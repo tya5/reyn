@@ -2,7 +2,7 @@
 recovery.
 
 Covers `call`'s runtime-selected sibling (Appendix B `match = {on: PATH, cases:
-{LABEL: {pipeline: LIT, pass: [NAME*]}}+, default?: {...}, output?: NAME}`,
+{LABEL: {pipeline: LIT, pass: [{NAME: EXPR}*]}}+, default?: {...}, output?: NAME}`,
 built on the same `_run_scope` + dotted-path recovery + dispatch-table
 foundation `call` uses):
 
@@ -65,8 +65,8 @@ async def test_match_selects_case_by_on_value_and_threads_final_output():
         MatchStep(
             on="ctx.kind",
             cases={
-                "cat": MatchCase(pipeline="on-cat", pass_=["brief"]),
-                "dog": MatchCase(pipeline="on-dog", pass_=["brief"]),
+                "cat": MatchCase(pipeline="on-cat", pass_=[("brief", "ctx.brief")]),
+                "dog": MatchCase(pipeline="on-dog", pass_=[("brief", "ctx.brief")]),
             },
             output="matched",
         ),
@@ -228,7 +228,7 @@ def _outer_matching(case_name: str) -> Pipeline:
         TransformStep(value="ctx.seed", output="carried"),
         MatchStep(
             on="ctx.kind",
-            cases={"go": MatchCase(pipeline=case_name, pass_=["seed"])},
+            cases={"go": MatchCase(pipeline=case_name, pass_=[("seed", "ctx.seed")])},
             output="match_out",
         ),
     ])

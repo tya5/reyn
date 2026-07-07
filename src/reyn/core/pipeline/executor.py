@@ -184,25 +184,28 @@ class AgentStep:
 class CallStep:
     """A COMPOSITIONAL step (R7 — the first non-linear primitive): synchronously
     run a REGISTERED sub-pipeline and thread ITS final output out as this step's
-    N2 return value (Appendix B: ``call = {pipeline: LIT, pass: [NAME*], output:
-    NAME}``).
+    N2 return value (Appendix B, redesigned: ``call = {pipeline: LIT, pass:
+    [{NAME: EXPR}*], output: NAME}``).
 
     - ``pipeline`` is a STATIC literal name (Hard rule 2 — never a runtime
       expression), resolved through the run's ``PipelineRegistry`` at execution.
       An absent target fails the step (never a silent no-op).
     - ``pass_`` (wire/DSL key ``pass`` — the Python field can't be the ``pass``
       keyword) is the ONLY channel by which the caller's scope reaches the
-      callee: the callee's context is built FRESH from ``{name: resolve(name)
-      for name in pass_}``, so the callee structurally cannot see anything not
-      listed here (Hard rule 8's ``{ctx.X}``-only-for-X-in-``pass`` isolation).
-      Each name resolves against the caller's named stores (``ctx``) FIRST;
-      if this ``call`` is itself inside a ``for_each``/``fold`` ``do:``, a
-      name not in ``ctx`` falls back to that scope's sibling ``item``/``acc``
-      binding (see :func:`_resolve_pass_names`) — this is what lets
-      ``pass: [item]`` forward a fan-out/fold loop variable into a
-      sub-pipeline, the same variable an ``agent`` step's ``{item}`` prompt
-      can already reach. ``ctx`` wins on a name collision. A name in neither
-      place fails the step.
+      callee: it is a ``list[(callee_name, expr_source)]`` NAME -> R1-EXPRESSION
+      mapping (normalized from the DSL's ``{NAME: EXPR}`` entries at parse
+      time — no bare-NAME shorthand, every entry states its own expression
+      explicitly). Each ``expr_source`` is evaluated via :func:`evaluate_expr`
+      against the CALLER's full current context — ``ctx``/``pipe``/``item``/
+      ``acc``, whatever is in scope (the SAME context ``transform.value``
+      evaluates against, so ``pass: [{current: item}]`` reaches a
+      ``for_each``/``fold`` loop variable exactly like an ``agent`` step's
+      ``{item}`` prompt already could) — and the result is bound to
+      ``callee_name`` in the callee's FRESH, isolated ``ctx``: the callee
+      structurally cannot see anything not listed here (Hard rule 8's
+      ``{ctx.X}``-only-for-X-in-``pass`` isolation). A failing expression
+      (missing path, wrong type, ...) fails the step, naming the failing
+      entry in the error.
     - the callee's FIRST step receives the caller's pipe-data at the call site
       (Hard rule 5) — bare ``{pipe}`` in the callee's first step is the outer
       pipe-data.
@@ -215,7 +218,7 @@ class CallStep:
     completed sub-steps replay EXACTLY-ONCE on resume (see the module docstring)."""
 
     pipeline: str
-    pass_: "list[str]" = field(default_factory=list)
+    pass_: "list[tuple[str, str]]" = field(default_factory=list)
     output: "str | None" = None
 
 
@@ -223,11 +226,11 @@ class CallStep:
 class MatchCase:
     """One ``match`` case target: a REGISTERED sub-pipeline (``pipeline``, a
     STATIC literal — Hard rule 2, never a runtime expression) plus its own
-    ``pass_`` caller-store projection, run exactly like a ``call`` step's
+    ``pass_`` NAME -> R1-EXPRESSION mapping, run exactly like a ``call`` step's
     callee (see :class:`CallStep`) once this case's LABEL is selected."""
 
     pipeline: str
-    pass_: "list[str]" = field(default_factory=list)
+    pass_: "list[tuple[str, str]]" = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -237,19 +240,20 @@ class MatchStep:
     ``TransformStep.value``) against the current context to get a VALUE, then
     select the :class:`MatchCase` whose LABEL string-equals that value —
     ``default`` runs when no case LABEL matches, and a step with no matching
-    case and no ``default`` fails cleanly (Appendix B: ``match = {on: PATH,
-    cases: {LABEL: {pipeline: LIT, pass: [NAME*]}}+, default?: {pipeline: LIT,
-    pass: [NAME*]}, output?: NAME}``).
+    case and no ``default`` fails cleanly (Appendix B, redesigned: ``match =
+    {on: PATH, cases: {LABEL: {pipeline: LIT, pass: [{NAME: EXPR}*]}}+,
+    default?: {pipeline: LIT, pass: [{NAME: EXPR}*]}, output?: NAME}``).
 
     - Hard rule 2: every case/``default`` target is a STATIC literal pipeline
       name — the runtime VALUE only ever selects a LABEL, never a target.
     - Hard rule 7: ``on`` should reference a schema-declared field; the
       analyzer facet (P4) warns when it does not (see ``analyzer.py``).
     - the SELECTED case runs exactly like ``call``'s callee: its own
-      ``pass_`` projects the caller's named stores into an isolated
-      sub-context, the callee's first step sees the caller's pipe-data at the
-      match site (Hard rule 5), and the callee's FINAL step output is this
-      ``match`` step's N2 return value.
+      ``pass_`` NAME -> R1-EXPRESSION mapping projects values evaluated
+      against the caller's full context into an isolated sub-context, the
+      callee's first step sees the caller's pipe-data at the match site
+      (Hard rule 5), and the callee's FINAL step output is this ``match``
+      step's N2 return value.
     - a non-string ``on`` value is stringified the same way
       ``_interpolate_prompt`` stringifies a non-string interpolation value,
       before the LABEL string-equality comparison — case LABELs are always
@@ -296,10 +300,12 @@ class FoldStep:
       ``{item}``/``{acc}`` — the SAME ``Path``/``{...}`` resolution
       ``ctx.NAME``/``pipe`` already use, just against two more top-level keys.
       A ``do: {call: ...}`` / ``do: {match: ...}`` reaches the SAME two
-      bindings via ``pass: [item]`` / ``pass: [acc]`` (:func:`_resolve_pass_names`
-      falls back to them when a ``pass:`` name isn't in ``ctx``) — so ``item``/
-      ``acc`` are forwardable into a sub-pipeline, not just readable from an
-      ``agent`` prompt in the same ``do``.
+      bindings via an explicit ``pass:`` entry — e.g. ``pass: [{current:
+      item}]`` / ``pass: [{running: acc}]`` — evaluated against this ``do``'s
+      full context the same way ``transform.value`` would be, so ``item``/
+      ``acc`` are forwardable into a sub-pipeline (under whatever name the
+      entry chooses), not just readable from an ``agent`` prompt in the same
+      ``do``.
     - ``do``'s RETURN VALUE becomes the next ``acc`` (never its ``pipe``/
       ``ctx`` output — those are local bookkeeping only); the FINAL ``acc``
       (after the last item, or ``init`` unchanged for an empty list) is this
@@ -354,10 +360,11 @@ class ForEachStep:
       call site">, "item": <the item_idx-th element>}``. There is NO ``acc``
       (that is ``fold``-only) and NO sibling visibility — an item cannot see any
       other item's result (writes happen only in ``collect``, Hard rule 6). A
-      ``do: {call: ...}`` / ``do: {match: ...}`` reaches ``item`` via
-      ``pass: [item]`` (:func:`_resolve_pass_names` falls back to it when the
-      name isn't in ``ctx``), forwarding the loop item into a sub-pipeline the
-      same way an ``agent`` step's ``{item}`` prompt already could.
+      ``do: {call: ...}`` / ``do: {match: ...}`` reaches ``item`` via an
+      explicit ``pass:`` entry, e.g. ``pass: [{current: item}]`` (evaluated
+      against this ``do``'s full context the same way ``transform.value``
+      would be), forwarding the loop item into a sub-pipeline the same way an
+      ``agent`` step's ``{item}`` prompt already could.
     - ``max_parallel`` (S5 guard a — the Semaphore cap): live concurrency is
       gated to ``max_parallel`` items at once; omitted, it defaults to a
       conservative finite value (``min(len(items), _DEFAULT_MAX_PARALLEL)``) —
@@ -810,14 +817,10 @@ async def _run_call_step(inv: "_StepInvocation") -> "tuple[Any, bool, dict[str, 
             "not registered"
         ) from exc
 
-    sub_stores = _resolve_pass_names(
+    sub_stores = _eval_pass_entries(
         step.pass_,
         inv.context,
-        not_found_error=lambda name: PipelineExecutionError(
-            f"step {inv.step_label} (call {step.pipeline!r}) pass: names "
-            f"{name!r}, which is not a named store nor an in-scope loop "
-            "binding (item/acc/pipe)"
-        ),
+        fail_where=f"step {inv.step_label} (call {step.pipeline!r})",
     )
 
     final_pipe, _final_stores, completed_step_results, any_durable = await (
@@ -835,43 +838,29 @@ async def _run_call_step(inv: "_StepInvocation") -> "tuple[Any, bool, dict[str, 
     return final_pipe, any_durable, completed_step_results
 
 
-_PASS_SIBLING_KEYS = ("item", "acc", "pipe")
-"""The step-local context keys a ``call``/``match`` step's ``pass:`` now falls
-back to when a name isn't a named store — the SAME sibling bindings a
-``for_each``/``fold`` ``do:`` context carries alongside ``ctx`` (see
-:func:`_run_fold_step` / :func:`_run_for_each_step`), and the SAME bindings an
-``agent`` step's ``{item}``/``{ctx.x}`` prompt template already resolves via
-:func:`_interpolate_prompt` evaluating against the FULL context. Excludes
-``ctx`` itself (that's the primary lookup, not a fallback)."""
-
-
-def _resolve_pass_names(
-    names: "list[str]",
+def _eval_pass_entries(
+    entries: "list[tuple[str, str]]",
     context: "dict[str, Any]",
     *,
-    not_found_error: "Callable[[str], PipelineExecutionError]",
+    fail_where: str,
 ) -> "dict[str, Any]":
-    """Resolve a ``pass:`` name list against ``context``: ``ctx`` (the
-    caller's named stores) FIRST, falling back to the sibling step-local
-    bindings (``item``/``acc``/``pipe``) present in this scope's context —
-    closing the asymmetry where a ``for_each``/``fold`` loop variable was
-    reachable from an ``agent`` step's ``{item}`` prompt but not from a
-    ``call``/``match`` step's ``pass:``. ``ctx`` wins on a name collision
-    (a named store called e.g. ``item`` shadows a sibling ``item`` loop
-    binding), so every pre-existing ``pass:`` resolution is unchanged — this
-    fallback only reaches names that previously raised. Raises
-    ``not_found_error(name)`` (a caller-supplied factory so the raised
-    :class:`PipelineExecutionError` message can name the specific
-    call/match step) for a name in neither place."""
-    outer_stores = context["ctx"]
+    """Evaluate a ``call``/``match`` step's ``pass_`` NAME -> R1-EXPRESSION
+    entries against the caller's current context — the SAME
+    :func:`evaluate_expr` call ``transform.value`` already makes, so
+    ``ctx``/``pipe``/``item``/``acc`` (whatever the caller's scope carries)
+    are all reachable from a ``pass:`` entry's expression, exactly like an
+    ``agent`` step's prompt template already reaches them. Returns the
+    callee's fresh, isolated ``ctx`` seed: ``{callee_name: evaluated_value,
+    ...}``. A failing expression (missing path, wrong type, ...) fails the
+    step, naming the failing entry."""
     resolved: "dict[str, Any]" = {}
-    for name in names:
-        if name in outer_stores:
-            resolved[name] = outer_stores[name]
-        elif name in _PASS_SIBLING_KEYS and name in context:
-            resolved[name] = context[name]
-        else:
-            raise not_found_error(name)
+    for callee_name, expr_source in entries:
+        try:
+            resolved[callee_name] = evaluate_expr(expr_source, context)
+        except (ExprEvalError, ExprParseError) as exc:
+            raise PipelineExecutionError(
+                f"{fail_where} pass: {callee_name!r} = {expr_source!r} failed: {exc}"
+            ) from exc
     return resolved
 
 
@@ -921,14 +910,10 @@ async def _run_match_step(inv: "_StepInvocation") -> "tuple[Any, bool, dict[str,
             f"{case.pipeline!r} is not registered"
         ) from exc
 
-    sub_stores = _resolve_pass_names(
+    sub_stores = _eval_pass_entries(
         case.pass_,
         inv.context,
-        not_found_error=lambda name: PipelineExecutionError(
-            f"step {inv.step_label} (match label {label!r} -> {case.pipeline!r}) "
-            f"pass: names {name!r}, which is not a named store nor an in-scope "
-            "loop binding (item/acc/pipe)"
-        ),
+        fail_where=f"step {inv.step_label} (match label {label!r} -> {case.pipeline!r})",
     )
 
     final_pipe, _final_stores, completed_step_results, any_durable = await (

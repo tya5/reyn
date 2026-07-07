@@ -135,6 +135,16 @@ def _decode_agent(data: "dict[str, Any]") -> "AgentStep":
     )
 
 
+def _encode_pass_entries(entries: "list[tuple[str, str]]") -> "list[list[str]]":
+    # ``pass_`` is a ``list[(callee_name, expr_source)]`` — JSON has no tuple
+    # type, so each pair round-trips as a 2-element ``[name, expr]`` list.
+    return [[name, expr] for name, expr in entries]
+
+
+def _decode_pass_entries(data: Any) -> "list[tuple[str, str]]":
+    return [(name, expr) for name, expr in (data or [])]
+
+
 def _encode_call(step: "CallStep") -> "dict[str, Any]":
     # ``pass_`` (the Python field — ``pass`` is a keyword) serializes under the
     # Appendix-B wire/DSL key ``"pass"``. This is the one place a step field name
@@ -142,7 +152,7 @@ def _encode_call(step: "CallStep") -> "dict[str, Any]":
     return {
         "kind": "call",
         "pipeline": step.pipeline,
-        "pass": list(step.pass_),
+        "pass": _encode_pass_entries(step.pass_),
         "output": step.output,
     }
 
@@ -150,17 +160,17 @@ def _encode_call(step: "CallStep") -> "dict[str, Any]":
 def _decode_call(data: "dict[str, Any]") -> "CallStep":
     return CallStep(
         pipeline=data["pipeline"],
-        pass_=list(data.get("pass") or []),
+        pass_=_decode_pass_entries(data.get("pass")),
         output=data.get("output"),
     )
 
 
 def _encode_match_case(case: "MatchCase") -> "dict[str, Any]":
-    return {"pipeline": case.pipeline, "pass": list(case.pass_)}
+    return {"pipeline": case.pipeline, "pass": _encode_pass_entries(case.pass_)}
 
 
 def _decode_match_case(data: "dict[str, Any]") -> "MatchCase":
-    return MatchCase(pipeline=data["pipeline"], pass_=list(data.get("pass") or []))
+    return MatchCase(pipeline=data["pipeline"], pass_=_decode_pass_entries(data.get("pass")))
 
 
 def _encode_match(step: "MatchStep") -> "dict[str, Any]":

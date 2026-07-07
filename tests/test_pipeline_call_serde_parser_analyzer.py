@@ -24,16 +24,22 @@ from reyn.core.pipeline.serde import pipeline_from_dict, pipeline_to_dict
 def test_call_serde_round_trip_non_default_values():
     """Tier 1: a ``CallStep`` with non-default ``pass_`` + ``output`` round-trips
     dataclass -> dict -> JSON -> dataclass, and the wire form uses the Appendix-B
-    key ``"pass"`` (not the Python field name ``pass_``)."""
+    key ``"pass"`` (not the Python field name ``pass_``) — each ``pass_`` entry
+    is a ``(name, expr_source)`` pair, serialized as a 2-element list."""
     pipeline = Pipeline(steps=[
-        CallStep(pipeline="sub-flow", pass_=["brief", "budget"], output="result"),
+        CallStep(
+            pipeline="sub-flow",
+            pass_=[("brief", "ctx.brief"), ("budget", "ctx.budget * 2")],
+            output="result",
+        ),
         ToolStep(name="noop", args={}),
     ])
     wire = pipeline_to_dict(pipeline)
     call_dict = wire["steps"][0]
     assert call_dict == {
         "kind": "call", "pipeline": "sub-flow",
-        "pass": ["brief", "budget"], "output": "result",
+        "pass": [["brief", "ctx.brief"], ["budget", "ctx.budget * 2"]],
+        "output": "result",
     }
     assert "pass_" not in call_dict  # the wire key is the Appendix-B `pass`
     assert pipeline_from_dict(json.loads(json.dumps(wire))) == pipeline
@@ -41,23 +47,27 @@ def test_call_serde_round_trip_non_default_values():
 
 def test_call_parses_from_dsl():
     """Tier 1: the DSL ``call`` step parses to a ``CallStep`` (moved out of the
-    not-yet-supported set) with ``pass``/``output`` honored."""
+    not-yet-supported set) with ``pass``/``output`` honored — every ``pass:``
+    entry is the explicit ``{NAME: EXPR}`` mapping form."""
     text = """
 pipeline: outer
 steps:
   - call:
       pipeline: inner
-      pass: [brief]
+      pass:
+        - brief: ctx.brief
       output: summary
 """
     parsed = parse_pipeline_dsl(text, SchemaRegistry())
-    assert parsed.steps == [CallStep(pipeline="inner", pass_=["brief"], output="summary")]
+    assert parsed.steps == [
+        CallStep(pipeline="inner", pass_=[("brief", "ctx.brief")], output="summary")
+    ]
 
 
 def test_call_dsl_requires_literal_pipeline_name():
     """Tier 1: an empty/missing ``pipeline`` name is a parse error (Hard rule 2 —
     the target is a static literal, and it must be present)."""
-    missing = "pipeline: o\nsteps:\n  - call:\n      pass: [x]\n"
+    missing = "pipeline: o\nsteps:\n  - call:\n      pass:\n        - x: ctx.x\n"
     with pytest.raises(PipelineParseError):
         parse_pipeline_dsl(missing, SchemaRegistry())
 

@@ -44,7 +44,7 @@ def test_parallel_serde_round_trip_non_default_values_with_nested_branches_and_c
     pipeline = Pipeline(steps=[
         ParallelStep(
             branches={
-                "summary": CallStep(pipeline="summarize", pass_=["doc"], output="s"),
+                "summary": CallStep(pipeline="summarize", pass_=[("doc", "ctx.doc")], output="s"),
                 "score": ToolStep(name="scorer", args={}, output="sc"),
             },
             collect=ToolStep(name="merge", args={}, output="merged"),
@@ -58,7 +58,8 @@ def test_parallel_serde_round_trip_non_default_values_with_nested_branches_and_c
         "kind": "parallel",
         "branches": {
             "summary": {
-                "kind": "call", "pipeline": "summarize", "pass": ["doc"], "output": "s",
+                "kind": "call", "pipeline": "summarize",
+                "pass": [["doc", "ctx.doc"]], "output": "s",
             },
             "score": {
                 "kind": "tool", "name": "scorer", "args": {}, "output": "sc", "schema": None,

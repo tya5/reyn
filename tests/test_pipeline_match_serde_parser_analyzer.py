@@ -32,8 +32,11 @@ def test_match_serde_round_trip_non_default_values():
         MatchStep(
             on="ctx.kind",
             cases={
-                "cat": MatchCase(pipeline="on-cat", pass_=["brief"]),
-                "dog": MatchCase(pipeline="on-dog", pass_=["brief", "budget"]),
+                "cat": MatchCase(pipeline="on-cat", pass_=[("brief", "ctx.brief")]),
+                "dog": MatchCase(
+                    pipeline="on-dog",
+                    pass_=[("brief", "ctx.brief"), ("budget", "ctx.budget")],
+                ),
             },
             default=MatchCase(pipeline="on-other", pass_=[]),
             output="result",
@@ -46,8 +49,11 @@ def test_match_serde_round_trip_non_default_values():
         "kind": "match",
         "on": "ctx.kind",
         "cases": {
-            "cat": {"pipeline": "on-cat", "pass": ["brief"]},
-            "dog": {"pipeline": "on-dog", "pass": ["brief", "budget"]},
+            "cat": {"pipeline": "on-cat", "pass": [["brief", "ctx.brief"]]},
+            "dog": {
+                "pipeline": "on-dog",
+                "pass": [["brief", "ctx.brief"], ["budget", "ctx.budget"]],
+            },
         },
         "default": {"pipeline": "on-other", "pass": []},
         "output": "result",
@@ -78,7 +84,8 @@ steps:
       cases:
         cat:
           pipeline: on-cat
-          pass: [brief]
+          pass:
+            - brief: ctx.brief
         dog:
           pipeline: on-dog
       default:
@@ -90,7 +97,7 @@ steps:
         MatchStep(
             on="ctx.kind",
             cases={
-                "cat": MatchCase(pipeline="on-cat", pass_=["brief"]),
+                "cat": MatchCase(pipeline="on-cat", pass_=[("brief", "ctx.brief")]),
                 "dog": MatchCase(pipeline="on-dog", pass_=[]),
             },
             default=MatchCase(pipeline="on-other", pass_=[]),
@@ -112,7 +119,7 @@ def test_match_dsl_case_requires_literal_pipeline_name():
     error (Hard rule 2 — every case target is a static literal)."""
     text = (
         "pipeline: o\nsteps:\n  - match:\n      on: ctx.kind\n      "
-        "cases:\n        a:\n          pass: [x]\n"
+        "cases:\n        a:\n          pass:\n            - x: ctx.x\n"
     )
     with pytest.raises(PipelineParseError):
         parse_pipeline_dsl(text, SchemaRegistry())
