@@ -3630,13 +3630,19 @@ class Session:
         ``run_pipeline`` actually resolves against, via ``get_pipeline_registry()``)
         would silently keep serving the stale registry.
 
-        Fail-loud-but-non-fatal: ``build_pipeline_registry`` raises ``PipelineLoadError``
-        (malformed DSL / duplicate declared name) on a broken on-disk file. That is
-        caught here (alongside any other unexpected error) — the reload seam logs +
-        returns False, leaving the OLD registry (on both holders) fully intact. The new
-        registry object is only ever assigned after a fully successful build, so a
-        malformed file at reload-time can never half-apply or clear the live registry
-        (atomic-by-construction, same guarantee as skills).
+        Fail-loud-but-non-fatal: ``build_pipeline_registry(..., strict=True)`` raises
+        ``PipelineLoadError`` (malformed DSL / duplicate declared name / missing path /
+        name mismatch) on the FIRST broken on-disk entry — ``strict=True`` is passed
+        explicitly here to opt back INTO that atomic fail-loud posture (the default,
+        used by session-FACTORY construction, is lenient/per-entry-isolated instead —
+        see ``build_pipeline_registry``'s own docstring for why the two call sites
+        need opposite postures: a brand-new session has no "old registry" to protect,
+        a live hot-reload does). The raise is caught here (alongside any other
+        unexpected error) — the reload seam logs + returns False, leaving the OLD
+        registry (on both holders) fully intact. The new registry object is only ever
+        assigned after a fully successful build, so a malformed file at reload-time
+        can never half-apply or clear the live registry (atomic-by-construction, same
+        guarantee as skills).
 
         Note (R7): a pipeline run already in flight resolves its OWN definition from
         the snapshotted work order (``invocation.json``), never the live registry, so a
@@ -3651,6 +3657,7 @@ class Session:
             fresh_cfg = load_config(self._hot_reload_project_root())
             new_registry = build_pipeline_registry(
                 fresh_cfg.pipelines, self._hot_reload_project_root(),
+                strict=True,
             )
         except Exception as exc:  # noqa: BLE001 — best-effort, last-good on failure (incl. PipelineLoadError)
             logger.warning("_reapply_pipelines: registry rebuild failed: %r", exc)

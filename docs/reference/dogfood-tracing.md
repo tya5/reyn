@@ -287,6 +287,39 @@ printer truncates long lines like it does for every event kind; read the
 
 ---
 
+# Pipeline Load Failures (`pipeline_load_failed` event)
+
+`reyn.data.pipelines.registry.build_pipeline_registry` (the
+`pipelines.entries` → `PipelineRegistry` loader called at every session-factory
+construction, see `docs/concepts/runtime/pipeline-registration.md` § "Failure
+behavior") isolates each `pipelines.entries.<key>` declaration: a broken entry
+(missing `path`, unreadable file, malformed DSL, a config-key / declared-name
+mismatch, or a duplicate declared name) no longer crashes the whole session
+start. It is durably emitted as a `pipeline_load_failed` P6 event via
+`emit_cli_event` (session-independent — routes to
+`.reyn/events/direct/cli/<date>.jsonl`, same sink as
+`asyncio_unhandled_exception` above) and skipped; every other declared entry
+still loads.
+
+```bash
+python scripts/dogfood_trace.py --mode full --filter pipeline_load_failed --root .reyn
+```
+
+Fields on the event: `key` (the `pipelines.entries.<key>` config key that
+failed), `path` (the entry's declared `path`, `""` if the entry had none),
+and `error` (the descriptive `PipelineLoadError` message, naming the file /
+mismatch / collision as appropriate).
+
+Note: the hot-reload seam (`Session._reapply_pipelines`, the `/reload`
+`pipelines` component) calls the loader with `strict=True` instead — it opts
+back into the OLD fail-loud, atomic posture (any broken entry aborts the
+WHOLE rebuild, previously-loaded registry left fully intact) rather than
+emitting `pipeline_load_failed`, since a live session's registry should never
+have an entry silently vanish mid-reload. That failure is only visible via
+the `_reapply_pipelines` warning log, not this event.
+
+---
+
 # LLM Replay (`scripts/llm_replay.py`)
 
 `llm_replay.py` takes a trace file, finds a specific request by `request_id`,
