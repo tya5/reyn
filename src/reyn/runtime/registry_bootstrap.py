@@ -25,10 +25,14 @@ Two tiers of extraction, deliberately:
   construction a **minimal, non-interactive, one-shot** caller needs
   (``reyn pipe run`` today). It is deliberately NOT a superset of ``reyn
   chat``'s own richer construction (model selection, ``--exclude-tools``,
-  environment-backend choice, interactive CUI logging, ``--grant-file-write``,
-  …) — those stay ``chat.py``'s own bespoke bits, built the same way as
-  before, on top of the same ``build_scoped_chat_session``/``AgentRegistry``
-  seams. Forcing chat's full parameter surface (~25 kwargs) through this
+  environment-backend choice, interactive CUI logging, …) — those stay
+  ``chat.py``'s own bespoke bits, built the same way as before, on top of
+  the same ``build_scoped_chat_session``/``AgentRegistry`` seams. The
+  ``--grant-file-write`` posture IS ported (as a ``grant_file_write`` param,
+  same semantics as ``chat.py``'s flag — see :func:`build_agent_registry_from_project`)
+  since a fail-closed-by-default permission posture is a correctness/security
+  property this helper must not silently drop, not merely a CLI convenience.
+  Forcing chat's full parameter surface (~25 kwargs) through this
   helper would either (a) duplicate that surface here (real drift risk, zero
   evidenced benefit — no second caller needs it yet) or (b) require
   chat.py to rebuild its registry after calling this helper (impossible —
@@ -86,6 +90,7 @@ def build_agent_registry_from_project(
     *,
     non_interactive: bool = False,
     agent_name: "str | None" = None,
+    grant_file_write: bool = False,
 ) -> "AgentRegistry":
     """Build a minimal, standalone ``AgentRegistry`` for a non-interactive,
     one-shot caller — e.g. ``reyn pipe run``'s ``agent:`` step support.
@@ -101,12 +106,21 @@ def build_agent_registry_from_project(
       host-backend default (``env_backend.py``). No ``--docker``/
       ``--sandbox-backend`` CLI surface for v1; a caller needing a container
       backend should use ``reyn chat``/``reyn run`` instead.
-    - **Operator-trusted permissions** — ``file.read``/``file.write``/
-      ``http.get`` default to ``allow`` (``setdefault``, so an explicit
-      ``reyn.yaml`` permission stays authoritative), mirroring how ``reyn
-      pipe install`` already treats a local CLI invocation as an
-      operator-trusted entry point (a human running a command directly, not
-      an LLM-driven turn).
+    - **Fail-closed permissions by default** — ``perm_config`` is exactly
+      whatever ``reyn.yaml``'s own ``permissions:`` section declares, byte-
+      identical to ``reyn chat``'s own no-flag default. ``grant_file_write``
+      (default ``False``) mirrors ``reyn chat --grant-file-write`` EXACTLY
+      (same two keys, same ``setdefault`` semantics) — the caller must
+      explicitly opt in per invocation. ``http.get`` is NEVER blanket-granted
+      here, matching ``reyn chat`` (which relies on ``require_http_get``'s
+      interactive JIT-approval prompt instead of a blanket grant); a
+      non-interactive caller without a JIT prompt to answer is correctly
+      denied HTTP access unless ``reyn.yaml`` itself grants it — the same
+      outcome a non-interactive ``reyn chat`` invocation would have. A
+      pipeline installed from an untrusted source (``reyn pipe install
+      --source``) must not silently gain broad file/network access merely by
+      being RUN — the operator opts in per invocation, the same trust
+      decision ``reyn chat --grant-file-write`` already requires.
     - **``interactive=not non_interactive``** on the ``PermissionResolver`` —
       a one-shot caller has no one to answer an interactive approval prompt.
     - **Default model tier** (``config.model``) + a fresh ``ModelResolver``
@@ -130,12 +144,13 @@ def build_agent_registry_from_project(
     budget_tracker = build_budget_tracker(config.cost, project_root, hydrate=False)
 
     perm_config = dict(getattr(config, "permissions", {}) or {})
-    # Operator-trusted default grant (mirrors `reyn chat --grant-file-write` /
-    # `reyn pipe install`'s CLI-is-operator-trusted posture). setdefault
-    # preserves any explicit operator-configured value.
-    perm_config.setdefault("file.read", "allow")
-    perm_config.setdefault("file.write", "allow")
-    perm_config.setdefault("http.get", "allow")
+    # Fail-closed by default (byte-identical to `reyn chat`'s own no-flag
+    # posture). Only grant file.read/file.write when the caller explicitly
+    # opts in (mirrors `reyn chat --grant-file-write` exactly) — NEVER
+    # blanket-grant http.get (see docstring).
+    if grant_file_write:
+        perm_config.setdefault("file.read", "allow")
+        perm_config.setdefault("file.write", "allow")
     perm_resolver = PermissionResolver(
         config_permissions=perm_config,
         project_root=project_root,

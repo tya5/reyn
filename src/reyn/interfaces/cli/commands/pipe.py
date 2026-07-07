@@ -36,10 +36,17 @@ ephemeral-session-spawn primitive, NOT a live chat session or router loop).
 Both are constructible standalone: ``reyn.runtime.registry_bootstrap.
 build_agent_registry_from_project`` extracts the reusable core of ``reyn
 chat``'s own ``AgentRegistry`` construction for exactly this. So ``run_run``
-now builds a real (operator-trusted, host-backend, non-interactive)
-``ToolContext`` + ``AgentRegistry`` and wires both into the executor — a
-pipeline built from ANY step kind (``transform``/``tool``/``agent``/``call``/
-``match``/``fold``/``for_each``/``parallel``) runs standalone.
+now builds a real (host-backend, non-interactive) ``ToolContext`` +
+``AgentRegistry`` and wires both into the executor — a pipeline built from
+ANY step kind (``transform``/``tool``/``agent``/``call``/``match``/``fold``/
+``for_each``/``parallel``) runs standalone. Permissions are **fail-closed by
+default** (byte-identical to ``reyn chat``'s own no-flag posture) — a
+``--grant-file-write`` flag, same name/semantics as ``reyn chat``'s, opts a
+SPECIFIC invocation into file.read/file.write; ``http.get`` is never
+blanket-granted (see ``_build_run_tool_context``'s docstring). This matters
+because a pipeline may be installed from an untrusted source (``reyn pipe
+install --source``) — it must not silently gain broad file/network access
+merely by being RUN.
 """
 from __future__ import annotations
 
@@ -205,6 +212,22 @@ def register(sub) -> None:
         dest="async_",
         action="store_true",
         help=argparse.SUPPRESS,
+    )
+    # Same flag name/semantics as `reyn chat --grant-file-write` (chat.py):
+    # OFF by default (fail-closed — a pipeline installed from an untrusted
+    # source must not silently gain file.read/file.write merely by being
+    # RUN); the operator opts in per invocation to trust THIS run.
+    run_p.add_argument(
+        "--grant-file-write",
+        dest="grant_file_write",
+        action="store_true",
+        help=(
+            "Grant file.read/file.write at the resolver layer for this run, "
+            "scoped to the project root. Off by default — a tool:/agent: "
+            "step that touches the filesystem without this flag is denied, "
+            "the same fail-closed posture 'reyn chat' has without its own "
+            "--grant-file-write."
+        ),
     )
     run_p.set_defaults(func=run_run)
 
@@ -420,7 +443,7 @@ def run_install(args: argparse.Namespace) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _build_run_tool_context(project_root: Path):
+def _build_run_tool_context(project_root: Path, *, grant_file_write: bool = False):
     """Build a real, standalone ``ToolContext`` for ``reyn pipe run``'s
     ``tool:`` step dispatch — routed through the SAME seam a live agent
     session's ``ToolStep`` uses (``_make_tool_dispatch`` /
@@ -429,10 +452,18 @@ def _build_run_tool_context(project_root: Path):
 
     Field-by-field:
       - ``events``: a real ``EventLog`` (mirrors ``reyn pipe install``).
-      - ``permission_resolver``: operator-trusted (``file.read``/
-        ``file.write``/``http.get`` default ``allow`` — a CLI invocation is a
-        human running a command directly, the same trust posture ``reyn pipe
-        install`` already gives the CLI).
+      - ``permission_resolver``: **fail-closed by default** — ``perm_config``
+        is exactly ``reyn.yaml``'s own ``permissions:`` section, byte-
+        identical to ``reyn chat``'s own no-flag posture. ``grant_file_write``
+        (``--grant-file-write``, off by default) mirrors ``reyn chat
+        --grant-file-write`` exactly (``file.read``/``file.write`` only).
+        ``http.get`` is NEVER blanket-granted — ``reyn chat`` doesn't either
+        (it relies on ``require_http_get``'s interactive JIT prompt; a
+        non-interactive caller with no prompt to answer is correctly
+        denied, same as a non-interactive ``reyn chat``). A pipeline
+        installed from an untrusted source (``reyn pipe install --source``)
+        must not silently gain broad file/network access merely by being
+        RUN — the operator opts in per invocation.
       - ``workspace``: a real ``reyn.data.workspace.Workspace`` anchored on
         ``project_root`` (host backend) — a real tool handler (``read_file``,
         ``write_file``, …) calls real methods on it (``read_file_bytes`` etc.),
@@ -464,9 +495,9 @@ def _build_run_tool_context(project_root: Path):
         perm_config = dict(getattr(load_config(), "permissions", {}) or {})
     except Exception:
         perm_config = {}
-    perm_config.setdefault("file.read", "allow")
-    perm_config.setdefault("file.write", "allow")
-    perm_config.setdefault("http.get", "allow")
+    if grant_file_write:
+        perm_config.setdefault("file.read", "allow")
+        perm_config.setdefault("file.write", "allow")
     perm_resolver = PermissionResolver(
         config_permissions=perm_config,
         project_root=project_root,
@@ -590,13 +621,14 @@ def run_run(args: argparse.Namespace) -> None:
         )
         sys.exit(1)
 
-    tool_ctx = _build_run_tool_context(project_root)
+    grant_file_write = bool(getattr(args, "grant_file_write", False))
+    tool_ctx = _build_run_tool_context(project_root, grant_file_write=grant_file_write)
     tool_dispatch = _make_tool_dispatch(tool_ctx)
     # A real, standalone AgentRegistry (registry_bootstrap) so an
     # AgentStep can genuinely spawn+run an ephemeral session — see the module
     # docstring for the corrected tool:/agent: scope decision.
     agent_registry = build_agent_registry_from_project(
-        project_root, config, non_interactive=True,
+        project_root, config, non_interactive=True, grant_file_write=grant_file_write,
     )
 
     run_id = f"cli-{uuid.uuid4().hex}"

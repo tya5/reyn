@@ -22,6 +22,10 @@ Covers:
     documented ``litellm.acompletion`` replay seam — see
     ``test_llm_request_event_1669.py``), asserting the pipeline's final
     output reflects the (faked) LLM reply.
+  - fail-closed-by-default permissions: a ``tool:`` step writing outside the
+    default write zone via the real, shipped ``write_file`` tool is DENIED
+    without ``--grant-file-write``, and succeeds with it — byte-identical to
+    ``reyn chat``'s own no-flag/``--grant-file-write`` posture.
 """
 from __future__ import annotations
 
@@ -91,13 +95,23 @@ def test_pipe_install_parses_source():
 
 
 def test_pipe_run_parses():
-    """Tier 2: 'pipe run NAME --input JSON' parses; --async is present but suppressed."""
+    """Tier 2: 'pipe run NAME --input JSON' parses; --async is present but
+    suppressed; --grant-file-write defaults to False (fail-closed)."""
     parser = _make_parser()
     args = parser.parse_args(["pipe", "run", "my_pipeline", "--input", '{"a": 1}'])
     assert args.pipe_command == "run"
     assert args.name == "my_pipeline"
     assert args.input == '{"a": 1}'
     assert args.async_ is False
+    assert args.grant_file_write is False
+
+
+def test_pipe_run_grant_file_write_flag_parses():
+    """Tier 2: '--grant-file-write' parses to True (opt-in, same flag name/
+    semantics as `reyn chat --grant-file-write`)."""
+    parser = _make_parser()
+    args = parser.parse_args(["pipe", "run", "my_pipeline", "--grant-file-write"])
+    assert args.grant_file_write is True
 
 
 def test_pipe_run_async_flag_parses_but_is_rejected_at_runtime(capsys):
@@ -340,6 +354,71 @@ def test_run_tool_step_dispatches_for_real(tmp_path, monkeypatch, capsys):
     result = json.loads(out)
     assert result["named_stores"]["shout"] == {"content": "HI REYN"}
     assert result["pipe_data"] == {"content": "HI REYN"}
+
+
+def test_run_tool_step_file_write_is_denied_without_grant_flag(
+    tmp_path, monkeypatch, capsys,
+):
+    """Tier 2: fail-closed-by-default permission posture (security fix). A
+    'tool:' step writing OUTSIDE the default write zone (.reyn/) via the
+    real, shipped 'write_file' tool is DENIED without --grant-file-write —
+    byte-identical to 'reyn chat's own no-flag posture. This matters
+    specifically because a pipeline may be installed from an untrusted
+    source (`reyn pipe install --source`); it must not silently gain
+    file-write access merely by being run."""
+    monkeypatch.chdir(tmp_path)
+
+    dsl_path = tmp_path / "writer.yaml"
+    dsl_path.write_text(
+        "pipeline: writer\n"
+        "steps:\n"
+        "  - tool: {name: write_file, args: {path: \"out.txt\", content: \"hello\"}, "
+        "output: r}\n",
+        encoding="utf-8",
+    )
+    _write_reyn_yaml(tmp_path, {"writer": {"path": "writer.yaml"}})
+
+    args = _ns(
+        name="writer", input="{}", project=str(tmp_path), async_=False,
+        grant_file_write=False,
+    )
+    run_run(args)
+
+    out = capsys.readouterr().out
+    result = json.loads(out)
+    assert result["named_stores"]["r"]["status"] == "denied"
+    assert not (tmp_path / "out.txt").exists()
+
+
+def test_run_tool_step_file_write_allowed_with_grant_flag(
+    tmp_path, monkeypatch, capsys,
+):
+    """Tier 2: the SAME write_file pipeline as above, but with
+    --grant-file-write — the opt-in flag (same name/semantics as `reyn chat
+    --grant-file-write`) grants file.write for THIS invocation, and the
+    write actually lands."""
+    monkeypatch.chdir(tmp_path)
+
+    dsl_path = tmp_path / "writer.yaml"
+    dsl_path.write_text(
+        "pipeline: writer\n"
+        "steps:\n"
+        "  - tool: {name: write_file, args: {path: \"out.txt\", content: \"hello\"}, "
+        "output: r}\n",
+        encoding="utf-8",
+    )
+    _write_reyn_yaml(tmp_path, {"writer": {"path": "writer.yaml"}})
+
+    args = _ns(
+        name="writer", input="{}", project=str(tmp_path), async_=False,
+        grant_file_write=True,
+    )
+    run_run(args)
+
+    out = capsys.readouterr().out
+    result = json.loads(out)
+    assert result["named_stores"]["r"]["status"] == "ok"
+    assert (tmp_path / "out.txt").read_text(encoding="utf-8") == "hello"
 
 
 def _fake_scripted_acompletion(content: str):
