@@ -106,8 +106,8 @@ steps:
   - match:
       on: ctx.all_passed
       cases:
-        "True": {pipeline: report_pass, pass: [reviews]}
-        "False": {pipeline: report_fail, pass: [reviews]}
+        "True": {pipeline: report_pass, pass: [{reviews: ctx.reviews}]}
+        "False": {pipeline: report_fail, pass: [{reviews: ctx.reviews}]}
       output: report
 ---
 schema: Review

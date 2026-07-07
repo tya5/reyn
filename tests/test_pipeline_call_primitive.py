@@ -5,7 +5,8 @@ Covers the non-linear foundation's first consumer
 built on the ``_run_scope`` + dotted-path recovery + dispatch-table foundation):
 
   1. happy path — a ``call`` runs its REGISTERED callee synchronously, ``pass:[...]``
-     projects ONLY the listed caller stores into the callee, the callee's first step
+     (a NAME -> R1-EXPRESSION mapping, e.g. ``[("brief", "ctx.brief")]``) projects
+     ONLY the listed callee names into the callee, the callee's first step
      receives the caller's pipe-data at the call site (Hard rule 5), and the callee's
      FINAL output threads out as the ``call`` step's N2 return value.
   2. ``pass:[...]`` isolation — a callee referencing a caller store NOT in ``pass``
@@ -64,7 +65,7 @@ async def test_call_runs_callee_and_threads_final_output_with_pass_scoping():
 
     outer = Pipeline(steps=[
         TransformStep(value="ctx.n", output="carried"),      # step 0: pipe_data = "seven"
-        CallStep(pipeline="summarize", pass_=["brief"], output="called_out"),  # step 1
+        CallStep(pipeline="summarize", pass_=[("brief", "ctx.brief")], output="called_out"),  # step 1
         TransformStep(value="ctx.called_out + '!'", output="final"),           # step 2
     ])
 
@@ -179,7 +180,7 @@ def _two_write_callee() -> Pipeline:
 def _outer_calling(callee_name: str) -> Pipeline:
     return Pipeline(steps=[
         TransformStep(value="ctx.seed", output="carried"),
-        CallStep(pipeline=callee_name, pass_=["seed"], output="call_out"),
+        CallStep(pipeline=callee_name, pass_=[("seed", "ctx.seed")], output="call_out"),
     ])
 
 

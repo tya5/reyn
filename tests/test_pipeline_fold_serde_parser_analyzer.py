@@ -30,7 +30,7 @@ def test_fold_serde_round_trip_non_default_values_with_nested_do():
     top-level step, not a bespoke shape."""
     pipeline = Pipeline(steps=[
         FoldStep(
-            init="[]", do=CallStep(pipeline="summarize-one", pass_=["item"], output="r"),
+            init="[]", do=CallStep(pipeline="summarize-one", pass_=[("item", "item")], output="r"),
             output="results", over="ctx.docs", max_items=5,
         ),
     ])
@@ -41,7 +41,10 @@ def test_fold_serde_round_trip_non_default_values_with_nested_do():
         "over": "ctx.docs",
         "items": None,
         "init": "[]",
-        "do": {"kind": "call", "pipeline": "summarize-one", "pass": ["item"], "output": "r"},
+        "do": {
+            "kind": "call", "pipeline": "summarize-one",
+            "pass": [["item", "item"]], "output": "r",
+        },
         "output": "results",
         "max_items": 5,
     }

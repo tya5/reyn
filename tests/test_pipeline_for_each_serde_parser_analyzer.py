@@ -38,7 +38,7 @@ def test_for_each_serde_round_trip_non_default_values_with_nested_do_and_collect
     its plain DSL string (normalized only at execution)."""
     pipeline = Pipeline(steps=[
         ForEachStep(
-            do=CallStep(pipeline="summarize-one", pass_=["item"], output="r"),
+            do=CallStep(pipeline="summarize-one", pass_=[("item", "item")], output="r"),
             collect=ToolStep(name="merge", args={}, output="merged"),
             on_error="retry(3)",
             over="ctx.docs",
@@ -54,7 +54,10 @@ def test_for_each_serde_round_trip_non_default_values_with_nested_do_and_collect
         "items": None,
         "max_parallel": 4,
         "on_error": "retry(3)",
-        "do": {"kind": "call", "pipeline": "summarize-one", "pass": ["item"], "output": "r"},
+        "do": {
+            "kind": "call", "pipeline": "summarize-one",
+            "pass": [["item", "item"]], "output": "r",
+        },
         "collect": {"kind": "tool", "name": "merge", "args": {}, "output": "merged", "schema": None},
         "output": "results",
     }
