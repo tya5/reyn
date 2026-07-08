@@ -319,6 +319,11 @@ differentiator is making blindness *auditable*, not forbidding it.)
 - **PR-C** — `presentations.yaml` registration + hot-reload seam + the 4-stage fallback
   chain (built fresh — FP-0051's registry is deleted; §§ 3, 6).
 - **PR-D** — replay/rewind placeholder rendering + docs (concepts page + reference).
+  **The PR-D description must restate the § 8 recovery-gate answer** (pure re-render /
+  placeholder, no authoritative state reconstructed from `presented` events ⇒
+  truncate-falsify gate N/A) so a future reviewer does not re-flag it — and must
+  re-trigger the gate in-arc if the implementation ever reconstructs state from
+  `presented` events.
 
 ## Test plan (per testing.ja.md tiers)
 
