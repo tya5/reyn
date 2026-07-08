@@ -16,13 +16,13 @@ at parse. Everything that is not a ``$bind`` object is a literal.
 
 The structural gate runs at op validation: a non-catalog component or a non-path
 binding is a hard rejection (``PresentBlueprintError``), not a soft drop —
-soft-skip is for *runtime* binding misses, not for a malformed template.
+soft-skip is for *runtime* binding misses, not for a malformed template. This gate
+is purely structural; leaf-string neutralization (labels, literals, bound values)
+is a single seam in the render layer (``binding.resolve_bindings``), not here.
 """
 from __future__ import annotations
 
 from typing import Any
-
-from reyn.core.present.guard import neutralize_leaf
 
 # Component name → the set of slot keys it accepts. Slots not listed are rejected
 # (keeps the surface tight + the gate exhaustive). ``rows`` / ``columns`` /
@@ -92,18 +92,9 @@ def _validate_slot_value(value: Any, *, where: str, allow_bind: bool = True) -> 
         )
 
 
-def _escape_label(label: Any) -> Any:
-    """Neutralize a literal label at parse (FP-0051's fence, generalized): the LLM
-    authors labels, so they are escaped the moment the blueprint is ingested, not
-    only at render. Non-string labels pass through."""
-    if isinstance(label, str):
-        clean, _ = neutralize_leaf(label)
-        return clean
-    return label
-
-
 def _validate_node(node: Any, *, path: str) -> dict:
-    """Validate one component node; return a normalized copy (labels escaped)."""
+    """Validate one component node; return a normalized copy (structure only —
+    leaf strings are neutralized later at the render seam, not here)."""
     if not isinstance(node, dict):
         raise PresentBlueprintError(f"{path}: component node must be an object, got {type(node).__name__}")
     component = node.get("component")
@@ -127,8 +118,6 @@ def _validate_node(node: Any, *, path: str) -> dict:
     if component in TEXT_FAMILY:
         if "text" in normalized:
             _validate_slot_value(normalized["text"], where=f"{path}.text")
-        if component == "code" and "language" in normalized:
-            normalized["language"] = _escape_label(normalized["language"])
     elif component == "keyvalue":
         normalized["rows"] = _validate_kv_rows(normalized.get("rows"), path=f"{path}.rows")
     elif component == "table":
@@ -141,8 +130,6 @@ def _validate_node(node: Any, *, path: str) -> dict:
     elif component == "image":
         if "src" in normalized:
             _validate_slot_value(normalized["src"], where=f"{path}.src")
-        if "alt" in normalized:
-            normalized["alt"] = _escape_label(normalized["alt"])
     return normalized
 
 
@@ -154,7 +141,7 @@ def _validate_kv_rows(rows: Any, *, path: str) -> list:
         if not isinstance(row, dict) or "label" not in row or "value" not in row:
             raise PresentBlueprintError(f"{path}[{i}]: each keyvalue row needs a label + value")
         _validate_slot_value(row["value"], where=f"{path}[{i}].value")
-        out.append({"label": _escape_label(row["label"]), "value": row["value"]})
+        out.append({"label": row["label"], "value": row["value"]})
     return out
 
 
@@ -167,13 +154,13 @@ def _validate_columns(columns: Any, *, path: str) -> list:
             raise PresentBlueprintError(f"{path}[{i}]: each column needs a header + path")
         # A column path is a row-relative JSON Pointer string (not a $bind object).
         _validate_pointer(col["path"], where=f"{path}[{i}].path")
-        out.append({"header": _escape_label(col["header"]), "path": col["path"]})
+        out.append({"header": col["header"], "path": col["path"]})
     return out
 
 
 def validate_blueprint(blueprint: Any) -> list[dict]:
     """Structurally gate an inline blueprint → a normalized list of component
-    nodes (labels escaped at parse).
+    nodes (structure only; leaf-string neutralization happens at the render seam).
 
     A blueprint is a single component node OR a list of nodes (a top-to-bottom
     sequence — the v1 catalog is display-only with no container component).

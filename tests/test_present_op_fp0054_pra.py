@@ -248,14 +248,55 @@ def test_root_pointer_into_text_is_size_capped():
     assert {"path": "", "reason": "guard_stripped"} in out.bindings_dropped
 
 
-def test_labels_escaped_at_parse():
-    """Tier 1: literal labels (column headers / kv labels) are neutralized at
-    parse (FP-0051 fence generalized), before any data binding."""
+def test_labels_neutralized_at_render_seam():
+    """Tier 1: literal labels (kv labels / column headers) are neutralized through
+    the single render seam (not at parse). The structural gate keeps them raw;
+    resolve_bindings neutralizes every render-leaf including labels."""
+    raw = "name\x1b[31m"
     nodes = validate_blueprint({
         "component": "keyvalue",
-        "rows": [{"label": "name\x1b[31m", "value": "v"}],
+        "rows": [{"label": raw, "value": "v"}],
     })
-    assert "\x1b" not in nodes[0]["rows"][0]["label"]
+    # Structural gate is purely structural — the label is still raw here.
+    assert nodes[0]["rows"][0]["label"] == raw
+    # The single seam neutralizes it in the render model.
+    out = resolve_bindings(nodes, {})
+    assert "\x1b" not in out.nodes[0]["rows"][0]["label"]
+
+
+def test_literal_text_slot_value_is_neutralized_via_single_seam():
+    """Tier 1: an LLM-authored LITERAL (non-$bind) escape / Rich-markup in a
+    text-family slot is neutralized + reported guard_stripped — the same standard
+    as a bound value (single-seam: no literal bypasses the guard). RED against the
+    pre-unification code where text-slot literals were only size-capped."""
+    nodes = validate_blueprint(
+        {"component": "text", "text": "safe\x1b[31mINJECT\x1b[0m [bold]owned[/bold]"}
+    )
+    out = resolve_bindings(nodes, {})
+    rendered = out.nodes[0]["text"]
+    assert "\x1b" not in rendered          # ESC control byte gone
+    assert "INJECT" in rendered            # readable text survives (inert)
+    assert "\\[" in rendered               # Rich markup escaped literal
+    assert any(d["reason"] == "guard_stripped" for d in out.bindings_dropped)
+
+
+def test_terminal_neutralizer_does_not_html_escape_code_content():
+    """Tier 1: the terminal neutralizer does NOT HTML-escape — a `<div>` in a
+    `code`/`diff` slot survives literally (no entity-escape corruption). HTML
+    neutralization is a future web renderer's job, not the terminal's."""
+    # Bound value into a code slot.
+    nodes = validate_blueprint({"component": "code", "text": {"$bind": "/src"}})
+    out = resolve_bindings(nodes, {"src": "<div class='x'>y & z</div>"})
+    rendered = out.nodes[0]["text"]
+    assert rendered == "<div class='x'>y & z</div>"   # byte-for-byte survival
+    assert "&lt;" not in rendered and "&amp;" not in rendered
+    # No terminal-dangerous content → not stripped.
+    assert all(d["reason"] != "guard_stripped" for d in out.bindings_dropped)
+
+    # Same for a literal in a code slot.
+    nodes2 = validate_blueprint({"component": "code", "text": "<p>&nbsp;</p>"})
+    out2 = resolve_bindings(nodes2, {})
+    assert out2.nodes[0]["text"] == "<p>&nbsp;</p>"
 
 
 # ── Tier 1: presented event field presence + OS-computed ingested ────────────

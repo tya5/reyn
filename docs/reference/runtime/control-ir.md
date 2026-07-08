@@ -190,7 +190,8 @@ Catalog components (all read-only): `text` / `markdown` / `code` / `diff` /
 document); everything else is a literal. `table` / `list` column paths resolve
 **row-relative** (relative to each iterated row). The structural gate at op
 validation rejects a non-catalog component or a non-path binding (a hard error,
-not a soft drop), and escapes literal labels at parse.
+not a soft drop); it is purely structural — leaf-string neutralization is a single
+seam in the render layer (below), not at parse.
 
 **Binding semantics.** Path hit → bind. Path miss → **soft-skip** that binding +
 record it in `bindings_dropped` (never a hard failure). Type mismatch → coerce (a
@@ -200,11 +201,17 @@ bound leaf neutralized or size-capped by the presentation-guard is recorded. Whe
 fallback signal; the fallback wiring itself lands in a later PR).
 
 **Presentation-guard (output seam).** Runs **unconditionally**, including for
-never-ingested data: every rendered leaf string is neutralized (terminal escape /
-control sequences, Rich markup, HTML) so bound bulk data cannot drive the surface
-it displays on, and **per-binding size caps** prevent a `/` (root) pointer bound
-into a `text` component from dumping a whole file. Neutralization is a transform
-(the value still renders, inert) — the ref remains the full-fidelity source.
+never-ingested data. Every render-leaf string — labels, literal slot values, AND
+bound data values — passes through ONE neutralizer, selected by the target
+**surface** (a per-surface strategy, so a future web surface slots in without
+touching the binding layer). The v1 **terminal** strategy strips ESC / control
+sequences (OSC / CSI) and **escapes** (not strips) Rich console markup so `[red]`
+renders literally; it does **not** HTML-escape — in a terminal `<div>` is a
+harmless literal, and entity-escaping would corrupt `code` / `diff` content (HTML
+neutralization is a future web renderer's concern). **Per-binding size caps**
+prevent a `/` (root) pointer bound into a `text` component from dumping a whole
+file. Neutralization is a transform (the value still renders, inert) — the ref
+remains the full-fidelity source.
 
 **Ack (op result)** — the LLM's only feedback, deliberately compact + high-signal:
 

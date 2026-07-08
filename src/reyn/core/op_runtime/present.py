@@ -120,8 +120,9 @@ async def handle(op: PresentIROp, ctx: OpContext) -> dict:
     except PresentBlueprintError as exc:
         return {"kind": "present", "status": "error", "ok": False, "error": str(exc)}
 
-    # 4. Bind + guard against the null renderer.
-    resolved = resolve_bindings(nodes, data)
+    # 4. Bind + guard against the null renderer. The guard applies the surface's
+    #    neutralizer strategy (PR-A's null surface uses the terminal strategy).
+    resolved = resolve_bindings(nodes, data, surface=_NULL_SURFACE[0])
 
     # 5. Audit event (P6) — refs + stats, never content bytes.
     _emit_presented(

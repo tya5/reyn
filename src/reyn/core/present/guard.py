@@ -1,20 +1,29 @@
-"""Presentation-guard — the output-side neutralization boundary for present (FP-0054).
+"""Presentation-guard — the per-surface output neutralization boundary (FP-0054).
 
 Mirror of the input-side content-guard, applied at the output seam: every leaf
-string that reaches a renderer is threat-scanned and **neutralized** —
-regardless of whether the data was ever ingested by the LLM (the whole point of
-present is blind routing). Two concerns:
+string that reaches a renderer — labels, literal slot values, AND bound data
+values alike — passes through ONE neutralizer, selected by the target surface.
+There is no second neutralization path, so no render-leaf can reach a renderer
+un-neutralized. Two concerns:
 
-- **Neutralize rendered leaf strings** so bound bulk data cannot drive the
-  surface it is displayed on: terminal escape / control sequences (a raw ``ESC``
-  can rewrite / spoof the user's terminal), Rich console markup (``[bold]`` …),
-  and HTML (``<script>`` …). Neutralization is a *transform* — the value still
-  renders, just inert — so no user data is lost; the ref remains the
-  full-fidelity source.
-- **Per-binding size caps** so a ``/`` (root) pointer bound into a ``text``
-  component cannot dump a whole file, and a huge array cannot flood scrollback.
-  Leaf strings cap by characters; arrays cap by row count (head-N + a remainder
-  note the caller composes from the ref).
+- **Neutralize rendered leaf strings** per surface so bound data cannot drive the
+  surface it displays on. Neutralization is surface-specific: what is dangerous
+  on a terminal (ESC / control sequences, Rich markup) is not what is dangerous
+  in a browser (HTML). The neutralizer is a **per-surface strategy** (dispatch by
+  surface name), so §6's per-surface boundary is structural, not a conditional —
+  a future ``web`` strategy (HTML-escape) registers here without touching the
+  binding seam.
+- **Per-binding size caps** (surface-agnostic) so a ``/`` (root) pointer bound
+  into a ``text`` component cannot dump a whole file, and a huge array cannot
+  flood scrollback. Leaf strings cap by characters; arrays cap by row count.
+
+The v1 **terminal** strategy does exactly two things: strip ESC / control
+sequences (OSC / CSI — notably OSC-52 clipboard — is a real attack surface on
+every terminal), and **escape** (not strip) Rich console markup so ``[red]``
+renders literally (fidelity-preserving, FP-0051 idiom). It does **not**
+HTML-escape: in a terminal sink ``<div>`` is a harmless literal, and
+entity-escaping would corrupt ``code`` / ``diff`` content (the v1 catalog core).
+HTML neutralization is a future web renderer's concern.
 
 Pure: no I/O, no events, no config — the caller wires telemetry and decides the
 drop-reason (``guard_stripped``) from the returned ``stripped`` flag.
@@ -22,6 +31,7 @@ drop-reason (``guard_stripped``) from the returned ``stripped`` flag.
 from __future__ import annotations
 
 import re
+from typing import Protocol
 
 # Per-binding default caps. A leaf string longer than this is truncated (the
 # ``/`` root-into-text dump guard); an array longer than MAX_ROWS is capped to
@@ -31,10 +41,10 @@ import re
 MAX_LEAF_CHARS: int = 10_000
 MAX_ROWS: int = 500
 
-# C0 control characters except tab / newline / carriage-return, plus the DEL
-# (0x7f) and the C1 range (0x80-0x9f). ``\x1b`` (ESC) — the lead byte of every
-# CSI / OSC terminal escape — is the headline threat; stripping the whole class
-# also removes the trailing sequence bytes so no partial escape survives.
+# C0 control characters except tab / newline / carriage-return, plus DEL (0x7f)
+# and the C1 range (0x80-0x9f). ``\x1b`` (ESC) — the lead byte of every CSI / OSC
+# terminal escape — is the headline threat; stripping the whole class also removes
+# the trailing sequence bytes so no partial escape survives.
 _CONTROL_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]")
 
 # Rich console markup tags: ``[tag]`` / ``[/tag]`` / ``[/]``. Rich's own escape
@@ -43,28 +53,45 @@ _CONTROL_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]")
 _RICH_TAG_RE = re.compile(r"\[(/?[a-zA-Z#][^\[\]]*|/)\]")
 
 
-def neutralize_leaf(value: str) -> tuple[str, bool]:
-    """Neutralize a single rendered leaf string. Returns ``(clean, stripped)``.
+class LeafNeutralizer(Protocol):
+    """A per-surface leaf-string neutralizer. ``neutralize`` returns
+    ``(clean, stripped)`` — ``stripped`` True when the value was materially
+    changed (the caller then reports the binding ``guard_stripped``)."""
 
-    ``stripped`` is True when the guard materially changed the value — a
-    terminal-escape / control sequence was removed, Rich markup was escaped, or
-    HTML angle brackets were entity-escaped. The caller reports a stripped
-    binding with drop-reason ``guard_stripped``.
+    def neutralize(self, value: str) -> tuple[str, bool]:
+        ...
 
-    The neutralized value still renders (inert) — this is a transform, not a
-    drop, so the user never loses data (the ref remains authoritative).
-    """
-    out = value
-    # 1. Strip terminal escape / control sequences.
-    out = _CONTROL_RE.sub("", out)
-    # 2. Escape Rich markup tags so they render literally (Rich unescapes a
-    #    leading backslash, so ``\[bold]`` prints as ``[bold]``).
-    out = _RICH_TAG_RE.sub(lambda m: "\\" + m.group(0), out)
-    # 3. Neutralize HTML: entity-escape the structural characters. ``&`` first so
-    #    the entities we introduce below are not themselves re-escaped.
-    if "<" in out or ">" in out or "&" in out:
-        out = out.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-    return out, out != value
+
+class TerminalNeutralizer:
+    """Terminal-surface strategy: strip ESC / control sequences + escape Rich
+    markup. Does NOT HTML-escape (a terminal renders ``<div>`` as a literal, and
+    entity-escaping would corrupt ``code`` / ``diff`` content)."""
+
+    def neutralize(self, value: str) -> tuple[str, bool]:
+        out = _CONTROL_RE.sub("", value)
+        out = _RICH_TAG_RE.sub(lambda m: "\\" + m.group(0), out)
+        return out, out != value
+
+
+_TERMINAL = TerminalNeutralizer()
+
+# Surface name → neutralizer strategy. v1 ships the terminal strategy; the null
+# renderer (no UI surface yet) uses it too, so the guard runs unconditionally even
+# with no real surface. A future ``web`` strategy (HTML-escape) is added here
+# WITHOUT touching the core seam or the binding layer.
+_STRATEGIES: dict[str, LeafNeutralizer] = {
+    "terminal": _TERMINAL,
+    "null": _TERMINAL,
+}
+_DEFAULT_STRATEGY: LeafNeutralizer = _TERMINAL
+
+
+def get_neutralizer(surface: str) -> LeafNeutralizer:
+    """Select the leaf neutralizer for ``surface`` (defaults to the terminal
+    strategy). The single dispatch point per-surface neutralization flows
+    through — the binding seam asks for a neutralizer by surface, never branches
+    on surface itself."""
+    return _STRATEGIES.get(surface, _DEFAULT_STRATEGY)
 
 
 def cap_leaf(value: str, *, max_chars: int = MAX_LEAF_CHARS) -> tuple[str, bool]:
