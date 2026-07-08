@@ -1,7 +1,8 @@
 # Present layer — user-facing presentation of bulk data without LLM token round-trip
 
-**Author:** architect · **Status:** DRAFT (design proposal — awaiting owner review; no
-implementation dispatched) · **Date:** 2026-07-08
+**Author:** architect · **Status:** RATIFIED 2026-07-08 (owner GO on v1 display-only;
+markdown + templates confirmed in-scope) — implementation in progress (PR-A dispatched,
+lead-coder review/merge). Landed design record. · **Date:** 2026-07-08
 
 ## Problem
 
@@ -337,12 +338,14 @@ differentiator is making blindness *auditable*, not forbidding it.)
 - **No Tier-4 pins**: no exact-render/whitespace assertions; assert content presence and
   drop lists, not layout.
 
-## Open questions (owner)
+## Owner decisions (resolved)
 
-1. **Ratify: v1 catalog is display-only** (interactivity deferred to v2 via intervention
-   bus). This is the single structural decision the rest of the design leans on.
-2. Naming: `present` (op), `presentations.yaml` (registry) — bikeshed-level, defaults
-   proposed here stand unless overridden.
+1. **v1 catalog is display-only — RATIFIED 2026-07-08.** Interactivity deferred to v2 via
+   the intervention bus. Owner additionally confirmed markdown + templates are in scope
+   (already covered: markdown = § 2 catalog; templates = § 3 4-stage fallback;
+   display-only means non-interactive, not content-limited).
+2. Naming: `present` (op), `presentations.yaml` (registry) — defaults stand (no override
+   requested).
 
 ## Sources
 
