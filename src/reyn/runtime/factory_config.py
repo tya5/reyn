@@ -46,6 +46,12 @@ class SessionFactoryConfig:
     # available_skills snapshot. Empty registry when project_root is unknown
     # (direct/test from_config(config)) → byte-identical to pre-#2575.
     pipeline_registry: Any
+    # FP-0054 PR-C: the populated PresentationRegistry, built ONCE per frontend from
+    # config.presentations (validate each inline blueprint → register by name).
+    # Threaded to every Session (incl. spawns) so a named `present` template resolves
+    # — mirrors the build-once available_skills / pipeline_registry snapshots. Empty
+    # registry when config has no presentations (byte-identical to pre-PR-C).
+    presentation_registry: Any
     # ── AgentRegistry uniform config (3) ────────────────────────────────────
     delegation_capability_default: str
     # #2103 C3: operator spawn-tree bounds (safety.spawn.*) — the LLM spawn seams
@@ -72,6 +78,7 @@ class SessionFactoryConfig:
         from pathlib import Path
 
         from reyn.data.pipelines.registry import build_pipeline_registry
+        from reyn.data.presentations.registry import build_presentation_registry
         from reyn.data.skills.registry import build_skill_registry
         root = Path(project_root) if project_root is not None else None
         pipeline_registry = (
@@ -79,6 +86,10 @@ class SessionFactoryConfig:
             if root is not None
             else build_pipeline_registry(None, Path.cwd())
         )
+        # FP-0054 PR-C: inline blueprints — no filesystem locus, so no project_root
+        # dependency (unlike pipelines). Built here so every factory site threads the
+        # same validated snapshot.
+        presentation_registry = build_presentation_registry(config.presentations)
         return cls(
             sandbox_config=config.sandbox,
             multimodal_config=config.multimodal,
@@ -92,6 +103,8 @@ class SessionFactoryConfig:
             available_skills=build_skill_registry(config.skills),
             # #2575: built once here (empty when project_root is unknown).
             pipeline_registry=pipeline_registry,
+            # FP-0054 PR-C: built once here from config.presentations.
+            presentation_registry=presentation_registry,
             delegation_capability_default=config.delegation.capability_default,
             max_spawn_depth=config.safety.spawn.max_depth,
             max_spawn_children=config.safety.spawn.max_children,

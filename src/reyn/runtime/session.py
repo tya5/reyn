@@ -746,6 +746,11 @@ class Session:
         # session). None (direct/test construction) → an empty registry, byte-
         # identical to pre-#2575's own-constructed empty one.
         pipeline_registry: "PipelineRegistry | None" = None,
+        # FP-0054 PR-C: the pre-built PresentationRegistry (operator named templates
+        # from presentations.yaml, built once at the session factory). None
+        # (direct/test construction) → an empty registry (byte-identical to pre-PR-C:
+        # every named template is "unknown" → generic fallback viewer).
+        presentation_registry: "object | None" = None,
     ) -> None:
         """
         snapshot_path: optional override for the per-agent snapshot file
@@ -1149,6 +1154,17 @@ class Session:
         # registered pipeline as ``pipeline__<name>`` to the LLM (IS-5 D19).
         self._pipeline_registry = (
             pipeline_registry if pipeline_registry is not None else PipelineRegistry()
+        )
+        # FP-0054 PR-C: the session's named-presentation-template registry. Threaded
+        # to RouterHostAdapter below (mirrors pipeline_registry) → each router
+        # OpContext's presentation_registry → the `present` op's stage-1 template
+        # resolution. The hot-reload seam (_reapply_presentations) SWAPS this
+        # reference AND the adapter's captured copy so a newly-registered template is
+        # visible at the next turn boundary. None (direct/test) → empty registry.
+        from reyn.data.presentations import PresentationRegistry
+        self._presentation_registry = (
+            presentation_registry if presentation_registry is not None
+            else PresentationRegistry()
         )
         # PR11: max delegation hop depth (LangGraph-style). 0 = user input,
         # each `_send_to_agent` increments. Refuse send when depth > limit.
@@ -1576,6 +1592,10 @@ class Session:
             # RouterCallerState.pipeline_registry by
             # RouterLoop._build_router_caller_state.
             pipeline_registry=self._pipeline_registry,
+            # FP-0054 PR-C: the session's PresentationRegistry — mirrors
+            # pipeline_registry above; the adapter threads its CURRENT snapshot into
+            # each router OpContext, and _reapply_presentations swaps both copies.
+            presentation_registry=self._presentation_registry,
             # #2103 S1bc-exec: record a spawned session's sid→task (the trusted result
             # header source) + read this session's LIVE sid (the cached session_id above
             # is stale for spawned sessions, stamped post-construction) for the non-main
@@ -2167,6 +2187,15 @@ class Session:
         ``RouterCallerState`` by ``RouterLoop._build_router_caller_state``.
         """
         return self._pipeline_registry
+
+    @property
+    def presentation_registry(self):
+        """Read-only accessor for the session's owning PresentationRegistry
+        (FP-0054 PR-C — operator named templates from presentations.yaml). Mirrors
+        ``pipeline_registry`` above; threaded into ``RouterHostAdapter`` at
+        construction and swapped by ``_reapply_presentations`` on hot-reload. Tests
+        verify a registered template is live via this surface."""
+        return self._presentation_registry
 
     @property
     def interventions(self) -> "InterventionRegistry":
@@ -3471,6 +3500,7 @@ class Session:
         hr.register_seam("hooks", self._reapply_hooks)  # #2073 S2b (global hooks)
         hr.register_seam("skills", self._reapply_skills)  # #2548 PR-B: skills hot-reload
         hr.register_seam("pipelines", self._reapply_pipelines)  # #2581: pipeline hot-reload
+        hr.register_seam("presentations", self._reapply_presentations)  # FP-0054 PR-C
 
     def _build_hook_registry(self, in_set: "dict | None" = None) -> "object":
         """Build the LAYERED hook registry — the three-layer COMBINE (#2073 S2b + the
@@ -3687,6 +3717,45 @@ class Session:
         # after a fully successful build, so a failure above never half-applies.
         self._pipeline_registry = new_registry
         self._router_host._pipeline_registry = new_registry
+        return True
+
+    async def _reapply_presentations(self, in_set: dict) -> bool:
+        """Reapply the named-presentation-template registry (FP-0054 PR-C) — re-read
+        the full config cascade (``load_config(project_root).presentations``) and
+        rebuild via :func:`~reyn.data.presentations.registry.build_presentation_registry`,
+        mirroring ``_reapply_pipelines`` exactly (same disk-loader shape, same
+        dual-write need).
+
+        The registry is rebuilt fresh + the reference SWAPPED (never mutated), so an
+        added / changed / removed template is picked up. The swap is a dual-write:
+        ``self._presentation_registry`` AND ``self._router_host._presentation_registry``
+        (the adapter holds its own captured copy that ``make_router_op_context`` reads
+        into each OpContext) — both must be reassigned or the adapter keeps serving the
+        stale registry.
+
+        Fail-loud-but-non-fatal: ``build_presentation_registry(..., strict=True)`` raises
+        ``PresentationLoadError`` on the FIRST malformed template — ``strict=True``
+        opts INTO the atomic last-good posture (a live session keeps its old registry
+        rather than half-applying a broken reload). The raise is caught here (alongside
+        any other error) — the seam logs + returns False, leaving the OLD registry (on
+        both holders) intact. The new registry is only assigned after a fully successful
+        build, so a malformed file at reload-time can never half-apply.
+
+        ``in_set`` is ignored; the full cascade re-read is the correct source (same
+        pattern as ``_reapply_skills`` / ``_reapply_pipelines``). Returns True iff a new
+        registry was successfully built + swapped."""
+        from reyn.config.loader import load_config
+        from reyn.data.presentations.registry import build_presentation_registry
+        try:
+            fresh_cfg = load_config(self._hot_reload_project_root())
+            new_registry = build_presentation_registry(fresh_cfg.presentations, strict=True)
+        except Exception as exc:  # noqa: BLE001 — best-effort, last-good on failure (incl. PresentationLoadError)
+            logger.warning("_reapply_presentations: registry rebuild failed: %r", exc)
+            return False
+        # Dual-write swap (Session + the adapter's captured copy) — only reached after
+        # a fully successful build, so a failure above never half-applies.
+        self._presentation_registry = new_registry
+        self._router_host._presentation_registry = new_registry
         return True
 
     async def _reapply_per_agent_capability(self, in_set: dict) -> bool:

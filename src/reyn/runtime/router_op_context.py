@@ -55,6 +55,7 @@ def build_router_op_context(
     agent_id: str | None,  # FP-0016 memory scope (RouterHostAdapter: None — gap candidate)
     intervention_bus: Any = None,  # Session wires post-hoc; RouterHostAdapter inline
     presentation_renderer: Any = None,  # FP-0054 PR-B: RouterHostAdapter wires inline (factory)
+    presentation_registry: Any = None,  # FP-0054 PR-C: operator named-template registry (hot-reloadable)
     multimodal_config: Any = None,  # #364
     media_store: Any = None,  # #383
     compact_now: Any = None,  # #272/#1128
@@ -136,6 +137,7 @@ def build_router_op_context(
         agent_id=agent_id,
         intervention_bus=intervention_bus,
         presentation_renderer=presentation_renderer,
+        presentation_registry=presentation_registry,
         multimodal_config=multimodal_config,
         media_store=media_store,
         compact_now=compact_now,

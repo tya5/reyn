@@ -89,11 +89,12 @@ def _make_session(tmp_path: Path, *, agent_name: str = "test-agent") -> Session:
 def test_seams_registered_on_the_reloader(tmp_path: Path) -> None:
     """Tier 2: the Session registers its reapply seams on the HotReloader (the 4 S2
     seams + the S2b hooks seam + the #2548 PR-B skills seam + the #2581 pipelines
-    seam)."""
+    seam + the FP-0054 PR-C presentations seam)."""
     session = _make_session(tmp_path)
     names = [name for (name, _fn) in session._hot_reloader._seams]
     assert names == [
-        "cron", "mcp", "per_agent_capability", "new_agent", "hooks", "skills", "pipelines",
+        "cron", "mcp", "per_agent_capability", "new_agent", "hooks", "skills",
+        "pipelines", "presentations",
     ]
 
 

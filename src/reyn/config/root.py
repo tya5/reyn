@@ -306,6 +306,26 @@ class ReynConfig:
     # (explicit entries win on collision) — same union-merge shape as
     # ``skills`` (see ``_merge`` in loader.py).
     pipelines: dict = field(default_factory=dict)
+    # FP-0054 PR-C: named-presentation-template registry config. Raw dict passed to
+    # reyn.data.presentations.registry.build_presentation_registry at session-factory
+    # time (SessionFactoryConfig.from_config). A named template's value is a
+    # blueprint (the same declarative component tree an inline `present` blueprint
+    # is), validated at build time. Registering a named template is an
+    # OPERATOR/config action (write-gate culture — the LLM authors inline blueprints
+    # only, never registers named templates), so there is no install op. Shape:
+    #   presentations:
+    #     entries:
+    #       <name>:
+    #         blueprint:                              # required; inline component tree
+    #           - component: table
+    #             rows: {"$bind": "/results"}
+    #             columns:
+    #               - {header: Author, path: /author}
+    #         description: "One-line description"     # optional
+    #         enabled: true                            # optional, default true
+    # Merged across config tiers by name (explicit entries win on collision) — same
+    # union-merge shape as ``skills`` / ``pipelines`` (see ``_merge`` in loader.py).
+    presentations: dict = field(default_factory=dict)
 
     def model_class_for(self, purpose: str) -> str:
         """#1672: the model CLASS for a logical call *purpose*.
