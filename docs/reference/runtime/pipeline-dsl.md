@@ -61,7 +61,7 @@ at each boundary:
 steps:
   - transform: {value: "ctx.name + '!'", output: greeting}   # step 0
   - tool: {name: shout, args: {text: !expr pipe}, output: shouted}  # step 1
-  - transform: {value: "ctx.shouted + ' (done)'", output: final}   # step 2
+  - transform: {value: "ctx.shouted.text + ' (done)'", output: final}   # step 2
 ```
 
 seeded with `ctx = {name: "Reyn"}`:
@@ -70,7 +70,7 @@ seeded with `ctx = {name: "Reyn"}`:
 |---|---|---|
 | 0 | `{name: "Reyn"}` | `null` (no prior step) |
 | 1 | `{name: "Reyn", greeting: "Reyn!"}` | `"Reyn!"` (step 0's result) |
-| 2 | `{name: "Reyn", greeting: "Reyn!", shouted: "REYN!"}` | `"REYN!"` (step 1's result) |
+| 2 | `{name: "Reyn", greeting: "Reyn!", shouted: {text: "REYN!"}}` | `{text: "REYN!"}` (step 1's result — see [`tool` step results](#tool-step-results) below) |
 | *(after step 2)* | `{..., final: "REYN! (done)"}` | `"REYN! (done)"` |
 
 Step 1 reads step 0's result two ways that both work: bare `pipe` (its
@@ -286,8 +286,26 @@ registered tool name (`web_search`).
 |-----|----------|---------|
 | `name` | yes | The tool/action name (literal string). |
 | `args` | no | Mapping of argument name → value. Each value is a **literal** unless tagged `!expr` (see [Literals vs `!expr`](#literals-vs-expr) below). |
-| `schema` | no | A registered schema name the result must conform to (`verify: schema` — see [Schemas](#schemas-verify-schema)). Non-conformance fails the step. |
+| `schema` | no | A registered schema name the result must conform to (`verify: schema` — see [Schemas](#schemas-verify-schema)). Non-conformance fails the step (checked against the RAW tool result, before the `text`/`structured` reduction below). |
 | `output` | no | Named store to write the result to. |
+
+#### `tool` step results
+
+A `tool` (and `shell`) step's result — what lands as `pipe` and `ctx.<output>`
+— is always the flat two-field shape `{text: ..., structured: ...}`, uniform
+across every tool kind (the same shape the chat side exposes to an LLM):
+
+- **`text`** — the tool's canonical string body (empty string when the tool
+  has no text-shaped result).
+- **`structured`** — present only when the tool produced non-text data; absent
+  entirely (no key) otherwise. A tool result dict with no recognized shape is
+  wrapped whole as `structured` (nothing is ever lost).
+
+This conversion is **shape-only** — it never truncates, offloads, or caps a
+value the way the chat-side tool-result path does; a pipeline step's `ctx`
+retains the full value for downstream steps to consume programmatically.
+Read a tool's text body via `ctx.<name>.text` and its structured payload via
+`ctx.<name>.structured` (or a field of it, e.g. `ctx.hits.structured.count`).
 
 `shell` is sugar for a `tool` step named `"shell"`: `command` runs as
 `/bin/sh -c <command>` inside the operator's sandbox
@@ -296,7 +314,9 @@ a direct `sandboxed_exec` call). The step's incoming pipe data is threaded to
 the process's **STDIN, JSON-encoded**; the process's **STDOUT becomes the
 step's result** — JSON-decoded when it parses as JSON (so `verify: schema`,
 which requires a `dict`, can apply to a JSON-emitting command), otherwise the
-raw text.
+raw text — and that (raw or JSON-decoded) value goes through the same
+`text`/`structured` reduction as any other `tool` step (a JSON-decoded dict
+lands in `ctx.<name>.structured`; raw text lands in `ctx.<name>.text`).
 
 ```yaml
 - shell: {command: !expr "'ls ' + ctx.dir", output: listing}

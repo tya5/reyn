@@ -274,11 +274,11 @@ async def test_truncate_falsify_call_resumes_callee_substeps_exactly_once(tmp_pa
 
     # Exactly-once: A appears ONCE (replayed, not re-executed); B once (resumed).
     assert out_file.read_text(encoding="utf-8").splitlines() == ["A", "B"]
-    assert resumed.completed_step_results["1.call.0"] == {"wrote": "A"}
-    assert resumed.completed_step_results["1.call.1"] == {"wrote": "B"}
+    assert resumed.completed_step_results["1.call.0"] == {"text": "", "structured": {"wrote": "A"}}
+    assert resumed.completed_step_results["1.call.1"] == {"text": "", "structured": {"wrote": "B"}}
     # The callee's final output (sub-step 1's result) threads out as the call's N2.
-    assert resumed.named_stores["call_out"] == {"wrote": "B"}
-    assert resumed.pipe_data == {"wrote": "B"}
+    assert resumed.named_stores["call_out"] == {"text": "", "structured": {"wrote": "B"}}
+    assert resumed.pipe_data == {"text": "", "structured": {"wrote": "B"}}
     assert resumed.step_index == 2
 
 
@@ -309,4 +309,4 @@ async def test_call_resume_after_full_run_replays_with_zero_new_side_effects(tmp
     )
     # No new lines — a fully-completed run replays with zero side effects.
     assert out_file.read_text(encoding="utf-8").splitlines() == ["A", "B"]
-    assert resumed.named_stores["call_out"] == {"wrote": "B"}
+    assert resumed.named_stores["call_out"] == {"text": "", "structured": {"wrote": "B"}}

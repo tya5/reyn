@@ -2946,7 +2946,7 @@ class RouterLoop:
         # declared ``_offload_payload_field`` now has a mapper; an unregistered kind falls back to a
         # whole-dict ``structured`` attachment). The format is INDEPENDENT of the media store — it
         # applies even when ``media_store is None``; only the size-gated offloading needs a store.
-        from reyn.core.offload.canonical import to_canonical
+        from reyn.core.offload.canonical import to_canonical, unwrap_dispatch_envelope
         from reyn.core.offload.seam import build_offload_body, render_tool_result
         for tc, r in zip(result.tool_calls, result.tool_results):
             # B41-NF-W7-1: _post_text → appended outside the body.
@@ -2984,11 +2984,9 @@ class RouterLoop:
                 # Unwrap dispatch-envelope layers ({status, data} with nothing else) until the op
                 # result (the dict carrying ``kind``) is reached. One layer for op_runtime ops
                 # (bare {kind:…} wrapped once by dispatch_tool); two for tool-registry handlers whose
-                # own return is already an envelope (e.g. run_pipeline → wrapped again).
-                _inner = r
-                while (isinstance(_inner, dict) and isinstance(_inner.get("data"), dict)
-                       and set(_inner) <= {"status", "data", "error"} and "kind" not in _inner):
-                    _inner = _inner["data"]
+                # own return is already an envelope (e.g. run_pipeline → wrapped again). Shared with
+                # the pipeline `tool:` step ctx path (#2425 PR-2, executor.py::_run_tool_step).
+                _inner = unwrap_dispatch_envelope(r)
                 if not isinstance(_inner, dict):
                     # Non-dict result (rare) — render its value as plain text, losslessly.
                     content_str = _inner if isinstance(_inner, str) else json.dumps(_inner, default=str)

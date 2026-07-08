@@ -44,7 +44,7 @@ async def test_linear_pipeline_threads_pipe_data_and_named_stores_via_real_evalu
         steps=[
             TransformStep(value="'hello ' + ctx.seed", output="greeting"),
             ToolStep(name="shout", args={"text": ExprRef("pipe")}, output="shouted"),
-            TransformStep(value="ctx.shouted + ' (done)'", output="final"),
+            TransformStep(value="ctx.shouted.text + ' (done)'", output="final"),
         ]
     )
     executor = PipelineExecutor()
@@ -56,16 +56,17 @@ async def test_linear_pipeline_threads_pipe_data_and_named_stores_via_real_evalu
         run_id="run-threading",
     )
 
+    # #2425 PR-2: a str tool result maps to the flat {"text": ...} ctx shape.
     assert result.pipe_data == "HELLO WORLD!!! (done)"
     assert result.named_stores == {
         "seed": "world",
         "greeting": "hello world",
-        "shouted": "HELLO WORLD!!!",
+        "shouted": {"text": "HELLO WORLD!!!"},
         "final": "HELLO WORLD!!! (done)",
     }
     assert result.completed_step_results == {
         "0": "hello world",
-        "1": "HELLO WORLD!!!",
+        "1": {"text": "HELLO WORLD!!!"},
         "2": "HELLO WORLD!!! (done)",
     }
 
@@ -85,7 +86,7 @@ pipeline: mcp-parse-demo
 description: tool result content string parsed into a structured value
 steps:
   - tool: {name: search, args: {query: "reyn"}, output: raw}
-  - transform: {value: "parse_json(ctx.raw.content)", output: parsed}
+  - transform: {value: "parse_json(ctx.raw.structured.content)", output: parsed}
   - transform: {value: "ctx.parsed.count + 1", output: total}
 """
     pipeline = parse_pipeline_dsl(dsl, SchemaRegistry())
@@ -93,6 +94,8 @@ steps:
     def tool_dispatch(name: str, args: dict):
         assert name == "search"
         payload = {"count": 5, "items": ["a", "b"]}
+        # a dict with no "kind" is an unregistered-kind result → the whole dict
+        # becomes the sole structured attachment (#2425 PR-2 ctx shape).
         return {"content": json.dumps(payload)}
 
     executor = PipelineExecutor()
@@ -134,7 +137,9 @@ async def test_verify_schema_passes_conforming_and_fails_non_conforming():
         tool_dispatch=_ok_dispatch, state_log=None, run_id="run-schema-ok",
         schema_registry=registry,
     )
-    assert ok_result.pipe_data == {"msg": "hi"}
+    # verify: schema validates the RAW dispatch result (unchanged); the step's ctx
+    # value is still reduced to the flat text/structured shape (#2425 PR-2).
+    assert ok_result.pipe_data == {"text": "", "structured": {"msg": "hi"}}
 
     bad_pipeline = Pipeline(
         steps=[ToolStep(name="greet", args={}, output="g", schema="greeting_schema")]
@@ -175,8 +180,8 @@ async def test_truncate_falsify_generation_survives_wal_truncation_below_its_seq
 
     step0 = TransformStep(value="ctx.seed + 1", output="t0")
     step1 = ToolStep(name="echo", args={"val": ExprRef("ctx.t0")}, output="t1")
-    step2 = ToolStep(name="echo", args={"val": ExprRef("pipe.value")}, output="t2")
-    step3 = ToolStep(name="echo", args={"val": ExprRef("pipe.value")}, output="t3")
+    step2 = ToolStep(name="echo", args={"val": ExprRef("pipe.structured.value")}, output="t2")
+    step3 = ToolStep(name="echo", args={"val": ExprRef("pipe.structured.value")}, output="t3")
 
     executor = PipelineExecutor()
     phase1 = Pipeline(steps=[step0, step1, step2])  # run through step K=2 (0-indexed)
@@ -222,9 +227,9 @@ async def test_truncate_falsify_generation_survives_wal_truncation_below_its_seq
     )
     assert resumed.step_index == 4
     assert resumed.named_stores["t0"] == 11
-    assert resumed.named_stores["t1"] == {"value": 11, "call": 1}
-    assert resumed.named_stores["t2"] == {"value": 11, "call": 2}
-    assert resumed.named_stores["t3"] == {"value": 11, "call": 3}
+    assert resumed.named_stores["t1"] == {"text": "", "structured": {"value": 11, "call": 1}}
+    assert resumed.named_stores["t2"] == {"text": "", "structured": {"value": 11, "call": 2}}
+    assert resumed.named_stores["t3"] == {"text": "", "structured": {"value": 11, "call": 3}}
     assert resumed.pipe_data == resumed.named_stores["t3"]
 
 
@@ -256,8 +261,8 @@ async def test_exactly_once_resume_does_not_replay_completed_tool_side_effect(tm
     )
 
     assert call_counts["count"] == 2, "step0 must not be re-run; only step1 is new"
-    assert resumed.named_stores["a"] == {"value": 1, "call": 1}
-    assert resumed.named_stores["b"] == {"value": 2, "call": 2}
+    assert resumed.named_stores["a"] == {"text": "", "structured": {"value": 1, "call": 1}}
+    assert resumed.named_stores["b"] == {"text": "", "structured": {"value": 2, "call": 2}}
     assert resumed.step_index == 2
 
 

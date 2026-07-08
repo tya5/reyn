@@ -44,7 +44,7 @@ steps:
 steps:
   - transform: {value: "ctx.name + '!'", output: greeting}   # ステップ 0
   - tool: {name: shout, args: {text: !expr pipe}, output: shouted}  # ステップ 1
-  - transform: {value: "ctx.shouted + ' (done)'", output: final}   # ステップ 2
+  - transform: {value: "ctx.shouted.text + ' (done)'", output: final}   # ステップ 2
 ```
 
 `ctx = {name: "Reyn"}` でシードした場合:
@@ -53,7 +53,7 @@ steps:
 |---|---|---|
 | 0 | `{name: "Reyn"}` | `null`(先行ステップ無し) |
 | 1 | `{name: "Reyn", greeting: "Reyn!"}` | `"Reyn!"`(ステップ 0 の結果) |
-| 2 | `{name: "Reyn", greeting: "Reyn!", shouted: "REYN!"}` | `"REYN!"`(ステップ 1 の結果) |
+| 2 | `{name: "Reyn", greeting: "Reyn!", shouted: {text: "REYN!"}}` | `{text: "REYN!"}`(ステップ 1 の結果 — 下記の[`tool` ステップの結果](#tool-step-results)参照) |
 | *(ステップ 2 の後)* | `{..., final: "REYN! (done)"}` | `"REYN! (done)"` |
 
 ステップ 1 はステップ 0 の結果を、両方とも機能する 2 通りの方法で読めます: bare な `pipe`(直前のステップ)か `ctx.greeting`(永続的な store)です — ステップ 0 の直後はどちらも同じ値を保持しますが、間に別のステップが挟まると `ctx.greeting` だけが到達可能なままです。
@@ -212,10 +212,27 @@ FieldType     ::= "{" "type:" ("bool" | "string" | "number") "}"
 |-----|------|------|
 | `name` | 必須 | ツール / アクション名(リテラル文字列)。 |
 | `args` | 任意 | 引数名 → 値 のマッピング。各値は `!expr` タグが付いていない限り**リテラル**([リテラル vs `!expr`](#vs-expr)参照)。 |
-| `schema` | 任意 | 結果が適合すべき登録済み schema 名(`verify: schema` — [Schema](#schema-verify-schema)参照)。不適合はステップを失敗させる。 |
+| `schema` | 任意 | 結果が適合すべき登録済み schema 名(`verify: schema` — [Schema](#schema-verify-schema)参照)。不適合はステップを失敗させる(下記の `text`/`structured` 変換前の、生のツール結果に対してチェックされる)。 |
 | `output` | 任意 | 結果を書き込む named store。 |
 
-`shell` は `"shell"` という名前の `tool` ステップのシュガーです: `command` は operator のサンドボックス(`sandboxed_exec` — 直接の `sandboxed_exec` 呼び出しと同じ閉じ込め、ポリシー優先順位、監査イベント)の中で `/bin/sh -c <command>` として実行されます。ステップに入ってくる pipe data はプロセスの **STDIN に JSON エンコードされて**渡されます。プロセスの **STDOUT がステップの結果になります** — JSON として parse できればデコードされ(`dict` を要求する `verify: schema` が JSON を出力するコマンドに適用できるように)、できなければ生のテキストのままです。
+#### `tool` ステップの結果 {#tool-step-results}
+
+`tool`(および `shell`)ステップの結果 — `pipe` と `ctx.<output>` に入るもの —
+は常にフラットな 2 フィールド形状 `{text: ..., structured: ...}` で、
+すべてのツール種別で統一されています(chat 側が LLM に見せるのと同じ形状):
+
+- **`text`** — ツールの正規の文字列本体(ツールにテキスト形状の結果が無い場合は空文字列)。
+- **`structured`** — ツールが非テキストのデータを出したときだけ存在する。それ以外は
+  キー自体が無い。認識されない形状のツール結果 dict は、丸ごと `structured` として
+  ラップされる(何も失われない)。
+
+この変換は**形状のみ**です — chat 側のツール結果パスのように値を切り詰めたり
+offload したり cap したりは絶対にしません。pipeline ステップの `ctx` は、後続の
+ステップがプログラム的に消費できるよう、値をフルで保持します。ツールのテキスト本体は
+`ctx.<name>.text` で、structured なペイロードは `ctx.<name>.structured`(またはその
+フィールド、例: `ctx.hits.structured.count`)で読みます。
+
+`shell` は `"shell"` という名前の `tool` ステップのシュガーです: `command` は operator のサンドボックス(`sandboxed_exec` — 直接の `sandboxed_exec` 呼び出しと同じ閉じ込め、ポリシー優先順位、監査イベント)の中で `/bin/sh -c <command>` として実行されます。ステップに入ってくる pipe data はプロセスの **STDIN に JSON エンコードされて**渡されます。プロセスの **STDOUT がステップの結果になります** — JSON として parse できればデコードされ(`dict` を要求する `verify: schema` が JSON を出力するコマンドに適用できるように)、できなければ生のテキストのままです — そして、その(生または JSON デコード済みの)値は他の `tool` ステップと同じ `text`/`structured` 変換を経ます(JSON デコードされた dict は `ctx.<name>.structured` に、生のテキストは `ctx.<name>.text` に入ります)。
 
 ```yaml
 - shell: {command: !expr "'ls ' + ctx.dir", output: listing}

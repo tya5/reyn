@@ -214,8 +214,9 @@ async def test_attached_run_streams_live_events_and_returns_inline(
     assert outcome["status"] == "ok"
     assert outcome["run_id"]
     # Inline result: last step's return value + the named stores, in-band.
-    assert outcome["output"] == {"tag": "s1"}
-    assert outcome["named_stores"]["o0"] == {"tag": "s0"}
+    # #2425 PR-2: a ToolStep's ctx value is the flat text/structured shape.
+    assert outcome["output"] == {"text": "", "structured": {"tag": "s1"}}
+    assert outcome["named_stores"]["o0"] == {"text": "", "structured": {"tag": "s0"}}
     # Both steps really executed (exactly once each).
     assert out_file.read_text(encoding="utf-8").splitlines() == ["s0", "s1"]
 

@@ -179,7 +179,8 @@ async def test_max_parallel_bounds_live_concurrency():
         pipeline, None,
         tool_dispatch=_dispatch, state_log=None, run_id="run-fe-parallel",
     )
-    assert result.pipe_data == [1, 2, 3, 4, 5, 6]  # ordered, all processed
+    # #2425 PR-2: a non-str/dict tool result (int) is structured, not stringified.
+    assert result.pipe_data == [{"text": "", "structured": n} for n in [1, 2, 3, 4, 5, 6]]
     assert peak <= 2, f"live concurrency {peak} exceeded max_parallel=2 (S5 guard a)"
     assert peak == 2, "with 6 items and a held slot, concurrency should reach the cap"
 
@@ -211,7 +212,8 @@ async def test_on_error_continue_drops_failed_item_and_collect_sees_survivors():
         tool_dispatch=_dispatch, state_log=None, run_id="run-fe-continue",
     )
     # collect saw only the survivors, in item order.
-    assert result.pipe_data == ["A", "C"]
+    # #2425 PR-2: a str tool result maps to the flat {"text": ...} ctx shape.
+    assert result.pipe_data == [{"text": "A"}, {"text": "C"}]
     # the dropped item's key holds the kind-marker (NOT absent, NOT bare None).
     dropped = result.completed_step_results["0.for_each.1"]
     assert dropped["__fan_out_dropped__"] is True
@@ -267,7 +269,8 @@ async def test_on_error_retry_reruns_flaky_item_until_success():
         pipeline, None,
         tool_dispatch=_dispatch, state_log=None, run_id="run-fe-retry-ok",
     )
-    assert sorted(result.pipe_data) == ["flaky", "ok"]
+    # #2425 PR-2: a str tool result maps to the flat {"text": ...} ctx shape.
+    assert sorted(result.pipe_data, key=lambda d: d["text"]) == [{"text": "flaky"}, {"text": "ok"}]
     assert attempts["flaky"] == 3  # 1 initial + 2 retries
 
 
@@ -399,8 +402,8 @@ async def test_truncate_falsify_mid_fan_out_replays_items_exactly_once(tmp_path:
     assert lines.count("A") == 1 and lines.count("B") == 1 and lines.count("D") == 1
     assert "C" not in lines
     # collect ran once; its result threads out as the for_each N2 return.
-    assert resumed.pipe_data == {"wrote": "COLLECT"}
-    assert resumed.completed_step_results["0.for_each.collect"] == {"wrote": "COLLECT"}
+    assert resumed.pipe_data == {"text": "", "structured": {"wrote": "COLLECT"}}
+    assert resumed.completed_step_results["0.for_each.collect"] == {"text": "", "structured": {"wrote": "COLLECT"}}
 
 
 @pytest.mark.asyncio
@@ -427,7 +430,7 @@ async def test_resume_after_full_fan_out_replays_with_zero_new_side_effects(tmp_
     )
     after = sorted(out_file.read_text(encoding="utf-8").splitlines())
     assert after == before, "a fully-completed fan-out must replay with zero side effects"
-    assert resumed.pipe_data == {"wrote": "COLLECT"}
+    assert resumed.pipe_data == {"text": "", "structured": {"wrote": "COLLECT"}}
 
 
 # ── the DOCUMENTED compositional-do atomic-re-run gap (commit unit = the ITEM) ─

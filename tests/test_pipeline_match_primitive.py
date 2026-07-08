@@ -311,8 +311,8 @@ async def test_truncate_falsify_match_resumes_case_substeps_exactly_once(tmp_pat
     )
 
     assert out_file.read_text(encoding="utf-8").splitlines() == ["A", "B"]
-    assert resumed.completed_step_results["1.match.0"] == {"wrote": "A"}
-    assert resumed.completed_step_results["1.match.1"] == {"wrote": "B"}
-    assert resumed.named_stores["match_out"] == {"wrote": "B"}
-    assert resumed.pipe_data == {"wrote": "B"}
+    assert resumed.completed_step_results["1.match.0"] == {"text": "", "structured": {"wrote": "A"}}
+    assert resumed.completed_step_results["1.match.1"] == {"text": "", "structured": {"wrote": "B"}}
+    assert resumed.named_stores["match_out"] == {"text": "", "structured": {"wrote": "B"}}
+    assert resumed.pipe_data == {"text": "", "structured": {"wrote": "B"}}
     assert resumed.step_index == 2

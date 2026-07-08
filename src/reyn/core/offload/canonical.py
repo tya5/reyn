@@ -236,3 +236,33 @@ def to_canonical(result: dict) -> CanonicalToolResult:
         source_ref=None,
         meta={},
     )
+
+
+def unwrap_dispatch_envelope(result: Any) -> Any:
+    """Peel any ``{"status": ..., "data": {...}}`` dispatch envelope(s) off a raw tool-dispatch
+    result, stopping at the first dict that already carries a ``kind`` (the shape :func:`to_canonical`
+    dispatches on). A tool-registry handler's own return value can itself be an envelope (e.g.
+    ``run_pipeline``), so more than one layer may need peeling — hence the loop, not a single unwrap."""
+    inner = result
+    while (
+        isinstance(inner, dict)
+        and isinstance(inner.get("data"), dict)
+        and set(inner) <= {"status", "data", "error"}
+        and "kind" not in inner
+    ):
+        inner = inner["data"]
+    return inner
+
+
+def canonical_to_ctx_fields(canonical: CanonicalToolResult) -> "dict[str, Any]":
+    """Reduce a :class:`CanonicalToolResult` to the flat ``{"text": ..., "structured": ...}`` shape a
+    pipeline step's ``ctx.<name>`` exposes (``structured`` key absent when there is no structured
+    attachment) — shape-only, mirroring ``seam.py``'s attachments reduction but with NO size gating:
+    pipeline ctx retains full values for downstream programmatic step processing (owner ruling)."""
+    fields: dict[str, Any] = {"text": canonical.get("text", "")}
+    structured_items = [
+        att.get("data") for att in canonical.get("attachments", []) or [] if att.get("kind") == "structured"
+    ]
+    if structured_items:
+        fields["structured"] = structured_items[0] if len(structured_items) == 1 else structured_items
+    return fields

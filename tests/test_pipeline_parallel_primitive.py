@@ -260,7 +260,8 @@ async def test_on_error_continue_drops_failed_branch_and_collect_sees_survivors(
         tool_dispatch=_dispatch, state_log=None, run_id="run-par-continue",
     )
     # collect saw only the survivors — the failed branch is absent, not None.
-    assert result.pipe_data == {"good": "OK"}
+    # #2425 PR-2: a str ToolStep result maps to the flat {"text": ...} ctx shape.
+    assert result.pipe_data == {"good": {"text": "OK"}}
     assert "bad" not in result.pipe_data
     dropped = result.completed_step_results["0.parallel.bad"]
     assert dropped["__fan_out_dropped__"] is True
@@ -321,7 +322,7 @@ async def test_on_error_retry_reruns_flaky_branch_until_success():
         pipeline, None,
         tool_dispatch=_dispatch, state_log=None, run_id="run-par-retry-ok",
     )
-    assert result.pipe_data == {"ok": "ok", "flaky": "flaky"}
+    assert result.pipe_data == {"ok": {"text": "ok"}, "flaky": {"text": "flaky"}}
     assert attempts["flaky"] == 3  # 1 initial + 2 retries
 
 
@@ -458,8 +459,8 @@ async def test_truncate_falsify_mid_parallel_replays_branches_exactly_once(tmp_p
     assert lines.count("A") == 1 and lines.count("B") == 1 and lines.count("D") == 1
     assert "C" not in lines
     # collect ran once; its result threads out as the parallel N2 return.
-    assert resumed.pipe_data == {"wrote": "COLLECT"}
-    assert resumed.completed_step_results["0.parallel.collect"] == {"wrote": "COLLECT"}
+    assert resumed.pipe_data == {"text": "", "structured": {"wrote": "COLLECT"}}
+    assert resumed.completed_step_results["0.parallel.collect"] == {"text": "", "structured": {"wrote": "COLLECT"}}
 
 
 @pytest.mark.asyncio
@@ -486,7 +487,7 @@ async def test_resume_after_full_parallel_replays_with_zero_new_side_effects(tmp
     )
     after = sorted(out_file.read_text(encoding="utf-8").splitlines())
     assert after == before, "a fully-completed fan-out must replay with zero side effects"
-    assert resumed.pipe_data == {"wrote": "COLLECT"}
+    assert resumed.pipe_data == {"text": "", "structured": {"wrote": "COLLECT"}}
 
 
 # ── S5 guard (b): fan_out_depth cap FAILS the step (does not spawn) ──────────

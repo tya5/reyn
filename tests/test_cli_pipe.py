@@ -366,8 +366,11 @@ def test_run_tool_step_dispatches_for_real(tmp_path, monkeypatch, capsys):
 
     out = capsys.readouterr().out
     result = json.loads(out)
-    assert result["named_stores"]["shout"] == {"content": "HI REYN"}
-    assert result["pipe_data"] == {"content": "HI REYN"}
+    # #2425 PR-2: an unregistered-kind tool result maps to the flat text/structured ctx shape —
+    # the whole raw dict becomes the (sole) structured attachment, text empty.
+    expected = {"text": "", "structured": {"content": "HI REYN"}}
+    assert result["named_stores"]["shout"] == expected
+    assert result["pipe_data"] == expected
 
 
 def test_run_tool_step_file_write_is_denied_without_grant_flag(
@@ -400,7 +403,9 @@ def test_run_tool_step_file_write_is_denied_without_grant_flag(
 
     out = capsys.readouterr().out
     result = json.loads(out)
-    assert result["named_stores"]["r"]["status"] == "denied"
+    # #2425 PR-2: write_file's "file"-kind result is unregistered in the canonical
+    # mapper table → the whole dict becomes the sole structured attachment.
+    assert result["named_stores"]["r"]["structured"]["status"] == "denied"
     assert not (tmp_path / "out.txt").exists()
 
 
@@ -431,7 +436,7 @@ def test_run_tool_step_file_write_allowed_with_grant_flag(
 
     out = capsys.readouterr().out
     result = json.loads(out)
-    assert result["named_stores"]["r"]["status"] == "ok"
+    assert result["named_stores"]["r"]["structured"]["status"] == "ok"
     assert (tmp_path / "out.txt").read_text(encoding="utf-8") == "hello"
 
 
@@ -588,8 +593,8 @@ def test_run_tool_step_dispatches_mcp_action_for_real(tmp_path, monkeypatch, cap
 
     out = capsys.readouterr().out
     result = json.loads(out)
-    assert result["named_stores"]["r"]["status"] == "ok"
-    assert result["named_stores"]["r"]["content"] == "ping:hi reyn"
+    # #2425 PR-2: an MCP result's canonical "text" is the joined content.
+    assert result["named_stores"]["r"]["text"] == "ping:hi reyn"
 
 
 @pytest.mark.asyncio
