@@ -31,6 +31,16 @@ control_ir/phase offloader, pending its separate removal.)
 
 P7: the op-kind → canonical mapping is OS-level (no domain-specific vocabulary). The deref / paging / offload
 store machinery is reused unchanged — 案B removes only the field-guessing.
+
+FP-0056 PR-H (hotfix): the original 案B mapper table scoped migration to the ops that once declared
+``_offload_payload_field`` (+ mcp/pipeline) — so the ``file`` family (``kind:"file"``, unmapped), the
+``reyn_src_*`` dev-reads (kind-less), and ``compact`` / ``judge_output`` all took the whole-dict fallback.
+In dogfood a doc read via ``reyn_source__read`` was therefore offloaded as a 600-char JSON-dict preview
+instead of the readable text body. This module now registers a ``file`` mapper (op-dispatched: read →
+``content`` as ``text``, grep/glob → rendered lines, mutations → a status line), a ``reyn_src`` mapper
+(the tool-handler seam tags its kind-less result ``kind:"reyn_src"`` so it routes here, not to the
+fallback), and ``compact`` / ``judge_output`` mappers. The registry-enforcement framework, identity-keyed
+dispatch, and the ``canonical_fallback_used`` event are follow-ups (PR-F1/PR-F2), not this hotfix.
 """
 from __future__ import annotations
 
@@ -203,6 +213,201 @@ def _run_pipeline_async_to_canonical(result: dict) -> CanonicalToolResult:
     return CanonicalToolResult(text=text, attachments=[], source_ref=None, meta={})
 
 
+def _file_signal_meta(result: dict) -> "dict[str, Any]":
+    """High-signal meta for a ``file`` op result: ``op`` + ``status`` (a ``truncated`` read tells the
+    LLM there is more; a ``not_found`` tells it to retry another path) + ``path`` (which file). Transport
+    noise beyond these is dropped, per the module's high-signal-only rule. ``isError`` is added on the
+    error path by the caller."""
+    meta: dict[str, Any] = {}
+    for key in ("op", "status", "path"):
+        value = result.get(key)
+        if value is not None:
+            meta[key] = value
+    return meta
+
+
+def _file_to_canonical(result: dict) -> CanonicalToolResult:
+    """``file`` op result (read/write/glob/grep/edit/delete/mkdir/move/stat/regenerate_index) → canonical.
+
+    Dispatch is on the result's ``op`` field (NOT ``kind``, which is the coarse ``"file"`` for the whole
+    family). The LLM-readable body per op:
+
+    - ``read`` → the file ``content`` as ``text`` (an image read surfaces its ``media_blocks`` as media
+      attachments, matching the MCP mapper); ``path``/``op``/``status`` are signal meta, never the body.
+    - ``grep`` / ``glob`` → the rendered match / path lines as ``text`` (``content`` mode → ``path:line:
+      text``; ``files_with_matches`` / glob → the paths; ``count`` mode → a one-line total).
+    - ``write`` / ``edit`` / ``delete`` / ``mkdir`` / ``move`` / ``stat`` / ``regenerate_index`` → a short
+      status ``text``.
+
+    Any op whose result is an error (``status`` error/denied/not_found, or an ``error`` field) surfaces
+    the ``error`` message as ``text`` with ``meta.isError`` — the sole error-path driver."""
+    op = result.get("op")
+    status = result.get("status")
+    meta = _file_signal_meta(result)
+    if _is_error(result) or status in ("error", "denied", "not_found") or (
+        "error" in result and result.get("error")
+    ):
+        meta["isError"] = True
+        return CanonicalToolResult(
+            text=str(result.get("error") or ""), attachments=[], source_ref=None, meta=meta,
+        )
+
+    if op == "read":
+        attachments = [
+            {"kind": "media", "block": block} for block in (result.get("media_blocks") or [])
+        ]
+        return CanonicalToolResult(
+            text=result.get("content", "") or "", attachments=attachments, source_ref=None, meta=meta,
+        )
+
+    if op == "grep":
+        return CanonicalToolResult(
+            text=_render_file_grep(result), attachments=[], source_ref=None, meta=meta,
+        )
+
+    if op == "glob":
+        matches = result.get("matches") or []
+        text = "\n".join(str(m) for m in matches) if matches else "(no matches)"
+        return CanonicalToolResult(text=text, attachments=[], source_ref=None, meta=meta)
+
+    # write / edit / delete / mkdir / move / stat / regenerate_index → a short status text.
+    return CanonicalToolResult(
+        text=_render_file_status(op, result), attachments=[], source_ref=None, meta=meta,
+    )
+
+
+def _render_file_grep(result: dict) -> str:
+    """Render a ``file`` grep result's matches as text lines. ``content`` mode → ``path:line: text``;
+    ``files_with_matches`` → one path per line; ``count`` mode → a one-line total."""
+    output_mode = result.get("output_mode")
+    if output_mode == "count":
+        return f"{result.get('count', 0)} match(es)"
+    if output_mode == "files_with_matches":
+        files = result.get("files") or []
+        return "\n".join(str(f) for f in files) if files else "(no matches)"
+    matches = result.get("matches") or []
+    if not matches:
+        return "(no matches)"
+    lines = [
+        f"{m.get('path', '')}:{m.get('line_number', '')}: {m.get('content', '')}" for m in matches
+    ]
+    return "\n".join(lines)
+
+
+def _render_file_status(op: "str | None", result: dict) -> str:
+    """A short, human-readable status line for a mutating / metadata ``file`` op (write/edit/delete/
+    mkdir/move/stat/regenerate_index). Descriptive, not JSON — the LLM acts on the outcome, not the
+    envelope."""
+    path = result.get("path", "")
+    if op == "write":
+        text = f"Wrote {result.get('bytes_written', 0)} bytes to {path}."
+        note = result.get("encoding_note")
+        return f"{text} {note}" if note else text
+    if op == "edit":
+        text = f"Edited {path}: {result.get('replacements', 0)} replacement(s)."
+        preview = result.get("preview")
+        return f"{text}\n{preview}" if preview else text
+    if op == "delete":
+        return f"Deleted {path} (deleted={result.get('deleted')})."
+    if op == "mkdir":
+        return f"Created directory {path} (created={result.get('created')})."
+    if op == "move":
+        return f"Moved {path} -> {result.get('dest_path', '')}."
+    if op == "regenerate_index":
+        return f"Regenerated index at {result.get('output_path', '')}: {result.get('entries', 0)} entries."
+    if op == "stat":
+        return f"stat {path}: {result.get('info')}"
+    return f"{op}: {result.get('status', 'ok')}"
+
+
+def _reyn_src_to_canonical(result: dict) -> CanonicalToolResult:
+    """``reyn_src_*`` handler result (read/list/glob/grep) → canonical. These handlers return a
+    kind-less ``{path, content}`` / ``{entries}`` / ``{matches}`` dict tagged with ``kind:"reyn_src"``
+    at the tool-handler seam so this mapper (not the whole-dict fallback) shapes them — the dogfood
+    incident root: a doc read via ``reyn_source__read`` was offloaded as a whole-dict ``structured``
+    blob instead of the readable body.
+
+    - ``read`` (``content``) → the file body as ``text`` (``path`` is signal meta).
+    - ``list`` (``entries``) → ``type: name`` lines as ``text``.
+    - ``glob`` (``matches`` of paths) / ``grep`` (``matches`` of ``{path, line, snippet}``) → the
+      rendered lines as ``text``.
+    - an ``error`` → the message as ``text`` with ``meta.isError``."""
+    if result.get("error"):
+        return CanonicalToolResult(
+            text=str(result["error"]), attachments=[], source_ref=None, meta={"isError": True},
+        )
+    if "content" in result:
+        meta = {"path": result["path"]} if result.get("path") is not None else {}
+        return CanonicalToolResult(
+            text=result.get("content", "") or "", attachments=[], source_ref=None, meta=meta,
+        )
+    if "entries" in result:
+        entries = result.get("entries") or []
+        text = "\n".join(f"{e.get('type', '')}: {e.get('name', '')}" for e in entries) or "(empty)"
+        return CanonicalToolResult(text=text, attachments=[], source_ref=None, meta={})
+    if "matches" in result:
+        matches = result.get("matches") or []
+        if matches and isinstance(matches[0], dict):
+            # grep: {path, line, snippet}
+            text = "\n".join(
+                f"{m.get('path', '')}:{m.get('line', '')}: {m.get('snippet', '')}" for m in matches
+            )
+        else:
+            # glob: a list of repo-relative path strings.
+            text = "\n".join(str(m) for m in matches)
+        return CanonicalToolResult(
+            text=text or "(no matches)", attachments=[], source_ref=None, meta={},
+        )
+    # A reyn_src shape with none of the known bodies — keep the whole dict lossless as structured.
+    return CanonicalToolResult(
+        text="", attachments=[{"kind": "structured", "data": result}], source_ref=None, meta={},
+    )
+
+
+def _compact_to_canonical(result: dict) -> CanonicalToolResult:
+    """``compact`` op result → canonical. On success the freed-token / free-window metrics (+ the chat-
+    axis compression fields when present) render as a short ``text`` summary; on error the ``error``
+    message surfaces as ``text`` with ``meta.isError``. Result shape:
+    ``{kind:"compact", status:"ok", freed_tokens?, free_window_after?, summarized_turns?,
+    compressed_tokens?, bridge_tokens?}`` (ok) or ``{status:"error", error_kind, error}`` (error)."""
+    if _is_error(result):
+        return CanonicalToolResult(
+            text=str(result.get("error") or ""), attachments=[], source_ref=None, meta={"isError": True},
+        )
+    parts: list[str] = ["Compaction complete."]
+    for label, key in (
+        ("freed_tokens", "freed_tokens"),
+        ("free_window_after", "free_window_after"),
+        ("summarized_turns", "summarized_turns"),
+        ("compressed_tokens", "compressed_tokens"),
+        ("bridge_tokens", "bridge_tokens"),
+    ):
+        value = result.get(key)
+        if value is not None:
+            parts.append(f"{label}={value}")
+    return CanonicalToolResult(text=" ".join(parts), attachments=[], source_ref=None, meta={})
+
+
+def _judge_output_to_canonical(result: dict) -> CanonicalToolResult:
+    """``judge_output`` op result → canonical. The scorer's ``reason`` (its LLM-readable explanation) is
+    the ``text``; ``score`` / ``passed`` / ``threshold`` / ``on_fail`` are signal meta (they drive the
+    caller's next move — a failed judgment triggers ``on_fail``). An error surfaces the message as
+    ``text`` with ``meta.isError``. Shape: ``{kind:"judge_output", score, passed, reason, threshold,
+    on_fail}`` (ok) or ``{status:"error", error}`` (error)."""
+    if _is_error(result) or (result.get("status") == "error"):
+        return CanonicalToolResult(
+            text=str(result.get("error") or ""), attachments=[], source_ref=None, meta={"isError": True},
+        )
+    meta: dict[str, Any] = {}
+    for key in ("score", "passed", "threshold", "on_fail"):
+        value = result.get(key)
+        if value is not None:
+            meta[key] = value
+    return CanonicalToolResult(
+        text=str(result.get("reason", "") or ""), attachments=[], source_ref=None, meta=meta,
+    )
+
+
 # op-kind → canonical mapper. Every op that once declared ``_offload_payload_field`` is registered
 # here; an unregistered kind falls back to a whole-dict ``structured`` attachment (see ``to_canonical``).
 _MAPPERS: dict[str, Any] = {
@@ -216,6 +421,12 @@ _MAPPERS: dict[str, Any] = {
     "index_query": _chunks_to_canonical,
     "run_pipeline": _run_pipeline_to_canonical,
     "run_pipeline_async": _run_pipeline_async_to_canonical,
+    # FP-0056 PR-H hotfix: the file family + reyn_src dev-reads + compact/judge_output — the coverage
+    # gap that offloaded a doc read as a whole-dict ``structured`` blob (dogfood 2026-07-09).
+    "file": _file_to_canonical,
+    "reyn_src": _reyn_src_to_canonical,
+    "compact": _compact_to_canonical,
+    "judge_output": _judge_output_to_canonical,
 }
 
 

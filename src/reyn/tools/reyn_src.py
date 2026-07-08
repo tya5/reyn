@@ -14,6 +14,17 @@ from typing import Any, Mapping
 
 from reyn.tools.types import ToolContext, ToolDefinition, ToolGates, ToolResult
 
+
+def _as_reyn_src(result: dict) -> dict:
+    """Tag a ``reyn.runtime.reyn_src`` helper result with ``kind:"reyn_src"`` so the offload seam
+    (``core/offload/canonical.py``) routes it through the dedicated ``reyn_src`` mapper — the file body
+    / listing / match lines become the LLM-readable ``text`` — instead of the whole-dict ``structured``
+    fallback that confused the agent in the FP-0056 dogfood incident (a doc read surfaced as a 600-char
+    JSON-dict preview). The runtime helpers stay pure (no ``kind``); tagging lives at this tool seam,
+    which is the only consumer of their results."""
+    result["kind"] = "reyn_src"
+    return result
+
 # Description must be byte-identical to the current router_tools.py
 # ToolSpec.description for reyn_src_list (lines 776-783). Copied verbatim.
 _REYN_SRC_LIST_DESCRIPTION = (
@@ -108,12 +119,12 @@ async def _handle_list(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
     try:
         root = resolve_reyn_root()
     except RuntimeError as exc:
-        return {"error": str(exc)}
+        return _as_reyn_src({"error": str(exc)})
     try:
         target = safe_resolve_inside(root, path)
     except ValueError as exc:
-        return {"error": str(exc)}
-    return list_entries(root, target, path)
+        return _as_reyn_src({"error": str(exc)})
+    return _as_reyn_src(list_entries(root, target, path))
 
 
 async def _handle_read(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
@@ -134,19 +145,19 @@ async def _handle_read(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
     try:
         root = resolve_reyn_root()
     except RuntimeError as exc:
-        return {"error": str(exc)}
+        return _as_reyn_src({"error": str(exc)})
     try:
         target = safe_resolve_inside(root, path)
     except ValueError as exc:
-        return {"error": str(exc)}
+        return _as_reyn_src({"error": str(exc)})
     offset_raw = args.get("offset")
     limit_raw = args.get("limit")
-    return read_text(
+    return _as_reyn_src(read_text(
         target,
         path,
         offset=int(offset_raw) if offset_raw is not None else None,
         limit=int(limit_raw) if limit_raw is not None else None,
-    )
+    ))
 
 
 _REYN_SRC_GLOB_DESCRIPTION = (
@@ -220,8 +231,8 @@ async def _handle_glob(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
     try:
         root = resolve_reyn_root()
     except RuntimeError as exc:
-        return {"error": str(exc)}
-    return glob_entries(root, pattern)
+        return _as_reyn_src({"error": str(exc)})
+    return _as_reyn_src(glob_entries(root, pattern))
 
 
 async def _handle_grep(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
@@ -232,15 +243,15 @@ async def _handle_grep(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
     try:
         root = resolve_reyn_root()
     except RuntimeError as exc:
-        return {"error": str(exc)}
-    return grep_entries(
+        return _as_reyn_src({"error": str(exc)})
+    return _as_reyn_src(grep_entries(
         root,
         pattern=pattern,
         path=args.get("path", ""),
         glob=args.get("glob"),
         case_sensitive=bool(args.get("case_sensitive", False)),
         max_results=int(args.get("max_results", 50) or 50),
-    )
+    ))
 
 
 REYN_SRC_LIST = ToolDefinition(
