@@ -272,6 +272,10 @@ class RouterHostAdapter:
         # left for the media follow-up after the (capped) tool text, so
         # router_loop bounds media materialisation. ``None`` = unbounded (pre-#272).
         media_followup_budget: Any = None,
+        # tool-result-schema-redesign §5: static per-session flag (not a callable —
+        # config doesn't change mid-session) gating build_offload_body's structured
+        # inline-size gate. Default True = normal offload behaviour.
+        offload_enabled: bool = True,
         # #272/#1128 compact op: awaitable () -> {freed_tokens, free_window_after}
         # wired by Session to its force_compact_now wrapper, so the LLM-
         # emittable `compact` control_ir op can voluntarily compact history.
@@ -429,6 +433,8 @@ class RouterHostAdapter:
         self._cap_tool_result = cap_tool_result
         # #272 media axis: per-turn media-budget provider (or None).
         self._media_followup_budget = media_followup_budget
+        # tool-result-schema-redesign §5: structured-offload gate flag.
+        self._offload_enabled = offload_enabled
         # #272/#1128 compact op: voluntary-compaction callable (or None).
         self._compact_now = compact_now
         # #1470: per-turn cancel event set by RouterLoopDriver._set_cancel_event.
@@ -557,6 +563,14 @@ class RouterHostAdapter:
         was supplied (= legacy / test paths).
         """
         return self._media_store
+
+    @property
+    def offload_enabled(self) -> bool:
+        """tool-result-schema-redesign §5: whether the structured-offload size
+        gate is active. ``True`` (default) = normal behaviour; ``False`` =
+        ``offload.enabled: false`` debug lever, structured data always inline.
+        """
+        return self._offload_enabled
 
     @property
     def chat_id(self) -> str:

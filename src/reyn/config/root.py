@@ -31,6 +31,7 @@ from reyn.config.chat import (
     CompactionConfig,
     CostWarnConfig,
     LoopConfig,
+    OffloadConfig,
     OnLimitConfig,
     ReasoningConfig,
     SafetyConfig,
@@ -231,6 +232,8 @@ class ReynConfig:
     safety: SafetyConfig = field(default_factory=SafetyConfig)
     # #1830 / FP-0052: high-cost model pre-selection awareness.
     cost_warn: CostWarnConfig = field(default_factory=CostWarnConfig)
+    # tool-result-schema-redesign §5: debug lever disabling all tool-result size gates.
+    offload: OffloadConfig = field(default_factory=OffloadConfig)
     # FP-0022 follow-up: declarative SSL config for web_fetch + MCP registry.
     # Priority: web.fetch.ca_bundle → web.fetch.verify_ssl → SSL_VERIFY env →
     # litellm.ssl_verify → SSL_CERT_FILE → True (default).

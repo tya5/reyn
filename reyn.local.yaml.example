@@ -416,6 +416,20 @@
 
 
 # -----------------------------------------------------------------------------
+# offload: debug/experiment lever disabling ALL tool-result size gates
+# (tool-result-schema-redesign §5). enabled=false turns off the text token
+# cap, the structured inline cap, and the media follow-up budget bound —
+# every tool result is emitted in full, unbounded. Debug/experiment lever
+# (isolates whether offload itself degrades LLM autonomy), NOT a recommended
+# steady-state setting: a single tool result can then exceed the model's
+# compaction-batch budget (recreates the #1128 compaction dead-end). Format
+# (frontmatter + text) is unchanged either way.
+# -----------------------------------------------------------------------------
+# offload:
+#   enabled: true
+
+
+# -----------------------------------------------------------------------------
 # skill_resume: policy for handling steps that have a
 # ``step_started`` WAL event but no matching ``step_completed`` / ``step_failed``
 # (= the op may have committed externally and only the operator can decide).

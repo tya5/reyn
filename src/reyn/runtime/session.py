@@ -21,6 +21,7 @@ from reyn.config import (  # noqa: F401
     EmbeddingConfig,
     EventsConfig,
     MultimodalConfig,
+    OffloadConfig,
     OnLimitConfig,
     RouterConfig,
     SafetyConfig,
@@ -660,6 +661,10 @@ class Session:
         # config to read and the gate silently no-op'd (fail-open). None →
         # defaults (warn-only, block off) = the head-less / scripted equivalent.
         cost_warn_config: CostWarnConfig | None = None,
+        # tool-result-schema-redesign §5: debug lever disabling all tool-result
+        # size gates (text cap / structured inline cap / media follow-up budget).
+        # None -> defaults (enabled=True, normal offload behaviour).
+        offload_config: OffloadConfig | None = None,
         state_log: StateLog | None = None,
         budget_tracker: BudgetTracker | None = None,
         snapshot_path: "Path | None" = None,
@@ -1171,6 +1176,8 @@ class Session:
         # when unthreaded) so the read can't AttributeError into a silent
         # fail-open — the production bug this fixes.
         self._cost_warn_config = cost_warn_config or CostWarnConfig()
+        # tool-result-schema-redesign §5: debug lever (default enabled=True).
+        self._offload_config = offload_config or OffloadConfig()
 
         # PR21: WAL + per-agent snapshot for crash recovery. state_log is
         # process-shared (owned by AgentRegistry); when None, persistence
@@ -1663,6 +1670,10 @@ class Session:
             # #272 media axis: per-turn media budget (= cap − tool text tokens)
             # so router_loop bounds the media follow-up (overflow media → ref).
             media_followup_budget=self._media_followup_budget,
+            # tool-result-schema-redesign §5: gates build_offload_body's structured
+            # inline-size gate (STRUCTURED_INLINE_MAX_CHARS). Static per-session config,
+            # not a callable (unlike the two budgets above, which read live engine state).
+            offload_enabled=self._offload_config.enabled,
             # #272/#1128 compact op: voluntary-compaction callback so the LLM-
             # emittable `compact` control_ir op can compact chat history.
             compact_now=self._compact_now_for_op,
@@ -1829,6 +1840,7 @@ class Session:
             model_fn=lambda: self._resolver.resolve(self.model).model,
             events=self._chat_events,
             history_fn=self._history_buffer.build_history,
+            offload_config=self._offload_config,
         )
 
         # session.py refactor PR-3: RouterLoopDriver owns the per-turn loop
@@ -4332,6 +4344,13 @@ class Session:
         from reyn.runtime.model_cost_warn import maybe_emit_model_cost_warn
         maybe_emit_model_cost_warn(self, self.model, action="session_start")
 
+        # tool-result-schema-redesign §5: offload.enabled=false disables all three
+        # tool-result size gates — a single tool result can then exceed the model's
+        # compaction-batch budget, recreating the #1128 dead-end (a turn too large to
+        # ever compact). Emit so traces are self-explaining when that happens.
+        if not self._offload_config.enabled:
+            self._chat_events.emit("offload_disabled", agent_name=self.agent_name)
+
         try:
             while await self.run_one_iteration():
                 pass
@@ -6000,7 +6019,7 @@ class Session:
         so the capper takes a single string — no clean-payload kwargs."""
         return self._budget_advisor.cap_tool_result(content_str)
 
-    def _media_followup_budget(self, tool_content: str) -> int:
+    def _media_followup_budget(self, tool_content: str) -> "int | None":
         """Forwarding → ContextBudgetAdvisor.media_followup_budget (PR-1)."""
         return self._budget_advisor.media_followup_budget(tool_content)
 

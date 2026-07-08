@@ -10,6 +10,7 @@ from reyn.config.chat import (  # #1682 #3 cross-section
     _build_chat_config,
     _build_cost_config,  # #1682 #3: cost builder lives in chat
     _build_cost_warn_config,
+    _build_offload_config,
     _build_safety_config,
 )
 from reyn.config.embedding import (  # #1682 #3 cross-section
@@ -459,6 +460,7 @@ def load_config(cwd: Path | None = None) -> ReynConfig:
     safety = _build_safety_config(safety_raw)
     cost = _build_cost_config(merged.get("cost"))
     cost_warn = _build_cost_warn_config(merged.get("cost_warn"))
+    offload = _build_offload_config(merged.get("offload"))
     _cfg = ReynConfig(
         model=str(merged.get("model", "standard")),
         output_language=output_language,
@@ -499,6 +501,7 @@ def load_config(cwd: Path | None = None) -> ReynConfig:
         embedding=_build_embedding_config(merged.get("embedding")),
         safety=safety,
         cost_warn=cost_warn,
+        offload=offload,
         web=_build_web_config(merged.get("web")),
         multimodal=_build_multimodal_config(merged.get("multimodal")),
         sandbox=_build_sandbox_config(merged.get("sandbox")),

@@ -393,6 +393,7 @@ def run(args: argparse.Namespace) -> None:
             task_backend=registry.task_backend,
             events_config=session_cfg.config.events,
             cost_warn_config=session_cfg.config.cost_warn,  # #2230: wire the warn/block gate
+            offload_config=session_cfg.config.offload,  # tool-result-schema-redesign §5
             state_log=state_log,
             budget_tracker=budget_tracker,
             hooks_config=session_cfg.config.hooks,  # #1800 slice 5b (pass-through, not bundled)
