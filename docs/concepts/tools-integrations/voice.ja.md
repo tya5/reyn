@@ -6,6 +6,8 @@ audience: [human, agent]
 
 # 音声入力
 
+> **ステータス: 現在利用不可。** この機能が実装されていた Textual TUI(`src/reyn/interfaces/tui/`、`voice.py` を含む)は、`reyn chat` がインライン CUI(`InlineChatRenderer`)に移行した際に丸ごと削除されました。現行インターフェースに Ctrl+R バインディングや音声入力パスは存在しません。`VoiceConfig`(`reyn.yaml` の `voice:` ブロック)は依然としてパース・ロードされますが、それを消費するコードはありません。このページの以下の内容はこの変更前の動作を記述したものであり、現状の挙動としてではなく歴史的記録として扱ってください。
+
 `reyn chat` TUI 向けの音声テキスト変換。`faster-whisper` で動作します。
 
 ## 機能概要

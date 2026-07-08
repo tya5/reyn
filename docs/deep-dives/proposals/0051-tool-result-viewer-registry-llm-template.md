@@ -1,6 +1,15 @@
 # FP-0051: Tool-result viewer registry + LLM-generated viewer templates (#1154 Phase 3)
 
-**[tui-coder]** — design-first proposal (2026-06-19). Status: **proposed** (awaiting lead review).
+**[tui-coder]** — design-first proposal (2026-06-19). Status: **superseded** — never implemented; its premise (the Textual TUI right panel) was deleted wholesale before this proposal was reviewed.
+
+> **Status update.** The Textual TUI (`src/reyn/interfaces/tui/`, including the right
+> panel this proposal's "Phase 2c baseline" describes) was replaced entirely by an
+> inline CUI (`InlineChatRenderer`). Tool results in the inline CUI render via a
+> single best-effort one-line summarizer (`summarize_tool_result` in
+> `src/reyn/interfaces/repl/renderer.py`) — there is no content-type-aware viewer
+> dispatch, no registry seam, and no LLM-template fallback anywhere in current
+> source. This proposal was never implemented and is kept below only as a
+> historical record of the Phase 3 design intent.
 
 ## Background
 

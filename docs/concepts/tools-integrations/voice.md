@@ -6,6 +6,14 @@ audience: [human, agent]
 
 # Voice input
 
+> **Status: currently unavailable.** The Textual TUI this feature was built for
+> (`src/reyn/interfaces/tui/`, including `voice.py`) was deleted wholesale when
+> `reyn chat` moved to the inline CUI (`InlineChatRenderer`); no Ctrl+R binding or
+> voice-input path exists in the current interface. `VoiceConfig` (`reyn.yaml`'s
+> `voice:` block) still parses and loads, but nothing consumes it. The rest of
+> this page describes the feature as it worked before that change; treat it as a
+> historical record, not current behavior.
+
 Speech-to-text for the `reyn chat` TUI, powered by `faster-whisper`.
 
 ## What it does
