@@ -69,16 +69,17 @@ async def resolve_present_source(data_ref: str, ctx: "OpContext") -> tuple[Any, 
         # renderer's concern in a later PR); the value is the byte count.
         value = {"binary": True, "byte_size": len(raw_bytes)}
     else:
-        value = _rehydrate(text)
+        value = rehydrate_ref_text(text)
 
     ingested = compute_ingested(ctx, data_ref, resolved)
     return value, ingested
 
 
-def _rehydrate(text: str) -> Any:
+def rehydrate_ref_text(text: str) -> Any:
     """Re-hydrate an offloaded structured ref (JSON bytes) to its object, else
     keep the plain text. The offload store writes ``json.dumps(...)`` for a
-    ``structured_ref``; a plain-text ref is returned as its string."""
+    ``structured_ref``; a plain-text ref is returned as its string. Shared with the
+    replay re-render path (``present.replay``) so live + replay re-hydration match."""
     import json
 
     stripped = text.strip()

@@ -338,6 +338,7 @@ The op kinds below mirror `OP_KIND_MODEL_MAP` in `op_runtime/registry.py`.
 |----|-------------|
 | `file` | `read` / `write` / `edit` / `delete` / `glob` / `grep` / `regenerate_index` (six fine-grained registry kinds) |
 | `ask_user` | Pause phase, collect user answer, re-run same phase |
+| `present` | Route bulk data + a declarative display template to the user surface without the data passing through LLM output tokens (Tier 0, fire-and-continue) |
 | `sandboxed_exec` | `argv` under `SandboxPolicy` via platform-selected backend |
 | `shell` | Raw shell exec — deprecated; prefer `sandboxed_exec` |
 | `web_search` | DuckDuckGo search — Tier 1, default-allow |
@@ -354,6 +355,23 @@ The op kinds below mirror `OP_KIND_MODEL_MAP` in `op_runtime/registry.py`.
 | `judge_output` | LLM scorer with rubric + threshold + `on_fail` policy |
 
 > The `embed` and `index_write` ops were removed — embedding and index-writing now run provider-direct inside `reyn.api.safe.embed_index` and the `recall` op, not as standalone ops. See [Control IR](reference/runtime/control-ir.md).
+
+---
+
+### Present layer
+
+Show bulk data to the user **without the data passing through LLM output tokens** — the agent routes a data ref + a declarative display template to the user surface directly. The LLM sees the data's shape (schema + preview) and binds paths; the renderer joins the template against the full data the LLM never ingested. Declarative + non-executable by construction (a vetted component catalog + JSON-Pointer bindings, no code) — safety from the primitive's shape, not layered policy.
+
+| Feature | Description | Documentation |
+|---------|-------------|---------------|
+| `present` op | Tier 0 (`ask_user`'s sibling), fire-and-continue; `data_ref` XOR `data_inline`, `template` XOR `blueprint`. `data_ref` read authority == `file.read` | [Present reference](reference/runtime/present.md) · [Concepts: Present layer](concepts/runtime/present.md) |
+| v1 component catalog | Display-only read-only components: `text` / `markdown` / `code` / `diff` / `keyvalue` / `table` / `list` / `image`; `$bind` JSON-Pointer (RFC 6901) bindings, row-relative for `table`/`list` | [Present reference § catalog](reference/runtime/present.md) |
+| Presentation-guard + renderer discipline | Surface-universal guard strips ESC/control sequences at one seam (every leaf, incl. never-ingested data); Rich-markup safety is structural in the renderer (markup-inert sinks, no escaping) | [Concepts: Present layer § guard vs renderer](concepts/runtime/present.md) |
+| 4-stage fallback | Registered template → inline blueprint → default viewer (from data shape) → generic (always renders); degrade-never-fail, drops audited in the ack | [Present reference § fallback](reference/runtime/present.md) |
+| `presentations.yaml` registry | Operator-registered named templates (`presentations.entries`), hot-reloaded at the turn boundary; the LLM authors inline blueprints only | [reyn.yaml § presentations](reference/config/reyn-yaml.md#presentations-block) |
+| `presented` event (P6) + replay-as-cache | Audit event carries refs + stats, never content bytes; replay/rewind re-renders best-effort from the ref, or an expiry placeholder when it is gone (display-only, no reconstructed state) | [Present reference § replay](reference/runtime/present.md) |
+
+> **Differentiation vs general agents:** general agents reproduce bulk tool data as LLM output tokens (expensive, and lossy when the model summarizes to fit). reyn's present layer routes the data's *handle* + a declarative template to the surface directly — display costs ~0 output tokens, the user sees full fidelity, and blind presentation is *audited* (an OS-computed `ingested` annotation) rather than forbidden. Non-executable by construction sidesteps the UI-spoofing class that sandboxed-iframe UI protocols spend their complexity on.
 
 ---
 
