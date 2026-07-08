@@ -44,7 +44,7 @@ steps:
 steps:
   - transform: {value: "ctx.name + '!'", output: greeting}   # ステップ 0
   - tool: {name: shout, args: {text: !expr pipe}, output: shouted}  # ステップ 1
-  - transform: {value: "ctx.shouted + ' (done)'", output: final}   # ステップ 2
+  - transform: {value: "ctx.shouted.text + ' (done)'", output: final}   # ステップ 2
 ```
 
 `ctx = {name: "Reyn"}` でシードした場合:
@@ -53,7 +53,7 @@ steps:
 |---|---|---|
 | 0 | `{name: "Reyn"}` | `null`(先行ステップ無し) |
 | 1 | `{name: "Reyn", greeting: "Reyn!"}` | `"Reyn!"`(ステップ 0 の結果) |
-| 2 | `{name: "Reyn", greeting: "Reyn!", shouted: "REYN!"}` | `"REYN!"`(ステップ 1 の結果) |
+| 2 | `{name: "Reyn", greeting: "Reyn!", shouted: {text: "REYN!"}}` | `{text: "REYN!"}`(ステップ 1 の結果 — 下記の[`tool` ステップの結果](#tool-step-results)参照) |
 | *(ステップ 2 の後)* | `{..., final: "REYN! (done)"}` | `"REYN! (done)"` |
 
 ステップ 1 はステップ 0 の結果を、両方とも機能する 2 通りの方法で読めます: bare な `pipe`(直前のステップ)か `ctx.greeting`(永続的な store)です — ステップ 0 の直後はどちらも同じ値を保持しますが、間に別のステップが挟まると `ctx.greeting` だけが到達可能なままです。

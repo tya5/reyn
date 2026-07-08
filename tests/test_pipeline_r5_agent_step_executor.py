@@ -361,5 +361,8 @@ async def test_no_agent_step_pipeline_unaffected_by_new_params(tmp_path: Path) -
         tool_dispatch=_shout, state_log=None, run_id="run-no-agent",
     )
 
-    assert result.pipe_data == "HI WORLD"
-    assert result.named_stores == {"name": "world", "greeting": "hi world", "shouted": "HI WORLD"}
+    # #2425 PR-2: a str tool result maps to the flat {"text": ...} ctx shape.
+    assert result.pipe_data == {"text": "HI WORLD"}
+    assert result.named_stores == {
+        "name": "world", "greeting": "hi world", "shouted": {"text": "HI WORLD"},
+    }

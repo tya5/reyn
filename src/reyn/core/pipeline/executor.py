@@ -108,6 +108,11 @@ from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, Awaitable, Callable, Union
 
 from reyn.core.events.pipeline_recovery import latest_pipeline_state, record_pipeline_state
+from reyn.core.offload.canonical import (
+    canonical_to_ctx_fields,
+    to_canonical,
+    unwrap_dispatch_envelope,
+)
 from reyn.core.pipeline.expr import ExprEvalError, ExprParseError, evaluate_expr
 from reyn.core.pipeline.registry import PipelineNotFoundError
 from reyn.core.pipeline.schema import SchemaRegistry, validate
@@ -754,7 +759,20 @@ async def _run_tool_step(inv: "_StepInvocation") -> "tuple[Any, bool, dict[str, 
                 f"step {inv.step_label} (tool {step.name!r}) output failed schema "
                 f"{step.schema!r}: {validation.errors}"
             )
-    return result, True, inv.completed_step_results
+    # #2425 PR-2: ctx exposes the same text/structured shape chat gets, uniformly across every op
+    # kind — shape-only (to_canonical), NEVER offloaded/size-gated (owner ruling: ctx/pipe data
+    # retains full values for downstream programmatic step processing). Schema validation above runs
+    # against the RAW dispatch result, unchanged.
+    if isinstance(result, dict):
+        canonical = to_canonical(unwrap_dispatch_envelope(result))
+        ctx_result: Any = canonical_to_ctx_fields(canonical)
+    elif isinstance(result, str):
+        ctx_result = {"text": result}
+    else:
+        # A non-dict, non-str result (int/float/bool/list/None/...) is not textual —
+        # it is structured data, not a stringified lossy blob (full-value retention).
+        ctx_result = {"text": "", "structured": result}
+    return ctx_result, True, inv.completed_step_results
 
 
 async def _run_agent_step(inv: "_StepInvocation") -> "tuple[Any, bool, dict[str, Any]]":

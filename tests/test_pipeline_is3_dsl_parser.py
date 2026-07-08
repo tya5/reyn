@@ -340,8 +340,10 @@ steps:
     # arg resolved against the live context (the parsed ExprRef, not the
     # literal text "ctx.brief") — this is the anti-drift assertion.
     assert calls == [("search", {"query": "reyn-dsl", "limit": 3})]
+    # #2425 PR-2: an unregistered-kind dict result's ctx shape wraps the whole
+    # dict as the sole structured attachment.
     assert result.named_stores["hits"] == {
-        "query": "reyn-dsl", "limit": 3, "results": ["a", "b"],
+        "text": "", "structured": {"query": "reyn-dsl", "limit": 3, "results": ["a", "b"]},
     }
     # The agent step ran (scripted reply threaded as pipe data / named output).
     assert result.named_stores["verdict"] == "pipelines are cool"

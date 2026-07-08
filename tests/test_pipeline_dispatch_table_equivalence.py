@@ -41,7 +41,7 @@ async def test_transform_tool_transform_threads_identically_through_dispatch_tab
         steps=[
             TransformStep(value="ctx.seed * 2", output="doubled"),
             ToolStep(name="echo", args={"v": ExprRef("pipe")}, output="echoed"),
-            TransformStep(value="ctx.echoed.echoed + 1", output="final"),
+            TransformStep(value="ctx.echoed.structured.echoed + 1", output="final"),
         ]
     )
     result = await PipelineExecutor().run(
@@ -49,13 +49,16 @@ async def test_transform_tool_transform_threads_identically_through_dispatch_tab
         tool_dispatch=_echo_dispatch, state_log=None, run_id="run-equiv",
     )
 
+    # #2425 PR-2: an unregistered-kind dict result's ctx shape wraps the whole
+    # dict as the sole structured attachment.
+    echoed_ctx = {"text": "", "structured": {"echoed": 42}}
     assert result.pipe_data == 43
     assert result.named_stores == {
-        "seed": 21, "doubled": 42, "echoed": {"echoed": 42}, "final": 43,
+        "seed": 21, "doubled": 42, "echoed": echoed_ctx, "final": 43,
     }
     # Flat linear keys — no dotted paths appear for a pipeline with no `call`.
     assert result.completed_step_results == {
-        "0": 42, "1": {"echoed": 42}, "2": 43,
+        "0": 42, "1": echoed_ctx, "2": 43,
     }
     assert result.step_index == 3
 

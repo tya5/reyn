@@ -44,6 +44,9 @@ A few things worth noting about this file:
   doesn't use that input, but see the
   [reference doc's `shell` section](../../reference/runtime/pipeline-dsl.md#tool-shell-sugar)
   for the full STDIN/STDOUT contract.
+- A `tool`/`shell` step's result (here, `ctx.shouted`) is always the flat
+  `{text: ..., structured: ...}` shape (`structured` only present for
+  non-text data) — see [`tool` step results](../../reference/runtime/pipeline-dsl.md#tool-step-results).
 
 ## 2. Register it
 
@@ -219,11 +222,11 @@ greet  pipelines/greet.yaml      Greet a name and shout it    yes      loaded
 
 $ reyn pipe run greet --input '{"name": "Reyn"}'
 {
-  "pipe_data": "Hello, Reyn! (shouted)",
+  "pipe_data": {"text": "Hello, Reyn! (shouted)"},
   "named_stores": {
     "name": "Reyn",
     "greeting": "Hello, Reyn!",
-    "shouted": "Hello, Reyn! (shouted)"
+    "shouted": {"text": "Hello, Reyn! (shouted)"}
   }
 }
 ```

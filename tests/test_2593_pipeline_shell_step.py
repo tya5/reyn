@@ -121,8 +121,11 @@ async def test_shell_step_threads_pipe_data_to_stdin_and_stdout_to_output():
         state_log=None,
         run_id="run-shell-stdin",
     )
-    assert result.pipe_data == {"n": 3, "msg": "hi"}
-    assert result.named_stores["echoed"] == {"n": 3, "msg": "hi"}
+    # #2425 PR-2: the shell tool's parsed-JSON dict (no "kind") is an
+    # unregistered-kind result → the whole dict is the sole structured attachment.
+    expected = {"text": "", "structured": {"n": 3, "msg": "hi"}}
+    assert result.pipe_data == expected
+    assert result.named_stores["echoed"] == expected
 
 
 # ─── 3. verify: schema on shell output ──────────────────────────────────────
@@ -153,7 +156,7 @@ async def test_shell_step_schema_verify_passes_conforming_output():
         run_id="run-shell-schema-ok",
         schema_registry=registry,
     )
-    assert result.pipe_data == {"msg": "hello"}
+    assert result.pipe_data == {"text": "", "structured": {"msg": "hello"}}
 
 
 @pytest.mark.asyncio

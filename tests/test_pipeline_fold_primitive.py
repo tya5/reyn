@@ -164,7 +164,11 @@ def _append_dispatch(state_log: StateLog, out_file, crash):
         with out_file.open("a", encoding="utf-8") as f:
             f.write(line + "\n")
         await state_log.append("inbox_put", note=line)
-        return str(args["acc"]) + line
+        # #2425 PR-2: a prior ToolStep iteration's ctx value is the flat
+        # {"text": ...} shape (this dispatch's own str return), not a bare str.
+        acc = args["acc"]
+        acc_str = acc["text"] if isinstance(acc, dict) else str(acc)
+        return acc_str + line
 
     return _dispatch
 
@@ -210,7 +214,8 @@ async def test_truncate_falsify_fold_resumes_completed_iterations_exactly_once(t
     assert out_file.read_text(encoding="utf-8").splitlines() == ["A"]
 
     snap_mid = latest_pipeline_state("run-fold-tf", state_log)
-    assert snap_mid["completed_step_results"]["0.fold.0"] == "A"
+    # #2425 PR-2: a ToolStep `do`'s ctx value is the flat {"text": ...} shape.
+    assert snap_mid["completed_step_results"]["0.fold.0"] == {"text": "A"}
     assert "0.fold.1" not in snap_mid["completed_step_results"]
     assert "0" not in snap_mid["completed_step_results"]
     assert snap_mid["step_index"] == 0  # the fold step itself is not done
@@ -234,14 +239,14 @@ async def test_truncate_falsify_fold_resumes_completed_iterations_exactly_once(t
 
     # Exactly-once: A appears ONCE (replayed, not re-executed); B once (resumed).
     assert out_file.read_text(encoding="utf-8").splitlines() == ["A", "B"]
-    assert resumed.completed_step_results["0.fold.0"] == "A"
+    assert resumed.completed_step_results["0.fold.0"] == {"text": "A"}
     # iteration 1's `do` receives the REPLAYED acc ("A") + item "B" == "AB" —
     # proof the accumulator was correctly rebuilt from the replayed result
     # before the remaining iteration ran, not re-derived from scratch.
-    assert resumed.completed_step_results["0.fold.1"] == "AB"
-    assert resumed.named_stores["joined"] == "AB"
-    assert resumed.pipe_data == "AB"
-    assert resumed.completed_step_results["0"] == "AB"
+    assert resumed.completed_step_results["0.fold.1"] == {"text": "AB"}
+    assert resumed.named_stores["joined"] == {"text": "AB"}
+    assert resumed.pipe_data == {"text": "AB"}
+    assert resumed.completed_step_results["0"] == {"text": "AB"}
 
 
 @pytest.mark.asyncio
@@ -277,7 +282,7 @@ async def test_fold_resume_after_full_run_replays_with_zero_new_side_effects(tmp
         tool_dispatch=dispatch, state_log=state_log,
     )
     assert out_file.read_text(encoding="utf-8").splitlines() == ["A", "B"]
-    assert resumed.named_stores["joined"] == "AB"
+    assert resumed.named_stores["joined"] == {"text": "AB"}
 
 
 # ── context injection: {item}/{acc} available to `do` ───────────────────────
