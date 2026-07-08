@@ -1,8 +1,11 @@
 # Present layer — user-facing presentation of bulk data without LLM token round-trip
 
-**Author:** architect · **Status:** RATIFIED 2026-07-08 (owner GO on v1 display-only;
-markdown + templates confirmed in-scope) — implementation in progress (PR-A dispatched,
-lead-coder review/merge). Landed design record. · **Date:** 2026-07-08
+**Author:** architect · **Status:** IMPLEMENTED 2026-07-08 (v1, display-only). Arc
+landed: PR-A #2658 (op core), PR-B #2661 (renderer + Option-B guard), PR-C #2664
+(registry + 4-stage fallback), PR-D #2665 (replay/rewind + concept/reference docs +
+feature-map). Non-blocking follow-ups: #2655 (renderer width), #2656 (offload
+shape-summary), #2663 (offload content_type for declared-type routing). · **Date:**
+2026-07-08
 
 ## Problem
 
