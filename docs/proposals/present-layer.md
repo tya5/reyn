@@ -189,23 +189,32 @@ Mirror of the input-side content-guard, at the output boundary:
   especially) for never-ingested data.
 - **Per-binding size caps** — prevents `/` (root) bound into a `text` component from
   dumping an entire file.
-- **Per-surface inline height caps** (terminal: e.g. ~20 rows inline + expand/pager
-  affordance, exact mechanics per tui-coder input) — a 10k-row present must not destroy
-  terminal scrollback. Fidelity is guaranteed by the ref (full data always reachable),
-  not by unbounded inline paint.
+- **Default output cap (present-specific — not a scrollback pager).** The inline-CUI
+  convention (confirmed with tui-coder) is that conversation output flows freely into
+  terminal scrollback *uncapped*, because normal output is already bounded by LLM
+  *output tokens*. `present` is unbounded by construction (that is the whole point), so
+  it must carry its **own** default cap: render head-N rows/lines + a
+  `…N more — full data: <ref>` tail. There is no pager in the inline-CUI; the **ref is
+  the full-fidelity escape hatch** (re-present with a filter/higher cap, or `file__read`).
+  This bound is orthogonal to the inline-CUI's live-region caps
+  (`_ABOVE_REGION_MAX_HEIGHT` / `_MENU_REGION_MAX_HEIGHT` = 12), which govern persistent
+  UI regions, not one-shot conversation output.
 
 ### 6. Renderers and surfaces
 
 - `PresentationRenderer` protocol — **built fresh** (the FP-0051 registry was deleted,
   not relocated; its design is the lineage, not a base to extend). Terminal (inline-CUI)
-  = Rich/ANSI (substrate to confirm with tui-coder); web = native components; A2A =
-  structured message part.
-- **Terminal note**: the current terminal UI is the inline-CUI
-  (`src/reyn/interfaces/inline/`) — no side panel, and its only tool-result rendering is
-  `summarize_tool_result` (a one-liner). `present` renders as an **inline block in the
-  conversation flow**, introducing rich rendering that does not exist today. Rendering
-  substrate and constraints (height caps, expand/pager affordances, scrollback behavior)
-  are being confirmed with tui-coder.
+  = **Rich** (confirmed with tui-coder); web = native components; A2A = structured
+  message part.
+- **Terminal note (confirmed with tui-coder 2026-07-08).** The terminal UI is the
+  inline-CUI (`src/reyn/interfaces/inline/`, prompt_toolkit + Rich) — the Textual TUI and
+  right panel were deleted in `eff08169`; there is no side panel (the model is elastic
+  Regions above / below the input bar). Its only tool-result rendering today is
+  `summarize_tool_result` (a one-liner). `present` renders as a **one-shot inline block
+  in the conversation scrollback**, riding the existing `repl/renderer.py` pattern: Rich
+  `Console` → `StringIO` → `prompt_toolkit.run_in_terminal()` print. This axis is
+  separate from the live-region line caps; the present-specific default output cap (§ 5)
+  applies instead.
 - **Remote surfaces (web/A2A)**: remote clients cannot read local refs. Data delivery is
   the surface adapter's responsibility: materialize via the gateway (size-capped inline
   embed or a served endpoint). v1 ships the terminal (inline-CUI) surface only; the hub
