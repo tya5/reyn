@@ -180,7 +180,7 @@ Component catalog, all read-only:
 
 ```
 registered template (operator-owned) → inline blueprint (LLM-authored, catalog-constrained)
-  → content-type default viewer (FP-0051 registry) → generic YAML/text
+  → default blueprint synthesized from data shape → generic (always renders)
 ```
 
 - Named templates live in **`.reyn/config/presentations.yaml`** — same registration +
@@ -188,8 +188,37 @@ registered template (operator-owned) → inline blueprint (LLM-authored, catalog
   templates is an **operator/config action**; the LLM authors inline blueprints only
   (write-gate culture).
 - Inline blueprints are structurally gated at op validation: catalog components only,
-  bindings are path expressions only, labels escaped at parse (FP-0051's fence,
-  generalized).
+  path-expression bindings only. Leaf safety is the single guard seam + markup-inert
+  renderer discipline (§ 5) — **not** parse-time escaping (removed in the PR-A/PR-B
+  Option-B revision).
+- **Stage 3 (default synthesis).** Build a **default declarative blueprint from the
+  resolved data** and run the **same** validate → resolve-bindings → render path — reusing
+  the guard, caps, and non-executable rails (better than a bespoke per-type viewer; the
+  FP-0051 registry is deleted). Component-choice precedence (FP-0051 order: explicit type
+  first, sniff/shape last):
+  1. **Declared content-type — only when available from inline data / explicit op args,
+     NOT from an offload ref.** The canonical mapper drops `content_type`/`mimeType` as
+     transport (high-signal-only frontmatter — authoritatively confirmed by the mapper's
+     author). When present: `text/x-diff`\|`text/x-patch`→`diff`, declared language→`code`,
+     `text/markdown`→`markdown`.
+  2. **Cheap diff content-sniff** (FP-0051 heuristic: `diff --git` / `--- `+`+++ ` / `@@ `)
+     → `diff`. Makes the `diff` component default-reachable without a declared type.
+  3. **Structural shape**: `list[dict]`→`table` (columns = union over the first K rows),
+     `list[scalar]`→`list`, `dict`→`keyvalue` (row per top-level key), `str`/scalar→**`text`**
+     (**not** `markdown` — faithful display; `markdown` reinterprets `#`/`*`/`[]()` and
+     mangles plain output), binary→`image` (image mimetype) or a `text` placeholder.
+- **Stage 4 (generic)** is the final catch that **always renders** — structured → YAML into
+  a `text`/`code` component, text → as-is — so data always reaches the user.
+- **Fallback triggers**: all-bindings-missed **or** unknown-template-name (never a hard
+  error). The ack reports the **requested** stage's stats plus a `note` naming the stage
+  that actually rendered, so the LLM self-corrects; the `presented` event shape is
+  unchanged (§§ 1, 7).
+- **Follow-up (non-blocking, sibling of #2656)**: preserving `content_type` for offloaded
+  data would give present declared-type routing for free — enabling default
+  markdown-rendering and code-highlighting that shape + diff-sniff cannot infer. Deferred;
+  PR-C completes with sniff + shape. Design nuance for whoever takes it: `content_type` is
+  *renderer* signal, not LLM-next-action signal, so it should reach present without
+  bloating the LLM-visible high-signal frontmatter.
 
 ### 4. Binding semantics
 
