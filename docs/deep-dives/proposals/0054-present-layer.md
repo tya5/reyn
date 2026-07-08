@@ -124,16 +124,31 @@ present:
   resolved identically to `file.read`** — `present` can never read more than the agent's
   file ops can. Not limited to tool-result refs: artifacts, agent-written files, any
   zone-readable path qualifies (works even with `offload.enabled: false`).
+- **`data_ref` resolution seam (junction with the tool-result arc).** A `data_ref` may
+  be a plain workspace path *or* an offload ref (e.g. a `structured_ref` produced by the
+  arc). `present` resolves it by loading the **full value** through the same file-read /
+  offload-store access the arc established (`file__read(path=<ref>)` semantics), under
+  the `file.read` authority check above — i.e. present re-hydrates offloaded structured
+  data from `structured_ref` rather than from the LLM-visible preview. The resolver is a
+  single explicit seam (`resolve_present_source(data_ref) -> bytes|obj`), so the two arcs
+  meet at exactly one point and offloaded vs inline data is transparent to the renderer.
 - **Fire-and-continue**: unlike `ask_user`, does not pause the run.
-- **Op result (ack)** — the LLM's only feedback, deliberately compact:
+- **Op result (ack)** — the LLM's only feedback, deliberately compact **and high-signal**
+  (same principle as the tool-result arc): each drop carries a *reason category* so the
+  next-turn LLM can act, not just a bare path list.
   ```yaml
   ok: true
   bindings_resolved: 3
-  bindings_dropped: ["/results/0/author"]
   rows: 500
+  bindings_dropped:
+    - {path: "/results/0/author", reason: path_not_found}   # template/data shape mismatch
+    # reason ∈ {path_not_found, type_mismatch, guard_stripped}
   ```
-  This closes the self-correction loop for blind presentation: the LLM detects a
-  mismatched template for tens of tokens and can re-present with corrected paths.
+  This closes the self-correction loop for blind presentation: `path_not_found` across
+  many rows reads as "template doesn't match this data shape → re-check"; `type_mismatch`
+  as "right path, wrong component"; `guard_stripped` as "content neutralized by the
+  presentation-guard, not a template bug". The LLM corrects for tens of tokens without
+  ingesting the data.
 - New op kind ⇒ **`OP_KIND_MODEL_MAP` + `docs/reference/runtime/control-ir.md` section
   in the same PR** (CLAUDE.md hard rule #1983).
 
@@ -225,7 +240,7 @@ Mirror of the input-side content-guard, at the output boundary:
   latent bug already in `repl/renderer.py`'s two existing render sites, and more visible
   for `present` tables. The renderer must read `get_app().output.get_size().columns` and
   pass it explicitly to `Console(width=...)` per render. (Fixing the two existing sites
-  is a worthwhile fast-follow, tracked separately — not in this proposal's scope.)
+  is a worthwhile fast-follow, tracked as issue #2655 — not in this proposal's scope.)
 - **Remote surfaces (web/A2A)**: remote clients cannot read local refs. Data delivery is
   the surface adapter's responsibility: materialize via the gateway (size-capped inline
   embed or a served endpoint). v1 ships the terminal (inline-CUI) surface only; the hub
@@ -241,7 +256,7 @@ presented:
   surface: [inline-cui]
   ingested: none | partial | full   # OS-COMPUTED, not LLM-self-reported
   bindings_resolved: 3
-  bindings_dropped: ["/results/0/author"]
+  bindings_dropped: [{path: "/results/0/author", reason: path_not_found}]
 ```
 
 **Blind-routing is not a permission mode — it is an audit annotation.** Whether the LLM
@@ -256,8 +271,14 @@ differentiator is making blindness *auditable*, not forbidding it.)
   existing lifecycle class.
 - Replay/rewind re-renders best-effort from the `presented` event; a GC'd ref renders as
   an expiry placeholder pointing at the audit event. Presentation is a cache; the event
-  is the truth. (No WAL-derived recovery state is introduced ⇒ the recovery-feature PR
-  gate does not apply.)
+  is the truth.
+- **Recovery-feature PR gate — explicit answer (per lead-coder):** PR-D introduces **no
+  reconstructed state**. It re-renders a projection from a durable event + an
+  already-durable ref, or shows a placeholder; nothing derives recoverable state from
+  WAL events, and `present` never writes recovery-core state. ⇒ the CLAUDE.md
+  recovery-feature truncate-falsify gate **does not apply**. If a future revision ever
+  reconstructs state from `presented` events, that PR must carry the truncate-falsify
+  test in-arc.
 - Conversation history never contains the presented bytes ⇒ nothing new for compaction.
 
 ## Relationship to the tool-result-schema-redesign arc
