@@ -267,7 +267,7 @@ def _overflow_ref_text(ref: dict) -> str:
     return (
         f"[image not loaded — exceeds the per-turn media budget. "
         f"Stored at {ref['path']} ({ref.get('mime_type', 'image')}); "
-        f"load it with read_tool_result when the context has room.]"
+        f"load it with file__read(path={ref['path']!r}) when the context has room.]"
     )
 
 
@@ -302,8 +302,8 @@ def _build_media_tail_preview(
                 return {"type": "text", "text": (
                     f"[{n} more image(s) exceed the per-turn media budget and are "
                     f"not shown here. A lossless manifest of their on-disk paths is "
-                    f"stored at {saved['path']}; load it with read_tool_result to "
-                    f"access them.]"
+                    f"stored at {saved['path']}; load it with "
+                    f"file__read(path={saved['path']!r}) to access them.]"
                 )}
             except Exception:  # noqa: BLE001 — offload best-effort; degrade below
                 pass
