@@ -205,13 +205,20 @@ never-ingested data. Every render-leaf string — labels, literal slot values, A
 bound data values — passes through ONE neutralizer, selected by the target
 **surface** (a per-surface strategy, so a future web surface slots in without
 touching the binding layer). The v1 **terminal** strategy strips ESC / control
-sequences (OSC / CSI) and **escapes** (not strips) Rich console markup so `[red]`
-renders literally; it does **not** HTML-escape — in a terminal `<div>` is a
-harmless literal, and entity-escaping would corrupt `code` / `diff` content (HTML
-neutralization is a future web renderer's concern). **Per-binding size caps**
-prevent a `/` (root) pointer bound into a `text` component from dumping a whole
-file. Neutralization is a transform (the value still renders, inert) — the ref
-remains the full-fidelity source.
+sequences (OSC / CSI) only; it does **not** escape Rich console markup and does
+**not** HTML-escape. Rich-markup safety is deliberately NOT this seam's job (PR-B
+revision): Rich console-markup injection is reachable only through
+`console.print(str, markup=True)` — a choice the *renderer* makes per Rich
+object, not a property of the terminal sink. The inline-CUI renderer routes
+every leaf into a markup-inert Rich object (`Text` / `Syntax` / `Markdown`) and
+never calls `console.print` with markup interpretation on presented content, so
+Rich injection is structurally impossible regardless of what the guard does — the
+same "safety from shape, not policy" discipline as the guard's own ESC-strip.
+HTML neutralization stays a future web renderer's own concern (in a terminal
+`<div>` is a harmless literal, and entity-escaping would corrupt `code` / `diff`
+content). **Per-binding size caps** prevent a `/` (root) pointer bound into a
+`text` component from dumping a whole file. Neutralization is a transform (the
+value still renders, inert) — the ref remains the full-fidelity source.
 
 **Ack (op result)** — the LLM's only feedback, deliberately compact + high-signal:
 
@@ -235,10 +242,15 @@ bindings_resolved, bindings_dropped, rows}`. `ingested` (`none` | `partial` |
 appear earlier in the session), never LLM-self-reported. The event carries **refs
 + stats only, never content bytes** (the data is already durable in the ref).
 
-> PR-A scope: the model + binding + guard run against a **null renderer**
-> (`surface: ["null"]`) — there is no UI surface yet. The inline-CUI renderer,
-> `presentations.yaml` registry + fallback chain, and replay/rewind rendering land
-> in later PRs.
+> PR-B: the inline-CUI renderer is wired (`surface: ["inline-cui"]` when a chat
+> session's `OpContext.presentation_renderer` is set; `["null"]` otherwise — e.g.
+> a bare `OpContext` built without one, PR-A's original behavior). It renders
+> `ResolvedPresentation.nodes` as a one-shot inline block in the conversation
+> scrollback (`interfaces/repl/present_renderer.py`, riding the existing Rich
+> `Console` → `StringIO` → `run_in_terminal()` pattern), with an explicit
+> per-render terminal width (Rich cannot auto-detect width writing to a
+> `StringIO`). `presentations.yaml` registry + fallback chain, and replay/rewind
+> rendering land in later PRs.
 
 ## `sandboxed_exec`
 

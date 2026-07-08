@@ -17,6 +17,7 @@ if TYPE_CHECKING:
     from reyn.config import MultimodalConfig, SandboxConfig, WebConfig
     from reyn.core.events.events import EventLog
     from reyn.core.events.state_log import StateLog
+    from reyn.core.present import PresentationRenderer
     from reyn.data.workspace.media_store import MediaStore
     from reyn.data.workspace.workspace import Workspace
     from reyn.llm.model_resolver import ModelResolver
@@ -79,6 +80,11 @@ class OpContext:
     # User interventions (ask_user, permission prompts in PR7)
     intervention_bus: "RequestBus | None" = None
     current_phase: str = ""
+
+    # FP-0054 PR-B: the surface a `present` op renders to. None = PR-A's null-surface
+    # behavior (no UI reached, resolve_bindings(surface="null")). A wired renderer names
+    # its own `surface_name` (e.g. inline-CUI's OutboxPresentationRenderer = "inline-cui").
+    presentation_renderer: "PresentationRenderer | None" = None
 
     # #272/#1128: voluntary-compaction capability for the `compact` op.
     # An awaitable zero-arg callable the caller (Session / phase runtime)

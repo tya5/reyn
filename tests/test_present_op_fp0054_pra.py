@@ -223,17 +223,19 @@ def test_terminal_escape_in_data_is_neutralized_not_rendered():
     assert {"path": "/v", "reason": "guard_stripped"} in out.bindings_dropped
 
 
-def test_rich_markup_in_data_is_escaped_literal():
-    """Tier 1: Rich markup in bound data is escaped so it renders literally (the
-    bracket survives as text, the styling does not drive the surface)."""
+def test_rich_markup_in_data_passes_the_guard_unescaped():
+    """Tier 1: PR-B revision (FP-0054 §5 Option B) — Rich console markup is NOT a
+    guard-level (surface-universal) threat like ESC sequences — it is reachable
+    ONLY through ``console.print(str, markup=True)``, a choice the RENDERER makes
+    per Rich object. The guard passes ``[tag]``-shaped text through byte-for-byte
+    (no escape, no strip, no drop); Rich-injection safety is the renderer's job
+    (it never feeds presented content through a markup-interpreting print call —
+    see ``interfaces/repl/present_renderer.py`` + its invariant-lock test)."""
     nodes = validate_blueprint({"component": "text", "text": {"$bind": "/v"}})
     out = resolve_bindings(nodes, {"v": "[bold red]owned[/bold red]"})
     rendered = out.nodes[0]["text"]
-    # The literal bracket text is preserved but escaped (backslash-guarded), so
-    # Rich will not interpret it as a style tag.
-    assert "bold red" in rendered
-    assert "\\[" in rendered
-    assert {"path": "/v", "reason": "guard_stripped"} in out.bindings_dropped
+    assert rendered == "[bold red]owned[/bold red]"
+    assert all(d["reason"] != "guard_stripped" for d in out.bindings_dropped)
 
 
 def test_root_pointer_into_text_is_size_capped():
@@ -265,10 +267,11 @@ def test_labels_neutralized_at_render_seam():
 
 
 def test_literal_text_slot_value_is_neutralized_via_single_seam():
-    """Tier 1: an LLM-authored LITERAL (non-$bind) escape / Rich-markup in a
-    text-family slot is neutralized + reported guard_stripped — the same standard
-    as a bound value (single-seam: no literal bypasses the guard). RED against the
-    pre-unification code where text-slot literals were only size-capped."""
+    """Tier 1: an LLM-authored LITERAL (non-$bind) escape in a text-family slot is
+    neutralized (ESC/control stripped) + reported guard_stripped — the same
+    standard as a bound value (single-seam: no literal bypasses the guard).
+    Rich-markup-shaped text in the SAME literal passes through unescaped (PR-B
+    Option B — see test_rich_markup_in_data_passes_the_guard_unescaped)."""
     nodes = validate_blueprint(
         {"component": "text", "text": "safe\x1b[31mINJECT\x1b[0m [bold]owned[/bold]"}
     )
@@ -276,7 +279,7 @@ def test_literal_text_slot_value_is_neutralized_via_single_seam():
     rendered = out.nodes[0]["text"]
     assert "\x1b" not in rendered          # ESC control byte gone
     assert "INJECT" in rendered            # readable text survives (inert)
-    assert "\\[" in rendered               # Rich markup escaped literal
+    assert "[bold]owned[/bold]" in rendered  # Rich-markup-shaped text passes through raw
     assert any(d["reason"] == "guard_stripped" for d in out.bindings_dropped)
 
 

@@ -1,4 +1,4 @@
-"""present kind handler — route bulk data + a display template to the user (FP-0054 PR-A).
+"""present kind handler — route bulk data + a display template to the user (FP-0054 PR-A/PR-B).
 
 **Tier 0** (``ask_user``'s sibling) and **fire-and-continue**: unlike ``ask_user``
 this op does NOT pause the run — it produces a presentation ack and returns. The
@@ -6,12 +6,12 @@ only gate is that ``data_ref`` read authority resolves identically to
 ``file.read`` (in ``resolve_present_source``); a denied read raises
 ``PermissionError`` and the dispatch layer returns ``status="denied"``.
 
-PR-A scope: the declarative model + binding resolution + presentation-guard run
-against a **null renderer** — there is no UI surface yet (the inline-CUI renderer
-is a later PR). The op returns the compact, high-signal ack
-(``{ok, bindings_resolved, bindings_dropped, rows}``, drops as
-``{path, reason}``) and emits the ``presented`` P6 event (refs + stats, never
-content bytes).
+The surface is whichever ``OpContext.presentation_renderer`` the caller wired (PR-B: the
+inline-CUI's ``OutboxPresentationRenderer``, ``runtime/session_buses.py``) — ``None`` keeps
+PR-A's null-surface behavior (no UI reached, ``surface="null"``). The op returns the
+compact, high-signal ack (``{ok, bindings_resolved, bindings_dropped, rows}``, drops as
+``{path, reason}``) and emits the ``presented`` P6 event (refs + stats, never content
+bytes) regardless of whether a renderer is wired.
 """
 from __future__ import annotations
 
@@ -31,9 +31,7 @@ from reyn.schemas.models import PresentIROp
 from . import register
 from .context import OpContext
 
-# The PR-A surface: there is no UI renderer yet, so present renders against a
-# null renderer (no bytes reach any surface). Later PRs add "inline-cui" etc.
-_NULL_SURFACE = ["null"]
+_NULL_SURFACE = "null"
 
 _INLINE_MARKER = "<inline-data>"
 
@@ -49,11 +47,19 @@ def _template_id(op: PresentIROp) -> str:
     return f"blueprint:{digest[:16]}"
 
 
+def _surface_name(ctx: OpContext) -> str:
+    """The surface a resolved presentation reaches: the wired renderer's own name, or
+    the PR-A null surface when none is wired."""
+    renderer = ctx.presentation_renderer
+    return renderer.surface_name if renderer is not None else _NULL_SURFACE
+
+
 def _emit_presented(
     ctx: OpContext,
     *,
     data_ref: str,
     template: str,
+    surface: str,
     ingested: str,
     bindings_resolved: int,
     bindings_dropped: list[dict],
@@ -68,7 +74,7 @@ def _emit_presented(
         phase=ctx.current_phase,
         data_ref=data_ref,
         template=template,
-        surface=list(_NULL_SURFACE),
+        surface=[surface],
         ingested=ingested,
         bindings_resolved=bindings_resolved,
         bindings_dropped=bindings_dropped,
@@ -95,14 +101,15 @@ async def handle(op: PresentIROp, ctx: OpContext) -> dict:
         data_ref_field = _INLINE_MARKER
 
     template_id = _template_id(op)
+    surface = _surface_name(ctx)
 
     # 2. Named-template resolution (registry + fallback chain) lands in a later
     #    PR; PR-A resolves inline blueprints only. A named template is recorded
     #    (audit-first) but not yet renderable.
     if op.template is not None:
         _emit_presented(
-            ctx, data_ref=data_ref_field, template=template_id, ingested=ingested,
-            bindings_resolved=0, bindings_dropped=[], rows=0,
+            ctx, data_ref=data_ref_field, template=template_id, surface=surface,
+            ingested=ingested, bindings_resolved=0, bindings_dropped=[], rows=0,
         )
         return {
             "kind": "present", "status": "ok", "ok": False,
@@ -120,22 +127,30 @@ async def handle(op: PresentIROp, ctx: OpContext) -> dict:
     except PresentBlueprintError as exc:
         return {"kind": "present", "status": "error", "ok": False, "error": str(exc)}
 
-    # 4. Bind + guard against the null renderer. The guard applies the surface's
-    #    neutralizer strategy (PR-A's null surface uses the terminal strategy).
-    resolved = resolve_bindings(nodes, data, surface=_NULL_SURFACE[0])
+    # 4. Bind + guard against the wired surface (or the PR-A null surface — both use the
+    #    terminal neutralizer strategy today; see guard.py's _STRATEGIES).
+    resolved = resolve_bindings(nodes, data, surface=surface)
 
     # 5. Audit event (P6) — refs + stats, never content bytes.
     _emit_presented(
         ctx,
         data_ref=data_ref_field,
         template=template_id,
+        surface=surface,
         ingested=ingested,
         bindings_resolved=resolved.bindings_resolved,
         bindings_dropped=resolved.bindings_dropped,
         rows=resolved.rows,
     )
 
-    # 6. The compact, high-signal ack (the LLM's only feedback).
+    # 6. Hand the render model to the wired surface (PR-B). Fire-and-continue: the op's
+    #    ack (below) is already fully derived from `resolved`'s stats, not from anything
+    #    the renderer does — a renderer failure must never be allowed to reach here (see
+    #    OutboxPresentationRenderer's own fire-and-forget contract).
+    if ctx.presentation_renderer is not None:
+        ctx.presentation_renderer.render(resolved)
+
+    # 7. The compact, high-signal ack (the LLM's only feedback).
     return {
         "kind": "present",
         "status": "ok",

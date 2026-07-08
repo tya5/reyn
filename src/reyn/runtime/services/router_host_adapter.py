@@ -244,6 +244,12 @@ class RouterHostAdapter:
         # config-deny path still raises, interactive prompt path raises
         # the documented RuntimeError telling the caller a bus is needed).
         intervention_bus_factory: Callable[[], Any] | None = None,
+        # FP-0054 PR-B: callable that yields a PresentationRenderer for router-initiated
+        # `present` ops. Session passes a factory wrapping
+        # ``OutboxPresentationRenderer(session)``; None (tests / headless) keeps
+        # ``OpContext.presentation_renderer=None`` — the `present` op's PR-A null-surface
+        # behavior (ack + audit event still fire; no UI is reached).
+        presentation_renderer_factory: Callable[[], Any] | None = None,
         # #2175: the safety.on_limit checkpoint + the shared per-run extension dict —
         # injected from Session (mirror the inter_agent_messaging injection) so the spawn SEAM can
         # route a spawn-limit exceed through the same mode-driven on_limit framework as
@@ -416,6 +422,10 @@ class RouterHostAdapter:
         # interactive (Layer 4) approval flow without crashing on
         # ``intervention_bus is None`` defensive guards.
         self._intervention_bus_factory = intervention_bus_factory
+        # FP-0054 PR-B: presentation-renderer factory used by make_router_op_context to
+        # populate ``ctx.presentation_renderer`` so a router-initiated `present` op
+        # reaches the live UI surface instead of PR-A's null surface.
+        self._presentation_renderer_factory = presentation_renderer_factory
         # #2175: spawn-limit on_limit checkpoint + the shared extension dict.
         self._handle_chat_limit_checkpoint = handle_chat_limit_checkpoint
         self._safety_extensions: "dict[str, float]" = (
@@ -1930,6 +1940,11 @@ class RouterHostAdapter:
             if self._intervention_bus_factory is not None
             else None
         )
+        presentation_renderer = (
+            self._presentation_renderer_factory()
+            if self._presentation_renderer_factory is not None
+            else None
+        )
         return build_router_op_context(
             events=self._events,
             permission_resolver=self._perm,
@@ -1944,6 +1959,7 @@ class RouterHostAdapter:
             sandbox_policy=self._sandbox_policy,
             agent_id=None,
             intervention_bus=bus,
+            presentation_renderer=presentation_renderer,
             multimodal_config=self._multimodal_config,
             media_store=self._media_store,
             compact_now=self._compact_now,

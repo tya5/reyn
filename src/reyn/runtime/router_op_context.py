@@ -54,6 +54,7 @@ def build_router_op_context(
     # ── per-host fields (caller-supplied; behavior-preserving) ─────────────
     agent_id: str | None,  # FP-0016 memory scope (RouterHostAdapter: None — gap candidate)
     intervention_bus: Any = None,  # Session wires post-hoc; RouterHostAdapter inline
+    presentation_renderer: Any = None,  # FP-0054 PR-B: RouterHostAdapter wires inline (factory)
     multimodal_config: Any = None,  # #364
     media_store: Any = None,  # #383
     compact_now: Any = None,  # #272/#1128
@@ -134,6 +135,7 @@ def build_router_op_context(
         run_id=run_id,
         agent_id=agent_id,
         intervention_bus=intervention_bus,
+        presentation_renderer=presentation_renderer,
         multimodal_config=multimodal_config,
         media_store=media_store,
         compact_now=compact_now,
