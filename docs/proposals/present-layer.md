@@ -194,8 +194,11 @@ Mirror of the input-side content-guard, at the output boundary:
   terminal scrollback *uncapped*, because normal output is already bounded by LLM
   *output tokens*. `present` is unbounded by construction (that is the whole point), so
   it must carry its **own** default cap: render head-N rows/lines + a
-  `…N more — full data: <ref>` tail. There is no pager in the inline-CUI; the **ref is
-  the full-fidelity escape hatch** (re-present with a filter/higher cap, or `file__read`).
+  `…N more — full data: <ref>` tail. **Cap before render, not after** (tui-coder review) —
+  for `code`/`diff`, Rich syntax highlighting is costly, so truncate the source to the
+  row/line budget first and highlight only the survivors. There is no pager in the
+  inline-CUI; the **ref is the full-fidelity escape hatch** (re-present with a
+  filter/higher cap, or `file__read`).
   This bound is orthogonal to the inline-CUI's live-region caps
   (`_ABOVE_REGION_MAX_HEIGHT` / `_MENU_REGION_MAX_HEIGHT` = 12), which govern persistent
   UI regions, not one-shot conversation output.
@@ -215,6 +218,12 @@ Mirror of the input-side content-guard, at the output boundary:
   `Console` → `StringIO` → `prompt_toolkit.run_in_terminal()` print. This axis is
   separate from the live-region line caps; the present-specific default output cap (§ 5)
   applies instead.
+- **Explicit render width (tui-coder review).** Rich's `Console` cannot auto-detect
+  terminal width when writing to a `StringIO`; it silently falls back to 80 columns — a
+  latent bug already in `repl/renderer.py`'s two existing render sites, and more visible
+  for `present` tables. The renderer must read `get_app().output.get_size().columns` and
+  pass it explicitly to `Console(width=...)` per render. (Fixing the two existing sites
+  is a worthwhile fast-follow, tracked separately — not in this proposal's scope.)
 - **Remote surfaces (web/A2A)**: remote clients cannot read local refs. Data delivery is
   the surface adapter's responsibility: materialize via the gateway (size-capped inline
   embed or a served endpoint). v1 ships the terminal (inline-CUI) surface only; the hub
@@ -282,8 +291,8 @@ differentiator is making blindness *auditable*, not forbidding it.)
   + control-ir.md section (hard rule), `presented` event type.
 - **PR-B** — inline-CUI renderer: conversation inline block + `PresentationRenderer`
   protocol (FP-0051 design lineage), height caps + expand affordance.
-- **PR-C** — `presentations.yaml` registration + hot-reload seam + 4-stage fallback
-  integration with FP-0051 registry.
+- **PR-C** — `presentations.yaml` registration + hot-reload seam + the 4-stage fallback
+  chain (built fresh — FP-0051's registry is deleted; §§ 3, 6).
 - **PR-D** — replay/rewind placeholder rendering + docs (concepts page + reference).
 
 ## Test plan (per testing.ja.md tiers)
