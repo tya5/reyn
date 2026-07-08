@@ -218,6 +218,11 @@ class RichChatRenderer(ChatRenderer):
         # the bracketed token).
         self._clear_transient()
         c = self._console
+        # Rich's Console can't auto-detect terminal width writing to a StringIO —
+        # it silently falls back to 80 columns. Read the LIVE terminal width per
+        # render (the terminal can resize between turns) instead of inheriting
+        # that fallback (issue #2655).
+        c.width = _live_terminal_width()
         kind = msg.kind
         text = f"{_meta_prefix(msg.meta)}{msg.text}"
         if kind == "agent":
@@ -770,15 +775,12 @@ class InlineChatRenderer(ChatRenderer):
         self._clear_transient()
         if wants_separator(msg.kind, self._seen_message):
             self._console.print()  # blank line between message blocks
-        if msg.kind == "presentation":
-            # FP-0054 §6 (tui-coder review): Rich's Console cannot auto-detect terminal
-            # width writing to a StringIO — it silently falls back to 80 columns. Read
-            # the LIVE terminal width per render (the terminal can resize between
-            # turns) rather than inheriting that fallback, which matters far more for
-            # `present`'s tables than for the plain-text/one-liner kinds this renderer
-            # otherwise prints (a pre-existing latent gap there — issue #2655 fast-follow,
-            # out of this PR's scope).
-            self._console.width = _live_terminal_width()
+        # Rich's Console cannot auto-detect terminal width writing to a StringIO —
+        # it silently falls back to 80 columns. Read the LIVE terminal width per
+        # render (the terminal can resize between turns) rather than inheriting
+        # that fallback. Applies to every kind, not just `presentation`'s tables —
+        # plain agent replies can carry wide code/diff blocks too (issue #2655).
+        self._console.width = _live_terminal_width()
         self._console.print(format_inline_message(msg))
         self._seen_message = True
         self._flush()
