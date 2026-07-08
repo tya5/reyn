@@ -17,6 +17,7 @@ if TYPE_CHECKING:
     from reyn.config import MultimodalConfig, SandboxConfig, WebConfig
     from reyn.core.events.events import EventLog
     from reyn.core.events.state_log import StateLog
+    from reyn.core.op_runtime.render_template import RenderTemplateBounds
     from reyn.core.present import PresentationRenderer
     from reyn.data.workspace.media_store import MediaStore
     from reyn.data.workspace.workspace import Workspace
@@ -96,6 +97,13 @@ class OpContext:
     # from the session/adapter's current registry, so a hot-reload swap is picked up
     # at the next turn boundary.
     presentation_registry: "object | None" = None
+
+    # FP-0055 PR-2: resource bounds for the `render_template` op (streaming
+    # output-size + wall-clock cap, applied DURING generation). None → the
+    # safety-spirit defaults (RenderTemplateBounds()). The override seam is used by
+    # operator config (future yaml wiring) and by tests that inject a tiny cap; a
+    # production-default None correctly applies the generous defaults in-handler.
+    render_template_bounds: "RenderTemplateBounds | None" = None
 
     # #272/#1128: voluntary-compaction capability for the `compact` op.
     # An awaitable zero-arg callable the caller (Session / phase runtime)

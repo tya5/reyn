@@ -23,6 +23,7 @@ from reyn.core.present.source import (
     compute_ingested,
     rehydrate_ref_text,
     resolve_present_source,
+    resolve_ref_text,
 )
 
 __all__ = [
@@ -41,5 +42,6 @@ __all__ = [
     "resolve_bindings",
     "resolve_pointer",
     "resolve_present_source",
+    "resolve_ref_text",
     "validate_blueprint",
 ]

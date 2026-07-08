@@ -20,6 +20,7 @@ Control IR is the list of side-effect operations the LLM may emit alongside its 
 | `grep_files` | Search file contents by regex | `file.read` |
 | `ask_user` | Pause the phase and ask the user a question | none (always allowed) |
 | `present` | Route bulk data + a declarative view to the user surface without the data passing through LLM output tokens (fire-and-continue) | Tier 0 (always allowed); `data_ref` read authority == `file.read` |
+| `render_template` | Render a Jinja2 template against structured data into a string (a sandboxed producer — no side effects, no sink) | `template_ref` / `data_ref` read authority == `file.read`; inline-only is pure computation (no gate) |
 | `sandboxed_exec` | Run argv under a `SandboxPolicy` via a `SandboxBackend` (replaces the removed `shell` op) | enforced by backend (`SandboxPolicy`) |
 | `web_search` | Search the public web via DuckDuckGo | Tier 1 — default allow; `web.search: deny` in `reyn.yaml` blocks |
 | `web_fetch` | Fetch a single URL and return extracted text | Tier 1 — default allow; `web.fetch: deny` in `reyn.yaml` blocks |
@@ -271,6 +272,72 @@ appear earlier in the session), never LLM-self-reported. The event carries **ref
 > display-only projection (no reconstructed state). See
 > [Concepts: Present layer](../../concepts/runtime/present.md) and the
 > [Present op & surface reference](present.md) for the full surface.
+
+## `render_template`
+
+Renders a Jinja2 template against structured data into a plain string. A general,
+sandboxed **producer**: `data + template → string`, with **no side effects and no
+sink** — the rendered string is returned as an ordinary op result (canonical `text`;
+large output auto-offloads on the chat path). The caller routes it to whatever sink it
+wants: `present`, a `write_file`, a message body, or a pipeline `ctx`.
+
+Prefer `present` (declarative) to show structured data to the user — it is
+token-economical and portable. Reach for `render_template` only when you need
+**computed text**: loops / conditionals / aggregation woven into prose, which
+declarative binding intentionally cannot express.
+
+```json
+{
+  "kind": "render_template",
+  "template": "{% for r in data.results %}- {{ r.title }}\n{% endfor %}",
+  "data_ref": "runs/summary.json",
+  "undefined": "strict"
+}
+```
+
+Fields:
+- `template` (XOR `template_ref`) — inline Jinja2 source string.
+- `template_ref` (XOR `template`) — a zone-readable template file path, read as **raw
+  text** under `file.read` authority (a template file is source text, never
+  JSON-rehydrated).
+- `data_ref` (XOR `data_inline`) — any zone-readable path, re-hydrated to its full
+  value under `file.read` semantics (the same seam `present` uses).
+- `data_inline` (XOR `data_ref`) — a small object already in the LLM's context.
+- `undefined` (optional, default `"strict"`) — `"strict"`: an undefined variable is a
+  **hard error naming the missing name** (loud-by-default, so a file sink never
+  silently writes a broken artifact); `"lenient"`: undefined renders empty and the
+  referenced-but-unbound names surface as `undefined_vars` in the result meta.
+
+The resolved data binds under **`data`** in the template context
+(`{{ data.results[0].title }}`).
+
+**Sandbox + neutrality.** The engine is always `jinja2.sandbox.SandboxedEnvironment`
+(via the one factory, `reyn.security.template_env.make_sandboxed_env`) — templates may
+be LLM-authored, and unsandboxed Jinja2 is arbitrary-code execution (SSTI). A blocked
+attribute traversal (`{{ ().__class__ }}`) raises a sandbox violation → a structured
+`error` result; nothing executes. `autoescape` is **OFF**: the op returns RAW rendered
+bytes. Neutralization is the **sink's** job (a terminal strips control bytes at its
+guard, a file is inert, a web surface HTML-escapes) — escaping in the producer would
+corrupt file / terminal artifacts.
+
+**Read-authority equivalence.** `template_ref` / `data_ref` resolve through exactly the
+`file.read` gate; a denied read → `status="denied"`. render_template can never read
+more than the agent's `file.read` can. An inline-only invocation (`template` +
+`data_inline`) is pure computation — no read gate.
+
+**Resource bounds.** `SandboxedEnvironment` stops SSTI but not resource exhaustion — a
+bounded loop like `{% for i in range(10**9) %}` still floods. The cap is applied
+**during** generation (streaming `template.generate(context)`), accumulating against a
+max-output-chars budget with a wall-clock backstop; the moment either is exceeded the
+render stops and the result is TRUNCATED with a `truncated: true` meta flag naming
+which bound fired (`truncate_reason`) — a bounded result, never an OOM / hang. Bounds
+default to safety-spirit constants (operator-tunable via `OpContext.render_template_bounds`).
+
+Result fields: `rendered` (the string), `truncated`, `truncate_reason` (when
+truncated), `undefined_vars` (lenient mode). An error result carries
+`status="error"` + `error_kind` (`template_error` | `security` | `undefined`) +
+`error`. No new event type — standard op events; a pure function of (template, data),
+so ordinary memo/replay applies.
 
 ## `sandboxed_exec`
 

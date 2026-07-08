@@ -218,6 +218,61 @@ class PresentIROp(BaseModel):
         return self
 
 
+class RenderTemplateIROp(BaseModel):
+    """render_template op — render a Jinja2 template against structured data into a
+    plain string (FP-0055 PR-2).
+
+    A general, sandboxed **producer**: ``data + template → string``. It has NO side
+    effects and invokes no sink — the rendered string is returned as an ordinary op
+    result whose bulk auto-offloads on the chat path; the caller routes it to any
+    sink (``present``, a ``write_file``, a message, or a pipeline ``ctx``).
+    Neutralization of the raw output is the SINK's job, never the producer's
+    (producer-neutrality: a file is inert bytes, a terminal strips control bytes at
+    its guard — different sinks disagree about what is dangerous).
+
+    Template source (exactly one): ``template`` — an inline Jinja2 source string —
+    XOR ``template_ref`` — a file path read as raw text under ``file.read``
+    authority (a template file is source text, never JSON-rehydrated).
+
+    Data source (exactly one): ``data_ref`` — any zone-readable path, re-hydrated to
+    its full value under ``file.read`` semantics (the same seam ``present`` uses) —
+    XOR ``data_inline`` — a small object already in the LLM's context. The resolved
+    value binds under ``data`` in the template context (``{{ data.results[0] }}``).
+
+    ``undefined``: ``strict`` (default) → an undefined variable is a HARD error
+    naming the missing name (loud-by-default so a file sink never silently writes a
+    broken artifact); ``lenient`` → undefined renders empty and the referenced-but-
+    unbound names are reported in the result meta (``undefined_vars``).
+
+    **Read-authority equivalence**: ``template_ref`` / ``data_ref`` resolve through
+    exactly the ``file.read`` gate (a denied read → ``status="denied"``);
+    render_template can never read more than the agent's ``file.read`` can. An
+    inline-only invocation is pure computation (no read gate). The engine is always
+    ``jinja2.sandbox.SandboxedEnvironment`` (SSTI-safe; templates may be
+    LLM-authored) with autoescape OFF (HTML-escaping is a sink concern).
+    """
+    kind: Literal["render_template"]
+    template: str | None = None            # XOR template_ref; inline Jinja2 source
+    template_ref: str | None = None        # XOR template; a zone-readable template file path
+    data_ref: str | None = None            # XOR data_inline; any zone-readable path (re-hydrated)
+    data_inline: Any | None = None         # XOR data_ref; small already-in-context data
+    undefined: Literal["strict", "lenient"] = "strict"
+
+    @model_validator(mode="after")
+    def _exactly_one_template_and_one_data(self) -> "RenderTemplateIROp":
+        # data_inline may legitimately be a falsy value ({} / [] / 0 / ""); the
+        # ``is None`` checks distinguish "absent" from "present-but-falsy".
+        if (self.template is None) == (self.template_ref is None):
+            raise ValueError(
+                "render_template requires exactly one of template / template_ref"
+            )
+        if (self.data_ref is None) == (self.data_inline is None):
+            raise ValueError(
+                "render_template requires exactly one of data_ref / data_inline"
+            )
+        return self
+
+
 class SandboxedExecIROp(BaseModel):
     """Execute a command under a SandboxPolicy (FP-0017).
 
@@ -681,6 +736,10 @@ OP_KIND_MODEL_MAP: dict[str, type[BaseModel]] = {
     # without the data passing through LLM output tokens. Tier 0 (ask_user's
     # sibling); the only gate is data_ref read authority == file.read.
     "present":     PresentIROp,
+    # FP-0055 PR-2: render a Jinja2 template against structured data → a string.
+    # A sandboxed producer (no side effects, no sink); template_ref/data_ref read
+    # authority == file.read.
+    "render_template": RenderTemplateIROp,
     "web_fetch":   WebFetchIROp,
     "web_search":  WebSearchIROp,
     "mcp_install": MCPInstallIROp,
@@ -736,6 +795,7 @@ if TYPE_CHECKING:
             MCPGetPromptIROp,
             AskUserIROp,
             PresentIROp,
+            RenderTemplateIROp,
             WebFetchIROp, WebSearchIROp, MCPInstallIROp,
             MCPDropServerIROp,
             IndexQueryIROp, RecallIROp, IndexDropIROp,
