@@ -1,8 +1,10 @@
 """Default-viewer synthesizers for the present layer's 4-stage fallback (FP-0054 §3, PR-C).
 
-The FP-0054 §3 template-source fallback chain::
+The FP-0054 §3 view-source fallback chain (FP-0055 PR-1: stages 1-2 are skipped
+entirely — not "unknown" — when the caller omits both ``view`` and
+``blueprint``; resolution enters directly at stage 3)::
 
-    registered template (operator) → inline blueprint (LLM)
+    registered view (operator) → inline blueprint (LLM)
         → content-type default viewer → generic YAML/text
 
 Stages 1-2 (registered / inline) are the *requested* rendering, driven in

@@ -54,6 +54,39 @@ def _run(coro):
     return asyncio.run(coro)
 
 
+class _RecordingRenderer:
+    """A real (non-mock) PresentationRenderer that records what reached the
+    surface. Fire-and-continue: ``render`` returns nothing the op awaits.
+    ``surface_name`` must be a registered guard surface (#2670 fail-closed)."""
+
+    surface_name = "inline-cui"
+
+    def __init__(self) -> None:
+        self.rendered: list = []
+
+    def render(self, resolved) -> None:
+        self.rendered.append(resolved)
+
+
+def _all_leaf_text(resolved) -> str:
+    """Every rendered string leaf in the render model (content-presence
+    assertion helper — never a layout pin)."""
+    parts: list[str] = []
+
+    def _walk(obj) -> None:
+        if isinstance(obj, str):
+            parts.append(obj)
+        elif isinstance(obj, dict):
+            for v in obj.values():
+                _walk(v)
+        elif isinstance(obj, list):
+            for v in obj:
+                _walk(v)
+
+    _walk(resolved.nodes)
+    return "\n".join(parts)
+
+
 # ── Tier 1: binding resolution ───────────────────────────────────────────────
 
 
@@ -317,7 +350,7 @@ def test_presented_event_carries_required_fields(tmp_path):
     ev = [e for e in events.all() if e.type == "presented"]
     assert ev, "present emitted no presented event"
     d = ev[-1].data
-    for field in ("data_ref", "template", "surface", "ingested",
+    for field in ("data_ref", "view", "surface", "ingested",
                   "bindings_resolved", "bindings_dropped", "rows"):
         assert field in d
     assert d["ingested"] in {"none", "partial", "full"}
@@ -439,3 +472,142 @@ def test_event_carries_no_content_bytes(tmp_path):
     ev = [e for e in events.all() if e.type == "presented"][-1]
     serialized = json.dumps(ev.data)
     assert secret_value not in serialized
+
+
+# ── Tier 1: FP-0055 PR-1 — view rename + optional view/blueprint ────────────
+
+
+def test_view_arg_round_trips_against_the_registry(tmp_path):
+    """Tier 1: the renamed ``view`` arg round-trips through the op — a registered
+    view name resolves via the same PR-C path the old ``template`` arg used, and
+    the presented event + ack record it as ``mode: "view"``."""
+    from reyn.data.presentations.registry import PresentationRegistry
+
+    registry = PresentationRegistry()
+    registry.register("authors", [
+        {"component": "text", "text": {"$bind": "/a"}},
+    ])
+    ctx, events = _ctx(tmp_path, _resolver(tmp_path))
+    ctx.presentation_registry = registry
+    op = PresentIROp(kind="present", data_inline={"a": 1}, view="authors")
+
+    ack = _run(handle(op, ctx))
+
+    assert ack["mode"] == "view"
+    assert ack["ok"] is True
+    ev = [e for e in events.all() if e.type == "presented"][-1]
+    assert ev.data["view"] == "authors"
+    assert ev.data["mode"] == "view"
+
+
+def test_inline_blueprint_view_field_is_a_stable_hash(tmp_path):
+    """Tier 1: an inline blueprint's ``view`` field (the presented event / ack
+    identity) is a stable ``blueprint:<hash>`` — never the blueprint bytes
+    themselves."""
+    ctx, events = _ctx(tmp_path, _resolver(tmp_path))
+    op = PresentIROp(
+        kind="present", data_inline={"a": 1},
+        blueprint={"component": "text", "text": {"$bind": "/a"}},
+    )
+    ack = _run(handle(op, ctx))
+    assert ack["mode"] == "blueprint"
+    ev = [e for e in events.all() if e.type == "presented"][-1]
+    assert ev.data["view"].startswith("blueprint:")
+
+
+def test_old_template_kwarg_is_inert_not_an_alias(tmp_path):
+    """Tier 1: FP-0055 PR-1 clean break — passing the OLD ``template`` kwarg name
+    is not a working alias for ``view``. ``PresentIROp`` has no ``template`` field
+    any more (pydantic's default extra-field handling silently accepts and drops
+    the unknown kwarg rather than raising), and present.py only ever reads
+    ``op.view`` — so a caller that still passes ``template=`` is treated as having
+    supplied NEITHER view nor blueprint (``mode: "default"``), never as if it had
+    named a view. Flags the design-doc ambiguity: "rejected" here means "inert",
+    not "raises" (no ``extra="forbid"`` — consistent with every other IR op)."""
+    ctx, _events = _ctx(tmp_path, _resolver(tmp_path))
+    op = PresentIROp(kind="present", data_inline={"a": 1}, template="should_be_ignored")
+    assert op.view is None  # the stray kwarg did NOT populate `view`
+    ack = _run(handle(op, ctx))
+    assert ack["mode"] == "default"
+    assert "note" not in ack
+
+
+def test_omitting_view_and_blueprint_routes_to_default_viewer(tmp_path):
+    """Tier 1: FP-0055 PR-1 — present(data_ref=...) with NEITHER view nor blueprint
+    is valid and routes straight to the stage-3 default viewer — the ack carries
+    mode: "default", the default viewer's OWN stats, and NO fallback note (this is
+    the intended rendering, not a fallback — distinct from the all-missed→fallback
+    case, which still carries a note)."""
+    ctx, events = _ctx(tmp_path, _resolver(tmp_path))
+    renderer = _RecordingRenderer()
+    ctx.presentation_renderer = renderer
+    op = PresentIROp(kind="present", data_inline={"author": "amy", "title": "hello"})
+
+    ack = _run(handle(op, ctx))
+
+    assert ack["status"] == "ok"
+    assert ack["ok"] is True
+    assert ack["mode"] == "default"
+    assert "note" not in ack
+    assert ack["all_bindings_missed"] is False
+    assert ack["bindings_resolved"] >= 1
+    # The default (content-type) viewer actually rendered the data (a dict →
+    # keyvalue over its keys).
+    assert renderer.rendered
+    surfaced = _all_leaf_text(renderer.rendered[-1])
+    assert "amy" in surfaced and "hello" in surfaced
+
+    ev = [e for e in events.all() if e.type == "presented"][-1]
+    assert ev.data["view"] is None
+    assert ev.data["mode"] == "default"
+
+
+def test_default_mode_ack_distinct_from_all_missed_fallback_note(tmp_path):
+    """Tier 1: the "no template given → default viewer" ack (mode: "default", no
+    note) is DISTINCT from the "template given but all bindings missed → fallback"
+    ack (mode: "blueprint", note present) — same underlying stage-3 viewer renders
+    in both, but only one carries a note, because only one is actually a
+    fallback FROM something the caller requested."""
+    ctx, _events = _ctx(tmp_path, _resolver(tmp_path))
+    data = {"author": "amy"}
+
+    # Case 1: no view/blueprint at all — the default viewer IS the request.
+    ack_default = _run(handle(PresentIROp(kind="present", data_inline=data), ctx))
+    assert ack_default["mode"] == "default"
+    assert "note" not in ack_default
+
+    # Case 2: an inline blueprint whose binding misses entirely — a genuine
+    # fallback FROM the caller's own (mismatched) blueprint.
+    ack_fallback = _run(handle(PresentIROp(
+        kind="present", data_inline=data,
+        blueprint=[{"component": "text", "text": {"$bind": "/nonexistent"}}],
+    ), ctx))
+    assert ack_fallback["mode"] == "blueprint"
+    assert "note" in ack_fallback
+    assert "all bindings missed" in ack_fallback["note"]
+
+
+# ── Tier 1: #2670 — get_neutralizer fails closed on an unknown surface ───────
+
+
+def test_unknown_surface_neutralizer_fails_closed():
+    """Tier 1: #2670 regression guard — an unregistered surface name raises
+    UnknownSurfaceError rather than silently falling through to the terminal
+    strategy. Falsifies the pre-fix fail-OPEN default — a caller that reaches a
+    live surface with a typo'd/new surface name must be refused, not silently
+    handed the terminal neutralizer as if it were safe for that surface."""
+    from reyn.core.present.guard import UnknownSurfaceError, get_neutralizer
+
+    with pytest.raises(UnknownSurfaceError):
+        get_neutralizer("bogus-surface")
+
+
+def test_registered_surfaces_still_resolve_after_fail_closed_fix():
+    """Tier 1: the explicit registrations (terminal / inline-cui / null) still
+    resolve normally — the fail-closed fix only changes the UNKNOWN-surface
+    default, not the registered strategies."""
+    from reyn.core.present.guard import TerminalNeutralizer, get_neutralizer
+
+    for surface in ("terminal", "inline-cui", "null"):
+        neut = get_neutralizer(surface)
+        assert isinstance(neut, TerminalNeutralizer)

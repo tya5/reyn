@@ -60,7 +60,7 @@ class ReplayedPresentation:
     """
 
     data_ref: str
-    template: str
+    view: str
     header: str
     lines: list[str] = field(default_factory=list)
     is_placeholder: bool = False
@@ -138,18 +138,18 @@ def _flatten_nodes(nodes: list[dict]) -> list[str]:
     return lines
 
 
-def _header(event_data: dict, template: str, data_ref: str) -> str:
+def _header(event_data: dict, view: str, data_ref: str) -> str:
     rows = event_data.get("rows", 0)
     resolved = event_data.get("bindings_resolved", 0)
     dropped = event_data.get("bindings_dropped") or []
     drop_note = f", {len(dropped)} dropped" if dropped else ""
     return (
-        f"[present] template={template} data_ref={data_ref} "
+        f"[present] view={view} data_ref={data_ref} "
         f"rows={rows} bindings_resolved={resolved}{drop_note}"
     )
 
 
-def _placeholder_lines(data_ref: str, template: str, event_data: dict, *, inline: bool) -> list[str]:
+def _placeholder_lines(data_ref: str, view: str, event_data: dict, *, inline: bool) -> list[str]:
     """Expiry placeholder pointing at the durable ``presented`` audit event."""
     rows = event_data.get("rows", 0)
     if inline:
@@ -160,7 +160,7 @@ def _placeholder_lines(data_ref: str, template: str, event_data: dict, *, inline
         f"[present · expired] {reason}.",
         (
             "  This is a best-effort cache re-render; the durable record is the "
-            f"`presented` audit event (template={template}, rows={rows}). "
+            f"`presented` audit event (view={view}, rows={rows}). "
             "Re-run the agent to regenerate the presentation."
         ),
     ]
@@ -172,33 +172,33 @@ def replay_presentation(
     """Re-render one ``presented`` event best-effort for replay/rewind display.
 
     ``event_data`` is the ``presented`` event's ``data`` dict (``data_ref``,
-    ``template``, ``surface``, ``rows``, ``bindings_resolved``, ``bindings_dropped``).
+    ``view``, ``surface``, ``rows``, ``bindings_resolved``, ``bindings_dropped``).
     ``load_ref`` re-hydrates the ref (default: from disk); returning ``None`` — or an
     ``<inline-data>`` ref, whose bytes the event never carried — yields an expiry
     placeholder pointing at the audit event. Never raises: a gone ref is a placeholder,
     not a crash, and a re-render is never a stale render (it re-reads the current ref).
     """
     data_ref = str(event_data.get("data_ref", "<unknown>"))
-    template = str(event_data.get("template", "<unknown>"))
-    header = _header(event_data, template, data_ref)
+    view = str(event_data.get("view", "<unknown>"))
+    header = _header(event_data, view, data_ref)
 
     if data_ref == _INLINE_MARKER:
         return ReplayedPresentation(
-            data_ref=data_ref, template=template, header=header,
-            lines=_placeholder_lines(data_ref, template, event_data, inline=True),
+            data_ref=data_ref, view=view, header=header,
+            lines=_placeholder_lines(data_ref, view, event_data, inline=True),
             is_placeholder=True,
         )
 
     value = load_ref(data_ref)
     if value is None:
         return ReplayedPresentation(
-            data_ref=data_ref, template=template, header=header,
-            lines=_placeholder_lines(data_ref, template, event_data, inline=False),
+            data_ref=data_ref, view=view, header=header,
+            lines=_placeholder_lines(data_ref, view, event_data, inline=False),
             is_placeholder=True,
         )
 
     resolved = _best_effort_resolved(value, _surface_of(event_data))
     return ReplayedPresentation(
-        data_ref=data_ref, template=template, header=header,
+        data_ref=data_ref, view=view, header=header,
         lines=_flatten_nodes(resolved.nodes), is_placeholder=False,
     )

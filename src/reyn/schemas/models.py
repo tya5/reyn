@@ -172,8 +172,9 @@ class AskUserIROp(BaseModel):
 
 
 class PresentIROp(BaseModel):
-    """present op — route bulk data + a display template to the user-facing
-    surface without the data round-tripping through LLM output tokens (FP-0054).
+    """present op — route bulk data + a declarative view to the user-facing
+    surface without the data round-tripping through LLM output tokens (FP-0054;
+    ``view`` naming + optional view/blueprint: FP-0055 PR-1).
 
     **Tier 0** (``ask_user``'s sibling): presenting to the user — the trust root —
     is not an exfiltration channel, so there is no output permission gate. The one
@@ -186,30 +187,33 @@ class PresentIROp(BaseModel):
     ``structured_ref`` is re-hydrated to its full value via ``file.read``
     semantics — XOR ``data_inline`` — small data already in the LLM's context.
 
-    Template (exactly one): ``template`` — a registered presentation name (the
-    registry + fallback chain land in a later PR) — XOR ``blueprint`` — an inline
+    View (at most one): ``view`` — a registered presentation name (resolved
+    against the presentations registry) — XOR ``blueprint`` — an inline
     declarative component tree with JSON-Pointer (RFC 6901) path bindings,
     structurally gated to the display-only catalog (catalog components only,
     bindings are path expressions only). No markup / HTML / code ever crosses from
-    the LLM to the renderer.
+    the LLM to the renderer. **Both omitted is valid**: it means "no explicit
+    view" and routes straight to the stage-3/4 default-viewer synthesis — a
+    one-shot ``present(data_ref=...)`` "just shows" the data.
     """
     kind: Literal["present"]
     data_ref: str | None = None            # XOR data_inline; any zone-readable path
     data_inline: Any | None = None         # XOR data_ref; small already-in-context data
-    template: str | None = None            # XOR blueprint; a registered presentation name
-    blueprint: dict[str, Any] | list[Any] | None = None  # XOR template; inline component tree
+    view: str | None = None                # at most one of view/blueprint; a registered presentation name
+    blueprint: dict[str, Any] | list[Any] | None = None  # at most one of view/blueprint; inline component tree
 
     @model_validator(mode="after")
-    def _exactly_one_source_and_template(self) -> "PresentIROp":
+    def _exactly_one_source_at_most_one_view(self) -> "PresentIROp":
         # data_inline may legitimately be a falsy value ({} / [] / 0); the
         # ``is None`` checks distinguish "absent" from "present-but-falsy".
         if (self.data_ref is None) == (self.data_inline is None):
             raise ValueError(
                 "present requires exactly one of data_ref / data_inline"
             )
-        if (self.template is None) == (self.blueprint is None):
+        if self.view is not None and self.blueprint is not None:
             raise ValueError(
-                "present requires exactly one of template / blueprint"
+                "present accepts at most one of view / blueprint (both omitted "
+                "is valid — routes to the default viewer)"
             )
         return self
 
@@ -673,7 +677,7 @@ OP_KIND_MODEL_MAP: dict[str, type[BaseModel]] = {
     # op_runtime/mcp_get_prompt.py + session.py's _mcp_list_prompts).
     "mcp_get_prompt": MCPGetPromptIROp,
     "ask_user":    AskUserIROp,
-    # FP-0054 PR-A: present bulk data + a display template to the user surface
+    # FP-0054 PR-A: present bulk data + a declarative view to the user surface
     # without the data passing through LLM output tokens. Tier 0 (ask_user's
     # sibling); the only gate is data_ref read authority == file.read.
     "present":     PresentIROp,
