@@ -55,10 +55,11 @@ import json
 import logging
 from dataclasses import dataclass
 
-from jinja2 import StrictUndefined, TemplateError, Undefined
+from jinja2 import TemplateError
 from jinja2.sandbox import SandboxedEnvironment
 
 from reyn.hooks.schema import PushBlock
+from reyn.security.template_env import make_sandboxed_env
 
 _log = logging.getLogger(__name__)
 
@@ -119,21 +120,6 @@ class ResolvedPush:
 
 
 # ---------------------------------------------------------------------------
-# Jinja2 environment factories
-# ---------------------------------------------------------------------------
-
-
-def _make_env_strict() -> SandboxedEnvironment:
-    """SandboxedEnvironment with StrictUndefined — for ``message``."""
-    return SandboxedEnvironment(undefined=StrictUndefined)
-
-
-def _make_env_silent() -> SandboxedEnvironment:
-    """SandboxedEnvironment with silent Undefined — for bool / session fields."""
-    return SandboxedEnvironment(undefined=Undefined)
-
-
-# ---------------------------------------------------------------------------
 # Core renderer
 # ---------------------------------------------------------------------------
 
@@ -173,8 +159,8 @@ def render_push(push: PushBlock, context: dict) -> ResolvedPush:
 
 def _render_push_inner(push: PushBlock, context: dict) -> ResolvedPush:
     """Inner renderer — may raise; callers should use ``render_push`` instead."""
-    env_strict = _make_env_strict()
-    env_silent = _make_env_silent()
+    env_strict = make_sandboxed_env(undefined="strict")
+    env_silent = make_sandboxed_env(undefined="lenient")
 
     # ── message (StrictUndefined — a blank message due to a typo is misleading) ──
     message = env_strict.from_string(push.message).render(context)
@@ -244,7 +230,7 @@ def render_pipeline_input(input_template: "dict | str | None", context: dict) ->
     """
     if input_template is None:
         return None
-    env = _make_env_silent()
+    env = make_sandboxed_env(undefined="lenient")
     if isinstance(input_template, str):
         rendered = env.from_string(input_template).render(context)
         obj = json.loads(rendered)
