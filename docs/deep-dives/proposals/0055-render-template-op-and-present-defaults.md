@@ -165,6 +165,35 @@ safety, sink-independent); neutralize = sink-side (output-byte safety,
 sink-dependent).** Falsify test: render data containing an ESC sequence → the op result
 retains the raw bytes; presenting that result strips them at the guard.
 
+#### Structural sink-neutralization contract (required — no convention, no fail-open)
+
+Because the producer is deliberately neutral, safety now **depends on every
+live-interpreting sink actually neutralizing** — and "depends on each sink remembering
+to" is precisely the failure class of #2670 (a `get_neutralizer` default that silently
+failed open). This design forbids that by contract, not habit:
+
+- **Invariant:** no un-neutralized producer output reaches a **live-interpreting
+  surface**. A live-interpreting sink is any path that renders bytes to a surface that
+  acts on control/markup (terminal, web) — as opposed to an **inert** sink (`file`
+  bytes, pipeline `ctx` data, the LLM tool-result channel) where raw is correct.
+- **Structural enforcement (not a convention):** every live-interpreting sink routes
+  **all** externally-derived content through its own single neutralizer seam with **no
+  bypass path**, and a missing/unknown neutralizer must **fail closed**, never fall
+  through to raw (the direct #2670 lesson). `present` already satisfies this via the
+  Option-B single guard seam; the design must guarantee the same for any other live
+  path.
+- **The specific path to verify (flagged by lead):** the **message / chat display
+  path** — if a `render_template` result is placed into an agent message that prints to
+  the terminal, that print path must neutralize it too. Producer output is
+  *untrusted-data-derived* and must **not** be treated as trusted agent prose. Either
+  the message-print path passes it through the same neutralizer, or producer output may
+  only reach a live surface via a neutralizing sink (`present`). No third, bypassing
+  path may exist.
+- **Test (Tier 1/2):** an ESC/control sequence interpolated by a template is neutralized
+  on **every** live-surface path (present *and* message-print), and an unknown-surface
+  neutralizer lookup fails closed rather than emitting raw (falsify against a fail-open
+  default, mirroring #2670's regression guard).
+
 ### Undefined policy — strict by default
 
 - **`strict` (default)**: `StrictUndefined`; any undefined variable → **hard error
@@ -185,12 +214,16 @@ retains the raw bytes; presenting that result strips them at the guard.
   <message>` — never a silent fallback (malformed input must not be masked; PR-C
   malformed-blueprint precedent).
 - **Output bound (required — new work):** `hooks/render.py` has **no** size/time bounds
-  today (its templates are operator-trusted one-liners; verified — no such code).
-  Untrusted templates can emit unbounded output (`{% for %}` over a huge range).
-  Render via **streaming** (`Template.generate()`), accumulate against a max-chars
-  budget, abort past it → hard error naming the cap. A wall-clock backstop bounds
-  CPU-only loops (implementer picks the mechanism; config default in the `safety`
-  spirit, operator-tunable).
+  today (its templates are operator-trusted one-liners; verified — no such code). The
+  `SandboxedEnvironment` stops SSTI but **not resource exhaustion** — a bounded template
+  like `{% for i in range(10**9) %}` still spins/floods. **The cap must be
+  *during*-generate, not post-render:** `template.render()` materializes the full string
+  first (exhaustion happens before any cap can fire), so use `template.generate(context)`
+  (Jinja2's streaming generator), accumulate chunks against a max-chars budget, and
+  truncate + stop the moment it is exceeded → hard error naming the cap. Jinja2 does not
+  expose an iteration count, so wrap the `generate()` loop in a **wall-clock backstop**
+  (break on exceed) — byte-cap + wall-clock together bound it in practice. Config
+  defaults in the `safety` spirit, operator-tunable. (Confirmed with lead-coder.)
 - **Determinism/replay**: pure function of (template, data) — no clock/random in scope;
   ordinary `CommittedStep` memo replay applies. No new event type; standard op events.
   No reconstructed state → recovery-feature gate N/A.
