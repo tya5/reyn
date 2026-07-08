@@ -329,11 +329,11 @@ Control IR `shell_exec` ops: Seatbelt (macOS), Landlock/seccomp (Linux), Noop
 
 Shell-hook commands require operator consent before they run. The consent flow depends on whether a live intervention listener is attached:
 
-- **TUI session** — consent routes through the unified intervention bus and surfaces as a **Pending-tab modal**: "Shell hook `<name>` wants to run a command" (the hook's configured `name:` field, or a generic message if unnamed). Three choices:
+- **Interactive chat session** (inline CUI) — consent routes through the unified intervention bus and renders as a closed-set intervention in the above-input region: "Shell hook `<name>` wants to run a command" (the hook's configured `name:` field, or a generic message if unnamed). Three choices:
   - **[A]lways** — allow and persist to the allowlist (`~/.reyn/shell-hooks-allowlist.json`, override via `REYN_SHELL_HOOKS_ALLOWLIST`). Future runs of the same command are auto-approved.
   - **[y]es** — allow this run only.
   - **[n]o** — skip (fail-closed).
-- **Non-TUI** (`reyn run`, `mcp-serve`, headless) — falls back to the pre-bus behavior: TTY stdin prompt when available, or refused when stdin is not a TTY.
+- **Non-interactive** (`reyn run`, `mcp-serve`, headless) — falls back to the pre-bus behavior: TTY stdin prompt when available, or refused when stdin is not a TTY.
 - **Allowlist hit** — any command already in the allowlist runs silently without a prompt (auto-approved on all surfaces).
 
 Consent is fail-closed throughout: if the sandbox backend cannot be confirmed, the hook is refused rather than run unsandboxed.
@@ -342,7 +342,7 @@ See [sandbox](sandbox.md) for the full backend model and [permission model](perm
 
 ### P6 event: `hook_shell_executed`
 
-Every shell hook run — including silently auto-approved runs — emits a `hook_shell_executed` P6 event. This event surfaces in the TUI **Events tab** (under the "tool" group) as:
+Every shell hook run — including silently auto-approved runs — emits a `hook_shell_executed` P6 event (under the "tool" group), recording:
 
 ```
 shell_exec: <command> [rc=N]

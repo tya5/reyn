@@ -188,16 +188,12 @@ mindmap
       Cross-session WAKES
       Content-fenced task text
       /tasks view
-    🖥️ TUI
+    🖥️ Inline CUI
       Conversation view
-      Right Panel tabs
-      tool-result viewers
-        Viewer registry seam
-        Content-type shorthand
-        LLM template fallback
-        Email viewer
-        Diff viewer
-      Input + command palette
+      Status chips (Agents/Cost/Model/Tools/MCP/Skills/Hooks/Pipes/Cron/Tasks)
+      Tool-result one-line summaries
+      Above-input region (interventions, command UIs)
+      Input + slash-command completion
     🐳 Environment
       EnvironmentBackend
       HostBackend
@@ -411,7 +407,7 @@ Main reference: **[`reyn.yaml`](reference/config/reyn-yaml.md)**
 | `eval` | Trace exporters: file / langfuse / **otlp** (optional dep `opentelemetry-exporter-otlp-proto-http`) / ietf_audit | [reyn-yaml § eval](reference/config/reyn-yaml.md#eval-block) |
 | `chat` | Compaction trigger / head+tail retention / section token caps | [Chat Compaction](concepts/data-retrieval/chat-compaction.md) |
 | `embedding` | Model classes / batch_size / cost_warn_threshold | [RAG concepts](concepts/data-retrieval/rag.md) |
-| `voice` | Whisper model / language / device — optional `reyn[voice]` | [Voice concepts](concepts/tools-integrations/voice.md) |
+| `voice` ⚠️ | Whisper model / language / device config still parses, but has no consumer since the Textual TUI it was built for was deleted (replaced by the inline CUI) — currently unavailable | [Voice concepts](concepts/tools-integrations/voice.md) |
 | `events` | Rotation size/age + cleanup_period_days | [Events reference](reference/runtime/events.md) |
 | `models` | Class → LiteLLM model string with `extends` chain | [reyn-yaml § models](reference/config/reyn-yaml.md#models-block) |
 | `permissions` | Project-wide default capability policy | [Permissions config](reference/config/permissions.md) |
@@ -423,7 +419,7 @@ Main reference: **[`reyn.yaml`](reference/config/reyn-yaml.md)**
 | `python` | `python`-step execution policy (safe / unsafe subprocess) | Preprocessor |
 | `cron` | Cron-scheduled skill job definitions | [reyn-yaml](reference/config/reyn-yaml.md) |
 | `action_retrieval` | Action-catalog `search_actions` retrieval tuning | [Universal catalog](concepts/tools-integrations/universal-catalog.md) |
-| `hooks` | Agent-lifecycle push/shell/pipeline hooks at 6 lifecycle points (`turn_start/end`, `session_start/end`, `task_start/end`) plus 4 external-event points fired outside the session's own run-loop: `mcp_resource_updated`, `file_changed`, `cron_fired`, `webhook_received` (the latter two non-blocking relative to their own ingress — dispatch never delays cron delivery or the webhook's HTTP response; `webhook_received`'s vars carry only routing metadata, never the raw request body). `push` mode: `wake:false` passive context ride-along, or `wake:true` self-continuation bounded by `safety.loop.max_hook_driven_turns`. `shell`: sandbox-gated side-effect, output ignored. `pipeline_launch`: async/detached launch of a registered pipeline, input Jinja2-rendered from the event's template vars. `matcher`: optional per-field filter (exact match, except `uri`/`path` which glob) narrowing which events fire a hook. Cross-session push routes to another session's inbox via the `session` field. Shell-hook consent routes through the intervention bus → TUI Pending-tab modal (`[A]lways` / `[y]es` / `[n]o`; `Always` persists to `~/.reyn/shell-hooks-allowlist.json`); falls back to stdin on non-TUI. All shell runs emit `hook_shell_executed` P6 event (Events-tab "tool" group; prefix `shell_exec:` or `shell_push:`). Hooks emit attributed `[hook:name]` messages — history is never silently mutated. | [reyn-yaml § hooks](reference/config/reyn-yaml.md#hooks-block) · [Concepts: hooks](concepts/runtime/hooks.md) |
+| `hooks` | Agent-lifecycle push/shell/pipeline hooks at 6 lifecycle points (`turn_start/end`, `session_start/end`, `task_start/end`) plus 4 external-event points fired outside the session's own run-loop: `mcp_resource_updated`, `file_changed`, `cron_fired`, `webhook_received` (the latter two non-blocking relative to their own ingress — dispatch never delays cron delivery or the webhook's HTTP response; `webhook_received`'s vars carry only routing metadata, never the raw request body). `push` mode: `wake:false` passive context ride-along, or `wake:true` self-continuation bounded by `safety.loop.max_hook_driven_turns`. `shell`: sandbox-gated side-effect, output ignored. `pipeline_launch`: async/detached launch of a registered pipeline, input Jinja2-rendered from the event's template vars. `matcher`: optional per-field filter (exact match, except `uri`/`path` which glob) narrowing which events fire a hook. Cross-session push routes to another session's inbox via the `session` field. Shell-hook consent routes through the intervention bus → an above-input closed-set intervention in the inline CUI (`[A]lways` / `[y]es` / `[n]o`; `Always` persists to `~/.reyn/shell-hooks-allowlist.json`); falls back to stdin on non-interactive surfaces. All shell runs emit `hook_shell_executed` P6 event ("tool" group; prefix `shell_exec:` or `shell_push:`). Hooks emit attributed `[hook:name]` messages — history is never silently mutated. | [reyn-yaml § hooks](reference/config/reyn-yaml.md#hooks-block) · [Concepts: hooks](concepts/runtime/hooks.md) |
 | `fs_watch` | Operator-declared filesystem watch paths (`paths`, `debounce_seconds`) firing the `file_changed` external-event hook on create/modify/delete. Restart-only (OUT-set) — no op/tool verb lets an agent register or widen a watch. Requires the `watchdog` extra; degrades to a no-op warning without it. | [reyn-yaml § fs_watch](reference/config/reyn-yaml.md#fs_watch-block) · [Concepts: hooks](concepts/runtime/hooks.md#file_changed) |
 | Config hot-reload | Runtime re-read of the IN-set (`.reyn/mcp.yaml` / `cron.yaml` / `hooks.yaml`) at the turn boundary without a process restart. OUT-set (`reyn.yaml`: security / budget / loop valve) is restart-only — the file-split is the structural write-gate. Two triggers: operator `/reload` and agent `hooks_add` LLM-op. Validate-before-apply + per-layer boot resilience + sandbox/loop-valve = safe-by-construction. | [Concepts: Config hot-reload](concepts/runtime/config-hot-reload.md) |
 
@@ -599,22 +595,25 @@ logic. Design: [content-threat scan proposal](deep-dives/proposals/0050-content-
 
 ---
 
-### TUI
+### Inline CUI
 
-The Textual terminal interface for `reyn chat` (`src/reyn/interfaces/tui/`).
+The default interactive `reyn chat` interface for a TTY: a Claude Code-style inline
+renderer (`src/reyn/interfaces/inline/`, `InlineChatRenderer`) that streams the
+conversation into the terminal's own scrollback rather than a full-screen app.
+Replaced the earlier Textual-based TUI (with its full-screen Right Panel tabs and
+a pluggable tool-result viewer registry) in full; `--cui` / non-TTY invocations
+still use the plain `ConsoleChatRenderer`.
 
 | Feature | Description | Documentation |
 |---------|-------------|---------------|
-| Conversation view | Streaming conversation with inline thinking rows and tool-call rendering | — |
-| Right Panel tabs | Live side panels: Agents / Cost / Docs / Events / Keys / Memory / Pending | — |
-| Tool-result viewer registry ✅ | `register_viewer` seam replaces inline content-type dispatch; `register_content_type_viewer(content_types, viewer, *, match="exact"\|"prefix"\|"substring")` provides the ergonomic MIME shorthand — delegates to `register_viewer` so name/position behave identically | [Tool-result viewers reference](reference/tui/tool-result-viewers.md) |
-| LLM-generated template fallback ✅ | On registry miss, `_generate_template` async-generates a `TemplateSchema` (label/value rows + caption) via LLM call; `_apply_template` renders it with label escape and row/caption caps (`_MAX_TEMPLATE_ROWS=8`, `_MAX_CAPTION_CHARS=40`) | [Tool-result viewers reference](reference/tui/tool-result-viewers.md) · [FP-0051 proposal](deep-dives/proposals/0051-tool-result-viewer-registry-llm-template.md) |
-| Email-diff viewer ✅ | Concrete viewers for `message/rfc822` (email from/subject card) and `text/x-diff` / `text/x-patch` (syntax-highlighted patch); registered before the generic JSON viewer so declared content-type takes priority | [Tool-result viewers reference](reference/tui/tool-result-viewers.md) |
-| Input + command palette | Input bar with slash commands (`/plan`, `/compact`, `/find`, `/help`, `/clear`) via a command palette | — |
-| Intervention widget | In-TUI `ask_user` prompt rendering | — |
-| Chainlit web chat (⚗ PoC) | Alternative browser chat UI sharing the same agent — `reyn chainlit` + `chainlit_app/` (agent picker, settings, uploads, slash routing); coexists with the TUI | — |
+| Conversation view | Streaming conversation in scrollback with terracotta-accented `⏺`/`⎿` markers per message kind (agent/status/error/intervention/trace) | — |
+| Status chips | Live one-line chip bar above the input: Agents / Cost / Model / Tools / MCP / Skills / Hooks / Pipes / Cron / Tasks, each expandable in place | — |
+| Tool-result summaries | `summarize_tool_result` renders a best-effort one-line, per-tool summary (e.g. `Read 42 lines`, `3 matches`); always degrades gracefully to a truncated repr, never a full content preview | — |
+| Above-input region | Closed-set interventions (confirm/select/grant-deny) and command UIs (e.g. the `/rewind` checkpoint picker) render as a selectable row list above the input, rather than a modal | [Permission model](concepts/runtime/permission-model.md) |
+| Input + slash-command completion | Input bar with `/`-prefixed command autocomplete (`/plan`, `/compact`, `/find`, `/help`, `/clear`, …) | — |
+| Chainlit web chat (⚗ PoC) | Alternative browser chat UI sharing the same agent — `reyn chainlit` + `chainlit_app/` (agent picker, settings, uploads, slash routing); coexists with the inline CUI | — |
 
-> **Differentiation vs general agents:** Reyn's chat surface is a local, inspectable TUI with live audit panels (events / cost / permissions) beside the conversation — the operator sees what the agent is doing and spending in real time.
+> **Differentiation vs general agents:** Reyn's chat surface is a local, inspectable CLI with live audit chips (agents / cost / permissions) beside the conversation — the operator sees what the agent is doing and spending in real time.
 
 ---
 
@@ -624,11 +623,11 @@ Cross-surface `ask_user` and permission routing — the same prompt reaches the 
 
 | Feature | Description | Documentation |
 |---------|-------------|---------------|
-| InterventionBus family | `ChatInterventionBus` (TUI) / `StdinInterventionBus` (CLI) / `A2AInterventionBus` (web) / `_MCPInterventionBus` (MCP) | [Permission model](concepts/runtime/permission-model.md) |
+| InterventionBus family | `ChatInterventionBus` (inline CUI) / `StdinInterventionBus` (CLI) / `A2AInterventionBus` (web) / `_MCPInterventionBus` (MCP) | [Permission model](concepts/runtime/permission-model.md) |
 | InterventionRegistry | Tracks pending interventions and pairs each answer back to the waiting run | — |
 | `ask_user` lifecycle | Pause run → surface prompt → resume on answer; async wait works across surfaces | [Control IR — ask_user](reference/runtime/control-ir.md) |
 
-> **Differentiation vs general agents:** human-in-the-loop is a first-class, surface-agnostic primitive — a permission ask or `ask_user` routes to the operator identically whether the agent runs in the TUI, CLI, web / A2A, or MCP.
+> **Differentiation vs general agents:** human-in-the-loop is a first-class, surface-agnostic primitive — a permission ask or `ask_user` routes to the operator identically whether the agent runs in the inline CUI, CLI, web / A2A, or MCP.
 
 ---
 
