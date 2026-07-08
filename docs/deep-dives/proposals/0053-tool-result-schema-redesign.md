@@ -1,6 +1,9 @@
 # Tool-result schema redesign — proposal
 
-**Author:** lead-coder · **Status:** APPROVED (owner GO 2026-07-08, Fable5-reviewed same day, all
+**Author:** lead-coder · **Status:** IMPLEMENTED (all PRs merged 2026-07-08: PR-0 #2647 stale
+read-back strings, PR-1 #2648 canonical format + legacy deletion, PR-2 #2652 pipeline ctx, PR-3
+#2651 offload config opt-out; follow-ups tracked in #2396 dead-offloader removal + #2649 pipeline
+error-format unification). Originally APPROVED (owner GO 2026-07-08, Fable5-reviewed same day, all
 review findings incorporated; clean-break ruling: no backward compat, legacy path deleted in-arc) ·
 **Date:** 2026-07-08
 
