@@ -153,15 +153,6 @@ async def _execute(op: MCPIROp, ctx: OpContext) -> dict:
         "tool": op.tool,
         "content": text,
         "media_blocks": media_blocks,
-        # #2336: declare the joined text as the offload payload so an oversized result is stored
-        # CLEAN (real newlines, not a whole-dict single-line JSON envelope). This ONLY fires when
-        # ``content`` is the SOLE oversized field. We dropped the former ``raw`` (the full flattened
-        # CallToolResult): it re-carried the same oversized ``content``, so both went oversized →
-        # gate missed → whole-dict fallback (the bug). ``isError`` is already surfaced as ``status``
-        # and the joined text is ``content``; ``structuredContent`` is the only non-duplicate SDK
-        # field, so it is preserved as ``structured`` below when present (never re-carries ``content``,
-        # so it stays a legitimate — and usually absent — second field).
-        "_offload_payload_field": "content",
     }
     # Preserve a real MCP structured-output only when the tool actually returned one (None by
     # default) — absent → no field (clean end-state, no shim); present → the LLM keeps the data.

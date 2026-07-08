@@ -360,12 +360,17 @@ async def _handle_run_pipeline(
         }
     if status == "running_async":
         # The attached wait did not reach terminal within the bound; the run was
-        # handed to detached completion + inbox delivery (never lost).
-        return {"status": "started", "data": {"run_id": outcome["run_id"]}}
+        # handed to detached completion + inbox delivery (never lost). ``kind`` marks it as an
+        # async start so the canonical mapper keeps ``run_id`` (the completion-message handle).
+        return {"status": "started",
+                "data": {"kind": "run_pipeline_async", "run_id": outcome["run_id"]}}
 
+    # #2425 案B: ``kind`` drives the canonical mapper — the sync result's ``output`` is the whole
+    # thing the caller wants; ``run_id``/``named_stores`` are dropped from the LLM-visible side.
     return {
         "status": "ok",
         "data": {
+            "kind": "run_pipeline",
             "run_id": outcome["run_id"],
             "output": outcome.get("output"),
             "named_stores": outcome.get("named_stores"),
@@ -468,7 +473,9 @@ async def _handle_run_pipeline_async(
     except ValueError as exc:
         return {"status": "error", "data": {"error": str(exc)}}
 
-    return {"status": "started", "data": {"run_id": run_id}}
+    # #2425 案B: ``kind`` drives the canonical mapper — the async result KEEPS ``run_id`` (the handle
+    # the caller matches against the later [pipeline] completion message).
+    return {"status": "started", "data": {"kind": "run_pipeline_async", "run_id": run_id}}
 
 
 RUN_PIPELINE_ASYNC = ToolDefinition(
@@ -738,11 +745,14 @@ async def _handle_run_pipeline_inline(
             "data": {"run_id": outcome["run_id"], "error": outcome.get("error")},
         }
     if status == "running_async":
-        return {"status": "started", "data": {"run_id": outcome["run_id"]}}
+        return {"status": "started",
+                "data": {"kind": "run_pipeline_async", "run_id": outcome["run_id"]}}
 
+    # #2425 案B: ``kind`` drives the canonical mapper (sync output → text/structured, run_id dropped).
     return {
         "status": "ok",
         "data": {
+            "kind": "run_pipeline",
             "run_id": outcome["run_id"],
             "output": outcome.get("output"),
             "named_stores": outcome.get("named_stores"),
@@ -781,7 +791,9 @@ async def _handle_run_pipeline_inline_async(
     except ValueError as exc:
         return {"status": "error", "data": {"error": str(exc)}}
 
-    return {"status": "started", "data": {"run_id": run_id}}
+    # #2425 案B: ``kind`` drives the canonical mapper — the async result KEEPS ``run_id`` (the handle
+    # the caller matches against the later [pipeline] completion message).
+    return {"status": "started", "data": {"kind": "run_pipeline_async", "run_id": run_id}}
 
 
 RUN_PIPELINE_INLINE = ToolDefinition(

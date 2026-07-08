@@ -633,8 +633,6 @@ async def test_disk_loaded_pipeline_invokable_through_full_live_loop(
 
     tool_messages = [m for m in session.history if m.role == "tool"]
     assert tool_messages, "expected a tool-result history entry"
-    payload = json.loads(tool_messages[-1].content)
-    assert payload["status"] == "ok"
-    inner = payload["data"]
-    assert inner["status"] == "ok"
-    assert inner["data"]["output"] == "Hello, Reyn!"
+    # #2425 案B: the sync run_pipeline result renders as its str ``output`` (plain text — run_id /
+    # named_stores dropped from the LLM-visible side), not a nested JSON envelope.
+    assert tool_messages[-1].content == "Hello, Reyn!"

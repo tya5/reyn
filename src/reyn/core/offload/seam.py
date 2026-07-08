@@ -1,22 +1,35 @@
-"""The single offload seam — build a tool-result body from a canonical result (#2425 案B step1b).
+"""The single offload seam — build the LLM-visible tool-result body from a canonical result (#2425 案B).
 
-Given a :class:`~reyn.core.offload.canonical.CanonicalToolResult`, produce the inline tool-message
-body the caller caps, plus the media blocks for the caller's vision follow-up. The crux of 案B lives
-here: ``text`` is the SOLE offload payload; ``structured`` / ``media`` are attachments handled OUT of
-the text-offload decision, so a large ``structured`` can NEVER become a second oversized field that
+Given a :class:`~reyn.core.offload.canonical.CanonicalToolResult`, produce the ``role: tool`` message
+content the LLM sees, plus the media blocks for the caller's vision follow-up. The crux of 案B lives
+here: ``text`` is the SOLE text-offload payload; ``structured`` / ``media`` are attachments handled OUT
+of the text-offload decision, so a large ``structured`` can NEVER become a second oversized field that
 collapses the offload to a whole-dict JSON envelope (the owner chat-MCP whole-envelope bug).
 
-- **media** attachments → returned as raw blocks for the caller's existing vision follow-up (byte
-  path unchanged; this replaces the per-op ``media_blocks`` extraction at the chat chokepoint).
-- **structured** attachments → kept as data when small; when large, offloaded to their OWN ref via
-  ``save_fn`` (preserved + retrievable, not dropped, not competing with ``text``). This also folds in
-  the tui-found miss (``structured`` used to slip past the media-strip and reach the offload decision).
-- **text** → the body's payload; the caller caps ``json.dumps(body)`` with ``payload_field="text"`` so
-  the offloaded ref holds the text CLEAN (real newlines), never a whole-dict envelope.
+LLM-visible format (frontmatter + text, no JSON envelope):
 
-Store-parameterized (``save_fn``) so the same seam serves chat (``MediaStore.save_tool_result``) and,
-if the phase path is retained, the phase axis — but only the chat integration is wired now (#2425
-re-scope: the phase-side integration is on hold pending the phase-deletion decision).
+- no structured/signal-meta → the plain ``text`` string (no wrapper);
+- structured data or signal meta present → a YAML frontmatter block, then the text body::
+
+      ---
+      <yaml: signal meta + structured data | structured ref+preview>
+      ---
+      <text>
+
+- error → a plain string, never JSON: ``Error (<kind>): <message>`` (dispatch envelope) or
+  ``Error: <text>`` (MCP ``isError``). Success and error are syntactically distinguishable with no
+  status field.
+
+Two independent offload streams:
+
+- **text** — capped by ``cap_tool_result_content`` (token budget) at the caller; its preview is plain
+  text, not a JSON stub.
+- **structured** — gated here by ``STRUCTURED_INLINE_MAX_CHARS`` (its own ref when oversized); the
+  frontmatter then carries ``structured_ref`` + a short ``structured_preview`` instead of the data.
+
+The format is INDEPENDENT of the store: with no ``save_fn`` the frontmatter still renders (structured
+stays inline, uncapped) — only the size-gated offloading needs a store. Media attachments are returned
+raw for the existing vision follow-up, never embedded in the text body.
 """
 from __future__ import annotations
 
@@ -26,7 +39,7 @@ from typing import Any, Callable
 from reyn.core.offload.canonical import CanonicalToolResult
 
 # A structured attachment larger than this (serialized chars) is offloaded to its own ref rather than
-# kept inline — so it never bloats the body or competes with ``text`` in the offload decision.
+# kept inline — so it never bloats the frontmatter or competes with ``text`` in the offload decision.
 STRUCTURED_INLINE_MAX_CHARS: int = 2_000
 _STRUCTURED_PREVIEW_CHARS: int = 600
 
@@ -34,16 +47,19 @@ _STRUCTURED_PREVIEW_CHARS: int = 600
 def build_offload_body(
     canonical: CanonicalToolResult,
     *,
-    save_fn: Callable[..., dict],
-) -> tuple[dict, list[dict]]:
-    """Return ``(body, media_blocks)`` for a canonical tool result.
+    save_fn: "Callable[..., dict] | None" = None,
+) -> tuple[dict, str, list[dict]]:
+    """Return ``(frontmatter, text, media_blocks)`` for a canonical tool result.
 
-    ``body`` = ``{**meta, "text": text[, "attachments": [<small structured | structured refs>]]}`` —
-    the caller serialises + caps it with ``payload_field="text"``. ``media_blocks`` = the raw media
-    blocks for the caller's vision follow-up. Large structured attachments are offloaded to their own
-    ref via ``save_fn`` (preserved, non-competing)."""
+    ``frontmatter`` = the signal meta + the structured data (inline when small, or ``structured_ref`` +
+    ``structured_preview`` when large and a ``save_fn`` is available). Empty ``{}`` when there is
+    nothing but plain text. ``text`` = the (uncapped) body the caller then caps + assembles via
+    :func:`render_tool_result`. ``media_blocks`` = the raw media blocks for the vision follow-up.
+
+    ``save_fn`` may be ``None`` (no media store): the format still applies — an oversized structured
+    attachment is kept INLINE (it cannot be offloaded without a store) rather than dropped."""
     media_blocks: list[dict] = []
-    structured_inline: list[dict] = []
+    structured_items: list[Any] = []
     for att in canonical.get("attachments", []) or []:
         kind = att.get("kind")
         if kind == "media":
@@ -51,21 +67,47 @@ def build_offload_body(
             if isinstance(block, dict):
                 media_blocks.append(block)
         elif kind == "structured":
-            data = att.get("data")
-            serialized = json.dumps(data, ensure_ascii=False, default=str)
-            if len(serialized) > STRUCTURED_INLINE_MAX_CHARS:
-                stored = save_fn(serialized)
-                structured_inline.append({
-                    "kind": "structured",
-                    "_offload_ref": stored.get("path", ""),
-                    "_offload_content_hash": stored.get("content_hash", ""),
-                    "_offload_total_chars": len(serialized),
-                    "_offload_preview": serialized[:_STRUCTURED_PREVIEW_CHARS],
-                })
-            else:
-                structured_inline.append({"kind": "structured", "data": data})
+            structured_items.append(att.get("data"))
 
-    body: dict[str, Any] = {**(canonical.get("meta") or {}), "text": canonical.get("text", "")}
-    if structured_inline:
-        body["attachments"] = structured_inline
-    return body, media_blocks
+    # Signal meta goes to the frontmatter as-is (``isError`` is handled by the error path, never here).
+    frontmatter: dict[str, Any] = {
+        k: v for k, v in (canonical.get("meta") or {}).items() if k != "isError"
+    }
+
+    if structured_items:
+        combined: Any = structured_items[0] if len(structured_items) == 1 else structured_items
+        serialized = json.dumps(combined, ensure_ascii=False, default=str)
+        if len(serialized) > STRUCTURED_INLINE_MAX_CHARS and save_fn is not None:
+            # ``tool="structured"`` distinguishes the structured stream's filename from the text
+            # stream's (the caller's text cap also stores through ``save_fn`` with the default tool
+            # token) — otherwise both would collide on the same-second filename and one would clobber
+            # the other, losing a stream.
+            stored = save_fn(serialized, tool="structured")
+            frontmatter["structured"] = "offloaded"
+            frontmatter["structured_ref"] = stored.get("path", "")
+            frontmatter["structured_preview"] = serialized[:_STRUCTURED_PREVIEW_CHARS]
+        else:
+            frontmatter["structured"] = combined
+
+    return frontmatter, canonical.get("text", "") or "", media_blocks
+
+
+def render_tool_result(frontmatter: dict, text: str) -> str:
+    """Assemble the LLM-visible ``role: tool`` content from a frontmatter dict and the (already-capped)
+    text body.
+
+    - ``frontmatter`` non-empty → ``---\\n<yaml>---\\n<text>`` (``default_flow_style=False``,
+      ``allow_unicode=True``, keys unsorted for readability).
+    - ``frontmatter`` empty → the plain ``text``. Edge guard: if ``text`` itself starts with ``---``
+      it is prefixed with a blank line so it cannot be misparsed as a frontmatter block.
+    """
+    if frontmatter:
+        import yaml
+
+        block = yaml.dump(
+            frontmatter, default_flow_style=False, allow_unicode=True, sort_keys=False,
+        )
+        return f"---\n{block}---\n{text}"
+    if text.startswith("---"):
+        return "\n" + text
+    return text

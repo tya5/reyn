@@ -267,7 +267,7 @@ def _overflow_ref_text(ref: dict) -> str:
     return (
         f"[image not loaded — exceeds the per-turn media budget. "
         f"Stored at {ref['path']} ({ref.get('mime_type', 'image')}); "
-        f"load it with read_tool_result when the context has room.]"
+        f"load it with file__read(path={ref['path']!r}) when the context has room.]"
     )
 
 
@@ -302,8 +302,8 @@ def _build_media_tail_preview(
                 return {"type": "text", "text": (
                     f"[{n} more image(s) exceed the per-turn media budget and are "
                     f"not shown here. A lossless manifest of their on-disk paths is "
-                    f"stored at {saved['path']}; load it with read_tool_result to "
-                    f"access them.]"
+                    f"stored at {saved['path']}; load it with "
+                    f"file__read(path={saved['path']!r}) to access them.]"
                 )}
             except Exception:  # noqa: BLE001 — offload best-effort; degrade below
                 pass
@@ -2940,94 +2940,86 @@ class RouterLoop:
                 meta={"chain_id": self.chain_id, "source": "router_tool_turn"},
                 tool_calls=result.tool_calls,
             )
-        # #2394-followup: the shared clean-payload decision (same helper the control_ir offloader
-        # uses) — lazy import to avoid any import cycle with context_builder.
-        from reyn.core.context_builder import decide_payload_field
+        # #2425 案B: every tool result is normalised at this chokepoint into the canonical
+        # {text, attachments, meta} shape and rendered as the frontmatter+text LLM-visible format
+        # (no JSON envelope). ``to_canonical`` dispatches on the op ``kind`` (each op that once
+        # declared ``_offload_payload_field`` now has a mapper; an unregistered kind falls back to a
+        # whole-dict ``structured`` attachment). The format is INDEPENDENT of the media store — it
+        # applies even when ``media_store is None``; only the size-gated offloading needs a store.
+        from reyn.core.offload.canonical import to_canonical
+        from reyn.core.offload.seam import build_offload_body, render_tool_result
         for tc, r in zip(result.tool_calls, result.tool_results):
-            # B41-NF-W7-1: _post_text → appended outside the JSON body.
+            # B41-NF-W7-1: _post_text → appended outside the body.
             post_text: str | None = None
             if isinstance(r, dict) and isinstance(r.get("_post_text"), str):
                 post_text = r["_post_text"]
                 r = {k: v for k, v in r.items() if k != "_post_text"}
-            # Issue #362: extract media blocks BEFORE serialising (surfaced as a
+            # Issue #362: extract media blocks BEFORE rendering (surfaced as a
             # multimodal follow-up user message, not base64 in the tool text).
             media_blocks: list[dict] = []
             if isinstance(r, dict) and isinstance(r.get("media_blocks"), list):
                 media_blocks = list(r["media_blocks"])
                 r = {k: v for k, v in r.items() if k != "media_blocks"}
             # FP-0050/#1822 S2: untrusted-source tag set by dispatch() (effective
-            # name). Pop before serialising so it never reaches the LLM body.
+            # name). Pop before rendering so it never reaches the LLM body.
             external_source = False
             if isinstance(r, dict) and r.get("_external_source"):
                 external_source = True
                 r = {k: v for k, v in r.items() if k != "_external_source"}
-            clean_value = None
-            payload_field = None
-            _is_envelope = (isinstance(r, dict) and isinstance(r.get("data"), dict)
-                            and set(r) <= {"status", "data", "error"})
-            _inner = r["data"] if _is_envelope else r
+
             _media_store = getattr(host, "media_store", None)
-            if (isinstance(_inner, dict) and _inner.get("kind") in ("mcp", "mcp_read_resource", "mcp_get_prompt")
-                    and _media_store is not None):
-                # #2425 案B: an MCP tool result normalises to a canonical shape so ``text`` (the joined
-                # content) is the SOLE offload payload and ``structured``/media are attachments held OUT
-                # of the offload decision — a large ``structuredContent`` can no longer become a second
-                # oversized field that collapses the offload to a whole-dict single-line JSON envelope
-                # (owner chat-MCP bug). It also lifts media/structured from INSIDE ``data`` (which the
-                # top-level media-strip above misses on the {status,data} envelope). The whole-inline
-                # envelope is preserved (data becomes the canonical body) and ``text`` is the clean
-                # payload the cap stores. Non-MCP ops stay on the current path below (byte-identical —
-                # canonical's whole-dict fallback would regress web/exec's own field offload).
-                # #2597 slice ②a: ``mcp_read_resource`` reuses the SAME canonical path — a resource's
-                # ``contents`` can carry a large ``blob`` alongside joined ``text``, the identical
-                # second-oversized-field risk a tool's ``structuredContent`` posed (see
-                # ``_mcp_read_resource_to_canonical``).
-                # #2597 slice ②c: ``mcp_get_prompt`` reuses the SAME canonical path — a rendered
-                # prompt's ``messages`` can carry a large non-text content block alongside joined
-                # ``text``, the identical second-oversized-field risk (see
-                # ``_mcp_get_prompt_to_canonical``).
-                from reyn.core.offload.canonical import to_canonical
-                from reyn.core.offload.seam import build_offload_body
-                _body, _mcp_media = build_offload_body(
-                    to_canonical(_inner), save_fn=_media_store.save_tool_result,
-                )
-                if _mcp_media:
-                    media_blocks = _mcp_media  # media from INSIDE data (the top-level strip missed it)
-                content_str = json.dumps(
-                    {"status": r.get("status", "ok"), "data": _body} if _is_envelope else _body,
-                    default=str,
-                )
-                clean_value = _body
-                payload_field = "text"
+            _save_fn = _media_store.save_tool_result if _media_store is not None else None
+            _cap = getattr(host, "cap_tool_result", None)
+
+            # Error path (plain string, never JSON): a dispatch-envelope error carries
+            # ``error.kind``/``.message`` (``permission_denied`` vs ``not_found`` imply different
+            # recovery); an MCP ``isError`` carries its description in the content text.
+            scan_target: str
+            if (isinstance(r, dict) and r.get("status") == "error"
+                    and isinstance(r.get("error"), dict)):
+                _err = r["error"]
+                content_str = f"Error ({_err.get('kind', 'error')}): {_err.get('message', '')}"
+                scan_target = content_str
             else:
-                # #2394-followup clean-payload (non-MCP): if r is the OS dispatch envelope
-                # {status, data:<dict>} and data declares a SOLE-oversized payload field (shared
-                # decide_payload_field — same decision the control_ir offloader uses), pass the inner
-                # op-result + field to the cap so the offloaded file holds THAT field CLEAN (real
-                # newlines), not the whole-envelope single-line JSON. P7-safe: OS-level keys only.
-                # Byte-identical to before for every non-MCP op.
-                if _is_envelope:
-                    payload_field = decide_payload_field(r["data"])
-                    if payload_field is not None:
-                        clean_value = r["data"]
-                content_str = json.dumps(r, default=str)
+                # Unwrap dispatch-envelope layers ({status, data} with nothing else) until the op
+                # result (the dict carrying ``kind``) is reached. One layer for op_runtime ops
+                # (bare {kind:…} wrapped once by dispatch_tool); two for tool-registry handlers whose
+                # own return is already an envelope (e.g. run_pipeline → wrapped again).
+                _inner = r
+                while (isinstance(_inner, dict) and isinstance(_inner.get("data"), dict)
+                       and set(_inner) <= {"status", "data", "error"} and "kind" not in _inner):
+                    _inner = _inner["data"]
+                if not isinstance(_inner, dict):
+                    # Non-dict result (rare) — render its value as plain text, losslessly.
+                    content_str = _inner if isinstance(_inner, str) else json.dumps(_inner, default=str)
+                    scan_target = content_str
+                else:
+                    canonical = to_canonical(_inner)
+                    if (canonical.get("meta") or {}).get("isError"):
+                        text_full = canonical.get("text", "") or ""
+                        scan_target = f"Error: {text_full}"
+                        text = _cap(text_full) if _cap is not None else text_full
+                        content_str = f"Error: {text}"
+                    else:
+                        frontmatter, text, built_media = build_offload_body(
+                            canonical, save_fn=_save_fn,
+                        )
+                        if built_media:
+                            # media lifted from INSIDE data (the top-level strip missed it)
+                            media_blocks.extend(built_media)
+                        # FP-0050/#1822 S2: scan the FULL body BEFORE the cap truncates it, so
+                        # injection cannot hide past the size cap.
+                        scan_target = render_tool_result(frontmatter, text)
+                        if _cap is not None:
+                            text = _cap(text)
+                        content_str = render_tool_result(frontmatter, text)
             if post_text:
                 content_str = f"{content_str}\n\n---\n{post_text}"
             # FP-0050/#1822 S2: scan-all on the FULL content BEFORE cap truncates
             # (so injection can't hide past the size cap). Detection completeness.
             _scan = getattr(host, "scan_tool_result", None)
             if _scan is not None:
-                _scan(content_str)
-            # #1128: cap oversized tool results once at this chokepoint. #2397-followup: uniform
-            # call — every capper accepts (content_str, *, clean_value, payload_field), so we always
-            # pass the clean-payload kwargs (both None when not an envelope → capper does a plain cap).
-            # No if/else backward-compat branch (that split let the wired Session._cap_tool_result be
-            # missed → MCP router-fail; owner: backward-compat = debt).
-            _cap = getattr(host, "cap_tool_result", None)
-            if _cap is not None:
-                content_str = _cap(
-                    content_str, clean_value=clean_value, payload_field=payload_field
-                )
+                _scan(scan_target)
             # FP-0050/#1822 S2: fence untrusted-source content AFTER cap (so
             # truncation can't sever the end marker). Trusted-internal = scan-only.
             if external_source:
