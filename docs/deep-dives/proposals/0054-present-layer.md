@@ -202,9 +202,27 @@ registered template (operator-owned) → inline blueprint (LLM-authored, catalog
 
 Mirror of the input-side content-guard, at the output boundary:
 
-- Threat scan + neutralization of rendered leaf strings: terminal escape sequences,
-  Rich markup, HTML — per target surface. Runs **unconditionally**, including (and
-  especially) for never-ingested data.
+- **Per-surface neutralizer strategy.** Neutralization of rendered leaf strings is a
+  strategy *selected by the target surface*, not a single uniform strip — what is
+  dangerous depends on the sink. Runs **unconditionally**, including (and especially) for
+  never-ingested data. Applied to **every** render-leaf string (label, literal, and
+  bound value) at one seam — never split "escape labels at parse / neutralize bound
+  values at bind", which leaves literal strings unguarded.
+  - **Terminal (v1, inline-CUI / Rich):** *strip* control / ESC sequences (always
+    dangerous — OSC / CSI, notably OSC-52 clipboard) and *escape* Rich console markup
+    (escape, not strip — `[red]` survives as literal text, preserving fidelity;
+    FP-0051 idiom). **No HTML-escaping** on this surface: `<div>` is inert literal text
+    in a terminal, and HTML-escaping would corrupt `<`/`>`/`&` in `code`/`diff` (core
+    v1 catalog) — a category error (neutralizing a threat that does not exist at this
+    sink).
+  - **Web (future):** HTML/JS escaping is *this* surface's neutralizer, shipped with the
+    web renderer — not applied on the terminal path. Structuring neutralization
+    per-surface (even with one surface in v1) lets the web strategy plug in without
+    touching the core (§ 6 per-surface boundary; structural write-gate).
+  - **Renderer note (PR-B):** Rich `Syntax` (code/diff) and `Text` are markup-inert, so
+    content routed to them must **not** be double-handled — the Rich-markup escape is for
+    markup-interpreting paths (`Markdown`), while `Syntax`/`Text` receive the raw
+    (control-stripped) string. Resolved in the PR-B renderer, not the guard core.
 - **Per-binding size caps** — prevents `/` (root) bound into a `text` component from
   dumping an entire file.
 - **Default output cap (present-specific — not a scrollback pager).** The inline-CUI
