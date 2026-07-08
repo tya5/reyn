@@ -171,6 +171,49 @@ class AskUserIROp(BaseModel):
     required: bool = True
 
 
+class PresentIROp(BaseModel):
+    """present op — route bulk data + a display template to the user-facing
+    surface without the data round-tripping through LLM output tokens (FP-0054).
+
+    **Tier 0** (``ask_user``'s sibling): presenting to the user — the trust root —
+    is not an exfiltration channel, so there is no output permission gate. The one
+    gate is that ``data_ref`` read authority resolves **identically to
+    ``file.read``**: present can never read more than the agent's file ops can.
+    Unlike ``ask_user``, present is **fire-and-continue** — it does NOT pause the
+    run.
+
+    Source (exactly one): ``data_ref`` — any zone-readable path; an offloaded
+    ``structured_ref`` is re-hydrated to its full value via ``file.read``
+    semantics — XOR ``data_inline`` — small data already in the LLM's context.
+
+    Template (exactly one): ``template`` — a registered presentation name (the
+    registry + fallback chain land in a later PR) — XOR ``blueprint`` — an inline
+    declarative component tree with JSON-Pointer (RFC 6901) path bindings,
+    structurally gated to the display-only catalog (catalog components only,
+    bindings are path expressions only). No markup / HTML / code ever crosses from
+    the LLM to the renderer.
+    """
+    kind: Literal["present"]
+    data_ref: str | None = None            # XOR data_inline; any zone-readable path
+    data_inline: Any | None = None         # XOR data_ref; small already-in-context data
+    template: str | None = None            # XOR blueprint; a registered presentation name
+    blueprint: dict[str, Any] | list[Any] | None = None  # XOR template; inline component tree
+
+    @model_validator(mode="after")
+    def _exactly_one_source_and_template(self) -> "PresentIROp":
+        # data_inline may legitimately be a falsy value ({} / [] / 0); the
+        # ``is None`` checks distinguish "absent" from "present-but-falsy".
+        if (self.data_ref is None) == (self.data_inline is None):
+            raise ValueError(
+                "present requires exactly one of data_ref / data_inline"
+            )
+        if (self.template is None) == (self.blueprint is None):
+            raise ValueError(
+                "present requires exactly one of template / blueprint"
+            )
+        return self
+
+
 class SandboxedExecIROp(BaseModel):
     """Execute a command under a SandboxPolicy (FP-0017).
 
@@ -630,6 +673,10 @@ OP_KIND_MODEL_MAP: dict[str, type[BaseModel]] = {
     # op_runtime/mcp_get_prompt.py + session.py's _mcp_list_prompts).
     "mcp_get_prompt": MCPGetPromptIROp,
     "ask_user":    AskUserIROp,
+    # FP-0054 PR-A: present bulk data + a display template to the user surface
+    # without the data passing through LLM output tokens. Tier 0 (ask_user's
+    # sibling); the only gate is data_ref read authority == file.read.
+    "present":     PresentIROp,
     "web_fetch":   WebFetchIROp,
     "web_search":  WebSearchIROp,
     "mcp_install": MCPInstallIROp,
@@ -684,6 +731,7 @@ if TYPE_CHECKING:
             MCPSubscribeResourceIROp, MCPUnsubscribeResourceIROp,
             MCPGetPromptIROp,
             AskUserIROp,
+            PresentIROp,
             WebFetchIROp, WebSearchIROp, MCPInstallIROp,
             MCPDropServerIROp,
             IndexQueryIROp, RecallIROp, IndexDropIROp,

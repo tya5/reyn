@@ -124,6 +124,9 @@ from . import mcp_unsubscribe_resource as _mcp_unsubscribe_resource  # noqa: F40
 
 # pipeline install op (register a pipeline DSL file into pipelines.entries — mirrors skill_install).
 from . import pipeline_install as _pipeline_install  # noqa: F401, E402
+
+# FP-0054 PR-A: present op — user-facing presentation of bulk data (null renderer).
+from . import present as _present  # noqa: F401, E402
 from . import recall as _recall  # noqa: F401, E402
 from . import sandboxed_exec as _sandboxed_exec  # noqa: F401, E402
 
