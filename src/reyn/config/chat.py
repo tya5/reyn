@@ -194,6 +194,41 @@ class CostWarnConfig:
 
 
 @dataclass
+class OffloadConfig:
+    """`offload:` — debug/experiment lever disabling the tool-result size gates
+    (tool-result-schema-redesign §5).
+
+    **Purpose:** the offload mechanism (text token cap + structured inline cap +
+    media follow-up budget) is suspected of degrading LLM autonomy via
+    over-truncation. This opt-out isolates that experimentally: with
+    ``enabled: false``, format stays identical (frontmatter + text, unchanged)
+    and the only variable is whether size gates truncate. Debug/experiment
+    lever, not a recommended steady-state setting.
+
+    ``enabled: false`` disables all three gates: the text token cap
+    (``cap_tool_result_content``), the structured inline gate
+    (``STRUCTURED_INLINE_MAX_CHARS`` in ``build_offload_body``), and the media
+    follow-up budget bound (``media_followup_budget`` — included so the
+    experiment isn't confounded by media starvation).
+
+    **Known risk (accepted):** with offload disabled, a single tool result can
+    exceed the model's compaction-batch budget, recreating the #1128
+    compaction dead-end (a turn too large to ever compact). A
+    ``offload_disabled`` warning event is emitted at session start so traces
+    stay self-explaining.
+    """
+    enabled: bool = True
+
+
+def _build_offload_config(raw: object) -> "OffloadConfig":
+    """Parse the ``offload:`` section. Missing/malformed -> defaults (enabled=True)."""
+    if not isinstance(raw, dict):
+        return OffloadConfig()
+    defaults = OffloadConfig()
+    return OffloadConfig(enabled=bool(raw.get("enabled", defaults.enabled)))
+
+
+@dataclass
 class SpawnConfig:
     """`safety.spawn:` — operator bounds on the LLM spawn tree (#2103 C3).
 

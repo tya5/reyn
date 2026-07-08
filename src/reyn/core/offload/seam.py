@@ -48,6 +48,7 @@ def build_offload_body(
     canonical: CanonicalToolResult,
     *,
     save_fn: "Callable[..., dict] | None" = None,
+    enabled: bool = True,
 ) -> tuple[dict, str, list[dict]]:
     """Return ``(frontmatter, text, media_blocks)`` for a canonical tool result.
 
@@ -57,7 +58,11 @@ def build_offload_body(
     :func:`render_tool_result`. ``media_blocks`` = the raw media blocks for the vision follow-up.
 
     ``save_fn`` may be ``None`` (no media store): the format still applies — an oversized structured
-    attachment is kept INLINE (it cannot be offloaded without a store) rather than dropped."""
+    attachment is kept INLINE (it cannot be offloaded without a store) rather than dropped.
+
+    ``enabled=False`` (tool-result-schema-redesign §5 debug lever) disables the
+    ``STRUCTURED_INLINE_MAX_CHARS`` size gate — structured data always stays inline
+    regardless of size, never offloaded to a ``structured_ref``."""
     media_blocks: list[dict] = []
     structured_items: list[Any] = []
     for att in canonical.get("attachments", []) or []:
@@ -77,7 +82,7 @@ def build_offload_body(
     if structured_items:
         combined: Any = structured_items[0] if len(structured_items) == 1 else structured_items
         serialized = json.dumps(combined, ensure_ascii=False, default=str)
-        if len(serialized) > STRUCTURED_INLINE_MAX_CHARS and save_fn is not None:
+        if enabled and len(serialized) > STRUCTURED_INLINE_MAX_CHARS and save_fn is not None:
             # ``tool="structured"`` distinguishes the structured stream's filename from the text
             # stream's (the caller's text cap also stores through ``save_fn`` with the default tool
             # token) — otherwise both would collide on the same-second filename and one would clobber

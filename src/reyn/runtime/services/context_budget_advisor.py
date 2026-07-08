@@ -42,6 +42,7 @@ class ContextBudgetAdvisor:
         model_fn: Callable[[], str],  # zero-arg → CURRENT resolved model (#1752)
         events: Any,                 # EventLog — for fallback budget + emit
         history_fn: Callable[[], list],  # zero-arg → current router-view history
+        offload_config: Any = None,  # OffloadConfig — tool-result-schema-redesign §5
     ) -> None:
         self._compaction = compaction
         self._compaction_controller = compaction_controller
@@ -49,6 +50,8 @@ class ContextBudgetAdvisor:
         self._model_fn = model_fn
         self._events = events
         self._history_fn = history_fn
+        from reyn.config.chat import OffloadConfig
+        self._offload_config = offload_config if offload_config is not None else OffloadConfig()
 
     @property
     def _model(self) -> str:
@@ -101,10 +104,13 @@ class ContextBudgetAdvisor:
     def cap_tool_result(self, content_str: str) -> str:
         """Cap an oversized chat tool result (#1128 size axis).
 
-        No-op when no media_store is configured. ``content_str`` is the canonical ``text`` body
-        (#2425 案B) — already the clean payload, so the stored body is it as-is and the inline is a
-        bounded plain-text preview.
+        No-op when no media_store is configured, or when ``offload.enabled: false``
+        (tool-result-schema-redesign §5 debug lever — never truncate). ``content_str``
+        is the canonical ``text`` body (#2425 案B) — already the clean payload, so the
+        stored body is it as-is and the inline is a bounded plain-text preview.
         """
+        if not self._offload_config.enabled:
+            return content_str
         store = self._media_store
         if store is None:
             return content_str
@@ -120,8 +126,15 @@ class ContextBudgetAdvisor:
             events=self._events,
         )
 
-    def media_followup_budget(self, tool_content: str) -> int:
-        """Tokens left for media after capped tool text (#272 media axis)."""
+    def media_followup_budget(self, tool_content: str) -> "int | None":
+        """Tokens left for media after capped tool text (#272 media axis).
+
+        ``None`` (unbounded) when ``offload.enabled: false`` (tool-result-schema-
+        redesign §5) — the media gate is one of the three size gates the debug
+        lever disables, so the opt-out isn't confounded by media starvation.
+        """
+        if not self._offload_config.enabled:
+            return None
         from reyn.services.compaction.engine import estimate_tokens
 
         use_chars4 = getattr(self._compaction, "use_chars4_estimate", False)

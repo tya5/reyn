@@ -3001,6 +3001,7 @@ class RouterLoop:
                     else:
                         frontmatter, text, built_media = build_offload_body(
                             canonical, save_fn=_save_fn,
+                            enabled=getattr(host, "offload_enabled", True),
                         )
                         if built_media:
                             # media lifted from INSIDE data (the top-level strip missed it)

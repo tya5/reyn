@@ -1121,6 +1121,21 @@ cost_warn:
 
 **Pricing source:** reyn looks up model costs from the [LiteLLM pricing database](https://github.com/BerriAI/litellm) (`litellm.model_cost`). Models not in the database are treated as below-threshold (no warning). Custom or proxy models that resolve to a key in the database will be matched.
 
+## `offload` block
+
+Debug/experiment lever disabling **all three** tool-result size gates (tool-result-schema-redesign §5): the text token cap, the structured-data inline cap, and the media follow-up budget bound. With `enabled: false`, every tool result is emitted to the LLM in full — never truncated, never offloaded to a file ref. The LLM-visible format (frontmatter + text) is unchanged either way; only whether size gates truncate varies, isolating that as the sole experimental variable.
+
+```yaml
+offload:
+  enabled: true   # false = never truncate, always emit tool results in full
+```
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `enabled` | bool | `true` | Master switch. `false` disables the text token cap, the structured inline cap, and the media follow-up budget bound. |
+
+**Not a recommended steady-state setting.** With offload disabled, a single tool result can exceed the model's compaction-batch budget, recreating the pre-#1128 compaction dead-end (a turn too large to ever compact). A `offload_disabled` warning event is emitted at session start when this is set, so traces stay self-explaining.
+
 ## MCP servers
 
 External tool servers reyn can call via the [Model Context Protocol](../../concepts/tools-integrations/mcp.md). Each entry under `mcp.servers:` is keyed by a short name (the same name the skill declares in `permissions.mcp` and emits in `mcp` ops).
