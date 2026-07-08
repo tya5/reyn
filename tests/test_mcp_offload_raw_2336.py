@@ -87,23 +87,6 @@ def test_no_raw_field_content_is_sole_oversized(tmp_path, monkeypatch):
         "content is the SOLE oversized field (clean-payload gate can fire)"
 
 
-def test_large_mcp_result_offloads_clean_content(tmp_path, monkeypatch):
-    """Tier 2: the bug — a large MCP result offloads as CLEAN text (real newlines), not a whole-dict
-    single-line JSON envelope. RED on main (whole-dict fallback because content+raw both oversized)."""
-    monkeypatch.chdir(tmp_path)
-    result = _run([{"type": "text", "text": _BIG_TEXT}], tmp_path)
-
-    inline = offload_control_ir_result(result, 0, tmp_path)
-    stored = Path(inline["_offload_ref"]).read_text(encoding="utf-8")
-
-    assert not stored.lstrip().startswith("{"), "offload file is clean content, not a JSON dict envelope"
-    assert stored == _BIG_TEXT, "the file is exactly the clean joined text"
-    assert "\\n" not in stored, "real newlines (not JSON-escaped) — no JSON-of-JSON symptom"
-    assert stored.count("\n") == _BIG_TEXT.count("\n"), "all newlines preserved"
-    text, _ = read_offloaded(inline["_offload_ref"], base_dir=tmp_path)
-    assert text == _BIG_TEXT, "read-back via the store returns the clean payload"
-
-
 def test_structured_content_preserved_when_present(tmp_path, monkeypatch):
     """Tier 2: a real MCP structured output is preserved as ``structured`` (no in-context data loss),
     and it does not re-carry ``content`` — so ``content`` stays the sole oversized field."""

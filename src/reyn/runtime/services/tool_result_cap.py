@@ -27,7 +27,6 @@ compaction call (the by-construction crux — see #1128 4585990x).
 """
 from __future__ import annotations
 
-import json
 from typing import Any, Callable
 
 from reyn.services.compaction.engine import estimate_tokens
@@ -71,21 +70,22 @@ def cap_tool_result_content(
     save_fn: Callable[..., dict],
     use_chars4: bool = False,
     events: Any = None,
-    clean_value: Any = None,
-    payload_field: str | None = None,
 ) -> str:
-    """Return *content_str* unchanged if within the cap, else its offloaded preview.
+    """Return *content_str* unchanged if within the cap, else its offloaded plain-text preview.
+
+    ``content_str`` is the canonical ``text`` body (#2425 案B): already the clean LLM-readable payload,
+    so the full body is stored as-is (real newlines) and the inline is replaced with a bounded
+    head/tail plain-text preview naming the read-back path — never a JSON stub.
 
     Args:
-        content_str:  The serialised tool-result text (router_loop:2148 chokepoint).
-        cap_tokens:   Token budget for the inline; results estimated above it are
+        content_str:  The tool-result text body (the canonical ``text`` stream).
+        cap_tokens:   Token budget for the inline; a body estimated above it is
                       offloaded. ``<= 0`` disables the cap (identity).
         model:        Model name for ``estimate_tokens`` unit consistency.
         save_fn:      Stores the full body and returns a path-ref block with at
                       least ``"path"`` (project-relative, read back via
-                      ``MediaStore.read_tool_result``) and ``"content_hash"``.
-                      In production this is ``MediaStore.save_tool_result`` (the
-                      #385 store) — lossless, never truncating.
+                      ``file__read``) and ``"content_hash"``. In production this is
+                      ``MediaStore.save_tool_result`` (the #385 store) — lossless.
         use_chars4:   Match the engine's token estimator (``cfg.use_chars4_estimate``)
                       so the size measurement is unit-consistent with the
                       ``effective_trigger`` budget the cap is derived from.
@@ -94,8 +94,8 @@ def cap_tool_result_content(
 
     Returns:
         The original string when ``estimate_tokens(content_str) <= cap_tokens``;
-        otherwise a bounded JSON preview string (head + tail + ``_offload_ref`` +
-        ``_offload_content_hash``) with ``estimate_tokens(preview) <= cap_tokens``.
+        otherwise a bounded plain-text preview (head + a truncation marker naming
+        the ``file__read`` path + tail) with ``estimate_tokens(preview) <= cap_tokens``.
         The full body is always stored first — no information is lost.
     """
     if cap_tokens <= 0:
@@ -103,23 +103,8 @@ def cap_tool_result_content(
     if estimate_tokens(content_str, model, use_chars4=use_chars4) <= cap_tokens:
         return content_str
 
-    # #2394-followup clean-payload: when the result is the OS dispatch envelope whose ``data``
-    # declares a sole-oversized field (``payload_field`` from the shared ``decide_payload_field``),
-    # store THAT field's value CLEAN (raw text, real newlines) — not the whole ``{status, data:{…}}``
-    # single-line envelope — and preview FROM it. Mirrors the control_ir offloader; only the STORED
-    # body + preview source change, the token-fit machinery below is identical. When no clean-payload
-    # (the default), behaviour is byte-identical to before.
-    clean = payload_field is not None and isinstance(clean_value, dict)
-    if clean:
-        block = save_fn(clean_value, payload_field=payload_field)
-        _field_val = clean_value.get(payload_field)
-        preview_source = (
-            _field_val if isinstance(_field_val, str)
-            else json.dumps(_field_val, ensure_ascii=False, default=str)
-        )
-    else:
-        block = save_fn(content_str)
-        preview_source = content_str
+    block = save_fn(content_str)
+    preview_source = content_str
     ref = block.get("path", "")
     content_hash = block.get("content_hash", "")
 
@@ -136,9 +121,8 @@ def cap_tool_result_content(
 
     head_chars, tail_chars = _PREVIEW_HEAD_CHARS, _PREVIEW_TAIL_CHARS
     preview = _build_preview(
-        preview_source, ref=ref, content_hash=content_hash,
+        preview_source, ref=ref,
         head_chars=head_chars, tail_chars=tail_chars,
-        payload_field=payload_field if clean else None,
     )
     # Shrink head/tail symmetrically until the preview fits cap_tokens. Floor at
     # 0 (= a bare lossless ref-marker) so even a tiny cap converges rather than
@@ -147,9 +131,8 @@ def cap_tool_result_content(
         head_chars = head_chars // 2 if head_chars > 64 else 0
         tail_chars = tail_chars // 2 if tail_chars > 64 else 0
         preview = _build_preview(
-            preview_source, ref=ref, content_hash=content_hash,
+            preview_source, ref=ref,
             head_chars=head_chars, tail_chars=tail_chars,
-            payload_field=payload_field if clean else None,
         )
 
     if events is not None:
@@ -167,29 +150,23 @@ def _build_preview(
     content_str: str,
     *,
     ref: str,
-    content_hash: str,
     head_chars: int,
     tail_chars: int,
-    payload_field: str | None = None,
 ) -> str:
-    """Build the bounded inline preview JSON for an offloaded tool result.
+    """Build the bounded plain-text preview for an offloaded tool result (#2425 §4).
 
-    When ``payload_field`` is set (#2394-followup clean-payload), the ref holds the CLEAN field
-    value (raw text) rather than the whole-dict envelope, so the inline signals that to the reader
-    via ``_offload_ref_format`` / ``_offload_payload_field`` — matching the control_ir offloader's
-    inline markers so both paths read back identically."""
-    inline: dict = {
-        "_offload_ref": ref,
-        "_offload_content_hash": content_hash,
-        "_offload_total_chars": len(content_str),
-        "_offload_note": (
-            f"Tool result offloaded ({len(content_str)} chars); read the full "
-            f"body via file__read(path={ref!r})."
-        ),
-        "_offload_head": content_str[:head_chars] if head_chars > 0 else "",
-        "_offload_tail": content_str[-tail_chars:] if tail_chars > 0 else "",
-    }
-    if payload_field is not None:
-        inline["_offload_ref_format"] = "raw_field"
-        inline["_offload_payload_field"] = payload_field
-    return json.dumps(inline, ensure_ascii=False)
+    Readable head/tail around a single truncation marker naming the ``file__read`` read-back path —
+    NOT a JSON stub. The full body is always in the store first, so the head/tail preview is lossless
+    overall::
+
+        <head>
+        ...[truncated: <N> chars total — full body: file__read(path="<ref>")]...
+        <tail>
+    """
+    head = content_str[:head_chars] if head_chars > 0 else ""
+    tail = content_str[-tail_chars:] if tail_chars > 0 else ""
+    marker = (
+        f"...[truncated: {len(content_str)} chars total — "
+        f'full body: file__read(path="{ref}")]...'
+    )
+    return f"{head}\n{marker}\n{tail}"

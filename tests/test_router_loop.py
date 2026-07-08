@@ -94,12 +94,9 @@ async def test_unknown_tool_returns_error_in_result(monkeypatch):
     round2_messages = messages_captured[1]
     tool_msgs = [m for m in round2_messages if m.get("role") == "tool"]
     (tool_msg,) = tool_msgs
-    result_data = json.loads(tool_msg["content"])
-    # PR36: unknown tools now return {status: "error", error: {kind: "unknown_tool", ...}}
-    assert result_data.get("status") == "error"
-    error = result_data.get("error", {})
-    assert error.get("kind") == "unknown_tool"
-    assert "bogus" in error.get("message", "")
+    # #2425 案B: a dispatch error renders the plain ``Error (<kind>): <message>`` string, not JSON.
+    assert tool_msg["content"].startswith("Error (unknown_tool): ")
+    assert "bogus" in tool_msg["content"]
     assert host.outbox[0]["text"] == "Recovered."
 
 
@@ -438,11 +435,9 @@ async def test_unknown_tool_name_returns_error_not_dispatched(monkeypatch):
     round2_messages = messages_captured[1]
     tool_msgs = [m for m in round2_messages if m.get("role") == "tool"]
     (tool_msg,) = tool_msgs
-    result_data = json.loads(tool_msg["content"])
-    assert result_data.get("status") == "error"
-    error = result_data.get("error", {})
-    assert error.get("kind") == "unknown_tool"
-    assert "read_file" in error.get("message", "")
+    # #2425 案B: a dispatch error renders the plain ``Error (<kind>): <message>`` string, not JSON.
+    assert tool_msg["content"].startswith("Error (unknown_tool): ")
+    assert "read_file" in tool_msg["content"]
 
     # Loop recovered and produced a reply
     assert host.outbox[0]["text"] == "Sorry, let me try differently."
@@ -596,9 +591,8 @@ async def test_no_events_attribute_needed_for_unknown_tool_path(monkeypatch):
 
     round2_messages = messages_captured[1]
     tool_msgs = [m for m in round2_messages if m.get("role") == "tool"]
-    result_data = json.loads(tool_msgs[0]["content"])
-    assert result_data.get("status") == "error"
-    assert result_data["error"]["kind"] == "unknown_tool"
+    # #2425 案B: a dispatch error renders the plain ``Error (<kind>): <message>`` string, not JSON.
+    assert tool_msgs[0]["content"].startswith("Error (unknown_tool): ")
     # events were emitted
     assert any(e["type"] == "tool_failed" for e in host.events.emitted)
 

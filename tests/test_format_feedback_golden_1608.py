@@ -13,10 +13,10 @@ No mocks: real universal scheme + the real ``_ScriptedLLM`` Fake + ``FakeRouterH
 """
 from __future__ import annotations
 
-import json
 from typing import Any
 
 import pytest
+import yaml
 
 from reyn.llm.llm import LLMToolCallResult
 from reyn.llm.pricing import TokenUsage
@@ -82,17 +82,16 @@ async def test_execute_round_message_sequence_golden(monkeypatch):
     # (3) sandbox_2's excluded-row assert: the EXCLUDED call's tool message is at its
     # own index with its own id, carrying the tool_excluded error (not dropped, not
     # reordered).
+    # #2425 案B: a dispatch error renders the plain ``Error (<kind>): <message>`` string.
     write_msg = tool_msgs[1]
     assert write_msg["tool_call_id"] == "call_write"
-    write_body = json.loads(write_msg["content"])
-    assert write_body.get("status") == "error"
-    assert write_body.get("error", {}).get("kind") == "tool_excluded"
+    assert write_msg["content"].startswith("Error (tool_excluded): ")
 
-    # (4) the dispatched call's result is its own message at index 0, with its result
-    # JSON-serialised into the content (the per-result serialization the relocation
-    # must preserve — the exact dispatch outcome is harness-dependent, but it must
-    # round-trip as a structured tool result at its own id).
+    # (4) the dispatched call's result is its own message at index 0. #2425 案B: an unmapped op
+    # result renders as a frontmatter YAML block (whole dict → ``structured``), not a JSON envelope
+    # — the exact dispatch outcome is harness-dependent, but it must round-trip at its own id.
     read_msg = tool_msgs[0]
     assert read_msg["tool_call_id"] == "call_read"
-    read_body = json.loads(read_msg["content"])
-    assert "status" in read_body
+    assert read_msg["content"].startswith("---\n"), "unmapped op result → frontmatter YAML"
+    _head = read_msg["content"][4:].split("\n---\n")[0]
+    assert yaml.safe_load(_head)["structured"]["kind"] == "file"

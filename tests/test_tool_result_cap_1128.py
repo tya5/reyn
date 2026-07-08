@@ -21,6 +21,7 @@ store + real ``read_tool_result`` read-back (no mocks):
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -34,6 +35,13 @@ from reyn.runtime.services.tool_result_cap import (
 from reyn.services.compaction.engine import estimate_tokens
 
 _MODEL = "gpt-4o"
+
+
+def _ref_from_preview(preview: str) -> str:
+    """Extract the offload ref path from the plain-text preview's ``file__read(path="<ref>")`` marker."""
+    m = re.search(r'file__read\(path="([^"]+)"\)', preview)
+    assert m, f"preview must name a file__read read-back path: {preview[:200]!r}"
+    return m.group(1)
 
 
 def test_under_cap_content_is_identity(tmp_path: Path) -> None:
@@ -70,7 +78,7 @@ def test_over_cap_preview_is_within_cap_tokens(tmp_path: Path, cap_tokens: int) 
         "single-turn compactable (the by-construction dead-end-#1 bound)"
     )
     assert len(out) <= MAX_TOOL_RESULT_INLINE_BYTES
-    assert "_offload_ref" in out
+    assert "file__read(path=" in out, "the plain-text preview names the file__read read-back path"
 
 
 def test_offloaded_body_reads_back_lossless(tmp_path: Path) -> None:
@@ -85,7 +93,7 @@ def test_offloaded_body_reads_back_lossless(tmp_path: Path) -> None:
         content, cap_tokens=512, model=_MODEL,
         save_fn=store.save_tool_result, use_chars4=True,
     )
-    ref = json.loads(out)["_offload_ref"]
+    ref = _ref_from_preview(out)
 
     body, found = store.read_tool_result(ref)
     assert found, f"read_tool_result could not locate the offloaded body at {ref!r}"

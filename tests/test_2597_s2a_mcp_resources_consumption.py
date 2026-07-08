@@ -410,7 +410,10 @@ def test_canonical_mapper_joins_text_and_isolates_blob_as_structured():
             "uri": "resource://blob", "mimeType": "application/octet-stream", "blob": "YWJj",
         }},
     ]
-    assert canonical["meta"]["kind"] == "mcp_read_resource"
+    # #2425 案B: meta is signal-only — transport echo (kind/status/server/uri) is dropped; a
+    # successful result carries no isError, so meta is empty.
+    assert "kind" not in canonical["meta"] and "server" not in canonical["meta"]
+    assert not canonical["meta"].get("isError")
 
 
 # ── Tier 2: tools/mcp.py verbs — delegation via a Fake host (no mocks) ────────

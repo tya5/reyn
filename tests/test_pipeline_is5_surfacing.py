@@ -384,15 +384,9 @@ async def test_run_pipeline_via_invoke_action_full_live_loop(
     # The tool-result history entry carries the REAL pipeline output.
     tool_messages = [m for m in session.history if m.role == "tool"]
     assert tool_messages, "expected at least one tool-result history entry"
-    # invoke_action wraps the target handler's own {status, data} envelope
-    # inside its own {status, data} — unwrap one level to reach run_pipeline's
-    # actual result shape ({run_id, output, named_stores}).
-    payload = json.loads(tool_messages[-1].content)
-    assert payload["status"] == "ok"
-    inner = payload["data"]
-    assert inner["status"] == "ok"
-    assert inner["data"]["output"] == "hello world"
-    assert inner["data"]["named_stores"]["greeting"] == "hello world"
+    # #2425 案B: the sync run_pipeline result renders as its str ``output`` (plain text — run_id /
+    # named_stores are dropped from the LLM-visible side), whatever envelope nesting produced it.
+    assert tool_messages[-1].content == "hello world"
 
     # The router's second round reached the outbox (the loop didn't hang or
     # error out after the tool call).
@@ -507,9 +501,5 @@ async def test_run_pipeline_via_d19_pipeline_name_full_live_loop(
 
     tool_messages = [m for m in session.history if m.role == "tool"]
     assert tool_messages, "expected at least one tool-result history entry"
-    payload = json.loads(tool_messages[-1].content)
-    assert payload["status"] == "ok"
-    inner = payload["data"]
-    assert inner["status"] == "ok"
-    assert inner["data"]["output"] == "hello world"
-    assert inner["data"]["named_stores"]["greeting"] == "hello world"
+    # #2425 案B: the sync run_pipeline result renders as its str ``output`` (plain text).
+    assert tool_messages[-1].content == "hello world"

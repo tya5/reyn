@@ -101,8 +101,8 @@ async def handle(
         ) from exc
 
     mode = "semantic" if chunks else "fallback"
-    # #2336: offload the chunks array as a clean JSON array, not a whole-dict envelope.
-    return {"chunks": [dict(c) for c in chunks], "mode": mode, "_offload_payload_field": "chunks"}
+    # #2425 案B: ``kind`` drives the canonical mapper (chunks → structured attachment).
+    return {"kind": "index_query", "chunks": [dict(c) for c in chunks], "mode": mode}
 
 
 register("index_query", handle)
