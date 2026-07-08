@@ -184,7 +184,7 @@ def _build_preview(
         "_offload_total_chars": len(content_str),
         "_offload_note": (
             f"Tool result offloaded ({len(content_str)} chars); read the full "
-            f"body via read_tool_result({ref!r})."
+            f"body via file__read(path={ref!r})."
         ),
         "_offload_head": content_str[:head_chars] if head_chars > 0 else "",
         "_offload_tail": content_str[-tail_chars:] if tail_chars > 0 else "",
