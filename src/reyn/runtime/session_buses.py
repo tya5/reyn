@@ -1,6 +1,6 @@
-"""reyn.runtime.session_buses — Session-backed intervention bus adapters.
+"""reyn.runtime.session_buses — Session-backed intervention + presentation adapters.
 
-The intervention-routing adapters that bind to a ``Session``:
+The routing adapters that bind to a ``Session``:
 
 - ``AgentRequestBus`` — a ``RequestBus`` adapter that forwards an
   intervention to the Session's ``handle_intervention`` so the Agent owns the
@@ -8,8 +8,13 @@ The intervention-routing adapters that bind to a ``Session``:
 - ``ChatInterventionBus`` — a ``UserChannel`` implementation that routes a
   prompt through the Session's outbox/inbox to the attached listener, stamping
   origin-channel provenance for cross-channel routing.
+- ``OutboxPresentationRenderer`` (FP-0054 PR-B) — a ``PresentationRenderer`` that
+  routes a resolved presentation's render model through the SAME outbox the other
+  two use, as a new ``"presentation"`` ``OutboxMessage`` kind. Fire-and-forget: it
+  never awaits anything (the `present` op's ack is already complete before this
+  runs), mirroring the op's own fire-and-continue contract.
 
-Both hold a ``Session`` and delegate to it; the ``Session`` type is referenced
+All three hold a ``Session`` and delegate to it; the ``Session`` type is referenced
 only under ``TYPE_CHECKING`` so importing this module never imports
 ``session`` (one-directional ``session`` -> ``session_buses`` at runtime).
 """
@@ -17,7 +22,10 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from reyn.runtime.outbox import OutboxMessage
+
 if TYPE_CHECKING:
+    from reyn.core.present.binding import ResolvedPresentation
     from reyn.runtime.session import Session
     from reyn.user_intervention import InterventionAnswer, UserIntervention
 
@@ -147,3 +155,28 @@ class ChatInterventionBus:
     # Note: _dispatch_intervention on session.py is now a thin wrapper around
     # InterventionRegistry.dispatch (wave 2 of PR-refactor-session-1). Kept
     # method-level call so the bus signature stays stable.
+
+
+class OutboxPresentationRenderer:
+    """``PresentationRenderer`` (``core/present/renderer.py``) that routes a resolved
+    presentation's render model onto the Session's outbox as a ``"presentation"``
+    ``OutboxMessage`` — the SAME queue every other display kind (agent/status/error/
+    trace/intervention) already flows through.
+
+    Deliberately thin: this class does NOT convert ``nodes`` to Rich renderables — that
+    conversion is a UI-layer concern (``interfaces/repl/renderer.py``'s
+    ``format_inline_message``), consistent with how every other outbox kind carries raw
+    data in ``meta`` and lets the UI layer decide how to draw it. ``op_runtime`` (which
+    constructs the ``ResolvedPresentation`` this class receives) never imports Rich or
+    prompt_toolkit; this adapter is the seam where that boundary is respected.
+    """
+
+    surface_name = "inline-cui"
+
+    def __init__(self, session: "Session") -> None:
+        self._session = session
+
+    def render(self, resolved: "ResolvedPresentation") -> None:
+        self._session.outbox.put_nowait(
+            OutboxMessage(kind="presentation", text="", meta={"nodes": resolved.nodes})
+        )

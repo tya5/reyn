@@ -324,6 +324,17 @@ def _short(v, n: int = 60) -> str:
     return s if len(s) <= n else s[: n - 1] + "…"
 
 
+def _live_terminal_width(default: int = 80) -> int:
+    """The live prompt_toolkit app's terminal width in columns, re-read per call (the
+    terminal can resize between turns). Falls back to `default` (Rich's own fallback)
+    when no app is running — e.g. a headless test importing this module directly."""
+    try:
+        from prompt_toolkit.application import get_app
+        return get_app().output.get_size().columns
+    except Exception:
+        return default
+
+
 def _summarize_args(args) -> str:
     """Compact ``k=v`` summary of a tool's args dict (or a bare value)."""
     if not args:
@@ -609,6 +620,13 @@ def format_inline_message(msg: OutboxMessage):
     kind = msg.kind
     meta = msg.meta or {}
 
+    # FP-0054 PR-B: a `present` op's resolved render model — a one-shot inline block,
+    # not a gutter-marked conversation line (it is a whole rendered document, not a
+    # single reply). See `present_renderer.py` for the markup-inert render invariant.
+    if kind == "presentation":
+        from reyn.interfaces.repl.present_renderer import render_presentation_nodes
+        return render_presentation_nodes(meta.get("nodes", []))
+
     # Tool-call rows. ▸ marks an invocation (distinct from the ⏺ assistant reply);
     # the ⎿ result / failure rows nest one level under it (2-space indent).
     if kind == "tool_call_started":
@@ -752,6 +770,15 @@ class InlineChatRenderer(ChatRenderer):
         self._clear_transient()
         if wants_separator(msg.kind, self._seen_message):
             self._console.print()  # blank line between message blocks
+        if msg.kind == "presentation":
+            # FP-0054 §6 (tui-coder review): Rich's Console cannot auto-detect terminal
+            # width writing to a StringIO — it silently falls back to 80 columns. Read
+            # the LIVE terminal width per render (the terminal can resize between
+            # turns) rather than inheriting that fallback, which matters far more for
+            # `present`'s tables than for the plain-text/one-liner kinds this renderer
+            # otherwise prints (a pre-existing latent gap there — issue #2655 fast-follow,
+            # out of this PR's scope).
+            self._console.width = _live_terminal_width()
         self._console.print(format_inline_message(msg))
         self._seen_message = True
         self._flush()

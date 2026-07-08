@@ -73,7 +73,11 @@ from reyn.runtime.services.chain_manager import _PendingChain
 from reyn.runtime.services.execution_driver import ExecutionDriver
 from reyn.runtime.services.inter_agent_messaging import InterAgentMessaging
 from reyn.runtime.services.task_wake import WAKE_READY_KIND, WAKE_REQUESTER_KIND
-from reyn.runtime.session_buses import AgentRequestBus, ChatInterventionBus
+from reyn.runtime.session_buses import (
+    AgentRequestBus,
+    ChatInterventionBus,
+    OutboxPresentationRenderer,
+)
 from reyn.security.permissions.permissions import PermissionResolver
 from reyn.services.compaction.engine import CompactionEngine
 from reyn.task.subscription import SubscriptionWriter
@@ -1693,6 +1697,11 @@ class Session:
                 self, run_id=None, actor="chat_router",
                 channel_id=DEFAULT_CHAT_CHANNEL_ID,
             ),
+            # FP-0054 PR-B: give the router OpContext a real PresentationRenderer so a
+            # `present` op reaches the live outbox (→ inline-CUI) instead of PR-A's null
+            # surface. Built per make_router_op_context() call, mirroring the
+            # intervention_bus_factory above.
+            presentation_renderer_factory=lambda: OutboxPresentationRenderer(self),
             # FP-0037 S2: yaml mtime watch needs the project root to resolve
             # the 3 yaml scope tier paths. None falls back to user-global only.
             project_root=getattr(self._registry, "_project_root", None),

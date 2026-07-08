@@ -8,22 +8,39 @@ un-neutralized. Two concerns:
 
 - **Neutralize rendered leaf strings** per surface so bound data cannot drive the
   surface it displays on. Neutralization is surface-specific: what is dangerous
-  on a terminal (ESC / control sequences, Rich markup) is not what is dangerous
-  in a browser (HTML). The neutralizer is a **per-surface strategy** (dispatch by
-  surface name), so §6's per-surface boundary is structural, not a conditional —
-  a future ``web`` strategy (HTML-escape) registers here without touching the
+  on a terminal (ESC / control sequences) is not what is dangerous in a browser
+  (HTML). The neutralizer is a **per-surface strategy** (dispatch by surface
+  name), so §6's per-surface boundary is structural, not a conditional — a
+  future ``web`` strategy (HTML-escape) registers here without touching the
   binding seam.
 - **Per-binding size caps** (surface-agnostic) so a ``/`` (root) pointer bound
   into a ``text`` component cannot dump a whole file, and a huge array cannot
   flood scrollback. Leaf strings cap by characters; arrays cap by row count.
 
-The v1 **terminal** strategy does exactly two things: strip ESC / control
-sequences (OSC / CSI — notably OSC-52 clipboard — is a real attack surface on
-every terminal), and **escape** (not strip) Rich console markup so ``[red]``
-renders literally (fidelity-preserving, FP-0051 idiom). It does **not**
-HTML-escape: in a terminal sink ``<div>`` is a harmless literal, and
-entity-escaping would corrupt ``code`` / ``diff`` content (the v1 catalog core).
-HTML neutralization is a future web renderer's concern.
+The v1 **terminal** strategy strips ESC / control sequences (OSC / CSI — notably
+OSC-52 clipboard — is a real attack surface on every terminal) and nothing else.
+It does **not** escape Rich console markup, and does **not** HTML-escape.
+
+**Rich-markup safety is NOT this module's responsibility (PR-B revision — see
+FP-0054 §5).** An earlier PR-A revision escaped ``[tag]``-shaped substrings here
+(the FP-0051 idiom), on the premise that Rich console markup is a surface-level
+threat like ESC sequences. It is not: Rich markup injection is possible ONLY
+through ``console.print(str, markup=True)`` — a choice the RENDERER makes per
+Rich object, not a property of the terminal sink itself. ``rich.text.Text`` and
+``rich.syntax.Syntax`` never interpret ``[tag]`` at all (markup-inert);
+``rich.markdown.Markdown`` interprets CommonMark's OWN backslash-escape, not
+Rich markup. Escaping here unconditionally corrupted Text/Syntax output with
+visible literal backslashes (a real bug caught by empirical testing across all
+three Rich paths, PR-B review) — the guard was neutralizing a threat that,
+for two of the three render paths it feeds, does not exist at that sink.
+
+The fix is structural, not a runtime escape/unescape pair: the inline-CUI
+renderer (``interfaces/repl/present_renderer.py``) routes every leaf into a
+markup-inert Rich object (``Text``/``Syntax``/``Markdown``) and never calls
+``console.print(str)`` with markup interpretation on presented content — Rich
+injection becomes impossible by construction, the same "safety from shape, not
+policy" philosophy as reyn's structural write-gate. HTML neutralization
+(HTML-escape) remains a future web renderer's own concern, for the same reason.
 
 Pure: no I/O, no events, no config — the caller wires telemetry and decides the
 drop-reason (``guard_stripped``) from the returned ``stripped`` flag.
@@ -47,11 +64,6 @@ MAX_ROWS: int = 500
 # the trailing sequence bytes so no partial escape survives.
 _CONTROL_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]")
 
-# Rich console markup tags: ``[tag]`` / ``[/tag]`` / ``[/]``. Rich's own escape
-# convention is a leading backslash on the ``[`` — we apply exactly that so the
-# tag renders as literal text instead of styling the surface.
-_RICH_TAG_RE = re.compile(r"\[(/?[a-zA-Z#][^\[\]]*|/)\]")
-
 
 class LeafNeutralizer(Protocol):
     """A per-surface leaf-string neutralizer. ``neutralize`` returns
@@ -63,24 +75,25 @@ class LeafNeutralizer(Protocol):
 
 
 class TerminalNeutralizer:
-    """Terminal-surface strategy: strip ESC / control sequences + escape Rich
-    markup. Does NOT HTML-escape (a terminal renders ``<div>`` as a literal, and
-    entity-escaping would corrupt ``code`` / ``diff`` content)."""
+    """Terminal-surface strategy: strip ESC / control sequences. Does NOT escape
+    Rich console markup (the renderer's job — see module docstring) and does NOT
+    HTML-escape (a terminal renders ``<div>`` as a literal, and entity-escaping
+    would corrupt ``code`` / ``diff`` content)."""
 
     def neutralize(self, value: str) -> tuple[str, bool]:
         out = _CONTROL_RE.sub("", value)
-        out = _RICH_TAG_RE.sub(lambda m: "\\" + m.group(0), out)
         return out, out != value
 
 
 _TERMINAL = TerminalNeutralizer()
 
-# Surface name → neutralizer strategy. v1 ships the terminal strategy; the null
-# renderer (no UI surface yet) uses it too, so the guard runs unconditionally even
-# with no real surface. A future ``web`` strategy (HTML-escape) is added here
-# WITHOUT touching the core seam or the binding layer.
+# Surface name → neutralizer strategy. v1 ships the terminal strategy for every
+# terminal-family surface (the null renderer uses it too, so the guard runs
+# unconditionally even with no real surface). A future ``web`` strategy
+# (HTML-escape) is added here WITHOUT touching the core seam or the binding layer.
 _STRATEGIES: dict[str, LeafNeutralizer] = {
     "terminal": _TERMINAL,
+    "inline-cui": _TERMINAL,
     "null": _TERMINAL,
 }
 _DEFAULT_STRATEGY: LeafNeutralizer = _TERMINAL
