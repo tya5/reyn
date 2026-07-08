@@ -403,9 +403,10 @@ def test_run_tool_step_file_write_is_denied_without_grant_flag(
 
     out = capsys.readouterr().out
     result = json.loads(out)
-    # #2425 PR-2: write_file's "file"-kind result is unregistered in the canonical
-    # mapper table → the whole dict becomes the sole structured attachment.
-    assert result["named_stores"]["r"]["structured"]["status"] == "denied"
+    # FP-0056 PR-H: write_file's "file"-kind result now has a canonical mapper → a mutating
+    # op surfaces a short status ``text`` (not a whole-dict structured blob). A denial surfaces
+    # the not-approved message as the text body; the write does not land.
+    assert "not approved" in result["named_stores"]["r"]["text"]
     assert not (tmp_path / "out.txt").exists()
 
 
@@ -436,7 +437,8 @@ def test_run_tool_step_file_write_allowed_with_grant_flag(
 
     out = capsys.readouterr().out
     result = json.loads(out)
-    assert result["named_stores"]["r"]["structured"]["status"] == "ok"
+    # FP-0056 PR-H: file write → a short status ``text`` (mapped), not a structured whole-dict blob.
+    assert "Wrote" in result["named_stores"]["r"]["text"]
     assert (tmp_path / "out.txt").read_text(encoding="utf-8") == "hello"
 
 

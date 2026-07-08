@@ -16,7 +16,6 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
-import yaml
 
 from reyn.llm.llm import LLMToolCallResult
 from reyn.llm.pricing import TokenUsage
@@ -87,11 +86,12 @@ async def test_execute_round_message_sequence_golden(monkeypatch):
     assert write_msg["tool_call_id"] == "call_write"
     assert write_msg["content"].startswith("Error (tool_excluded): ")
 
-    # (4) the dispatched call's result is its own message at index 0. #2425 案B: an unmapped op
-    # result renders as a frontmatter YAML block (whole dict → ``structured``), not a JSON envelope
-    # — the exact dispatch outcome is harness-dependent, but it must round-trip at its own id.
+    # (4) the dispatched call's result is its own message at index 0. FP-0056 PR-H: the ``file`` kind
+    # now has a canonical mapper (no longer the whole-dict frontmatter fallback), so the read renders
+    # via that mapper — the exact dispatch outcome is harness-dependent (this fixtureless host has no
+    # workspace, so the read surfaces as an error string), but it must round-trip at its own id with a
+    # non-empty body and must NOT carry the excluded-call error.
     read_msg = tool_msgs[0]
     assert read_msg["tool_call_id"] == "call_read"
-    assert read_msg["content"].startswith("---\n"), "unmapped op result → frontmatter YAML"
-    _head = read_msg["content"][4:].split("\n---\n")[0]
-    assert yaml.safe_load(_head)["structured"]["kind"] == "file"
+    assert isinstance(read_msg["content"], str) and read_msg["content"], "read result round-trips at its id"
+    assert not read_msg["content"].startswith("Error (tool_excluded): "), "read is dispatched, not excluded"
