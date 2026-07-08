@@ -65,6 +65,16 @@ def validate_in_set(in_set: "dict") -> "str | None":
         entries = skills.get("entries")
         if entries is not None and not isinstance(entries, dict):
             return "skills.entries must be a mapping"
+    presentations = in_set.get("presentations")
+    if presentations is not None:
+        # FP-0054 PR-C: structural shape check only (mirrors skills). A malformed
+        # individual blueprint is caught per-entry by build_presentation_registry
+        # (strict=True on the reload seam → the whole rebuild rejects, last-good kept).
+        if not isinstance(presentations, dict):
+            return "presentations section must be a mapping"
+        entries = presentations.get("entries")
+        if entries is not None and not isinstance(entries, dict):
+            return "presentations.entries must be a mapping"
     hooks = in_set.get("hooks")
     if hooks is not None:
         # #2073 S2b: validate the runtime hooks shape via the real loader so a

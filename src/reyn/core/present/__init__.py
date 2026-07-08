@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from reyn.core.present.binding import ResolvedPresentation, resolve_bindings, resolve_pointer
 from reyn.core.present.catalog import CATALOG, PresentBlueprintError, validate_blueprint
+from reyn.core.present.fallback import default_viewer_blueprint, generic_blueprint
 from reyn.core.present.renderer import PresentationRenderer
 from reyn.core.present.source import (
     PresentSourceNotFound,
@@ -25,6 +26,8 @@ __all__ = [
     "PresentationRenderer",
     "ResolvedPresentation",
     "compute_ingested",
+    "default_viewer_blueprint",
+    "generic_blueprint",
     "resolve_bindings",
     "resolve_pointer",
     "resolve_present_source",

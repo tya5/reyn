@@ -881,3 +881,23 @@
 #         messages:
 #           - type: text
 #             text: "${ROUTER_REPLY}"
+
+# -----------------------------------------------------------------------------
+# presentations: named presentation-template registry for the `present` op.
+# A template's value is a blueprint (the same declarative component tree an
+# inline `present` blueprint is). Registering one is an operator/config action
+# (there is no install tool — the model authors inline blueprints only). Merges
+# across config tiers like skills/pipelines; the dynamic
+# .reyn/config/presentations.yaml layer hot-reloads at the turn boundary.
+# -----------------------------------------------------------------------------
+# presentations:
+#   entries:
+#     search_results:
+#       blueprint:
+#         - component: table
+#           rows: {"$bind": "/results"}
+#           columns:
+#             - {header: Author, path: /author}
+#             - {header: Title,  path: /title}
+#       description: "Search results table"   # optional
+#       enabled: true                          # optional, default true

@@ -235,6 +235,21 @@ def _merge(base: dict, override: dict) -> dict:
                 **val,
                 "entries": {**existing_entries, **new_entries},
             }
+        elif key == "presentations" and isinstance(val, dict):
+            # FP-0054 PR-C: named-presentation-template registry entries union across
+            # config tiers — mirrors the ``skills`` / ``pipelines`` branches exactly
+            # (``entries`` is a per-name union with later tier winning on collision,
+            # not last-tier-wins-wholesale). Lets ~/.reyn/config.yaml declare global
+            # templates while reyn.yaml / .reyn/config/presentations.yaml add
+            # project-local ones.
+            existing = result.get("presentations", {})
+            existing_entries = existing.get("entries", {}) if isinstance(existing, dict) else {}
+            new_entries = val.get("entries", {}) if isinstance(val, dict) else {}
+            result["presentations"] = {
+                **existing,
+                **val,
+                "entries": {**existing_entries, **new_entries},
+            }
         else:
             result[key] = val
     return result
@@ -401,6 +416,18 @@ def load_config(cwd: Path | None = None) -> ReynConfig:
         dynamic_pipelines = _load_yaml(project_root / ".reyn" / "config" / "pipelines.yaml")
         merged = _merge(merged, dynamic_pipelines)
 
+        # FP-0054 PR-C: named-presentation-template registry separated from static
+        # config — same #470 invariant as skills/pipelines/MCP.
+        # .reyn/config/presentations.yaml carries project-local template
+        # declarations; merged LAST so it wins on name collision with
+        # operator-edited reyn.yaml presentation entries. Shape:
+        # {"presentations": {"entries": {<name>: {<entry>}}}} — same as the
+        # presentations section in reyn.yaml, handled by the _merge presentations
+        # branch above. Also in _HOT_RELOAD_FILES (the IN-set) so template
+        # declarations hot-reload at the turn boundary.
+        dynamic_presentations = _load_yaml(project_root / ".reyn" / "config" / "presentations.yaml")
+        merged = _merge(merged, dynamic_presentations)
+
         # ADR-0031: <project>/.reyn/config.yaml is DEPRECATED (removed from
         # the 3-layer cascade).  Emit a one-time warning if the file exists so
         # users know to migrate.  The file is intentionally NOT loaded.
@@ -519,6 +546,7 @@ def load_config(cwd: Path | None = None) -> ReynConfig:
         ),
         skills=_as_config_dict(merged.get("skills"), "skills"),
         pipelines=_as_config_dict(merged.get("pipelines"), "pipelines"),
+        presentations=_as_config_dict(merged.get("presentations"), "presentations"),
     )
     _reconcile_embedding_class(_cfg)
     return _cfg
@@ -537,6 +565,7 @@ _HOT_RELOAD_FILES: tuple[str, ...] = (
     "config/mcp.yaml", "config/cron.yaml", "config/hooks.yaml",
     "config/skills.yaml",  # #2548 PR-B: skills IN-set hot-reload
     "config/pipelines.yaml",  # pipelines IN-set hot-reload (mirrors skills.yaml)
+    "config/presentations.yaml",  # FP-0054 PR-C: presentation-template IN-set hot-reload
 )
 
 

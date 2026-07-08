@@ -122,6 +122,7 @@ class RouterHostAdapter:
         state_log: Any = None,                  # StateLog | None — #2248 PR-A2 (config emit)
         agent_registry: Any,                    # AgentRegistry | None
         pipeline_registry: Any = None,          # PipelineRegistry | None — IS-5
+        presentation_registry: Any = None,      # PresentationRegistry | None — FP-0054 PR-C
         record_spawned_task: "Callable[[str, str], None] | None" = None,  # #2103 S1bc-exec
         live_session_id_fn: "Callable[[], str | None] | None" = None,     # #2103 S1bc-exec
         current_task_id_fn: "Callable[[], str | None] | None" = None,     # #1953 §16
@@ -364,6 +365,12 @@ class RouterHostAdapter:
         self._state_log = state_log  # #2259 PR-1: WAL head for config generation emit
         self._registry = agent_registry
         self._pipeline_registry = pipeline_registry  # IS-5: run_pipeline lookup source
+        # FP-0054 PR-C: operator named-template registry (presentations.yaml). Held on
+        # the adapter (like _pipeline_registry) so make_router_op_context threads the
+        # CURRENT snapshot into each OpContext; the pipelines/skills-style hot-reload
+        # seam (Session._reapply_presentations) SWAPS this reference (dual-write with
+        # the Session's copy) so a newly-registered template is visible next turn.
+        self._presentation_registry = presentation_registry
         self._record_spawned_task = record_spawned_task   # #2103 S1bc-exec
         self._live_session_id_fn = live_session_id_fn      # #2103 S1bc-exec
         self._current_task_id_fn = current_task_id_fn      # #1953 §16
@@ -665,6 +672,14 @@ class RouterHostAdapter:
         against the session's actual registered pipelines instead of the
         None landmine."""
         return self._pipeline_registry
+
+    def get_presentation_registry(self) -> Any:
+        """The adapter's captured PresentationRegistry (or None) — FP-0054 PR-C.
+        ``make_router_op_context`` reads it into each router OpContext's
+        ``presentation_registry`` so a `present` op resolves a named ``template``.
+        The public surface the hot-reload dual-write (``_reapply_presentations``)
+        swaps and tests observe (mirrors ``get_pipeline_registry``)."""
+        return self._presentation_registry
 
     def get_web_fetch_allowed(self) -> bool:
         """Always returns True — FP-0022: web_fetch is now always in the catalog.
@@ -1960,6 +1975,8 @@ class RouterHostAdapter:
             agent_id=None,
             intervention_bus=bus,
             presentation_renderer=presentation_renderer,
+            # FP-0054 PR-C: the adapter's CURRENT registry snapshot (hot-reload swaps it).
+            presentation_registry=self._presentation_registry,
             multimodal_config=self._multimodal_config,
             media_store=self._media_store,
             compact_now=self._compact_now,

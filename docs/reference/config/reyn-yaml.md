@@ -1252,6 +1252,34 @@ The entry **key must match the DSL file's own declared `pipeline:` name exactly*
 
 See [Concepts: Pipeline registration](../../concepts/runtime/pipeline-registration.md) for the full registration model and the install tools.
 
+## `presentations` block
+
+Registers **named presentation templates** for the `present` op — the same explicit-registration model as `skills.entries` / `pipelines.entries` / `mcp.servers`. A named template's value is a **blueprint**: the identical declarative, non-executable component tree an inline `present` blueprint is (catalog components + JSON-Pointer path bindings). The blueprint lives **inline** in the entry (no file indirection — a blueprint is small declarative data), and is structurally validated at load time.
+
+Registering a named template is an **operator/config action** — there is no install tool and no op the model can call to register one. The model authors *inline* blueprints only; a named `template:` in a `present` op is a read-only lookup against this registry. An unknown template name is not an error: the `present` op falls back through a content-type default viewer to a generic YAML/text view, so the data always reaches the user.
+
+```yaml
+presentations:
+  entries:
+    search_results:
+      blueprint:                              # required; inline component tree
+        - component: table
+          rows: {"$bind": "/results"}
+          columns:
+            - {header: Author, path: /author}
+            - {header: Title,  path: /title}
+      description: "Search results table"      # optional
+      enabled: true                            # optional, default true
+```
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `blueprint` | list or object | required | The declarative component tree (same shape + catalog as an inline `present` blueprint). Validated at load; a malformed blueprint is skipped (logged), or on hot-reload rejects the whole reload (last-good kept). |
+| `description` | string | `""` | Optional one-line summary. |
+| `enabled` | bool | `true` | `false` removes the entry from the registry entirely. |
+
+`presentations.entries` merges across `~/.reyn/config.yaml` ⊕ `reyn.yaml` ⊕ `reyn.local.yaml` ⊕ the dynamic `<project>/.reyn/config/presentations.yaml`, later tiers winning on name collision — the same merge shape as `skills.entries` / `pipelines.entries` / `mcp.servers`. The `<project>/.reyn/config/presentations.yaml` layer hot-reloads at the turn boundary, so a newly-registered template becomes resolvable on the next turn without a restart.
+
 ## `embedding` block
 
 RAG embedding model classes and batch settings. Built-in defaults cover the OpenAI path — no `reyn.yaml` changes are required for a fresh install with `OPENAI_API_KEY`.

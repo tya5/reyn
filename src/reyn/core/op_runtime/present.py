@@ -1,4 +1,4 @@
-"""present kind handler — route bulk data + a display template to the user (FP-0054 PR-A/PR-B).
+"""present kind handler — route bulk data + a display template to the user (FP-0054 PR-A/B/C).
 
 **Tier 0** (``ask_user``'s sibling) and **fire-and-continue**: unlike ``ask_user``
 this op does NOT pause the run — it produces a presentation ack and returns. The
@@ -12,6 +12,22 @@ PR-A's null-surface behavior (no UI reached, ``surface="null"``). The op returns
 compact, high-signal ack (``{ok, bindings_resolved, bindings_dropped, rows}``, drops as
 ``{path, reason}``) and emits the ``presented`` P6 event (refs + stats, never content
 bytes) regardless of whether a renderer is wired.
+
+**PR-C — named templates + the §3 4-stage fallback chain.** ``op.template`` is a
+registered name resolved against ``OpContext.presentation_registry`` (the operator's
+``presentations.yaml`` — a named template's value is a validated blueprint, the same
+downstream ``resolve_bindings`` → render path as an inline blueprint). The template
+source falls back through 4 stages (never a hard failure — the data always reaches
+the user): **(1)** a resolvable registered ``template`` → **(2)** an inline
+``blueprint`` → **(3)** a content-type default viewer synthesized from the data's
+shape → **(4)** a generic YAML/text dump of the whole value. The fallback fires when
+the requested rendering cannot produce a usable presentation — an UNKNOWN template
+name, or a template whose bindings ALL miss the data (``all_bindings_missed`` — don't
+show an empty shell). The ack + ``presented`` event carry the REQUESTED rendering's
+stats (so the LLM's self-correction loop still sees its template all-missed), plus a
+``note`` naming the fallback viewer that actually reached the user. A malformed INLINE
+blueprint stays a HARD error (``status="error"``) — that is a template bug, not a
+fallback trigger.
 """
 from __future__ import annotations
 
@@ -22,6 +38,9 @@ from typing import Any
 from reyn.core.present import (
     PresentBlueprintError,
     PresentSourceNotFound,
+    ResolvedPresentation,
+    default_viewer_blueprint,
+    generic_blueprint,
     resolve_bindings,
     resolve_present_source,
     validate_blueprint,
@@ -34,6 +53,11 @@ from .context import OpContext
 _NULL_SURFACE = "null"
 
 _INLINE_MARKER = "<inline-data>"
+
+# The §3 fallback-stage labels used in the ack ``note`` (never in the fixed
+# ``presented`` event shape).
+_STAGE_CONTENT_TYPE = "content_type_default"
+_STAGE_GENERIC = "generic"
 
 
 def _template_id(op: PresentIROp) -> str:
@@ -103,63 +127,151 @@ async def handle(op: PresentIROp, ctx: OpContext) -> dict:
     template_id = _template_id(op)
     surface = _surface_name(ctx)
 
-    # 2. Named-template resolution (registry + fallback chain) lands in a later
-    #    PR; PR-A resolves inline blueprints only. A named template is recorded
-    #    (audit-first) but not yet renderable.
-    if op.template is not None:
-        _emit_presented(
-            ctx, data_ref=data_ref_field, template=template_id, surface=surface,
-            ingested=ingested, bindings_resolved=0, bindings_dropped=[], rows=0,
-        )
-        return {
-            "kind": "present", "status": "ok", "ok": False,
-            "bindings_resolved": 0, "bindings_dropped": [], "rows": 0,
-            "note": (
-                "named-template resolution is not available yet; author an inline "
-                "blueprint (catalog components + $bind path bindings) instead."
-            ),
-        }
-
-    # 3. Structural gate on the inline blueprint (catalog components + path
-    #    bindings only). A malformed blueprint is a hard error, NOT a soft drop.
+    # 2. Resolve the presentation through the §3 4-stage fallback chain. A
+    #    malformed INLINE blueprint is a HARD error (a template bug), NOT a
+    #    fallback trigger — unknown template names / all-miss templates fall
+    #    through instead.
     try:
-        nodes = validate_blueprint(op.blueprint)
+        requested, rendered, fallback_stage = _resolve_presentation(
+            op, data, surface=surface, registry=ctx.presentation_registry,
+        )
     except PresentBlueprintError as exc:
         return {"kind": "present", "status": "error", "ok": False, "error": str(exc)}
 
-    # 4. Bind + guard against the wired surface (or the PR-A null surface — both use the
-    #    terminal neutralizer strategy today; see guard.py's _STRATEGIES).
-    resolved = resolve_bindings(nodes, data, surface=surface)
-
-    # 5. Audit event (P6) — refs + stats, never content bytes.
+    # 3. Audit event (P6) — refs + REQUESTED-rendering stats, never content bytes.
+    #    (The fallback rendering is a deterministic display detail derivable from
+    #    the recorded data_ref; the event audits what the caller requested.)
+    stats = _requested_stats(requested)
     _emit_presented(
         ctx,
         data_ref=data_ref_field,
         template=template_id,
         surface=surface,
         ingested=ingested,
-        bindings_resolved=resolved.bindings_resolved,
-        bindings_dropped=resolved.bindings_dropped,
-        rows=resolved.rows,
+        bindings_resolved=stats["bindings_resolved"],
+        bindings_dropped=stats["bindings_dropped"],
+        rows=stats["rows"],
     )
 
-    # 6. Hand the render model to the wired surface (PR-B). Fire-and-continue: the op's
-    #    ack (below) is already fully derived from `resolved`'s stats, not from anything
-    #    the renderer does — a renderer failure must never be allowed to reach here (see
-    #    OutboxPresentationRenderer's own fire-and-forget contract).
+    # 4. Hand the actually-rendered model to the wired surface (PR-B). Fire-and-
+    #    continue: the op's ack (below) is already fully derived from the stats,
+    #    not from anything the renderer does — a renderer failure must never be
+    #    allowed to reach here (see OutboxPresentationRenderer's own fire-and-forget
+    #    contract).
     if ctx.presentation_renderer is not None:
-        ctx.presentation_renderer.render(resolved)
+        ctx.presentation_renderer.render(rendered)
 
-    # 7. The compact, high-signal ack (the LLM's only feedback).
-    return {
+    # 5. The compact, high-signal ack (the LLM's only feedback). ``ok`` is True
+    #    because SOME presentation reached the user; ``all_bindings_missed`` +
+    #    ``note`` carry the "your template did not match" self-correction signal
+    #    when a fallback fired.
+    ack = {
         "kind": "present",
         "status": "ok",
         "ok": True,
-        "bindings_resolved": resolved.bindings_resolved,
-        "bindings_dropped": resolved.bindings_dropped,
-        "rows": resolved.rows,
-        "all_bindings_missed": resolved.all_bindings_missed,
+        "bindings_resolved": stats["bindings_resolved"],
+        "bindings_dropped": stats["bindings_dropped"],
+        "rows": stats["rows"],
+        "all_bindings_missed": stats["all_bindings_missed"],
     }
+    note = _fallback_note(op, requested, fallback_stage)
+    if note is not None:
+        ack["note"] = note
+    return ack
+
+
+def _resolve_presentation(
+    op: PresentIROp, data: Any, *, surface: str, registry: Any,
+) -> "tuple[ResolvedPresentation | None, ResolvedPresentation, str | None]":
+    """Run the FP-0054 §3 4-stage template-source fallback chain.
+
+    Returns ``(requested, rendered, fallback_stage)``:
+
+    - ``requested`` — the ``ResolvedPresentation`` of the caller-requested rendering
+      (stage 1 registered ``template`` or stage 2 inline ``blueprint``), or ``None``
+      when the requested template name is UNKNOWN (nothing was bound). The ack +
+      event report these stats so the LLM's self-correction loop sees its own
+      template's outcome.
+    - ``rendered`` — the ``ResolvedPresentation`` actually handed to the surface: the
+      requested one when it produced a usable presentation (≥1 binding resolved, or a
+      literal-only template), else a synthesized fallback — stage 3 (content-type
+      default viewer), then stage 4 (generic YAML/text, which always renders).
+    - ``fallback_stage`` — ``None`` when the requested rendering was used, else the
+      fallback stage that rendered.
+
+    A malformed INLINE blueprint raises ``PresentBlueprintError`` (a hard error, not
+    a fallback trigger) — the caller surfaces ``status="error"``. A registered
+    template is already validated at registry-build time, so it never re-validates
+    here.
+    """
+    requested: "ResolvedPresentation | None" = None
+    if op.template is not None:
+        nodes = registry.get(op.template) if registry is not None else None
+        if nodes is not None:
+            requested = resolve_bindings(nodes, data, surface=surface)
+    else:
+        # Inline blueprint — the structural gate (hard error preserved), then bind.
+        nodes = validate_blueprint(op.blueprint)
+        requested = resolve_bindings(nodes, data, surface=surface)
+
+    # Requested rendering is usable → no fallback. ``all_bindings_missed`` is True
+    # only when the template had ≥1 binding and none resolved (a literal-only or a
+    # partially-hitting template is usable and renders as-is).
+    if requested is not None and not requested.all_bindings_missed:
+        return requested, requested, None
+
+    # Stage 3 — content-type default viewer (synthesized from the data's shape).
+    stage3 = resolve_bindings(
+        validate_blueprint(default_viewer_blueprint(data)), data, surface=surface,
+    )
+    if not stage3.all_bindings_missed:
+        return requested, stage3, _STAGE_CONTENT_TYPE
+
+    # Stage 4 — generic YAML/text (always renders — the final catch).
+    stage4 = resolve_bindings(
+        validate_blueprint(generic_blueprint(data)), data, surface=surface,
+    )
+    return requested, stage4, _STAGE_GENERIC
+
+
+def _requested_stats(requested: "ResolvedPresentation | None") -> dict:
+    """The ack + event binding-stats for the caller-requested rendering. An unknown
+    template name (``requested is None``) reports zeros — the LLM asked for a
+    template that resolved nothing; the ``note`` explains the fallback."""
+    if requested is None:
+        return {
+            "bindings_resolved": 0, "bindings_dropped": [], "rows": 0,
+            "all_bindings_missed": False,
+        }
+    return {
+        "bindings_resolved": requested.bindings_resolved,
+        "bindings_dropped": requested.bindings_dropped,
+        "rows": requested.rows,
+        "all_bindings_missed": requested.all_bindings_missed,
+    }
+
+
+def _fallback_note(
+    op: PresentIROp, requested: "ResolvedPresentation | None", fallback_stage: "str | None",
+) -> "str | None":
+    """The ack ``note`` naming the fallback viewer that reached the user, or ``None``
+    when the requested rendering was used directly."""
+    if fallback_stage is None:
+        return None
+    viewer = (
+        "content-type default viewer"
+        if fallback_stage == _STAGE_CONTENT_TYPE
+        else "generic YAML/text viewer"
+    )
+    if op.template is not None and requested is None:
+        return (
+            f"template {op.template!r} is not registered — presented via the "
+            f"{viewer} so the data still reached the user."
+        )
+    return (
+        f"all bindings missed — presented via the {viewer} so the data still "
+        "reached the user (re-check the template against the data shape)."
+    )
 
 
 register("present", handle)
