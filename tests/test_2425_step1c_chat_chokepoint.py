@@ -1,16 +1,19 @@
-"""Tier 3a: #2425 案B step1c — the chat chokepoint canonicalizes MCP results (whole-envelope FIXED).
+"""Tier 3a: #2425 案B — the chat chokepoint renders frontmatter+text (whole-envelope blob FIXED).
 
-router_loop.feedback (the chat tool-result chokepoint) now normalizes an MCP result via to_canonical
-+ the offload seam: ``text`` (content) is the sole offload payload; ``structured``/media are
-attachments held OUT of the offload decision. So the owner chat-MCP whole-envelope (a large content
-AND a large structuredContent → the whole ``{status,data}`` dict stored as one JSON line) can no
-longer occur. Non-MCP ops stay byte-identical (the current decide_payload_field path). Real MediaStore
-+ real RouterLoop.feedback (no mocks); the host provides the media_store the seam stores through.
+router_loop.feedback (the chat tool-result chokepoint) normalizes EVERY result via to_canonical + the
+offload seam and renders the LLM-visible frontmatter+text format — no JSON envelope. ``text`` is the
+sole text-offload payload; a large ``structured`` is offloaded to its OWN ref, so the owner chat-MCP
+whole-envelope (a large content AND a large structuredContent collapsing to one single-line JSON blob)
+can no longer occur. Real MediaStore + real RouterLoop.feedback (no mocks); ``media_store=None`` proves
+the format is store-independent.
 """
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
+
+import yaml
 
 from reyn.data.workspace.media_store import MediaStore
 from reyn.runtime.router_loop import RouterLoop
@@ -21,20 +24,36 @@ _MODEL = "gpt-4o"
 _BIG = "\n".join(f"line {i}: " + "z" * 60 for i in range(400))  # well over the offload trigger
 
 
-class _CanonicalHost:
-    """RouterLoopHost surface with the cap AND the media_store the #2425 MCP path stores through."""
+class _CapHost:
+    """RouterLoopHost surface with the cap + the media_store the canonical path stores through."""
 
-    def __init__(self, store: MediaStore) -> None:
+    def __init__(self, store: "MediaStore | None") -> None:
         self.media_store = store
 
-    def cap_tool_result(self, content_str: str, *, clean_value=None, payload_field=None) -> str:
+    def cap_tool_result(self, content_str: str) -> str:
+        if self.media_store is None:
+            return content_str
         return cap_tool_result_content(
             content_str, cap_tokens=100, model=_MODEL, save_fn=self.media_store.save_tool_result,
-            use_chars4=True, clean_value=clean_value, payload_field=payload_field,
+            use_chars4=True,
         )
 
     def media_followup_budget(self, _content_str: str) -> int:
         return 500
+
+
+def _feedback(env: dict, store: "MediaStore | None"):
+    loop = RouterLoop(host=_CapHost(store), chain_id="c1", router_model=_MODEL)
+    result = ExecutionResult(
+        tool_results=[env],
+        tool_calls=[{"id": "call_1", "type": "function", "function": {"name": "mcp"}}],
+        assistant_content="",
+    )
+    return loop.feedback(result)
+
+
+def _tool_content(msgs) -> str:
+    return next(m for m in msgs if m["role"] == "tool")["content"]
 
 
 def _mcp_env(**data_extra) -> dict:
@@ -43,61 +62,88 @@ def _mcp_env(**data_extra) -> dict:
     return {"status": "ok", "data": data}
 
 
-def _feedback(env: dict, tmp_path: Path):
+def _text_ref(content: str) -> str:
+    m = re.search(r'file__read\(path="([^"]+)"\)', content)
+    assert m, f"no file__read read-back path in {content[:200]!r}"
+    return m.group(1)
+
+
+def test_single_payload_mcp_offloads_text_clean(tmp_path):
+    """Tier 3a: a single-payload MCP result (only content large) offloads the content CLEAN as a
+    plain-text preview — the read-back file is exactly the content (real newlines, no JSON stub)."""
     store = MediaStore(project_root=tmp_path)
-    loop = RouterLoop(host=_CanonicalHost(store), chain_id="c1", router_model=_MODEL)
-    result = ExecutionResult(
-        tool_results=[env],
-        tool_calls=[{"id": "call_1", "type": "function", "function": {"name": "mcp"}}],
-        assistant_content="",
-    )
-    return loop.feedback(result), store
+    content = _tool_content(_feedback(_mcp_env(content=_BIG), store))
+    assert not content.lstrip().startswith("{"), "plain-text preview, not a JSON stub"
+    assert "file__read(path=" in content, "the preview names the file__read read-back path"
+    body = (tmp_path / _text_ref(content)).read_text(encoding="utf-8")
+    assert body == _BIG, "the offloaded body is the CLEAN content (real newlines)"
 
 
-def _stored_body(tool_content: str, tmp_path: Path) -> str:
-    return (tmp_path / json.loads(tool_content)["_offload_ref"]).read_text(encoding="utf-8")
+def test_falsify_both_streams_offload_cleanly_no_whole_dict_blob(tmp_path):
+    """Tier 3a: FALSIFY (bug #2) — a result with BOTH an oversized ``content`` AND an oversized
+    ``structured`` produces TWO clean offload files (one per stream) and NO single-line whole-dict
+    JSON blob. The independent-stream seam is genuinely exercised: text via the token cap, structured
+    via the seam's own gate."""
+    store = MediaStore(project_root=tmp_path)
+    big_structured = {"rows": ["x" * 4000]}
+    content = _tool_content(_feedback(_mcp_env(content=_BIG, structured=big_structured), store))
+
+    # No whole-dict blob: the content is frontmatter + a plain-text preview, never one JSON line
+    # carrying BOTH content and structured.
+    assert "\\n" not in content, "no JSON-of-JSON escaped newlines (the whole-dict-blob symptom)"
+    assert not any(
+        line.lstrip().startswith("{") and '"content"' in line and '"structured"' in line
+        for line in content.splitlines()
+    ), "no single-line whole-dict JSON blob carrying both streams"
+
+    # Two clean offload files: unpacking asserts EXACTLY two independent files (one per stream) —
+    # the whole point of the independent-stream seam, and the falsify against a single-blob fallback.
+    file_a, file_b = sorted(store.tool_results_dir.iterdir())
+    bodies = [file_a.read_text(encoding="utf-8"), file_b.read_text(encoding="utf-8")]
+    assert any(b == _BIG for b in bodies), "the text stream is stored CLEAN in its own file"
+    assert any(json.loads(b) == big_structured for b in bodies if b.lstrip().startswith(("{", "["))), \
+        "the structured stream is stored in its OWN file (not merged into text)"
+
+    # The structured ref is surfaced in the frontmatter, not dropped.
+    assert "structured_ref:" in content and "structured: offloaded" in content
 
 
-def test_a_single_payload_mcp_offloads_content_clean(tmp_path):
-    """Tier 3a: (a) a single-payload MCP result (only content large) offloads the content CLEAN — the
-    LLM-reachable body is exactly the content (fit-equivalent to the current path)."""
-    msgs, _store = _feedback(_mcp_env(content=_BIG), tmp_path)
-    tool_msg = next(m for m in msgs if m["role"] == "tool")
-    assert _stored_body(tool_msg["content"], tmp_path) == _BIG, "content offloaded clean (text = sole payload)"
-    assert json.loads(tool_msg["content"]).get("_offload_payload_field") == "text"
+def test_format_is_store_independent_media_store_none():
+    """Tier 3a: format ⊥ store — with ``media_store=None`` the frontmatter format STILL applies (no
+    JSON envelope), proving the format does not depend on store presence. Only offloading needs a
+    store; here structured stays inline, uncapped."""
+    content = _tool_content(_feedback(_mcp_env(content="body", structured={"n": 1}), None))
+    assert content.startswith("---\n"), "frontmatter still emitted with no store"
+    head, _, body = content[4:].partition("\n---\n")
+    assert yaml.safe_load(head).get("structured") == {"n": 1}, "structured inline in the frontmatter"
+    assert body == "body", "the text body follows the frontmatter"
 
 
-def test_b_multi_field_whole_envelope_is_fixed(tmp_path):
-    """Tier 3a: (b) CORE — an MCP result with a large content AND a large structuredContent no longer
-    whole-envelopes. The offloaded body is the content CLEAN (not a JSON dict of the envelope); the
-    structured is a separate attachment, never a second oversized field. RED-verify: reverting the MCP
-    branch stores the whole {status,data} envelope (body starts with '{', structured JSON-escaped)."""
-    env = _mcp_env(content=_BIG, structured={"rows": ["x" * 4000]})
-    msgs, _store = _feedback(env, tmp_path)
-    tool_msg = next(m for m in msgs if m["role"] == "tool")
-    body = _stored_body(tool_msg["content"], tmp_path)
-    assert body == _BIG, "the offloaded body is the CLEAN content — the whole-envelope collapse is gone"
-    assert not body.lstrip().startswith("{"), "not a whole-dict JSON envelope"
-    assert "\\n" not in body, "real newlines, no JSON-of-JSON (structured did not force a whole-dict fallback)"
+def test_plain_text_only_result_has_no_wrapper():
+    """Tier 3a: a text-only MCP result (no structured/signal-meta) renders as the plain text — no
+    frontmatter, no JSON."""
+    content = _tool_content(_feedback(_mcp_env(content="hello world"), None))
+    assert content == "hello world"
 
 
-def test_c_media_blocks_inside_data_are_forwarded(tmp_path):
-    """Tier 3a: (c) media blocks nested INSIDE data (which the top-level strip missed) are lifted and
-    forwarded as a multimodal follow-up — the canonical path fixes the previously-missed MCP media."""
-    env = _mcp_env(content="small", media_blocks=[{"type": "image", "data": "aGVsbG8="}])
-    msgs, _store = _feedback(env, tmp_path)
-    # a follow-up user message beyond the assistant + tool messages carries the media
-    followups = [m for m in msgs if m.get("role") == "user"]
-    assert followups, "a media follow-up message is produced (MCP image lifted from data + forwarded)"
+def test_media_blocks_inside_data_are_forwarded(tmp_path):
+    """Tier 3a: media nested INSIDE data (which the top-level strip misses) is lifted and forwarded as
+    a multimodal follow-up user message — the canonical path fixes the previously-missed MCP media."""
+    store = MediaStore(project_root=tmp_path)
+    msgs = _feedback(_mcp_env(content="small", media_blocks=[{"type": "image", "data": "aGVsbG8="}]), store)
+    assert [m for m in msgs if m.get("role") == "user"], "a media follow-up message is produced"
 
 
-def test_e_non_mcp_op_stays_on_current_payload_path(tmp_path):
-    """Tier 3a: (e) a non-MCP op (exec) stays on the current decide_payload_field path — its declared
-    stdout is offloaded clean via its own marker, unchanged by the MCP branch (a permanent invariant:
-    canonicalization is MCP-only, so web/exec keep their field offload)."""
-    env = {"status": "ok", "data": {"kind": "sandboxed_exec", "status": "ok", "stdout": _BIG,
-                                     "_offload_payload_field": "stdout"}}
-    msgs, _store = _feedback(env, tmp_path)
-    tool_msg = next(m for m in msgs if m["role"] == "tool")
-    assert _stored_body(tool_msg["content"], tmp_path) == _BIG, "exec stdout offloaded clean (unchanged path)"
-    assert json.loads(tool_msg["content"]).get("_offload_payload_field") == "stdout", "current marker, not text"
+def test_dispatch_error_renders_error_kind_message():
+    """Tier 3a: a dispatch-envelope error renders the plain ``Error (<kind>): <message>`` string
+    (``kind`` retained because permission_denied vs not_found imply different recovery), never JSON."""
+    env = {"status": "error", "error": {"kind": "permission_denied", "message": "denied: web.fetch"}}
+    content = _tool_content(_feedback(env, None))
+    assert content == "Error (permission_denied): denied: web.fetch"
+
+
+def test_mcp_iserror_renders_error_from_content():
+    """Tier 3a: an MCP ``isError`` result (carried as ``status: error``) renders ``Error: <content>`` —
+    MCP puts the error description in the content text."""
+    content = _tool_content(_feedback(_mcp_env(status="error", content="tool blew up"), None))
+    assert content == "Error: tool blew up"

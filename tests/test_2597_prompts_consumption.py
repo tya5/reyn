@@ -391,7 +391,10 @@ def test_canonical_mapper_joins_text_and_isolates_non_text_as_structured():
     assert canonical["attachments"] == [
         {"kind": "structured", "data": {"type": "image", "data": "YWJj", "mimeType": "image/png"}},
     ]
-    assert canonical["meta"]["kind"] == "mcp_get_prompt"
+    # #2425 案B: meta is signal-only — transport echo (kind/status/server/name) is dropped; a
+    # successful result carries no isError, so meta is empty.
+    assert "kind" not in canonical["meta"] and "server" not in canonical["meta"]
+    assert not canonical["meta"].get("isError")
 
 
 # ── Tier 2: tools/mcp.py verbs — delegation via a Fake host (no mocks) ────────

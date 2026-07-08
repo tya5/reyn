@@ -123,8 +123,8 @@ async def handle(
     else:
         mode = "mixed"
 
-    # #2336: offload the chunks array as a clean JSON array, not a whole-dict envelope.
-    return {"chunks": stripped_chunks, "mode": mode, "_offload_payload_field": "chunks"}
+    # #2425 案B: ``kind`` drives the canonical mapper (chunks → structured attachment).
+    return {"kind": "recall", "chunks": stripped_chunks, "mode": mode}
 
 
 register("recall", handle)

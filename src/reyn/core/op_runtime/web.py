@@ -499,9 +499,6 @@ async def handle_web_fetch(op: WebFetchIROp, ctx: OpContext) -> dict:
         "start_index": op.start_index,
         "next_start": next_start,
         "total_length": total_length,
-        # #2336: if this result is offloaded, store the fetched text CLEAN (real
-        # newlines) rather than a JSON-of-JSON whole-dict envelope.
-        "_offload_payload_field": "content",
     }
 
 
@@ -534,8 +531,6 @@ async def handle_web_search(op: WebSearchIROp, ctx: OpContext) -> dict:
         "backend": op.backend,
         "status": "ok",
         "results": results,
-        # #2336: offload the results array as a clean JSON array, not a whole-dict envelope.
-        "_offload_payload_field": "results",
     }
 
 
