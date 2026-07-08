@@ -202,27 +202,36 @@ registered template (operator-owned) → inline blueprint (LLM-authored, catalog
 
 Mirror of the input-side content-guard, at the output boundary:
 
-- **Per-surface neutralizer strategy.** Neutralization of rendered leaf strings is a
-  strategy *selected by the target surface*, not a single uniform strip — what is
-  dangerous depends on the sink. Runs **unconditionally**, including (and especially) for
-  never-ingested data. Applied to **every** render-leaf string (label, literal, and
-  bound value) at one seam — never split "escape labels at parse / neutralize bound
-  values at bind", which leaves literal strings unguarded.
-  - **Terminal (v1, inline-CUI / Rich):** *strip* control / ESC sequences (always
-    dangerous — OSC / CSI, notably OSC-52 clipboard) and *escape* Rich console markup
-    (escape, not strip — `[red]` survives as literal text, preserving fidelity;
-    FP-0051 idiom). **No HTML-escaping** on this surface: `<div>` is inert literal text
-    in a terminal, and HTML-escaping would corrupt `<`/`>`/`&` in `code`/`diff` (core
-    v1 catalog) — a category error (neutralizing a threat that does not exist at this
-    sink).
-  - **Web (future):** HTML/JS escaping is *this* surface's neutralizer, shipped with the
-    web renderer — not applied on the terminal path. Structuring neutralization
+Two responsibilities, at two layers (the split that empirical Rich testing forced — a
+uniform "escape everything" guard corrupts markup-inert sinks):
+
+- **Guard (surface-universal, sink threat) — the output seam.** Neutralize the threats
+  that are dangerous to a surface regardless of which render component receives the
+  content. Runs **unconditionally**, including (and especially) for never-ingested data,
+  and applies to **every** render-leaf string (label, literal, and bound value) at one
+  seam — never split "escape labels at parse / neutralize bound values at bind", which
+  leaves literal strings unguarded.
+  - **Terminal (v1, inline-CUI / Rich):** *strip* control / ESC sequences — the real,
+    sink-level terminal threat (OSC / CSI, notably OSC-52 clipboard). That is the guard's
+    **whole** terminal job. **No HTML-escaping** (a `<div>` is inert literal text in a
+    terminal; HTML-escaping would corrupt `<`/`>`/`&` in `code`/`diff`, a category
+    error), and **no Rich-markup escaping** (see the renderer layer below — it is not a
+    surface-universal threat).
+  - **Web (future):** HTML/JS escaping is *this* surface's guard neutralizer, shipped
+    with the web renderer — never applied on the terminal path. Structuring the guard
     per-surface (even with one surface in v1) lets the web strategy plug in without
     touching the core (§ 6 per-surface boundary; structural write-gate).
-  - **Renderer note (PR-B):** Rich `Syntax` (code/diff) and `Text` are markup-inert, so
-    content routed to them must **not** be double-handled — the Rich-markup escape is for
-    markup-interpreting paths (`Markdown`), while `Syntax`/`Text` receive the raw
-    (control-stripped) string. Resolved in the PR-B renderer, not the guard core.
+- **Renderer discipline (per-component, render-API safety) — PR-B.** Rich console markup
+  (`[red]…[/]`) is **not** a surface-universal threat: it is a Rich-library concept, and
+  only `console.print(markup=True)` interprets it — `Text` and `Syntax` are markup-inert,
+  and `Markdown` treats `[red]` as inert literal text (CommonMark). So Rich-markup-safety
+  is the **renderer's** responsibility, achieved *structurally* rather than by escaping:
+  the renderer routes every untrusted leaf to a markup-inert sink (`Text` / `Syntax`) or
+  to `Markdown`, and **never** calls `console.print(markup=True)` on leaf content. Rich-
+  markup injection is then structurally impossible with **no escape/unescape anywhere** —
+  which also removes the fragile guard-regex coupling and the corner case where data
+  containing a literal `\[red]` would be mangled by an unescape pass. (Empirically
+  verified by tui-coder; corrects an earlier draft that escaped Rich markup in the guard.)
 - **Per-binding size caps** — prevents `/` (root) bound into a `text` component from
   dumping an entire file.
 - **Default output cap (present-specific — not a scrollback pager).** The inline-CUI
