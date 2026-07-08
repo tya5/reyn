@@ -2,7 +2,7 @@
 type: concept
 topic: runtime
 audience: [human, agent]
-search_hints: [present, presentation, present op, present layer, declarative UI, blueprint, JSON pointer binding, presentation guard, fallback chain, replay as cache, bulk data output, output tokens]
+search_hints: [present, presentation, present op, present layer, declarative UI, view, blueprint, JSON pointer binding, presentation guard, fallback chain, replay as cache, bulk data output, output tokens]
 ---
 
 # Present layer
@@ -10,7 +10,7 @@ search_hints: [present, presentation, present op, present layer, declarative UI,
 The **present layer** lets an agent show bulk data to the user **without the data
 passing through LLM output tokens**. An agent that has obtained a large result — a
 table of search hits, a file, a structured API payload — routes the data's *handle*
-plus a declarative *display template* straight to the user-facing surface. The bulk
+plus a declarative *view* straight to the user-facing surface. The bulk
 bytes reach the user directly; the LLM never re-types them.
 
 ## The problem: bulk data costs output tokens
@@ -27,7 +27,7 @@ round-trips through the LLM twice:
   its output budget the LLM summarizes or truncates — so the user *also* loses fidelity.
 
 The offloaded ref file is already "data file + handle". What was missing is a primitive
-that routes that handle plus a template to the user's surface directly. That primitive is
+that routes that handle plus a view to the user's surface directly. That primitive is
 the **`present` op**.
 
 ## LLM sees shape, the user sees content
@@ -35,7 +35,7 @@ the **`present` op**.
 The defining asymmetry of the present layer:
 
 > The LLM works from the schema + preview and **binds paths**; the renderer joins the
-> template against the **full data the LLM never ingested**. The user sees everything;
+> view against the **full data the LLM never ingested**. The user sees everything;
 > the LLM sees only the shape.
 
 This is the designed contract, not a defect. **Display is free; computation costs.**
@@ -50,7 +50,7 @@ The present layer does not forbid **blind** presentation — it makes blindness
 
 ## The declarative model — never executable
 
-A template is a **declarative component tree**, never code. It is built from a fixed
+A view is a **declarative component tree**, never code. It is built from a fixed
 **catalog** of read-only components:
 
 | Component | Shows |
@@ -63,7 +63,7 @@ A template is a **declarative component tree**, never code. It is built from a f
 | `list` | a bullet list |
 | `image` | v1 renders an `[image: <alt>]` dim-text placeholder only — not yet routed to the multimodal delivery path |
 
-Data is joined to the template by **JSON Pointer (RFC 6901)** path bindings — expressed
+Data is joined to the view by **JSON Pointer (RFC 6901)** path bindings — expressed
 structurally as `{"$bind": "<pointer>"}`. `table` and `list` paths resolve **row-relative**
 (relative to each iterated row). Everything that is not a `$bind` is a literal.
 
@@ -107,10 +107,10 @@ or read it directly.
 
 ## Degrade, never fail — the 4-stage fallback
 
-A binding miss never loses the user's access to the data. Template resolution degrades
+A binding miss never loses the user's access to the data. View resolution degrades
 through four stages, the last of which **always renders**:
 
-1. **Registered template** — a named template from the operator's registry.
+1. **Registered view** — a named view from the operator's registry.
 2. **Inline blueprint** — an LLM-authored component tree, structurally gated at op
    validation.
 3. **Default viewer** — a blueprint synthesized from the data's *shape* (`list[dict]` →
@@ -119,23 +119,30 @@ through four stages, the last of which **always renders**:
 4. **Generic** — the final catch: structured data dumped as YAML into a `text` component,
    plain text shown as-is.
 
-The fallback fires on an all-miss template or an unknown template name — never a hard
-error. The op's **ack** reports the *requested* template's stats plus a `note` naming the
+The fallback fires on an all-miss view or an unknown view name — never a hard
+error. The op's **ack** reports the *requested* view's stats plus a `note` naming the
 stage that actually rendered, so a blind agent self-corrects for a few tokens: many
-`path_not_found` drops read as "my template doesn't match this data shape", `type_mismatch`
+`path_not_found` drops read as "my view doesn't match this data shape", `type_mismatch`
 as "right path, wrong component", `guard_stripped` as "content neutralized by the guard,
-not a template bug".
+not a view bug".
 
-Named templates are registered by an **operator** in a config file; the LLM only ever
+Named views are registered by an **operator** in a config file; the LLM only ever
 authors inline blueprints. This mirrors reyn's write-gate culture — the durable, reusable
 surface is operator-owned.
+
+**Omitting both `view` and `blueprint` is valid** (FP-0055 PR-1): resolution enters
+directly at stage 3, skipping stages 1-2 entirely — `present(data_ref=...)` alone "just
+shows" the data. This IS the requested rendering, not a fallback: the ack carries the
+default viewer's own stats and no `note`, unless stage 3 itself degrades further to
+stage 4.
 
 ## Audit-first, and replay-as-cache
 
 Every presentation emits a durable **`presented`** audit event carrying **refs + stats
 only, never content bytes** — the data is already durable in the ref file, so the event
-stays light. The event records the data ref, the template name (or a hash of the inline
-blueprint), the surface, the OS-computed `ingested` annotation, and the binding stats.
+stays light. The event records the data ref, the view name (or a hash of the inline
+blueprint, or `null` when neither was given), the `mode` (`view` | `blueprint` |
+`default`), the surface, the OS-computed `ingested` annotation, and the binding stats.
 
 A presentation is a **cache**; the `presented` event is the **truth**. When a session is
 [replayed](events.md) or rewound, a `presented` event is re-rendered **best-effort**: if

@@ -86,11 +86,12 @@ class OpContext:
     # its own `surface_name` (e.g. inline-CUI's OutboxPresentationRenderer = "inline-cui").
     presentation_renderer: "PresentationRenderer | None" = None
 
-    # FP-0054 PR-C: the operator's named-template registry (from
-    # `.reyn/config/presentations.yaml`) a `present` op resolves `op.template`
-    # against — the §3 fallback chain's stage 1. A `PresentationRegistry` (duck-typed
-    # `.get(name) -> validated nodes | None`). None = no registry wired (direct/test
-    # construction) → every named template is "unknown" and falls through to the
+    # FP-0054 PR-C: the operator's named-view registry (from
+    # `.reyn/config/presentations.yaml`) a `present` op resolves `op.view`
+    # (FP-0055 PR-1 rename of `op.template`) against — the §3 fallback chain's
+    # stage 1. A `PresentationRegistry` (duck-typed `.get(name) -> validated
+    # nodes | None`). None = no registry wired (direct/test construction) →
+    # every named view is "unknown" and falls through to the
     # generic fallback viewer (never a hard error). Sourced fresh per op-ctx build
     # from the session/adapter's current registry, so a hot-reload swap is picked up
     # at the next turn boundary.

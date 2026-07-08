@@ -187,7 +187,7 @@ class ConsoleLogger:
         try:
             replayed = replay_presentation(data)
         except Exception:  # noqa: BLE001 — replay must never crash on one bad event
-            print(f"[present] template={data.get('template', '?')} "
+            print(f"[present] view={data.get('view', '?')} "
                   f"data_ref={data.get('data_ref', '?')} (re-render unavailable)")
             return
         print(replayed.header)

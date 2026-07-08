@@ -16,7 +16,7 @@ at parse. Everything that is not a ``$bind`` object is a literal.
 
 The structural gate runs at op validation: a non-catalog component or a non-path
 binding is a hard rejection (``PresentBlueprintError``), not a soft drop —
-soft-skip is for *runtime* binding misses, not for a malformed template. This gate
+soft-skip is for *runtime* binding misses, not for a malformed blueprint. This gate
 is purely structural; leaf-string neutralization (labels, literals, bound values)
 is a single seam in the render layer (``binding.resolve_bindings``), not here.
 """

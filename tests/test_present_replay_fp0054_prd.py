@@ -119,6 +119,6 @@ def test_replay_never_raises_on_a_missing_ref():
     """Tier 2: replay is best-effort by construction — a data_ref that cannot load
     yields a placeholder, never an exception (a bad event must not crash a replay)."""
     replayed = replay_presentation(
-        {"data_ref": "/does/not/exist.json", "template": "t", "rows": 0},
+        {"data_ref": "/does/not/exist.json", "view": "t", "rows": 0},
     )
     assert replayed.is_placeholder is True

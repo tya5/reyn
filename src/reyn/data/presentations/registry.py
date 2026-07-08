@@ -148,7 +148,10 @@ def build_presentation_registry(
 
     For each ``presentations.entries.<key>`` declaration, the inline ``blueprint``
     is validated via :func:`validate_blueprint` and registered under the entry key
-    (the authoritative name a ``present`` op's ``template`` resolves against).
+    (the authoritative name a ``present`` op's ``view`` resolves against;
+    FP-0055 PR-1 renamed the op arg from ``template`` — the registry's own
+    vocabulary, "named templates", is unchanged prose here, only the op-arg
+    reference is updated).
 
     ``raw_presentations=None`` / an empty-or-absent ``presentations:`` block / a
     block with no ``entries`` → an empty registry (zero-config default, not a

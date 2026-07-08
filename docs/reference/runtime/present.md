@@ -2,13 +2,13 @@
 type: reference
 topic: runtime
 audience: [human, agent]
-search_hints: [present op, present reference, presentation, data_ref, data_inline, blueprint, template, catalog component, table, keyvalue, list, code, diff, markdown, image, $bind, JSON pointer, presentations.yaml, presentations.entries, present ack, bindings_dropped, presented event, replay, recovery gate, expiry placeholder]
+search_hints: [present op, present reference, presentation, data_ref, data_inline, blueprint, view, catalog component, table, keyvalue, list, code, diff, markdown, image, $bind, JSON pointer, presentations.yaml, presentations.entries, present ack, bindings_dropped, presented event, replay, recovery gate, expiry placeholder]
 ---
 
 # Present op & surface reference
 
 Operator/agent-facing reference for the **present layer** — the `present` op's args, the
-v1 component catalog, path binding, named-template registration, the op ack, the
+v1 component catalog, path binding, named-view registration, the op ack, the
 `presented` audit event, and the replay/rewind behavior. For the *why* (the axis-B/C
 problem, the LLM-sees-shape/user-sees-content asymmetry, the guard/renderer split), see
 [Concepts: Present layer](../../concepts/runtime/present.md). The op also appears in the
@@ -31,14 +31,20 @@ problem, the LLM-sees-shape/user-sees-content asymmetry, the guard/renderer spli
 }
 ```
 
-Exactly one **data source** and exactly one **template**:
+Exactly one **data source**; **at most one** of `view` / `blueprint` (both omitted is
+valid — see [Optional view/blueprint](#optional-viewblueprint-default-rendering) below):
 
 | Arg | Type | Notes |
 |---|---|---|
 | `data_ref` | string | **XOR** `data_inline`. Any zone-readable path. An offloaded `structured_ref` is **re-hydrated to its full value** (not read from the LLM-visible preview) via `file.read` semantics. |
 | `data_inline` | any | **XOR** `data_ref`. Small data already in the LLM's context (convenience). |
-| `template` | string | **XOR** `blueprint`. A registered presentation name (see registration below). An unknown name is not an error — it falls through the fallback chain. |
-| `blueprint` | object \| array | **XOR** `template`. An inline declarative component tree (a single node or a top-to-bottom list). |
+| `view` | string | At most one of `view` / `blueprint`. A registered presentation name (see registration below). An unknown name is not an error — it falls through the fallback chain. |
+| `blueprint` | object \| array | At most one of `view` / `blueprint`. An inline declarative component tree (a single node or a top-to-bottom list). |
+
+`view` is FP-0055 PR-1's rename of the original `template` arg — a clean break, no
+alias. "Template" now means exclusively the future `render_template` op's Jinja2 text
+templates; the declarative, registered-or-inline presentation description present uses
+is a **view**.
 
 - **Tier 0** (`ask_user`'s sibling), **fire-and-continue** — presenting to the user (the
   trust root) has no output permission gate, and unlike `ask_user` it does **not** pause
@@ -65,7 +71,7 @@ There are **no interactive components** (no buttons / forms) in v1.
 
 ### Binding — `$bind` / JSON Pointer
 
-Data is joined to a template by **JSON Pointer (RFC 6901)** paths, expressed structurally:
+Data is joined to a view by **JSON Pointer (RFC 6901)** paths, expressed structurally:
 
 - `{"$bind": "/results/0/title"}` — a pointer string; `""` binds the **whole document**.
 - Anything that is not a `$bind` object is a **literal** (e.g. a `header` string).
@@ -79,12 +85,12 @@ table) + record `type_mismatch`; a leaf neutralized/size-capped by the guard →
 routes to the fallback chain — never a hard failure.
 
 The structural gate at op validation rejects a **non-catalog component** or a **non-path
-binding** as a hard error (`status="error"`) for an inline blueprint — that is a template
-bug, distinct from a soft binding drop.
+binding** as a hard error (`status="error"`) for an inline blueprint — that is a
+blueprint bug, distinct from a soft binding drop.
 
-## Named-template registration (operator-only)
+## Named-view registration (operator-only)
 
-Named templates are registered in **`presentations.yaml`** (`presentations.entries`) — an
+Named views are registered in **`presentations.yaml`** (`presentations.entries`) — an
 **operator/config action**. There is no install op; the LLM authors inline blueprints only.
 
 ```yaml
@@ -105,17 +111,29 @@ The blueprint is validated at load; the `<project>/.reyn/config/presentations.ya
 hot-reloads at the turn boundary. Full field table + merge order:
 [reyn.yaml § presentations](../config/reyn-yaml.md#presentations-block).
 
-## Template fallback — 4 stages
+## View fallback — 4 stages
 
 Resolution degrades until something renders (never a hard error):
 
-1. **Registered `template`** → 2. **inline `blueprint`** → 3. **default viewer**
+1. **Registered `view`** → 2. **inline `blueprint`** → 3. **default viewer**
 (synthesized from data shape: `list[dict]` → `table`, `dict` → `keyvalue`, scalar →
 `text`, diff-sniff → `diff`) → 4. **generic** (structured → YAML into `text`, plain text
 as-is — always renders).
 
-The fallback fires on an all-miss template or an unknown template name. The ack reports the
-**requested** template's stats plus a `note` naming the stage that actually rendered.
+The fallback fires on an all-miss view or an unknown view name. The ack reports the
+**requested** view's stats plus a `note` naming the stage that actually rendered.
+
+### Optional view/blueprint — default rendering
+
+`view` and `blueprint` may **both be omitted** (FP-0055 PR-1) — `present(data_ref=...)`
+alone is valid and means "no explicit view; just show it". Resolution then enters
+**directly at stage 3** (the content-type default viewer), skipping stages 1-2 entirely
+— there is no requested view to look up or fall back from. The ack carries `mode:
+"default"` and the default viewer's own stats, with **no `note`** — this is the intended
+rendering, not a fallback. A `note` still appears if stage 3 itself degrades further to
+stage 4 (the default viewer's own bindings all miss), naming that further degradation —
+distinct wording from the "view not registered" / "all bindings missed" notes below,
+since there was no requested view to begin with.
 
 ## Ack (op result)
 
@@ -123,6 +141,7 @@ The LLM's only feedback — compact + high-signal:
 
 ```yaml
 ok: true
+mode: view        # view | blueprint | default — which input the caller gave
 bindings_resolved: 3
 rows: 500
 bindings_dropped:
@@ -132,9 +151,9 @@ all_bindings_missed: false
 note: "…"        # present only when a fallback stage rendered
 ```
 
-`path_not_found` across many rows → "template doesn't match this data shape";
+`path_not_found` across many rows → "view doesn't match this data shape";
 `type_mismatch` → "right path, wrong component"; `guard_stripped` → "content neutralized by
-the guard, not a template bug". The agent self-corrects without ingesting the data.
+the guard, not a view bug". The agent self-corrects without ingesting the data.
 
 ## `presented` event (P6 audit)
 
@@ -144,7 +163,8 @@ bytes**:
 | Field | Meaning |
 |---|---|
 | `data_ref` | the ref path, or `<inline-data>` for a `data_inline` presentation |
-| `template` | the registered name, or `blueprint:<hash>` for an inline blueprint (no blueprint bytes) |
+| `view` | the registered name, `blueprint:<hash>` for an inline blueprint (no blueprint bytes), or `null` when neither was given (`mode: "default"`) |
+| `mode` | `view` \| `blueprint` \| `default` — which of the three mutually-exclusive inputs the caller gave |
 | `surface` | list, e.g. `["inline-cui"]` (`["null"]` when no renderer is wired) |
 | `ingested` | `none` \| `partial` \| `full` — **OS-computed** (was the data inline, or does a prior `read_file` on the ref appear earlier in the session?), never LLM-self-reported |
 | `bindings_resolved` | count of resolved bindings |

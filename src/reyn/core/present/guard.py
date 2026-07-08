@@ -96,15 +96,32 @@ _STRATEGIES: dict[str, LeafNeutralizer] = {
     "inline-cui": _TERMINAL,
     "null": _TERMINAL,
 }
-_DEFAULT_STRATEGY: LeafNeutralizer = _TERMINAL
+
+
+class UnknownSurfaceError(ValueError):
+    """Raised by :func:`get_neutralizer` for a surface with no registered
+    neutralizer strategy — see the function docstring for the fail-closed
+    rationale (#2670)."""
 
 
 def get_neutralizer(surface: str) -> LeafNeutralizer:
-    """Select the leaf neutralizer for ``surface`` (defaults to the terminal
-    strategy). The single dispatch point per-surface neutralization flows
-    through — the binding seam asks for a neutralizer by surface, never branches
-    on surface itself."""
-    return _STRATEGIES.get(surface, _DEFAULT_STRATEGY)
+    """Select the leaf neutralizer for ``surface``. **Fail-closed** (#2670): an
+    unknown surface raises :class:`UnknownSurfaceError` rather than silently
+    falling through to the terminal strategy. A silent default was the exact
+    #2670 regression — a genuinely new live-interpreting surface must register
+    its own neutralizer here before it can reach a renderer at all; there is no
+    safe generic default to fall open to (what is dangerous is surface-specific).
+    The single dispatch point per-surface neutralization flows through — the
+    binding seam asks for a neutralizer by surface, never branches on surface
+    itself."""
+    try:
+        return _STRATEGIES[surface]
+    except KeyError:
+        raise UnknownSurfaceError(
+            f"no neutralizer registered for surface {surface!r} — refusing to "
+            "fall open to a default strategy (#2670); register an explicit "
+            "strategy for this surface in _STRATEGIES"
+        ) from None
 
 
 def cap_leaf(value: str, *, max_chars: int = MAX_LEAF_CHARS) -> tuple[str, bool]:

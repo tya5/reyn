@@ -51,9 +51,15 @@ def _resolver(tmp_path: Path) -> PermissionResolver:
 
 class _RecordingRenderer:
     """A real (non-mock) PresentationRenderer that records what reached the
-    surface. Fire-and-continue: ``render`` returns nothing the op awaits."""
+    surface. Fire-and-continue: ``render`` returns nothing the op awaits.
 
-    surface_name = "test-surface"
+    ``surface_name`` must be one of the guard's registered surfaces (#2670:
+    ``get_neutralizer`` now fails closed on an unknown surface name rather than
+    silently falling through to the terminal strategy) — ``"inline-cui"`` is a
+    real registered surface, unlike the previous placeholder ``"test-surface"``.
+    """
+
+    surface_name = "inline-cui"
 
     def __init__(self) -> None:
         self.rendered: list = []
@@ -175,7 +181,7 @@ def test_registered_template_renders_via_same_binding_path_as_inline(tmp_path: P
     r_named = _RecordingRenderer()
     ctx_n, _ = _ctx(tmp_path, registry=registry, renderer=r_named)
     ack_named = _run(handle(
-        PresentIROp(kind="present", data_inline=data, template="authors"), ctx_n))
+        PresentIROp(kind="present", data_inline=data, view="authors"), ctx_n))
 
     # Equivalent inline-blueprint path over the same data.
     r_inline = _RecordingRenderer()
@@ -194,14 +200,14 @@ def test_registered_template_renders_via_same_binding_path_as_inline(tmp_path: P
 
 
 def test_registered_template_records_name_in_presented_event(tmp_path: Path) -> None:
-    """Tier 1: the presented event records the REGISTERED NAME as its template
+    """Tier 1: the presented event records the REGISTERED NAME as its view
     field (not an inline-blueprint hash)."""
     data = {"results": [{"author": "amy"}]}
     registry = build_presentation_registry({"entries": {"authors": {"blueprint": _AUTHORS_TEMPLATE}}})
     ctx, events = _ctx(tmp_path, registry=registry, renderer=_RecordingRenderer())
-    _run(handle(PresentIROp(kind="present", data_inline=data, template="authors"), ctx))
+    _run(handle(PresentIROp(kind="present", data_inline=data, view="authors"), ctx))
     ev = [e for e in events.all() if e.type == "presented"][-1]
-    assert ev.data["template"] == "authors"
+    assert ev.data["view"] == "authors"
     assert ev.data["bindings_resolved"] >= 1
 
 
@@ -218,7 +224,7 @@ def test_unknown_template_falls_to_generic_viewer_not_error(tmp_path: Path) -> N
     ctx, events = _ctx(tmp_path, registry=registry, renderer=renderer)
 
     ack = _run(handle(
-        PresentIROp(kind="present", data_inline=data, template="does_not_exist"), ctx))
+        PresentIROp(kind="present", data_inline=data, view="does_not_exist"), ctx))
 
     assert ack["status"] == "ok"
     assert ack["ok"] is True
@@ -243,7 +249,7 @@ def test_all_bindings_miss_template_falls_to_fallback_viewer(tmp_path: Path) -> 
     renderer = _RecordingRenderer()
     ctx, _ = _ctx(tmp_path, registry=registry, renderer=renderer)
 
-    ack = _run(handle(PresentIROp(kind="present", data_inline=data, template="authors"), ctx))
+    ack = _run(handle(PresentIROp(kind="present", data_inline=data, view="authors"), ctx))
 
     assert ack["ok"] is True
     assert ack["all_bindings_missed"] is True  # the REQUESTED template's own outcome
@@ -292,7 +298,7 @@ def test_no_registry_wired_treats_named_template_as_unknown(tmp_path: Path) -> N
     data = {"x": 1}
     renderer = _RecordingRenderer()
     ctx, _ = _ctx(tmp_path, registry=None, renderer=renderer)
-    ack = _run(handle(PresentIROp(kind="present", data_inline=data, template="anything"), ctx))
+    ack = _run(handle(PresentIROp(kind="present", data_inline=data, view="anything"), ctx))
     assert ack["ok"] is True
     assert "note" in ack
     assert "1" in _all_leaf_text(renderer.rendered[-1])
@@ -310,7 +316,7 @@ def test_referencing_a_template_name_never_registers_it(tmp_path: Path) -> None:
     assert not registry.has("llm_authored")
     ctx, _ = _ctx(tmp_path, registry=registry, renderer=_RecordingRenderer())
 
-    _run(handle(PresentIROp(kind="present", data_inline={"a": 1}, template="llm_authored"), ctx))
+    _run(handle(PresentIROp(kind="present", data_inline={"a": 1}, view="llm_authored"), ctx))
 
     # The op did not register anything — the registry is exactly as the operator left it.
     assert not registry.has("llm_authored")
@@ -436,6 +442,6 @@ def test_fallback_event_carries_no_content_bytes(tmp_path: Path) -> None:
     registry = build_presentation_registry({"entries": {"authors": {"blueprint": _AUTHORS_TEMPLATE}}})
     ctx, events = _ctx(tmp_path, registry=registry, renderer=_RecordingRenderer())
     _run(handle(PresentIROp(
-        kind="present", data_inline={"note": secret}, template="does_not_exist"), ctx))
+        kind="present", data_inline={"note": secret}, view="does_not_exist"), ctx))
     ev = [e for e in events.all() if e.type == "presented"][-1]
     assert secret not in json.dumps(ev.data)

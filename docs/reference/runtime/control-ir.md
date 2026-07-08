@@ -19,7 +19,7 @@ Control IR is the list of side-effect operations the LLM may emit alongside its 
 | `glob_files` | List files matching a glob pattern | `file.read` |
 | `grep_files` | Search file contents by regex | `file.read` |
 | `ask_user` | Pause the phase and ask the user a question | none (always allowed) |
-| `present` | Route bulk data + a display template to the user surface without the data passing through LLM output tokens (fire-and-continue) | Tier 0 (always allowed); `data_ref` read authority == `file.read` |
+| `present` | Route bulk data + a declarative view to the user surface without the data passing through LLM output tokens (fire-and-continue) | Tier 0 (always allowed); `data_ref` read authority == `file.read` |
 | `sandboxed_exec` | Run argv under a `SandboxPolicy` via a `SandboxBackend` (replaces the removed `shell` op) | enforced by backend (`SandboxPolicy`) |
 | `web_search` | Search the public web via DuckDuckGo | Tier 1 — default allow; `web.search: deny` in `reyn.yaml` blocks |
 | `web_fetch` | Fetch a single URL and return extracted text | Tier 1 — default allow; `web.fetch: deny` in `reyn.yaml` blocks |
@@ -143,10 +143,10 @@ Pauses the phase and asks the user. The OS prints the question, reads stdin, and
 
 ## `present`
 
-Routes bulk data plus a declarative display template to the user-facing surface
+Routes bulk data plus a declarative view to the user-facing surface
 **without the data round-tripping through LLM output tokens**. The offloaded ref
-file is already "data file + handle"; `present` joins that handle to a display
-template so the bulk bytes reach the user directly. Presenting N rows costs ~0
+file is already "data file + handle"; `present` joins that handle to a view
+so the bulk bytes reach the user directly. Presenting N rows costs ~0
 output tokens; the moment the agent must *transform* the data it pays to read the
 ref instead.
 
@@ -171,15 +171,22 @@ never read more than the agent's file ops can. Unlike `ask_user`, `present` is
 }
 ```
 
-Fields (exactly one source, exactly one template):
+Fields (exactly one source; at most one of `view` / `blueprint` — both omitted is
+valid, see the PR-1 note below):
 
 - `data_ref` (str) **XOR** `data_inline` (any) — the data source. `data_ref` is
   any zone-readable path; an offloaded `structured_ref` is **re-hydrated to its
   full value** (not read from the LLM-visible preview) via `file.read` semantics.
   `data_inline` is small data already in the LLM's context.
-- `template` (str) **XOR** `blueprint` (object | array) — the display template.
-  `template` is a registered presentation name (the registry + fallback chain,
+- `view` (str) **at most one with** `blueprint` (object | array) — the view.
+  `view` is a registered presentation name (the registry + fallback chain,
   see the PR-B/C/D note below); `blueprint` is an inline declarative component tree.
+  (FP-0055 PR-1 renamed this arg from `template` — a clean break, no alias — as
+  part of a vocabulary partition: `view` is the declarative sense, `template` is
+  reserved for the `render_template` op's Jinja2 text templates.)
+- **Both omitted (FP-0055 PR-1):** valid — "no explicit view" routes straight to
+  the stage-3/4 default-viewer synthesis below; `present(data_ref=...)` alone
+  "just shows" the data.
 
 **Declarative model (v1 catalog — display-only, non-executable by construction).**
 A blueprint is a single component node or a list of them (rendered top to bottom).
@@ -224,6 +231,7 @@ value still renders, inert) — the ref remains the full-fidelity source.
 
 ```yaml
 ok: true
+mode: view        # view | blueprint | default (FP-0055 PR-1) — which input the caller gave
 bindings_resolved: 3
 rows: 500
 bindings_dropped:
@@ -232,13 +240,19 @@ bindings_dropped:
 all_bindings_missed: false
 ```
 
-`path_not_found` across many rows reads as "template doesn't match this data
+`path_not_found` across many rows reads as "view doesn't match this data
 shape"; `type_mismatch` as "right path, wrong component"; `guard_stripped` as
-"content neutralized by the guard, not a template bug". The LLM self-corrects a
-blind presentation for tens of tokens without ingesting the data.
+"content neutralized by the guard, not a view bug". The LLM self-corrects a
+blind presentation for tens of tokens without ingesting the data. With `mode:
+"default"` (neither `view` nor `blueprint` given) the stats above are the
+synthesized default viewer's own — this is the intended rendering, so there is
+no fallback `note` unless that default viewer itself degrades further to the
+stage-4 generic fallback.
 
-Event emitted: `presented` (P6 audit) — `{data_ref, template, surface, ingested,
-bindings_resolved, bindings_dropped, rows}`. `ingested` (`none` | `partial` |
+Event emitted: `presented` (P6 audit) — `{data_ref, view, mode, surface, ingested,
+bindings_resolved, bindings_dropped, rows}`. `view` is the registered name,
+`blueprint:<hash>` for an inline blueprint, or `null` when neither was given.
+`ingested` (`none` | `partial` |
 `full`) is **OS-computed** (was the data inline, or does a `read_file` on the ref
 appear earlier in the session), never LLM-self-reported. The event carries **refs
 + stats only, never content bytes** (the data is already durable in the ref).
