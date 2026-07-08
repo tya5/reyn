@@ -50,6 +50,10 @@ _OP_KIND_ALIASES: "dict[str, frozenset[str]]" = {
     "judge_output": frozenset(),
     "compact": frozenset(),
     "ask_user": frozenset(),
+    # FP-0054 PR-A: present is Tier 0 (no output gate) but still gates on its own
+    # kind name under a per-session contextual narrowing (no distinct chat-tool
+    # qualified name → kind only; no silent bypass).
+    "present": frozenset(),
     # #1953 slice 1: Task ops have no distinct chat-tool qualified name → each
     # is gated on its own kind name (no silent bypass).
     "task.create": frozenset(),

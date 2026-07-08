@@ -19,6 +19,7 @@ Control IR is the list of side-effect operations the LLM may emit alongside its 
 | `glob_files` | List files matching a glob pattern | `file.read` |
 | `grep_files` | Search file contents by regex | `file.read` |
 | `ask_user` | Pause the phase and ask the user a question | none (always allowed) |
+| `present` | Route bulk data + a display template to the user surface without the data passing through LLM output tokens (fire-and-continue) | Tier 0 (always allowed); `data_ref` read authority == `file.read` |
 | `sandboxed_exec` | Run argv under a `SandboxPolicy` via a `SandboxBackend` (replaces the removed `shell` op) | enforced by backend (`SandboxPolicy`) |
 | `web_search` | Search the public web via DuckDuckGo | Tier 1 — default allow; `web.search: deny` in `reyn.yaml` blocks |
 | `web_fetch` | Fetch a single URL and return extracted text | Tier 1 — default allow; `web.fetch: deny` in `reyn.yaml` blocks |
@@ -139,6 +140,105 @@ Pauses the phase and asks the user. The OS prints the question, reads stdin, and
 ```
 
 `suggestions` are free-text hints (the user may still type anything). `options` (PR-F3, #2233) is a **closed selectable set** — when non-empty, the frontend renders a **selector** over exactly those answers (empty → free-text input). `required` (default `true`) — when `false`, the user may dismiss without answering.
+
+## `present`
+
+Routes bulk data plus a declarative display template to the user-facing surface
+**without the data round-tripping through LLM output tokens**. The offloaded ref
+file is already "data file + handle"; `present` joins that handle to a display
+template so the bulk bytes reach the user directly. Presenting N rows costs ~0
+output tokens; the moment the agent must *transform* the data it pays to read the
+ref instead.
+
+**Tier 0** (`ask_user`'s sibling): presenting to the user — the trust root — is
+not an exfiltration channel, so there is no output permission gate. The one gate:
+`data_ref` read authority resolves **identically to `file.read`** — `present` can
+never read more than the agent's file ops can. Unlike `ask_user`, `present` is
+**fire-and-continue** — it does NOT pause the run.
+
+```json
+{
+  "kind": "present",
+  "data_ref": ".reyn/cache/tool-results/2026-.../structured.json",
+  "blueprint": {
+    "component": "table",
+    "rows": {"$bind": "/results"},
+    "columns": [
+      {"header": "Title", "path": "/title"},
+      {"header": "Author", "path": "/author"}
+    ]
+  }
+}
+```
+
+Fields (exactly one source, exactly one template):
+
+- `data_ref` (str) **XOR** `data_inline` (any) — the data source. `data_ref` is
+  any zone-readable path; an offloaded `structured_ref` is **re-hydrated to its
+  full value** (not read from the LLM-visible preview) via `file.read` semantics.
+  `data_inline` is small data already in the LLM's context.
+- `template` (str) **XOR** `blueprint` (object | array) — the display template.
+  `template` is a registered presentation name (the registry + fallback chain
+  land in a later PR); `blueprint` is an inline declarative component tree.
+
+**Declarative model (v1 catalog — display-only, non-executable by construction).**
+A blueprint is a single component node or a list of them (rendered top to bottom).
+Catalog components (all read-only): `text` / `markdown` / `code` / `diff` /
+`keyvalue` / `table` / `list` / `image`. There are **no interactive components**
+(no buttons / forms) in v1. Bindings are expressed structurally as
+`{"$bind": "<json-pointer>"}` — an RFC 6901 JSON Pointer **string** (`""` = whole
+document); everything else is a literal. `table` / `list` column paths resolve
+**row-relative** (relative to each iterated row). The structural gate at op
+validation rejects a non-catalog component or a non-path binding (a hard error,
+not a soft drop); it is purely structural — leaf-string neutralization is a single
+seam in the render layer (below), not at parse.
+
+**Binding semantics.** Path hit → bind. Path miss → **soft-skip** that binding +
+record it in `bindings_dropped` (never a hard failure). Type mismatch → coerce (a
+scalar into a `table` `rows` slot → a 1-row table) + record. Guard-stripped → a
+bound leaf neutralized or size-capped by the presentation-guard is recorded. When
+**all** bindings miss, the op reports `all_bindings_missed` (the generic-viewer
+fallback signal; the fallback wiring itself lands in a later PR).
+
+**Presentation-guard (output seam).** Runs **unconditionally**, including for
+never-ingested data. Every render-leaf string — labels, literal slot values, AND
+bound data values — passes through ONE neutralizer, selected by the target
+**surface** (a per-surface strategy, so a future web surface slots in without
+touching the binding layer). The v1 **terminal** strategy strips ESC / control
+sequences (OSC / CSI) and **escapes** (not strips) Rich console markup so `[red]`
+renders literally; it does **not** HTML-escape — in a terminal `<div>` is a
+harmless literal, and entity-escaping would corrupt `code` / `diff` content (HTML
+neutralization is a future web renderer's concern). **Per-binding size caps**
+prevent a `/` (root) pointer bound into a `text` component from dumping a whole
+file. Neutralization is a transform (the value still renders, inert) — the ref
+remains the full-fidelity source.
+
+**Ack (op result)** — the LLM's only feedback, deliberately compact + high-signal:
+
+```yaml
+ok: true
+bindings_resolved: 3
+rows: 500
+bindings_dropped:
+  - {path: "/results/0/author", reason: path_not_found}
+  # reason ∈ {path_not_found, type_mismatch, guard_stripped}
+```
+
+`path_not_found` across many rows reads as "template doesn't match this data
+shape"; `type_mismatch` as "right path, wrong component"; `guard_stripped` as
+"content neutralized by the guard, not a template bug". The LLM self-corrects a
+blind presentation for tens of tokens without ingesting the data.
+
+Event emitted: `presented` (P6 audit) — `{data_ref, template, surface, ingested,
+bindings_resolved, bindings_dropped, rows}`. `ingested` (`none` | `partial` |
+`full`) is **OS-computed** (was the data inline, or does a `read_file` on the ref
+appear earlier in the session), never LLM-self-reported. The event carries **refs
++ stats only, never content bytes** (the data is already durable in the ref).
+
+> PR-A scope: the model + binding + guard run against a **null renderer**
+> (`surface: ["null"]`) — there is no UI surface yet. The inline-CUI renderer,
+> `presentations.yaml` registry + fallback chain, and replay/rewind rendering land
+> in later PRs.
 
 ## `sandboxed_exec`
 
