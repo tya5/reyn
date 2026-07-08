@@ -117,6 +117,14 @@ render_template:
 
 - Returns the rendered **string** as an ordinary op result (canonical `text`). The
   standard tool-result offload applies on the chat path (large output → ref + preview).
+- **Its own canonical mapper is part of this op's contract (FP-0056 discipline).**
+  `render_template` is a new producer kind; a new op-kind without a `_MAPPERS` entry
+  falls to the whole-dict-structured fallback (the exact FP-0056 bug) for **its own**
+  result. So PR-2 must register a `render_template` mapper (rendered string → `text`) in
+  the same PR — not rely on the fallback. Under FP-0056 PR-F1's registry-derived gate
+  this becomes mechanically enforced; until then it is an explicit PR-2 deliverable.
+  (Sequencing consequence: PR-2 lands after FP-0056 PR-H, since both edit
+  `canonical.py::_MAPPERS`.)
 - Template context binds the resolved data under **`data`**
   (`{{ data.results[0].title }}`) — unambiguous, mirrors pipeline `ctx` style.
 - **No `as`/format arg** — the op produces a string; what component displays it is the
