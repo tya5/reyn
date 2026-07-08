@@ -364,6 +364,34 @@ def _reyn_src_to_canonical(result: dict) -> CanonicalToolResult:
     )
 
 
+def _render_template_to_canonical(result: dict) -> CanonicalToolResult:
+    """``render_template`` op result → canonical (FP-0055 PR-2). The rendered string
+    (``rendered``) IS the LLM-readable body → ``text`` (NOT a whole-dict ``structured``
+    blob — a render_template result without its own mapper would fall to the FP-0056
+    whole-dict fallback and hide the rendered text behind a JSON envelope). Signal
+    meta: ``truncated`` (+ which bound fired, ``truncate_reason``) tells the LLM the
+    output was capped mid-generate; ``undefined_vars`` (lenient mode) names the
+    referenced-but-unbound template variables so it can self-correct. An error
+    (``status="error"`` — syntax / SSTI-blocked / strict-undefined) surfaces the
+    message as ``text`` with ``meta.isError``."""
+    if _is_error(result):
+        return CanonicalToolResult(
+            text=str(result.get("error") or ""), attachments=[], source_ref=None, meta={"isError": True},
+        )
+    meta: dict[str, Any] = {}
+    if result.get("truncated"):
+        meta["truncated"] = True
+        reason = result.get("truncate_reason")
+        if reason:
+            meta["truncate_reason"] = reason
+    undefined_vars = result.get("undefined_vars")
+    if undefined_vars:
+        meta["undefined_vars"] = undefined_vars
+    return CanonicalToolResult(
+        text=result.get("rendered", "") or "", attachments=[], source_ref=None, meta=meta,
+    )
+
+
 def _compact_to_canonical(result: dict) -> CanonicalToolResult:
     """``compact`` op result → canonical. On success the freed-token / free-window metrics (+ the chat-
     axis compression fields when present) render as a short ``text`` summary; on error the ``error``
@@ -421,6 +449,9 @@ _MAPPERS: dict[str, Any] = {
     "index_query": _chunks_to_canonical,
     "run_pipeline": _run_pipeline_to_canonical,
     "run_pipeline_async": _run_pipeline_async_to_canonical,
+    # FP-0055 PR-2: render_template producer — the rendered string → text (never the
+    # whole-dict fallback for its OWN result; truncated/undefined_vars as signal meta).
+    "render_template": _render_template_to_canonical,
     # FP-0056 PR-H hotfix: the file family + reyn_src dev-reads + compact/judge_output — the coverage
     # gap that offloaded a doc read as a whole-dict ``structured`` blob (dogfood 2026-07-09).
     "file": _file_to_canonical,

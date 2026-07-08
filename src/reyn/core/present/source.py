@@ -31,19 +31,23 @@ class PresentSourceNotFound(FileNotFoundError):
     passed) — distinct from a permission denial."""
 
 
-async def resolve_present_source(data_ref: str, ctx: "OpContext") -> tuple[Any, str]:
-    """Resolve ``data_ref`` to its full value under ``file.read`` authority.
+async def _gate_and_read_ref(ref: str, ctx: "OpContext") -> tuple[bytes, str]:
+    """The shared read-authority gate + workspace read for any ref-resolving op.
 
-    Returns ``(value, ingested)`` where ``value`` is the re-hydrated structured
-    object (when the ref's bytes parse as JSON) or the decoded text, and
-    ``ingested`` ∈ ``{none, partial, full}`` (OS-computed).
+    Runs the ``file.read`` gate (read-authority equivalence: a ref-read can never
+    read more than the agent's ``file.read`` can) then reads the bytes. Returns
+    ``(raw_bytes, ingested)`` where ``ingested`` ∈ ``{none, partial, full}``
+    (OS-computed from the events log).
 
     Raises ``PermissionError`` when the read is not authorized (identical gate to
-    ``file.read``); ``PresentSourceNotFound`` when the path is missing.
+    ``file.read``); ``PresentSourceNotFound`` when the path is missing. This is the
+    ONE seam both ``resolve_present_source`` (present's ``data_ref``) and
+    ``resolve_ref_text`` (``render_template``'s ``template_ref`` / ``data_ref``)
+    route through, so the equivalence is asserted in exactly one place.
     """
     from reyn.core.op_runtime.file import _resolve_for_gate
 
-    resolved = _resolve_for_gate(ctx, data_ref)
+    resolved = _resolve_for_gate(ctx, ref)
 
     # Read-authority equivalence: the SAME gate file.read uses. bus=None → the
     # non-interactive deny path; a wired bus → the same JIT prompt.
@@ -58,9 +62,25 @@ async def resolve_present_source(data_ref: str, ctx: "OpContext") -> tuple[Any, 
             bus=ctx.intervention_bus,
         )
 
-    raw_bytes, found = ctx.workspace.read_file_bytes(data_ref)
+    raw_bytes, found = ctx.workspace.read_file_bytes(ref)
     if not found:
-        raise PresentSourceNotFound(f"present data_ref not found: {data_ref}")
+        raise PresentSourceNotFound(f"ref not found: {ref}")
+
+    ingested = compute_ingested(ctx, ref, resolved)
+    return raw_bytes, ingested
+
+
+async def resolve_present_source(data_ref: str, ctx: "OpContext") -> tuple[Any, str]:
+    """Resolve ``data_ref`` to its full value under ``file.read`` authority.
+
+    Returns ``(value, ingested)`` where ``value`` is the re-hydrated structured
+    object (when the ref's bytes parse as JSON) or the decoded text, and
+    ``ingested`` ∈ ``{none, partial, full}`` (OS-computed).
+
+    Raises ``PermissionError`` when the read is not authorized (identical gate to
+    ``file.read``); ``PresentSourceNotFound`` when the path is missing.
+    """
+    raw_bytes, ingested = await _gate_and_read_ref(data_ref, ctx)
 
     text, _encoding = decode_text_or_none(raw_bytes)
     value: Any
@@ -71,8 +91,25 @@ async def resolve_present_source(data_ref: str, ctx: "OpContext") -> tuple[Any, 
     else:
         value = rehydrate_ref_text(text)
 
-    ingested = compute_ingested(ctx, data_ref, resolved)
     return value, ingested
+
+
+async def resolve_ref_text(ref: str, ctx: "OpContext") -> tuple[str, str]:
+    """Resolve ``ref`` to its decoded **text** under ``file.read`` authority — the
+    ``render_template`` counterpart to :func:`resolve_present_source` that keeps the
+    bytes as raw text (NO JSON re-hydration), because a Jinja2 template file is
+    source text even when it happens to start with ``{`` / ``[``.
+
+    Returns ``(text, ingested)``. Raises ``PermissionError`` (identical gate to
+    ``file.read`` — same seam as present) when the read is not authorized, and
+    ``PresentSourceNotFound`` when the path is missing OR the bytes are not
+    decodable text (a binary blob is not a template / template-context source).
+    """
+    raw_bytes, ingested = await _gate_and_read_ref(ref, ctx)
+    text, _encoding = decode_text_or_none(raw_bytes)
+    if text is None:
+        raise PresentSourceNotFound(f"ref is not decodable text: {ref}")
+    return text, ingested
 
 
 def rehydrate_ref_text(text: str) -> Any:

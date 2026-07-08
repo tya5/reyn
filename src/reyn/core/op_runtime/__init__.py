@@ -128,6 +128,9 @@ from . import pipeline_install as _pipeline_install  # noqa: F401, E402
 # FP-0054 PR-A: present op — user-facing presentation of bulk data (null renderer).
 from . import present as _present  # noqa: F401, E402
 from . import recall as _recall  # noqa: F401, E402
+
+# FP-0055 PR-2: render_template op — sandboxed Jinja2 text-templating producer.
+from . import render_template as _render_template  # noqa: F401, E402
 from . import sandboxed_exec as _sandboxed_exec  # noqa: F401, E402
 
 # #2548 PR-C: local skill install op (register a SKILL.md dir into skills.entries).
