@@ -775,6 +775,34 @@ skills:
 
 登録モデル全体、3 層の露出モデル(メニュー / オンデマンド読み取り / バンドル資産)、インストールツールについては [コンセプト: Skills](../../concepts/tools-integrations/skills.md) を参照してください。
 
+## `presentations` ブロック {#presentations-block}
+
+`present` op 向けの**名前付きプレゼンテーションテンプレート**を登録します — `skills.entries` / `pipelines.entries` / `mcp.servers` と同じ明示登録モデルです。名前付きテンプレートの値は **blueprint** です: インライン `present` blueprint と同一の、宣言的で非実行なコンポーネントツリー(カタログコンポーネント + JSON-Pointer パスバインディング)。blueprint はエントリ内に**インライン**で存在し(ファイル間接参照なし — blueprint は小さな宣言的データです)、ロード時に構造的に検証されます。
+
+名前付きテンプレートの登録は**operator/config アクション**です — インストールツールも、モデルが呼び出して登録できる op もありません。モデルは*インライン* blueprint のみを作成します。`present` op の `template:` による名前付き参照は、このレジストリに対する read-only な検索です。未知のテンプレート名はエラーではありません: `present` op はコンテンツタイプのデフォルトビューアを経由して汎用 YAML/text 表示にフォールバックするため、データは常にユーザーへ届きます。
+
+```yaml
+presentations:
+  entries:
+    search_results:
+      blueprint:                              # 必須。インラインのコンポーネントツリー
+        - component: table
+          rows: {"$bind": "/results"}
+          columns:
+            - {header: Author, path: /author}
+            - {header: Title,  path: /title}
+      description: "Search results table"      # 任意
+      enabled: true                            # 任意、デフォルト true
+```
+
+| フィールド | 型 | デフォルト | 説明 |
+|-------|------|---------|-------------|
+| `blueprint` | list または object | 必須 | 宣言的コンポーネントツリー(インライン `present` blueprint と同じ形状・カタログ)。ロード時に検証され、不正な blueprint はスキップされ(ログ記録)、hot-reload 時は reload 全体を拒否します(直近の正常な状態を保持)。 |
+| `description` | string | `""` | 任意の一行サマリー。 |
+| `enabled` | bool | `true` | `false` にするとエントリはレジストリから完全に除外されます。 |
+
+`presentations.entries` は `~/.reyn/config.yaml` ⊕ `reyn.yaml` ⊕ `reyn.local.yaml` ⊕ 動的な `<project>/.reyn/config/presentations.yaml` をまたいでマージされ、名前が衝突した場合は後の tier が優先します — `skills.entries` / `pipelines.entries` / `mcp.servers` と同じマージ形です。`<project>/.reyn/config/presentations.yaml` 層はターン境界で hot-reload されるため、新しく登録されたテンプレートは再起動なしに次のターンで解決可能になります。
+
 ## `embedding` ブロック
 
 RAG 埋め込みモデルクラスとバッチ設定。組み込みデフォルトが OpenAI パスをカバーしているため、`OPENAI_API_KEY` を設定した新規インストールでは `reyn.yaml` の変更は不要です。

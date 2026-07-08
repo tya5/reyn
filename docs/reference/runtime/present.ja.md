@@ -57,7 +57,7 @@ guard/renderer の分割）については [コンセプト: Present レイヤ](
 | `keyvalue` | `rows: [{label, value}]` |
 | `table` | `rows`（bind → 配列）, `columns: [{header, path}]` |
 | `list` | `items`（bind → 配列）, `item_path?`（項目単位パス） |
-| `image` | `src`, `alt?` — マルチモーダル配送経路へ |
+| `image` | `src`, `alt?` — v1 では `[image: <alt>]` という dim テキストのプレースホルダーのみ描画され、マルチモーダル配送経路へはまだルーティングされない |
 
 v1 に**対話コンポーネント**（ボタン / フォーム）は存在しない。
 

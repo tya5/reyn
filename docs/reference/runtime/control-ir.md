@@ -178,8 +178,8 @@ Fields (exactly one source, exactly one template):
   full value** (not read from the LLM-visible preview) via `file.read` semantics.
   `data_inline` is small data already in the LLM's context.
 - `template` (str) **XOR** `blueprint` (object | array) — the display template.
-  `template` is a registered presentation name (the registry + fallback chain
-  land in a later PR); `blueprint` is an inline declarative component tree.
+  `template` is a registered presentation name (the registry + fallback chain,
+  see the PR-B/C/D note below); `blueprint` is an inline declarative component tree.
 
 **Declarative model (v1 catalog — display-only, non-executable by construction).**
 A blueprint is a single component node or a list of them (rendered top to bottom).
@@ -198,7 +198,7 @@ record it in `bindings_dropped` (never a hard failure). Type mismatch → coerce
 scalar into a `table` `rows` slot → a 1-row table) + record. Guard-stripped → a
 bound leaf neutralized or size-capped by the presentation-guard is recorded. When
 **all** bindings miss, the op reports `all_bindings_missed` (the generic-viewer
-fallback signal; the fallback wiring itself lands in a later PR).
+fallback signal; the fallback wiring itself is described in the PR-B/C/D note below).
 
 **Presentation-guard (output seam).** Runs **unconditionally**, including for
 never-ingested data. Every render-leaf string — labels, literal slot values, AND
@@ -229,6 +229,7 @@ rows: 500
 bindings_dropped:
   - {path: "/results/0/author", reason: path_not_found}
   # reason ∈ {path_not_found, type_mismatch, guard_stripped}
+all_bindings_missed: false
 ```
 
 `path_not_found` across many rows reads as "template doesn't match this data
