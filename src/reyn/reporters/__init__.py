@@ -174,6 +174,26 @@ class ConsoleLogger:
             else:
                 print(f"  result: {kind} [{status}]")
 
+    # ── Present (FP-0054 §8) ────────────────────────────────────────────────────
+
+    def on_presented(self, data: dict) -> None:
+        """Re-render a ``presented`` event on replay (§8: presentation is a cache, the
+        event is the truth). Best-effort re-render from the still-durable ``data_ref``;
+        an expired / inline ref shows a placeholder pointing at this audit event. Never
+        raises — a re-render failure degrades to the header line, never a crashed replay.
+        Display-only: nothing authoritative is reconstructed from the event."""
+        from reyn.core.present import replay_presentation
+
+        try:
+            replayed = replay_presentation(data)
+        except Exception:  # noqa: BLE001 — replay must never crash on one bad event
+            print(f"[present] template={data.get('template', '?')} "
+                  f"data_ref={data.get('data_ref', '?')} (re-render unavailable)")
+            return
+        print(replayed.header)
+        for line in replayed.lines:
+            print(f"  {line}")
+
     # ── User intervention ──────────────────────────────────────────────────────
 
     def on_user_intervention_requested(self, data: dict) -> None:

@@ -249,8 +249,13 @@ appear earlier in the session), never LLM-self-reported. The event carries **ref
 > scrollback (`interfaces/repl/present_renderer.py`, riding the existing Rich
 > `Console` → `StringIO` → `run_in_terminal()` pattern), with an explicit
 > per-render terminal width (Rich cannot auto-detect width writing to a
-> `StringIO`). `presentations.yaml` registry + fallback chain, and replay/rewind
-> rendering land in later PRs.
+> `StringIO`). The `presentations.yaml` registry + 4-stage fallback chain and
+> replay/rewind re-rendering are landed. On replay (`reyn events <log>`) a
+> `presented` event re-renders best-effort from the still-durable ref, or shows an
+> expiry placeholder pointing at the audit event when the ref is gone — a
+> display-only projection (no reconstructed state). See
+> [Concepts: Present layer](../../concepts/runtime/present.md) and the
+> [Present op & surface reference](present.md) for the full surface.
 
 ## `sandboxed_exec`
 
