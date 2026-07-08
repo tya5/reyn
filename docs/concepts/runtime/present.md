@@ -61,7 +61,7 @@ A template is a **declarative component tree**, never code. It is built from a f
 | `keyvalue` | a card of label/value rows |
 | `table` | rows × columns |
 | `list` | a bullet list |
-| `image` | routes to the multimodal delivery path |
+| `image` | v1 renders an `[image: <alt>]` dim-text placeholder only — not yet routed to the multimodal delivery path |
 
 Data is joined to the template by **JSON Pointer (RFC 6901)** path bindings — expressed
 structurally as `{"$bind": "<pointer>"}`. `table` and `list` paths resolve **row-relative**
@@ -96,10 +96,12 @@ strategy corrupts markup-inert sinks:
   escaping anywhere**.
 
 Per-binding **size caps** stop a root pointer bound into a `text` component from dumping a
-whole file, and `present` carries its **own** default output cap (head-N rows/lines + a
-`…N more — full data: <ref>` tail) because it is unbounded by construction. The **ref is
-always the full-fidelity escape hatch**: re-present with a filter or a higher cap, or read
-it directly.
+whole file: a capped leaf string keeps a compact `… (+N chars — full data in the ref)` tail.
+`present` also caps array bindings to head-N rows because a `table`/`list` binding is
+otherwise unbounded by construction — this row cap is **silent** (no tail marker, no count
+of how many rows were dropped) since the caller only ever sees the surviving head. The
+**ref is always the full-fidelity escape hatch**: re-present with a filter or a higher cap,
+or read it directly.
 
 ## Degrade, never fail — the 4-stage fallback
 

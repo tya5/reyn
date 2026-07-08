@@ -59,7 +59,7 @@ All components are read-only. A blueprint node is `{"component": <name>, ...slot
 | `keyvalue` | `rows: [{label, value}]` |
 | `table` | `rows` (bind → array), `columns: [{header, path}]` |
 | `list` | `items` (bind → array), `item_path?` (per-item path) |
-| `image` | `src`, `alt?` — routes to the multimodal delivery path |
+| `image` | `src`, `alt?` — v1 renders an `[image: <alt>]` dim-text placeholder only, not yet routed to the multimodal delivery path |
 
 There are **no interactive components** (no buttons / forms) in v1.
 
