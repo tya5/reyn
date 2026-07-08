@@ -20,9 +20,13 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from reyn.config import CompactionConfig, OffloadConfig, _build_offload_config
+from reyn.core.events.state_log import StateLog
 from reyn.data.workspace.media_store import MediaStore, MediaStoreConfig
 from reyn.runtime.services.context_budget_advisor import ContextBudgetAdvisor
+from reyn.runtime.session import Session
 
 
 def _write_yaml(path: Path, content: str) -> None:
@@ -166,3 +170,66 @@ def test_offload_enabled_default_media_followup_budget_is_bounded():
     budget = advisor.media_followup_budget("some tool text")
     assert isinstance(budget, int)
     assert budget >= 0
+
+
+# ── Tier 2: session-start warning event (real Session.run(), no tautology) ──
+
+
+def _make_session(tmp_path: Path, *, offload_config: OffloadConfig) -> Session:
+    return Session(
+        agent_name="test-agent",
+        state_log=StateLog(tmp_path / "state.wal"),
+        snapshot_path=tmp_path / "snapshot.json",
+        offload_config=offload_config,
+    )
+
+
+def _collect_events(session: Session) -> list[dict]:
+    """Subscribe a collector to the session's real EventLog (public API),
+    mirroring test_session_lifecycle_events_1800.py's helper."""
+    collected: list[dict] = []
+
+    def _subscriber(event) -> None:
+        collected.append({"type": event.type, **event.data})
+
+    session._chat_events.add_subscriber(_subscriber)
+    return collected
+
+
+@pytest.mark.asyncio
+async def test_offload_disabled_emits_warning_at_session_start(tmp_path, monkeypatch) -> None:
+    """Tier 2: with ``offload.enabled=False``, ``Session.run()`` emits
+    ``offload_disabled`` before exiting — the real session.py:run() body is
+    exercised end-to-end (a pre-loaded shutdown sentinel makes
+    run_one_iteration() return False immediately, same technique as
+    test_session_lifecycle_events_1800.py), so deleting the emit line in
+    session.py turns this test RED.
+    """
+    monkeypatch.chdir(tmp_path)
+    session = _make_session(tmp_path, offload_config=OffloadConfig(enabled=False))
+    collected = _collect_events(session)
+
+    session.inbox.put_nowait(("shutdown", {}))
+    await session.run()
+
+    fired = [e for e in collected if e["type"] == "offload_disabled"]
+    (event,) = fired  # unpack-enforcement: exactly one offload_disabled fires
+    assert event.get("agent_name") == "test-agent"
+
+
+@pytest.mark.asyncio
+async def test_offload_enabled_default_emits_no_warning_at_session_start(
+    tmp_path, monkeypatch,
+) -> None:
+    """Tier 2: with ``offload.enabled=True`` (default), the same
+    real ``Session.run()`` path never emits ``offload_disabled`` — proves the
+    prior test's event is caused by the flag, not an unconditional emit."""
+    monkeypatch.chdir(tmp_path)
+    session = _make_session(tmp_path, offload_config=OffloadConfig(enabled=True))
+    collected = _collect_events(session)
+
+    session.inbox.put_nowait(("shutdown", {}))
+    await session.run()
+
+    fired = [e for e in collected if e["type"] == "offload_disabled"]
+    assert fired == []
