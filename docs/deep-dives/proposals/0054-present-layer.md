@@ -10,7 +10,7 @@ always round-trips through LLM tokens. Splitting the cost into axes:
 
 | Axis | Cost | Status |
 |---|---|---|
-| **A. Ingestion (input)** | tool result entering LLM context | **Solved** by the offload mechanism + tool-result-schema-redesign arc (`docs/proposals/tool-result-schema-redesign.md`): data lands in a ref file, the LLM sees schema + preview, reads back on demand via `file__read` |
+| **A. Ingestion (input)** | tool result entering LLM context | **Solved** by the offload mechanism + tool-result-schema-redesign arc (`docs/deep-dives/proposals/0053-tool-result-schema-redesign.md`, IMPLEMENTED): data lands in a ref file, the LLM sees schema + preview, reads back on demand via `file__read` |
 | **B. Reproduction (output)** | the LLM re-types the data as output tokens to show the user | **Unsolved — target of this proposal** |
 | **C. Fidelity loss** | to fit output, the LLM summarizes/truncates; the user loses data | **Unsolved — same mechanism solves it** |
 
@@ -20,11 +20,13 @@ the bulk bytes never pass through LLM output.
 
 Two existing reyn mechanisms are each half of the answer, currently unconnected:
 
-1. **Offload** (redesign arc) — offloaded refs are the data handles: the
-   `structured_ref` frontmatter field for the structured stream, and the text-side ref
-   embedded inline in the truncation note (`file__read("<ref>")` — no dedicated
-   frontmatter field). Saves input tokens only; presentation still goes through output
-   tokens.
+1. **Offload** (redesign arc, landed) — the offload refs are the data handles.
+   Structured stream: an inline `structured` frontmatter field, or when offloaded
+   `structured: offloaded` + `structured_ref` (a `file__read`-able path) +
+   `structured_preview`. Text stream: the body text, or when offloaded a plain-text note
+   `...[truncated: <N> chars total — full body: file__read(path="<ref>")]...` (no
+   dedicated frontmatter field for the text ref). Saves input tokens only; presentation
+   still goes through output tokens.
 2. **Tool-result viewer registry + LLM template** (FP-0051,
    `docs/deep-dives/proposals/0051-tool-result-viewer-registry-llm-template.md`) —
    content-type → viewer → Rich renderable, with a safety-fenced LLM-generated template
@@ -261,13 +263,15 @@ differentiator is making blindness *auditable*, not forbidding it.)
 ## Relationship to the tool-result-schema-redesign arc
 
 - **Consumer, not competitor**: `present` consumes the arc's offload refs — the
-  `structured_ref` frontmatter field, plus the text-side ref carried inline in the
-  truncation note — i.e. the text/structured stream split from the canonical mappers.
-- **Zero blocking asks — and the dependency is already met**: the arc is owner-approved,
-  and as of 2026-07-08 design doc (#2646), PR-0 (#2647), and PR-1 (#2648, canonical
-  mappers + legacy-path deletion) are **merged**. The interfaces this proposal consumes
-  are live; the arc's remaining PR-2 (pipeline ctx) / PR-3 (offload config) do not gate
-  this proposal.
+  `structured` / `structured_ref` / `structured_preview` frontmatter fields, plus the
+  text-side ref carried inline in the truncation note — i.e. the text/structured stream
+  split from the canonical mappers. Pipeline `ctx.<name>.text` / `ctx.<name>.structured`
+  (PR-2) expose the same split (no size gate, full value).
+- **Zero blocking asks — dependency fully met (arc CLOSED 2026-07-08)**: every arc PR is
+  merged — PR-0 #2647, PR-1 #2648 (canonical mappers + legacy deletion), PR-2 #2652
+  (pipeline ctx), PR-3 #2651 (`offload:` opt-out), PR-4 #2654 (design doc →
+  `docs/deep-dives/proposals/0053-tool-result-schema-redesign.md`, IMPLEMENTED stamp).
+  The offload output shape is landed and fixed; nothing gates this proposal.
 - **Follow-up (additive, post-arc)**: enrich offload frontmatter with a shape summary
   (key names / types / array lengths) instead of only a head-N-chars preview — improves
   blind template authoring. To be filed as an issue after the arc lands.
@@ -323,4 +327,4 @@ differentiator is making blindness *auditable*, not forbidding it.)
 - The New Stack: Agent UI Standards Multiply — https://thenewstack.io/agent-ui-standards-multiply-mcp-apps-and-googles-a2ui/
 - Vercel AI SDK 3.0 Generative UI — https://vercel.com/blog/ai-sdk-3-generative-ui
 - FP-0051 viewer registry (superseded — TUI + registry deleted 2026-07, design lineage only) — `docs/deep-dives/proposals/0051-tool-result-viewer-registry-llm-template.md`
-- Tool-result schema redesign — `docs/proposals/tool-result-schema-redesign.md`
+- Tool-result schema redesign (IMPLEMENTED) — `docs/deep-dives/proposals/0053-tool-result-schema-redesign.md`
