@@ -1077,9 +1077,9 @@ class RouterHostAdapter:
                 decision = await self._spawn_limit_checkpoint(
                     kind=f"max_session_depth:{self._agent_name}",
                     prompt=(
-                        f"Session-spawn nesting depth {cur_depth + 1} would exceed "
-                        f"max_spawn_depth ({eff_depth}). Allow agent {self._agent_name!r} "
-                        "to nest spawned sessions deeper?"
+                        f"Session-spawn nesting depth {cur_depth + 1} would exceed the "
+                        f"session-nesting cap ({eff_depth}). Allow agent "
+                        f"{self._agent_name!r} to nest spawned sessions deeper?"
                     ),
                     detail=(
                         f"agent={self._agent_name} sid={from_sid} depth={cur_depth + 1} "
@@ -1092,10 +1092,13 @@ class RouterHostAdapter:
                     return {
                         "status": "error", "kind": "spawn_limit_exceeded",
                         "error": (
-                            f"spawn-limit: max_spawn_depth={eff_depth} would be exceeded "
-                            f"(agent {self._agent_name!r} at session-nesting depth "
-                            f"{cur_depth}). → Raise safety.spawn.max_depth to allow deeper "
-                            "session nesting."
+                            f"spawn-limit: session-nesting depth {cur_depth + 1} would "
+                            f"exceed the session-nesting cap ({eff_depth}) (agent "
+                            f"{self._agent_name!r} at session-nesting depth {cur_depth}). "
+                            "→ Extend just this axis via the operator spawn-limit "
+                            "checkpoint (raises max_session_depth for this agent), or "
+                            "raise the shared base safety.spawn.max_depth (which lifts "
+                            "BOTH the agent-tree and session-nesting caps)."
                         ),
                     }
         sid = await self._registry.spawn_session_recorded(
