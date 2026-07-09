@@ -107,3 +107,42 @@ def render_presentation_nodes(nodes: list[dict]) -> "Any":
     from rich.console import Group
 
     return Group(*[_render_node(node) for node in nodes])
+
+
+class StdoutPresentationRenderer:
+    """`PresentationRenderer` (`core/present/renderer.py`) that prints a resolved
+    presentation directly to **stdout** via a Rich `Console` — the headless sink a
+    `present` op reaches from `reyn pipe run` (#2702), which has no live CUI outbox /
+    output loop to route through.
+
+    This is the SINK end of the same seam as the inline-CUI's `OutboxPresentationRenderer`
+    (`runtime/session_buses.py`): the CUI variant is deliberately thin (it hands the raw
+    render model to the outbox and lets the UI loop draining it own the Rich conversion),
+    but a headless CLI run has no such loop — so this renderer owns the
+    `render_presentation_nodes` conversion + the `Console.print` itself, reusing the SAME
+    markup-inert render model this module already builds for the CUI. The op_runtime layer
+    still never imports Rich; this interfaces-layer adapter is the seam where that boundary
+    is respected.
+
+    `surface_name = "terminal"`: the generic terminal-family surface (a registered
+    neutralizer strategy in `core/present/guard.py` — ESC/control strip), so the guard's
+    per-surface binding runs exactly as it does for the inline-CUI sink.
+
+    Fire-and-continue: `render` must never raise into the `present` op (the op's ack is
+    already derived from the resolved stats before this is called — see
+    `op_runtime/present.py`'s fire-and-forget contract), so a Rich/IO failure is swallowed;
+    a pipeline step must never crash on a display-only side effect.
+    """
+
+    surface_name = "terminal"
+
+    def render(self, resolved: "Any") -> None:
+        try:
+            from rich.console import Console
+
+            # Construct the Console per render so it binds the CURRENT sys.stdout
+            # (honors capture/redirect); no ANSI is forced — a headless CLI writes
+            # whatever the terminal (or a captured stream) supports.
+            Console().print(render_presentation_nodes(resolved.nodes))
+        except Exception:  # noqa: BLE001 — display-only fire-and-forget (see docstring)
+            pass

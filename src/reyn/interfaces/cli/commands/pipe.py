@@ -706,9 +706,30 @@ def run_run(args: argparse.Namespace) -> None:
                     # router turn's — NOT the hardcoded router_state=None gap
                     # documented as "caveat-1" in runtime/router_loop.py.
                     source_session = agent_registry.get_or_load(DEFAULT_AGENT_NAME)
-                    _router_state_cache["state"] = await build_resource_caller_state(
+                    state = await build_resource_caller_state(
                         source_session.router_host,
                     )
+                    # #2702: wire the pipe-run present RENDER surface. The op_context
+                    # _factory this state carries is the default-identity Session's
+                    # make_router_op_context, which wires an OutboxPresentationRenderer
+                    # routing to that Session's outbox — a sink NOTHING drains in a
+                    # headless `reyn pipe run`. So a `tool: present` step executed
+                    # ok:True but the operator saw nothing (silent purpose-failure).
+                    # Wrap the factory to override the OpContext's presentation_renderer
+                    # with a headless stdout Rich Console sink, so present from a
+                    # pipeline `tool:` step actually reaches the user's stdout. Additive
+                    # — the op handler / render / guard / binding logic is untouched.
+                    base_factory = state.op_context_factory
+                    if base_factory is not None:
+                        def _factory_with_stdout_present(_base=base_factory):
+                            from reyn.interfaces.repl.present_renderer import (
+                                StdoutPresentationRenderer,
+                            )
+                            op_ctx = _base()
+                            op_ctx.presentation_renderer = StdoutPresentationRenderer()
+                            return op_ctx
+                        state.op_context_factory = _factory_with_stdout_present
+                    _router_state_cache["state"] = state
                 return _router_state_cache["state"]
 
             tool_ctx = _build_run_tool_context(
