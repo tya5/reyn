@@ -37,7 +37,7 @@ Control IR is the list of side-effect operations the LLM may emit alongside its 
 | `recall` | Macro: embed query (provider-direct) → index_query per source → merge top-K | none (embedding API cost) |
 | `index_drop` | Remove an indexed source entirely (destructive) | `permissions.index_drop: ask` in skill frontmatter |
 | `judge_output` | LLM scorer: rubric + threshold + `on_fail` policy | none (LLM cost) |
-| `compact` | Voluntarily compact the conversation/phase history (advisory) | none (LLM cost; the mandatory `retry_loop` backstop is independent) |
+| `compact` | Voluntarily compact the conversation history (advisory) | none (LLM cost; the mandatory `retry_loop` backstop is independent) |
 | `task.create` | Create a Task (`deps` for ordering; `link_type` `awaited`/`background` sets whether a sub-task gates the parent's completion — §2187; sub-task ownership is OS-derived from execution context — §16) | requester-gated (caller becomes requester) |
 | `task.update_status` | Declare a status transition | assignee-gated (single-writer CAS on `assignee == caller session_id`) |
 | `task.get` | Read one Task record | requester-gated |
