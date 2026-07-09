@@ -54,11 +54,12 @@ into sub-tasks") plus the catalog, not by a forced mode.
 
 ## The ops
 
-The 11 ops are callable both from a phase's control-IR and, since the dynamic
+The 12 ops are callable both via Control IR dispatch and, since the dynamic
 wiring, from the chat router via `invoke_action` (`task__create`,
-`task__update_status`, …). The router path enforces the **same** assignee CAS as
-the phase path — keyed on the real caller session id, with no bypass (the bridge
-refuses rather than run a session-less context that would mask the gate).
+`task__update_status`, …). The router path enforces the **same** assignee CAS —
+keyed on the real caller session id, with no bypass (the bridge refuses rather
+than run a session-less context that would mask the gate) — across every
+dispatch path.
 
 | Op | Role gate | Purpose |
 |---|---|---|
@@ -71,6 +72,7 @@ refuses rather than run a session-less context that would mask the gate).
 | `task.heartbeat` | assignee | Liveness + unblock-predicate evaluation trigger |
 | `task.register_unblock_predicate` | assignee | Register a deterministic (no-LLM) unblock predicate |
 | `task.comment` | — | Append to the Task's thread (inter-agent / human-in-the-loop) |
+| `task.assign` | UNASSIGNED → any session; assigned → current assignee only | Claim an UNASSIGNED task or reassign an assigned one (pending-assignment queue, §27-31); rebinds the WAL subscription and re-derives the now-startable status |
 
 The ToolDefinitions are derived single-source from the IROp models
 (`model_json_schema()` minus the `kind` discriminator), so the LLM-facing schema
@@ -87,6 +89,6 @@ never drifts from the runtime contract.
 
 ## See also
 
-- [Workspace](workspace.md) — the single source of truth for data passed between phases
+- [Workspace](workspace.md) — the single source of truth for everything reyn produces during a run
 - [Events](events.md) — the runtime's per-run audit trail
 - [Permission model](permission-model.md) — the gate layer the ops resolve through
