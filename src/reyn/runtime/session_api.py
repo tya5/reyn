@@ -63,6 +63,15 @@ prefix and differing only in how the caller drives + collects:
     ``EventLog`` (see the function docstring) — the driver-session's live
     events are on a DIFFERENT EventLog than the one the human-attached caller
     (the TUI) watches, so this marker is the signal that bridges the two.
+    #2707: a ``present`` step renders through the driver-session's OWN
+    ``OutboxPresentationRenderer`` onto the DRIVER's outbox — a user-reaching
+    ``"presentation"`` message that is NOT an event, so it does not ride the
+    #2570 eventlog bridge. Parallel to that bridge, ``run_pipeline_attached``
+    forwards the driver's drained ``"presentation"`` outbox messages onto the
+    CALLER's own outbox (the same queue+kind a chat-native present reaches), so
+    a chat-invoked pipeline's present actually shows in the parent chat. This
+    forward is a Phase0 interim (removed/subsumed by P3 spawn-bundle inheritance,
+    #2708 Surface Capability Contract).
 """
 from __future__ import annotations
 
@@ -487,7 +496,7 @@ async def run_pipeline_attached(
 
     bus = MessageBus()
     try:
-        await bus.request(
+        drained = await bus.request(
             session,
             kind="user",
             payload={"text": "", "chain_id": uuid.uuid4().hex},  # the D案 run nudge
@@ -497,6 +506,36 @@ async def run_pipeline_attached(
     finally:
         if unregister_cancel is not None:
             unregister_cancel()
+
+    # Phase0 interim for #2707; removed/subsumed by P3 spawn-bundle inheritance
+    # (#2708 Surface Capability Contract). Kept as a LOCALIZED bridge — a plain
+    # "the driver-session's presentation reaches the parent's presentation
+    # consumer" forward, not entangled with any permanent machinery — so P3 can
+    # remove it wholesale once spawn inherits the caller's capability bundle
+    # (presentation sink included).
+    #
+    # #2707 (part of the #2688 present-sink sweep): a `present` step inside the
+    # driver-session renders through the driver's OWN
+    # ``OutboxPresentationRenderer`` (session_buses.py) → the DRIVER session's
+    # outbox as a ``"presentation"`` ``OutboxMessage``. ``MessageBus.request``
+    # above DRAINS that outbox (``drained``) as part of quiescence, but the
+    # sync-attached result contract only reads the terminal ``read_result``
+    # marker — so the drained presentation would be silently discarded and the
+    # attached caller's chat surface never shows it (present's ack is ``ok:True``
+    # regardless). #2570's driver→caller bridge carries pipeline_step_* EVENTS
+    # via the caller's EventLog; present is NOT an event, so it does not ride
+    # that bridge. Parallel to it, forward the driver's user-reaching outbox
+    # messages (the ``"presentation"`` kind) onto the CALLER's own outbox — the
+    # SAME queue+kind a chat-native present reaches (``OutboxPresentationRenderer``
+    # → ``session.outbox`` → the REPL/CUI presentation renderer), so the parent
+    # chat renders it identically. Additive: the present op / renderer / guard
+    # are untouched. Best-effort: an unresolvable caller session (should not
+    # happen on the attached path) skips the forward, degrading to the pre-fix
+    # behavior rather than blocking the run.
+    if caller_session is not None:
+        for msg in drained:
+            if msg.kind == "presentation":
+                caller_session.outbox.put_nowait(msg)
 
     marker = read_result(run_dir)
     if marker is not None:
