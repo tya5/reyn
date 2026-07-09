@@ -29,6 +29,18 @@ feature-map `file:line` as its exemplar.
   them). Cells are never invented to fill a gap; a lens that is honestly thin
   (Retrieval, Evaluation) will show mostly "—" across most families, and that
   sparseness is itself informative, not a defect in the table.
+- **Don't conflate a band member with the lens that names it as a discipline.**
+  `cost/budget (bounding)` is a cross-cutting band member — hard caps, refuse-on-exceed,
+  the universal spend guard every feature respects. **Product Think** is a lens about
+  legibility and predictability *for the operator* — cost *reporting*, warnings, and
+  reduction (e.g. `present`'s ~0-token routing), never the bounding mechanism itself.
+  The owner drew this line explicitly (bounding ≠ reduction/legibility); a Product
+  Think cell that cites a refuse-on-exceed cap is citing the band, not the lens — find
+  the family's actual reporting/warning/reduction exemplar instead. The same discipline
+  applies to the other two band↔lens pairs (Security↔`permission`,
+  Reliability↔`crash-recovery (WAL)`): the band member is the mechanism every feature
+  must obey; the lens is the discipline of doing that mechanism *well* for its own
+  purpose, which usually has its own, narrower exemplar.
 - Authoring proceeds family-by-family (one PR per column). Not-yet-authored
   columns are marked **"*(pending)*"**, distinct from a deliberately-empty "—" cell
   within an authored column.
@@ -44,7 +56,7 @@ feature-map `file:line` as its exemplar.
 | **Security** | `present`'s `data_ref` read authority resolves identically to `file.read` ([`feature-map.md:333`](../../feature-map.md)); `sandboxed_exec` runs under a declared `SandboxPolicy` ([`feature-map.md:308`](../../feature-map.md)) | *(pending)* | *(pending)* | ⊆-parent capability model: a spawned agent's effective capability = parent's live effective ∩ assigned profile, recursively no-escalation-via-spawn, closed across four stale-lineage axes ([`feature-map.md:665`](../../feature-map.md)) | *(pending)* | Tier 2/3 capabilities (`shell` / `mcp` / `file` out-of-zone / `python`) require declaration + 4-layer just-in-time approval (config pre-approval → saved → session → interactive prompt) — no capability reaches the world without passing the gatekeeper ([`feature-map.md:420-426`](../../feature-map.md)) | — |
 | **Evaluation** | `judge_output`: LLM scorer with rubric + threshold + `on_fail` policy ([`feature-map.md:321`](../../feature-map.md)) | *(pending)* | *(pending)* | — | *(pending)* | — | — |
 | **Observability** | Event System (P6): 171 event types, append-only JSONL, `reyn events` replay ([`feature-map.md:242-247`](../../feature-map.md)); `present`'s own `presented` audit event ([`feature-map.md:338`](../../feature-map.md)) | *(pending)* | *(pending)* | `chain_id` propagation traces multi-hop delegation chains in P6 events ([`feature-map.md:650`](../../feature-map.md)) | *(pending)* | `limit_denied` is a P6 audit event on every deny path (`max_iterations` / `router_cap`) ([`feature-map.md:443`](../../feature-map.md)) | `reyn events` replays event JSONL files for audit and debug — the CLI-side entry point into the P6 audit trail ([`feature-map.md:370`](../../feature-map.md)) |
-| **Product Think** | `present` routes bulk data to the surface at ~0 output tokens instead of reproducing it as LLM output ([`feature-map.md:340`](../../feature-map.md)) | *(pending)* | *(pending)* | `/tasks` view: list running tasks + per-task status + kill, spanning skill runs and dynamic tasks — operator legibility into orchestrated work ([`feature-map.md:685`](../../feature-map.md)) | *(pending)* | On-limit modes (`interactive` / `auto_extend` / `unattended`) give the operator predictable, config-selectable control over every loop/timeout/budget checkpoint uniformly ([`feature-map.md:441`](../../feature-map.md)) | Token + USD caps per agent/chain/model with refuse-on-exceed and a pre-selection high-cost model warning — runaway spend is structurally bounded, not merely observed after the fact ([`feature-map.md:484`](../../feature-map.md)) |
+| **Product Think** | `present` routes bulk data to the surface at ~0 output tokens instead of reproducing it as LLM output ([`feature-map.md:340`](../../feature-map.md)) | *(pending)* | *(pending)* | `/tasks` view: list running tasks + per-task status + kill, spanning skill runs and dynamic tasks — operator legibility into orchestrated work ([`feature-map.md:685`](../../feature-map.md)) | *(pending)* | On-limit modes (`interactive` / `auto_extend` / `unattended`) give the operator predictable, config-selectable control over every loop/timeout/budget checkpoint uniformly ([`feature-map.md:441`](../../feature-map.md)) | High-cost model warn (`cost_warn`): a pre-selection warning to the operator when the resolved model's cost-per-1M-tokens exceeds a threshold, de-duped once per model per session — legibility, distinct from the token/USD *bounding* caps themselves (the cross-cutting band's `cost/budget` member, not a Product Think exemplar) ([`feature-map.md:482`](../../feature-map.md)) |
 
 ## Family → feature-map section map
 
