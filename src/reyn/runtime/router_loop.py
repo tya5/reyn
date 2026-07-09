@@ -2956,6 +2956,8 @@ class RouterLoop:
         # ``structured`` attachment. The format is INDEPENDENT of the media store — it applies even
         # when ``media_store is None``; only the size-gated offloading needs a store.
         from reyn.core.offload.canonical import (
+            CANONICAL_FALLBACK_EVENT,
+            canonical_fallback_reason,
             extract_canonical_source,
             to_canonical,
             unwrap_dispatch_envelope,
@@ -3023,6 +3025,23 @@ class RouterLoop:
                             canonical, save_fn=_save_fn,
                             enabled=getattr(host, "offload_enabled", True),
                         )
+                        # FP-0056 PR-F2: a VISIBLE fallback (a #2681 CANONICAL_TODO producer, a
+                        # genuinely-unregistered source, or a STRUCTURED_PASSTHROUGH whose whole-dict
+                        # blob exceeded the offload gate) emits a P6 audit event naming the source —
+                        # degrade-with-audit, never silently (the dogfood incident was one silent
+                        # fallback). Source id only; NEVER the result body.
+                        _fallback_reason = canonical_fallback_reason(
+                            canonical_source,
+                            structured_offloaded=frontmatter.get("structured") == "offloaded",
+                        )
+                        if _fallback_reason is not None:
+                            _events = getattr(host, "events", None)
+                            if _events is not None:
+                                _events.emit(
+                                    CANONICAL_FALLBACK_EVENT,
+                                    source=canonical_source,
+                                    reason=_fallback_reason,
+                                )
                         if built_media:
                             # media lifted from INSIDE data (the top-level strip missed it)
                             media_blocks.extend(built_media)

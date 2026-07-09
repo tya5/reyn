@@ -130,6 +130,14 @@ Events emitted by the task Control IR ops (`task.py`).
 | `workspace_updated` | Any artifact is written |
 | `tool_executed` | Generic tool dispatch |
 
+## Tool-result canonicalization
+
+Every tool/op result is normalized to one canonical shape before it reaches the LLM. A producer with a real mapper is shaped cleanly; one that has no mapper (declared debt, or a genuinely unregistered source) takes a lossless whole-dict fallback instead — and that fallback is made visible here rather than silent, so unmapped-producer debt is one `grep` away.
+
+| Kind | When | Key payload |
+|------|------|-------------|
+| `canonical_fallback_used` | A tool/op result took the whole-dict canonical fallback: a producer with declared-but-unwritten mapper debt, a genuinely unregistered / unknown source, or a passthrough producer whose whole-dict blob exceeded the structured offload gate. | `source` — the invoked producer id (op kind / tool name; `null` for a genuine unknown); `reason` — `unregistered` \| `canonical_todo` \| `passthrough_oversized`. Carries the source identity only — never the result body. |
+
 ## Memory
 
 | Kind | When | Key payload |

@@ -109,6 +109,8 @@ from typing import TYPE_CHECKING, Any, Awaitable, Callable, Union
 
 from reyn.core.events.pipeline_recovery import latest_pipeline_state, record_pipeline_state
 from reyn.core.offload.canonical import (
+    CANONICAL_FALLBACK_EVENT,
+    canonical_fallback_reason,
     canonical_to_ctx_fields,
     extract_canonical_source,
     to_canonical,
@@ -773,6 +775,16 @@ async def _run_tool_step(inv: "_StepInvocation") -> "tuple[Any, bool, dict[str, 
     if isinstance(result, dict):
         canonical = to_canonical(unwrap_dispatch_envelope(result), source=canonical_source)
         ctx_result: Any = canonical_to_ctx_fields(canonical)
+        # FP-0056 PR-F2: a VISIBLE fallback (a #2681 CANONICAL_TODO producer, or a
+        # genuinely-unregistered tool) emits a P6 audit event naming the source — degrade-with-audit,
+        # never silently. The passthrough-oversized case (owner decision #2) can't arise here: the
+        # pipeline ctx path is NEVER offloaded/size-gated (full-value retention), so it is not probed.
+        # Source id only; NEVER the result body.
+        _fallback_reason = canonical_fallback_reason(canonical_source)
+        if _fallback_reason is not None and inv.deps.events is not None:
+            inv.deps.events.emit(
+                CANONICAL_FALLBACK_EVENT, source=canonical_source, reason=_fallback_reason,
+            )
     elif isinstance(result, str):
         ctx_result = {"text": result}
     else:
