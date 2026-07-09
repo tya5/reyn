@@ -22,7 +22,7 @@ unset + no proxy ``api_base``" is a miss; every other input passes through so
 the resolver / litellm own their errors. Because the check fires INSIDE the
 funnel, an LLM-less run (a transform/tool-only ``pipe run``) never reaches it
 and thus can never be rejected for missing creds — the #2686 false-positive-zero
-property is now structural, not a hand-maintained ``pipeline_uses_llm`` guard.
+property is now structural, not a hand-maintained guard.
 """
 from __future__ import annotations
 
