@@ -1,9 +1,11 @@
 # Canonical-mapping coverage enforcement — no tool result without a declared LLM-visible shape
 
-**Author:** architect · **Status:** IN IMPLEMENTATION — owner-reviewed 2026-07-09
-(decisions resolved per architect recommendation); lead-coder APPROVE. PR-H hotfix +
-PR-F1 (registration-seam declaration + registry-derived gate + `CANONICAL_TODO`
-grandfather ratchet) dispatched; PR-F2 event to follow F1 land · **Date:** 2026-07-09 ·
+**Author:** architect · **Status:** ✅ IMPLEMENTED 2026-07-09 — all three code PRs
+merged: **PR-H #2677** (hotfix mappers) · **PR-F1 #2680** (registration-seam declaration +
+identity dispatch + registry-derived gate + `CANONICAL_TODO` grandfather ratchet) ·
+**PR-F2 #2684** (`canonical_fallback_used` visibility event, 6ccc70ed). Owner-reviewed +
+lead-coder APPROVE. As-built deltas verified against merged code — see
+[As-implemented](#as-implemented-verified-against-merged-code-2026-07-09) · **Date:** 2026-07-09 ·
 **Builds on:**
 [FP-0053 tool-result schema redesign](0053-tool-result-schema-redesign.md) (IMPLEMENTED)
 
@@ -197,6 +199,43 @@ The live dogfood pain must not wait for the refactor:
    deferred) after direct shape inspection. *(Ratified 2026-07-09: architect ratchet
    refinement + lead-coder concurrence; delivered to the F1 coder before the marker was
    finalized.)*
+
+## As-implemented (verified against merged code, 2026-07-09)
+
+Stamped after reading the merged sources/tests directly (not a rubber-stamp — the
+counts below correct the approximate figures used during dispatch).
+
+1. **Ratchet (§2a) landed as an EQUALITY assert.**
+   `tests/test_fp0056_canonical_coverage_gate.py` holds
+   `_CANONICAL_TODO_GRANDFATHERED = frozenset({…})` (**52 entries**) and asserts
+   `live_todo == set(_CANONICAL_TODO_GRANDFATHERED)` — so *adding* a producer to the
+   marker (new debt) OR *forgetting to remove* one after mapping (stale) both go red.
+   Equality — not subset — is what enforces new-producer-ban **and** monotonic burn-down
+   in one set. `_STRUCTURED_PASSTHROUGH_ADMIN_6` (**6 entries**: `mcp_install`,
+   `mcp_drop_server`, `skill_install`, `pipeline_install`, `mcp_subscribe_resource`,
+   `mcp_unsubscribe_resource`) is asserted equal to the live passthrough set — Decision #1
+   honored exactly.
+2. **Hot-text triage — hypothesis tested, mostly negative.** The migration surfaced
+   **~54 provisional producers**; direct shape-inspection classified exactly **2 as
+   text-shaped** (`read_memory_body` → the memory body text; `ask_user` → the user's
+   answer), which got **real mappers in F1** (`core/offload/canonical.py:545,566`). The
+   remaining **52 are genuinely structured/status-only** and sit under `CANONICAL_TODO`
+   as the #2681 burn-down ledger. The feared "the 40+ hide a `file`-class text producer"
+   risk was confirmed by inspection to be small (2 of ~54) rather than extrapolated —
+   the "confirm by inspect, don't rubber-stamp inference" instruction held.
+3. **PR-F2 `canonical_fallback_used` — three fire conditions, content-free.**
+   `canonical_fallback_reason(source, *, structured_offloaded)`
+   (`canonical.py:611-640`) returns one of three category strings, else `None`:
+   - `"unregistered"` — genuine unknown the registries can't enumerate.
+   - `"canonical_todo"` — a grandfathered marker producer took the whole-dict fallback
+     (the #2681 debt made runtime-visible; feeds burn-down prioritization).
+   - `"passthrough_oversized"` — a `STRUCTURED_PASSTHROUGH` result whose whole-dict
+     serialization exceeded the structured offload gate (caller passes
+     `structured_offloaded=True`; Decision #2). A **small/inline** passthrough is a
+     reviewed legitimate view → `None` (no event). A **real mapper always returns
+     `None`** — a mapped producer never took a fallback.
+   Only the category + `source` id are emitted; **no result body** is ever returned or
+   logged (audit signal, not data).
 
 ## References
 
