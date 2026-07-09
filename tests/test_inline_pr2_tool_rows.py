@@ -1,6 +1,6 @@
 """Tier 2: inline CC-style tool rows + working-indicator contract.
 
-Tool-call OutboxMessages render as ⏺ Tool(args) / ⎿ result / ⎿ ✗ error, and the
+Tool-call OutboxMessages render as ● Tool(args) / ⎿ result / ⎿ ✗ error, and the
 working indicator turns on/off with the turn lifecycle. Assertions are on the
 public surfaces (`.plain`, `bottom_toolbar()`), not whitespace or private state.
 """
@@ -29,7 +29,7 @@ def _plain(kind: str, text: str, meta: dict) -> str:
 
 
 def test_tool_started_shows_invoke_marker_tool_and_args() -> None:
-    """Tier 2: tool_call_started → ▸ invocation marker (distinct from the ⏺
+    """Tier 2: tool_call_started → ▸ invocation marker (distinct from the ●
     assistant reply) + tool name + arg summary."""
     out = _plain("tool_call_started", "read_file",
                  {"tool": "read_file", "args": {"path": "docs/x.md"}})

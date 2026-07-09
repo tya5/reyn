@@ -60,13 +60,13 @@ def test_agent_heading_renders_left_not_centered() -> None:
 
     rich.Markdown centers H1 by default (LEVEL_ALIGN = {"h1": "center"}) which
     produces many leading spaces inside the gutter-grid body column:
-    "⏺                          My Heading". The _ChatMarkdown override makes all
+    "●                          My Heading". The _ChatMarkdown override makes all
     heading levels left-aligned so headings sit at the left edge of the body column,
     matching the CC chat aesthetic."""
     out = _plain("agent", "# Heading Title\nsome text", width=80)
     heading_line = next((ln for ln in out.split("\n") if "Heading Title" in ln), None)
     assert heading_line is not None, "heading line not found in output"
-    # Left-aligned: the heading text follows the gutter marker (⏺) with at most
+    # Left-aligned: the heading text follows the gutter marker (●) with at most
     # a small indent. Centered: ~30+ spaces precede the text in an 80-wide render.
     leading = len(heading_line) - len(heading_line.lstrip())
     assert leading < 10, (
@@ -81,10 +81,10 @@ def test_wrapped_agent_body_hang_indents_clear_of_the_gutter() -> None:
     lines = [ln for ln in out.split("\n") if ln.strip()]
     # a wrapped continuation line exists, indented into the body column with no
     # marker → the long body did wrap AND hang-indented clear of the gutter
-    assert any(c.startswith("  ") and "⏺" not in c for c in lines)
+    assert any(c.startswith("  ") and "●" not in c for c in lines)
     # the marker only ever LEADS a line (it never appears inside the body / in the
     # gutter of a continuation line)
-    assert all(("⏺" not in c) or c.startswith("⏺") for c in lines)
+    assert all(("●" not in c) or c.startswith("●") for c in lines)
 
 
 def test_long_unbreakable_token_folds_instead_of_truncating() -> None:
@@ -116,9 +116,9 @@ def test_user_echo_leads_with_input_marker_and_keeps_text() -> None:
 
 
 def test_agent_line_leads_with_dot_marker_and_keeps_text() -> None:
-    """Tier 2: an agent message renders with the ⏺ marker and its text."""
+    """Tier 2: an agent message renders with the ● marker and its text."""
     out = _plain("agent", "hello world")
-    assert "⏺" in out
+    assert "●" in out
     assert "hello world" in out
 
 
@@ -164,13 +164,13 @@ def test_intervention_keeps_actor_prefix_when_present() -> None:
 
 def test_kinds_use_distinct_markers() -> None:
     """Tier 2: message kinds carry distinct glyphs so the eye separates them — the
-    assistant ⏺ is not reused for an intervention (◆) or a tool invocation (▸)."""
+    assistant ● is not reused for an intervention (◆) or a tool invocation (▸)."""
     agent = _plain("agent", "x")
     interv = _plain("intervention", "x")
     tool = _plain("tool_call_started", "", {"tool": "Bash", "args": {}})
-    assert "⏺" in agent
-    assert "◆" in interv and "⏺" not in interv
-    assert "▸" in tool and "⏺" not in tool
+    assert "●" in agent
+    assert "◆" in interv and "●" not in interv
+    assert "▸" in tool and "●" not in tool
 
 
 def test_tool_call_completed_renders_corner_marker_and_summary() -> None:
