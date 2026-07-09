@@ -248,6 +248,7 @@ def run(args: argparse.Namespace) -> None:
     from reyn.config import _find_project_root, load_project_context
     from reyn.interfaces.repl.repl import run_repl
     from reyn.runtime.factory_config import SessionFactoryConfig
+    from reyn.runtime.presentation_consumer import OutboxPresentationConsumer
     from reyn.runtime.profile import AgentProfile
     from reyn.runtime.registry import DEFAULT_AGENT_NAME, AgentRegistry
     from reyn.runtime.registry_bootstrap import build_budget_tracker, build_state_log
@@ -369,6 +370,10 @@ def run(args: argparse.Namespace) -> None:
         # narrowing (enforcement) + view exclusion. (None, ∅) when unbound = byte-identical.
         _ctx_perm, _profile_excluded = registry.resolved_profile_for(profile.name)
         s = build_scoped_chat_session(
+            # #2708 P1: chat-CLI (inline/plain --cui / run-once) — the InlineChatRenderer
+            # drains the outbox "presentation" message and renders it (renderer.py:148),
+            # so the outbox-backed consumer is byte-identical to the pre-#2708 default.
+            presentation_consumer=OutboxPresentationConsumer(),
             agent_name=profile.name,
             model=model,
             resolver=session_cfg.resolver,

@@ -54,7 +54,7 @@ def build_router_op_context(
     # ── per-host fields (caller-supplied; behavior-preserving) ─────────────
     agent_id: str | None,  # FP-0016 memory scope (RouterHostAdapter: None — gap candidate)
     intervention_bus: Any = None,  # Session wires post-hoc; RouterHostAdapter inline
-    presentation_renderer: Any = None,  # FP-0054 PR-B: RouterHostAdapter wires inline (factory)
+    presentation_renderer: Any,  # #2708 P1: REQUIRED (no default) — every OpContext builder must EXPLICITLY decide the present sink (a PresentationRenderer or None for the file/MCP-op path that no present op reaches). Silent-omission drift removed. RouterHostAdapter wires the surface consumer's sink (factory); Session._make_router_op_context passes None.
     presentation_registry: Any = None,  # FP-0054 PR-C: operator named-template registry (hot-reloadable)
     multimodal_config: Any = None,  # #364
     media_store: Any = None,  # #383

@@ -258,6 +258,7 @@ def _get_registry():
     if _registry is None:
         from reyn.config import load_project_context
         from reyn.runtime.factory_config import SessionFactoryConfig
+        from reyn.runtime.presentation_consumer import NullPresentationConsumer
         from reyn.runtime.profile import AgentProfile
         from reyn.runtime.registry import AgentRegistry
         from reyn.runtime.scoped_session_factory import build_scoped_chat_session
@@ -305,6 +306,11 @@ def _get_registry():
             # #1827 S3: resolve the agent's topology capability_profile (None/∅ unbound).
             _ctx_perm, _profile_excluded = registry.resolved_profile_for(profile.name)
             s = build_scoped_chat_session(
+                # #2708 P1: web/A2A is a machine JSON surface with no human present drain
+                # (its external outbox interceptor routes only kind="agent",
+                # external_routing.py:333) — a reviewed NA surface. Null is byte-identical
+                # (present was invisible + not externally routed before #2708).
+                presentation_consumer=NullPresentationConsumer("web"),
                 agent_name=profile.name,
                 model=model,
                 resolver=resolver,

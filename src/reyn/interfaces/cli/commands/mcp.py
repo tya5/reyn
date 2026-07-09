@@ -326,6 +326,7 @@ def run_serve(args: argparse.Namespace) -> None:
     from reyn.mcp.server import serve_stdio
     from reyn.runtime.budget.budget import BudgetTracker
     from reyn.runtime.factory_config import SessionFactoryConfig
+    from reyn.runtime.presentation_consumer import NullPresentationConsumer
     from reyn.runtime.profile import AgentProfile
     from reyn.runtime.registry import AgentRegistry
     from reyn.runtime.scoped_session_factory import build_scoped_chat_session
@@ -398,6 +399,9 @@ def run_serve(args: argparse.Namespace) -> None:
         # #1827 S3: resolve the agent's topology capability_profile (None/∅ unbound).
         _ctx_perm, _profile_excluded = registry.resolved_profile_for(profile.name)
         s = build_scoped_chat_session(
+            # #2708 P1: stdio-MCP is a history-harvest surface with no live present drain
+            # — a reviewed NA surface. Null is byte-identical (present was invisible before).
+            presentation_consumer=NullPresentationConsumer("mcp"),
             agent_name=profile.name,
             model=model,
             resolver=session_cfg.resolver,
