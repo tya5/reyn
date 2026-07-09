@@ -298,7 +298,7 @@ Config-gated `litellm.Router` slot-in for provider-resilience. Default OFF (`llm
 
 All ops are documented in the single reference page: **[Control IR](reference/runtime/control-ir.md)**
 
-The op kinds below mirror `OP_KIND_MODEL_MAP` in `op_runtime/registry.py`.
+The op kinds below mirror `OP_KIND_MODEL_MAP` in `schemas/models.py`.
 
 | Op | Description |
 |----|-------------|
@@ -354,7 +354,7 @@ How tools are presented to the LLM and how its calls are dispatched is a **plugg
 | `retrieval` | RAG-over-tools — present a search tool, the LLM searches, the OS re-presents matched tools as callable. Supported opt-in for very large tool sets where full-catalog token cost is prohibitive; requires a configured embedding provider (`action_retrieval.embedding_class`) | [Tool-Use Schemes](concepts/tools-integrations/tool-use-schemes.md) |
 | `CodeAct` | Code-as-tools — the LLM writes a Python snippet whose in-code `tool()` calls run in a sandboxed subprocess under the same permission gate as a JSON call. Strongest for weak models | [Tool-Use Schemes](concepts/tools-integrations/tool-use-schemes.md) |
 
-> **Differentiation vs general agents:** the tool-use strategy is a swappable scheme — `enumerate-all` / `retrieval` / `CodeAct` / the default catalog — chosen per layer by config, *without* changing the OS. Because every scheme dispatches through the same exclude → permission → `dispatch_tool` gate (P4/P5), swapping the LLM-facing tool surface never weakens the security or validation pipeline. The presentation is data; the gate is constant.
+> **Differentiation vs general agents:** the tool-use strategy is a swappable scheme — `enumerate-all` / `retrieval` / `CodeAct` / the default catalog — chosen per layer by config, *without* changing the OS. Because every scheme dispatches through the same exclude → permission → `dispatch_tool` gate, swapping the LLM-facing tool surface never weakens the security or validation pipeline. The presentation is data; the gate is constant.
 
 ---
 

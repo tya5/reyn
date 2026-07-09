@@ -20,10 +20,15 @@ feature-map `file:line` as its exemplar.
   below).
 - **Each cell** = that family's exemplar implementation of that lens, with a
   `feature-map.md` file:line citation. An empty cell is written as **"—"** — a lens
-  genuinely does not manifest in that family. Cells are never invented to fill a
-  gap; a lens that is honestly thin (Retrieval, Evaluation) will show mostly "—"
-  across most families, and that sparseness is itself informative, not a defect
-  in the table.
+  genuinely does not manifest *in that specific family*. **"—" is not "this lens is
+  covered better elsewhere"** — a lens can (and should) have a different exemplar
+  in every family it genuinely shows up in; check the family's own feature-map
+  section before writing "—", don't reach for a cross-family analogy or a
+  same-word-different-meaning cousin (e.g. the Retrieval *lens*, about context, is
+  not the `retrieval` tool-use *scheme*, about tool-surface scaling — don't conflate
+  them). Cells are never invented to fill a gap; a lens that is honestly thin
+  (Retrieval, Evaluation) will show mostly "—" across most families, and that
+  sparseness is itself informative, not a defect in the table.
 - Authoring proceeds family-by-family (one PR per column). Not-yet-authored
   columns are marked **"*(pending)*"**, distinct from a deliberately-empty "—" cell
   within an authored column.
@@ -33,8 +38,8 @@ feature-map `file:line` as its exemplar.
 | Lens | Decision & Tool-Use | Chat & Session | Context & Retrieval | Orchestration | External surfaces | Safety & Config | Product surface |
 |---|---|---|---|---|---|---|---|
 | **System Design** | The agent loop is an OS-enforced contract: every side effect is a schema-validated, typed Control IR op, never a free-form string ([`feature-map.md:249`](../../feature-map.md)) | *(pending)* | *(pending)* | *(pending)* | *(pending)* | *(pending)* | *(pending)* |
-| **Tool Contract** | Op kinds mirror `OP_KIND_MODEL_MAP` 1:1, one typed schema per kind ([`feature-map.md:301`](../../feature-map.md)); every tool-use scheme dispatches through the same exclude → permission → dispatch gate regardless of presentation ([`feature-map.md:357`](../../feature-map.md)) | *(pending)* | *(pending)* | *(pending)* | *(pending)* | *(pending)* | *(pending)* |
-| **Retrieval** | — | *(pending)* | *(pending)* | *(pending)* | *(pending)* | *(pending)* | *(pending)* |
+| **Tool Contract** | Op kinds mirror `OP_KIND_MODEL_MAP` 1:1 in `schemas/models.py`, one typed schema per kind ([`feature-map.md:301`](../../feature-map.md)); every tool-use scheme dispatches through the same exclude → permission → dispatch gate regardless of presentation ([`feature-map.md:357`](../../feature-map.md)) | *(pending)* | *(pending)* | *(pending)* | *(pending)* | *(pending)* | *(pending)* |
+| **Retrieval** | `recall`: embed query → `index_query` per source → merge top-K ([`feature-map.md:318`](../../feature-map.md)) — context-retrieval, not to be confused with the `retrieval` tool-use *scheme* ([`feature-map.md:354`](../../feature-map.md)), which retrieves tools, not context | *(pending)* | *(pending)* | *(pending)* | *(pending)* | *(pending)* | *(pending)* |
 | **Reliability** | Crash Recovery: `.reyn/` recovery-core classification, WAL state log, forward-replay resume, `CommittedStep` memo ([`feature-map.md:207-217`](../../feature-map.md)) | *(pending)* | *(pending)* | *(pending)* | *(pending)* | *(pending)* | *(pending)* |
 | **Security** | `present`'s `data_ref` read authority resolves identically to `file.read` ([`feature-map.md:333`](../../feature-map.md)); `sandboxed_exec` runs under a declared `SandboxPolicy` ([`feature-map.md:308`](../../feature-map.md)) | *(pending)* | *(pending)* | *(pending)* | *(pending)* | *(pending)* | *(pending)* |
 | **Evaluation** | `judge_output`: LLM scorer with rubric + threshold + `on_fail` policy ([`feature-map.md:321`](../../feature-map.md)) | *(pending)* | *(pending)* | *(pending)* | *(pending)* | *(pending)* | *(pending)* |
