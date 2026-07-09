@@ -132,6 +132,13 @@ def test_every_scalar_leaf_takes_effect_on_nondefault_set(tmp_path: Path) -> Non
     noops: list[str] = []
     checked = 0
     old_cwd = os.getcwd()
+    # load_config() materializes some config keys into process env
+    # (LITELLM_API_BASE from api_base, REYN_MCP_REGISTRY_URLS, REYN_FETCH_
+    # ALLOW_PRIVATE_IPS). This test loads a synthetic config per leaf — snapshot
+    # + restore os.environ so those exports don't leak across the loop OR past
+    # this test into the rest of the suite (the same per-field isolation the
+    # per-leaf project root already gives on disk).
+    old_environ = dict(os.environ)
     try:
         for i, node in enumerate(nodes):
             if node.default is MISSING:
@@ -157,6 +164,8 @@ def test_every_scalar_leaf_takes_effect_on_nondefault_set(tmp_path: Path) -> Non
                 noops.append(f"{node.key}: set {cand!r} → reload {got!r} (set ignored)")
     finally:
         os.chdir(old_cwd)
+        os.environ.clear()
+        os.environ.update(old_environ)
 
     assert checked > 0, "no scalar leaf exercised — candidate generator returned None for all"
     assert not noops, (
