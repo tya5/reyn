@@ -133,6 +133,74 @@ def test_plain_text_tool_content_gets_prefix() -> None:
     assert new_content.endswith("plain text result")
 
 
+# ── 3b. Canonical frontmatter+text tool content (#2689) ─────────────────────
+# #2425 案B made `---\n<yaml>---\n<text>` the DOMINANT tool-result shape (no
+# JSON envelope). That content does not start with `{`, so it used to fall to
+# the plain-text branch and got a bare `resume\n\n` prefix glued onto the front
+# of the real op result — the model read it as corrupted tool output (#2689).
+# The signal must instead be a LABELED `_g12_signal` frontmatter field, mirroring
+# the JSON `_g12_signal` field.
+
+
+def _canonical_tool_content() -> str:
+    """Real canonical `---\\n<yaml>---\\n<text>` tool content via the production
+    renderer (no mock) — the shape feedback() builds for every tool result."""
+    from reyn.core.offload.seam import render_tool_result
+
+    return render_tool_result(
+        {"op": "read", "status": "ok", "path": "sample.txt"},
+        "Line one of a readable sample file.\nLine two.",
+    )
+
+
+def test_canonical_frontmatter_tool_content_has_no_bare_resume_prefix() -> None:
+    """Tier 2: #2689 regression guard — a canonical frontmatter+text tool result
+    must NOT be sent with a foreign `resume\\n\\n` prefix glued to its front.
+
+    RED before the fix: `_apply_g12_signal` hit the plain-text `else` branch and
+    produced `resume\\n\\n---\\nop: read...` (the exact corrupted payload the
+    reporter captured from REYN_LLM_TRACE_DUMP). GREEN after: the signal is a
+    labeled frontmatter field, so the op result the model reads is untouched.
+    """
+    import yaml
+
+    canonical = _canonical_tool_content()
+    msgs = [
+        {"role": "assistant", "tool_calls": [{"id": "call_1"}]},
+        {"role": "tool", "tool_call_id": "call_1", "content": canonical},
+    ]
+    result = _apply_g12_signal(msgs)
+    sent = result[-1]["content"]
+
+    # Core #2689 guard: no foreign token glued to the front of the op result.
+    assert not sent.startswith("resume"), (
+        "canonical tool content must not carry a bare 'resume' prefix (#2689)"
+    )
+    # The signal is still present — the workaround must not be silently dropped.
+    assert "_g12_signal" in sent
+    # Still a valid frontmatter block, and the signal is a labeled field.
+    assert sent.startswith("---\n")
+    fm_block, body = sent[4:].split("\n---\n", 1)
+    parsed = yaml.safe_load(fm_block)
+    assert parsed["_g12_signal"] == "resume"
+    # Original op metadata + body survive intact (the tool result the model
+    # reads is the real result, not a mangled one).
+    assert parsed["op"] == "read"
+    assert parsed["status"] == "ok"
+    assert body == "Line one of a readable sample file.\nLine two."
+
+
+def test_canonical_frontmatter_does_not_mutate_input() -> None:
+    """Tier 2: #2689 — embedding the signal into canonical content returns a new
+    list + message and leaves the caller's persistent messages untouched (the
+    self-heal property: history/older-context copies stay clean)."""
+    canonical = _canonical_tool_content()
+    msgs = [{"role": "tool", "tool_call_id": "c", "content": canonical}]
+    result = _apply_g12_signal(msgs)
+    assert result is not msgs
+    assert msgs[-1]["content"] == canonical, "must not mutate the input message"
+
+
 # ── 4. Non-string content (= future content-parts API) ──────────────────────
 
 

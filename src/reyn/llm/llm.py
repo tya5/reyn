@@ -389,6 +389,15 @@ def _apply_g12_signal(messages: list[dict]) -> list[dict]:
         top-level `_g12_signal` field after the opening brace, with
         trailing-comma elision for empty-object shapes (= `"{}"`,
         `"{ }"`) so the output is always parse-valid.
+      - Canonical frontmatter+text tool content (= `---\\n<yaml>---\\n<text>`,
+        the #2425 案B dominant shape): inject the signal as a LABELED
+        `_g12_signal` frontmatter field right after the opening delimiter —
+        mirroring the JSON `_g12_signal` field. This is the #2689 fix: the
+        prior code hit the plain-text branch below and glued a bare
+        `resume\\n\\n` prefix onto the actual tool result, which the model
+        read as corrupted tool output (a foreign, unlabeled token on the
+        front of the op result). A labeled frontmatter field is structured
+        metadata the model can attribute correctly, same as the JSON path.
       - Plain-text or non-JSON tool content: prefix with the signal text
         + a blank line for visual separation.
       - Non-string content (= list of content parts or None): leave
@@ -424,6 +433,15 @@ def _apply_g12_signal(messages: list[dict]) -> list[dict]:
             new_last["content"] = (
                 f'{{"_g12_signal": "{signal}", {inner}'
             )
+    elif content.startswith("---\n") and "\n---\n" in content:
+        # #2689: #2425 案B canonical tool-result format `---\n<yaml>---\n<text>`.
+        # Embed the signal as a LABELED frontmatter field (mirroring the JSON
+        # `_g12_signal` field) instead of the bare `resume\n\n` prefix the plain-
+        # text branch below would produce — that prefix read to the model as a
+        # foreign token glued to the front of the op result (corrupted tool
+        # output). Inject after the opening `---\n` delimiter (content[4:] drops
+        # it); the block stays valid YAML frontmatter with `_g12_signal` first.
+        new_last["content"] = f"---\n_g12_signal: {signal}\n{content[4:]}"
     else:
         new_last["content"] = f"{signal}\n\n{content}"
     return messages[:-1] + [new_last]
