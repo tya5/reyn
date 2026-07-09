@@ -169,7 +169,7 @@ def build_agent_registry_from_project(
     ws_base_dir = project_root
     ws_state_dir = project_root / ".reyn"
 
-    def _session_factory(profile: "AgentProfile", *, presentation_consumer=None):
+    def _session_factory(profile: "AgentProfile", *, presentation_consumer=None, intervention_bridge=None):
         _ctx_perm, _profile_excluded = registry.resolved_profile_for(profile.name)
         s = build_scoped_chat_session(
             # #2708 P1: the reusable registry base session (reyn pipe run's default
@@ -180,6 +180,10 @@ def build_agent_registry_from_project(
             # override (present reaches the parent by construction, replacing the removed
             # #2707 forward); None (default / non-spawn) keeps the outbox-backed consumer.
             presentation_consumer=presentation_consumer or OutboxPresentationConsumer(),
+            # #2708 P3.2a: forward the attached pipeline driver's intervention bridge
+            # (SpawnBridgeInterventionListener) so a driver ask_user reaches the parent's live
+            # operator; None (default / non-spawn / detached) = self-bound fail-closed.
+            intervention_bridge=intervention_bridge,
             agent_name=profile.name,
             model=config.model,
             resolver=resolver,

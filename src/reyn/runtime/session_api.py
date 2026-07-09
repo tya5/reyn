@@ -75,6 +75,15 @@ prefix and differing only in how the caller drives + collects:
     Together: both the visible present and its audit trail reach the parent, closing the
     driver-isolation split. (Detached/async present is out of P3.1 scope — no attached
     parent surface exists; tracked as the P3 spawn-routing completeness gate.)
+    #2708 P3.2a: the SAME attach seam bridges the driver's INTERVENTION delivery. The driver
+    gets a fresh listener-less ``InterventionRegistry`` (fail-closed), so an ``ask_user`` step
+    would silently auto-refuse even with a live operator blocked on the parent (#2721). The
+    attached driver-session is spawned with a ``SpawnBridgeInterventionListener``
+    (``runtime/session_buses.py``) bound to the PARENT, so its router intervention bus
+    dispatches on the PARENT session's live-operator listener — the operator is prompted and
+    their answer flows back to the driver's awaiting op by construction. (Detached/async
+    intervention keeps the fail-closed default — a tracked known-RED cell, same completeness
+    gate as present.)
 """
 from __future__ import annotations
 
@@ -308,19 +317,34 @@ async def _spawn_pipeline_driver_session(
     # so the embedded pipeline name is sanitized to one safe path component.
     safe_name = re.sub(r"[^A-Za-z0-9_.-]", "_", pipeline_name) or "pipeline"
     rid = run_id or f"pipeline-{safe_name}-{uuid.uuid4().hex}"
-    # #2708 P3.1 Half-A: on the attached path, bind the driver's present sink to the
-    # PARENT's consumer so its render reaches the parent surface by construction. Detached
-    # spawns pass None → the default self-bound outbox consumer (byte-identical).
+    # #2708 P3.1 Half-A / P3.2a: on the attached path, bind the driver's present sink AND its
+    # ask_user/permission routing to the PARENT by construction — so a `present` step reaches
+    # the parent surface (P3.1) and an `ask_user` step reaches the parent's live operator
+    # listener instead of silently auto-refusing (P3.2a, #2721). Detached spawns pass None for
+    # both → the default self-bound outbox consumer + listener-less registry (byte-identical);
+    # the detached ask_user auto-refuse is a tracked known-RED cell (P3 completeness gate).
     bridge_consumer: "Any | None" = None
+    bridge_intervention: "Any | None" = None
     if attached_parent_session is not None:
         from reyn.runtime.presentation_consumer import SpawnBridgePresentationConsumer
+        from reyn.runtime.session import DEFAULT_CHAT_CHANNEL_ID
+        from reyn.runtime.session_buses import SpawnBridgeInterventionListener
 
         bridge_consumer = SpawnBridgePresentationConsumer(
             parent_consumer=attached_parent_session.presentation_consumer,
             parent_session=attached_parent_session,
         )
+        # The parent chat surface (CLI/CUI/chainlit) registers its operator listener under
+        # DEFAULT_CHAT_CHANNEL_ID ("tui") — the same id a parent-native ask_user stamps — so
+        # the bridged iv routes to the live listener, not the stalled queue.
+        bridge_intervention = SpawnBridgeInterventionListener(
+            parent_session=attached_parent_session,
+            parent_channel_id=DEFAULT_CHAT_CHANNEL_ID,
+        )
     sid = await registry.spawn_session_recorded(
-        reply_to_agent, mode="persistent", presentation_consumer=bridge_consumer,
+        reply_to_agent, mode="persistent",
+        presentation_consumer=bridge_consumer,
+        intervention_bridge=bridge_intervention,
     )
     work_order = PipelineWorkOrder(
         run_id=rid,

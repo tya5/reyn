@@ -471,7 +471,7 @@ def _build_live_runner(agent_name: str, *, env_backend=None, ws_base_dir=None, w
         # cell so the factory can reference it before assignment completes.
         _reg_cell: list = []
 
-        def _session_factory(profile: AgentProfile, *, presentation_consumer=None) -> Session:
+        def _session_factory(profile: AgentProfile, *, presentation_consumer=None, intervention_bridge=None) -> Session:
             # #1827 S3: resolve the agent's topology capability_profile. The registry
             # cell may be empty during bootstrap → (None, ∅) = byte-identical.
             _reg = _reg_cell[0] if _reg_cell else None
@@ -484,6 +484,10 @@ def _build_live_runner(agent_name: str, *, env_backend=None, ws_base_dir=None, w
                 # was never rendered by the harness before #2708).
                 # #2708 P3.1: a spawn override (attached pipeline driver) wins when given.
                 presentation_consumer=presentation_consumer or NullPresentationConsumer("dogfood"),
+                # #2708 P3.2a: forward the spawn-time intervention bridge (None = self-bound
+                # default). The dogfood harness is headless (_non_interactive) — a driver
+                # spawn keeps the fail-closed default; the seam is threaded uniformly.
+                intervention_bridge=intervention_bridge,
                 agent_name=profile.name,
                 model=model,
                 resolver=resolver,
