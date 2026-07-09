@@ -163,6 +163,7 @@ nav:
           - reference/upgrade-policy.md
   - Concepts:
       - Architecture:
+          - concepts/architecture/charter.md
           - concepts/architecture/care-boundary.md
           - concepts/architecture/llm-invocation-surfaces.md
           - concepts/architecture/interaction-layers.md

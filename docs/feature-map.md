@@ -246,7 +246,7 @@ User-facing point-in-time rewind with branching. Phase 1 and Phase 2 (2a/2b/2c/2
 | Append-only JSONL | `.reyn/events/<run_id>.jsonl` per-run (`EventStore`); audit trail — append-only, rotation-based (not per-append fsync). Separate log and lifecycle from the recovery WAL (`.reyn/state/wal.jsonl`). | [Events reference](reference/runtime/events.md) |
 | Replay | `reyn events <path>` streams events for audit and debug | [reyn events CLI](reference/cli/events.md) |
 
-> **Differentiation vs general agents:** the agent loop is an OS-enforced contract — the LLM decides only from OS-provided candidates (P3/P4), every output is schema-validated, every inter-phase value lives in the workspace (P5), and every state change emits an append-only, replayable event (P6). Constrained and auditable by construction, not by developer discipline.
+> **Differentiation vs general agents:** the agent loop is an OS-enforced contract — every side effect the LLM emits is a schema-validated, typed Control IR op (never a free-form string), every op routes through the same exclude → permission → dispatch gate regardless of which tool-use scheme is active, every value the agent produces lives in the workspace (P5), and every state change emits an append-only, replayable event (P6). Constrained and auditable by construction, not by developer discipline.
 
 ---
 
@@ -317,7 +317,7 @@ The op kinds below mirror `OP_KIND_MODEL_MAP` in `op_runtime/registry.py`.
 | `index_query` | Vector similarity search over one indexed source |
 | `recall` | Macro: embed query → `index_query` per source → merge top-K |
 | `index_drop` | Destructive source removal — requires approval |
-| `compact` | Summarise / compact context within budget (chat + phase results) |
+| `compact` | Summarise / compact conversation history within budget |
 | `judge_output` | LLM scorer with rubric + threshold + `on_fail` policy |
 
 > The `embed` and `index_write` ops were removed — embedding and index-writing now run provider-direct inside `reyn.api.safe.embed_index` and the `recall` op, not as standalone ops. See [Control IR](reference/runtime/control-ir.md).
