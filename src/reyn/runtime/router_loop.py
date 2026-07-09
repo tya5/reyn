@@ -2971,7 +2971,9 @@ class RouterLoop:
         # ``structured`` attachment. The format is INDEPENDENT of the media store — it applies even
         # when ``media_store is None``; only the size-gated offloading needs a store.
         from reyn.core.offload.canonical import (
+            CANONICAL_DEGRADED_EVENT,
             CANONICAL_FALLBACK_EVENT,
+            canonical_degraded_reason,
             canonical_fallback_reason,
             extract_canonical_source,
             to_canonical,
@@ -3056,6 +3058,26 @@ class RouterLoop:
                                     CANONICAL_FALLBACK_EVENT,
                                     source=canonical_source,
                                     reason=_fallback_reason,
+                                )
+                        # FP-0056 v2 piece #2: a MAPPED producer that canonicalized to an empty view
+                        # (no text + no attachments) on a non-error result silently lost its content
+                        # (mode M2) — fire ``canonical_degraded`` (audit event + warn log,
+                        # degrade-with-audit). A legit-empty success renders an explicit marker in its
+                        # mapper and does not reach here. Source id only; NEVER the result body.
+                        _degraded_reason = canonical_degraded_reason(_inner, canonical)
+                        if _degraded_reason is not None:
+                            import logging
+                            logging.getLogger(__name__).warning(
+                                "canonical_degraded: source=%s reason=%s (a non-error tool result "
+                                "canonicalized to an empty view — no text, no attachments)",
+                                canonical_source, _degraded_reason,
+                            )
+                            _events = getattr(host, "events", None)
+                            if _events is not None:
+                                _events.emit(
+                                    CANONICAL_DEGRADED_EVENT,
+                                    source=canonical_source,
+                                    reason=_degraded_reason,
                                 )
                         if built_media:
                             # media lifted from INSIDE data (the top-level strip missed it)
