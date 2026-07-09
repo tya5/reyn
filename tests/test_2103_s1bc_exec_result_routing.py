@@ -34,12 +34,13 @@ def _registry(tmp_path: Path) -> AgentRegistry:
     state_log = StateLog(tmp_path / ".reyn" / "wal.jsonl")
     holder: dict = {}
 
-    def _factory(profile: AgentProfile) -> Session:
+    def _factory(profile: AgentProfile, *, presentation_consumer=None, intervention_bridge=None) -> Session:
         # wire the registry back-reference (= what production frontends pass) so the
         # A2A response callback (_a2a_send_response) can route — without it the
         # response is silently dropped (registry is None).
         return Session(
             agent_name=profile.name, state_log=state_log, registry=holder.get("reg"),
+            presentation_consumer=presentation_consumer, intervention_bridge=intervention_bridge,
         )
 
     reg = AgentRegistry(project_root=tmp_path, session_factory=_factory, state_log=state_log)

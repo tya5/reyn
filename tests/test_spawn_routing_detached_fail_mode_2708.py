@@ -34,12 +34,14 @@ from reyn.runtime.presentation_consumer import (
     AuditOnlyPresentationSink,
 )
 from reyn.runtime.registry import AgentRegistry
-from reyn.runtime.session import Session
+from reyn.runtime.session import DEFAULT_CHAT_CHANNEL_ID, Session
 from reyn.runtime.session_api import run_agent_step, start_pipeline_run
 from reyn.runtime.session_buses import (
     NO_SURFACE_REFUSAL_REASON,
     AuditOnlyInterventionBridge,
+    SpawnBridgeInterventionListener,
 )
+from reyn.user_intervention import UserIntervention
 
 
 def _recording_registry(tmp_path: Path, state_log: "StateLog") -> "tuple[AgentRegistry, list]":
@@ -297,6 +299,61 @@ async def test_agent_step_worker_spawned_audit_only(tmp_path: Path) -> None:
         "run_agent_step did not spawn its ephemeral worker AuditOnly (#2706 root-cause-i) — its "
         "present would self-bind to an undrained outbox, dropped by the kind=='agent' filter."
     )
+
+    for task in list(reg._tasks.values()):
+        if not task.done():
+            task.cancel()
+
+
+# ── co-vet must-fix: LLM session_spawn child bridges to the parent operator (no hang) ────
+
+
+@pytest.mark.asyncio
+async def test_session_spawn_child_ask_user_reaches_parent_operator_no_hang(tmp_path: Path) -> None:
+    """Tier 2: co-vet must-fix — the LLM ``session_spawn`` tool's BACKGROUND child routes
+    ``BridgeToParent`` (not self-bound ReviewedNA), so its ``ask_user`` reaches the spawning
+    PARENT's live operator and RESOLVES — it does NOT hit the origin-pin park/hang a self-bound
+    child would (its "tui"-stamped iv on a listener-less own registry parks forever). RED before
+    fix (child ``intervention_bridge`` is None → ask_user parks on the child's own registry);
+    GREEN after (BridgeToParent → the parent operator resolves it)."""
+    state_log = StateLog(tmp_path / ".reyn" / "wal.jsonl")
+    reg, built = _recording_registry(tmp_path, state_log)
+    parent = reg.get_or_load("worker")
+    # A live operator attached to the PARENT (the "tui" listener a mounted CUI registers).
+    parent.register_intervention_listener(DEFAULT_CHAT_CHANNEL_ID)
+    host = parent._router_host
+    host._live_session_id_fn = lambda: "main"  # from_sid = the parent's real sid (resolvable)
+
+    result = await host.spawn_session(
+        request="help me", mode="persistent", narrowing=None, chain_id="c1",
+    )
+    assert result["status"] == "spawned"
+    child = reg.get_session("worker", result["sid"])
+    assert child is not None
+
+    # Routing proof: the child bridges its user-reaching capabilities to the PARENT (not self-bound).
+    assert isinstance(child.intervention_bridge, SpawnBridgeInterventionListener), (
+        "session_spawn's child was self-bound (ReviewedNA) — its ask_user would origin-pin-park; "
+        "it must route BridgeToParent so a delegated sub-agent's ask_user reaches the operator."
+    )
+    assert child.intervention_bridge.parent_session is parent
+
+    # Operator-reach proof: the child's ask_user (via its DECLARED bridge — the exact bus its router
+    # op builds) lands on the PARENT's live listener and resolves with the operator's answer — no hang.
+    bus = child.intervention_bridge.bus(run_id="r", actor="child")
+    iv = UserIntervention(kind="ask_user", prompt="which branch?")
+    deliver = asyncio.ensure_future(bus.deliver(iv))
+    loop = asyncio.get_event_loop()
+    deadline = loop.time() + 5.0
+    while loop.time() < deadline and not parent.interventions.list_active():
+        await asyncio.sleep(0.02)
+    assert parent.interventions.list_active(), (
+        "the child's ask_user never reached the parent operator's active queue (parked/hung)."
+    )
+    consumed = await parent._maybe_answer_oldest_intervention("blue")
+    assert consumed is True
+    answer = await asyncio.wait_for(deliver, timeout=5.0)  # resolves (no hang)
+    assert (answer.choice_id or answer.text) == "blue"
 
     for task in list(reg._tasks.values()):
         if not task.done():

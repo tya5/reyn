@@ -13,18 +13,20 @@ three spawn seams (``AgentRegistry.spawn_session`` / ``.spawn_session_recorded``
 ``session_api.spawn_ephemeral_session``) takes ``presentation_consumer`` + ``intervention_bridge``
 as REQUIRED, no-default kwargs (pinned by ``inspect.signature`` — the #1402
 completeness-by-construction mechanism generalized to the spawn axis), so a spawn site cannot
-omit the decision. A ``SpawnRouting`` value names ONE of four decisions and resolves to the
+omit the decision. A ``SpawnRouting`` value names ONE of three decisions and resolves to the
 concrete pair a site forwards:
 
-- :class:`BridgeToParent` — an attached parent surface exists: the child's ``present`` renders
-  to the parent's sink and its ``ask_user`` reaches the parent's live operator listener (the
-  P3.1 / P3.2a ``SpawnBridge*`` seams). Used by the attached pipeline driver spawn.
+- :class:`BridgeToParent` — the child bridges its user-reaching capabilities to its spawning
+  PARENT: ``present`` renders to the parent's sink and ``ask_user`` reaches the parent's live
+  operator listener (the P3.1 / P3.2a ``SpawnBridge*`` seams). Used by the attached pipeline
+  driver spawn AND the LLM ``session_spawn`` tool (a delegated sub-agent's ask_user must reach
+  the operator, "delegated-work-can-ask") — since the parent is a live session with its own
+  declared routing, this is hang-safe by construction (parent attached → operator; a parent
+  that cannot serve degrades to that parent's own reviewed fail-mode, never an unbounded park).
 - :class:`AuditOnlyNoSurface` — no attachable surface (detached async pipeline, headless
   ephemeral agent-step): ``present`` is audit-only (the durable ``presented`` P6 event fires;
   the visible draw is a documented no-op — not an orphan) and ``ask_user`` returns a typed,
   reason'd refusal (never silent-empty, never a park/hang). The reviewed *deliberate* fail-mode.
-- :class:`SelfDeliveringWithDrain` — the spawn owns a surface that drains its own outbox
-  (passes an explicit real consumer); no parent bridge.
 - :class:`ReviewedNA` — a spawn where self-binding to the factory default is genuinely correct
   (a real user-attachable conversation session, or a crash-recovery re-wake). Its ``site`` MUST
   be a member of the reviewed :data:`_REVIEWED_SELF_BOUND_SPAWN_SITES` frozenset — constructing
@@ -58,16 +60,16 @@ if TYPE_CHECKING:
 #   - _rewake_pipeline_runs: pipeline driver crash-recovery re-wake; the originally-attached caller
 #                           is gone, the result routes via the inbox reply address.
 #   - session_cmd:          ``/session new`` opens a real attachable conversation session under the
-#                           agent — the user ``/session switch``es to focus + drain it.
-#   - spawn_session:        the LLM ``session_spawn`` tool spawns a real attachable conversation
-#                           session under the agent (async-dispatch; result routes back FP-0043
-#                           Stage-4) — like ``/session new``, drainable by attaching.
+#                           agent — a HUMAN starts it and ``/session switch``es to focus + drain it.
+# NB: the LLM ``session_spawn`` tool (``router_host_adapter.spawn_session``) is deliberately NOT
+# here — it is LLM-initiated + backgrounded, so no operator is guaranteed to know the child sid to
+# attach + drain, and a self-bound child would hit the very origin-pin ask_user hang this gate
+# closes. It routes ``BridgeToParent`` instead (delegated-work-can-ask), NOT self-bound.
 _REVIEWED_SELF_BOUND_SPAWN_SITES = frozenset({
     "runtime/registry.py::resolve_session",
     "runtime/registry.py::restore_all",
     "runtime/registry.py::_rewake_pipeline_runs",
     "interfaces/slash/session.py::session_cmd",
-    "runtime/services/router_host_adapter.py::spawn_session",
 })
 
 
@@ -141,26 +143,6 @@ class AuditOnlyNoSurface(SpawnRouting):
         return AuditOnlyInterventionBridge()
 
 
-class SelfDeliveringWithDrain(SpawnRouting):
-    """The spawn owns a surface that drains its OWN outbox — it passes an explicit, real present
-    consumer (e.g. a stdout self-delivering consumer). No parent bridge; ``ask_user`` keeps the
-    session's own listener wiring."""
-
-    def __init__(
-        self, consumer: "object", *, intervention_bridge: "object | None" = None,
-    ) -> None:
-        self._consumer = consumer
-        self._intervention_bridge = intervention_bridge
-
-    @property
-    def presentation_consumer(self) -> "object":
-        return self._consumer
-
-    @property
-    def intervention_bridge(self) -> "object | None":
-        return self._intervention_bridge
-
-
 class ReviewedNA(SpawnRouting):
     """Self-binding to the session factory's own default is genuinely correct here — a real
     user-attachable conversation session, or a crash-recovery re-wake. ``site`` MUST be a member
@@ -195,7 +177,6 @@ __all__ = [
     "AuditOnlyNoSurface",
     "BridgeToParent",
     "ReviewedNA",
-    "SelfDeliveringWithDrain",
     "SpawnRouting",
     "_REVIEWED_SELF_BOUND_SPAWN_SITES",
 ]

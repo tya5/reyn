@@ -145,14 +145,15 @@ def test_all_three_spawn_seams_require_routing_kwargs_no_default() -> None:
 
 def test_reviewed_self_bound_spawn_sites_is_the_reviewed_frozenset() -> None:
     """Tier 2: the reviewed self-bound spawn sites are EXACTLY the reviewed set (transport-native
-    reuse, two crash-recovery re-wakes, /session new, LLM session_spawn). A new self-bound spawn
-    site must be added here deliberately — the equality ratchet blocks a silent self-bind."""
+    reuse, two crash-recovery re-wakes, /session new). A new self-bound spawn site must be added
+    here deliberately — the equality ratchet blocks a silent self-bind. The LLM ``session_spawn``
+    tool is deliberately NOT a member (co-vet must-fix): it is LLM-initiated + backgrounded, so a
+    self-bound child would hit the origin-pin ask_user hang — it routes ``BridgeToParent`` instead."""
     assert _REVIEWED_SELF_BOUND_SPAWN_SITES == frozenset({
         "runtime/registry.py::resolve_session",
         "runtime/registry.py::restore_all",
         "runtime/registry.py::_rewake_pipeline_runs",
         "interfaces/slash/session.py::session_cmd",
-        "runtime/services/router_host_adapter.py::spawn_session",
     })
 
 
@@ -163,6 +164,10 @@ def test_reviewed_na_refuses_non_reviewed_site() -> None:
         ReviewedNA("runtime/session_api.py::run_agent_step")
     with pytest.raises(ValueError):
         ReviewedNA("some/new/site.py::brand_new_spawn")
+    # The LLM session_spawn tool is NOT reviewed-self-bound (co-vet must-fix: it routes
+    # BridgeToParent, not ReviewedNA) — constructing ReviewedNA for it must be refused.
+    with pytest.raises(ValueError):
+        ReviewedNA("runtime/services/router_host_adapter.py::spawn_session")
 
 
 def test_reviewed_na_yields_self_bound_pair_for_reviewed_site() -> None:

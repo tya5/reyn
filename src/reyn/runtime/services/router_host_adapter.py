@@ -1036,11 +1036,24 @@ class RouterHostAdapter:
         # non-main-spawn guard: a non-main session may now spawn — its result routes back
         # correctly by (agent, from_sid). (None / "main" → main-case, byte-identical.)
         from_sid = self.live_session_id
-        # #2708 P3-item3: the LLM session_spawn tool spawns a real attachable conversation session
-        # under this agent (async-dispatch; result routes back FP-0043 Stage-4) — like /session new,
-        # the user can attach to drain it; self-binding to the factory default is reviewed-NA.
-        from reyn.runtime.spawn_routing import ReviewedNA
-        _routing = ReviewedNA("runtime/services/router_host_adapter.py::spawn_session")
+        # #2708 P3-item3 (co-vet must-fix): the LLM session_spawn tool spawns a background sub-agent
+        # that is NOT self-attachable by a human — it is LLM-initiated, so no operator is guaranteed
+        # to know the child sid to attach + drain (unlike /session new, which a human starts + attaches
+        # to). A self-bound (ReviewedNA) child would hit the SAME origin-pin park/hang this PR closes:
+        # its ask_user stamps "tui", no listener → InterventionCoordinator.dispatch parks forever. So
+        # the child BRIDGES to its spawning PARENT (BridgeToParent): the spawner is a live session whose
+        # own routing already decides where user-reaching capabilities go — a delegated sub-agent's
+        # ask_user reaches the parent's operator (parent attached) by construction, exactly like the
+        # attached pipeline driver ("delegated-work-can-ask"). A parent that cannot be resolved (should
+        # not happen — this adapter runs FOR that session) falls back to AuditOnlyNoSurface (a typed
+        # refusal), never a hang.
+        from reyn.runtime.spawn_routing import AuditOnlyNoSurface, BridgeToParent
+        parent_session = self._registry.get_session(self._agent_name, from_sid)
+        _routing = (
+            BridgeToParent(parent_session)
+            if parent_session is not None
+            else AuditOnlyNoSurface()
+        )
         sid = await self._registry.spawn_session_recorded(
             self._agent_name, mode=mode, narrowing=narrowing,
             presentation_consumer=_routing.presentation_consumer,
