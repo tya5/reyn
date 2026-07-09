@@ -51,8 +51,8 @@ reyn events purge [OPTIONS]
 ## Examples
 
 ```bash
-reyn events .reyn/events/direct/skill_runs/2026-05/abc123_my_skill.jsonl
-reyn events .reyn/events/direct/skill_runs/2026-05/abc123.jsonl --filter phase_started
+reyn events .reyn/events/agents/reyn/chat/2026-05/abc123.jsonl
+reyn events .reyn/events/agents/reyn/chat/2026-05/abc123.jsonl --filter permission_denied
 reyn events purge --before 2026-04-01
 reyn events purge --before 2026-04-01 --dry-run
 ```

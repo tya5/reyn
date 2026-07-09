@@ -823,7 +823,7 @@ Returns:
 - **Compression metric** (the meaningful signal): `summarized_turns: int` (older turns folded into the bridge), `compressed_tokens: int` (their raw token cost), `bridge_tokens: int` (the summary's token cost). The value that matters is the `compressed_tokens → bridge_tokens` compression, not `freed_tokens`.
 - On error: `error_kind` (`compaction_unavailable` when no compaction context is wired here; `compaction_failed`) + `error`.
 
-**Events**: `compact_op_requested` / `compact_op_completed` (`freed_tokens`, `free_window_after`, `summarized_turns` / `compressed_tokens` / `bridge_tokens`) / `compact_op_failed` / `compact_op_unavailable` (P6). The inner compaction engine emits its own compaction events.
+**Events**: `compact_op_requested` / `compact_op_completed` (`freed_tokens`, `free_window_after`, `summarized_turns` / `compressed_tokens` / `bridge_tokens`) / `compact_op_failed` / `compact_op_unavailable` (P6). The inner compaction engine emits its own compaction audit-events.
 
 **Permission**: none required (LLM cost only). Voluntary and independent of the involuntary `retry_loop` backstop, which always runs regardless.
 
