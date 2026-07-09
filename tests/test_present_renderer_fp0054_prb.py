@@ -190,6 +190,35 @@ def test_format_inline_message_dispatches_presentation_kind() -> None:
     assert "hello from present" in console.file.getvalue()
 
 
+def test_console_chat_renderer_renders_presentation_kind_issue_2701() -> None:
+    """Tier 2: RED→GREEN regression for issue #2701 — `--cui` (`reyn chat --cui`)
+    uses `ConsoleChatRenderer`, not `InlineChatRenderer`. PR-B originally wired
+    `kind="presentation"` only into `format_inline_message` (consumed by
+    `InlineChatRenderer`), so `ConsoleChatRenderer.message()` fell through to its
+    generic branch and printed nothing (`msg.text` is deliberately empty; the
+    render model lives in `msg.meta["nodes"]`) — a `present` op succeeded at the
+    OS level but showed the user nothing in `--cui` mode. RED against the
+    pre-fix code (empty output); GREEN once `ConsoleChatRenderer.message()` also
+    renders `meta["nodes"]`."""
+    import sys as _sys
+    from io import StringIO as _StringIO
+
+    from reyn.interfaces.repl.renderer import ConsoleChatRenderer
+
+    renderer = ConsoleChatRenderer()
+    msg = OutboxMessage(kind="presentation", text="", meta={"nodes": [
+        {"component": "text", "text": "hello from present cui"},
+    ]})
+    captured = _StringIO()
+    real_stdout = _sys.__stdout__
+    _sys.__stdout__ = captured
+    try:
+        renderer.message(msg)
+    finally:
+        _sys.__stdout__ = real_stdout
+    assert "hello from present cui" in captured.getvalue()
+
+
 # ── 5. op_runtime/present.py surface derivation + renderer call ─────────────
 
 
