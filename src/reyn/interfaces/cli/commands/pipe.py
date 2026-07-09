@@ -647,13 +647,12 @@ def run_run(args: argparse.Namespace) -> None:
         )
         sys.exit(1)
 
-    # #2708 P3.2b: the #2686 conditional credential pre-check is GONE from this
-    # per-surface startup path. It moved onto the single LLM funnel
-    # (``recorded_acompletion``): a transform/tool-only pipeline never reaches the
-    # funnel, so it is STRUCTURALLY immune to a missing-cred rejection (the #2686
-    # false-positive-zero property, no longer a hand-maintained
-    # ``pipeline_uses_llm`` guard here); an agent-using pipeline hits the funnel on
-    # its first LLM call and surfaces a typed ``MissingCredentialsError``.
+    # #2708 P3.2b: there is no conditional credential pre-check on this
+    # per-surface startup path. The missing-cred check lives on the single LLM
+    # funnel (``recorded_acompletion``): a transform/tool-only pipeline never
+    # reaches the funnel, so it is STRUCTURALLY immune to a missing-cred rejection
+    # (the #2686 false-positive-zero property); an agent-using pipeline hits the
+    # funnel on its first LLM call and surfaces a typed ``MissingCredentialsError``.
     grant_file_write = bool(getattr(args, "grant_file_write", False))
     # A real, standalone AgentRegistry (registry_bootstrap) so an
     # AgentStep can genuinely spawn+run an ephemeral session — see the module
