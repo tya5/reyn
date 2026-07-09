@@ -94,7 +94,9 @@ bearer token):
 """
 from __future__ import annotations
 
+import logging
 import os
+import signal
 import sys
 import tempfile
 import warnings
@@ -107,6 +109,8 @@ from typing import Any, NoReturn
 # callers that import ``from reyn.mcp.client import expand_env`` continue to
 # work without change.
 from reyn.security.secrets.interpolation import expand_env as expand_env  # noqa: F401
+
+logger = logging.getLogger(__name__)
 
 # ── Errors ───────────────────────────────────────────────────────────────────
 
@@ -257,6 +261,82 @@ def _classify_and_raise(exc: Exception, message: str) -> NoReturn:
     raise MCPError(message) from exc
 
 
+def _extract_stdio_child_pid(fastmcp_client: "Any") -> int | None:
+    """#2714 best-effort: return the OS pid of the stdio subprocess backing
+    ``fastmcp_client``, or None if it can't be located.
+
+    fastmcp 3.4.2's ``StdioTransport`` deliberately keeps the spawned subprocess
+    handle OFF the transport object (its connect-task holds it in a task-local
+    ``AsyncExitStack`` so the task owns no back-reference), and neither fastmcp nor
+    the mcp SDK exposes the pid on any public surface. So we walk the connect-task's
+    coroutine / async-generator frame chain (through the mcp ``stdio_client``
+    generator's ``AsyncExitStack``) to find the ``anyio.abc.Process`` and read its
+    ``pid``.
+
+    Every step is defensive: any structural drift from a fastmcp/mcp upgrade returns
+    None, and the belt-and-suspenders reap then simply falls back to the async
+    graceful teardown — byte-identical to pre-#2714 behaviour. Captured ONCE at
+    connect (structure known-good) and only ever used as a terminate target, so a
+    stale/None value can never do worse than the pre-fix orphan."""
+    try:
+        from anyio.abc import Process as _AnyioProcess
+    except Exception:  # pragma: no cover — anyio ships with fastmcp
+        return None
+    transport = getattr(fastmcp_client, "transport", None)
+    connect_task = getattr(transport, "_connect_task", None)
+    get_coro = getattr(connect_task, "get_coro", None)
+    if get_coro is None:
+        return None
+    try:
+        return _walk_frames_for_process_pid(get_coro(), _AnyioProcess)
+    except Exception:  # noqa: BLE001 — pid capture is best-effort, never fatal
+        return None
+
+
+def _walk_frames_for_process_pid(root_coro: "Any", process_type: type) -> int | None:
+    """Breadth-first walk of a coroutine/async-generator/AsyncExitStack graph rooted
+    at ``root_coro``, returning the ``pid`` of the first ``process_type`` instance
+    found in any frame's locals. Bounded (``id``-deduped, step-capped) so a cyclic
+    or pathological graph can never loop forever. Helper for
+    :func:`_extract_stdio_child_pid` — see there for why the walk is necessary."""
+    pending: list[Any] = [root_coro]
+    seen: set[int] = set()
+    steps = 0
+    while pending and steps < 500:
+        steps += 1
+        node = pending.pop()
+        if node is None or id(node) in seen:
+            continue
+        seen.add(id(node))
+        # An AsyncExitStack node: descend into the context managers it will exit
+        # (the mcp stdio_client generator + the ClientSession live here).
+        callbacks = getattr(node, "_exit_callbacks", None)
+        if callbacks is not None:
+            for cb in callbacks:
+                callback = cb[1] if isinstance(cb, tuple) and len(cb) == 2 else None
+                target = getattr(callback, "__self__", None)
+                gen = getattr(target, "gen", None)  # _AsyncGeneratorContextManager.gen
+                if gen is not None:
+                    pending.append(gen)
+                inner_stack = getattr(target, "_exit_stack", None)  # ClientSession
+                if inner_stack is not None:
+                    pending.append(inner_stack)
+            continue
+        frame = getattr(node, "cr_frame", None) or getattr(node, "ag_frame", None)
+        if frame is not None:
+            for value in frame.f_locals.values():
+                if isinstance(value, process_type):
+                    pid = getattr(value, "pid", None)
+                    if isinstance(pid, int):
+                        return pid
+                if getattr(value, "_exit_callbacks", None) is not None:
+                    pending.append(value)
+        awaited = getattr(node, "cr_await", None) or getattr(node, "ag_await", None)
+        if awaited is not None:
+            pending.append(awaited)
+    return None
+
+
 # ── Client ───────────────────────────────────────────────────────────────────
 
 class MCPClient:
@@ -362,6 +442,14 @@ class MCPClient:
         # never raises).
         self._negotiated_version: str | None = None
         self._server_capabilities: Any = None  # mcp.types.ServerCapabilities | None
+        # #2714 belt-and-suspenders: the OS pid of the stdio subprocess this client
+        # spawned (stdio transport only; None for http/sse and until initialize()
+        # succeeds). Captured best-effort right after the connect handshake and used
+        # as the explicit-terminate target in ``_reap_child_process`` so a normal-exit
+        # teardown that is cut short by a swallowed Windows teardown fault (or a loop
+        # torn down before the async graceful close drains) still reaps the child
+        # rather than orphaning it in Task Manager. See ``_extract_stdio_child_pid``.
+        self._child_pid: int | None = None
 
     @property
     def server_name(self) -> str | None:
@@ -496,6 +584,13 @@ class MCPClient:
 
         self._client = client
         self._initialized = True
+        # #2714: capture the stdio subprocess pid now (structure known-good right
+        # after the handshake) for the belt-and-suspenders reap in close(). Best-
+        # effort and stdio-only — non-stdio transports own no subprocess, and any
+        # structural drift in a future fastmcp/mcp upgrade simply yields None (the
+        # reap then no-ops, falling back to the async graceful teardown).
+        if self._type == "stdio":
+            self._child_pid = _extract_stdio_child_pid(client)
         # #2597 capability/version gate: read the negotiated version + capabilities
         # right after the handshake completes. ``initialize_result`` is populated by
         # ``client.__aenter__()`` above (fastmcp 3.4.2: ``Client.initialize_result``
@@ -742,9 +837,22 @@ class MCPClient:
             _classify_and_raise(exc, f"MCP resources/unsubscribe error: {exc}")
 
     async def close(self) -> None:
-        """Tear down the transport and session. Safe to call repeatedly."""
+        """Tear down the transport and session. Safe to call repeatedly.
+
+        #2714: the graceful ``client.close()`` (fastmcp → mcp ``stdio_client``'s
+        SIGTERM→SIGKILL / Windows Job-Object tree-terminate) is the PRIMARY reaper.
+        But that teardown runs inside anyio cancel scopes that, on Windows, can raise
+        a ``BrokenResourceError`` / ``BaseExceptionGroup`` mid-teardown (the fault the
+        existing seams contain, see connection_service.py / pool.py) — and if that
+        fault (or the event loop tearing down before the async teardown drains) cuts
+        the terminate short, the stdio subprocess survives (Unix reaps orphans; Windows
+        does not). So after the graceful close — whether it succeeds OR raises — a
+        ``finally`` explicitly reaps the captured child pid, guaranteeing the OS
+        subprocess is terminated rather than trusting that a swallowed fault left it
+        dead. On a clean close the child is already gone and the reap is a no-op."""
         if self._client is None:
             self.close_stderr_capture()
+            self._reap_child_process()  # nothing opened, or already closed once — still idempotent
             return
         client = self._client
         self._client = None
@@ -758,9 +866,59 @@ class MCPClient:
         try:
             await client.close()
         except Exception:
-            # Best-effort cleanup; transport may already be down.
+            # Best-effort graceful cleanup; transport may already be down. The
+            # belt-and-suspenders reap in the finally still terminates the OS
+            # subprocess even when this graceful path raised (the #2714 guard).
             pass
-        self.close_stderr_capture()
+        finally:
+            # #2714: explicit terminate runs on BOTH the success and the fault path
+            # (finally, not just after — a BaseExceptionGroup from the anyio teardown
+            # would otherwise skip it), so a Windows teardown fault can never leave the
+            # child alive.
+            self._reap_child_process()
+            self.close_stderr_capture()
+
+    def _reap_child_process(self) -> None:
+        """#2714 belt-and-suspenders: synchronously terminate the captured stdio child
+        subprocess if it is still alive. Idempotent + best-effort — never raises.
+
+        The async graceful teardown normally leaves the child already dead, so the
+        common case is ``ProcessLookupError`` (already gone) → a no-op. This exists for
+        the path where the graceful teardown did NOT complete (a swallowed Windows
+        teardown fault, or a loop torn down before it drained): a plain synchronous
+        ``os.kill`` reaps the child without needing a live event loop.
+
+        Scope note (honest bound): this reaps the DIRECT child pid via stdlib
+        ``os.kill`` only (psutil is not a dependency), which is exactly the reported
+        leak (``python -m <server>`` / an ``execvp``-preserving sandbox wrapper, whose
+        direct child IS the server — verified). Full process-TREE termination (a server
+        that itself forks grandchildren) stays owned by the graceful path's
+        SIGTERM→SIGKILL / Windows Job-Object teardown."""
+        pid = self._child_pid
+        if pid is None:
+            return
+        self._child_pid = None
+        # SIGKILL is absent on Windows; os.kill(pid, SIGTERM) there maps to
+        # TerminateProcess — either way an unconditional, immediate terminate.
+        sig = getattr(signal, "SIGKILL", signal.SIGTERM)
+        try:
+            os.kill(pid, sig)
+        except (ProcessLookupError, ChildProcessError):
+            return  # already gone — the graceful path reaped it (the common no-op case)
+        except OSError as exc:  # e.g. EPERM — never fail teardown on the reap
+            logger.warning("MCP subprocess reap (pid=%s) failed: %r", pid, exc)
+            return
+        # POSIX: the child was spawned in-process (anyio.open_process) so it is OUR
+        # child — waitpid it so the freshly SIGKILL'd process doesn't linger as a
+        # zombie (itself a leftover process). Blocks only until the just-killed child
+        # is reaped (immediate); a concurrent reap by asyncio's child watcher surfaces
+        # as ChildProcessError, which is fine. Windows has no zombies and no waitpid
+        # for a non-os-spawned pid, so skip it there.
+        if os.name == "posix":
+            try:
+                os.waitpid(pid, 0)
+            except (ChildProcessError, OSError):
+                pass
 
     # ── stderr capture (stdio only) ─────────────────────────────────────────
 

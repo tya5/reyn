@@ -3004,15 +3004,35 @@ class AgentRegistry:
             if not t.done():
                 t.cancel()
         tasks = self.running_tasks()
-        if not tasks:
-            return
-        # Cooperative grace, then hard-cancel any straggler (cancelled forwarders
-        # finish immediately; a stuck session.run lands in `pending`).
-        _done, pending = await asyncio.wait(tasks, timeout=_SHUTDOWN_GRACE_S)
-        for t in pending:
-            t.cancel()
-        if pending:
-            await asyncio.gather(*pending, return_exceptions=True)
+        if tasks:
+            # Cooperative grace, then hard-cancel any straggler (cancelled forwarders
+            # finish immediately; a stuck session.run lands in `pending`).
+            _done, pending = await asyncio.wait(tasks, timeout=_SHUTDOWN_GRACE_S)
+            for t in pending:
+                t.cancel()
+            if pending:
+                await asyncio.gather(*pending, return_exceptions=True)
+        # #2714: close held MCP connections (Option C) for EVERY loaded session on the
+        # NORMAL-exit path too — the REPL's /quit + Ctrl-C/EOF (interfaces/repl/repl.py)
+        # route through here, but pre-#2714 only ``remove_session`` (spawned-session
+        # drop) and ``archive_agent`` (DELETE) ran the MCP teardown, so the MAIN
+        # interactive session's held stdio subprocesses were orphaned on every ordinary
+        # exit (accumulating in Windows Task Manager — Unix reaps them, Windows does
+        # not). Run AFTER the run-loop tasks have drained/cancelled above so no in-flight
+        # MCP call races the close, and while this event loop is still alive (this async
+        # method is awaited before the loop tears down — an async close needs a live
+        # loop; MCPClient.close's synchronous belt-and-suspenders reap covers the case
+        # where a teardown fault or loop-teardown cuts the graceful close short). A
+        # no-op for ephemeral sessions (never populate the connection service) and
+        # sessions built without one (getattr guard) — mirrors remove_session/
+        # archive_agent's teardown seam.
+        for _name, session in self._iter_named_sessions():
+            aclose_mcp = getattr(session, "aclose_mcp_connections", None)
+            if callable(aclose_mcp):
+                try:
+                    await aclose_mcp()
+                except Exception as exc:
+                    logger.warning("MCP connection teardown failed for %r: %s", _name, exc)
 
     def loaded_names(self) -> list[str]:
         return list(self._sessions.keys())
