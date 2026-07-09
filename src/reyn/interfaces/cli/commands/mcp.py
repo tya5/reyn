@@ -333,8 +333,9 @@ def run_serve(args: argparse.Namespace) -> None:
     from reyn.security.permissions.permissions import PermissionResolver
 
     session_cfg = InvocationContext.from_args(args)
-    from reyn.interfaces.cli.credentials_check import verify_credentials_or_exit
-    verify_credentials_or_exit(session_cfg, args)
+    # #2708 P3.2b: missing-cred pre-check moved onto the single LLM funnel
+    # (``recorded_acompletion``) — no per-surface startup gate. It surfaces as a
+    # typed ``MissingCredentialsError`` through this command's error boundary.
     model, _ = session_cfg.model_for(args)
     output_language = session_cfg.output_language_for(args)
     safety = session_cfg.safety_for(args)

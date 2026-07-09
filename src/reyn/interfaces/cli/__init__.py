@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import argparse
 
+from reyn.llm.credentials import MissingCredentialsError
+
 from .commands import ALL as _COMMANDS
 
 
@@ -26,7 +28,17 @@ def build_parser() -> argparse.ArgumentParser:
 def main() -> None:
     parser = build_parser()
     args = parser.parse_args()
-    args.func(args)
+    try:
+        args.func(args)
+    except MissingCredentialsError as exc:
+        # #2708 P3.2b: the CLI error boundary for the typed missing-cred error
+        # raised at the LLM funnel (``recorded_acompletion``). Renders the same
+        # actionable "no API key" message the removed per-surface startup gates
+        # printed, then exits 1 — friendly stderr + exit, no raw litellm stack.
+        import sys
+
+        sys.stderr.write(f"Error: {exc.user_message()}\n")
+        sys.exit(1)
 
 
 if __name__ == "__main__":

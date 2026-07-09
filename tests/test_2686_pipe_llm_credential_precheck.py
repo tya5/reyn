@@ -1,30 +1,24 @@
-"""Tier 1/2: #2686 — CONDITIONAL LLM credential pre-check for ``reyn pipe run``.
+"""Tier 1/2: #2686/#2708 — ``pipeline_uses_llm`` classification + LLM-less
+``reyn pipe run`` never rejected for missing creds.
 
-``reyn pipe run`` gains ``reyn chat``'s early "no API key set" pre-check, but
-fires it ONLY when the resolved pipeline actually uses an LLM (``pipeline_uses_llm``)
-and only AFTER pipeline resolution. A PRIOR attempt (#2685) added the check
-UNCONDITIONALLY and regressed: it ``SystemExit``-ed legitimate transform/tool-only
-pipelines whose provider env var was merely unset, and preempted the "pipeline not
-registered" error. That was reverted; #2686 re-adds it conditionally.
+Since #2708 P3.2b the missing-cred pre-check moved OFF ``reyn pipe run``'s
+per-surface startup gate and ONTO the single LLM funnel (``recorded_acompletion``,
+tested in ``test_2708_cred_check_chokepoint.py``). Two things survive here:
 
-Structure of this file:
-
-- Tier 1 completeness gate: every ``_STEP_KINDS`` step type is classified into
-  exactly one LLM bucket (llm-leaf / non-llm-leaf / container). A new kind is RED
-  until classified — a silent non-LLM default would unsoundly disable the check.
-- Tier 1 per-kind behaviour falsify: the gate catches MISSING classification but
-  not WRONG classification, so each container kind (fold/for_each/parallel/call/
-  match) gets a minimal pipeline reaching an ``AgentStep`` ONLY through it →
-  predicate True; transform/tool/shell-only → False (false-positive-zero).
-- Tier 2 integration/core: the extracted config-level core
-  (``verify_model_credentials_or_exit``) exits/short-circuits correctly, and
-  ``run_run`` drives it — a non-LLM pipeline runs WITHOUT SystemExit even with
-  every provider key unset (the #2685 regression, pinned dead); an agent pipeline
-  with no key + no proxy exits early; "not registered" surfaces its own error.
+- ``pipeline_uses_llm`` remains an OPTIONAL early-UX predicate (no longer
+  load-bearing for correctness). Its Tier-1 classification contract still holds:
+  every ``_STEP_KINDS`` kind is classified into exactly one LLM bucket, and each
+  container kind (fold/for_each/parallel/call/match) reaching an ``AgentStep``
+  ONLY through it → predicate True; transform/tool/shell-only → False.
+- The #2686 false-positive-zero property is now STRUCTURAL: an LLM-less
+  (transform/tool-only) pipeline never reaches the funnel, so it can never be
+  rejected for a missing provider key. ``run_run`` on a transform-only pipeline
+  runs to completion even with every provider key unset (the reverted #2685
+  regression, pinned dead — now by construction, not a hand-maintained guard).
+  A "not registered" name still surfaces its own resolution error.
 
 Real dataclasses / real ``PipelineRegistry`` / real ``load_config`` / real
-``run_run`` — no mocks. The credential pre-check for the agent-pipeline case
-exits BEFORE any LLM spawn, so no LLM replay is needed here.
+``run_run`` — no mocks.
 """
 from __future__ import annotations
 
@@ -55,7 +49,6 @@ from reyn.core.pipeline.executor import (
 )
 from reyn.core.pipeline.registry import PipelineRegistry
 from reyn.interfaces.cli.commands.pipe import register, run_run
-from reyn.interfaces.cli.credentials_check import verify_model_credentials_or_exit
 
 _PROVIDER_KEYS = ("OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GEMINI_API_KEY", "AZURE_API_KEY")
 
@@ -252,27 +245,16 @@ def test_nested_container_over_call_to_agent_uses_llm() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Tier 2 — the extracted config-level credential core
+# Tier 2 — run_run integration (LLM-less pipeline is never cred-rejected)
 # ---------------------------------------------------------------------------
 
 
-def _load_config_at(tmp_path: Path, monkeypatch, *, api_base: str | None):
-    """Write a minimal reyn.yaml (optionally with api_base) and load it."""
-    from reyn.config import load_config
-    data: dict = {"model": "standard", "models": {"standard": "openai/gpt-4o-mini"}}
-    if api_base is not None:
-        data["api_base"] = api_base
-    (tmp_path / "reyn.yaml").write_text(
-        yaml.dump(data, allow_unicode=True, default_flow_style=False), encoding="utf-8",
-    )
-    monkeypatch.chdir(tmp_path)
-    return load_config()
-
-
 @pytest.fixture
-def _keys_unset(monkeypatch):
+def _keys_unset(monkeypatch, _provider_credentials_present):
     """Every provider env var (and the proxy switch) unset — reproduces the CI
-    environment the #2685 regression was masked away from locally.
+    environment the #2685 regression was masked away from locally. Depends on
+    ``_provider_credentials_present`` (the conftest autouse dummy-cred fixture)
+    so this ``delenv`` runs AFTER its ``setenv`` and wins.
 
     LITELLM_API_BASE is cleared via direct ``os.environ.pop`` (the autouse
     ``_restore_litellm_api_base`` fixture owns its restore) rather than
@@ -282,45 +264,6 @@ def _keys_unset(monkeypatch):
     for key in _PROVIDER_KEYS:
         monkeypatch.delenv(key, raising=False)
     os.environ.pop("LITELLM_API_BASE", None)
-
-
-def test_core_exits_when_key_unset_and_no_proxy(tmp_path, monkeypatch, _keys_unset) -> None:
-    """Tier 2: no api_base + known provider prefix + env var unset → SystemExit(1)
-    with an actionable message. This is the ONLY exit case."""
-    config = _load_config_at(tmp_path, monkeypatch, api_base=None)
-    with pytest.raises(SystemExit) as exc:
-        verify_model_credentials_or_exit(config, "openai/gpt-4o-mini")
-    assert exc.value.code == 1
-
-
-def test_core_no_exit_when_key_present(tmp_path, monkeypatch, _keys_unset) -> None:
-    """Tier 2: env var set → no exit (returns None)."""
-    config = _load_config_at(tmp_path, monkeypatch, api_base=None)
-    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
-    assert verify_model_credentials_or_exit(config, "openai/gpt-4o-mini") is None
-
-
-def test_core_proxy_api_base_is_a_no_op(tmp_path, monkeypatch, _keys_unset) -> None:
-    """Tier 2: api_base (proxy) set → no-op even with the provider key unset —
-    the proxy handles auth. This is the branch that makes an agent pipeline under
-    a proxy config proceed without an early exit (the user's real dogfood setup)."""
-    config = _load_config_at(tmp_path, monkeypatch, api_base="http://localhost:4000")
-    assert verify_model_credentials_or_exit(config, "openai/gpt-4o-mini") is None
-
-
-def test_core_none_bare_and_unknown_provider_are_no_ops(tmp_path, monkeypatch, _keys_unset) -> None:
-    """Tier 2: resolver-failure (None), a bare model name (no '/'), and an
-    unknown provider prefix all early-return — the check is deliberately narrow
-    (false positives are worse than a late litellm error)."""
-    config = _load_config_at(tmp_path, monkeypatch, api_base=None)
-    assert verify_model_credentials_or_exit(config, None) is None
-    assert verify_model_credentials_or_exit(config, "gpt-4o-mini") is None
-    assert verify_model_credentials_or_exit(config, "cohere/command-r") is None
-
-
-# ---------------------------------------------------------------------------
-# Tier 2 — run_run integration (the conditional gate, end to end)
-# ---------------------------------------------------------------------------
 
 
 def _write_reyn_yaml(root: Path, entries: dict) -> None:
@@ -351,9 +294,10 @@ def test_register_parses_run_subcommand() -> None:
 def test_run_non_llm_pipeline_does_not_exit_with_keys_unset(
     tmp_path, monkeypatch, capsys, _keys_unset,
 ) -> None:
-    """Tier 2: THE #2685 regression, pinned dead. A transform-only pipeline runs
-    to completion via ``run_run`` even with EVERY provider key unset and no proxy
-    — the conditional check must NOT fire for a non-LLM pipeline."""
+    """Tier 2: THE #2685 regression, pinned dead — now STRUCTURAL. A transform-only
+    pipeline runs to completion via ``run_run`` even with EVERY provider key unset
+    and no proxy: it never reaches the LLM funnel (``recorded_acompletion``), so it
+    is by construction immune to a missing-cred rejection (#2708 P3.2b)."""
     monkeypatch.chdir(tmp_path)
     (tmp_path / "hello.yaml").write_text(
         "pipeline: hello_cli\n"
@@ -371,28 +315,6 @@ def test_run_non_llm_pipeline_does_not_exit_with_keys_unset(
 
     result = json.loads(capsys.readouterr().out)
     assert result["pipe_data"] == "hello world"
-
-
-def test_run_agent_pipeline_exits_early_when_key_unset_no_proxy(
-    tmp_path, monkeypatch, capsys, _keys_unset,
-) -> None:
-    """Tier 2: an agent (LLM) pipeline with the provider key unset AND no proxy
-    exits early (code 1) with the credential message — AFTER pipeline resolution,
-    BEFORE any LLM spawn."""
-    monkeypatch.chdir(tmp_path)
-    (tmp_path / "agent.yaml").write_text(
-        "pipeline: agent_cli\n"
-        "steps:\n"
-        "  - agent: {prompt: \"summarize {pipe}\", identity: default}\n",
-        encoding="utf-8",
-    )
-    _write_reyn_yaml(tmp_path, {"agent_cli": {"path": "agent.yaml"}})
-
-    args = _ns(name="agent_cli", input="{}", project=str(tmp_path), async_=False)
-    with pytest.raises(SystemExit) as exc:
-        run_run(args)
-    assert exc.value.code == 1
-    assert "no api key" in capsys.readouterr().err.lower()
 
 
 def test_run_unregistered_pipeline_surfaces_its_own_error_not_cred(
