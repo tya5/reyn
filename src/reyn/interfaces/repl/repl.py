@@ -130,19 +130,41 @@ async def _input_loop(
         if attached is None:
             renderer.message(_simple_status("no agent attached; try :agents"))
             continue
-        # Mark a reply as in flight before submit so the pacing gate on
-        # the next iteration blocks until the output loop signals it.
-        # `/`-prefixed slash commands (`/list`, `/attach`, `/answer`, ...)
-        # bypass the router and emit only `status` (no router reply),
-        # so clearing the gate for them would deadlock the next pipe
-        # iteration. `/quit` and `/exit` are handled above and never
-        # reach this branch. Intervention answers (plain text that
-        # happens to answer a pending ask_user) can still deadlock the
-        # pipe; that path is rare in scripted use and tracked as a
-        # known limitation.
-        if reply_seen is not None and not text.startswith("/"):
-            reply_seen.clear()
-        await attached.submit_user_text(text)
+        await _route_input_line(attached, text, reply_seen)
+
+
+async def _route_input_line(attached, text: str, reply_seen: "asyncio.Event | None") -> None:
+    """Route one non-quit REPL line to the attached session.
+
+    A pending intervention (permission prompt, ask_user, safety-limit) suspends
+    the router turn on the intervention's future — and that turn is the SOLE
+    consumer of the session inbox, so an answer routed the ordinary way
+    (``submit_user_text`` → inbox) can never be dequeued while the turn is
+    blocked: the future is never resolved and the session hangs indefinitely
+    (#2690 — the file-write approval prompt "never resumes after answering y").
+    A non-slash line is therefore delivered DIRECTLY to the pending intervention
+    via ``answer_oldest_intervention_text`` (the same session seam the inline
+    CUI's concurrent region poll uses), bypassing the inbox so the future
+    resolves and the blocked turn resumes.
+
+    Ordinary turns (no pending intervention) still flow through
+    ``submit_user_text``; a ``/``-prefixed line is never an intervention answer,
+    so it is left on the normal slash/inbox path. The direct-delivery result is
+    checked so a race where the intervention resolves between the head-check and
+    the deliver falls back to a normal turn instead of being dropped.
+    """
+    if not text.startswith("/") and attached.interventions.head() is not None:
+        if await attached.answer_oldest_intervention_text(text):
+            return
+    # Mark a reply as in flight before submit so the pacing gate on the next
+    # iteration blocks until the output loop signals it. `/`-prefixed slash
+    # commands (`/list`, `/attach`, `/answer`, ...) bypass the router and emit
+    # only `status` (no router reply), so clearing the gate for them would
+    # deadlock the next pipe iteration. `/quit` and `/exit` are handled by the
+    # caller and never reach here.
+    if reply_seen is not None and not text.startswith("/"):
+        reply_seen.clear()
+    await attached.submit_user_text(text)
 
 
 async def _output_loop(
