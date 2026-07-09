@@ -178,7 +178,7 @@ mindmap
       /tasks view
     🖥️ Inline CUI
       Conversation view
-      Status chips (Agents/Cost/Model/Tools/MCP/Skills/Hooks/Pipes/Cron/Tasks)
+      Status chips (Agents/Cost/Model/Ctx/Tools/MCP/Skills/Hooks/Pipes/Cron/Tasks)
       Tool-result one-line summaries
       Above-input region (interventions, command UIs)
       Input + slash-command completion
@@ -595,7 +595,7 @@ still use the plain `ConsoleChatRenderer`.
 | Feature | Description | Documentation |
 |---------|-------------|---------------|
 | Conversation view | Streaming conversation in scrollback with terracotta-accented `⏺`/`⎿` markers per message kind (agent/status/error/intervention/trace) | — |
-| Status chips | Live one-line chip bar above the input: Agents / Cost / Model / Tools / MCP / Skills / Hooks / Pipes / Cron / Tasks, each expandable in place | — |
+| Status chips | Live one-line chip bar above the input: Agents / Cost / Model / Ctx / Tools / MCP / Skills / Hooks / Pipes / Cron / Tasks, each expandable in place — Ctx shows current context size vs the model's context window as a Claude Code-style %, with a dropdown for window source (litellm catalog vs fallback), cache-hit rate, and the compaction subsystem's own separate estimate | — |
 | Tool-result summaries | `summarize_tool_result` renders a best-effort one-line, per-tool summary (e.g. `Read 42 lines`, `3 matches`); always degrades gracefully to a truncated repr, never a full content preview | — |
 | Above-input region | Closed-set interventions (confirm/select/grant-deny) and command UIs (e.g. the `/rewind` checkpoint picker) render as a selectable row list above the input, rather than a modal | [Permission model](concepts/runtime/permission-model.md) |
 | Input + slash-command completion | Input bar with `/`-prefixed command autocomplete (`/plan`, `/compact`, `/find`, `/help`, `/clear`, …) | — |
