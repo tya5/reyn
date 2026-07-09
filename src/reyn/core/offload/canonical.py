@@ -601,6 +601,45 @@ def to_canonical(result: dict, *, source: "str | None" = None) -> CanonicalToolR
     return declaration(result)
 
 
+# The audit-event kind the two live ``to_canonical`` callers emit when a result took a VISIBLE
+# fallback path — the observability half of FP-0056 (the static coverage gate is PR-F1; this makes
+# the runtime debt + genuine-unknown fallbacks visible instead of silent). It is an audit / P6 event,
+# NOT a WAL / recovery-core event.
+CANONICAL_FALLBACK_EVENT = "canonical_fallback_used"
+
+
+def canonical_fallback_reason(
+    source: "str | None", *, structured_offloaded: bool = False
+) -> "str | None":
+    """Return the audit reason a :data:`CANONICAL_FALLBACK_EVENT` should carry for ``source``'s
+    canonicalization, or ``None`` when nothing should fire (FP-0056 PR-F2 — the visibility half).
+
+    A short category string is returned on each of the three fail-visible paths (owner decisions #2/#3
+    — degrade-with-audit, never silently):
+
+    - ``source`` unregistered / ``None`` (a genuine unknown the registries can't enumerate → the
+      lossless whole-dict fallback) → ``"unregistered"``.
+    - ``source`` declared :data:`CANONICAL_TODO` (gate-satisfying debt, no real mapper yet → the same
+      whole-dict fallback) → ``"canonical_todo"``. This is the #2681 burn-down debt made runtime-visible.
+    - ``source`` declared :data:`STRUCTURED_PASSTHROUGH` whose whole-dict serialization exceeded the
+      structured offload gate (caller passes ``structured_offloaded=True``) → ``"passthrough_oversized"``
+      (owner decision #2: an oversized passthrough blob signals passthrough was the wrong choice for
+      this producer — make it visible). A SMALL (inline) passthrough is a reviewed, legitimate view →
+      ``None`` (no event).
+
+    A real mapper always returns ``None`` — a mapped producer never took a fallback. Only a reason
+    CATEGORY is returned; NO result content is ever returned or logged (audit signal, not data — the
+    callers emit the ``source`` id + this reason, never the result body)."""
+    declaration = canonical_declaration(source)
+    if declaration is None:
+        return "unregistered"
+    if declaration is CANONICAL_TODO:
+        return "canonical_todo"
+    if declaration is STRUCTURED_PASSTHROUGH and structured_offloaded:
+        return "passthrough_oversized"
+    return None
+
+
 _CANONICAL_SOURCE_KEY = "_canonical_source"
 
 
