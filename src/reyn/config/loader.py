@@ -473,6 +473,24 @@ def load_config(cwd: Path | None = None) -> ReynConfig:
         if _ap is True or (isinstance(_ap, str) and _ap.strip().lower() in ("1", "true", "yes", "on")):
             _os_for_mcp.environ["REYN_FETCH_ALLOW_PRIVATE_IPS"] = "1"
 
+    # #2682: propagate ``api_base`` into the ``LITELLM_API_BASE`` env var — the
+    # single switch litellm reads (``reyn.llm.llm.proxy_kwargs`` / the embedding
+    # ``_proxy_kwargs`` mirror) to route a request to the LiteLLM proxy instead
+    # of the real upstream endpoint. ``load_config()`` is the one universal
+    # chokepoint EVERY LLM entry point passes before its first LLM call
+    # (``reyn pipe run`` / dogfood / embeddings call it directly; chat/run/mcp
+    # reach it via ``InvocationContext.from_args``; web via ``_get_registry``),
+    # so folding the export here closes the whole class at once — including the
+    # embeddings path the per-entry inline copies never covered. Mirrors the
+    # REYN_* exports above: explicit operator-set env var wins (idempotent
+    # ``setdefault``); an absent/empty ``api_base`` is a no-op. The pre-existing
+    # inline copies (``invocation_context.py`` / ``web/deps.py``) are now
+    # redundant but harmless (same ``setdefault`` value); their removal + a
+    # single-writer AST/CI guard is #2683.
+    _api_base = str(merged.get("api_base") or "")
+    if _api_base:
+        _os_for_mcp.environ.setdefault("LITELLM_API_BASE", _api_base)
+
     raw_ol = merged.get("output_language")
     output_language: str | None
     if isinstance(raw_ol, str) and raw_ol.strip():
