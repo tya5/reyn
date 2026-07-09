@@ -12,6 +12,6 @@ audience: [human, agent]
 
 # reyn
 
-**LLM workflow OS — phase transitions as a constrained decision graph.**
+**An operating system for LLM agents — they decide, organize, and orchestrate; the OS makes every action typed, permissioned, audited, and recoverable by construction.**
 
 **→ [Start here](start.md)** — orientation and where to go next.

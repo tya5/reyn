@@ -3,6 +3,33 @@
 Tier 1 hard rules for code-writing agents. Read on demand for rationale and
 deep dives via the references at the bottom.
 
+## Constitution
+
+> **Reyn is an operating system for LLM agents** — they decide, organize, and orchestrate; the OS makes every action typed, permissioned, audited, and recoverable by construction.
+
+Every new feature is read through **eight engineering lenses** and must stand on the **cross-cutting band**. A lens asks *"does this do X well?"*; the band asks *"does this obey the universals at all?"* — fail a band member and it does not ship.
+
+### The eight lenses — each line is the pass-line (a gate for new work)
+1. **System Design** — responsibility sits at the right layer (LLM decides / OS executes / feature owns its domain); no new cross-layer coupling.
+2. **Tool Contract** — every side effect rides a typed, validated envelope (Control IR / a typed op), never an untyped string the LLM free-forms.
+3. **Retrieval** — the right context is delivered deterministically at the right time (`recall` + the preprocessor step), not stuffed unconditionally into the prompt.
+4. **Reliability** — it recovers from failure (schema-validate + re-prompt, bounded loops with graceful force-close, timeout + opt-in provider-retry); any derived state survives WAL truncation.
+5. **Security** — it is permission-gated and sandbox-scoped; no capability reaches the world without passing the gatekeeper.
+6. **Evaluation** — its output can be scored against a rubric in-run (`judge_output`: LLM scorer + threshold + `on_fail` policy).
+7. **Observability** — it leaves an audit-event trace sufficient to inspect and reconstruct what happened (the P6 audit log, `reyn events` replay, live audit chips).
+8. **Product Think** — it is predictable, cost-disciplined, and legible to the operator (CLI/CUI affordance, cost reporting, and token-cost *reduction* such as zero-token `present`/offload).
+
+### The cross-cutting band — the foundation every feature obeys
+**permission · audit-events · workspace-SSoT · crash-recovery (WAL) · cost/budget (bounding).**
+
+Three lenses name a *discipline* whose *universal mechanism* is a band member: **Security ↔ permission**, **Reliability ↔ crash-recovery (WAL)**, **Observability ↔ audit-events**. The band is where the still-true P5 (workspace) / P6 (events) / P7 (OS-domain-agnostic) survive, demoted from "principles" to the substrate every lens-cell stands on.
+
+*Two honest thin areas (where new work is most valuable): **Retrieval** (`recall` + a RAG framework to build on, not a fixed pipeline) and **Evaluation** (`judge_output` is the surviving eval surface; the eval-export subsystem was removed).*
+
+*"event" is three distinct things — **audit-event** (P6 `.reyn/events`, the audit trail) / **WAL-event** (`.reyn/state/wal.jsonl`, the recovery substrate) / **hook-event** (lifecycle+external reactivity triggers). Never write bare "event".*
+
+*(The full 8×7 populated table lives in `docs/concepts/architecture/charter.md`; this skeleton is the durable core agents read before new work. Tagline: hero = the line above (T1); one-liner/meta = "An agent OS where agency is bounded by construction — decide, spawn, orchestrate, but only through typed, permissioned, auditable, rewindable ops." (T3).)*
+
 ## Hard rules
 
 - **`docs/reference/runtime/control-ir.md` must stay synced with `OP_KIND_MODEL_MAP`** in `src/reyn/schemas/models.py` (#1983: relocated there from `op_runtime/registry.py` so the `Op` union derives from the same map). New op kinds get a section in the reference in the same PR.
