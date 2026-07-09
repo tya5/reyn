@@ -647,32 +647,13 @@ def run_run(args: argparse.Namespace) -> None:
         )
         sys.exit(1)
 
-    # #2686: credential pre-check, CONDITIONAL on the pipeline actually using an
-    # LLM. ``reyn pipe run`` builds NO InvocationContext, so we resolve
-    # ``config.model`` ourselves and call the config-level core directly. This
-    # runs AFTER pipeline resolution (so "not registered" / parse / validation
-    # errors surface first — the #2685 lesson) and fires ONLY for LLM-using
-    # pipelines (``pipeline_uses_llm``, a false-positive-zero under-approximation)
-    # so a legitimate transform/tool-only pipeline is NEVER SystemExit-ed when a
-    # provider env var happens to be unset (the reverted #2685 regression). The
-    # proxy path is already a no-op inside the core (``config.api_base`` short-
-    # circuit), so no new proxy/credential logic lives here.
-    from reyn.core.pipeline.executor import pipeline_uses_llm
-    from reyn.interfaces.cli.credentials_check import verify_model_credentials_or_exit
-
-    if pipeline_uses_llm(pipeline, pipeline_registry):
-        from reyn.llm.model_resolver import ModelResolver
-
-        try:
-            resolved_model: "str | None" = ModelResolver(
-                config.models,
-                default_class=config.model,
-                purpose_classes=config.model_class_by_purpose,
-            ).resolve(config.model).model
-        except Exception:
-            resolved_model = None  # resolver failure — let downstream surface it
-        verify_model_credentials_or_exit(config, resolved_model)
-
+    # #2708 P3.2b: the #2686 conditional credential pre-check is GONE from this
+    # per-surface startup path. It moved onto the single LLM funnel
+    # (``recorded_acompletion``): a transform/tool-only pipeline never reaches the
+    # funnel, so it is STRUCTURALLY immune to a missing-cred rejection (the #2686
+    # false-positive-zero property, no longer a hand-maintained
+    # ``pipeline_uses_llm`` guard here); an agent-using pipeline hits the funnel on
+    # its first LLM call and surfaces a typed ``MissingCredentialsError``.
     grant_file_write = bool(getattr(args, "grant_file_write", False))
     # A real, standalone AgentRegistry (registry_bootstrap) so an
     # AgentStep can genuinely spawn+run an ephemeral session — see the module

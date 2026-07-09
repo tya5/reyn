@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Coroutine, NamedTuple, TypeVar, Union
 import httpx
 
 logger = logging.getLogger(__name__)
+from reyn.llm.credentials import check_model_credentials
 from reyn.llm.json_parse import loads_lenient
 from reyn.llm.model_resolver import ModelSpec
 from reyn.llm.pricing import TokenUsage, estimate_cost
@@ -1528,6 +1529,19 @@ async def recorded_acompletion(
 
     # #309: per-class routing (api_base/provider) wins; None → global proxy_kwargs().
     extra = routing if routing is not None else proxy_kwargs()
+
+    # #2708 P3.2b: the ONE credential pre-check, at the single LLM funnel. Every
+    # surface (CLI / web / chainlit / dogfood / agent-step spawn / pipeline
+    # driver) funnels here, so a friendly missing-cred error is universal BY
+    # CONSTRUCTION — no per-surface startup gate to hand-wire or let drift. The
+    # effective ``api_base`` (per-class routing OR global proxy) → skip (proxy
+    # handles auth), preserving the narrow-by-design contract EXACTLY. An
+    # LLM-less run never reaches here, so it can never be rejected for missing
+    # creds (#2686 false-positive-zero, now structural). Fires before litellm is
+    # touched, so no network call is wasted on a knowably-uncredentialled model.
+    _cred_miss = check_model_credentials(model=model, api_base=extra.get("api_base"))
+    if _cred_miss is not None:
+        raise _cred_miss
     # Strip the provider prefix ONLY when routing to an api_base endpoint
     # (OpenAI-compatible proxy expects a bare model + custom_llm_provider). A
     # direct-provider route (provider set, no api_base) keeps the prefix so

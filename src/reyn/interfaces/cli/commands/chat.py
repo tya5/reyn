@@ -282,8 +282,10 @@ def run(args: argparse.Namespace) -> None:
         _setup_interactive_logging(project_root)
 
     session_cfg = InvocationContext.from_args(args)
-    from reyn.interfaces.cli.credentials_check import verify_credentials_or_exit
-    verify_credentials_or_exit(session_cfg, args)
+    # #2708 P3.2b: the missing-cred pre-check moved OFF this per-surface startup
+    # gate and ONTO the single LLM funnel (``recorded_acompletion``). It now
+    # fires on the FIRST LLM call (early for any LLM run) and surfaces as a typed
+    # ``MissingCredentialsError`` rendered by the CLI error boundary (main()).
     # ``model`` (= tier key like "standard" / "strong") drives Session's
     # ModelResolver. ``resolved_model`` (= the litellm string like
     # "openai/gemini-2.5-flash-lite") is what the header should surface so

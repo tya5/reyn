@@ -59,6 +59,24 @@ def _isolated_secrets(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.fixture(autouse=True)
+def _provider_credentials_present(monkeypatch: pytest.MonkeyPatch) -> None:
+    """#2708 P3.2b: present dummy provider credentials by default.
+
+    The missing-cred check now fires at the single LLM funnel
+    (``recorded_acompletion``) BEFORE any ``litellm.acompletion`` stub / replay.
+    So a unit or replay test that fakes the provider call still funnels through
+    the check — and a real run needs credentials to make an LLM call at all. The
+    default test environment therefore presents provider credentials, exactly as
+    a configured machine would. A test that specifically exercises the MISSING-
+    cred path unsets these (see the ``_keys_unset`` fixtures in
+    ``test_2686_*`` / ``test_2708_*``, which depend on this fixture so their
+    ``delenv`` runs AFTER this ``setenv`` and wins). Tests that set their own
+    provider key / proxy ``api_base`` override these unconditionally."""
+    for var in ("OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GEMINI_API_KEY", "AZURE_API_KEY"):
+        monkeypatch.setenv(var, "test-key")
+
+
+@pytest.fixture(autouse=True)
 def _isolate_budget_limit_context():
     """Reset ``reyn.llm.llm._llm_call_limit_context_var`` after every test.
 
