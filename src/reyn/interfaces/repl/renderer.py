@@ -302,11 +302,11 @@ _SPINNER = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
 # Glyphs are distinct per kind so the eye separates them; colour is reserved for
 # STATE — default terminal fg (_CC_TEXT), then amber=needs-you, red=error,
 # green=done, dim=ambient/low — so a coloured glyph always signals something to
-# notice. Distinct glyphs: ⏺ assistant · ❯ you · ▸ tool · ◆ needs-you · ✗ error ·
+# notice. Distinct glyphs: ● assistant · ❯ you · ▸ tool · ◆ needs-you · ✗ error ·
 # ✓ done · · status · ⎿ detail.
 _KIND_LINE = {
     "user":         ("❯ ",   _CC_TEXT,   _CC_DIM),   # your input  (default fg, + bg block)
-    "agent":        ("⏺ ",   _CC_TEXT,   _CC_TEXT),  # normal reply — terminal default fg
+    "agent":        ("● ",   _CC_TEXT,   _CC_TEXT),  # normal reply — terminal default fg
     "reasoning":    ("· ",   _CC_DIM,    _CC_DIM),   # model thinking (dim; only shown when chat.reasoning.display=true)
     "intervention": ("◆ ",   _CC_WARN,   "bold"),    # needs you   — amber
     "error":        ("✗ ",   _CC_ERR,    _CC_ERR),   # error       — red
@@ -616,7 +616,7 @@ def _body_renderable(kind: str, text: str, body_style: str):
     if kind == "agent":
         # rich.Markdown centers H1 by default (LEVEL_ALIGN = {"h1": "center"}).
         # In a gutter-grid chat context that produces heavy leading whitespace —
-        # "⏺                          My Heading". Override to left for all levels.
+        # "●                          My Heading". Override to left for all levels.
         class _LeftHeading(Heading):
             LEVEL_ALIGN = {tag: "left" for tag in Heading.LEVEL_ALIGN}
 
@@ -651,7 +651,7 @@ def format_inline_message(msg: OutboxMessage):
         from reyn.interfaces.repl.present_renderer import render_presentation_nodes
         return render_presentation_nodes(meta.get("nodes", []))
 
-    # Tool-call rows. ▸ marks an invocation (distinct from the ⏺ assistant reply);
+    # Tool-call rows. ▸ marks an invocation (distinct from the ● assistant reply);
     # the ⎿ result / failure rows nest one level under it (2-space indent).
     if kind == "tool_call_started":
         tool = str(meta.get("tool", msg.text))
@@ -704,7 +704,7 @@ class InlineChatRenderer(ChatRenderer):
     reaches the terminal without corrupting the prompt). Conversation history
     stays in the terminal's own scrollback; only the prompt is live below.
 
-    PR1 (cutover) scope: `⏺`/`⎿` symbols + terracotta accent + per-kind
+    PR1 (cutover) scope: `●`/`⎿` symbols + terracotta accent + per-kind
     formatting. The rule-sandwiched input bar, navigable status bar, and
     in-conversation animations land in follow-up PRs (a custom prompt_toolkit
     Application that replaces the PromptSession input).
