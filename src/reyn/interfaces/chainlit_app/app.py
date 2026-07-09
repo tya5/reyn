@@ -203,7 +203,7 @@ async def _get_or_build_registry() -> "AgentRegistry":
 
         registry_ref: list = []
 
-        def _session_factory(profile: AgentProfile, *, presentation_consumer=None) -> Session:
+        def _session_factory(profile: AgentProfile, *, presentation_consumer=None, intervention_bridge=None) -> Session:
             # #1827 S3: resolve the agent's topology capability_profile (None/∅ unbound).
             _ctx_perm, _profile_excluded = registry_ref[0].resolved_profile_for(profile.name)
             s = build_scoped_chat_session(
@@ -215,6 +215,9 @@ async def _get_or_build_registry() -> "AgentRegistry":
                 # present output was invisible.
                 # #2708 P3.1: a spawn override (attached pipeline driver) wins when given.
                 presentation_consumer=presentation_consumer or OutboxPresentationConsumer(),
+                # #2708 P3.2a: forward the attached pipeline driver's intervention bridge so a
+                # driver ask_user reaches this chainlit operator; None = self-bound default.
+                intervention_bridge=intervention_bridge,
                 agent_name=profile.name,
                 model=model,
                 resolver=session_cfg.resolver,

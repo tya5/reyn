@@ -53,12 +53,13 @@ def _agent_registry(tmp_path: Path, state_log: "StateLog") -> AgentRegistry:
     """Real AgentRegistry + real Session factory (mirrors the IS-2/IS-4 tests)."""
     holder: dict = {}
 
-    def _factory(profile, *, presentation_consumer=None) -> Session:
+    def _factory(profile, *, presentation_consumer=None, intervention_bridge=None) -> Session:
         # #2708 P3.1: accept + forward the attached driver spawn's present-sink override.
         return Session(
             agent_name=profile.name, state_log=state_log,
             registry=holder.get("reg"), non_interactive=True,
             presentation_consumer=presentation_consumer,
+            intervention_bridge=intervention_bridge,  # #2708 P3.2a: accept + forward the attached driver spawn's intervention bridge
         )
 
     reg = AgentRegistry(project_root=tmp_path, session_factory=_factory, state_log=state_log)

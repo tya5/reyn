@@ -364,7 +364,7 @@ def run(args: argparse.Namespace) -> None:
         interactive=sys.stdin.isatty(),
     )
 
-    def _session_factory(profile: AgentProfile, *, presentation_consumer=None):
+    def _session_factory(profile: AgentProfile, *, presentation_consumer=None, intervention_bridge=None):
         # Captured CLI defaults — registry doesn't need to know them.
         # #1827 S3: resolve the agent's topology capability_profile → contextual
         # narrowing (enforcement) + view exclusion. (None, ∅) when unbound = byte-identical.
@@ -376,6 +376,10 @@ def run(args: argparse.Namespace) -> None:
             # #2708 P3.1: a spawn override (the attached pipeline driver's parent-bound
             # SpawnBridgePresentationConsumer) wins when supplied; None = this default.
             presentation_consumer=presentation_consumer or OutboxPresentationConsumer(),
+            # #2708 P3.2a: forward the attached pipeline driver's intervention bridge
+            # (SpawnBridgeInterventionListener) so a driver ask_user reaches this live
+            # operator; None (default / non-spawn) = self-bound fail-closed, byte-identical.
+            intervention_bridge=intervention_bridge,
             agent_name=profile.name,
             model=model,
             resolver=session_cfg.resolver,

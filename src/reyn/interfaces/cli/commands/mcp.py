@@ -395,7 +395,7 @@ def run_serve(args: argparse.Namespace) -> None:
 
     project_context = load_project_context(session_cfg.config, project_root)
 
-    def _session_factory(profile: AgentProfile, *, presentation_consumer=None):
+    def _session_factory(profile: AgentProfile, *, presentation_consumer=None, intervention_bridge=None):
         # #1827 S3: resolve the agent's topology capability_profile (None/∅ unbound).
         _ctx_perm, _profile_excluded = registry.resolved_profile_for(profile.name)
         s = build_scoped_chat_session(
@@ -403,6 +403,9 @@ def run_serve(args: argparse.Namespace) -> None:
             # — a reviewed NA surface. Null is byte-identical (present was invisible before).
             # #2708 P3.1: a spawn override (attached pipeline driver) wins when given.
             presentation_consumer=presentation_consumer or NullPresentationConsumer("mcp"),
+            # #2708 P3.2a: forward the spawn-time intervention bridge (None = self-bound
+            # default). stdio-MCP is a machine surface; the seam is threaded uniformly.
+            intervention_bridge=intervention_bridge,
             agent_name=profile.name,
             model=model,
             resolver=session_cfg.resolver,

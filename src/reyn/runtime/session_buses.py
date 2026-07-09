@@ -157,6 +157,73 @@ class ChatInterventionBus:
     # method-level call so the bus signature stays stable.
 
 
+class SpawnBridgeInterventionListener:
+    """A spawned/driver session's intervention bridge that routes the child's
+    ``ask_user`` / permission interventions to the PARENT session's live-operator
+    listener *by construction* (#2708 P3.2a). The intervention analog of
+    ``SpawnBridgePresentationConsumer`` (``runtime/presentation_consumer.py``).
+
+    A chat-invoked pipeline runs in a spawned driver-session that gets a fresh
+    ``InterventionRegistry(enforce_listener_presence=True)`` with **no** listener
+    registered (no ``bind_focus_listeners`` / ``register_intervention_listener`` for
+    the driver). So a driver ``ask_user`` would hit the no-listener short-circuit
+    (``services/intervention_registry.py`` — ``dispatch`` returns an empty
+    ``InterventionAnswer(text="")``) and **silently auto-refuse** — even under
+    ``run_pipeline_attached`` where a live operator is synchronously blocked on the
+    parent (#2721, the intervention-delivery sibling of the #2707 present gap).
+
+    This bridge, wired ONLY on the attached driver-spawn path
+    (``session_api._spawn_pipeline_driver_session``), makes the driver's router
+    intervention bus dispatch on the PARENT session instead of the child:
+    ``bus()`` returns a ``ChatInterventionBus`` bound to ``parent_session``, so the
+    child's ``ask_user`` routes into the parent's ``InterventionRegistry`` — which
+    HAS the live operator's listener — announces on the PARENT's outbox (the
+    operator sees it exactly as a chat-native ask_user), and the operator's answer
+    resolves the SAME ``iv.future`` the driver's op awaits. The delivery is
+    byte-identical to a parent-native ask_user (same channel-id stamping), and no
+    reverse answer path is needed (the future lives on the shared
+    ``UserIntervention``).
+
+    Detached (``start_pipeline_run``) and ephemeral-headless spawns pass no bridge
+    and keep the fail-closed default (no live operator) — the detached case is a
+    tracked known-RED cell (P3 spawn-routing completeness gate), NOT blessed-correct.
+    """
+
+    def __init__(self, parent_session: "Session", parent_channel_id: str) -> None:
+        self._parent_session = parent_session
+        self._parent_channel_id = parent_channel_id
+
+    @property
+    def parent_session(self) -> "Session":
+        """Read-only accessor for the bridged-to parent session (tests / audit)."""
+        return self._parent_session
+
+    @property
+    def parent_channel_id(self) -> str:
+        """The parent's intervention channel the bridged iv is stamped with — the
+        SAME id the parent operator registered its listener under, so the parent
+        coordinator routes the bridged iv to the live listener (not the stalled
+        queue)."""
+        return self._parent_channel_id
+
+    def bus(
+        self, *, run_id: "str | None" = None, actor: "str | None" = None,
+    ) -> "ChatInterventionBus":
+        """Build the driver's router intervention bus bound to the PARENT session.
+
+        The child ignores its OWN session (the analog of
+        ``SpawnBridgePresentationConsumer.sink`` ignoring the child): the returned
+        bus delivers through ``parent_session._dispatch_intervention`` and stamps
+        ``parent_channel_id`` so the parent's live operator listener resolves it —
+        identical to a parent-native chat ask_user."""
+        return ChatInterventionBus(
+            self._parent_session,
+            run_id=run_id,
+            actor=actor,
+            channel_id=self._parent_channel_id,
+        )
+
+
 class OutboxPresentationRenderer:
     """``PresentationRenderer`` (``core/present/renderer.py``) that routes a resolved
     presentation's render model onto the Session's outbox as a ``"presentation"``

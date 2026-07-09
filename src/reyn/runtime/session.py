@@ -760,6 +760,16 @@ class Session:
         # lazily via ``consumer.sink(self)`` (deferred so the outbox sink can bind this
         # Session, which does not exist when the factory kwarg is passed).
         presentation_consumer: "object | None" = None,
+        # #2708 P3.2a: the spawn-time intervention BRIDGE (a
+        # ``SpawnBridgeInterventionListener``). None (every non-spawn / detached /
+        # ephemeral construction) keeps today's self-bound fail-closed behavior — the
+        # driver's ``ask_user`` routes through its own listener-less registry. Only the
+        # ATTACHED pipeline driver spawn (``session_api._spawn_pipeline_driver_session``)
+        # passes one, so the driver's router intervention bus dispatches on the PARENT
+        # session's live-operator listener instead of silently auto-refusing (#2721). The
+        # reusable capability-bundle inheritance seam — same threading as
+        # ``presentation_consumer`` (P3.1).
+        intervention_bridge: "object | None" = None,
     ) -> None:
         """
         snapshot_path: optional override for the per-agent snapshot file
@@ -834,6 +844,11 @@ class Session:
             if presentation_consumer is not None
             else OutboxPresentationConsumer()
         )
+        # #2708 P3.2a: the spawn-time intervention bridge (None = self-bound default).
+        # When set (attached pipeline driver), the router intervention_bus_factory below
+        # builds a bus bound to the PARENT session so the driver's ``ask_user`` reaches the
+        # parent's live operator listener by construction (mirror of _presentation_consumer).
+        self._intervention_bridge = intervention_bridge
         # #1953 §16 (recursive-request): the task_id this session is currently
         # EXECUTING as a task-as-request, set per-turn from an execute-wake's meta
         # (run_one_iteration). Read by the router op-ctx builders so task.create
@@ -1741,9 +1756,21 @@ class Session:
             # flow. The bus is built per make_router_op_context() call
             # — short-lived, scoped to the chat_router turn, identical
             # to what session._mcp_call_tool wires manually today.
-            intervention_bus_factory=lambda: ChatInterventionBus(
-                self, run_id=None, actor="chat_router",
-                channel_id=DEFAULT_CHAT_CHANNEL_ID,
+            # #2708 P3.2a: when this session is an ATTACHED pipeline driver (it carries a
+            # SpawnBridgeInterventionListener), the router intervention bus dispatches on the
+            # PARENT session's live-operator listener instead of the driver's own
+            # listener-less registry — so a pipeline-step ``ask_user`` reaches the operator
+            # blocked on the parent by construction (#2721), instead of silently auto-
+            # refusing. Non-driver / detached / ephemeral sessions (bridge is None) keep the
+            # self-bound bus, byte-identical. Mirror of the presentation_renderer_factory
+            # spawn-bridge below.
+            intervention_bus_factory=lambda: (
+                self._intervention_bridge.bus(run_id=None, actor="chat_router")
+                if self._intervention_bridge is not None
+                else ChatInterventionBus(
+                    self, run_id=None, actor="chat_router",
+                    channel_id=DEFAULT_CHAT_CHANNEL_ID,
+                )
             ),
             # FP-0054 PR-B / #2708 P1: give the router OpContext a real PresentationRenderer
             # so a `present` op reaches the surface's sink instead of PR-A's null surface.

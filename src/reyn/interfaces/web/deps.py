@@ -300,7 +300,7 @@ def _get_registry():
             os.environ.get("REYN_WEB_EAGER_EMBEDDING_BUILD", "").strip() == "1"
         )
 
-        def _session_factory(profile: AgentProfile, *, presentation_consumer=None) -> Session:
+        def _session_factory(profile: AgentProfile, *, presentation_consumer=None, intervention_bridge=None) -> Session:
             registry = registry_ref[0]
             _scoped = get_cli_scoped_overrides()  # #1401 CLI-scoped capabilities
             # #1827 S3: resolve the agent's topology capability_profile (None/∅ unbound).
@@ -312,6 +312,10 @@ def _get_registry():
                 # (present was invisible + not externally routed before #2708).
                 # #2708 P3.1: a spawn override (attached pipeline driver) wins when given.
                 presentation_consumer=presentation_consumer or NullPresentationConsumer("web"),
+                # #2708 P3.2a: forward the spawn-time intervention bridge (None = self-bound
+                # default). Web is a machine surface; a driver spawn from it keeps the fail-
+                # closed default, but the seam is threaded uniformly with the other frontends.
+                intervention_bridge=intervention_bridge,
                 agent_name=profile.name,
                 model=model,
                 resolver=resolver,

@@ -2577,6 +2577,7 @@ class AgentRegistry:
         *,
         is_delegate: bool = False,
         presentation_consumer: "object | None" = None,
+        intervention_bridge: "object | None" = None,
     ) -> "object":
         """Build a configured Session from a profile (factory + shared-store
         attach), WITHOUT inserting it into the session map. Shared by get_or_load
@@ -2588,20 +2589,23 @@ class AgentRegistry:
         without a factory-signature change. Save/restore (not set-False) so it is
         correct under nesting too — non-re-entrant today, but free future-proofing.
 
-        #2708 P3.1: ``presentation_consumer`` is the spawn-time present-sink OVERRIDE (the
-        reusable capability-bundle inheritance seam — P3.2 threads cred/permission through
-        the SAME param). ``None`` (every non-spawn / default-spawn caller) keeps the
-        factory call byte-identical (``self._factory(profile)``); only when a spawn site
-        opts in (the attached pipeline driver, ``session_api._spawn_pipeline_driver_session``)
-        is the override forwarded, so the widened-factory contract only binds spawn sites
-        that actually pass one — bare test factories stay callable."""
+        #2708 P3.1/P3.2a: ``presentation_consumer`` (present-sink) and
+        ``intervention_bridge`` (ask_user/permission routing) are the spawn-time
+        capability OVERRIDES — the reusable capability-bundle inheritance seam. ``None``
+        for both (every non-spawn / default-spawn caller) keeps the factory call
+        byte-identical (``self._factory(profile)``); only a spawn site that opts in (the
+        attached pipeline driver, ``session_api._spawn_pipeline_driver_session``) forwards
+        an override, so the widened-factory contract only binds spawn sites that actually
+        pass one — bare test factories stay callable."""
         _prev_delegate = self._constructing_as_delegate
         self._constructing_as_delegate = is_delegate
         try:
+            factory_kwargs: dict = {}
             if presentation_consumer is not None:
-                session = self._factory(profile, presentation_consumer=presentation_consumer)
-            else:
-                session = self._factory(profile)
+                factory_kwargs["presentation_consumer"] = presentation_consumer
+            if intervention_bridge is not None:
+                factory_kwargs["intervention_bridge"] = intervention_bridge
+            session = self._factory(profile, **factory_kwargs)
         finally:
             self._constructing_as_delegate = _prev_delegate
         # #1547: hand the session the shared anchor store so cut_generation
@@ -2615,6 +2619,7 @@ class AgentRegistry:
     def spawn_session(
         self, name: str, sid: "str | None" = None,
         *, presentation_consumer: "object | None" = None,
+        intervention_bridge: "object | None" = None,
     ) -> str:
         """FP-0043 Stage 3: open a NEW conversation Session under an existing
         Agent, SHARING the agent's identity object. Returns the new session-id.
@@ -2629,11 +2634,15 @@ class AgentRegistry:
         new_sid = sid or uuid4().hex[:8]
         if self._has_session(name, new_sid):
             raise ValueError(f"session {new_sid!r} already exists for agent {name!r}")
-        # #2708 P3.1: forward the optional present-sink override to the factory (None keeps
-        # today's default self-bound outbox consumer; the attached driver spawn passes a
-        # SpawnBridgePresentationConsumer so the driver's present reaches the parent).
+        # #2708 P3.1/P3.2a: forward the optional present-sink + intervention overrides to the
+        # factory (None keeps today's default self-bound outbox consumer + listener-less
+        # intervention registry; the attached driver spawn passes a
+        # SpawnBridgePresentationConsumer so the driver's present reaches the parent, and a
+        # SpawnBridgeInterventionListener so its ask_user reaches the parent's live operator).
         session = self._construct_session(
-            self.load_profile(name), presentation_consumer=presentation_consumer,
+            self.load_profile(name),
+            presentation_consumer=presentation_consumer,
+            intervention_bridge=intervention_bridge,
         )
         if shared is not None:
             # Share the SAME identity object (not the fresh one the factory built),
@@ -2702,6 +2711,7 @@ class AgentRegistry:
         self, name: str, *, mode: str = "persistent",
         narrowing: "dict | None" = None,
         presentation_consumer: "object | None" = None,
+        intervention_bridge: "object | None" = None,
     ) -> str:
         """#2103 S1bc: the action-layer SESSION-SPAWN seam — spawn a fresh-context
         session under ``name`` (sync ``spawn_session``) + persist the spawner's
@@ -2714,11 +2724,17 @@ class AgentRegistry:
         Does NOT submit a task — that is the caller (the spawn op), separable from the
         record. Emit no-ops without a WAL.
 
-        #2708 P3.1: ``presentation_consumer`` (default None = today's self-bound outbox
-        consumer) is the present-sink override forwarded to the constructed session — the
-        attached pipeline driver spawn passes a ``SpawnBridgePresentationConsumer`` so the
-        driver's present reaches the parent surface by construction."""
-        sid = self.spawn_session(name, presentation_consumer=presentation_consumer)
+        #2708 P3.1/P3.2a: ``presentation_consumer`` + ``intervention_bridge`` (both default
+        None = today's self-bound outbox consumer + listener-less intervention registry) are
+        the spawn-time capability overrides forwarded to the constructed session — the
+        attached pipeline driver spawn passes a ``SpawnBridgePresentationConsumer`` (present
+        reaches the parent surface) and a ``SpawnBridgeInterventionListener`` (ask_user
+        reaches the parent's live operator) by construction."""
+        sid = self.spawn_session(
+            name,
+            presentation_consumer=presentation_consumer,
+            intervention_bridge=intervention_bridge,
+        )
         if mode == "ephemeral":
             # #2103: mark the live session so it auto-vanishes once its task is done
             # (Session._maybe_schedule_ephemeral_vanish, via this registry's
