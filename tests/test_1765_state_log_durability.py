@@ -1,9 +1,9 @@
-"""Tier 2: #1765 Step 1a — StateLog routed through the DurabilityWorker (off-loop WAL fsync).
+"""Tier 2: #1765 Step 1a/1b — StateLog routed through the DurabilityWorker (off-loop WAL write).
 
-The refactor is BEHAVIOR-INVARIANT for durability + recovery (the off-loop fsync is the only
-change): an append returns only once durable, recovery replays every durable entry, and the
-`_durable_seq` watermark closes the #1751 lockless-read surface (a written-but-not-yet-fsync'd
-tail entry is structurally unreadable). Real instances (no mocks).
+The refactor is BEHAVIOR-INVARIANT for durability + recovery (moving the write/fsync off the
+loop is the only change): an append returns only once durable, recovery replays every durable
+entry, and the `_durable_seq` watermark closes the #1751 lockless-read surface (a
+written-but-not-yet-durable tail entry is structurally unreadable). Real instances (no mocks).
 """
 from __future__ import annotations
 
@@ -66,6 +66,57 @@ async def test_iter_from_excludes_inflight_entry_during_fsync(tmp_path, monkeypa
     await appending  # fsync completes → seq 2 is now durable
     after = [e["seq"] for e in sl.iter_from(1)]
     assert after == [1, 2], "after the fsync, the now-durable entry is readable"
+    await sl.aclose()
+
+
+@pytest.mark.asyncio
+async def test_slow_file_open_does_not_freeze_the_event_loop(tmp_path, monkeypatch):
+    """Tier 2: #1765 Step 1b. Step 1a moved only `fsync` off the loop; the preceding
+    `_needs_lead_newline` check + `open`/`write`/`flush` stayed synchronous on the loop. On a
+    stalled filesystem (Windows AV re-scan / cloud-sync rehydration / a stale lock — all far
+    more likely after the file has sat idle), those calls freeze the WHOLE event loop, not just
+    this append (the reported symptom: the user's message echoes, but the "Working…" indicator
+    never appears). RED against pre-Step-1b code: a concurrent counter task would NOT advance
+    during a slow `open()`, since the synchronous open call itself blocked the only thread
+    running the loop."""
+    import asyncio
+
+    p = tmp_path / "wal.jsonl"
+    sl = StateLog(p)
+
+    orig_do_wal_write = sl._do_wal_write
+
+    def _slow_do_wal_write(payload):
+        import time
+        time.sleep(0.2)  # simulates a stalled `open()`/`stat()` — runs off-loop in to_thread
+        return orig_do_wal_write(payload)
+
+    monkeypatch.setattr(sl, "_do_wal_write", _slow_do_wal_write)
+
+    ticks = 0
+
+    async def _counter() -> None:
+        nonlocal ticks
+        for _ in range(50):
+            await asyncio.sleep(0.005)
+            ticks += 1
+
+    counter_task = asyncio.create_task(_counter())
+    await sl.append("inbox_put", text="slow-open")
+    # snapshot BEFORE draining counter_task to completion: if the loop had frozen for the
+    # 0.2s stall, ticks would still be near-zero here, only catching up afterward — awaiting
+    # counter_task first (as a prior version of this test did) makes the assertion pass
+    # unconditionally regardless of whether the loop froze.
+    ticks_during_append = ticks
+    await counter_task
+    # threshold kept low (5, not e.g. 20): on Windows — the platform this fix targets — the
+    # default ~15.6ms timer resolution makes each 5ms `asyncio.sleep` take ~15.6ms, so even a
+    # correct implementation only accumulates ~12 ticks in the 200ms stall. A frozen loop still
+    # produces ~0, so >= 5 keeps the discrimination margin without false-failing on Windows.
+    assert ticks_during_append >= 5, (
+        "the loop must keep making progress on OTHER coroutines DURING the stalled "
+        "open/write/flush (off-loop) — a near-zero count at this point means the loop froze"
+    )
     await sl.aclose()
 
 

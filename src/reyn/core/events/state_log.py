@@ -23,17 +23,22 @@ like LLM calls live in the audit log under `.reyn/events/`):
 Per P7: this is OS-level generic infrastructure — `kind` strings and
 field names live here, not in any domain-specific code.
 
-Off-loop durability (#1765 Step 1a). The fsync runs OFF the event loop via the shared
-`DurabilityWorker` (so a slow disk no longer freezes the loop — TUI repaint + other
-sessions keep running DURING the fsync), yet `append` still returns only once durable: the
-per-append crash-recovery contract is UNCHANGED (no relaxed-durability window — that is the
-deferred Step 2). The off-loop fsync would reopen the #1751 surface (a lockless `iter_from`
-reading a written-but-not-yet-fsync'd entry) — closed structurally by `_inflight_seq`: the
-worker marks the seq it is fsyncing right now, and `iter_from` skips exactly that one entry
-(a single-entry exclusion, NOT a durable ceiling, so cross-instance reads of a process-shared
-WAL + recovery still see every durable entry). The seq is assigned + the worker write
-submitted under the lock, so seq order = file order, and `truncate_below` (also under the
-lock) never overlaps a write.
+Off-loop durability (#1765 Step 1a, extended by Step 1b). Step 1a moved the `fsync` OFF the
+event loop via the shared `DurabilityWorker` (so a slow disk no longer freezes the loop — TUI
+repaint + other sessions keep running DURING the fsync); Step 1b (`_do_wal_write`) extends this
+to the `open`/`write`/`flush` themselves + the defensive lead-newline `stat`/`read` check, since
+those are NOT free on every platform (Windows AV re-scan / cloud-sync rehydration / a stale
+file-lock can stall a plain `open()` after the file has sat idle — same loop-freezing failure
+mode Step 1a fixed for `fsync`, just for a different syscall). `append` still returns only once
+durable: the per-append crash-recovery contract is UNCHANGED (no relaxed-durability window for
+`append`; `append_nowait` is the separate, deliberately-relaxed fire-and-forget path). The
+off-loop write would reopen the #1751 surface (a lockless `iter_from` reading a
+written-but-not-yet-durable entry) — closed structurally by `_inflight_seq`: the worker marks
+the seq it is writing right now (for the WHOLE off-loop window, not just the fsync slice), and
+`iter_from` skips exactly that one entry (a single-entry exclusion, NOT a durable ceiling, so
+cross-instance reads of a process-shared WAL + recovery still see every durable entry). The seq
+is assigned + the worker write submitted under the lock, so seq order = file order, and
+`truncate_below` (also under the lock) never overlaps a write.
 """
 from __future__ import annotations
 
@@ -236,11 +241,13 @@ class StateLog:
         """The durable WAL-write job (run by the DurabilityWorker, serially — the single serial
         venue, so no lock). At drain it ASSIGNS the seq (``++_counter`` — serial, so monotonic =
         durability order, never racing) and sets ``_last_assigned_seq`` (the paired snapshot job,
-        FIFO-after, reads it to stamp ``applied_seq``); writes the line + fsyncs OFF the loop;
-        then advances ``_last_durable_seq`` strictly AFTER the fsync (the watermark never names a
-        non-durable entry). ``_inflight_seq`` (the one entry mid-fsync — the worker is serial, so
-        only ever one) keeps ``iter_from`` from exposing it. Post-append observers fire after the
-        durable write. A blocking ``append`` passes a per-call ``holder`` to receive the seq."""
+        FIFO-after, reads it to stamp ``applied_seq``); writes the line + fsyncs OFF the loop
+        (``_do_wal_write``, off-loop — see #1765-Step-1b below); then advances
+        ``_last_durable_seq`` strictly AFTER the write (the watermark never names a non-durable
+        entry). ``_inflight_seq`` (the one entry mid-write — the worker is serial, so only ever
+        one) keeps ``iter_from`` from exposing it for the WHOLE off-loop window. Post-append
+        observers fire after the durable write. A blocking ``append`` passes a per-call
+        ``holder`` to receive the seq."""
         async def _task() -> None:
             self._counter += 1
             seq = self._counter
@@ -250,26 +257,39 @@ class StateLog:
             entry = {"seq": seq, "ts": datetime.now().isoformat(), "kind": kind}
             entry.update(fields)
             # Mark this entry in-flight BEFORE it appears in the file, so a concurrent
-            # `iter_from` during the fsync skips it (written but not yet durable); cleared
-            # only AFTER the fsync, when it is durable + readable.
+            # `iter_from` during the write/fsync skips it (written but not yet durable);
+            # cleared only AFTER the write, when it is durable + readable.
             self._inflight_seq = seq
             try:
                 payload = json.dumps(entry, ensure_ascii=False) + "\n"
-                # Defensive lead-newline (a prior run may have crashed mid-write so the file
-                # ends without a newline): start on our own line; the torn fragment parses as
-                # garbage + is skipped on replay.
-                need_lead_newline = self._needs_lead_newline()
-                with self._path.open("a", encoding="utf-8") as f:
-                    if need_lead_newline:
-                        f.write("\n")
-                    f.write(payload)
-                    f.flush()
-                    await asyncio.to_thread(os.fsync, f.fileno())
+                await asyncio.to_thread(self._do_wal_write, payload)
             finally:
                 self._inflight_seq = None
             self._last_durable_seq = seq  # durable now → the watermark advances
             await self._fire_post_append(kind, seq, fields)
         return _task
+
+    def _do_wal_write(self, payload: str) -> None:
+        """#1765 Step 1b: the synchronous WAL-line write (run off-loop via ``asyncio.to_thread``,
+        mirroring ``_do_truncate``'s pattern). Step 1a moved ONLY ``os.fsync`` off the loop; the
+        preceding ``_needs_lead_newline`` check (a ``stat`` + tail-byte ``read``) and the
+        ``open``/``write``/``flush`` themselves stayed SYNCHRONOUS on the loop, on the (POSIX-
+        biased) assumption that appending to an already-resident file is effectively instant. On
+        Windows that assumption doesn't hold after the file has sat idle: a real-time antivirus
+        re-scan, a cloud-sync (OneDrive/Dropbox) placeholder needing to rehydrate, or a stale
+        file-lock retry can each stall an ``open``/``stat``/``read`` for seconds to minutes —
+        and because this job runs on the SAME event loop as the TUI repaint and the whole
+        turn-processing pipeline, that stall freezes everything (the "message echoes, but
+        Working… never appears" symptom), not just this WAL append. Folding the lead-newline
+        check + open/write/flush/fsync into ONE thread-hop keeps every synchronous file access
+        for this append off the loop, closing the gap Step 1a left open."""
+        need_lead_newline = self._needs_lead_newline()
+        with self._path.open("a", encoding="utf-8") as f:
+            if need_lead_newline:
+                f.write("\n")
+            f.write(payload)
+            f.flush()
+            os.fsync(f.fileno())
 
     async def submit_durable(self, do_durable_write) -> None:
         """#1765 Step 1a: submit a durable write from ANOTHER substrate (e.g. a snapshot
