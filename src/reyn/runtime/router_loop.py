@@ -1377,6 +1377,12 @@ class RouterLoop:
         self._dispatch_catalog: "dict[str, dict] | None" = None
         self._tool_names: frozenset[str] = frozenset()  # kept for backward compat
         self._total_usage: TokenUsage = TokenUsage()
+        # Status-bar ctx chip's "current size" figure needs a SINGLE LLM call's
+        # prompt_tokens, not the turn-summed _total_usage above — summing every
+        # call in a multi-tool-iteration turn double(triple/...)-counts nearly
+        # the same growing context each iteration re-sends, wildly overstating
+        # "how much of the window is currently occupied".
+        self._last_call_usage: TokenUsage = TokenUsage()
         # #1593: the active tool-use scheme. PR-1 = universal-category (the shipped
         # behaviour, behind the protocol) for every layer → byte-identical. Per-layer
         # config selection (tool_use:{chat,step,phase}) plugs in here; with all
@@ -1388,6 +1394,13 @@ class RouterLoop:
         """Accumulated token usage across all LLM calls made in this loop."""
         return self._total_usage
 
+    @property
+    def last_call_usage(self) -> TokenUsage:
+        """TokenUsage of the single MOST RECENT LLM call made in this loop —
+        distinct from ``total_usage`` (the turn-summed figure). Reset at the
+        start of each ``run()`` like ``total_usage``."""
+        return self._last_call_usage
+
     async def run(self, user_text: str, history: list[dict]) -> TokenUsage:
         """Process one user utterance end-to-end. Emits to host.put_outbox.
 
@@ -1395,6 +1408,7 @@ class RouterLoop:
         caller can credit it to the session-level usage counter (F4 Bug 2).
         """
         self._total_usage = TokenUsage()
+        self._last_call_usage = TokenUsage()
         host = self.host
         # #1092 PR-A (FD1, ADR-0036): catalog-source REPLACE seam. A phase host
         # supplies its op tool catalog (allowed_ops via _build_phase_tool_catalog),
@@ -1948,6 +1962,7 @@ class RouterLoop:
                         )
             if result.usage:
                 self._total_usage += result.usage
+                self._last_call_usage = result.usage
             # #1593 loop-unify (Issue-1): interpret-driven routing — the active
             # scheme classifies EVERY result, instead of the OS sniffing
             # ``result.tool_calls``. universal-category returns Execute when there

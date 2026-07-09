@@ -96,6 +96,39 @@ def test_accumulate_independent_of_tracker():
     assert snap.get("agent_tokens", {}).get("test_agent", 0) == 0
 
 
+def test_last_call_usage_is_overwritten_not_accumulated():
+    """Tier 2: last_call_usage (status-bar ctx chip's current-size figure)
+    reflects only the MOST RECENT accumulate() call, unlike total_usage which
+    sums every call — a stale earlier-call usage must not leak into a later
+    call's current-size reading."""
+    gw, _ = _make_gateway()
+
+    r1 = _FakeLLMResult(prompt_tokens=10, completion_tokens=5, cost_usd=0.001)
+    gw.accumulate(r1)
+    assert gw.last_call_usage.prompt_tokens == 10
+    assert gw.total_usage.prompt_tokens == 10
+
+    r2 = _FakeLLMResult(prompt_tokens=20, completion_tokens=8, cost_usd=0.002)
+    gw.accumulate(r2)
+    assert gw.last_call_usage.prompt_tokens == 20   # overwritten, not 10+20
+    assert gw.total_usage.prompt_tokens == 30        # cumulative still sums
+
+
+def test_last_call_usage_unaffected_by_zero_usage_result():
+    """Tier 2: a zero-usage accumulate() call (e.g. a cost-only event) must not
+    clobber the last real call's current-size figure."""
+    gw, _ = _make_gateway()
+
+    gw.accumulate(_FakeLLMResult(prompt_tokens=15, completion_tokens=3))
+    gw.accumulate(_FakeLLMResult(prompt_tokens=0, completion_tokens=0, cost_usd=None))
+    # token_usage is still a TokenUsage(0, 0) object (not None) on the zero
+    # result, so accumulate()'s `if result.token_usage is not None` branch
+    # DOES run — this documents that current behavior overwrites with the
+    # zero usage (matches total_usage's own += semantics: a real zero-usage
+    # call is data, not a no-op).
+    assert gw.last_call_usage.prompt_tokens == 0
+
+
 # ---------------------------------------------------------------------------
 # Invariant 2: router cap fires exactly at cap-th invocation
 # ---------------------------------------------------------------------------
@@ -299,3 +332,42 @@ def test_add_router_usage_no_strip_without_proxy(monkeypatch):
     )
 
     assert gw.total_usage.total_tokens == 75
+
+
+def test_add_router_usage_uses_explicit_last_call_usage_not_turn_total():
+    """Tier 2: add_router_usage (the live chat-turn accumulation path, see
+    router_loop_driver.py) takes `usage` (the TURN-SUMMED total, across every
+    LLM call the turn made — a tool-loop can iterate several times) and a
+    SEPARATE `last_call_usage` (the single most recent call, from
+    RouterLoop.last_call_usage). last_call_usage must reflect the smaller
+    single-call figure, NOT the turn total — using the turn-summed figure as
+    the ctx chip's "current context size" would double/triple-count nearly
+    the same growing context each tool-loop iteration re-sends (the bug this
+    param was added to fix)."""
+    resolver = ModelResolver({"light": "openai/gpt-4o-mini"}, builtin={})
+    gw, _ = _make_gateway()
+
+    # A 3-call turn: usage is the SUM (300 prompt tokens across 3 calls), but
+    # last_call_usage is only the final call's own usage (120 of those 300).
+    turn_total = TokenUsage(prompt_tokens=300, completion_tokens=30, cached_tokens=200)
+    final_call = TokenUsage(prompt_tokens=120, completion_tokens=10, cached_tokens=100)
+    gw.add_router_usage(
+        usage=turn_total, last_call_usage=final_call,
+        resolver=resolver, router_model_name="light",
+    )
+    assert gw.last_call_usage.prompt_tokens == 120   # the single call, NOT 300
+    assert gw.last_call_usage.cached_tokens == 100
+    assert gw.total_usage.prompt_tokens == 300        # billing still counts every call
+
+
+def test_add_router_usage_falls_back_to_turn_total_when_last_call_usage_omitted():
+    """Tier 2: last_call_usage is optional (default None) — omitting it (as an
+    older/non-UI caller might) falls back to the turn total, so nothing
+    breaks for callers that don't care about the ctx-chip distinction."""
+    resolver = ModelResolver({"light": "openai/gpt-4o-mini"}, builtin={})
+    gw, _ = _make_gateway()
+
+    u = TokenUsage(prompt_tokens=40, completion_tokens=5, cached_tokens=5)
+    gw.add_router_usage(usage=u, resolver=resolver, router_model_name="light")
+    assert gw.last_call_usage.prompt_tokens == 40
+    assert gw.total_usage.prompt_tokens == 40

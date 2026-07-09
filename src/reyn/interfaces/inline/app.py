@@ -143,16 +143,74 @@ def _model_expansion(snap, dispatch):
     return CommandUIElement(rows, [f"/model {c}" for c in classes], dispatch)
 
 
+def _cache_hit_line(label: str, cached: int, prompt: int, *, note: str = "") -> str:
+    """One "cache X% hit (a / b prompt tokens)" line, label padded to the same
+    9-char column every other cost/ctx dropdown line uses (was misaligned
+    when the label itself carried the qualifier, e.g. "cache (cumulative)")."""
+    pct = round(100 * cached / prompt) if prompt > 0 else 0
+    tail = f", {note}" if note else ""
+    return f"{label:<9}{pct}% hit ({cached:,} / {prompt:,} prompt tokens{tail})"
+
+
 def _cost_expansion(snap, dispatch):
     def lines():
         p, c, t = snap["usage"]
         session = snap["cost_usd"]
         agent_t = snap.get("agent_tokens", t)
+        cached = snap.get("session_cached_tokens", 0)
         return [
             f"total    ${snap.get('cost_total', session):.4f}",
             f"agent    ${snap.get('cost_agent', session):.4f}",
             f"session  ${session:.4f}",
             f"tokens   prompt {p} · completion {c} · total {agent_t}",
+            _cache_hit_line("cache", cached, p, note="cumulative"),
+        ]
+    return DetailElement(lines)
+
+
+def _ctx_pct(snap) -> str:
+    window = snap.get("ctx_window", 0)
+    used = snap.get("ctx_used", 0)
+    # used <= 0 means no LLM call has completed yet this session — show "—"
+    # rather than a misleading "0%" (a real completed call's prompt_tokens is
+    # never actually 0; the system prompt alone is nonzero).
+    if window <= 0 or used <= 0:
+        return "—"
+    return f"{round(100 * used / window)}%"
+
+
+def _ctx_expansion(snap, dispatch):
+    # Current-state only (this is the ctx chip's whole reason to exist —
+    # cumulative figures live in the cost chip instead, see _cost_expansion).
+    #
+    # Two DISTINCT figures, kept visually separated so they don't collapse
+    # back into one ambiguous number:
+    #   - prompt/window/free/cache: the REAL last-call size against the
+    #     model's REAL context limit — "how close to the hard limit".
+    #   - compaction: the compaction subsystem's OWN lightweight estimate
+    #     (history only, excl. system prompt/tools) against ITS internal
+    #     trigger threshold — "when will auto-compaction fire". A smaller,
+    #     already-adjusted number; not comparable to the block above.
+    def lines():
+        window = snap.get("ctx_window", 0)
+        prompt_tokens = snap.get("ctx_used", 0)
+        free = max(0, window - prompt_tokens)
+        pct = round(100 * prompt_tokens / window) if window > 0 else 0
+        recent_prompt, recent_cached = snap.get("ctx_recent_usage", (0, 0))
+        # Lazy: only computed while this dropdown is actually open (see
+        # _snapshot's comment on why context_window_status() must not run on
+        # every render frame).
+        status_fn = snap.get("ctx_compaction_status_fn")
+        status = status_fn() if status_fn is not None else {}
+        comp_trigger = status.get("effective_trigger", 0)
+        comp_est = max(0, comp_trigger - status.get("free_window", 0))
+        comp_pct = round(100 * comp_est / comp_trigger) if comp_trigger > 0 else 0
+        return [
+            f"window       {window:,} tokens  ({snap.get('ctx_source', 'unknown')})",
+            f"prompt       {prompt_tokens:,} tokens  ({pct}% of window)",
+            f"free         {free:,} tokens",
+            _cache_hit_line("cache", recent_cached, recent_prompt),
+            f"compaction   {comp_est:,} / {comp_trigger:,} tokens est.  ({comp_pct}% to trigger)",
         ]
     return DetailElement(lines)
 
@@ -362,6 +420,8 @@ _CHIP_SPECS = [
              value_color=_CC_COOL),
     ChipSpec("task",  "task",  lambda s: str(s.get("task_count", 0)), _task_expansion,
              value_color=_CC_WARN),
+    ChipSpec("ctx",   "ctx",   _ctx_pct, _ctx_expansion,
+             value_color=_CC_COOL),
     # "more" has no `expansion` — Enter on it opens the level-2 sub-bar
     # (_MORE_SUB_CHIP_SPECS) instead of a menu_region dropdown directly; see
     # _is_more()/_sub_bar_visible() in run_inline_input.
@@ -563,6 +623,34 @@ def _snapshot(registry, task_cache=None, config=None):
         registry.agent_tokens(registry.attached_name)
         if registry.attached_name else u.total_tokens
     )
+    # Headline figure: the single most recent LLM call's prompt_tokens against
+    # the model's REAL context window (get_max_input_tokens) — "how close to
+    # the model's hard limit am I", matching the Claude Code-style % owners
+    # expect. last_call_usage (NOT total_usage or a turn-summed figure) — a
+    # turn can make several LLM calls via tool-loop iterations, each re-
+    # sending nearly the same growing context, so summing them would wildly
+    # overstate current occupancy. raw_context_window() is a cheap dict
+    # lookup, safe to call every render frame (_snapshot runs on every frame).
+    raw_window = s.raw_context_window()
+    ctx_window = raw_window["window"]
+    ctx_source = raw_window["source"]
+    recent = s.last_call_usage
+    ctx_used = recent.prompt_tokens
+    # Supplementary figure: the compaction subsystem's OWN lightweight estimate
+    # (history only, excl. system prompt/tools) against ITS internal trigger
+    # threshold (already SP/head/tail-adjusted, not the model's real window) —
+    # answers "when will auto-compaction fire", a different question from the
+    # headline one above. Keeping both avoids collapsing two distinct
+    # measurements into one ambiguous number (the original "used" bug).
+    #
+    # UNLIKE raw_context_window, Session.context_window_status() is NOT cheap
+    # (json.dumps + token-estimate of the full router-view history) — do not
+    # call it eagerly here, since _snapshot() runs on every render frame
+    # regardless of whether the ctx dropdown is even open. Store the bound
+    # method itself; _ctx_expansion's lines() calls it lazily, only while the
+    # dropdown is actually open (and only once per redraw of THAT dropdown,
+    # not the whole app).
+    ctx_compaction_status_fn = s.context_window_status
     return {
         "model": s.model,
         "model_active_class": s.active_model_class(),
@@ -575,6 +663,12 @@ def _snapshot(registry, task_cache=None, config=None):
         "cost_total": cost_total,
         "cost_agent": cost_agent,
         "agent_tokens": agent_tokens,
+        "ctx_used": ctx_used,
+        "ctx_window": ctx_window,
+        "ctx_source": ctx_source,
+        "session_cached_tokens": u.cached_tokens,
+        "ctx_recent_usage": (recent.prompt_tokens, recent.cached_tokens),
+        "ctx_compaction_status_fn": ctx_compaction_status_fn,
         "task_count": task_cache["count"] if task_cache else 0,
         "task_tree": task_cache["tree"] if task_cache else [],
         "cron_jobs": _extract_cron_jobs(config) if config is not None else [],

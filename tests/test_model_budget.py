@@ -17,7 +17,11 @@ from __future__ import annotations
 import pytest
 
 from reyn.core.events.events import EventLog
-from reyn.llm.model_budget import _FALLBACK_MAX_INPUT_TOKENS, get_max_input_tokens
+from reyn.llm.model_budget import (
+    _FALLBACK_MAX_INPUT_TOKENS,
+    get_max_input_tokens,
+    get_max_input_tokens_source,
+)
 
 
 def test_known_model_returns_positive_int() -> None:
@@ -100,3 +104,32 @@ def test_unknown_prefixed_model_still_falls_back() -> None:
     assert result == _FALLBACK_MAX_INPUT_TOKENS
     # the fallback event still fires for the genuinely-unknown model (unchanged).
     assert [e for e in events.all() if e.type == "model_budget_fallback"]
+
+
+def test_source_for_cataloged_model_names_litellm() -> None:
+    """Tier 2: get_max_input_tokens_source (status-bar ctx chip's source line)
+    names "litellm catalog" — not the fallback — for a real cataloged model."""
+    source = get_max_input_tokens_source("gemini/gemini-2.5-flash-lite")
+    assert source.startswith("litellm catalog:")
+    assert "gemini/gemini-2.5-flash-lite" in source
+
+
+def test_source_for_unknown_model_names_reyn_fallback() -> None:
+    """Tier 2: an unrecognized model's source names reyn's OWN fallback default,
+    not litellm — the owner explicitly wants this distinguished from a real
+    catalog hit (there is no user-configurable window override in reyn today,
+    so these two are the only two real sources)."""
+    source = get_max_input_tokens_source("unknown/garbage-model-xyz-test-only")
+    assert source.startswith("reyn fallback default")
+    assert str(_FALLBACK_MAX_INPUT_TOKENS) in source.replace(",", "")
+
+
+def test_source_for_prefix_strip_resolved_model_names_bare_litellm_hit() -> None:
+    """Tier 2: a proxy-prefixed model that only resolves via #1162's bare-name
+    retry still reports "litellm catalog" (naming the bare model), matching
+    what get_max_input_tokens actually used — not a fallback claim."""
+    if get_max_input_tokens(_BARE) == _FALLBACK_MAX_INPUT_TOKENS:
+        pytest.skip(f"litellm catalog lacks {_BARE!r} in this env")
+    source = get_max_input_tokens_source(f"openai/{_BARE}")
+    assert source.startswith("litellm catalog:")
+    assert _BARE in source
