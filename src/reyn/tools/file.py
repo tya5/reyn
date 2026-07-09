@@ -301,9 +301,20 @@ async def _handle_list(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
     legacy_ctx = _build_legacy_op_context(ctx)
     result = await execute_op(op, legacy_ctx)
 
-    # Normalise to {path, entries} shape (= same as session._file_list_directory)
+    # Normalise to {path, entries} shape (= same as session._file_list_directory).
+    # Preserve op="glob" + status + matches so file_to_canonical's glob branch
+    # fires (#2695: dropping op made the mapper fall through to "None: ok",
+    # silently losing the listing). entries is the caller-ergonomic alias;
+    # matches is the field the canonical glob branch renders.
     if result.get("status") == "ok":
-        return {"path": path, "entries": result.get("matches", [])}
+        matches = result.get("matches", [])
+        return {
+            "op": "glob",
+            "status": "ok",
+            "path": path,
+            "entries": matches,
+            "matches": matches,
+        }
     return {"error": result.get("error", "list_directory failed")}
 
 
@@ -351,8 +362,13 @@ async def _handle_glob(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
     result = await execute_op(op, legacy_ctx)
 
     # Normalise: surface as {pattern, matches, count} for caller ergonomics.
+    # Preserve op="glob" + status so file_to_canonical's glob branch fires
+    # (#2695: dropping op made the mapper fall through to "None: ok", silently
+    # losing every match). pattern/matches/count stay as the ergonomic fields.
     if result.get("status") == "ok":
         return {
+            "op": "glob",
+            "status": "ok",
             "pattern": combined,
             "matches": result.get("matches", []),
             "count": result.get("count", 0),
