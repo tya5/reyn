@@ -169,6 +169,20 @@ def _is_error(result: dict) -> bool:
     return bool(result.get("isError")) or result.get("status") == "error"
 
 
+def _explicit_empty(text: str, marker: str) -> str:
+    """Render a legit-empty SUCCESS body (an empty file read, a no-output command, an empty
+    template render, …) as an EXPLICIT marker instead of a blank string.
+
+    Two reasons (FP-0056 v2 piece #2): (1) a blank ``text`` with no attachments on a non-error
+    result would spuriously fire the runtime ``canonical_degraded`` invariant, which exists to catch
+    a *success-mapper losing content it had* (M2) — a genuinely-empty success is not that loss;
+    (2) an explicit "(empty file)" / "(no output)" is better LLM UX than a blank tool result the
+    model has to guess about. Only mappers whose success path can legitimately produce no output
+    wrap their body here; a mapper that regresses to empty when it should always produce something
+    (or an unknown future mapper) still fires the invariant."""
+    return text if text.strip() else marker
+
+
 def mcp_to_canonical(result: dict) -> CanonicalToolResult:
     """MCP result → canonical. ``content`` (joined text) → ``text``; ``structured``
     (structuredContent) + ``media_blocks`` → typed ``attachments`` (a large ``structured`` is
@@ -184,8 +198,14 @@ def mcp_to_canonical(result: dict) -> CanonicalToolResult:
     for block in result.get("media_blocks") or []:
         attachments.append({"kind": "media", "block": block})
     meta = {"isError": True} if _is_error(result) else {}
+    text = result.get("content", "") or ""
+    # A successful MCP call with no content AND no attachments renders an explicit empty (else the
+    # canonical_degraded invariant fires on a legit no-output tool). An error keeps its (possibly
+    # terse) message untouched; an attachment-carrying result already has visible content.
+    if not attachments and not _is_error(result):
+        text = _explicit_empty(text, "(no content)")
     return CanonicalToolResult(
-        text=result.get("content", "") or "",
+        text=text,
         attachments=attachments,
         source_ref=None,
         meta=meta,
@@ -209,8 +229,11 @@ def mcp_read_resource_to_canonical(result: dict) -> CanonicalToolResult:
         elif "blob" in item:
             attachments.append({"kind": "structured", "data": item})
     meta = {"isError": True} if _is_error(result) else {}
+    text = "\n".join(text_parts)
+    if not attachments and not _is_error(result):
+        text = _explicit_empty(text, "(no content)")
     return CanonicalToolResult(
-        text="\n".join(text_parts),
+        text=text,
         attachments=attachments,
         source_ref=None,
         meta=meta,
@@ -234,8 +257,11 @@ def mcp_get_prompt_to_canonical(result: dict) -> CanonicalToolResult:
         elif content is not None:
             attachments.append({"kind": "structured", "data": content})
     meta = {"isError": True} if _is_error(result) else {}
+    text = "\n".join(text_parts)
+    if not attachments and not _is_error(result):
+        text = _explicit_empty(text, "(no content)")
     return CanonicalToolResult(
-        text="\n".join(text_parts),
+        text=text,
         attachments=attachments,
         source_ref=None,
         meta=meta,
@@ -249,6 +275,7 @@ def web_fetch_to_canonical(result: dict) -> CanonicalToolResult:
     is dropped."""
     content = result.get("content")
     text = content if content else str(result.get("preview") or "")
+    text = _explicit_empty(text, "(no content)")
     meta: dict[str, Any] = {}
     if result.get("truncated"):
         meta["truncated"] = True
@@ -281,6 +308,9 @@ def sandboxed_exec_to_canonical(result: dict) -> CanonicalToolResult:
         text = f"{stdout}\n{stderr}" if stdout else stderr
     else:
         text = stdout
+    # A command that produced no stdout/stderr (e.g. mkdir/touch/mv) renders an explicit empty so the
+    # canonical_degraded invariant does not fire on a legit no-output exec (returncode carries signal).
+    text = _explicit_empty(text, "(no output)")
     meta: dict[str, Any] = {}
     returncode = result.get("returncode")
     if returncode:  # nonzero (or truthy) only — a 0 exit is not actionable signal
@@ -304,9 +334,16 @@ def run_pipeline_to_canonical(result: dict) -> CanonicalToolResult:
     ruling)."""
     output = result.get("output")
     if isinstance(output, str):
-        return CanonicalToolResult(text=output, attachments=[], source_ref=None, meta={})
-    attachments = [{"kind": "structured", "data": output}] if output is not None else []
-    return CanonicalToolResult(text="", attachments=attachments, source_ref=None, meta={})
+        return CanonicalToolResult(
+            text=_explicit_empty(output, "(no output)"), attachments=[], source_ref=None, meta={},
+        )
+    if output is None:
+        # A pipeline that completed with no final output: explicit empty text (no structured to carry
+        # it), so a legit no-output run does not fire the canonical_degraded invariant.
+        return CanonicalToolResult(text="(no output)", attachments=[], source_ref=None, meta={})
+    return CanonicalToolResult(
+        text="", attachments=[{"kind": "structured", "data": output}], source_ref=None, meta={},
+    )
 
 
 def run_pipeline_async_to_canonical(result: dict) -> CanonicalToolResult:
@@ -363,8 +400,13 @@ def file_to_canonical(result: dict) -> CanonicalToolResult:
         attachments = [
             {"kind": "media", "block": block} for block in (result.get("media_blocks") or [])
         ]
+        text = result.get("content", "") or ""
+        # An empty file read (no media blocks carrying an image body) renders an explicit empty so the
+        # canonical_degraded invariant does not fire on a legit read of a genuinely empty file.
+        if not attachments:
+            text = _explicit_empty(text, "(empty file)")
         return CanonicalToolResult(
-            text=result.get("content", "") or "", attachments=attachments, source_ref=None, meta=meta,
+            text=text, attachments=attachments, source_ref=None, meta=meta,
         )
 
     if op == "grep":
@@ -445,8 +487,9 @@ def reyn_src_to_canonical(result: dict) -> CanonicalToolResult:
         )
     if "content" in result:
         meta = {"path": result["path"]} if result.get("path") is not None else {}
+        text = _explicit_empty(result.get("content", "") or "", "(empty file)")
         return CanonicalToolResult(
-            text=result.get("content", "") or "", attachments=[], source_ref=None, meta=meta,
+            text=text, attachments=[], source_ref=None, meta=meta,
         )
     if "entries" in result:
         entries = result.get("entries") or []
@@ -492,8 +535,9 @@ def render_template_to_canonical(result: dict) -> CanonicalToolResult:
     undefined_vars = result.get("undefined_vars")
     if undefined_vars:
         meta["undefined_vars"] = undefined_vars
+    text = _explicit_empty(result.get("rendered", "") or "", "(empty render)")
     return CanonicalToolResult(
-        text=result.get("rendered", "") or "", attachments=[], source_ref=None, meta=meta,
+        text=text, attachments=[], source_ref=None, meta=meta,
     )
 
 
@@ -571,8 +615,9 @@ def judge_output_to_canonical(result: dict) -> CanonicalToolResult:
         value = result.get(key)
         if value is not None:
             meta[key] = value
+    text = _explicit_empty(str(result.get("reason", "") or ""), "(no reason given)")
     return CanonicalToolResult(
-        text=str(result.get("reason", "") or ""), attachments=[], source_ref=None, meta=meta,
+        text=text, attachments=[], source_ref=None, meta=meta,
     )
 
 
@@ -593,8 +638,9 @@ def memory_body_to_canonical(result: dict) -> CanonicalToolResult:
         value = result.get(key)
         if value is not None:
             meta[key] = value
+    text = _explicit_empty(result.get("content", "") or "", "(empty)")
     return CanonicalToolResult(
-        text=result.get("content", "") or "", attachments=[], source_ref=None, meta=meta,
+        text=text, attachments=[], source_ref=None, meta=meta,
     )
 
 
@@ -603,8 +649,9 @@ def ask_user_to_canonical(result: dict) -> CanonicalToolResult:
     (free text or the chosen option) IS what the LLM acts on → ``text`` — not a whole-dict blob hiding
     it behind ``kind``/``question``/``status`` transport. Shape:
     ``{kind:"ask_user", question, answer, status:"ok"}``."""
+    text = _explicit_empty(str(result.get("answer", "") or ""), "(no answer)")
     return CanonicalToolResult(
-        text=str(result.get("answer", "") or ""), attachments=[], source_ref=None, meta={},
+        text=text, attachments=[], source_ref=None, meta={},
     )
 
 
@@ -673,6 +720,54 @@ def canonical_fallback_reason(
     if declaration is STRUCTURED_PASSTHROUGH and structured_offloaded:
         return "passthrough_oversized"
     return None
+
+
+# The audit-event kind the two live ``to_canonical`` callers emit when a NON-error result canonicalized
+# to a completely empty view — no text AND no attachments — i.e. a success-mapper silently lost the
+# content it should have surfaced (FP-0056 v2 piece #2, mode M2), or an unknown future mapper bug did.
+# Distinct from ``canonical_fallback_used`` (which fires on the *declared/unknown whole-dict fallback*
+# paths, never on a mapped producer): this one fires on a MAPPED producer that emitted nothing. It is
+# an audit / P6 event, NOT a WAL / recovery-core event (no truncate-falsify obligation).
+CANONICAL_DEGRADED_EVENT = "canonical_degraded"
+
+# The single reason category ``canonical_degraded_reason`` returns when it fires. A category string
+# (not result content) so the callers emit ``source`` id + this reason, never the result body.
+_CANONICAL_DEGRADED_REASON = "empty_canonical"
+
+
+def canonical_degraded_reason(
+    result: dict, canonical: CanonicalToolResult
+) -> "str | None":
+    """Return the audit reason a :data:`CANONICAL_DEGRADED_EVENT` should carry, or ``None`` when the
+    result canonicalized to a visible view (FP-0056 v2 piece #2 — the runtime M2 safety net).
+
+    Fires (non-``None``) iff ALL hold:
+
+    - the result is **not error-classified** — neither :func:`_is_error` (``isError`` / ``status ==
+      "error"``) nor the canonical's ``meta.isError`` (the broader per-mapper error checks — ``file``'s
+      ``denied``/``not_found``, an ``error`` field, …) flags it. An error result may legitimately carry
+      a terse message; it is not a silent SUCCESS loss (piece #1's shared error seam will further
+      guarantee non-empty error text);
+    - the canonical ``text`` is empty after ``.strip()``;
+    - the canonical ``attachments`` list is empty.
+
+    A ``data: []`` (or any) structured attachment is an EXPLICIT empty the LLM sees → does NOT fire
+    (the rule is purely text-empty AND attachments-empty; there is deliberately NO "trivial attachment"
+    check). A legit-empty success (empty file, no-output command, …) is rendered to an explicit marker
+    by its mapper (:func:`_explicit_empty`), so it too renders non-empty text and does NOT fire — only a
+    mapper that *lost* content it had, or a not-yet-fixed future mapper, produces the empty+empty shape.
+
+    The helper is PURE (a sibling of :func:`canonical_fallback_reason`): the event fires caller-side at
+    the two ``to_canonical`` call sites, never here."""
+    if not isinstance(result, dict):
+        return None
+    if _is_error(result) or (canonical.get("meta") or {}).get("isError"):
+        return None
+    if (canonical.get("text", "") or "").strip():
+        return None
+    if canonical.get("attachments"):
+        return None
+    return _CANONICAL_DEGRADED_REASON
 
 
 _CANONICAL_SOURCE_KEY = "_canonical_source"

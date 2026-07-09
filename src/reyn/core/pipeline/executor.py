@@ -109,7 +109,9 @@ from typing import TYPE_CHECKING, Any, Awaitable, Callable, Union
 
 from reyn.core.events.pipeline_recovery import latest_pipeline_state, record_pipeline_state
 from reyn.core.offload.canonical import (
+    CANONICAL_DEGRADED_EVENT,
     CANONICAL_FALLBACK_EVENT,
+    canonical_degraded_reason,
     canonical_fallback_reason,
     canonical_to_ctx_fields,
     extract_canonical_source,
@@ -773,7 +775,8 @@ async def _run_tool_step(inv: "_StepInvocation") -> "tuple[Any, bool, dict[str, 
     # retains full values for downstream programmatic step processing). Schema validation above runs
     # against the RAW dispatch result, unchanged.
     if isinstance(result, dict):
-        canonical = to_canonical(unwrap_dispatch_envelope(result), source=canonical_source)
+        _inner = unwrap_dispatch_envelope(result)
+        canonical = to_canonical(_inner, source=canonical_source)
         ctx_result: Any = canonical_to_ctx_fields(canonical)
         # FP-0056 PR-F2: a VISIBLE fallback (a #2681 CANONICAL_TODO producer, or a
         # genuinely-unregistered tool) emits a P6 audit event naming the source — degrade-with-audit,
@@ -785,6 +788,24 @@ async def _run_tool_step(inv: "_StepInvocation") -> "tuple[Any, bool, dict[str, 
             inv.deps.events.emit(
                 CANONICAL_FALLBACK_EVENT, source=canonical_source, reason=_fallback_reason,
             )
+        # FP-0056 v2 piece #2: a MAPPED producer that canonicalized to an empty view (no text + no
+        # attachments) on a non-error result silently lost its content (mode M2) — fire the
+        # ``canonical_degraded`` audit event + a warn log (degrade-with-audit). A legit-empty success
+        # renders an explicit marker in its mapper and does not reach here. Source id only; NEVER the
+        # result body.
+        _degraded_reason = canonical_degraded_reason(
+            _inner if isinstance(_inner, dict) else {}, canonical
+        )
+        if _degraded_reason is not None:
+            import logging
+            logging.getLogger(__name__).warning(
+                "canonical_degraded: source=%s reason=%s (a non-error tool result canonicalized to an "
+                "empty view — no text, no attachments)", canonical_source, _degraded_reason,
+            )
+            if inv.deps.events is not None:
+                inv.deps.events.emit(
+                    CANONICAL_DEGRADED_EVENT, source=canonical_source, reason=_degraded_reason,
+                )
     elif isinstance(result, str):
         ctx_result = {"text": result}
     else:
