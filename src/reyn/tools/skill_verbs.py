@@ -210,10 +210,10 @@ async def _handle_skill_install_source(
 
 # ── ToolDefinitions ───────────────────────────────────────────────────────────
 
-from reyn.core.offload.canonical import STRUCTURED_PASSTHROUGH  # noqa: E402
+from reyn.core.offload.canonical import CANONICAL_TODO  # noqa: E402
 
 SKILL_INSTALL_LOCAL = ToolDefinition(
-    canonical=STRUCTURED_PASSTHROUGH,
+    canonical=CANONICAL_TODO,
     name="skill_install_local",
     description=_SKILL_INSTALL_LOCAL_DESCRIPTION,
     parameters=_SKILL_INSTALL_LOCAL_PARAMETERS,
@@ -224,7 +224,7 @@ SKILL_INSTALL_LOCAL = ToolDefinition(
 )
 
 SKILL_INSTALL_SOURCE = ToolDefinition(
-    canonical=STRUCTURED_PASSTHROUGH,
+    canonical=CANONICAL_TODO,
     name="skill_install_source",
     description=_SKILL_INSTALL_SOURCE_DESCRIPTION,
     parameters=_SKILL_INSTALL_SOURCE_PARAMETERS,

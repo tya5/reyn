@@ -82,10 +82,10 @@ async def _handle(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
     )
 
 
-from reyn.core.offload.canonical import STRUCTURED_PASSTHROUGH  # noqa: E402
+from reyn.core.offload.canonical import CANONICAL_TODO  # noqa: E402
 
 SESSION_SPAWN = ToolDefinition(
-    canonical=STRUCTURED_PASSTHROUGH,
+    canonical=CANONICAL_TODO,
     name="session_spawn",
     router_dispatched=True,
     description=_SESSION_SPAWN_DESCRIPTION,

@@ -1570,10 +1570,10 @@ def _augment_suggestions(
 # ── 4 ToolDefinitions exported ─────────────────────────────────────────────
 
 
-from reyn.core.offload.canonical import STRUCTURED_PASSTHROUGH  # noqa: E402
+from reyn.core.offload.canonical import CANONICAL_TODO  # noqa: E402
 
 LIST_ACTIONS = ToolDefinition(
-    canonical=STRUCTURED_PASSTHROUGH,
+    canonical=CANONICAL_TODO,
     name="list_actions",
     router_dispatched=True,
     description=_LIST_ACTIONS_DESCRIPTION,
@@ -1586,7 +1586,7 @@ LIST_ACTIONS = ToolDefinition(
 
 
 SEARCH_ACTIONS = ToolDefinition(
-    canonical=STRUCTURED_PASSTHROUGH,
+    canonical=CANONICAL_TODO,
     name="search_actions",
     router_dispatched=True,
     description=_SEARCH_ACTIONS_DESCRIPTION,
@@ -1599,7 +1599,7 @@ SEARCH_ACTIONS = ToolDefinition(
 
 
 DESCRIBE_ACTION = ToolDefinition(
-    canonical=STRUCTURED_PASSTHROUGH,
+    canonical=CANONICAL_TODO,
     name="describe_action",
     router_dispatched=True,
     description=_DESCRIBE_ACTION_DESCRIPTION,
@@ -1612,7 +1612,7 @@ DESCRIBE_ACTION = ToolDefinition(
 
 
 INVOKE_ACTION = ToolDefinition(
-    canonical=STRUCTURED_PASSTHROUGH,
+    canonical=CANONICAL_TODO,
     name="invoke_action",
     router_dispatched=True,
     description=_INVOKE_ACTION_DESCRIPTION,

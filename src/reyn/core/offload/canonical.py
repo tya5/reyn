@@ -39,10 +39,13 @@ A registry-derived CI gate (``tests/test_fp0056_canonical_coverage_gate.py``) wa
 op kind + every ToolDefinition and asserts each carries a declaration — catching design-level
 omissions a hand-written table misses (it WOULD have caught the ``file`` gap).
 
-A declaration is either a **mapper** (``result -> CanonicalToolResult``) or the explicit named opt-in
-:data:`STRUCTURED_PASSTHROUGH` (the whole dict legitimately IS the LLM view — admin/install ops).
-A genuinely unregistered ``source`` (dynamic/edge, or ``None``) keeps the lossless whole-dict
-fallback; PR-F2 adds the ``canonical_fallback_used`` visibility event (degrade-with-audit).
+A declaration is a **mapper** (``result -> CanonicalToolResult``), the explicit named opt-in
+:data:`STRUCTURED_PASSTHROUGH` (the whole dict legitimately IS the LLM view — admin/install ops, owner
+decision #1), or :data:`CANONICAL_TODO` (declared but a real mapper is not yet written — a provisional
+whole-dict fallback, ratcheted so it can't become a permanent escape hatch; burn-down in issue #2681).
+A genuinely unregistered ``source`` (dynamic/edge, or ``None``) keeps the lossless whole-dict fallback;
+PR-F2 adds the ``canonical_fallback_used`` visibility event (degrade-with-audit) on the TODO + unknown
+paths.
 
 P7: the source → canonical mapping is OS-level (no domain-specific vocabulary). The deref / paging /
 offload store machinery is reused unchanged — 案B removes only the field-guessing.
@@ -81,6 +84,26 @@ class _StructuredPassthrough:
 STRUCTURED_PASSTHROUGH = _StructuredPassthrough()
 
 
+class _CanonicalTodo:
+    """The sentinel type of :data:`CANONICAL_TODO` (single instance)."""
+
+    __slots__ = ()
+
+    def __repr__(self) -> str:  # pragma: no cover - debug aid
+        return "CANONICAL_TODO"
+
+
+# CANONICAL_TODO — a producer's canonical shape IS declared (gate-satisfying — NOT a silent gap), but
+# a real mapper is not yet written; it takes a provisional whole-dict fallback. DISTINCT from
+# ``STRUCTURED_PASSTHROUGH`` (whose whole-dict output is the reviewed, legitimate LLM view for the
+# admin/install ops of owner decision #1): a ``CANONICAL_TODO`` producer may well have a text body a
+# future mapper should surface — the marker records the debt so a reader (and PR-F2's
+# ``canonical_fallback_used`` event) can tell "reviewed-legitimate" from "todo". Ratcheted: the gate
+# grandfathers ONLY the existing producers relabeled at F1 migration; a NEW producer may not adopt it
+# (real mapper or STRUCTURED_PASSTHROUGH only). Greppable; burn-down tracked in issue #2681.
+CANONICAL_TODO = _CanonicalTodo()
+
+
 class _Undeclared:
     """The sentinel type of :data:`UNDECLARED` (single instance)."""
 
@@ -96,21 +119,22 @@ class _Undeclared:
 UNDECLARED = _Undeclared()
 
 
-# A canonical declaration: a mapper, or the explicit passthrough opt-in.
-CanonicalDeclaration = "CanonicalMapper | _StructuredPassthrough"
+# A canonical declaration: a mapper, the reviewed passthrough opt-in, or the provisional TODO marker.
+CanonicalDeclaration = "CanonicalMapper | _StructuredPassthrough | _CanonicalTodo"
 
 
 # source-identity (op kind / tool name) → declaration. Populated at BOTH registration seams:
 # ``op_runtime.register(kind, handler, canonical=…)`` for op kinds, and ``ToolRegistry.register`` for
 # router ToolDefinitions (via their ``canonical`` field). This is the migrated ``_MAPPERS`` — no
 # longer a free-floating hand-synced dict, but derived from the registrations themselves.
-_DECLARATIONS: "dict[str, CanonicalMapper | _StructuredPassthrough]" = {}
+_DECLARATIONS: "dict[str, CanonicalMapper | _StructuredPassthrough | _CanonicalTodo]" = {}
 
 
 def declare_canonical(
-    source_id: str, declaration: "CanonicalMapper | _StructuredPassthrough"
+    source_id: str, declaration: "CanonicalMapper | _StructuredPassthrough | _CanonicalTodo"
 ) -> None:
-    """Register ``source_id``'s canonical declaration (a mapper or ``STRUCTURED_PASSTHROUGH``).
+    """Register ``source_id``'s canonical declaration (a mapper, ``STRUCTURED_PASSTHROUGH``, or
+    ``CANONICAL_TODO``).
 
     Called from the two registration seams. Idempotent for an identical re-declaration (registries
     are rebuilt per ``get_default_registry()`` call); a *conflicting* re-declaration raises, since two
@@ -118,7 +142,7 @@ def declare_canonical(
     if declaration is UNDECLARED:
         raise ValueError(
             f"canonical declaration for {source_id!r} is UNDECLARED — every registered producer must "
-            f"declare a mapper or STRUCTURED_PASSTHROUGH (FP-0056 PR-F1)"
+            f"declare a mapper, STRUCTURED_PASSTHROUGH, or CANONICAL_TODO (FP-0056 PR-F1)"
         )
     existing = _DECLARATIONS.get(source_id)
     if existing is not None and existing is not declaration:
@@ -130,7 +154,7 @@ def declare_canonical(
 
 def canonical_declaration(
     source_id: "str | None",
-) -> "CanonicalMapper | _StructuredPassthrough | None":
+) -> "CanonicalMapper | _StructuredPassthrough | _CanonicalTodo | None":
     """Return the declared canonical mapping for ``source_id`` (op kind / tool name), or ``None`` when
     the identity was never registered (a genuine unknown → the visible fallback in
     :func:`to_canonical`)."""
@@ -517,12 +541,45 @@ def judge_output_to_canonical(result: dict) -> CanonicalToolResult:
     )
 
 
+def memory_body_to_canonical(result: dict) -> CanonicalToolResult:
+    """``read_memory_body`` result → canonical (FP-0056 PR-F1 triage: text-shaped). The memory entry's
+    body (``content``, frontmatter already stripped by the handler) IS the LLM-readable text → ``text``
+    — NOT a whole-dict blob. This is the same file-class the incident exposed, and it has its own
+    documented G12 empty-stop attractor (an LLM handed non-clean memory text stopped with an empty
+    reply — router_loop._read_memory_body). ``layer`` / ``slug`` are signal meta (which entry). An
+    error (``error`` field) surfaces the message as ``text`` with ``meta.isError``. Shape:
+    ``{content, layer?, slug?}`` (ok) or ``{error, layer?, slug?}`` (error)."""
+    if result.get("error"):
+        return CanonicalToolResult(
+            text=str(result["error"]), attachments=[], source_ref=None, meta={"isError": True},
+        )
+    meta: dict[str, Any] = {}
+    for key in ("layer", "slug"):
+        value = result.get(key)
+        if value is not None:
+            meta[key] = value
+    return CanonicalToolResult(
+        text=result.get("content", "") or "", attachments=[], source_ref=None, meta=meta,
+    )
+
+
+def ask_user_to_canonical(result: dict) -> CanonicalToolResult:
+    """``ask_user`` op result → canonical (FP-0056 PR-F1 triage: text-shaped). The user's ``answer``
+    (free text or the chosen option) IS what the LLM acts on → ``text`` — not a whole-dict blob hiding
+    it behind ``kind``/``question``/``status`` transport. Shape:
+    ``{kind:"ask_user", question, answer, status:"ok"}``."""
+    return CanonicalToolResult(
+        text=str(result.get("answer", "") or ""), attachments=[], source_ref=None, meta={},
+    )
+
+
 def _fallback_structured(result: dict) -> CanonicalToolResult:
     """The lossless whole-dict fallback: the entire result becomes a ``structured`` attachment
     (readable as frontmatter YAML, ``ctx.<name>.structured.<field>`` still programmatically reachable),
-    ``text`` empty. Used for a declared ``STRUCTURED_PASSTHROUGH`` producer AND for a genuinely
-    unregistered ``source`` (dynamic/edge). PR-F2 adds a ``canonical_fallback_used`` event on the
-    unregistered path (degrade-with-audit)."""
+    ``text`` empty. Used for a declared ``STRUCTURED_PASSTHROUGH`` producer, a provisional
+    ``CANONICAL_TODO`` producer, AND a genuinely unregistered ``source`` (dynamic/edge). PR-F2 adds a
+    ``canonical_fallback_used`` event on the ``CANONICAL_TODO`` + unregistered paths (degrade-with-
+    audit) — but NOT on ``STRUCTURED_PASSTHROUGH`` (a reviewed, legitimate whole-dict view)."""
     return CanonicalToolResult(
         text="", attachments=[{"kind": "structured", "data": result}], source_ref=None, meta={},
     )
@@ -534,11 +591,12 @@ def to_canonical(result: dict, *, source: "str | None" = None) -> CanonicalToolR
     ``result["kind"]`` (which a producer may not set — the ``reyn_src`` incident class).
 
     - ``source`` declared with a mapper → the mapper shapes the result.
-    - ``source`` declared ``STRUCTURED_PASSTHROUGH`` → the whole dict is a ``structured`` attachment.
+    - ``source`` declared ``STRUCTURED_PASSTHROUGH`` (reviewed) or ``CANONICAL_TODO`` (provisional,
+      pending a real mapper) → the whole dict is a ``structured`` attachment.
     - ``source`` ``None`` or unregistered (genuine unknown) → the same lossless whole-dict fallback
-      (PR-F2 will emit ``canonical_fallback_used`` here). Nothing is ever lost."""
+      (PR-F2 will emit ``canonical_fallback_used`` on the TODO + unknown paths). Nothing is ever lost."""
     declaration = canonical_declaration(source)
-    if declaration is None or declaration is STRUCTURED_PASSTHROUGH:
+    if declaration is None or declaration is STRUCTURED_PASSTHROUGH or declaration is CANONICAL_TODO:
         return _fallback_structured(result)
     return declaration(result)
 

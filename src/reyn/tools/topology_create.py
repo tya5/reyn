@@ -122,10 +122,10 @@ async def _handle(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
     )
 
 
-from reyn.core.offload.canonical import STRUCTURED_PASSTHROUGH  # noqa: E402
+from reyn.core.offload.canonical import CANONICAL_TODO  # noqa: E402
 
 TOPOLOGY_CREATE = ToolDefinition(
-    canonical=STRUCTURED_PASSTHROUGH,
+    canonical=CANONICAL_TODO,
     name="topology_create",
     router_dispatched=True,
     description=_TOPOLOGY_CREATE_DESCRIPTION,

@@ -87,8 +87,8 @@ _HANDLERS: dict = {}
 def register(kind: str, handler, *, canonical) -> None:
     """Register an op handler + its canonical declaration (FP-0056 PR-F1).
 
-    ``canonical`` is REQUIRED: either a mapper (``result -> CanonicalToolResult``) or the explicit
-    ``STRUCTURED_PASSTHROUGH`` opt-in. The declaration is born WITH the op registration (not a
+    ``canonical`` is REQUIRED: a mapper (``result -> CanonicalToolResult``), the ``STRUCTURED_PASSTHROUGH``
+    opt-in, or the provisional ``CANONICAL_TODO`` marker. The declaration is born WITH the op registration (not a
     free-floating ``_MAPPERS`` dict hand-synced elsewhere), so an op kind can never reach the offload
     chokepoint without a declared LLM-visible shape — the structural gap the 2026-07-09 dogfood
     incident exposed. The coverage gate (``tests/test_fp0056_canonical_coverage_gate.py``) enumerates

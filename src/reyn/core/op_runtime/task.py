@@ -759,17 +759,17 @@ async def _assign(op, ctx: OpContext) -> dict:
     return _ok("task.assign", task=assigned.to_dict())
 
 
-from reyn.core.offload.canonical import STRUCTURED_PASSTHROUGH  # noqa: E402
+from reyn.core.offload.canonical import CANONICAL_TODO  # noqa: E402
 
-register("task.create", _create, canonical=STRUCTURED_PASSTHROUGH)
-register("task.update_status", _update_status, canonical=STRUCTURED_PASSTHROUGH)
-register("task.get", _get, canonical=STRUCTURED_PASSTHROUGH)
-register("task.list", _list, canonical=STRUCTURED_PASSTHROUGH)
-register("task.add_dependency", _add_dependency, canonical=STRUCTURED_PASSTHROUGH)
-register("task.remove_dependency", _remove_dependency, canonical=STRUCTURED_PASSTHROUGH)
-register("task.repoint_dependency", _repoint_dependency, canonical=STRUCTURED_PASSTHROUGH)
-register("task.abort", _abort, canonical=STRUCTURED_PASSTHROUGH)
-register("task.heartbeat", _heartbeat, canonical=STRUCTURED_PASSTHROUGH)
-register("task.register_unblock_predicate", _register_unblock_predicate, canonical=STRUCTURED_PASSTHROUGH)
-register("task.comment", _comment, canonical=STRUCTURED_PASSTHROUGH)
-register("task.assign", _assign, canonical=STRUCTURED_PASSTHROUGH)
+register("task.create", _create, canonical=CANONICAL_TODO)
+register("task.update_status", _update_status, canonical=CANONICAL_TODO)
+register("task.get", _get, canonical=CANONICAL_TODO)
+register("task.list", _list, canonical=CANONICAL_TODO)
+register("task.add_dependency", _add_dependency, canonical=CANONICAL_TODO)
+register("task.remove_dependency", _remove_dependency, canonical=CANONICAL_TODO)
+register("task.repoint_dependency", _repoint_dependency, canonical=CANONICAL_TODO)
+register("task.abort", _abort, canonical=CANONICAL_TODO)
+register("task.heartbeat", _heartbeat, canonical=CANONICAL_TODO)
+register("task.register_unblock_predicate", _register_unblock_predicate, canonical=CANONICAL_TODO)
+register("task.comment", _comment, canonical=CANONICAL_TODO)
+register("task.assign", _assign, canonical=CANONICAL_TODO)

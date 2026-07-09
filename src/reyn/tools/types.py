@@ -18,7 +18,11 @@ from typing import TYPE_CHECKING, Any, Awaitable, Callable, Literal, Mapping, Pr
 from reyn.core.offload.canonical import UNDECLARED
 
 if TYPE_CHECKING:
-    from reyn.core.offload.canonical import CanonicalMapper, _StructuredPassthrough
+    from reyn.core.offload.canonical import (
+        CanonicalMapper,
+        _CanonicalTodo,
+        _StructuredPassthrough,
+    )
     from reyn.data.skills.registry import SkillEntry
 
 
@@ -400,12 +404,16 @@ class ToolDefinition:
     # FP-0056 PR-F1: the tool's canonical declaration — how its result is normalized to the
     # LLM-visible {text, attachments, meta} shape at the offload chokepoint. REQUIRED in spirit
     # (kw_only, and the coverage gate rejects the UNDECLARED default): either a mapper
-    # (``result -> CanonicalToolResult``) or the explicit ``STRUCTURED_PASSTHROUGH`` opt-in (the whole
+    # (``result -> CanonicalToolResult``) or the explicit ``CANONICAL_TODO`` opt-in (the whole
     # dict IS the right LLM view — admin/install tools). Born WITH the tool, like its schema — so a
     # router tool can never reach the chokepoint without a declared shape (the file/reyn_src incident
     # class). ``ToolRegistry.register`` records it into the canonical registry keyed by tool name;
     # ``to_canonical(result, source=<tool name>)`` resolves it by invoked identity, not result sniffing.
-    canonical: "CanonicalMapper | _StructuredPassthrough" = field(kw_only=True, default=UNDECLARED)
+    # A not-yet-mapped tool declares ``CANONICAL_TODO`` (provisional whole-dict fallback, greppable
+    # debt) — distinct from ``CANONICAL_TODO`` (the reviewed admin/install whole-dict view).
+    canonical: "CanonicalMapper | _StructuredPassthrough | _CanonicalTodo" = field(
+        kw_only=True, default=UNDECLARED,
+    )
 
     # Future metadata anchors (commented out; surface as needed):
     # cost_weight: float = 1.0

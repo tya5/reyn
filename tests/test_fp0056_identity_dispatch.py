@@ -7,7 +7,12 @@ result canonicalizes correctly, and a MISLEADING kind on the result is irrelevan
 """
 from __future__ import annotations
 
-from reyn.core.offload.canonical import STRUCTURED_PASSTHROUGH, to_canonical
+from reyn.core.offload.canonical import (
+    CANONICAL_TODO,
+    STRUCTURED_PASSTHROUGH,
+    canonical_declaration,
+    to_canonical,
+)
 
 
 def test_kindless_reyn_src_result_canonicalizes_via_source() -> None:
@@ -49,6 +54,34 @@ def test_structured_passthrough_admin_result_passes_through_whole_dict() -> None
     assert canonical["text"] == ""
     assert canonical["attachments"] == [{"kind": "structured", "data": result}]
     # And the declaration really is the passthrough sentinel, not a bespoke mapper.
-    from reyn.core.offload.canonical import canonical_declaration
-
     assert canonical_declaration("mcp_install") is STRUCTURED_PASSTHROUGH
+
+
+def test_canonical_todo_producer_gets_the_whole_dict_fallback() -> None:
+    """Tier 1: a ``CANONICAL_TODO`` producer (declared, pending a real mapper) takes the SAME lossless
+    whole-dict fallback as an unknown source — behavior-preserving vs the pre-framework silent
+    fallback, but now an explicit, ratcheted, tracked declaration (issue #2681)."""
+    result = {"servers": [{"name": "acme"}], "status": "ok"}
+    canonical = to_canonical(result, source="list_mcp_servers")
+    assert canonical["text"] == ""
+    assert canonical["attachments"] == [{"kind": "structured", "data": result}]
+    assert canonical_declaration("list_mcp_servers") is CANONICAL_TODO
+
+
+def test_triaged_text_shaped_producers_surface_their_text_not_a_blob() -> None:
+    """Tier 1: the two producers triaged as text-shaped in F1 got REAL mappers (not CANONICAL_TODO) —
+    ``read_memory_body`` surfaces the memory body as ``text`` (the file-class / G12 attractor), and
+    ``ask_user`` surfaces the user's answer — instead of hiding them in a whole-dict blob."""
+    mem = to_canonical(
+        {"content": "Yasuda", "layer": "user", "slug": "identity"}, source="read_memory_body",
+    )
+    assert mem["text"] == "Yasuda" and not mem["attachments"]
+
+    ans = to_canonical(
+        {"kind": "ask_user", "question": "name?", "answer": "Ada", "status": "ok"}, source="ask_user",
+    )
+    assert ans["text"] == "Ada" and not ans["attachments"]
+
+    # Neither is a passthrough/todo marker — they resolve to real callable mappers.
+    assert callable(canonical_declaration("read_memory_body"))
+    assert callable(canonical_declaration("ask_user"))
