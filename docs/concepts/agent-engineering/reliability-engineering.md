@@ -6,7 +6,17 @@ audience: [human, agent]
 
 # Reliability Engineering
 
-Making agents recover from failure: schema validation, re-prompt on rejection, loop bounds, per-step timeout, and (longer-term) retry policies and checkpoint/resume. The bar is "the system stays in a defined state even when the LLM gets it wrong."
+> **Status: partially stale.** This page predates the deleted phase-graph skill
+> engine. The LLM-call-timeout and LLM-router-resilience sections below are
+> current and unaffected — confirmed live in `docs/reference/config/reyn-yaml.md`.
+> The "Python preprocessor timeout" section describes a step kind
+> (`python` preprocessor) that no longer exists in the current pipeline DSL
+> (confirmed via `docs/reference/runtime/pipeline-dsl.md` — no such step kind).
+> A full rewrite covering the current crash-recovery/WAL substrate is tracked
+> as a follow-up; in the meantime see [Time-travel](../runtime/time-travel.md)
+> and [Events](../runtime/events.md) for the current reliability story.
+
+Making agents recover from failure: schema validation, re-prompt on rejection, loop bounds, per-step timeout, and retry policies. The bar is "the system stays in a defined state even when the LLM gets it wrong."
 
 ## How reyn handles it
 
@@ -36,7 +46,7 @@ Per `python` preprocessor step, a wall-clock `timeout` (default `30`s) is enforc
 
 A few reliability primitives are intentionally simple today and on the roadmap to deepen:
 
-**No checkpoint/resume.** Because every state change is an event (P3), the *information* needed for resume is already in the log; the *machinery* to reload at event N and continue isn't built. Adding it doesn't require new event types — just a runtime mode that replays events as state-restore rather than just rendering.
+**Checkpoint/resume is now implemented, WAL-backed rather than audit-event-backed.** Crash recovery reconstructs agent state from the WAL (`.reyn/state/wal.jsonl`) plus seq-keyed snapshots, and user-initiated rewind (`/rewind`) forks history at a past checkpoint the same way. See [Time-travel](../runtime/time-travel.md) for the mechanism — this superseded the "not built yet" note that used to be here.
 
 **Idempotency is the workflow author's responsibility.** If a workflow writes a file via Control IR, re-running the same step on retry will write again. Deterministic preprocessing helps, but workflows with externally-visible side effects need to think about idempotency themselves.
 

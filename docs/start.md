@@ -16,7 +16,7 @@ reyn lets an LLM agent decide, organize, and orchestrate — picking tools, spaw
 | Install and start the agent | [Getting started](guide/getting-started/01-installation.md) |
 | Solve a specific problem (chat user) | [Guide / for users](guide/for-users/manage-permissions.md) |
 | Understand the design | Concepts |
-| Read reyn through agent-engineering lenses | [Six lenses](concepts/agent-engineering/index.md) |
+| Read reyn through agent-engineering lenses | [Eight lenses](concepts/agent-engineering/index.md) |
 | Contribute | See `docs/deep-dives/contributing/` in the repository |
 
 ## The four reading modes (Diátaxis)

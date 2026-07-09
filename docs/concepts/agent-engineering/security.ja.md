@@ -6,6 +6,18 @@ audience: [human, agent]
 
 # Security
 
+> **状態: partially stale。** 以下の「3層 permission モデル」「phase レベル宣言」
+> 「skill スコープの承認」セクションは、削除済みの phase-graph skill engine の
+> 承認フロー(phase の frontmatter 宣言ごと、`run_skill` の継承)を記述しています
+> — 現行ソースにどちらの概念も存在しないことを直接 grep で確認済みです。現行モデルは
+> `docs/concepts/runtime/permission-model.ja.md` に記述されている 4 層の
+> just-in-time capability 承認フロー(config 事前承認 → saved → session →
+> interactive prompt)です。「Python preprocessor 用 AST サンドボックス」セクションは、
+> 現行の pipeline DSL に存在しないステップ種別を記述しています。**以下の
+> 「Content-layer defense」セクション(とそれ以下すべて)は現行かつ影響を受けません**
+> — `docs/feature-map.md` の Content-layer defense セクションと一致しています。
+> stale なセクションの書き直しは follow-up として追跡されています。
+
 ケイパビリティのゲーティング、サンドボックス境界、トラスト スコーピング。目標は「ユーザーが承認していないケイパビリティをワークフローが暗黙的に取得せず、侵害されたワークフローが他のワークフローにエスカレートできないこと」です。
 
 ## Reyn の実装方法

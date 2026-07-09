@@ -6,6 +6,19 @@ audience: [human, agent]
 
 # Security
 
+> **Status: partially stale.** The "three-layer permission model" / "phase-level
+> declarations" / "skill-scoped approvals" sections below describe the deleted
+> phase-graph skill engine's approval flow (per-phase frontmatter declarations,
+> `run_skill` inheritance) — confirmed via direct grep that neither concept
+> exists in current source; the current model is the 4-layer just-in-time
+> capability approval flow (config pre-approval → saved → session →
+> interactive prompt) described in `docs/concepts/runtime/permission-model.md`.
+> The "AST sandbox for Python preprocessor steps" section describes a step
+> kind that no longer exists in the current pipeline DSL. The **"Content-layer
+> defense" section below (and everything under it) is current and unaffected**
+> — it matches `docs/feature-map.md`'s Content-layer defense section verbatim.
+> A rewrite of the stale sections is tracked as a follow-up.
+
 Capability gating, sandbox boundaries, and trust scoping. The bar is "no workflow silently gets capabilities the user didn't authorize, and a compromised workflow can't escalate to other workflows."
 
 ## How reyn handles it

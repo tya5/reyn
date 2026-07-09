@@ -6,6 +6,16 @@ audience: [human, agent]
 
 # System Design
 
+> **状態: stale。** このページは phase-graph skill engine(Phase / Workflow / OS
+> のレイヤー分割、`candidate_outputs` エッジ)を前提に書かれていますが、
+> 後の engine 削除 arc で削除されました — 現行ソースにどちらの概念も存在しないことを
+> 直接 grep で確認済みです。現行モデル(permission gate を通す typed Control IR op
+> dispatch、phase graph ではなく Control IR op/pipeline/skill に dispatch する
+> router loop)をカバーする書き直しは follow-up として追跡されています。当面は
+> `CLAUDE.md` の Constitution 節と
+> [`docs/concepts/architecture/charter.md`](../architecture/charter.md)
+> (System Design 行)が、この lens の現行 grounded ソースです。
+
 agent システムのマクロ構造: 制御フロー、状態、責任をレイヤーを横断してどのように分散させるか、そしてランタイムが LLM が何をしても強制する不変条件は何か。
 
 ## Reyn の実装方法

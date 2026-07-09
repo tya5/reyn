@@ -6,6 +6,21 @@ audience: [human, agent]
 
 # Retrieval Engineering
 
+> **状態: stale。** このページは削除済みの phase-graph skill engine(`recall_memory` を
+> 「preprocessor」経由で呼び出す stdlib ワークフローとする記述)を前提に書かれており、
+> それ以降に出荷された 2 つの機能を反映していません — `docs/feature-map.md` の
+> Memory & RAG セクションで確認済み: **(1)** `recall` は現在、typed Control IR op として
+> ベクトル類似検索(source ごとの `index_query`、top-K マージ)をプラガブルな
+> `IndexBackend` 上で行います。以下で「現行」かつベクトル検索を「おそらく次のステップ」と
+> 記述しているキーワード/インデックスマッチングとは異なります。**(2)** `web_search` /
+> `web_fetch` は現在、バンドル済みの Tier-1 default-allow ツールであり、以下の
+> 「web 検索や外部検索プリミティブなし」という主張と矛盾します。書き直しは follow-up
+> として追跡されています。当面は
+> [`docs/concepts/data-retrieval/rag.md`](../data-retrieval/rag.md) と
+> [`docs/concepts/architecture/charter.md`](../architecture/charter.md)
+> (Retrieval 行 — 憲章の 2 つの honest thin area の 1 つ)が現行の grounded な
+> ストーリーです。
+
 適切なコンテキストを適切なタイミングで agent に渡すこと — 過去のやり取りの記憶、プロジェクト固有の知識、外部ドキュメント、検索結果。検索品質は多くの場合、モデルの選択よりも出力品質に大きく影響します。
 
 ## Reyn の実装方法

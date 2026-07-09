@@ -6,6 +6,22 @@ audience: [human, agent]
 
 # Retrieval Engineering
 
+> **Status: stale.** This page was written against the deleted phase-graph
+> skill engine (`recall_memory` as a stdlib workflow invoked via a
+> "preprocessor") and predates two features that have since shipped —
+> confirmed via `docs/feature-map.md`'s Memory & RAG section:
+> **(1)** `recall` is now a typed Control IR op doing vector similarity
+> search (`index_query` per source, merge top-K) over a pluggable
+> `IndexBackend`, not the keyword/index matching described below as current
+> and "a likely next step" for vector retrieval; **(2)** `web_search` /
+> `web_fetch` are now bundled Tier-1 default-allow tools, contradicting the
+> "no web search or external retrieval primitive" claim below. A rewrite is
+> tracked as a follow-up; in the meantime see
+> [`docs/concepts/data-retrieval/rag.md`](../data-retrieval/rag.md) and
+> [`docs/concepts/architecture/charter.md`](../architecture/charter.md)
+> (Retrieval row — one of the constitution's two honest thin areas) for the
+> current, grounded story.
+
 Feeding the right context into the agent at the right time — memory of past interactions, project-specific knowledge, external documentation, search results. Retrieval quality often dominates output quality more than model choice does.
 
 ## How reyn handles it

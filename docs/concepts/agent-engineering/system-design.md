@@ -6,6 +6,16 @@ audience: [human, agent]
 
 # System Design
 
+> **Status: stale.** This page was written against the phase-graph skill engine
+> (Phase / Workflow / OS layering, `candidate_outputs` edges), deleted in a
+> later engine-deletion arc — confirmed via direct grep that neither concept
+> exists in current source. A rewrite covering the current model (typed
+> Control IR op dispatch through a permission gate; the router loop
+> dispatching to Control IR ops, pipelines, and skills rather than a phase
+> graph) is tracked as a follow-up. In the meantime, `CLAUDE.md`'s
+> Constitution section and [`docs/concepts/architecture/charter.md`](../architecture/charter.md)
+> (System Design row) are the current, grounded source for this lens.
+
 The macro shape of an agent system: how control flow, state, and responsibility are distributed across layers, and what invariants the runtime enforces no matter what the LLM does.
 
 ## How reyn handles it
