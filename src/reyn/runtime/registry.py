@@ -2649,8 +2649,8 @@ class AgentRegistry:
         #2708 P3-item3: ``presentation_consumer`` + ``intervention_bridge`` are REQUIRED,
         no-default kwargs (the spawn-axis completeness gate) — every caller must declare an
         explicit spawn-time user-reaching routing decision (``runtime/spawn_routing``): a
-        ``BridgeToParent`` / ``SelfDeliveringWithDrain`` / ``AuditOnlyNoSurface`` value's
-        resolved pair, or ``None``/``None`` only at a reviewed ``ReviewedNA`` self-bound site.
+        ``BridgeToParent`` / ``AuditOnlyNoSurface`` value's resolved pair, or ``None``/``None``
+        only at a reviewed ``ReviewedNA`` self-bound site.
         A missing kwarg is a TypeError (pinned by ``inspect.signature``), so a new spawn site
         cannot silently self-bind into an orphan/hang.
 
@@ -2757,9 +2757,9 @@ class AgentRegistry:
         #2708 P3-item3: ``presentation_consumer`` + ``intervention_bridge`` are REQUIRED,
         no-default kwargs — the spawn-time user-reaching routing decision, forwarded to the
         constructed session. A caller declares one of ``runtime/spawn_routing``'s decisions:
-        ``BridgeToParent`` (attached pipeline driver — present reaches the parent surface, ask_user
-        reaches the parent's live operator), ``AuditOnlyNoSurface`` (detached/headless — present
-        audit-only, ask_user a typed refusal), ``SelfDeliveringWithDrain``, or ``ReviewedNA``
+        ``BridgeToParent`` (attached pipeline driver / delegated sub-agent — present reaches the
+        parent surface, ask_user reaches the parent's live operator), ``AuditOnlyNoSurface``
+        (detached/headless — present audit-only, ask_user a typed refusal), or ``ReviewedNA``
         (``None``/``None`` self-bound, reviewed sites only). No silent default (#2708 P3-item3)."""
         sid = self.spawn_session(
             name,
