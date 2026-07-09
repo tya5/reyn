@@ -5,9 +5,9 @@ audience: [human, agent]
 
 # reyn
 
-**LLM workflow OS — phase transitions as a constrained decision graph.**
+**An operating system for LLM agents — they decide, organize, and orchestrate; the OS makes every action typed, permissioned, audited, and recoverable by construction.**
 
-reyn runs LLM workflows as a state machine. Phases are stateless and reusable; the workflow definition specifies the graph and the final output schema; the OS controls execution. The LLM's role is reduced to choosing among OS-provided transitions and producing structured artifacts — never to inventing control flow.
+reyn lets an LLM agent decide, organize, and orchestrate — picking tools, spawning sub-agents, composing pipelines — while the OS keeps every action typed (Control IR), permission-gated, audit-logged, and recoverable from a crash. The agent's freedom is real; the OS's guarantees are structural, not a matter of the agent's discipline.
 
 ## Where to start
 
@@ -33,7 +33,7 @@ reyn is in alpha (0.1.x). The DSL, CLI, and event log are stable enough to build
 
 Reyn is powered by AI in two senses:
 
-- **At runtime.** Every workflow execution delegates decisions to an LLM provider via LiteLLM. Reyn is an LLM workflow OS by design.
+- **At runtime.** Every agent run delegates decisions to an LLM provider via LiteLLM. Reyn is an agent OS where agency is bounded by construction — decide, spawn, orchestrate, but only through typed, permissioned, auditable, rewindable ops.
 - **In its development.** Substantial portions of the codebase, the stdlib components, this documentation, and the landing page were drafted with AI tooling — primarily Claude Code (Anthropic) for implementation and Claude Design for the website. Human review, integration, and final architectural calls live with the maintainer; AI contributions are recorded as `Co-Authored-By: Claude ...` trailers in the git history.
 
 This is a transparency note, not a marketing line. For provenance auditing, see `git log --grep="Co-Authored-By: Claude"` and the design prompts under `website/_design/`.
