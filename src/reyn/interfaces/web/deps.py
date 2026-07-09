@@ -269,9 +269,12 @@ def _get_registry():
         perm_resolver = _get_perm_resolver()
         project_context = load_project_context(config, root)
 
+        # #2683: ``LITELLM_API_BASE`` export folded into ``load_config()`` — the
+        # single canonical writer (universal chokepoint). ``_load_config()`` above
+        # (line ~265) already ran ``load_config()`` before any session/LLM call on
+        # the web path, so the former inline copy here was purely redundant
+        # (idempotent ``setdefault``). ``os`` stays imported: read below at :~296.
         import os
-        if config.api_base:
-            os.environ.setdefault("LITELLM_API_BASE", config.api_base)
 
         from reyn.llm.model_resolver import ModelResolver
         resolver = ModelResolver(

@@ -8,7 +8,6 @@ load/merge logic.
 from __future__ import annotations
 
 import argparse
-import os
 from dataclasses import dataclass
 
 from reyn.config import ReynConfig, SafetyConfig, load_config
@@ -22,9 +21,11 @@ class InvocationContext:
 
     @classmethod
     def from_args(cls, args: argparse.Namespace) -> "InvocationContext":
+        # #2683: ``LITELLM_API_BASE`` export folded into ``load_config()`` — the
+        # single canonical writer (universal chokepoint). The former inline copy
+        # here was purely redundant (``load_config`` above already exported it via
+        # idempotent ``setdefault``); a single-writer AST guard now enforces this.
         config = load_config()
-        if config.api_base:
-            os.environ.setdefault("LITELLM_API_BASE", config.api_base)
         return cls(config=config, resolver=ModelResolver(
             config.models,
             default_class=config.model,
