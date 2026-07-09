@@ -670,7 +670,7 @@ registered fails clearly.
   driver-session's run and blocks until it reaches a terminal state, reading
   the result back in-band (`{status: "ok", data: {run_id, output,
   named_stores}}`, or `error`/`cancelled`). Live `pipeline_step_started` /
-  `pipeline_step_completed` events stream to the caller for the run's
+  `pipeline_step_completed` audit-events stream to the caller for the run's
   duration (what a TUI live view renders), and a cooperative Ctrl-C stops the
   run cleanly at the next step boundary. If the attach itself is interrupted
   by a crash, the run is not lost — it is handed to the same recovery path

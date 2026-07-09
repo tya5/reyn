@@ -81,7 +81,7 @@ same rewind path (WAL replay + snapshot generations — see
 [Time travel](../../concepts/runtime/time-travel.md)):
 
 - **Authoritative** (the recovery TRUTH — write-gated):
-  - `.reyn/state/wal.jsonl` — the append-only, seq'd WAL: the complete event history
+  - `.reyn/state/wal.jsonl` — the append-only, seq'd WAL: the complete WAL-event history
     everything else is replayed from. Also `.reyn/state/tasks.db`,
     `.reyn/state/budget_ledger.jsonl`.
   - `.reyn/config/<x>.yaml` — the agent-edited config registries. Each mutation goes
