@@ -39,7 +39,7 @@ async def test_shutdown_closes_main_session_held_mcp_connections(tmp_path: Path)
     from reyn.runtime.registry import AgentRegistry
     from reyn.runtime.session import Session
 
-    def _factory(profile) -> Session:
+    def _factory(profile, *, presentation_consumer=None, intervention_bridge=None) -> Session:
         return Session(agent_name=profile.name, mcp_servers={"srv": _CFG})
 
     registry = AgentRegistry(project_root=tmp_path, session_factory=_factory)

@@ -288,7 +288,7 @@ async def test_notify_reply_true_driver_DOES_deliver_positive_control(
     scripted = _ScriptedAgentReply("ack")
     reg = _agent_registry(tmp_path, state_log, scripted)
 
-    sid = await reg.spawn_session_recorded("worker", mode="persistent")
+    sid = await reg.spawn_session_recorded("worker", mode="persistent", presentation_consumer=None, intervention_bridge=None)
     session = reg.get_session("worker", sid)
     pipeline = _steps(1)
     from reyn.core.pipeline.serde import pipeline_to_dict
@@ -383,7 +383,7 @@ async def test_driver_cancel_writes_terminal_marker_recovery_skips(
     out_file = tmp_path / "out.txt"
     reg = _agent_registry(tmp_path, state_log, None)
 
-    sid = await reg.spawn_session_recorded("worker", mode="persistent")
+    sid = await reg.spawn_session_recorded("worker", mode="persistent", presentation_consumer=None, intervention_bridge=None)
     session = reg.get_session("worker", sid)
     # Late-bind the driver so the step handler can close over it to request cancel.
     from reyn.core.pipeline.serde import pipeline_to_dict

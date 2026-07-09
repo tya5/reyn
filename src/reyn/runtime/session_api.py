@@ -73,8 +73,8 @@ prefix and differing only in how the caller drives + collects:
     EventLog bridge as ``pipeline_step_*`` — extended (``lifecycle_forwarder``) to re-emit
     ``presented`` onto the PARENT's log with ``bridged_from=<driver_sid>`` provenance.
     Together: both the visible present and its audit trail reach the parent, closing the
-    driver-isolation split. (Detached/async present is out of P3.1 scope — no attached
-    parent surface exists; tracked as the P3 spawn-routing completeness gate.)
+    driver-isolation split. (Detached/async present has no attached parent surface — the
+    #2708 P3-item3 completeness gate routes it ``AuditOnlyNoSurface``: audit-only, no orphan.)
     #2708 P3.2a: the SAME attach seam bridges the driver's INTERVENTION delivery. The driver
     gets a fresh listener-less ``InterventionRegistry`` (fail-closed), so an ``ask_user`` step
     would silently auto-refuse even with a live operator blocked on the parent (#2721). The
@@ -82,8 +82,16 @@ prefix and differing only in how the caller drives + collects:
     (``runtime/session_buses.py``) bound to the PARENT, so its router intervention bus
     dispatches on the PARENT session's live-operator listener — the operator is prompted and
     their answer flows back to the driver's awaiting op by construction. (Detached/async
-    intervention keeps the fail-closed default — a tracked known-RED cell, same completeness
-    gate as present.)
+    intervention has no attachable operator — the #2708 P3-item3 gate routes it
+    ``AuditOnlyNoSurface``: a typed, reason'd refusal, replacing the pre-fix origin-pin park/hang.)
+
+    #2708 P3-item3 (the spawn-axis completeness gate): every spawn seam
+    (``spawn_session`` / ``spawn_session_recorded`` / ``spawn_ephemeral_session``) takes
+    ``presentation_consumer`` + ``intervention_bridge`` as REQUIRED, no-default kwargs, so a
+    spawn's user-reaching capabilities cannot silently self-bind. Each spawn site declares a
+    ``runtime/spawn_routing`` decision: ``_spawn_pipeline_driver_session`` picks
+    ``BridgeToParent`` (attached) or ``AuditOnlyNoSurface`` (detached); ``run_agent_step`` picks
+    ``AuditOnlyNoSurface`` (headless leaf worker — closing #2706).
 """
 from __future__ import annotations
 
@@ -131,6 +139,8 @@ _DEFAULT_AGENT_STEP_TIMEOUT_S: float = 120.0
 
 async def spawn_ephemeral_session(
     registry: "AgentRegistry", *, identity: str, narrowing: "dict | None" = None,
+    presentation_consumer: "object | None",
+    intervention_bridge: "object | None",
 ) -> str:
     """Spawn an ephemeral session under ``identity`` for a non-LLM caller.
 
@@ -143,9 +153,18 @@ async def spawn_ephemeral_session(
 
     No task is submitted here — that stays the caller's job (the Pipeline
     executor's ``agent`` step, in the eventual wiring), same as the S1bc
-    action-layer seam does not submit either."""
+    action-layer seam does not submit either.
+
+    #2708 P3-item3: ``presentation_consumer`` + ``intervention_bridge`` are REQUIRED, no-default
+    kwargs (root-cause-i of #2706: this seam wholly lacked them, so an agent-step worker's
+    ``present`` silently self-bound to an undrained outbox). The caller declares a
+    ``runtime/spawn_routing`` decision — ``run_agent_step`` passes ``AuditOnlyNoSurface`` (a
+    headless leaf worker has no attachable surface) — and this forwards it to
+    ``spawn_session_recorded``."""
     return await registry.spawn_session_recorded(
         identity, mode="ephemeral", narrowing=narrowing,
+        presentation_consumer=presentation_consumer,
+        intervention_bridge=intervention_bridge,
     )
 
 
@@ -199,9 +218,19 @@ async def run_agent_step(
     """
     from reyn.core.pipeline.schema import validate
     from reyn.runtime.message_bus import MessageBus
+    from reyn.runtime.spawn_routing import AuditOnlyNoSurface
 
     narrowing = _build_agent_step_narrowing(capabilities)
-    sid = await spawn_ephemeral_session(registry, identity=identity, narrowing=narrowing)
+    # #2708 P3-item3 (#2706): a headless ephemeral leaf worker has no attachable surface, so its
+    # user-reaching capabilities route AuditOnlyNoSurface — a ``present`` step is audit-only (the
+    # durable ``presented`` P6 event fires; no orphan outbox message), and an ``ask_user`` step
+    # returns a typed refusal rather than silently self-binding to an undrained outbox / hanging.
+    routing = AuditOnlyNoSurface()
+    sid = await spawn_ephemeral_session(
+        registry, identity=identity, narrowing=narrowing,
+        presentation_consumer=routing.presentation_consumer,
+        intervention_bridge=routing.intervention_bridge,
+    )
     session = registry.get_session(identity, sid)
     if session is None:
         raise AgentStepError(
@@ -219,6 +248,12 @@ async def run_agent_step(
         reply_to=SystemRef(),
         timeout=timeout if timeout is not None else _DEFAULT_AGENT_STEP_TIMEOUT_S,
     )
+    # #2708 P3-item3 (#2706 root-cause-ii): a ``present`` step's output is ROUTED per the worker's
+    # DECLARED consumer (AuditOnlyNoSurface above) — it renders at the worker's own sink (audit-only:
+    # the durable ``presented`` P6 event) at op time, so it never arrives here as a ``"presentation"``
+    # outbox reply to be silently dropped (the pre-fix self-bound worker put a ``"presentation"`` on
+    # its own outbox that this ``kind == "agent"`` filter discarded). The join is the agent-step's
+    # RETURN text; presentation is not lost, it is deliberately audit-only per the declaration.
     text = "\n\n".join(r.text for r in replies if r.kind == "agent")
 
     if schema is None:
@@ -290,14 +325,14 @@ async def _spawn_pipeline_driver_session(
     Returns ``(driver_session, run_id, driver_sid)``; the caller drives the run
     (nudge + detached pump, or attached ``MessageBus.request``).
 
-    #2708 P3.1 (Half-A, visible output): when ``attached_parent_session`` is given (the
-    ATTACHED path only — ``run_pipeline_attached`` passes the live caller session), the
-    driver-session is spawned with a ``SpawnBridgePresentationConsumer`` bound to that
-    parent, so a ``present`` step's render reaches the PARENT's surface by construction
-    (structurally replacing the #2707 interim outbox forward). The DETACHED path
-    (``start_pipeline_run``) passes ``None`` — there is no live attached surface, so the
-    driver keeps the default self-bound consumer (its present is audit-only in its own
-    log, correct with no attached parent)."""
+    #2708 P3-item3: the spawn-time routing is a typed decision. ATTACHED path (given
+    ``attached_parent_session`` — ``run_pipeline_attached`` passes the live caller):
+    ``BridgeToParent`` binds the driver's present sink + ask_user routing to the PARENT, so a
+    ``present``/``ask_user`` step reaches the parent surface/operator by construction. DETACHED
+    path (``start_pipeline_run``, ``attached_parent_session=None``): ``AuditOnlyNoSurface`` —
+    ``present`` is audit-only (durable ``presented`` P6 event; no orphan outbox, closing #2710)
+    and ``ask_user`` returns a typed refusal (closing the confirmed detached HANG), a DELIBERATE
+    reviewed fail-mode rather than the pre-fix incidental self-bound orphan/park."""
     from reyn.core.events.config_recovery import reyn_root
     from reyn.core.pipeline.serde import pipeline_to_dict
     from reyn.core.pipeline.work_order import (
@@ -317,34 +352,24 @@ async def _spawn_pipeline_driver_session(
     # so the embedded pipeline name is sanitized to one safe path component.
     safe_name = re.sub(r"[^A-Za-z0-9_.-]", "_", pipeline_name) or "pipeline"
     rid = run_id or f"pipeline-{safe_name}-{uuid.uuid4().hex}"
-    # #2708 P3.1 Half-A / P3.2a: on the attached path, bind the driver's present sink AND its
-    # ask_user/permission routing to the PARENT by construction — so a `present` step reaches
-    # the parent surface (P3.1) and an `ask_user` step reaches the parent's live operator
-    # listener instead of silently auto-refusing (P3.2a, #2721). Detached spawns pass None for
-    # both → the default self-bound outbox consumer + listener-less registry (byte-identical);
-    # the detached ask_user auto-refuse is a tracked known-RED cell (P3 completeness gate).
-    bridge_consumer: "Any | None" = None
-    bridge_intervention: "Any | None" = None
-    if attached_parent_session is not None:
-        from reyn.runtime.presentation_consumer import SpawnBridgePresentationConsumer
-        from reyn.runtime.session import DEFAULT_CHAT_CHANNEL_ID
-        from reyn.runtime.session_buses import SpawnBridgeInterventionListener
+    # #2708 P3-item3: the driver's spawn-time user-reaching routing is an explicit, typed decision
+    # (``runtime/spawn_routing``). ATTACHED path (``run_pipeline_attached`` passes the live caller):
+    # ``BridgeToParent`` — a ``present`` step reaches the parent surface (P3.1) and an ``ask_user``
+    # step reaches the parent's live operator listener (P3.2a, #2721), both by construction. DETACHED
+    # path (``start_pipeline_run``, no attached surface): ``AuditOnlyNoSurface`` — ``present`` is
+    # audit-only (durable ``presented`` P6 event; no orphan outbox — closes #2710) and ``ask_user``
+    # returns a typed refusal instead of parking forever (closes the confirmed detached HANG).
+    from reyn.runtime.spawn_routing import AuditOnlyNoSurface, BridgeToParent
 
-        bridge_consumer = SpawnBridgePresentationConsumer(
-            parent_consumer=attached_parent_session.presentation_consumer,
-            parent_session=attached_parent_session,
-        )
-        # The parent chat surface (CLI/CUI/chainlit) registers its operator listener under
-        # DEFAULT_CHAT_CHANNEL_ID ("tui") — the same id a parent-native ask_user stamps — so
-        # the bridged iv routes to the live listener, not the stalled queue.
-        bridge_intervention = SpawnBridgeInterventionListener(
-            parent_session=attached_parent_session,
-            parent_channel_id=DEFAULT_CHAT_CHANNEL_ID,
-        )
+    routing = (
+        BridgeToParent(attached_parent_session)
+        if attached_parent_session is not None
+        else AuditOnlyNoSurface()
+    )
     sid = await registry.spawn_session_recorded(
         reply_to_agent, mode="persistent",
-        presentation_consumer=bridge_consumer,
-        intervention_bridge=bridge_intervention,
+        presentation_consumer=routing.presentation_consumer,
+        intervention_bridge=routing.intervention_bridge,
     )
     work_order = PipelineWorkOrder(
         run_id=rid,

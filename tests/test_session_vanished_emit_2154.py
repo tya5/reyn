@@ -63,7 +63,7 @@ async def test_genuine_ephemeral_vanish_emits_session_vanished(tmp_path):
     emitted defect."""
     reg = _make_registry(tmp_path)
     reg.get_or_load("alice")
-    sid = await reg.spawn_session_recorded("alice", mode="ephemeral")
+    sid = await reg.spawn_session_recorded("alice", mode="ephemeral", presentation_consumer=None, intervention_bridge=None)
 
     eph = reg._peek_session("alice", sid)
     eph._maybe_schedule_ephemeral_vanish()
@@ -84,7 +84,7 @@ async def test_reconstruction_drop_does_not_emit_session_vanished(tmp_path):
     corrupt as-of-cut reconstruction (the cause-separation, record=False)."""
     reg = _make_registry(tmp_path)
     reg.get_or_load("alice")
-    sid = await reg.spawn_session_recorded("alice", mode="persistent")
+    sid = await reg.spawn_session_recorded("alice", mode="persistent", presentation_consumer=None, intervention_bridge=None)
     assert sid not in _vanished_sids(reg.state_log, "alice")  # spawn alone: none
 
     await reg._drop_session("alice", sid)
@@ -101,7 +101,7 @@ async def test_session_vanished_before_cut_reconstructs_gone(tmp_path):
     reg = _make_registry(tmp_path)
     reg.get_or_load("alice")
     log = reg.state_log
-    sid = await reg.spawn_session_recorded("alice", mode="ephemeral")  # spawn ≤ cut, live
+    sid = await reg.spawn_session_recorded("alice", mode="ephemeral", presentation_consumer=None, intervention_bridge=None)  # spawn ≤ cut, live
     assert sid in reg.session_ids("alice")                    # present (public surface)
     # the vanish was RECORDED but the session survives (teardown didn't finish).
     await log.append("session_vanished", entity_kind="session", name="alice", sid=sid)
@@ -126,7 +126,7 @@ async def test_session_vanished_after_cut_survives_reconstruction(tmp_path):
     reg = _make_registry(tmp_path)
     reg.get_or_load("alice")
     log = reg.state_log
-    sid = await reg.spawn_session_recorded("alice", mode="persistent")
+    sid = await reg.spawn_session_recorded("alice", mode="persistent", presentation_consumer=None, intervention_bridge=None)
     cut = log.current_seq                                          # cut = N (after spawn)
     await log.append("session_vanished", entity_kind="session",
                      name="alice", sid=sid)                        # V = cut+1 (abandoned)

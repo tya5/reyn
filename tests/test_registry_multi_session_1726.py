@@ -59,7 +59,7 @@ def test_spawn_session_creates_distinct_session_sharing_agent(tmp_path) -> None:
     surface, so the test pins the public identity-equivalence contract.)"""
     reg = _registry(tmp_path)
     main = reg.get_or_load("default")
-    sid = reg.spawn_session("default")
+    sid = reg.spawn_session("default", presentation_consumer=None, intervention_bridge=None)
     spawned = reg.get_session("default", sid)
 
     assert sid != _DEFAULT_SID
@@ -77,7 +77,7 @@ def test_default_session_unaffected_by_spawn(tmp_path) -> None:
     one (get_or_load still returns the original "main" instance)."""
     reg = _registry(tmp_path)
     main = reg.get_or_load("default")
-    reg.spawn_session("default")
+    reg.spawn_session("default", presentation_consumer=None, intervention_bridge=None)
     assert reg.get_or_load("default") is main
     assert reg.get_session("default") is main
 
@@ -90,7 +90,7 @@ async def test_attach_session_focuses_existing_and_rejects_unknown(tmp_path) -> 
     handler + forwarder rely on). No build — the session must already exist."""
     reg = _registry(tmp_path)
     reg.get_or_load("default")
-    sid = reg.spawn_session("default")
+    sid = reg.spawn_session("default", presentation_consumer=None, intervention_bridge=None)
     try:
         focused = await reg.attach_session("default", sid)
         assert reg.attached_name == "default"
@@ -131,7 +131,7 @@ def test_agent_cost_usd_reads_durable_per_agent_total(tmp_path):
 
     reg = _registry(tmp_path, tracker=tracker)
     reg.get_or_load("default")
-    reg.spawn_session("default")  # a 2nd session — must NOT double the reported per-agent cost
+    reg.spawn_session("default", presentation_consumer=None, intervention_bridge=None)  # a 2nd session — must NOT double the reported per-agent cost
 
     assert reg.agent_cost_usd("default") == pytest.approx(0.15), (
         "durable per-agent total (all sessions, one counter) — not reset to 0, not N×-summed"
@@ -162,8 +162,8 @@ def test_agent_cost_usd_survives_restart_and_byte_aligns_no_ntimes(tmp_path):
 
     reg = _registry(tmp_path, tracker=restarted)
     reg.get_or_load("default")
-    reg.spawn_session("default")
-    reg.spawn_session("default")  # 3 sessions total — must not multiply the per-agent cost
+    reg.spawn_session("default", presentation_consumer=None, intervention_bridge=None)
+    reg.spawn_session("default", presentation_consumer=None, intervention_bridge=None)  # 3 sessions total — must not multiply the per-agent cost
 
     assert reg.agent_cost_usd("default") == pytest.approx(0.42), "survives restart (not 0), no N×"
     assert reg.agent_cost_usd("default") == restarted.agent_cost_usd("default"), (

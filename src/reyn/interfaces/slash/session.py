@@ -23,6 +23,7 @@ from typing import TYPE_CHECKING
 
 from reyn.interfaces.slash import reply, reply_error, slash
 from reyn.runtime.outbox import OutboxMessage
+from reyn.runtime.spawn_routing import ReviewedNA
 
 if TYPE_CHECKING:
     from reyn.runtime.session import Session
@@ -53,7 +54,14 @@ async def session_cmd(session: "Session", args: str) -> None:
 
     if sub == "new":
         try:
-            sid = reg.spawn_session(name)
+            # #2708 P3-item3: /session new opens a real attachable conversation session — the user
+            # /session switches to focus + drain it; self-binding to the factory default is reviewed-NA.
+            _routing = ReviewedNA("interfaces/slash/session.py::session_cmd")
+            sid = reg.spawn_session(
+                name,
+                presentation_consumer=_routing.presentation_consumer,
+                intervention_bridge=_routing.intervention_bridge,
+            )
         except ValueError as exc:  # dup id (spawn_session guards)
             await reply_error(session, str(exc))
             return

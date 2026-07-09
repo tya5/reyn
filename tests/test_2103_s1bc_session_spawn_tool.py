@@ -46,7 +46,7 @@ async def test_spawn_session_recorded_emits_config_complete_event(tmp_path: Path
     reg = _registry(tmp_path)
     sid = await reg.spawn_session_recorded(
         "worker", mode="ephemeral", narrowing={"tool_deny": ["sandboxed_exec"]},
-    )
+    presentation_consumer=None, intervention_bridge=None)
     ev = next(
         e for e in reg.state_log.iter_from(0)
         if e.get("kind") == "session_spawned" and e.get("sid") == sid
@@ -71,7 +71,7 @@ async def test_spawn_session_recorded_enforces_narrowing_on_live_session(tmp_pat
     reg = _registry(tmp_path)
     sid = await reg.spawn_session_recorded(
         "worker", mode="persistent", narrowing={"tool_deny": ["delete_file"]},
-    )
+    presentation_consumer=None, intervention_bridge=None)
     session = reg.get_session("worker", sid)
     # the live tool gate reads _effective_contextual_for_turn(); a fresh spawned session
     # has no untrusted-content history → it returns the injected _contextual_permission.
@@ -92,7 +92,7 @@ async def test_spawn_session_recorded_no_narrowing_is_inert(tmp_path: Path) -> N
     is (None, ∅), the public surface), but session_spawned is still emitted
     (rewind-tracking is unconditional)."""
     reg = _registry(tmp_path)
-    sid = await reg.spawn_session_recorded("worker", mode="persistent", narrowing=None)
+    sid = await reg.spawn_session_recorded("worker", mode="persistent", narrowing=None, presentation_consumer=None, intervention_bridge=None)
     assert reg.resolved_profile_for("worker", sid=sid) == (None, frozenset())  # inert
     assert any(e.get("kind") == "session_spawned" for e in reg.state_log.iter_from(0))
 

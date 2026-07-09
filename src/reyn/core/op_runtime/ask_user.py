@@ -62,6 +62,26 @@ async def handle(op: AskUserIROp, ctx: OpContext) -> dict:
     )
 
     answer = await ctx.intervention_bus.request(iv)
+    # #2708 P3-item3: a DELIBERATE, reason'd refusal (a detached/headless spawn with no
+    # attachable operator surface — AuditOnlyInterventionBridge) surfaces as a TYPED outcome:
+    # status="refused" carrying the reason, NOT a fabricated empty "ok" answer and NOT a
+    # park/hang. Distinct from a legacy empty-string auto-refuse (refused=False) which stays
+    # the status="ok", answer="" path below (behaviour unchanged for existing callers).
+    if getattr(answer, "refused", False):
+        ctx.events.emit(
+            "user_intervention_received",
+            run_id=ctx.run_id,
+            actor=ctx.actor,
+            phase=ctx.current_phase,
+            answer="",
+            intervention_id=iv.id,
+            refused=True,
+            reason=answer.reason,
+        )
+        return {
+            "kind": "ask_user", "question": op.question, "answer": "",
+            "status": "refused", "reason": answer.reason,
+        }
     # A selected option resolves with choice_id (= the option text); free-text
     # resolves with text.
     text = answer.choice_id or answer.text or ""

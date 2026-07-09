@@ -1036,8 +1036,15 @@ class RouterHostAdapter:
         # non-main-spawn guard: a non-main session may now spawn — its result routes back
         # correctly by (agent, from_sid). (None / "main" → main-case, byte-identical.)
         from_sid = self.live_session_id
+        # #2708 P3-item3: the LLM session_spawn tool spawns a real attachable conversation session
+        # under this agent (async-dispatch; result routes back FP-0043 Stage-4) — like /session new,
+        # the user can attach to drain it; self-binding to the factory default is reviewed-NA.
+        from reyn.runtime.spawn_routing import ReviewedNA
+        _routing = ReviewedNA("runtime/services/router_host_adapter.py::spawn_session")
         sid = await self._registry.spawn_session_recorded(
             self._agent_name, mode=mode, narrowing=narrowing,
+            presentation_consumer=_routing.presentation_consumer,
+            intervention_bridge=_routing.intervention_bridge,
         )
         # #2103 S1bc-exec: record sid→task BEFORE submitting, so a fast result finds the
         # trusted task on return (else it falls back to the kind=agent rendering).

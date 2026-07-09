@@ -63,7 +63,7 @@ def _reload_spawned(tmp_path: Path, sid: str) -> Session:
     floor + visibility.yaml override both persist on disk, so the reload re-derives them."""
     reg2 = _make_registry(tmp_path)
     reg2.get_or_load("alice")
-    reg2.spawn_session("alice", sid=sid)
+    reg2.spawn_session("alice", sid=sid, presentation_consumer=None, intervention_bridge=None)
     return reg2.get_session("alice", sid)
 
 
@@ -77,7 +77,7 @@ async def test_persisted_override_cannot_rewiden_spawner_floor_after_reload(tmp_
     monkeypatch.chdir(tmp_path)
     reg = _make_registry(tmp_path)
     reg.get_or_load("alice")
-    sid = await reg.spawn_session_recorded("alice", narrowing={"tool_deny": ["delete_file"]})
+    sid = await reg.spawn_session_recorded("alice", narrowing={"tool_deny": ["delete_file"]}, presentation_consumer=None, intervention_bridge=None)
     session = reg.get_session("alice", sid)
     assert _allows_tool(session, "delete_file") is False  # spawner floor denies it
 
@@ -103,7 +103,7 @@ async def test_visibility_override_round_trips_across_reload(tmp_path, monkeypat
     monkeypatch.chdir(tmp_path)
     reg = _make_registry(tmp_path)
     reg.get_or_load("alice")
-    sid = await reg.spawn_session_recorded("alice")  # no narrowing → envelope allows all tools
+    sid = await reg.spawn_session_recorded("alice", presentation_consumer=None, intervention_bridge=None)  # no narrowing → envelope allows all tools
     session = reg.get_session("alice", sid)
     assert _allows_tool(session, "read_file") is True
 
@@ -123,7 +123,7 @@ async def test_hidden_set_round_trips_exact_value(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     reg = _make_registry(tmp_path)
     reg.get_or_load("alice")
-    sid = await reg.spawn_session_recorded("alice")
+    sid = await reg.spawn_session_recorded("alice", presentation_consumer=None, intervention_bridge=None)
     session = reg.get_session("alice", sid)
     session.set_capability_visible("tool", "read_file", False)
     session.set_capability_visible("tool", "ask_user", False)
@@ -148,7 +148,7 @@ async def test_hook_disabled_set_survives_reload(tmp_path, monkeypatch):
     reg = _make_registry(tmp_path)
     _write_agent_hook(tmp_path, "myhook")  # shared per-agent hook (built into every session registry)
     reg.get_or_load("alice")
-    sid = await reg.spawn_session_recorded("alice")
+    sid = await reg.spawn_session_recorded("alice", presentation_consumer=None, intervention_bridge=None)
     session = reg.get_session("alice", sid)
     assert any(h["name"] == "myhook" and h["enabled"] for h in session.hook_state())
 
@@ -167,7 +167,7 @@ async def test_clearing_override_removes_persisted_store(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     reg = _make_registry(tmp_path)
     reg.get_or_load("alice")
-    sid = await reg.spawn_session_recorded("alice")
+    sid = await reg.spawn_session_recorded("alice", presentation_consumer=None, intervention_bridge=None)
     session = reg.get_session("alice", sid)
     session.set_capability_visible("tool", "read_file", False)
     session.set_capability_visible("tool", "read_file", True)  # back to default → store pruned

@@ -174,9 +174,20 @@ class InterventionAnswer:
     is the id of the selected `InterventionChoice` (or None when the user
     typed something that didn't match any hotkey — producer decides whether
     to re-issue the prompt).
+
+    #2708 P3-item3: `refused` marks a DELIBERATE, reason'd refusal (distinct from
+    an empty free-text answer `text=""`). A detached/headless spawn with no
+    attachable operator surface resolves `ask_user` this way (via
+    `runtime/session_buses.AuditOnlyInterventionBridge`), so the producer sees a
+    typed outcome — the `ask_user` op returns `status="refused"` carrying `reason`
+    — instead of a fabricated empty answer or a park/hang. Legacy empty-string
+    auto-refusals (`InterventionRegistry.dispatch`'s listener-enforce short-circuit)
+    keep `refused=False` — behaviour unchanged for existing callers.
     """
     text: str = ""
     choice_id: str | None = None
+    refused: bool = False
+    reason: str = ""
 
 
 @runtime_checkable

@@ -224,6 +224,57 @@ class SpawnBridgeInterventionListener:
         )
 
 
+# The reason a detached/headless spawn's ``ask_user`` is refused — carried on the typed
+# ``InterventionAnswer.reason`` so the pipeline/agent-step sees a DELIBERATE outcome, never a
+# fabricated empty answer nor a park/hang.
+NO_SURFACE_REFUSAL_REASON = (
+    "no interactive surface attached to this detached/headless run — ask_user cannot reach an "
+    "operator; the run proceeds with a deliberate refusal rather than hanging or fabricating an "
+    "empty answer"
+)
+
+
+class _AuditOnlyInterventionChannel:
+    """The ``UserChannel`` / ``RequestBus`` a detached/headless spawn dispatches ``ask_user`` on:
+    it DELIBERATELY refuses every intervention with a reason, resolving IMMEDIATELY — it never
+    enqueues, never announces, never awaits a future. So there is no origin-pin park/hang (the
+    confirmed #2710 detached fail-mode: the self-bound ``ChatInterventionBus`` stamps
+    ``origin_channel_id='tui'``, and ``InterventionCoordinator.dispatch`` parks it stalled +
+    ``await iv.future`` forever) and no silent empty-string auto-refuse."""
+
+    async def deliver(self, iv: "UserIntervention") -> "InterventionAnswer":
+        from reyn.user_intervention import InterventionAnswer
+
+        return InterventionAnswer(refused=True, reason=NO_SURFACE_REFUSAL_REASON)
+
+    async def request(self, iv: "UserIntervention") -> "InterventionAnswer":
+        return await self.deliver(iv)
+
+
+class AuditOnlyInterventionBridge:
+    """The intervention analog of ``AuditOnlyPresentationConsumer`` (``runtime/
+    presentation_consumer.py``): the DELIBERATE ``ask_user`` routing for a spawn with NO
+    attachable operator surface — a detached pipeline driver (``start_pipeline_run``) or a
+    headless ephemeral agent-step worker (``run_agent_step``).
+
+    Where ``SpawnBridgeInterventionListener`` routes a child ``ask_user`` to a live PARENT
+    operator, this bridge has no parent to route to, so its ``bus()`` returns a channel that
+    resolves every ``ask_user`` with a typed, reason'd REFUSAL
+    (``InterventionAnswer(refused=True, reason=...)``). That is the reviewed replacement for the
+    two incidental fail-modes an unrouted detached spawn hit before: the origin-pin park/hang
+    (confirmed the live #2710 fail-mode) and, on other constructions, the silent empty-string
+    auto-refuse (``InterventionRegistry.dispatch``'s ``enforce_listener_presence`` short-circuit).
+    Chosen EXPLICITLY at the spawn site via ``runtime/spawn_routing.AuditOnlyNoSurface``."""
+
+    def bus(
+        self, *, run_id: "str | None" = None, actor: "str | None" = None,
+    ) -> "_AuditOnlyInterventionChannel":
+        """Build the spawn's router intervention channel — a refuse-with-reason sink. The
+        ``run_id`` / ``actor`` are accepted for signature-parity with
+        ``SpawnBridgeInterventionListener.bus`` but unused (a refusal carries no provenance)."""
+        return _AuditOnlyInterventionChannel()
+
+
 class OutboxPresentationRenderer:
     """``PresentationRenderer`` (``core/present/renderer.py``) that routes a resolved
     presentation's render model onto the Session's outbox as a ``"presentation"``
