@@ -99,7 +99,10 @@ async def _handle(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
     return await handle_web_fetch(op=op, ctx=legacy_ctx)
 
 
+from reyn.core.offload.canonical import web_fetch_to_canonical  # noqa: E402
+
 WEB_FETCH = ToolDefinition(
+    canonical=web_fetch_to_canonical,
     name="web_fetch",
     router_dispatched=True,
     description=_WEB_FETCH_DESCRIPTION,

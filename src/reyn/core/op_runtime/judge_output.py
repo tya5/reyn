@@ -211,4 +211,6 @@ async def handle(
     }
 
 
-register("judge_output", handle)
+from reyn.core.offload.canonical import judge_output_to_canonical  # noqa: E402
+
+register("judge_output", handle, canonical=judge_output_to_canonical)

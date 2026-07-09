@@ -94,12 +94,15 @@ async def test_fence_by_source_and_scan_all(monkeypatch):
 
     # scan ALL (not fence-gated): scan ran on BOTH the external (web_fetch) result
     # AND a non-external (read_file) result. If scan were gated on the fence
-    # decision, only the external result would have reached the scanner. (#2425 案B:
-    # the scanned content is the rendered canonical body, not the JSON envelope — the
-    # trusted read_file result surfaces its ``file`` kind in the frontmatter structured block.)
-    # Unpacking asserts BOTH results (external + trusted) reached the scanner.
+    # decision, only the external result would have reached the scanner. (#2425 案B /
+    # FP-0056: the scanned content is the rendered canonical body — the trusted read_file
+    # result canonicalizes via its INVOKED IDENTITY (source="read_file" → the file mapper),
+    # so its rendered body — not a whole-dict JSON envelope — is what reaches the scanner.)
+    # Unpacking asserts EXACTLY two results reached the scanner...
     scanned_a, scanned_b = host.scanned
-    assert any("file" in c for c in (scanned_a, scanned_b)), \
+    # ...and the trusted (read_file) result's own rendered body is among them (its tool-message
+    # content, un-fenced, equals the scan target) — proving that specific trusted result was scanned.
+    assert tool_msgs["call_src"]["content"] in (scanned_a, scanned_b), \
         "the trusted (read_file) result was ALSO scanned — scan is not fence-gated"
 
 

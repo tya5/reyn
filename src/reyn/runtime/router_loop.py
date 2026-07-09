@@ -2748,12 +2748,20 @@ class RouterLoop:
             events=self.host.events,
         )
 
-        return await dispatch_tool(
+        result = await dispatch_tool(
             name=name,
             args=args,
             ctx=dctx,
             invoker=functools.partial(self._invoke_router_tool, name),
         )
+        # FP-0056 PR-F1: tag the INVOKED IDENTITY at the common router-dispatch funnel so the
+        # feedback() chokepoint canonicalizes by what was called, not result["kind"] (data a producer
+        # may not set — the reyn_src incident class). ``setdefault``: a wrapper handler (invoke_action)
+        # already tagged the DEEPER resolved target inside ``data`` — that wins (extract_canonical_
+        # source takes the deepest); a direct call has only this outer tag = the named tool.
+        if isinstance(result, dict):
+            result.setdefault("_canonical_source", name)
+        return result
 
     # ── #1593 SchemeOps adapter ─────────────────────────────────────────────
     # The router IS the ``SchemeOps`` a *delegating* scheme calls. PR-1's
@@ -2942,11 +2950,16 @@ class RouterLoop:
             )
         # #2425 案B: every tool result is normalised at this chokepoint into the canonical
         # {text, attachments, meta} shape and rendered as the frontmatter+text LLM-visible format
-        # (no JSON envelope). ``to_canonical`` dispatches on the op ``kind`` (each op that once
-        # declared ``_offload_payload_field`` now has a mapper; an unregistered kind falls back to a
-        # whole-dict ``structured`` attachment). The format is INDEPENDENT of the media store — it
-        # applies even when ``media_store is None``; only the size-gated offloading needs a store.
-        from reyn.core.offload.canonical import to_canonical, unwrap_dispatch_envelope
+        # (no JSON envelope). FP-0056 PR-F1: ``to_canonical`` dispatches on the INVOKED IDENTITY
+        # (``source=`` — the effective tool name dispatch() tagged), resolving the declaration born at
+        # the op/tool registration seam; a genuinely unregistered source falls back to a whole-dict
+        # ``structured`` attachment. The format is INDEPENDENT of the media store — it applies even
+        # when ``media_store is None``; only the size-gated offloading needs a store.
+        from reyn.core.offload.canonical import (
+            extract_canonical_source,
+            to_canonical,
+            unwrap_dispatch_envelope,
+        )
         from reyn.core.offload.seam import build_offload_body, render_tool_result
         for tc, r in zip(result.tool_calls, result.tool_results):
             # B41-NF-W7-1: _post_text → appended outside the body.
@@ -2966,6 +2979,13 @@ class RouterLoop:
             if isinstance(r, dict) and r.get("_external_source"):
                 external_source = True
                 r = {k: v for k, v in r.items() if k != "_external_source"}
+            # FP-0056 PR-F1: split the invoked-identity tag(s) off the (possibly envelope-wrapped)
+            # result — the deepest tag (a wrapper handler's resolved target) wins over the outer
+            # dispatch-loop tag. ``source`` feeds to_canonical so canonicalization resolves by what was
+            # called, not result["kind"]; the cleaned result carries no tag into rendering.
+            canonical_source: str | None = None
+            if isinstance(r, dict):
+                canonical_source, r = extract_canonical_source(r)
 
             _media_store = getattr(host, "media_store", None)
             _save_fn = _media_store.save_tool_result if _media_store is not None else None
@@ -2992,7 +3012,7 @@ class RouterLoop:
                     content_str = _inner if isinstance(_inner, str) else json.dumps(_inner, default=str)
                     scan_target = content_str
                 else:
-                    canonical = to_canonical(_inner)
+                    canonical = to_canonical(_inner, source=canonical_source)
                     if (canonical.get("meta") or {}).get("isError"):
                         text_full = canonical.get("text", "") or ""
                         scan_target = f"Error: {text_full}"

@@ -566,4 +566,6 @@ async def handle(
     }
 
 
-register("skill_install", handle)
+from reyn.core.offload.canonical import STRUCTURED_PASSTHROUGH  # noqa: E402
+
+register("skill_install", handle, canonical=STRUCTURED_PASSTHROUGH)

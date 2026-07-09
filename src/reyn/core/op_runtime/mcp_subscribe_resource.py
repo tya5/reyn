@@ -88,4 +88,6 @@ async def handle(op: MCPSubscribeResourceIROp, ctx: OpContext) -> dict:
     return await _execute(op, ctx)
 
 
-register("mcp_subscribe_resource", handle)
+from reyn.core.offload.canonical import STRUCTURED_PASSTHROUGH  # noqa: E402
+
+register("mcp_subscribe_resource", handle, canonical=STRUCTURED_PASSTHROUGH)

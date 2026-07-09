@@ -95,7 +95,10 @@ async def _handle(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
     return await handle_web_search(op=op, ctx=legacy_ctx)
 
 
+from reyn.core.offload.canonical import web_search_to_canonical  # noqa: E402
+
 WEB_SEARCH = ToolDefinition(
+    canonical=web_search_to_canonical,
     name="web_search",
     router_dispatched=True,
     description=_WEB_SEARCH_DESCRIPTION,

@@ -65,7 +65,10 @@ async def _handle(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
     return await handle(op=op, ctx=None)
 
 
+from reyn.core.offload.canonical import ask_user_to_canonical  # noqa: E402
+
 ASK_USER = ToolDefinition(
+    canonical=ask_user_to_canonical,
     name="ask_user",
     description=_ASK_USER_DESCRIPTION,
     parameters=_ASK_USER_PARAMETERS,

@@ -79,4 +79,6 @@ async def handle(op: AskUserIROp, ctx: OpContext) -> dict:
     return {"kind": "ask_user", "question": op.question, "answer": text, "status": "ok"}
 
 
-register("ask_user", handle)
+from reyn.core.offload.canonical import ask_user_to_canonical  # noqa: E402
+
+register("ask_user", handle, canonical=ask_user_to_canonical)

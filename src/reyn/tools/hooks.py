@@ -196,7 +196,10 @@ async def _handle_hooks_add(args: Mapping[str, Any], ctx: ToolContext) -> ToolRe
     }
 
 
+from reyn.core.offload.canonical import CANONICAL_TODO  # noqa: E402
+
 HOOKS_ADD = ToolDefinition(
+    canonical=CANONICAL_TODO,
     name="hooks_add",
     description=_HOOKS_ADD_DESCRIPTION,
     parameters=_HOOKS_ADD_PARAMETERS,

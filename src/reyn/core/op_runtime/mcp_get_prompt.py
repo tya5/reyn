@@ -86,4 +86,6 @@ async def handle(op: MCPGetPromptIROp, ctx: OpContext) -> dict:
     return await _execute(op, ctx)
 
 
-register("mcp_get_prompt", handle)
+from reyn.core.offload.canonical import mcp_get_prompt_to_canonical  # noqa: E402
+
+register("mcp_get_prompt", handle, canonical=mcp_get_prompt_to_canonical)

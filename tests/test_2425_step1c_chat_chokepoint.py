@@ -59,7 +59,10 @@ def _tool_content(msgs) -> str:
 def _mcp_env(**data_extra) -> dict:
     data = {"kind": "mcp", "status": "ok", "server": "s", "tool": "t", "content": "", "media_blocks": []}
     data.update(data_extra)
-    return {"status": "ok", "data": data}
+    # FP-0056 PR-F1: the invoked-identity tag dispatch() sets — canonicalization now resolves by
+    # ``source`` (the effective tool name), not result["kind"]. The direct-feedback unit test supplies
+    # what dispatch() would tag.
+    return {"status": "ok", "data": data, "_canonical_source": "mcp"}
 
 
 def _text_ref(content: str) -> str:

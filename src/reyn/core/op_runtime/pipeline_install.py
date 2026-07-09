@@ -443,4 +443,6 @@ async def handle(
     }
 
 
-register("pipeline_install", handle)
+from reyn.core.offload.canonical import STRUCTURED_PASSTHROUGH  # noqa: E402
+
+register("pipeline_install", handle, canonical=STRUCTURED_PASSTHROUGH)

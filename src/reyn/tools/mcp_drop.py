@@ -134,7 +134,10 @@ async def _handle_mcp_drop_server_op(
     return await drop_handle(op=op, ctx=legacy_ctx)
 
 
+from reyn.core.offload.canonical import STRUCTURED_PASSTHROUGH  # noqa: E402
+
 MCP_DROP_SERVER_OP = ToolDefinition(
+    canonical=STRUCTURED_PASSTHROUGH,
     name="mcp_drop_server",
     description=_MCP_DROP_SERVER_DESCRIPTION,
     parameters=_MCP_DROP_SERVER_PARAMETERS,

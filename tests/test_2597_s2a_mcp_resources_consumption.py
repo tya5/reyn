@@ -403,7 +403,7 @@ def test_canonical_mapper_joins_text_and_isolates_blob_as_structured():
             {"uri": "resource://blob", "mimeType": "application/octet-stream", "blob": "YWJj"},
         ],
     }
-    canonical = to_canonical(result)
+    canonical = to_canonical(result, source="mcp_read_resource")
     assert canonical["text"] == "hello"
     assert canonical["attachments"] == [
         {"kind": "structured", "data": {

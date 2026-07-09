@@ -625,7 +625,15 @@ async def _handle_describe_mcp_tool(
 
 # ── ToolDefinitions ───────────────────────────────────────────────────────────
 
+from reyn.core.offload.canonical import (  # noqa: E402
+    CANONICAL_TODO,
+    mcp_get_prompt_to_canonical,
+    mcp_read_resource_to_canonical,
+    mcp_to_canonical,
+)
+
 LIST_MCP_SERVERS = ToolDefinition(
+    canonical=CANONICAL_TODO,
     name="list_mcp_servers",
     router_dispatched=True,
     description=_LIST_MCP_SERVERS_DESCRIPTION,
@@ -637,6 +645,7 @@ LIST_MCP_SERVERS = ToolDefinition(
 )
 
 LIST_MCP_TOOLS = ToolDefinition(
+    canonical=CANONICAL_TODO,
     name="list_mcp_tools",
     router_dispatched=True,
     description=_LIST_MCP_TOOLS_DESCRIPTION,
@@ -649,6 +658,7 @@ LIST_MCP_TOOLS = ToolDefinition(
 )
 
 CALL_MCP_TOOL = ToolDefinition(
+    canonical=mcp_to_canonical,
     name="call_mcp_tool",
     router_dispatched=True,
     description=_CALL_MCP_TOOL_DESCRIPTION,
@@ -662,6 +672,7 @@ CALL_MCP_TOOL = ToolDefinition(
 )
 
 DESCRIBE_MCP_TOOL = ToolDefinition(
+    canonical=CANONICAL_TODO,
     name="describe_mcp_tool",
     router_dispatched=True,
     description=_DESCRIBE_MCP_TOOL_DESCRIPTION,
@@ -681,6 +692,7 @@ DESCRIBE_MCP_TOOL = ToolDefinition(
 # the absent mcp_tool_name prop for these three).
 
 LIST_MCP_RESOURCES = ToolDefinition(
+    canonical=CANONICAL_TODO,
     name="list_mcp_resources",
     router_dispatched=True,
     description=_LIST_MCP_RESOURCES_DESCRIPTION,
@@ -694,6 +706,7 @@ LIST_MCP_RESOURCES = ToolDefinition(
 )
 
 LIST_MCP_RESOURCE_TEMPLATES = ToolDefinition(
+    canonical=CANONICAL_TODO,
     name="list_mcp_resource_templates",
     router_dispatched=True,
     description=_LIST_MCP_RESOURCE_TEMPLATES_DESCRIPTION,
@@ -707,6 +720,7 @@ LIST_MCP_RESOURCE_TEMPLATES = ToolDefinition(
 )
 
 READ_MCP_RESOURCE = ToolDefinition(
+    canonical=mcp_read_resource_to_canonical,
     name="read_mcp_resource",
     router_dispatched=True,
     description=_READ_MCP_RESOURCE_DESCRIPTION,
@@ -725,6 +739,7 @@ READ_MCP_RESOURCE = ToolDefinition(
 # reuse (server enum only).
 
 SUBSCRIBE_MCP_RESOURCE = ToolDefinition(
+    canonical=CANONICAL_TODO,
     name="subscribe_mcp_resource",
     router_dispatched=True,
     description=_SUBSCRIBE_MCP_RESOURCE_DESCRIPTION,
@@ -737,6 +752,7 @@ SUBSCRIBE_MCP_RESOURCE = ToolDefinition(
 )
 
 UNSUBSCRIBE_MCP_RESOURCE = ToolDefinition(
+    canonical=CANONICAL_TODO,
     name="unsubscribe_mcp_resource",
     router_dispatched=True,
     description=_UNSUBSCRIBE_MCP_RESOURCE_DESCRIPTION,
@@ -755,6 +771,7 @@ UNSUBSCRIBE_MCP_RESOURCE = ToolDefinition(
 # the absent mcp_tool_name prop for these two). No subscribe analogue.
 
 LIST_MCP_PROMPTS = ToolDefinition(
+    canonical=CANONICAL_TODO,
     name="list_mcp_prompts",
     router_dispatched=True,
     description=_LIST_MCP_PROMPTS_DESCRIPTION,
@@ -768,6 +785,7 @@ LIST_MCP_PROMPTS = ToolDefinition(
 )
 
 GET_MCP_PROMPT = ToolDefinition(
+    canonical=mcp_get_prompt_to_canonical,
     name="get_mcp_prompt",
     router_dispatched=True,
     description=_GET_MCP_PROMPT_DESCRIPTION,

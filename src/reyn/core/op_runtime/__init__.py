@@ -80,13 +80,23 @@ async def execute_op(
 
 
 # Lazy-populated handler registry. Each module under op_runtime registers
-# its handler at import time via `register("kind", handler)`.
+# its handler at import time via `register("kind", handler, canonical=…)`.
 _HANDLERS: dict = {}
 
 
-def register(kind: str, handler) -> None:
-    """Register an op handler. Called at module import time."""
+def register(kind: str, handler, *, canonical) -> None:
+    """Register an op handler + its canonical declaration (FP-0056 PR-F1).
+
+    ``canonical`` is REQUIRED: a mapper (``result -> CanonicalToolResult``), the ``STRUCTURED_PASSTHROUGH``
+    opt-in, or the provisional ``CANONICAL_TODO`` marker. The declaration is born WITH the op registration (not a
+    free-floating ``_MAPPERS`` dict hand-synced elsewhere), so an op kind can never reach the offload
+    chokepoint without a declared LLM-visible shape — the structural gap the 2026-07-09 dogfood
+    incident exposed. The coverage gate (``tests/test_fp0056_canonical_coverage_gate.py``) enumerates
+    every registered kind and asserts the declaration exists."""
+    from reyn.core.offload.canonical import declare_canonical
+
     _HANDLERS[kind] = handler
+    declare_canonical(kind, canonical)
 
 
 def available_kinds() -> list[str]:

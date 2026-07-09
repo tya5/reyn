@@ -136,4 +136,6 @@ async def handle(
     }
 
 
-register("sandboxed_exec", handle)
+from reyn.core.offload.canonical import sandboxed_exec_to_canonical  # noqa: E402
+
+register("sandboxed_exec", handle, canonical=sandboxed_exec_to_canonical)

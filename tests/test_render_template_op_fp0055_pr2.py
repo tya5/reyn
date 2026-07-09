@@ -281,7 +281,7 @@ def test_canonical_mapper_rendered_string_becomes_text():
         "kind": "render_template", "status": "ok", "ok": True,
         "rendered": "the rendered body", "truncated": False,
     }
-    canonical = to_canonical(result)
+    canonical = to_canonical(result, source="render_template")
     assert canonical["text"] == "the rendered body"
     # NOT the fallback: no structured attachment carrying the whole dict.
     assert canonical.get("attachments") == []
@@ -294,7 +294,7 @@ def test_canonical_mapper_surfaces_truncated_and_undefined_meta():
         "kind": "render_template", "status": "ok", "ok": True,
         "rendered": "XXX", "truncated": True, "truncate_reason": "max_output_chars",
         "undefined_vars": ["missing_var"],
-    })
+    }, source="render_template")
     assert truncated["meta"]["truncated"] is True
     assert truncated["meta"]["truncate_reason"] == "max_output_chars"
     assert "missing_var" in truncated["meta"]["undefined_vars"]
@@ -302,7 +302,7 @@ def test_canonical_mapper_surfaces_truncated_and_undefined_meta():
     errored = to_canonical({
         "kind": "render_template", "status": "error", "ok": False,
         "error_kind": "undefined", "error": "'missing_var' is undefined",
-    })
+    }, source="render_template")
     assert errored["meta"]["isError"] is True
     assert "missing_var" in errored["text"]
 

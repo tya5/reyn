@@ -138,7 +138,10 @@ async def _handle(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
     }
 
 
+from reyn.core.offload.canonical import CANONICAL_TODO  # noqa: E402
+
 DELEGATE_TO_AGENT = ToolDefinition(
+    canonical=CANONICAL_TODO,
     name="delegate_to_agent",
     router_dispatched=True,
     description=_DELEGATE_TO_AGENT_DESCRIPTION,

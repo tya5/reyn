@@ -22,6 +22,7 @@ from __future__ import annotations
 
 from typing import Any, Mapping
 
+from reyn.core.offload.canonical import CANONICAL_TODO
 from reyn.schemas.models import (
     TaskAbortIROp,
     TaskAddDependencyIROp,
@@ -149,6 +150,7 @@ def build_task_tool_definitions() -> list[ToolDefinition]:
     defs: list[ToolDefinition] = []
     for op_kind, model, description in _TASK_OPS:
         defs.append(ToolDefinition(
+            canonical=CANONICAL_TODO,
             name=op_kind,  # e.g. "task.create" — registry-dispatch target name
             description=description,
             parameters=_parameters_for(model),

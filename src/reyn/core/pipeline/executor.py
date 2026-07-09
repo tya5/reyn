@@ -110,6 +110,7 @@ from typing import TYPE_CHECKING, Any, Awaitable, Callable, Union
 from reyn.core.events.pipeline_recovery import latest_pipeline_state, record_pipeline_state
 from reyn.core.offload.canonical import (
     canonical_to_ctx_fields,
+    extract_canonical_source,
     to_canonical,
     unwrap_dispatch_envelope,
 )
@@ -747,6 +748,12 @@ async def _run_tool_step(inv: "_StepInvocation") -> "tuple[Any, bool, dict[str, 
     }
     raw = deps.tool_dispatch(step.name, resolved_args)
     result = await raw if inspect.isawaitable(raw) else raw
+    # FP-0056 PR-F1: the dispatch seam tagged the resolved target tool name (invoked identity). Split
+    # it off (deepest tag wins across envelope layers) before schema validation + ctx exposure; use it
+    # as the canonicalization ``source`` below.
+    canonical_source: "str | None" = None
+    if isinstance(result, dict):
+        canonical_source, result = extract_canonical_source(result)
     if step.schema is not None:
         if deps.schema_registry is None:
             raise PipelineExecutionError(
@@ -764,7 +771,7 @@ async def _run_tool_step(inv: "_StepInvocation") -> "tuple[Any, bool, dict[str, 
     # retains full values for downstream programmatic step processing). Schema validation above runs
     # against the RAW dispatch result, unchanged.
     if isinstance(result, dict):
-        canonical = to_canonical(unwrap_dispatch_envelope(result))
+        canonical = to_canonical(unwrap_dispatch_envelope(result), source=canonical_source)
         ctx_result: Any = canonical_to_ctx_fields(canonical)
     elif isinstance(result, str):
         ctx_result = {"text": result}
