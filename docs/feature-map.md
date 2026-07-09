@@ -246,7 +246,7 @@ User-facing point-in-time rewind with branching. Phase 1 and Phase 2 (2a/2b/2c/2
 | Append-only JSONL | `.reyn/events/<run_id>.jsonl` per-run (`EventStore`); audit trail — append-only, rotation-based (not per-append fsync). Separate log and lifecycle from the recovery WAL (`.reyn/state/wal.jsonl`). | [Events reference](reference/runtime/events.md) |
 | Replay | `reyn events <path>` streams events for audit and debug | [reyn events CLI](reference/cli/events.md) |
 
-> **Differentiation vs general agents:** the agent loop is an OS-enforced contract — the LLM decides only from OS-provided candidates (P3/P4), every output is schema-validated, every inter-phase value lives in the workspace (P5), and every state change emits an append-only, replayable event (P6). Constrained and auditable by construction, not by developer discipline.
+> **Differentiation vs general agents:** the agent loop is an OS-enforced contract — every side effect the LLM emits is a schema-validated, typed Control IR op (never a free-form string), every op routes through the same exclude → permission → dispatch gate regardless of which tool-use scheme is active, every value the agent produces lives in the workspace (P5), and every state change emits an append-only, replayable event (P6). Constrained and auditable by construction, not by developer discipline.
 
 ---
 
@@ -298,7 +298,7 @@ Config-gated `litellm.Router` slot-in for provider-resilience. Default OFF (`llm
 
 All ops are documented in the single reference page: **[Control IR](reference/runtime/control-ir.md)**
 
-The op kinds below mirror `OP_KIND_MODEL_MAP` in `op_runtime/registry.py`.
+The op kinds below mirror `OP_KIND_MODEL_MAP` in `schemas/models.py`.
 
 | Op | Description |
 |----|-------------|
@@ -317,7 +317,7 @@ The op kinds below mirror `OP_KIND_MODEL_MAP` in `op_runtime/registry.py`.
 | `index_query` | Vector similarity search over one indexed source |
 | `recall` | Macro: embed query → `index_query` per source → merge top-K |
 | `index_drop` | Destructive source removal — requires approval |
-| `compact` | Summarise / compact context within budget (chat + phase results) |
+| `compact` | Summarise / compact conversation history within budget |
 | `judge_output` | LLM scorer with rubric + threshold + `on_fail` policy |
 
 > The `embed` and `index_write` ops were removed — embedding and index-writing now run provider-direct inside `reyn.api.safe.embed_index` and the `recall` op, not as standalone ops. See [Control IR](reference/runtime/control-ir.md).
@@ -354,7 +354,7 @@ How tools are presented to the LLM and how its calls are dispatched is a **plugg
 | `retrieval` | RAG-over-tools — present a search tool, the LLM searches, the OS re-presents matched tools as callable. Supported opt-in for very large tool sets where full-catalog token cost is prohibitive; requires a configured embedding provider (`action_retrieval.embedding_class`) | [Tool-Use Schemes](concepts/tools-integrations/tool-use-schemes.md) |
 | `CodeAct` | Code-as-tools — the LLM writes a Python snippet whose in-code `tool()` calls run in a sandboxed subprocess under the same permission gate as a JSON call. Strongest for weak models | [Tool-Use Schemes](concepts/tools-integrations/tool-use-schemes.md) |
 
-> **Differentiation vs general agents:** the tool-use strategy is a swappable scheme — `enumerate-all` / `retrieval` / `CodeAct` / the default catalog — chosen per layer by config, *without* changing the OS. Because every scheme dispatches through the same exclude → permission → `dispatch_tool` gate (P4/P5), swapping the LLM-facing tool surface never weakens the security or validation pipeline. The presentation is data; the gate is constant.
+> **Differentiation vs general agents:** the tool-use strategy is a swappable scheme — `enumerate-all` / `retrieval` / `CodeAct` / the default catalog — chosen per layer by config, *without* changing the OS. Because every scheme dispatches through the same exclude → permission → `dispatch_tool` gate, swapping the LLM-facing tool surface never weakens the security or validation pipeline. The presentation is data; the gate is constant.
 
 ---
 
