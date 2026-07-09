@@ -83,7 +83,7 @@ def test_session_tree_lists_spawned_sessions(tmp_path: Path) -> None:
     """Tier 2: a spawned session shows up alongside 'main' under the same agent."""
     reg = _make_registry(tmp_path)
     reg.get_or_load("default")
-    sid = reg.spawn_session("default", "sub1")
+    sid = reg.spawn_session("default", "sub1", presentation_consumer=None, intervention_bridge=None)
 
     sids = {s["sid"] for s in reg.session_tree()[0]["sessions"]}
     assert {"main", sid} <= sids
@@ -93,8 +93,8 @@ def test_session_tree_sids_sorted(tmp_path: Path) -> None:
     """Tier 2: sessions within an agent are sorted by sid regardless of spawn order."""
     reg = _make_registry(tmp_path)
     reg.get_or_load("default")
-    reg.spawn_session("default", "zz")
-    reg.spawn_session("default", "aa")
+    reg.spawn_session("default", "zz", presentation_consumer=None, intervention_bridge=None)
+    reg.spawn_session("default", "aa", presentation_consumer=None, intervention_bridge=None)
 
     sids = [s["sid"] for s in reg.session_tree()[0]["sessions"]]
     assert sids == sorted(sids)
@@ -105,7 +105,7 @@ def test_session_tree_all_false_when_nothing_attached(tmp_path: Path) -> None:
     the agent and session level."""
     reg = _make_registry(tmp_path)
     reg.get_or_load("default")
-    reg.spawn_session("default", "sub1")
+    reg.spawn_session("default", "sub1", presentation_consumer=None, intervention_bridge=None)
     assert reg.attached_name is None           # public-surface precondition
 
     entry = reg.session_tree()[0]

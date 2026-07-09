@@ -586,8 +586,10 @@ class _ScriptedAgentReply:
 def _agent_registry(tmp_path: Path, state_log: StateLog, scripted: _ScriptedAgentReply) -> AgentRegistry:
     holder: dict = {}
 
-    def _factory(profile) -> Session:
+    def _factory(profile, *, presentation_consumer=None, intervention_bridge=None) -> Session:
         s = Session(
+            presentation_consumer=presentation_consumer,
+            intervention_bridge=intervention_bridge,
             agent_name=profile.name, state_log=state_log,
             registry=holder.get("reg"), non_interactive=True,
         )

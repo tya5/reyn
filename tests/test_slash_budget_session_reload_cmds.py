@@ -83,7 +83,9 @@ class _FakeRegistry:
         self._spawn_raises = spawn_raises
         self._get_session_result = get_session_result
 
-    def spawn_session(self, name: str) -> str:
+    def spawn_session(
+        self, name: str, *, presentation_consumer=None, intervention_bridge=None,
+    ) -> str:
         if self._spawn_raises is not None:
             raise self._spawn_raises
         return self._spawn_result  # type: ignore[return-value]

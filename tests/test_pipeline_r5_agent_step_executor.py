@@ -63,8 +63,10 @@ def _registry(
     real ``RouterLoopDriver`` via ``_loop_observer``, before the driver's first turn."""
     holder: dict = {}
 
-    def _factory(profile) -> Session:
+    def _factory(profile, *, presentation_consumer=None, intervention_bridge=None) -> Session:
         s = Session(
+            presentation_consumer=presentation_consumer,
+            intervention_bridge=intervention_bridge,
             agent_name=profile.name, state_log=state_log,
             registry=holder.get("reg"), non_interactive=True,
         )

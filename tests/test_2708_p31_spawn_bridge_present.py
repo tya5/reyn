@@ -176,8 +176,11 @@ async def test_detached_present_not_bridged_to_caller(tmp_path: Path) -> None:
     """Tier 2: scope guard — a DETACHED (``start_pipeline_run``) pipeline's present is NOT
     bridged to the (non-attached) invoker: no ``pipeline_run_attached`` marker is emitted,
     so the caller's forwarder never bridge-subscribes → no bridged ``presented`` on the
-    caller log and no presentation on the caller outbox. This pins the attached-only scope
-    (detached/async present is the tracked P3-item3 known-RED cell, not addressed here)."""
+    caller log and no presentation on the caller outbox. This pins the attached-only scope of
+    P3.1's PARENT-bridge. (Detached present is now a DELIBERATE ``AuditOnlyNoSurface`` decision
+    — audit-only, no orphan — landed in P3-item3; see
+    ``test_spawn_routing_detached_fail_mode_2708``. It still, correctly, does not reach this
+    non-attached caller.)"""
     state_log = StateLog(tmp_path / ".reyn" / "wal.jsonl")
     reg = _agent_registry(tmp_path, state_log)
     caller = reg.get_or_load("worker")

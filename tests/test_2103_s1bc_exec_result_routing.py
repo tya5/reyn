@@ -34,12 +34,13 @@ def _registry(tmp_path: Path) -> AgentRegistry:
     state_log = StateLog(tmp_path / ".reyn" / "wal.jsonl")
     holder: dict = {}
 
-    def _factory(profile: AgentProfile) -> Session:
+    def _factory(profile: AgentProfile, *, presentation_consumer=None, intervention_bridge=None) -> Session:
         # wire the registry back-reference (= what production frontends pass) so the
         # A2A response callback (_a2a_send_response) can route — without it the
         # response is silently dropped (registry is None).
         return Session(
             agent_name=profile.name, state_log=state_log, registry=holder.get("reg"),
+            presentation_consumer=presentation_consumer, intervention_bridge=intervention_bridge,
         )
 
     reg = AgentRegistry(project_root=tmp_path, session_factory=_factory, state_log=state_log)
@@ -80,7 +81,7 @@ async def test_main_spawn_result_routes_back_correlated_as_spawned_session(tmp_p
     reg = _registry(tmp_path)
     main = reg.get_or_load("worker")  # the spawner (main session)
 
-    sid = await reg.spawn_session_recorded("worker", mode="persistent")
+    sid = await reg.spawn_session_recorded("worker", mode="persistent", presentation_consumer=None, intervention_bridge=None)
     spawned = reg.ensure_session_running("worker", sid)
     assert spawned is not None
     # the spawner records the trusted sid→task (= what the adapter does at spawn time).
@@ -117,7 +118,7 @@ async def test_unrecorded_sid_falls_back_to_kind_agent(tmp_path, monkeypatch):
     monkeypatch.setattr("reyn.runtime.router_loop.call_llm_tools", _scripted_llm())
     reg = _registry(tmp_path)
     main = reg.get_or_load("worker")
-    sid = await reg.spawn_session_recorded("worker", mode="persistent")
+    sid = await reg.spawn_session_recorded("worker", mode="persistent", presentation_consumer=None, intervention_bridge=None)
     spawned = reg.ensure_session_running("worker", sid)
     # NO record_spawned_task → the lookup misses.
     await spawned._send_agent_response(
@@ -136,7 +137,7 @@ async def test_response_routes_to_non_main_spawner_sid_not_main(tmp_path):
     (get_or_load(to) → main): main would get it + the spawner would not."""
     reg = _registry(tmp_path)
     main = reg.get_or_load("worker")  # the agent's main (must NOT receive a non-main reply)
-    x_sid = await reg.spawn_session_recorded("worker", mode="persistent")
+    x_sid = await reg.spawn_session_recorded("worker", mode="persistent", presentation_consumer=None, intervention_bridge=None)
     spawner_x = reg.ensure_session_running("worker", x_sid)  # the non-main spawner, loaded
     assert spawner_x is not None and x_sid != "main"
 
@@ -180,7 +181,7 @@ async def test_non_main_delegation_reply_routes_to_delegating_sid_not_main(tmp_p
     reg = _registry(tmp_path)
     reg.create("peer")
     main = reg.get_or_load("worker")  # the delegator agent's main (must NOT get the reply)
-    x_sid = await reg.spawn_session_recorded("worker", mode="persistent")
+    x_sid = await reg.spawn_session_recorded("worker", mode="persistent", presentation_consumer=None, intervention_bridge=None)
     x = reg.ensure_session_running("worker", x_sid)  # the NON-MAIN delegating session
     assert x is not None and x_sid != "main"
 

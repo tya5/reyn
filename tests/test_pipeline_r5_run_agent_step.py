@@ -80,10 +80,12 @@ def _registry(tmp_path: Path, scripted: "_ScriptedAgentReply | None") -> AgentRe
     state_log = StateLog(tmp_path / ".reyn" / "wal.jsonl")
     holder: dict = {}
 
-    def _factory(profile) -> Session:
+    def _factory(profile, *, presentation_consumer=None, intervention_bridge=None) -> Session:
         s = Session(
             agent_name=profile.name, state_log=state_log,
             registry=holder.get("reg"), non_interactive=True,
+            presentation_consumer=presentation_consumer,
+            intervention_bridge=intervention_bridge,
         )
         if scripted is not None:
             s._loop_driver._loop_observer = (
@@ -204,7 +206,7 @@ async def test_agent_step_narrowing_denies_delegation_when_spawned(tmp_path: Pat
         ["delegate_to_agent", "run_pipeline", "file__read"]
     )
 
-    sid = await spawn_ephemeral_session(reg, identity="worker", narrowing=narrowing)
+    sid = await spawn_ephemeral_session(reg, identity="worker", narrowing=narrowing, presentation_consumer=None, intervention_bridge=None)
     contextual, _excluded = reg.resolved_profile_for("worker", sid=sid)
 
     assert contextual is not None

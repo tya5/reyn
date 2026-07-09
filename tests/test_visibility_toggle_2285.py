@@ -48,7 +48,7 @@ async def test_toggle_on_cannot_revive_envelope_denied_tool(tmp_path, monkeypatc
     monkeypatch.chdir(tmp_path)
     reg = _make_registry(tmp_path)
     reg.get_or_load("alice")
-    sid = await reg.spawn_session_recorded("alice", narrowing={"tool_deny": ["delete_file"]})
+    sid = await reg.spawn_session_recorded("alice", narrowing={"tool_deny": ["delete_file"]}, presentation_consumer=None, intervention_bridge=None)
     session = reg.get_session("alice", sid)
 
     assert _allows_tool(session, "delete_file") is False  # envelope denies it
@@ -66,7 +66,7 @@ async def test_toggle_hides_then_restores_within_envelope(tmp_path, monkeypatch)
     monkeypatch.chdir(tmp_path)
     reg = _make_registry(tmp_path)
     reg.get_or_load("alice")
-    sid = await reg.spawn_session_recorded("alice")  # no narrowing → envelope allows all tools
+    sid = await reg.spawn_session_recorded("alice", presentation_consumer=None, intervention_bridge=None)  # no narrowing → envelope allows all tools
     session = reg.get_session("alice", sid)
     assert _allows_tool(session, "delete_file") is True  # allowed by the envelope
 
@@ -84,7 +84,7 @@ async def test_visibility_state_reflects_envelope_and_override(tmp_path, monkeyp
     monkeypatch.chdir(tmp_path)
     reg = _make_registry(tmp_path)
     reg.get_or_load("alice")
-    sid = await reg.spawn_session_recorded("alice", narrowing={"tool_deny": ["delete_file"]})
+    sid = await reg.spawn_session_recorded("alice", narrowing={"tool_deny": ["delete_file"]}, presentation_consumer=None, intervention_bridge=None)
     session = reg.get_session("alice", sid)
     session.set_capability_visible("tool", "ask_user", False)
 

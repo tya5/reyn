@@ -56,6 +56,7 @@ from reyn.core.events.state_log import StateLog
 from reyn.task.subscription import SubscriptionRegistry
 
 from .profile import PROFILE_FILENAME, AgentProfile
+from .spawn_routing import ReviewedNA
 from .topology import TOPOLOGY_DIRNAME, Topology, _validate_topology_name
 
 DEFAULT_AGENT_NAME = "default"
@@ -493,7 +494,14 @@ class AgentRegistry:
             return session
         sid = f"{transport}:{native_id}"
         if not self._has_session(agent_name, sid):
-            self.spawn_session(agent_name, sid=sid)
+            # #2708 P3-item3: a transport-native inbound session — the transport drains its OWN
+            # outbox, no parent to bridge to; self-binding to the factory default is reviewed-correct.
+            _routing = ReviewedNA("runtime/registry.py::resolve_session")
+            self.spawn_session(
+                agent_name, sid=sid,
+                presentation_consumer=_routing.presentation_consumer,
+                intervention_bridge=_routing.intervention_bridge,
+            )
         return self.get_session(agent_name, sid)
 
     def load_profile(self, name: str) -> AgentProfile:
@@ -1042,7 +1050,14 @@ class AgentRegistry:
                 await self.ensure_running(name)
             else:
                 if not self._has_session(name, sid):
-                    self.spawn_session(name, sid=sid)
+                    # #2708 P3-item3: crash-recovery re-creates a spawned session to re-adopt its
+                    # snapshot — a headless re-wake with no attached surface; self-bound reviewed-NA.
+                    _routing = ReviewedNA("runtime/registry.py::restore_all")
+                    self.spawn_session(
+                        name, sid=sid,
+                        presentation_consumer=_routing.presentation_consumer,
+                        intervention_bridge=_routing.intervention_bridge,
+                    )
                 session = self._peek_session(name, sid)
                 if session is not None:
                     session.restore_state(snap)
@@ -1130,7 +1145,14 @@ class AgentRegistry:
                 continue
             bump_resume_attempts(run_dir)
             if not self._has_session(name, sid):
-                self.spawn_session(name, sid=sid)
+                # #2708 P3-item3: pipeline driver crash-recovery re-wake — the originally-attached
+                # caller is gone, the result routes via the inbox reply address; self-bound reviewed-NA.
+                _routing = ReviewedNA("runtime/registry.py::_rewake_pipeline_runs")
+                self.spawn_session(
+                    name, sid=sid,
+                    presentation_consumer=_routing.presentation_consumer,
+                    intervention_bridge=_routing.intervention_bridge,
+                )
             session = self._peek_session(name, sid)
             if session is None:
                 continue
@@ -2618,11 +2640,19 @@ class AgentRegistry:
 
     def spawn_session(
         self, name: str, sid: "str | None" = None,
-        *, presentation_consumer: "object | None" = None,
-        intervention_bridge: "object | None" = None,
+        *, presentation_consumer: "object | None",
+        intervention_bridge: "object | None",
     ) -> str:
         """FP-0043 Stage 3: open a NEW conversation Session under an existing
         Agent, SHARING the agent's identity object. Returns the new session-id.
+
+        #2708 P3-item3: ``presentation_consumer`` + ``intervention_bridge`` are REQUIRED,
+        no-default kwargs (the spawn-axis completeness gate) — every caller must declare an
+        explicit spawn-time user-reaching routing decision (``runtime/spawn_routing``): a
+        ``BridgeToParent`` / ``AuditOnlyNoSurface`` value's resolved pair, or ``None``/``None``
+        only at a reviewed ``ReviewedNA`` self-bound site.
+        A missing kwarg is a TypeError (pinned by ``inspect.signature``), so a new spawn site
+        cannot silently self-bind into an orphan/hang.
 
         Structure-only (lead-confirmed): this lets the Registry hold N sessions
         per agent; INBOUND routing to a non-default session is Stage 4 — until
@@ -2710,8 +2740,8 @@ class AgentRegistry:
     async def spawn_session_recorded(
         self, name: str, *, mode: str = "persistent",
         narrowing: "dict | None" = None,
-        presentation_consumer: "object | None" = None,
-        intervention_bridge: "object | None" = None,
+        presentation_consumer: "object | None",
+        intervention_bridge: "object | None",
     ) -> str:
         """#2103 S1bc: the action-layer SESSION-SPAWN seam — spawn a fresh-context
         session under ``name`` (sync ``spawn_session``) + persist the spawner's
@@ -2724,12 +2754,13 @@ class AgentRegistry:
         Does NOT submit a task — that is the caller (the spawn op), separable from the
         record. Emit no-ops without a WAL.
 
-        #2708 P3.1/P3.2a: ``presentation_consumer`` + ``intervention_bridge`` (both default
-        None = today's self-bound outbox consumer + listener-less intervention registry) are
-        the spawn-time capability overrides forwarded to the constructed session — the
-        attached pipeline driver spawn passes a ``SpawnBridgePresentationConsumer`` (present
-        reaches the parent surface) and a ``SpawnBridgeInterventionListener`` (ask_user
-        reaches the parent's live operator) by construction."""
+        #2708 P3-item3: ``presentation_consumer`` + ``intervention_bridge`` are REQUIRED,
+        no-default kwargs — the spawn-time user-reaching routing decision, forwarded to the
+        constructed session. A caller declares one of ``runtime/spawn_routing``'s decisions:
+        ``BridgeToParent`` (attached pipeline driver / delegated sub-agent — present reaches the
+        parent surface, ask_user reaches the parent's live operator), ``AuditOnlyNoSurface``
+        (detached/headless — present audit-only, ask_user a typed refusal), or ``ReviewedNA``
+        (``None``/``None`` self-bound, reviewed sites only). No silent default (#2708 P3-item3)."""
         sid = self.spawn_session(
             name,
             presentation_consumer=presentation_consumer,

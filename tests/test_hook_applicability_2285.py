@@ -54,8 +54,8 @@ async def test_hook_disable_is_per_session(tmp_path, monkeypatch):
     reg = _make_registry(tmp_path)
     _write_agent_hook(tmp_path, "myhook")  # shared per-agent hook, before the sessions build registries
     reg.get_or_load("alice")
-    s1 = reg.get_session("alice", await reg.spawn_session_recorded("alice"))
-    s2 = reg.get_session("alice", await reg.spawn_session_recorded("alice"))
+    s1 = reg.get_session("alice", await reg.spawn_session_recorded("alice", presentation_consumer=None, intervention_bridge=None))
+    s2 = reg.get_session("alice", await reg.spawn_session_recorded("alice", presentation_consumer=None, intervention_bridge=None))
 
     s1.set_hook_enabled("myhook", False)  # disable in S1 only
 
@@ -73,7 +73,7 @@ async def test_hook_toggle_off_then_on(tmp_path, monkeypatch):
     reg = _make_registry(tmp_path)
     _write_agent_hook(tmp_path, "myhook")
     reg.get_or_load("alice")
-    s = reg.get_session("alice", await reg.spawn_session_recorded("alice"))
+    s = reg.get_session("alice", await reg.spawn_session_recorded("alice", presentation_consumer=None, intervention_bridge=None))
 
     s.set_hook_enabled("myhook", False)
     await s._hook_dispatcher.dispatch("turn_end", {})
@@ -91,7 +91,7 @@ async def test_per_session_hooks_yaml_is_a_4th_layer(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     reg = _make_registry(tmp_path)
     reg.get_or_load("alice")
-    s = reg.get_session("alice", await reg.spawn_session_recorded("alice"))
+    s = reg.get_session("alice", await reg.spawn_session_recorded("alice", presentation_consumer=None, intervention_bridge=None))
 
     # write a per-session hook at this session's state dir, then re-build the registry
     per_session = Path(s._snapshot_path).parent / "hooks.yaml"
@@ -125,7 +125,7 @@ async def test_hook_slash_disables_via_public_state(tmp_path, monkeypatch):
     reg = _make_registry(tmp_path)
     _write_agent_hook(tmp_path, "myhook")
     reg.get_or_load("alice")
-    s = reg.get_session("alice", await reg.spawn_session_recorded("alice"))
+    s = reg.get_session("alice", await reg.spawn_session_recorded("alice", presentation_consumer=None, intervention_bridge=None))
     s.is_attached = True
 
     await hook_cmd(s, "off myhook")

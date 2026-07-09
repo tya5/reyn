@@ -52,8 +52,8 @@ async def test_spawned_sessions_have_isolated_history(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     reg = _make_registry(tmp_path)
     reg.get_or_load("alice")
-    a = reg.get_session("alice", reg.spawn_session("alice"))
-    b = reg.get_session("alice", reg.spawn_session("alice"))
+    a = reg.get_session("alice", reg.spawn_session("alice", presentation_consumer=None, intervention_bridge=None))
+    b = reg.get_session("alice", reg.spawn_session("alice", presentation_consumer=None, intervention_bridge=None))
 
     assert a.history_path != b.history_path, "spawned sessions must have isolated history paths"
     a._append_history(ChatMessage(role="user", content="secret from A"))
@@ -71,7 +71,7 @@ async def test_spawned_events_isolated_and_forwarder_survives_rewire(tmp_path, m
     monkeypatch.chdir(tmp_path)
     reg = _make_registry(tmp_path)
     main = reg.get_or_load("alice")
-    a = reg.get_session("alice", reg.spawn_session("alice"))
+    a = reg.get_session("alice", reg.spawn_session("alice", presentation_consumer=None, intervention_bridge=None))
 
     assert a.events_dir != main.events_dir, "spawned session must have an isolated events dir"
 
@@ -97,8 +97,8 @@ async def test_crash_recovery_restores_each_session_own_history(tmp_path, monkey
     monkeypatch.chdir(tmp_path)
     reg = _make_registry(tmp_path)
     reg.get_or_load("alice")
-    a = reg.get_session("alice", reg.spawn_session("alice"))
-    b = reg.get_session("alice", reg.spawn_session("alice"))
+    a = reg.get_session("alice", reg.spawn_session("alice", presentation_consumer=None, intervention_bridge=None))
+    b = reg.get_session("alice", reg.spawn_session("alice", presentation_consumer=None, intervention_bridge=None))
     a._append_history(ChatMessage(role="user", content="A-only"))
     b._append_history(ChatMessage(role="user", content="B-only"))
 
@@ -125,8 +125,8 @@ async def test_rewind_reset_does_not_touch_other_sessions_transcript(tmp_path, m
     monkeypatch.chdir(tmp_path)
     reg = _make_registry(tmp_path)
     reg.get_or_load("alice")
-    a = reg.get_session("alice", reg.spawn_session("alice"))
-    b = reg.get_session("alice", reg.spawn_session("alice"))
+    a = reg.get_session("alice", reg.spawn_session("alice", presentation_consumer=None, intervention_bridge=None))
+    b = reg.get_session("alice", reg.spawn_session("alice", presentation_consumer=None, intervention_bridge=None))
     a._append_history(ChatMessage(role="user", content="A-msg"))
     b._append_history(ChatMessage(role="user", content="B-msg"))
     b_before = b.history_path.read_text()

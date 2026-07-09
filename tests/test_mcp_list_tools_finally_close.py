@@ -44,7 +44,7 @@ def _make_registry(tmp_path: Path) -> AgentRegistry:
 async def _session(tmp_path) -> Session:
     reg = _make_registry(tmp_path)
     reg.get_or_load("alice")
-    sid = await reg.spawn_session_recorded("alice")
+    sid = await reg.spawn_session_recorded("alice", presentation_consumer=None, intervention_bridge=None)
     sess = reg.get_session("alice", sid)
     # #2597 S2a: only an EPHEMERAL session still routes _mcp_list_tools through the
     # one-shot MCPClientPool this test exercises — a persistent session now holds its

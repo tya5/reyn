@@ -70,7 +70,7 @@ async def test_ephemeral_spawn_forces_non_interactive_true(tmp_path):
     reg = _make_registry(tmp_path)
     reg.get_or_load("alice")  # the live main session (factory default: False)
 
-    eph_sid = await reg.spawn_session_recorded("alice", mode="ephemeral")
+    eph_sid = await reg.spawn_session_recorded("alice", mode="ephemeral", presentation_consumer=None, intervention_bridge=None)
     eph = reg._peek_session("alice", eph_sid)
 
     assert eph.non_interactive is True
@@ -85,7 +85,7 @@ async def test_persistent_spawn_keeps_factory_default(tmp_path):
     reg = _make_registry(tmp_path)
     reg.get_or_load("alice")
 
-    per_sid = await reg.spawn_session_recorded("alice", mode="persistent")
+    per_sid = await reg.spawn_session_recorded("alice", mode="persistent", presentation_consumer=None, intervention_bridge=None)
     per = reg._peek_session("alice", per_sid)
 
     assert per.non_interactive is False

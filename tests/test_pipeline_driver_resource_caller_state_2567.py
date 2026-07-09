@@ -170,8 +170,10 @@ def _worker_registry(tmp_path: Path, state_log: "StateLog") -> AgentRegistry:
     helper, extended with ``mcp_servers=``."""
     holder: dict = {}
 
-    def _factory(profile) -> Session:
+    def _factory(profile, *, presentation_consumer=None, intervention_bridge=None) -> Session:
         return Session(
+            presentation_consumer=presentation_consumer,
+            intervention_bridge=intervention_bridge,
             agent_name=profile.name, state_log=state_log,
             registry=holder.get("reg"), non_interactive=True,
             mcp_servers={"servers": {"brave": {"command": "true"}}},

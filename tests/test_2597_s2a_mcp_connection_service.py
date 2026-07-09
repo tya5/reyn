@@ -193,12 +193,12 @@ async def test_remove_session_teardown_closes_held_connections(tmp_path: Path):
     from reyn.runtime.registry import AgentRegistry
     from reyn.runtime.session import Session
 
-    def _factory(profile) -> Session:
+    def _factory(profile, *, presentation_consumer=None, intervention_bridge=None) -> Session:
         return Session(agent_name=profile.name, mcp_servers={"srv": _CFG})
 
     registry = AgentRegistry(project_root=tmp_path, session_factory=_factory)
     registry.create("s2a-owner")
-    sid = await registry.spawn_session_recorded("s2a-owner", mode="persistent")
+    sid = await registry.spawn_session_recorded("s2a-owner", mode="persistent", presentation_consumer=None, intervention_bridge=None)
     session = registry._peek_session("s2a-owner", sid)
 
     await session._mcp_call_tool("srv", "echo", {"text": "hi"})

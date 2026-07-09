@@ -2264,6 +2264,14 @@ class Session:
         return self._presentation_consumer
 
     @property
+    def intervention_bridge(self):
+        """Read-only accessor for this session's spawn-time intervention bridge (#2708 P3.2a /
+        P3-item3), or ``None`` for a self-bound session. An attached pipeline driver carries a
+        ``SpawnBridgeInterventionListener`` (ask_user reaches the parent operator); a detached /
+        headless spawn carries an ``AuditOnlyInterventionBridge`` (ask_user is a typed refusal)."""
+        return self._intervention_bridge
+
+    @property
     def interventions(self) -> "InterventionRegistry":
         """Read-only public accessor for the session's InterventionRegistry.
 

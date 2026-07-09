@@ -31,7 +31,7 @@ class _StubRegistry:
     def attached_name(self):
         return self._attached_name
 
-    def spawn_session(self, name):
+    def spawn_session(self, name, *, presentation_consumer=None, intervention_bridge=None):
         sid = f"s{len(self._sids)}"
         self._sids.append(sid)
         self.spawned.append(name)

@@ -90,7 +90,7 @@ async def test_multi_session_restore_is_per_session_independent(tmp_path, monkey
     # ── pre-crash: open main + a spawned session, assign distinct state ──
     reg1 = _make_registry(tmp_path, wal)
     main1 = reg1.get_or_load("alpha")                 # the implicit "main" session
-    sid = reg1.spawn_session("alpha")                 # a second session under the same agent
+    sid = reg1.spawn_session("alpha", presentation_consumer=None, intervention_bridge=None)                 # a second session under the same agent
     spawned1 = reg1.get_session("alpha", sid)
     assert spawned1 is not None
 

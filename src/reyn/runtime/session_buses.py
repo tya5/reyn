@@ -208,20 +208,88 @@ class SpawnBridgeInterventionListener:
 
     def bus(
         self, *, run_id: "str | None" = None, actor: "str | None" = None,
-    ) -> "ChatInterventionBus":
-        """Build the driver's router intervention bus bound to the PARENT session.
+    ):
+        """Build the child's router intervention bus, resolved COMPOSITIONALLY toward the
+        PARENT's OWN declared routing (not a raw dispatch on the parent's coordinator).
 
-        The child ignores its OWN session (the analog of
-        ``SpawnBridgePresentationConsumer.sink`` ignoring the child): the returned
-        bus delivers through ``parent_session._dispatch_intervention`` and stamps
-        ``parent_channel_id`` so the parent's live operator listener resolves it —
-        identical to a parent-native chat ask_user."""
-        return ChatInterventionBus(
-            self._parent_session,
-            run_id=run_id,
-            actor=actor,
-            channel_id=self._parent_channel_id,
-        )
+        The child ignores its OWN session (the analog of ``SpawnBridgePresentationConsumer.sink``
+        ignoring the child) and asks: how does the PARENT itself route ``ask_user``?
+
+        - The parent is ITSELF a bridged/audit-only spawn (it carries an
+          ``intervention_bridge``) → recurse into it. So a chain of spawns (a sub-agent that
+          ``session_spawn``s a grandchild) resolves TRANSITIVELY toward the first ancestor that
+          can actually serve an operator — a grandchild's ``ask_user`` reaches the human via an
+          attached ancestor, NOT the immediate (headless, listener-less) parent's registry where
+          it would origin-pin park (the #2708 co-vet recursive hang edge).
+        - The parent is a root/real session (no bridge) with a LIVE operator listener on
+          ``parent_channel_id`` → deliver there (identical to a parent-native chat ask_user).
+        - The parent is a root/real session with NO live listener (a fully-headless chain — no
+          operator anywhere) → a typed, reason'd refusal (``AuditOnlyInterventionBridge``), NEVER
+          an unbounded park. This is the terminal that makes BridgeToParent hang-safe by
+          construction at every depth."""
+        parent_bridge = getattr(self._parent_session, "intervention_bridge", None)
+        if parent_bridge is not None:
+            return parent_bridge.bus(run_id=run_id, actor=actor)
+        if self._parent_session.interventions.has_listener(self._parent_channel_id):
+            return ChatInterventionBus(
+                self._parent_session,
+                run_id=run_id,
+                actor=actor,
+                channel_id=self._parent_channel_id,
+            )
+        # Fully-headless chain: no reachable operator → deliberate typed refusal, not a park.
+        return AuditOnlyInterventionBridge().bus(run_id=run_id, actor=actor)
+
+
+# The reason a detached/headless spawn's ``ask_user`` is refused — carried on the typed
+# ``InterventionAnswer.reason`` so the pipeline/agent-step sees a DELIBERATE outcome, never a
+# fabricated empty answer nor a park/hang.
+NO_SURFACE_REFUSAL_REASON = (
+    "no interactive surface attached to this detached/headless run — ask_user cannot reach an "
+    "operator; the run proceeds with a deliberate refusal rather than hanging or fabricating an "
+    "empty answer"
+)
+
+
+class _AuditOnlyInterventionChannel:
+    """The ``UserChannel`` / ``RequestBus`` a detached/headless spawn dispatches ``ask_user`` on:
+    it DELIBERATELY refuses every intervention with a reason, resolving IMMEDIATELY — it never
+    enqueues, never announces, never awaits a future. So there is no origin-pin park/hang (the
+    confirmed #2710 detached fail-mode: the self-bound ``ChatInterventionBus`` stamps
+    ``origin_channel_id='tui'``, and ``InterventionCoordinator.dispatch`` parks it stalled +
+    ``await iv.future`` forever) and no silent empty-string auto-refuse."""
+
+    async def deliver(self, iv: "UserIntervention") -> "InterventionAnswer":
+        from reyn.user_intervention import InterventionAnswer
+
+        return InterventionAnswer(refused=True, reason=NO_SURFACE_REFUSAL_REASON)
+
+    async def request(self, iv: "UserIntervention") -> "InterventionAnswer":
+        return await self.deliver(iv)
+
+
+class AuditOnlyInterventionBridge:
+    """The intervention analog of ``AuditOnlyPresentationConsumer`` (``runtime/
+    presentation_consumer.py``): the DELIBERATE ``ask_user`` routing for a spawn with NO
+    attachable operator surface — a detached pipeline driver (``start_pipeline_run``) or a
+    headless ephemeral agent-step worker (``run_agent_step``).
+
+    Where ``SpawnBridgeInterventionListener`` routes a child ``ask_user`` to a live PARENT
+    operator, this bridge has no parent to route to, so its ``bus()`` returns a channel that
+    resolves every ``ask_user`` with a typed, reason'd REFUSAL
+    (``InterventionAnswer(refused=True, reason=...)``). That is the reviewed replacement for the
+    two incidental fail-modes an unrouted detached spawn hit before: the origin-pin park/hang
+    (confirmed the live #2710 fail-mode) and, on other constructions, the silent empty-string
+    auto-refuse (``InterventionRegistry.dispatch``'s ``enforce_listener_presence`` short-circuit).
+    Chosen EXPLICITLY at the spawn site via ``runtime/spawn_routing.AuditOnlyNoSurface``."""
+
+    def bus(
+        self, *, run_id: "str | None" = None, actor: "str | None" = None,
+    ) -> "_AuditOnlyInterventionChannel":
+        """Build the spawn's router intervention channel — a refuse-with-reason sink. The
+        ``run_id`` / ``actor`` are accepted for signature-parity with
+        ``SpawnBridgeInterventionListener.bus`` but unused (a refusal carries no provenance)."""
+        return _AuditOnlyInterventionChannel()
 
 
 class OutboxPresentationRenderer:

@@ -58,8 +58,8 @@ async def test_ephemeral_spawn_auto_vanishes_persistent_survives(tmp_path):
     reg = _make_registry(tmp_path)
     reg.get_or_load("alice")  # the live main session
 
-    eph_sid = await reg.spawn_session_recorded("alice", mode="ephemeral")
-    per_sid = await reg.spawn_session_recorded("alice", mode="persistent")
+    eph_sid = await reg.spawn_session_recorded("alice", mode="ephemeral", presentation_consumer=None, intervention_bridge=None)
+    per_sid = await reg.spawn_session_recorded("alice", mode="persistent", presentation_consumer=None, intervention_bridge=None)
     live = reg.session_ids("alice")
     assert eph_sid in live and per_sid in live  # both live initially (public surface)
 
@@ -88,7 +88,7 @@ async def test_ephemeral_does_not_vanish_while_awaiting_delegation(tmp_path):
     if the awaited-work guard is dropped (it vanishes mid-await)."""
     reg = _make_registry(tmp_path)
     reg.get_or_load("alice")
-    sid = await reg.spawn_session_recorded("alice", mode="ephemeral")
+    sid = await reg.spawn_session_recorded("alice", mode="ephemeral", presentation_consumer=None, intervention_bridge=None)
     eph = reg._peek_session("alice", sid)
 
     # the spawned session delegated to a peer + awaits its response (pending chain;
@@ -114,7 +114,7 @@ async def test_ephemeral_vanish_scheduled_once(tmp_path):
     session)."""
     reg = _make_registry(tmp_path)
     reg.get_or_load("alice")
-    sid = await reg.spawn_session_recorded("alice", mode="ephemeral")
+    sid = await reg.spawn_session_recorded("alice", mode="ephemeral", presentation_consumer=None, intervention_bridge=None)
     eph = reg._peek_session("alice", sid)
 
     eph._maybe_schedule_ephemeral_vanish()

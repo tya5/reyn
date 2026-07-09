@@ -41,7 +41,7 @@ def _allows(session: Session, name: str) -> bool:
 async def _session(tmp_path) -> Session:
     reg = _make_registry(tmp_path)
     reg.get_or_load("alice")
-    sid = await reg.spawn_session_recorded("alice")
+    sid = await reg.spawn_session_recorded("alice", presentation_consumer=None, intervention_bridge=None)
     session = reg.get_session("alice", sid)
     session.is_attached = True
     return session

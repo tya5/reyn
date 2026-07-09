@@ -265,8 +265,10 @@ async def test_hotreload_malformed_pipeline_observable_via_warning_and_noop_appl
 def _worker_registry(tmp_path: Path, state_log: StateLog, pipeline_registry: PipelineRegistry) -> AgentRegistry:
     holder: dict = {}
 
-    def _factory(profile) -> Session:
+    def _factory(profile, *, presentation_consumer=None, intervention_bridge=None) -> Session:
         return Session(
+            presentation_consumer=presentation_consumer,
+            intervention_bridge=intervention_bridge,
             agent_name=profile.name, state_log=state_log,
             registry=holder.get("reg"), non_interactive=True,
             pipeline_registry=pipeline_registry,

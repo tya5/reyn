@@ -119,6 +119,53 @@ class SpawnBridgePresentationConsumer:
         return self._parent_consumer.sink(self._parent_session)
 
 
+class AuditOnlyPresentationConsumer:
+    """The DELIBERATE present routing for a spawn with NO attachable parent surface and no own
+    drain — a detached pipeline driver (``start_pipeline_run``) or a headless ephemeral
+    agent-step worker (``run_agent_step``). Its ``present`` is *audit-only*: the ``presented``
+    P6 event still fires upstream (``core/op_runtime/present.py`` emits it UNCONDITIONALLY,
+    before the sink is consulted), so the render is durable in the spawn's own audit log /
+    ``reyn events`` replay — NOT lost — while the visible draw is a documented no-op.
+
+    This is the structural replacement for today's self-bound default, whose
+    ``OutboxPresentationConsumer`` would enqueue a ``"presentation"`` message onto the spawn's
+    OWN outbox that nobody drains (the #2710 detached-present / #2706 agent-step-present
+    silent-loss class): the render returned ``ok:True`` while reaching no one.
+
+    Distinct from ``NullPresentationConsumer`` (gated to reviewed NA *frontends* — web / mcp /
+    dogfood): this is the reviewed routing decision for a *spawn* with no attachable surface,
+    chosen EXPLICITLY at the spawn site via ``runtime/spawn_routing.AuditOnlyNoSurface`` — so a
+    human frontend's detached spawn still lands here deliberately, not by an NA-surface dodge.
+    It constructs NO ``OutboxPresentationRenderer`` (it returns the no-op sink), so the #2708
+    present-sink AST guard is unaffected."""
+
+    def sink(self, session: "Session") -> "PresentationRenderer":
+        # The child ``session`` is intentionally ignored: there is no surface to bind. The
+        # no-op sink drops the visible draw; the durable audit trail is the upstream
+        # ``presented`` P6 event (fired regardless of the sink), so the present is recorded,
+        # not orphaned.
+        return AuditOnlyPresentationSink()
+
+
+class AuditOnlyPresentationSink:
+    """The no-op ``PresentationRenderer`` an :class:`AuditOnlyPresentationConsumer` yields. Its
+    ``surface_name`` is the REGISTERED ``"null"`` neutralizer surface (``core/present/guard.py``
+    ``_STRATEGIES``) — the terminal no-op family — so a ``present`` op resolves + neutralizes
+    bindings cleanly for EVERY blueprint shape (an explicit text blueprint, a default viewer,
+    a generic dump alike) and then draws nothing. (Deliberately NOT reusing ``NullPresentationSink``
+    whose ``surface_name="none"`` is unregistered and fails the fail-closed guard for a text-leaf
+    blueprint — a spawn's audit-only present must be robust across all shapes.) The visible draw is
+    dropped; the durable audit trail is the upstream ``presented`` P6 event (fired regardless)."""
+
+    surface_name = "null"
+
+    def render(self, resolved: "ResolvedPresentation") -> None:
+        # Documented no-op: a detached/headless spawn has no attachable surface, so the resolved
+        # render model is intentionally not drawn. The `present` op's ack + `presented` event
+        # already fired upstream; only the visible draw is a no-op.
+        return None
+
+
 class NullPresentationSink:
     """`PresentationRenderer` (`core/present/renderer.py`) for a surface with no human
     presentation drain: `render` is a documented no-op. Obtainable ONLY through
@@ -160,6 +207,8 @@ class NullPresentationConsumer:
 
 
 __all__ = [
+    "AuditOnlyPresentationConsumer",
+    "AuditOnlyPresentationSink",
     "NullPresentationConsumer",
     "NullPresentationSink",
     "OutboxPresentationConsumer",

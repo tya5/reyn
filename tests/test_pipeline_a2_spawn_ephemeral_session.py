@@ -26,8 +26,12 @@ from reyn.runtime.session_api import spawn_ephemeral_session
 def _registry(tmp_path: Path) -> AgentRegistry:
     state_log = StateLog(tmp_path / ".reyn" / "wal.jsonl")
 
-    def _factory(profile) -> Session:
-        return Session(agent_name=profile.name, state_log=state_log)
+    def _factory(profile, *, presentation_consumer=None, intervention_bridge=None) -> Session:
+        return Session(
+            agent_name=profile.name, state_log=state_log,
+            presentation_consumer=presentation_consumer,
+            intervention_bridge=intervention_bridge,
+        )
 
     reg = AgentRegistry(project_root=tmp_path, session_factory=_factory, state_log=state_log)
     reg.create("worker")
@@ -43,7 +47,7 @@ async def test_spawn_ephemeral_session_emits_config_complete_event(tmp_path: Pat
     event (entity_kind/name/sid/mode="ephemeral") — the identical event shape
     ``reg.spawn_session_recorded`` emits for the LLM tool path."""
     reg = _registry(tmp_path)
-    sid = await spawn_ephemeral_session(reg, identity="worker")
+    sid = await spawn_ephemeral_session(reg, identity="worker", presentation_consumer=None, intervention_bridge=None)
     ev = next(
         e for e in reg.state_log.iter_from(0)
         if e.get("kind") == "session_spawned" and e.get("sid") == sid
@@ -66,7 +70,7 @@ async def test_spawn_ephemeral_session_works_with_no_router_state(tmp_path: Path
     ToolContext is constructed anywhere in this test, and session_api.py imports
     neither at module scope (grep-checked below)."""
     reg = _registry(tmp_path)
-    sid = await spawn_ephemeral_session(reg, identity="worker")
+    sid = await spawn_ephemeral_session(reg, identity="worker", presentation_consumer=None, intervention_bridge=None)
     assert isinstance(sid, str) and sid
 
 
@@ -104,7 +108,7 @@ async def test_spawn_ephemeral_session_narrowing_applied(tmp_path: Path) -> None
     reg = _registry(tmp_path)
     sid = await spawn_ephemeral_session(
         reg, identity="worker", narrowing={"tool_deny": ["delete_file"]},
-    )
+    presentation_consumer=None, intervention_bridge=None)
     session = reg.get_session("worker", sid)
     effective = session._effective_contextual_for_turn()
     assert effective is not None, (
@@ -119,5 +123,5 @@ async def test_spawn_ephemeral_session_no_narrowing_is_inert(tmp_path: Path) -> 
     """Tier 2: no narrowing → the per-session capability layer stays inert
     (byte-identical to the no-narrowing tool-path case)."""
     reg = _registry(tmp_path)
-    sid = await spawn_ephemeral_session(reg, identity="worker")
+    sid = await spawn_ephemeral_session(reg, identity="worker", presentation_consumer=None, intervention_bridge=None)
     assert reg.resolved_profile_for("worker", sid=sid) == (None, frozenset())

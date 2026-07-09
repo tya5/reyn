@@ -222,15 +222,14 @@ async def test_attached_ask_user_not_stalled_uses_live_parent_listener(
 
 
 @pytest.mark.asyncio
-async def test_detached_ask_user_does_not_reach_invoker_known_red(tmp_path: Path) -> None:
-    """Tier 2: scope guard (known-RED cell) — a DETACHED (``start_pipeline_run``) pipeline's
-    ``ask_user`` has NO attached parent surface, so the driver keeps its self-bound,
-    listener-less intervention registry: the ask does NOT reach the (non-attached) invoker's
-    live operator listener (over a bounded window the invoker is never prompted). This pins
-    the attached-only scope of P3.2a — detached/async intervention is the tracked P3-item3
-    completeness-gate cell, NOT addressed here and NOT silently blessed as correct (the
-    detached ask does not resolve against the invoker; whether it fail-closes or stalls in
-    the driver's own registry is the known-RED behavior tracked for the completeness gate)."""
+async def test_detached_ask_user_does_not_reach_invoker(tmp_path: Path) -> None:
+    """Tier 2: scope guard — a DETACHED (``start_pipeline_run``) pipeline's ``ask_user`` does
+    NOT reach the (non-attached) invoker's live operator listener (over a bounded window the
+    invoker is never prompted). This pins the attached-only scope of P3.2a's PARENT-bridge.
+    (Detached ask_user is now a DELIBERATE ``AuditOnlyNoSurface`` decision — a typed refusal
+    resolved locally, NOT the pre-fix origin-pin park/hang — landed in P3-item3; see
+    ``test_spawn_routing_detached_fail_mode_2708``. It correctly resolves without ever touching
+    this non-attached invoker's registry.)"""
     state_log = StateLog(tmp_path / ".reyn" / "wal.jsonl")
     reg = _agent_registry(tmp_path, state_log)
     caller = reg.get_or_load("worker")
@@ -258,9 +257,9 @@ async def test_detached_ask_user_does_not_reach_invoker_known_red(tmp_path: Path
             )
             await asyncio.sleep(0.1)
     finally:
-        # Teardown: the detached driver's ask_user may still be pending in its own registry
-        # (known-RED), so cancel the registry's live session run tasks to avoid a lingering
-        # coroutine at loop close.
+        # Teardown: cancel the registry's live session run tasks to avoid a lingering coroutine
+        # at loop close. (Post-P3-item3 the detached ask_user resolves immediately via the
+        # AuditOnly refusal — no longer parked — but the driver pump task may still be live.)
         for task in list(reg._tasks.values()):
             if not task.done():
                 task.cancel()
