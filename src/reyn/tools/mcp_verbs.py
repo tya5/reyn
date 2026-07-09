@@ -549,7 +549,10 @@ async def _handle_mcp_call_tool(
 # ── ToolDefinitions ──────────────────────────────────────────────────────────
 
 
+from reyn.core.offload.canonical import STRUCTURED_PASSTHROUGH, mcp_to_canonical  # noqa: E402
+
 MCP_SEARCH_REGISTRY = ToolDefinition(
+    canonical=STRUCTURED_PASSTHROUGH,
     name="mcp_search_registry",
     description=_MCP_SEARCH_REGISTRY_DESCRIPTION,
     parameters=_MCP_SEARCH_REGISTRY_PARAMETERS,
@@ -562,6 +565,7 @@ MCP_SEARCH_REGISTRY = ToolDefinition(
 
 
 MCP_INSTALL_REGISTRY = ToolDefinition(
+    canonical=STRUCTURED_PASSTHROUGH,
     name="mcp_install_registry",
     description=_MCP_INSTALL_REGISTRY_DESCRIPTION,
     parameters=_MCP_INSTALL_REGISTRY_PARAMETERS,
@@ -573,6 +577,7 @@ MCP_INSTALL_REGISTRY = ToolDefinition(
 
 
 MCP_INSTALL_PACKAGE = ToolDefinition(
+    canonical=STRUCTURED_PASSTHROUGH,
     name="mcp_install_package",
     description=_MCP_INSTALL_PACKAGE_DESCRIPTION,
     parameters=_MCP_INSTALL_PACKAGE_PARAMETERS,
@@ -584,6 +589,7 @@ MCP_INSTALL_PACKAGE = ToolDefinition(
 
 
 MCP_INSTALL_LOCAL = ToolDefinition(
+    canonical=STRUCTURED_PASSTHROUGH,
     name="mcp_install_local",
     description=_MCP_INSTALL_LOCAL_DESCRIPTION,
     parameters=_MCP_INSTALL_LOCAL_PARAMETERS,
@@ -595,6 +601,7 @@ MCP_INSTALL_LOCAL = ToolDefinition(
 
 
 MCP_CALL_TOOL = ToolDefinition(
+    canonical=mcp_to_canonical,
     name="mcp_call_tool",
     description=_MCP_CALL_TOOL_DESCRIPTION,
     parameters=_MCP_CALL_TOOL_PARAMETERS,

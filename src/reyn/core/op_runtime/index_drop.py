@@ -107,4 +107,6 @@ class _DenyBus:
         return InterventionAnswer(choice_id="no", text="")
 
 
-register("index_drop", handle)
+from reyn.core.offload.canonical import STRUCTURED_PASSTHROUGH  # noqa: E402
+
+register("index_drop", handle, canonical=STRUCTURED_PASSTHROUGH)

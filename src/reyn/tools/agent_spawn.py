@@ -64,7 +64,10 @@ async def _handle(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
     return await rs.spawn_agent_fn(name=name, role=args.get("role", "") or "")
 
 
+from reyn.core.offload.canonical import STRUCTURED_PASSTHROUGH  # noqa: E402
+
 AGENT_SPAWN = ToolDefinition(
+    canonical=STRUCTURED_PASSTHROUGH,
     name="agent_spawn",
     router_dispatched=True,
     description=_AGENT_SPAWN_DESCRIPTION,

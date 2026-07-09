@@ -127,4 +127,6 @@ async def handle(
     return {"kind": "recall", "chunks": stripped_chunks, "mode": mode}
 
 
-register("recall", handle)
+from reyn.core.offload.canonical import chunks_to_canonical  # noqa: E402
+
+register("recall", handle, canonical=chunks_to_canonical)

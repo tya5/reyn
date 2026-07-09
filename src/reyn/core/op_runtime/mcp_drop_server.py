@@ -277,4 +277,6 @@ async def handle(
     }
 
 
-register("mcp_drop_server", handle)
+from reyn.core.offload.canonical import STRUCTURED_PASSTHROUGH  # noqa: E402
+
+register("mcp_drop_server", handle, canonical=STRUCTURED_PASSTHROUGH)

@@ -174,7 +174,10 @@ async def _handle_recall(args: Mapping[str, Any], ctx: ToolContext) -> ToolResul
     return await execute_op(op, legacy_ctx)
 
 
+from reyn.core.offload.canonical import chunks_to_canonical  # noqa: E402
+
 RECALL = ToolDefinition(
+    canonical=chunks_to_canonical,
     name="recall",
     router_dispatched=True,
     description=_RECALL_DESCRIPTION,

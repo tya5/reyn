@@ -95,7 +95,10 @@ async def _handle(args: Mapping[str, Any], ctx: ToolContext) -> Any:
         return stdout
 
 
+from reyn.core.offload.canonical import STRUCTURED_PASSTHROUGH  # noqa: E402
+
 SHELL = ToolDefinition(
+    canonical=STRUCTURED_PASSTHROUGH,
     name="shell",
     description=_SHELL_DESCRIPTION,
     parameters=_SHELL_PARAMETERS,

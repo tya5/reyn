@@ -47,7 +47,7 @@ def test_incident_file_read_offloads_clean_text_not_whole_dict_blob():
         "kind": "file", "op": "read", "path": "docs/reference/runtime/present.ja.md",
         "status": "ok", "content": _BIG_DOC, "_self_bounded": True,
     }
-    canonical = to_canonical(result)
+    canonical = to_canonical(result, source="read_file")
     assert canonical["text"] == _BIG_DOC, "the doc body is the text payload (not offloaded as a dict)"
     assert not any(a.get("kind") == "structured" for a in canonical["attachments"]), \
         "no whole-dict structured attachment — the incident's blob is gone"
@@ -64,7 +64,7 @@ def test_incident_reyn_src_read_offloads_clean_text_not_whole_dict_blob():
     ``kind:"reyn_src"`` at the tool seam) normalizes to a clean ``text`` body, no whole-dict blob.
     RED pre-hotfix: the kind-less result took the fallback and offloaded the whole dict."""
     result = {"kind": "reyn_src", "path": "docs/reference/runtime/present.ja.md", "content": _BIG_DOC}
-    canonical = to_canonical(result)
+    canonical = to_canonical(result, source="reyn_src_read")
     assert canonical["text"] == _BIG_DOC
     assert not any(a.get("kind") == "structured" for a in canonical["attachments"])
 
@@ -83,7 +83,7 @@ async def test_incident_end_to_end_real_reyn_src_read_handler_tags_kind_and_maps
     result = await _handle_read({"path": "pyproject.toml"}, ctx)
     assert result["kind"] == "reyn_src", "the tool seam tags the kind so the mapper (not fallback) runs"
 
-    canonical = to_canonical(result)
+    canonical = to_canonical(result, source="reyn_src_read")
     assert canonical["text"] == result["content"], "the file body is the text payload"
     assert 'name = "reyn"' in canonical["text"], "the real file content is present as readable text"
     assert not any(a.get("kind") == "structured" for a in canonical["attachments"])
@@ -98,7 +98,7 @@ def test_file_read_content_is_text_path_op_status_are_signal_meta():
     """Tier 1: file read → ``content`` is ``text``; ``path``/``op``/``status`` are signal meta (which
     file, what happened), never the body."""
     c = to_canonical({"kind": "file", "op": "read", "path": "a/b.md", "status": "ok",
-                      "content": "hello world", "_self_bounded": True})
+                      "content": "hello world", "_self_bounded": True}, source="file")
     assert c["text"] == "hello world"
     assert c["meta"].get("path") == "a/b.md"
     assert c["meta"].get("op") == "read" and c["meta"].get("status") == "ok"
@@ -109,7 +109,7 @@ def test_file_read_not_found_surfaces_error_text_and_iserror():
     """Tier 1: a not_found read surfaces the error message as ``text`` with ``meta.isError`` — the sole
     error-path driver (so the seam renders ``Error: ...`` and the LLM retries a different path)."""
     c = to_canonical({"kind": "file", "op": "read", "path": "missing.md",
-                      "status": "not_found", "error": "file not found: missing.md", "content": ""})
+                      "status": "not_found", "error": "file not found: missing.md", "content": ""}, source="file")
     assert c["meta"].get("isError") is True
     assert "file not found" in c["text"]
 
@@ -118,7 +118,7 @@ def test_file_read_image_media_blocks_become_media_attachments():
     """Tier 1: an image read (content empty, media_blocks present) surfaces the blocks as MEDIA
     attachments (matching the MCP mapper), never a structured blob."""
     c = to_canonical({"kind": "file", "op": "read", "path": "x.png", "status": "ok",
-                      "content": "", "media_blocks": [{"type": "image", "data": "..."}]})
+                      "content": "", "media_blocks": [{"type": "image", "data": "..."}]}, source="file")
     assert [a["kind"] for a in c["attachments"]] == ["media"]
 
 
@@ -128,7 +128,7 @@ def test_file_grep_content_mode_renders_match_lines_as_text():
                       "pattern": "foo", "matches": [
                           {"path": "a.py", "line_number": 3, "content": "foo = 1"},
                           {"path": "b.py", "line_number": 9, "content": "foo()"}],
-                      "count": 2})
+                      "count": 2}, source="file")
     assert "a.py:3: foo = 1" in c["text"] and "b.py:9: foo()" in c["text"]
     assert not any(a.get("kind") == "structured" for a in c["attachments"])
 
@@ -136,14 +136,14 @@ def test_file_grep_content_mode_renders_match_lines_as_text():
 def test_file_glob_matches_render_as_path_lines():
     """Tier 1: glob → the matched paths as newline-joined ``text``."""
     c = to_canonical({"kind": "file", "op": "glob", "pattern": "*.py", "status": "ok",
-                      "matches": ["a.py", "b.py"], "count": 2})
+                      "matches": ["a.py", "b.py"], "count": 2}, source="file")
     assert c["text"] == "a.py\nb.py"
 
 
 def test_file_write_is_short_status_text():
     """Tier 1: write → a short human-readable status ``text`` (bytes + path), not a JSON envelope."""
     c = to_canonical({"kind": "file", "op": "write", "path": "out.txt", "status": "ok",
-                      "bytes_written": 42})
+                      "bytes_written": 42}, source="file")
     assert "42" in c["text"] and "out.txt" in c["text"]
     assert not any(a.get("kind") == "structured" for a in c["attachments"])
 
@@ -155,14 +155,14 @@ def test_file_write_is_short_status_text():
 
 def test_reyn_src_read_content_is_text_path_is_meta():
     """Tier 1: reyn_src read → ``content`` is the ``text`` body; ``path`` is signal meta."""
-    c = to_canonical({"kind": "reyn_src", "path": "README.md", "content": "# Reyn"})
+    c = to_canonical({"kind": "reyn_src", "path": "README.md", "content": "# Reyn"}, source="reyn_src_read")
     assert c["text"] == "# Reyn"
     assert c["meta"].get("path") == "README.md"
 
 
 def test_reyn_src_error_surfaces_iserror():
     """Tier 1: a reyn_src error (e.g. path outside repo) surfaces the message as ``text`` + isError."""
-    c = to_canonical({"kind": "reyn_src", "error": "reyn_src: path '..' resolves outside repo"})
+    c = to_canonical({"kind": "reyn_src", "error": "reyn_src: path '..' resolves outside repo"}, source="reyn_src_read")
     assert c["meta"].get("isError") is True
     assert "outside" in c["text"]
 
@@ -170,14 +170,14 @@ def test_reyn_src_error_surfaces_iserror():
 def test_reyn_src_list_entries_render_as_text_lines():
     """Tier 1: reyn_src list → ``type: name`` lines as ``text`` (a browsable listing, not a dict)."""
     c = to_canonical({"kind": "reyn_src", "path": "docs", "entries": [
-        {"name": "concepts", "type": "dir"}, {"name": "README.md", "type": "file"}]})
+        {"name": "concepts", "type": "dir"}, {"name": "README.md", "type": "file"}]}, source="reyn_src_list")
     assert "dir: concepts" in c["text"] and "file: README.md" in c["text"]
 
 
 def test_reyn_src_grep_matches_render_as_text_lines():
     """Tier 1: reyn_src grep → ``path:line: snippet`` lines as ``text``."""
     c = to_canonical({"kind": "reyn_src", "pattern": "def", "count": 1, "truncated": False,
-                      "matches": [{"path": "x.py", "line": 5, "snippet": "def foo():"}]})
+                      "matches": [{"path": "x.py", "line": 5, "snippet": "def foo():"}]}, source="reyn_src_grep")
     assert "x.py:5: def foo():" in c["text"]
     assert not any(a.get("kind") == "structured" for a in c["attachments"])
 
@@ -185,7 +185,7 @@ def test_reyn_src_grep_matches_render_as_text_lines():
 def test_reyn_src_glob_matches_render_as_path_lines():
     """Tier 1: reyn_src glob → the matched path strings as newline-joined ``text``."""
     c = to_canonical({"kind": "reyn_src", "pattern": "**/*.md", "count": 2,
-                      "matches": ["docs/a.md", "docs/b.md"]})
+                      "matches": ["docs/a.md", "docs/b.md"]}, source="reyn_src_glob")
     assert c["text"] == "docs/a.md\ndocs/b.md"
 
 
@@ -197,7 +197,7 @@ def test_reyn_src_glob_matches_render_as_path_lines():
 def test_compact_ok_summarizes_metrics_as_text():
     """Tier 1: compact ok → a short ``text`` summary of the freed-token / free-window metrics (no blob)."""
     c = to_canonical({"kind": "compact", "status": "ok", "freed_tokens": 1200,
-                      "free_window_after": 90000, "summarized_turns": 8})
+                      "free_window_after": 90000, "summarized_turns": 8}, source="compact")
     assert "freed_tokens=1200" in c["text"] and "free_window_after=90000" in c["text"]
     assert not any(a.get("kind") == "structured" for a in c["attachments"])
 
@@ -205,7 +205,7 @@ def test_compact_ok_summarizes_metrics_as_text():
 def test_compact_error_surfaces_iserror():
     """Tier 1: compact error → the message as ``text`` with ``meta.isError``."""
     c = to_canonical({"kind": "compact", "status": "error", "error_kind": "compaction_unavailable",
-                      "error": "no compaction context is wired here"})
+                      "error": "no compaction context is wired here"}, source="compact")
     assert c["meta"].get("isError") is True
     assert "no compaction context" in c["text"]
 
@@ -214,7 +214,7 @@ def test_judge_output_reason_is_text_score_is_signal_meta():
     """Tier 1: judge_output → ``reason`` is the ``text``; score/passed/threshold/on_fail are signal
     meta (they drive the caller's next move — a failed judgment triggers on_fail)."""
     c = to_canonical({"kind": "judge_output", "score": 0.4, "passed": False, "reason": "too terse",
-                      "threshold": 0.7, "on_fail": "retry"})
+                      "threshold": 0.7, "on_fail": "retry"}, source="judge_output")
     assert c["text"] == "too terse"
     assert c["meta"].get("passed") is False and c["meta"].get("score") == 0.4
     assert c["meta"].get("threshold") == 0.7 and c["meta"].get("on_fail") == "retry"
@@ -223,6 +223,6 @@ def test_judge_output_reason_is_text_score_is_signal_meta():
 def test_judge_output_error_surfaces_iserror():
     """Tier 1: judge_output error (target resolution failed) → the message as ``text`` + isError."""
     c = to_canonical({"kind": "judge_output", "status": "error",
-                      "error": "target resolution failed: 'summary'"})
+                      "error": "target resolution failed: 'summary'"}, source="judge_output")
     assert c["meta"].get("isError") is True
     assert "target resolution failed" in c["text"]

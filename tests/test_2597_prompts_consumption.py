@@ -386,7 +386,7 @@ def test_canonical_mapper_joins_text_and_isolates_non_text_as_structured():
             {"role": "user", "content": {"type": "image", "data": "YWJj", "mimeType": "image/png"}},
         ],
     }
-    canonical = to_canonical(result)
+    canonical = to_canonical(result, source="mcp_get_prompt")
     assert canonical["text"] == "hello"
     assert canonical["attachments"] == [
         {"kind": "structured", "data": {"type": "image", "data": "YWJj", "mimeType": "image/png"}},

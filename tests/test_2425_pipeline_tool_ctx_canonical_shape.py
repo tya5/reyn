@@ -94,9 +94,11 @@ async def test_tool_step_ctx_uniform_text_structured_across_two_distinct_op_kind
                 "kind": "mcp",
                 "content": "mcp said hi",
                 "structured": {"echo": args.get("msg")},
+                "_canonical_source": "mcp",
             }
         if name == "run_shell":
-            return {"kind": "sandboxed_exec", "stdout": "shell said hi", "returncode": 0}
+            return {"kind": "sandboxed_exec", "stdout": "shell said hi", "returncode": 0,
+                    "_canonical_source": "sandboxed_exec"}
         raise AssertionError(f"unexpected tool {name!r}")
 
     pipeline = Pipeline(steps=[
@@ -130,7 +132,8 @@ async def test_tool_step_unwraps_dispatch_envelope_before_canonicalizing():
     unregistered-kind whole-dict fallback instead of the real mapper."""
 
     def _dispatch(name: str, args: dict) -> dict:
-        return {"status": "ok", "data": {"kind": "sandboxed_exec", "stdout": "enveloped", "returncode": 0}}
+        return {"status": "ok", "data": {"kind": "sandboxed_exec", "stdout": "enveloped", "returncode": 0},
+                "_canonical_source": "sandboxed_exec"}
 
     pipeline = Pipeline(steps=[
         ToolStep(name="run_shell", args={}, output="r"),
@@ -155,7 +158,8 @@ async def test_tool_step_ctx_never_offloads_oversized_structured_data():
     big_items = list(range(STRUCTURED_INLINE_MAX_CHARS))  # str() of this vastly exceeds the cap
 
     def _dispatch(name: str, args: dict) -> dict:
-        return {"kind": "mcp", "content": "", "structured": {"items": big_items}}
+        return {"kind": "mcp", "content": "", "structured": {"items": big_items},
+                "_canonical_source": "mcp"}
 
     pipeline = Pipeline(steps=[ToolStep(name="big_call", args={}, output="r")])
     result = await PipelineExecutor().run(

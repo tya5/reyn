@@ -29,13 +29,22 @@ class ToolRegistry:
 
     def register(self, tool: ToolDefinition) -> None:
         """Add a tool to the registry. Re-registration with the same
-        name raises (= prevents accidental shadowing)."""
+        name raises (= prevents accidental shadowing).
+
+        FP-0056 PR-F1: records the tool's ``canonical`` declaration into the canonical registry keyed
+        by tool name, so ``to_canonical(result, source=<tool name>)`` resolves by invoked identity. A
+        tool left ``UNDECLARED`` is NOT recorded (it resolves to the visible fallback at runtime); the
+        coverage gate is what turns that omission into red CI."""
         if tool.name in self._tools:
             raise ValueError(
                 f"ToolDefinition with name {tool.name!r} already registered. "
                 f"Re-registration is not allowed; remove the prior registration first."
             )
         self._tools[tool.name] = tool
+        from reyn.core.offload.canonical import UNDECLARED, declare_canonical
+
+        if tool.canonical is not UNDECLARED:
+            declare_canonical(tool.name, tool.canonical)
 
     def lookup(self, name: str) -> ToolDefinition | None:
         """Find a tool by name. Returns None if not registered."""

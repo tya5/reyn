@@ -105,4 +105,6 @@ async def handle(
     return {"kind": "index_query", "chunks": [dict(c) for c in chunks], "mode": mode}
 
 
-register("index_query", handle)
+from reyn.core.offload.canonical import chunks_to_canonical  # noqa: E402
+
+register("index_query", handle, canonical=chunks_to_canonical)

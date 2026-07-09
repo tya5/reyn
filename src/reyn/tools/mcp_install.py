@@ -122,7 +122,10 @@ async def _handle_mcp_install_op(
     return await mcp_install_handle(op=op, ctx=legacy_ctx)
 
 
+from reyn.core.offload.canonical import STRUCTURED_PASSTHROUGH  # noqa: E402
+
 MCP_INSTALL_OP = ToolDefinition(
+    canonical=STRUCTURED_PASSTHROUGH,
     name="mcp_install",
     description=_MCP_INSTALL_DESCRIPTION,
     parameters=_MCP_INSTALL_PARAMETERS,

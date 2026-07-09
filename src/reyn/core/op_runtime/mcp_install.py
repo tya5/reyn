@@ -564,4 +564,6 @@ async def handle(
     }
 
 
-register("mcp_install", handle)
+from reyn.core.offload.canonical import STRUCTURED_PASSTHROUGH  # noqa: E402
+
+register("mcp_install", handle, canonical=STRUCTURED_PASSTHROUGH)

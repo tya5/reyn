@@ -80,7 +80,10 @@ async def _handle_compact(args: Mapping[str, Any], ctx: ToolContext) -> ToolResu
     return await execute_op(op, legacy_ctx)
 
 
+from reyn.core.offload.canonical import compact_to_canonical  # noqa: E402
+
 COMPACT = ToolDefinition(
+    canonical=compact_to_canonical,
     name="compact",
     router_dispatched=True,
     description=_COMPACT_DESCRIPTION,

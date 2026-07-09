@@ -97,7 +97,10 @@ async def _handle_drop_source(
     return await execute_op(op, legacy_ctx)
 
 
+from reyn.core.offload.canonical import STRUCTURED_PASSTHROUGH  # noqa: E402
+
 DROP_SOURCE = ToolDefinition(
+    canonical=STRUCTURED_PASSTHROUGH,
     name="drop_source",
     router_dispatched=True,
     description=_DROP_SOURCE_DESCRIPTION,

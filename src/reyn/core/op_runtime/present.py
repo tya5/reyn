@@ -347,4 +347,6 @@ def _fallback_note(
     )
 
 
-register("present", handle)
+from reyn.core.offload.canonical import STRUCTURED_PASSTHROUGH  # noqa: E402
+
+register("present", handle, canonical=STRUCTURED_PASSTHROUGH)

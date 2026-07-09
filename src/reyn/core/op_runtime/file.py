@@ -743,4 +743,6 @@ def _execute_regenerate_index(op: FileIROp, ctx: OpContext) -> dict:
     }
 
 
-register("file", handle)
+from reyn.core.offload.canonical import file_to_canonical  # noqa: E402
+
+register("file", handle, canonical=file_to_canonical)

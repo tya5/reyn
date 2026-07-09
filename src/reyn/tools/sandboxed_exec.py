@@ -143,7 +143,10 @@ def _with_sandbox_config(op_ctx: Any, sandbox_config: Any) -> Any:
     return dataclasses.replace(op_ctx, sandbox_config=sandbox_config)
 
 
+from reyn.core.offload.canonical import sandboxed_exec_to_canonical  # noqa: E402
+
 SANDBOXED_EXEC = ToolDefinition(
+    canonical=sandboxed_exec_to_canonical,
     name="sandboxed_exec",
     description=_SANDBOXED_EXEC_DESCRIPTION,
     parameters=_SANDBOXED_EXEC_PARAMETERS,

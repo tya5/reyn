@@ -360,7 +360,10 @@ async def _handle_glob(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
     return {"error": result.get("error", "glob_files failed")}
 
 
+from reyn.core.offload.canonical import file_to_canonical  # noqa: E402
+
 READ_FILE = ToolDefinition(
+    canonical=file_to_canonical,
     name="read_file",
     router_dispatched=True,
     description=_READ_FILE_DESCRIPTION,
@@ -372,6 +375,7 @@ READ_FILE = ToolDefinition(
 )
 
 WRITE_FILE = ToolDefinition(
+    canonical=file_to_canonical,
     name="write_file",
     router_dispatched=True,
     description=_WRITE_FILE_DESCRIPTION,
@@ -383,6 +387,7 @@ WRITE_FILE = ToolDefinition(
 )
 
 DELETE_FILE = ToolDefinition(
+    canonical=file_to_canonical,
     name="delete_file",
     router_dispatched=True,
     description=_DELETE_FILE_DESCRIPTION,
@@ -394,6 +399,7 @@ DELETE_FILE = ToolDefinition(
 )
 
 EDIT_FILE = ToolDefinition(
+    canonical=file_to_canonical,
     name="edit_file",
     router_dispatched=True,
     description=_EDIT_FILE_DESCRIPTION,
@@ -405,6 +411,7 @@ EDIT_FILE = ToolDefinition(
 )
 
 LIST_DIRECTORY = ToolDefinition(
+    canonical=file_to_canonical,
     name="list_directory",
     router_dispatched=True,
     description=_LIST_DIRECTORY_DESCRIPTION,
@@ -416,6 +423,7 @@ LIST_DIRECTORY = ToolDefinition(
 )
 
 GREP_FILES = ToolDefinition(
+    canonical=file_to_canonical,
     name="grep_files",
     router_dispatched=True,
     description=_GREP_FILES_DESCRIPTION,
@@ -427,6 +435,7 @@ GREP_FILES = ToolDefinition(
 )
 
 GLOB_FILES = ToolDefinition(
+    canonical=file_to_canonical,
     name="glob_files",
     router_dispatched=True,
     description=_GLOB_FILES_DESCRIPTION,

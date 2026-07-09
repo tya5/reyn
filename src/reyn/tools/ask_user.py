@@ -65,7 +65,10 @@ async def _handle(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
     return await handle(op=op, ctx=None)
 
 
+from reyn.core.offload.canonical import STRUCTURED_PASSTHROUGH  # noqa: E402
+
 ASK_USER = ToolDefinition(
+    canonical=STRUCTURED_PASSTHROUGH,
     name="ask_user",
     description=_ASK_USER_DESCRIPTION,
     parameters=_ASK_USER_PARAMETERS,

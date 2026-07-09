@@ -254,7 +254,10 @@ async def _handle_grep(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
     ))
 
 
+from reyn.core.offload.canonical import reyn_src_to_canonical  # noqa: E402
+
 REYN_SRC_LIST = ToolDefinition(
+    canonical=reyn_src_to_canonical,
     name="reyn_src_list",
     router_dispatched=True,
     description=_REYN_SRC_LIST_DESCRIPTION,
@@ -266,6 +269,7 @@ REYN_SRC_LIST = ToolDefinition(
 )
 
 REYN_SRC_READ = ToolDefinition(
+    canonical=reyn_src_to_canonical,
     name="reyn_src_read",
     router_dispatched=True,
     description=_REYN_SRC_READ_DESCRIPTION,
@@ -277,6 +281,7 @@ REYN_SRC_READ = ToolDefinition(
 )
 
 REYN_SRC_GLOB = ToolDefinition(
+    canonical=reyn_src_to_canonical,
     name="reyn_src_glob",
     description=_REYN_SRC_GLOB_DESCRIPTION,
     parameters=_REYN_SRC_GLOB_PARAMETERS,
@@ -287,6 +292,7 @@ REYN_SRC_GLOB = ToolDefinition(
 )
 
 REYN_SRC_GREP = ToolDefinition(
+    canonical=reyn_src_to_canonical,
     name="reyn_src_grep",
     description=_REYN_SRC_GREP_DESCRIPTION,
     parameters=_REYN_SRC_GREP_PARAMETERS,

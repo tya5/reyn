@@ -91,4 +91,6 @@ async def handle(
     return out
 
 
-register("compact", handle)
+from reyn.core.offload.canonical import compact_to_canonical  # noqa: E402
+
+register("compact", handle, canonical=compact_to_canonical)

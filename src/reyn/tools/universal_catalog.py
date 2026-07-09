@@ -1521,7 +1521,14 @@ async def _handle_invoke_action(
 
     # Forward ctx verbatim — target handlers consume their slice of
     # router_state via the typed sub-object.
-    return await target.handler(resolved.target_args, ctx)
+    result = await target.handler(resolved.target_args, ctx)
+    # FP-0056 PR-F1: tag the RESOLVED target tool name so canonicalization dispatches by the true
+    # invoked identity, not the ``invoke_action`` wrapper (which would resolve to the wrapper's own
+    # passthrough declaration and hide the target's text body). The chat/pipeline chokepoints strip
+    # this before rendering; dispatch()'s outer tag defers to it (setdefault).
+    if isinstance(result, dict) and "_canonical_source" not in result:
+        result = {**result, "_canonical_source": resolved.target_tool_name}
+    return result
 
 
 def _augment_suggestions(
@@ -1563,7 +1570,10 @@ def _augment_suggestions(
 # ── 4 ToolDefinitions exported ─────────────────────────────────────────────
 
 
+from reyn.core.offload.canonical import STRUCTURED_PASSTHROUGH  # noqa: E402
+
 LIST_ACTIONS = ToolDefinition(
+    canonical=STRUCTURED_PASSTHROUGH,
     name="list_actions",
     router_dispatched=True,
     description=_LIST_ACTIONS_DESCRIPTION,
@@ -1576,6 +1586,7 @@ LIST_ACTIONS = ToolDefinition(
 
 
 SEARCH_ACTIONS = ToolDefinition(
+    canonical=STRUCTURED_PASSTHROUGH,
     name="search_actions",
     router_dispatched=True,
     description=_SEARCH_ACTIONS_DESCRIPTION,
@@ -1588,6 +1599,7 @@ SEARCH_ACTIONS = ToolDefinition(
 
 
 DESCRIBE_ACTION = ToolDefinition(
+    canonical=STRUCTURED_PASSTHROUGH,
     name="describe_action",
     router_dispatched=True,
     description=_DESCRIBE_ACTION_DESCRIPTION,
@@ -1600,6 +1612,7 @@ DESCRIBE_ACTION = ToolDefinition(
 
 
 INVOKE_ACTION = ToolDefinition(
+    canonical=STRUCTURED_PASSTHROUGH,
     name="invoke_action",
     router_dispatched=True,
     description=_INVOKE_ACTION_DESCRIPTION,

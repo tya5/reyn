@@ -609,7 +609,10 @@ def _regenerate_index(ctx: ToolContext, mem_dir: Path, index_path: Path) -> None
 
 # ── ToolDefinition instances ─────────────────────────────────────────────────────
 
+from reyn.core.offload.canonical import STRUCTURED_PASSTHROUGH  # noqa: E402
+
 LIST_MEMORY = ToolDefinition(
+    canonical=STRUCTURED_PASSTHROUGH,
     name="list_memory",
     router_dispatched=True,
     description=_LIST_MEMORY_DESCRIPTION,
@@ -622,6 +625,7 @@ LIST_MEMORY = ToolDefinition(
 )
 
 READ_MEMORY_BODY = ToolDefinition(
+    canonical=STRUCTURED_PASSTHROUGH,
     name="read_memory_body",
     router_dispatched=True,
     description=_READ_MEMORY_BODY_DESCRIPTION,
@@ -634,6 +638,7 @@ READ_MEMORY_BODY = ToolDefinition(
 )
 
 REMEMBER_SHARED = ToolDefinition(
+    canonical=STRUCTURED_PASSTHROUGH,
     name="remember_shared",
     router_dispatched=True,
     description=_REMEMBER_SHARED_DESCRIPTION,
@@ -645,6 +650,7 @@ REMEMBER_SHARED = ToolDefinition(
 )
 
 REMEMBER_AGENT = ToolDefinition(
+    canonical=STRUCTURED_PASSTHROUGH,
     name="remember_agent",
     router_dispatched=True,
     description=_REMEMBER_AGENT_DESCRIPTION,
@@ -656,6 +662,7 @@ REMEMBER_AGENT = ToolDefinition(
 )
 
 FORGET_MEMORY = ToolDefinition(
+    canonical=STRUCTURED_PASSTHROUGH,
     name="forget_memory",
     router_dispatched=True,
     description=_FORGET_MEMORY_DESCRIPTION,

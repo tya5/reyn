@@ -173,4 +173,6 @@ async def handle(op: MCPIROp, ctx: OpContext) -> dict:
     return await _execute(op, ctx)
 
 
-register("mcp", handle)
+from reyn.core.offload.canonical import mcp_to_canonical  # noqa: E402
+
+register("mcp", handle, canonical=mcp_to_canonical)

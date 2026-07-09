@@ -207,4 +207,6 @@ async def handle(op: Any, ctx: OpContext) -> dict:
     return result
 
 
-register(_KIND, handle)
+from reyn.core.offload.canonical import render_template_to_canonical  # noqa: E402
+
+register(_KIND, handle, canonical=render_template_to_canonical)

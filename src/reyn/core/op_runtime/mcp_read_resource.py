@@ -86,4 +86,6 @@ async def handle(op: MCPReadResourceIROp, ctx: OpContext) -> dict:
     return await _execute(op, ctx)
 
 
-register("mcp_read_resource", handle)
+from reyn.core.offload.canonical import mcp_read_resource_to_canonical  # noqa: E402
+
+register("mcp_read_resource", handle, canonical=mcp_read_resource_to_canonical)

@@ -242,7 +242,13 @@ def _make_tool_dispatch(ctx: ToolContext) -> "Callable[[str, dict], Any]":
                 f"registered tool (tried qualified-action routing, then a "
                 f"bare lookup of {target_name!r})"
             )
-        return await target.handler(target_args, ctx)
+        result = await target.handler(target_args, ctx)
+        # FP-0056 PR-F1: tag the RESOLVED target tool name so _run_tool_step canonicalizes by invoked
+        # identity (declaration born at the tool's registration seam), not result["kind"]. Stripped
+        # before schema validation + ctx exposure in _run_tool_step.
+        if isinstance(result, dict) and "_canonical_source" not in result:
+            result = {**result, "_canonical_source": target_name}
+        return result
 
     return _dispatch
 
@@ -378,7 +384,13 @@ async def _handle_run_pipeline(
     }
 
 
+from reyn.core.offload.canonical import (  # noqa: E402
+    run_pipeline_async_to_canonical,
+    run_pipeline_to_canonical,
+)
+
 RUN_PIPELINE = ToolDefinition(
+    canonical=run_pipeline_to_canonical,
     name="run_pipeline",
     description=_RUN_PIPELINE_DESCRIPTION,
     parameters=_RUN_PIPELINE_PARAMETERS,
@@ -479,6 +491,7 @@ async def _handle_run_pipeline_async(
 
 
 RUN_PIPELINE_ASYNC = ToolDefinition(
+    canonical=run_pipeline_async_to_canonical,
     name="run_pipeline_async",
     description=_RUN_PIPELINE_ASYNC_DESCRIPTION,
     parameters=_RUN_PIPELINE_PARAMETERS,  # same surface: name + optional input
@@ -797,6 +810,7 @@ async def _handle_run_pipeline_inline_async(
 
 
 RUN_PIPELINE_INLINE = ToolDefinition(
+    canonical=run_pipeline_to_canonical,
     name="run_pipeline_inline",
     description=_RUN_PIPELINE_INLINE_DESCRIPTION,
     parameters=_RUN_PIPELINE_INLINE_PARAMETERS,
@@ -808,6 +822,7 @@ RUN_PIPELINE_INLINE = ToolDefinition(
 
 
 RUN_PIPELINE_INLINE_ASYNC = ToolDefinition(
+    canonical=run_pipeline_async_to_canonical,
     name="run_pipeline_inline_async",
     description=_RUN_PIPELINE_INLINE_ASYNC_DESCRIPTION,
     parameters=_RUN_PIPELINE_INLINE_PARAMETERS,  # same surface: definition + input

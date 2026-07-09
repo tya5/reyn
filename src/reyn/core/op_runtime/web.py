@@ -534,5 +534,10 @@ async def handle_web_search(op: WebSearchIROp, ctx: OpContext) -> dict:
     }
 
 
-register("web_fetch", handle_web_fetch)
-register("web_search", handle_web_search)
+from reyn.core.offload.canonical import (  # noqa: E402
+    web_fetch_to_canonical,
+    web_search_to_canonical,
+)
+
+register("web_fetch", handle_web_fetch, canonical=web_fetch_to_canonical)
+register("web_search", handle_web_search, canonical=web_search_to_canonical)

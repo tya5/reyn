@@ -138,7 +138,10 @@ async def _handle(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
     }
 
 
+from reyn.core.offload.canonical import STRUCTURED_PASSTHROUGH  # noqa: E402
+
 DELEGATE_TO_AGENT = ToolDefinition(
+    canonical=STRUCTURED_PASSTHROUGH,
     name="delegate_to_agent",
     router_dispatched=True,
     description=_DELEGATE_TO_AGENT_DESCRIPTION,

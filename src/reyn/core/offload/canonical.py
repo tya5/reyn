@@ -20,31 +20,36 @@ interpret:
                     ``status``, ``server``, ``tool`` echo) are dropped — they never change what the
                     LLM does next. ``isError`` is retained as the sole error-path driver.
 
-Every op kind that once declared ``_offload_payload_field`` now has a mapper here (案B endgame, not a
-partial migration): MCP + web fetch/search + sandboxed exec + recall/index_query + run_pipeline(_async).
-An unregistered kind falls back to a whole-dict ``structured`` attachment (never lost, and
-``ctx.<name>.structured.<field>`` still gives programmatic access). The chat offload path no longer
-guesses a payload field: the six per-op ``_offload_payload_field`` markers and the chat use of
-``decide_payload_field`` / the sole-oversized condition are gone — ``text`` is the payload by
-construction. (``decide_payload_field`` / ``_oversized_fields`` themselves remain only for the now-dead
-control_ir/phase offloader, pending its separate removal.)
+FP-0056 PR-F1 — coverage enforcement by construction (this module's endgame). The pre-F1 design had
+two structural defects the 2026-07-09 dogfood incident exposed (a ``reyn_source__read`` doc read
+offloaded as a whole-dict ``structured`` blob instead of the readable body):
 
-P7: the op-kind → canonical mapping is OS-level (no domain-specific vocabulary). The deref / paging / offload
-store machinery is reused unchanged — 案B removes only the field-guessing.
+1. **Free-floating ``_MAPPERS`` dict, hand-synced with the op/tool registries.** Nothing forced
+   "registered a producer" to imply "declared its LLM-visible shape", so ``file`` / ``reyn_src`` /
+   admin ops silently took the fallback. **Fix:** the canonical declaration is now *born at the
+   registration seam* — an op kind declares it through ``op_runtime.register(kind, handler,
+   canonical=…)``; a router ``ToolDefinition`` declares it through its required ``canonical`` field.
+   ``_MAPPERS`` is gone; declarations live in :data:`_DECLARATIONS`, populated from both seams.
+2. **Dispatch sniffed ``result["kind"]`` — data a producer may not even set (``reyn_src`` had none).**
+   **Fix:** :func:`to_canonical` dispatches on the *invoked identity* (``source=`` — the tool/op the
+   chokepoint called), NOT the result dict. ``result["kind"]`` stops being load-bearing for
+   canonicalization; it stays ordinary result data. This fixes the kind-less-handler class outright.
 
-FP-0056 PR-H (hotfix): the original 案B mapper table scoped migration to the ops that once declared
-``_offload_payload_field`` (+ mcp/pipeline) — so the ``file`` family (``kind:"file"``, unmapped), the
-``reyn_src_*`` dev-reads (kind-less), and ``compact`` / ``judge_output`` all took the whole-dict fallback.
-In dogfood a doc read via ``reyn_source__read`` was therefore offloaded as a 600-char JSON-dict preview
-instead of the readable text body. This module now registers a ``file`` mapper (op-dispatched: read →
-``content`` as ``text``, grep/glob → rendered lines, mutations → a status line), a ``reyn_src`` mapper
-(the tool-handler seam tags its kind-less result ``kind:"reyn_src"`` so it routes here, not to the
-fallback), and ``compact`` / ``judge_output`` mappers. The registry-enforcement framework, identity-keyed
-dispatch, and the ``canonical_fallback_used`` event are follow-ups (PR-F1/PR-F2), not this hotfix.
+A registry-derived CI gate (``tests/test_fp0056_canonical_coverage_gate.py``) walks every registered
+op kind + every ToolDefinition and asserts each carries a declaration — catching design-level
+omissions a hand-written table misses (it WOULD have caught the ``file`` gap).
+
+A declaration is either a **mapper** (``result -> CanonicalToolResult``) or the explicit named opt-in
+:data:`STRUCTURED_PASSTHROUGH` (the whole dict legitimately IS the LLM view — admin/install ops).
+A genuinely unregistered ``source`` (dynamic/edge, or ``None``) keeps the lossless whole-dict
+fallback; PR-F2 adds the ``canonical_fallback_used`` visibility event (degrade-with-audit).
+
+P7: the source → canonical mapping is OS-level (no domain-specific vocabulary). The deref / paging /
+offload store machinery is reused unchanged — 案B removes only the field-guessing.
 """
 from __future__ import annotations
 
-from typing import Any, TypedDict
+from typing import Any, Callable, TypedDict
 
 
 class CanonicalToolResult(TypedDict, total=False):
@@ -56,13 +61,91 @@ class CanonicalToolResult(TypedDict, total=False):
     meta: dict
 
 
+# A canonical mapper: an invoked producer's raw result dict → the canonical shape.
+CanonicalMapper = Callable[[dict], CanonicalToolResult]
+
+
+class _StructuredPassthrough:
+    """The sentinel type of :data:`STRUCTURED_PASSTHROUGH` (single instance)."""
+
+    __slots__ = ()
+
+    def __repr__(self) -> str:  # pragma: no cover - debug aid
+        return "STRUCTURED_PASSTHROUGH"
+
+
+# STRUCTURED_PASSTHROUGH — the explicit, greppable, reviewable opt-in a producer declares when its
+# whole result dict legitimately IS the right LLM view (no single text body to surface). Behaves
+# identically to the lossless whole-dict fallback, but is a *declared* choice, not a silent one — the
+# framework's whole point (the file/reyn_src incident was a silent fallback, not a reviewed decision).
+STRUCTURED_PASSTHROUGH = _StructuredPassthrough()
+
+
+class _Undeclared:
+    """The sentinel type of :data:`UNDECLARED` (single instance)."""
+
+    __slots__ = ()
+
+    def __repr__(self) -> str:  # pragma: no cover - debug aid
+        return "UNDECLARED"
+
+
+# UNDECLARED — the default ``ToolDefinition.canonical`` value. A producer left UNDECLARED has made no
+# canonical choice; the coverage gate rejects it (red CI naming the tool). It exists so a missing
+# declaration is a loud gate failure, not a silent fallback.
+UNDECLARED = _Undeclared()
+
+
+# A canonical declaration: a mapper, or the explicit passthrough opt-in.
+CanonicalDeclaration = "CanonicalMapper | _StructuredPassthrough"
+
+
+# source-identity (op kind / tool name) → declaration. Populated at BOTH registration seams:
+# ``op_runtime.register(kind, handler, canonical=…)`` for op kinds, and ``ToolRegistry.register`` for
+# router ToolDefinitions (via their ``canonical`` field). This is the migrated ``_MAPPERS`` — no
+# longer a free-floating hand-synced dict, but derived from the registrations themselves.
+_DECLARATIONS: "dict[str, CanonicalMapper | _StructuredPassthrough]" = {}
+
+
+def declare_canonical(
+    source_id: str, declaration: "CanonicalMapper | _StructuredPassthrough"
+) -> None:
+    """Register ``source_id``'s canonical declaration (a mapper or ``STRUCTURED_PASSTHROUGH``).
+
+    Called from the two registration seams. Idempotent for an identical re-declaration (registries
+    are rebuilt per ``get_default_registry()`` call); a *conflicting* re-declaration raises, since two
+    different shapes for one invoked identity is a registration bug, not a legitimate override."""
+    if declaration is UNDECLARED:
+        raise ValueError(
+            f"canonical declaration for {source_id!r} is UNDECLARED — every registered producer must "
+            f"declare a mapper or STRUCTURED_PASSTHROUGH (FP-0056 PR-F1)"
+        )
+    existing = _DECLARATIONS.get(source_id)
+    if existing is not None and existing is not declaration:
+        raise ValueError(
+            f"conflicting canonical declaration for {source_id!r}: {existing!r} vs {declaration!r}"
+        )
+    _DECLARATIONS[source_id] = declaration
+
+
+def canonical_declaration(
+    source_id: "str | None",
+) -> "CanonicalMapper | _StructuredPassthrough | None":
+    """Return the declared canonical mapping for ``source_id`` (op kind / tool name), or ``None`` when
+    the identity was never registered (a genuine unknown → the visible fallback in
+    :func:`to_canonical`)."""
+    if not isinstance(source_id, str):
+        return None
+    return _DECLARATIONS.get(source_id)
+
+
 def _is_error(result: dict) -> bool:
     """A result is an error when it explicitly flags one (MCP ``isError``) or its op-level
     ``status`` is ``error`` (the sole error-path driver kept after meta-tightening)."""
     return bool(result.get("isError")) or result.get("status") == "error"
 
 
-def _mcp_to_canonical(result: dict) -> CanonicalToolResult:
+def mcp_to_canonical(result: dict) -> CanonicalToolResult:
     """MCP result → canonical. ``content`` (joined text) → ``text``; ``structured``
     (structuredContent) + ``media_blocks`` → typed ``attachments`` (a large ``structured`` is
     separately referenced, never competing with ``text`` in the offload decision — the owner
@@ -85,7 +168,7 @@ def _mcp_to_canonical(result: dict) -> CanonicalToolResult:
     )
 
 
-def _mcp_read_resource_to_canonical(result: dict) -> CanonicalToolResult:
+def mcp_read_resource_to_canonical(result: dict) -> CanonicalToolResult:
     """MCP resource-read result → canonical (#2597 slice ②a). ``contents`` is a list of flattened
     ``TextResourceContents``/``BlobResourceContents``: a ``text`` entry joins into the canonical
     ``text``; a ``blob`` entry (base64, arbitrary mimeType) becomes a ``structured`` attachment rather
@@ -110,7 +193,7 @@ def _mcp_read_resource_to_canonical(result: dict) -> CanonicalToolResult:
     )
 
 
-def _mcp_get_prompt_to_canonical(result: dict) -> CanonicalToolResult:
+def mcp_get_prompt_to_canonical(result: dict) -> CanonicalToolResult:
     """MCP get-prompt result → canonical (#2597 slice ②c). ``messages`` is a list of flattened
     ``PromptMessage`` dicts; each message's text content joins into the canonical ``text``; a non-text
     content block (image/audio/embedded-resource) becomes a ``structured`` attachment (kept out of the
@@ -135,7 +218,7 @@ def _mcp_get_prompt_to_canonical(result: dict) -> CanonicalToolResult:
     )
 
 
-def _web_fetch_to_canonical(result: dict) -> CanonicalToolResult:
+def web_fetch_to_canonical(result: dict) -> CanonicalToolResult:
     """web_fetch result → canonical. The fetched page text (``content``, or the op's own ``preview``
     when it pre-offloaded to a ``path_ref``) → ``text``. Signal meta: ``truncated`` + ``next_start``
     (the LLM's pagination handle) when the fetch was cut. Transport (url/status/content_type/extractor)
@@ -151,7 +234,7 @@ def _web_fetch_to_canonical(result: dict) -> CanonicalToolResult:
     return CanonicalToolResult(text=text, attachments=[], source_ref=None, meta=meta)
 
 
-def _web_search_to_canonical(result: dict) -> CanonicalToolResult:
+def web_search_to_canonical(result: dict) -> CanonicalToolResult:
     """web_search result → canonical. The ``results`` list → a ``structured`` attachment (rendered as
     frontmatter YAML, or offloaded to its own ref when large). An op-level failure (no ``results``,
     ``status: error``) surfaces its message as ``text``. Transport (query/backend) is dropped."""
@@ -164,7 +247,7 @@ def _web_search_to_canonical(result: dict) -> CanonicalToolResult:
     return CanonicalToolResult(text=text, attachments=[], source_ref=None, meta={})
 
 
-def _sandboxed_exec_to_canonical(result: dict) -> CanonicalToolResult:
+def sandboxed_exec_to_canonical(result: dict) -> CanonicalToolResult:
     """sandboxed_exec result → canonical. ``stdout`` (+ ``stderr`` when present) → ``text``; a NONZERO
     ``returncode`` → signal meta (it changes what the LLM does next — a zero code is not signal).
     Transport (backend/truncated) is dropped."""
@@ -181,7 +264,7 @@ def _sandboxed_exec_to_canonical(result: dict) -> CanonicalToolResult:
     return CanonicalToolResult(text=text, attachments=[], source_ref=None, meta=meta)
 
 
-def _chunks_to_canonical(result: dict) -> CanonicalToolResult:
+def chunks_to_canonical(result: dict) -> CanonicalToolResult:
     """recall / index_query result → canonical. The retrieved ``chunks`` list → a ``structured``
     attachment (frontmatter YAML, or its own ref when large). There is no text body. Transport
     (``mode``) is dropped."""
@@ -190,7 +273,7 @@ def _chunks_to_canonical(result: dict) -> CanonicalToolResult:
     return CanonicalToolResult(text="", attachments=attachments, source_ref=None, meta={})
 
 
-def _run_pipeline_to_canonical(result: dict) -> CanonicalToolResult:
+def run_pipeline_to_canonical(result: dict) -> CanonicalToolResult:
     """Sync run_pipeline result → canonical. The final ``output`` is the whole thing the calling LLM
     wants: a str output → ``text``; a non-str output → a ``structured`` attachment. ``run_id`` and
     ``named_stores`` are correlation/transport plumbing the caller never acts on → dropped (owner
@@ -202,7 +285,7 @@ def _run_pipeline_to_canonical(result: dict) -> CanonicalToolResult:
     return CanonicalToolResult(text="", attachments=attachments, source_ref=None, meta={})
 
 
-def _run_pipeline_async_to_canonical(result: dict) -> CanonicalToolResult:
+def run_pipeline_async_to_canonical(result: dict) -> CanonicalToolResult:
     """Async run_pipeline result → canonical. Unlike the sync case, ``run_id`` is KEPT — it is the
     correlation handle the caller uses to match the later ``[pipeline]`` completion message."""
     run_id = result.get("run_id")
@@ -226,7 +309,7 @@ def _file_signal_meta(result: dict) -> "dict[str, Any]":
     return meta
 
 
-def _file_to_canonical(result: dict) -> CanonicalToolResult:
+def file_to_canonical(result: dict) -> CanonicalToolResult:
     """``file`` op result (read/write/glob/grep/edit/delete/mkdir/move/stat/regenerate_index) → canonical.
 
     Dispatch is on the result's ``op`` field (NOT ``kind``, which is the coarse ``"file"`` for the whole
@@ -320,12 +403,12 @@ def _render_file_status(op: "str | None", result: dict) -> str:
     return f"{op}: {result.get('status', 'ok')}"
 
 
-def _reyn_src_to_canonical(result: dict) -> CanonicalToolResult:
+def reyn_src_to_canonical(result: dict) -> CanonicalToolResult:
     """``reyn_src_*`` handler result (read/list/glob/grep) → canonical. These handlers return a
-    kind-less ``{path, content}`` / ``{entries}`` / ``{matches}`` dict tagged with ``kind:"reyn_src"``
-    at the tool-handler seam so this mapper (not the whole-dict fallback) shapes them — the dogfood
-    incident root: a doc read via ``reyn_source__read`` was offloaded as a whole-dict ``structured``
-    blob instead of the readable body.
+    kind-less ``{path, content}`` / ``{entries}`` / ``{matches}`` dict — the dogfood incident root: a
+    doc read via ``reyn_source__read`` was offloaded as a whole-dict ``structured`` blob instead of the
+    readable body. Under PR-F1 the ``reyn_src_*`` ToolDefinitions *declare* this mapper (identity
+    dispatch), so the result no longer needs a ``kind`` field to route here.
 
     - ``read`` (``content``) → the file body as ``text`` (``path`` is signal meta).
     - ``list`` (``entries``) → ``type: name`` lines as ``text``.
@@ -364,12 +447,10 @@ def _reyn_src_to_canonical(result: dict) -> CanonicalToolResult:
     )
 
 
-def _render_template_to_canonical(result: dict) -> CanonicalToolResult:
+def render_template_to_canonical(result: dict) -> CanonicalToolResult:
     """``render_template`` op result → canonical (FP-0055 PR-2). The rendered string
     (``rendered``) IS the LLM-readable body → ``text`` (NOT a whole-dict ``structured``
-    blob — a render_template result without its own mapper would fall to the FP-0056
-    whole-dict fallback and hide the rendered text behind a JSON envelope). Signal
-    meta: ``truncated`` (+ which bound fired, ``truncate_reason``) tells the LLM the
+    blob). Signal meta: ``truncated`` (+ which bound fired, ``truncate_reason``) tells the LLM the
     output was capped mid-generate; ``undefined_vars`` (lenient mode) names the
     referenced-but-unbound template variables so it can self-correct. An error
     (``status="error"`` — syntax / SSTI-blocked / strict-undefined) surfaces the
@@ -392,7 +473,7 @@ def _render_template_to_canonical(result: dict) -> CanonicalToolResult:
     )
 
 
-def _compact_to_canonical(result: dict) -> CanonicalToolResult:
+def compact_to_canonical(result: dict) -> CanonicalToolResult:
     """``compact`` op result → canonical. On success the freed-token / free-window metrics (+ the chat-
     axis compression fields when present) render as a short ``text`` summary; on error the ``error``
     message surfaces as ``text`` with ``meta.isError``. Result shape:
@@ -416,7 +497,7 @@ def _compact_to_canonical(result: dict) -> CanonicalToolResult:
     return CanonicalToolResult(text=" ".join(parts), attachments=[], source_ref=None, meta={})
 
 
-def _judge_output_to_canonical(result: dict) -> CanonicalToolResult:
+def judge_output_to_canonical(result: dict) -> CanonicalToolResult:
     """``judge_output`` op result → canonical. The scorer's ``reason`` (its LLM-readable explanation) is
     the ``text``; ``score`` / ``passed`` / ``threshold`` / ``on_fail`` are signal meta (they drive the
     caller's next move — a failed judgment triggers ``on_fail``). An error surfaces the message as
@@ -436,48 +517,65 @@ def _judge_output_to_canonical(result: dict) -> CanonicalToolResult:
     )
 
 
-# op-kind → canonical mapper. Every op that once declared ``_offload_payload_field`` is registered
-# here; an unregistered kind falls back to a whole-dict ``structured`` attachment (see ``to_canonical``).
-_MAPPERS: dict[str, Any] = {
-    "mcp": _mcp_to_canonical,
-    "mcp_read_resource": _mcp_read_resource_to_canonical,
-    "mcp_get_prompt": _mcp_get_prompt_to_canonical,
-    "web_fetch": _web_fetch_to_canonical,
-    "web_search": _web_search_to_canonical,
-    "sandboxed_exec": _sandboxed_exec_to_canonical,
-    "recall": _chunks_to_canonical,
-    "index_query": _chunks_to_canonical,
-    "run_pipeline": _run_pipeline_to_canonical,
-    "run_pipeline_async": _run_pipeline_async_to_canonical,
-    # FP-0055 PR-2: render_template producer — the rendered string → text (never the
-    # whole-dict fallback for its OWN result; truncated/undefined_vars as signal meta).
-    "render_template": _render_template_to_canonical,
-    # FP-0056 PR-H hotfix: the file family + reyn_src dev-reads + compact/judge_output — the coverage
-    # gap that offloaded a doc read as a whole-dict ``structured`` blob (dogfood 2026-07-09).
-    "file": _file_to_canonical,
-    "reyn_src": _reyn_src_to_canonical,
-    "compact": _compact_to_canonical,
-    "judge_output": _judge_output_to_canonical,
-}
-
-
-def to_canonical(result: dict) -> CanonicalToolResult:
-    """Normalize an op result dict to :class:`CanonicalToolResult`. Dispatches on ``result["kind"]``;
-    an unregistered kind falls back to a whole-dict ``structured`` attachment (``text`` empty) so
-    nothing is ever lost — the whole dict renders as readable frontmatter YAML and
-    ``ctx.<name>.structured.<field>`` still gives programmatic access."""
-    kind = result.get("kind")
-    mapper = _MAPPERS.get(kind) if isinstance(kind, str) else None
-    if mapper is not None:
-        return mapper(result)
-    # Fallback: not-yet-migrated kind → the whole dict is a structured attachment (lossless, readable
-    # as frontmatter YAML), never a whole-dict JSON-into-text blob.
+def _fallback_structured(result: dict) -> CanonicalToolResult:
+    """The lossless whole-dict fallback: the entire result becomes a ``structured`` attachment
+    (readable as frontmatter YAML, ``ctx.<name>.structured.<field>`` still programmatically reachable),
+    ``text`` empty. Used for a declared ``STRUCTURED_PASSTHROUGH`` producer AND for a genuinely
+    unregistered ``source`` (dynamic/edge). PR-F2 adds a ``canonical_fallback_used`` event on the
+    unregistered path (degrade-with-audit)."""
     return CanonicalToolResult(
-        text="",
-        attachments=[{"kind": "structured", "data": result}],
-        source_ref=None,
-        meta={},
+        text="", attachments=[{"kind": "structured", "data": result}], source_ref=None, meta={},
     )
+
+
+def to_canonical(result: dict, *, source: "str | None" = None) -> CanonicalToolResult:
+    """Normalize an op/tool result dict to :class:`CanonicalToolResult`, dispatching on the **invoked
+    identity** ``source`` (the op kind / tool name the chokepoint called — FP-0056 PR-F1), NOT on
+    ``result["kind"]`` (which a producer may not set — the ``reyn_src`` incident class).
+
+    - ``source`` declared with a mapper → the mapper shapes the result.
+    - ``source`` declared ``STRUCTURED_PASSTHROUGH`` → the whole dict is a ``structured`` attachment.
+    - ``source`` ``None`` or unregistered (genuine unknown) → the same lossless whole-dict fallback
+      (PR-F2 will emit ``canonical_fallback_used`` here). Nothing is ever lost."""
+    declaration = canonical_declaration(source)
+    if declaration is None or declaration is STRUCTURED_PASSTHROUGH:
+        return _fallback_structured(result)
+    return declaration(result)
+
+
+_CANONICAL_SOURCE_KEY = "_canonical_source"
+
+
+def extract_canonical_source(result: Any) -> "tuple[str | None, Any]":
+    """Split the invoked-identity tag off a (possibly envelope-wrapped) result: return
+    ``(source, cleaned)`` where ``source`` is the DEEPEST ``_canonical_source`` in the envelope chain
+    and ``cleaned`` is the result with every such tag removed (FP-0056 PR-F1).
+
+    Why deepest-wins: the dispatch layer wraps a handler's return in ``{status, data: <return>}``
+    (``dispatch_tool``), so a WRAPPER handler that resolved the true target (``invoke_action`` /
+    pipeline tool dispatch) tags the INNER ``data`` with the resolved tool name, while the outer
+    dispatch loop tags the envelope with the wrapper's own name. The inner (resolved) identity is the
+    correct canonicalization source, so descending into ``data`` overrides the shallower tag. A direct
+    (unwrapped) call has only the outer tag — which is then the correct identity."""
+    if not isinstance(result, dict):
+        return None, result
+    source: "str | None" = None
+
+    def _walk(d: dict) -> dict:
+        nonlocal source
+        cleaned: dict[str, Any] = {}
+        for key, value in d.items():
+            if key == _CANONICAL_SOURCE_KEY:
+                source = value
+                continue
+            cleaned[key] = value
+        inner = cleaned.get("data")
+        if isinstance(inner, dict):
+            cleaned["data"] = _walk(inner)
+        return cleaned
+
+    cleaned = _walk(result)
+    return source, cleaned
 
 
 def unwrap_dispatch_envelope(result: Any) -> Any:

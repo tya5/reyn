@@ -442,7 +442,10 @@ async def _handle_cron_disable(
 # ── ToolDefinition instances ─────────────────────────────────────────
 
 
+from reyn.core.offload.canonical import STRUCTURED_PASSTHROUGH  # noqa: E402
+
 CRON_REGISTER = ToolDefinition(
+    canonical=STRUCTURED_PASSTHROUGH,
     name="cron_register",
     description=_CRON_REGISTER_DESCRIPTION,
     parameters=_CRON_REGISTER_PARAMETERS,
@@ -453,6 +456,7 @@ CRON_REGISTER = ToolDefinition(
 )
 
 CRON_UNREGISTER = ToolDefinition(
+    canonical=STRUCTURED_PASSTHROUGH,
     name="cron_unregister",
     description=_CRON_UNREGISTER_DESCRIPTION,
     parameters=_CRON_NAME_ONLY_PARAMETERS,
@@ -463,6 +467,7 @@ CRON_UNREGISTER = ToolDefinition(
 )
 
 CRON_LIST = ToolDefinition(
+    canonical=STRUCTURED_PASSTHROUGH,
     name="cron_list",
     description=_CRON_LIST_DESCRIPTION,
     parameters=_CRON_LIST_PARAMETERS,
@@ -473,6 +478,7 @@ CRON_LIST = ToolDefinition(
 )
 
 CRON_ENABLE = ToolDefinition(
+    canonical=STRUCTURED_PASSTHROUGH,
     name="cron_enable",
     description=_CRON_ENABLE_DESCRIPTION,
     parameters=_CRON_NAME_ONLY_PARAMETERS,
@@ -483,6 +489,7 @@ CRON_ENABLE = ToolDefinition(
 )
 
 CRON_DISABLE = ToolDefinition(
+    canonical=STRUCTURED_PASSTHROUGH,
     name="cron_disable",
     description=_CRON_DISABLE_DESCRIPTION,
     parameters=_CRON_NAME_ONLY_PARAMETERS,
