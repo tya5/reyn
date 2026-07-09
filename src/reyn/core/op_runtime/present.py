@@ -347,6 +347,10 @@ def _fallback_note(
     )
 
 
-from reyn.core.offload.canonical import CANONICAL_TODO  # noqa: E402
+from reyn.core.offload.canonical import present_to_canonical  # noqa: E402
 
-register("present", handle, canonical=CANONICAL_TODO)
+# FP-0056 burn-down (#2681): the ack is an agent-facing signal (reached-user / view-bind stats),
+# not bulk content, so it maps to a short text line via ``present_to_canonical`` — no longer the
+# provisional ``CANONICAL_TODO``. The tool ToolDefinition (tools/present.py) declares the SAME mapper
+# so identity dispatch (source == "present") resolves it across chat + pipeline + the op path.
+register("present", handle, canonical=present_to_canonical)

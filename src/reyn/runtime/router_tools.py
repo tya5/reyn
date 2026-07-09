@@ -619,6 +619,34 @@ def build_tools(
             dispatch_kind=_compact_def.dispatch_kind,
         ))
 
+    # ── #2692: present + render_template (presentation surface) ─────────────────
+    # part of the #2688 sweep. Unconditional (like recall/drop_source §H): present
+    # has no natural window-fill visibility gate — the agent may want to display
+    # bulk data on any turn, and read-authority is enforced at op-exec (data_ref ==
+    # file.read), not by catalog exclusion (the web_fetch posture). Registering one
+    # ToolDefinition each also opens the pipeline surface (bare-name lookup, gate-
+    # ignoring); this section is what surfaces them to the default enumerate-all
+    # chat LLM. Op handler + IR op model unchanged.
+    _present_def = _registry.lookup("present")
+    if _present_def is not None and _present_def.gates.router == "allow":
+        _present_rendered = _present_def.render_for_router()
+        specs.append(ToolSpec(
+            name=_present_rendered["function"]["name"],
+            description=_present_rendered["function"]["description"],
+            parameters=_present_rendered["function"]["parameters"],
+            dispatch_kind=_present_def.dispatch_kind,
+        ))
+
+    _render_template_def = _registry.lookup("render_template")
+    if _render_template_def is not None and _render_template_def.gates.router == "allow":
+        _render_template_rendered = _render_template_def.render_for_router()
+        specs.append(ToolSpec(
+            name=_render_template_rendered["function"]["name"],
+            description=_render_template_rendered["function"]["description"],
+            parameters=_render_template_rendered["function"]["parameters"],
+            dispatch_kind=_render_template_def.dispatch_kind,
+        ))
+
     # ── D. MCP tools (permission-gated) ──────────────────────────────────────
     #
     # FP-0024 Component D: threshold-based switch.

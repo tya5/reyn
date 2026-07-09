@@ -103,7 +103,9 @@ def get_default_registry() -> ToolRegistry:
         RUN_PIPELINE_INLINE,
         RUN_PIPELINE_INLINE_ASYNC,
     )
+    from reyn.tools.present import PRESENT
     from reyn.tools.recall import RECALL
+    from reyn.tools.render_template import RENDER_TEMPLATE
     from reyn.tools.reyn_src import (
         REYN_SRC_GLOB,
         REYN_SRC_GREP,
@@ -139,6 +141,12 @@ def get_default_registry() -> ToolRegistry:
     registry.register(RECALL)
     registry.register(DROP_SOURCE)
     registry.register(COMPACT)
+    # #2692 (part of the #2688 sweep): present + render_template invocation surface.
+    # One registration each opens BOTH chat (build_tools + gates.router="allow") and
+    # pipeline (bare-name lookup) from the single unified registry — the op handlers
+    # already existed; only the ToolDefinition was missing.
+    registry.register(PRESENT)
+    registry.register(RENDER_TEMPLATE)
     # Task ops (#1953 dynamic-wire): the 12 task.* ToolDefinitions, derived
     # single-source from the IROp models (tools/task_ops.py).
     from reyn.tools.task_ops import TASK_TOOL_DEFINITIONS

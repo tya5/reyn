@@ -43,6 +43,9 @@ _EXPECTED_DISPATCH: "frozenset[str]" = frozenset({
     "list_mcp_prompts", "get_mcp_prompt",
     "remember_shared", "remember_agent", "forget_memory", "list_memory", "read_memory_body",
     "recall", "drop_source", "compact",
+    # #2692 (part of the #2688 sweep): present + render_template gained a ToolDefinition
+    # (router_dispatched=True) so chat + pipeline can reach the existing op handlers.
+    "present", "render_template",
     "list_actions", "search_actions", "describe_action", "invoke_action",
 })
 

@@ -42,6 +42,12 @@ EXPECTED_TOOL_NAMES = [
     # when the ToolRegistry contains them (B17-S6-1 / B17-S8-2 fix).
     "recall",
     "drop_source",
+    # present + render_template (#2692, part of the #2688 sweep) — always exposed
+    # so chat can reach the existing present-layer ops (read-authority is enforced
+    # at op-exec, not by catalog exclusion; the pipeline surface opens from the same
+    # single registration).
+    "present",
+    "render_template",
     # compact (#272/#1128) is NOT in the baseline — it is visibility-gated
     # (compact_visible) and only appears when the window is filling, paired
     # with the context-size signal (see test_compact_visible_gates_tool).
@@ -294,7 +300,8 @@ def test_total_tool_count_with_full_permissions():
     + 2 web E1+E2 (web_search + web_fetch always on since FP-0022; #1449
     retired read_tool_result E3) + 4 MCP D1-D4
     + 2 reyn_src F1-F2 + 1 plan G1
-    + 2 RAG H1-H2 (recall + drop_source) = 26 tools total.
+    + 2 RAG H1-H2 (recall + drop_source)
+    + 2 presentation (present + render_template, #2692) = 28 tools total.
     FP-0032: D4 describe_mcp_tool added alongside D1-D3.
     web_fetch_allowed param is kept for backward compat but now a no-op.
     """

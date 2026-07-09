@@ -71,7 +71,8 @@ _CANONICAL_TODO_GRANDFATHERED = frozenset({
     "list_memory",
     "mcp_install_local", "mcp_install_package", "mcp_install_registry", "mcp_search_registry",
     "pipeline_install_local", "pipeline_install_source",
-    "present",
+    # #2692 burn-down: ``present`` now ships a real text mapper (its ack is an agent-facing
+    # signal, not bulk content) — removed from the ledger (the ratchet set only shrinks).
     "remember_agent", "remember_shared",
     "search_actions",
     "session_spawn",
