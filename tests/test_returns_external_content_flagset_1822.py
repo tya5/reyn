@@ -101,6 +101,16 @@ _NOT_EXTERNAL = {
     "list_agents", "describe_agent",
     "list_actions", "search_actions", "describe_action",
     "list_mcp_servers", "cron_list",
+    # — presentation (#2692, part of the #2688 sweep) —
+    # present: fire-and-continue → returns a compact ACK (reached-user + view-bind
+    # stats), NOT the presented data itself → no external content forwarded (same
+    # "status ACK, not content" rationale as topology_create / the installers).
+    "present",
+    # render_template: returns the rendered string, derived from a template + data.
+    # A data_ref/template_ref reads file content — the same agent-work-product /
+    # file-content class as read_file (the deferred fast-follow, scan-only), not a
+    # relay of server/internet content.
+    "render_template",
     # — control / orchestration —
     "compact",
     # invoke_action: generic dispatcher — trust resolved by the EFFECTIVE inner

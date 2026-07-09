@@ -521,6 +521,41 @@ def compact_to_canonical(result: dict) -> CanonicalToolResult:
     return CanonicalToolResult(text=" ".join(parts), attachments=[], source_ref=None, meta={})
 
 
+def present_to_canonical(result: dict) -> CanonicalToolResult:
+    """``present`` op/tool result → canonical (FP-0054 / FP-0056). ``present`` is fire-and-continue: it
+    routes the bulk data to the user surface itself and returns a compact ACK. That ack is an
+    AGENT-facing signal (did the presentation reach the user? did the view bind? which fallback fired?),
+    NOT bulk content — so it renders as a short ``text`` line, not a whole-dict ``structured`` blob (the
+    incident class). Success shape: ``{kind:"present", status:"ok", ok:True, mode, bindings_resolved,
+    bindings_dropped, rows, all_bindings_missed, note?}``. Any non-``ok`` status (``error`` — malformed
+    inline blueprint / XOR violation; ``not_found`` — missing ``data_ref``; ``denied`` — read-authority)
+    surfaces the ``error`` message as ``text`` with ``meta.isError`` so the LLM self-corrects."""
+    status = result.get("status")
+    if status not in (None, "ok"):
+        return CanonicalToolResult(
+            text=str(result.get("error") or f"present {status}"),
+            attachments=[], source_ref=None, meta={"isError": True},
+        )
+    parts: list[str] = ["Presented to the user."]
+    mode = result.get("mode")
+    if mode is not None:
+        parts.append(f"mode={mode}")
+    for key in ("rows", "bindings_resolved"):
+        value = result.get(key)
+        if value is not None:
+            parts.append(f"{key}={value}")
+    dropped = result.get("bindings_dropped")
+    if dropped:
+        parts.append(f"bindings_dropped={len(dropped)}")
+    if result.get("all_bindings_missed"):
+        parts.append("all_bindings_missed=True")
+    text = " ".join(parts)
+    note = result.get("note")
+    if note:
+        text = f"{text}\n{note}"
+    return CanonicalToolResult(text=text, attachments=[], source_ref=None, meta={})
+
+
 def judge_output_to_canonical(result: dict) -> CanonicalToolResult:
     """``judge_output`` op result → canonical. The scorer's ``reason`` (its LLM-readable explanation) is
     the ``text``; ``score`` / ``passed`` / ``threshold`` / ``on_fail`` are signal meta (they drive the
