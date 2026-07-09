@@ -24,9 +24,8 @@ PAGE_TITLE: "Reyn — predictable LLM workflows"
 # no per-platform override is provided. Aim for 120–160 chars; match the LP
 # hero lede tone without repeating it word-for-word.
 META_DESCRIPTION: >-
-  LLM agent workflow OS with a Markdown DSL. Phase transitions are
-  constrained, validated, and replayable — predictability for production
-  agents, not just experiments.
+  Reyn is an operating system for LLM agents. Every action is typed,
+  permissioned, audited, and recoverable by construction.
 
 # Canonical URL: the production landing-page URL. Update this together with
 # `site_url` in mkdocs.yml when the project moves to a custom domain
@@ -40,7 +39,7 @@ CANONICAL_URL: "https://tya5.github.io/reyn/"
 # custom domain once that lands.
 OG_TITLE: "Reyn — gives you the reins"
 OG_IMAGE: "https://tya5.github.io/reyn/assets/banner-hero-reyn-main.png"
-OG_IMAGE_ALT: "Reyn — LLM agent workflow OS, on a clay-coloured banner"
+OG_IMAGE_ALT: "Reyn — an operating system for LLM agents, on a clay-coloured banner"
 
 # ── header / nav ────────────────────────────────────────────────────────────
 NAV_ARCH: "Architecture"
@@ -50,11 +49,12 @@ NAV_GITHUB: "GitHub"
 NAV_GITHUB_HREF: "https://github.com/tya5/reyn"
 
 # ── hero ────────────────────────────────────────────────────────────────────
-HERO_EYEBROW: "Open-source LLM workflow OS"
+HERO_EYEBROW: "Open-source agent OS"
 HERO_H1_HTML: "Many agents.<br/>One pair of <em>reins.</em>"
 HERO_LEDE: >-
-  Reyn is an LLM workflow OS. Phase transitions are constrained, validated,
-  and replayable — predictability for production agents, not just experiments.
+  Reyn is an operating system for LLM agents — they decide, organize, and
+  orchestrate; the OS makes every action typed, permissioned, audited, and
+  recoverable by construction.
 HERO_CTA_PRIMARY: "Get Started"
 HERO_CTA_SECONDARY: "Read the docs"
 
