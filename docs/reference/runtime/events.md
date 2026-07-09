@@ -49,7 +49,7 @@ Each Control IR op kind emits its own event:
 | `web_fetch_started`, `web_fetch_completed`, `web_fetch_failed` | web_fetch ops — `started`: `url`; `completed`: `url`, `status_code`, `content_length`, `extractor`; `failed`: `url`, `status` (`"timeout"` or `"error"`), `error` |
 | `recall_embed_failed` | `recall` op — emitted when the embed sub-op fails; `query`, `error` |
 | `index_dropped` | `index_drop` op — `source`, `chunks_dropped: int` |
-| `control_ir_skipped`, `control_ir_failed` | dispatch failures (`control_ir_skipped` reasons include `handler_not_implemented`, `not_allowed_in_phase`) |
+| `control_ir_skipped`, `control_ir_failed` | dispatch failures (`control_ir_skipped` reasons include `handler_not_implemented`) |
 | `permission_denied` | When an op is denied by the resolver |
 
 ## MCP

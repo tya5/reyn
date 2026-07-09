@@ -86,7 +86,7 @@ block applies to the final turn unless `per_turn_expected` is specified.
 
 ```yaml
   - id: multi_turn_plan
-    covers: [os-core/phase-engine/act-decide-loop]
+    covers: [os-core/workspace-p5/permission-gated-io]
     prompts:
       - "コードを改善してください"
       - "変更を適用してください"
@@ -153,9 +153,9 @@ Each scenario's `covers:` tags map to feature paths in `docs/feature-map.md`.
 The path scheme is lowercase kebab-case:
 
 ```
-### OS Core          -> os-core
-#### Phase Engine    -> os-core/phase-engine
-| Act/Decide loop |  -> os-core/phase-engine/act-decide-loop
+### OS Core           -> os-core
+#### Workspace (P5)    -> os-core/workspace-p5
+| Permission-gated IO | -> os-core/workspace-p5/permission-gated-io
 ```
 
 `reyn dogfood coverage` (or `--json` for machine consumption) reads all
@@ -167,7 +167,7 @@ Covered:           42  (22%)
 Uncovered:        145
 
 Uncovered (sample):
-  os-core/llm-validation/artifact-schema-validation
+  os-core/crash-recovery/world-op-bypass
   control-ir-ops/sandboxed-exec
   stdlib-skills/skill-builder
   ...

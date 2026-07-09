@@ -4,15 +4,28 @@ topic: architecture
 audience: [human, agent]
 ---
 
-# LLM invocation surfaces — Router-style vs Phase-style
+# LLM invocation surfaces — the router-style tool contract
+
+> **Status: partially stale.** This page originally compared two invocation kinds:
+> the chat router (function-calling tools) and the phase executor inside a
+> now-deleted workflow engine (a JSON `control`/`artifact`/`control_ir` output
+> contract, deleted in a later engine-deletion arc. The phase-style surface and every
+> section that compared against it (the capability matrix, the four divergence
+> types, the doctrine options for closing router/phase gaps) described a
+> comparison that no longer has two sides — confirmed via direct grep that
+> `OSRuntime` and the `control`/`artifact`/`control_ir` envelope do not exist in
+> current source. Those sections have been removed. Section 4 (the unified
+> `ToolRegistry` implementation log) remains accurate — it documents the still-
+> current architecture — except that its `gates(phase=...)` references are now
+> vestigial (no phase surface consumes them).
 
 ## 1. Why this matters
 
-Reyn invokes the LLM in two structurally distinct contexts: the chat router and the phase executor inside a workflow. Each context exposes its own vocabulary of capabilities — function-calling tools for the router, Control IR ops for the phase. The two sets overlap substantially but not completely. Without a written account of that divergence, contributors tend to add new capabilities to whichever surface is convenient, and the gap widens silently. This document names the two invocation kinds, maps the divergence, and identifies which asymmetries are principled and which are convention drift — so that future additions land in the right place, and unintended asymmetries surface before they accumulate.
+Reyn invokes the LLM via native function-calling tools over `RouterLoop` (interactive chat sessions), assembled per-context by a `RouterLoopHost` facade. This document names that invocation surface and its tool inventory.
 
 ---
 
-## 2. Two invocation kinds
+## 2. The router invocation surface
 
 ### 2.1 Router-style (chat)
 
@@ -28,190 +41,25 @@ Reyn invokes the LLM in two structurally distinct contexts: the chat router and 
 
 **Role:** orchestration — pick the next sub-component (workflow, agent, plan, memory operation, direct text reply).
 
-### 2.2 Phase-style (workflow execution)
-
-**Used by:** every phase invocation inside a workflow, driven by `OSRuntime`.
-
-**Mechanism:** JSON output contract. The LLM returns a single structured response:
-
-```json
-{
-  "control": {"type": "transition|finish|abort", "decision": "continue|finish|abort",
-               "next_phase": "<name> or null", "confidence": 0.0, "reason": {}},
-  "artifact": {"type": "<schema_name>", "data": {}},
-  "control_ir": []
-}
-```
-
-No native function calling. The LLM declares its intended side effects in `control_ir` as typed op objects; the OS dispatches them.
-
-**Op surface:** the Control IR op kinds are defined in `OP_KIND_MODEL_MAP` in `src/reyn/core/op_runtime/registry.py`. The core kinds (the RAG / sandbox / compaction kinds are omitted here for brevity):
-
-| Op kind | Purpose |
-|---------|---------|
-| `read_file` / `write_file` / `edit_file` / `delete_file` / `glob_files` / `grep_files` | Fine-grained file operations — the same subset the chat router exposes as tools (#1240) |
-| `mcp` | Call a tool on a configured MCP server |
-| `run_skill` | Invoke a sub-skill as a nested workflow |
-| `shell` | Run a shell command |
-| `lint` | Run the DSL linter on a skill directory |
-| `ask_user` | Pause and prompt the user for input |
-| `web_fetch` | Fetch a single URL |
-| `web_search` | Search the public web |
-
-The fine file kinds replaced the former coarse `file` kind in #1240 Wave 2b (the coarse `FileIROp` is kept only as the shared execution backend, not as a phase-emittable kind). `mcp` and `run_skill` are advertised to the phase LLM under their chat-tool names `call_mcp_tool` / `invoke_skill` and aliased back to the canonical kinds at the parse boundary — so the phase catalog is uniform with the router's.
-
-Each phase narrows this set further via `allowed_ops: list[str]` in the phase declaration (default: `["read_file", "write_file", "edit_file", "delete_file", "glob_files", "grep_files", "ask_user"]`). The OS enforces `allowed_ops` at dispatch time as a defense-in-depth layer.
-
-**Role:** domain work — produce an artifact for the next phase or as the workflow's final output.
-
-### 2.3 What is NOT a third invocation kind
-
-Two constructs are sometimes confused with LLM invocation kinds because they appear in the same phase execution context:
-
-**Preprocessor steps** (`run_skill` / `iterate` / `validate` / `lint_plan` / `python`) run deterministically, before the phase LLM call. They do not invoke the LLM themselves. The `python` step executes a sandboxed Python function. The `run_skill` step dispatches a sub-skill recursively — that sub-skill contains its own phases that DO invoke the LLM phase-style, but the preprocessor step itself is synchronous and does not make an LLM call from the preprocessing layer. See ../skills/preprocessor.md.
-
-**Postprocessor steps** (same step types) run deterministically, after the LLM's `finish` output, before the artifact is returned to the caller. Not an LLM call. See ../skills/postprocessor.md.
-
-Both are OS-executed deterministic pipelines, not LLM invocations.
-
 ---
 
-## 3. Capability comparison matrix
+## 3. See also
 
-| Capability | Router-style surface | Phase-style surface | Status |
-|------------|---------------------|---------------------|--------|
-| File read | `read_file` (conditional on file read permission) | `read_file` op | Symmetric |
-| File write / delete | `write_file`, `delete_file` (conditional on file write permission) | `write_file`, `delete_file`, `edit_file` ops | Symmetric |
-| File list / search | `list_directory` | `glob_files`, `grep_files` ops | Symmetric |
-| Web search | `web_search` (always present) | `web_search` op | Symmetric |
-| Web fetch | `web_fetch` (operator opt-in) | `web_fetch` op | Symmetric |
-| MCP call_tool | `call_mcp_tool` (conditional on mcp_servers) | `mcp` op | Symmetric |
-| MCP discover (list servers / tools) | `list_mcp_servers`, `list_mcp_tools` | Not available | Gap (Type C) |
-| Shell | Not available | `shell` op | Role-separated (Type B) |
-| Lint | Not available | `lint` op | Role-separated (Type B) |
-| Run / invoke skill | `invoke_skill` (conditional on skills registered) | `run_skill` op | Symmetric |
-| Inter-agent delegation | `delegate_to_agent` | Not available | Role-separated (Type B) |
-| Ask user | Not available as a tool; router exits with a text reply | `ask_user` op | Role-separated (Type B) |
-| Memory read | `list_memory`, `read_memory_body` | Via context_builder injection only (read at phase start; no mid-phase query) | Gap (Type C) |
-| Memory write | `remember_shared`, `remember_agent`, `forget_memory` | Not available | Gap (Type C) |
-| Catalog browse | `list_skills`, `describe_skill`, `list_agents`, `describe_agent` | Via op_catalog injection in ContextFrame only (no mid-phase query) | Gap (Type C) |
-| Plan invocation | `plan` | Not available (use `run_skill` for in-phase decomposition) | Role-separated (Type B) |
-| Reyn source read | `reyn_src_list`, `reyn_src_read` | Not available | Router-only |
-
----
-
-## 4. Four divergence types
-
-### Type A — Healthy symmetry
-
-Capabilities present on both sides with the same semantic, expressed in different invocation forms (function calling vs Control IR JSON). These are not problems; they are the natural consequence of two API styles.
-
-**Examples:** file ops (`read_file` ↔ `read_file` — the same fine kinds on both sides since #1240), web ops (`web_search` / `web_fetch` ↔ `web_search` / `web_fetch` ops), MCP invocation (`call_mcp_tool` ↔ `mcp` op), skill invocation (`invoke_skill` ↔ `run_skill` op).
-
-The router LLM calls `invoke_skill("name", input={...})`; the phase LLM also emits `invoke_skill` (the chat-tool name the phase catalog advertises), which the OS aliases to `{"kind": "run_skill", "skill": "name", "input": {...}}` before dispatch. The OS dispatches both. Since #1240 the surface form is largely unified (fine file kinds + chat-tool names on both sides); the remaining difference is the wire protocol (native function-calling vs Control IR JSON).
-
-### Type B — Deliberate role separation
-
-Asymmetries that exist for principled reasons and should remain asymmetric:
-
-- **`delegate_to_agent` is router-only.** Phases work within a workflow scope. Routing a request to a peer agent is an orchestration decision that belongs to the chat session, not to a phase mid-execution. Allowing agent delegation from inside a phase would conflate the orchestration layer (session) with the domain-work layer (phase).
-
-- **`plan` is router-only.** Phases already have `run_skill` for in-phase decomposition. The `plan` tool is the chat session's mechanism for multi-source synthesis across router turns; it has no analog inside a phase because phases have a defined input and output contract.
-
-- **`shell` is phase-only.** Exposing `shell` directly to the chat router would allow the LLM to execute arbitrary commands in a free-form conversational context with no schema boundary. The phase model constrains this: `shell` is opt-in per workflow, gated by `allowed_ops`, and the phase's input schema narrows what data reaches the command. The router LLM sees the user's open-ended request; the phase LLM sees a bounded, schema-validated artifact.
-
-- **`lint` is phase-only.** Lint validates the LLM's workflow-authoring output during a phase. It has no use in the chat router, which does not produce workflow artifacts.
-
-- **`ask_user` is phase-only as an explicit op.** The router LLM asks the user by emitting a plain text reply — the `RouterLoop` exits with that text. The phase LLM cannot exit mid-phase to reply; it must use `ask_user` in `control_ir` to pause and surface a question to the OS.
-
-### Type C — Convention drift
-
-Asymmetries that emerged over time without a doctrine and do not have a strong role-based reason to exist:
-
-- **Memory I/O is router-only.** The tools `list_memory`, `read_memory_body`, `remember_shared`, `remember_agent`, and `forget_memory` are available to the chat router. Phases receive memory injected via context_builder at phase entry (read-only snapshot); they cannot query or update memory mid-phase. There is no principled architectural reason why phases cannot write memory — the gap emerged because memory tools were added to the router for direct user interaction, and no corresponding phase capability was designed.
-
-- **Catalog browse is router-only.** The tools `list_skills`, `describe_skill`, `list_agents`, and `describe_agent` are available to the chat router. Phases that need skill or agent catalog data (for example, `eval_builder` or `skill_improver`) receive the catalog injected as ContextFrame data (`op_catalog`), but they cannot issue a mid-phase catalog query. This gap emerged because catalog browsing was primarily useful for the router's "what skill should I invoke?" decision; the phase use case was less common and handled by injection rather than tools.
-
-- **MCP discover is router-only.** `list_mcp_servers` and `list_mcp_tools` are available to the chat router. Phases using the `mcp` op must have the server name and tool name statically declared in `control_ir`; they cannot discover available MCP tools at runtime. This gap emerged because MCP browsing was added for the router's interactive "what can I do with MCP?" use case, without a corresponding discovery mechanism for the phase-side `mcp` op.
-
-These are gaps, not failures. Whether to close them is the doctrine question addressed in Section 6.
-
-### Type D — Pre-LLM deterministic steps
-
-Preprocessor and postprocessor steps are not LLM invocations, but they appear in feature-parity discussions because they are "things a workflow author can reach for." The distinction matters:
-
-- A `python` preprocessor step runs sandboxed Python code — no LLM call.
-- A `run_skill` preprocessor step invokes a sub-skill whose phases DO invoke the LLM phase-style — but the preprocessor dispatch itself is synchronous and OS-controlled, not an LLM call in the same turn.
-- A `validate` step runs a JSON Schema check — no LLM call.
-
-Preprocessor and postprocessor steps expand what a phase can compute before and after the LLM call; they do not constitute a third invocation kind.
-
----
-
-## 5. Why the divergence happened — historical pattern
-
-The chat router accumulated capabilities via tool additions whenever a new feature landed: memory I/O, catalog browse, web ops, plan mode, Reyn source access. Each addition was natural in context — the chat user wants to ask about memory directly, or browse the catalog interactively, or search the web in a conversational turn. The phase Control IR op set grew more conservatively (8 op kinds vs up to 23 router tools) because Reyn's phase model emphasizes constrained candidate sets (P4) and workflow-author intent: a phase declares what it is allowed to do, and nothing more. The result is that the router accumulated interactive-exploration capabilities; the phase surface stayed domain-work-focused. This is appropriate where the role-separation reason holds (Type B); it is convention drift where it does not (Type C).
-
----
-
-## 6. Doctrine options
-
-The question: **should the convention-drift gaps (Type C) be closed?** This section presents three options. The choice is a separate decision; this document establishes the framework.
-
-### Option 1 — Full symmetry
-
-Every capability available on both surfaces, expressed in the appropriate invocation form. Type B exceptions (shell, lint, ask_user, plan, delegate_to_agent) are retained as documented exceptions.
-
-- **Pros:** clean doctrine; no asymmetry except by explicit per-capability choice; contributors have a simple default rule ("add to both unless there is a reason not to").
-- **Cons:** some capabilities do not fit naturally on both sides (a phase that delegates to a peer agent mid-execution conflates orchestration with domain work); surface area grows; every new capability requires a two-surface implementation.
-
-### Option 2 — Role-based asymmetry (ratify current state)
-
-Document the current asymmetries as the doctrine. Router does orchestration; phase does domain work; capabilities belong to one role only. Type C gaps are accepted as-is.
-
-- **Pros:** minimal change; codifies what already works; contributors have a clear rule ("is this orchestration or domain work?"); no implementation cost.
-- **Cons:** Type C gaps are rubber-stamped without re-examining whether the role argument actually applies to them; memory write from a phase is a legitimate need that this option leaves unaddressed; the doctrine may not age well as more complex workflows require richer phase-side capabilities.
-
-### Option 3 — Hybrid: close Type C only
-
-Adopt Option 2's role separation for Type B, but explicitly close the three Type C convention-drift gaps:
-
-- **Memory write from phases:** new `memory` op kind (or a stdlib workflow like `update_memory`) so phases can write durable facts without routing through the chat layer.
-- **Catalog browse from phases:** a stdlib workflow (for example, `recall_skill_catalog`) that a phase can invoke via `run_skill` to query the live catalog mid-phase, without embedding catalog knowledge in the OS.
-- **MCP discover from phases:** extend the `mcp` op with `action=list_servers` and `action=list_tools` variants so phases can probe available MCP capabilities at runtime.
-
-- **Pros:** principled — role-based where role separation is real (Type B), symmetric where the gap was unintentional (Type C); the doctrine does not accumulate technical debt; new capabilities designed for both surfaces from the start.
-- **Cons:** medium implementation cost (three new capabilities); ordering matters (stdlib workflows before phase op extensions); requires discipline to avoid re-creating drift with the next batch of additions.
-
----
-
-## 7. How this connects to existing principles
-
-**P3 (OS controls execution)** — both invocation kinds are OS-mediated. The router LLM calls tools; the OS dispatches them. The phase LLM emits `control_ir`; the OS dispatches those ops. Neither surface allows the LLM to execute directly. The doctrine question is about which capabilities the OS exposes to each kind, not about who controls execution.
-
-**P4 (LLM is a constrained decision engine)** — both invocation kinds present a curated candidate set. The router LLM sees a fixed tool list assembled by `build_tools()`. The phase LLM sees `available_control_ops` built from the phase's `allowed_ops`. Doctrine is about which candidates each kind sees; P4 applies to both sides equally.
-
-**P7 (OS domain-agnostic)** — neither surface should embed domain-specific knowledge. Closing Type C gaps via stdlib workflows (Option 3 path) preserves P7: the OS exposes a general `memory` op or `run_skill` mechanism; the workflow author decides whether to use it. Embedding domain-specific memory keys or catalog paths in the OS layer would violate P7.
-
----
-
-## 8. See also
-
-- [../architecture/care-boundary.md](../architecture/care-boundary.md) — what Reyn does and does not own; the downstream tooling section complements the matrix above
-- ../skills/preprocessor.md — pre-LLM deterministic steps (= why those are not a third invocation kind)
-- ../skills/postprocessor.md — post-LLM deterministic steps (same reason)
-- [../../reference/runtime/control-ir.md](../../reference/runtime/control-ir.md) — phase-side op vocabulary and semantics
+- [../architecture/care-boundary.md](../architecture/care-boundary.md) — what Reyn does and does not own
+- [../../reference/runtime/control-ir.md](../../reference/runtime/control-ir.md) — the OS-dispatched op vocabulary
 - [../../reference/cli/chat.md](../../reference/cli/chat.md) — slash commands available in chat (sometimes confused with router tools; they are distinct)
-- [../../reference/cli/mcp.md](../../reference/cli/mcp.md) — MCP server side (Reyn-as-MCP-server exposes a third surface that is NOT covered here because it is external clients calling INTO Reyn, not Reyn's internal LLM invocation kinds)
+- [../../reference/cli/mcp.md](../../reference/cli/mcp.md) — MCP server side (Reyn-as-MCP-server exposes a third surface that is NOT covered here because it is external clients calling INTO Reyn, not Reyn's internal LLM invocation surface)
 
 ---
 
-## 9. Implementation: unified registry (ADR-0026 Accepted — M4 complete, both surfaces consume the registry)
+## 4. Implementation: unified registry (ADR-0026 Accepted)
 
-The dual-implementation architecture described in this document (two separate
-catalogs: `router_tools.py` / `OP_KIND_MODEL_MAP`) is the historical baseline.
-ADR-0026 (Status: Proposed) closes the structural drift by introducing a single
-`ToolDefinition` per capability with two render methods.
+The dual-implementation architecture this ADR closed (two separate catalogs:
+`router_tools.py` / `OP_KIND_MODEL_MAP`, back when a phase-side surface existed
+too) is the historical baseline. ADR-0026 closes the structural drift by
+introducing a single `ToolDefinition` per capability with two render methods
+(one of which — the phase-side render — is now vestigial per the status note
+above).
 
 **M1 (landed — commit `edd4c1b`):** The infrastructure module `src/reyn/tools/` is in place:
 

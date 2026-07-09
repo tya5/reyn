@@ -90,7 +90,7 @@ reyn chat
 > このディレクトリにある README.md を要約して
 ```
 
-router が自動的に `mcp__list_tools` → `mcp__call_tool` を呼び出します。 どのワークフローにも `permissions.mcp:` 宣言を書く必要はありません。 **ワークフロー作成は、 繰り返し使うワークフローを形式化したい時** (= phase graph / validation / retry policy が必要になった時) に検討するものであって、 MCP を使う前提条件ではありません。 以下の deep-dive はその場合の話で、 ad-hoc 利用だけならここで読み終えて問題ありません。
+router が自動的に `mcp__list_tools` → `mcp__call_tool` を呼び出します。 どのワークフローにも `permissions.mcp:` 宣言を書く必要はありません。 **ワークフロー作成は、 繰り返し使うワークフローを形式化したい時** (= validation / retry policy が必要になった時) に検討するものであって、 MCP を使う前提条件ではありません。 以下の deep-dive はその場合の話で、 ad-hoc 利用だけならここで読み終えて問題ありません。
 
 ## ロール 1：MCP クライアント — Reyn が外部サーバーを呼ぶ
 

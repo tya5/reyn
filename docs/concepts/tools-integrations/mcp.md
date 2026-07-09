@@ -90,7 +90,7 @@ reyn chat
 > このディレクトリにある README.md を要約して
 ```
 
-The router invokes `mcp__list_tools` → `mcp__call_tool` automatically; no `permissions.mcp:` declaration in any workflow is required. **Workflow authoring is for when you want to formalize a recurring workflow** (= phase graph, validation, retry policy) — not a prerequisite to using MCP. The deep-dive below is for that case; if you only need ad-hoc invocation, you can stop reading here.
+The router invokes `mcp__list_tools` → `mcp__call_tool` automatically; no `permissions.mcp:` declaration in any workflow is required. **Workflow authoring is for when you want to formalize a recurring workflow** (= validation, retry policy) — not a prerequisite to using MCP. The deep-dive below is for that case; if you only need ad-hoc invocation, you can stop reading here.
 
 ## Role 1: MCP client — Reyn calls external servers
 

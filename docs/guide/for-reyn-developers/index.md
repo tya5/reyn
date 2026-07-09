@@ -77,6 +77,5 @@ The full rationale is in the testing doc — the rules are non-obvious and viola
 ## See also
 
 - [Reference: Control IR](../../reference/runtime/control-ir.md) — op kind catalogue (must stay in sync with `OP_KIND_MODEL_MAP`)
-- [Reference: LLM output contract](../../reference/runtime/llm-output-contract.md) — the JSON the OS validates on every LLM call
 - [Reference: Events](../../reference/runtime/events.md) — event kind list and JSONL schema
 - [ADR index](../../deep-dives/decisions/README.md) — architectural decisions and the rejected alternatives

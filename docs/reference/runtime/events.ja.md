@@ -49,7 +49,7 @@ Reyn はすべての状態変化に対して構造化イベントを発行しま
 | `web_fetch_started`、`web_fetch_completed`、`web_fetch_failed` | web_fetch op — `started`: `url`; `completed`: `url`、`status_code`、`content_length`、`extractor`; `failed`: `url`、`status`（`"timeout"` または `"error"`）、`error` |
 | `recall_embed_failed` | `recall` op — embed サブ op が失敗したとき: `query`、`error` |
 | `index_dropped` | `index_drop` op — `source`、`chunks_dropped: int` |
-| `control_ir_skipped`、`control_ir_failed` | ディスパッチ失敗（`control_ir_skipped` の理由は `handler_not_implemented`、`not_allowed_in_phase` を含む） |
+| `control_ir_skipped`、`control_ir_failed` | ディスパッチ失敗（`control_ir_skipped` の理由には `handler_not_implemented` を含む） |
 | `permission_denied` | op がリゾルバーに拒否されたとき |
 
 ## MCP
