@@ -79,16 +79,11 @@ Token budgets use `litellm.token_counter` by default for accuracy; a cheaper
 `len(text) // 4` heuristic is available for latency-sensitive deployments
 (`use_chars4_estimate: true`).
 
-## Compaction axes
+## Compaction axis
 
-The same engine serves three distinct compaction axes:
-
-- **Chat axis** — conversation history (this document).
-- **Planner step axis** — older plan-step results inside an active plan.
-- **Phase axis** — older `control_ir_results` inside a running phase's act loop.
-
-Each axis has both automatic compaction (per-frame) and an on-demand seam (the
-`compact` Control IR op, available to the LLM when the context-size signal fires).
+The engine serves the chat axis (conversation history, this document): both
+automatic compaction (per-frame) and an on-demand seam (the `compact` Control
+IR op, available to the LLM when the context-size signal fires).
 
 ## Cost observability
 

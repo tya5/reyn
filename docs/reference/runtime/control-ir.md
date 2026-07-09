@@ -37,7 +37,7 @@ Control IR is the list of side-effect operations the LLM may emit alongside its 
 | `recall` | Macro: embed query (provider-direct) → index_query per source → merge top-K | none (embedding API cost) |
 | `index_drop` | Remove an indexed source entirely (destructive) | `permissions.index_drop: ask` in skill frontmatter |
 | `judge_output` | LLM scorer: rubric + threshold + `on_fail` policy | none (LLM cost) |
-| `compact` | Voluntarily compact the conversation/phase history (advisory) | none (LLM cost; the mandatory `retry_loop` backstop is independent) |
+| `compact` | Voluntarily compact the conversation history (advisory) | none (LLM cost; the mandatory `retry_loop` backstop is independent) |
 | `task.create` | Create a Task (`deps` for ordering; `link_type` `awaited`/`background` sets whether a sub-task gates the parent's completion — §2187; sub-task ownership is OS-derived from execution context — §16) | requester-gated (caller becomes requester) |
 | `task.update_status` | Declare a status transition | assignee-gated (single-writer CAS on `assignee == caller session_id`) |
 | `task.get` | Read one Task record | requester-gated |
@@ -801,13 +801,12 @@ Audit event: `tool_executed` with `op=judge_output, target, score, passed, thres
 
 ## `compact`
 
-Voluntarily compact the conversation/phase history *now*, freeing context
-window. The OS injects a **context-size signal** (a `## Context window` header
-with the exact-token free window) when the window is filling; the model may
+Voluntarily compact the conversation history *now*, freeing context window.
+The OS injects a **context-size signal** (a `## Context window` header with
+the exact-token free window) when the window is filling; the model may
 respond by emitting `compact` instead of waiting for the mandatory `retry_loop`
-backstop. The op routes to the caller-wired compaction (chat:
-`force_compact_now`; phase: `compact_control_ir_results` on-demand seam) and
-reports the freed tokens + the free window afterwards, in exact tokens
+backstop. The op routes to the caller-wired compaction (`force_compact_now`)
+and reports the freed tokens + the free window afterwards, in exact tokens
 (unit-aligned with the media load-contract error so "should I compact" and
 "what fits now" use the same scale).
 
@@ -822,18 +821,16 @@ Fields:
 
 Returns:
 - `status: "ok" | "error"`
-- `freed_tokens: int` — exact-token reduction. **Per-axis meaning**: on the **phase** axis this is the real `control_ir_results` shrink. On the **chat** axis it is **~0 by construction** — the router prompt is head+tail *turn*-count bounded (`_build_history_for_router`), so compaction does not shrink the bounded view; it compresses the already-elided middle into a summary bridge. Don't front `freed_tokens` for chat.
+- `freed_tokens: int` — exact-token reduction. **~0 by construction**: the router prompt is head+tail *turn*-count bounded (`_build_history_for_router`), so compaction does not shrink the bounded view; it compresses the already-elided middle into a summary bridge. Don't front `freed_tokens` here — see the compression metric below.
 - `free_window_after` / `free_window_before: int` — exact-token headroom after / before.
-- **Chat-axis compression metric** (the meaningful chat signal; `null` on the phase axis): `summarized_turns: int` (older turns folded into the bridge), `compressed_tokens: int` (their raw token cost), `bridge_tokens: int` (the summary's token cost). The chat value is the `compressed_tokens → bridge_tokens` compression, not `freed_tokens`.
+- **Compression metric** (the meaningful signal): `summarized_turns: int` (older turns folded into the bridge), `compressed_tokens: int` (their raw token cost), `bridge_tokens: int` (the summary's token cost). The value that matters is the `compressed_tokens → bridge_tokens` compression, not `freed_tokens`.
 - On error: `error_kind` (`compaction_unavailable` when no compaction context is wired here; `compaction_failed`) + `error`.
 
-**Events**: `compact_op_requested` / `compact_op_completed` (`freed_tokens`, `free_window_after`, + chat-axis `summarized_turns` / `compressed_tokens` / `bridge_tokens`) / `compact_op_failed` / `compact_op_unavailable` (P6). The inner compaction engine emits its own compaction events.
+**Events**: `compact_op_requested` / `compact_op_completed` (`freed_tokens`, `free_window_after`, `summarized_turns` / `compressed_tokens` / `bridge_tokens`) / `compact_op_failed` / `compact_op_unavailable` (P6). The inner compaction engine emits its own compaction events.
 
 **Permission**: none required (LLM cost only). Voluntary and independent of the involuntary `retry_loop` backstop, which always runs regardless.
 
 **Visibility**: advertised to the LLM (tool / `available_control_ops`) only when the window is filling — paired with the context-size signal — so it is not offered when there is nothing to compact (mirrors the `search_actions` visibility gate). The permission gate stays "allow"; only *when surfaced* is gated.
-
-**Axis scope (chat vs phase)**: the `compact` op is available on **both** axes. On the **chat** axis, it routes to `force_compact_now`; on the **phase** axis, it routes to the `compact_control_ir_results` on-demand seam wired by the phase runtime (in addition to the automatic per-frame compaction that fires regardless). In both cases the OS wires `ctx.compact_now`; the op handler itself is axis-agnostic. Both axes also inject the paired context-size signal so the model knows when to emit `compact`.
 
 ## Task ops
 
