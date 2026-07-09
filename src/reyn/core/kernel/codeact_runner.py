@@ -27,12 +27,13 @@ from __future__ import annotations
 import asyncio
 import json
 import os
-import signal
 import socket
 import subprocess
 import sys
 from pathlib import Path
 from typing import Any, Awaitable, Callable
+
+from reyn.security.sandbox import kill_process_tree
 
 
 def _harness_subprocess_env() -> dict[str, str]:
@@ -181,7 +182,7 @@ class CodeActRunner:
         except asyncio.TimeoutError:
             timed_out = True
             service_task.cancel()
-            await _kill_proc_group(proc, loop)
+            await kill_process_tree(proc)
             stdout_b, stderr_b = b"", b""
         else:
             # Normal exit: the child sent op="final" then closed the channel (EOF), so
@@ -319,23 +320,3 @@ class CodeActRunner:
             }
         payload["status"] = "ok" if payload.get("ok") else "error"
         return payload
-
-
-async def _kill_proc_group(
-    proc: subprocess.Popen, loop: asyncio.AbstractEventLoop, grace_seconds: float = 2.0,
-) -> None:
-    """SIGTERM the process group, then SIGKILL after grace if still alive (mirrors
-    the SeatbeltBackend cancel kill — covers the wrapper + child under the sandbox)."""
-    try:
-        os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
-    except (ProcessLookupError, OSError):
-        return
-    try:
-        await asyncio.wait_for(
-            loop.run_in_executor(None, proc.wait), timeout=grace_seconds,
-        )
-    except (asyncio.TimeoutError, Exception):
-        try:
-            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
-        except (ProcessLookupError, OSError):
-            pass

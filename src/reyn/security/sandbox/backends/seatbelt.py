@@ -29,7 +29,7 @@ import subprocess
 import tempfile
 from pathlib import Path
 
-from reyn.security.sandbox._subprocess_io import communicate_capped
+from reyn.security.sandbox._subprocess_io import communicate_capped, kill_process_tree
 from reyn.security.sandbox.backend import SandboxResult, WrappedCommand
 from reyn.security.sandbox.policy import SandboxPolicy
 
@@ -311,7 +311,7 @@ class SeatbeltBackend:
             )
 
             if cancel_task in done:
-                await _kill_proc_group(proc, loop)
+                await kill_process_tree(proc)
                 cancel_task.cancel()
                 try:
                     stdout_b, stderr_b, _trunc = await asyncio.wait_for(
@@ -328,7 +328,7 @@ class SeatbeltBackend:
                 )
             elif not done:
                 cancel_task.cancel()
-                await _kill_proc_group(proc, loop)
+                await kill_process_tree(proc)
                 try:
                     stdout_b, stderr_b, _trunc = await asyncio.wait_for(
                         asyncio.shield(comm_future), timeout=3.0,
@@ -357,22 +357,3 @@ class SeatbeltBackend:
                     os.unlink(profile_path)
                 except OSError:
                     pass
-
-
-async def _kill_proc_group(
-    proc: subprocess.Popen, loop: asyncio.AbstractEventLoop, grace_seconds: float = 2.0
-) -> None:
-    """SIGTERM the process group, then SIGKILL after grace_seconds if still alive."""
-    try:
-        os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
-    except (ProcessLookupError, OSError):
-        return
-    try:
-        await asyncio.wait_for(
-            loop.run_in_executor(None, proc.wait), timeout=grace_seconds,
-        )
-    except (asyncio.TimeoutError, Exception):
-        try:
-            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
-        except (ProcessLookupError, OSError):
-            pass
