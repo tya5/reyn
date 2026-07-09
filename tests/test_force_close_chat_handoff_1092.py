@@ -55,11 +55,17 @@ class _FakeRouterLoop:
         self.router_model = "fake-model"
         self.force_close_calls = 0
         self.always_overflow = always_overflow
+        # Mirrors RouterLoop.last_call_usage (status-bar ctx chip's single-most-
+        # recent-call figure) — router_loop_driver.py reads this attribute
+        # after a successful run().
+        self.last_call_usage = TokenUsage()
 
     async def run(self, *, user_text: str, history: list[dict]) -> TokenUsage:
         if self.always_overflow or not _has_consolidation(history):
             raise ContextOverflowError("simulated context_length too large")
-        return TokenUsage(prompt_tokens=10, completion_tokens=5)
+        usage = TokenUsage(prompt_tokens=10, completion_tokens=5)
+        self.last_call_usage = usage
+        return usage
 
     async def _force_close_call(
         self, messages: list[dict], *, resolved_model: str

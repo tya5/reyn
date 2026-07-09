@@ -53,6 +53,38 @@ def _lookup_max_input(model: str) -> "int | None":
     return None
 
 
+def _resolve_max_input(model: str) -> "tuple[int, str, bool]":
+    """Resolve (value, source, is_fallback) exactly once — the single place
+    ``get_max_input_tokens`` and ``get_max_input_tokens_source`` both delegate
+    to, so the #1162 prefix-strip-retry resolution order exists in ONE spot
+    (previously duplicated across the two functions, a silent-drift risk if
+    the order ever changed in only one place)."""
+    max_input = _lookup_max_input(model)
+    if max_input is not None:
+        return max_input, f"litellm catalog: {model}", False
+
+    # #1162: provider-prefixed proxy models miss the catalog under the prefix
+    # but resolve under the bare model name. e.g. ``openai/gemini-2.5-flash-lite``
+    # (routing Gemini through an openai-compat proxy) is not in litellm's openai
+    # catalog → exception → would fall to the 128K default, over-compacting a
+    # real 1M window by ~87%. Strip the FIRST provider segment and retry before
+    # falling back. This only IMPROVES resolution: a still-unknown bare name
+    # falls through to the same conservative fallback as before (safe even if a
+    # proxy aliases the prefixed name to something else — the bare lookup just
+    # misses → 128K).
+    if "/" in model:
+        bare = model.split("/", 1)[1]
+        max_input = _lookup_max_input(bare)
+        if max_input is not None:
+            return max_input, f"litellm catalog: {bare}", False
+
+    return (
+        _FALLBACK_MAX_INPUT_TOKENS,
+        f"reyn fallback default: {_FALLBACK_MAX_INPUT_TOKENS:,} tokens (model not cataloged)",
+        True,
+    )
+
+
 def get_max_input_tokens(
     model: str,
     *,
@@ -83,27 +115,8 @@ def get_max_input_tokens(
     int
         Positive integer token count. Always > 0.
     """
-    max_input = _lookup_max_input(model)
-    if max_input is not None:
-        return max_input
-
-    # #1162: provider-prefixed proxy models miss the catalog under the prefix
-    # but resolve under the bare model name. e.g. ``openai/gemini-2.5-flash-lite``
-    # (routing Gemini through an openai-compat proxy) is not in litellm's openai
-    # catalog → exception → would fall to the 128K default, over-compacting a
-    # real 1M window by ~87%. Strip the FIRST provider segment and retry before
-    # falling back. This only IMPROVES resolution: a still-unknown bare name
-    # falls through to the same conservative fallback as before (safe even if a
-    # proxy aliases the prefixed name to something else — the bare lookup just
-    # misses → 128K).
-    if "/" in model:
-        bare = model.split("/", 1)[1]
-        max_input = _lookup_max_input(bare)
-        if max_input is not None:
-            return max_input
-
-    # Fallback path: emit warning once per model.
-    if model not in _warned_models:
+    value, _source, is_fallback = _resolve_max_input(model)
+    if is_fallback and model not in _warned_models:
         _warned_models.add(model)
         msg = (
             f"model_budget: max_input_tokens unknown for model={model!r}; "
@@ -118,5 +131,13 @@ def get_max_input_tokens(
                 phase=phase,
                 run_id=run_id,
             )
+    return value
 
-    return _FALLBACK_MAX_INPUT_TOKENS
+
+def get_max_input_tokens_source(model: str) -> str:
+    """Human-readable description of where ``get_max_input_tokens(model)``'s
+    value came from — litellm's catalog, or this module's conservative
+    fallback (there is no user-configurable override of a model's context
+    window anywhere in reyn today). Display-only (status bar / debug)."""
+    _value, source, _is_fallback = _resolve_max_input(model)
+    return source

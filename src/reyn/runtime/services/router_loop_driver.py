@@ -424,6 +424,7 @@ class RouterLoopDriver:
         if router_usage is not None:
             self._budget.add_router_usage(
                 usage=router_usage,
+                last_call_usage=loop.last_call_usage,
                 resolver=self._resolver,
                 router_model_name=loop.router_model,
             )

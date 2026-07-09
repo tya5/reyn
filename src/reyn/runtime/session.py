@@ -1746,7 +1746,7 @@ class Session:
             compact_now=self._compact_now_for_op,
             # #272/#1128 context-size signal: live exact-token budget so the
             # router SP can show the LLM the free window (header).
-            context_window_status=self._context_window_status,
+            context_window_status=self.context_window_status,
             # B25-S5-1: thread eager-build flag so RouterLoop awaits build
             # before computing _search_visible on the first turn.
             eager_embedding_build=self._eager_embedding_build,
@@ -2047,6 +2047,14 @@ class Session:
     @property
     def total_usage(self):
         return self._budget.total_usage
+
+    @property
+    def last_call_usage(self):
+        """TokenUsage of the single most recent LLM call only (distinct from
+        BOTH the session-cumulative ``total_usage`` and a turn-summed figure —
+        a turn can make several LLM calls via tool-loop iterations) — status-
+        bar ctx chip's "current context size" headline figure."""
+        return self._budget.last_call_usage
 
     @property
     def total_cost_usd(self) -> float:
@@ -6180,9 +6188,23 @@ class Session:
         """Forwarding → ContextBudgetAdvisor.media_followup_budget (PR-1)."""
         return self._budget_advisor.media_followup_budget(tool_content)
 
-    def _context_window_status(self) -> dict:
-        """Forwarding → ContextBudgetAdvisor.context_window_status (PR-1)."""
+    def context_window_status(self) -> dict:
+        """Forwarding → ContextBudgetAdvisor.context_window_status (PR-1).
+
+        Public — read by both the RouterHostAdapter SP context-size signal
+        (via the callback wired at __init__) and the inline UI's ctx chip
+        dropdown (status bar reads only public accessors, see
+        interfaces/inline/app.py's module docstring). Non-trivial cost: does a
+        json.dumps + token-estimate of the full router-view history on every
+        call — callers should not invoke this from a per-render-frame path."""
         return self._budget_advisor.context_window_status()
+
+    def raw_context_window(self) -> dict:
+        """Forwarding → ContextBudgetAdvisor.raw_context_window (status-bar ctx
+        chip's real "distance to the model's hard limit" denominator). Public,
+        and cheap (a dict lookup) — safe to call every render frame, unlike
+        ``context_window_status`` above."""
+        return self._budget_advisor.raw_context_window()
 
     async def _compact_now_for_op(self) -> dict:
         """#272/#1128/#191: voluntary-compaction callback (compact op + /compact).

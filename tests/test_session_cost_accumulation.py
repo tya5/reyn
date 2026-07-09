@@ -242,3 +242,106 @@ def test_router_loop_run_accumulates_usage_across_iterations():
     # Two iterations × 50 prompt + 10 completion
     assert total.prompt_tokens == 100, f"Expected 100 prompt tokens, got {total.prompt_tokens}"
     assert total.completion_tokens == 20, f"Expected 20 completion tokens, got {total.completion_tokens}"
+
+
+def test_router_loop_last_call_usage_is_the_final_iteration_only():
+    """Tier 2: RouterLoop.last_call_usage reflects only the LAST iteration's
+    TokenUsage, distinct from total_usage (the sum across every iteration).
+    The status-bar ctx chip's "current context size" figure uses
+    last_call_usage precisely to avoid the turn-total's double-counting —
+    each tool-loop iteration re-sends nearly the same growing context, so
+    summing them wildly overstates current occupancy (review-caught bug in
+    the original ctx-chip landing)."""
+    import json
+
+    host = _FakeHost()
+    loop = RouterLoop(host=host, chain_id="c-test", max_iterations=3)
+
+    first_usage = TokenUsage(prompt_tokens=50, completion_tokens=10)
+    final_usage = TokenUsage(prompt_tokens=90, completion_tokens=15)  # larger, later call
+
+    tool_result = LLMToolCallResult(
+        content=None,
+        tool_calls=[{
+            "id": "tc_1",
+            "type": "function",
+            "function": {"name": "list_skills", "arguments": json.dumps({})},
+        }],
+        finish_reason="tool_calls",
+        usage=first_usage,
+    )
+    text_result = LLMToolCallResult(
+        content="done", tool_calls=[], finish_reason="stop", usage=final_usage,
+    )
+
+    results_queue = [tool_result, text_result]
+
+    async def fake_call_llm_tools(**kwargs):
+        return results_queue.pop(0)
+
+    async def run_it():
+        import reyn.runtime.router_loop as _rl_mod
+        original = _rl_mod.call_llm_tools
+        _rl_mod.call_llm_tools = fake_call_llm_tools
+        try:
+            return await loop.run(user_text="hi", history=[])
+        finally:
+            _rl_mod.call_llm_tools = original
+
+    total = asyncio.run(run_it())
+
+    assert total.prompt_tokens == 140  # 50 + 90, the turn-summed total
+    assert loop.last_call_usage.prompt_tokens == 90    # only the FINAL call
+    assert loop.last_call_usage.completion_tokens == 15
+    assert loop.last_call_usage.prompt_tokens != total.prompt_tokens
+
+
+def test_router_loop_last_call_usage_resets_between_runs():
+    """Tier 2: last_call_usage (like total_usage) resets to zero at the start
+    of each run() — a stale value from a prior turn must not leak into a new
+    turn that (e.g.) makes zero LLM calls before erroring out."""
+    loop = RouterLoop(host=_FakeHost(), chain_id="c-test", max_iterations=3)
+
+    usage = TokenUsage(prompt_tokens=77, completion_tokens=7)
+    result = LLMToolCallResult(
+        content="done", tool_calls=[], finish_reason="stop", usage=usage,
+    )
+
+    async def fake_call_llm_tools(**kwargs):
+        return result
+
+    async def run_once():
+        import reyn.runtime.router_loop as _rl_mod
+        original = _rl_mod.call_llm_tools
+        _rl_mod.call_llm_tools = fake_call_llm_tools
+        try:
+            return await loop.run(user_text="hi", history=[])
+        finally:
+            _rl_mod.call_llm_tools = original
+
+    asyncio.run(run_once())
+    assert loop.last_call_usage.prompt_tokens == 77
+
+    # Second run reuses the SAME loop instance (mirrors router_loop_driver.py's
+    # single-loop-per-turn construction) with a fresh empty-usage result.
+    empty_result = LLMToolCallResult(
+        content="done", tool_calls=[], finish_reason="stop", usage=None,
+    )
+
+    async def fake_call_llm_tools_empty(**kwargs):
+        return empty_result
+
+    async def run_again():
+        import reyn.runtime.router_loop as _rl_mod
+        original = _rl_mod.call_llm_tools
+        _rl_mod.call_llm_tools = fake_call_llm_tools_empty
+        try:
+            return await loop.run(user_text="hi again", history=[])
+        finally:
+            _rl_mod.call_llm_tools = original
+
+    asyncio.run(run_again())
+    assert loop.last_call_usage.prompt_tokens == 0, (
+        "last_call_usage must reset at the start of run(), not carry over "
+        "the previous turn's value when the new turn's call has no usage"
+    )

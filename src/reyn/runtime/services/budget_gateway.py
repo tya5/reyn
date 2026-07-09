@@ -44,6 +44,7 @@ class BudgetGateway:
         self._events = events
         self._agent_name = agent_name
         self._total_usage: TokenUsage = TokenUsage()
+        self._last_call_usage: TokenUsage = TokenUsage()
         self._total_cost_usd: float = 0.0
         self._router_cap: int = default_router_cap
         self._router_invocations_this_turn: int = 0
@@ -68,16 +69,30 @@ class BudgetGateway:
         """Cumulative USD cost for this session (all LLM calls)."""
         return self._total_cost_usd
 
+    @property
+    def last_call_usage(self) -> TokenUsage:
+        """TokenUsage of the single MOST RECENT LLM call only — distinct from
+        BOTH the cumulative session total AND a turn-summed figure. A chat
+        turn can make several LLM calls (tool-loop iterations), each re-
+        sending nearly the same growing context; summing them would wildly
+        overstate "how much of the context window is currently occupied"
+        (status-bar ctx chip's headline figure). Overwritten (not
+        accumulated) on each call."""
+        return self._last_call_usage
+
     def accumulate(self, result) -> None:
         """Accumulate a single LLM call result's tokens + cost into per-session
-        totals. Mirrors Session._accumulate."""
+        totals. Mirrors Session._accumulate. ``result.token_usage`` is already
+        a single call's usage (not turn-summed), so it doubles as last_call_usage."""
         if result.token_usage is not None:
             self._total_usage += result.token_usage
+            self._last_call_usage = result.token_usage
         if result.cost_usd is not None:
             self._total_cost_usd += result.cost_usd
 
     def add_router_usage(
-        self, *, usage: TokenUsage, resolver, router_model_name: str
+        self, *, usage: TokenUsage, last_call_usage: "TokenUsage | None" = None,
+        resolver, router_model_name: str,
     ) -> None:
         """Accumulate router LLM usage with proxy-prefix stripping.
 
@@ -85,10 +100,17 @@ class BudgetGateway:
         prefix (e.g. ``openai/``) from the resolved model name before
         passing it to ``estimate_cost`` so the litellm pricing lookup
         succeeds (F4 Bug 1).
+
+        ``usage`` is the TURN-SUMMED total (all LLM calls this turn) and is
+        what gets accumulated into total_usage/total_cost_usd (billing must
+        count every call). ``last_call_usage`` — the single most recent call,
+        from RouterLoop.last_call_usage — is what last_call_usage reports;
+        they are NOT the same figure for a multi-tool-iteration turn.
         """
         if usage is None or usage.total_tokens == 0:
             return
         self._total_usage += usage
+        self._last_call_usage = last_call_usage if last_call_usage is not None else usage
         # F4 Bug 1: strip proxy prefix so estimate_cost lookup succeeds.
         from reyn.llm.llm import proxy_kwargs
         from reyn.llm.pricing import estimate_cost

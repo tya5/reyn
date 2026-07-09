@@ -56,6 +56,12 @@ def _snap(**over):
         "cost_usd": 0.0,
         "cost_agent": 0.0,
         "agent_tokens": 0,
+        "ctx_used": 0,
+        "ctx_window": 0,
+        "ctx_source": "litellm catalog: standard",
+        "session_cached_tokens": 0,
+        "ctx_recent_usage": (0, 0),
+        "ctx_compaction_status_fn": lambda: {"effective_trigger": 0, "free_window": 0},
         "task_count": 0,
         "task_tree": [],
         "cron_jobs": [],
@@ -76,9 +82,9 @@ def _snap(**over):
 
 
 def test_chip_specs_has_required_keys_in_order() -> None:
-    """Tier 2: the registry exposes model/cost/agent/task/more in that order."""
+    """Tier 2: the registry exposes model/cost/agent/task/ctx/more in that order."""
     keys = [s.key for s in _CHIP_SPECS]
-    assert keys == ["model", "cost", "agent", "task", "more"]
+    assert keys == ["model", "cost", "agent", "task", "ctx", "more"]
 
 
 def test_chips_carry_per_item_value_colours() -> None:
@@ -131,6 +137,146 @@ def test_task_chip_value_returns_count_string() -> None:
     spec = next(s for s in _CHIP_SPECS if s.key == "task")
     assert spec.value(_snap(task_count=3)) == "3"
     assert spec.value(_snap(task_count=0)) == "0"
+
+
+def test_ctx_chip_value_returns_usage_percent() -> None:
+    """Tier 2: the ctx chip's value() returns used/window as a rounded percent."""
+    spec = next(s for s in _CHIP_SPECS if s.key == "ctx")
+    assert spec.value(_snap(ctx_used=50_000, ctx_window=200_000)) == "25%"
+
+
+def test_ctx_chip_value_shows_dash_when_window_unknown() -> None:
+    """Tier 2: a zero/missing window (no attached session budget yet) shows '—'
+    rather than raising a ZeroDivisionError."""
+    spec = next(s for s in _CHIP_SPECS if s.key == "ctx")
+    assert spec.value(_snap(ctx_used=0, ctx_window=0)) == "—"
+
+
+def test_ctx_chip_value_shows_dash_when_no_call_completed_yet() -> None:
+    """Tier 2: used<=0 (no LLM call has completed this session — last_call_usage
+    starts at TokenUsage() zero) shows '—', not a misleading "0%" — a real
+    completed call's prompt_tokens is never actually 0 (system prompt alone is
+    nonzero), so 0 unambiguously means "not measured yet"."""
+    spec = next(s for s in _CHIP_SPECS if s.key == "ctx")
+    assert spec.value(_snap(ctx_used=0, ctx_window=200_000)) == "—"
+
+
+def test_ctx_expansion_is_detail_element() -> None:
+    """Tier 2: the ctx chip's dropdown is read-only (no picker — nothing to select)."""
+    from reyn.interfaces.inline.app import _ctx_expansion
+    el = _ctx_expansion(_snap(ctx_used=50_000, ctx_window=200_000), lambda _: None)
+    assert isinstance(el, DetailElement)
+
+
+def test_ctx_expansion_shows_prompt_window_free_and_source() -> None:
+    """Tier 2: the dropdown breaks the percent down into raw prompt/window/free
+    token counts plus WHERE the window size came from (owner: 情報源もわかるように —
+    litellm catalog vs reyn's own fallback default, since there is no
+    user-configurable override of a model's context window in reyn today).
+    ctx_used is the LAST ACTUAL REQUEST's prompt_tokens (owner: 「ユーザは
+    prompt tokensの方を気にするのでは」→ confirmed) against the model's REAL
+    context window — "how close to the hard limit", not a compaction-internal
+    estimate (that lives in the separate "compaction" line — see
+    test_ctx_expansion_shows_compaction_estimate_separately)."""
+    from reyn.interfaces.inline.app import _ctx_expansion
+    snap = _snap(
+        ctx_used=50_000, ctx_window=200_000,
+        ctx_source="litellm catalog: claude-opus-4-8",
+    )
+    lines = _ctx_expansion(snap, lambda _: None).lines()
+    joined = "\n".join(lines)
+    assert "prompt" in joined and "50,000 tokens" in joined
+    assert "200,000 tokens" in joined
+    assert "litellm catalog: claude-opus-4-8" in joined
+    assert "150,000 tokens" in joined  # free = window - prompt
+    assert "25%" in joined
+
+
+def test_ctx_expansion_shows_compaction_estimate_separately() -> None:
+    """Tier 2: owner asked to keep the compaction subsystem's own lightweight
+    history estimate visible too, but NOT collapsed into the same number as
+    the real prompt/window figures above (that ambiguity was the original bug
+    — 「今の見せ方だと意味がわからない」). It gets its own labeled line with its
+    own (smaller, already-adjusted) denominator, the compaction trigger
+    threshold — never the model's real window.
+
+    The compaction figures come from a LAZY status_fn (not eager snapshot
+    fields) — Session.context_window_status() is expensive (json.dumps +
+    token-estimate of the full history) and must only run while this dropdown
+    is open, not on every _snapshot() render-frame call (perf regression
+    caught in review: mirrors the exact WAL-off-loop lesson from #1765 — don't
+    reintroduce a per-frame/per-loop-tick cost)."""
+    from reyn.interfaces.inline.app import _ctx_expansion
+    snap = _snap(
+        ctx_used=50_000, ctx_window=200_000,
+        ctx_compaction_status_fn=lambda: {"effective_trigger": 68_000, "free_window": 67_296},
+    )
+    lines = _ctx_expansion(snap, lambda _: None).lines()
+    joined = "\n".join(lines)
+    assert "compaction" in joined
+    assert "704 / 68,000 tokens est." in joined
+    assert "1% to trigger" in joined  # round(100 * 704 / 68000) == 1
+
+
+def test_ctx_expansion_compaction_status_fn_called_lazily() -> None:
+    """Tier 2: the compaction status_fn must NOT be invoked until lines() is
+    actually called — proves the deferral is real, not just a renamed eager
+    read. Falsification: if _ctx_expansion or its outer closure called
+    status_fn eagerly, `calls` would already be 1 before lines() runs."""
+    from reyn.interfaces.inline.app import _ctx_expansion
+    calls = []
+    def _status_fn():
+        calls.append(1)
+        return {"effective_trigger": 100, "free_window": 50}
+    snap = _snap(ctx_compaction_status_fn=_status_fn)
+    el = _ctx_expansion(snap, lambda _: None)
+    assert calls == [], "status_fn must not be called before lines() is invoked"
+    el.lines()
+    assert calls == [1], "status_fn must be called exactly once when lines() runs"
+
+
+def test_ctx_expansion_compaction_estimate_zero_trigger_shows_zero_percent() -> None:
+    """Tier 2: a zero/unknown compaction trigger must not divide by zero."""
+    from reyn.interfaces.inline.app import _ctx_expansion
+    snap = _snap(ctx_compaction_status_fn=lambda: {"effective_trigger": 0, "free_window": 0})
+    joined = "\n".join(_ctx_expansion(snap, lambda _: None).lines())
+    assert "0 / 0 tokens est.  (0% to trigger)" in joined
+
+
+def test_ctx_expansion_missing_compaction_status_fn_defaults_to_zero() -> None:
+    """Tier 2: a snap without ctx_compaction_status_fn (e.g. an older caller,
+    or a test that doesn't care about this line) must not crash."""
+    from reyn.interfaces.inline.app import _ctx_expansion
+    snap = _snap()
+    snap.pop("ctx_compaction_status_fn", None)
+    joined = "\n".join(_ctx_expansion(snap, lambda _: None).lines())
+    assert "0 / 0 tokens est.  (0% to trigger)" in joined
+
+
+def test_ctx_expansion_shows_current_turn_cache_hit_only() -> None:
+    """Tier 2: ctx is the CURRENT-state chip (owner: 「ctxはカレントの状態と考える」) —
+    it shows only the most recent LLM call's cache-hit rate. Cumulative
+    cache-hit lives in the cost chip instead (see
+    test_cost_expansion_shows_cumulative_cache_hit_rate), so ctx must NOT
+    duplicate a session-cumulative figure."""
+    from reyn.interfaces.inline.app import _ctx_expansion
+    snap = _snap(
+        usage=(80_000, 500, 80_500), session_cached_tokens=60_000,  # session cumulative — unused here
+        ctx_recent_usage=(10_000, 2_000),                           # last call: 20%
+    )
+    lines = _ctx_expansion(snap, lambda _: None).lines()
+    joined = "\n".join(lines)
+    assert "20% hit (2,000 / 10,000 prompt tokens)" in joined
+    assert "75% hit" not in joined  # the session-cumulative figure must NOT appear
+
+
+def test_ctx_expansion_cache_hit_zero_when_no_prompt_tokens() -> None:
+    """Tier 2: no prompt tokens yet (fresh session, no call completed) must not
+    divide by zero."""
+    from reyn.interfaces.inline.app import _ctx_expansion
+    snap = _snap(usage=(0, 0, 0), session_cached_tokens=0, ctx_recent_usage=(0, 0))
+    joined = "\n".join(_ctx_expansion(snap, lambda _: None).lines())
+    assert "0% hit (0 / 0 prompt tokens)" in joined
 
 
 def test_more_chip_has_no_expansion() -> None:
@@ -594,6 +740,16 @@ def test_cost_expansion_breaks_down_total_agent_session() -> None:
     assert "0.0100" in by_label["session"]    # the attached session
     # the breakdown is not collapsed: total reflects the cross-agent sum
     assert by_label["total"] != by_label["session"]
+
+
+def test_cost_expansion_shows_cumulative_cache_hit_rate() -> None:
+    """Tier 2: owner explicitly asked to confirm the SESSION-cumulative cache-hit
+    figure lives in the cost chip (not ctx, which is current-call-only) —
+    session_cached_tokens is a subset of usage[0]=prompt_tokens (#1772 semantics)."""
+    snap = _snap(usage=(80_000, 500, 80_500), session_cached_tokens=60_000)
+    lines = _cost_expansion(snap, lambda _: None).lines()
+    joined = "\n".join(lines)
+    assert "75% hit (60,000 / 80,000 prompt tokens, cumulative)" in joined
 
 
 # ---------------------------------------------------------------------------

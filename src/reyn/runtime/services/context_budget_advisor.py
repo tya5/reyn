@@ -141,15 +141,42 @@ class ContextBudgetAdvisor:
         text_tokens = estimate_tokens(tool_content, self._model, use_chars4=use_chars4)
         return max(0, self.per_turn_cap_tokens() - text_tokens)
 
+    def _effective_trigger_source(self) -> str:
+        """Where effective_trigger's underlying window size came from (status-bar
+        ctx chip detail). The engine-budget path subdivides T_max by configured
+        component weights, but T_max itself is always resolved via
+        get_max_input_tokens — so the root source is the same two-way split
+        either way (litellm catalog vs reyn's fallback default)."""
+        from reyn.llm.model_budget import get_max_input_tokens_source
+        return get_max_input_tokens_source(self._model)
+
     def context_window_status(self) -> dict:
         """Live exact-token context budget for the SP context-size signal.
 
-        Returns {free_window, effective_trigger}.
+        Returns {free_window, effective_trigger, source}.
         """
         effective_trigger, used = self._free_window_now()
         return {
             "free_window": max(0, effective_trigger - used),
             "effective_trigger": effective_trigger,
+            "source": self._effective_trigger_source(),
+        }
+
+    def raw_context_window(self) -> dict:
+        """The model's ACTUAL context window (get_max_input_tokens), distinct
+        from ``context_window_status``'s ``effective_trigger`` — that value is
+        already reduced by SP/head/tail/component-weight budgeting (an
+        internal compaction-trigger threshold, not the model's real limit).
+        For a user-facing "how close to the model's hard limit" display
+        (status-bar ctx chip), the denominator should be this raw figure.
+
+        Returns {window, source}.
+        """
+        from reyn.llm.model_budget import get_max_input_tokens, get_max_input_tokens_source
+        model = self._model
+        return {
+            "window": get_max_input_tokens(model, events=self._events),
+            "source": get_max_input_tokens_source(model),
         }
 
     async def maybe_force_compact(
