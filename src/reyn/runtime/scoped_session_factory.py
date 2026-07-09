@@ -40,6 +40,8 @@ from reyn.runtime.session import Session
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from reyn.runtime.presentation_consumer import PresentationConsumer
+
 
 def build_scoped_chat_session(
     *,
@@ -57,6 +59,7 @@ def build_scoped_chat_session(
     agent_id: str | None,  # FP-0016 agent-id-scoped memory
     router_max_iterations: int,  # #187 per-message tool-call budget
     non_interactive: bool,  # #1439 Fix #1: run-once (no TTY) → SP proceeds instead of asking a clarifying question. Per-frontend: chat-CLI = not isatty(); A2A/MCP/chainlit/dogfood = False (interactive byte-identical)
+    presentation_consumer: "PresentationConsumer",  # #2708 P1: the surface's present-sink CONSUMER (orphan-impossible). Its .sink(session) yields the PresentationRenderer wired per-turn. REQUIRED (no default) so a surface cannot silently omit a present sink; a bare renderer can't be the kwarg because the outbox sink needs the not-yet-built Session (.sink defers it). Per-frontend: CUI=OutboxPresentationConsumer / chainlit=OutboxPresentationConsumer(+fixed drain) / web/mcp/dogfood=NullPresentationConsumer(reviewed NA)
     eager_embedding_build: bool,  # build the action embedding index up-front
     allowed_mcp: list[str] | None,  # per-profile MCP allow-list
     task_backend: Any,  # #1953 slice R — session-scoped Task backend instance. I-5=(A): cli/chat + MCP pass a per-session sqlite (rewind-participating); A2A/web passes None (the process-singleton A2A surface is read directly, NOT threaded here, so A2A tasks stay durable but un-rewound). None → op-runtime in-memory fallback (_BACKEND)
@@ -119,6 +122,7 @@ def build_scoped_chat_session(
         eager_embedding_build=eager_embedding_build,
         allowed_mcp=allowed_mcp,
         task_backend=task_backend,  # #1953 slice R
+        presentation_consumer=presentation_consumer,  # #2708 P1: present-sink consumer (.sink deferred to Session init)
         sandbox_config=factory_config.sandbox_config,
         multimodal_config=factory_config.multimodal_config,
         action_retrieval_config=factory_config.action_retrieval_config,

@@ -18,6 +18,10 @@ Kind coverage:
 - ``tool_call_failed``     → author "🔧 tool", type "system_message",
                               text "✗ <name>: <err>"
 - ``trace``                → dropped (debug noise)
+- ``presentation``         → author "📊 present", type "system_message";
+                              the ``present`` op render model in ``meta["nodes"]``
+                              serialized to Markdown (#2708 P1 — the #2688 fix; the
+                              generic fall-through dropped it as empty ``text``)
 - ``system``               → author "ℹ system", type "system_message"
 - ``__stream_*__``         → dropped (TUI-only incremental render kinds)
 - ``__end__``              → sentinel, signals drain to stop (returns None)
@@ -148,6 +152,63 @@ def _format_tool_call(msg: OutboxMessage) -> str:
     return f"✗ {name}{err}"
 
 
+_AUTHOR_PRESENT = "📊 present"
+
+
+def _present_node_to_markdown(node: dict) -> str:
+    """Render ONE `ResolvedPresentation` node (the FP-0054 render model — see
+    `interfaces/repl/present_renderer.py` for the terminal twin) to a Markdown
+    fragment for the chainlit browser UI. The render model is already bound /
+    neutralized / capped upstream; this is a display-only serialization."""
+    component = node.get("component")
+    text = node.get("text", "")
+    if component in ("text", "markdown"):
+        return text
+    if component == "code":
+        lang = node.get("language") or ""
+        return f"```{lang}\n{text}\n```"
+    if component == "diff":
+        return f"```diff\n{text}\n```"
+    if component == "keyvalue":
+        return "\n".join(
+            f"**{row.get('label', '')}**: {row.get('value', '')}"
+            for row in node.get("rows", [])
+        )
+    if component == "list":
+        return "\n".join(f"- {item}" for item in node.get("items", []))
+    if component == "table":
+        columns = node.get("columns", [])
+        if not columns:
+            return ""
+        headers = [str(c.get("header", "")) for c in columns]
+        n_rows = max((len(c.get("cells", [])) for c in columns), default=0)
+        lines = ["| " + " | ".join(headers) + " |",
+                 "| " + " | ".join("---" for _ in headers) + " |"]
+        for i in range(n_rows):
+            cells = [
+                str(c["cells"][i]) if i < len(c.get("cells", [])) else ""
+                for c in columns
+            ]
+            lines.append("| " + " | ".join(cells) + " |")
+        return "\n".join(lines)
+    if component == "image":
+        alt = node.get("alt") or node.get("src") or ""
+        return f"_[image: {alt}]_"
+    # Unregistered/future component — never crash the drain over one bad node.
+    return f"_<unsupported present component {component!r}>_"
+
+
+def _presentation_nodes_to_markdown(nodes: list) -> str:
+    """Serialize a `ResolvedPresentation.nodes` render model to a single Markdown
+    block for chainlit. #2708 P1: this is the chainlit side of the forced #2688
+    present fix — before it, kind="presentation" fell through to the generic branch,
+    which used the (empty) `text` field and dropped the render model in `meta["nodes"]`,
+    so a `present` op was invisible in chainlit despite ok:True."""
+    return "\n\n".join(
+        _present_node_to_markdown(n) for n in nodes if isinstance(n, dict)
+    )
+
+
 def outbox_to_chainlit(msg: OutboxMessage) -> ChainlitPayload | None:
     """Map one OutboxMessage to a Chainlit payload, or None to drop."""
     kind = msg.kind
@@ -173,6 +234,18 @@ def outbox_to_chainlit(msg: OutboxMessage) -> ChainlitPayload | None:
             role="message",
             author=_AUTHOR_TOOL,
             content=_format_tool_call(msg),
+            message_type=MSG_TYPE_SYSTEM,
+        )
+
+    # #2708 P1: a `present` op's render model rides on ``meta["nodes"]`` (the outbox
+    # message's ``text`` is ""), so it MUST be rendered from nodes — the generic
+    # fall-through below would emit empty content (the #2688 chainlit silent-drop bug).
+    if kind == "presentation":
+        meta = msg.meta if isinstance(msg.meta, dict) else {}
+        return ChainlitPayload(
+            role="message",
+            author=_AUTHOR_PRESENT,
+            content=_presentation_nodes_to_markdown(meta.get("nodes", [])),
             message_type=MSG_TYPE_SYSTEM,
         )
 

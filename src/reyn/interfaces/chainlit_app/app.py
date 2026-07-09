@@ -154,6 +154,7 @@ async def _get_or_build_registry() -> "AgentRegistry":
         from reyn.interfaces.cli.invocation_context import InvocationContext
         from reyn.runtime.budget.budget import BudgetTracker
         from reyn.runtime.factory_config import SessionFactoryConfig
+        from reyn.runtime.presentation_consumer import OutboxPresentationConsumer
         from reyn.runtime.profile import AgentProfile
         from reyn.runtime.registry import AgentRegistry
         from reyn.runtime.scoped_session_factory import build_scoped_chat_session
@@ -206,6 +207,13 @@ async def _get_or_build_registry() -> "AgentRegistry":
             # #1827 S3: resolve the agent's topology capability_profile (None/∅ unbound).
             _ctx_perm, _profile_excluded = registry_ref[0].resolved_profile_for(profile.name)
             s = build_scoped_chat_session(
+                # #2708 P1: chainlit is a HUMAN surface — it cannot NA-dodge (a Null sink
+                # is refused for a non-reviewed surface), so it MUST provide a real
+                # outbox-backed consumer. Its outbox drain (adapter.py::outbox_to_chainlit)
+                # now renders the "presentation" nodes to the chainlit UI (the forced
+                # #2688 silent-drop fix); before #2708 it fell through to text="" and the
+                # present output was invisible.
+                presentation_consumer=OutboxPresentationConsumer(),
                 agent_name=profile.name,
                 model=model,
                 resolver=session_cfg.resolver,

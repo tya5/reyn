@@ -58,6 +58,7 @@ from reyn.runtime.limits.limit_handler import (
 )
 from reyn.runtime.outbox import OutboxMessage
 from reyn.runtime.pending_op_view import PendingOpView
+from reyn.runtime.presentation_consumer import OutboxPresentationConsumer
 from reyn.runtime.services import (
     BudgetGateway,
     ChainManager,
@@ -76,7 +77,6 @@ from reyn.runtime.services.task_wake import WAKE_READY_KIND, WAKE_REQUESTER_KIND
 from reyn.runtime.session_buses import (
     AgentRequestBus,
     ChatInterventionBus,
-    OutboxPresentationRenderer,
 )
 from reyn.security.permissions.permissions import PermissionResolver
 from reyn.services.compaction.engine import CompactionEngine
@@ -751,6 +751,15 @@ class Session:
         # (direct/test construction) → an empty registry (byte-identical to pre-PR-C:
         # every named template is "unknown" → generic fallback viewer).
         presentation_registry: "object | None" = None,
+        # #2708 P1: the surface's present-sink CONSUMER. In production every Session is
+        # built via build_scoped_chat_session, which REQUIRES this (no default) — a
+        # frontend cannot silently omit a present sink. None is reachable ONLY by
+        # direct/test construction (forbidden in src/reyn by the #1402 invariant), where
+        # it falls back to the outbox-backed consumer (byte-identical to the pre-#2708
+        # uniform ``OutboxPresentationRenderer(self)`` default). The renderer is obtained
+        # lazily via ``consumer.sink(self)`` (deferred so the outbox sink can bind this
+        # Session, which does not exist when the factory kwarg is passed).
+        presentation_consumer: "object | None" = None,
     ) -> None:
         """
         snapshot_path: optional override for the per-agent snapshot file
@@ -812,6 +821,19 @@ class Session:
         # falls back to its in-memory backend (tests / direct construction).
         self._task_backend = task_backend
         self._task_waker = task_waker  # #1953 slice 7
+        # #2708 P1: the present-sink consumer. In production it is always supplied by
+        # build_scoped_chat_session (required kwarg); a direct/test construction (None)
+        # falls back to the outbox-backed consumer so the per-turn OpContext still wires
+        # an OutboxPresentationRenderer (byte-identical to the removed uniform default).
+        # The renderer is obtained lazily below (``sink(self)``) so it can bind this
+        # Session. No OutboxPresentationRenderer is instantiated here — the AST guard
+        # (test_present_sink_ast_guard_2708) requires the sole construction site to be
+        # OutboxPresentationConsumer.sink().
+        self._presentation_consumer = (
+            presentation_consumer
+            if presentation_consumer is not None
+            else OutboxPresentationConsumer()
+        )
         # #1953 §16 (recursive-request): the task_id this session is currently
         # EXECUTING as a task-as-request, set per-turn from an execute-wake's meta
         # (run_one_iteration). Read by the router op-ctx builders so task.create
@@ -1717,11 +1739,13 @@ class Session:
                 self, run_id=None, actor="chat_router",
                 channel_id=DEFAULT_CHAT_CHANNEL_ID,
             ),
-            # FP-0054 PR-B: give the router OpContext a real PresentationRenderer so a
-            # `present` op reaches the live outbox (→ inline-CUI) instead of PR-A's null
-            # surface. Built per make_router_op_context() call, mirroring the
-            # intervention_bus_factory above.
-            presentation_renderer_factory=lambda: OutboxPresentationRenderer(self),
+            # FP-0054 PR-B / #2708 P1: give the router OpContext a real PresentationRenderer
+            # so a `present` op reaches the surface's sink instead of PR-A's null surface.
+            # Built per make_router_op_context() call, mirroring the intervention_bus_factory
+            # above. The sink is obtained from the surface's declared PresentationConsumer
+            # (orphan-impossible: OutboxPresentationRenderer is constructible ONLY inside
+            # OutboxPresentationConsumer.sink) — bound to THIS Session via sink(self).
+            presentation_renderer_factory=lambda: self._presentation_consumer.sink(self),
             # FP-0037 S2: yaml mtime watch needs the project root to resolve
             # the 3 yaml scope tier paths. None falls back to user-global only.
             project_root=getattr(self._registry, "_project_root", None),
@@ -5617,6 +5641,11 @@ class Session:
                 else None
             ),
             agent_id=self._agent_id,
+            # #2708 P1: this builder serves file/MCP ops (_file_op / MCP), which no
+            # `present` op reaches — so the present sink is EXPLICITLY None (the required
+            # kwarg forces the decision, no silent omission). The visible present path is
+            # RouterHostAdapter.make_router_op_context, which wires the surface consumer's sink.
+            presentation_renderer=None,
             # #2409: forward the media store (the public twin RouterHostAdapter.make_router_op_context
             # already does — session.py:1826). Without it the chat-router MCP path got media_store=None
             # → MCP ImageContent couldn't be saved as a path-ref → a large image was inlined as

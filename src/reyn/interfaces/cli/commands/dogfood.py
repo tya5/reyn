@@ -434,6 +434,7 @@ def _build_live_runner(agent_name: str, *, env_backend=None, ws_base_dir=None, w
     from reyn.mcp.server import send_to_agent_impl
     from reyn.runtime.budget.budget import BudgetTracker
     from reyn.runtime.factory_config import SessionFactoryConfig
+    from reyn.runtime.presentation_consumer import NullPresentationConsumer
     from reyn.runtime.profile import AgentProfile
     from reyn.runtime.registry import AgentRegistry
     from reyn.runtime.scoped_session_factory import build_scoped_chat_session
@@ -478,6 +479,10 @@ def _build_live_runner(agent_name: str, *, env_backend=None, ws_base_dir=None, w
                 _reg.resolved_profile_for(profile.name) if _reg else (None, frozenset())
             )
             s = build_scoped_chat_session(
+                # #2708 P1: the dogfood eval harness is headless with no outbox/present
+                # drain at all — a reviewed NA surface. Null is byte-identical (present
+                # was never rendered by the harness before #2708).
+                presentation_consumer=NullPresentationConsumer("dogfood"),
                 agent_name=profile.name,
                 model=model,
                 resolver=resolver,

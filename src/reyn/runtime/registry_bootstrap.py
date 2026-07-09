@@ -135,6 +135,7 @@ def build_agent_registry_from_project(
     from reyn.config import load_project_context
     from reyn.llm.model_resolver import ModelResolver
     from reyn.runtime.factory_config import SessionFactoryConfig
+    from reyn.runtime.presentation_consumer import OutboxPresentationConsumer
     from reyn.runtime.profile import AgentProfile
     from reyn.runtime.registry import AgentRegistry
     from reyn.runtime.scoped_session_factory import build_scoped_chat_session
@@ -171,6 +172,13 @@ def build_agent_registry_from_project(
     def _session_factory(profile: "AgentProfile"):
         _ctx_perm, _profile_excluded = registry.resolved_profile_for(profile.name)
         s = build_scoped_chat_session(
+            # #2708 P1: the reusable registry base session (reyn pipe run's default
+            # identity + driver spawns). Outbox-backed, byte-identical to the pre-#2708
+            # uniform default: pipe run OVERRIDES the OpContext sink post-hoc with a
+            # self-delivering stdout renderer (pipe.py), and a driver spawn's outbox is
+            # bridged to the parent (#2707 forward) — neither is an orphan. P3 replaces
+            # the #2707 interim with a proper spawn-bridge sink.
+            presentation_consumer=OutboxPresentationConsumer(),
             agent_name=profile.name,
             model=config.model,
             resolver=resolver,
