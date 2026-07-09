@@ -6,7 +6,7 @@ audience: [human, agent]
 
 # Control IR
 
-Control IR is the list of side-effect operations the LLM may emit alongside its artifact. The OS dispatches each op and returns the result for the LLM (or the next phase) to consume.
+Control IR is the list of side-effect operations the LLM may emit. The OS dispatches each op and returns the result for the LLM to consume.
 
 ## Op kinds
 
@@ -18,7 +18,7 @@ Control IR is the list of side-effect operations the LLM may emit alongside its 
 | `delete_file` | Delete a file | `file.write` |
 | `glob_files` | List files matching a glob pattern | `file.read` |
 | `grep_files` | Search file contents by regex | `file.read` |
-| `ask_user` | Pause the phase and ask the user a question | none (always allowed) |
+| `ask_user` | Pause the run and ask the user a question | none (always allowed) |
 | `present` | Route bulk data + a declarative view to the user surface without the data passing through LLM output tokens (fire-and-continue) | Tier 0 (always allowed); `data_ref` read authority == `file.read` |
 | `render_template` | Render a Jinja2 template against structured data into a string (a sandboxed producer — no side effects, no sink) | `template_ref` / `data_ref` read authority == `file.read`; inline-only is pure computation (no gate) |
 | `sandboxed_exec` | Run argv under a `SandboxPolicy` via a `SandboxBackend` (replaces the removed `shell` op) | enforced by backend (`SandboxPolicy`) |
@@ -62,7 +62,7 @@ Every op is a JSON object with a `kind` discriminator:
 }
 ```
 
-The OS validates the op against its kind's schema, executes it, and returns a result to the calling phase.
+The OS validates the op against its kind's schema, executes it, and returns a result to the LLM.
 
 ## File ops (fine-grained)
 
@@ -107,10 +107,10 @@ lines around where `new_string` landed (±3 by default), so the agent can SEE
 **language-agnostic** (pure line slicing), and bounded (capped height). For
 `replace_all` it shows the first changed region; the count is in `replacements`.
 
-### The coarse `file` execution backend (not phase-emittable)
+### The coarse `file` execution backend (not LLM-emittable)
 
-The fine kinds above are the only file ops a phase advertises to (and accepts
-from) the LLM. They are dispatched through the unified ToolRegistry, then build
+The fine kinds above are the only file ops advertised to (and accepted from)
+the LLM. They are dispatched through the unified ToolRegistry, then build
 a coarse `FileIROp` (`{kind: "file", op: ...}`) internally and route to the
 shared `op_runtime/file.py` backend. That coarse `file` kind — dropped from
 `OP_KIND_MODEL_MAP` — is **not** an LLM-emittable Control IR
@@ -121,14 +121,14 @@ kind. It survives only as:
   (`{kind: file, op: ...}`), the chat host file methods, and the `reyn memory`
   CLI.
 
-Those non-phase callers also reach extended sub-ops the fine kinds do not
+Those non-LLM callers also reach extended sub-ops the fine kinds do not
 expose — `mkdir`, `move`, `stat`, and `regenerate_index` (used by `reyn memory`
-and memory-managing skills via the preprocessor / CLI, never as phase Control
-IR).
+and memory-managing skills via the preprocessor / CLI, never as an LLM-emitted
+Control IR op).
 
 ## `ask_user`
 
-Pauses the phase and asks the user. The OS prints the question, reads stdin, and re-runs the *same phase* with the answer merged into the input as a `user_message` artifact. Visit count does not increment.
+Pauses the run and asks the user. The OS routes the question through the intervention bus (`ChatInterventionBus` for the inline CUI, `StdinInterventionBus` for CLI) and resumes once the user answers.
 
 ```json
 {
@@ -771,7 +771,7 @@ Events: `index_dropped` (`source`, `chunks_dropped`).
 
 ## `judge_output`
 
-LLM-based output scorer for in-phase evaluation loops. Resolves a `target` dot-path to a value, calls an LLM with the caller-supplied `rubric`, and returns a score (0.0–1.0) plus a pass/fail flag.
+LLM-based output scorer for evaluation loops. Resolves a `target` dot-path to a value, calls an LLM with the caller-supplied `rubric`, and returns a score (0.0–1.0) plus a pass/fail flag.
 
 ```json
 {
@@ -787,10 +787,7 @@ Fields:
 - `target` (str, required): Dot-path to the value being scored (e.g. `"artifact.data.summary"`). Resolved against the current workspace artifact.
 - `rubric` (str, required): LLM prompt body. Skill author writes the evaluation criteria. The OS never interprets this content (P7).
 - `threshold` (float, optional, default `0.8`): Passing score in `[0.0, 1.0]`.
-- `on_fail` (`"transition" | "abort" | "continue"`, optional, default `"transition"`):
-  - `"transition"`: LLM picks next phase (existing decision flow).
-  - `"abort"`: Abort skill execution.
-  - `"continue"`: Score recorded only; no flow change.
+- `on_fail` (`"transition" | "abort" | "continue"`, optional, default `"transition"`): recorded in the result for the caller to act on. The op handler itself does not branch on this value — it resolves `target`, scores it, and returns; interpreting `on_fail` (e.g. aborting a run) is the caller's responsibility.
 - `model` (str | null, optional): Model class override (e.g. `"strong"`). Defaults to the skill's current model.
 
 Returns: `{"kind": "judge_output", "score": float, "passed": bool, "reason": str, "threshold": float, "on_fail": str}`
@@ -982,9 +979,8 @@ evaluation) — the residual non-terminal-stuck backstop.
 
 ## Where ops are exposed to the LLM
 
-The OS injects available ops into every context frame as `available_control_ops`. Each entry includes a `kind`, a one-line description, and a worked example. The LLM picks ops by matching its intent to descriptions — phase markdown MUST NOT describe op syntax (P8).
+Each op kind's schema and description are held on a `ToolDefinition` (per capability) in the unified `ToolRegistry`. `render_for_router()` renders these into the OpenAI-style `tools[]` array `build_tools()` assembles for the chat router — the LLM picks ops by matching its intent to those descriptions. See [LLM invocation surfaces](../../concepts/architecture/llm-invocation-surfaces.md) for the full mechanism.
 
 ## See also
 
 - [events.md](events.md) — events emitted per op kind
-- Concepts: principles P8 (principles doc removed)

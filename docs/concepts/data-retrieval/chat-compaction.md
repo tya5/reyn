@@ -87,8 +87,8 @@ IR op, available to the LLM when the context-size signal fires).
 
 ## Cost observability
 
-The `/budget` command shows token and cost usage broken down **by purpose**:
-`main`, `phase`, `compaction`, `judge`, and agent-attributed buckets. This lets
+The `/budget` command shows token and cost usage broken down **by purpose**
+(`compaction`, `judge`, `dogfood`) plus agent-attributed buckets. This lets
 operators see how much of their token spend the compaction engine is consuming
 across a session.
 
