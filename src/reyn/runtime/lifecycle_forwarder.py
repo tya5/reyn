@@ -29,9 +29,21 @@ from reyn.schemas.models import Event
 class ChatLifecycleForwarder:
     """Callable subscriber that bridges session-level events into the outbox."""
 
-    def __init__(self, outbox: asyncio.Queue, registry: "Any | None" = None) -> None:
+    def __init__(
+        self,
+        outbox: asyncio.Queue,
+        registry: "Any | None" = None,
+        events: "Any | None" = None,
+    ) -> None:
         self.outbox = outbox
         self._registry = registry
+        # #2708 P3.1 Half-B: this forwarder's OWN session EventLog (the parent/caller
+        # audit log). Used by the driver→parent bridge to re-emit a driver-session's
+        # ``presented`` event onto the parent's log with ``bridged_from=<driver_sid>``,
+        # so the present audit trail is not split across the driver and parent sessions.
+        # None (pre-P3.1 callers / tests) simply skips the audit-forward (visible-output
+        # bridge is independent, established by consumer inheritance, not here).
+        self._events = events
         # #2570: run_id -> (driver EventLog, listener fn, invoking tool name).
         # Tracks bridge-subscriptions to a pipeline driver-session's own
         # EventLog for the duration of one sync-attached run_pipeline call.
@@ -331,6 +343,29 @@ class ChatLifecycleForwarder:
             return
 
         def _on_driver_event(event: Event) -> None:
+            if event.type == "presented":
+                # #2708 P3.1 Half-B: bridge the driver's ``presented`` P6 audit event
+                # onto the PARENT's EventLog. Deliberately NOT run_id-filtered (unlike
+                # the pipeline_step_* path below), and this is SAFE — not the mis-fix of
+                # dropping a shared filter that guards concurrency:
+                #   (a) a pipeline-step present's ``run_id`` is structurally None, never
+                #       the pipeline rid — present.py:116 builds its OpContext via
+                #       ``ctx.router_state.op_context_factory()`` (the driver session's
+                #       ``make_router_op_context``, session.py:1739, run_id=None), and
+                #       op_runtime/present.py:132 emits ``presented`` with that run_id.
+                #       A run_id-equality filter would therefore SILENTLY DROP every
+                #       bridged present (the architect's flagged failure mode).
+                #   (b) there is no cross-run leak to guard against here: each pipeline
+                #       run spawns its OWN driver session (session_api._spawn_pipeline_
+                #       driver_session → a fresh spawn_session_recorded), so this
+                #       per-driver-EventLog subscription — added on attach, removed on
+                #       tool completion — sees exactly ONE run's presents. The driver
+                #       session runs only the pipeline (a PipelineExecutorDriver loop, no
+                #       interactive chat), so no unrelated present rides this log.
+                # (Making ``presented.run_id`` carry the rid = a larger present-op change,
+                # architect Q1-deferred; this mechanism-level bridge is the P3.1 scope.)
+                self._forward_presented_event(event, driver_sid=driver_sid, run_id=run_id)
+                return
             if event.type not in ("pipeline_step_started", "pipeline_step_completed"):
                 return
             if event.data.get("run_id") != run_id:
@@ -357,6 +392,28 @@ class ChatLifecycleForwarder:
             self.outbox.put_nowait(OutboxMessage(kind="status", text=text, meta=meta))
         except asyncio.QueueFull:
             pass
+
+    def _forward_presented_event(
+        self, event: Event, *, driver_sid: str, run_id: str
+    ) -> None:
+        """#2708 P3.1 Half-B: re-emit a driver-session's ``presented`` P6 event onto the
+        PARENT's EventLog so the present audit trail is not split across sessions.
+
+        The driver's OWN log legitimately keeps its native copy; this ADDS a copy to the
+        parent's log (which previously had none) annotated with provenance so replay/audit
+        tooling can tell a bridged present from a native one and not double-count:
+        ``bridged_from`` = the driver sid, ``pipeline_run_id`` = the attached run's id
+        (distinct from the event's own ``run_id``, which is the chat-router ``None``).
+
+        No-op when the forwarder was built without an ``events`` handle (pre-P3.1 callers
+        / tests). The parent forwarder defines no ``on_presented`` handler, so re-emitting
+        here does not recurse."""
+        if self._events is None:
+            return
+        payload = dict(event.data)
+        payload["bridged_from"] = driver_sid
+        payload.setdefault("pipeline_run_id", run_id)
+        self._events.emit("presented", **payload)
 
     def _maybe_unsubscribe_pipeline(self, tool: "str | None", run_id: "str | None") -> None:
         if not self._pipeline_subs:

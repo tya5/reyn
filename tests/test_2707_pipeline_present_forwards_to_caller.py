@@ -21,10 +21,14 @@ NOT merely on the driver-session's isolated outbox. Real
 collaborator mocks; asserts the presented CONTENT (a marker substring) on the
 public outbox surface, never exact Rich formatting/whitespace (a Tier-4 pin).
 
-# Phase0 interim for #2707; removed/subsumed by P3 spawn-bundle inheritance
-(#2708 Surface Capability Contract) — when spawn inherits the caller's
-capability bundle (presentation sink included), the outbox-forward this pins is
-gone and this test moves with it.
+# #2708 P3.1 UPDATE — the #2707 interim outbox-forward is now REMOVED; the driver's
+present reaches the caller by CONSTRUCTION (the driver spawns with a parent-bound
+``SpawnBridgePresentationConsumer`` — its present sink IS the caller's sink). This test
+stays GREEN via that new mechanism and, because it asserts EXACTLY ONE ``"presentation"``
+on the caller outbox, now doubles as the single-delivery guard: the forward + the bridge
+together would double-deliver, so a resurrected forward makes the ``(presented,) = ...``
+unpack fail. The mechanism changed (forward → inherited sink); the reachable-for-purpose
+outcome asserted here did not.
 """
 from __future__ import annotations
 
@@ -70,10 +74,15 @@ def _agent_registry(tmp_path: Path, state_log: "StateLog") -> AgentRegistry:
     own outbox), so a driver-session present renders exactly as in production."""
     holder: dict = {}
 
-    def _factory(profile) -> Session:
+    def _factory(profile, *, presentation_consumer=None) -> Session:
+        # #2708 P3.1: the attached driver spawn threads a parent-bound
+        # SpawnBridgePresentationConsumer through the factory; accept + forward it so the
+        # driver's present renders to the PARENT's outbox by construction (None on the
+        # non-driver caller session = Session's default self-bound outbox consumer).
         return Session(
             agent_name=profile.name, state_log=state_log,
             registry=holder.get("reg"), non_interactive=True,
+            presentation_consumer=presentation_consumer,
         )
 
     reg = AgentRegistry(project_root=tmp_path, session_factory=_factory, state_log=state_log)
@@ -103,13 +112,13 @@ async def test_attached_pipeline_present_reaches_parent_caller_outbox(
     tmp_path: Path,
 ) -> None:
     """Tier 2: a sync-attached ``run_pipeline_attached`` of a ``tool: present``
-    step forwards the driver-session's ``"presentation"`` render onto the CALLER
+    step lands the driver-session's ``"presentation"`` render on the CALLER
     session's own outbox (the parent chat surface the REPL/CUI drains), carrying
-    the presented marker. RED on origin/main — the driver's presentation is
-    drained by the attached pump and then discarded (only the terminal marker is
-    read back), so the caller outbox has no ``"presentation"`` message and the
-    marker never reaches the parent chat. GREEN once the attached pump forwards
-    the driver's user-reaching outbox messages to the caller."""
+    the presented marker — EXACTLY ONCE. #2708 P3.1: this now holds by construction
+    (the driver inherits the parent's present sink via ``SpawnBridgePresentationConsumer``),
+    not by the removed #2707 drain-and-copy forward. The single ``"presentation"``
+    (``(presented,) = ...`` unpack) is the single-delivery guard: bridge + a resurrected
+    forward would double-deliver."""
     state_log = StateLog(tmp_path / ".reyn" / "wal.jsonl")
     reg = _agent_registry(tmp_path, state_log)
     caller = reg.get_or_load("worker")  # (worker, main) = the reply/parent-chat address

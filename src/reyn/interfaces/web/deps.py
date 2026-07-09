@@ -300,7 +300,7 @@ def _get_registry():
             os.environ.get("REYN_WEB_EAGER_EMBEDDING_BUILD", "").strip() == "1"
         )
 
-        def _session_factory(profile: AgentProfile) -> Session:
+        def _session_factory(profile: AgentProfile, *, presentation_consumer=None) -> Session:
             registry = registry_ref[0]
             _scoped = get_cli_scoped_overrides()  # #1401 CLI-scoped capabilities
             # #1827 S3: resolve the agent's topology capability_profile (None/∅ unbound).
@@ -310,7 +310,8 @@ def _get_registry():
                 # (its external outbox interceptor routes only kind="agent",
                 # external_routing.py:333) — a reviewed NA surface. Null is byte-identical
                 # (present was invisible + not externally routed before #2708).
-                presentation_consumer=NullPresentationConsumer("web"),
+                # #2708 P3.1: a spawn override (attached pipeline driver) wins when given.
+                presentation_consumer=presentation_consumer or NullPresentationConsumer("web"),
                 agent_name=profile.name,
                 model=model,
                 resolver=resolver,

@@ -594,12 +594,14 @@ async def test_disk_loaded_pipeline_invokable_through_full_live_loop(
     state_log = StateLog(tmp_path / ".reyn" / "state.wal")
     holder: dict = {}
 
-    def _factory(profile) -> Session:
+    def _factory(profile, *, presentation_consumer=None) -> Session:
+        # #2708 P3.1: accept + forward the attached driver spawn's present-sink override.
         return Session(
             agent_name=profile.name, state_log=state_log,
             registry=holder.get("reg"), non_interactive=True,
             chat_tool_use_scheme="universal-category",
             pipeline_registry=loaded,  # the config-loaded registry, threaded as the factory would
+            presentation_consumer=presentation_consumer,
         )
 
     reg = AgentRegistry(project_root=tmp_path, session_factory=_factory, state_log=state_log)

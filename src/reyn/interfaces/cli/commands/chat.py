@@ -364,7 +364,7 @@ def run(args: argparse.Namespace) -> None:
         interactive=sys.stdin.isatty(),
     )
 
-    def _session_factory(profile: AgentProfile):
+    def _session_factory(profile: AgentProfile, *, presentation_consumer=None):
         # Captured CLI defaults — registry doesn't need to know them.
         # #1827 S3: resolve the agent's topology capability_profile → contextual
         # narrowing (enforcement) + view exclusion. (None, ∅) when unbound = byte-identical.
@@ -373,7 +373,9 @@ def run(args: argparse.Namespace) -> None:
             # #2708 P1: chat-CLI (inline/plain --cui / run-once) — the InlineChatRenderer
             # drains the outbox "presentation" message and renders it (renderer.py:148),
             # so the outbox-backed consumer is byte-identical to the pre-#2708 default.
-            presentation_consumer=OutboxPresentationConsumer(),
+            # #2708 P3.1: a spawn override (the attached pipeline driver's parent-bound
+            # SpawnBridgePresentationConsumer) wins when supplied; None = this default.
+            presentation_consumer=presentation_consumer or OutboxPresentationConsumer(),
             agent_name=profile.name,
             model=model,
             resolver=session_cfg.resolver,
