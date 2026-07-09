@@ -203,7 +203,7 @@ async def _get_or_build_registry() -> "AgentRegistry":
 
         registry_ref: list = []
 
-        def _session_factory(profile: AgentProfile) -> Session:
+        def _session_factory(profile: AgentProfile, *, presentation_consumer=None) -> Session:
             # #1827 S3: resolve the agent's topology capability_profile (None/∅ unbound).
             _ctx_perm, _profile_excluded = registry_ref[0].resolved_profile_for(profile.name)
             s = build_scoped_chat_session(
@@ -213,7 +213,8 @@ async def _get_or_build_registry() -> "AgentRegistry":
                 # now renders the "presentation" nodes to the chainlit UI (the forced
                 # #2688 silent-drop fix); before #2708 it fell through to text="" and the
                 # present output was invisible.
-                presentation_consumer=OutboxPresentationConsumer(),
+                # #2708 P3.1: a spawn override (attached pipeline driver) wins when given.
+                presentation_consumer=presentation_consumer or OutboxPresentationConsumer(),
                 agent_name=profile.name,
                 model=model,
                 resolver=session_cfg.resolver,

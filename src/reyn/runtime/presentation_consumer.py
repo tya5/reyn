@@ -84,6 +84,41 @@ class OutboxPresentationConsumer:
         return OutboxPresentationRenderer(session)
 
 
+class SpawnBridgePresentationConsumer:
+    """A spawned/driver session's presentation consumer that DELEGATES to the PARENT's
+    consumer bound to the PARENT session — the child's `present` output reaches the
+    parent's surface *by construction* (#2708 P3.1).
+
+    A chat-invoked pipeline runs in a spawned driver-session; a `present` step in it
+    would otherwise render through the driver's OWN outbox sink, isolated from the parent
+    chat (the #2688 orphan class). This consumer, wired ONLY on the attached driver-spawn
+    path (`session_api._spawn_pipeline_driver_session`), makes the driver's present sink
+    resolve to the PARENT session's sink instead: `sink(child)` ignores the child and
+    returns `parent_consumer.sink(parent_session)`, so the render lands on the parent's
+    outbox exactly as a chat-native present would.
+
+    It STRUCTURALLY REPLACES the #2707 interim per-message outbox forward
+    (`session_api.py::run_pipeline_attached`): with the sink inherited, the parent receives
+    the present by construction (single delivery), not by a post-hoc copy of the driver's
+    drained outbox. It constructs NO `OutboxPresentationRenderer` itself (it delegates), so
+    the #2708 AST guard (`tests/test_present_sink_ast_guard_2708.py`) — which pins
+    `OutboxPresentationConsumer.sink` as the SOLE renderer construction site — is
+    unaffected."""
+
+    def __init__(
+        self, parent_consumer: "PresentationConsumer", parent_session: "Session"
+    ) -> None:
+        self._parent_consumer = parent_consumer
+        self._parent_session = parent_session
+
+    def sink(self, session: "Session") -> "PresentationRenderer":
+        # The child `session` is intentionally ignored: bind to the PARENT so render()
+        # writes to the parent's outbox (or, if the parent is itself a driver, recursively
+        # up; or a NullPresentationSink if the parent is an NA surface — inherited for
+        # free by delegating to the parent's own consumer).
+        return self._parent_consumer.sink(self._parent_session)
+
+
 class NullPresentationSink:
     """`PresentationRenderer` (`core/present/renderer.py`) for a surface with no human
     presentation drain: `render` is a documented no-op. Obtainable ONLY through
@@ -129,5 +164,6 @@ __all__ = [
     "NullPresentationSink",
     "OutboxPresentationConsumer",
     "PresentationConsumer",
+    "SpawnBridgePresentationConsumer",
     "_NA_PRESENTATION_SURFACES",
 ]

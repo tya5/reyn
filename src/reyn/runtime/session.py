@@ -1459,7 +1459,13 @@ class Session:
         # conv pane via OutboxMessage(kind="system").
         from reyn.runtime.lifecycle_forwarder import ChatLifecycleForwarder
         self._chat_events.add_subscriber(
-            ChatLifecycleForwarder(self.outbox, registry=self._registry)
+            # #2708 P3.1 Half-B: give the forwarder THIS session's own EventLog so its
+            # driver→parent bridge (on_pipeline_run_attached) can re-emit a driver
+            # ``presented`` audit event onto the PARENT's log (bridged_from=<driver_sid>),
+            # closing the split audit trail that the visible-output bridge (Half-A) leaves.
+            ChatLifecycleForwarder(
+                self.outbox, registry=self._registry, events=self._chat_events
+            )
         )
         # #398 v4 emitter family — generic events-log subscriber that
         # converts known op-emitted events (= mcp_server_installed,
@@ -2220,6 +2226,15 @@ class Session:
         construction and swapped by ``_reapply_presentations`` on hot-reload. Tests
         verify a registered template is live via this surface."""
         return self._presentation_registry
+
+    @property
+    def presentation_consumer(self):
+        """Read-only accessor for this session's present-sink ``PresentationConsumer``
+        (#2708 P1 stores it; P3.1 reads it here). The spawn-bridge uses this to bind a
+        driver-session's present output to the PARENT: an attached pipeline driver spawn
+        wraps ``parent.presentation_consumer`` in a ``SpawnBridgePresentationConsumer`` so
+        the driver's present reaches the parent surface by construction."""
+        return self._presentation_consumer
 
     @property
     def interventions(self) -> "InterventionRegistry":

@@ -63,10 +63,12 @@ def _agent_registry(
     test_pipeline_r5_agent_step_executor.py's ``_registry`` helper)."""
     holder: dict = {}
 
-    def _factory(profile) -> Session:
+    def _factory(profile, *, presentation_consumer=None) -> Session:
+        # #2708 P3.1: accept + forward the attached driver spawn's present-sink override.
         s = Session(
             agent_name=profile.name, state_log=state_log,
             registry=holder.get("reg"), non_interactive=True,
+            presentation_consumer=presentation_consumer,
         )
         if scripted is not None:
             s._loop_driver._loop_observer = (

@@ -63,15 +63,18 @@ prefix and differing only in how the caller drives + collects:
     ``EventLog`` (see the function docstring) — the driver-session's live
     events are on a DIFFERENT EventLog than the one the human-attached caller
     (the TUI) watches, so this marker is the signal that bridges the two.
-    #2707: a ``present`` step renders through the driver-session's OWN
-    ``OutboxPresentationRenderer`` onto the DRIVER's outbox — a user-reaching
-    ``"presentation"`` message that is NOT an event, so it does not ride the
-    #2570 eventlog bridge. Parallel to that bridge, ``run_pipeline_attached``
-    forwards the driver's drained ``"presentation"`` outbox messages onto the
-    CALLER's own outbox (the same queue+kind a chat-native present reaches), so
-    a chat-invoked pipeline's present actually shows in the parent chat. This
-    forward is a Phase0 interim (removed/subsumed by P3 spawn-bundle inheritance,
-    #2708 Surface Capability Contract).
+    #2708 P3.1: a ``present`` step's OUTPUT (Half-A) reaches the parent chat surface
+    BY CONSTRUCTION — the attached driver-session is spawned with a
+    ``SpawnBridgePresentationConsumer`` (``runtime/presentation_consumer.py``) bound to the
+    PARENT session, so its present sink IS the parent's sink (structurally replacing the
+    #2707 interim outbox forward, which is removed — keeping both would double-deliver). Its
+    AUDIT event (Half-B) is bridged separately: ``presented`` is a driver-EventLog P6 event
+    (not a ``"presentation"`` outbox message), so it rides the same #2570 driver→parent
+    EventLog bridge as ``pipeline_step_*`` — extended (``lifecycle_forwarder``) to re-emit
+    ``presented`` onto the PARENT's log with ``bridged_from=<driver_sid>`` provenance.
+    Together: both the visible present and its audit trail reach the parent, closing the
+    driver-isolation split. (Detached/async present is out of P3.1 scope — no attached
+    parent surface exists; tracked as the P3 spawn-routing completeness gate.)
 """
 from __future__ import annotations
 
@@ -246,6 +249,7 @@ async def _spawn_pipeline_driver_session(
     notify_reply: bool,
     run_id: "str | None" = None,
     schema_registry: "SchemaRegistry | None" = None,
+    attached_parent_session: "Any | None" = None,
 ) -> "tuple[Any, str, str]":
     """Spawn + arm a pipeline driver-session, up to (but NOT including) the
     run/resume nudge — the shared launch prefix of the async (``start_pipeline_run``)
@@ -275,7 +279,16 @@ async def _spawn_pipeline_driver_session(
          caller collects the result in-band via ``read_result``).
 
     Returns ``(driver_session, run_id, driver_sid)``; the caller drives the run
-    (nudge + detached pump, or attached ``MessageBus.request``)."""
+    (nudge + detached pump, or attached ``MessageBus.request``).
+
+    #2708 P3.1 (Half-A, visible output): when ``attached_parent_session`` is given (the
+    ATTACHED path only — ``run_pipeline_attached`` passes the live caller session), the
+    driver-session is spawned with a ``SpawnBridgePresentationConsumer`` bound to that
+    parent, so a ``present`` step's render reaches the PARENT's surface by construction
+    (structurally replacing the #2707 interim outbox forward). The DETACHED path
+    (``start_pipeline_run``) passes ``None`` — there is no live attached surface, so the
+    driver keeps the default self-bound consumer (its present is audit-only in its own
+    log, correct with no attached parent)."""
     from reyn.core.events.config_recovery import reyn_root
     from reyn.core.pipeline.serde import pipeline_to_dict
     from reyn.core.pipeline.work_order import (
@@ -295,7 +308,20 @@ async def _spawn_pipeline_driver_session(
     # so the embedded pipeline name is sanitized to one safe path component.
     safe_name = re.sub(r"[^A-Za-z0-9_.-]", "_", pipeline_name) or "pipeline"
     rid = run_id or f"pipeline-{safe_name}-{uuid.uuid4().hex}"
-    sid = await registry.spawn_session_recorded(reply_to_agent, mode="persistent")
+    # #2708 P3.1 Half-A: on the attached path, bind the driver's present sink to the
+    # PARENT's consumer so its render reaches the parent surface by construction. Detached
+    # spawns pass None → the default self-bound outbox consumer (byte-identical).
+    bridge_consumer: "Any | None" = None
+    if attached_parent_session is not None:
+        from reyn.runtime.presentation_consumer import SpawnBridgePresentationConsumer
+
+        bridge_consumer = SpawnBridgePresentationConsumer(
+            parent_consumer=attached_parent_session.presentation_consumer,
+            parent_session=attached_parent_session,
+        )
+    sid = await registry.spawn_session_recorded(
+        reply_to_agent, mode="persistent", presentation_consumer=bridge_consumer,
+    )
     work_order = PipelineWorkOrder(
         run_id=rid,
         pipeline_name=pipeline_name,
@@ -452,6 +478,15 @@ async def run_pipeline_attached(
     from reyn.core.pipeline.work_order import pipeline_run_dir, read_result
     from reyn.runtime.message_bus import MessageBus
 
+    # #2708 P3.1 Half-A: resolve the live caller (parent) session BEFORE the spawn so the
+    # driver inherits its present sink by construction (the ``SpawnBridgePresentationConsumer``
+    # is built inside ``_spawn_pipeline_driver_session`` from this parent). This is the SAME
+    # (agent, sid) live Session the #2588 cancel-bridge resolves below — resolve it once and
+    # reuse. None (should not happen on the attached path — the caller is live) → no bridge:
+    # the driver keeps its default self-bound consumer (degrades to pre-fix isolation, never
+    # blocks the run).
+    caller_session = registry.get_session(reply_to_agent, reply_to_sid)
+
     session, rid, sid = await _spawn_pipeline_driver_session(
         registry,
         pipeline=pipeline,
@@ -463,6 +498,7 @@ async def run_pipeline_attached(
         notify_reply=False,
         run_id=run_id,
         schema_registry=schema_registry,
+        attached_parent_session=caller_session,
     )
     if caller_events is not None:
         caller_events.emit(
@@ -487,7 +523,6 @@ async def run_pipeline_attached(
     # caller is live), skip the bridge (degrades to the pre-fix behavior, never
     # blocks the run).
     driver = getattr(session, "_loop_driver", None)
-    caller_session = registry.get_session(reply_to_agent, reply_to_sid)
     unregister_cancel: "Any | None" = None
     if caller_session is not None and driver is not None:
         register = getattr(caller_session, "register_cancel_forward", None)
@@ -496,7 +531,11 @@ async def run_pipeline_attached(
 
     bus = MessageBus()
     try:
-        drained = await bus.request(
+        # #2708 P3.1: the drained outbox is no longer inspected for a ``"presentation"``
+        # message to forward (that #2707 interim is removed — present now rides the
+        # inherited parent sink, see below). The request is still awaited for pump
+        # quiescence; its return value is intentionally unused.
+        await bus.request(
             session,
             kind="user",
             payload={"text": "", "chain_id": uuid.uuid4().hex},  # the D案 run nudge
@@ -507,36 +546,13 @@ async def run_pipeline_attached(
         if unregister_cancel is not None:
             unregister_cancel()
 
-    # Phase0 interim for #2707; removed/subsumed by P3 spawn-bundle inheritance
-    # (#2708 Surface Capability Contract). Kept as a LOCALIZED bridge — a plain
-    # "the driver-session's presentation reaches the parent's presentation
-    # consumer" forward, not entangled with any permanent machinery — so P3 can
-    # remove it wholesale once spawn inherits the caller's capability bundle
-    # (presentation sink included).
-    #
-    # #2707 (part of the #2688 present-sink sweep): a `present` step inside the
-    # driver-session renders through the driver's OWN
-    # ``OutboxPresentationRenderer`` (session_buses.py) → the DRIVER session's
-    # outbox as a ``"presentation"`` ``OutboxMessage``. ``MessageBus.request``
-    # above DRAINS that outbox (``drained``) as part of quiescence, but the
-    # sync-attached result contract only reads the terminal ``read_result``
-    # marker — so the drained presentation would be silently discarded and the
-    # attached caller's chat surface never shows it (present's ack is ``ok:True``
-    # regardless). #2570's driver→caller bridge carries pipeline_step_* EVENTS
-    # via the caller's EventLog; present is NOT an event, so it does not ride
-    # that bridge. Parallel to it, forward the driver's user-reaching outbox
-    # messages (the ``"presentation"`` kind) onto the CALLER's own outbox — the
-    # SAME queue+kind a chat-native present reaches (``OutboxPresentationRenderer``
-    # → ``session.outbox`` → the REPL/CUI presentation renderer), so the parent
-    # chat renders it identically. Additive: the present op / renderer / guard
-    # are untouched. Best-effort: an unresolvable caller session (should not
-    # happen on the attached path) skips the forward, degrading to the pre-fix
-    # behavior rather than blocking the run.
-    if caller_session is not None:
-        for msg in drained:
-            if msg.kind == "presentation":
-                caller_session.outbox.put_nowait(msg)
-
+    # #2707 interim REMOVED here (#2708 P3.1): the driver-session's ``present`` no longer
+    # renders to the driver's OWN outbox to be forwarded post-hoc. Half-A binds the driver's
+    # present sink to the PARENT's consumer at spawn (``SpawnBridgePresentationConsumer``,
+    # via ``attached_parent_session`` above), so a ``present`` step reaches the parent chat
+    # surface BY CONSTRUCTION — exactly once. Keeping the old drain-and-copy forward here
+    # alongside the bridge would DOUBLE-deliver the presentation, so it is deleted, not
+    # migrated.
     marker = read_result(run_dir)
     if marker is not None:
         return {

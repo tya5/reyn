@@ -395,13 +395,14 @@ def run_serve(args: argparse.Namespace) -> None:
 
     project_context = load_project_context(session_cfg.config, project_root)
 
-    def _session_factory(profile: AgentProfile):
+    def _session_factory(profile: AgentProfile, *, presentation_consumer=None):
         # #1827 S3: resolve the agent's topology capability_profile (None/∅ unbound).
         _ctx_perm, _profile_excluded = registry.resolved_profile_for(profile.name)
         s = build_scoped_chat_session(
             # #2708 P1: stdio-MCP is a history-harvest surface with no live present drain
             # — a reviewed NA surface. Null is byte-identical (present was invisible before).
-            presentation_consumer=NullPresentationConsumer("mcp"),
+            # #2708 P3.1: a spawn override (attached pipeline driver) wins when given.
+            presentation_consumer=presentation_consumer or NullPresentationConsumer("mcp"),
             agent_name=profile.name,
             model=model,
             resolver=session_cfg.resolver,
