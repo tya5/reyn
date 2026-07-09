@@ -414,12 +414,12 @@ _MORE_SUB_CHIP_SPECS = [
 _CHIP_SPECS = [
     ChipSpec("model", "model", lambda s: str(s["model"]), _model_expansion,
              value_color=_CC_ACCENT),
-    ChipSpec("cost",  "cost",  lambda s: f"${s['cost_agent']:.4f}", _cost_expansion,
-             value_color=_CC_DONE),
     ChipSpec("agent", "agent", lambda s: str(s["attached_name"] or "—"), _agent_expansion,
              value_color=_CC_COOL),
     ChipSpec("task",  "task",  lambda s: str(s.get("task_count", 0)), _task_expansion,
              value_color=_CC_WARN),
+    ChipSpec("cost",  "cost",  lambda s: f"${s['cost_agent']:.4f}", _cost_expansion,
+             value_color=_CC_DONE),
     ChipSpec("ctx",   "ctx",   _ctx_pct, _ctx_expansion,
              value_color=_CC_COOL),
     # "more" has no `expansion` — Enter on it opens the level-2 sub-bar
