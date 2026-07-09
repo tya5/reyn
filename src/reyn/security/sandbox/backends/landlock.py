@@ -27,7 +27,7 @@ import platform
 import signal
 import subprocess
 
-from .._subprocess_io import communicate_capped
+from .._subprocess_io import communicate_capped, kill_process_tree
 from ..backend import SandboxResult, WrappedCommand
 from ..policy import SandboxPolicy
 
@@ -316,7 +316,7 @@ class LandlockBackend:
 
         # #1470: cancel-aware path — Popen in executor + asyncio.wait race.
         # ⚠ Linux-only; logic mirrors SeatbeltBackend (verified on macOS) — the
-        # cancel block + `_kill_proc_group` (SIGTERM-pg → SIGKILL grace) are a
+        # cancel block + `kill_process_tree` (SIGTERM-pg → SIGKILL grace) are a
         # faithful mirror (code-inspected, #1527). LIVE-confirmed by
         # ``tests/test_subprocess_cancel_1470.py::test_landlock_cancel_kills_subprocess``
         # when run on a Linux 5.13+ host with the landlock LSM (skipif-gated; the
@@ -359,7 +359,7 @@ class LandlockBackend:
         )
 
         if cancel_task in done:
-            await _kill_proc_group(proc, loop)
+            await kill_process_tree(proc)
             cancel_task.cancel()
             try:
                 stdout_b, stderr_b, _trunc = await asyncio.wait_for(
@@ -376,7 +376,7 @@ class LandlockBackend:
             )
         elif not done:
             cancel_task.cancel()
-            await _kill_proc_group(proc, loop)
+            await kill_process_tree(proc)
             try:
                 stdout_b, stderr_b, _trunc = await asyncio.wait_for(
                     asyncio.shield(comm_future), timeout=3.0,
@@ -399,22 +399,3 @@ class LandlockBackend:
                 stderr=stderr_b or b"",
                 truncated=_trunc,
             )
-
-
-async def _kill_proc_group(
-    proc: subprocess.Popen, loop: asyncio.AbstractEventLoop, grace_seconds: float = 2.0
-) -> None:
-    """SIGTERM the process group, then SIGKILL after grace_seconds if still alive."""
-    try:
-        os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
-    except (ProcessLookupError, OSError):
-        return
-    try:
-        await asyncio.wait_for(
-            loop.run_in_executor(None, proc.wait), timeout=grace_seconds,
-        )
-    except (asyncio.TimeoutError, Exception):
-        try:
-            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
-        except (ProcessLookupError, OSError):
-            pass

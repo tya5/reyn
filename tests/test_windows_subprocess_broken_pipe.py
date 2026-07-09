@@ -7,8 +7,9 @@ discard past the cap so the child never blocks, ``TimeoutExpired`` carrying part
 reader is cross-platform, so parity is asserted DIRECTLY on the dev env. The real-Windows check
 (the actual broken-pipe gone) is the OWNER'S real-env gate; it is NOT faked with importorskip.
 
-Also: ``_kill_proc_group`` falls back to ``proc.terminate()``/``kill()`` when ``os.killpg`` is
-absent (Windows).
+Also: ``kill_process_tree`` (the shared cancel/timeout reaper) falls back to the Windows tree-kill
+path when ``os.killpg`` is absent. Deep tree-kill coverage lives in
+``test_windows_kill_tree_2292_2715.py``.
 """
 from __future__ import annotations
 
@@ -125,26 +126,27 @@ def test_dispatch_posix_keeps_selectors(monkeypatch):
     assert called.get("selectors"), "POSIX MUST keep the selectors path"
 
 
-# ── _kill_proc_group: killpg (POSIX) vs terminate/kill (no-killpg / Windows) ──────────────────
+# ── kill_process_tree: killpg (POSIX) vs terminate/tree-kill (no-killpg / Windows) ────────────
 
 
 @pytest.mark.asyncio
-async def test_kill_proc_group_posix_uses_killpg():
+async def test_kill_process_tree_posix_uses_killpg():
     """Tier 2: with os.killpg present (POSIX), the process is killed via the group."""
-    from reyn.security.sandbox.noop_backend import _kill_proc_group
+    from reyn.security.sandbox import kill_process_tree
     p = subprocess.Popen(
         [sys.executable, "-c", "import time; time.sleep(30)"], start_new_session=True,
     )
-    await _kill_proc_group(p, grace_seconds=1.0)
+    await kill_process_tree(p, grace_seconds=1.0)
     assert p.poll() is not None, "the process must be killed via killpg"
 
 
 @pytest.mark.asyncio
-async def test_kill_proc_group_without_killpg_falls_back_to_terminate(monkeypatch):
-    """Tier 2: when os.killpg is absent (Windows), fall back to proc.terminate()/kill(). RED if the
-    guard weren't present (os.killpg would AttributeError and the process would never be killed)."""
-    from reyn.security.sandbox import noop_backend
-    monkeypatch.delattr(noop_backend.os, "killpg", raising=False)
+async def test_kill_process_tree_without_killpg_falls_back_to_terminate(monkeypatch):
+    """Tier 2: when os.killpg is absent (Windows), fall back to the terminate/tree-kill path. RED if
+    the guard weren't present (os.killpg would AttributeError and the process would never be
+    killed)."""
+    from reyn.security.sandbox import _subprocess_io
+    monkeypatch.delattr(_subprocess_io.os, "killpg", raising=False)
     p = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
-    await noop_backend._kill_proc_group(p, grace_seconds=1.0)
-    assert p.poll() is not None, "without killpg, terminate/kill must still kill the process"
+    await _subprocess_io.kill_process_tree(p, grace_seconds=1.0)
+    assert p.poll() is not None, "without killpg, the terminate/tree-kill path must still kill it"

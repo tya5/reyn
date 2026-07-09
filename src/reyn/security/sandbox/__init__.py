@@ -6,6 +6,8 @@ Exports:
     SandboxResult   — return type of `backend.run()`
     NoopBackend     — default fallback (no isolation enforced)
     get_default_backend() — factory; platform-aware lazy auto-selection
+    kill_process_tree() — shared cancel/timeout reaper (POSIX killpg / Windows
+                          taskkill /T tree-kill), used by every subprocess site
 
 Platform-specific backends live in `reyn.security.sandbox.backends.*` and are
 lazy-imported so a missing sibling file (e.g. before Component B / C lands
@@ -17,6 +19,7 @@ import logging
 import platform
 from typing import TYPE_CHECKING
 
+from ._subprocess_io import kill_process_tree
 from .backend import SandboxBackend, SandboxResult, WrappedCommand
 from .noop_backend import NoopBackend
 from .policy import SandboxPolicy
@@ -194,4 +197,5 @@ __all__ = [
     "WrappedCommand",
     "NoopBackend",
     "get_default_backend",
+    "kill_process_tree",
 ]

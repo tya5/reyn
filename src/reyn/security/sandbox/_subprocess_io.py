@@ -13,12 +13,22 @@ blocks on a full pipe, so its return code is preserved) and ``truncated`` is set
 Mirrors CPython's POSIX ``Popen._communicate`` selectors structure (the proven
 reference) plus the per-stream cap. Stdlib-only; the seatbelt / landlock / noop
 backends call it from both the blocking and the cancel-aware (#1470) paths.
+
+This module also owns ``kill_process_tree`` — the single shared cancel/timeout
+reaper for every subprocess-launch site (the three sandbox backends + the CodeAct
+runner). It kills the child TREE with a platform-correct mechanism: ``os.killpg``
+on POSIX (whole process group) and ``taskkill /T`` on Windows (whole descendant
+tree — ``terminate()``/``kill()`` alone reach only the direct process and orphan
+grandchildren, #2292/#2715). One seam so the Windows gap is fixed once, not
+re-fixed per site.
 """
 from __future__ import annotations
 
+import asyncio
 import os
 import select as _select
 import selectors
+import signal
 import subprocess
 import sys
 import threading
@@ -225,3 +235,85 @@ def _communicate_capped_selectors(
     except subprocess.TimeoutExpired:
         raise _timed_out() from None
     return bytes(stdout_buf), bytes(stderr_buf), truncated
+
+
+def _taskkill_tree(pid: int, *, force: bool) -> None:
+    """Best-effort Windows process-TREE kill via ``taskkill /T`` (#2292).
+
+    ``proc.terminate()`` / ``proc.kill()`` on Windows signal ONLY the direct
+    process, so a sandboxed process that spawned grandchildren leaves ORPHANS on
+    cancel/timeout. ``taskkill /T`` walks and terminates the whole descendant
+    tree; ``/F`` forces it (the ``SIGKILL`` analog — without ``/F`` taskkill
+    requests a graceful close first). Any failure (taskkill absent — e.g. this is
+    a POSIX host under a no-``killpg`` test — or the pid already gone) is swallowed:
+    this is a best-effort reaper on the cancel/timeout cleanup path.
+    """
+    cmd = ["taskkill", "/T", "/PID", str(pid)]
+    if force:
+        cmd.insert(1, "/F")
+    try:
+        subprocess.run(  # noqa: S603 — fixed argv; pid is an int
+            cmd,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+        )
+    except OSError:
+        pass
+
+
+async def kill_process_tree(proc: subprocess.Popen, grace_seconds: float = 2.0) -> None:
+    """Kill ``proc`` AND its child tree with a platform-correct mechanism —
+    gracefully first, then forcefully after ``grace_seconds`` if still alive.
+
+    - **POSIX**: ``os.killpg`` signals the whole process GROUP (SIGTERM → grace →
+      SIGKILL). The spawn sites pass ``start_new_session=True`` so the child leads
+      its own group and the group == the process tree.
+    - **Windows** (no ``os.killpg`` / no process groups): ``taskkill /T`` walks and
+      kills the descendant TREE. ``proc.terminate()`` / ``proc.kill()`` alone reach
+      only the DIRECT process, leaving grandchildren orphaned (#2292) — so the
+      graceful pass is ``taskkill /T`` + ``proc.terminate()`` and, after the grace,
+      the forced pass is ``taskkill /F /T`` + ``proc.kill()``.
+
+    Single shared reaper for every cancel/timeout cleanup site (the noop / seatbelt
+    / landlock sandbox backends + the CodeAct runner) so the Windows tree-kill gap
+    is fixed ONCE, not re-fixed per site (#2292, #2715). Requires a running event
+    loop (blocking ``proc.wait`` / ``taskkill`` are offloaded to its executor).
+    """
+    loop = asyncio.get_running_loop()
+
+    async def _wait_grace() -> bool:
+        """True if the process exits within the grace window."""
+        try:
+            await asyncio.wait_for(
+                loop.run_in_executor(None, proc.wait), timeout=grace_seconds,
+            )
+            return True
+        except (asyncio.TimeoutError, Exception):
+            return False
+
+    if hasattr(os, "killpg"):
+        try:
+            os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+        except (ProcessLookupError, OSError):
+            return
+        if not await _wait_grace():
+            try:
+                os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+            except (ProcessLookupError, OSError):
+                pass
+    else:
+        # Windows: kill the whole TREE (grandchildren included), not just the
+        # direct process (#2292). Graceful tree request + terminate, then escalate
+        # to a forced tree kill after the grace.
+        await loop.run_in_executor(None, lambda: _taskkill_tree(proc.pid, force=False))
+        try:
+            proc.terminate()
+        except OSError:
+            pass
+        if not await _wait_grace():
+            await loop.run_in_executor(None, lambda: _taskkill_tree(proc.pid, force=True))
+            try:
+                proc.kill()
+            except OSError:
+                pass
