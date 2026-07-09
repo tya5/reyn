@@ -1,8 +1,10 @@
 # Canonical-mapping coverage enforcement — no tool result without a declared LLM-visible shape
 
-**Author:** architect · **Status:** DRAFT — owner-reviewed 2026-07-09 (decisions
-resolved per architect recommendation); shared to lead-coder for review; no
-implementation dispatched · **Date:** 2026-07-09 · **Builds on:**
+**Author:** architect · **Status:** IN IMPLEMENTATION — owner-reviewed 2026-07-09
+(decisions resolved per architect recommendation); lead-coder APPROVE. PR-H hotfix +
+PR-F1 (registration-seam declaration + registry-derived gate + `CANONICAL_TODO`
+grandfather ratchet) dispatched; PR-F2 event to follow F1 land · **Date:** 2026-07-09 ·
+**Builds on:**
 [FP-0053 tool-result schema redesign](0053-tool-result-schema-redesign.md) (IMPLEMENTED)
 
 ## Incident (dogfood, 2026-07-09)
@@ -89,6 +91,43 @@ canonical mapping; "undeclared" is a CI failure, not a runtime fallback.
   FP-0053's table was hand-written and missed `file`; a registry-derived gate catches
   even *design-level* omissions.
 
+### 2a. `CANONICAL_TODO` marker + grandfather ratchet (a third, self-liquidating declaration category)
+
+Migrating to the gate surfaced ~40 non-admin producers (memory/cron/catalog/task/
+agent-spawn/hooks/mcp-discovery/universal-wrappers, etc.) with no real mapper. Writing
+40 real mappers is out of PR-F1 scope **and not behavior-preserving** (whole-dict→text
+changes what the LLM sees), so they need a way to pass the gate now. The wrong way is to
+mark them `STRUCTURED_PASSTHROUGH`: that conflates *"whole dict is legitimately the LLM
+view"* (the admin/install decision-#1 semantics) with *"no mapper yet"* — and would
+**bless a latent `file`-class bug** (a text-content producer whose whole-dict output is
+really text) as an intentional passthrough, defeating the very gate that was meant to be
+load-bearing.
+
+So a **distinct** marker `CANONICAL_TODO` carries the "declared-to-pass-the-gate, not
+yet mapped" meaning, kept semantically separate from `STRUCTURED_PASSTHROUGH`. On its own
+a third green declaration would hollow out the gate — any new producer could reach for
+`CANONICAL_TODO` and the anti-regression property evaporates. The **grandfather ratchet**
+is what keeps the gate load-bearing:
+
+- **Grandfather-only membership.** `CANONICAL_TODO` is usable **only** by the explicit
+  `frozenset _CANONICAL_TODO_GRANDFATHERED` — the source-ids relabeled in this migration,
+  enumerated in code. A producer outside the set that declares `CANONICAL_TODO` = **red
+  CI**. New op-kinds / ToolDefinitions may declare only a real mapper or
+  `STRUCTURED_PASSTHROUGH` — never `CANONICAL_TODO`.
+- **Monotonic burn-down.** The allowlist only shrinks: as each grandfathered producer
+  gets a real mapper it leaves the set, and nothing may ever be added. One frozenset thus
+  enforces both *count-non-increasing* and *new-producer-ban* at once.
+- **Tracked, greppable.** Each `CANONICAL_TODO` declaration references the burn-down
+  tracking issue (#2681), so the remaining debt is one grep and has an owner.
+
+**Hot-text triage precedes deferral (no rubber-stamped inference).** Before parking all
+40 under the marker, each producer's result shape is **directly inspected** and classified
+text-shaped / structured / status. Only **text-shaped** producers (the latent `file`-class
+risk) get a real mapper inside F1; genuinely structured/status producers are the ones
+deferred under `CANONICAL_TODO`. The "40 hide a `file`-class producer" claim is a
+**hypothesis to confirm by inspection**, not a fact to extrapolate from 1–2 samples — the
+triage classification is listed in the PR as #2681's starting material.
+
 ### 3. Runtime fallback kept for true unknowns — but visible
 
 - Genuinely unregistered sources (dynamic/edge cases the registries cannot enumerate)
@@ -150,6 +189,14 @@ The live dogfood pain must not wait for the refactor:
    `STRUCTURED_PASSTHROUGH` result exceeds the structured offload gate** — a passthrough
    op producing an oversized structured blob is a signal that passthrough was the wrong
    choice for it; make it visible rather than silent, same audit-not-silence principle.
+3. **`CANONICAL_TODO` is a grandfather-only, monotonic-burn-down, new-producer-banned
+   marker** (see §2a), kept distinct from `STRUCTURED_PASSTHROUGH` so the migration debt
+   never conflates with the reviewed admin/install passthrough set and never becomes a
+   gate escape hatch. Membership lives in one `frozenset` that only shrinks; each entry
+   references the #2681 burn-down issue. Text-shaped producers are mapped in F1 (not
+   deferred) after direct shape inspection. *(Ratified 2026-07-09: architect ratchet
+   refinement + lead-coder concurrence; delivered to the F1 coder before the marker was
+   finalized.)*
 
 ## References
 
