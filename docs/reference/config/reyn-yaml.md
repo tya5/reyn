@@ -38,7 +38,7 @@ models:
 | `chat` | map | Chat-session compaction settings. See below. |
 | `voice` | map | Voice input (Whisper) settings for the chat TUI. See below. |
 | `events` | map | Audit-log rotation policy for chat-session event files. See below. |
-| `tool_use` | map | Per-layer tool-use scheme selector (chat/step/phase). See below. |
+| `tool_use` | map | Per-layer tool-use scheme selector (chat/step). See below. |
 | `mcp` | map | MCP server definitions and `search_threshold`. See below. |
 | `python` | map | Python preprocessor additional allowed-modules. See below. |
 | `agent` | map | Agent identity for P6 event audit trail and outgoing HTTP header. See below. |
@@ -269,7 +269,6 @@ specific purpose; an unset purpose falls back to `model`.
 | Purpose | What it covers |
 |---|---|
 | `router` | The per-turn chat router / intent classification. |
-| `control_ir` | Control-IR sub-execution model. |
 | `tool` | The default class for tool-spawned skill runs. |
 | `compaction` | Context-compaction summarisation. |
 | `judge` | Output-judging / evaluation calls. |
@@ -281,14 +280,13 @@ models:
   light:    openai/gpt-4o-mini
 model_class_by_purpose:
   router: light                  # opt INTO a cheaper per-turn router (an explicit choice)
-  # control_ir / tool / compaction / judge unset → follow `model` (gpt-5.4)
+  # tool / compaction / judge unset → follow `model` (gpt-5.4)
 ```
 
 **Cost note**: the router runs on every turn, so the cheap-router optimisation is
 still available — it is now an explicit one-line opt-in (`router: light`) rather
-than a hidden default. Explicit per-call selections (a skill's `op.model`, a
-phase's frontmatter `model_class`) still win over this fallback. Unknown purpose
-keys are warned (not fatal) at load time.
+than a hidden default. Explicit per-call selections (a skill's `op.model`) still
+win over this fallback. Unknown purpose keys are warned (not fatal) at load time.
 
 ## `llm` block
 
@@ -485,16 +483,14 @@ Per-layer tool-use scheme selector. Each layer picks a registered `ToolUseScheme
 tool_use:
   chat: enumerate-all         # default
   step: universal-category    # default
-  phase: universal-category   # default
 ```
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | `chat` | string | `enumerate-all` | Tool-use scheme for the top-level chat layer. **Default `enumerate-all`** — flat-lists actions so the LLM invokes them directly instead of hallucinating `invoke_action` names (raised non-hot-list tool-use ~30%→100%). Set to `universal-category` for a minimal-surface / many-tool catalog (discover-then-call), or another registered scheme. |
 | `step` | string | `universal-category` | Tool-use scheme for the skill step layer. |
-| `phase` | string | `universal-category` | Tool-use scheme for the OS phase layer. |
 
-The chat layer defaults to `enumerate-all`; `step` / `phase` keep `universal-category`. A scheme owns how the `tools=` payload is built, the SP tool-use instructions, how an LLM response is interpreted, and how it is dispatched — so swapping a layer's scheme changes the whole tool-use loop for that layer without OS changes. `universal-category` remains available per-layer via this config (e.g. for very large tool catalogs where flat-listing every action would bloat the request). `retrieval` (search-over-tools) and `CodeAct` are likewise supported opt-in schemes per layer; `retrieval` additionally requires `action_retrieval.embedding_class` set to a configured embedding provider.
+The chat layer defaults to `enumerate-all`; `step` keeps `universal-category`. A scheme owns how the `tools=` payload is built, the SP tool-use instructions, how an LLM response is interpreted, and how it is dispatched — so swapping a layer's scheme changes the whole tool-use loop for that layer without OS changes. `universal-category` remains available per-layer via this config (e.g. for very large tool catalogs where flat-listing every action would bloat the request). `retrieval` (search-over-tools) and `CodeAct` are likewise supported opt-in schemes per layer; `retrieval` additionally requires `action_retrieval.embedding_class` set to a configured embedding provider.
 
 For what each scheme does and **when to choose which** (`enumerate-all` / `retrieval` / `CodeAct` vs the default), see [Tool-Use Schemes](../../concepts/tools-integrations/tool-use-schemes.md).
 
