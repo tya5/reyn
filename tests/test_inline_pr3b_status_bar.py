@@ -82,9 +82,10 @@ def _snap(**over):
 
 
 def test_chip_specs_has_required_keys_in_order() -> None:
-    """Tier 2: the registry exposes model/cost/agent/task/ctx/more in that order."""
+    """Tier 2: the registry exposes model/agent/task/cost/ctx/more in that order
+    (owner: cost moved between task and ctx)."""
     keys = [s.key for s in _CHIP_SPECS]
-    assert keys == ["model", "cost", "agent", "task", "ctx", "more"]
+    assert keys == ["model", "agent", "task", "cost", "ctx", "more"]
 
 
 def test_chips_carry_per_item_value_colours() -> None:
