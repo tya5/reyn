@@ -630,6 +630,40 @@ class AgentRegistry:
                 n += 1
         return n
 
+    def session_nesting_depth(self, name: str, sid: "str | None" = None) -> int:
+        """#2737: the LLM ``session_spawn`` NESTING depth of session ``(name, sid)`` — a
+        root/main session = 0, each ``session_spawn`` edge +1. Walks the
+        ``SpawnBridgeInterventionListener`` parent-linkage chain — the SAME parent linkage
+        ``SpawnBridgeInterventionListener.bus()`` recurses over to resolve an ``ask_user``
+        toward the root operator (#2735) — so the depth this returns is exactly that
+        ``bus()`` recursion depth. Capping it at the ``session_spawn`` seam therefore bounds
+        BOTH unbounded session nesting (resource) AND the compositional ``bus()`` recursion
+        (a deep-chain ``RecursionError``) by construction — the #2708 P3-item3 co-vet edge.
+
+        This is a LIVE-runtime property (the in-memory bridge chain), matching the live risk
+        it bounds: a crash tears the chain down (restore re-creates a spawned session
+        self-bound via ``ReviewedNA`` — no ``SpawnBridge*`` bridge), so there is no persisted
+        depth to survive WAL truncation and no recovery-gate surface. A non-spawned session
+        (no ``SpawnBridgeInterventionListener`` bridge) terminates the walk at depth 0."""
+        from reyn.runtime.session_buses import SpawnBridgeInterventionListener
+
+        session = self._peek_session(
+            name, sid if sid is not None else _DEFAULT_SID,
+        )
+        depth = 0
+        seen: "set[int]" = set()
+        while session is not None:
+            bridge = getattr(session, "intervention_bridge", None)
+            if not isinstance(bridge, SpawnBridgeInterventionListener):
+                break
+            parent = bridge.parent_session
+            if parent is None or id(parent) in seen:
+                break
+            seen.add(id(parent))
+            depth += 1
+            session = parent
+        return depth
+
     # #2175: the BASE operator spawn bounds (safety.spawn.*, config-set restart-only).
     # Exposed so the LLM spawn SEAM (host adapter) can compute the EFFECTIVE limit
     # (base + the on_limit per-operation extension) and route an exceed through the

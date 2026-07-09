@@ -1054,6 +1054,53 @@ class RouterHostAdapter:
             if parent_session is not None
             else AuditOnlyNoSurface()
         )
+        # #2737: session_spawn NESTING depth cap — PARITY with agent_spawn's max_spawn_depth
+        # gate (this method's sibling ``spawn_agent`` below). The LLM session_spawn path
+        # re-exposes spawn_session on EVERY spawned child's router host, so unbounded
+        # grandchildren/great-grandchildren are reachable; and the compositional
+        # ``SpawnBridgeInterventionListener.bus()`` walk (#2735) recurses once per nesting
+        # level to resolve ask_user toward the root operator, so a deep chain risks a
+        # ``RecursionError`` during ask_user resolution. The SAME operator base cap
+        # (``safety.spawn.max_depth`` = ``registry.max_spawn_depth``) bounds BOTH by
+        # construction (capped nesting depth ⇒ bounded bus() recursion, since the depth is
+        # exactly that walk's length). Routed through the SAME on_limit checkpoint and the
+        # SAME typed ``spawn_limit_exceeded`` error as agent_spawn (uniform sibling), with a
+        # SEPARATE extension key — session nesting ≠ agent-tree depth, so an approved widen of
+        # one must not silently widen the other (the #2175 approval-scoping principle).
+        base_depth = self._registry.max_spawn_depth
+        if base_depth:
+            cur_depth = self._registry.session_nesting_depth(self._agent_name, from_sid)
+            eff_depth = base_depth + int(
+                self._safety_extensions.get(f"max_session_depth:{self._agent_name}", 0.0)
+            )
+            if cur_depth + 1 > eff_depth:
+                decision = await self._spawn_limit_checkpoint(
+                    kind=f"max_session_depth:{self._agent_name}",
+                    prompt=(
+                        f"Session-spawn nesting depth {cur_depth + 1} would exceed the "
+                        f"session-nesting cap ({eff_depth}). Allow agent "
+                        f"{self._agent_name!r} to nest spawned sessions deeper?"
+                    ),
+                    detail=(
+                        f"agent={self._agent_name} sid={from_sid} depth={cur_depth + 1} "
+                        f"cap={eff_depth}"
+                    ),
+                    extension_amount=1.0,
+                    run_id=self._agent_name,
+                )
+                if not decision.allow_continue:
+                    return {
+                        "status": "error", "kind": "spawn_limit_exceeded",
+                        "error": (
+                            f"spawn-limit: session-nesting depth {cur_depth + 1} would "
+                            f"exceed the session-nesting cap ({eff_depth}) (agent "
+                            f"{self._agent_name!r} at session-nesting depth {cur_depth}). "
+                            "→ Extend just this axis via the operator spawn-limit "
+                            "checkpoint (raises max_session_depth for this agent), or "
+                            "raise the shared base safety.spawn.max_depth (which lifts "
+                            "BOTH the agent-tree and session-nesting caps)."
+                        ),
+                    }
         sid = await self._registry.spawn_session_recorded(
             self._agent_name, mode=mode, narrowing=narrowing,
             presentation_consumer=_routing.presentation_consumer,
