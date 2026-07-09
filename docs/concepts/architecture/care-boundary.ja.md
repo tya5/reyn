@@ -135,11 +135,9 @@ care boundary はこれら 4 つを統合するメタ原則。
 
 Reyn は OS 層に一連の raw primitive を公開する:
 
-- **Events log** — 全状態変化を記録した、構造化・機械可読な JSONL ストリーム ([../runtime/events.md](../runtime/events.md) 参照)。
+- **Events log** — 全状態変化を記録した、構造化・機械可読な JSONL ストリーム。op 単位の Control IR ディスパッチ結果も含む ([../runtime/events.md](../runtime/events.md) 参照)。
 - **WAL およびワークフロースナップショット** — crash を生き残る workspace state; P5 の workspace-as-source-of-truth の産物。
 - **Cost tracker** — run 単位・ワークフロー単位のトークン数とコスト集計を event として emit。
-- **Phase trace** — run ごとに記録された phase 順序、LLM call、Control IR 実行の系列。
-- **control_ir results** — phase 実行ごとに event log に書き込まれる op レベルの実行結果。
 
 これらの primitive は、LLM-agent エコシステムが現在活発に build している一連の downstream product にとって十分な基盤だ: conversation analytics platform、durable agent runtime、eval-as-a-service、observability dashboard、agent marketplace。Reyn が substrate を提供し、それらの product が consumer layer となる。
 

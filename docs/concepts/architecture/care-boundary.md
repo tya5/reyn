@@ -135,11 +135,9 @@ The three care regions above describe where the OS boundary sits relative to LLM
 
 Reyn exposes a set of raw primitives at the OS layer:
 
-- **Events log** — a JSONL stream of every state change, structured and machine-readable (see [../runtime/events.md](../runtime/events.md)).
+- **Events log** — a JSONL stream of every state change, structured and machine-readable, including per-op Control IR dispatch outcomes (see [../runtime/events.md](../runtime/events.md)).
 - **WAL and workflow snapshots** — the workspace state that survives a crash; the artifact of P5's workspace-as-source-of-truth.
 - **Cost tracker** — per-run and per-workflow token and cost aggregations emitted as events.
-- **Phase trace** — the sequence of phases, LLM calls, and Control IR executions recorded per run.
-- **control_ir results** — op-level outcomes written into the event log per phase execution.
 
 These primitives are sufficient for a range of downstream products that the LLM-agent ecosystem is actively building: conversation-analytics platforms, durable agent runtimes, eval-as-a-service, observability dashboards, agent marketplaces. Reyn provides the substrate; those products are the consumer layer.
 

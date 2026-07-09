@@ -58,5 +58,4 @@ reyn はワークフローグラフを明示的に書くコストを払い、代
 
 ## 参考
 
-- [Reference: llm-output-contract](../../reference/runtime/llm-output-contract.md)
-- [Reference: context-frame](../../reference/runtime/context-frame.md)
+- [Reference: control-ir](../../reference/runtime/control-ir.md)

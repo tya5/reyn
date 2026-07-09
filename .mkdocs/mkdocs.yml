@@ -136,8 +136,6 @@ nav:
               - reference/cli/source.md
               - reference/cli/common-flags.md
       - Runtime:
-          - reference/runtime/context-frame.md
-          - reference/runtime/llm-output-contract.md
           - reference/runtime/control-ir.md
           - reference/runtime/events.md
           - reference/runtime/pipeline-dsl.md

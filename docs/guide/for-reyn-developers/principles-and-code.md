@@ -6,6 +6,22 @@ audience: [human]
 
 # P1–P8 and the code that enforces them
 
+> **Status: stale.** This page was written against the phase-graph skill engine, deleted
+> in a later engine-deletion arc. P1–P4 and P8 describe invariants specific to that engine
+> (`Phase`/`OSRuntime`/`candidate_outputs`/`next_phase`) — confirmed via direct grep that
+> none of the cited modules (`kernel/runtime.py`, `compiler/linter.py`,
+> `compiler/expander.py`, `context_builder.py::build_frame()`/`_build_candidates()`) exist
+> in current source; they no longer apply and have no established modern equivalent
+> documented elsewhere. P5–P7's underlying mechanisms (Workspace as single source of
+> truth, an append-only event log, no domain-specific strings in OS code / a single op
+> catalog) remain live, but the file paths below are stale: `workspace/workspace.py` is now
+> `data/workspace/workspace.py`; `events/events.py` / `events/state_log.py` are now under
+> `core/events/`; `op_runtime/registry.py` still exists but `OP_KIND_MODEL_MAP` itself
+> relocated to `schemas/models.py` (per CLAUDE.md's OP_KIND_MODEL_MAP/control-ir.md sync rule). This page needs a fresh
+> pass from someone with current architecture ownership rather than a docs-only patch —
+> the rest of the page is kept below as a historical record of the *shape* of the old P1–P8
+> framework, not a current reference.
+
 Each of Reyn's eight OS invariants is enforced by a specific combination of type constraints, compiler checks, and runtime validation — not just by convention. This page maps each principle to the exact files and mechanisms that uphold it.
 
 This page focuses on the *how*; the conceptual rationale is in CLAUDE.md.
@@ -159,6 +175,10 @@ The practical consequence: you can change an artifact's schema without editing a
 
 ## Adding a new op kind (3 touch points)
 
+> This section is superseded by [Add a new Control IR op kind](add-an-op-kind.md), which
+> has the current, verified file paths and a worked walkthrough — read that instead. Kept
+> below only as part of this page's historical P1–P8 framework.
+
 This is the canonical example of P7 in practice: a new op kind requires exactly three changes, all in OS code, none in any workflow.
 
 ### 1. Define the Pydantic model (`schemas/models.py`)
@@ -225,5 +245,4 @@ from . import my_op as _my_op  # noqa: F401, E402
 
 
 - [reference/runtime/control-ir.md](../../reference/runtime/control-ir.md) — op kind catalogue
-- [reference/runtime/llm-output-contract.md](../../reference/runtime/llm-output-contract.md) — the JSON the OS validates
 - [deep-dives/contributing/testing.md](../../deep-dives/contributing/testing.md) — test tier requirements

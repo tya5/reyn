@@ -58,5 +58,4 @@ So reyn pays the cost of writing workflow graphs explicitly and gets predictabil
 
 ## See also
 
-- [Reference: llm-output-contract](../../reference/runtime/llm-output-contract.md)
-- [Reference: context-frame](../../reference/runtime/context-frame.md)
+- [Reference: control-ir](../../reference/runtime/control-ir.md)

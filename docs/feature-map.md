@@ -16,19 +16,7 @@ Per-group **Differentiation vs general agents** callouts position each capabilit
 mindmap
   root((Reyn<br/>Agent OS))
     🧩 OS Core
-      🌀 Phase Engine
-        Act/Decide loop
-        Context build
-        Candidate gate
-        Phase rollback
-      ✅ LLM Validation
-        JSON contract
-        Type-decision check
-        Next-phase allowlist
-        Artifact schema
-        Normalization retry
       🗂️ Workspace P5
-        Artifact storage
         Permission-gated IO
       ♻️ Crash Recovery
         WAL state log
@@ -211,27 +199,9 @@ mindmap
 
 ### OS Core
 
-#### Phase Engine
-| Feature | Description | Documentation |
-|---------|-------------|---------------|
-| Act/Decide loop | LLM↔op volleys until the LLM emits a transition/finish/abort decision | [LLM Output Contract](reference/runtime/llm-output-contract.md) |
-| Context build | Constructs LLM input from phase instructions, current artifact, candidates, and available ops | [Context Frame](reference/runtime/context-frame.md) |
-| Candidate gate | LLM picks next phase only from OS-provided candidates (P4) | [LLM as Decision Engine](concepts/architecture/llm-as-decision-engine.md) |
-| Phase rollback | Revert to predecessor phase when downstream output is rejected | [LLM Output Contract](reference/runtime/llm-output-contract.md) |
-
-#### LLM Validation
-| Feature | Description | Documentation |
-|---------|-------------|---------------|
-| JSON contract | Enforce `control` / `artifact` / `control_ir` envelope structure | [LLM Output Contract](reference/runtime/llm-output-contract.md) |
-| Type-decision consistency | `finish` type requires `decision=finish`, `next_phase=null`, etc. | [LLM Output Contract](reference/runtime/llm-output-contract.md) |
-| Next-phase allowlist | Transition target must appear in the skill graph candidates | [LLM Output Contract](reference/runtime/llm-output-contract.md) · Graph |
-| Artifact schema validation | `data` validated against the target phase's `input_schema` | Artifact YAML |
-| Normalization retry | Minor JSON errors healed before rejecting, up to `llm_max_retries` | [LLM Output Contract](reference/runtime/llm-output-contract.md) |
-
 #### Workspace (P5)
 | Feature | Description | Documentation |
 |---------|-------------|---------------|
-| Artifact storage | Phase artifacts persisted to `.reyn/artifacts/` | [Concepts: Workspace](concepts/runtime/workspace.md) |
 | Permission-gated IO | Paths outside CWD require `file.read` / `file.write` declaration | [Concepts: Workspace](concepts/runtime/workspace.md) · [Permissions](reference/config/permissions.md) |
 
 #### Crash Recovery
@@ -333,7 +303,7 @@ The op kinds below mirror `OP_KIND_MODEL_MAP` in `op_runtime/registry.py`.
 | Op | Description |
 |----|-------------|
 | `file` | `read` / `write` / `edit` / `delete` / `glob` / `grep` / `regenerate_index` (six fine-grained registry kinds) |
-| `ask_user` | Pause phase, collect user answer, re-run same phase |
+| `ask_user` | Pause the run, collect the user's answer via the intervention bus |
 | `present` | Route bulk data + a declarative display template to the user surface without the data passing through LLM output tokens (Tier 0, fire-and-continue) |
 | `sandboxed_exec` | `argv` under `SandboxPolicy` via platform-selected backend |
 | `shell` | Raw shell exec — deprecated; prefer `sandboxed_exec` |
@@ -373,13 +343,13 @@ Show bulk data to the user **without the data passing through LLM output tokens*
 
 ### Tool-Use Schemes
 
-How tools are presented to the LLM and how its calls are dispatched is a **pluggable scheme**, selectable per layer (`tool_use: {chat, step, phase}` in `reyn.yaml`). The `chat` layer defaults to `enumerate-all`; `step` / `phase` default to `universal-category`. Non-default schemes are opt-in per layer. All schemes route every tool call through the same OS gate (exclude → permission → dispatch), so the security and validation pipeline is unchanged whichever scheme is active.
+How tools are presented to the LLM and how its calls are dispatched is a **pluggable scheme**, selectable per layer (`tool_use: {chat, step}` in `reyn.yaml`). The `chat` layer defaults to `enumerate-all`; `step` defaults to `universal-category`. Non-default schemes are opt-in per layer. All schemes route every tool call through the same OS gate (exclude → permission → dispatch), so the security and validation pipeline is unchanged whichever scheme is active.
 
 | Feature | Description | Documentation |
 |---------|-------------|---------------|
 | Pluggable scheme protocol | `ToolUseScheme` seam — tool presentation + interpretation + dispatch + feedback behind one interface; schemes are swapped by config, no OS change | [Tool-Use Schemes](concepts/tools-integrations/tool-use-schemes.md) |
-| Per-layer selection | Independent scheme per layer — chat / plan-step / OS-phase — via `tool_use` config | [Tool-Use Schemes](concepts/tools-integrations/tool-use-schemes.md) · [`reyn.yaml` § tool_use](reference/config/reyn-yaml.md#tool_use-block) |
-| `universal-category` (step/phase default) | The universal action catalog — 4 wrappers over every category, qualified-name discover + dispatch | [Tool-Use Schemes](concepts/tools-integrations/tool-use-schemes.md) · [Universal catalog](concepts/tools-integrations/universal-catalog.md) |
+| Per-layer selection | Independent scheme per layer — chat / step — via `tool_use` config | [Tool-Use Schemes](concepts/tools-integrations/tool-use-schemes.md) · [`reyn.yaml` § tool_use](reference/config/reyn-yaml.md#tool_use-block) |
+| `universal-category` (step default) | The universal action catalog — 4 wrappers over every category, qualified-name discover + dispatch | [Tool-Use Schemes](concepts/tools-integrations/tool-use-schemes.md) · [Universal catalog](concepts/tools-integrations/universal-catalog.md) |
 | `enumerate-all` (chat default) | Flat-native-JSON baseline — every usable tool presented flatly, dispatched by name. Best for small tool sets where determinism matters | [Tool-Use Schemes](concepts/tools-integrations/tool-use-schemes.md) |
 | `retrieval` | RAG-over-tools — present a search tool, the LLM searches, the OS re-presents matched tools as callable. Supported opt-in for very large tool sets where full-catalog token cost is prohibitive; requires a configured embedding provider (`action_retrieval.embedding_class`) | [Tool-Use Schemes](concepts/tools-integrations/tool-use-schemes.md) |
 | `CodeAct` | Code-as-tools — the LLM writes a Python snippet whose in-code `tool()` calls run in a sandboxed subprocess under the same permission gate as a JSON call. Strongest for weak models | [Tool-Use Schemes](concepts/tools-integrations/tool-use-schemes.md) |

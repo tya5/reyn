@@ -47,12 +47,12 @@ class TestParseFeatureMap:
         features = parse_feature_map(FEATURE_MAP_PATH)
         assert features, "Expected parse_feature_map to return at least one feature node."
 
-    def test_known_path_os_core_phase_engine_act_decide_loop(self) -> None:
-        """Tier 1: 'os-core/phase-engine/act-decide-loop' is parsed from the table row."""
+    def test_known_path_os_core_workspace_p5_permission_gated_io(self) -> None:
+        """Tier 1: 'os-core/workspace-p5/permission-gated-io' is parsed from the table row."""
         features = parse_feature_map(FEATURE_MAP_PATH)
         paths = {f.path for f in features}
-        assert "os-core/phase-engine/act-decide-loop" in paths, (
-            f"Expected 'os-core/phase-engine/act-decide-loop' in feature paths. "
+        assert "os-core/workspace-p5/permission-gated-io" in paths, (
+            f"Expected 'os-core/workspace-p5/permission-gated-io' in feature paths. "
             f"Got paths sample: {sorted(paths)[:10]}"
         )
 
@@ -74,14 +74,14 @@ class TestParseFeatureMap:
         assert "os-core" in by_path
         assert by_path["os-core"].parent is None
 
-        # os-core/phase-engine is a subsection under os-core
-        if "os-core/phase-engine" in by_path:
-            assert by_path["os-core/phase-engine"].parent == "os-core"
+        # os-core/workspace-p5 is a subsection under os-core
+        if "os-core/workspace-p5" in by_path:
+            assert by_path["os-core/workspace-p5"].parent == "os-core"
 
-        # os-core/phase-engine/act-decide-loop is a leaf under os-core/phase-engine
-        leaf = by_path.get("os-core/phase-engine/act-decide-loop")
+        # os-core/workspace-p5/permission-gated-io is a leaf under os-core/workspace-p5
+        leaf = by_path.get("os-core/workspace-p5/permission-gated-io")
         if leaf is not None:
-            assert leaf.parent == "os-core/phase-engine"
+            assert leaf.parent == "os-core/workspace-p5"
 
     def test_no_duplicate_paths(self) -> None:
         """Tier 1: parse_feature_map never returns duplicate paths."""
@@ -102,9 +102,9 @@ class TestParseFeatureMap:
         """Tier 1: FeatureNode.label preserves the original text from the doc."""
         features = parse_feature_map(FEATURE_MAP_PATH)
         by_path = {f.path: f for f in features}
-        node = by_path.get("os-core/phase-engine/act-decide-loop")
+        node = by_path.get("os-core/workspace-p5/permission-gated-io")
         if node is not None:
-            assert "Act" in node.label or "act" in node.label.lower()
+            assert "permission" in node.label.lower()
 
 
 # ---------------------------------------------------------------------------
@@ -139,12 +139,12 @@ class TestComputeCoverageEmpty:
 
 class TestComputeCoverageAssignment:
     def test_matching_tag_marks_feature_covered(self) -> None:
-        """Tier 1: A scenario covering 'os-core/phase-engine/act-decide-loop' marks it covered."""
-        scenario = _make_scenario("s1", ["os-core/phase-engine/act-decide-loop"])
+        """Tier 1: A scenario covering 'os-core/workspace-p5/permission-gated-io' marks it covered."""
+        scenario = _make_scenario("s1", ["os-core/workspace-p5/permission-gated-io"])
         s = _make_set("test_set", [scenario])
         matrix = compute_coverage([s], FEATURE_MAP_PATH)
-        assert "os-core/phase-engine/act-decide-loop" in matrix.coverage_map
-        refs = matrix.coverage_map["os-core/phase-engine/act-decide-loop"]
+        assert "os-core/workspace-p5/permission-gated-io" in matrix.coverage_map
+        refs = matrix.coverage_map["os-core/workspace-p5/permission-gated-io"]
         assert refs, "Expected at least one coverage ref for the covered tag."
         assert refs[0] == ("test_set", "s1")
 
@@ -153,7 +153,7 @@ class TestComputeCoverageAssignment:
         scenario = _make_scenario(
             "s1",
             [
-                "os-core/phase-engine/act-decide-loop",
+                "os-core/workspace-p5/permission-gated-io",
                 "control-ir-ops/file",
             ],
         )
@@ -163,7 +163,7 @@ class TestComputeCoverageAssignment:
 
     def test_uncovered_excludes_covered_features(self) -> None:
         """Tier 1: uncovered list does not include features that have coverage refs."""
-        target = "os-core/phase-engine/act-decide-loop"
+        target = "os-core/workspace-p5/permission-gated-io"
         scenario = _make_scenario("s1", [target])
         s = _make_set("test_set", [scenario])
         matrix = compute_coverage([s], FEATURE_MAP_PATH)
@@ -215,14 +215,14 @@ class TestUnknownTags:
         """Tier 1: Valid tags are covered; invalid tags go to unknown_tags."""
         scenario = _make_scenario(
             "s_mixed",
-            ["os-core/phase-engine/act-decide-loop", "totally/invalid/path"],
+            ["os-core/workspace-p5/permission-gated-io", "totally/invalid/path"],
         )
         s = _make_set("mixed_set", [scenario])
         matrix = compute_coverage([s], FEATURE_MAP_PATH)
 
         # Valid tag is covered
         assert matrix.covered_count >= 1
-        refs = matrix.coverage_map["os-core/phase-engine/act-decide-loop"]
+        refs = matrix.coverage_map["os-core/workspace-p5/permission-gated-io"]
         assert refs, "Expected at least one coverage ref for the valid tag."
 
         # Invalid tag is in unknown_tags
@@ -237,7 +237,7 @@ class TestUnknownTags:
 class TestToJson:
     def test_to_json_is_json_serialisable(self) -> None:
         """Tier 1: CoverageMatrix.to_json() returns a JSON-serialisable dict."""
-        scenario = _make_scenario("s1", ["os-core/phase-engine/act-decide-loop"])
+        scenario = _make_scenario("s1", ["os-core/workspace-p5/permission-gated-io"])
         s = _make_set("test_set", [scenario])
         matrix = compute_coverage([s], FEATURE_MAP_PATH)
         result = matrix.to_json()

@@ -6,66 +6,45 @@ audience: [human, agent]
 
 # Tool Contract Design
 
-How the LLM acts on the world: the typed envelope for side effects, the typed envelope for decisions, and the deterministic hook that runs before the LLM is even called. A clean tool contract is what lets validation, replay, and re-prompt all share the same machinery.
+> **Status: partially stale.** This page was written against the phase-graph skill
+> engine, deleted in a later engine-deletion arc. The "Candidate outputs" and
+> "Preprocessor" sections described that engine specifically (`next_phase` transitions,
+> `skill_router`/preprocessor chains) and have been removed — confirmed via direct grep
+> that neither concept exists in current source. The "Control IR" section below is kept
+> and corrected: the side-effect envelope itself is still live, just under
+> `schemas/models.py` (not `op_runtime/registry.py` — `OP_KIND_MODEL_MAP` relocated
+> there per CLAUDE.md's OP_KIND_MODEL_MAP/control-ir.md sync rule) and with a current op-kind list.
+
+How the LLM acts on the world: the typed envelope for side effects. A clean tool contract is what lets validation and replay share the same machinery.
 
 ## How reyn handles it
 
-Three contracts, all schema-anchored:
+### Control IR — the side-effect envelope
 
-### 1. Control IR — the side-effect envelope
-
-Every side effect (file I/O, asking the user, invoking a sub-skill, running shell, linting) is a JSON object with a `kind` discriminator. The OS dispatches each op against its kind's schema:
+Every side effect (file I/O, asking the user, presenting data, running a sandboxed command, calling an MCP tool) is a JSON object with a `kind` discriminator. The OS dispatches each op against its kind's schema:
 
 ```json
 {"kind": "read_file", "path": "src/foo.py"}
 {"kind": "ask_user", "question": "Which model?", "suggestions": [...]}
-{"kind": "run_skill", "skill": "recall_memory", "input": {...}}
+{"kind": "mcp", "server": "github", "tool": "create_issue", "args": {...}}
 ```
 
-The op kinds live in `OP_KIND_MODEL_MAP` (`op_runtime/registry.py`): the
+The op kinds live in `OP_KIND_MODEL_MAP` (`schemas/models.py`): the
 fine-grained file ops (`read_file`, `write_file`, `edit_file`, `delete_file`,
-`glob_files`, `grep_files`), plus `ask_user`, `run_skill`, `lint`, `shell`,
-`mcp`, `web_search`, `web_fetch`, and the RAG / sandbox / compaction kinds.
-Available ops are injected into the LLM's context per phase as
-`available_control_ops` — phase markdown never describes the syntax (P8).
-
-Each phase narrows that set further with `allowed_ops` in its frontmatter (default: the fine file ops + `ask_user`). The OS shows only the listed kinds to the LLM and rejects anything else the LLM emits anyway. This is two-edged: it prevents drift (a `write_memory` extract phase can't accidentally use `web_search` because it sees flash-lite and decides to "look up" a name), and it shrinks the prompt — irrelevant op descriptions are not paid for in tokens.
-
-### 2. Candidate outputs — the decision envelope
-
-For every phase, the OS computes the set of legal next moves: each allowed next phase (or `end`), with the input schema it expects. The LLM picks one and produces a matching artifact:
-
-```json
-{
-  "control": {"type": "transition", "decision": "continue", "next_phase": "review", ...},
-  "artifact": {"type": "draft", "data": {...}},
-  "control_ir": [...]
-}
-```
-
-The shape is fixed; the discriminators are validated; the artifact is checked against the chosen target's schema. Anything off-contract is rejected.
-
-### 3. Preprocessor — deterministic enrichment
-
-A phase may declare a chain that runs **before** the LLM is called: invoke a sub-skill, iterate over a list, validate against a schema, run a Python function. The result lands at a named slot in the LLM's input — phases reference the slot by name and don't need to know it came from a preprocessor.
-
-This is what lets stdlib workflows compose without imperative code: `eval` iterates `judge_phase` over per-criterion requests; `skill_router` calls `recall_memory` before deciding which workflow to dispatch.
+`glob_files`, `grep_files`), plus `ask_user`, `present`, `sandboxed_exec`,
+`mcp` (and its resource/prompt/subscribe variants), `web_search`, `web_fetch`,
+and the RAG / task / compaction kinds. See [Control IR](../../reference/runtime/control-ir.md)
+for the full, current catalog.
 
 ## Why type the contracts so aggressively
 
-Three properties fall out of "everything has a schema":
+Two properties fall out of "every op has a schema":
 
-- **Reject early.** Malformed output triggers a re-prompt before any side effect runs.
-- **Replay safely.** A saved event log can be re-rendered without re-invoking the LLM, because every artifact and op was validated at write-time.
-- **Compose without surprises.** A sub-skill's output is a typed artifact; the calling phase consumes it like any input.
-
-## Where it's still thin
-
-The five Control IR kinds cover most workflows but more are likely needed as the ecosystem grows. MCP integration exists at the runtime layer (workflows can declare MCP servers in permissions and the LLM gets MCP tools as ops); the surface area will grow. Extending the contract is intentionally cheap: add a kind to the OS, declare it in `available_control_ops`, and every workflow can use it.
+- **Reject early.** Malformed output triggers a validation error before any side effect runs.
+- **Replay safely.** A saved event log can be re-rendered without re-invoking the LLM, because every op was validated at write-time.
 
 ## See also
 
 - [Reference: control-ir](../../reference/runtime/control-ir.md)
-- [Reference: llm-output-contract](../../reference/runtime/llm-output-contract.md)
 - [system-design.md](system-design.md) — what the contract makes possible
 - [reliability-engineering.md](reliability-engineering.md) — how rejection is handled
