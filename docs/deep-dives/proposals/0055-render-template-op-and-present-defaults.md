@@ -1,9 +1,10 @@
 # render_template op + present defaults — text templating without bloating the present layer
 
-**Author:** architect · **Status:** DRAFT — owner-reviewed 2026-07-09 (decisions
-resolved per architect recommendation); shared to lead-coder for review; no
-implementation dispatched · **Date:** 2026-07-09 · **Builds on:**
-[FP-0054 present layer](0054-present-layer.md) (IMPLEMENTED)
+**Author:** architect · **Status:** IMPLEMENTED 2026-07-09. Arc landed: PR-0 #2674
+(sandbox env extraction → `security/template_env.py`), PR-1 #2676 (present `view`
+rename + optional view + #2670 fail-closed), PR-2 #2678 (`render_template` op + its own
+canonical mapper). Follow-up: #2679 (operator-yaml bounds config). · **Date:**
+2026-07-09 · **Builds on:** [FP-0054 present layer](0054-present-layer.md) (IMPLEMENTED)
 
 ## Requirements (owner)
 
@@ -108,8 +109,8 @@ The exploration (owner + architect, 2026-07-08/09) converged through four observ
 
 ```yaml
 render_template:
-  template_ref: <path>       # XOR template_inline — Jinja2 source
-  template_inline: <string>
+  template_ref: <path>       # XOR template — Jinja2 source
+  template: <string>         # inline Jinja2 source (as implemented; control-ir.md matches)
   data_ref: <path>           # XOR data_inline — context data (same resolution
   data_inline: <obj>         #   seam as present: resolve_present_source / file.read)
   undefined: strict | lenient   # default: strict
@@ -135,7 +136,7 @@ render_template:
 ### Engine and trust model
 
 - `jinja2.sandbox.SandboxedEnvironment` — **load-bearing**, because templates may be
-  LLM-authored (`template_inline`) and LLM-authored Jinja2 without a sandbox is
+  LLM-authored (`template`) and LLM-authored Jinja2 without a sandbox is
   arbitrary-code execution (SSTI). Operator-authored template files get the same
   sandbox as defense-in-depth (no cost, no mode split, no registry needed — template
   files are just zone-readable files).
