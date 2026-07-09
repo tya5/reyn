@@ -44,8 +44,8 @@ reactive one.
 
 When the window is filling, the OS injects a `## Context window` header with
 the exact-token free window (the context-size signal). The model may emit a
-`compact` Control IR op in response, which triggers an on-demand compaction on
-the current axis (chat or phase) and returns the freed tokens and new headroom.
+`compact` Control IR op in response, which triggers an on-demand compaction
+and returns the freed tokens and new headroom.
 See [`control-ir.md`](../../reference/runtime/control-ir.md) for the op contract.
 
 ### 3. `retry_loop` overflow backstop
@@ -87,8 +87,8 @@ IR op, available to the LLM when the context-size signal fires).
 
 ## Cost observability
 
-The `/budget` command shows token and cost usage broken down **by purpose**:
-`main`, `phase`, `compaction`, `judge`, and agent-attributed buckets. This lets
+The `/budget` command shows token and cost usage broken down **by purpose**
+(`compaction`, `judge`, `dogfood`) plus agent-attributed buckets. This lets
 operators see how much of their token spend the compaction engine is consuming
 across a session.
 
