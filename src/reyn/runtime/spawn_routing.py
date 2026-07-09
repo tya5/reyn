@@ -153,9 +153,9 @@ class ReviewedNA(SpawnRouting):
         if site not in _REVIEWED_SELF_BOUND_SPAWN_SITES:
             raise ValueError(
                 f"ReviewedNA refused for spawn site {site!r}: not a reviewed self-bound site. A "
-                f"spawn that reaches the user must declare BridgeToParent / SelfDeliveringWithDrain "
-                f"/ AuditOnlyNoSurface; only {sorted(_REVIEWED_SELF_BOUND_SPAWN_SITES)} may self-bind "
-                f"to the factory default (add here ONLY via review — see the frozenset rationale)."
+                f"spawn that reaches the user must declare BridgeToParent or AuditOnlyNoSurface; "
+                f"only {sorted(_REVIEWED_SELF_BOUND_SPAWN_SITES)} may self-bind to the factory "
+                f"default (add here ONLY via review — see the frozenset rationale)."
             )
         self._site = site
 

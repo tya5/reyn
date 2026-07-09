@@ -208,20 +208,37 @@ class SpawnBridgeInterventionListener:
 
     def bus(
         self, *, run_id: "str | None" = None, actor: "str | None" = None,
-    ) -> "ChatInterventionBus":
-        """Build the driver's router intervention bus bound to the PARENT session.
+    ):
+        """Build the child's router intervention bus, resolved COMPOSITIONALLY toward the
+        PARENT's OWN declared routing (not a raw dispatch on the parent's coordinator).
 
-        The child ignores its OWN session (the analog of
-        ``SpawnBridgePresentationConsumer.sink`` ignoring the child): the returned
-        bus delivers through ``parent_session._dispatch_intervention`` and stamps
-        ``parent_channel_id`` so the parent's live operator listener resolves it —
-        identical to a parent-native chat ask_user."""
-        return ChatInterventionBus(
-            self._parent_session,
-            run_id=run_id,
-            actor=actor,
-            channel_id=self._parent_channel_id,
-        )
+        The child ignores its OWN session (the analog of ``SpawnBridgePresentationConsumer.sink``
+        ignoring the child) and asks: how does the PARENT itself route ``ask_user``?
+
+        - The parent is ITSELF a bridged/audit-only spawn (it carries an
+          ``intervention_bridge``) → recurse into it. So a chain of spawns (a sub-agent that
+          ``session_spawn``s a grandchild) resolves TRANSITIVELY toward the first ancestor that
+          can actually serve an operator — a grandchild's ``ask_user`` reaches the human via an
+          attached ancestor, NOT the immediate (headless, listener-less) parent's registry where
+          it would origin-pin park (the #2708 co-vet recursive hang edge).
+        - The parent is a root/real session (no bridge) with a LIVE operator listener on
+          ``parent_channel_id`` → deliver there (identical to a parent-native chat ask_user).
+        - The parent is a root/real session with NO live listener (a fully-headless chain — no
+          operator anywhere) → a typed, reason'd refusal (``AuditOnlyInterventionBridge``), NEVER
+          an unbounded park. This is the terminal that makes BridgeToParent hang-safe by
+          construction at every depth."""
+        parent_bridge = getattr(self._parent_session, "intervention_bridge", None)
+        if parent_bridge is not None:
+            return parent_bridge.bus(run_id=run_id, actor=actor)
+        if self._parent_session.interventions.has_listener(self._parent_channel_id):
+            return ChatInterventionBus(
+                self._parent_session,
+                run_id=run_id,
+                actor=actor,
+                channel_id=self._parent_channel_id,
+            )
+        # Fully-headless chain: no reachable operator → deliberate typed refusal, not a park.
+        return AuditOnlyInterventionBridge().bus(run_id=run_id, actor=actor)
 
 
 # The reason a detached/headless spawn's ``ask_user`` is refused — carried on the typed

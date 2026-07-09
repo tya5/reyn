@@ -97,7 +97,7 @@ def test_spawn_seam_calls_declare_both_routing_kwargs() -> None:
     assert not offenders, (
         "spawn-seam call(s) omit a required routing kwarg — a child's present/ask_user would "
         "silently self-bind (orphan outbox / origin-pin hang). Declare a runtime/spawn_routing "
-        f"decision (BridgeToParent / SelfDeliveringWithDrain / AuditOnlyNoSurface / ReviewedNA): "
+        f"decision (BridgeToParent / AuditOnlyNoSurface / ReviewedNA): "
         f"{offenders}"
     )
 

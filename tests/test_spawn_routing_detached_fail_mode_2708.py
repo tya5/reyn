@@ -358,3 +358,81 @@ async def test_session_spawn_child_ask_user_reaches_parent_operator_no_hang(tmp_
     for task in list(reg._tasks.values()):
         if not task.done():
             task.cancel()
+
+
+async def _spawn_from(
+    reg: "AgentRegistry", spawner: "Session", spawner_sid: str,
+) -> "tuple[Session, str]":
+    """Spawn a child session from ``spawner`` via the LLM session_spawn adapter path (so the child
+    gets the adapter's BridgeToParent routing), returning ``(child_session, child_sid)``."""
+    host = spawner._router_host
+    host._live_session_id_fn = lambda: spawner_sid
+    r = await host.spawn_session(request="x", mode="persistent", narrowing=None, chain_id="c")
+    child = reg.get_session("worker", r["sid"])
+    assert child is not None
+    return child, r["sid"]
+
+
+@pytest.mark.asyncio
+async def test_session_spawn_grandchild_ask_user_reaches_root_operator_transitively(
+    tmp_path: Path,
+) -> None:
+    """Tier 2: co-vet recursive-edge closure — a GRANDCHILD (session_spawn from a HEADLESS spawned
+    child) routes its ask_user TRANSITIVELY to the first attached ancestor (the ROOT operator), NOT
+    the immediate headless parent's listener-less registry where it would origin-pin park. Proves
+    BridgeToParent is hang-safe at EVERY depth (session_spawn has no depth cap + a spawned child's
+    router loop re-exposes session_spawn → grandchildren are reachable). RED if the bridge dispatches
+    on the immediate parent's coordinator (the grandchild never reaches the root queue → hang)."""
+    state_log = StateLog(tmp_path / ".reyn" / "wal.jsonl")
+    reg, _built = _recording_registry(tmp_path, state_log)
+    root = reg.get_or_load("worker")
+    root.register_intervention_listener(DEFAULT_CHAT_CHANNEL_ID)  # the human operator (attached root)
+
+    child, child_sid = await _spawn_from(reg, root, "main")  # headless spawned child (no listener)
+    assert not child.interventions.has_listener(DEFAULT_CHAT_CHANNEL_ID)
+    grandchild, _ = await _spawn_from(reg, child, child_sid)
+
+    # The grandchild's ask_user (via its declared bridge) must land on the ROOT operator's queue.
+    bus = grandchild.intervention_bridge.bus(run_id="r", actor="gc")
+    iv = UserIntervention(kind="ask_user", prompt="which branch?")
+    deliver = asyncio.ensure_future(bus.deliver(iv))
+    loop = asyncio.get_event_loop()
+    deadline = loop.time() + 5.0
+    while loop.time() < deadline and not root.interventions.list_active():
+        await asyncio.sleep(0.02)
+    assert root.interventions.list_active(), (
+        "the grandchild's ask_user did NOT reach the ROOT operator — it parked on the immediate "
+        "headless parent's listener-less registry (the recursive hang edge)."
+    )
+    answered = await root._maybe_answer_oldest_intervention("blue")
+    assert answered is True
+    answer = await asyncio.wait_for(deliver, timeout=5.0)  # resolves via root operator, no hang
+    assert (answer.choice_id or answer.text) == "blue"
+
+    for task in list(reg._tasks.values()):
+        if not task.done():
+            task.cancel()
+
+
+@pytest.mark.asyncio
+async def test_fully_headless_spawn_chain_ask_user_refuses_not_hang(tmp_path: Path) -> None:
+    """Tier 2: co-vet recursive-edge terminal — a FULLY-headless spawn chain (no operator listener
+    anywhere in the ancestry) resolves ask_user with a typed refusal, NEVER an unbounded park. This
+    is the terminal that makes BridgeToParent hang-safe by construction even with no reachable
+    operator at the root."""
+    state_log = StateLog(tmp_path / ".reyn" / "wal.jsonl")
+    reg, _built = _recording_registry(tmp_path, state_log)
+    root = reg.get_or_load("worker")  # NO listener registered — a headless root (cron/background)
+
+    child, child_sid = await _spawn_from(reg, root, "main")
+    grandchild, _ = await _spawn_from(reg, child, child_sid)
+
+    bus = grandchild.intervention_bridge.bus(run_id="r", actor="gc")
+    iv = UserIntervention(kind="ask_user", prompt="which branch?")
+    answer = await asyncio.wait_for(bus.deliver(iv), timeout=3.0)  # MUST NOT hang
+    assert answer.refused is True
+    assert answer.reason == NO_SURFACE_REFUSAL_REASON
+
+    for task in list(reg._tasks.values()):
+        if not task.done():
+            task.cancel()
