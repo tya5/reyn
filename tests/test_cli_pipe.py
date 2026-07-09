@@ -471,6 +471,12 @@ def test_run_agent_step_spawns_real_ephemeral_session(tmp_path, monkeypatch, cap
     monkeypatch.setattr(
         litellm, "acompletion", _fake_scripted_acompletion("the agent's answer"),
     )
+    # #2686: an agent (LLM) pipeline now trips ``reyn pipe run``'s conditional
+    # credential pre-check, which exits early when no provider key AND no proxy
+    # are configured (keys are UNSET in CI). The faked ``acompletion`` ignores
+    # the key value, so a dummy env var satisfies the pre-check and lets the run
+    # reach the replay seam — matching real "a credential must be configured".
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test-2686-dummy")
 
     dsl_path = tmp_path / "uses_agent.yaml"
     dsl_path.write_text(
