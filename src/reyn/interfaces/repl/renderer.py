@@ -145,6 +145,25 @@ class ConsoleChatRenderer(ChatRenderer):
 
     def message(self, msg: OutboxMessage) -> None:
         self._clear_transient()
+        if msg.kind == "presentation":
+            # FP-0054 PR-B gap (issue #2701): this plain (--cui) renderer never had
+            # `format_inline_message`'s presentation handling, so a `present` op's
+            # result was silently dropped here (rendered nowhere, the OS-level op
+            # itself succeeded). Render via a plain (no ANSI) Console so this
+            # renderer's existing no-color contract holds — same node→renderable
+            # conversion `InlineChatRenderer` uses, just captured as plain text.
+            from io import StringIO as _StringIO
+
+            from rich.console import Console
+
+            from reyn.interfaces.repl.present_renderer import render_presentation_nodes
+            buf = _StringIO()
+            Console(file=buf, color_system=None, width=100).print(
+                render_presentation_nodes(msg.meta.get("nodes", []))
+            )
+            self._write(buf.getvalue())
+            self._transient_active = False
+            return
         kind_prefix = self._PREFIX.get(msg.kind, "")
         meta_prefix = _meta_prefix(msg.meta)
         # Inject meta prefix between kind tag and text so logs read
