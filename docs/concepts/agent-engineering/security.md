@@ -6,52 +6,35 @@ audience: [human, agent]
 
 # Security
 
-> **Status: partially stale.** The "three-layer permission model" / "phase-level
-> declarations" / "skill-scoped approvals" sections below describe the deleted
-> phase-graph skill engine's approval flow (per-phase frontmatter declarations,
-> `run_skill` inheritance) — confirmed via direct grep that neither concept
-> exists in current source; the current model is the 4-layer just-in-time
-> capability approval flow (config pre-approval → saved → session →
-> interactive prompt) described in `docs/concepts/runtime/permission-model.md`.
-> The "AST sandbox for Python preprocessor steps" section describes a step
-> kind that no longer exists in the current pipeline DSL. The **"Content-layer
-> defense" section below (and everything under it) is current and unaffected**
-> — it matches `docs/feature-map.md`'s Content-layer defense section verbatim.
-> A rewrite of the stale sections is tracked as a follow-up.
-
-Capability gating, sandbox boundaries, and trust scoping. The bar is "no workflow silently gets capabilities the user didn't authorize, and a compromised workflow can't escalate to other workflows."
+Capability gating, sandbox boundaries, and trust scoping. The bar is "no agent silently gets capabilities the operator didn't authorize, and a compromised call can't escalate to other actors."
 
 ## How reyn handles it
 
-### The three-layer permission model
+### Three-layer permission model
 
 ```
 defaults (always on)
-   ↓ if a workflow needs more
-phase declarations → user approves at startup
+   ↓ if an actor needs more
+declared capability → JIT prompt at point of use (not at startup)
    ↓ if you trust the project broadly
 project-wide pre-approval (reyn.yaml)
 ```
 
-Defaults are conservative — read anywhere under the project root, write only under `.reyn/`, no shell, no MCP, no Python. Anything beyond requires opt-in at one of the upper layers.
+Defaults are conservative — read/glob/grep anywhere under the project root, write/edit/delete only under `.reyn/` (with a narrow carve-out even there for `.reyn/approvals.yaml` and `.reyn/index/sources.yaml`, since those paths have no downstream use-time gate to catch a direct write). No shell, no MCP, no Python beyond that. Anything more requires a declared capability, which prompts just-in-time at the point of actual use — not a single startup-time blanket prompt.
 
-### Phase-level declarations + interactive approval
+**This 3-layer split and the charter's "4-layer JIT approval" are two different axes, not a contradiction.** These three layers are the *grant hierarchy* — how broad an actor's authorization is (defaults / declared / project-wide). Charter's 4-layer description is the *approval-source resolution order* the JIT prompt itself checks before it actually has to ask: config pre-approval → saved approvals (`.reyn/approvals.yaml`) → session approvals (in-memory, current invocation) → interactive prompt (the last resort). The 4-layer resolution lives entirely inside this section's middle layer ("declared capability → JIT prompt").
 
-A phase declares the capabilities it needs in its frontmatter; at startup the runtime shows a single approval prompt. Persistent choices land in `.reyn/approvals.yaml`, keyed by `<skill>/<op>/<path>`.
+### Actor-scoped approvals
 
-### Skill-scoped approvals
+Persistent approval choices land in `.reyn/approvals.yaml`, keyed by `<actor>/<op>/<path>`. Keys are actor-scoped, not skill- or user-scoped: one actor's approval doesn't leak to another. This is the composition-safety property — an approval granted to the chat router's own dispatch path doesn't transitively extend to, say, a background hook or cron caller acting through a different actor identity.
 
-Approvals are keyed by skill, not by user. If skill A is granted `file.write:/tmp/output`, sub-skill B (invoked via `run_skill`) does not transitively inherit that grant — B has to ask for its own. This is the composition-safety property: trusting one skill doesn't trust everything it might call.
+### `sandboxed_exec` — a typed, per-axis `SandboxPolicy`
 
-### AST sandbox for Python preprocessor steps
-
-`python` preprocessor steps are always sandboxed: AST-validated against an allowlist (no `open`, `eval`, `exec`, `__import__`, `compile`, `subprocess`, etc.). Imports are limited to a curated allowlist (`math`, `statistics`, `json`, `re`, `random`, `time`, `datetime`, …), extensible via `reyn.yaml`. Restricted `__builtins__`. Executes in a subprocess with a wall-clock timeout for crash isolation.
-
-A step that needs a non-ambient capability (operator files, network, env vars, process spawning) must split that I/O out into a `run_op` step — which carries its own permission gate and event-log entry — or use the permission-gated `reyn.api.safe.*` surface. There is no unsandboxed escape valve: a `mode: unsafe` declaration is rejected at load.
+Subprocess execution is gated by a `SandboxPolicy` with deliberately asymmetric axes, each set to the tightness that actually buys safety: `write_paths` is a tight allowlist (the hard guard on what a process can persist), `network` is off by default (the exfiltration gate), `allow_subprocess` bounds child-process spawning, and `read` is broad-allow by default plus an optional sensitive-path deny-list (`read_deny_paths`) — the strict read-allowlist model was abolished, since the network gate, not the read surface, is what actually stops exfiltration. Enforcement is backend-selected per platform (Seatbelt on macOS, Landlock + seccomp-BPF on Linux, a `NoopBackend` audit-only fallback when neither is available).
 
 ### Non-interactive approval (run-once, CI)
 
-`reyn run-once` does not prompt (`reyn eval` was a phase-graph-era command, deleted alongside that engine; `run-once` is its current, live counterpart for non-interactive invocation). Permissions must be in place before the run — either pre-approved in `reyn.yaml` (`permissions.<key>: allow`) or persisted from a prior interactive run. The trust model doesn't change between modes; a non-interactive run just inherits the decisions you've already made.
+`reyn run-once` does not prompt. Permissions must be in place before the run — either pre-approved in `reyn.yaml` (`permissions.<key>: allow`) or persisted from a prior interactive run. The trust model doesn't change between modes; a non-interactive run just inherits the decisions you've already made.
 
 ### Content-layer defense
 
@@ -90,15 +73,16 @@ Memory is therefore covered on **both** directions: a memory **read** (recall or
 
 ## Where it's still thin
 
-**Content-layer defense is seam-based regex detection, not a prompt-injection guarantee.** Pattern scans catch known attack shapes at OS seams; novel or obfuscated payloads that don't match a regex pass through. Once untrusted content is fenced and in the prompt, the LLM may still follow embedded instructions that read as natural language rather than a recognisable attack pattern. The OS does not gate the LLM's *response* for injection residue — capability damage is bounded by the permission system (no writes outside approved paths, no `sandboxed_exec` outside its declared `SandboxPolicy`) but response-level interception is not implemented. Direct operator input (`ask_user`, chat messages) is trusted by definition and not scanned. Workflow design still matters: keep untrusted content summarised rather than passed verbatim, validate structured outputs, and use `judge_output` to gate critical decisions.
+**Content-layer defense is seam-based regex detection, not a prompt-injection guarantee.** Pattern scans catch known attack shapes at OS seams; novel or obfuscated payloads that don't match a regex pass through. Once untrusted content is fenced and in the prompt, the LLM may still follow embedded instructions that read as natural language rather than a recognisable attack pattern. The OS does not gate the LLM's *response* for injection residue — capability damage is bounded by the permission system (no writes outside approved paths, no `sandboxed_exec` outside its declared `SandboxPolicy`) but response-level interception is not implemented.
 
-**The AST sandbox is honor-system, not a kernel sandbox.** The safe-mode validator + restricted builtins stop honest authoring mistakes (an accidental `import os`, a stray `open`), but a motivated author using `getattr` chains or other metaprogramming can still escape it. The real safety boundary is the subprocess isolation + the permission gate on the `run_op` / `reyn.api.safe.*` surfaces, not the validator. This is the right boundary for a developer tool — but it means python steps deserve code review the way a Makefile target does.
+**The Landlock backend's read-deny-list is not enforceable.** On macOS, Seatbelt's last-match-wins semantics let a broad read-allow be narrowed by a deny-list for sensitive paths (`~/.ssh`, `~/.aws`, …). Landlock (Linux) is allowlist-only — you cannot carve a sensitive subpath back out of a broader allowed parent — so on Linux a compromised in-sandbox process can read those paths. The primary boundary (write-allowlist + network-off) holds identically on both backends; the deny-list is defense-in-depth on Linux, not the primary guarantee there.
 
 ## See also
 
-- [../runtime/permission-model.md](../runtime/permission-model.md) — concept
+- [`docs/concepts/architecture/charter.md`](../architecture/charter.md) — the Security row, grounded across all 7 feature families
+- [../runtime/permission-model.md](../runtime/permission-model.md) — the full permission model, including the JIT prompt UX and the audit trail
+- [../runtime/sandbox.md](../runtime/sandbox.md) — the full `SandboxPolicy` field reference and backend selection table
 - [Reference: permissions](../../reference/config/permissions.md) — full schema
-- [Reference: reyn.yaml](../../reference/config/reyn-yaml.md) — `permissions:` key
 - [How-to: manage permissions](../../guide/for-users/manage-permissions.md)
 - [reliability-engineering.md](reliability-engineering.md) — what happens when an op is denied
 - [Feature map — Content-layer defense](../../feature-map.md#content-layer-defense) — full mechanism inventory
