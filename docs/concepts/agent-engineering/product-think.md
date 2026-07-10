@@ -6,6 +6,18 @@ audience: [human, agent]
 
 # Product Think
 
+> **Status: stale.** This page was written against the deleted phase-graph
+> skill engine — the CLI table below (`reyn run-once`, workflow-centric
+> subcommands), `limits.phase.max_visits`, and the "no streaming output" /
+> "no cost dashboard" claims in "Where it's still thin" all predate the
+> current inline CUI (with live audit chips for agents/cost/permissions —
+> confirmed current via `docs/feature-map.md`'s Inline CUI section, which
+> contradicts the "no streaming output" claim below). A rewrite is tracked
+> as a follow-up; in the meantime see
+> [`docs/concepts/architecture/charter.md`](../architecture/charter.md)
+> (Product Think row, populated across all 7 feature families) for the
+> current, grounded story.
+
 The agent-as-a-product perspective: how it feels to use, what it costs to run, how predictable it is in the wild. Easy to under-invest in because it's not a research problem — but it's what determines whether anyone keeps the system around.
 
 ## How reyn handles it

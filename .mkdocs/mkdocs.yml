@@ -203,13 +203,15 @@ nav:
           - concepts/tools-integrations/voice.md
       - Observability:
           - concepts/observability/dogfood-scenarios.md
-      - Agent engineering — six lenses:
+      - Agent engineering — eight lenses:
           - concepts/agent-engineering/index.md
           - concepts/agent-engineering/system-design.md
           - concepts/agent-engineering/tool-contract-design.md
           - concepts/agent-engineering/retrieval-engineering.md
           - concepts/agent-engineering/reliability-engineering.md
           - concepts/agent-engineering/security.md
+          - concepts/agent-engineering/evaluation.md
+          - concepts/agent-engineering/observability.md
           - concepts/agent-engineering/product-think.md
 
 extra_css:

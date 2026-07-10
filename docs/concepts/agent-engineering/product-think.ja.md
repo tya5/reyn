@@ -6,6 +6,16 @@ audience: [human, agent]
 
 # Product Think
 
+> **状態: stale。** このページは削除済みの phase-graph skill engine を前提に書かれています —
+> 以下の CLI 表(`reyn run-once`、ワークフロー中心のサブコマンド)、
+> `limits.phase.max_visits`、「まだ薄い部分」の「ストリーミング出力なし」/
+> 「コストダッシュボードなし」という主張は、すべて現行の inline CUI(agents/cost/permissions
+> のライブ audit chip 付き — `docs/feature-map.md` の Inline CUI セクションで現行確認済み、
+> 以下の「ストリーミング出力なし」という主張と矛盾)より前のものです。
+> 書き直しは follow-up として追跡されています。現行の grounded なストーリーは
+> [`docs/concepts/architecture/charter.md`](../architecture/charter.md)
+> (Product Think 行、7 feature family 全体で populate 済み)を参照してください。
+
 製品としての agent の視点: 使用感、実行コスト、実環境での予測可能性。研究上の問題ではないため、投資が不足しがちですが、システムを長期間維持するかどうかを決めるのはこの部分です。
 
 ## Reyn の実装方法
