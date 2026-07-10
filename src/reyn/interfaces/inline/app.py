@@ -72,7 +72,11 @@ class _SlashCompleter(Completer):
 
     def get_completions(self, document, complete_event):
         text = document.text_before_cursor
-        if not text.startswith("/") or " " in text:
+        # Slash commands are inherently single-line; a "\n" means the input
+        # (now multiline-capable, see run_inline_input's Buffer) has moved past
+        # a bare command word, so stop suggesting — same intent as the
+        # existing " " in text check, just extended to the newline case.
+        if not text.startswith("/") or " " in text or "\n" in text:
             return
         prefix = text[1:]
         for name, summary in slash_command_completions(prefix):
@@ -95,6 +99,75 @@ _ABOVE_REGION_MAX_HEIGHT = 12
 # unbounded Dimension.exact(), which prompt_toolkit cannot satisfy past the
 # terminal's remaining rows and renders "Window too small" instead of the menu.
 _MENU_REGION_MAX_HEIGHT = 12
+
+# Same cap, for the multiline input box itself. A fixed height=1 (the
+# pre-multiline default) only ever showed the buffer's current line — once
+# Shift+Enter/Ctrl+J can insert real newlines, a fixed height=1 window hides
+# every line except the one the cursor is on (confirmed live via tmux: typing
+# "line one", Shift+Enter, "line two" showed only "line two", though the
+# newline itself DID insert correctly — a rendering gap, not a submit bug).
+# Capped (not unbounded) for the same "Window too small" reason as the two
+# constants above.
+_INPUT_MAX_HEIGHT = 8
+
+
+# Owner spec for the inline input: Enter=submit, Shift+Enter=newline — the
+# OPPOSITE of prompt_toolkit's own multiline default (Enter=newline,
+# Meta+Enter=submit; see run_inline_input's "enter" binding, which inverts it).
+#
+# Hard limit (confirmed via direct prompt_toolkit source read + an empirical
+# tmux byte-probe, not guesswork): most terminals send an IDENTICAL "\r" for
+# Enter and Shift+Enter — the classic VT100 protocol has no way to encode
+# "Enter + Shift" as a distinct byte sequence, so this is a terminal-layer
+# limit reyn's code cannot work around for those terminals (macOS
+# Terminal.app, GNOME Terminal, default Windows Terminal, PuTTY, conhost).
+#
+# Some terminals DO send a disambiguated escape sequence when an extended
+# keyboard protocol is active — critically, mintty (Windows Git Bash) sends
+# the legacy xterm modifyOtherKeys form below BY DEFAULT since 2009.
+# prompt_toolkit's OWN ansi_escape_sequences.py maps that sequence back to
+# plain Keys.ControlM (its own comment: "currently unsupported, so just
+# re-map... to the unmodified versions") — but the raw KeyPress.data still
+# carries the full original escape string, so the distinction survives and can
+# be recovered without any prompt_toolkit monkeypatch. Verified empirically: a
+# byte-probe app confirmed `\x1b[27;2;13~` parses as ONE Keys.ControlM event
+# whose .data is the full escape string, distinct from plain Enter's .data ==
+# "\r". Ctrl+J (LF, a byte distinct from Enter's CR on every VT100-compatible
+# terminal) is the guaranteed-always-works fallback for terminals where
+# Shift+Enter is genuinely undetectable — see the "c-j" binding.
+_SHIFT_ENTER_RAW_DATA = frozenset({
+    "\x1b[27;2;13~",  # xterm modifyOtherKeys (mintty default) — Shift+Enter
+})
+
+
+def _is_shift_enter_escape(data: str) -> bool:
+    """True if ``data`` (a KeyPress's raw ``.data``) is the disambiguated
+    Shift+Enter escape sequence prompt_toolkit's own key-name resolution
+    collapses to plain Enter. See ``_SHIFT_ENTER_RAW_DATA`` above for the full
+    investigation."""
+    return data in _SHIFT_ENTER_RAW_DATA
+
+
+def _down_arrow_action(has_text: bool, cursor_row: int, line_count: int) -> str:
+    """Pure decision for the multiline input buffer's ↓ key, mirroring
+    ``Buffer.auto_down``'s row-awareness (this custom binding replaces
+    prompt_toolkit's default auto_down entirely, so it must reproduce that
+    part) plus reyn's own empty-box "drop to status bar" affordance.
+
+    Returns one of ``"focus_status"`` / ``"cursor_down"`` / ``"history_forward"``.
+    """
+    if not has_text:
+        return "focus_status"
+    if cursor_row < line_count - 1:
+        return "cursor_down"
+    return "history_forward"
+
+
+def _input_window_height(line_count: int) -> int:
+    """Pure: how many rows the input Window should occupy for a buffer with
+    ``line_count`` lines — at least 1, capped at ``_INPUT_MAX_HEIGHT`` (see its
+    own docstring for why a fixed height=1 broke multiline display)."""
+    return min(max(1, line_count), _INPUT_MAX_HEIGHT)
 
 
 def _picker_hint(has_picker_focus: bool, key: str | None) -> str:
@@ -700,8 +773,13 @@ async def run_inline_input(registry, renderer, config=None) -> None:
     if attached is None:
         raise RuntimeError("run_inline_input: no session attached (call registry.attach() first)")
     history = FileHistory(str(attached.workspace_dir / ".input_history"))
+    # multiline=True: Enter=submit / Shift+Enter=newline (owner spec) instead of
+    # prompt_toolkit's own multiline default (Enter=newline, Meta+Enter=submit) —
+    # see the "enter" binding below, which inverts it. FileHistory already
+    # round-trips multi-line entries natively ("+"-prefixed continuation lines,
+    # history.py:297-306) — no reyn-side change needed there.
     buf = Buffer(
-        multiline=False, history=history,
+        multiline=True, history=history,
         completer=_SLASH_COMPLETER, complete_while_typing=True,
     )
     # sel: which main chip; open: its detail/picker shown. The dropdown's
@@ -774,7 +852,10 @@ async def run_inline_input(registry, renderer, config=None) -> None:
     prompt_sym = Window(
         FormattedTextControl([(f"fg:{_CC_ACCENT} bold", "❯ ")]), width=2, height=1
     )
-    input_win = Window(BufferControl(buffer=buf), height=1)
+    input_win = Window(
+        BufferControl(buffer=buf),
+        height=lambda: _input_window_height(buf.document.line_count),
+    )
     inputrow = VSplit([prompt_sym, input_win])
 
     def status_fragments() -> list:
@@ -938,8 +1019,7 @@ async def run_inline_input(registry, renderer, config=None) -> None:
 
     kb = KeyBindings()
 
-    @kb.add("enter", filter=has_focus(input_win))
-    def _accept(event) -> None:
+    def _do_submit(event) -> None:
         text = buf.text
         buf.reset(append_to_history=True)
         stripped = text.strip()
@@ -962,17 +1042,63 @@ async def run_inline_input(registry, renderer, config=None) -> None:
             registry.repl_outbox.put_nowait(OutboxMessage(kind="user", text=stripped))
             event.app.create_background_task(_submit(registry, stripped))
 
+    # Owner spec: Enter=submit, Shift+Enter=newline. See the module-level
+    # _SHIFT_ENTER_RAW_DATA / _is_shift_enter_escape / _down_arrow_action
+    # docstrings (above _picker_hint) for the full cross-terminal investigation.
+    @kb.add("enter", filter=has_focus(input_win))
+    def _accept(event) -> None:
+        last = event.key_sequence[-1] if event.key_sequence else None
+        if last is not None and _is_shift_enter_escape(last.data):
+            buf.newline(copy_margin=False)
+            return
+        _do_submit(event)
+
+    # Kitty keyboard protocol form of Shift+Enter (`ESC [ 1 3 ; 2 u`) — enabled
+    # by DEFAULT on iTerm2/kitty/Ghostty/Alacritty/Rio/Warp/Contour (not on
+    # mintty, which uses the legacy form the "enter" binding above handles
+    # instead). Registered as a raw multi-key sequence since prompt_toolkit has
+    # no built-in "s-enter" name — confirmed via its own key-bindings docs,
+    # which list every other shift-combination (s-up/s-down/s-left/s-right/
+    # s-tab/etc.) but not s-enter. prompt_toolkit's KeyProcessor already
+    # buffers-and-matches multi-byte sequences this way for every other
+    # escape-coded key (arrows, F-keys, …), so this is the same mechanism, not
+    # a special case.
+    @kb.add("escape", "[", "1", "3", ";", "2", "u", filter=has_focus(input_win))
+    def _shift_enter_kitty(event) -> None:
+        buf.newline(copy_margin=False)
+
+    # Ctrl+J (raw LF, 0x0A) — a byte distinct from Enter's CR (0x0D) on EVERY
+    # VT100-compatible terminal, needing no protocol negotiation. The
+    # guaranteed-always-works newline binding for terminals where Shift+Enter
+    # is genuinely undetectable (see _SHIFT_ENTER_RAW_DATA's docstring) — the
+    # same fallback pattern used by other CLIs facing this exact cross-terminal
+    # gap (e.g. Claude Code's own tracking issue on this recommends Ctrl+J/
+    # Alt+Enter as the documented alternative). Overrides prompt_toolkit's own
+    # default c-j binding, which normally re-feeds it as if it were Enter (some
+    # terminals, e.g. WSL, send \n instead of \r for plain Enter) — reyn's
+    # input already only ever reaches here via an explicit Enter/Shift+Enter
+    # path, so that default's rationale doesn't apply and this rebinding is safe.
+    @kb.add("c-j", filter=has_focus(input_win))
+    def _ctrl_j_newline(event) -> None:
+        buf.newline(copy_margin=False)
+
     @kb.add("down", filter=has_focus(input_win) & ~has_completions)
     def _down(event) -> None:
-        # With text in the box, ↓ is history navigation (forward, shell-like) so
-        # it doesn't yank focus away mid-edit. With an empty box, ↓ drops into the
-        # status bar (its discoverable affordance). ↑ stays history either way.
-        # Gated on ~has_completions so that while the slash menu is open ↓ falls
-        # through to the default binding (navigate the completion list).
-        if buf.text:
-            buf.history_forward()
-        else:
+        # Gated on ~has_completions so that while the slash menu is open ↓
+        # falls through to the default binding (navigate the completion
+        # list). ↑ stays on prompt_toolkit's own default (auto_up), which
+        # already has the same row-aware behavior built in — only ↓ needed
+        # reyn's empty-box "drop to status bar" special case, see
+        # _down_arrow_action's docstring.
+        action = _down_arrow_action(
+            bool(buf.text), buf.document.cursor_position_row, buf.document.line_count,
+        )
+        if action == "focus_status":
             event.app.layout.focus(status_win)
+        elif action == "cursor_down":
+            buf.cursor_down()
+        else:
+            buf.history_forward()
 
     def _actionable_open() -> bool:
         # Dropdown showing AND the opened element is a selectable picker (a

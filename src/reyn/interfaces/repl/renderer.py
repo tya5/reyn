@@ -787,7 +787,18 @@ class InlineChatRenderer(ChatRenderer):
             self._transient_active = False
 
     def banner(self, agent_name: str) -> None:
-        self._console.print(f"[{_CC_DIM}]· {agent_name} · /quit to exit ·[/]\n")
+        # Ctrl+J is the GUARANTEED-works newline binding (documented per the
+        # #1765-adjacent Shift+Enter investigation: most terminals can't
+        # distinguish Shift+Enter from plain Enter at all — Ctrl+J sends a
+        # distinct byte, LF vs CR, on every VT100-compatible terminal). Shift+
+        # Enter also works out of the box on terminals with an extended
+        # keyboard protocol (mintty/Git Bash default; iTerm2/kitty/Ghostty/
+        # Alacritty default) — worth advertising, but Ctrl+J is the one that
+        # never silently fails, so it leads.
+        self._console.print(
+            f"[{_CC_DIM}]· {agent_name} · Enter to send · "
+            f"ctrl+j / shift+enter for newline · /quit to exit ·[/]\n"
+        )
         self._flush()
 
     def message(self, msg: OutboxMessage) -> None:
