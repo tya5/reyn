@@ -99,7 +99,7 @@ Hermes Agent と比較した結論を、各領域に対応する GitHub issue (#
 - 確認事項: CodeAct の tool() ループが max_act_turns を過剰消費しないか(Hermes は execute_code を refund) → #1834 に追記。
 
 ### 12. ツールカタログ / dispatch (#1834)
-- **Reyn の scheme 抽象が圧勝**: 4方式プラガブル(enumerate/universal/CodeAct/retrieval)× 層ごと選択(chat/step/phase)× P7(OS は scheme 固有概念ゼロ)。競合は各1〜2方式固定。
+- **Reyn の scheme 抽象が圧勝**: 4方式プラガブル(enumerate/universal/CodeAct/retrieval)× chat レイヤーで選択 × P7(OS は scheme 固有概念ゼロ)。競合は各1〜2方式固定。
 - 競合は互いを参照(Hermes が OpenClaw #84141 の catalog drift 失敗から「stateless 再構築」を学んだ)。
 - **欠けるもの**: 閾値ベースの動的切替。chat=enumerate-all 固定(#1657 owner H1)なので、ツールが増えるとコンテキスト圧迫。Hermes の threshold gate(deferrable tools が context の 10% 超で discovery に切替)を取り込む。#1827(capability profile)と相乗。
 

@@ -499,17 +499,15 @@ def _action_index_build_failure_warning(exc: BaseException, model_class: Any) ->
 class RouterLoopCore(Protocol):
     """#1092 PR-A (ADR-0036 FD1, decision c): the NARROW core surface the
     RouterLoop act-loop actually depends on — the members RouterLoop's loop
-    directly calls for ANY host (chat / plan-step / phase). A phase implements
-    ONLY this (via PhaseRouterLoopHost) — no chat-extra stubs. The chat
-    ``RouterHostAdapter`` is a superset and satisfies this for free.
+    directly calls for any host. The chat ``RouterHostAdapter`` is a superset and
+    satisfies this for free. (The narrow/superset split dates to the phase-graph
+    era; the phase host — ``PhaseRouterLoopHost`` — was deleted in #2438, so chat
+    is the only production implementor today.)
 
     The chat-extras (agents/mcp/memory/web/file/reyn_src/embedding/
-    discovery/spawn/send_to_agent) live on ``RouterLoopHost``
-    below; they are reached only via the chat-discovery setup, the chat
-    system-prompt build, or chat-dispatch handlers — a phase never reaches them
-    (its op catalog REPLACES chat-discovery, and its ops dispatch via the op
-    handlers + ``make_router_op_context``). ``get_phase_op_catalog`` is a
-    phase-only getattr-hook (not declared here — chat doesn't implement it).
+    discovery/spawn/send_to_agent) live on ``RouterLoopHost`` below; they are
+    reached only via the chat-discovery setup, the chat system-prompt build, or
+    chat-dispatch handlers.
     """
 
     agent_name: str
@@ -1272,7 +1270,7 @@ class RouterLoop:
         max_tool_calls_per_turn: int = 50,  # #1666 — safety.loop.max_tool_calls_per_turn (0 = unlimited)
         on_limit: "Any | None" = None,  # OnLimitConfig | None — FP-0005 max_iterations checkpoint
         llm_caller: "Any | None" = None,  # Tier 2 test seam: real-fake injection
-        scheme_name: "str | None" = None,  # #1593 PR-2: per-layer tool-use scheme (None → universal default; the construction site resolves config.tool_use.<layer>)
+        scheme_name: "str | None" = None,  # #1593 PR-2: chat-layer tool-use scheme (None → universal default; the construction site resolves config.tool_use.chat)
     ):
         self.host = host
         self.chain_id = chain_id
@@ -1410,21 +1408,13 @@ class RouterLoop:
         self._total_usage = TokenUsage()
         self._last_call_usage = TokenUsage()
         host = self.host
-        # #1092 PR-A (FD1, ADR-0036): catalog-source REPLACE seam. A phase host
-        # supplies its op tool catalog (allowed_ops via _build_phase_tool_catalog),
-        # which REPLACES chat-discovery — a phase has no actions/agents/mcp/universal
-        # (#1212 PR3 decision A). getattr-fallback so chat / plan-step hosts (no such
-        # method) keep the existing chat-discovery tool-build byte-identically.
-        _phase_op_catalog_getter = getattr(host, "get_phase_op_catalog", None)
-        _phase_op_catalog = _phase_op_catalog_getter() if _phase_op_catalog_getter else None
         # FP-0034 Phase 2 step 5: ActionUsageTracker for hot list recording.
         # Resolved once per run() so recording below can reuse without re-fetching.
         _tracker_getter = getattr(host, "get_action_usage_tracker", None)
         _tracker = _tracker_getter() if _tracker_getter else None
         # FP-0034 PR-3b-iii: read universal wrapper visibility from host.
-        # getattr fallback so narrow hosts (= phase sub-host) that
-        # don't implement the method default to off (= preserve prior
-        # phase-step tools= shape).
+        # getattr fallback so narrow hosts (= test FakeRouterHost) that don't
+        # implement the method default to off (= the prior flat tools= shape).
         _univ_enabled_getter = getattr(
             host, "get_universal_wrappers_enabled", None,
         )
@@ -1630,7 +1620,6 @@ class RouterLoop:
         except Exception:
             _rm_family = "other"
         _scheme_layer_ctx = {
-            "phase_op_catalog": _phase_op_catalog,
             "univ_enabled": _univ_enabled,
             "search_visible": _search_visible,
             "ctx_signal_present": _ctx_signal is not None,
@@ -1756,13 +1745,11 @@ class RouterLoop:
         """#1092 PR-B (FD1, ADR-0036): the shared op-execution loop (convergence ii).
 
         Extracted verbatim from ``run()`` so the chat ``run()`` (after its
-        chat-specific pre-loop setup) AND a phase host (via a RouterLoop built with
-        PhaseRouterLoopHost) drive the SAME loop = true convergence. The loop body
-        is unchanged; chat-specific terminals (put_outbox spawn-acks, text reply)
-        are host-polymorphic and go inert for a phase host (no-op put_outbox,
-        async_count=0). FD2: the phase transition is a SEPARATE structured-json
-        call the phase host post-pends AFTER this loop returns at end_turn — it is
-        NOT in this loop (P1/P8 preserved).
+        chat-specific pre-loop setup) drives it as the single shared op-execution
+        loop. (The extraction originally also served a phase host driving the SAME
+        loop for true chat/phase convergence; that host — ``PhaseRouterLoopHost`` —
+        was deleted in #2438, leaving chat as the only driver. The chat-specific
+        terminals below remain host-polymorphic from that design.)
         """
         host = self.host
         # #1092 PR-B: keep the DISPATCH catalog (``self._catalog``, consumed by
@@ -2785,28 +2772,24 @@ class RouterLoop:
     # their own logic instead of delegating.
 
     def present(self, available, layer_ctx):
-        """SchemeOps.present: today's universal-category presentation — the phase
-        op-catalog (when the phase layer supplies one) OR ``build_tools`` with the
-        catalog wrappers. #1627 Stage 4: sp_params removed (build_system_prompt no
-        longer reads them; the scheme layer owns SP via tool_use_sp slot-map)."""
+        """SchemeOps.present: today's universal-category presentation —
+        ``build_tools`` with the catalog wrappers. #1627 Stage 4: sp_params removed
+        (build_system_prompt no longer reads them; the scheme layer owns SP via
+        tool_use_sp slot-map)."""
         from reyn.tools.scheme import Presentation
 
-        phase_op_catalog = layer_ctx.get("phase_op_catalog")
         univ = layer_ctx["univ_enabled"]
         search_visible = layer_ctx["search_visible"]
-        if phase_op_catalog is not None:
-            tools = list(phase_op_catalog)
-        else:
-            tools = build_tools(
-                self.host.list_available_agents(),
-                file_permissions=self.host.get_file_permissions(),
-                mcp_servers=self.host.get_mcp_servers(),
-                web_fetch_allowed=self.host.get_web_fetch_allowed(),
-                universal_wrappers_enabled=univ,
-                search_actions_visible=search_visible,
-                hot_list_aliases=available["hot_list_aliases"],
-                compact_visible=layer_ctx["ctx_signal_present"],
-            )
+        tools = build_tools(
+            self.host.list_available_agents(),
+            file_permissions=self.host.get_file_permissions(),
+            mcp_servers=self.host.get_mcp_servers(),
+            web_fetch_allowed=self.host.get_web_fetch_allowed(),
+            universal_wrappers_enabled=univ,
+            search_actions_visible=search_visible,
+            hot_list_aliases=available["hot_list_aliases"],
+            compact_visible=layer_ctx["ctx_signal_present"],
+        )
         # #1627 Stage 4: sp_params removed — build_system_prompt no longer reads it.
         return Presentation(
             llm_tools_payload=tools,
@@ -2816,10 +2799,7 @@ class RouterLoop:
         """SchemeOps.base_tools (#1593 PR-2): the prior-shape base tools —
         ``build_tools`` with the universal wrappers OFF. The common base a
         self-contained scheme starts from (enumerate-all adds ``catalog_entries``
-        on top instead of the wrappers). The phase layer's op-catalog is its base."""
-        phase_op_catalog = layer_ctx.get("phase_op_catalog")
-        if phase_op_catalog is not None:
-            return list(phase_op_catalog)
+        on top instead of the wrappers)."""
         return build_tools(
             self.host.list_available_agents(),
             file_permissions=self.host.get_file_permissions(),

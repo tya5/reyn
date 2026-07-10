@@ -105,18 +105,16 @@ specific to those two situations.
 
 ## How to enable
 
-CodeAct is selected per layer in `reyn.yaml`, like any scheme. The default is
-`universal-category`, so CodeAct is opt-in:
+CodeAct is selected for the chat layer in `reyn.yaml`, like any scheme. The chat
+default is `enumerate-all`, so CodeAct is opt-in:
 
 ```yaml
 # reyn.yaml
 tool_use:
   chat: codeact     # top-level chat router
-  step: universal-category
-  phase: universal-category
 ```
 
-Any of `chat` / `step` / `phase` can independently use `codeact`. See
+The `chat` layer can use `codeact`. See
 [`reyn.yaml` § tool_use](../../reference/config/reyn-yaml.md#tool_use-block).
 
 ## Security note

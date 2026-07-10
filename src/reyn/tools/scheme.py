@@ -28,13 +28,12 @@ from typing import Any, Protocol, runtime_checkable
 
 
 class ToolUseLayer(str, Enum):
-    """The layer a router loop runs for — each independently scheme-selectable
-    (``tool_use: {chat, step, phase}``). The phase layer's op-catalog presentation
-    is the phase scheme; chat/step default to universal-category."""
+    """The layer a router loop runs for. Scheme-selectable via ``tool_use.chat``
+    in reyn.yaml; the chat layer defaults to ``enumerate-all`` (#1657). #2768
+    removed the dead ``step`` / ``phase`` layers (phase-graph era, zero read
+    sites — ``PhaseRouterLoopHost`` deleted #2438)."""
 
     CHAT = "chat"
-    STEP = "step"
-    PHASE = "phase"
 
 
 @dataclass
@@ -260,7 +259,7 @@ class SchemeOps(Protocol):
 @runtime_checkable
 class ToolUseScheme(Protocol):
     """The pluggable tool-use scheme contract. The OS calls only these four; it
-    holds no scheme-specific strings (P7). Schemes are selected per-layer by name
+    holds no scheme-specific strings (P7). Schemes are selected by name
     from the registry. ``ops`` is the OS-substrate binding — a delegating scheme
     (PR-1 universal) uses it; a self-contained scheme (enumerate-all/CodeAct) ignores
     it."""

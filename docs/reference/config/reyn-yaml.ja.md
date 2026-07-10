@@ -349,7 +349,7 @@ sandbox:
 
 ## `action_retrieval` ブロック
 
-ユニバーサルカタログの可視化 + 検索設定。 このフラグは layer レベルの scheme 選択については `tool_use` ブロック(EN 版 `reyn-yaml.md#tool_use-block` を参照。ja 版はまだこのブロックの翻訳が無い)に superseded/generalize されています — `tool_use.chat` はデフォルトで `enumerate-all`(この wrapper path ではない)であり、`tool_use.step`/`phase` がデフォルトで `universal-category`(このフラグ・ブロックが設定する対象)です。 scheme が `universal-category` に解決される layer に対して **ユニバーサル wrapper** (`list_actions` / `describe_action` / `invoke_action`) による、 全 skill / agent / MCP / file / memory / RAG カテゴリで統一の browse / describe / invoke を提供します。`universal_wrappers_enabled` は legacy フラグパスの直接呼び出し元に対してデフォルト ON — その呼び出し元について既存の flat `tools=` shape を保持したい operator は `universal_wrappers_enabled: false` でオプトアウト可能。
+ユニバーサルカタログの可視化 + 検索設定。 scheme *選択* は `tool_use` ブロック(EN 版 `reyn-yaml.md#tool_use-block` を参照。ja 版はまだこのブロックの翻訳が無い)に generalize されています — `tool_use.chat` はデフォルトで `enumerate-all`(この wrapper path ではない)です。 `tool_use.chat: universal-category` を設定するとこのフラグが設定する wrapper scheme を選択できます。 chat レイヤーの scheme が `universal-category` に解決される時、 このフラグがその presentation を制御します。 **ユニバーサル wrapper** (`list_actions` / `describe_action` / `invoke_action`) による、 全 skill / agent / MCP / file / memory / RAG カテゴリで統一の browse / describe / invoke を提供します。`universal_wrappers_enabled` は legacy フラグパスの直接呼び出し元に対してデフォルト ON — その呼び出し元について既存の flat `tools=` shape を保持したい operator は `universal_wrappers_enabled: false` でオプトアウト可能。
 
 ```yaml
 action_retrieval:

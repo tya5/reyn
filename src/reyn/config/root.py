@@ -196,8 +196,11 @@ class ReynConfig:
     events: EventsConfig = field(default_factory=EventsConfig)
     # Budget / rate-limit policy (PR22).
     cost: CostConfig = field(default_factory=CostConfig)
-    # #1593 — per-layer tool-use scheme selector (chat/step/phase). Default all
-    # universal-category (today's behaviour); generalizes universal_wrappers_enabled.
+    # #1593 — chat-layer tool-use scheme selector. Default enumerate-all (#1657).
+    # This generalizes the chat layer's scheme *selection*; it is orthogonal to
+    # ``action_retrieval.universal_wrappers_enabled``, which is a live presentation
+    # sub-flag of the universal-category scheme (catalog-wrapper vs direct-tool) —
+    # NOT retired by this selector. (#2768 removed the dead step/phase layers.)
     tool_use: ToolUseConfig = field(default_factory=ToolUseConfig)
     # Voice input (Whisper) settings for the chat TUI. Optional feature gated
     # by the `reyn[voice]` extras; the OS itself never depends on this block.
