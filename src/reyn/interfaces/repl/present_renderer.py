@@ -41,7 +41,19 @@ def _render_keyvalue(node: dict) -> "Any":
     return grid
 
 
+def _truncation_tail_text(node: dict) -> "Any | None":
+    """A dim `Text` for a `table`/`list` node's `truncation_tail` (§5 visible
+    truncation indicator, issue #2669) — `None` when the node was not capped."""
+    from rich.text import Text
+
+    tail = node.get("truncation_tail")
+    if not tail:
+        return None
+    return Text(tail, style="dim")
+
+
 def _render_table(node: dict) -> "Any":
+    from rich.console import Group
     from rich.table import Table
 
     columns = node.get("columns", [])
@@ -54,13 +66,20 @@ def _render_table(node: dict) -> "Any":
             _cell(col["cells"][i]) if i < len(col.get("cells", [])) else _cell("")
             for col in columns
         ])
+    tail = _truncation_tail_text(node)
+    if tail is not None:
+        return Group(table, tail)
     return table
 
 
 def _render_list(node: dict) -> "Any":
     from rich.console import Group
 
-    return Group(*[_cell(f"• {item}") for item in node.get("items", [])])
+    items = [_cell(f"• {item}") for item in node.get("items", [])]
+    tail = _truncation_tail_text(node)
+    if tail is not None:
+        items.append(tail)
+    return Group(*items)
 
 
 def _render_code_or_diff(node: dict, *, lexer: str) -> "Any":

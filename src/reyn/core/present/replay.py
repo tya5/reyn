@@ -96,18 +96,22 @@ def _surface_of(event_data: dict) -> str:
     return "null"
 
 
-def _best_effort_resolved(value: Any, surface: str) -> ResolvedPresentation:
+def _best_effort_resolved(
+    value: Any, surface: str, *, ref: "str | None" = None,
+) -> ResolvedPresentation:
     """Re-render ``value`` through the §3 stage-3 (content-type default viewer) → stage-4
     (generic YAML/text, always renders) chain — the same generic path the live op falls
     back to. The original inline blueprint is not in the event, so this is the faithful
-    best-effort view of the data's shape."""
+    best-effort view of the data's shape. ``ref`` (the event's ``data_ref``) threads
+    through so a `cap_rows`-capped table/list still carries its §5 visible truncation
+    tail on replay (issue #2669)."""
     stage3 = resolve_bindings(
-        validate_blueprint(default_viewer_blueprint(value)), value, surface=surface,
+        validate_blueprint(default_viewer_blueprint(value)), value, surface=surface, ref=ref,
     )
     if not stage3.all_bindings_missed:
         return stage3
     return resolve_bindings(
-        validate_blueprint(generic_blueprint(value)), value, surface=surface,
+        validate_blueprint(generic_blueprint(value)), value, surface=surface, ref=ref,
     )
 
 
@@ -131,8 +135,12 @@ def _flatten_nodes(nodes: list[dict]) -> list[str]:
                     col["cells"][i] if i < len(col.get("cells", [])) else ""
                     for col in columns
                 ))
+            if node.get("truncation_tail"):
+                lines.append(node["truncation_tail"])
         elif component == "list":
             lines.extend(f"• {item}" for item in node.get("items", []))
+            if node.get("truncation_tail"):
+                lines.append(node["truncation_tail"])
         elif component == "image":
             lines.append(f"[image: {node.get('alt') or node.get('src') or ''}]")
     return lines
@@ -197,7 +205,7 @@ def replay_presentation(
             is_placeholder=True,
         )
 
-    resolved = _best_effort_resolved(value, _surface_of(event_data))
+    resolved = _best_effort_resolved(value, _surface_of(event_data), ref=data_ref)
     return ReplayedPresentation(
         data_ref=data_ref, view=view, header=header,
         lines=_flatten_nodes(resolved.nodes), is_placeholder=False,
