@@ -448,13 +448,50 @@ async def _handle_mcp_install_local(
 
     data = _read_yaml_config(config_path)
     servers = data.setdefault("mcp", {}).setdefault("servers", {})
+
+    # #2761 PR-3: probe-then-commit + path-condition for the PRIMARY local-stdio path.
+    # mcp__install_local writes .reyn/config/mcp.yaml DIRECTLY — a parallel path to the
+    # mcp_install op — so it must carry the same immediate-apply contract, else the
+    # primary local-stdio use would never get same-turn use of its just-installed
+    # server. A PURE ADDITION on a live per-session reloader PROBES the server first
+    # (spawn/connect + list_tools) and writes ONLY on a successful probe (a
+    # failed/cancelled probe leaves nothing written — no half-install); a same-name
+    # overwrite or no per-session reloader keeps the existing deferred behavior. The
+    # per-session reloader (ctx.hot_reloader, #2761 PR-2) is reached via the router's
+    # op-context factory (the single tool→op ctx source); absent (test / CLI) → deferred.
+    from reyn.core.op_runtime.mcp_install import probe_mcp_server
+    from reyn.runtime.hot_reload import dispatch_install_reload, is_pure_addition
+
+    _op_ctx = (
+        rs.op_context_factory()
+        if rs is not None and getattr(rs, "op_context_factory", None) is not None
+        else None
+    )
+    _reloader = getattr(_op_ctx, "hot_reloader", None) if _op_ctx is not None else None
+    _is_addition = is_pure_addition(name, servers)
+    if _is_addition and _reloader is not None:
+        _probe_err = await probe_mcp_server(
+            name, entry, agent_id=getattr(_op_ctx, "agent_id", None),
+        )
+        if _probe_err is not None:
+            return {
+                "status": "error",
+                "data": {
+                    "kind": "mcp_install_local",
+                    "name": name,
+                    "error": (
+                        f"MCP server {name!r} failed its pre-install probe "
+                        f"(nothing written — no half-install): {_probe_err}"
+                    ),
+                },
+            }
+
     servers[name] = entry
     _write_yaml_config(config_path, data)
 
-    from reyn.runtime.hot_reload import get_active_hot_reloader
-    _reloader = get_active_hot_reloader()
-    if _reloader is not None:
-        _reloader.request_reload(source="mcp__install_local")
+    await dispatch_install_reload(
+        _reloader, source="mcp__install_local", is_addition=_is_addition,
+    )
 
     return {
         "status": "ok",

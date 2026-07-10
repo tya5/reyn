@@ -5,7 +5,13 @@ Handler logic (one-shot, no sub-phases):
   2. Check runtime command availability (npx / uvx / docker / dnx)
   3. Gate via PermissionResolver.require_mcp_install (ADR-0029)
   4. Prompt for secret env vars via intervention_bus; persist with secrets.store
-  5. Write mcp.servers.<name> into the target scope config file
+  5. Reload (#2761 PR-3): a PURE ADDITION on a live per-session reloader takes the
+     IMMEDIATE mid-turn path — PROBE the server (spawn/connect + list_tools) FIRST,
+     write mcp.servers.<name> ONLY on a successful probe (probe-then-commit: a
+     failed/cancelled probe leaves nothing written — no half-install), then
+     apply_now so its tools are resolvable this same turn. A same-name overwrite
+     (the documented re-install fix) or no per-session reloader keeps the deferred
+     turn-boundary path (write + request_reload), unchanged.
   6. Emit mcp_server_installed event (P6)
 
 Scope → file mapping:
@@ -146,6 +152,44 @@ def _build_server_entry(pkg_raw: dict, env_keys: list[str]) -> dict:
         entry["env"] = {k: f"${{{k}}}" for k in env_keys}
 
     return entry
+
+
+async def probe_mcp_server(
+    server_name: str, server_entry: dict, *, agent_id: str | None = None,
+) -> "str | None":
+    """#2761 PR-3: probe a prospective MCP server (spawn/connect + ``list_tools``)
+    BEFORE its config is committed — the probe-then-commit atomicity gate.
+
+    Returns ``None`` on a successful probe (the server is reachable and advertises
+    tools) or an error string on failure. The caller writes the config ONLY on
+    ``None`` — so a failed probe leaves NOTHING written (no half-install, no rollback).
+
+    Routed through the crash-safe :class:`~reyn.mcp.gateway.MCPGateway` seam (#2421):
+    open + list + teardown inside one contain-all boundary + a per-server timeout,
+    task-affine so the SDK's stdio_client/ClientSession scopes close in the same task.
+    The gateway raises ONLY :class:`MCPFault` for a transport/timeout fault (contained
+    here → error string); a genuine Ctrl+C ``CancelledError`` is re-raised by the
+    gateway as control flow and propagates OUT of this probe — the pool's ``__aexit__``
+    has already torn the transport down (stdio subprocess kill via ``kill_process_tree``
+    / HTTP close), and because the config write is strictly AFTER this probe, a cancel
+    leaves nothing committed. **Transport-uniform**: stdio and remote (http/sse) share
+    this one path — ``MCPClient.__aexit__`` owns the transport-appropriate teardown, so
+    the probe never branches on transport (mirrors ``Session._mcp_list_tools``)."""
+    from reyn.mcp.client import expand_env  # noqa: PLC0415
+    from reyn.mcp.gateway import MCPFault, MCPGateway  # noqa: PLC0415
+
+    expanded = expand_env(server_entry)
+    if not isinstance(expanded, dict):
+        return f"server config must be a dict, got {type(expanded).__name__}"
+    # A url-only remote entry defaults to http (mirrors _mcp_list_tools).
+    if "type" not in expanded and expanded.get("url"):
+        expanded = {**expanded, "type": "http"}
+    gateway = MCPGateway(agent_id=agent_id)
+    try:
+        await gateway.list_tools(server_name, expanded)
+    except MCPFault as exc:
+        return str(exc)
+    return None
 
 
 def _read_yaml_config(path: Path) -> dict:
@@ -509,11 +553,51 @@ async def handle(
             ),
         }
 
-    # Merge into existing config
+    # Ensure the mcp section shape exists (read-only prep — NO write yet).
     if "mcp" not in existing or not isinstance(existing.get("mcp"), dict):
         existing["mcp"] = {}
     if "servers" not in existing["mcp"] or not isinstance(existing["mcp"].get("servers"), dict):
         existing["mcp"]["servers"] = {}
+
+    # ── 5b. Probe-then-commit + path-condition (#2761 PR-3) ───────────────────
+    # Capture pure-addition-vs-overwrite BEFORE any mutation. A PURE ADDITION on a
+    # live per-session reloader takes the IMMEDIATE mid-turn path: PROBE the server
+    # (spawn/connect + list_tools) FIRST, and write config ONLY on a successful probe
+    # → a failed/cancelled probe leaves nothing committed (no half-install, no
+    # rollback). A same-name overwrite (the documented `reyn mcp install` re-install
+    # fix) or no per-session reloader keeps the existing deferred turn-boundary path
+    # (unchanged), confining any in-use-replace to the deferred path.
+    from reyn.runtime.hot_reload import (  # noqa: PLC0415
+        dispatch_install_reload,
+        is_pure_addition,
+    )
+    _is_addition = is_pure_addition(server_name, existing["mcp"]["servers"])
+    _reloader = getattr(ctx, "hot_reloader", None)
+    if _is_addition and _reloader is not None:
+        _probe_err = await probe_mcp_server(
+            server_name, server_entry, agent_id=getattr(ctx, "agent_id", None),
+        )
+        if _probe_err is not None:
+            ctx.events.emit(
+                "mcp_install_probe_failed",
+                server_id=op.server_id,
+                server_name=server_name,
+                error=_probe_err,
+            )
+            return {
+                "kind": "mcp_install",
+                "status": "error",
+                "server_id": op.server_id,
+                "server_name": server_name,
+                "source": op.source or "",
+                "error": (
+                    f"MCP server {server_name!r} failed its pre-install probe "
+                    f"(nothing written — no half-install): {_probe_err}"
+                ),
+            }
+
+    # ── 5c. COMMIT: write mcp.servers.<name>. The immediate path reaches here ONLY
+    # after a successful probe; the deferred path always writes (unchanged). ──────
     existing["mcp"]["servers"][server_name] = server_entry
 
     _write_yaml_config(config_path, existing)
@@ -539,17 +623,18 @@ async def handle(
         # NOTE: env values are NOT emitted — only key names for audit
     )
 
-    # ── 7. #2372: schedule a hot-reload so the installed server's tools go live in the
-    # SAME chat session (no restart). The mcp seam (_reapply_mcp → refresh_mcp_servers)
-    # re-reads the roster from the config cascade — which merges the IN-set just written —
-    # and re-probes tools at the next turn boundary. Next-turn is the effective granularity:
-    # the LLM tool catalog is rebuilt per-turn, so same-turn would buy nothing. Best-effort:
-    # no active reloader (CLI `reyn mcp install` runs in a separate process; a phase/tool
-    # ctx has none) → no-op, and a restart / yaml mtime-watch still surfaces it.
-    from reyn.runtime.hot_reload import get_active_hot_reloader  # noqa: PLC0415
-    _reloader = get_active_hot_reloader()
-    if _reloader is not None:
-        _reloader.request_reload(source="mcp_install")
+    # ── 7. Reload (#2761 PR-3 + #2372): a PROBED pure addition on a live per-session
+    # reloader applies IMMEDIATELY (mid-turn) — the mcp seam (_reapply_mcp →
+    # refresh_mcp_servers) re-reads the roster from the config cascade (merging the
+    # IN-set just written) and swaps the live tool-set, so the just-installed server's
+    # tools are resolvable/callable this same turn. A same-name overwrite or no
+    # per-session reloader (CLI `reyn mcp install` separate process) keeps the existing
+    # deferred turn-boundary behavior via the process-active reloader (best-effort;
+    # a restart / yaml mtime-watch still surfaces it). The LLM's tool *catalog* still
+    # rebuilds next turn (discovery vs resolution) — the install op *uses* it this turn.
+    await dispatch_install_reload(
+        _reloader, source="mcp_install", is_addition=_is_addition,
+    )
 
     return {
         "kind": "mcp_install",
