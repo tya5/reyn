@@ -132,6 +132,32 @@ async def _lifespan(app: FastAPI):
     )
     install_asyncio_exception_handler(asyncio.get_running_loop())
 
+    # ── Server-side authentication context (ADR-0039 P0) ──────────────────────
+    # Built once per process; read on every WebSocket connection to gate the
+    # answer / permission-grant paths. The effective token is handed in from the
+    # CLI via REYN_WEB_AUTH_TOKEN (or web.auth.token); when neither is set a
+    # token is generated so the surface is never left unauthenticated — the
+    # generated value is logged so a direct-uvicorn launch can still connect.
+    # Defensive boot (mirrors the cron block below): a config-load failure must
+    # not prevent the gateway from booting, but the auth gate MUST still be
+    # present — so fall back to an env/generated token rather than leaving
+    # app.state.auth unset.
+    from reyn.interfaces.web.auth import AuthContext  # noqa: PLC0415
+    try:
+        from reyn.config import load_config  # noqa: PLC0415
+        app.state.auth = AuthContext.from_env_and_config(load_config())
+    except Exception as exc:  # noqa: BLE001 — defensive boot; the gate must exist
+        app.state.auth = AuthContext.from_env_and_config(None)
+        logger.warning(
+            "web.auth: config load failed (%s); using an env/generated token so "
+            "the auth gate is still enforced.", exc,
+        )
+    if getattr(app.state.auth, "token_was_generated", False):
+        logger.warning(
+            "web.auth: no token configured; generated an ephemeral gateway "
+            "token for this run: %s", app.state.auth.token,
+        )
+
     # FP-0001 + issue #267 Gap 5: RunRegistry singleton — process-wide
     # task lifecycle tracking with snapshot persistence so a process
     # restart preserves A2A async-task state (= the structural gap that

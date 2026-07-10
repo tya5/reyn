@@ -169,7 +169,14 @@
 
   function _connectWS(agentName) {
     if (ws) { try { ws.close(); } catch (_) {} }
-    ws = new WebSocket(`${wsProtocol}//${location.host}/ws/chat/${agentName}`);
+    // ADR-0039 P0: the gateway requires an authentication token on the
+    // loopback/network (browser) surface. The launch URL carries it as
+    // ?token=... (Jupyter-style); forward it on the ws connect so an
+    // unauthenticated browser is rejected (4401) rather than acting as the
+    // operator.
+    const _token = new URLSearchParams(location.search).get("token");
+    const _q = _token ? `?token=${encodeURIComponent(_token)}` : "";
+    ws = new WebSocket(`${wsProtocol}//${location.host}/ws/chat/${agentName}${_q}`);
     wsReady = false;
 
     ws.addEventListener("open", () => {

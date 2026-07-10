@@ -37,6 +37,17 @@ def register(sub) -> None:
         help="バインドするポート番号 (デフォルト: 8080)",
     )
     p.add_argument(
+        "--uds",
+        default=None,
+        metavar="PATH",
+        dest="uds",
+        help=(
+            "UNIX ドメインソケットにバインドする (T2 same-machine; 指定時は "
+            "--host/--port を無視)。同一マシンの thin-client 接続向け — 認証は "
+            "OS の peer-credential (SO_PEERCRED / getpeereid)。"
+        ),
+    )
+    p.add_argument(
         "--reload",
         action="store_true",
         help="コード変更時に自動リロードする (開発用)",
@@ -197,13 +208,120 @@ def run(args: argparse.Namespace) -> None:
     # override could silently drop. Pin it from config (operator-tunable via
     # web.ws_max_size) so the inbound-frame bound is explicit + version-independent.
     from reyn.config import load_config
-    _ws_max_size = load_config().web.ws_max_size
+    _config = load_config()
+    _ws_max_size = _config.web.ws_max_size
+
+    # ── Server-side auth (ADR-0039 P0): fail-closed bind + token + TLS ─────────
+    uvicorn_kwargs = _apply_auth_startup(args, _config)
 
     uvicorn.run(
         "reyn.interfaces.web.server:app",
-        host=args.host,
-        port=args.port,
         reload=args.reload,
         log_level=args.log_level,
         ws_max_size=_ws_max_size,
+        **uvicorn_kwargs,
     )
+
+
+def _apply_auth_startup(args: argparse.Namespace, config) -> dict:
+    """Resolve the P0 auth posture and return the uvicorn bind kwargs.
+
+    Enforces the tiered, secure-by-default model (ADR-0039):
+
+      - **UDS bind** (``--uds``): same-machine T2; identity via OS peer-cred, no
+        token needed. Binds a UNIX socket in an owner-only (0700) run dir.
+      - **Loopback TCP**: browser surface; a token is generated (Jupyter-style)
+        when none is configured and embedded in the printed launch URL.
+      - **Non-loopback TCP**: T3 network. **Fail-closed** — refuses to start
+        without an explicitly configured ``web.auth.token``. Provisions
+        self-signed TLS (TOFU) when the operator supplies no certificate and
+        prints the fingerprint to pin.
+
+    The effective token is exported via ``REYN_WEB_AUTH_TOKEN`` so the app's
+    AuthContext (built in the server lifespan) verifies against the same secret.
+    """
+    import os
+    import sys
+    from pathlib import Path
+
+    from reyn.interfaces.web.auth import (
+        TOKEN_ENV_VAR,
+        AuthStartupError,
+        check_startup_binding,
+        generate_token,
+        is_loopback_host,
+    )
+
+    host = args.host
+    uds_path = getattr(args, "uds", None)
+    auth_cfg = config.web.auth
+    configured_token = auth_cfg.token
+
+    # Fail-closed guard: a non-loopback bind with no configured token refuses
+    # to start (a UDS bind and a loopback bind are both allowed here).
+    try:
+        check_startup_binding(host, token=configured_token, uds=bool(uds_path))
+    except AuthStartupError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        sys.exit(2)
+
+    run_dir = Path.cwd() / ".reyn" / "run"
+
+    # Resolve the effective token. UDS needs none; loopback generates one for
+    # the browser surface; network is guaranteed to have a configured token
+    # (the guard above already rejected the tokenless network case).
+    effective_token = configured_token
+    if effective_token is None and not uds_path and is_loopback_host(host):
+        effective_token = generate_token()
+    if effective_token:
+        os.environ[TOKEN_ENV_VAR] = effective_token
+
+    uvicorn_kwargs: dict = {}
+    if uds_path:
+        run_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            run_dir.chmod(0o700)  # owner-only dir gates the socket file
+        except OSError:
+            pass
+        uvicorn_kwargs["uds"] = str(uds_path)
+        print(f"reyn web: bound to UNIX socket {uds_path} (T2 peer-cred auth).")
+        return uvicorn_kwargs
+
+    uvicorn_kwargs["host"] = host
+    uvicorn_kwargs["port"] = args.port
+
+    scheme = "http"
+    if not is_loopback_host(host):
+        # T3 network bind: provision TLS (self-signed TOFU or operator cert).
+        scheme = _provision_network_tls(args, auth_cfg, run_dir, uvicorn_kwargs)
+
+    if effective_token:
+        print(
+            f"reyn web: open {scheme}://{host}:{args.port}/?token={effective_token}"
+        )
+    return uvicorn_kwargs
+
+
+def _provision_network_tls(args, auth_cfg, run_dir, uvicorn_kwargs: dict) -> str:
+    """Provision TLS for a T3 bind; set uvicorn ssl kwargs; return the scheme."""
+    import sys
+
+    from reyn.interfaces.web.auth import TlsProvisioningError, provision_tls
+
+    try:
+        material = provision_tls(
+            run_dir,
+            certfile=auth_cfg.tls_certfile,
+            keyfile=auth_cfg.tls_keyfile,
+            host=args.host,
+        )
+    except TlsProvisioningError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        sys.exit(2)
+    uvicorn_kwargs["ssl_certfile"] = str(material.certfile)
+    uvicorn_kwargs["ssl_keyfile"] = str(material.keyfile)
+    print(
+        "reyn web: TLS enabled (self-signed TOFU). Pin this fingerprint:\n"
+        f"  SHA256 {material.fingerprint_sha256}"
+    )
+    return "https"

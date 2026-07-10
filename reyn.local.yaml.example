@@ -663,6 +663,11 @@
 #     max_download_bytes: 10485760  # 10MB wire-byte ceiling (DoS guard)
 #     allow_private_ips: false      # #1956 SSRF: opt-in to private IPs (link-local/metadata/loopback always denied)
 #   ws_max_size: 16777216           # 16MB WebSocket inbound-frame ceiling (reyn web gateway)
+#   auth:                           # reyn web gateway authentication (server-side)
+#     token: null                   # cross-machine (T3) bearer token; REQUIRED for a non-loopback bind (else fail-closed)
+#     require_token_on_loopback: true  # also require the token on loopback TCP (secure default for shared hosts)
+#     tls_certfile: null            # operator TLS cert (T3); null → self-signed TOFU generated at startup
+#     tls_keyfile: null             # operator TLS key (T3); must be set together with tls_certfile
 
 
 # -----------------------------------------------------------------------------
