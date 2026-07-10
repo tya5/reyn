@@ -76,7 +76,9 @@ _CANONICAL_TODO_GRANDFATHERED = frozenset({
     "remember_agent", "remember_shared",
     "search_actions",
     "session_spawn",
-    "shell",
+    # #2681 Bucket A burn-down: ``shell`` now ships a real text mapper (its stdout is the readable
+    # LLM body, mirroring ``sandboxed_exec``'s stdout-is-text treatment) — removed from the ledger
+    # (the ratchet set only shrinks).
     "skill_install_local", "skill_install_source",
     "subscribe_mcp_resource", "unsubscribe_mcp_resource",
     "task.abort", "task.add_dependency", "task.assign", "task.comment", "task.create",

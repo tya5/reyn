@@ -121,9 +121,10 @@ async def test_shell_step_threads_pipe_data_to_stdin_and_stdout_to_output():
         state_log=None,
         run_id="run-shell-stdin",
     )
-    # #2425 PR-2: the shell tool's parsed-JSON dict (no "kind") is an
-    # unregistered-kind result → the whole dict is the sole structured attachment.
-    expected = {"text": "", "structured": {"n": 3, "msg": "hi"}}
+    # #2681 Bucket A: ``shell`` now ships a real text canonical mapper (mirroring
+    # ``sandboxed_exec``'s stdout-is-text treatment) — the parsed-JSON dict renders as
+    # readable ``text`` (json.dumps'd), NOT a whole-dict ``structured`` blob.
+    expected = {"text": '{"n": 3, "msg": "hi"}'}
     assert result.pipe_data == expected
     assert result.named_stores["echoed"] == expected
 
@@ -156,7 +157,9 @@ async def test_shell_step_schema_verify_passes_conforming_output():
         run_id="run-shell-schema-ok",
         schema_registry=registry,
     )
-    assert result.pipe_data == {"text": "", "structured": {"msg": "hello"}}
+    # #2681 Bucket A: real text mapper — the parsed-JSON dict renders as readable
+    # ``text``, not a whole-dict ``structured`` blob (see test 2's comment).
+    assert result.pipe_data == {"text": '{"msg": "hello"}'}
 
 
 @pytest.mark.asyncio
