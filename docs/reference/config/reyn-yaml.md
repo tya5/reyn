@@ -527,6 +527,11 @@ web:
     max_download_bytes: 10485760        # wire-byte ceiling (default 10MB)
     allow_private_ips: false            # SSRF: opt-in to private IPs (default deny)
   ws_max_size: 16777216                 # WS inbound-frame ceiling (default 16MB)
+  auth:
+    token: my-shared-secret             # T3 cross-machine bearer token (required for a non-loopback bind)
+    require_token_on_loopback: true     # also require the token on loopback TCP (secure default)
+    tls_certfile: /path/to/cert.pem     # operator TLS cert (T3); omit → self-signed TOFU
+    tls_keyfile: /path/to/key.pem       # operator TLS key (T3); set together with tls_certfile
 ```
 
 Priority chain (highest first):
@@ -545,6 +550,12 @@ Priority chain (highest first):
 | `web.fetch.max_download_bytes` | int | `10485760` (10MB) | Maximum response bytes `web_fetch` reads off the wire. A response whose `Content-Length` exceeds this is rejected before any body is downloaded; a chunked / unknown-length body is aborted once the stream passes the ceiling (status `too_large`). Guards against an unbounded-body memory blow-up from a hostile or runaway URL. `<= 0` or non-integer falls back to the default. |
 | `web.fetch.allow_private_ips` | bool | `false` | SSRF opt-in. When `true`, `web_fetch` / `safe.http` may fetch **private** RFC1918/ULA addresses (enterprise internal-fetch). Link-local, cloud-metadata (`169.254.169.254`), and loopback are **always** denied regardless of this flag. HTTP redirects are re-validated per hop (both the host allowlist and the IP-deny), so an allowlisted host cannot redirect to an internal target. Also exported to the `REYN_FETCH_ALLOW_PRIVATE_IPS` env var so the safe.http subprocess and registry clients honor the same opt-in. |
 | `web.ws_max_size` | int | `16777216` (16MB) | Maximum size (bytes) of a single inbound WebSocket frame the `reyn web` gateway accepts; a larger frame is rejected by the server before delivery. Pins the WebSocket frame ceiling explicitly instead of relying on the server library's implicit default, so the bound stays in place across server-library upgrades. Operators may tighten or loosen it. `<= 0` or non-integer falls back to the default. |
+| `web.auth.token` | str | `null` | The gateway's cross-machine (T3) bearer token. A **non-loopback bind refuses to start** without it (fail-closed — closes the accidental-exposure hole). A loopback bind generates an ephemeral token at startup when this is unset (printed in the launch URL, Jupyter-style), so the browser surface is never left unauthenticated. |
+| `web.auth.require_token_on_loopback` | bool | `true` | When `true`, even loopback TCP connections must present the token (secure default — a shared multi-user host must not leave the browser loopback surface open). Same-machine UDS connections are authenticated by OS peer credentials and never need a token. |
+| `web.auth.tls_certfile` | str | `null` | Operator TLS certificate (PEM) for a T3 network bind. When unset, a self-signed certificate is generated at startup and its SHA-256 fingerprint is printed for trust-on-first-use pinning. Must be set together with `tls_keyfile`. |
+| `web.auth.tls_keyfile` | str | `null` | Operator TLS private key (PEM) paired with `tls_certfile`. Setting only one of the two is a startup error. |
+
+**Transport tiers** (secure-by-default). The gateway identifies every connection: **T1** in-process (the operator's own process, no auth); **T2** same-machine cross-process over a UNIX domain socket (`reyn web --uds PATH`) identified by OS peer credentials, or loopback TCP as a fallback; **T3** cross-machine network, which requires `web.auth.token` and runs over TLS. An intervention answer is a permission grant, so an unauthenticated connection cannot answer.
 
 ## `hooks` block
 

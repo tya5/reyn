@@ -36,9 +36,11 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import secrets
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
+from reyn.interfaces.web.auth import AuthContext, ConnectionIdentity
 from reyn.interfaces.web.deps import get_registry
 
 router = APIRouter(tags=["websocket"])
@@ -91,7 +93,6 @@ def _serialize(msg, *, session=None) -> str:
     )
 
 
-@router.websocket("/ws/chat/{agent_name}")
 def _decode_inbound_frame(raw: str) -> dict | None:
     """Decode an untrusted client text frame into a JSON object.
 
@@ -108,12 +109,69 @@ def _decode_inbound_frame(raw: str) -> dict | None:
     return payload if isinstance(payload, dict) else None
 
 
+def _unauthorized_frame() -> str:
+    """A JSON error frame for a write rejected by delivery-time authorization."""
+    return json.dumps({
+        "kind": "error",
+        "text": "unauthorized: this connection is not authenticated to answer "
+        "or run privileged commands.",
+        "meta": {"$unauthorized": True},
+    })
+
+
+def _get_auth_context(websocket: WebSocket) -> AuthContext | None:
+    """Return the process-wide AuthContext attached to app.state, if any.
+
+    Built once by the server lifespan (``app.state.auth``). A missing context
+    means the app was launched outside the gateway startup path; the caller
+    fails closed for network peers rather than trusting an unauthenticated one.
+    """
+    app = getattr(websocket, "app", None)
+    state = getattr(app, "state", None)
+    return getattr(state, "auth", None)
+
+
+def _emit_audit(session, event_type: str, identity: ConnectionIdentity, **extra) -> None:
+    """Stamp a gateway audit-event carrying the connection identity.
+
+    Answer / attach / detach events record WHO acted (the authenticated
+    user-id + connection id + transport tier + OS peer-uid) so a permission
+    grant is attributable to the identity that made it. Best-effort — an audit
+    emit failure never breaks the connection (P6: the operator's action is the
+    primary effect).
+    """
+    events = getattr(session, "_chat_events", None)
+    if events is None:
+        return
+    try:
+        events.emit(event_type, **identity.audit_fields(), **extra)
+    except Exception:  # noqa: BLE001 — audit is best-effort
+        logger.exception("gateway audit emit failed for %r", event_type)
+
+
+@router.websocket("/ws/chat/{agent_name}")
 async def ws_chat(websocket: WebSocket, agent_name: str) -> None:
     """WebSocket endpoint for a chat session with the named agent."""
     registry = get_registry()
 
     if not registry.exists(agent_name):
         await websocket.close(code=4004, reason=f"Agent {agent_name!r} not found")
+        return
+
+    # ── Authentication gate (server-side; pre-accept) ───────────────────────
+    # Every connection carries an identity. A connection that fails
+    # authentication (no/invalid token on the loopback/network surface, or a
+    # peer-uid mismatch on UDS) is rejected before the chat session is attached
+    # — closing the unauthenticated-answer hole. When no AuthContext is present
+    # (launched outside the gateway startup path) we fail closed.
+    connection_id = secrets.token_hex(8)
+    auth = _get_auth_context(websocket)
+    if auth is None:
+        await websocket.close(code=4401, reason="authentication unavailable")
+        return
+    identity = auth.authenticate_ws(websocket, connection_id=connection_id)
+    if not identity.authenticated:
+        await websocket.close(code=4401, reason="authentication required")
         return
 
     await websocket.accept()
@@ -126,6 +184,9 @@ async def ws_chat(websocket: WebSocket, agent_name: str) -> None:
         logger.exception("Failed to attach agent %r", agent_name)
         await websocket.close(code=4000, reason=f"Failed to attach agent: {exc}")
         return
+
+    # Audit: an authenticated client attached to this agent.
+    _emit_audit(session, "web_client_attached", identity, agent_name=agent_name)
 
     # Drain outbox into the WebSocket. We read from the session's own outbox
     # directly (rather than registry.repl_outbox which is REPL-global) so that
@@ -236,6 +297,12 @@ async def ws_chat(websocket: WebSocket, agent_name: str) -> None:
                 # outbox forwarding (= ``reply`` writes
                 # ``kind="system"`` frames, ``reply_error`` writes
                 # ``kind="error"``, both already forwarded).
+                # Server-side, delivery-time authorization (client-untrusted):
+                # slash commands run server-side privileged handlers (attach,
+                # budget, cancel) — gate them on the authenticated identity.
+                if not auth.authorize_write(identity):
+                    await websocket.send_text(_unauthorized_frame())
+                    continue
                 text = str(payload.get("text", "")).strip()
                 if not text or not text.startswith("/"):
                     await websocket.send_text(json.dumps({
@@ -262,6 +329,17 @@ async def ws_chat(websocket: WebSocket, agent_name: str) -> None:
                 # ``InterventionHandler.maybe_answer`` (= matches
                 # chip-button labels + free-text against the head
                 # pending intervention's choices, same as local TUI).
+                #
+                # KEYSTONE: an intervention answer IS a permission grant. It is
+                # authorized SERVER-SIDE, at delivery time, against the server's
+                # own record of this connection's authenticated identity (never
+                # a client-asserted token) — an unauthenticated connection is
+                # rejected here even though it also fails the pre-accept gate
+                # (defense in depth; the seam a later seize/takeover phase
+                # extends to reject a deposed holder's in-flight answer).
+                if not auth.authorize_write(identity):
+                    await websocket.send_text(_unauthorized_frame())
+                    continue
                 text = str(payload.get("text", "")).strip()
                 if not text:
                     await websocket.send_text(json.dumps({
@@ -282,7 +360,13 @@ async def ws_chat(websocket: WebSocket, agent_name: str) -> None:
                         "meta": {},
                     }))
                     continue
-                if not answered:
+                if answered:
+                    # Audit: attribute the permission grant to the identity.
+                    _emit_audit(
+                        session, "web_intervention_answered", identity,
+                        agent_name=agent_name,
+                    )
+                else:
                     # No pending intervention matched. Local
                     # ``_maybe_answer_oldest_intervention`` returns
                     # False silently when there's nothing to answer
@@ -311,6 +395,10 @@ async def ws_chat(websocket: WebSocket, agent_name: str) -> None:
     finally:
         drain_task.cancel()
         send_task.cancel()
+        # Audit: the authenticated client detached. (Does NOT invalidate any
+        # pending intervention answer — the last-surface-gone DENY flow with a
+        # grace window is a later phase; disconnect here is audit-only.)
+        _emit_audit(session, "web_client_detached", identity, agent_name=agent_name)
         # Detach only if this is still the attached agent — another WS
         # connection may have attached a different agent in the meantime.
         if registry.attached_name == agent_name:

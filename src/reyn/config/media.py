@@ -93,15 +93,35 @@ DEFAULT_WS_MAX_SIZE = 16 * 1024 * 1024
 
 
 @dataclass
+class AuthConfig:
+    """`web.auth:` — gateway authentication settings (server-side auth model).
+
+    ``token`` is the T3 cross-machine bearer secret. Leaving it unset keeps a
+    loopback gateway usable (a token is generated at startup for the browser
+    surface) but makes a **non-loopback bind refuse to start** (fail-closed).
+    ``require_token_on_loopback`` forces even loopback TCP connections to
+    present the token (secure default — a shared multi-user host must not leave
+    the browser loopback surface unauthenticated). ``tls_certfile`` /
+    ``tls_keyfile`` override the self-signed TOFU material for a T3 bind.
+    """
+    token: str | None = None
+    require_token_on_loopback: bool = True
+    tls_certfile: str | None = None
+    tls_keyfile: str | None = None
+
+
+@dataclass
 class WebConfig:
     """`web:` — web settings.
 
-    Aggregates the ``web.fetch`` sub-section (web_fetch operation knobs) and
-    ``ws_max_size`` (the gateway WebSocket inbound-frame ceiling). Extend here
-    when ``web.search`` gets its own knobs.
+    Aggregates the ``web.fetch`` sub-section (web_fetch operation knobs),
+    ``ws_max_size`` (the gateway WebSocket inbound-frame ceiling), and
+    ``web.auth`` (the gateway authentication model). Extend here when
+    ``web.search`` gets its own knobs.
     """
     fetch: WebFetchConfig = field(default_factory=WebFetchConfig)
     ws_max_size: int = DEFAULT_WS_MAX_SIZE
+    auth: AuthConfig = field(default_factory=AuthConfig)
 
 
 def _build_web_fetch_config(raw: object) -> WebFetchConfig:
@@ -135,6 +155,27 @@ def _build_web_fetch_config(raw: object) -> WebFetchConfig:
     )
 
 
+def _build_auth_config(raw: object) -> AuthConfig:
+    """Parse the ``web.auth:`` sub-section. Empty / missing returns defaults."""
+    if not isinstance(raw, dict):
+        return AuthConfig()
+    token_raw = raw.get("token")
+    token = str(token_raw) if token_raw not in (None, "") else None
+    # bool, but tolerate a truthy string (an interpolated ${VAR}).
+    rtl_raw = raw.get("require_token_on_loopback", True)
+    require_token_on_loopback = rtl_raw is True or (
+        isinstance(rtl_raw, str) and rtl_raw.strip().lower() in ("1", "true", "yes", "on")
+    )
+    cert_raw = raw.get("tls_certfile")
+    key_raw = raw.get("tls_keyfile")
+    return AuthConfig(
+        token=token,
+        require_token_on_loopback=require_token_on_loopback,
+        tls_certfile=str(cert_raw) if cert_raw else None,
+        tls_keyfile=str(key_raw) if key_raw else None,
+    )
+
+
 def _build_web_config(raw: object) -> WebConfig:
     """Parse the ``web:`` section. Empty / missing returns full defaults."""
     if not isinstance(raw, dict):
@@ -146,7 +187,11 @@ def _build_web_config(raw: object) -> WebConfig:
             ws_max_size = DEFAULT_WS_MAX_SIZE
     except (TypeError, ValueError):
         ws_max_size = DEFAULT_WS_MAX_SIZE
-    return WebConfig(fetch=_build_web_fetch_config(fetch_raw), ws_max_size=ws_max_size)
+    return WebConfig(
+        fetch=_build_web_fetch_config(fetch_raw),
+        ws_max_size=ws_max_size,
+        auth=_build_auth_config(raw.get("auth")),
+    )
 
 
 # ── multimodal: media-size gate for image/audio/etc. (#364 cluster) ─────────
