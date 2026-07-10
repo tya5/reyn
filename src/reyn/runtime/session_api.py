@@ -91,7 +91,10 @@ prefix and differing only in how the caller drives + collects:
     spawn's user-reaching capabilities cannot silently self-bind. Each spawn site declares a
     ``runtime/spawn_routing`` decision: ``_spawn_pipeline_driver_session`` picks
     ``BridgeToParent`` (attached) or ``AuditOnlyNoSurface`` (detached); ``run_agent_step`` picks
-    ``AuditOnlyNoSurface`` (headless leaf worker — closing #2706).
+    ``BridgeToParent(invoker_session)`` when a live invoking pipeline session is threaded in
+    (#2769 — the agent-step's ask_user / permission / present reach the pipeline ORIGINATOR via
+    the #2735 transitive bridge) or ``AuditOnlyNoSurface`` when detached / headless (no invoker —
+    closing #2706, and fail-closed by construction).
 """
 from __future__ import annotations
 
@@ -195,6 +198,7 @@ async def run_agent_step(
     schema_registry: "SchemaRegistry | None" = None,
     chain_id: "str | None" = None,
     timeout: "float | None" = None,
+    invoker_session: "Any | None" = None,
 ) -> Any:
     """Spawn an ephemeral session, run one turn, collect + return its output.
 
@@ -215,17 +219,41 @@ async def run_agent_step(
     ``chain_id`` defaults to a fresh uuid4 hex (mirrors ``MessageBus``'s own
     ``_new_request_id``). ``timeout`` defaults to
     ``_DEFAULT_AGENT_STEP_TIMEOUT_S`` seconds.
+
+    ``invoker_session`` (#2769) is the LIVE session that invoked this pipeline run
+    — the pipeline driver-session, threaded down opaquely by ``PipelineExecutor``
+    from ``PipelineExecutorDriver`` (which holds ``self._session``). When present,
+    the ephemeral worker's user-reaching capabilities route ``BridgeToParent`` to
+    it, so an agent-step ``ask_user`` / permission JIT approval / ``safety.limit`` /
+    MCP elicitation AND ``present`` reach the pipeline ORIGINATOR (the operator) —
+    the #2735 compositional transitive bridge walks agent-step → driver → root
+    operator, resolving at the first attached ancestor. When the invoking pipeline
+    was itself launched DETACHED, the driver-session's own bridge is
+    ``AuditOnlyInterventionBridge`` and that same transitive walk terminates in a
+    typed refusal at the driver hop — so the fail-closed behavior is preserved by
+    the driver's own routing, not by this seam. ``None`` (a CLI-headless ``reyn
+    pipe`` run with no live session, or a direct executor call) routes
+    ``AuditOnlyNoSurface`` here directly.
     """
     from reyn.core.pipeline.schema import validate
     from reyn.runtime.message_bus import MessageBus
-    from reyn.runtime.spawn_routing import AuditOnlyNoSurface
+    from reyn.runtime.spawn_routing import AuditOnlyNoSurface, BridgeToParent
 
     narrowing = _build_agent_step_narrowing(capabilities)
-    # #2708 P3-item3 (#2706): a headless ephemeral leaf worker has no attachable surface, so its
-    # user-reaching capabilities route AuditOnlyNoSurface — a ``present`` step is audit-only (the
-    # durable ``presented`` P6 event fires; no orphan outbox message), and an ``ask_user`` step
-    # returns a typed refusal rather than silently self-binding to an undrained outbox / hanging.
-    routing = AuditOnlyNoSurface()
+    # #2769 (refines #2706/#2710 P3-item3): an agent-step's user-reaching capabilities route to the
+    # pipeline INVOKER when one is threaded in (``BridgeToParent(invoker_session)`` — the driver
+    # session), so ``ask_user`` / permission / ``safety.limit`` / elicitation AND ``present`` reach
+    # the originating operator via the #2735 transitive bridge (agent-step → driver → operator). With
+    # NO invoker (CLI-headless ``reyn pipe`` / a direct executor call), route ``AuditOnlyNoSurface`` —
+    # ``present`` is audit-only (durable ``presented`` P6 event; no orphan outbox) and ``ask_user``
+    # returns a typed refusal, never a silent self-bind/hang. When the invoker pipeline is DETACHED,
+    # the driver session's OWN bridge is AuditOnly, so the transitive walk still refuses fail-closed —
+    # the DENY is a consumer-side deny-by-default property, independent of this routing decision.
+    routing = (
+        BridgeToParent(invoker_session)
+        if invoker_session is not None
+        else AuditOnlyNoSurface()
+    )
     sid = await spawn_ephemeral_session(
         registry, identity=identity, narrowing=narrowing,
         presentation_consumer=routing.presentation_consumer,
@@ -248,12 +276,14 @@ async def run_agent_step(
         reply_to=SystemRef(),
         timeout=timeout if timeout is not None else _DEFAULT_AGENT_STEP_TIMEOUT_S,
     )
-    # #2708 P3-item3 (#2706 root-cause-ii): a ``present`` step's output is ROUTED per the worker's
-    # DECLARED consumer (AuditOnlyNoSurface above) — it renders at the worker's own sink (audit-only:
-    # the durable ``presented`` P6 event) at op time, so it never arrives here as a ``"presentation"``
-    # outbox reply to be silently dropped (the pre-fix self-bound worker put a ``"presentation"`` on
-    # its own outbox that this ``kind == "agent"`` filter discarded). The join is the agent-step's
-    # RETURN text; presentation is not lost, it is deliberately audit-only per the declaration.
+    # #2708 P3-item3 (#2706 root-cause-ii) + #2769: a ``present`` step's output is ROUTED per the
+    # worker's DECLARED consumer — under ``BridgeToParent`` (attached invoker) it renders onto the
+    # INVOKER's outbox (reaching the operator by construction); under ``AuditOnlyNoSurface`` (detached)
+    # it renders audit-only (the durable ``presented`` P6 event). In EITHER case it renders at op time
+    # at the worker's own sink and never arrives here as a ``"presentation"`` outbox reply for this
+    # ``kind == "agent"`` filter to see — so present symmetry falls out of the ROUTING decision above,
+    # NOT of this filter (do NOT special-case it for present). The join is the agent-step's RETURN
+    # text; presentation is delivered/audited per the declaration, never lost here.
     text = "\n\n".join(r.text for r in replies if r.kind == "agent")
 
     if schema is None:

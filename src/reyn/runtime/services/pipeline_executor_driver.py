@@ -216,6 +216,14 @@ class PipelineExecutorDriver:
                     schema_registry=schema_registry,
                     max_fan_out_depth=self._registry.max_pipeline_fan_out_depth,
                     max_pipeline_spawns=self._registry.max_pipeline_spawns,
+                    # #2769: thread THIS driver-session down to any agent-step's
+                    # run_agent_step so its ask_user / permission / present reach the
+                    # pipeline originator (via BridgeToParent + the #2735 transitive
+                    # bridge). When this driver is itself detached (async / headless
+                    # launch), its OWN intervention_bridge is AuditOnly, so the
+                    # transitive walk terminates in a fail-closed typed refusal at this
+                    # driver hop — the agent-step is never left able to self-allow.
+                    invoker_session=self._session,
                 )
             else:
                 result = await executor.resume(
@@ -231,6 +239,8 @@ class PipelineExecutorDriver:
                     schema_registry=schema_registry,
                     max_fan_out_depth=self._registry.max_pipeline_fan_out_depth,
                     max_pipeline_spawns=self._registry.max_pipeline_spawns,
+                    # #2769: same invoker threading on the resume path (see run above).
+                    invoker_session=self._session,
                 )
         except PipelineCancelled as exc:
             # IS-6: an intentional Ctrl-C stop at a step boundary. TERMINAL (so

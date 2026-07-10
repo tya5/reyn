@@ -702,6 +702,19 @@ class _RunDeps:
     pipeline_registry: "PipelineRegistry | None"
     events: "EventLog | None"
     cancel_check: "Callable[[], bool] | None"
+    # #2769: the LIVE session that invoked this pipeline run (the
+    # ``PipelineExecutorDriver``'s own ``self._session``), or ``None`` if the run is
+    # detached / headless (a CLI ``reyn pipe`` run, or a direct executor call in a
+    # test). The executor NEVER uses it except to forward it, opaquely, to an
+    # ``agent`` step's ``run_agent_step`` (``_run_agent_step``) — where it becomes the
+    # ``BridgeToParent`` target so the worker's ``ask_user`` / permission / present
+    # reach the pipeline ORIGINATOR via the #2735 transitive bridge (agent-step →
+    # driver → operator). A live ``Session`` (NOT a snapshot) is threaded because the
+    # transitive bridge re-reads ``parent_session.intervention_bridge`` at ask-time to
+    # support live re-attachment, which a frozen snapshot could not. Threaded unchanged
+    # into every nested scope by ``replace(deps, ...)`` so a ``for_each`` / ``call``
+    # sub-scope's agent-steps reach the same originator.
+    invoker_session: "Any | None" = None
     # S5 fan-out spawn bounds. ``fan_out_depth`` is a PER-BRANCH frozen value:
     # entering a ``for_each`` threads a ``replace(deps, fan_out_depth=+1)`` copy
     # into its item/collect sub-scopes, so a nested for_each sees a deeper value
@@ -847,6 +860,10 @@ async def _run_agent_step(inv: "_StepInvocation") -> "tuple[Any, bool, dict[str,
             capabilities=step.capabilities,
             schema=step.schema,
             schema_registry=deps.schema_registry,
+            # #2769: forward the invoking pipeline's live session so this agent-step's
+            # ask_user / permission / present reach the ORIGINATOR (via BridgeToParent +
+            # the #2735 transitive bridge) when attached; None → AuditOnly fail-closed.
+            invoker_session=deps.invoker_session,
         )
     except AgentStepError as exc:
         raise PipelineExecutionError(
@@ -1483,6 +1500,7 @@ class PipelineExecutor:
         cancel_check: "Callable[[], bool] | None" = None,
         max_fan_out_depth: "int | None" = None,
         max_pipeline_spawns: "int | None" = None,
+        invoker_session: "Any | None" = None,
     ) -> PipelineResult:
         """Run `pipeline` from the first step. `initial_context` seeds the named
         stores (``ctx.*``) available to the first step; there is no incoming pipe
@@ -1501,7 +1519,13 @@ class PipelineExecutor:
         omitted (NEVER unbounded-by-omission); the operator wires reyn.yaml's
         ``safety.spawn.*`` values here via the driver. ``0`` = unlimited (opt-out).
         Deliberately decoupled from `registry`: a `for_each` needs its caps even
-        with no `AgentStep` (so no `registry`) in the pipeline."""
+        with no `AgentStep` (so no `registry`) in the pipeline.
+
+        `invoker_session` (#2769) is the live session that invoked this run (the
+        driver-session), forwarded opaquely to an `agent` step's `run_agent_step`
+        so its interventions + present reach the pipeline originator when attached;
+        `None` (CLI-headless / direct executor call) → the agent-step routes
+        AuditOnly (fail-closed)."""
         named_stores: "dict[str, Any]" = dict(initial_context) if initial_context else {}
         return await self._run_from(
             pipeline,
@@ -1520,6 +1544,7 @@ class PipelineExecutor:
             cancel_check=cancel_check,
             max_fan_out_depth=max_fan_out_depth,
             max_pipeline_spawns=max_pipeline_spawns,
+            invoker_session=invoker_session,
         )
 
     async def resume(
@@ -1537,6 +1562,7 @@ class PipelineExecutor:
         cancel_check: "Callable[[], bool] | None" = None,
         max_fan_out_depth: "int | None" = None,
         max_pipeline_spawns: "int | None" = None,
+        invoker_session: "Any | None" = None,
     ) -> PipelineResult:
         """Resume `run_id`: load the latest recorded generation (R4) and replay every
         step already in ``completed_step_results`` (no re-execution — exactly-once).
@@ -1565,6 +1591,7 @@ class PipelineExecutor:
                 cancel_check=cancel_check,
                 max_fan_out_depth=max_fan_out_depth,
                 max_pipeline_spawns=max_pipeline_spawns,
+                invoker_session=invoker_session,
             )
         return await self._run_from(
             pipeline,
@@ -1583,6 +1610,7 @@ class PipelineExecutor:
             cancel_check=cancel_check,
             max_fan_out_depth=max_fan_out_depth,
             max_pipeline_spawns=max_pipeline_spawns,
+            invoker_session=invoker_session,
         )
 
     async def _run_from(
@@ -1604,6 +1632,7 @@ class PipelineExecutor:
         cancel_check: "Callable[[], bool] | None" = None,
         max_fan_out_depth: "int | None" = None,
         max_pipeline_spawns: "int | None" = None,
+        invoker_session: "Any | None" = None,
     ) -> PipelineResult:
         # S5 caps: default to conservative finite constants when the caller omits
         # them (never unbounded-by-omission). ``0`` (an explicit operator opt-out)
@@ -1626,6 +1655,7 @@ class PipelineExecutor:
             pipeline_registry=pipeline_registry,
             events=events,
             cancel_check=cancel_check,
+            invoker_session=invoker_session,
             fan_out_depth=0,
             max_fan_out_depth=eff_max_depth,
             spawn_budget=SpawnBudget(eff_max_spawns),
