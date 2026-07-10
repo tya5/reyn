@@ -46,7 +46,11 @@ from reyn.runtime.presentation_consumer import (
 )
 from reyn.runtime.registry import AgentRegistry
 from reyn.runtime.session import DEFAULT_CHAT_CHANNEL_ID, Session
-from reyn.runtime.session_api import run_agent_step
+from reyn.runtime.session_api import (
+    _build_agent_step_narrowing,
+    run_agent_step,
+    spawn_ephemeral_session,
+)
 from reyn.runtime.session_buses import (
     AuditOnlyInterventionBridge,
     SpawnBridgeInterventionListener,
@@ -294,16 +298,19 @@ async def test_detached_agent_step_ask_user_refuses(tmp_path: Path) -> None:
 
 @pytest.mark.asyncio
 async def test_detached_agent_step_permission_fail_closed_deny(tmp_path: Path) -> None:
-    """Tier 2: (safety crux) a DETACHED agent-step's AuditOnly permission refusal is interpreted as
-    DENY (fail-closed) by the real permission consumer — NOT allow. The detached worker's OWN
-    AuditOnly bus, fed to a real ``PermissionResolver.require_tool`` (the consumer an agent-step's
-    permission op reaches), yields a ``PermissionError`` (deny). This is the security-critical
-    invariant: the routing change cannot open a refuse→allow hole because DENY is a consumer-side
-    deny-by-default property (``choice_id=None`` falls through to deny), independent of routing."""
+    """Tier 2: (safety crux, detached CASE i of ii) ``invoker_session=None`` → the agent-step routes
+    ``AuditOnlyNoSurface`` DIRECTLY, and its AuditOnly permission refusal is interpreted as DENY
+    (fail-closed) by the real permission consumer — NOT allow. The detached worker's OWN AuditOnly
+    bus, fed to a real ``PermissionResolver.require_tool`` (the consumer an agent-step's permission
+    op reaches), yields a ``PermissionError`` (deny). Security-critical invariant: the routing change
+    cannot open a refuse→allow hole because DENY is a consumer-side deny-by-default property
+    (``choice_id=None`` falls through to deny), independent of routing. Case ii (invoker IS a
+    detached-driver session → transitive fail-close) is pinned separately below — the two together
+    enumerate BOTH production-reachable detached fail-close cases (not a curated subset)."""
     state_log = StateLog(tmp_path / ".reyn" / "wal.jsonl")
     reg, built = _recording_registry(tmp_path, state_log)
 
-    await run_agent_step(reg, identity="worker", prompt="do a thing")  # detached
+    await run_agent_step(reg, identity="worker", prompt="do a thing")  # detached (invoker_session=None)
 
     workers = [s for s in built if isinstance(s.intervention_bridge, AuditOnlyInterventionBridge)]
     assert workers, "the detached agent-step worker was not routed AuditOnly (#2769 fail-closed)."
@@ -319,6 +326,68 @@ async def test_detached_agent_step_permission_fail_closed_deny(tmp_path: Path) -
     with pytest.raises(PermissionError):
         # The AuditOnly refusal (choice_id=None) is consumed as DENY — require_tool raises. A
         # refuse→allow hole would let this pass (the serious security regression this pins against).
+        await resolver.require_tool(decl, "risky_tool", bus)
+
+    _cancel_tasks(reg)
+
+
+@pytest.mark.asyncio
+async def test_detached_driver_invoker_agent_step_permission_fail_closed_deny_transitively(
+    tmp_path: Path,
+) -> None:
+    """Tier 2: (safety crux, detached CASE ii of ii) the invoker IS a detached-driver session — a
+    headless async pipeline whose OWN driver session EXISTS but is ``AuditOnly``-spawned (the exact
+    production path ``_spawn_pipeline_driver_session`` takes on ``start_pipeline_run``, and the one
+    ``pipeline_executor_driver.py`` claims: "when this driver is itself detached ... its OWN
+    intervention_bridge is AuditOnly, so the transitive walk terminates in a fail-closed typed
+    refusal"). Here the agent-step routes ``BridgeToParent(detached-driver)`` (NOT direct AuditOnly),
+    and the #2735 transitive walk resolves at the DRIVER hop into the driver's own AuditOnly bridge →
+    refuse → the permission consumer DENIES. Pins that this SECOND detached case fail-closes via the
+    transitive hop, completing the enumeration with case i above (invoker=None → direct AuditOnly)."""
+    state_log = StateLog(tmp_path / ".reyn" / "wal.jsonl")
+    reg, built = _recording_registry(tmp_path, state_log)
+
+    # A detached-driver session: spawned AuditOnly, exactly as the detached (start_pipeline_run)
+    # launch path spawns its pipeline driver. It EXISTS (a live session driving a headless async
+    # pipeline) but has no attachable operator surface — its own bridge is AuditOnly.
+    driver_sid = await spawn_ephemeral_session(
+        reg, identity="worker", narrowing=_build_agent_step_narrowing(None),
+        presentation_consumer=AuditOnlyPresentationConsumer(),
+        intervention_bridge=AuditOnlyInterventionBridge(),
+    )
+    detached_driver = reg.get_session("worker", driver_sid)
+    assert detached_driver is not None
+    assert isinstance(detached_driver.intervention_bridge, AuditOnlyInterventionBridge)
+
+    # The agent-step is invoked WITH this detached driver as its invoker → BridgeToParent(driver),
+    # NOT direct AuditOnly (that distinguishes case ii from case i above).
+    await run_agent_step(
+        reg, identity="worker", prompt="do a thing", invoker_session=detached_driver,
+    )
+
+    # The worker routed BridgeToParent(detached-driver): a SpawnBridge whose parent IS the driver
+    # (NOT a direct AuditOnly bridge). RED if run_agent_step ignored the invoker (case-i shape).
+    workers = [
+        s for s in built
+        if isinstance(s.intervention_bridge, SpawnBridgeInterventionListener)
+        and s.intervention_bridge.parent_session is detached_driver
+    ]
+    assert workers, (
+        "the agent-step worker was NOT routed BridgeToParent(detached-driver) — case ii requires "
+        "the invoker (the detached driver) to be the bridge parent, so the transitive walk can "
+        "fail-close at the driver hop rather than the worker routing AuditOnly directly (case i)."
+    )
+    worker = workers[-1]
+
+    # The transitive walk (worker → detached-driver's own AuditOnly bridge → refuse) is the EXACT
+    # bus the worker's permission op dispatches on. Fed to the real permission consumer → DENY,
+    # reached VIA the driver hop (not a worker-local AuditOnly). This is the production-reachable
+    # (ii) path proven fail-closed.
+    bus = worker.intervention_bridge.bus(run_id="r", actor="agent-step")
+    resolver = PermissionResolver({}, project_root=tmp_path, interactive=True)
+    decl = PermissionDecl(tool=["risky_tool"])
+
+    with pytest.raises(PermissionError):
         await resolver.require_tool(decl, "risky_tool", bus)
 
     _cancel_tasks(reg)
