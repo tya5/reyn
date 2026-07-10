@@ -503,31 +503,102 @@ _CHIP_SPECS = [
 ]
 
 
+@dataclass(frozen=True)
+class WaitingOn:
+    """What the current turn is blocked on, for the working indicator.
+
+    Owner: "Working… もっと状態細分化できないの?" — the intent was knowing WHAT
+    is blocking progress (a slow tool? the model? a question only the user can
+    answer?), not just "is something happening". Table-driven (see
+    ``_WAITING_ON_BY_EVENT`` below) rather than growing an if/elif chain in the
+    renderer — a new axis is one new table entry, not a new branch.
+
+    Every ``turn`` in reyn funnels through exactly THREE await chokepoints
+    (verified by reading the actual dispatch code, not assumed):
+    ``call_llm_tools`` (the LLM call — the default/idle state below),
+    ``dispatch_tool`` (any tool execution — sub-agent delegation / MCP / shell
+    / web all go through this same call, and #2344's owner design decision
+    made chat-axis tool_calls run SERIALLY in declaration order, so a single
+    ``detail`` slot is correct, never a set), and ``intervention_bus.request``
+    (ANY human-in-the-loop pause — ask_user, permission confirm, cost-warn,
+    safety-limit checkpoint, MCP install confirm, elicitation, hook confirm
+    all fan into this one primitive). This dataclass models exactly those
+    three plus "reached via a mid-turn compaction pass" as a fourth, all
+    optional/extensible via the table.
+    """
+
+    label: str
+    detail: "str | None" = None
+    # True → render as a static amber line matching the above-input
+    # intervention region's visual weight, NOT the "the AI is busy" shimmer —
+    # the ball is in the user's court, not the model's, and the shimmer
+    # animation was actively misleading here (owner's original complaint was
+    # exactly this: the spinner kept ticking through an ask_user pause).
+    is_user_wait: bool = False
+
+    def text(self) -> str:
+        return f"{self.label} {self.detail}" if self.detail else self.label
+
+
+_WAITING_ON_THINKING = WaitingOn(label="Thinking")  # default: LLM response in flight
+_WAITING_ON_FOR_USER = WaitingOn(label="Waiting for you", is_user_wait=True)
+
+# Event → WaitingOn transition table. tool_called's data is
+# {caller_kind, caller_id, tool, chain_id, args, args_hash} (dispatch/dispatcher.py
+# via lifecycle_forwarder.py's on_tool_called/on_tool_returned/on_tool_failed
+# — the SAME events the scrollback's "▸ tool(...)"/"⎿ ..." trace lines already
+# come from). Extending to a new axis (e.g. compaction, once desired — the
+# compaction_check(outcome="forced_sync", candidate_count>0) / completed /
+# failed events already exist and could bracket a "Compacting" state) is one
+# new entry here, not a new branch in the renderer.
+_WAITING_ON_BY_EVENT: "dict[str, Callable[[dict], WaitingOn]]" = {
+    "tool_called": lambda d: WaitingOn(label="Running", detail=d.get("tool")),
+    "tool_returned": lambda d: _WAITING_ON_THINKING,
+    "tool_failed": lambda d: _WAITING_ON_THINKING,
+}
+
+
 def working_line(
     thinking: bool,
     think_start: float,
     now: float,
     *,
     cancelling: bool = False,
+    waiting_on: "WaitingOn | None" = None,
+    waiting_on_since: "float | None" = None,
 ) -> list:
     """Pure: working-row fragments while a turn runs (empty list when idle).
 
     The spinner frame derives from `now` so it advances smoothly regardless of
-    refresh jitter; elapsed is whole seconds since `think_start`. The label carries
-    a shimmer — a bright crest sweeping left→right across the text (a moving light)
-    over a dim base, also clock-driven so it animates on each refresh.
+    refresh jitter. The label carries a shimmer — a bright crest sweeping
+    left→right across the text (a moving light) over a dim base, also
+    clock-driven so it animates on each refresh.
+
+    ``waiting_on`` (default ``None`` → the "Thinking" default, byte-identical
+    to every pre-existing caller/test) names WHAT is currently blocking
+    progress — see ``WaitingOn``'s docstring. ``waiting_on_since`` is when
+    THAT state began (defaults to ``think_start``, i.e. turn start, if not
+    given) — elapsed seconds shown is time-in-THIS-state, not turn-total, so
+    "Running grep_files… 45s" answers "where exactly is it stuck", not just
+    "the turn has been going for a while".
 
     When ``cancelling=True`` (ctrl-c was pressed mid-turn), the shimmer is replaced
     by a static "Cancelling…" indicator — the cancel is cooperative so the turn
     completes at the next tool boundary; the indicator reassures the user it's noted.
+    Takes priority over ``waiting_on`` (a cancel-in-progress is the one thing
+    that always wins, regardless of what the turn happened to be doing).
     """
     if not thinking:
         return []
     if cancelling:
         return [(f"fg:{_CC_WARN}", " ✗ Cancelling…")]
+    wo = waiting_on if waiting_on is not None else _WAITING_ON_THINKING
+    since = waiting_on_since if waiting_on_since is not None else think_start
+    elapsed = max(0, int(now - since))
+    label = f"{wo.text()}… {elapsed}s"
+    if wo.is_user_wait:
+        return [(f"fg:{_CC_WARN}", f" ◆ {label} · ctrl-c to interrupt")]
     frame = _SPINNER[int(now * 8) % len(_SPINNER)]
-    elapsed = max(0, int(now - think_start))
-    label = f"Working… {elapsed}s"
     frags = [(f"fg:{_CC_ACCENT}", f" {frame} ")]
     # The crest sweeps across the label then pauses in a short trailing gap before
     # restarting, so the light reads as a repeating left→right pass.

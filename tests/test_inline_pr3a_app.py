@@ -18,8 +18,8 @@ from reyn.interfaces.repl.renderer import (
 from reyn.schemas.models import Event
 
 
-def _evt(t: str) -> Event:
-    return Event(type=t, timestamp=datetime.now(timezone.utc), data={})
+def _evt(t: str, **data) -> Event:
+    return Event(type=t, timestamp=datetime.now(timezone.utc), data=data)
 
 
 def test_working_line_idle_is_empty() -> None:
@@ -28,12 +28,14 @@ def test_working_line_idle_is_empty() -> None:
 
 
 def test_working_line_running_has_spinner_and_label() -> None:
-    """Tier 2: while running, the row carries a spinner glyph + 'Working…'."""
+    """Tier 2: while running (no waiting_on given → the default), the row
+    carries a spinner glyph + 'Thinking…' (owner: renamed from "Working" —
+    "LLM 処理中は Thinking の方が良さそう")."""
     frags = working_line(True, 0.0, 3.0)
     text = "".join(t for _, t in frags)
-    assert "Working" in text
+    assert "Thinking" in text
     assert "3s" in text          # elapsed = now - start
-    assert text.strip()[0] not in ("W",)  # a spinner glyph leads, not the label
+    assert text.strip()[0] not in ("T",)  # a spinner glyph leads, not the label
 
 
 def test_working_line_elapsed_tracks_now_minus_start() -> None:
@@ -129,6 +131,192 @@ def test_cancelling_state_does_not_bleed_into_next_turn() -> None:
         assert "Cancelling" not in text, (
             f"after {end_event}, next turn still shows Cancelling indicator"
         )
-        assert "Working" in text, (
-            f"after {end_event}, next turn should show normal working indicator"
+        assert "Thinking" in text, (
+            f"after {end_event}, next turn should show the default Thinking indicator"
         )
+
+
+# ── WaitingOn framework (owner: "Working… もっと状態細分化できないの?" →
+# "何に待たされているのか知りたい") ────────────────────────────────────────────
+
+
+def test_working_line_waiting_on_running_shows_tool_name():
+    """Tier 2: a WaitingOn with a detail (tool name) renders "Running <tool>…",
+    not the generic "Thinking…" default."""
+    from reyn.interfaces.inline.app import WaitingOn
+    text = "".join(
+        t for _, t in working_line(True, 0.0, 3.0, waiting_on=WaitingOn(label="Running", detail="edit_file"))
+    )
+    assert "Running edit_file…" in text
+    assert "Thinking" not in text
+
+
+def test_working_line_waiting_on_since_resets_elapsed_not_turn_total():
+    """Tier 2: elapsed seconds shown is time-in-THIS-state (waiting_on_since),
+    not turn-total (think_start) — "Running grep_files… 5s" must answer "how
+    long has THIS been running", not "how long has the whole turn been"."""
+    from reyn.interfaces.inline.app import WaitingOn
+    text = "".join(t for _, t in working_line(
+        True, think_start=0.0, now=20.0,
+        waiting_on=WaitingOn(label="Running", detail="grep_files"),
+        waiting_on_since=15.0,  # this tool started at t=15, turn started at t=0
+    ))
+    assert "5s" in text   # 20 - 15, NOT 20 - 0
+    assert "20s" not in text
+
+
+def test_working_line_waiting_on_since_defaults_to_think_start():
+    """Tier 2: omitting waiting_on_since falls back to think_start (turn-total
+    elapsed) — the default/"Thinking" state has no separate sub-state start."""
+    from reyn.interfaces.inline.app import WaitingOn
+    text = "".join(t for _, t in working_line(
+        True, think_start=10.0, now=17.0, waiting_on=WaitingOn(label="Thinking"),
+    ))
+    assert "7s" in text
+
+
+def test_working_line_user_wait_is_static_not_shimmering():
+    """Tier 2: is_user_wait=True renders a static amber row with no per-character
+    shimmer crest — the "ball is in your court" state must look visually
+    distinct from "the AI is busy", which was the owner's original complaint
+    (the spinner kept ticking through an ask_user pause). Verified by content
+    (no bold-crest fragment, unlike the shimmering "Thinking"/"Running" case
+    covered by test_working_line_has_a_moving_shimmer_crest above), not by
+    pinning how many fragments compose the row."""
+    from reyn.interfaces.inline.app import WaitingOn
+    frags = working_line(
+        True, 0.0, 3.0, waiting_on=WaitingOn(label="Waiting for you", is_user_wait=True),
+    )
+    text = "".join(t for _, t in frags)
+    assert "Waiting for you" in text
+    assert "3s" in text
+    assert not any("bold" in style for style, _ in frags), (
+        "no shimmer crest fragment — the user-wait row must not animate"
+    )
+
+
+def test_working_line_cancelling_overrides_waiting_on():
+    """Tier 2: cancelling=True still shows "Cancelling…" even with a
+    waiting_on set (e.g. mid-tool-call) — cancel-in-progress always wins."""
+    from reyn.interfaces.inline.app import WaitingOn
+    text = "".join(t for _, t in working_line(
+        True, 0.0, 3.0, cancelling=True, waiting_on=WaitingOn(label="Running", detail="shell"),
+    ))
+    assert "Cancelling" in text
+    assert "Running shell" not in text
+
+
+# ── InlineChatRenderer WaitingOn state-transition wiring ────────────────────
+
+
+def test_tool_called_sets_running_state():
+    """Tier 2: a "tool_called" chat event (the SAME event lifecycle_forwarder.py
+    already consumes to render the scrollback's "▸ tool(...)" trace line —
+    this is a second, independent subscriber, not new plumbing) makes the
+    working row name that tool."""
+    r = InlineChatRenderer()
+    r.on_chat_event(_evt("turn_started"))
+    r.on_chat_event(_evt("tool_called", tool="edit_file"))
+    text = "".join(t for _, t in r.working_frags(time.monotonic()))
+    assert "Running edit_file…" in text
+
+
+def test_tool_returned_resets_to_thinking():
+    """Tier 2: "tool_returned" clears the tool name — falls back to
+    "Thinking…" while the LLM processes the tool's result."""
+    r = InlineChatRenderer()
+    r.on_chat_event(_evt("turn_started"))
+    r.on_chat_event(_evt("tool_called", tool="edit_file"))
+    r.on_chat_event(_evt("tool_returned", tool="edit_file"))
+    text = "".join(t for _, t in r.working_frags(time.monotonic()))
+    assert "Thinking" in text
+    assert "Running" not in text
+
+
+def test_tool_failed_resets_to_thinking():
+    """Tier 2: "tool_failed" also clears the tool name (mirrors tool_returned
+    — the dispatch attempt is over either way)."""
+    r = InlineChatRenderer()
+    r.on_chat_event(_evt("turn_started"))
+    r.on_chat_event(_evt("tool_called", tool="shell"))
+    r.on_chat_event(_evt("tool_failed", tool="shell"))
+    text = "".join(t for _, t in r.working_frags(time.monotonic()))
+    assert "Thinking" in text
+    assert "Running" not in text
+
+
+def test_second_tool_call_replaces_first_in_same_turn():
+    """Tier 2: a turn with multiple sequential tool calls (#2344's owner
+    design decision: chat-axis tool_calls run SERIALLY, never parallelized —
+    verified in router_loop.py's SchemeOps.dispatch) shows whichever tool is
+    CURRENTLY dispatched, not the first one from earlier in the turn."""
+    r = InlineChatRenderer()
+    r.on_chat_event(_evt("turn_started"))
+    r.on_chat_event(_evt("tool_called", tool="read_file"))
+    r.on_chat_event(_evt("tool_returned", tool="read_file"))
+    r.on_chat_event(_evt("tool_called", tool="edit_file"))
+    text = "".join(t for _, t in r.working_frags(time.monotonic()))
+    assert "Running edit_file…" in text
+    assert "read_file" not in text
+
+
+def test_intervention_message_sets_waiting_for_you():
+    """Tier 2: an outbox kind="intervention" message (InterventionHandler
+    .announce() — the ONE signal common to ALL 6 intervention_bus.request()
+    callers: ask_user / permission confirm / cost-warn / safety-limit
+    checkpoint / MCP install confirm / hook confirm, verified only ask_user.py
+    emits user_intervention_requested directly, so THIS is the correct
+    chokepoint) switches the working row to "Waiting for you"."""
+    from reyn.runtime.outbox import OutboxMessage
+    r = InlineChatRenderer()
+    r.on_chat_event(_evt("turn_started"))
+    r.message(OutboxMessage(kind="intervention", text="Continue?"))
+    text = "".join(t for _, t in r.working_frags(time.monotonic()))
+    assert "Waiting for you" in text
+
+
+def test_user_answered_intervention_resets_to_thinking():
+    """Tier 2: "user_answered_intervention" (InterventionHandler.record_answer
+    — also common to all 6 intervention paths) clears the user-wait state."""
+    from reyn.runtime.outbox import OutboxMessage
+    r = InlineChatRenderer()
+    r.on_chat_event(_evt("turn_started"))
+    r.message(OutboxMessage(kind="intervention", text="Continue?"))
+    r.on_chat_event(_evt("user_answered_intervention"))
+    text = "".join(t for _, t in r.working_frags(time.monotonic()))
+    assert "Thinking" in text
+    assert "Waiting for you" not in text
+
+
+def test_waiting_on_does_not_leak_into_next_turn():
+    """Tier 2: turn_started resets waiting_on to the default — a tool (or
+    user-wait) from a PRIOR turn must not still show as active once a new
+    turn begins (mirrors the existing cancelling-state non-bleed guard)."""
+    r = InlineChatRenderer()
+    r.on_chat_event(_evt("turn_started"))
+    r.on_chat_event(_evt("tool_called", tool="read_file"))
+    r.on_chat_event(_evt("turn_settled"))
+    r.on_chat_event(_evt("turn_started"))   # next turn, no tool_called yet
+    text = "".join(t for _, t in r.working_frags(time.monotonic()))
+    assert "Thinking" in text
+    assert "Running" not in text
+
+
+def test_waiting_on_since_updates_on_each_transition(monkeypatch):
+    """Tier 2: each WaitingOn transition stamps a fresh `_waiting_on_since` —
+    elapsed shown after a transition is time-since-THAT-transition, not
+    time-since-turn-start (the actual "how long has the CURRENT thing been
+    stuck" the owner asked for)."""
+    import reyn.interfaces.repl.renderer as renderer_mod
+    fake_now = {"t": 100.0}
+    monkeypatch.setattr(renderer_mod.time, "monotonic", lambda: fake_now["t"])
+
+    r = InlineChatRenderer()
+    r.on_chat_event(_evt("turn_started"))       # think_start = 100
+    fake_now["t"] = 110.0
+    r.on_chat_event(_evt("tool_called", tool="grep_files"))  # waiting_on_since = 110
+    fake_now["t"] = 115.0                        # 5s into the tool call, 15s into the turn
+
+    text = "".join(t for _, t in r.working_frags(115.0))
+    assert "5s" in text
+    assert "15s" not in text
