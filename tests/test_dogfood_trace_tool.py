@@ -39,19 +39,23 @@ def _run(args: list[str]) -> tuple[str, int]:
     return result.stdout + result.stderr, result.returncode
 
 
+# Surviving, still-produced event vocab (#2512): the skill-era
+# workflow_*/phase_*/run_skill_* kinds have 0 producers after the skill-machinery
+# removal, so the live-mode renderers no longer branch on them. ``tool_called``
+# (emitted by ``core/dispatch/dispatcher.py``) + ``session_started`` /
+# ``session_completed`` are current producers, so they exercise the real
+# chain/summary/full rendering paths.
 MINIMAL_EVENTS = [
-    {"type": "workflow_started", "timestamp": "2026-05-04T10:00:00+09:00",
-     "data": {"run_id": "run_001", "skill": "my_skill", "entry_phase": "do_it"}},
-    {"type": "phase_started", "timestamp": "2026-05-04T10:00:01+09:00",
-     "data": {"phase": "do_it", "visit_count": 1}},
+    {"type": "session_started", "timestamp": "2026-05-04T10:00:00+09:00",
+     "data": {"run_id": "run_001", "agent": "default"}},
     {"type": "tool_called", "timestamp": "2026-05-04T10:00:02+09:00",
-     "data": {"caller_kind": "skill_phase", "caller_id": "my_skill.do_it",
-              "tool": "invoke_skill", "args": {"skill": "sub"}}},
+     "data": {"caller_kind": "agent", "caller_id": "default",
+              "tool": "file", "args": {"op": "read", "path": "src/x.py"}}},
     {"type": "tool_called", "timestamp": "2026-05-04T10:00:03+09:00",
-     "data": {"caller_kind": "skill_phase", "caller_id": "my_skill.do_it",
-              "tool": "describe_skill", "args": {"name": "sub"}}},
-    {"type": "workflow_finished", "timestamp": "2026-05-04T10:00:05+09:00",
-     "data": {"run_id": "run_001", "status": "finished"}},
+     "data": {"caller_kind": "agent", "caller_id": "default",
+              "tool": "ask_user", "args": {"prompt": "proceed?"}}},
+    {"type": "session_completed", "timestamp": "2026-05-04T10:00:05+09:00",
+     "data": {"run_id": "run_001", "status": "completed"}},
 ]
 
 
@@ -62,14 +66,15 @@ MINIMAL_EVENTS = [
 class TestSummaryMode:
     """Tier 2: summary mode emits expected sections."""
 
-    def test_summary_includes_skill_chain(self, tmp_path: Path) -> None:
-        """Tier 2: summary output contains skill_started and tool_called data."""
+    def test_summary_includes_tool_calls(self, tmp_path: Path) -> None:
+        """Tier 2: summary output renders the [Tool Calls] section from live
+        ``tool_called`` events (surviving vocab, #2512)."""
         reyn = tmp_path / ".reyn"
         _write_events(reyn, MINIMAL_EVENTS)
         out, rc = _run(["--root", str(reyn), "--mode", "summary"])
         assert rc == 0
-        assert "my_skill" in out
-        assert "invoke_skill" in out or "describe_skill" in out
+        assert "Tool Calls" in out
+        assert "file" in out or "ask_user" in out
 
     def test_summary_no_events_message(self, tmp_path: Path) -> None:
         """Tier 2: empty .reyn/events dir prints 'no events found'."""
@@ -119,8 +124,8 @@ class TestFullMode:
         out, rc = _run(["--root", str(reyn), "--mode", "full", "--filter", "tool_called"])
         assert rc == 0
         assert "tool_called" in out
-        # workflow_started events should NOT appear in the header section
-        assert "workflow_started" not in out
+        # a non-filtered kind (session_started) should NOT appear in the grouped output
+        assert "session_started" not in out
 
     def test_full_corrupt_line_skipped(self, tmp_path: Path) -> None:
         """Tier 2: a corrupt JSONL line is silently skipped; valid lines parsed."""
@@ -128,25 +133,26 @@ class TestFullMode:
         target = reyn / "events" / "agents" / "default" / "chat" / "s.jsonl"
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(
-            '{"type":"workflow_started","timestamp":"2026-05-04T10:00:00+09:00","data":{"run_id":"r1","skill":"x","entry_phase":"p"}}\n'
+            '{"type":"session_started","timestamp":"2026-05-04T10:00:00+09:00","data":{"run_id":"r1","agent":"default"}}\n'
             'NOT VALID JSON\n'
-            '{"type":"workflow_finished","timestamp":"2026-05-04T10:00:01+09:00","data":{"run_id":"r1","status":"finished"}}\n',
+            '{"type":"session_completed","timestamp":"2026-05-04T10:00:01+09:00","data":{"run_id":"r1","status":"completed"}}\n',
             encoding="utf-8",
         )
         out, rc = _run(["--root", str(reyn), "--mode", "full"])
         assert rc == 0
-        assert "workflow_started" in out
-        assert "workflow_finished" in out
+        assert "session_started" in out
+        assert "session_completed" in out
 
 
 class TestChainMode:
-    """Tier 2: chain mode shows workflow/phase/tool timeline."""
+    """Tier 2: chain mode shows the live tool-call timeline."""
 
-    def test_chain_shows_phases(self, tmp_path: Path) -> None:
-        """Tier 2: chain mode prints phase_started events in order."""
+    def test_chain_shows_tool_calls(self, tmp_path: Path) -> None:
+        """Tier 2: chain mode prints live ``tool_called`` events in order
+        (surviving vocab, #2512)."""
         reyn = tmp_path / ".reyn"
         _write_events(reyn, MINIMAL_EVENTS)
         out, rc = _run(["--root", str(reyn), "--mode", "chain"])
         assert rc == 0
-        assert "workflow_started" in out
-        assert "do_it" in out
+        assert "tool:" in out
+        assert "file" in out
