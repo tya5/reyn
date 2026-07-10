@@ -25,12 +25,14 @@ discovery uses `search_actions` (embedding-backed).
 a single fixed path.** Since Phase 6 (2026-05-16) the wrapper-only path was
 briefly the sole production behaviour for every layer, but an owner-driven H1 fix later flipped the `chat` layer's own default to `enumerate-all` — a
 flat, no-wrapper tool list — because flat listing stops `invoke_action`
-name-hallucination (30%→100% non-hot-list tool-use accuracy). The `step` and
-`phase` layers still default to this universal-category wrapper path
-described below. `tool_use: {chat, step, phase}` in `reyn.yaml` selects the
-scheme per layer; see [Tool-Use Schemes](tool-use-schemes.md) for the full,
-current per-layer model — the sections below describe the `universal-category`
-scheme's own mechanics, not which layer uses it by default.
+name-hallucination (30%→100% non-hot-list tool-use accuracy). `ToolUseConfig`
+still declares a `step`/`phase` default of this universal-category wrapper
+path (config-level fact) — whether the `step`/`phase` layers themselves are
+current live surfaces is under separate verification, not asserted here.
+`tool_use: {chat, step, phase}` in `reyn.yaml` selects the scheme per layer;
+see [Tool-Use Schemes](tool-use-schemes.md) for the full, current per-layer
+model — the sections below describe the `universal-category` scheme's own
+mechanics, not which layer uses it by default.
 
 When this wrapper path is active for a layer, the handlers (`invoke_skill` /
 `delegate_to_agent` / `call_mcp_tool` / …) remain in the registry as
