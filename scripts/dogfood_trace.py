@@ -277,32 +277,14 @@ def mode_chain(root: Path) -> None:
     if not evs:
         print("no events found"); return
     base_ts = evs[0].get("timestamp")
-    indent = 0
-    print("=== Skill / Tool Chain ===")
+    print("=== Tool Chain ===")
     for ev in evs:
         kind, data, ts = ev.get("type", ""), ev.get("data", {}), ev.get("timestamp")
-        pad = "  " * indent
         t = _ts_offset(base_ts, ts)
-        if kind == "workflow_started":
-            print(f"{pad}[{t}] workflow_started: {data.get('skill','?')}  run_id={data.get('run_id','')}")
-            indent = min(indent + 1, 6)
-        elif kind == "phase_started":
-            print(f"{pad}[{t}] phase_started: {data.get('phase','?')}")
-        elif kind == "tool_called":
-            print(f"{pad}[{t}] tool: {data.get('tool','?')}({_exc(data.get('args',{}))})")
-        elif kind == "run_skill_started":
-            print(f"{pad}[{t}] run_skill_started: {data.get('skill','?')}")
-            indent = min(indent + 1, 6)
-        elif kind == "run_skill_completed":
-            indent = max(indent - 1, 0); pad = "  " * indent
-            print(f"{pad}[{t}] run_skill_completed: {data.get('skill','?')}  status={data.get('status','?')}")
-        elif kind == "workflow_finished":
-            indent = max(indent - 1, 0); pad = "  " * indent
-            print(f"{pad}[{t}] workflow_finished  status={data.get('status','?')}")
-        elif kind == "phase_completed":
-            print(f"{pad}[{t}] phase_completed: {data.get('phase','?')}  decision={data.get('decision','?')}")
-        elif kind in ("control_ir_failed", "phase_retry"):
-            print(f"{pad}[{t}] {kind}: {json.dumps(data, ensure_ascii=False)[:80]}")
+        if kind == "tool_called":
+            print(f"[{t}] tool: {data.get('tool','?')}({_exc(data.get('args',{}))})")
+        elif kind == "control_ir_failed":
+            print(f"[{t}] {kind}: {json.dumps(data, ensure_ascii=False)[:80]}")
 
 
 def mode_summary(root: Path) -> None:
@@ -310,31 +292,11 @@ def mode_summary(root: Path) -> None:
     if not evs:
         print("no events found"); return
 
-    workflows: list[dict] = []
-    wf_map: dict[str, dict] = {}
     tool_calls, peer_failures, iv_dispatch, iv_resolve, agent_msgs = [], [], [], [], []
 
     for ev in evs:
         kind, data, ts = ev.get("type", ""), ev.get("data", {}), ev.get("timestamp", "")
-        if kind == "workflow_started":
-            wf = {"run_id": data.get("run_id",""), "skill": data.get("skill",""),
-                  "entry_phase": data.get("entry_phase",""), "ts": ts, "status": "active", "phases": []}
-            workflows.append(wf); wf_map[wf["run_id"]] = wf
-        elif kind == "workflow_finished":
-            run_id = data.get("run_id", "")
-            if run_id in wf_map:
-                wf_map[run_id]["status"] = data.get("status", "finished")
-            else:
-                for wf in reversed(workflows):
-                    if wf["status"] == "active":
-                        wf["status"] = data.get("status", "finished"); break
-        elif kind == "phase_started":
-            phase = data.get("phase", "")
-            for wf in reversed(workflows):
-                if wf["status"] == "active":
-                    if phase not in wf["phases"]: wf["phases"].append(phase)
-                    break
-        elif kind == "tool_called" and data.get("tool") in IMPORTANT_TOOLS:
+        if kind == "tool_called" and data.get("tool") in IMPORTANT_TOOLS:
             tool_calls.append({"tool": data.get("tool"), "args": data.get("args", {}),
                                 "caller": data.get("caller_id", data.get("caller_kind", "")), "ts": ts})
         elif kind == "peer_reply_failed_surfaced":
@@ -351,13 +313,6 @@ def mode_summary(root: Path) -> None:
     print("=" * 60)
     print("DOGFOOD TRACE SUMMARY")
     print("=" * 60)
-
-    print(f"\n[Skill Chain]  ({len(workflows)} workflow(s))")
-    for wf in workflows:
-        phases_str = " -> ".join(wf["phases"]) or "(no phases recorded)"
-        print(f"  [{wf['ts'][:19]}] {wf['skill']} (entry={wf['entry_phase']})  status={wf['status']}")
-        print(f"    phases: {phases_str}")
-        print(f"    run_id: {wf['run_id']}")
 
     print(f"\n[Tool Calls]  ({len(tool_calls)} important tool call(s))")
     for i, tc in enumerate(tool_calls, 1):
@@ -379,15 +334,6 @@ def mode_summary(root: Path) -> None:
         src = d.get("from", d.get("agent", "?"))
         text = str(d.get("text", d.get("content", "")))
         print(f"  {src}: {text[:40]}")
-
-    skill_runs_dir = root / "state" / "skill_runs"
-    if skill_runs_dir.exists():
-        runs = list(skill_runs_dir.iterdir())
-        print(f"\n[Skill Run State]  {skill_runs_dir}  ({len(runs)} entr(ies))")
-        for r in sorted(runs)[:10]:
-            print(f"  {r.name}")
-    else:
-        print(f"\n[Skill Run State]  {skill_runs_dir} (not found)")
 
     print()
     mode_cost(root)
