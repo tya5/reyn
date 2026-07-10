@@ -15,7 +15,14 @@ audience: [human, agent]
 > `control`/`artifact`/`control_ir` エンベロープが現行ソースに存在しないことを直接
 > grep で確認済みです。第4節(統合 `ToolRegistry` 実装ログ)は現行アーキテクチャを
 > 記述しており正確ですが、`gates(phase=...)` への言及は今や vestigial です(消費する
-> phase surface が無い)。
+> phase surface が無い)。**§2.1 のツール一覧(「常時存在13 tools + 条件付き、13–22
+> tools」という記述)も stale だったため訂正済み** — これは FP-0034 以前の per-kind
+> ツール surface を記述しており、Phase 6(2026-05-16)以降 production の唯一の挙動と
+> なっている universal action catalog wrapper モードではありません。
+> `docs/concepts/tools-integrations/universal-catalog.md` と
+> `src/reyn/runtime/router_tools.py` の `_LEGACY_TOOL_NAMES` strip list、および
+> `ActionRetrievalConfig.universal_wrappers_enabled: bool = True`(production
+> デフォルト)で確認済みです。
 
 ## 1. なぜこれが重要か
 
@@ -31,11 +38,12 @@ Reyn は `RouterLoop`(インタラクティブチャットセッション)経由
 
 **仕組み:** litellm 経由の `call_llm_tools` によるネイティブ LLM function calling。ツール定義は OpenAI `tools` 配列形式に従い、モデルはアシスタントメッセージ内の `tool_calls` で応答する。OS は各呼び出しをディスパッチし、`tool_result` を追記して、モデルが通常テキストを返すまで LLM を再呼び出しする。
 
-**ツール surface:** `src/reyn/runtime/router_tools.py` の `build_tools()` がツールリストを組み立てる。実際の数はオペレーター設定に依存する。
+**ツール surface:** `src/reyn/runtime/router_tools.py` の `build_tools()` がツールリストを組み立て、引き続き OpenAI `tools` 配列形式を返すが、そのリストの **production デフォルトの形状は、もはやフラットな per-kind ツールリストではなく universal action catalog** である — 完全なモデルは [Universal Action Catalog](../tools-integrations/universal-catalog.md) を参照。production デフォルト設定(`action_retrieval.universal_wrappers_enabled: true`、FP-0034 PR-3b-iv 以降のデフォルト)では:
 
-- **常時存在（13 tools）:** `list_skills`, `describe_skill`, `list_agents`, `describe_agent`, `list_memory`, `read_memory_body`, `delegate_to_agent`, `remember_shared`, `remember_agent`, `forget_memory`, `web_search`, `reyn_src_list`, `reyn_src_read`
-- **条件付き（+0〜+9 tools）:** `invoke_skill`（ワークフロー登録時）、`list_directory` + `read_file`（file read スコープ設定時）、`write_file` + `delete_file`（file write スコープ設定時）、`web_fetch`（オペレーターのオプトイン）、`list_mcp_servers` + `list_mcp_tools` + `call_mcp_tool`（MCP servers 設定時）
-- **実測レンジ: 13–22 tools**（`router_tools.py` のコメントに記載の「11–18」は `web_search`、`reyn_src_list`、`reyn_src_read` 追加前の記述であり、現在は stale）
+- **3〜4 個の universal wrapper**(`list_actions`、`describe_action`、`invoke_action`、加えて `action_retrieval.embedding_class` が設定され index が準備できている場合は `search_actions`)が、skill / peer agent / MCP / file / web / memory / RAG corpus / sandboxed exec を含むすべてのカテゴリを、種類ごとに別ツールを用意するのではなく単一の qualified-name dispatch パターン(`<category>__<entry>`)でカバーする。
+- **legacy な per-kind ツールはこのモードで `tools=` から除外される**(`router_tools.py` の `_LEGACY_TOOL_NAMES` セット)— `list_agents`、`describe_agent`、`delegate_to_agent`、`list_memory`、`read_memory_body`、`remember_shared`、`remember_agent`、`forget_memory`、`recall`、`read_file`、`write_file`、`delete_file`、`list_directory`、`web_search`、`web_fetch`、`list_mcp_servers`、`list_mcp_tools`、`call_mcp_tool` 等はもう LLM に見える tool list に現れない。それらのハンドラーは wrapper の backing implementation として registry に残り、`universal_dispatch.py` 経由で dispatch される。
+- **オプションの hot-list 直接エイリアス**(`hot_list_aliases`)を wrapper に加えて追加でき、頻用アクションについてのみ discover ステップを bypass できる。
+- **オペレーターの opt-out**: `action_retrieval.universal_wrappers_enabled: false` を設定すると FP-0034 以前のフラットな per-kind ツールリスト(このセクションがかつて無条件に記述していた形状)に戻る — これは config のエスケープハッチであり、デフォルトの operator 体験ではない。
 
 **役割:** オーケストレーション — 次のサブコンポーネント（ワークフロー、Agent、plan、メモリ操作、直接テキスト応答）を選択する。
 

@@ -17,7 +17,15 @@ audience: [human, agent]
 > current source. Those sections have been removed. Section 4 (the unified
 > `ToolRegistry` implementation log) remains accurate — it documents the still-
 > current architecture — except that its `gates(phase=...)` references are now
-> vestigial (no phase surface consumes them).
+> vestigial (no phase surface consumes them). §2.1's tool-inventory list (the
+> "13 always-present + conditional, 13–22 tools" description) was **also stale
+> and has been corrected** — it described the pre-FP-0034 per-kind tool surface,
+> not the universal-action-catalog wrapper mode that has been the sole
+> production behaviour since Phase 6 (2026-05-16), confirmed via
+> `docs/concepts/tools-integrations/universal-catalog.md` and
+> `src/reyn/runtime/router_tools.py`'s `_LEGACY_TOOL_NAMES` strip list plus
+> `ActionRetrievalConfig.universal_wrappers_enabled: bool = True` (the
+> production default).
 
 ## 1. Why this matters
 
@@ -33,11 +41,12 @@ Reyn invokes the LLM via native function-calling tools over `RouterLoop` (intera
 
 **Mechanism:** native LLM function calling via `call_llm_tools` (backed by litellm). Tool definitions follow the OpenAI `tools` array shape; the model replies with `tool_calls` in the assistant message. The OS dispatches each call, appends the `tool_result`, and re-invokes the LLM until it produces a plain text reply.
 
-**Tool surface:** `build_tools()` in `src/reyn/runtime/router_tools.py` assembles the tool list. The actual count depends on operator configuration:
+**Tool surface:** `build_tools()` in `src/reyn/runtime/router_tools.py` assembles the tool list, still returning the OpenAI `tools` array shape, but the *production-default* shape of that list is now the universal action catalog, not a flat per-kind tool list — see [Universal Action Catalog](../tools-integrations/universal-catalog.md) for the full model. In production default config (`action_retrieval.universal_wrappers_enabled: true`, the default since FP-0034 PR-3b-iv):
 
-- **Always present (13 tools):** `list_skills`, `describe_skill`, `list_agents`, `describe_agent`, `list_memory`, `read_memory_body`, `delegate_to_agent`, `remember_shared`, `remember_agent`, `forget_memory`, `web_search`, `reyn_src_list`, `reyn_src_read`.
-- **Conditional (+0 to +9 tools):** `invoke_skill` (when workflows are registered), `list_directory` + `read_file` (when file read scope is configured), `write_file` + `delete_file` (when file write scope is configured), `web_fetch` (operator opt-in), `list_mcp_servers` + `list_mcp_tools` + `call_mcp_tool` (when MCP servers are configured).
-- **Verified range: 13–22 tools.** (The comment in `router_tools.py` that states "11–18" predates the addition of `web_search`, `reyn_src_list`, and `reyn_src_read` and is stale.)
+- **The 3–4 universal wrappers** (`list_actions`, `describe_action`, `invoke_action`, plus `search_actions` when `action_retrieval.embedding_class` is configured and its index is ready) address every category — skill, peer agent, MCP, file, web, memory, RAG corpus, sandboxed exec — through one qualified-name dispatch pattern (`<category>__<entry>`), rather than a separate tool per kind.
+- **Legacy per-kind tools are stripped** from `tools=` in this mode (`router_tools.py`'s `_LEGACY_TOOL_NAMES` set) — `list_agents`, `describe_agent`, `delegate_to_agent`, `list_memory`, `read_memory_body`, `remember_shared`, `remember_agent`, `forget_memory`, `recall`, `read_file`, `write_file`, `delete_file`, `list_directory`, `web_search`, `web_fetch`, `list_mcp_servers`, `list_mcp_tools`, `call_mcp_tool`, and more no longer appear in the LLM-visible tool list; their handlers remain registered as the wrappers' backing implementations, dispatched via `universal_dispatch.py`.
+- **Optional hot-list direct aliases** may be appended on top of the wrappers for frequently-used actions (`hot_list_aliases`), bypassing the discover step for those specific actions only.
+- **Operator opt-out**: setting `action_retrieval.universal_wrappers_enabled: false` restores the pre-FP-0034 flat per-kind tool list (the shape this section used to describe unconditionally) — this is a config escape hatch, not the default operator experience.
 
 **Role:** orchestration — pick the next sub-component (workflow, agent, plan, memory operation, direct text reply).
 
