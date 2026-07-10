@@ -526,14 +526,23 @@ def run(args: argparse.Namespace) -> None:
         # A2A use (registry.get_or_load returns this attached scoped session, no
         # fresh unscoped build), then print the final reply and exit.
         if getattr(args, "once", False):
-            _once_result = await _run_once(registry, name)
-            sys.stdout.write((_once_result.get("reply", "") or "") + "\n")
-            # #1649: a limit-abort must propagate a non-zero exit so a
-            # non-TTY wrapper/CI detects the runaway-stop (vs a clean reply).
-            # The decision-enabling message is already in the reply above
-            # (never silent). exit(2) distinguishes it from arg/usage errors.
-            if _once_result.get("limit_stopped"):
-                sys.exit(2)
+            # #2783: this branch used to return (or sys.exit) with NO teardown of
+            # any kind — unlike run_repl (below), which always routes through
+            # registry.shutdown() on /quit/EOF. That left MCP connections,
+            # FsWatcher, StateLog and EventStore all unclosed on every
+            # `reyn run-once` invocation. try/finally so a limit-abort's
+            # sys.exit(2) still runs teardown before the process exits.
+            try:
+                _once_result = await _run_once(registry, name)
+                sys.stdout.write((_once_result.get("reply", "") or "") + "\n")
+                # #1649: a limit-abort must propagate a non-zero exit so a
+                # non-TTY wrapper/CI detects the runaway-stop (vs a clean reply).
+                # The decision-enabling message is already in the reply above
+                # (never silent). exit(2) distinguishes it from arg/usage errors.
+                if _once_result.get("limit_stopped"):
+                    sys.exit(2)
+            finally:
+                await registry.shutdown()
             return
         await run_repl(registry, renderer=renderer, config=session_cfg.config)
 

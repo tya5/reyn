@@ -818,6 +818,15 @@ class AgentRegistry:
             aclose_mcp = getattr(session, "aclose_mcp_connections", None)
             if callable(aclose_mcp):
                 await aclose_mcp()
+            # #2783: same teardown-completeness gap as remove_session — close
+            # FsWatcher/EventStore here too, not just MCP, before ``self.remove``
+            # drops the session from the in-memory map.
+            aclose_fs_watcher = getattr(session, "aclose_fs_watcher", None)
+            if callable(aclose_fs_watcher):
+                await aclose_fs_watcher()
+            aclose_event_store = getattr(session, "aclose_event_store", None)
+            if callable(aclose_event_store):
+                await aclose_event_store()
         cascade_changes = self.remove(name, purge=purge)
         if self._state_log is not None:
             await self._state_log.append(
@@ -1982,6 +1991,21 @@ class AgentRegistry:
             aclose_mcp = getattr(session, "aclose_mcp_connections", None)
             if callable(aclose_mcp):
                 await aclose_mcp()
+            # #2783: close FsWatcher/EventStore SYNCHRONOUSLY here too, mirroring the
+            # MCP close above — do not rely on session.run()'s own `finally` (which
+            # also closes FsWatcher) to get there before this function returns. That
+            # `finally` only runs once the task.cancel() below is actually scheduled
+            # and unwound, which this function never awaits (bare `task.cancel()`,
+            # no `await task`) — a genuine race, not hypothetical. Both closes are
+            # idempotent (FsWatcher.aclose / EventStore.aclose, verified — see their
+            # docstrings), so `run()`'s later finally-close is a harmless no-op if it
+            # still fires after this.
+            aclose_fs_watcher = getattr(session, "aclose_fs_watcher", None)
+            if callable(aclose_fs_watcher):
+                await aclose_fs_watcher()
+            aclose_event_store = getattr(session, "aclose_event_store", None)
+            if callable(aclose_event_store):
+                await aclose_event_store()
         for task_dict in (self._tasks, self._forward_tasks):
             task = task_dict.pop((name, sid), None)
             if task is not None:
@@ -3143,6 +3167,26 @@ class AgentRegistry:
                     await aclose_mcp()
                 except Exception as exc:
                     logger.warning("MCP connection teardown failed for %r: %s", _name, exc)
+        # #2783: drain every loaded session's EventStore (per-session instance) so
+        # trailing audit events (fire-and-forget via submit_nowait) survive a normal
+        # exit instead of being silently dropped when asyncio.run cancels outstanding
+        # tasks at loop teardown. Same getattr-guarded, same-loop-as-MCP pattern above.
+        for _name, session in self._iter_named_sessions():
+            aclose_event_store = getattr(session, "aclose_event_store", None)
+            if callable(aclose_event_store):
+                try:
+                    await aclose_event_store()
+                except Exception as exc:
+                    logger.warning("EventStore teardown failed for %r: %s", _name, exc)
+        # #2783: drain the registry-wide StateLog (WAL) — the same gap #1765 left open
+        # for the exact same reason (fire-and-forget submit_nowait, cancelled at loop
+        # teardown). One shared instance, so this runs once per shutdown() call, not
+        # per session.
+        if self._state_log is not None:
+            try:
+                await self._state_log.aclose()
+            except Exception as exc:
+                logger.warning("StateLog teardown failed: %s", exc)
 
     def loaded_names(self) -> list[str]:
         return list(self._sessions.keys())
