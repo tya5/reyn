@@ -71,10 +71,10 @@ async def _handle_list_agents(args: Mapping[str, Any], ctx: ToolContext) -> Tool
     return rs.list_agents_fn(path)  # type: ignore[return-value]
 
 
-from reyn.core.offload.canonical import CANONICAL_TODO  # noqa: E402
+from reyn.core.offload.canonical import list_agents_to_canonical  # noqa: E402
 
 LIST_AGENTS = ToolDefinition(
-    canonical=CANONICAL_TODO,
+    canonical=list_agents_to_canonical,
     name="list_agents",
     router_dispatched=True,
     description=_LIST_AGENTS_DESCRIPTION,
@@ -128,8 +128,10 @@ async def _handle_describe_agent(args: Mapping[str, Any], ctx: ToolContext) -> T
     return rs.describe_agent_fn(name)
 
 
+from reyn.core.offload.canonical import describe_agent_to_canonical  # noqa: E402
+
 DESCRIBE_AGENT = ToolDefinition(
-    canonical=CANONICAL_TODO,
+    canonical=describe_agent_to_canonical,
     name="describe_agent",
     router_dispatched=True,
     description=_DESCRIBE_AGENT_DESCRIPTION,

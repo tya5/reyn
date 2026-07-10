@@ -56,31 +56,20 @@ _STRUCTURED_PASSTHROUGH_ADMIN_6 = frozenset({
 # in F1 (``read_memory_body`` → the memory body text; ``ask_user`` → the user's answer), so they are
 # NOT here. See PR-F1 description for the full text-shaped / genuinely-structured / status-only triage.
 #
-# #2681 Bucket C burn-down: 25 status-only producers (write/ack/spawn-ack results, no readable body)
-# now ship a real ``make_status_text_mapper`` mapper (canonical.py) instead of the whole-dict
-# fallback — removed from the ledger. ``topology_create`` was triaged alongside them but its result
-# is a genuine RECORD (full topology config echo: kind/members/leader/profiles), not an ack, so it
-# stays here for Bucket B.
-_CANONICAL_TODO_GRANDFATHERED = frozenset({
-    "cron_list",
-    "describe_action", "describe_agent", "describe_mcp_tool",
-    "invoke_action",
-    "list_actions", "list_agents",
-    "list_mcp_prompts", "list_mcp_resource_templates", "list_mcp_resources",
-    "list_mcp_servers", "list_mcp_tools",
-    "list_memory",
-    "mcp_search_registry",
-    # #2692 burn-down: ``present`` now ships a real text mapper (its ack is an agent-facing
-    # signal, not bulk content) — removed from the ledger (the ratchet set only shrinks).
-    "search_actions",
-    # #2681 Bucket A burn-down: ``shell`` now ships a real text mapper (its stdout is the readable
-    # LLM body, mirroring ``sandboxed_exec``'s stdout-is-text treatment) — removed from the ledger
-    # (the ratchet set only shrinks).
-    "task.abort", "task.add_dependency", "task.assign", "task.create",
-    "task.get", "task.list",
-    "task.remove_dependency", "task.repoint_dependency", "task.update_status",
-    "topology_create",
-})
+# #2681 burn-down COMPLETE — the ledger is now EMPTY. Every producer that F1 provisionally relabeled
+# ``CANONICAL_TODO`` has been migrated to a real mapper across three disjoint burn-down PRs:
+#   - Bucket A (#2807): ``shell`` (stdout-is-text, mirroring ``sandboxed_exec``).
+#   - Bucket B (this PR): 25 genuinely-structured record-reads (list_memory, universal_catalog's
+#     list/search/describe/invoke_action, catalog's list/describe_agent, mcp.py's 6 list/describe
+#     surfaces, mcp_search_registry, cron_list, 9 task.* record ops, and topology_create) → a short
+#     bounded ``text`` summary + the record(s) as a ``structured`` attachment
+#     (``canonical.py::_records_to_canonical`` + ``task_op_to_canonical``).
+#   - Bucket C (#2808): 25 status-only producers (write/ack/spawn-ack results) → a real status-text
+#     mapper, plus 3 status-shaped task ops (heartbeat / register_unblock_predicate / comment).
+# The ``present`` producer was already burned down separately in #2692. With the set empty, the
+# ratchet gate below now enforces "NO producer may adopt CANONICAL_TODO" — a real mapper or
+# STRUCTURED_PASSTHROUGH is the only permitted declaration going forward.
+_CANONICAL_TODO_GRANDFATHERED: frozenset[str] = frozenset()
 
 
 def _is_valid_declaration(decl: object) -> bool:

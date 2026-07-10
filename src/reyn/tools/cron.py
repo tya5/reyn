@@ -443,7 +443,7 @@ async def _handle_cron_disable(
 
 
 from reyn.core.offload.canonical import (  # noqa: E402
-    CANONICAL_TODO,
+    cron_list_to_canonical,
     cron_register_to_canonical,
     cron_set_enabled_to_canonical,
     cron_unregister_to_canonical,
@@ -472,7 +472,7 @@ CRON_UNREGISTER = ToolDefinition(
 )
 
 CRON_LIST = ToolDefinition(
-    canonical=CANONICAL_TODO,
+    canonical=cron_list_to_canonical,
     name="cron_list",
     description=_CRON_LIST_DESCRIPTION,
     parameters=_CRON_LIST_PARAMETERS,

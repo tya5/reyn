@@ -26,6 +26,7 @@ from reyn.core.offload.canonical import (
     CANONICAL_TODO,
     task_comment_to_canonical,
     task_heartbeat_to_canonical,
+    task_op_to_canonical,
     task_register_unblock_predicate_to_canonical,
 )
 from reyn.schemas.models import (
@@ -93,16 +94,29 @@ _TASK_OPS: tuple[tuple[str, type, str], ...] = (
 )
 
 
-# #2681 Bucket C burn-down: these three task ops' ToolDefinition MUST declare the same canonical
-# mapper as their op_runtime registration (core/op_runtime/task.py) — both seams share the ONE
-# ``"task.<verb>"`` source id, and ``declare_canonical`` rejects a conflicting re-declaration. The
-# other 9 task ops (create/update_status/get/list/add_dependency/remove_dependency/
-# repoint_dependency/abort/assign) return a full ``task=...to_dict()`` record — genuinely structured,
-# left on ``CANONICAL_TODO`` (Bucket B).
+# Every task op's ToolDefinition MUST declare the SAME canonical mapper as its op_runtime
+# registration (core/op_runtime/task.py) — both seams share the ONE ``"task.<verb>"`` source id, and
+# ``declare_canonical`` rejects a conflicting re-declaration.
+#   - #2681 Bucket C: the three status-shaped ops (heartbeat / register_unblock_predicate / comment)
+#     get their own status-text mappers.
+#   - #2681 Bucket B: the other 9 ops (create/update_status/get/list/add_dependency/
+#     remove_dependency/repoint_dependency/abort/assign) return a full ``task=...to_dict()`` record —
+#     genuinely structured, sharing the ONE ``task_op_to_canonical`` (record summary + attachment).
+# All 12 are declared here; ``.get(op_kind, CANONICAL_TODO)`` below is a defensive fallback for a
+# future 13th op added without a mapper (it would surface via the ratchet gate).
 _TASK_OP_CANONICAL: "dict[str, Any]" = {
     "task.heartbeat": task_heartbeat_to_canonical,
     "task.register_unblock_predicate": task_register_unblock_predicate_to_canonical,
     "task.comment": task_comment_to_canonical,
+    "task.create": task_op_to_canonical,
+    "task.update_status": task_op_to_canonical,
+    "task.get": task_op_to_canonical,
+    "task.list": task_op_to_canonical,
+    "task.add_dependency": task_op_to_canonical,
+    "task.remove_dependency": task_op_to_canonical,
+    "task.repoint_dependency": task_op_to_canonical,
+    "task.abort": task_op_to_canonical,
+    "task.assign": task_op_to_canonical,
 }
 
 

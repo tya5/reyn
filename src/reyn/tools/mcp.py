@@ -627,6 +627,12 @@ async def _handle_describe_mcp_tool(
 
 from reyn.core.offload.canonical import (  # noqa: E402
     CANONICAL_TODO,
+    describe_mcp_tool_to_canonical,
+    list_mcp_prompts_to_canonical,
+    list_mcp_resource_templates_to_canonical,
+    list_mcp_resources_to_canonical,
+    list_mcp_servers_to_canonical,
+    list_mcp_tools_to_canonical,
     mcp_get_prompt_to_canonical,
     mcp_read_resource_to_canonical,
     mcp_subscribe_resource_verb_to_canonical,
@@ -635,7 +641,7 @@ from reyn.core.offload.canonical import (  # noqa: E402
 )
 
 LIST_MCP_SERVERS = ToolDefinition(
-    canonical=CANONICAL_TODO,
+    canonical=list_mcp_servers_to_canonical,
     name="list_mcp_servers",
     router_dispatched=True,
     description=_LIST_MCP_SERVERS_DESCRIPTION,
@@ -647,7 +653,7 @@ LIST_MCP_SERVERS = ToolDefinition(
 )
 
 LIST_MCP_TOOLS = ToolDefinition(
-    canonical=CANONICAL_TODO,
+    canonical=list_mcp_tools_to_canonical,
     name="list_mcp_tools",
     router_dispatched=True,
     description=_LIST_MCP_TOOLS_DESCRIPTION,
@@ -674,7 +680,7 @@ CALL_MCP_TOOL = ToolDefinition(
 )
 
 DESCRIBE_MCP_TOOL = ToolDefinition(
-    canonical=CANONICAL_TODO,
+    canonical=describe_mcp_tool_to_canonical,
     name="describe_mcp_tool",
     router_dispatched=True,
     description=_DESCRIBE_MCP_TOOL_DESCRIPTION,
@@ -694,7 +700,7 @@ DESCRIBE_MCP_TOOL = ToolDefinition(
 # the absent mcp_tool_name prop for these three).
 
 LIST_MCP_RESOURCES = ToolDefinition(
-    canonical=CANONICAL_TODO,
+    canonical=list_mcp_resources_to_canonical,
     name="list_mcp_resources",
     router_dispatched=True,
     description=_LIST_MCP_RESOURCES_DESCRIPTION,
@@ -708,7 +714,7 @@ LIST_MCP_RESOURCES = ToolDefinition(
 )
 
 LIST_MCP_RESOURCE_TEMPLATES = ToolDefinition(
-    canonical=CANONICAL_TODO,
+    canonical=list_mcp_resource_templates_to_canonical,
     name="list_mcp_resource_templates",
     router_dispatched=True,
     description=_LIST_MCP_RESOURCE_TEMPLATES_DESCRIPTION,
@@ -773,7 +779,7 @@ UNSUBSCRIBE_MCP_RESOURCE = ToolDefinition(
 # the absent mcp_tool_name prop for these two). No subscribe analogue.
 
 LIST_MCP_PROMPTS = ToolDefinition(
-    canonical=CANONICAL_TODO,
+    canonical=list_mcp_prompts_to_canonical,
     name="list_mcp_prompts",
     router_dispatched=True,
     description=_LIST_MCP_PROMPTS_DESCRIPTION,

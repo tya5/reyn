@@ -32,7 +32,9 @@ import reyn.core.op_runtime as _op_runtime  # noqa: F401
 from reyn.core.events.events import EventLog
 from reyn.core.offload.canonical import (
     CANONICAL_FALLBACK_EVENT,
+    CANONICAL_TODO,
     canonical_fallback_reason,
+    declare_canonical,
 )
 from reyn.core.pipeline.executor import Pipeline, PipelineExecutor, ToolStep
 from reyn.tools import get_default_registry
@@ -40,12 +42,17 @@ from reyn.tools import get_default_registry
 get_default_registry()
 
 
-# A grandfathered ``CANONICAL_TODO`` producer (issue #2681 burn-down ledger). Used only to confirm the
-# classifier reports the ``canonical_todo`` reason for a real declared-debt producer; if this one is
-# later burned down to a real mapper it simply leaves the set — swap in any other ledger member.
-# (#2681 Bucket C burned ``agent_spawn`` down to a real status-text mapper — swapped to
-# ``topology_create``, triaged as a genuine record and left on the ledger for Bucket B.)
-_A_CANONICAL_TODO_PRODUCER = "topology_create"
+# A ``CANONICAL_TODO``-declared producer used only to confirm the classifier reports the
+# ``canonical_todo`` reason for a declared-debt producer. After the #2681 burn-down (Buckets A/B/C)
+# the live ``CANONICAL_TODO`` set is EMPTY — no REAL registered producer carries the marker anymore
+# (the ratchet gate in ``test_fp0056_canonical_coverage_gate.py`` now enforces an empty ledger), so
+# there is no ledger member to point at. The ``canonical_todo`` classifier branch is still live code
+# (a future producer could be re-added to the ledger via a review-gated edit), so this exercises it
+# via a SYNTHETIC fixture source declared ``CANONICAL_TODO``. ``declare_canonical`` is idempotent for
+# the same sentinel + id, so repeated runs / imports don't conflict; the fixture id is neither an op
+# kind nor a ToolDefinition, so it never enters the ratchet gate's registry-derived source set.
+_A_CANONICAL_TODO_PRODUCER = "fixture_canonical_todo_fallback_source"
+declare_canonical(_A_CANONICAL_TODO_PRODUCER, CANONICAL_TODO)
 # An admin/install producer declared STRUCTURED_PASSTHROUGH (owner decision #1 family).
 _A_PASSTHROUGH_PRODUCER = "mcp_install"
 # A producer with a REAL mapper — the falsify control.

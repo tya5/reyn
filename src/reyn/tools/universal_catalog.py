@@ -1570,10 +1570,15 @@ def _augment_suggestions(
 # ── 4 ToolDefinitions exported ─────────────────────────────────────────────
 
 
-from reyn.core.offload.canonical import CANONICAL_TODO  # noqa: E402
+from reyn.core.offload.canonical import (  # noqa: E402
+    describe_action_to_canonical,
+    invoke_action_to_canonical,
+    list_actions_to_canonical,
+    search_actions_to_canonical,
+)
 
 LIST_ACTIONS = ToolDefinition(
-    canonical=CANONICAL_TODO,
+    canonical=list_actions_to_canonical,
     name="list_actions",
     router_dispatched=True,
     description=_LIST_ACTIONS_DESCRIPTION,
@@ -1586,7 +1591,7 @@ LIST_ACTIONS = ToolDefinition(
 
 
 SEARCH_ACTIONS = ToolDefinition(
-    canonical=CANONICAL_TODO,
+    canonical=search_actions_to_canonical,
     name="search_actions",
     router_dispatched=True,
     description=_SEARCH_ACTIONS_DESCRIPTION,
@@ -1599,7 +1604,7 @@ SEARCH_ACTIONS = ToolDefinition(
 
 
 DESCRIBE_ACTION = ToolDefinition(
-    canonical=CANONICAL_TODO,
+    canonical=describe_action_to_canonical,
     name="describe_action",
     router_dispatched=True,
     description=_DESCRIBE_ACTION_DESCRIPTION,
@@ -1612,7 +1617,7 @@ DESCRIBE_ACTION = ToolDefinition(
 
 
 INVOKE_ACTION = ToolDefinition(
-    canonical=CANONICAL_TODO,
+    canonical=invoke_action_to_canonical,
     name="invoke_action",
     router_dispatched=True,
     description=_INVOKE_ACTION_DESCRIPTION,

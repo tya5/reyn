@@ -1107,6 +1107,283 @@ def ask_user_to_canonical(result: dict) -> CanonicalToolResult:
     )
 
 
+# ── FP-0056 #2681 Bucket B — genuinely-structured record-read producers ───────────────────────────
+#
+# Owner Decision #1 restricts STRUCTURED_PASSTHROUGH to the admin-6 (external/protocol payloads
+# needing verbatim structure — MCP responses / install manifests). The 24 producers mapped below are
+# internal record-reads (single-record "describe" views, and record-LIST "list"/"search" views) —
+# they fit a CanonicalToolResult with a short bounded ``text`` summary + the record(s) as a
+# ``structured`` attachment. A record-list is unbounded by nature, so a bounded summary + full
+# structured detail is MORE correct than a raw whole-dict passthrough for these.
+#
+# SUCCESS shape only, uniformly: every producer below has an error path that carries a dedicated
+# error-message field (``error`` / ``error_message`` / ``error_kind``) or ``isError``, so the shared
+# error seam (piece #1, ``is_error_result`` in :func:`to_canonical`) intercepts it BEFORE any of these
+# mappers runs — no per-mapper error branch needed here (mirrors ``file_to_canonical`` /
+# ``reyn_src_to_canonical`` / the rest of this module's success-only mappers).
+
+
+def _bounded_join(records: Any, key: str, *, limit: int = 10) -> str:
+    """Join up to ``limit`` records' ``key`` field into a comma-separated preview string, or ``""``
+    when ``records`` isn't a list or no record carries a truthy ``key``. BOUNDED by construction: the
+    full record list — however large — always lives in the ``structured`` attachment; this preview is
+    only ever a short ``text`` accent, never the data's only home."""
+    if not isinstance(records, list):
+        return ""
+    names = [str(r[key]) for r in records if isinstance(r, dict) and r.get(key)]
+    if not names:
+        return ""
+    shown = names[:limit]
+    remaining = len(names) - len(shown)
+    joined = ", ".join(shown)
+    return f"{joined}, +{remaining} more" if remaining > 0 else joined
+
+
+def _records_to_canonical(text: str, records: Any) -> CanonicalToolResult:
+    """THE shared shape for every #2681 Bucket B record-read mapper below: a short bounded
+    LLM-readable ``text`` summary (e.g. "5 memories", "3 MCP servers: a, b, c", "task <id>: <status>")
+    + the record(s) — a single dict (a "describe" view) or a list of dicts (a "list"/"search" view) —
+    as ONE ``structured`` attachment. Centralizing this (rather than each mapper building its own
+    ``CanonicalToolResult``) is the reusable seam these 24 producers share by construction."""
+    return CanonicalToolResult(
+        text=text, attachments=[{"kind": "structured", "data": records}], source_ref=None, meta={},
+    )
+
+
+def memory_list_to_canonical(result: dict) -> CanonicalToolResult:
+    """``list_memory`` result -> canonical (#2681 Bucket B). The handler returns a BARE LIST (browse
+    entries: ``{path, count}`` at the root/layer level, or ``{slug, name, description}`` at the leaf
+    level) — a non-dict handler return, so ``unwrap_dispatch_envelope`` does not peel the dispatch
+    envelope (its ``data`` isn't itself a dict), and this mapper receives ``{"status": "ok",
+    "data": [...]}`` rather than the bare list directly (verified against the real dispatch chain,
+    not shape-inference alone)."""
+    records = result.get("data") or []
+    n = len(records) if isinstance(records, list) else 0
+    text = f"{n} memory {'entry' if n == 1 else 'entries'}."
+    return _records_to_canonical(text, records)
+
+
+def list_agents_to_canonical(result: dict) -> CanonicalToolResult:
+    """``list_agents`` result -> canonical (#2681 Bucket B). Same bare-list handler shape as
+    ``list_memory`` (see :func:`memory_list_to_canonical`) — the dispatch envelope survives, so this
+    mapper reads ``result["data"]``. Entries are either ``{cluster, count}`` (root browse) or
+    ``{name, role}`` (one cluster's agents); a ``name`` field (present only in the latter) drives the
+    bounded preview."""
+    records = result.get("data") or []
+    n = len(records) if isinstance(records, list) else 0
+    preview = _bounded_join(records, "name")
+    label = "agent" if preview else "cluster"
+    text = f"{n} {label}{'s' if n != 1 else ''}" + (f": {preview}" if preview else "") + "."
+    return _records_to_canonical(text, records)
+
+
+def describe_agent_to_canonical(result: dict) -> CanonicalToolResult:
+    """``describe_agent`` result -> canonical (#2681 Bucket B). A SINGLE record — the raw agent entry
+    dict (``name``, ``role``, optional ``cluster``/others) — carried whole in the structured
+    attachment; ``text`` names the agent + role."""
+    name = result.get("name", "")
+    role = result.get("role") or "(no role)"
+    text = f"agent {name}: {role}."
+    return _records_to_canonical(text, result)
+
+
+def list_actions_to_canonical(result: dict) -> CanonicalToolResult:
+    """``list_actions`` result -> canonical (#2681 Bucket B). ``items`` is the current (enriched)
+    page; ``total`` is the full catalog count across all categories — the summary reports BOTH so the
+    LLM knows whether it is seeing everything or a page. The FP-0043 ``hint`` (search_actions
+    unavailable in this session) is appended when present — instructional signal the LLM must relay,
+    not bulk data."""
+    items = result.get("items") or []
+    total = result.get("total", len(items))
+    text = f"{len(items)} of {total} action(s)."
+    hint = result.get("hint")
+    if hint:
+        text = f"{text}\n{hint}"
+    return _records_to_canonical(text, items)
+
+
+def search_actions_to_canonical(result: dict) -> CanonicalToolResult:
+    """``search_actions`` result -> canonical (#2681 Bucket B). ``items`` (each
+    ``{qualified_name, short_description, score}``) is the ranked semantic-match list."""
+    items = result.get("items") or []
+    total = result.get("total", len(items))
+    text = f"{total} matching action(s)."
+    return _records_to_canonical(text, items)
+
+
+def describe_action_to_canonical(result: dict) -> CanonicalToolResult:
+    """``describe_action`` result -> canonical (#2681 Bucket B). A SINGLE resolved-action record
+    (``qualified_name``, ``description``, ``input_schema``, ``metadata``) carried whole in the
+    structured attachment; ``text`` names the action + its dispatch target. (The router-loop
+    chokepoint pops the ``_post_text`` B41 post-call directive BEFORE canonicalization — see
+    ``router_loop.py``'s dedicated strip — so it never reaches this mapper there; a pipeline `tool:`
+    step does not strip it, so it rides along inside the structured attachment there, unchanged from
+    the prior whole-dict behavior.)"""
+    qualified_name = result.get("qualified_name", "")
+    target = (result.get("metadata") or {}).get("target_tool_name", "")
+    text = f"action {qualified_name} -> {target}." if target else f"action {qualified_name}."
+    return _records_to_canonical(text, result)
+
+
+def invoke_action_to_canonical(result: dict) -> CanonicalToolResult:
+    """``invoke_action``'s OWN canonical declaration — a defensive fallback, NOT the common path
+    (#2681 Bucket B reviewer note). ``invoke_action`` normally delegates classification to its
+    resolved TARGET via the ``_canonical_source`` tag it injects
+    (``universal_catalog.py::_handle_invoke_action``): when the target's handler returns a dict,
+    canonicalization dispatches through the TARGET's own mapper and this declaration is never
+    consulted. This declaration is reached ONLY when the delegated target's handler returns a
+    NON-DICT value (a bare list/scalar — e.g. ``list_memory`` / ``list_agents`` invoked via
+    ``invoke_action``), because the tag-injection guard (``isinstance(result, dict)``) skips a
+    non-dict return, so the OUTER ``invoke_action`` tag survives instead of the target's, and this
+    mapper receives the still-wrapped ``{"status": "ok", "data": <the raw value>}`` envelope (the
+    same shape :func:`memory_list_to_canonical` sees directly). Renders generically via the shared
+    records+summary shape (the specific record type is unknown at this layer)."""
+    records = result.get("data", result)
+    n = len(records) if isinstance(records, list) else 1
+    text = f"invoke_action: {n} record(s)."
+    return _records_to_canonical(text, records)
+
+
+def describe_mcp_tool_to_canonical(result: dict) -> CanonicalToolResult:
+    """``describe_mcp_tool`` result -> canonical (#2681 Bucket B). A SINGLE mcp_tool record
+    (``name``, ``description``, ``input_schema``) carried whole in the structured attachment."""
+    name = result.get("name", "")
+    description = result.get("description") or ""
+    text = f"mcp_tool {name}: {description}" if description else f"mcp_tool {name}."
+    return _records_to_canonical(text, result)
+
+
+def list_mcp_servers_to_canonical(result: dict) -> CanonicalToolResult:
+    """``list_mcp_servers`` result -> canonical (#2681 Bucket B). ``servers`` (each typically
+    ``{name, description}``) is the installed-server list."""
+    servers = result.get("servers") or []
+    n = len(servers)
+    preview = _bounded_join(servers, "name")
+    text = f"{n} MCP server{'s' if n != 1 else ''}" + (f": {preview}" if preview else "") + "."
+    return _records_to_canonical(text, servers)
+
+
+def list_mcp_tools_to_canonical(result: dict) -> CanonicalToolResult:
+    """``list_mcp_tools`` result -> canonical (#2681 Bucket B). ``mcp_tools`` entries carry the
+    ``<server>__<tool>`` identifier + description + inputSchema."""
+    tools = result.get("mcp_tools") or []
+    n = len(tools)
+    preview = _bounded_join(tools, "name")
+    text = f"{n} mcp_tool{'s' if n != 1 else ''}" + (f": {preview}" if preview else "") + "."
+    return _records_to_canonical(text, tools)
+
+
+def list_mcp_resources_to_canonical(result: dict) -> CanonicalToolResult:
+    """``list_mcp_resources`` result -> canonical (#2681 Bucket B). ``resources`` entries are MCP
+    ``Resource`` dicts (``uri``, optional ``name``/``description``) — the preview prefers ``name``,
+    falling back to ``uri`` (resources are addressed by URI, not all servers name them)."""
+    resources = result.get("resources") or []
+    n = len(resources)
+    preview = _bounded_join(resources, "name") or _bounded_join(resources, "uri")
+    text = f"{n} MCP resource{'s' if n != 1 else ''}" + (f": {preview}" if preview else "") + "."
+    return _records_to_canonical(text, resources)
+
+
+def list_mcp_resource_templates_to_canonical(result: dict) -> CanonicalToolResult:
+    """``list_mcp_resource_templates`` result -> canonical (#2681 Bucket B). Mirrors
+    :func:`list_mcp_resources_to_canonical`; an empty list is a normal "no templates" result, not an
+    error."""
+    templates = result.get("resource_templates") or []
+    n = len(templates)
+    preview = _bounded_join(templates, "name") or _bounded_join(templates, "uriTemplate")
+    text = (
+        f"{n} MCP resource template{'s' if n != 1 else ''}" + (f": {preview}" if preview else "") + "."
+    )
+    return _records_to_canonical(text, templates)
+
+
+def list_mcp_prompts_to_canonical(result: dict) -> CanonicalToolResult:
+    """``list_mcp_prompts`` result -> canonical (#2681 Bucket B). Mirrors
+    :func:`list_mcp_resources_to_canonical`; ``prompts`` entries carry ``name`` (+ optional
+    ``description``/``arguments``)."""
+    prompts = result.get("prompts") or []
+    n = len(prompts)
+    preview = _bounded_join(prompts, "name")
+    text = f"{n} MCP prompt{'s' if n != 1 else ''}" + (f": {preview}" if preview else "") + "."
+    return _records_to_canonical(text, prompts)
+
+
+def mcp_search_registry_to_canonical(result: dict) -> CanonicalToolResult:
+    """``mcp_search_registry`` result -> canonical (#2681 Bucket B). The handler's OWN
+    ``{"status", "data": {...}}`` return shape is DOUBLE-peeled by ``unwrap_dispatch_envelope`` (both
+    the outer dispatch envelope AND the handler's own status/data wrapper independently satisfy the
+    "peelable envelope" shape), so this mapper receives the innermost ``{"query", "candidates"}``
+    dict directly — confirmed empirically against the real dispatch_tool chain (not shape-inference
+    alone). The handler's error branches carry an ``error`` field one layer deeper
+    (``{"status": "error", "data": {"error": ...}}``); the SAME double-peel exposes that ``error``
+    field at the top level, so the shared error seam intercepts both error branches before this
+    mapper runs."""
+    candidates = result.get("candidates") or []
+    query = result.get("query", "")
+    n = len(candidates)
+    preview = _bounded_join(candidates, "name")
+    text = (
+        f"{n} MCP registry candidate{'s' if n != 1 else ''} for {query!r}"
+        + (f": {preview}" if preview else "") + "."
+    )
+    return _records_to_canonical(text, candidates)
+
+
+def cron_list_to_canonical(result: dict) -> CanonicalToolResult:
+    """``cron_list`` result -> canonical (#2681 Bucket B). ``jobs`` (each carrying ``name``) come
+    from either the live scheduler or the on-disk config (``source`` names which)."""
+    jobs = result.get("jobs") or []
+    n = len(jobs)
+    source = result.get("source", "")
+    preview = _bounded_join(jobs, "name")
+    text = f"{n} cron job{'s' if n != 1 else ''} ({source})" + (f": {preview}" if preview else "") + "."
+    return _records_to_canonical(text, jobs)
+
+
+def task_op_to_canonical(result: dict) -> CanonicalToolResult:
+    """Shared ``task.*`` op result -> canonical (#2681 Bucket B) for the 9 record-read/write ops whose
+    success view is a task record: ``task.create`` / ``.update_status`` / ``.get`` / ``.list`` /
+    ``.add_dependency`` / ``.remove_dependency`` / ``.repoint_dependency`` / ``.abort`` / ``.assign``.
+    Every op's error/denied result (``_not_found`` / ``_edge_error`` / ``_role_denied`` /
+    ``_open_children_error`` in ``op_runtime/task.py``) carries an ``error`` field, caught by the
+    shared error seam before this mapper runs.
+
+    Two success shapes share this ONE mapper (the inner discriminator): ``task.list`` returns
+    ``{"tasks": [<task dict>, ...]}`` (plural — the one list-shaped op among these 9); every other op
+    returns ``{"task": <task dict>}`` (singular, one ``Task.to_dict()`` record). Neither key present
+    is a discriminator-miss (mode M3, fail-visible per this module's convention) rather than a
+    silent status-only line."""
+    if "tasks" in result:
+        tasks = result.get("tasks") or []
+        n = len(tasks)
+        text = f"{n} task{'s' if n != 1 else ''}."
+        return _records_to_canonical(text, tasks)
+    if "task" in result:
+        task = result.get("task") or {}
+        task_id = task.get("task_id", "")
+        status = task.get("status", "")
+        text = f"task {task_id}: {status}."
+        return _records_to_canonical(text, task)
+    raise CanonicalDiscriminatorMiss("task_op_to_canonical: no task/tasks body key")
+
+
+def topology_create_to_canonical(result: dict) -> CanonicalToolResult:
+    """``topology_create`` result -> canonical (#2681 Bucket B — punted here from Bucket C's sweep:
+    the success shape ``{status: "created", name, kind, members, leader, profiles}`` echoes the
+    FULL created config, a genuine record, not a mere status ack — see
+    ``router_host_adapter.py::create_topology``). Every error branch (``spawn_limit_exceeded`` /
+    ``member_outside_subtree`` / ``invalid_topology`` / ``topology_exists`` / ``create_rejected`` /
+    the handler's own ``invalid_name``/``invalid_kind``/``invalid_members``) carries an ``error``
+    field, caught by the shared error seam before this mapper runs. A SINGLE record carried whole in
+    the structured attachment; ``text`` names the topology + kind + member count."""
+    name = result.get("name", "")
+    kind = result.get("kind", "")
+    members = result.get("members") or []
+    n = len(members) if isinstance(members, list) else 0
+    text = f"topology {name} ({kind}): {n} member{'s' if n != 1 else ''}."
+    return _records_to_canonical(text, result)
+
+
 # A private, NON-rendered marker key stamped on the whole-dict fallback canonical when it was taken
 # because an inner-dispatch mapper raised :class:`CanonicalDiscriminatorMiss` (FP-0056 v2 piece #3, M3).
 # It is a signal channel for :func:`canonical_fallback_reason` only — the renderer (``build_offload_body``
