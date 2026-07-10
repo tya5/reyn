@@ -6,72 +6,45 @@ audience: [human, agent]
 
 # Product Think
 
-> **Status: stale.** This page was written against the deleted phase-graph
-> skill engine — the CLI table below (`reyn run-once`, workflow-centric
-> subcommands), `limits.phase.max_visits`, and the "no streaming output" /
-> "no cost dashboard" claims in "Where it's still thin" all predate the
-> current inline CUI (with live audit chips for agents/cost/permissions —
-> confirmed current via `docs/feature-map.md`'s Inline CUI section, which
-> contradicts the "no streaming output" claim below). A rewrite is tracked
-> as a follow-up; in the meantime see
-> [`docs/concepts/architecture/charter.md`](../architecture/charter.md)
-> (Product Think row, populated across all 7 feature families) for the
-> current, grounded story.
-
 The agent-as-a-product perspective: how it feels to use, what it costs to run, how predictable it is in the wild. Easy to under-invest in because it's not a research problem — but it's what determines whether anyone keeps the system around.
 
 ## How reyn handles it
 
 ### CLI affordances
 
-The reyn CLI is structured as small, composable subcommands rather than one monolithic entrypoint:
+reyn's CLI is structured as small, composable subcommands rather than one monolithic entrypoint — each owning exactly its own subsystem's operator surface (agent / topology / memory / permissions / events / mcp / config / …), sharing the same `reyn.yaml` and `.reyn/` state directory rather than a shared mega-command. See [feature-map.md's CLI section](../../feature-map.md#cli) for the full, current command inventory rather than a duplicated list here.
 
-| Command | Purpose |
-|---------|---------|
-| `reyn run-once` | Run the general agent once on a stdin prompt |
-| `reyn chat` | Interactive REPL with router + memory |
-| `reyn agent` | Create and manage named persistent agents |
-| `reyn init` | Scaffold `reyn.yaml` and `.reyn/` |
-| `reyn permissions` | Inspect / revoke saved approvals |
-| `reyn memory` | List / show / edit / search / export memory |
-| `reyn events` | Replay a saved event log |
-| `reyn config` | View / edit configuration |
+### Live legibility: the inline CUI's audit chips
 
-Each one can be learned in isolation; they compose by sharing the same `reyn.yaml` and `.reyn/` state directory.
+The inline CUI's status-chip bar (Agents / Cost / Model / Tools / MCP / Skills / Hooks / Pipes / Cron / Tasks) surfaces the same operator-visible state the P6 audit-event log records, live and inline rather than only available via after-the-fact replay — this is the dual-facet companion to the Observability lens's reading of the same chips (see [observability.md](observability.md)).
 
-### Cost discipline
+### Cost reporting and reduction — distinct from bounding
 
-Three levers, all surfaced as flags or config:
+Two things that look similar but are lens-distinct:
 
-- **Model classes (`light` / `standard` / `strong`).** A workflow is written without naming a specific model; the resolver maps the class to a concrete LiteLLM model string from `reyn.yaml`. Switching cost tiers per project (or per run with `--model`) is a one-line change.
-- **Per-agent cost reporting.** `reyn chat`'s `/cost` slash command gives a quick token + USD summary for the current agent.
-- **`limits.phase.max_visits` and `limits.phase.max_wall_seconds`.** Cap runaway loops and per-phase time budgets — both are cost ceilings (each visit is at least one LLM call, and time-bounded phases prevent slow-LLM blowups).
+- **Cost *reporting* (this lens)**: `/cost` gives a quick token + USD summary for the current agent; `/budget` gives a full breakdown. `cost_warn` is a pre-selection warning to the operator when the resolved model's cost-per-1M-tokens exceeds a threshold, de-duped once per model per session — legibility and predictability, nothing more.
+- **Cost *bounding* (the cross-cutting band's `cost/budget` member, not this lens)**: hard per-agent / daily / monthly token+USD caps that refuse further spend once exceeded. Don't cite the bounding caps as a Product Think exemplar — they're the band's job, not this lens's (see `CLAUDE.md`'s Constitution section for the full band↔lens distinction).
+- **Cost *reduction*** is this lens's other facet: `present` routes bulk data to the surface at ~0 output tokens instead of reproducing it as LLM output — a genuine token-cost reduction, not just a reporting mechanism.
 
 ### Predictable UX
 
-A few small choices that compound:
-
-- **`output_language`.** One config key controls the language of user-facing output across every workflow. No per-workflow localization code.
+- **`output_language`.** One config key controls the language of user-facing output. No per-agent localization code.
 - **`reyn events`.** When a run does something unexpected, the artifact-of-record is one CLI call away.
 - **State is on disk.** `.reyn/` holds events, chats, approvals, memory. Nothing important is in process memory only.
-
-### Composition without programming
-
-The system rewards thinking in workflows rather than functions. `chat` is a router workflow; importer/improver/builder are themselves workflows. New high-level capabilities tend to be new workflows rather than new CLI subcommands.
+- **On-limit modes.** `interactive` / `auto_extend` / `unattended` give the operator predictable, config-selectable control over every loop/timeout/budget checkpoint uniformly — see [reliability-engineering.md](reliability-engineering.md).
+- **`/tasks` view.** Lists running tasks, per-task status, and kill — operator legibility into orchestrated work, spanning skill runs and dynamic tasks.
 
 ## Where it's still thin
 
-A handful of UX/cost levers are missing or thin:
-
-- **No streaming output.** A long-running phase shows nothing on the console until it completes (the event log fills in real time, but the rendered output is per-phase). For interactive work this is OK; for very long-running workflows, it's not.
-- **No cost dashboard or trend view.** Per-run cost is shown; aggregating across runs is the user's job (the data is structured enough to feed into other tools).
-- **Onboarding has rough edges.** `reyn init` scaffolds config but tutorial 01 is the actual orientation; a single integrated `reyn quickstart` doesn't exist.
+- **No cost dashboard or trend view.** Per-run cost is shown (`/cost`, `/budget`); aggregating across runs is the operator's own job (the data is structured enough to feed into other tools).
+- **Onboarding has rough edges.** `reyn init` scaffolds config, but the getting-started guide is the actual orientation — a single integrated one-command quickstart doesn't exist.
 
 These are addressable without changing the OS — they're product polish on top of an already-stable runtime.
 
 ## See also
 
+- `CLAUDE.md` (§ Constitution) — the Product Think lens's pass-line, and the bounding≠reduction/legibility distinction this page depends on
+- [`docs/concepts/architecture/charter.md`](../architecture/charter.md) — the Product Think row, grounded across all 7 feature families
+- [observability.md](observability.md) — the audit-chips dual-facet companion to this page's "Live legibility" section
 - [Reference: cli/chat](../../reference/cli/chat.md)
-- [Reference: cli/common-flags](../../reference/cli/common-flags.md)
-
-- [retrieval-engineering.md](retrieval-engineering.md) — chat memory affects UX directly
+- [Reference: config/budget](../../reference/config/budget.md)
