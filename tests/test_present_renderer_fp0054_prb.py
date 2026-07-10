@@ -150,6 +150,82 @@ def test_control_and_esc_sequences_still_stripped_through_the_full_pipeline() ->
     assert "INJECT" in out
 
 
+# ── 3b. #2669 — cap_rows shows a visible truncation tail, not a silent drop ──
+
+
+def test_table_cap_rows_shows_visible_truncation_tail_with_ref() -> None:
+    """Tier 2: issue #2669 — ratified §5 (`docs/deep-dives/proposals/
+    0054-present-layer.md`) mandates a visible `…N more — full data: <ref>` tail
+    when `cap_rows` truncates a table's bound rows. Through the REAL
+    resolve_bindings → render_presentation_nodes → Console.print pipeline: a
+    dataset with more rows than `guard.MAX_ROWS` renders a visible tail naming
+    the correct remainder count and the data ref — never a silent drop."""
+    from reyn.core.present.guard import MAX_ROWS
+
+    extra = 37
+    total = MAX_ROWS + extra
+    data = {"items": [{"n": f"row-{i}"} for i in range(total)]}
+    nodes = validate_blueprint({
+        "component": "table",
+        "rows": {"$bind": "/items"},
+        "columns": [{"header": "name", "path": "/n"}],
+    })
+    resolved = resolve_bindings(nodes, data, surface="inline-cui", ref="/tmp/dataset.json")
+
+    # The render model carries the tail (not just the ack's drop stats) so the
+    # renderer actually shows it — the #2669 gap was exactly that the drop was
+    # recorded for the LLM but never threaded to the render model.
+    tail = resolved.nodes[0].get("truncation_tail")
+    assert tail is not None, "cap_rows capped the table but no visible tail was produced"
+    assert str(extra) in tail
+    assert "/tmp/dataset.json" in tail
+
+    out = _render_to_text(resolved.nodes)
+    assert str(extra) in out
+    assert "/tmp/dataset.json" in out
+    # The survivors still render (cap-before-render, unchanged).
+    assert "row-0" in out
+
+
+def test_list_cap_rows_shows_visible_truncation_tail_without_ref_for_inline_data() -> None:
+    """Tier 2: the same visible-tail guarantee for a `list` component's bound
+    `items`. Inline data (no `data_ref`) has no re-fetchable ref, so the tail
+    correctly omits the "full data" clause rather than naming a bogus ref —
+    but the remainder count is still visible, never silently dropped."""
+    from reyn.core.present.guard import MAX_ROWS
+
+    extra = 5
+    total = MAX_ROWS + extra
+    data = {"items": [f"item-{i}" for i in range(total)]}
+    nodes = validate_blueprint({"component": "list", "items": {"$bind": "/items"}})
+    resolved = resolve_bindings(nodes, data, surface="inline-cui", ref=None)
+
+    tail = resolved.nodes[0].get("truncation_tail")
+    assert tail is not None
+    assert str(extra) in tail
+    assert "full data" not in tail  # no ref available — no bogus escape-hatch claim
+
+    out = _render_to_text(resolved.nodes)
+    assert str(extra) in out
+    assert "item-0" in out
+
+
+def test_table_under_cap_rows_produces_no_truncation_tail() -> None:
+    """Tier 2: a dataset within `MAX_ROWS` renders with no truncation tail at
+    all — the indicator appears if and only if `cap_rows` actually capped
+    (never a false-positive "more" tail on an un-truncated table)."""
+    data = {"items": [{"n": "only-row"}]}
+    nodes = validate_blueprint({
+        "component": "table",
+        "rows": {"$bind": "/items"},
+        "columns": [{"header": "name", "path": "/n"}],
+    })
+    resolved = resolve_bindings(nodes, data, surface="inline-cui", ref="/tmp/dataset.json")
+    assert "truncation_tail" not in resolved.nodes[0]
+    out = _render_to_text(resolved.nodes)
+    assert "more" not in out
+
+
 # ── 4. OutboxPresentationRenderer + format_inline_message dispatch ──────────
 
 

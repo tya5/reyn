@@ -120,3 +120,34 @@ def test_chainlit_present_table_and_list_render() -> None:
     assert "- a" in content and "- b" in content
     assert "**k**: v" in content
     assert "| H1 | H2 |" in content
+
+
+def test_chainlit_present_table_and_list_show_truncation_tail() -> None:
+    """Tier 2: issue #2669 — a capped `table`/`list` node's `truncation_tail`
+    (the §5 visible truncation indicator) reaches the chainlit browser surface
+    too, not just the terminal renderer. A capped table on the web must not be
+    silently indistinguishable from an un-capped one. Presence of the tail text +
+    its remainder count; a node WITHOUT a tail stays untouched."""
+    msg = OutboxMessage(
+        kind="presentation",
+        text="",
+        meta={"nodes": [
+            {
+                "component": "table",
+                "columns": [{"header": "name", "cells": ["r1"]}],
+                "truncation_tail": "…9500 more — full data: /tmp/big.json",
+            },
+            {
+                "component": "list",
+                "items": ["only-item"],
+                "truncation_tail": "…42 more",
+            },
+            {"component": "list", "items": ["uncapped"]},
+        ]},
+    )
+    content = outbox_to_chainlit(msg).content
+    assert "9500" in content
+    assert "/tmp/big.json" in content
+    assert "42" in content
+    # The un-capped node contributes no spurious "more" tail of its own.
+    assert content.count("more") == 2

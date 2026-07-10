@@ -76,6 +76,18 @@ class ResolvedPresentation:
             self._missed += 1
 
 
+def _truncation_tail(omitted: int, ref: "str | None") -> str:
+    """The §5-mandated visible truncation indicator for a `cap_rows`-capped
+    `table`/`list` rows slot: ``…N more — full data: <ref>`` (ratified
+    ``docs/deep-dives/proposals/0054-present-layer.md`` §5). ``ref`` is the
+    op's `data_ref` when the presented data came from one; omitted (``None``)
+    for inline data, which has no re-fetchable ref — the tail then reads
+    ``…N more`` (issue #2669)."""
+    if ref:
+        return f"…{omitted} more — full data: {ref}"
+    return f"…{omitted} more"
+
+
 def resolve_pointer(doc: Any, pointer: str) -> tuple[Any, bool]:
     """Resolve an RFC 6901 JSON Pointer against ``doc``. Returns ``(value, found)``.
 
@@ -178,26 +190,29 @@ def _render_text_slot(
     return _guard_maybe(slot, neut, out, path=loc)
 
 
-def _bind_rows_slot(slot: Any, doc: Any, out: ResolvedPresentation) -> tuple[list, bool]:
-    """Resolve a ``rows`` / ``items`` array slot. Returns ``(rows, found)`` — an
-    empty list + ``found=False`` on a miss. (The array itself is not a leaf; its
-    cells are neutralized where they are rendered.)"""
+def _bind_rows_slot(slot: Any, doc: Any, out: ResolvedPresentation) -> tuple[list, bool, int]:
+    """Resolve a ``rows`` / ``items`` array slot. Returns ``(rows, found, omitted)``
+    — an empty list + ``found=False`` on a miss; ``omitted`` is the row count
+    ``cap_rows`` dropped (0 when not capped), threaded to the render model so the
+    caller can attach a visible truncation tail (§5, issue #2669). (The array
+    itself is not a leaf; its cells are neutralized where they are rendered.)"""
     if not is_binding(slot):
-        return (slot if isinstance(slot, list) else []), True
+        return (slot if isinstance(slot, list) else []), True, 0
     ptr = binding_pointer(slot)
     value, found = resolve_pointer(doc, ptr)
     if not found:
         out._drop(ptr, PATH_NOT_FOUND)
-        return [], False
+        return [], False, 0
     rows, mismatch = _coerce_rows(value)
     out.rows += len(rows)
     out._resolve()
     if mismatch:
         out._drop(ptr, TYPE_MISMATCH)
     capped_rows, was_capped = cap_rows(rows)
+    omitted = (len(rows) - len(capped_rows)) if was_capped else 0
     if was_capped:
         out._drop(ptr, GUARD_STRIPPED)
-    return capped_rows, True
+    return capped_rows, True, omitted
 
 
 def _bind_row_relative(
@@ -249,9 +264,16 @@ def _guard_list_items(
     return result
 
 
-def resolve_bindings(nodes: list[dict], doc: Any, *, surface: str = "null") -> ResolvedPresentation:
+def resolve_bindings(
+    nodes: list[dict], doc: Any, *, surface: str = "null", ref: "str | None" = None,
+) -> ResolvedPresentation:
     """Join a validated (normalized) blueprint to ``doc``, neutralizing every
     render-leaf through the ``surface``-selected seam.
+
+    ``ref`` is the presented data's ``data_ref`` (``None`` for inline data) — it
+    is threaded into a `table`/`list` node's ``truncation_tail`` only when
+    ``cap_rows`` actually capped that node's rows (§5, issue #2669); it does
+    nothing when no row slot was capped.
 
     Returns a :class:`ResolvedPresentation` — the render model plus the compact
     binding stats (``bindings_resolved`` / ``bindings_dropped`` / ``rows`` /
@@ -281,7 +303,7 @@ def resolve_bindings(nodes: list[dict], doc: Any, *, surface: str = "null") -> R
                     rows_out.append({"label": label, "value": val})
             rendered["rows"] = rows_out
         elif component == "table":
-            rows, _found = _bind_rows_slot(node.get("rows"), doc, out)
+            rows, _found, omitted = _bind_rows_slot(node.get("rows"), doc, out)
             columns_out = []
             for j, col in enumerate(node.get("columns", [])):
                 cells = _bind_row_relative(rows, col["path"], out, neut)
@@ -289,12 +311,16 @@ def resolve_bindings(nodes: list[dict], doc: Any, *, surface: str = "null") -> R
                 columns_out.append({"header": header, "cells": cells})
             rendered["columns"] = columns_out
             rendered["row_count"] = len(rows)
+            if omitted:
+                rendered["truncation_tail"] = _truncation_tail(omitted, ref)
         elif component == "list":
-            rows, _found = _bind_rows_slot(node.get("items"), doc, out)
+            rows, _found, omitted = _bind_rows_slot(node.get("items"), doc, out)
             if "item_path" in node:
                 rendered["items"] = _bind_row_relative(rows, node["item_path"], out, neut)
             else:
                 rendered["items"] = _guard_list_items(rows, out, neut, loc=f"{loc}.items")
+            if omitted:
+                rendered["truncation_tail"] = _truncation_tail(omitted, ref)
         elif component == "image":
             if "src" in node:
                 val = _render_text_slot(node["src"], doc, out, neut, loc=f"{loc}.src")

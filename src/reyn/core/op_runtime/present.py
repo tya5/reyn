@@ -253,15 +253,19 @@ def _resolve_presentation(
     view is already validated at registry-build time, so it never re-validates
     here.
     """
+    # ``op.data_ref`` (None for inline data) is threaded through to
+    # ``resolve_bindings`` so a `cap_rows`-capped table/list node's visible
+    # truncation tail (§5, issue #2669) can name the full-fidelity escape hatch.
+    ref = op.data_ref
     requested: "ResolvedPresentation | None" = None
     if mode == _MODE_VIEW:
         nodes = registry.get(op.view) if registry is not None else None
         if nodes is not None:
-            requested = resolve_bindings(nodes, data, surface=surface)
+            requested = resolve_bindings(nodes, data, surface=surface, ref=ref)
     elif mode == _MODE_BLUEPRINT:
         # Inline blueprint — the structural gate (hard error preserved), then bind.
         nodes = validate_blueprint(op.blueprint)
-        requested = resolve_bindings(nodes, data, surface=surface)
+        requested = resolve_bindings(nodes, data, surface=surface, ref=ref)
     # else mode == _MODE_DEFAULT: neither given — requested stays None, no
     # stage 1/2 attempted; resolution enters directly at stage 3 below.
 
@@ -273,7 +277,7 @@ def _resolve_presentation(
 
     # Stage 3 — content-type default viewer (synthesized from the data's shape).
     stage3 = resolve_bindings(
-        validate_blueprint(default_viewer_blueprint(data)), data, surface=surface,
+        validate_blueprint(default_viewer_blueprint(data)), data, surface=surface, ref=ref,
     )
     if not stage3.all_bindings_missed:
         # In default mode, stage 3 IS the requested rendering — not a fallback.
@@ -282,7 +286,7 @@ def _resolve_presentation(
 
     # Stage 4 — generic YAML/text (always renders — the final catch).
     stage4 = resolve_bindings(
-        validate_blueprint(generic_blueprint(data)), data, surface=surface,
+        validate_blueprint(generic_blueprint(data)), data, surface=surface, ref=ref,
     )
     return requested, stage4, _STAGE_GENERIC
 

@@ -98,10 +98,9 @@ strategy corrupts markup-inert sinks:
 Per-binding **size caps** stop a root pointer bound into a `text` component from dumping a
 whole file: a capped leaf string keeps a compact `… (+N chars — full data in the ref)` tail.
 `present` also caps array bindings to head-N rows because a `table`/`list` binding is
-otherwise unbounded by construction — the design calls for the same visible tail here
-(a `…N more — full data: <ref>` marker), but the current implementation caps rows
-**silently** (no tail, no count of how many rows were dropped); this is a known
-implementation gap against the ratified design, not the intended behavior. The
+otherwise unbounded by construction — a capped `table`/`list` node carries the same kind of
+visible tail (`…N more — full data: <ref>`; the ref clause is omitted for inline data, which
+has no re-fetchable ref) so the operator sees that rows were dropped, not just the LLM. The
 **ref is always the full-fidelity escape hatch**: re-present with a filter or a higher cap,
 or read it directly.
 
