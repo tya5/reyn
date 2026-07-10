@@ -799,6 +799,18 @@ class InlineChatRenderer(ChatRenderer):
             f"[{_CC_DIM}]· {agent_name} · Enter to send · "
             f"ctrl+j / shift+enter for newline · /quit to exit ·[/]\n"
         )
+        # Multi-line paste is verified working (tmux round-trip: literal
+        # insert, no premature submit, single-turn send) on any terminal that
+        # respects prompt_toolkit's auto-enabled bracketed-paste mode — true
+        # for virtually every terminal in current use. The rare-terminal
+        # caveat (same hard-limit class as Shift+Enter): a terminal/input path
+        # that ignores bracketed paste entirely sends each embedded newline as
+        # a plain Enter, submitting one line at a time instead of one paste.
+        self._console.print(
+            f"[{_CC_DIM}]  paste: multi-line pastes work as one block on "
+            f"bracketed-paste-aware terminals (virtually all modern ones); "
+            f"without that, each line may submit separately.[/]\n"
+        )
         self._flush()
 
     def message(self, msg: OutboxMessage) -> None:
