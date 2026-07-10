@@ -21,9 +21,20 @@ qualified name (`<category>__<entry>`) and dispatched through
 introspection through `describe_action`; semantic / natural-language
 discovery uses `search_actions` (embedding-backed).
 
-Since Phase 6 (2026-05-16), the wrapper-only path is the **sole
-production behaviour**: legacy per-kind tools no longer appear in the
-LLM-visible `tools=`. The handlers (`invoke_skill` /
+**Status update: tool presentation is now a pluggable, per-layer scheme, not
+a single fixed path.** Since Phase 6 (2026-05-16) the wrapper-only path was
+briefly the sole production behaviour for every layer, but an owner-driven H1 fix later flipped the `chat` layer's own default to `enumerate-all` — a
+flat, no-wrapper tool list — because flat listing stops `invoke_action`
+name-hallucination (30%→100% non-hot-list tool-use accuracy). `ToolUseConfig`
+still declares a `step`/`phase` default of this universal-category wrapper
+path (config-level fact) — whether the `step`/`phase` layers themselves are
+current live surfaces is under separate verification, not asserted here.
+`tool_use: {chat, step, phase}` in `reyn.yaml` selects the scheme per layer;
+see [Tool-Use Schemes](tool-use-schemes.md) for the full, current per-layer
+model — the sections below describe the `universal-category` scheme's own
+mechanics, not which layer uses it by default.
+
+When this wrapper path is active for a layer, the handlers (`invoke_skill` /
 `delegate_to_agent` / `call_mcp_tool` / …) remain in the registry as
 **backing implementations** of the universal wrappers — `invoke_action`
 dispatches to them through `universal_dispatch.py`. Validation:
@@ -376,6 +387,13 @@ out of scope. Strong models run with the mandates off and are unaffected.
 > strong models unconstrained.
 
 ## Default-on (PR-3b-iv)
+
+**This section describes the underlying `universal_wrappers_enabled` flag's
+own default, not which layer's tool-use scheme resolves to it today** — see
+the status update at the top of this page: the newer per-layer
+`tool_use.chat`/`step`/`phase` scheme selector generalizes this flag, and
+`chat`'s own scheme default (`enumerate-all`) does not route through this
+flag at all.
 
 `ActionRetrievalConfig.universal_wrappers_enabled` defaults to `True`
 in production. Direct callers of `build_tools` or `build_system_prompt`
