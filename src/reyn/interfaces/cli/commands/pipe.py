@@ -175,9 +175,10 @@ def register(sub) -> None:
         default=None,
         metavar="NAME",
         help=(
-            "Optional override — must match the DSL's declared 'pipeline:' "
-            "name exactly, or the install is refused (the declared name is "
-            "always the identity a call/match step resolves against)."
+            "Optional namespace key for the entry (default: the DSL file "
+            "stem, or the source basename). Every pipeline in the file "
+            "registers as '<name>.<declared-pipeline-name>'. Must not "
+            "contain '.' (the reserved namespace separator)."
         ),
     )
     install.add_argument(
@@ -203,7 +204,10 @@ def register(sub) -> None:
     run_p.add_argument(
         "name",
         metavar="NAME",
-        help="Registered pipeline name (its declared 'pipeline:' name)",
+        help=(
+            "Registered pipeline's fully-qualified name "
+            "'<entry-key>.<declared-pipeline-name>' (see `reyn pipe list`)."
+        ),
     )
     run_p.add_argument(
         "--input",
@@ -261,12 +265,15 @@ def run_list(args: argparse.Namespace) -> None:
     union-merge invariant ``mcp.py``'s ``_all_servers_with_scope`` hand-rolls
     for ``mcp.servers`` — see ``loader.py``'s ``pipelines`` merge branch —
     so this reuses ``load_config()`` rather than re-deriving that cascade a
-    second time) and checks, per ENABLED entry, whether its declared name
-    landed in the registry. An entry that is ``enabled: true`` but did NOT
-    load (malformed DSL, unreadable path, config-key / declared-name
-    mismatch, or a duplicate declared name — #2641's per-entry-isolation
-    posture) shows FAILED here, so ``reyn pipe list`` is a first-class way
-    to SEE load failures without digging through dogfood_trace/logs.
+    second time) and checks, per ENABLED entry, whether any pipeline landed
+    in the registry under that entry's ``{key}.`` namespace (#2722 —
+    namespacing is always on, so a healthy entry registers one or more
+    ``{key}.{declared-name}`` globals). An entry that is ``enabled: true`` but
+    registered NOTHING (malformed DSL, unreadable path, a reserved ``.`` in the
+    key, or an unresolved dot-less sibling reference — #2641's
+    per-entry-isolation posture) shows FAILED here, so ``reyn pipe list`` is a
+    first-class way to SEE load failures without digging through
+    dogfood_trace/logs.
     """
     from reyn.config import load_config
     from reyn.data.pipelines.registry import build_pipeline_registry
@@ -304,7 +311,8 @@ def run_list(args: argparse.Namespace) -> None:
         enabled = bool(raw.get("enabled", True))
         if not enabled:
             status = "disabled"
-        elif key in loaded_names:
+        elif any(n == key or n.startswith(f"{key}.") for n in loaded_names):
+            # #2722: a healthy entry registers under the `{key}.` namespace.
             status = "loaded"
         else:
             status = "FAILED"

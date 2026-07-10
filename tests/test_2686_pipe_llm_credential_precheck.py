@@ -113,7 +113,7 @@ def test_run_non_llm_pipeline_does_not_exit_with_keys_unset(
     _write_reyn_yaml(tmp_path, {"hello_cli": {"path": "hello.yaml"}})
 
     args = _ns(
-        name="hello_cli", input=json.dumps({"name": "world"}),
+        name="hello_cli.hello_cli", input=json.dumps({"name": "world"}),
         project=str(tmp_path), async_=False,
     )
     run_run(args)  # must NOT raise SystemExit

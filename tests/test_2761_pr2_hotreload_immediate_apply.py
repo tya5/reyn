@@ -407,14 +407,14 @@ async def test_pipeline_install_new_name_is_resolvable_same_turn(
 
     monkeypatch.chdir(tmp_path)
     session = _make_session(tmp_path)
-    assert "greet" not in _pipeline_names(session)
+    assert "greet.greet" not in _pipeline_names(session)
 
     dsl = _write_pipeline(tmp_path, "greet.yaml", name="greet", description="v1")
     op = PipelineInstallIROp(kind="pipeline_install", path=str(dsl))
     result = await pipeline_install_handle(op, _op_ctx(tmp_path, session))
 
     assert result["status"] == "installed"
-    assert "greet" in _pipeline_names(session), (
+    assert "greet.greet" in _pipeline_names(session), (
         "a NEW pipeline must be resolvable the same turn (immediate mid-turn apply)"
     )
     residual = await session._hot_reloader.apply_pending()
@@ -440,7 +440,7 @@ async def test_pipeline_install_same_name_overwrite_defers_but_lands(
         PipelineInstallIROp(kind="pipeline_install", path=str(dsl)),
         _op_ctx(tmp_path, session),
     )
-    assert _pipeline_desc(session, "greet") == "v1"
+    assert _pipeline_desc(session, "greet.greet") == "v1"
 
     # Re-install SAME declared name with a changed description (clobber-update).
     _write_pipeline(tmp_path, "greet.yaml", name="greet", description="v2")
@@ -450,12 +450,12 @@ async def test_pipeline_install_same_name_overwrite_defers_but_lands(
     )
 
     assert result["status"] == "installed", "clobber-update must not be errored/refused"
-    assert _pipeline_desc(session, "greet") == "v1", (
+    assert _pipeline_desc(session, "greet.greet") == "v1", (
         "a same-name overwrite must NOT be applied mid-turn (deferred)"
     )
 
     await session._hot_reloader.apply_pending()
-    assert _pipeline_desc(session, "greet") == "v2", (
+    assert _pipeline_desc(session, "greet.greet") == "v2", (
         "the clobber-update must land at the turn boundary (applies next turn)"
     )
 

@@ -163,7 +163,10 @@ async def test_pipeline_install_e2e_writes_config_and_registry_picks_up(tmp_path
     result = await handle(op=op, ctx=ctx)
 
     assert result["status"] == "installed", f"install failed: {result}"
+    # #2722: no op.name → the namespace key defaults to the DSL file stem ("hello").
     assert result["name"] == "hello"
+    # H6: the full set of global names registered is enumerated (namespaced).
+    assert result["registered_names"] == ["hello.hello"]
     assert result["description"] == "Does something useful"
 
     config_path = tmp_path / ".reyn" / "config" / "pipelines.yaml"
@@ -175,8 +178,8 @@ async def test_pipeline_install_e2e_writes_config_and_registry_picks_up(tmp_path
     assert entry["description"] == "Does something useful"
 
     registry = build_pipeline_registry(raw["pipelines"], tmp_path)
-    assert "hello" in registry.names()
-    assert registry.get("hello").description == "Does something useful"
+    assert "hello.hello" in registry.names()  # {key}.{declared} (#2722)
+    assert registry.get("hello.hello").description == "Does something useful"
 
 
 # ── Test 2: truncate-falsify (MANDATORY CLAUDE.md recovery gate) ─────────────
@@ -209,7 +212,9 @@ async def test_pipeline_install_truncate_falsify_generation_survives_wal_truncat
 
     dsl_path = _make_pipeline_dsl(tmp_path / "pipelines", "recover.yaml", "recover-pipeline", "Recoverable pipeline")
     ctx, _events = _make_ctx(tmp_path, state_log=state_log)
-    op = PipelineInstallIROp(kind="pipeline_install", path=str(dsl_path))
+    # op.name sets the namespace key explicitly (#2722), so the config entry key
+    # is "recover-pipeline" (this test tracks the ENTRY through rewind).
+    op = PipelineInstallIROp(kind="pipeline_install", path=str(dsl_path), name="recover-pipeline")
     result = await handle(op=op, ctx=ctx)
     assert result["status"] == "installed", f"install failed: {result}"
 
@@ -343,11 +348,11 @@ def test_pipeline_install_source_is_denied_under_untrusted_floor() -> None:
 
 
 @pytest.mark.asyncio
-async def test_pipeline_install_op_name_mismatch_with_declared_name_refused(tmp_path):
-    """Tier 2: unlike skill_install (op.name freely renames the registered key),
-    a pipeline's declared 'pipeline:' name is ALWAYS the resolution key a
-    call/match step targets — op.name disagreeing with it is refused rather
-    than silently diverging the config key from the resolution key."""
+async def test_pipeline_install_op_name_is_free_namespace_key(tmp_path):
+    """Tier 2: #2722 — the op.name == declared-name coupling is GONE. op.name is a
+    free namespace key (like skill_install), independent of the DSL's declared
+    'pipeline:' name. Installing a `pipeline: hello` file with `name="not-hello"`
+    is ACCEPTED and registers the pipeline as `not-hello.hello`."""
     from reyn.core.op_runtime.pipeline_install import handle
 
     dsl_path = _make_pipeline_dsl(tmp_path / "pipelines", "hello.yaml", "hello", "desc")
@@ -356,14 +361,15 @@ async def test_pipeline_install_op_name_mismatch_with_declared_name_refused(tmp_
     op = PipelineInstallIROp(kind="pipeline_install", path=str(dsl_path), name="not-hello")
     result = await handle(op=op, ctx=ctx)
 
-    assert result["status"] == "error", f"expected error, got {result}"
-    assert "mismatch" in result["error"].lower()
+    assert result["status"] == "installed", f"expected installed, got {result}"
+    assert result["name"] == "not-hello"  # the namespace key
+    assert result["registered_names"] == ["not-hello.hello"]  # {key}.{declared}
 
     config_path = tmp_path / ".reyn" / "config" / "pipelines.yaml"
-    assert not config_path.exists() or not (
-        yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
-    ).get("pipelines", {}).get("entries", {}), \
-        "pipelines.yaml must not gain an entry when the name mismatch is refused"
+    raw = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    assert "not-hello" in raw["pipelines"]["entries"]  # config entry keyed by op.name
+    registry = build_pipeline_registry(raw["pipelines"], tmp_path)
+    assert "not-hello.hello" in registry.names()
 
 
 # ── Test 6: source install (mirrors PR-D) ─────────────────────────────────────
@@ -380,11 +386,13 @@ async def test_pipeline_install_source_e2e_clones_and_registers(tmp_path):
     source_url = repo.as_uri()
 
     ctx, events = _make_ctx(tmp_path)
-    op = PipelineInstallIROp(kind="pipeline_install", source=source_url)
+    # #2722: op.name is the namespace key (no longer coupled to the declared name).
+    op = PipelineInstallIROp(kind="pipeline_install", source=source_url, name="source-pipeline")
     result = await handle(op=op, ctx=ctx)
 
     assert result["status"] == "installed", f"expected installed, got {result}"
     assert result["name"] == "source-pipeline"
+    assert result["registered_names"] == ["source-pipeline.source-pipeline"]
     assert result["description"] == "A git-sourced pipeline"
     assert result["source"] == source_url
 
@@ -495,7 +503,7 @@ async def test_pipeline_install_source_subdir_convention(tmp_path):
     source_url = repo.as_uri() + "//pipelines"
 
     ctx, _events = _make_ctx(tmp_path)
-    op = PipelineInstallIROp(kind="pipeline_install", source=source_url)
+    op = PipelineInstallIROp(kind="pipeline_install", source=source_url, name="subdir-pipeline")
     result = await handle(op=op, ctx=ctx)
 
     assert result["status"] == "installed", f"expected installed, got {result}"

@@ -233,10 +233,11 @@ def test_install_local_path_writes_config(tmp_path, capsys):
     assert "installed successfully" in out.lower()
 
 
-def test_install_name_mismatch_is_a_clean_error(tmp_path, capsys):
-    """Tier 2: a --name that disagrees with the DSL's declared 'pipeline:'
-    name is refused with a clear message (pipeline_install.py's own
-    validation), not a raw exception leaking to the CLI user."""
+def test_install_name_becomes_the_namespace_key(tmp_path, capsys):
+    """Tier 2: #2722 — a --name that differs from the DSL's declared 'pipeline:'
+    name is NOT an error (the coupling is gone); --name is the namespace key, so
+    the pipeline registers as '<name>.<declared>' and the config entry is keyed
+    by --name."""
     _write_reyn_yaml(tmp_path)
 
     dsl_path = tmp_path / "p.yaml"
@@ -246,14 +247,17 @@ def test_install_name_mismatch_is_a_clean_error(tmp_path, capsys):
     )
 
     args = _ns(
-        path=str(dsl_path), source=None, name="different_name",
+        path=str(dsl_path), source=None, name="my_namespace",
         project=str(tmp_path), non_interactive=True,
     )
-    with pytest.raises(SystemExit) as exc_info:
-        run_install(args)
-    assert exc_info.value.code == 2
-    err = capsys.readouterr().err
-    assert "name mismatch" in err.lower() or "does not match" in err.lower()
+    run_install(args)  # no SystemExit — a divergent --name is fine now
+
+    out = capsys.readouterr().out
+    assert "installed successfully" in out.lower()
+    written = yaml.safe_load(
+        (tmp_path / ".reyn" / "config" / "pipelines.yaml").read_text(encoding="utf-8")
+    )
+    assert "my_namespace" in written["pipelines"]["entries"]  # entry keyed by --name
 
 
 def test_install_neither_path_nor_source_rejects(tmp_path, capsys):
@@ -287,7 +291,7 @@ def test_run_transform_pipeline_end_to_end(tmp_path, monkeypatch, capsys):
     _write_reyn_yaml(tmp_path, {"hello_cli": {"path": "hello.yaml"}})
 
     args = _ns(
-        name="hello_cli", input=json.dumps({"name": "world"}),
+        name="hello_cli.hello_cli", input=json.dumps({"name": "world"}),
         project=str(tmp_path), async_=False,
     )
     run_run(args)
@@ -359,7 +363,7 @@ def test_run_tool_step_dispatches_for_real(tmp_path, monkeypatch, capsys):
     _write_reyn_yaml(tmp_path, {"uses_tool": {"path": "uses_tool.yaml"}})
 
     args = _ns(
-        name="uses_tool", input=json.dumps({"msg": "hi reyn"}),
+        name="uses_tool.uses_tool", input=json.dumps({"msg": "hi reyn"}),
         project=str(tmp_path), async_=False,
     )
     run_run(args)
@@ -396,7 +400,7 @@ def test_run_tool_step_file_write_is_denied_without_grant_flag(
     _write_reyn_yaml(tmp_path, {"writer": {"path": "writer.yaml"}})
 
     args = _ns(
-        name="writer", input="{}", project=str(tmp_path), async_=False,
+        name="writer.writer", input="{}", project=str(tmp_path), async_=False,
         grant_file_write=False,
     )
     run_run(args)
@@ -430,7 +434,7 @@ def test_run_tool_step_file_write_allowed_with_grant_flag(
     _write_reyn_yaml(tmp_path, {"writer": {"path": "writer.yaml"}})
 
     args = _ns(
-        name="writer", input="{}", project=str(tmp_path), async_=False,
+        name="writer.writer", input="{}", project=str(tmp_path), async_=False,
         grant_file_write=True,
     )
     run_run(args)
@@ -500,7 +504,7 @@ def test_run_agent_step_spawns_real_ephemeral_session(tmp_path, monkeypatch, cap
         encoding="utf-8",
     )
 
-    args = _ns(name="uses_agent", input="{}", project=str(tmp_path), async_=False)
+    args = _ns(name="uses_agent.uses_agent", input="{}", project=str(tmp_path), async_=False)
     run_run(args)
 
     out = capsys.readouterr().out
@@ -594,7 +598,7 @@ def test_run_tool_step_dispatches_mcp_action_for_real(tmp_path, monkeypatch, cap
     )
 
     args = _ns(
-        name="uses_mcp", input=json.dumps({"msg": "hi reyn"}),
+        name="uses_mcp.uses_mcp", input=json.dumps({"msg": "hi reyn"}),
         project=str(tmp_path), async_=False,
     )
     run_run(args)

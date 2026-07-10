@@ -7,18 +7,18 @@ build_pipeline_registry``): an operator declares ``pipelines.entries.<key>:
 {path: ...}`` in config (the SAME explicit-registration model as
 ``skills.entries`` / ``mcp.servers`` — clean break from an earlier
 directory-scan design; there is no ``scan_dirs`` / blind glob) and each
-declared entry is parsed + registered under its OWN declared ``pipeline:``
-name at session-factory time.
+declared entry is parsed + registered under the uniform ``{key}.{name}``
+namespace (#2722) at session-factory time.
 
 Coverage:
   1. Contract — the parser now carries the declared name on ``Pipeline.name``,
      and serde round-trips it (default-tolerant for pre-existing on-disk data).
-  2. Loader — config entries → registry keyed by the declared name; a config
-     key that disagrees with the DSL's declared name, a malformed file, a
-     missing path, or a duplicate declared name are each isolated PER ENTRY
-     (logged + durably emitted, the entry skipped, remaining entries still
-     load — see the follow-up bugfix in test_2639-style commit history: a
-     single broken entry must never crash session startup); empty → empty.
+  2. Loader — config entries → registry keyed by ``{entry-key}.{declared-name}``
+     (#2722: namespacing always on, the key is a pure label); a malformed file,
+     a missing path, or an unresolved dot-less sibling reference are each
+     isolated PER ENTRY (logged + durably emitted, the entry skipped, remaining
+     entries still load — a single broken entry must never crash session
+     startup); empty → empty.
   3. Wiring — ``from_config(config, project_root)`` builds the registry once;
      ``Session(pipeline_registry=)`` adopts it.
   4. Surfacing + invoke — a config-loaded pipeline surfaces as ``pipeline__<name>``
@@ -136,17 +136,17 @@ def test_pipeline_from_dict_defaults_name_when_absent() -> None:
 # ── 2. Loader: config entries → registry, keyed by declared name; fail-loud ───
 
 
-def test_loader_registers_pipeline_from_entry_under_declared_name(tmp_path: Path) -> None:
+def test_loader_registers_pipeline_from_entry_under_namespaced_name(tmp_path: Path) -> None:
     """Tier 2: a ``pipelines.entries.<key>`` declaration is parsed + registered
-    under its declared ``pipeline:`` name, with its name + description surfaced
-    via ``entries()`` (what the catalog enumerator reads)."""
+    under the uniform ``{key}.{declared-name}`` namespace (#2722), with its name +
+    description surfaced via ``entries()`` (what the catalog enumerator reads)."""
     _write(tmp_path / "pipelines", "hello.yaml", _HELLO_DSL)
 
-    registry = build_pipeline_registry(_entries(("hello", "pipelines/hello.yaml")), tmp_path)
+    registry = build_pipeline_registry(_entries(("greetings", "pipelines/hello.yaml")), tmp_path)
 
-    assert set(registry.names()) == {"hello"}
-    assert registry.entries() == (("hello", "greet the seed name"),)
-    assert registry.get("hello").name == "hello"
+    assert set(registry.names()) == {"greetings.hello"}
+    assert registry.entries() == (("greetings.hello", "greet the seed name"),)
+    assert registry.get("greetings.hello").name == "greetings.hello"
 
 
 def test_loader_no_entries_yields_empty_registry(tmp_path: Path) -> None:
@@ -172,39 +172,35 @@ def test_loader_scan_dirs_key_is_ignored(tmp_path: Path) -> None:
 
 
 def test_loader_entry_path_may_use_any_filename(tmp_path: Path) -> None:
-    """Tier 2: an entry's ``path`` may point at any filename — the declared
-    ``pipeline:`` name (not the filename) is the registration identity, and the
-    entry key must match it (see the mismatch test below)."""
+    """Tier 2: an entry's ``path`` may point at any filename — neither the
+    filename nor the declared name has to equal the entry key; the global name is
+    ``{key}.{declared-name}`` (#2722)."""
     _write(tmp_path / "pipelines", "greet.yaml", _HELLO_DSL)  # file stem = "greet"
 
     registry = build_pipeline_registry(_entries(("hello", "pipelines/greet.yaml")), tmp_path)
 
-    assert set(registry.names()) == {"hello"}  # declared name, not "greet"
+    assert set(registry.names()) == {"hello.hello"}  # {key}.{declared}, not "greet"
 
 
-def test_loader_entry_key_declared_name_mismatch_is_skipped_not_fatal(
+def test_loader_entry_key_need_not_equal_declared_name(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Tier 2: a config entry key that disagrees with the DSL's declared
-    ``pipeline:`` name is a footgun (a ``call`` step resolves the DECLARED
-    name, not the config key you'd naturally look for) — the entry is
-    skipped (not registered) and the failure is durably logged, but
-    ``build_pipeline_registry`` itself does NOT raise (regression: this used
-    to crash the whole session at startup — see the module docstring)."""
+    """Tier 2: #2722 — the ``key == declared-name`` coupling is GONE. A config
+    entry key that differs from the DSL's declared ``pipeline:`` name is fine:
+    the key is a pure namespace label, and the pipeline registers under the
+    ``{key}.{declared-name}`` global name (no error, no skip)."""
     reyn_dir = tmp_path / ".reyn"
     reyn_dir.mkdir()
     monkeypatch.chdir(tmp_path)
     _write(tmp_path / "pipelines", "hello.yaml", _HELLO_DSL)  # declares "hello"
 
     registry = build_pipeline_registry(
-        _entries(("mismatched-key", "pipelines/hello.yaml")), tmp_path,
+        _entries(("some_namespace", "pipelines/hello.yaml")), tmp_path,
     )
 
-    assert registry.names() == ()
-    events = _read_events_of_kind(reyn_dir / "events", "pipeline_load_failed")
-    [event] = events
-    assert event["data"]["key"] == "mismatched-key"
-    assert "hello" in event["data"]["error"]
+    assert set(registry.names()) == {"some_namespace.hello"}
+    # no failure was logged — a divergent key is no longer an error.
+    assert _read_events_of_kind(reyn_dir / "events", "pipeline_load_failed") == []
 
 
 def test_loader_malformed_file_is_skipped_and_durably_logged(
@@ -249,20 +245,19 @@ def test_loader_broken_entry_does_not_prevent_valid_sibling_from_loading(
         tmp_path,
     )
 
-    assert set(registry.names()) == {"hello"}
+    assert set(registry.names()) == {"hello.hello"}
     events = _read_events_of_kind(reyn_dir / "events", "pipeline_load_failed")
     [event] = events  # exactly one failure captured — unpack raises otherwise
     assert event["data"]["key"] == "broken"
 
 
-def test_loader_duplicate_declared_name_first_wins_second_skipped(
+def test_loader_same_declared_name_different_keys_both_register(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Tier 2: two entries declaring the SAME ``pipeline:`` name (via distinct
-    files that both name themselves after their own key) — the FIRST entry
-    (dict iteration = declaration order) wins the registration; the second
-    entry is logged + durably captured and skipped, never a silent
-    last-wins overwrite and never fatal to the whole load."""
+    """Tier 2: #2722 — two entries whose files declare the SAME ``pipeline:``
+    name but sit under DIFFERENT keys BOTH register, namespaced apart
+    (``key_a.hello`` / ``key_b.hello``). Namespacing decouples them: the same
+    declared name no longer collides across entries, so nothing is skipped."""
     reyn_dir = tmp_path / ".reyn"
     reyn_dir.mkdir()
     monkeypatch.chdir(tmp_path)
@@ -272,18 +267,15 @@ def test_loader_duplicate_declared_name_first_wins_second_skipped(
     registry = build_pipeline_registry(
         {
             "entries": {
-                "hello": {"path": "pipelines/a.yaml"},
-                "hello-again": {"path": "pipelines/b.yaml"},
+                "key_a": {"path": "pipelines/a.yaml"},
+                "key_b": {"path": "pipelines/b.yaml"},
             }
         },
         tmp_path,
     )
 
-    assert set(registry.names()) == {"hello"}
-    events = _read_events_of_kind(reyn_dir / "events", "pipeline_load_failed")
-    [event] = events
-    assert event["data"]["key"] == "hello-again"
-    assert "hello" in event["data"]["error"]
+    assert set(registry.names()) == {"key_a.hello", "key_b.hello"}
+    assert _read_events_of_kind(reyn_dir / "events", "pipeline_load_failed") == []
 
 
 def test_loader_empty_config_yields_empty_registry(tmp_path: Path) -> None:
@@ -348,7 +340,7 @@ def test_from_config_builds_populated_registry_from_project_root(tmp_path: Path)
 
     fc = SessionFactoryConfig.from_config(config, tmp_path)
 
-    assert set(fc.pipeline_registry.names()) == {"hello"}
+    assert set(fc.pipeline_registry.names()) == {"hello.hello"}
 
 
 def test_from_config_without_project_root_is_empty(tmp_path: Path, monkeypatch) -> None:
@@ -462,8 +454,8 @@ async def test_disk_loaded_pipeline_surfaces_in_list_actions(tmp_path: Path) -> 
     result = await LIST_ACTIONS.handler({"category": ["pipeline"]}, ctx)
 
     items = {it["qualified_name"]: it for it in result["items"]}
-    assert "pipeline__hello" in items
-    assert items["pipeline__hello"]["short_description"] == "greet the seed name"
+    assert "pipeline__hello.hello" in items
+    assert items["pipeline__hello.hello"]["short_description"] == "greet the seed name"
 
 
 # ── 5. Cross-pipeline call: a loaded pipeline calls another loaded pipeline ────
@@ -471,11 +463,11 @@ async def test_disk_loaded_pipeline_surfaces_in_list_actions(tmp_path: Path) -> 
 
 @pytest.mark.asyncio
 async def test_disk_loaded_pipeline_call_resolves_and_runs_end_to_end(tmp_path: Path) -> None:
-    """Tier 2: two pipelines loaded FROM config entries — one whose ``call``
-    step targets the other by its declared name — resolve + run end-to-end.
-    This closes the foundation's deferred named-callee production
-    registration: a ``call`` against a config-registered pipeline now works
-    in production."""
+    """Tier 2: two pipelines loaded FROM separate config entries — one whose
+    ``call`` step targets the other by its FULLY-QUALIFIED cross-file name
+    (``inner.inner`` — a dotted global reference, #2722) — resolve + run
+    end-to-end. A cross-entry reference must be dotted (dot-less resolves to a
+    same-file sibling only)."""
     callee_dsl = """
 pipeline: inner
 description: inner callee
@@ -486,7 +478,7 @@ steps:
 pipeline: outer
 description: calls inner
 steps:
-  - call: {pipeline: inner, pass: {seed: ctx.seed}, output: called}
+  - call: {pipeline: inner.inner, pass: {seed: ctx.seed}, output: called}
   - transform: {value: "ctx.called + '-outer'", output: final}
 """
     _write(tmp_path / "pipelines", "inner.yaml", callee_dsl)
@@ -496,7 +488,7 @@ steps:
         _entries(("inner", "pipelines/inner.yaml"), ("outer", "pipelines/outer.yaml")),
         tmp_path,
     )
-    outer = registry.get("outer")
+    outer = registry.get("outer.outer")
 
     result = await PipelineExecutor().run(
         outer, {"seed": "x"},
@@ -551,7 +543,7 @@ def test_loading_a_pipeline_does_not_loosen_the_floor(tmp_path: Path) -> None:
 
     _write(tmp_path / "pipelines", "hello.yaml", _HELLO_DSL)
     registry = build_pipeline_registry(_entries(("hello", "pipelines/hello.yaml")), tmp_path)
-    assert "hello" in registry.names()  # a pipeline IS registered
+    assert "hello.hello" in registry.names()  # a pipeline IS registered
 
     contextual, _ = cp.resolve_profile(cp.builtin_untrusted_profile())
     layer = ContextualLayer(contextual)
@@ -618,7 +610,7 @@ async def test_disk_loaded_pipeline_invokable_through_full_live_loop(
             "function": {
                 "name": "invoke_action",
                 "arguments": json.dumps({
-                    "action_name": "pipeline__hello",
+                    "action_name": "pipeline__hello.hello",
                     "args": {"input": {"name": "Reyn"}},
                 }),
             },

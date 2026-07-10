@@ -35,14 +35,14 @@ from reyn.tools.types import ToolContext, ToolDefinition, ToolGates, ToolResult
 _PIPELINE_INSTALL_LOCAL_DESCRIPTION = (
     "Register a local pipeline DSL file into the project config "
     "by writing an entry to .reyn/config/pipelines.yaml. The pipeline is "
-    "immediately available to sessions (as pipeline__<name> and run_pipeline) "
-    "after the next hot-reload. Pass the direct path to the pipeline's *.yaml "
-    "DSL file (unlike skill, a pipeline registration is always exactly one "
-    "file — there is no directory resolution). "
-    "Use 'name' to make the intended registration name explicit; it must "
-    "match the DSL's own declared 'pipeline:' name exactly (a mismatch is "
-    "refused rather than silently allowed to diverge — the declared name is "
-    "the identity a call/match step resolves against)."
+    "immediately available to sessions (as pipeline__<key>.<name> and "
+    "run_pipeline) after the next hot-reload. Pass the direct path to the "
+    "pipeline's *.yaml DSL file (which may hold multiple '---'-separated "
+    "'pipeline:' documents). "
+    "Use 'name' to set the NAMESPACE KEY for the file; every pipeline in it "
+    "registers as '<name>.<declared-pipeline-name>'. 'name' need not match any "
+    "declared name and must not contain '.' (the reserved separator); it "
+    "defaults to the DSL file stem when omitted."
 )
 
 _PIPELINE_INSTALL_LOCAL_PARAMETERS: dict[str, Any] = {
@@ -58,10 +58,10 @@ _PIPELINE_INSTALL_LOCAL_PARAMETERS: dict[str, Any] = {
         "name": {
             "type": "string",
             "description": (
-                "Optional: the expected registration name. Must match the "
-                "DSL's own declared 'pipeline:' name exactly, or the install "
-                "is refused. When omitted, the config key defaults to the "
-                "DSL's declared name."
+                "Optional namespace key for the file. Every pipeline in it "
+                "registers as '<name>.<declared-pipeline-name>'. Need not "
+                "match any declared name; must not contain '.'. Defaults to "
+                "the DSL file stem when omitted."
             ),
         },
     },
@@ -132,8 +132,9 @@ _PIPELINE_INSTALL_SOURCE_DESCRIPTION = (
     "'https://github.com/user/repo//path/to/pipelines' (subdir form). "
     "Use 'path' to select the DSL file inside the clone when the repo/subdir "
     "contains more than one *.yaml file. "
-    "Use 'name' to make the intended registration name explicit; it must "
-    "match the DSL's own declared 'pipeline:' name exactly."
+    "Use 'name' to set the NAMESPACE KEY; every pipeline in the file registers "
+    "as '<name>.<declared-pipeline-name>'. 'name' need not match any declared "
+    "name and must not contain '.'; it defaults to the source basename."
 )
 
 _PIPELINE_INSTALL_SOURCE_PARAMETERS: dict[str, Any] = {
@@ -159,9 +160,10 @@ _PIPELINE_INSTALL_SOURCE_PARAMETERS: dict[str, Any] = {
         "name": {
             "type": "string",
             "description": (
-                "Optional: the expected registration name. Must match the "
-                "DSL's own declared 'pipeline:' name exactly, or the install "
-                "is refused."
+                "Optional namespace key. Every pipeline in the file registers "
+                "as '<name>.<declared-pipeline-name>'. Need not match any "
+                "declared name; must not contain '.'. Defaults to the source "
+                "basename."
             ),
         },
     },
@@ -180,7 +182,8 @@ async def _handle_pipeline_install_source(
       2. Shallow-clones the repo to .reyn/pipelines/<name>/.
       3. Locates + parses the DSL file from the clone (root or subdir via //;
          'path' selects it when ambiguous).
-      4. Validates the registration name against the DSL's declared name.
+      4. Resolves the namespace key (#2722: 'name' or the source basename;
+         every pipeline registers as '<key>.<declared-name>').
       5. Threat-scans the description (scope=strict; block on blocking match).
       6. Gates require_file_write for .reyn/config/pipelines.yaml.
       7. Writes the pipelines.yaml entry with the installed clone path + source URL.

@@ -13,16 +13,18 @@ Handler logic (one-shot, no sub-phases):
 Local-path install (``op.source is None``):
   1. Resolve the pipeline DSL file: ``op.path`` must point directly at a
      ``*.yaml`` file (unlike skill, there is no directory-or-file resolution —
-     a pipeline registration is always exactly one file).
-  2. Parse it via ``parse_pipeline_dsl`` into a ``Pipeline`` — this is the
-     validation step (a malformed DSL file is refused, never registered).
-  3. Resolve the registration name: the DSL's own declared ``pipeline:`` name
-     is ALWAYS the identity a ``call``/``match`` step resolves against. When
-     ``op.name`` is set it must match the DSL's declared name exactly — a
-     mismatch is refused (fail-loud) rather than letting the config key
-     silently diverge from the resolution key.
-  4. Threat-scan the pipeline description via ``content_guard.scan_for_threats``
-     (scope="strict") — block on blocking-severity match (same threat surface
+     a pipeline registration is always exactly one file, though that file may
+     hold MULTIPLE ``pipeline:`` documents — #2722).
+  2. Parse it via ``parse_pipeline_docs`` into one-or-more ``Pipeline``s — this
+     is the validation step (a malformed DSL file is refused, never registered).
+  3. Resolve the registration namespace KEY (#2722): the config entry key is a
+     pure namespace label (``op.name``, or the DSL file stem when omitted) — it
+     no longer must equal any declared ``pipeline:`` name (the old key==name
+     coupling is gone). ``.`` is reserved (R1) and rejected in the key. Every
+     ``pipeline:`` document registers as ``{key}.{declared-name}``; the FULL set
+     is enumerated in the result + audit event (H6 — no silent scope creep).
+  4. Threat-scan EVERY pipeline's description via ``content_guard.scan_for_threats``
+     (scope="strict") — block on any blocking-severity match (same threat surface
      as a skill's SKILL.md description: free-text authored by whoever wrote the
      DSL, which for a source install is untrusted third-party content).
   5. Gate via ``PermissionResolver.require_file_write`` for the pipelines.yaml path.
@@ -97,13 +99,15 @@ def _pipelines_config_path(project_root: Path) -> Path:
     return project_root / ".reyn" / "config" / "pipelines.yaml"
 
 
-def _parse_pipeline_file(path: Path) -> "tuple[object | None, str]":
-    """Read + parse a pipeline DSL file. Returns (Pipeline | None, error_message).
+def _parse_pipeline_file(path: Path) -> "tuple[list | None, str]":
+    """Read + parse a pipeline DSL file. Returns (list[Pipeline] | None, error).
 
-    On success, error_message is "". On failure (unreadable file or malformed
-    DSL), the Pipeline is None and error_message describes the failure.
-    """
-    from reyn.core.pipeline.parser import PipelineParseError, parse_pipeline_dsl
+    A file may hold MORE than one ``pipeline:`` document (#2722) — every one is
+    parsed and returned. On success, error_message is "". On failure (unreadable
+    file or malformed DSL), the list is None and error_message describes the
+    failure. R1 (a reserved ``.`` in a declared name) and R2 (an intra-file
+    duplicate declared name) surface here as a malformed-file error."""
+    from reyn.core.pipeline.parser import PipelineParseError, parse_pipeline_docs
     from reyn.core.pipeline.schema import SchemaRegistry
 
     try:
@@ -111,10 +115,10 @@ def _parse_pipeline_file(path: Path) -> "tuple[object | None, str]":
     except OSError as exc:
         return None, f"could not read pipeline file {path}: {exc}"
     try:
-        pipeline = parse_pipeline_dsl(text, SchemaRegistry())
+        pipelines = parse_pipeline_docs(text, SchemaRegistry())
     except PipelineParseError as exc:
         return None, f"malformed pipeline file {path}: {exc}"
-    return pipeline, ""
+    return pipelines, ""
 
 
 def _find_sole_yaml(directory: Path) -> "Path | None":
@@ -136,11 +140,12 @@ async def handle(
 ) -> dict:
     """Execute a pipeline_install op — register a local or source-fetched pipeline.
 
-    Local path (``op.source is None``): parses the DSL at ``op.path``, resolves
-    + validates the registration name against the DSL's own declared
-    ``pipeline:`` name, threat-scans the description, gates the config write,
-    persists the entry, records a config generation for crash-recovery, emits
-    an audit event, and requests a hot-reload.
+    Local path (``op.source is None``): parses the DSL at ``op.path`` (one or
+    more ``pipeline:`` documents — #2722), resolves the namespace key (``op.name``
+    or the file stem; ``.`` reserved), threat-scans every description, gates the
+    config write, persists the entry, records a config generation for
+    crash-recovery, emits an audit event (enumerating all ``{key}.{name}`` global
+    names registered — H6), and requests a hot-reload.
 
     Source/git path (``op.source`` set): additionally gates the source host
     via ``require_http_get`` and shallow-clones the repo before the same
@@ -264,9 +269,9 @@ async def handle(
             }
         install_path = str(dsl_path.resolve())
 
-    # ── 2. Parse the DSL (validation step) ────────────────────────────────────
-    pipeline, parse_err = _parse_pipeline_file(dsl_path)
-    if pipeline is None:
+    # ── 2. Parse the DSL (validation step) — a file may hold N pipelines (#2722)
+    pipelines, parse_err = _parse_pipeline_file(dsl_path)
+    if pipelines is None:
         if op.source:
             shutil.rmtree(clone_dest, ignore_errors=True)
         return {
@@ -277,16 +282,25 @@ async def handle(
             "error": parse_err,
         }
 
-    declared_name = pipeline.name
-    description = pipeline.description or ""
+    # The config entry's description is metadata surfaced alongside the namespace
+    # in the catalog — use the first document's (the file's own summary).
+    description = pipelines[0].description or ""
 
-    # ── 3. Resolve + validate the registration name ───────────────────────────
-    # The DSL's own declared `pipeline:` name is ALWAYS the resolution key a
-    # call/match step resolves against — unlike skill, op.name cannot rename
-    # the registered identity. A caller-supplied op.name that disagrees with
-    # the DSL is a footgun (config key != resolution key) and is refused
-    # rather than silently allowed to diverge.
-    if op.name and op.name.strip() != declared_name:
+    # ── 3. Resolve the registration namespace KEY (#2722) ─────────────────────
+    # The config entry key IS the namespace label — every pipeline in the file
+    # registers as `{key}.{declared-name}`. The old `op.name == declared-name`
+    # coupling is GONE: the key no longer must equal any declared pipeline name.
+    # For a source install the key was derived pre-clone (`_candidate_name`); for
+    # a local install it is `op.name` or the DSL file stem.
+    if op.source:
+        name = _candidate_name
+    else:
+        name = (op.name or "").strip() or dsl_path.stem
+
+    # #2722 R1: '.' is RESERVED as the namespace separator — reject it in the key
+    # (stricter than _safe_name_component, which permits an interior '.'). A key
+    # with a '.' would make the derived global name '<key>.<doc>' ambiguous.
+    if "." in name:
         if op.source:
             shutil.rmtree(clone_dest, ignore_errors=True)
         return {
@@ -295,20 +309,16 @@ async def handle(
             "path": op.path,
             "source": op.source or "",
             "error": (
-                f"name mismatch: op.name={op.name!r} does not match the DSL's "
-                f"declared pipeline name {declared_name!r}. The declared 'pipeline:' "
-                "name is the authoritative identity a call/match step resolves "
-                "against, so the config key must match it exactly — pass no "
-                "'name' override, or fix the DSL's 'pipeline:' key."
+                f"invalid pipeline namespace key {name!r}: '.' is reserved as the "
+                "namespace separator (registered names are '<key>.<pipeline-name>'). "
+                "Choose a 'name' with no '.'."
             ),
         }
-    name = declared_name
 
-    # SECURITY: sanitize the resolved name BEFORE it is used as a config key OR
-    # (for source installs) a filesystem path component. The DSL's `pipeline:`
-    # name is third-party content for a source install — a malicious
-    # `pipeline: ../../../evil` would escape .reyn/pipelines/ at the rename step
-    # (path-traversal → arbitrary rmtree).
+    # SECURITY: sanitize the key BEFORE it is used as a config key OR (for source
+    # installs) a filesystem path component. For a source install the key derives
+    # from an attacker-influenced URL basename — a malicious name would escape
+    # .reyn/pipelines/ (path-traversal → arbitrary rmtree).
     safe_name = _safe_name_component(name)
     if safe_name is None:
         if op.source:
@@ -320,42 +330,29 @@ async def handle(
             "source": op.source or "",
             "error": (
                 f"invalid pipeline name {name!r}. The name must be a single path "
-                "component (letters, digits, '.', '_', '-'; no '/', '\\', '..', or "
-                "leading '.'). Fix the DSL's 'pipeline:' key."
+                "component (letters, digits, '_', '-'; no '.', '/', '\\', '..', or "
+                "leading '.'). Pass a safe 'name'."
             ),
         }
 
-    # For source installs: if the resolved name differs from the candidate we used
-    # for the clone destination, rename the clone dir to the resolved name.
-    if op.source and name != _candidate_name:
-        new_dest = _pipelines_root / name
-        # SECURITY: containment check BEFORE any rmtree/rename — refuse if new_dest
-        # escapes .reyn/pipelines/ even after sanitization (guards a sanitizer gap).
-        if not _contained_under(new_dest, _pipelines_root):
-            shutil.rmtree(clone_dest, ignore_errors=True)
-            return {
-                "kind": "pipeline_install",
-                "status": "error",
-                "source": op.source or "",
-                "error": (
-                    f"refused: install destination for {name!r} escapes .reyn/pipelines/. "
-                    "This is a path-containment violation."
-                ),
-            }
-        if new_dest.exists():
-            shutil.rmtree(new_dest)
-        # Preserve the relative position of the DSL file inside the clone.
-        rel_dsl = dsl_path.relative_to(clone_dest)
-        clone_dest.rename(new_dest)
-        clone_dest = new_dest
-        dsl_path = new_dest / rel_dsl
-        install_path = str(dsl_path.resolve())
+    # #2722 H6: the FULL set of global names this install registers — every
+    # `pipeline:` document in the file, namespaced under the key. Enumerated in
+    # the approval-visible result + the audit event so approving one op.name
+    # never silently registers extra pipelines behind the operator's back.
+    registered_names = [f"{safe_name}.{p.name}" for p in pipelines]
 
-    # ── 4. Threat-scan the description (scope="strict") ──────────────────────
+    # ── 4. Threat-scan EVERY pipeline's description (scope="strict") ──────────
+    # A multi-doc file has N author-written descriptions; each is untrusted
+    # free-text (esp. for a source install) — scan them all, block on any match.
     _ts = getattr(ctx, "threat_scan", None)
-    if _ts is not None and getattr(_ts, "enabled", False) and description:
-        _matches = scan_for_threats(description, _ts, scope="strict")
-        if _matches:
+    if _ts is not None and getattr(_ts, "enabled", False):
+        for _p in pipelines:
+            _desc = _p.description or ""
+            if not _desc:
+                continue
+            _matches = scan_for_threats(_desc, _ts, scope="strict")
+            if not _matches:
+                continue
             for _m in _matches:
                 ctx.events.emit(
                     "pipeline_install_threat_match",
@@ -383,8 +380,8 @@ async def handle(
                     "source": op.source or "",
                     "path": install_path,
                     "error": (
-                        f"install blocked: pipeline description matched threat "
-                        f"pattern '{_block.pattern_id}' "
+                        f"install blocked: pipeline {_p.name!r} description matched "
+                        f"threat pattern '{_block.pattern_id}' "
                         f"({_block.scope}/{_block.severity}). The description "
                         f"contains a prohibited pattern. Do not install this pipeline."
                     ),
@@ -428,6 +425,7 @@ async def handle(
     ctx.events.emit(
         "pipeline_installed",
         name=safe_name,
+        registered_names=registered_names,
         path=install_path,
         description=description,
         config_path=str(config_path),
@@ -451,6 +449,7 @@ async def handle(
     return {
         "status": "installed",
         "name": safe_name,
+        "registered_names": registered_names,
         "path": install_path,
         "description": description,
         "config_path": str(config_path),

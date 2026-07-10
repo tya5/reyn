@@ -235,13 +235,14 @@ schema: only_a_schema
 fields:
   a: {type: string, required: true}
 """
-    with pytest.raises(PipelineParseError, match="exactly one"):
+    with pytest.raises(PipelineParseError, match="at least one"):
         parse_pipeline_dsl(dsl, SchemaRegistry())
 
 
 def test_two_pipeline_documents_raises() -> None:
     """Tier 1: a text with more than one `pipeline:` document is a
-    `PipelineParseError` (ambiguous "which pipeline did I just parse")."""
+    `PipelineParseError` under the SINGLE-document `parse_pipeline_dsl` contract
+    (multi-doc is `parse_pipeline_docs`, tested in test_2722_*)."""
     dsl = """
 pipeline: one
 steps:

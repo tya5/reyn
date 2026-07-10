@@ -1201,7 +1201,7 @@ Registers pipeline DSL files — the same explicit-registration model as `skills
 ```yaml
 pipelines:
   entries:
-    hello:
+    greetings:                       # entry KEY = the namespace label
       path: pipelines/hello.yaml   # project-root-relative or absolute
       description: "Minimal greeting pipeline"   # optional
       enabled: true                              # optional, default true
@@ -1209,11 +1209,11 @@ pipelines:
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `path` | string | required | Path to the pipeline's `*.yaml` DSL file. |
+| `path` | string | required | Path to the pipeline's `*.yaml` DSL file (may hold multiple `---`-separated `pipeline:` documents). |
 | `description` | string | `""` | Optional one-line summary; if omitted, the DSL's own `description:` key is used. |
 | `enabled` | bool | `true` | `false` removes the entry from the registry entirely. |
 
-The entry **key must match the DSL file's own declared `pipeline:` name exactly** — the declared name is the authoritative identity a `call`/`match` step resolves against, not the config key. A mismatch fails session start loudly, naming both the key and the declared name.
+The entry **key is a pure namespace label** — it need not equal any declared `pipeline:` name. Every pipeline in the file registers under the global name `{key}.{declared-name}` (namespacing is always on). A `.` is reserved as the namespace separator, so it is forbidden in both an entry key and a declared `pipeline:` name. A dot-less `call`/`match` target resolves to a same-file sibling (`{key}.name`); a dotted target is a global reference (`other_key.name`).
 
 `pipelines.entries` merges across `~/.reyn/config.yaml` ⊕ `reyn.yaml` ⊕ `reyn.local.yaml` ⊕ the dynamic `<project>/.reyn/config/pipelines.yaml` (written by the `pipeline_management__install_local` / `pipeline_management__install_source` chat tools), later tiers winning on name collision — the same merge shape as `skills.entries` / `mcp.servers`.
 
