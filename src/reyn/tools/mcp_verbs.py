@@ -586,7 +586,12 @@ async def _handle_mcp_call_tool(
 # ── ToolDefinitions ──────────────────────────────────────────────────────────
 
 
-from reyn.core.offload.canonical import CANONICAL_TODO, mcp_to_canonical  # noqa: E402
+from reyn.core.offload.canonical import (  # noqa: E402
+    CANONICAL_TODO,
+    mcp_install_local_verb_to_canonical,
+    mcp_install_verb_to_canonical,
+    mcp_to_canonical,
+)
 
 MCP_SEARCH_REGISTRY = ToolDefinition(
     canonical=CANONICAL_TODO,
@@ -602,7 +607,7 @@ MCP_SEARCH_REGISTRY = ToolDefinition(
 
 
 MCP_INSTALL_REGISTRY = ToolDefinition(
-    canonical=CANONICAL_TODO,
+    canonical=mcp_install_verb_to_canonical,
     name="mcp_install_registry",
     description=_MCP_INSTALL_REGISTRY_DESCRIPTION,
     parameters=_MCP_INSTALL_REGISTRY_PARAMETERS,
@@ -614,7 +619,7 @@ MCP_INSTALL_REGISTRY = ToolDefinition(
 
 
 MCP_INSTALL_PACKAGE = ToolDefinition(
-    canonical=CANONICAL_TODO,
+    canonical=mcp_install_verb_to_canonical,
     name="mcp_install_package",
     description=_MCP_INSTALL_PACKAGE_DESCRIPTION,
     parameters=_MCP_INSTALL_PACKAGE_PARAMETERS,
@@ -626,7 +631,7 @@ MCP_INSTALL_PACKAGE = ToolDefinition(
 
 
 MCP_INSTALL_LOCAL = ToolDefinition(
-    canonical=CANONICAL_TODO,
+    canonical=mcp_install_local_verb_to_canonical,
     name="mcp_install_local",
     description=_MCP_INSTALL_LOCAL_DESCRIPTION,
     parameters=_MCP_INSTALL_LOCAL_PARAMETERS,

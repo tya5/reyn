@@ -43,7 +43,9 @@ get_default_registry()
 # A grandfathered ``CANONICAL_TODO`` producer (issue #2681 burn-down ledger). Used only to confirm the
 # classifier reports the ``canonical_todo`` reason for a real declared-debt producer; if this one is
 # later burned down to a real mapper it simply leaves the set — swap in any other ledger member.
-_A_CANONICAL_TODO_PRODUCER = "agent_spawn"
+# (#2681 Bucket C burned ``agent_spawn`` down to a real status-text mapper — swapped to
+# ``topology_create``, triaged as a genuine record and left on the ledger for Bucket B.)
+_A_CANONICAL_TODO_PRODUCER = "topology_create"
 # An admin/install producer declared STRUCTURED_PASSTHROUGH (owner decision #1 family).
 _A_PASSTHROUGH_PRODUCER = "mcp_install"
 # A producer with a REAL mapper — the falsify control.

@@ -759,7 +759,12 @@ async def _assign(op, ctx: OpContext) -> dict:
     return _ok("task.assign", task=assigned.to_dict())
 
 
-from reyn.core.offload.canonical import CANONICAL_TODO  # noqa: E402
+from reyn.core.offload.canonical import (  # noqa: E402
+    CANONICAL_TODO,
+    task_comment_to_canonical,
+    task_heartbeat_to_canonical,
+    task_register_unblock_predicate_to_canonical,
+)
 
 register("task.create", _create, canonical=CANONICAL_TODO)
 register("task.update_status", _update_status, canonical=CANONICAL_TODO)
@@ -769,7 +774,10 @@ register("task.add_dependency", _add_dependency, canonical=CANONICAL_TODO)
 register("task.remove_dependency", _remove_dependency, canonical=CANONICAL_TODO)
 register("task.repoint_dependency", _repoint_dependency, canonical=CANONICAL_TODO)
 register("task.abort", _abort, canonical=CANONICAL_TODO)
-register("task.heartbeat", _heartbeat, canonical=CANONICAL_TODO)
-register("task.register_unblock_predicate", _register_unblock_predicate, canonical=CANONICAL_TODO)
-register("task.comment", _comment, canonical=CANONICAL_TODO)
+register("task.heartbeat", _heartbeat, canonical=task_heartbeat_to_canonical)
+register(
+    "task.register_unblock_predicate", _register_unblock_predicate,
+    canonical=task_register_unblock_predicate_to_canonical,
+)
+register("task.comment", _comment, canonical=task_comment_to_canonical)
 register("task.assign", _assign, canonical=CANONICAL_TODO)

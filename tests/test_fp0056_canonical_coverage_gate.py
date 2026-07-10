@@ -55,34 +55,29 @@ _STRUCTURED_PASSTHROUGH_ADMIN_6 = frozenset({
 # Two of the migration's ~54 provisional producers were triaged as text-shaped and given REAL mappers
 # in F1 (``read_memory_body`` → the memory body text; ``ask_user`` → the user's answer), so they are
 # NOT here. See PR-F1 description for the full text-shaped / genuinely-structured / status-only triage.
+#
+# #2681 Bucket C burn-down: 25 status-only producers (write/ack/spawn-ack results, no readable body)
+# now ship a real ``make_status_text_mapper`` mapper (canonical.py) instead of the whole-dict
+# fallback — removed from the ledger. ``topology_create`` was triaged alongside them but its result
+# is a genuine RECORD (full topology config echo: kind/members/leader/profiles), not an ack, so it
+# stays here for Bucket B.
 _CANONICAL_TODO_GRANDFATHERED = frozenset({
-    "agent_spawn",
-    "cron_disable", "cron_enable", "cron_list", "cron_register", "cron_unregister",
-    "delegate_to_agent",
+    "cron_list",
     "describe_action", "describe_agent", "describe_mcp_tool",
-    "drop_source",
-    "forget_memory",
-    "hooks_add",
-    "index_drop",
     "invoke_action",
     "list_actions", "list_agents",
     "list_mcp_prompts", "list_mcp_resource_templates", "list_mcp_resources",
     "list_mcp_servers", "list_mcp_tools",
     "list_memory",
-    "mcp_install_local", "mcp_install_package", "mcp_install_registry", "mcp_search_registry",
-    "pipeline_install_local", "pipeline_install_source",
+    "mcp_search_registry",
     # #2692 burn-down: ``present`` now ships a real text mapper (its ack is an agent-facing
     # signal, not bulk content) — removed from the ledger (the ratchet set only shrinks).
-    "remember_agent", "remember_shared",
     "search_actions",
-    "session_spawn",
     # #2681 Bucket A burn-down: ``shell`` now ships a real text mapper (its stdout is the readable
     # LLM body, mirroring ``sandboxed_exec``'s stdout-is-text treatment) — removed from the ledger
     # (the ratchet set only shrinks).
-    "skill_install_local", "skill_install_source",
-    "subscribe_mcp_resource", "unsubscribe_mcp_resource",
-    "task.abort", "task.add_dependency", "task.assign", "task.comment", "task.create",
-    "task.get", "task.heartbeat", "task.list", "task.register_unblock_predicate",
+    "task.abort", "task.add_dependency", "task.assign", "task.create",
+    "task.get", "task.list",
     "task.remove_dependency", "task.repoint_dependency", "task.update_status",
     "topology_create",
 })

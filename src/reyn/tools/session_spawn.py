@@ -82,10 +82,10 @@ async def _handle(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
     )
 
 
-from reyn.core.offload.canonical import CANONICAL_TODO  # noqa: E402
+from reyn.core.offload.canonical import session_spawn_to_canonical  # noqa: E402
 
 SESSION_SPAWN = ToolDefinition(
-    canonical=CANONICAL_TODO,
+    canonical=session_spawn_to_canonical,
     name="session_spawn",
     router_dispatched=True,
     description=_SESSION_SPAWN_DESCRIPTION,

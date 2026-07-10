@@ -107,6 +107,6 @@ class _DenyBus:
         return InterventionAnswer(choice_id="no", text="")
 
 
-from reyn.core.offload.canonical import CANONICAL_TODO  # noqa: E402
+from reyn.core.offload.canonical import index_drop_to_canonical  # noqa: E402
 
-register("index_drop", handle, canonical=CANONICAL_TODO)
+register("index_drop", handle, canonical=index_drop_to_canonical)
