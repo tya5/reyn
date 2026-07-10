@@ -6,70 +6,36 @@ audience: [human, agent]
 
 # Retrieval Engineering
 
-> **状態: stale。** このページは削除済みの phase-graph skill engine(`recall_memory` を
-> 「preprocessor」経由で呼び出す stdlib ワークフローとする記述)を前提に書かれており、
-> それ以降に出荷された 2 つの機能を反映していません — `docs/feature-map.md` の
-> Memory & RAG セクションで確認済み: **(1)** `recall` は現在、typed Control IR op として
-> ベクトル類似検索(source ごとの `index_query`、top-K マージ)をプラガブルな
-> `IndexBackend` 上で行います。以下で「現行」かつベクトル検索を「おそらく次のステップ」と
-> 記述しているキーワード/インデックスマッチングとは異なります。**(2)** `web_search` /
-> `web_fetch` は現在、バンドル済みの Tier-1 default-allow ツールであり、以下の
-> 「web 検索や外部検索プリミティブなし」という主張と矛盾します。書き直しは follow-up
-> として追跡されています。当面は
-> [`docs/concepts/data-retrieval/rag.md`](../data-retrieval/rag.md) と
-> [`docs/concepts/architecture/charter.md`](../architecture/charter.md)
-> (Retrieval 行 — 憲章の 2 つの honest thin area の 1 つ)が現行の grounded な
-> ストーリーです。
-
-適切なコンテキストを適切なタイミングで agent に渡すこと — 過去のやり取りの記憶、プロジェクト固有の知識、外部ドキュメント、検索結果。検索品質は多くの場合、モデルの選択よりも出力品質に大きく影響します。
+適切なコンテキストを適切なタイミングで agent に渡すこと — 過去のやり取りの記憶、プロジェクト固有の知識、外部ドキュメント、検索結果。検索品質は多くの場合、モデルの選択よりも出力品質に大きく影響します。これは憲章が明示する 2 つの honest thin area の 1 つです(`CLAUDE.md` の Constitution 節を参照)— 以下の記述は、ギャップを取り繕うのではなく、存在するものを率直に述べる方向に寄せています。
 
 ## Reyn の実装方法
 
-現在 2 つの検索メカニズムがあり、どちらも通常の stdlib ワークフローとして表現されています:
+### `recall` — インデックス済み任意コーパスへのベクトル検索
 
-### `recall_memory`
+`recall` は LLM が直接呼び出す typed な Control IR op です: クエリを埋め込み、設定された source ごとに `index_query` を実行し、top-K 結果をグローバルにマージします。プラガブルな `IndexBackend`(デフォルトは SQLite、≤100K チャンク、サブ秒クエリ)上で動作します — キーワード/フラットインデックスマッチではありません。
 
-プロジェクトスコープおよびユーザースコープの Memory ストアからファクトを取得します:
+コーパスのインデックス作成は意図的にバンドル済みのワンコマンド skill にはなっていません: 短い safe-mode Python ステップがファイルを読み、チャンク化し、一度 `embed_and_index()` を呼び出します。**LangChain/LlamaIndex との差別化ポイントは検索呼び出しがどこに存在するか**です — それらは自分のドライバーコードから呼び出すライブラリを提供しますが、Reyn の `recall` は通常の `reyn chat` セッション中に LLM 自身が呼び出す組み込みツールであり、検索側にオーケストレーションコードは不要です。独立した `recall_docs` の仕組みはありません — プロジェクトドキュメントも他のコーパスと同じ方法で検索されます: 一度 `embed_and_index()` でインデックス化すれば、`recall` は他の source と同様にそこに到達します。
 
-| スコープ | 場所 | 内容 |
-|-------|----------|-------|
-| Global | `~/.reyn/memory/` | ユーザーに関するファクト（役割、好み） |
-| Project | `.reyn/memory/` | 現在のプロジェクトに関するファクト |
+### Memory — RAG 検索とは別の仕組み
 
-両スコープは同じ形式（`MEMORY.md` インデックス + エントリーごとの `<slug>.md`）を共有し、一緒に読み込まれます。プロジェクトエントリーが先に現れます。ワークフローは preprocessor を通じて検索結果を消費します:
+プロジェクトおよび agent スコープの Memory(ユーザーの好み、プロジェクトの決定事項、agent 固有の習慣)は `recall` の特殊ケースではなく **別の** 仕組みです: Memory は各チャットターンで router がインラインで読みます(shared レイヤーと agent スコープレイヤーからマージされた `MEMORY.md` インデックス)。ツール呼び出しでオンデマンドに問い合わせるものではありません。read/write パスは [Memory](../data-retrieval/memory.md) を参照してください。
 
-```yaml
-preprocessor:
-  - run_skill:
-      skill: recall_memory
-      input:
-        type: user_message
-        data: { text: "what does the user prefer?" }
-      into: relevant_memories
-```
+### Web 検索
 
-Phase は `input.relevant_memories` を通常のフィールドと同様に読み取ります。データが preprocessor から来ていることを知る必要はありません。
-
-### `reyn chat` の自動検索
-
-chat モードでは、各ターンが暗黙的に `recall_memory` を呼び出します（`top-k` は `chat.memory.recall_top_k` で設定可能）。また数ターンごとに `write_memory` が新しい情報を永続化する機会が与えられます。検索のケイデンスは設定によって制御され、手動でオーケストレートしません。
+`web_search` と `web_fetch` はバンドル済みの Tier-1 default-allow ツールです — ワークフロー作者が自分で用意する必要はありません。
 
 ## まだ薄い部分
 
-これは Reyn が現在最も取り組むべき余地があるレンズです。
+スコープを取り繕わず正直に:
 
-**`recall_docs` はまだ実装されていません。** 計画では `recall_memory` の対称的な対として、`recall_memory` が Memory から検索するのと同様にプロジェクトのドキュメントから検索する stdlib ワークフローになる予定です。リリースされるまでは、ドキュメントのコンテキストを必要とするワークフローは、Phase の指示に関連する段落を直接転記します。これは機能しますが、手動であり、転記はソースから乖離していきます。
-
-**Memory マッチングはキーワード/インデックスベースであり、ベクターではありません。** `MEMORY.md` はフラットなインデックスであり、`recall_memory` はキーワードとメタデータによるクエリにマッチするエントリーを返します。数十エントリーならこれで問題ありません。数百エントリーになると関連するマッチを見逃し始めます。ベクター検索（またはハイブリッドキーワード + ベクター）が有望な次のステップですが、API サーフェス（型付き入力を持つ stdlib ワークフロー）はすでに後で実装を交換するための正しい形になっています。
-
-**Web 検索や外部検索のプリミティブはありません。** Web からフェッチする必要があるワークフローは、設定されていれば MCP 検索ツールを呼び出します。Reyn はデフォルトの Web 検索ワークフローをバンドルしていません。意図は OS をワークフローに依存させないこと（P7）です。検索の種類はワークフローを書くことで追加し、ランタイムを変更しません。
-
-## このレンズが本当に問いかけていること
-
-Retrieval Engineering は「ドキュメントを見つけられたか？」というだけではありません。「決定がそれに依存していた*そのとき*に agent がそのドキュメントを見ていたか？」です。Reyn の preprocessor メカニズムはタイミングの問いへの答えです: 検索は決定論的に、LLM 呼び出しの前に、Phase がすでに期待している場所に結果を置いて実行されます。残る作業はマッチングの問い（より良い検索、より広いソース）にあります。
+- **Phase 1 のみ。** 現在出荷されているのは framework foundation、SQLite デフォルトバックエンド、LiteLLM embedding passthrough です。Vector store のプラグインバリエーション(Qdrant / FAISS / Weaviate / Pinecone)、高度な検索(rerank / HyDE / contextual retrieval)、RAG eval framework は明示的に post-1.0 の領域です — 隠れたギャップではなく、明言された境界です。そのエコシステムが今必要なら、LangChain / LlamaIndex の方が適しています。
+- **パイプラインではなく framework。** `recall` + safe-mode Python ステップが直接呼び出せるプラガブルな `IndexBackend` は、検索を構築するための foundation であり、決定論的でフルマネージドな RAG パイプラインではありません。チャンキングロジックは自分で持つ必要があります。
+- **バンドル済みのコーパスインデックス skill はありません。** すべてのコーパス(ドキュメントを含む)は `recall` が到達できるようになる前に、それぞれ独自の短いインデックス作成スクリプトが必要です — `reyn index this repo` のようなワンライナーはありません。
 
 ## 関連情報
 
-- [../data-retrieval/memory.md](../data-retrieval/memory.md) — コンセプト
-- [tool-contract-design.md](tool-contract-design.md) — 検索がコントラクトにどう組み込まれるか
-
+- `CLAUDE.md`(§ Constitution)— Retrieval レンズの pass-line と、その明示的な thin-area 宣言
+- [`docs/concepts/architecture/charter.md`](../architecture/charter.md) — 7 つの feature family すべてで grounded された Retrieval 行
+- [`docs/concepts/data-retrieval/rag.md`](../data-retrieval/rag.md) — 完全な RAG framework、クイックスタート、Phase 1/2 スコープ境界
+- [`docs/concepts/data-retrieval/memory.md`](../data-retrieval/memory.md) — 別の仕組みである Memory
+- [tool-contract-design.md](tool-contract-design.md) — `recall` が typed op contract にどう組み込まれるか

@@ -6,71 +6,36 @@ audience: [human, agent]
 
 # Retrieval Engineering
 
-> **Status: stale.** This page was written against the deleted phase-graph
-> skill engine (`recall_memory` as a stdlib workflow invoked via a
-> "preprocessor") and predates two features that have since shipped —
-> confirmed via `docs/feature-map.md`'s Memory & RAG section:
-> **(1)** `recall` is now a typed Control IR op doing vector similarity
-> search (`index_query` per source, merge top-K) over a pluggable
-> `IndexBackend`, not the keyword/index matching described below as current
-> and "a likely next step" for vector retrieval; **(2)** `web_search` /
-> `web_fetch` are now bundled Tier-1 default-allow tools, contradicting the
-> "no web search or external retrieval primitive" claim below. A rewrite is
-> tracked as a follow-up; in the meantime see
-> [`docs/concepts/data-retrieval/rag.md`](../data-retrieval/rag.md) and
-> [`docs/concepts/architecture/charter.md`](../architecture/charter.md)
-> (Retrieval row — one of the constitution's two honest thin areas) for the
-> current, grounded story.
-
-Feeding the right context into the agent at the right time — memory of past interactions, project-specific knowledge, external documentation, search results. Retrieval quality often dominates output quality more than model choice does.
+Feeding the right context into the agent at the right time — memory of past interactions, project-specific knowledge, external documentation, search results. Retrieval quality often dominates output quality more than model choice does. This is one of the constitution's two declared **honest thin areas** (see `CLAUDE.md`'s Constitution section) — the framing below leans toward stating what exists plainly rather than dressing up gaps.
 
 ## How reyn handles it
 
-Two retrieval mechanisms today, both expressed as ordinary stdlib workflows:
+### `recall` — vector search over any indexed corpus
 
-### `recall_memory`
+`recall` is a typed Control IR op the LLM calls directly: embed the query, run `index_query` per configured source, merge the top-K results globally. It runs over a pluggable `IndexBackend` (SQLite is the default, ≤100K chunks, sub-second query) — not a keyword/flat-index match.
 
-Pulls facts from project- and user-scope memory stores:
+Indexing a corpus is deliberately not a bundled one-command skill: a short safe-mode Python step reads your files, chunks them, and calls `embed_and_index()` once. **The differentiation from LangChain/LlamaIndex is where the retrieval call lives** — those give you a library you call from your own driver code; reyn's `recall` is a built-in tool the LLM itself calls during an ordinary `reyn chat` session, with no orchestration code required on the search side. There is no separate `recall_docs` mechanism — project documentation is retrieved the same way any other corpus is: index it once via `embed_and_index()`, then `recall` reaches it like any other source.
 
-| Scope | Lives at | Holds |
-|-------|----------|-------|
-| Global | `~/.reyn/memory/` | Facts about the user (role, preferences) |
-| Project | `.reyn/memory/` | Facts about the current project |
+### Memory — a separate mechanism from RAG retrieval
 
-Both scopes share the same shape (a `MEMORY.md` index plus one `<slug>.md` per entry) and are read together; project entries surface first. Workflows consume retrieval results via the preprocessor:
+Project- and agent-scoped memory (user preferences, project decisions, agent-specific habits) is a **distinct** mechanism from `recall`, not a special case of it: memory is read inline by the router on every chat turn (a `MEMORY.md` index merged from the shared + agent-scoped layers), not queried on demand via a tool call. See [Memory](../data-retrieval/memory.md) for the read/write path.
 
-```yaml
-preprocessor:
-  - run_skill:
-      skill: recall_memory
-      input:
-        type: user_message
-        data: { text: "what does the user prefer?" }
-      into: relevant_memories
-```
+### Web retrieval
 
-The phase reads `input.relevant_memories` like any other field — it does not need to know the data came from a preprocessor.
-
-### `reyn chat` automatic recall
-
-In chat mode, every turn implicitly calls `recall_memory` (`top-k` configurable via `chat.memory.recall_top_k`) and offers `write_memory` a chance to persist anything new every few turns. The retrieval cadence is configured, not hand-orchestrated.
+`web_search` and `web_fetch` are bundled Tier-1, default-allow tools — not something a workflow author has to wire up themselves.
 
 ## Where it's still thin
 
-This is the lens where reyn currently has the most ground to cover.
+Being honest about scope rather than dressing it up:
 
-**`recall_docs` is not yet implemented.** The plan is for it to be the symmetric counterpart of `recall_memory` — a stdlib workflow that retrieves from the project's docs the way `recall_memory` retrieves from memory. Until it ships, workflows that need doc context transcribe the relevant passages directly into phase instructions. This works but it's manual, and the transcription drifts from the source.
-
-**Memory matching is keyword/index-based, not vector.** `MEMORY.md` is a flat index; `recall_memory` returns entries that match the query by keyword and metadata. At a few dozen entries this is fine. At a few hundred it will start missing relevant matches. Vector retrieval (or hybrid keyword + vector) is a likely next step, but the API surface — a stdlib workflow with a well-typed input — is already the right shape for swapping the implementation later.
-
-**No web search or external retrieval primitive.** Workflows that need to fetch from the web invoke MCP search tools when configured; reyn does not bundle a default web retrieval workflow. The intent is to keep the OS workflow-agnostic (P7) — retrieval kinds are added by writing workflows, not by changing the runtime.
-
-## What this lens is really asking
-
-Retrieval engineering isn't just "did we find the doc?" — it's "did the agent see the doc *at the moment a decision depended on it*?" reyn's preprocessor mechanism is the answer to the timing half: retrieval runs deterministically, before the LLM call, with results placed where the phase already expects them. The remaining work is on the matching half (better recall, broader sources).
+- **Phase 1 only.** The framework foundation, the SQLite default backend, and the LiteLLM embedding passthrough are what currently ships. Vector store plugin variety (Qdrant / FAISS / Weaviate / Pinecone), advanced retrieval (rerank / HyDE / contextual retrieval), and RAG eval frameworks are explicitly post-1.0 territory — not a secret gap, a stated boundary. If you need that ecosystem today, LangChain / LlamaIndex are the better fit for it.
+- **A framework, not a pipeline.** `recall` + a pluggable `IndexBackend` a safe-mode Python step calls directly is a foundation to build retrieval on, not a deterministic, fully-managed RAG pipeline. You own the chunking logic.
+- **No bundled corpus-indexing skill.** Every corpus (docs included) needs its own short indexing script before `recall` can reach it — there is no `reyn index this repo` one-liner.
 
 ## See also
 
-- [../data-retrieval/memory.md](../data-retrieval/memory.md) — concept (memory is read inline by the router on every chat turn)
-- [tool-contract-design.md](tool-contract-design.md) — how retrieval slots into the contract
-
+- `CLAUDE.md` (§ Constitution) — the Retrieval lens's pass-line and its explicit thin-area declaration
+- [`docs/concepts/architecture/charter.md`](../architecture/charter.md) — the Retrieval row, grounded across all 7 feature families
+- [`docs/concepts/data-retrieval/rag.md`](../data-retrieval/rag.md) — the full RAG framework, quick start, and Phase 1/2 scope boundary
+- [`docs/concepts/data-retrieval/memory.md`](../data-retrieval/memory.md) — the separate memory mechanism
+- [tool-contract-design.md](tool-contract-design.md) — how `recall` slots into the typed op contract
