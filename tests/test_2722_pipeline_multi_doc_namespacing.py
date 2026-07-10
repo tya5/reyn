@@ -166,6 +166,55 @@ def test_unresolved_dotless_sibling_is_load_error(tmp_path: Path) -> None:
         build_pipeline_registry(_entries(("mine", "p/caller.yaml")), tmp_path, strict=True)
 
 
+def _read_events_of_kind(events_dir: Path, kind: str) -> "list[dict]":
+    """Read every JSONL event of *kind* from anywhere under *events_dir* (the
+    canonical way to read back an ``emit_cli_event``-durable-captured event)."""
+    import json
+
+    found: "list[dict]" = []
+    if not events_dir.exists():
+        return found
+    for path in events_dir.rglob("*.jsonl"):
+        for line in path.read_text().splitlines():
+            if line.strip() and (rec := json.loads(line)).get("type") == kind:
+                found.append(rec)
+    return found
+
+
+def test_unresolved_sibling_fail_loud_no_silent_fallback_per_entry(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Tier 2: the settled design's *"fail-loud; NO silent fallback"* for an
+    unresolved dot-less sibling, in the DEFAULT (non-strict) session-factory
+    posture. The resolution NEVER silently binds the dot-less target to some
+    unrelated global (no fallback); instead it raises a ``PipelineLoadError``
+    that flows through the established #2641 per-entry-isolation seam: the bad
+    entry is SKIPPED and durably recorded as a ``pipeline_load_failed`` event
+    (loud), while a healthy sibling entry still loads. (The strict hot-reload
+    seam re-raises atomically — see test_unresolved_dotless_sibling_is_load_error.)"""
+    reyn_dir = tmp_path / ".reyn"
+    reyn_dir.mkdir()
+    monkeypatch.chdir(tmp_path)
+    # `ghost` is neither a same-file sibling nor a (would-be) global — pre-#2722
+    # this could have silently resolved to an unrelated bare `ghost`; now it fails.
+    _write(tmp_path / "p", "bad.yaml", "pipeline: caller\nsteps:\n  - call: {pipeline: ghost, output: r}\n")
+    _write(tmp_path / "p", "ok.yaml", "pipeline: fine\nsteps:\n  - transform: {value: \"1\", output: o}\n")
+
+    registry = build_pipeline_registry(
+        {"entries": {"a": {"path": "p/bad.yaml"}, "b": {"path": "p/ok.yaml"}}},
+        tmp_path,  # strict=False (default) — per-entry isolation
+    )
+
+    # the unresolved-sibling entry registered NOTHING (no silent misresolution);
+    # the healthy sibling entry still loaded.
+    assert set(registry.names()) == {"b.fine"}
+    # and the failure is LOUD — durably recorded, naming the entry + the target.
+    events = _read_events_of_kind(reyn_dir / "events", "pipeline_load_failed")
+    [event] = events
+    assert event["data"]["key"] == "a"
+    assert "ghost" in event["data"]["error"]
+
+
 def test_r1_dot_in_entry_key_is_load_error(tmp_path: Path) -> None:
     """Tier 2: R1 — a config entry key containing the reserved '.' is a load
     error (it would make the derived ``{key}.{name}`` global name ambiguous)."""
