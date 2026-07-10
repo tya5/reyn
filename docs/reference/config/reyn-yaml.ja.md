@@ -29,7 +29,6 @@ models:
 | `safety` | マップ | ランタイムの停止条件: ループ検出上限、タイムアウト、上限超過時ポリシー。以下参照。 |
 | `cost` | マップ | バジェット上限とレート制限（エージェントごと、日次、月次）。以下参照。 |
 | `web` | マップ | `web_fetch` と MCP レジストリ呼び出しの SSL 設定。以下参照。 |
-| `eval` | マップ | `reyn eval` のトレース exporter バックエンド。以下参照。 |
 | `sandbox` | マップ | `sandboxed_exec` のバックエンド選択・非対応プラットフォームポリシー・agent-level サンドボックスポリシー。以下参照。 |
 | `action_retrieval` | マップ | ユニバーサルカタログの可視化 + 検索設定。以下参照。 |
 | `embedding` | マップ | RAG 埋め込みモデルクラスとバッチ設定。以下参照。 |
@@ -308,34 +307,6 @@ web:
 `web.fetch.allow_private_ips`（bool, デフォルト `false`）は SSRF 対策。`true` のとき `web_fetch` / `safe.http` がプライベート RFC1918/ULA アドレスへ到達できます（エンタープライズの内部 fetch 向け opt-in）。link-local / クラウドメタデータ（`169.254.169.254`）/ ループバックはこのフラグに関わらず**常に**拒否されます。HTTP リダイレクトは hop ごとに再検証（allowlist + IP-deny）されるため、allowlist 済みホストが内部ターゲットへリダイレクトすることはできません。`REYN_FETCH_ALLOW_PRIVATE_IPS` 環境変数にもエクスポートされ、safe.http サブプロセス + レジストリクライアントが同じ opt-in を参照します。
 
 `web.ws_max_size`（int, デフォルト `16777216` = 16MB）は `reyn web` ゲートウェイが受け付ける単一 WebSocket インバウンドフレームの最大バイト数。サーバーライブラリの暗黙デフォルトに依存せず上限を明示的に固定するため、ライブラリアップグレード後も bound が維持されます。operator は tighten / loosen 可能。`<= 0` / 非整数はデフォルトにフォールバック。
-
-## `eval` ブロック
-
-トレース exporter バックエンド。設定すると、すべての Skill 実行のイベントトレースを指定バックエンドに送出します。
-
-```yaml
-eval:
-  exporters:
-    - type: file
-      path: .reyn/traces/        # exporter 未設定時のデフォルト
-    - type: langfuse
-      public_key: ${LANGFUSE_PUBLIC_KEY}
-      secret_key: ${LANGFUSE_SECRET_KEY}
-      host: https://cloud.langfuse.com   # 省略可; デフォルトはクラウドエンドポイント
-    - type: otlp
-      endpoint: http://localhost:4317
-    - type: ietf_audit
-      path: .reyn/audit/         # IETF Agent Audit Trail ドラフト形式
-```
-
-| `type` | 説明 |
-|--------|------|
-| `file` | `path` 以下の JSON-lines ファイル。`exporters` が空のときのデフォルトバックエンド。 |
-| `langfuse` | Langfuse インスタンスにトレースを送信。`public_key` / `secret_key` は `${VAR}` 環境変数補間をサポート。 |
-| `otlp` | OpenTelemetry Protocol。`endpoint` は OTLP gRPC または HTTP レシーバー。 |
-| `ietf_audit` | IETF Agent Audit Trail ドラフト形式で `path` に書き込み。 |
-
-すべての exporter は fire-and-forget です: エクスポートの失敗はログに記録されますが、Skill 実行を中止しません。
 
 ## `sandbox` ブロック
 

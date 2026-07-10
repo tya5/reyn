@@ -392,7 +392,6 @@ Main reference: **[`reyn.yaml`](reference/config/reyn-yaml.md)**
 | `cost` | Per-agent / per-chain / daily / monthly token+USD caps | [Budget config](reference/config/budget.md) |
 | `sandbox` | Backend selection (auto/seatbelt/landlock/noop) + `on_unsupported` | [reyn-yaml § sandbox](reference/config/reyn-yaml.md#sandbox-block) |
 | `web` | `web.fetch` SSL `verify_ssl` and `ca_bundle` override | [reyn-yaml § web](reference/config/reyn-yaml.md#web-block) |
-| `eval` | Trace exporters: file / langfuse / **otlp** (optional dep `opentelemetry-exporter-otlp-proto-http`) / ietf_audit | [reyn-yaml § eval](reference/config/reyn-yaml.md#eval-block) |
 | `chat` | Compaction trigger / head+tail retention / section token caps | [Chat Compaction](concepts/data-retrieval/chat-compaction.md) |
 | `embedding` | Model classes / batch_size / cost_warn_threshold | [RAG concepts](concepts/data-retrieval/rag.md) |
 | `voice` ⚠️ | Whisper model / language / device config still parses, but has no consumer since the Textual TUI it was built for was deleted (replaced by the inline CUI) — currently unavailable | [Voice concepts](concepts/tools-integrations/voice.md) |

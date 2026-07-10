@@ -21,7 +21,7 @@ reyn chat [agent_name] [OPTIONS]
 
 ## Options
 
-Common runtime flags (`--model`, `--output-language`, `--phase-budget`, `--llm-timeout`, `--llm-max-retries`) are shared with `reyn run` and `reyn eval`. See [Common flags](common-flags.md).
+Common runtime flags (`--model`, `--output-language`, `--phase-budget`, `--llm-timeout`, `--llm-max-retries`) are shared with `reyn run-once`. See [Common flags](common-flags.md).
 
 Chat-specific flags:
 

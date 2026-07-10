@@ -143,9 +143,9 @@ permissions:
 
 Use `allow` only when the project is trusted. `ask` (the default) prompts; `deny` rejects.
 
-## Non-interactive runs (CI, eval)
+## Non-interactive runs (CI)
 
-`reyn eval` runs non-interactively — there is no prompt. Approvals must be pre-arranged either in `reyn.yaml` or `.reyn/approvals.yaml` (e.g. by running the target workflow once interactively first).
+`reyn run-once` runs non-interactively — there is no prompt. Approvals must be pre-arranged either in `reyn.yaml` or `.reyn/approvals.yaml` (e.g. by running the agent once interactively first).
 
 ## Inspecting and revoking
 

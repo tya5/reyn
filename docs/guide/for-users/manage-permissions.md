@@ -92,14 +92,14 @@ reyn permissions revoke my_skill/file.write//tmp/output
 reyn permissions clear     # remove all (asks for confirmation)
 ```
 
-## Eval mode
+## Non-interactive mode
 
-`reyn eval` is non-interactive. Pre-arrange every approval the target workflow needs:
+`reyn run-once` is non-interactive. Pre-arrange every approval the agent needs:
 
-- run the target once with `reyn run` and persist via `[j]` or `[r]`, OR
+- run once interactively first and persist via `[j]` or `[r]`, OR
 - pre-approve in `reyn.yaml`.
 
-Without prior approval the eval case is reported as not-finished.
+Without prior approval the run fails at the ungranted capability.
 
 ## See also
 
