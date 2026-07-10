@@ -19,6 +19,7 @@ Policy compliance (docs/deep-dives/contributing/testing.md):
 """
 from __future__ import annotations
 
+import ast
 import asyncio
 import json
 import logging
@@ -30,6 +31,8 @@ from prompt_toolkit.application.current import create_app_session
 from prompt_toolkit.input import create_pipe_input
 from prompt_toolkit.output import DummyOutput
 
+import reyn.interfaces.inline.app as inline_app_mod
+import reyn.interfaces.repl.repl as repl_mod
 from reyn.core.events.asyncio_diagnostics import install_asyncio_exception_handler
 
 
@@ -176,4 +179,56 @@ def test_durable_capture_survives_prompt_toolkit_prompt_wait(
     assert (
         event["data"]["context_message"]
         == "message-only-context-during-prompt-wait"
+    )
+
+
+def _call_passes_set_exception_handler_false(source: str, method_name: str) -> bool:
+    """Whether *source* contains a ``<...>.<method_name>(...)`` call that
+    passes ``set_exception_handler=False`` as a keyword.
+
+    AST-level (not a substring grep): tolerant of formatting/whitespace and
+    scoped to the actual call, not a comment mentioning the param.
+    """
+    tree = ast.parse(source)
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        if not (isinstance(func, ast.Attribute) and func.attr == method_name):
+            continue
+        for kw in node.keywords:
+            if (
+                kw.arg == "set_exception_handler"
+                and isinstance(kw.value, ast.Constant)
+                and kw.value.value is False
+            ):
+                return True
+    return False
+
+
+def test_repl_prompt_call_sites_disable_prompt_toolkit_exception_handler() -> None:
+    """Tier 2b: both REPL prompt_toolkit entry points keep reyn's asyncio
+    exception handler wired by passing ``set_exception_handler=False``.
+
+    The durable-capture test above hardcodes the parameter in its own driver,
+    so it would stay green even if a future edit dropped the argument from the
+    production call sites -- i.e. it verifies the mechanism, not the wiring.
+    This pins the wiring itself: if ``interfaces/repl/repl.py``'s
+    ``prompt_session.prompt_async(...)`` (the ``--cui`` / non-TTY path) or
+    ``interfaces/inline/app.py``'s ``app.run_async(...)`` (the default
+    interactive ``reyn chat`` path) loses the argument, prompt_toolkit's
+    default (``True``) silently re-masks #2637's capture -- exactly the #2786
+    regression -- and this goes RED. Reads the real module source (AST), no
+    mocks.
+    """
+    repl_src = Path(repl_mod.__file__).read_text()
+    inline_src = Path(inline_app_mod.__file__).read_text()
+
+    assert _call_passes_set_exception_handler_false(repl_src, "prompt_async"), (
+        "repl.py's prompt_session.prompt_async(...) must pass "
+        "set_exception_handler=False (else prompt_toolkit re-masks #2637 capture)"
+    )
+    assert _call_passes_set_exception_handler_false(inline_src, "run_async"), (
+        "inline/app.py's app.run_async(...) must pass "
+        "set_exception_handler=False (else prompt_toolkit re-masks #2637 capture)"
     )

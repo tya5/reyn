@@ -34,6 +34,8 @@ with an equivalent handler).
 from __future__ import annotations
 
 import asyncio
+import logging
+import sys
 import traceback
 from typing import Any
 
@@ -98,15 +100,48 @@ def _durably_capture(context: dict[str, Any]) -> None:
         pass
 
 
+def _asyncio_log_reaches_console() -> bool:
+    """Whether an ERROR record on the ``asyncio`` logger reaches the console.
+
+    ``loop.default_exception_handler`` logs via the ``asyncio`` logger. If the
+    effective handler chain includes a ``StreamHandler`` pointed at the real
+    console (``sys.stdout`` / ``sys.stderr``) -- or NO handler at all, in which
+    case ``logging``'s ``lastResort`` handler writes to stderr -- the message
+    is already on screen. Only when the interactive-CUI redirect
+    (``_setup_interactive_logging`` in interfaces/cli/commands/chat.py) has
+    replaced those with a ``FileHandler`` does no console handler remain.
+
+    Walks the logger→parent chain honoring ``propagate``, mirroring
+    ``logging.Logger.callHandlers``. ``FileHandler`` is a ``StreamHandler``
+    subclass, so it is excluded explicitly.
+    """
+    logger: logging.Logger | None = logging.getLogger("asyncio")
+    saw_handler = False
+    while logger is not None:
+        for handler in logger.handlers:
+            saw_handler = True
+            if isinstance(handler, logging.StreamHandler) and not isinstance(
+                handler, logging.FileHandler
+            ):
+                if getattr(handler, "stream", None) in (sys.stdout, sys.stderr):
+                    return True
+        if not logger.propagate:
+            break
+        logger = logger.parent
+    # No handler anywhere in the chain → logging.lastResort (stderr) fires.
+    return not saw_handler
+
+
 def _surface_while_app_running(context: dict[str, Any]) -> None:
     """Print the context's message on screen while a prompt_toolkit
-    Application owns the terminal (#2786 polish).
+    Application owns the terminal AND the ``asyncio`` logger's output has
+    been redirected away from the console (#2786 polish).
 
     ``loop.default_exception_handler`` (called before this, in ``_handler``)
     already logs ``context["message"]`` via the ``asyncio`` logger --
     including the message-only case (no ``exception`` key) this module's
     docstring describes, where the message is the ONLY diagnostic available.
-    That log line reaches stderr for every entrypoint EXCEPT reyn's own
+    That log line reaches the console for every entrypoint EXCEPT reyn's own
     interactive chat CUI: `_setup_interactive_logging`
     (interfaces/cli/commands/chat.py) redirects the root logger to
     `.reyn/logs/reyn.log` for the whole duration of that session, so the
@@ -114,13 +149,18 @@ def _surface_while_app_running(context: dict[str, Any]) -> None:
     exactly the "Exception None" blank-diagnostics symptom #2786 reports,
     even after the loop's exception handler is no longer masked.
 
+    The ``_asyncio_log_reaches_console()`` guard is what keeps this from
+    DOUBLE-printing on paths where the default handler already reached the
+    console -- e.g. the ``--cui`` PromptSession path (a prompt_toolkit
+    Application IS running there, but logging is NOT redirected, so stderr
+    already showed the message). Surfacing there would print it twice.
+
     A bare ``print`` would also corrupt whichever prompt_toolkit
     Application currently owns the terminal (the inline CUI's rule-bar
-    Application, or the `--cui` / non-TTY PromptSession's own Application),
-    so this goes through ``run_in_terminal`` -- the same mechanism
-    prompt_toolkit's own ``Application._handle_exception`` and reyn's REPL
-    output loop (``interfaces/repl/repl.py``) already use to interleave
-    ad-hoc output with a live render.
+    Application), so this goes through ``run_in_terminal`` -- the same
+    mechanism prompt_toolkit's own ``Application._handle_exception`` and
+    reyn's REPL output loop (``interfaces/repl/repl.py``) already use to
+    interleave ad-hoc output with a live render.
 
     No-op when no Application is running (headless entrypoints -- web
     server, chainlit, cron, dogfood -- are unaffected; their unredirected
@@ -131,6 +171,11 @@ def _surface_while_app_running(context: dict[str, Any]) -> None:
     except Exception:  # noqa: BLE001 -- optional at import time, never fatal
         return
     if get_app_or_none() is None:
+        return
+    if _asyncio_log_reaches_console():
+        # The default handler already put the message on screen; a second
+        # print via run_in_terminal would double it. Only surface when the
+        # log has been redirected off-console (interactive-CUI session).
         return
 
     exc = context.get("exception")
