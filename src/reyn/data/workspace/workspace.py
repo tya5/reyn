@@ -162,15 +162,30 @@ class Workspace:
         self._backend.write_bytes(path, content.encode("utf-8"))
         self._events.emit("workspace_updated", path=str(path))
 
-    def write_file_bytes(self, path_str: str, data: bytes) -> None:
+    def write_file_bytes(self, path_str: str, data: bytes, *, emit: bool = True) -> str:
         """Write raw bytes into the project (#1452 — the write-side mirror of
         ``read_file_bytes``). Used by file__edit / write to persist content
         already encoded in the file's detected codec (preserving a non-UTF-8
         encoding + BOM on in-place edits). Same write-zone gating as
-        ``write_file``. Raises PermissionError if denied."""
+        ``write_file``. Raises PermissionError if denied.
+
+        Returns the resolved absolute path string that was written.
+
+        ``emit=False`` (#2782) skips the ``workspace_updated`` emit — for a
+        caller running this off the event loop (an ``asyncio.to_thread``
+        worker), which MUST emit itself afterward, back on the loop thread.
+        A worker-thread ``ctx.events.emit`` reaches ``EventStore.write``,
+        which calls ``asyncio.get_running_loop()`` — off-loop, that RAISES,
+        falling to a non-serialized sync-fallback write path that mutates
+        ``EventStore``'s rotation state without the loop-thread-only
+        serialization protecting it, racing the DurabilityWorker's own
+        writes to the same file (the #2780/#2784 off-loop thread-safety
+        contract this must not violate)."""
         path = self._resolve_write(path_str)
         self._backend.write_bytes(path, data)
-        self._events.emit("workspace_updated", path=str(path))
+        if emit:
+            self._events.emit("workspace_updated", path=str(path))
+        return str(path)
 
     def delete_file(self, path_str: str) -> bool:
         """Delete a file from the project. Returns True if deleted, False if not found."""
