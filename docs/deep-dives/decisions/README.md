@@ -89,6 +89,12 @@ historical value with status updated to "superseded by ADR-XXXX").
 
 > Web UI direction (= 元 ADR-0028) は positioning doc に re-class、 `docs/deep-dives/research/positioning/web-ui-direction.md` 参照。 現在 vision は **`reyn chat` (= local + embedded Web UI server を session bind で同梱) + `reyn serve` (= explicit long-running server、 browser からアクセス)** の 2 commands。 業界慣行 (Ollama / vLLM / LangGraph) の `<tool> serve` pattern に整合、 remote TUI client は workspace location semantics の懸念で当面 scope 外 (= browser remote access で代替、 将来 concrete demand 出たら再判断)。 embedded thesis は `reyn chat` 内に温存。 実現性検討は未着手。
 
+### Runtime interaction model
+
+| ADR | Topic |
+|---|---|
+| [0039](0039-thin-client-single-writer-server.md) | N thin CUI clients × one single-writer server — UI-path unification, four-surface separation (Proposed) |
+
 ## Format
 
 ```markdown
