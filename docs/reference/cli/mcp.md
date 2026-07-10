@@ -65,6 +65,13 @@ The chat router exposes the same install surface as four `mcp` verbs split along
 
 The CLI and chat paths converge at `op_runtime/mcp_install.py`, so permission gates, secret detection, and audit events are identical.
 
+**Persistence asymmetry.** The two paths differ in one respect: whether the new server config is written when the server can't be reached.
+
+- **Chat-driven install, mid-turn, with a live per-session reloader** — probe-then-commit: the server is probed (spawn/connect + `list_tools`) *before* anything is written. A failed or cancelled probe leaves `.reyn/mcp.yaml` unchanged (no half-install) — this fits the immediate use case, since the LLM wanted to use the server this same turn.
+- **`reyn mcp install` (CLI) or any install with no live reloader attached** — writes the config without probing first. The server may currently be unreachable; this fits the deferred use case of configuring a server to come up later.
+
+Both paths converge again after the write (or non-write): permission gates, secret detection, and audit events are unaffected by which path ran.
+
 ---
 
 ## Subcommand: `search`
