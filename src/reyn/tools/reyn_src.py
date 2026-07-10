@@ -25,16 +25,28 @@ def _as_reyn_src(result: dict) -> dict:
     result["kind"] = "reyn_src"
     return result
 
-# Description must be byte-identical to the current router_tools.py
-# ToolSpec.description for reyn_src_list (lines 776-783). Copied verbatim.
+# router_tools.py derives its rendered description from this ToolDefinition
+# via render_for_router() (registry lookup), not a separate literal — keep
+# this the single source of truth for the LLM-facing text.
+#
+# The example path was "docs/en/concepts" until the docs i18n restructure
+# (suffix-based: English lives at the repo-root path, Japanese is the same
+# path with a ".ja.md" filename suffix — no "/en/" or "/ja/" directory
+# prefix). That stale example reliably steered agents into guessing
+# nonexistent "docs/en/..." paths (a tool-description-caused attractor, not
+# generic LLM hallucination — confirmed by grep across dogfood journal
+# findings hitting this exact wrong path repeatedly). Kept in sync with
+# ``docs/concepts`` actually existing at the repo root.
 _REYN_SRC_LIST_DESCRIPTION = (
     "List entries under a path inside Reyn's own repository "
     "(= the project that built this agent). Pass \"\" for "
     "the repo root. Returns names + types (file/dir). Use "
     "this to discover Reyn's source/doc layout before "
     "reading specific files. Examples: list \"\" for the "
-    "top-level layout, \"docs/en/concepts\" for concept "
-    "docs, or any subdirectory path for its contents."
+    "top-level layout, \"docs/concepts\" for concept docs "
+    "(English; Japanese translations are the same path with a "
+    "\".ja.md\" filename suffix, not a separate directory), or "
+    "any subdirectory path for its contents."
 )
 
 # Parameters JSON schema must be byte-identical to the current
