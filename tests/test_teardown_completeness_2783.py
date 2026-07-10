@@ -188,3 +188,47 @@ async def test_remove_session_closes_event_store_synchronously_before_cancel(tmp
         "remove_session must close the spawned session's EventStore synchronously, "
         "before task.cancel(), not rely on the cancelled run() task's own finally (#2783)"
     )
+
+
+@pytest.mark.asyncio
+async def test_archive_agent_closes_event_store_and_fs_watcher(tmp_path, monkeypatch):
+    """Tier 2: #2783 — `archive_agent` (the DELETE seam for the MAIN session,
+    `registry.py:805-834`) got the SAME FsWatcher/EventStore synchronous-close
+    fix as `remove_session` (`registry.py:1968-1990`), added in the SAME PR — a
+    separate call site with its own risk of being missed. Per the co-vet
+    discipline of falsifying every call site a multi-site fix touches, not just
+    one sibling path: this test targets `archive_agent` specifically, distinct
+    from `test_remove_session_closes_event_store_synchronously_before_cancel`
+    above (which only drives `remove_session`).
+
+    Uses a call-through spy on `Session.aclose_event_store`/`aclose_fs_watcher`
+    rather than an on-disk content check: `archive_agent` awaits
+    `self._state_log.append(...)` AFTER the close block, and that await gives
+    the EventStore's background drainer a chance to flush the queued write
+    anyway — even WITHOUT this fix — so an on-disk assertion here would pass
+    whether or not `archive_agent` actually called the close methods (a
+    timing coincidence, not a real green). A call-count spy is deterministic
+    regardless of drainer timing."""
+    monkeypatch.chdir(tmp_path)
+    reg = _make_registry(tmp_path)
+    session = reg.get_or_load("owner")
+
+    calls: dict[str, int] = {"event_store": 0, "fs_watcher": 0}
+    orig_aclose_event_store = session.aclose_event_store
+    orig_aclose_fs_watcher = session.aclose_fs_watcher
+
+    async def _spy_event_store() -> None:
+        calls["event_store"] += 1
+        await orig_aclose_event_store()
+
+    async def _spy_fs_watcher() -> None:
+        calls["fs_watcher"] += 1
+        await orig_aclose_fs_watcher()
+
+    monkeypatch.setattr(session, "aclose_event_store", _spy_event_store)
+    monkeypatch.setattr(session, "aclose_fs_watcher", _spy_fs_watcher)
+
+    await reg.archive_agent("owner", purge=False)
+
+    assert calls["event_store"] == 1, "archive_agent must call session.aclose_event_store() (#2783)"
+    assert calls["fs_watcher"] == 1, "archive_agent must call session.aclose_fs_watcher() (#2783)"
