@@ -269,6 +269,39 @@ def _scenario_state_targets(project_root: Path, agent_name: str) -> "dict[str, P
     }
 
 
+def _leaked_agent_dirs(project_root: Path, keep_agent: str) -> "list[Path]":
+    """#2169: the spawn-arc-created SIBLING agent dirs under ``.reyn/agents/`` that a
+    fresh per-scenario reset must remove — every agent dir EXCEPT the dogfood target.
+
+    Agent-creating scenarios (spawn-arc #2103 B/C) write ``.reyn/agents/<name>/profile.yaml``
+    for each agent they spawn (``researcher``/``alice``/``A``/``B``/``C``/``child``/…).
+    In single-run mode the project ``.reyn/`` is REUSED across runs, so those created
+    agents leak: a re-run of an agent-creating scenario hits ``agent already exists``
+    (``AgentRegistry.create`` raises when ``profile.yaml`` is present) → ``refuted``.
+
+    The dogfood TARGET agent (``keep_agent``, default ``"default"``) is deliberately
+    spared: its ``profile.yaml`` is a precondition — ``AgentRegistry.get_or_load`` raises
+    ``FileNotFoundError`` without it, so wiping it would block EVERY scenario — and its
+    ephemeral ledger/history are already wiped by ``_scenario_state_targets``. Per-agent
+    event logs live under ``.reyn/events/agents/<name>/`` (PR20), NOT under the removed
+    ``.reyn/agents/<name>/`` dir, so this removes no event log (no running-web constraint,
+    the reason ``dogfood_fresh_reset.sh`` — which has no agent name — defers this)."""
+    agents_root = project_root / ".reyn" / "agents"
+    if not agents_root.is_dir():
+        return []
+    return [d for d in sorted(agents_root.iterdir()) if d.is_dir() and d.name != keep_agent]
+
+
+def _wipe_leaked_agents(project_root: Path, keep_agent: str) -> None:
+    """Remove the spawn-arc-created sibling agent dirs (#2169) so agent-creating
+    scenarios are reproducible in single-run mode. Spares ``keep_agent`` (see
+    :func:`_leaked_agent_dirs`). Idempotent: a no-op when none have leaked."""
+    import shutil
+
+    for d in _leaked_agent_dirs(project_root, keep_agent):
+        shutil.rmtree(d, ignore_errors=True)
+
+
 def _baselines_dir() -> Path:
     return _dogfood_base_dir() / "baselines"
 
@@ -401,6 +434,11 @@ def _build_live_runner(agent_name: str, *, env_backend=None, ws_base_dir=None, w
       context — defeating the "fresh per scenario" guarantee. The
       dogfood_fresh_reset.sh script explicitly defers per-agent history
       wipe to callers (= the runner is the caller); this is that wipe.
+    - Wipes agents CREATED by spawn-arc scenarios (sibling .reyn/agents/<other>/
+      dirs) before each scenario so an agent-creating scenario is reproducible
+      in single-run mode — otherwise created agents leak across runs and a
+      re-run hits "agent already exists" (#2169). The dogfood target agent is
+      spared (its profile.yaml is a load precondition).
     - Drops the cached Session from the registry between scenarios so
       the session's in-memory EventLog starts empty each time.
 
@@ -562,6 +600,11 @@ def _build_live_runner(agent_name: str, *, env_backend=None, ws_base_dir=None, w
         # wipe to the runner because it needs the agent name (which the script doesn't have).
         targets["action_usage"].unlink(missing_ok=True)
         targets["history"].unlink(missing_ok=True)
+        # #2169: remove agents CREATED by spawn-arc scenarios (siblings under .reyn/agents/),
+        # which otherwise leak across single-runs → "agent already exists" on re-run. The target
+        # agent is spared (its profile.yaml is a precondition). Same "needs the agent name" reason
+        # dogfood_fresh_reset.sh can't do this — the runner has the name, so it does it here.
+        _wipe_leaked_agents(project_root, agent_name)
 
     def _collect_events(registry: AgentRegistry) -> list[dict]:
         """Harvest events emitted during the scenario from the EventStore."""
