@@ -13,6 +13,7 @@ from reyn.schemas.models import FileIROp
 from . import register
 from .context import OpContext
 from .context import sandbox_policy_from_ctx as _sandbox_policy_from_ctx
+from .path_locks import get_path_lock, locked_paths
 
 _WRITE_OPS = frozenset({"write", "edit", "delete", "regenerate_index", "mkdir", "move"})
 _READ_OPS = frozenset({"read", "glob", "grep", "stat"})
@@ -237,15 +238,20 @@ async def handle(op: FileIROp, ctx: OpContext) -> dict:
         # changed. The pre-read is best-effort (skipped if read is denied).
         _prev_enc: str | None = None
         _prev_size: int | None = None  # #1466: bytes of the file before overwrite
-        try:
-            _prev_bytes, _existed = ctx.workspace.read_file_bytes(op.path)
-            if _existed:
-                _, _prev_enc = decode_text_or_none(_prev_bytes)
-                _prev_size = len(_prev_bytes)  # zero extra I/O — reuse the encoding pre-read
-        except PermissionError:
-            pass
-        _content = op.content or ""
-        ctx.workspace.write_file(op.path, _content)
+        # #2782 path-locking step: hold the SAME per-path lock `edit` holds, so
+        # a concurrent edit's read-modify-write can't interleave with this
+        # blind overwrite (either direction would silently discard the other
+        # op's change — a lost update).
+        async with get_path_lock(_resolve_for_gate(ctx, op.path)):
+            try:
+                _prev_bytes, _existed = ctx.workspace.read_file_bytes(op.path)
+                if _existed:
+                    _, _prev_enc = decode_text_or_none(_prev_bytes)
+                    _prev_size = len(_prev_bytes)  # zero extra I/O — reuse the encoding pre-read
+            except PermissionError:
+                pass
+            _content = op.content or ""
+            ctx.workspace.write_file(op.path, _content)
         ctx.events.emit("tool_executed", op="write_file", path=op.path)
         result: dict = {
             "kind": "file", "op": "write", "path": op.path, "status": "ok",
@@ -422,7 +428,11 @@ async def handle(op: FileIROp, ctx: OpContext) -> dict:
         }
 
     if op.op == "delete":
-        deleted = ctx.workspace.delete_file(op.path)
+        # #2782: same per-path lock as edit/write — otherwise a concurrent
+        # edit's read-modify-write can straddle this delete and "resurrect"
+        # the file (edit read before the delete, writes back after it).
+        async with get_path_lock(_resolve_for_gate(ctx, op.path)):
+            deleted = ctx.workspace.delete_file(op.path)
         ctx.events.emit("tool_executed", op="delete_file", path=op.path, deleted=deleted)
         return {"kind": "file", "op": "delete", "path": op.path, "status": "ok", "deleted": deleted}
 
@@ -433,6 +443,15 @@ async def handle(op: FileIROp, ctx: OpContext) -> dict:
         return await _execute_edit(op, ctx)
 
     if op.op == "regenerate_index":
+        # #2782: lock the SAME per-path key on the actually-written
+        # `output_path` (not the source `path`, which is a directory of
+        # *.md sources being read, not the file being mutated). The
+        # error branches (missing output_path/entry_template) never
+        # touch disk, so they run outside the lock.
+        if op.output_path:
+            resolved_output = _resolve_for_gate(ctx, op.output_path)
+            async with get_path_lock(resolved_output):
+                return _execute_regenerate_index(op, ctx)
         return _execute_regenerate_index(op, ctx)
 
     if op.op == "mkdir":
@@ -456,7 +475,14 @@ async def handle(op: FileIROp, ctx: OpContext) -> dict:
                 "kind": "file", "op": "move", "path": op.path,
                 "status": "error", "error": "dest_path is required for move",
             }
-        moved = ctx.workspace.move_path(op.path, op.dest_path)
+        # #2782: move touches TWO paths (source is effectively deleted, dest is
+        # effectively written) — lock BOTH via `locked_paths`, which acquires
+        # them in a fixed sorted order (never src-then-dest vs dest-then-src)
+        # so a move and a reverse move can never deadlock against each other.
+        src_resolved = _resolve_for_gate(ctx, op.path)
+        dst_resolved = _resolve_for_gate(ctx, op.dest_path)
+        async with locked_paths(src_resolved, dst_resolved):
+            moved = ctx.workspace.move_path(op.path, op.dest_path)
         if not moved:
             ctx.events.emit("tool_executed", op="move", path=op.path, found=False)
             return {
@@ -692,7 +718,15 @@ def _execute_edit_sync(op: FileIROp, ctx: OpContext) -> tuple[dict, int | None, 
 
 
 async def _execute_edit(op: FileIROp, ctx: OpContext) -> dict:
-    result, replacements, written_path = await asyncio.to_thread(_execute_edit_sync, op, ctx)
+    # #2782 path-locking step: #2794 made the read-modify-write atomic WITHIN
+    # this one `to_thread` job, but two concurrent `edit_file` (or edit +
+    # write/delete/move) ops on the SAME path now run in different worker
+    # threads — both read, both write, one silently lost (the demonstrated
+    # race). The per-path lock is held across the ENTIRE `to_thread` call
+    # (the whole read-modify-write), so a second same-path writer blocks here
+    # until this one's write has landed.
+    async with get_path_lock(_resolve_for_gate(ctx, op.path)):
+        result, replacements, written_path = await asyncio.to_thread(_execute_edit_sync, op, ctx)
     if replacements is not None:
         # Order matches pre-#2782 behavior: write_file_bytes's workspace_updated
         # emit ran BEFORE the handler's tool_executed emit.
