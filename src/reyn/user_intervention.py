@@ -245,6 +245,21 @@ class UserChannel(Protocol):
 InterventionBus = RequestBus
 
 
+def _neutralize_terminal(value: str) -> str:
+    """Strip ESC / control sequences from an LLM-derived intervention leaf
+    before it reaches the ``StdinInterventionBus`` prompt_toolkit prompt
+    string (#2779). Mirrors ``runtime/services/intervention_handler
+    ._neutralize_terminal`` (#2776) exactly — same
+    ``core/present/guard.get_neutralizer("terminal")`` strategy (ESC/control
+    strip, FP-0054) — applied at this bus's own render seam so the
+    `reyn run` / cron / scripted-stdin surface gets the same guard the
+    inline-CUI surface already has.
+    """
+    from reyn.core.present.guard import get_neutralizer
+
+    return get_neutralizer("terminal").neutralize(value)[0]
+
+
 def match_choice(text: str, choices: list[InterventionChoice]) -> InterventionChoice | None:
     """Return the choice whose hotkey matches `text` exactly (case-sensitive),
     or None when no hotkey matches. Whitespace is stripped.
@@ -296,15 +311,30 @@ class StdinInterventionBus:
 
     @staticmethod
     def _render_prompt(iv: UserIntervention) -> str:
+        """Build the prompt_toolkit prompt string for this intervention.
+
+        ``iv.prompt`` / ``iv.detail`` / ``iv.suggestions`` / choice ``label``s
+        are LLM-derived (untrusted) — ``ask_user`` args come straight from a
+        model tool-call, and permission prompts interpolate a model-controlled
+        path. Each is passed through the SAME terminal neutralizer (#2776,
+        ``core/present/guard.get_neutralizer("terminal")`` — ESC/control
+        strip) the inline-CUI intervention paths use, so a control/ESC
+        sequence embedded in that content cannot drive this stdin-bus
+        terminal (#2779, the sibling surface #2776 left unguarded). The
+        ``[actor]`` prefix and the ``> `` affordance are OS-controlled and
+        need no guard; ``choice.hotkey``/``id`` (match keys) are never
+        rendered here and stay untouched.
+        """
         lines: list[str] = []
         prefix = f"[{iv.actor}] " if iv.actor else ""
-        lines.append(f"{prefix}{iv.prompt}")
+        lines.append(f"{prefix}{_neutralize_terminal(iv.prompt)}")
         if iv.detail:
-            lines.append(f"  {iv.detail}")
+            lines.append(f"  {_neutralize_terminal(iv.detail)}")
         if iv.suggestions:
-            lines.append(f"  options: {' / '.join(iv.suggestions)}")
+            options = " / ".join(_neutralize_terminal(s) for s in iv.suggestions)
+            lines.append(f"  options: {options}")
         if iv.choices:
-            labels = " / ".join(c.label for c in iv.choices)
+            labels = " / ".join(_neutralize_terminal(c.label) for c in iv.choices)
             lines.append(f"  {labels}")
         lines.append("  > ")
         return "\n".join(lines)
