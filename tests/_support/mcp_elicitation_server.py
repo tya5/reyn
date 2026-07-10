@@ -19,6 +19,12 @@ Tools:
                                     ``"api_key"`` to exercise the sensitive-field
                                     warning path, or ``"comment"`` for the
                                     non-sensitive control case).
+  - ``pick(question)``          -> ``ctx.elicit(question, response_type=
+                                    Literal["red","green","blue"])`` — a single
+                                    (scalar) ENUM-schema field; the sibling of
+                                    ``confirm`` in the single-closed-set-field
+                                    class (#2622). Returns the elicited value as
+                                    text, or ``"decline"`` / ``"cancel"``.
   - ``ask_multi()``             -> a THREE-field flat dataclass schema
                                     (``name: str``, ``count: int``, ``proceed:
                                     bool``) — exercises D1's sequential
@@ -28,6 +34,7 @@ Tools:
 from __future__ import annotations
 
 from dataclasses import dataclass, make_dataclass
+from typing import Literal
 
 from fastmcp import Context, FastMCP
 
@@ -38,6 +45,12 @@ def _render(result) -> str:
     if result.action == "accept":
         return str(result.data)
     return result.action  # "decline" | "cancel"
+
+
+@mcp.tool()
+async def pick(question: str, ctx: Context) -> str:
+    result = await ctx.elicit(question, response_type=Literal["red", "green", "blue"])
+    return _render(result)
 
 
 @mcp.tool()

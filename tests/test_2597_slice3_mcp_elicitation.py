@@ -19,7 +19,7 @@ from pathlib import Path
 
 import pytest
 
-from reyn.intervention_choices import ACCEPT
+from reyn.intervention_choices import ACCEPT, DECLINE
 from reyn.mcp.connection_service import MCPConnectionService
 from reyn.user_intervention import InterventionAnswer, UserIntervention
 
@@ -68,14 +68,17 @@ class _EventRecorder:
 
 
 @pytest.mark.asyncio
-async def test_bool_schema_accept_routes_through_bus_with_attribution():
-    """Tier 2: (a) a bool-schema elicitation is routed through the intervention
-    bus with forced server-attribution; a human ACCEPT (gate) + "true" (field)
-    answer resolves to {action: accept, content: {value: True}} — observed via
-    the REAL server's own rendering of the elicitation result."""
+async def test_single_bool_field_collapses_to_one_prompt():
+    """Tier 2: #2622 — a single-CLOSED-SET-field (bool) elicitation renders
+    exactly ONE prompt, not two. Before #2622 a ``confirm`` surfaced the gate
+    banner AND a redundant per-field prompt (``value: yes or no?``) that only
+    restated the ask against the scalar-wrapper name. The collapse folds them:
+    one attributed prompt (carrying the server's real question + the "NOT reyn"
+    disclaimer) whose choices collect the answer. A single ``"true"`` answer
+    resolves to {action: accept, content: {value: True}} — observed via the
+    REAL server's own rendering."""
     bus = _ScriptedBus([
-        InterventionAnswer(choice_id=ACCEPT),  # the gate: engage with this elicitation
-        InterventionAnswer(choice_id="true"),  # the single bool field
+        InterventionAnswer(choice_id="true"),  # the one merged prompt
     ])
     events = _EventRecorder()
     service = MCPConnectionService(
@@ -90,18 +93,63 @@ async def test_bool_schema_accept_routes_through_bus_with_attribution():
     finally:
         await service.aclose()
 
-    # Server attribution: every prompt the human saw carries the server name
-    # (either the full gate disclaimer, or the short per-field prefix); the
-    # gate prompt specifically carries the explicit "NOT reyn" disclaimer.
-    assert bus.seen, "the elicitation must route through the bus"
-    for iv in bus.seen:
-        assert "srv" in iv.prompt
-    gate_ivs = [iv for iv in bus.seen if iv.kind == "mcp_elicitation"]
-    assert gate_ivs and "NOT reyn" in gate_ivs[0].prompt
+    # Exactly ONE prompt reaches the human — the redundant second render is gone.
+    # (Unpack-to-one is the behavioral "exactly one" assertion: a second prompt
+    # makes this raise, without pinning a literal count.)
+    (only,) = bus.seen
+    # That one prompt carries full server attribution (the "NOT reyn" disclaimer)
+    # AND the server's real question — not the meaningless scalar-wrapper name.
+    assert "srv" in only.prompt and "NOT reyn" in only.prompt
+    assert "Delete the file?" in only.prompt
+    # No separate per-field ("mcp_elicitation_field") render was emitted.
+    assert not [iv for iv in bus.seen if iv.kind == "mcp_elicitation_field"]
 
     event_names = [name for name, _ in events.events]
     assert "mcp_elicitation_requested" in event_names
     assert "mcp_elicitation_answered" in event_names
+
+
+@pytest.mark.asyncio
+async def test_single_bool_field_no_and_decline_stay_distinct():
+    """Tier 2: #2622 — folding the gate into the single bool prompt preserves
+    BOTH MCP actions the two-prompt flow exposed: answering "no" (accept +
+    value False) and declining (action=decline) remain separately reachable
+    from the one prompt, so the collapse loses no server-observable semantics."""
+    for choice_id, expected in (("false", "False"), (DECLINE, "decline")):
+        bus = _ScriptedBus([InterventionAnswer(choice_id=choice_id)])
+        service = MCPConnectionService(
+            elicitation_bus=bus, elicitation_gate=lambda: True,
+        )
+        try:
+            client = await service.get("srv", _CFG)
+            result = await client.call_tool("confirm", {"question": "Delete?"})
+            assert result["content"][0]["text"] == expected
+        finally:
+            await service.aclose()
+        # Still exactly one prompt on both the "no" and the "decline" path.
+        (only,) = bus.seen
+        assert only.kind == "mcp_elicitation"
+        assert not [iv for iv in bus.seen if iv.kind == "mcp_elicitation_field"]
+
+
+@pytest.mark.asyncio
+async def test_single_enum_field_collapses_to_one_prompt():
+    """Tier 2: #2622 — the enum sibling of the single-closed-set-field class
+    collapses identically: a lone enum field renders ONE attributed prompt whose
+    choices are the enum values, and the picked value round-trips to the REAL
+    server (no separate gate + per-field pair)."""
+    bus = _ScriptedBus([InterventionAnswer(choice_id="green")])
+    service = MCPConnectionService(elicitation_bus=bus, elicitation_gate=lambda: True)
+    try:
+        client = await service.get("srv", _CFG)
+        result = await client.call_tool("pick", {"question": "Pick a color"})
+        assert result["content"][0]["text"] == "green"
+    finally:
+        await service.aclose()
+
+    (only,) = bus.seen  # exactly one prompt for the lone enum field
+    assert "srv" in only.prompt and "NOT reyn" in only.prompt
+    assert not [iv for iv in bus.seen if iv.kind == "mcp_elicitation_field"]
 
 
 @pytest.mark.asyncio

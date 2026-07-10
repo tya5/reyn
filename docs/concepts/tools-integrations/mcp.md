@@ -145,6 +145,7 @@ Prompts have no subscribe concept — MCP defines no per-prompt push notificatio
 A server can ask the user a flat/primitive-schema question through reyn's own consent path — the server issues an `elicitation/create` request, and reyn turns it into a user intervention prompt.
 
 - **Server attribution.** The prompt always names the asking server and states this is not reyn (e.g. `⚠️ MCP server 'github' asks (this is NOT reyn): ...`); individual field prompts carry the same `[MCP server '<name>']` prefix.
+- **One prompt for a single closed-set field.** A question that resolves to a single yes/no or enum choice (e.g. a `confirm`) is shown as ONE prompt — the attributed banner, whose choices are the answer plus an explicit `decline`. It is not split into a separate accept/decline gate followed by a redundant value prompt. Multi-field questions still show the accept/decline gate first, then one prompt per field; a single free-text field also keeps its gate.
 - **Sensitive-field warning.** A field whose name or description contains `password`, `token`, `key`, `secret`, or `credential` gets an extra confirmation step first, stating explicitly that the answer will be sent to the server and that reyn never autofills it from env vars or stored secrets.
 - **No autofill.** Every answer is human-typed — this path never reads env vars or the secrets store to prefill a field.
 - **Configuration** (per server, under `mcp.servers.<name>`): `elicitation` (`prompt` (default) | `auto_decline`), `elicitation_timeout_seconds` (default 120).
