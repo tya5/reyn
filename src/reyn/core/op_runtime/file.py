@@ -1,6 +1,7 @@
 """file kind handler — read/write/glob/grep/delete/edit/regenerate_index/mkdir/move/stat."""
 from __future__ import annotations
 
+import asyncio
 import re
 from collections import defaultdict
 from pathlib import Path
@@ -404,7 +405,12 @@ async def handle(op: FileIROp, ctx: OpContext) -> dict:
         }
 
     if op.op == "glob":
-        matches = ctx.workspace.glob_files(op.path, max_results=op.max_results)
+        # #2782: offloaded — pure read (tree-walk), no atomicity concern, safe to
+        # move wholesale to a worker thread. `ctx.events.emit` stays on the event
+        # loop thread (called after the `await`, not inside the threaded call) —
+        # EventStore.write ultimately does an `asyncio.Queue.put_nowait`, which is
+        # NOT thread-safe if called from a to_thread worker thread.
+        matches = await asyncio.to_thread(ctx.workspace.glob_files, op.path, max_results=op.max_results)
         ctx.events.emit("tool_executed", op="glob_files", path=op.path, match_count=len(matches))
         return {
             "kind": "file",
@@ -421,10 +427,10 @@ async def handle(op: FileIROp, ctx: OpContext) -> dict:
         return {"kind": "file", "op": "delete", "path": op.path, "status": "ok", "deleted": deleted}
 
     if op.op == "grep":
-        return _execute_grep(op, ctx)
+        return await _execute_grep(op, ctx)
 
     if op.op == "edit":
-        return _execute_edit(op, ctx)
+        return await _execute_edit(op, ctx)
 
     if op.op == "regenerate_index":
         return _execute_regenerate_index(op, ctx)
@@ -482,14 +488,22 @@ async def handle(op: FileIROp, ctx: OpContext) -> dict:
     raise ValueError(f"unsupported file op: {op.op!r}")
 
 
-def _execute_grep(op: FileIROp, ctx: OpContext) -> dict:
+def _execute_grep_sync(op: FileIROp, ctx: OpContext) -> tuple[dict, int | None]:
+    """The I/O-bound core of ``grep`` (tree-walk + per-file read + regex scan) —
+    pure, safe to run wholesale on a worker thread (#2782). Returns
+    ``(result, match_count_to_emit)``; ``match_count_to_emit`` is ``None`` for the
+    validation-error branches (no event was emitted for those before #2782
+    either). The caller emits ``tool_executed`` AFTER the ``to_thread`` call
+    returns, back on the event loop thread — ``ctx.events.emit`` ultimately does
+    an ``asyncio.Queue.put_nowait`` (EventStore's DurabilityWorker), which is NOT
+    thread-safe if called from a worker thread."""
     if not op.pattern:
-        return {"kind": "file", "op": "grep", "status": "error", "error": "pattern is required for grep"}
+        return {"kind": "file", "op": "grep", "status": "error", "error": "pattern is required for grep"}, None
     flags = re.IGNORECASE if op.case_insensitive else 0
     try:
         regex = re.compile(op.pattern, flags)
     except re.error as exc:
-        return {"kind": "file", "op": "grep", "status": "error", "error": f"invalid regex: {exc}"}
+        return {"kind": "file", "op": "grep", "status": "error", "error": f"invalid regex: {exc}"}, None
 
     # FP-0008 #1115 Stage 1: the glob+read+regex scan is an environment-internal
     # primitive run by the backend (Workspace.grep gates the root + delegates).
@@ -506,7 +520,7 @@ def _execute_grep(op: FileIROp, ctx: OpContext) -> dict:
             context_after=op.context_after,
         )
     except PermissionError as exc:
-        return {"kind": "file", "op": "grep", "status": "denied", "error": str(exc)}
+        return {"kind": "file", "op": "grep", "status": "denied", "error": str(exc)}, None
 
     def _rel(p: Path) -> str:
         try:
@@ -516,14 +530,12 @@ def _execute_grep(op: FileIROp, ctx: OpContext) -> dict:
 
     if result.output_mode == "files_with_matches":
         matched = [_rel(f) for f in result.files]
-        ctx.events.emit("tool_executed", op="grep", pattern=op.pattern, match_count=len(matched))
         return {"kind": "file", "op": "grep", "status": "ok",
-                "output_mode": "files_with_matches", "files": matched, "count": len(matched)}
+                "output_mode": "files_with_matches", "files": matched, "count": len(matched)}, len(matched)
 
     if result.output_mode == "count":
-        ctx.events.emit("tool_executed", op="grep", pattern=op.pattern, match_count=result.count)
         return {"kind": "file", "op": "grep", "status": "ok",
-                "output_mode": "count", "count": result.count}
+                "output_mode": "count", "count": result.count}, result.count
 
     matches: list[dict] = []
     for hit in result.matches:
@@ -536,10 +548,16 @@ def _execute_grep(op: FileIROp, ctx: OpContext) -> dict:
             entry["context"] = hit["context"]
         matches.append(entry)
 
-    ctx.events.emit("tool_executed", op="grep", pattern=op.pattern, match_count=len(matches))
     return {"kind": "file", "op": "grep", "status": "ok",
             "output_mode": "content", "pattern": op.pattern,
-            "matches": matches, "count": len(matches)}
+            "matches": matches, "count": len(matches)}, len(matches)
+
+
+async def _execute_grep(op: FileIROp, ctx: OpContext) -> dict:
+    result, match_count = await asyncio.to_thread(_execute_grep_sync, op, ctx)
+    if match_count is not None:
+        ctx.events.emit("tool_executed", op="grep", pattern=op.pattern, match_count=match_count)
+    return result
 
 
 def _changed_region_preview(
@@ -585,11 +603,24 @@ def _changed_region_preview(
     return rendered
 
 
-def _execute_edit(op: FileIROp, ctx: OpContext) -> dict:
+def _execute_edit_sync(op: FileIROp, ctx: OpContext) -> tuple[dict, int | None]:
+    """The read-modify-write core of ``edit_file`` — run WHOLESALE on a worker
+    thread (#2782), preserving today's atomicity: no ``await`` used to appear
+    between the read and the write (the whole stretch ran uninterrupted on the
+    event loop), so no ``await`` may appear inside this function either — it
+    must stay one uninterrupted synchronous call, just now off-loop. Splitting
+    the read and the write into separate ``to_thread`` calls would reintroduce
+    an interleaving window (a concurrent session's edit landing between this
+    read and this write) that does not exist today.
+
+    Returns ``(result, replacements_to_emit)``; the caller emits
+    ``tool_executed`` AFTER this returns, back on the event loop thread — see
+    ``_execute_grep_sync``'s docstring for why (EventStore's
+    ``asyncio.Queue.put_nowait`` is not thread-safe off the loop thread)."""
     if op.old_string is None:
-        return {"kind": "file", "op": "edit", "status": "error", "error": "old_string is required"}
+        return {"kind": "file", "op": "edit", "status": "error", "error": "old_string is required"}, None
     if op.new_string is None:
-        return {"kind": "file", "op": "edit", "status": "error", "error": "new_string is required"}
+        return {"kind": "file", "op": "edit", "status": "error", "error": "new_string is required"}, None
 
     raw_bytes, found = ctx.workspace.read_file_bytes(op.path)
     if not found:
@@ -601,7 +632,7 @@ def _execute_edit(op: FileIROp, ctx: OpContext) -> dict:
             "status": "not_found",
             "error": f"file not found: {op.path}",
             "suggestions": suggestions,
-        }
+        }, None
 
     # #1452: decode via the shared codec ladder so a non-UTF-8 text file can be
     # edited in place (encoding preserved on write-back below). A binary file
@@ -612,15 +643,15 @@ def _execute_edit(op: FileIROp, ctx: OpContext) -> dict:
             "kind": "file", "op": "edit", "path": op.path, "status": "error",
             "binary": True,
             "error": "binary file — cannot edit as text (its bytes were not loaded).",
-        }
+        }, None
 
     count = content.count(op.old_string)
     if count == 0:
         return {"kind": "file", "op": "edit", "status": "error",
-                "error": "old_string not found in file"}
+                "error": "old_string not found in file"}, None
     if not op.replace_all and count > 1:
         return {"kind": "file", "op": "edit", "status": "error",
-                "error": f"old_string appears {count} times; set replace_all=true to replace all occurrences"}
+                "error": f"old_string appears {count} times; set replace_all=true to replace all occurrences"}, None
 
     new_content = content.replace(op.old_string, op.new_string) if op.replace_all \
         else content.replace(op.old_string, op.new_string, 1)
@@ -638,10 +669,9 @@ def _execute_edit(op: FileIROp, ctx: OpContext) -> dict:
                 f"({_encoding or 'utf-8'}) — file left unchanged. Some new "
                 "characters cannot be encoded there."
             ),
-        }
+        }, None
     ctx.workspace.write_file_bytes(op.path, encoded)
     replacements = count if op.replace_all else 1
-    ctx.events.emit("tool_executed", op="edit_file", path=op.path, replacements=replacements)
     # #1418: an additive, show-not-judge preview of the changed region so the
     # agent can SEE what landed (and at what indent), not just the count. For
     # replace_all this shows the first changed region; the count is in
@@ -652,7 +682,14 @@ def _execute_edit(op: FileIROp, ctx: OpContext) -> dict:
         "kind": "file", "op": "edit", "path": op.path, "status": "ok",
         "replacements": replacements, "preview": preview,
         **({"encoding": _encoding} if _encoding else {}),
-    }
+    }, replacements
+
+
+async def _execute_edit(op: FileIROp, ctx: OpContext) -> dict:
+    result, replacements = await asyncio.to_thread(_execute_edit_sync, op, ctx)
+    if replacements is not None:
+        ctx.events.emit("tool_executed", op="edit_file", path=op.path, replacements=replacements)
+    return result
 
 
 def regenerate_index_impl(
