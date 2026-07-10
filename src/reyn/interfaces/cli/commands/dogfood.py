@@ -545,8 +545,6 @@ def _build_live_runner(agent_name: str, *, env_backend=None, ws_base_dir=None, w
             state_log=None,
             # #2093: the uniform reyn.yaml-derived registry config bundle.
             factory_config=SessionFactoryConfig.from_config(config, project_root),
-            environment_backend=env_backend,   # #1544: container shadow-git
-            workspace_state_dir=ws_state_dir,  # #1557 gap-#1: shadow git-dir under --state-dir
         )
         _reg_cell.append(reg)
         return reg

@@ -462,8 +462,6 @@ def run(args: argparse.Namespace) -> None:
         # #2093: the uniform reyn.yaml-derived registry config bundle
         # (delegation_capability_default) — one source point.
         factory_config=SessionFactoryConfig.from_config(session_cfg.config, project_root),
-        environment_backend=env_backend,
-        workspace_state_dir=ws_state_dir,
     )
 
     name = args.agent_name or DEFAULT_AGENT_NAME
