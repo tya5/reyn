@@ -70,11 +70,30 @@ parsed from another as long as the same registry is passed to both.
 A DSL text is one or more YAML documents (``---``-separated). Each document
 is classified as a ``schema:`` document or a ``pipeline:`` document by its
 top-level key; a text may mix both (schemas typically precede the pipeline
-that references them). Exactly one ``pipeline:`` document must be present in
-a call to :func:`parse_pipeline_dsl` — a file with zero or more than one is a
-parse error (unambiguous "what did I just parse" contract for the registry
-caller populating a :class:`~reyn.core.pipeline.registry.PipelineRegistry`
-from one file per pipeline).
+that references them). A text may hold **multiple** ``pipeline:`` documents
+(#2722 — a file's private helper pipelines co-located with the entry point):
+
+  - :func:`parse_pipeline_docs` returns **all** ``pipeline:`` documents in the
+    text as a ``list[Pipeline]`` (at least one — zero is still a parse error).
+    Two documents declaring the SAME ``pipeline:`` name is a parse error
+    (#2722 R2 — the intra-file duplicate-name check). This is the entry point
+    the config loader (:mod:`reyn.data.pipelines.registry`) and the
+    ``pipeline_install`` op use.
+  - :func:`parse_pipeline_dsl` is the **single-document** contract: it calls
+    :func:`parse_pipeline_docs` and requires exactly one ``pipeline:`` document,
+    returning that sole :class:`Pipeline`. Used where a text is inherently one
+    pipeline — ``run_pipeline_inline`` ("run THIS one now") and programmatic
+    single-pipeline parse.
+
+This parser is **config-agnostic**: it parses the declared ``pipeline:`` names
+and ``call``/``match`` targets VERBATIM (bare names as authored) and never sees
+the config entry key that a namespaced registration derives from. The
+``{entry-key}.{local-name}`` prefixing — and the "a dot-less ``call`` target
+must resolve to a same-file sibling" rule (#2722) — belong to the loader, which
+owns the entry key (H4). The parser's one naming rule is #2722 **R1**: a ``.``
+is reserved as the namespace separator, so a declared ``pipeline:`` name
+containing ``.`` is a parse error (the config entry key is R1-checked separately
+by the loader).
 """
 from __future__ import annotations
 
@@ -101,7 +120,7 @@ from reyn.core.pipeline.expr import ExprParseError
 from reyn.core.pipeline.expr import parse as parse_expr
 from reyn.core.pipeline.schema import SchemaRegistry
 
-__all__ = ["PipelineParseError", "parse_pipeline_dsl"]
+__all__ = ["PipelineParseError", "parse_pipeline_dsl", "parse_pipeline_docs"]
 
 
 class PipelineParseError(ValueError):
@@ -657,6 +676,17 @@ def _parse_pipeline_doc(doc: "dict[str, Any]") -> Pipeline:
     name = doc.get("pipeline")
     if not isinstance(name, str) or not name:
         _fail("pipeline document: 'pipeline' must be a non-empty name string")
+    if "." in name:
+        # #2722 R1: '.' is RESERVED as the namespace separator — a global
+        # registered name is '<entry-key>.<local-name>', so a declared name may
+        # never contain a '.' (it would alias a qualified cross-file reference
+        # and break the dot/no-dot resolution dichotomy). Fail loud at parse.
+        _fail(
+            f"pipeline name {name!r} contains a reserved '.' — '.' is the "
+            "namespace separator (a registered pipeline's global name is "
+            "'<entry-key>.<local-name>'); a declared 'pipeline:' name must not "
+            "contain it"
+        )
     description = doc.get("description", "")
     if not isinstance(description, str):
         _fail(f"pipeline {name!r}: 'description' must be a string, got {type(description).__name__}")
@@ -681,15 +711,29 @@ def _parse_schema_doc(doc: "dict[str, Any]", schema_registry: SchemaRegistry) ->
     schema_registry.register(name, {"fields": fields})
 
 
-def parse_pipeline_dsl(text: str, schema_registry: SchemaRegistry) -> Pipeline:
-    """Parse `text` (one or more `---`-separated YAML documents) into exactly
-    one `Pipeline`. Any `schema:`-keyed document found is registered into
-    `schema_registry` (mutated in place — the caller passes the SAME
-    registry to `PipelineExecutor.run`/`resume` so `schema: REF` references
-    resolve). Raises `PipelineParseError` for malformed YAML, a malformed R1
-    expression, any construct outside the linear executor's current scope
-    (see module docstring), or a text with zero or more than one `pipeline:`
-    document."""
+def parse_pipeline_docs(
+    text: str, schema_registry: SchemaRegistry
+) -> "list[Pipeline]":
+    """Parse `text` (one or more `---`-separated YAML documents) into a LIST of
+    `Pipeline`s — one per `pipeline:` document, in document order (#2722). Any
+    `schema:`-keyed document found is registered into `schema_registry` (mutated
+    in place — the caller passes the SAME registry to `PipelineExecutor.run`/
+    `resume` so `schema: REF` references resolve; every parsed pipeline shares
+    this one registry).
+
+    At least one `pipeline:` document must be present (zero is a parse error).
+    Two `pipeline:` documents declaring the SAME name is a parse error (#2722
+    R2 — the intra-file duplicate-name check; both would otherwise claim the
+    same `{entry-key}.{name}` global name). Raises `PipelineParseError` for
+    malformed YAML, a malformed R1 expression, a declared name containing the
+    reserved `.` (#2722 R1), any construct outside the linear executor's current
+    scope (see module docstring), a text with zero `pipeline:` documents, or an
+    intra-file duplicate declared name.
+
+    This function is CONFIG-AGNOSTIC (H4): it returns pipelines under their bare
+    declared names and leaves `call`/`match` targets verbatim. Namespacing
+    (`{entry-key}.{local-name}`) and the sibling-resolution of dot-less targets
+    are the loader's job (it owns the entry key)."""
     try:
         raw_docs = list(yaml.load_all(text, Loader=_PipelineLoader))
     except yaml.YAMLError as exc:
@@ -718,8 +762,37 @@ def parse_pipeline_dsl(text: str, schema_registry: SchemaRegistry) -> Pipeline:
                 f"key, got keys {sorted(doc)!r}"
             )
 
-    if len(pipeline_docs) != 1:
+    if not pipeline_docs:
+        _fail("expected at least one 'pipeline:' document, found 0")
+
+    pipelines = [_parse_pipeline_doc(d) for d in pipeline_docs]
+    # #2722 R2: intra-file duplicate declared-name check. Two docs claiming the
+    # same name would both map to `{entry-key}.{name}` — reject before the
+    # loader ever tries to register them.
+    seen: "set[str]" = set()
+    for pipeline in pipelines:
+        if pipeline.name in seen:
+            _fail(
+                f"duplicate 'pipeline:' name {pipeline.name!r} — two documents in "
+                "one DSL text may not declare the same name (each declared name "
+                "must be unique within the file)"
+            )
+        seen.add(pipeline.name)
+    return pipelines
+
+
+def parse_pipeline_dsl(text: str, schema_registry: SchemaRegistry) -> Pipeline:
+    """Parse `text` into exactly ONE `Pipeline` — the single-document contract.
+
+    A thin wrapper over :func:`parse_pipeline_docs` for the surfaces where a text
+    is inherently a single pipeline (``run_pipeline_inline`` — "run THIS one
+    now" — and programmatic single-pipeline parse). Raises `PipelineParseError`
+    (same failure set as :func:`parse_pipeline_docs`) plus a text with MORE than
+    one `pipeline:` document (this contract is single-doc; use
+    :func:`parse_pipeline_docs` for a multi-pipeline file)."""
+    pipelines = parse_pipeline_docs(text, schema_registry)
+    if len(pipelines) != 1:
         _fail(
-            f"expected exactly one 'pipeline:' document, found {len(pipeline_docs)}"
+            f"expected exactly one 'pipeline:' document, found {len(pipelines)}"
         )
-    return _parse_pipeline_doc(pipeline_docs[0])
+    return pipelines[0]

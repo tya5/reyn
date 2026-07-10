@@ -1,24 +1,26 @@
 # Sample pipeline — the minimal end-to-end example.
 #
 # This file is NOT registered by merely sitting in this directory — pipelines
-# are registered only via an explicit `pipelines.entries.<name>` declaration
+# are registered only via an explicit `pipelines.entries.<key>` declaration
 # in config (see docs/concepts/runtime/pipeline-registration.md). To make
 # this one live, either add:
 #
 #     pipelines:
 #       entries:
-#         hello:
+#         greetings:              # the entry KEY is a pure namespace label
 #           path: pipelines/hello.yaml
 #
 #   to reyn.yaml, or call `pipeline_management__install_local` with this
-#   file's path. Either way it registers as `hello` — the `pipeline:` key
-#   below is authoritative, not the file name — and is live immediately via
-#   hot-reload (no session restart needed).
+#   file's path. Namespacing is always on (#2722): every pipeline registers
+#   as `{entry-key}.{pipeline-name}`, so the `pipeline: hello` doc below
+#   registers as `greetings.hello`. The entry key does NOT need to equal the
+#   declared name — it is just the namespace. Live immediately via hot-reload
+#   (no session restart needed).
 #
-# An agent can then launch it:
-#     run_pipeline(name="hello", input={name: "Reyn"})
+# An agent can then launch it by its fully-qualified name:
+#     run_pipeline(name="greetings.hello", input={name: "Reyn"})
 # or via the qualified catalog verb the enumerator surfaces:
-#     pipeline__hello({name: "Reyn"})
+#     pipeline__greetings.hello({name: "Reyn"})
 #
 # It is a single pure `transform` step so it runs with no external tools —
 # safe to keep as a live smoke/dogfood pipeline.

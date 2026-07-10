@@ -66,7 +66,7 @@ def test_pipe_run_present_step_renders_to_stdout(tmp_path, monkeypatch, capsys):
     _write_present_pipeline(tmp_path)
 
     args = argparse.Namespace(
-        name="shows", input="{}", project=str(tmp_path), async_=False,
+        name="shows.shows", input="{}", project=str(tmp_path), async_=False,
         grant_file_write=False,
     )
     run_run(args)

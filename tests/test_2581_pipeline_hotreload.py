@@ -121,7 +121,7 @@ async def test_hotreload_adds_pipeline_to_live_registry(
     ``session.router_host.get_pipeline_registry()`` — not a dead local copy."""
     monkeypatch.chdir(tmp_path)
     session = _make_session(tmp_path)
-    assert "hello" not in _names(session)
+    assert "hello.hello" not in _names(session)
 
     _write_pipeline(tmp_path, "hello.yaml", _HELLO_V1)
     _write_dynamic_entries(tmp_path, ("hello", "pipelines/hello.yaml"))
@@ -129,8 +129,8 @@ async def test_hotreload_adds_pipeline_to_live_registry(
     changed = await session._reapply_pipelines({})
 
     assert changed is True
-    assert "hello" in _names(session)
-    assert "hello" in set(session.router_host.get_pipeline_registry().names()), (
+    assert "hello.hello" in _names(session)
+    assert "hello.hello" in set(session.router_host.get_pipeline_registry().names()), (
         "the RouterHostAdapter's own captured registry must reflect the swap "
         "(the dual-write the adapter needs since it never re-reads Session)"
     )
@@ -147,15 +147,15 @@ async def test_hotreload_changes_pipeline_description_on_live_registry(
     _write_pipeline(tmp_path, "hello.yaml", _HELLO_V1)
     _write_dynamic_entries(tmp_path, ("hello", "pipelines/hello.yaml"))
     session = _make_session(tmp_path)
-    assert session.pipeline_registry.get("hello").steps[0].value.startswith("'v1-'")
+    assert session.pipeline_registry.get("hello.hello").steps[0].value.startswith("'v1-'")
 
     _write_pipeline(tmp_path, "hello.yaml", _HELLO_V2)
     changed = await session._reapply_pipelines({})
 
     assert changed is True
-    assert session.pipeline_registry.get("hello").steps[0].value.startswith("'v2-'")
+    assert session.pipeline_registry.get("hello.hello").steps[0].value.startswith("'v2-'")
     assert (
-        session.router_host.get_pipeline_registry().get("hello").steps[0].value.startswith("'v2-'")
+        session.router_host.get_pipeline_registry().get("hello.hello").steps[0].value.startswith("'v2-'")
     ), "router_host's own registry copy must also see the changed definition"
 
 
@@ -188,8 +188,8 @@ async def test_hotreload_via_apply_pending_dual_write(
 
     assert summary is not None
     assert "pipelines" in summary["applied"]
-    assert "hello" in _names(session)
-    assert "hello" in set(session.router_host.get_pipeline_registry().names())
+    assert "hello.hello" in _names(session)
+    assert "hello.hello" in set(session.router_host.get_pipeline_registry().names())
 
 
 # ---------------------------------------------------------------------------
@@ -208,7 +208,7 @@ async def test_hotreload_malformed_pipeline_keeps_old_registry_intact(
     _write_pipeline(tmp_path, "hello.yaml", _HELLO_V1)
     _write_dynamic_entries(tmp_path, ("hello", "pipelines/hello.yaml"))
     session = _make_session(tmp_path)
-    assert "hello" in _names(session)
+    assert "hello.hello" in _names(session)
     old_registry = session.pipeline_registry
 
     # Break the file: malformed steps.
@@ -223,7 +223,7 @@ async def test_hotreload_malformed_pipeline_keeps_old_registry_intact(
     assert session.router_host.get_pipeline_registry() is old_registry, (
         "a failed rebuild must leave the router_host's captured registry untouched"
     )
-    assert "hello" in _names(session), "the last-good pipeline must still be registered"
+    assert "hello.hello" in _names(session), "the last-good pipeline must still be registered"
 
 
 @pytest.mark.asyncio
@@ -253,7 +253,7 @@ async def test_hotreload_malformed_pipeline_observable_via_warning_and_noop_appl
         "_reapply_pipelines" in rec.message for rec in caplog.records
     ), "the malformed-file failure must be logged for operator visibility"
     # And the old registry is still intact after the no-op apply.
-    assert "hello" in _names(session)
+    assert "hello.hello" in _names(session)
 
 
 # ---------------------------------------------------------------------------

@@ -297,14 +297,16 @@ class ReynConfig:
     # invisible to every session). Shape:
     #   pipelines:
     #     entries:
-    #       <name>:
+    #       <key>:
     #         path: "pipelines/hello.yaml"
     #         description: "One-line description"   # optional
     #         enabled: true                          # optional, default true
-    # Each entry's ``path`` is parsed via ``parse_pipeline_dsl``; the pipeline
-    # registers under its OWN declared ``pipeline:`` name (the authoritative
-    # resolution key a ``call``/``match`` step targets), not the config entry
-    # key — see ``build_pipeline_registry``'s name-mismatch validation.
+    # Each entry's ``path`` is parsed via ``parse_pipeline_docs`` (a file may
+    # hold multiple ``pipeline:`` documents — #2722). Namespacing is always on:
+    # every pipeline registers as ``{key}.{declared-name}``. The config entry
+    # key is a pure namespace label (it need NOT equal any declared name); a
+    # dot-less ``call``/``match`` target resolves to a same-file sibling, a
+    # dotted one to a global — see ``build_pipeline_registry``.
     # Absent/empty → no pipelines loaded. Merged across config tiers by name
     # (explicit entries win on collision) — same union-merge shape as
     # ``skills`` (see ``_merge`` in loader.py).

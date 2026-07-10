@@ -413,18 +413,16 @@ class PipelineInstallIROp(BaseModel):
       required when the repo root/subdir contains more than one candidate),
       and registers the installed copy's path.
 
-    ``name`` resolution: the pipeline DSL's own declared ``pipeline:`` name is
-    ALWAYS the registration identity (the key a ``call``/``match`` step
-    resolves against) — unlike skill, where the config key IS the identity.
-    When ``name`` is supplied it must match the DSL's declared ``pipeline:``
-    name; a mismatch is refused (``status="error"``) rather than silently
-    diverging the config key from the resolution key. When omitted, the
-    config key defaults to the DSL's declared name.
+    ``name`` resolution (#2722): ``name`` is a free NAMESPACE KEY (like skill),
+    NOT coupled to any declared ``pipeline:`` name. Every ``pipeline:`` document
+    in the file registers under ``{name}.{declared-name}``. ``.`` is reserved
+    (the namespace separator) and rejected in ``name``. When omitted, the key
+    defaults to the DSL file stem (or the source basename for a git install).
     """
     kind: Literal["pipeline_install"]
     path: str = ""                              # local DSL *.yaml file (ignored when source set; also selects the file inside a cloned source repo)
     scope: str = ".reyn/config/pipelines.yaml"   # target config file (no-op tier arg, forward-compat with mcp_install's `scope`)
-    name: str | None = None                      # must match the DSL's declared `pipeline:` name when set
+    name: str | None = None                      # free namespace key (#2722); no '.'; defaults to the DSL file stem
     # When set, the pipeline DSL is fetched from this git/GitHub URL (mirrors SkillInstallIROp.source).
     # Supports optional subdir via "//": "https://github.com/user/repo" (root) or
     # "https://github.com/user/repo//pipelines/my-pipeline" (pipelines/my-pipeline subdir).
