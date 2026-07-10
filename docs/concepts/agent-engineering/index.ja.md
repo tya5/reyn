@@ -78,7 +78,7 @@ run 内で rubric に対して出力をスコアリングする(`judge_output`: 
 - agent エンジニアリング一般が初めてですか? まず `CLAUDE.md` の Constitution 節と [charter.md](../architecture/charter.md) を読んでください — それらが現行の grounded なモデルです。このページにはレンズごとのナラティブな解説のために戻ってきてください。
 - 別のフレームワークから来ていますか? 最も興味のあるレンズにスキップしてください。クロスリンクが必要に応じて他のレンズに引き戻します。
 - 自分のシステムの自己評価をしていますか? 「まだ薄い部分」の記述 — 特に憲章の 2 つの honest thin area である Retrieval と Evaluation — が率直な箇所です。
-- **staleness についての注記**: この 8 つのレンズページのうち 3 つ(Reliability、Security、Product Think)は、以前の engine 削除 arc で削除された phase-graph skill engine を前提に書かれており、それぞれ何が stale で何が現行かを明示する状態バナーをページ冒頭に持っています。Tool Contract Design、System Design、Retrieval Engineering はすでに完全な書き直しを経ています。Evaluation と Observability は現行モデルに対して新規に書かれました。残り 3 ページの完全な de-drift パスは follow-up として、1 ページずつ追跡されています — `charter.md` 自体が family ごとに構築された方法をなぞっています。
+- **staleness についての注記**: この 8 つのレンズページのうち 2 つ(Security、Product Think)は、以前の engine 削除 arc で削除された phase-graph skill engine を前提に書かれており、それぞれ何が stale で何が現行かを明示する状態バナーをページ冒頭に持っています。Tool Contract Design、System Design、Retrieval Engineering、Reliability Engineering はすでに完全な書き直しを経ています。Evaluation と Observability は現行モデルに対して新規に書かれました。残り 2 ページの完全な de-drift パスは follow-up として、1 ページずつ追跡されています — `charter.md` 自体が family ごとに構築された方法をなぞっています。
 
 ## 関連情報
 
