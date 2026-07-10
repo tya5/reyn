@@ -65,8 +65,11 @@ _NULL_SURFACE = "null"
 
 _INLINE_MARKER = "<inline-data>"
 
-# The §3 fallback-stage labels used in the ack ``note`` (never in the fixed
-# ``presented`` event shape).
+# The §3 fallback-stage labels used in the ack ``note`` AND the ``presented``
+# event's ``fallback_stage`` field (#2671 — so the durable audit record can
+# distinguish a literal-only view rendered as-requested, ``fallback_stage:
+# null``, from an unknown-view / all-missed generic fallback, which otherwise
+# share the ``bindings_resolved=0, bindings_dropped=[]`` signature).
 _STAGE_CONTENT_TYPE = "content_type_default"
 _STAGE_GENERIC = "generic"
 
@@ -120,13 +123,22 @@ def _emit_presented(
     bindings_resolved: int,
     bindings_dropped: list[dict],
     rows: int,
+    fallback_stage: "str | None",
 ) -> None:
     """Emit the P6 ``presented`` audit event — refs + stats only, never content
     bytes (the data is already durable in the ref; the event stays light).
 
     ``view`` (FP-0055 PR-1 rename of the former ``template`` field): the
     registered name, ``blueprint:<hash>`` for an inline blueprint, or ``None``
-    when neither was given (``mode: "default"``)."""
+    when neither was given (``mode: "default"``).
+
+    ``fallback_stage`` (#2671): ``None`` when the requested rendering (or the
+    ``mode: "default"`` stage-3 viewer) reached the user directly, else the
+    fallback stage that actually rendered — ``content_type_default`` or
+    ``generic``. This is what lets the durable record tell a literal-only view
+    (rendered as requested, ``fallback_stage: null``) apart from an unknown /
+    all-missed view that fell through to a synthesized viewer; both otherwise
+    carry ``bindings_resolved=0, bindings_dropped=[]``."""
     ctx.events.emit(
         "presented",
         run_id=ctx.run_id,
@@ -140,6 +152,7 @@ def _emit_presented(
         bindings_resolved=bindings_resolved,
         bindings_dropped=bindings_dropped,
         rows=rows,
+        fallback_stage=fallback_stage,
     )
 
 
@@ -192,6 +205,7 @@ async def handle(op: PresentIROp, ctx: OpContext) -> dict:
         bindings_resolved=stats["bindings_resolved"],
         bindings_dropped=stats["bindings_dropped"],
         rows=stats["rows"],
+        fallback_stage=fallback_stage,
     )
 
     # 4. Hand the actually-rendered model to the wired surface (PR-B). Fire-and-
@@ -285,6 +299,19 @@ def _resolve_presentation(
         return requested, stage3, fallback_stage
 
     # Stage 4 — generic YAML/text (always renders — the final catch).
+    #
+    # #2671: this branch (and therefore ``fallback_stage="generic"`` on the
+    # presented event) is currently UNREACHABLE via ``handle()``. Reaching it
+    # requires stage 3 to report ``all_bindings_missed``, but every
+    # ``default_viewer_blueprint`` binds the whole document (``$bind: ""``, which
+    # ``resolve_pointer`` always resolves) or a zero-binding literal, so stage 3
+    # never all-misses. This is BY DESIGN, not a gap: FP-0054 §3 frames stage 3 as
+    # the shape-exhaustive universal viewer and stage 4 as the defense-in-depth
+    # "always renders" final catch guaranteeing the "data always reaches the user"
+    # invariant. Kept as a construction-time safety net; a future
+    # ``default_viewer_blueprint`` change that CAN all-miss re-activates it (and is
+    # caught by test_stage3_default_viewer_never_all_misses_so_generic_never_emitted,
+    # which would then go RED and demand event-level coverage of this value).
     stage4 = resolve_bindings(
         validate_blueprint(generic_blueprint(data)), data, surface=surface, ref=ref,
     )

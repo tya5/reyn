@@ -445,3 +445,136 @@ def test_fallback_event_carries_no_content_bytes(tmp_path: Path) -> None:
         kind="present", data_inline={"note": secret}, view="does_not_exist"), ctx))
     ev = [e for e in events.all() if e.type == "presented"][-1]
     assert secret not in json.dumps(ev.data)
+
+
+# ── Tier 2 (#2671): fallback_stage disambiguates the audit record ─────────────
+
+
+def _presented(events: EventLog) -> dict:
+    """The newest `presented` event's data payload."""
+    return [e for e in events.all() if e.type == "presented"][-1].data
+
+
+def test_literal_only_view_records_null_fallback_stage(tmp_path: Path) -> None:
+    """Tier 2: (#2671) a literal-only view (zero bindings) rendered AS REQUESTED
+    records `fallback_stage: null` — no viewer took over.
+
+    This is one half of the ambiguous pair #2671 resolves: the event carries
+    `bindings_resolved=0, bindings_dropped=[]` (there was nothing to bind), which
+    used to be indistinguishable from an unknown-view fallback with the same
+    zero-binding signature. `fallback_stage` is what tells them apart."""
+    # A literal-only blueprint: one component, no `$bind` anywhere.
+    literal_blueprint = [{"component": "text", "text": "a fixed literal line"}]
+    ctx, events = _ctx(tmp_path, registry=None, renderer=_RecordingRenderer())
+    ack = _run(handle(PresentIROp(
+        kind="present", data_inline={"anything": 1}, blueprint=literal_blueprint), ctx))
+
+    assert ack["ok"] is True
+    assert "note" not in ack  # rendered as requested — no fallback note
+    ev = _presented(events)
+    assert ev["bindings_resolved"] == 0
+    assert ev["bindings_dropped"] == []
+    assert ev["fallback_stage"] is None  # THE disambiguator: rendered as requested
+
+
+def test_unknown_view_records_nonnull_fallback_stage(tmp_path: Path) -> None:
+    """Tier 2: (#2671) an UNKNOWN view name that falls through to the synthesized
+    content-type default viewer records a NON-null `fallback_stage`
+    (`content_type_default`) — even though its `bindings_resolved=0,
+    bindings_dropped=[]` signature is identical to the literal-only case above.
+
+    Together with the literal-only test, this proves the durable audit record can
+    now answer "what did the user actually see" on exactly the fallback dimension
+    the feature introduces (the gap #2671 reports)."""
+    registry = build_presentation_registry({"entries": {"authors": {"blueprint": _AUTHORS_TEMPLATE}}})
+    ctx, events = _ctx(tmp_path, registry=registry, renderer=_RecordingRenderer())
+    ack = _run(handle(PresentIROp(
+        kind="present", data_inline={"author": "amy"}, view="does_not_exist"), ctx))
+
+    assert ack["ok"] is True
+    assert "note" in ack  # a fallback fired
+    ev = _presented(events)
+    # Same zero-binding signature as the literal-only case …
+    assert ev["bindings_resolved"] == 0
+    assert ev["bindings_dropped"] == []
+    # … but fallback_stage now distinguishes it: a synthesized viewer took over.
+    assert ev["fallback_stage"] == "content_type_default"
+
+
+def test_matched_view_records_null_fallback_stage(tmp_path: Path) -> None:
+    """Tier 2: (#2671) a registered view whose bindings resolve records
+    `fallback_stage: null` (rendered as requested, no fallback)."""
+    data = {"results": [{"author": "amy"}, {"author": "bob"}]}
+    registry = build_presentation_registry({"entries": {"authors": {"blueprint": _AUTHORS_TEMPLATE}}})
+    ctx, events = _ctx(tmp_path, registry=registry, renderer=_RecordingRenderer())
+    _run(handle(PresentIROp(kind="present", data_inline=data, view="authors"), ctx))
+    ev = _presented(events)
+    assert ev["bindings_resolved"] >= 1
+    assert ev["fallback_stage"] is None
+
+
+def test_default_mode_stage3_records_null_fallback_stage(tmp_path: Path) -> None:
+    """Tier 2: (#2671) `mode: "default"` (neither view nor blueprint) rendering at
+    stage 3 records `fallback_stage: null` — the default viewer IS the requested
+    rendering here, not a fallback from anything (mirrors the ack's no-note rule)."""
+    ctx, events = _ctx(tmp_path, registry=None, renderer=_RecordingRenderer())
+    ack = _run(handle(PresentIROp(kind="present", data_inline={"author": "amy"}), ctx))
+    assert ack["mode"] == "default"
+    assert "note" not in ack
+    ev = _presented(events)
+    assert ev["fallback_stage"] is None
+
+
+def test_stage3_default_viewer_never_all_misses_so_generic_never_emitted(
+    tmp_path: Path,
+) -> None:
+    """Tier 2: (#2671) the presented event's `fallback_stage` is never `generic` —
+    stage-3's content-type default viewer always renders, so stage 4 is never
+    reached through the op path.
+
+    This completes the enum coverage honestly: the event's other two values
+    (`null`, `content_type_default`) are pinned by the tests above; this pins the
+    invariant that EXPLAINS the third. `generic` (stage 4) is currently
+    unreachable via `handle()` because every `default_viewer_blueprint` binds the
+    whole document (`$bind: ""`, always resolvable) or a zero-binding literal, so
+    stage 3 never reports `all_bindings_missed` — the sole trigger for the stage-4
+    generic viewer (FP-0054 §3 designs stage 3 as the shape-exhaustive universal
+    viewer and stage 4 as the defense-in-depth "always renders" final catch).
+
+    Drives a spread of data shapes (dict / list-of-dicts / list-of-scalars /
+    scalar / empty containers / binary marker / null-valued dict) through the REAL
+    op, on BOTH fallback entry points (unknown view name AND an all-missing inline
+    blueprint — each falls to stage 3), and asserts no emitted event ever carries
+    `fallback_stage == "generic"` (only `null` / `content_type_default`). Goes RED
+    if a future `default_viewer_blueprint` change makes stage 3 all-miss for any
+    shape — i.e. makes stage-4 generic reachable — which would then need its own
+    event-level coverage."""
+    shapes = [
+        {"author": "amy"},
+        [{"a": 1}, {"b": 2}],
+        [1, 2, 3],
+        "plain text",
+        42,
+        {},
+        [],
+        {"binary": True, "byte_size": 8},
+        {"a": None, "b": None},
+    ]
+    for data in shapes:
+        for op in (
+            # Unknown view → skips the requested stage, enters at stage 3.
+            PresentIROp(kind="present", data_inline=data, view="does_not_exist"),
+            # Inline blueprint whose sole binding misses → also falls to stage 3.
+            PresentIROp(
+                kind="present", data_inline=data,
+                blueprint=[{"component": "text", "text": {"$bind": "/absent"}}],
+            ),
+        ):
+            ctx, events = _ctx(tmp_path, registry=None, renderer=_RecordingRenderer())
+            _run(handle(op, ctx))
+            stage = _presented(events)["fallback_stage"]
+            assert stage != "generic", (
+                f"stage-4 generic unexpectedly emitted for data={data!r} — stage-3 "
+                "default viewer must always render (FP-0054 §3 universal viewer)"
+            )
+            assert stage in (None, "content_type_default")

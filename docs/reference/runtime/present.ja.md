@@ -165,6 +165,7 @@ note: "…"        # フォールバック段が描画した場合のみ存在
 | `bindings_resolved` | 解決されたバインディング数 |
 | `bindings_dropped` | `[{path, reason}]` |
 | `rows` | バインドされた行数 |
+| `fallback_stage` | `null` \| `content_type_default` \| `generic` — 実際にユーザーへ届いたビューア。`null` = 要求された描画（または `mode: "default"` の stage-3 ビューア）が直接描画された。非 null = 要求ビューが未知 / 全ミスで合成ビューアが引き継いだ。これにより、要求どおり描画されたリテラルのみビュー（`null`）を、未知 / 全ミスのフォールバックと区別できる — 両者とも `bindings_resolved=0, bindings_dropped=[]` を運ぶため。 |
 
 ## Replay / rewind — キャッシュとしての提示
 

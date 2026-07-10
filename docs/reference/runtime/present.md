@@ -170,6 +170,7 @@ bytes**:
 | `bindings_resolved` | count of resolved bindings |
 | `bindings_dropped` | `[{path, reason}]` |
 | `rows` | row count bound |
+| `fallback_stage` | `null` \| `content_type_default` \| `generic` — which viewer actually reached the user. `null` = the requested rendering (or the `mode: "default"` stage-3 viewer) rendered directly; a non-null value = the requested view was unknown / all-missed and a synthesized viewer took over. This is what distinguishes a literal-only view rendered as requested (`null`) from an unknown / all-missed fallback — both otherwise carry `bindings_resolved=0, bindings_dropped=[]`. |
 
 ## Replay / rewind — presentation as cache
 
