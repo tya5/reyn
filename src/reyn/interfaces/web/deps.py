@@ -385,10 +385,6 @@ def _get_registry():
             # (delegation_capability_default) — one bundle, so a new one can't be
             # missed here (the delegation_capability_default #2081 drift).
             factory_config=SessionFactoryConfig.from_config(config, root),
-            # ``_scoped`` is local to the session factory above; fetch the overrides
-            # at this scope via the accessor.
-            environment_backend=get_cli_scoped_overrides().environment_backend,
-            workspace_state_dir=get_cli_scoped_overrides().workspace_state_dir,
         )
         registry_ref.append(registry)
         _registry = registry

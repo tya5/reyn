@@ -149,8 +149,6 @@ class AgentRegistry:
         session_factory: Callable[[AgentProfile], "object"],
         state_log: StateLog | None = None,
         retention_policy: RetentionPolicy | None = None,
-        environment_backend: "object | None" = None,
-        workspace_state_dir: "Path | None" = None,
         delegation_capability_default: str = "inherit",
         max_spawn_depth: int = 0,
         max_spawn_children: int = 0,

@@ -227,7 +227,5 @@ def build_agent_registry_from_project(
         session_factory=_session_factory,
         state_log=state_log,
         factory_config=factory_config,
-        environment_backend=None,
-        workspace_state_dir=ws_state_dir,
     )
     return registry
