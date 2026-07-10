@@ -280,7 +280,11 @@ def _apply_auth_startup(args: argparse.Namespace, config) -> dict:
     if uds_path:
         run_dir.mkdir(parents=True, exist_ok=True)
         try:
-            run_dir.chmod(0o700)  # owner-only dir gates the socket file
+            # Owner-only (0700) run dir is the enforceable access gate for the
+            # socket: macOS ignores a UNIX socket's own file-mode bits on
+            # connect, so restricting the parent directory (not the socket file)
+            # is what keeps a foreign UID from connecting.
+            run_dir.chmod(0o700)
         except OSError:
             pass
         uvicorn_kwargs["uds"] = str(uds_path)

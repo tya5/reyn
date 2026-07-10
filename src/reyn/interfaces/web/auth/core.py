@@ -138,7 +138,7 @@ def check_startup_binding(host: str, *, token: str | None, uds: bool) -> None:
     A **non-loopback TCP bind WITHOUT a configured token** is the
     accidental-exposure hole (``reyn web --host 0.0.0.0`` with no auth would
     let any network client act as the operator). It refuses to start. UDS binds
-    (same-machine, socket file-mode gated) and loopback binds are allowed.
+    (same-machine, owner-only run-dir gated) and loopback binds are allowed.
     """
     if uds:
         return
@@ -201,8 +201,11 @@ class AuthContext:
     ) -> ConnectionIdentity:
         """Resolve the identity of a connection (server-side; client-untrusted).
 
-        UDS: OS-gated (socket ``0600`` admits only the operator UID). When a
-        peer UID is readable it must match the server UID, else the connection
+        UDS: OS-gated — the socket lives in an owner-only (``0700``) run
+        directory that admits only the operator UID (macOS ignores a socket's
+        own file-mode on ``connect``, so the parent dir is the enforceable
+        gate). When a peer UID is readable it must match the server UID, else
+        the connection
         is unauthenticated (defense in depth). Loopback / network: the token is
         required and compared in constant time. All authenticated connections
         resolve to the SAME operator user-id, so authorization is uniform across
@@ -300,7 +303,7 @@ def _peer_uid_from_ws(websocket) -> int | None:
 
     The raw peer socket is not exposed by Starlette's public surface, so this
     is a best-effort read of known scope locations. Returns ``None`` when the
-    socket is unreachable — UDS security still holds via the socket file mode;
+    socket is unreachable — UDS security still holds via the owner-only run dir;
     the peer-cred UID is an audit-stamp / defense-in-depth read, and the
     per-OS resolution itself is exercised directly in the peer-cred unit test.
     """

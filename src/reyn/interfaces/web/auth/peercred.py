@@ -15,7 +15,10 @@ abstracts the three cases behind one function:
 
 The UID this returns is the authorization anchor: the auth layer compares it
 against the server-owner UID so only the operator's own processes are admitted
-on the UDS tier (defense in depth behind the socket's ``0600`` file mode). It is
+on the UDS tier (defense in depth behind the owner-only ``0700`` run directory
+that holds the socket — macOS ignores a UNIX socket's own file-mode bits on
+``connect``, so the enforceable gate is the parent directory, not the socket
+file). It is
 deliberately a small, socket-in / uid-out function so it can be exercised
 directly against a real ``socket.socketpair(AF_UNIX)`` — both ends live in the
 test process, so the peer UID is the running user's own UID.
@@ -33,7 +36,7 @@ def peer_uid_from_socket(sock: socket.socket) -> int | None:
     *sock* must be a connected ``AF_UNIX`` stream socket. ``None`` is returned
     when the running OS exposes no peer-credential mechanism (e.g. Windows) or
     the syscall fails — the caller treats ``None`` as "peer UID unknown" and
-    relies on the token tier / socket file mode instead of guessing.
+    relies on the token tier / owner-only run directory instead of guessing.
     """
     try:
         if sys.platform.startswith("linux") and hasattr(socket, "SO_PEERCRED"):
