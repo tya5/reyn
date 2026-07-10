@@ -35,7 +35,7 @@ from reyn.dev.dogfood.scenarios import Scenario
 from reyn.llm.llm import LLMToolCallResult
 from reyn.llm.pricing import TokenUsage
 from reyn.runtime.budget.budget import BudgetTracker, CostConfig
-from reyn.runtime.profile import AgentProfile
+from reyn.runtime.profile import PROFILE_FILENAME, AgentProfile
 from reyn.runtime.registry import AgentRegistry
 from reyn.runtime.session import Session
 
@@ -379,3 +379,61 @@ async def test_history_jsonl_wiped_before_scenario(tmp_path, monkeypatch):
                 )
 
     assert result.scenario_id == "hist-s1"
+
+
+# ---------------------------------------------------------------------------
+# Test 6: created-agent isolation — spawn-arc sibling agents are wiped per
+# scenario through the REAL runner_fn -> _wipe_scenario_state wiring (#2169).
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_created_sibling_agents_wiped_before_scenario(tmp_path, monkeypatch):
+    """Tier 2: #2169 — agents CREATED by a prior spawn-arc scenario do not leak
+    into the next single-run scenario.
+
+    Regression guard for the PRODUCTION WIRING (not just the mechanism): the
+    runner's ``runner_fn`` calls ``_wipe_scenario_state`` first, which calls
+    ``_wipe_leaked_agents`` — so a leaked sibling ``.reyn/agents/<other>/`` must
+    be gone after a scenario runs. Drives the real runner_fn path end-to-end so
+    that DELETING the ``_wipe_leaked_agents`` call (dogfood.py) makes this RED —
+    the direct-call mechanism tests in test_dogfood_leaked_agents_wipe_2169.py
+    would stay green if that wiring were stripped, so this closes the gap.
+
+    Strategy:
+    1. Seed a created sibling agent (``researcher``) with a real profile.yaml on
+       disk before running any scenario (mirrors a prior spawn-arc scenario).
+    2. Run a scenario for the dogfood target ``default`` via the runner_fn.
+    3. Assert the sibling's profile.yaml (the ``AgentRegistry.exists`` marker
+       that triggers "agent already exists") is gone, while the target
+       ``default`` agent survives (its profile is a load precondition) — the
+       latter is also a self-check that the runner rooted on ``tmp_path``.
+    """
+    monkeypatch.chdir(tmp_path)
+
+    # A leaked created sibling from a prior spawn-arc scenario.
+    agents_root = tmp_path / ".reyn" / "agents"
+    researcher_dir = agents_root / "researcher"
+    AgentProfile.new("researcher", role="spawned").save(researcher_dir)
+    assert (researcher_dir / PROFILE_FILENAME).is_file(), (
+        "Precondition: leaked sibling agent seeded on disk."
+    )
+
+    async def fake_llm(**kw):
+        return _text_result("Fresh reply.")
+
+    runner_fn = _make_live_runner_fn(tmp_path, agent_name="default")
+    assert runner_fn is not None
+
+    scenario = _make_scenario("created-s1", input_text="hello")
+    monkeypatch.setattr("reyn.runtime.router_loop.call_llm_tools", fake_llm)
+    result = await runner_fn(scenario)
+
+    # The leaked sibling is gone — a re-run would no longer hit "already exists".
+    assert not (researcher_dir / PROFILE_FILENAME).is_file(), (
+        "the created sibling agent must be wiped by the runner's per-scenario reset"
+    )
+    assert not researcher_dir.exists()
+    # The dogfood target is spared (and this confirms the runner rooted on tmp_path).
+    assert (agents_root / "default" / PROFILE_FILENAME).is_file()
+    assert result.scenario_id == "created-s1"
