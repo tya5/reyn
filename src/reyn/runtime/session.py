@@ -5713,6 +5713,7 @@ class Session:
             contextual_permission=self._contextual_permission,  # #1827 S3 → control-IR OpContext
             hook_dispatcher=self._hook_dispatcher,  # #1800 slice 5c: complete-by-construction (both router callers)
             current_task_id=self._current_task_id,  # #1953 §16: ownership-derivation for task.create (enumerate ALL op-ctx builders)
+            hot_reloader=self._hot_reloader,  # #2761 PR-2: per-session reloader (both router op-ctx builders complete-by-construction)
         )
 
     async def _file_op(self, op_dict: dict) -> dict:

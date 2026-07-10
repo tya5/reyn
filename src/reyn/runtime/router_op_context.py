@@ -74,6 +74,7 @@ def build_router_op_context(
     task_subscription_writer: Any = None,  # #2187 backend-master: the Task subscription WAL writer
     hook_dispatcher: Any = None,  # #1800 slice 5c: the Session's HookDispatcher
     current_task_id: str | None = None,  # #1953 §16: the task this turn is executing → task.create ownership
+    hot_reloader: Any = None,  # #2761 PR-2: this session's HotReloader → immediate mid-turn install apply
 ) -> Any:
     """Build the chat-router OpContext (the single source for both hosts).
 
@@ -159,4 +160,5 @@ def build_router_op_context(
         task_subscription_writer=task_subscription_writer,  # #2187 backend-master: the Task subscription WAL writer
         hook_dispatcher=hook_dispatcher,  # #1800 slice 5c: task_start/end dispatch
         current_task_id=current_task_id,  # #1953 §16: ownership-derivation context
+        hot_reloader=hot_reloader,  # #2761 PR-2: per-session reloader for immediate mid-turn install apply
     )

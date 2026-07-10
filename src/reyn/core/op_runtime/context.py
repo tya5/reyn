@@ -147,6 +147,16 @@ class OpContext:
     # non-chat) → the op skips it (the opt-in contract, same as the step-event gate).
     state_log: "StateLog | None" = None
 
+    # #2761 PR-2: this SESSION's HotReloader (the #2073 S3 per-session route), so an
+    # install op (skill_install / pipeline_install) can apply its reload IMMEDIATELY
+    # (mid-turn) for a PURE ADDITION — making the just-installed NEW entry resolvable
+    # this turn. A same-name overwrite / no reloader keeps the deferred turn-boundary
+    # path. Per-session (never the process-global get_active_hot_reloader, which is the
+    # last-registered session — a multi-session footgun). None outside a live chat
+    # session (tests / CLI separate-process install) → the op falls back to the deferred
+    # path (unchanged behavior).
+    hot_reloader: "object | None" = None
+
     # FP-0022 follow-up: declarative SSL config for web_fetch and MCP registry.
     # Defaults to WebConfig() (= no override, falls through to env-var chain).
     # Callers that have a ReynConfig available should pass config.web here.

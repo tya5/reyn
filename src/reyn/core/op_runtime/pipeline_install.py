@@ -31,9 +31,11 @@ Local-path install (``op.source is None``):
   7. ``record_config_generation`` on the pipelines.yaml path AFTER write —
      the truncation-surviving recovery base (#2259 / CLAUDE.md recovery gate).
   8. Emit ``pipeline_installed`` event (P6 audit trail).
-  9. Request hot-reload so the installed pipeline goes live in the current session
-     (the ``"pipelines"`` seam — ``Session._reapply_pipelines`` — rebuilds the
-     registry from the fresh config cascade).
+  9. Reload so the installed pipeline goes live (#2761 PR-2): a PURE ADDITION on a
+     live per-session reloader (``ctx.hot_reloader``) applies the ``"pipelines"`` seam
+     (``Session._reapply_pipelines`` — rebuilds the registry from the fresh config
+     cascade) IMMEDIATELY (mid-turn) — resolvable this same turn; a same-name overwrite
+     (clobber-update) or no per-session reloader keeps the deferred turn-boundary path.
 
 Source/git install (``op.source`` set):
   Same pipeline as local, but step 0 fetches the DSL file first:
@@ -410,6 +412,11 @@ async def handle(
     }
     if op.source:
         entry["source"] = op.source
+    # #2761 PR-2: capture pure-addition-vs-overwrite BEFORE the write mutates entries,
+    # so step 9 routes a NEW name to the immediate mid-turn apply and a same-name
+    # overwrite (clobber-update — pipeline's only update path) to the deferred path.
+    from reyn.runtime.hot_reload import is_pure_addition  # noqa: PLC0415
+    _is_addition = is_pure_addition(safe_name, existing["pipelines"]["entries"])
     existing["pipelines"]["entries"][safe_name] = entry
     _write_yaml(config_path, existing)
 
@@ -428,10 +435,18 @@ async def handle(
     )
 
     # ── 9. Hot-reload: surface the installed pipeline in the current session ──
-    from reyn.runtime.hot_reload import get_active_hot_reloader  # noqa: PLC0415
-    _reloader = get_active_hot_reloader()
-    if _reloader is not None:
-        _reloader.request_reload(source="pipeline_install")
+    # #2761 PR-2: a PURE ADDITION on a live per-session reloader (ctx.hot_reloader)
+    # applies IMMEDIATELY (mid-turn) so the just-installed NEW pipeline is resolvable
+    # this turn (a call/match step can target it same execution); a same-name overwrite
+    # (clobber-update) or no per-session reloader (CLI separate process) keeps the
+    # existing deferred turn-boundary behavior — which also confines the R7 pending-call
+    # target hazard to the deferred path it already lives on.
+    from reyn.runtime.hot_reload import dispatch_install_reload  # noqa: PLC0415
+    await dispatch_install_reload(
+        getattr(ctx, "hot_reloader", None),
+        source="pipeline_install",
+        is_addition=_is_addition,
+    )
 
     return {
         "status": "installed",
