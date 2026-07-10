@@ -28,9 +28,9 @@ The OS never interprets the `rubric` content — it is the skill author's own ev
 
 Every `judge_output` call emits a P6 audit-event (`tool_executed` with `op=judge_output`, `target`, `score`, `passed`, `threshold`, `reason`) — a scored decision is auditable the same way any other op is.
 
-### `reyn eval`
+### `reyn run-once`
 
-A non-interactive CLI entry point for running an agent without a live approval prompt — permissions must already be pre-approved (in config or persisted from a prior interactive run) before the run starts. This is what makes `judge_output`-gated runs usable in CI: the scoring loop and the permission model are orthogonal, so an eval run's trust decisions are made once, up front, not re-litigated per invocation.
+The non-interactive CLI entry point for running an agent without a live approval prompt (`reyn eval` was a phase-graph-era command; it was deleted alongside that engine — `reyn run-once` is its current, live counterpart). Permissions must already be pre-approved before the run starts — e.g. `--grant-file-write` grants a specific capability at invocation time rather than via an interactive prompt. This is what makes `judge_output`-gated runs usable in CI: the scoring loop and the permission model are orthogonal, so a non-interactive run's trust decisions are made once, up front, not re-litigated per invocation.
 
 ## Where it's still thin
 

@@ -49,9 +49,9 @@ Approvals are keyed by skill, not by user. If skill A is granted `file.write:/tm
 
 A step that needs a non-ambient capability (operator files, network, env vars, process spawning) must split that I/O out into a `run_op` step — which carries its own permission gate and event-log entry — or use the permission-gated `reyn.api.safe.*` surface. There is no unsandboxed escape valve: a `mode: unsafe` declaration is rejected at load.
 
-### Non-interactive approval (eval, CI)
+### Non-interactive approval (run-once, CI)
 
-`reyn eval` does not prompt. Permissions must be in place before the run — either pre-approved in `reyn.yaml` (`permissions.<key>: allow`) or persisted from a prior interactive run. The trust model doesn't change between modes; eval just inherits the decisions you've already made.
+`reyn run-once` does not prompt (`reyn eval` was a phase-graph-era command, deleted alongside that engine; `run-once` is its current, live counterpart for non-interactive invocation). Permissions must be in place before the run — either pre-approved in `reyn.yaml` (`permissions.<key>: allow`) or persisted from a prior interactive run. The trust model doesn't change between modes; a non-interactive run just inherits the decisions you've already made.
 
 ### Content-layer defense
 
