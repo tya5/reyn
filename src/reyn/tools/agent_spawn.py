@@ -64,10 +64,10 @@ async def _handle(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
     return await rs.spawn_agent_fn(name=name, role=args.get("role", "") or "")
 
 
-from reyn.core.offload.canonical import CANONICAL_TODO  # noqa: E402
+from reyn.core.offload.canonical import agent_spawn_to_canonical  # noqa: E402
 
 AGENT_SPAWN = ToolDefinition(
-    canonical=CANONICAL_TODO,
+    canonical=agent_spawn_to_canonical,
     name="agent_spawn",
     router_dispatched=True,
     description=_AGENT_SPAWN_DESCRIPTION,

@@ -629,7 +629,9 @@ from reyn.core.offload.canonical import (  # noqa: E402
     CANONICAL_TODO,
     mcp_get_prompt_to_canonical,
     mcp_read_resource_to_canonical,
+    mcp_subscribe_resource_verb_to_canonical,
     mcp_to_canonical,
+    mcp_unsubscribe_resource_verb_to_canonical,
 )
 
 LIST_MCP_SERVERS = ToolDefinition(
@@ -739,7 +741,7 @@ READ_MCP_RESOURCE = ToolDefinition(
 # reuse (server enum only).
 
 SUBSCRIBE_MCP_RESOURCE = ToolDefinition(
-    canonical=CANONICAL_TODO,
+    canonical=mcp_subscribe_resource_verb_to_canonical,
     name="subscribe_mcp_resource",
     router_dispatched=True,
     description=_SUBSCRIBE_MCP_RESOURCE_DESCRIPTION,
@@ -752,7 +754,7 @@ SUBSCRIBE_MCP_RESOURCE = ToolDefinition(
 )
 
 UNSUBSCRIBE_MCP_RESOURCE = ToolDefinition(
-    canonical=CANONICAL_TODO,
+    canonical=mcp_unsubscribe_resource_verb_to_canonical,
     name="unsubscribe_mcp_resource",
     router_dispatched=True,
     description=_UNSUBSCRIBE_MCP_RESOURCE_DESCRIPTION,

@@ -22,7 +22,12 @@ from __future__ import annotations
 
 from typing import Any, Mapping
 
-from reyn.core.offload.canonical import CANONICAL_TODO
+from reyn.core.offload.canonical import (
+    CANONICAL_TODO,
+    task_comment_to_canonical,
+    task_heartbeat_to_canonical,
+    task_register_unblock_predicate_to_canonical,
+)
 from reyn.schemas.models import (
     TaskAbortIROp,
     TaskAddDependencyIROp,
@@ -88,6 +93,19 @@ _TASK_OPS: tuple[tuple[str, type, str], ...] = (
 )
 
 
+# #2681 Bucket C burn-down: these three task ops' ToolDefinition MUST declare the same canonical
+# mapper as their op_runtime registration (core/op_runtime/task.py) — both seams share the ONE
+# ``"task.<verb>"`` source id, and ``declare_canonical`` rejects a conflicting re-declaration. The
+# other 9 task ops (create/update_status/get/list/add_dependency/remove_dependency/
+# repoint_dependency/abort/assign) return a full ``task=...to_dict()`` record — genuinely structured,
+# left on ``CANONICAL_TODO`` (Bucket B).
+_TASK_OP_CANONICAL: "dict[str, Any]" = {
+    "task.heartbeat": task_heartbeat_to_canonical,
+    "task.register_unblock_predicate": task_register_unblock_predicate_to_canonical,
+    "task.comment": task_comment_to_canonical,
+}
+
+
 def _parameters_for(model: type) -> dict[str, Any]:
     """JSON-schema ``parameters`` for a task IROp model, minus the ``kind``
     discriminator (set by the factory, never the LLM)."""
@@ -150,7 +168,7 @@ def build_task_tool_definitions() -> list[ToolDefinition]:
     defs: list[ToolDefinition] = []
     for op_kind, model, description in _TASK_OPS:
         defs.append(ToolDefinition(
-            canonical=CANONICAL_TODO,
+            canonical=_TASK_OP_CANONICAL.get(op_kind, CANONICAL_TODO),
             name=op_kind,  # e.g. "task.create" — registry-dispatch target name
             description=description,
             parameters=_parameters_for(model),

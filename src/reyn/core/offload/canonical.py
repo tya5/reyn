@@ -799,6 +799,288 @@ def memory_body_to_canonical(result: dict) -> CanonicalToolResult:
     )
 
 
+# ── Status-text mappers — FP-0056 issue #2681 Bucket C burn-down ─────────────────────────────────
+#
+# The 26 (25 real mappers; ``topology_create`` triaged as a genuine RECORD — full config echo, not
+# an ack — and left in the ratchet ledger for Bucket B) write/ack/spawn-ack producers whose result
+# has NO readable body: a write confirmation, a spawn ack, an install ack. Before this burn-down each
+# took the ``CANONICAL_TODO`` whole-dict fallback (a raw ``structured`` blob); :func:`make_status_text_mapper`
+# is the ONE reusable factory every one of them declares through — a short human/LLM-readable status
+# line (the producer-specific phrasing) + the SAME structured fields carried as ``meta`` instead of an
+# opaque blob. Behavior-preserving: nothing the caller could read via the whole-dict fallback is lost,
+# only reshaped (canonical text+meta instead of a raw dict).
+
+
+def make_status_text_mapper(
+    render: "Callable[[dict], str]",
+    *,
+    meta_keys: "tuple[str, ...]" = (),
+    empty_marker: str = "(done)",
+) -> CanonicalMapper:
+    """Factory — build a canonical mapper for a SUCCESS-shaped status/ack result (issue #2681 Bucket
+    C: write/ack/spawn-ack producers with no readable body).
+
+    ``render(result)`` renders the short human/LLM-readable status line (the producer-specific
+    phrasing — "Saved '<slug>' to <path>.", "Spawned agent '<name>'.", "Removed N chunk(s).", …).
+    ``meta_keys`` names the top-level result fields that ride along as structured ``meta``
+    (frontmatter) — the SAME fields the pre-burn-down whole-dict fallback carried; a key absent from
+    a particular result shape is silently skipped (lets one factory call cover a producer with more
+    than one success sub-shape, e.g. ``mcp_install``'s ``ok`` vs ``needs_secrets``).
+
+    SUCCESS shape only — FP-0056 v2 piece #1 (the shared error seam) routes any
+    :func:`is_error_result` shape through ``error_to_canonical`` BEFORE a mapper runs, so ``render``
+    only ever sees a success/status dict."""
+
+    def _mapper(result: dict) -> CanonicalToolResult:
+        meta: dict[str, Any] = {}
+        for key in meta_keys:
+            value = result.get(key)
+            if value is not None:
+                meta[key] = value
+        text = _explicit_empty(render(result), empty_marker)
+        return CanonicalToolResult(text=text, attachments=[], source_ref=None, meta=meta)
+
+    return _mapper
+
+
+def _render_remember(result: dict) -> str:
+    return f"Saved '{result.get('saved', '')}' to {result.get('path', '')}."
+
+
+# ``remember_shared`` / ``remember_agent`` (tools/memory.py) — same success shape
+# ``{saved, layer, path}``, one shared mapper.
+remember_to_canonical = make_status_text_mapper(
+    render=_render_remember, meta_keys=("saved", "layer", "path"),
+)
+
+
+def _render_forget_memory(result: dict) -> str:
+    return f"Deleted memory '{result.get('deleted', '')}'."
+
+
+# ``forget_memory`` (tools/memory.py) — ``{deleted, layer}``.
+forget_memory_to_canonical = make_status_text_mapper(
+    render=_render_forget_memory, meta_keys=("deleted", "layer"),
+)
+
+
+def _render_cron_register(result: dict) -> str:
+    verb = "Replaced" if result.get("replaced") else "Registered"
+    return f"{verb} cron job '{result.get('name', '')}'."
+
+
+# ``cron_register`` (tools/cron.py) — ``{status, name, replaced, live_update_applied, path}``.
+cron_register_to_canonical = make_status_text_mapper(
+    render=_render_cron_register,
+    meta_keys=("name", "replaced", "live_update_applied", "path"),
+)
+
+
+def _render_cron_unregister(result: dict) -> str:
+    verb = "Removed" if result.get("removed") else "No matching job for"
+    return f"{verb} cron job '{result.get('name', '')}'."
+
+
+# ``cron_unregister`` (tools/cron.py) — ``{status, name, removed, live_update_applied, path}``.
+cron_unregister_to_canonical = make_status_text_mapper(
+    render=_render_cron_unregister,
+    meta_keys=("name", "removed", "live_update_applied", "path"),
+)
+
+
+def _render_cron_set_enabled(result: dict) -> str:
+    state = "enabled" if result.get("enabled") else "disabled"
+    return f"Cron job '{result.get('name', '')}' {state}."
+
+
+# ``cron_enable`` / ``cron_disable`` (tools/cron.py) — shared ``_set_enabled`` backbone, same shape
+# ``{status, name, enabled, found_in_dynamic, live_update_applied}``.
+cron_set_enabled_to_canonical = make_status_text_mapper(
+    render=_render_cron_set_enabled,
+    meta_keys=("name", "enabled", "found_in_dynamic", "live_update_applied"),
+)
+
+
+def _render_hooks_add(result: dict) -> str:
+    verb = "Added" if result.get("added") else "Already present:"
+    return f"{verb} hook at '{result.get('on', '')}'."
+
+
+# ``hooks_add`` (tools/hooks.py) — ``{status, on, added, reload_scheduled, path}``.
+hooks_add_to_canonical = make_status_text_mapper(
+    render=_render_hooks_add,
+    meta_keys=("on", "added", "reload_scheduled", "path"),
+)
+
+
+def _render_task_heartbeat(result: dict) -> str:
+    return f"Heartbeat recorded for task {result.get('task_id', '')} (state={result.get('state', '')})."
+
+
+# ``task.heartbeat`` (core/op_runtime/task.py) — ``{kind, status, task_id, state, unblocked}``.
+task_heartbeat_to_canonical = make_status_text_mapper(
+    render=_render_task_heartbeat, meta_keys=("task_id", "state", "unblocked"),
+)
+
+
+def _render_task_register_unblock_predicate(result: dict) -> str:
+    return f"Unblock predicate registered for task {result.get('task_id', '')}."
+
+
+# ``task.register_unblock_predicate`` (core/op_runtime/task.py) — ``{kind, status, task_id}``.
+task_register_unblock_predicate_to_canonical = make_status_text_mapper(
+    render=_render_task_register_unblock_predicate, meta_keys=("task_id",),
+)
+
+
+def _render_task_comment(result: dict) -> str:
+    return f"Comment {result.get('comment_id', '')} added to task {result.get('task_id', '')}."
+
+
+# ``task.comment`` (core/op_runtime/task.py) — ``{kind, status, task_id, comment_id}``.
+task_comment_to_canonical = make_status_text_mapper(
+    render=_render_task_comment, meta_keys=("task_id", "comment_id"),
+)
+
+
+def _render_agent_spawn(result: dict) -> str:
+    text = f"Spawned agent '{result.get('name', '')}' (parent={result.get('parent', '')})."
+    note = result.get("note")
+    return f"{text}\n{note}" if note else text
+
+
+# ``agent_spawn`` (tools/agent_spawn.py) — ``{status, name, parent, note}``.
+agent_spawn_to_canonical = make_status_text_mapper(
+    render=_render_agent_spawn, meta_keys=("name", "parent"),
+)
+
+
+def _render_session_spawn(result: dict) -> str:
+    text = f"Spawned session {result.get('sid', '')} (mode={result.get('mode', '')})."
+    note = result.get("note")
+    return f"{text}\n{note}" if note else text
+
+
+# ``session_spawn`` (tools/session_spawn.py) — ``{status, sid, mode, note}``.
+session_spawn_to_canonical = make_status_text_mapper(
+    render=_render_session_spawn, meta_keys=("sid", "mode"),
+)
+
+
+def _render_delegate_to_agent(result: dict) -> str:
+    text = f"Dispatched to '{result.get('to', '')}'."
+    note = result.get("note")
+    return f"{text}\n{note}" if note else text
+
+
+# ``delegate_to_agent`` (tools/delegate_to_agent.py) — ``{status, to, note}``.
+delegate_to_agent_to_canonical = make_status_text_mapper(
+    render=_render_delegate_to_agent, meta_keys=("to",),
+)
+
+
+def _render_index_drop(result: dict) -> str:
+    chunks = result.get("chunks_dropped", 0)
+    verb = "Removed" if result.get("removed") else "No source found; removed"
+    return f"{verb} {chunks} chunk(s)."
+
+
+# ``index_drop`` (core/op_runtime/index_drop.py) op kind AND its ``drop_source`` (tools/drop_source.py)
+# tool wrapper — both surface the same handler's ``{removed, chunks_dropped}`` result verbatim.
+index_drop_to_canonical = make_status_text_mapper(
+    render=_render_index_drop, meta_keys=("removed", "chunks_dropped"),
+)
+
+
+def _render_pipeline_install_verb(result: dict) -> str:
+    name = result.get("name", "")
+    registered = result.get("registered_names") or []
+    count = len(registered)
+    plural = "s" if count != 1 else ""
+    return f"Installed pipeline '{name}' ({count} pipeline{plural} registered)."
+
+
+# ``pipeline_install_local`` / ``pipeline_install_source`` (tools/pipeline_management_verbs.py) —
+# both delegate to ``op_runtime.pipeline_install.handle`` and surface its
+# ``{status:"installed", name, registered_names, path, description, config_path, source}`` verbatim
+# (the tool-level ``{status:"ok", data:...}`` envelope is peeled by ``unwrap_dispatch_envelope`` before
+# this mapper runs).
+pipeline_install_verb_to_canonical = make_status_text_mapper(
+    render=_render_pipeline_install_verb,
+    meta_keys=("name", "registered_names", "path", "description", "config_path", "source"),
+)
+
+
+def _render_skill_install_verb(result: dict) -> str:
+    return f"Installed skill '{result.get('name', '')}'."
+
+
+# ``skill_install_local`` / ``skill_install_source`` (tools/skill_verbs.py) — both delegate to
+# ``op_runtime.skill_install.handle`` and surface its
+# ``{status:"installed", name, path, description, config_path, source}`` verbatim (envelope peeled
+# the same way as the pipeline-install verbs).
+skill_install_verb_to_canonical = make_status_text_mapper(
+    render=_render_skill_install_verb,
+    meta_keys=("name", "path", "description", "config_path", "source"),
+)
+
+
+def _render_mcp_install_local_verb(result: dict) -> str:
+    return f"Installed local MCP server '{result.get('name', '')}'."
+
+
+# ``mcp_install_local`` (tools/mcp_verbs.py) — writes ``.reyn/config/mcp.yaml`` directly (does not
+# delegate to ``op_runtime.mcp_install``); its own result shape is
+# ``{kind:"mcp_install_local", name, config_path, entry}``.
+mcp_install_local_verb_to_canonical = make_status_text_mapper(
+    render=_render_mcp_install_local_verb, meta_keys=("name", "config_path", "entry"),
+)
+
+
+def _render_mcp_install_verb(result: dict) -> str:
+    if result.get("status") == "needs_secrets":
+        return result.get("guide") or "MCP install needs secrets set before it can proceed."
+    server_name = result.get("server_name") or result.get("server_id") or ""
+    return f"Installed MCP server '{server_name}'."
+
+
+# ``mcp_install_registry`` / ``mcp_install_package`` (tools/mcp_verbs.py) — both delegate to
+# ``op_runtime.mcp_install.handle`` and surface its result verbatim: either the ``status:"ok"``
+# install-complete shape (``server_id, server_name, scope, installed_path, runtime, env_keys_set,
+# source``) or the ``status:"needs_secrets"`` short-circuit (``server_id, missing_secret_keys,
+# guide`` — the ``guide`` text IS the actionable message, so it becomes ``text`` verbatim rather than
+# a synthesized line). Envelope peeled the same way as the pipeline/skill install verbs.
+mcp_install_verb_to_canonical = make_status_text_mapper(
+    render=_render_mcp_install_verb,
+    meta_keys=(
+        "status", "server_id", "server_name", "scope", "installed_path", "runtime",
+        "env_keys_set", "source", "missing_secret_keys",
+    ),
+)
+
+
+def _render_mcp_subscribe_resource_verb(result: dict) -> str:
+    return f"Subscribed to {result.get('uri', '')} on server '{result.get('server', '')}'."
+
+
+# ``subscribe_mcp_resource`` (tools/mcp.py) — surfaces the ``mcp_subscribe_resource`` op kind's
+# ``{kind, status:"ok", server, uri}`` result verbatim.
+mcp_subscribe_resource_verb_to_canonical = make_status_text_mapper(
+    render=_render_mcp_subscribe_resource_verb, meta_keys=("server", "uri"),
+)
+
+
+def _render_mcp_unsubscribe_resource_verb(result: dict) -> str:
+    return f"Unsubscribed from {result.get('uri', '')} on server '{result.get('server', '')}'."
+
+
+# ``unsubscribe_mcp_resource`` (tools/mcp.py) — surfaces the ``mcp_unsubscribe_resource`` op kind's
+# ``{kind, status:"ok", server, uri}`` result verbatim.
+mcp_unsubscribe_resource_verb_to_canonical = make_status_text_mapper(
+    render=_render_mcp_unsubscribe_resource_verb, meta_keys=("server", "uri"),
+)
+
+
 def ask_user_to_canonical(result: dict) -> CanonicalToolResult:
     """``ask_user`` op result → canonical (FP-0056 PR-F1 triage: text-shaped). The user's ``answer``
     (free text or the chosen option) IS what the LLM acts on → ``text`` — not a whole-dict blob hiding

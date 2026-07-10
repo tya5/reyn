@@ -236,10 +236,10 @@ async def _handle_pipeline_install_source(
 
 # ── ToolDefinitions ───────────────────────────────────────────────────────────
 
-from reyn.core.offload.canonical import CANONICAL_TODO  # noqa: E402
+from reyn.core.offload.canonical import pipeline_install_verb_to_canonical  # noqa: E402
 
 PIPELINE_INSTALL_LOCAL = ToolDefinition(
-    canonical=CANONICAL_TODO,
+    canonical=pipeline_install_verb_to_canonical,
     name="pipeline_install_local",
     description=_PIPELINE_INSTALL_LOCAL_DESCRIPTION,
     parameters=_PIPELINE_INSTALL_LOCAL_PARAMETERS,
@@ -250,7 +250,7 @@ PIPELINE_INSTALL_LOCAL = ToolDefinition(
 )
 
 PIPELINE_INSTALL_SOURCE = ToolDefinition(
-    canonical=CANONICAL_TODO,
+    canonical=pipeline_install_verb_to_canonical,
     name="pipeline_install_source",
     description=_PIPELINE_INSTALL_SOURCE_DESCRIPTION,
     parameters=_PIPELINE_INSTALL_SOURCE_PARAMETERS,

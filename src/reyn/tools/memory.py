@@ -609,7 +609,12 @@ def _regenerate_index(ctx: ToolContext, mem_dir: Path, index_path: Path) -> None
 
 # ── ToolDefinition instances ─────────────────────────────────────────────────────
 
-from reyn.core.offload.canonical import CANONICAL_TODO, memory_body_to_canonical  # noqa: E402
+from reyn.core.offload.canonical import (  # noqa: E402
+    CANONICAL_TODO,
+    forget_memory_to_canonical,
+    memory_body_to_canonical,
+    remember_to_canonical,
+)
 
 LIST_MEMORY = ToolDefinition(
     canonical=CANONICAL_TODO,
@@ -638,7 +643,7 @@ READ_MEMORY_BODY = ToolDefinition(
 )
 
 REMEMBER_SHARED = ToolDefinition(
-    canonical=CANONICAL_TODO,
+    canonical=remember_to_canonical,
     name="remember_shared",
     router_dispatched=True,
     description=_REMEMBER_SHARED_DESCRIPTION,
@@ -650,7 +655,7 @@ REMEMBER_SHARED = ToolDefinition(
 )
 
 REMEMBER_AGENT = ToolDefinition(
-    canonical=CANONICAL_TODO,
+    canonical=remember_to_canonical,
     name="remember_agent",
     router_dispatched=True,
     description=_REMEMBER_AGENT_DESCRIPTION,
@@ -662,7 +667,7 @@ REMEMBER_AGENT = ToolDefinition(
 )
 
 FORGET_MEMORY = ToolDefinition(
-    canonical=CANONICAL_TODO,
+    canonical=forget_memory_to_canonical,
     name="forget_memory",
     router_dispatched=True,
     description=_FORGET_MEMORY_DESCRIPTION,

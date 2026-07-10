@@ -97,10 +97,10 @@ async def _handle_drop_source(
     return await execute_op(op, legacy_ctx)
 
 
-from reyn.core.offload.canonical import CANONICAL_TODO  # noqa: E402
+from reyn.core.offload.canonical import index_drop_to_canonical  # noqa: E402
 
 DROP_SOURCE = ToolDefinition(
-    canonical=CANONICAL_TODO,
+    canonical=index_drop_to_canonical,
     name="drop_source",
     router_dispatched=True,
     description=_DROP_SOURCE_DESCRIPTION,
