@@ -8,9 +8,8 @@ audience: [human, agent]
 
 How an agent's tools are shown to the LLM — and how the LLM's calls are turned
 back into dispatched actions — is a **pluggable scheme**. Reyn ships four, and
-you select one per layer in `reyn.yaml`. The defaults are `enumerate-all` for the
-`chat` layer and `universal-category` for `step` / `phase`; any layer can
-be switched to another scheme via config.
+you select one for the chat layer in `reyn.yaml`. The default is `enumerate-all`;
+the chat layer can be switched to another scheme via config.
 
 The key invariant: **the scheme only changes the LLM-facing surface**. Every
 tool call, whichever scheme produced it, is routed through the same OS gate —
@@ -50,8 +49,7 @@ The [universal action catalog](universal-catalog.md): every action — a workflo
 MCP tool, a memory entry, a file op, an indexed corpus — is addressed by a single
 qualified name and reached through a small fixed set of wrappers (discover →
 describe → invoke). The LLM-facing tool list stays constant as the catalogue
-grows. The default for the `step` / `phase` layers; set `tool_use.chat:
-universal-category` to use it for chat too.
+grows. Opt in for chat by setting `tool_use.chat: universal-category`.
 
 **Use when:** a very large / fast-growing tool set where flat-listing every
 action in the request would cost too many tokens — the wrappers keep the
@@ -91,19 +89,17 @@ call, plus sandbox containment.
 **Use when:** running **weak / low-cost models**, where expressing tool use as
 code measurably outperforms JSON tool-calling.
 
-## Per-layer selection
+## Chat-layer selection
 
-The scheme is chosen independently for each of the three layers an agent runs:
+The scheme is chosen for the chat layer:
 
 ```yaml
 # reyn.yaml
 tool_use:
   chat: enumerate-all         # top-level chat router (default)
-  step: universal-category    # plan / skill steps (default)
-  phase: universal-category   # OS phases (default)
 ```
 
-Any layer can use any registered scheme; the others are unaffected. Full per-key
+The chat layer can use any registered scheme. Full per-key
 reference: [`reyn.yaml` § tool_use](../../reference/config/reyn-yaml.md#tool_use-block).
 
 ## Why this is safe to swap
@@ -122,6 +118,6 @@ gate is constant.
 
 ## See also
 
-- [Universal Action Catalog](universal-catalog.md) — the internals of the `universal-category` scheme (step/phase default; chat alternative)
+- [Universal Action Catalog](universal-catalog.md) — the internals of the `universal-category` scheme (a chat-layer opt-in)
 - [`reyn.yaml` § tool_use](../../reference/config/reyn-yaml.md#tool_use-block) — config reference
 - [Permission model](../runtime/permission-model.md) — the gate every scheme dispatches through

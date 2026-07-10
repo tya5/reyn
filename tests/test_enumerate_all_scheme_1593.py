@@ -160,30 +160,25 @@ def test_format_feedback_delegates_to_ops() -> None:
 
 def test_default_chat_layer_resolves_to_enumerate_all() -> None:
     """Tier 2: #1657 — the DEFAULT chat layer (None / missing tool_use:) is
-    ``enumerate-all`` (the owner H1 fix) and resolves to EnumerateAllScheme;
-    step/phase keep ``universal-category``. A config override flips chat back to
-    universal-category per-layer (the knob still works both ways).
+    ``enumerate-all`` (the owner H1 fix) and resolves to EnumerateAllScheme. A
+    config override flips chat back to universal-category (the knob still works
+    both ways). (#2768 removed the dead step/phase layers.)
 
-    Pins the config→selection seam at its public surfaces: the per-layer config
-    dataclass (``ToolUseConfig``), the scheme resolver (``_resolve_tool_use_scheme``),
+    Pins the config→selection seam at its public surfaces: the config dataclass
+    (``ToolUseConfig``), the scheme resolver (``_resolve_tool_use_scheme``),
     and the scheme's public ``.name`` — NOT a running router or private state. The
     config value is what each frontend threads (chat_tool_use_scheme) through the
     factory → Session → RouterLoopDriver → RouterLoop(scheme_name=)."""
     from reyn.config import _build_tool_use_config
     from reyn.runtime.router_loop import _resolve_tool_use_scheme
 
-    # #1657: default chat → enumerate-all (resolves to EnumerateAllScheme);
-    # step/phase remain universal-category (the H1 evidence is the chat path).
+    # #1657: default chat → enumerate-all (resolves to EnumerateAllScheme).
     default_cfg = _build_tool_use_config(None)
     assert default_cfg.chat == "enumerate-all"
-    assert default_cfg.step == "universal-category"
-    assert default_cfg.phase == "universal-category"
     assert _resolve_tool_use_scheme(default_cfg.chat).name == "enumerate-all"
 
     # The override knob still works: chat → universal-category (the now-non-default)
-    # resolves back, and is per-layer (step/phase untouched).
+    # resolves back.
     cfg = _build_tool_use_config({"chat": "universal-category"})
     assert cfg.chat == "universal-category"
-    assert cfg.step == "universal-category"
-    assert cfg.phase == "universal-category"
     assert _resolve_tool_use_scheme(cfg.chat).name == "universal-category"

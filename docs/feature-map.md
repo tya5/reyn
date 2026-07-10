@@ -53,8 +53,8 @@ mindmap
       compact
       judge_output
     🔧 Tool-Use Schemes
-      Pluggable per-layer
-      universal-category default
+      Pluggable chat-layer
+      enumerate-all default
       enumerate-all
       retrieval
       CodeAct
@@ -343,7 +343,7 @@ Show bulk data to the user **without the data passing through LLM output tokens*
 
 ### Tool-Use Schemes
 
-How tools are presented to the LLM and how its calls are dispatched is a **pluggable scheme**, selectable per layer (`tool_use: {chat, step}` in `reyn.yaml`). The `chat` layer defaults to `enumerate-all`; `step` defaults to `universal-category`. Non-default schemes are opt-in per layer. All schemes route every tool call through the same OS gate (exclude → permission → dispatch), so the security and validation pipeline is unchanged whichever scheme is active.
+How tools are presented to the LLM and how its calls are dispatched is a **pluggable scheme**, selectable for the chat layer (`tool_use.chat` in `reyn.yaml`). The `chat` layer defaults to `enumerate-all`. Non-default schemes are opt-in. All schemes route every tool call through the same OS gate (exclude → permission → dispatch), so the security and validation pipeline is unchanged whichever scheme is active.
 
 | Feature | Description | Documentation |
 |---------|-------------|---------------|

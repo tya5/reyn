@@ -134,13 +134,24 @@ async def test_universal_execute_and_feedback_round_trip() -> None:
 # ── per-layer config ─────────────────────────────────────────────────────────
 
 
-def test_tool_use_config_per_layer_and_defaults() -> None:
-    """Tier 2: per-layer scheme selection parses (NON-default) + defaults to
-    universal-category; a non-string value is a loud error."""
+def test_tool_use_config_chat_scheme_and_defaults() -> None:
+    """Tier 2: chat-layer scheme selection parses + defaults to enumerate-all;
+    a non-string value is a loud error. (#2768 removed the dead step/phase layers.)"""
     assert _build_tool_use_config(None) == ToolUseConfig()
     assert ToolUseConfig().chat == "enumerate-all"
-    cfg = _build_tool_use_config({"chat": "enumerate-all"})
-    assert cfg.chat == "enumerate-all"
-    assert cfg.step == "universal-category" and cfg.phase == "universal-category"
+    cfg = _build_tool_use_config({"chat": "universal-category"})
+    assert cfg.chat == "universal-category"
     with pytest.raises(ValueError):
         _build_tool_use_config({"chat": 123})
+
+
+def test_chat_default_matches_runtime_fallback_default() -> None:
+    """Tier 1: the single enforced source of truth for the tool-use default (#2768).
+
+    Two literals declare the default and are kept in sync by convention only: the
+    config-schema default (``ToolUseConfig().chat``) and the runtime fallback
+    (``scheme.DEFAULT_SCHEME_NAME``). ``config/execution.py`` is a declarative
+    dataclass, not a runtime source, so this contract test is the binding that
+    prevents the two from silently drifting — edit one literal without the other
+    and this fails."""
+    assert ToolUseConfig().chat == DEFAULT_SCHEME_NAME

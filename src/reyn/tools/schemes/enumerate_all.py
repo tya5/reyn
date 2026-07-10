@@ -5,8 +5,8 @@ in ``tools=`` (no universal category-wrapper discovery indirection) + a minimal
 SP, and dispatch by name. Per the #1593 competitor research this is a fine
 small-toolset baseline (max determinism, maps onto reyn's constrained
 ``candidate_outputs``) — it is **not** the weak-model fix (flat JSON is weakest
-for weak models; CodeAct/PR-3 is the evidence-winner). Selected per-layer via
-``tool_use: {chat/step/phase}``.
+for weak models; CodeAct/PR-3 is the evidence-winner). Selected for the chat
+layer via ``tool_use.chat``.
 
 Unlike ``UniversalCategoryScheme`` (which delegates *all four* methods to the
 router ``SchemeOps``, byte-identical), enumerate-all is the first **self-contained**

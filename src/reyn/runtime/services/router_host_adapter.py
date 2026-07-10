@@ -468,7 +468,8 @@ class RouterHostAdapter:
         consolidation ≤ output_reserve — the by-construction guarantee that the
         re-injected handoff stays below threshold (``assert_turn_budget_bounds``,
         run at engine construction, enforces output_reserve + offload_cap <
-        threshold). Mirrors ``PhaseRouterLoopHost.wrap_up_output_reserve``.
+        threshold). (Originally mirrored the phase host's wrap-up cap; that host —
+        ``PhaseRouterLoopHost`` — was deleted in #2438.)
 
         NOTE — chat deliberately exposes ONLY this (the wrap-up cap), not
         ``should_force_close``: chat is REACTIVE-only. Unlike a phase (task

@@ -98,18 +98,16 @@ CodeAct は opt-in。 選ぶ価値があるのは:
 
 ## 有効化 (How to enable)
 
-CodeAct は他の scheme 同様 `reyn.yaml` で layer ごとに選ぶ。 default は
-`universal-category` ゆえ CodeAct は opt-in:
+CodeAct は他の scheme 同様 `reyn.yaml` で chat レイヤーに選ぶ。 chat default は
+`enumerate-all` ゆえ CodeAct は opt-in:
 
 ```yaml
 # reyn.yaml
 tool_use:
   chat: codeact     # top-level chat router
-  step: universal-category
-  phase: universal-category
 ```
 
-`chat` / `step` / `phase` のいずれも独立に `codeact` にできる。
+`chat` レイヤーを `codeact` にできる。
 [`reyn.yaml` § tool_use](../../reference/config/reyn-yaml.md#tool_use-block) 参照。
 
 ## security note（セキュリティ注記）
