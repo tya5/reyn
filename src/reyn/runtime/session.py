@@ -6176,6 +6176,20 @@ class Session:
         """
         await self._mcp_connection_service.aclose()
 
+    async def aclose_event_store(self) -> None:
+        """#2783 teardown: drain this session's EventStore before the process exits.
+
+        Idempotent (``EventStore.aclose`` is idempotent — see #2780). Without this,
+        a normal ``/quit`` can drop the trailing audit events (e.g. the very
+        ``session_completed``/``turn_completed`` records describing the graceful
+        exit) because ``asyncio.run`` cancels outstanding tasks at loop teardown
+        and ``EventStore.write`` enqueues via ``submit_nowait`` (fire-and-forget).
+        Called from the registry's session-teardown seams alongside
+        ``aclose_mcp_connections``/``aclose_fs_watcher`` — same pattern, same
+        call sites.
+        """
+        await self._event_store.aclose()
+
     # --- RouterLoop orchestration ---
 
     def _cap_tool_result(self, content_str: str) -> str:
