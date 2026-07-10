@@ -430,6 +430,20 @@
 
 
 # -----------------------------------------------------------------------------
+# render_template: output bounds for the render_template op (FP-0055 / #2679).
+# The op renders a Jinja2 template against data into a string; the sandbox blocks
+# template injection but not resource exhaustion, so output is capped DURING
+# generation (a runaway {% for i in range(10**9) %} is truncated, not OOM'd).
+# Omit the block to keep the safe defaults below (behaviour unchanged); raise for
+# a large report, lower to harden a shared host. A non-positive/non-numeric value
+# falls back to that field's default.
+# -----------------------------------------------------------------------------
+# render_template:
+#   max_output_chars: 256000   # streaming char budget — truncate past this
+#   wall_clock_seconds: 5.0    # elapsed-time backstop for a runaway loop
+
+
+# -----------------------------------------------------------------------------
 # skill_resume: policy for handling steps that have a
 # ``step_started`` WAL event but no matching ``step_completed`` / ``step_failed``
 # (= the op may have committed externally and only the operator can decide).

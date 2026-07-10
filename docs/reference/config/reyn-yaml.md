@@ -1101,6 +1101,23 @@ offload:
 
 **Not a recommended steady-state setting.** With offload disabled, a single tool result can exceed the model's compaction-batch budget, recreating the pre-#1128 compaction dead-end (a turn too large to ever compact). A `offload_disabled` warning event is emitted at session start when this is set, so traces stay self-explaining.
 
+## `render_template` block
+
+Output bounds for the `render_template` tool. That tool renders a Jinja2 template against structured data into a string; the sandbox blocks template-injection but not resource exhaustion, so a runaway template (e.g. `{% for i in range(10**9) %}…{% endfor %}`) is capped **during** generation. The render stops the moment either bound is hit and the result is truncated (with a `truncated` flag naming which bound fired) rather than flooding memory or hanging. Raise the bounds for a large report; lower them to harden a shared host.
+
+```yaml
+render_template:
+  max_output_chars: 256000   # streaming char budget — truncate past this
+  wall_clock_seconds: 5.0    # elapsed-time backstop for a runaway loop
+```
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `max_output_chars` | int | `256000` | The streaming character budget. The render truncates the moment cumulative output exceeds it. A non-positive or non-numeric value falls back to the default. |
+| `wall_clock_seconds` | float | `5.0` | Elapsed-time backstop. Jinja2 exposes no iteration count, so wall-clock bounds a runaway loop that emits little text per step. A non-positive or non-numeric value falls back to the default. |
+
+The defaults are generous enough for real reports / configs and tight enough that a runaway generator stops quickly. Omitting the block leaves both at their defaults (behaviour unchanged).
+
 ## MCP servers
 
 External tool servers reyn can call via the [Model Context Protocol](../../concepts/tools-integrations/mcp.md). Each entry under `mcp.servers:` is keyed by a short name (the same name the skill declares in `permissions.mcp` and emits in `mcp` ops).

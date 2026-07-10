@@ -264,6 +264,10 @@ class RouterHostAdapter:
         # file__read / mcp ops consult the cap + on_oversize policy.
         # ``None`` = no cap.
         multimodal_config: Any = None,
+        # #2679: operator RenderTemplateBounds threaded onto the router OpContext so
+        # a router/pipeline render_template op honours the operator's output cap.
+        # None → the op's in-handler defaults (256_000 chars / 5.0s).
+        render_template_bounds: Any = None,
         # #1652: ReasoningConfig (continuity/display/recent_turns) + the session
         # callback that renders the bounded prior-reasoning text section (reads
         # history + applies the continuity gate). None → reasoning disabled.
@@ -441,6 +445,9 @@ class RouterHostAdapter:
         # Issue #364: store the gate config so make_router_op_context can
         # thread it into the OpContext for router-initiated binary ops.
         self._multimodal_config = multimodal_config
+        # #2679: store the operator render_template output bounds for the same
+        # make_router_op_context threading.
+        self._render_template_bounds = render_template_bounds
         # #1652: reasoning capture/continuity/display config + the section renderer.
         self._reasoning_config = reasoning_config
         self._reasoning_continuity_section_fn = reasoning_continuity_section_fn
@@ -2046,6 +2053,7 @@ class RouterHostAdapter:
             # FP-0054 PR-C: the adapter's CURRENT registry snapshot (hot-reload swaps it).
             presentation_registry=self._presentation_registry,
             multimodal_config=self._multimodal_config,
+            render_template_bounds=self._render_template_bounds,  # #2679: operator render_template output cap
             media_store=self._media_store,
             compact_now=self._compact_now,
             cancel_event=self._cancel_event,

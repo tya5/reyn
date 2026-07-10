@@ -229,6 +229,66 @@ def _build_offload_config(raw: object) -> "OffloadConfig":
 
 
 @dataclass
+class RenderTemplateConfig:
+    """`render_template:` — operator-tunable output bounds for the ``render_template``
+    op (FP-0055 / #2679).
+
+    The op caps output DURING generation (a ``SandboxedEnvironment`` blocks SSTI but
+    not resource exhaustion — a bounded loop like ``{% for i in range(10**9) %}``
+    still floods). Safe defaults + a per-op-context override seam already ship; this
+    section exposes the two bounds to operator yaml, mirroring ``offload:`` /
+    ``cost_warn:``.
+
+    - ``max_output_chars`` — the streaming char budget; the render truncates the
+      moment cumulative output exceeds it. Default 256_000.
+    - ``wall_clock_seconds`` — the elapsed-time backstop (Jinja2 exposes no iteration
+      count, so wall-clock bounds a runaway loop that emits little text per step).
+      Default 5.0.
+
+    The defaults mirror ``op_runtime.render_template.RenderTemplateBounds`` (the
+    in-handler fallback). Generous enough for real reports / configs, tight enough
+    that a runaway generator stops quickly; an operator raises them for a large
+    report or lowers them to harden a shared host.
+    """
+    max_output_chars: int = 256_000
+    wall_clock_seconds: float = 5.0
+
+
+def _build_render_template_config(raw: object) -> "RenderTemplateConfig":
+    """Parse the ``render_template:`` section (#2679).
+
+    Missing or malformed → full defaults (256_000 chars / 5.0s). A non-numeric or
+    non-positive value for either bound falls back to that field's default (an
+    operator typo must not silently disable the cap → a zero/negative bound would
+    truncate everything or never fire).
+    """
+    if not isinstance(raw, dict):
+        return RenderTemplateConfig()
+    defaults = RenderTemplateConfig()
+
+    max_output_chars = raw.get("max_output_chars", defaults.max_output_chars)
+    try:
+        max_output_chars = int(max_output_chars)
+        if max_output_chars <= 0:
+            max_output_chars = defaults.max_output_chars
+    except (TypeError, ValueError):
+        max_output_chars = defaults.max_output_chars
+
+    wall_clock_seconds = raw.get("wall_clock_seconds", defaults.wall_clock_seconds)
+    try:
+        wall_clock_seconds = float(wall_clock_seconds)
+        if wall_clock_seconds <= 0:
+            wall_clock_seconds = defaults.wall_clock_seconds
+    except (TypeError, ValueError):
+        wall_clock_seconds = defaults.wall_clock_seconds
+
+    return RenderTemplateConfig(
+        max_output_chars=max_output_chars,
+        wall_clock_seconds=wall_clock_seconds,
+    )
+
+
+@dataclass
 class SpawnConfig:
     """`safety.spawn:` — operator bounds on the LLM spawn tree (#2103 C3).
 

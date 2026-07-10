@@ -23,6 +23,7 @@ from reyn.config import (  # noqa: F401
     MultimodalConfig,
     OffloadConfig,
     OnLimitConfig,
+    RenderTemplateConfig,
     RouterConfig,
     SafetyConfig,
     SandboxConfig,
@@ -669,6 +670,10 @@ class Session:
         # size gates (text cap / structured inline cap / media follow-up budget).
         # None -> defaults (enabled=True, normal offload behaviour).
         offload_config: OffloadConfig | None = None,
+        # FP-0055 / #2679: operator-tunable render_template output bounds
+        # (max_output_chars / wall_clock_seconds). None -> the safe defaults
+        # (256_000 chars / 5.0s), identical to the in-handler fallback.
+        render_template_config: RenderTemplateConfig | None = None,
         state_log: StateLog | None = None,
         budget_tracker: BudgetTracker | None = None,
         snapshot_path: "Path | None" = None,
@@ -1235,6 +1240,18 @@ class Session:
         self._cost_warn_config = cost_warn_config or CostWarnConfig()
         # tool-result-schema-redesign §5: debug lever (default enabled=True).
         self._offload_config = offload_config or OffloadConfig()
+        # FP-0055 / #2679: resolve the operator render_template bounds config into a
+        # concrete RenderTemplateBounds once, then thread it into every router
+        # OpContext builder (both make_router_op_context twins). Default config =
+        # the safe 256_000/5.0 bounds, so an unconfigured session is byte-identical
+        # to the prior in-handler fallback. The `render_template` op reads
+        # ``ctx.render_template_bounds`` (op_runtime/render_template.py).
+        _rt_cfg = render_template_config or RenderTemplateConfig()
+        from reyn.core.op_runtime.render_template import RenderTemplateBounds
+        self._render_template_bounds = RenderTemplateBounds(
+            max_output_chars=_rt_cfg.max_output_chars,
+            wall_clock_seconds=_rt_cfg.wall_clock_seconds,
+        )
 
         # PR21: WAL + per-agent snapshot for crash recovery. state_log is
         # process-shared (owned by AgentRegistry); when None, persistence
@@ -1721,6 +1738,9 @@ class Session:
             ),
             # Issue #364 multi-modal cluster: media-size gate config.
             multimodal_config=self._multimodal_config,
+            # FP-0055 / #2679: operator render_template output bounds → the router
+            # OpContext (the render_template op reads ctx.render_template_bounds).
+            render_template_bounds=self._render_template_bounds,
             # #1652: reasoning config (display/continuity/recent_turns gates) +
             # the bounded prior-reasoning section renderer (reads this session's
             # history). The host exposes reasoning_display_enabled() /
@@ -5714,6 +5734,7 @@ class Session:
             hook_dispatcher=self._hook_dispatcher,  # #1800 slice 5c: complete-by-construction (both router callers)
             current_task_id=self._current_task_id,  # #1953 §16: ownership-derivation for task.create (enumerate ALL op-ctx builders)
             hot_reloader=self._hot_reloader,  # #2761 PR-2: per-session reloader (both router op-ctx builders complete-by-construction)
+            render_template_bounds=self._render_template_bounds,  # #2679: operator bounds (both router op-ctx builders complete-by-construction)
         )
 
     async def _file_op(self, op_dict: dict) -> dict:
