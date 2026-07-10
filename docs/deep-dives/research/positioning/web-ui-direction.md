@@ -1,9 +1,9 @@
 # Reyn Web UI direction — `reyn chat` (local + embedded) + `reyn serve` (= browser remote access)
 
-**Status**: Design direction (2026-05-09 update 4) — UX positioning。 architectural commitment ではないため ADR ではなく positioning doc として記録。 **実現性検討は未着手**。
+**Status**: Design direction (2026-05-09 update 4) — UX positioning。 architectural commitment ではないため ADR ではなく positioning doc として記録。 **実現性検討は未着手**。 **Section 8 の "remote TUI client 当面 scope 外" 判断は [ADR-0039](../../decisions/0039-thin-client-single-writer-server.md) に superseded 済み** — 詳細は section 8 冒頭の注記を参照。
 **Track**: Web UI / CLI 統合 UX
 
-> Update 履歴: (1) 元 ADR-0028 「同一 process embedded」、 (2) 一度 `reyn serve / reyn client` の 2 軸案、 (3) 業界慣行寄せで `reyn chat --host` 統合案、 (4) **update 4 で workspace location semantics の懸念から remote TUI client を当面 scope 外**に。 現在 vision は **`reyn chat` (= local + embedded Web UI)** と **`reyn serve` (= explicit long-running server、 browser からアクセス)** の 2 commands のみ。 remote TUI client (= 同 TUI codebase が remote server に接続) は feasibility 検討時に naming + mode boundary 決定とセットで再判断 (= section 8 「Deferred: remote TUI client」 参照)。
+> Update 履歴: (1) 元 ADR-0028 「同一 process embedded」、 (2) 一度 `reyn serve / reyn client` の 2 軸案、 (3) 業界慣行寄せで `reyn chat --host` 統合案、 (4) update 4 で workspace location semantics の懸念から remote TUI client を当面 scope 外に、 (5) **ADR-0039 が (4) を supersede** — shared single-writer server の下で remote CUI (`reyn chat --connect`) が browser と co-equal な AG-UI surface として復活。 現在の vision は ADR-0039 を参照。 このページの section 1-7 は当時の positioning 検討記録として残す。
 
 ## 業界慣行との整合
 
@@ -167,7 +167,19 @@ remote TUI client は当面 scope 外。 仮に将来追加するなら、 同 c
 
 ---
 
-## 8. Deferred: remote TUI client (= 当面 scope 外)
+## 8. Deferred: remote TUI client (= 当面 scope 外) — superseded by ADR-0039
+
+> **Superseded (2026-07-10).** [ADR-0039](../../decisions/0039-thin-client-single-writer-server.md)
+> revisits and supersedes this section's "当面 scope 外" 判断。 shared
+> single-writer server の下で、 remote CUI (`reyn chat --connect`) は
+> browser と co-equal な AG-UI client として復活する — 2つの独立した
+> command family ではなく、 1 つの server の 2 つの AG-UI surface。 このセクションが
+> 挙げていた2つの懸念は無視されたのではなく解消された: (i) workspace
+> location semantics の懸念は、 shared-writer model の下では *意図された
+> semantic*(server 側 workspace を指す、 ということ自体が仕様)として
+> recast された。 (ii) `reyn serve` の single-user 前提は、 v1 default +
+> per-user-ID authorization という明示的な拡張 seam(ADR-0039 D5(a))を
+> 持つ形になった。 以下は当時の検討記録として残す。
 
 ### 経緯
 

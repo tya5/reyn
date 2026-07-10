@@ -33,6 +33,38 @@ construction trio is what makes "shared" defensible.
 
 ---
 
+## Relationship to prior direction — supersedes the "remote TUI deferred" positioning
+
+Prior positioning (`docs/deep-dives/research/positioning/web-ui-direction.md`,
+update 4) **deferred the remote TUI/CUI client** (the same TUI codebase
+connecting to a remote server) out of scope, substituting **browser remote
+access**, and framed `reyn chat` (local + embedded) and `reyn serve` (browser
+remote) as the only two commands. It deferred on two grounds: (i) a
+**workspace-location-semantics** concern, and (ii) a **single-user
+assumption** for `reyn serve`.
+
+**This ADR revisits and supersedes that deferral.** Under the shared
+single-writer server (D2/D3), the remote CUI is revived as **`reyn chat
+--connect` — a co-equal AG-UI surface alongside the browser**: both are
+AG-UI clients of *one* server, not two separate command families. The two
+grounds are resolved, not ignored:
+- **(i)** The workspace-location-semantics concern is **recast as an
+  intended property** (D3's irreducible workspace-affordance gap): a remote
+  client's `file:line` / `!`-shell locality points at the *server's*
+  workspace *by design*, because there is exactly one shared workspace. What
+  read as a blocker under an isolation assumption is a defined semantic under
+  the shared-writer model.
+- **(ii)** The single-user assumption is **the v1 default with a defined
+  extension seam**: per-user-ID authorization (D5(a), Axis A) is where
+  multi-user secret/session isolation + audit attribution land — scoped, not
+  left as a contradictory standing position.
+
+The positioning doc's "Deferred: remote TUI client" section is thereby
+superseded; `docs/deep-dives/research/positioning/web-ui-direction.md` is
+updated in the same PR that lands this ADR to point here.
+
+---
+
 ## The live seams we extend (flow-trace)
 
 - **Session driving** — `runtime/session.py::run_one_iteration`: already
@@ -132,21 +164,33 @@ terminals** (laptop + desktop), not collaborators:
 Three mechanisms replace isolation's free safety:
 - **(a) Authentication + identity/authorization (Axis A; P0, gates the
   build).** A network intervention answer *is* a permission grant. **A
-  connection carries an identity (a user-ID); that identity's authorization
-  decides fencing/trust.** Keystone: an authenticated identity's answer is
-  fenced or unfenced *per its authz* — in v1 there is a **single user-ID ≡
-  the operator ⇒ `external_source=False` (unfenced)**; **per-user-ID
-  authorization is the multi-user extension point** (a lower-privileged
-  user-ID's answer could warrant different treatment). An **A2A agent peer**
-  is a **non-operator identity ⇒ stays `external_source=True` (fenced)** —
-  unchanged. Answer authority and seize eligibility are identity-gated (an
-  unauthenticated connection can neither).
+  connection carries an identity (a user-ID); the identity carries two
+  ORTHOGONAL attributes** that must not be conflated:
+  - **Identity class ⇒ fencing (`external_source`) — injection defense.**
+    Human-operator class ⇒ unfenced (`False`); **agent-peer class (A2A) ⇒
+    fenced (`True`)** — an agent peer is an injection vector, a human is not.
+    Fencing tracks **class, never privilege level** (a low-privileged
+    *human*'s answer is still human input; the fence is not the control for
+    privilege).
+  - **Per-user-ID authorization scope — privilege control.** What the
+    identity may do: which intervention kinds it may answer (e.g. `ask_user`
+    yes, `permission.file_write` no), which sessions it may attach/seize.
+    **This scope — not fencing — is the multi-user extension point.**
+  In v1 there is a **single user-ID ≡ the operator** (human class + full
+  scope ⇒ `external_source=False`); multi-user adds user-IDs differentiated
+  by **authz scope** (all human-class, unfenced) — an authz-table extension,
+  not a re-architecture. Answer authority and seize eligibility are
+  identity-gated (an unauthenticated connection can neither).
   **Two-axis × three-tier, secure-by-default.** Identity is *established per
   transport tier*, but the downstream user-ID authorization is *unified*:
   - **Tier 1 — in-process** (local, same process): no auth; it is the
     operator's process.
-  - **Tier 2 — same-machine**: **UDS `0600` default** (OS identity via
-    `SO_PEERCRED`), TCP-loopback opt-in.
+  - **Tier 2 — same-machine**: **UDS `0600` default** (OS identity via the
+    per-OS peer-credential mechanism — `SO_PEERCRED` on Linux,
+    `getpeereid`/`LOCAL_PEERCRED` on macOS), TCP-loopback opt-in. The
+    **browser surface** (openui) cannot use a UDS → it stays **loopback TCP +
+    a startup-issued token** (Jupyter-style); "UDS default" is the
+    thin-client connect surface, not every Tier 2 surface.
   - **Tier 3 — cross-machine**: **token + TLS, opt-in, fail-closed** (a
     non-loopback bind with no token ⇒ refuse to start).
   - **One server binds Tier 2 + Tier 3 simultaneously** (same-machine always
@@ -239,9 +283,11 @@ industry-aligned, not exotic.)
 - **Rich surface is reyn-private on a standard pipe** — interoperable core,
   private richness. Owner-accepted as the intended interop level.
 - **Same-machine auth = UDS `0600` (default), loopback opt-in.** UDS with
-  `SO_PEERCRED` is operator-exclusive on multi-user hosts (unlike
-  TCP-loopback, which any local user can reach); it needs no secret. Loopback
-  remains an opt-in for single-user simplicity.
+  the OS peer-credential (per-OS: `SO_PEERCRED` / `getpeereid`) is
+  operator-exclusive on multi-user hosts (unlike TCP-loopback, which any
+  local user can reach); it needs no secret. Loopback remains an opt-in for
+  single-user simplicity. The **browser surface stays loopback TCP + startup
+  token** (a browser cannot open a UDS).
 - **Protocol proliferation:** AG-UI is another wire format alongside the
   ad-hoc ws JSON, chainlit, and A2A; the consolidation phase (P6) retires the
   ad-hoc one to bound the cost.
@@ -274,6 +320,8 @@ industry-aligned, not exotic.)
 
 ## References
 - ADR-0001 (WAL + snapshot state model) / ADR-0018 (cross-process deferral)
+- Supersedes: `docs/deep-dives/research/positioning/web-ui-direction.md`
+  (update 4's "Deferred: remote TUI client" section)
 - Live seams: `runtime/session.py`, `interfaces/web/ws/chat.py`,
   `interfaces/repl/renderer.py`, `interfaces/web/a2a_intervention.py`,
   `runtime/session_buses.py`, `core/present/binding.py`
