@@ -22,6 +22,8 @@ declared capability → 使用時点での JIT prompt(起動時ではない)
 
 デフォルトは保守的です — プロジェクトルート配下であればどこでも read/glob/grep、write/edit/delete は `.reyn/` 配下のみ(それでも `.reyn/approvals.yaml` と `.reyn/index/sources.yaml` は狭い carve-out の対象です。これらのパスには直接書き込みを捕まえる downstream の use-time ゲートが無いためです)。それ以上はシェルも MCP も Python も一切ありません。それ以上必要なら declared capability が必要で、起動時の一括プロンプトではなく、実際に使用される時点で JIT にプロンプトされます。
 
+**この 3 層の分割と charter の「4層 JIT approval」は矛盾ではなく、別の軸です。** この 3 層は *grant hierarchy* — actor の認可がどれだけ広いか(defaults / declared / project-wide)です。Charter の 4 層の記述は、JIT prompt 自体が実際にユーザーへ尋ねる前にチェックする *approval-source の解決順序* です: config 事前承認 → saved approvals(`.reyn/approvals.yaml`)→ session approvals(in-memory、現在の呼び出し限り)→ interactive prompt(最後の手段)。この 4 層の解決は、このセクションの中間層(「declared capability → JIT prompt」)の内部にまるごと存在します。
+
 ### Actor スコープの承認
 
 永続的な承認選択は `<actor>/<op>/<path>` をキーとして `.reyn/approvals.yaml` に記録されます。キーは skill でもユーザーでもなく actor スコープです: ある actor の承認は別の actor に漏れません。これが組み合わせの安全性の性質です — chat router 自身の dispatch パスに付与された承認は、例えば background hook や cron caller のような別の actor identity 経由で動作するものには推移的に及びません。

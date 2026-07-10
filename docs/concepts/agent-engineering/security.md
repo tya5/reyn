@@ -22,6 +22,8 @@ project-wide pre-approval (reyn.yaml)
 
 Defaults are conservative — read/glob/grep anywhere under the project root, write/edit/delete only under `.reyn/` (with a narrow carve-out even there for `.reyn/approvals.yaml` and `.reyn/index/sources.yaml`, since those paths have no downstream use-time gate to catch a direct write). No shell, no MCP, no Python beyond that. Anything more requires a declared capability, which prompts just-in-time at the point of actual use — not a single startup-time blanket prompt.
 
+**This 3-layer split and the charter's "4-layer JIT approval" are two different axes, not a contradiction.** These three layers are the *grant hierarchy* — how broad an actor's authorization is (defaults / declared / project-wide). Charter's 4-layer description is the *approval-source resolution order* the JIT prompt itself checks before it actually has to ask: config pre-approval → saved approvals (`.reyn/approvals.yaml`) → session approvals (in-memory, current invocation) → interactive prompt (the last resort). The 4-layer resolution lives entirely inside this section's middle layer ("declared capability → JIT prompt").
+
 ### Actor-scoped approvals
 
 Persistent approval choices land in `.reyn/approvals.yaml`, keyed by `<actor>/<op>/<path>`. Keys are actor-scoped, not skill- or user-scoped: one actor's approval doesn't leak to another. This is the composition-safety property — an approval granted to the chat router's own dispatch path doesn't transitively extend to, say, a background hook or cron caller acting through a different actor identity.
