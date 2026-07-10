@@ -21,7 +21,7 @@ reyn chat [agent_name] [OPTIONS]
 
 ## オプション
 
-共通ランタイムフラグ（`--model`、`--output-language`、`--phase-budget`、`--llm-timeout`、`--llm-max-retries`）は `reyn run` / `reyn eval` と共有です。[共通フラグ](common-flags.md) を参照してください。
+共通ランタイムフラグ（`--model`、`--output-language`、`--phase-budget`、`--llm-timeout`、`--llm-max-retries`）は `reyn run-once` と共有です。[共通フラグ](common-flags.md) を参照してください。
 
 chat 固有のフラグ:
 

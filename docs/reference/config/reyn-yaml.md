@@ -30,7 +30,6 @@ models:
 | `safety` | map | Runtime stop conditions: loop-detection caps, timeouts, on-limit policy. See below. |
 | `cost` | map | Budget caps and rate limits (per-agent, daily, monthly). See below. |
 | `web` | map | SSL settings for `web_fetch` and MCP registry calls. See below. |
-| `eval` | map | Trace exporter backends for `reyn eval`. See below. |
 | `sandbox` | map | Sandboxed-exec backend selection, unsupported-platform policy, and the agent-level sandbox policy. See below. |
 | `hooks` | list | Agent-lifecycle hooks — template_push / shell_exec / shell_push hooks at lifecycle points. See below. |
 | `action_retrieval` | map | Universal catalog visibility + retrieval settings. See below. |
@@ -548,34 +547,6 @@ Priority chain (highest first):
 | `web.fetch.max_download_bytes` | int | `10485760` (10MB) | Maximum response bytes `web_fetch` reads off the wire. A response whose `Content-Length` exceeds this is rejected before any body is downloaded; a chunked / unknown-length body is aborted once the stream passes the ceiling (status `too_large`). Guards against an unbounded-body memory blow-up from a hostile or runaway URL. `<= 0` or non-integer falls back to the default. |
 | `web.fetch.allow_private_ips` | bool | `false` | SSRF opt-in. When `true`, `web_fetch` / `safe.http` may fetch **private** RFC1918/ULA addresses (enterprise internal-fetch). Link-local, cloud-metadata (`169.254.169.254`), and loopback are **always** denied regardless of this flag. HTTP redirects are re-validated per hop (both the host allowlist and the IP-deny), so an allowlisted host cannot redirect to an internal target. Also exported to the `REYN_FETCH_ALLOW_PRIVATE_IPS` env var so the safe.http subprocess and registry clients honor the same opt-in. |
 | `web.ws_max_size` | int | `16777216` (16MB) | Maximum size (bytes) of a single inbound WebSocket frame the `reyn web` gateway accepts; a larger frame is rejected by the server before delivery. Pins the WebSocket frame ceiling explicitly instead of relying on the server library's implicit default, so the bound stays in place across server-library upgrades. Operators may tighten or loosen it. `<= 0` or non-integer falls back to the default. |
-
-## `eval` block
-
-Trace exporter backends. When configured, reyn exports event traces from every skill run to the listed backends.
-
-```yaml
-eval:
-  exporters:
-    - type: file
-      path: .reyn/traces/        # default when no exporters are set
-    - type: langfuse
-      public_key: ${LANGFUSE_PUBLIC_KEY}
-      secret_key: ${LANGFUSE_SECRET_KEY}
-      host: https://cloud.langfuse.com   # optional; default cloud endpoint
-    - type: otlp
-      endpoint: http://localhost:4317
-    - type: ietf_audit
-      path: .reyn/audit/         # IETF Agent Audit Trail draft format
-```
-
-| `type` | Description |
-|--------|-------------|
-| `file` | JSON-lines file under `path`. Default backend when `exporters` is empty. |
-| `langfuse` | Sends traces to a Langfuse instance. `public_key` + `secret_key` support `${VAR}` env interpolation. |
-| `otlp` | OpenTelemetry Protocol; `endpoint` is the OTLP gRPC or HTTP receiver. |
-| `ietf_audit` | IETF Agent Audit Trail draft format written to `path`. |
-
-All exporters are fire-and-forget: export failures are logged but do not abort the skill run.
 
 ## `hooks` block
 

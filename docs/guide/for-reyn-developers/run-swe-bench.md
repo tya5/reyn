@@ -6,17 +6,29 @@ audience: [human]
 
 # Run SWE-bench
 
+> **Status: partially stale.** `reyn eval benchmark` — the whole CLI subcommand
+> this page's "Run a batch" section documents, not just its previously-bundled
+> `swe_bench` workflow — was deleted alongside the phase-graph skill engine
+> (confirmed via `src/reyn/interfaces/cli/commands/__init__.py`'s command
+> list and `git log --diff-filter=D`). There is currently no batch/scoring
+> CLI driver. "Solve a single instance" below is current and unaffected —
+> `scripts/swe_bench_runner.py` still exists and still invokes `reyn run-once`
+> as documented. For a full dataset today, loop the single-instance runner
+> yourself and score with the `swebench` harness directly; a rewrite of "Run
+> a batch" describing that DIY path (rather than a nonexistent CLI command)
+> is tracked as a follow-up.
+
 This how-to covers running Reyn against [SWE-bench](https://www.swebench.com/)
 (the standard coding-agent benchmark) to measure how the general agent solves
-real GitHub issues. There are two surfaces, and they are independent:
+real GitHub issues.
 
 - **Solve a single instance** — `scripts/swe_bench_runner.py` runs the general
   agent on one SWE-bench instance and emits a prediction (a git patch). It does
   **not** score.
-- **Run a batch** — `reyn eval benchmark` runs a workflow across a JSONL task file
-  with concurrent dispatch and **built-in faithful scoring**.
+- **Run a batch** — see the status note above; there is no current CLI batch
+  driver.
 
-Scoring in both cases is delegated to the official `swebench` harness, which is
+Scoring is delegated to the official `swebench` harness, which is
 an **optional dependency** — see [Faithful scoring](#faithful-scoring-and-the-honest-skip).
 
 ## Prerequisites
@@ -91,14 +103,17 @@ To score the prediction, feed it to the official `swebench` harness
 (`python -m swebench.harness.run_evaluation`), or use the batch driver below,
 which scores inline.
 
-## Run a batch
+## Run a batch (dead — described for historical context only)
 
-`reyn eval benchmark` runs a workflow across a JSONL task file (one task per line)
-with concurrent dispatch, and scores each result inline:
+`reyn eval benchmark` **no longer exists as a CLI command.** The description
+below documents what the deleted batch driver used to do, kept as design
+history; do not attempt to run these commands. `reyn eval benchmark` ran a
+workflow across a JSONL task file (one task per line) with concurrent
+dispatch, and scored each result inline:
 
-> **There is no bundled `swe_bench` workflow.** The batch driver runs whatever
-> workflow you name, and the previously bundled `swe_bench` workflow was retired — so
-> `reyn eval benchmark swe_bench …` will dead-end with "workflow not found". The
+> **There was no bundled `swe_bench` workflow even before removal.** The batch driver ran whatever
+> workflow you named, and the previously bundled `swe_bench` workflow was retired — so
+> `reyn eval benchmark swe_bench …` would dead-end with "workflow not found". The
 > batch path requires a **caller-supplied** workflow. The agent-routed (no-workflow)
 > SWE-bench solve is the [single-instance runner](#solve-a-single-instance)
 > above; to cover a full dataset that way, loop the runner over instances and
@@ -158,9 +173,8 @@ permissions:
   python.safe: allow   # python steps are always sandboxed (safe mode only)
 ```
 
-Without prior approval a task fails and is reported as not-finished. See the
-reyn eval reference
-and [Manage permissions](../for-users/manage-permissions.md).
+Without prior approval a task fails and is reported as not-finished. See
+[Manage permissions](../for-users/manage-permissions.md).
 
 ## Faithful scoring and the honest-skip
 

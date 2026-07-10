@@ -14,9 +14,11 @@ prep.
 
 ## Why
 
-Three mechanisms exist today and were not unified before FP-0036:
+Three mechanisms existed before FP-0036 and were not unified (`reyn eval` has
+since been removed alongside the phase-graph skill engine; the comparison
+below is retained as design history):
 
-| | `reyn eval` | Dogfood scenario framework |
+| | `reyn eval` (removed) | Dogfood scenario framework |
 |---|---|---|
 | Entry point | `reyn run <skill>` | `reyn chat` (router decides workflow) |
 | Verification | Per-phase rubric (LLM judge) | reply + events + artifacts |
@@ -24,10 +26,10 @@ Three mechanisms exist today and were not unified before FP-0036:
 | Outcome scale | Binary pass/fail | 4-band (verified / inconclusive / refuted / blocked) |
 | Use case | Per-workflow regression | System-wide e2e regression |
 
-The framework is **orthogonal** to `reyn eval`. It reuses the `judge_output`
-op backend and the baseline comparison pattern, but the CLI surface and YAML
-schema are distinct. It is also orthogonal to one-shot batch preludes — those
-are Markdown prose, not machine-readable, not reusable across batches.
+The framework reuses the `judge_output` op backend and the baseline
+comparison pattern from that era, but the CLI surface and YAML schema are
+distinct. It is also orthogonal to one-shot batch preludes — those are
+Markdown prose, not machine-readable, not reusable across batches.
 
 LLM stochasticity, replay cost, feature drift, and coverage gaps are the four
 driving constraints:

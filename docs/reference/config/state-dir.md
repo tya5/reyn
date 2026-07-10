@@ -56,10 +56,6 @@ Per-agent workspace. One directory per named agent (created by `reyn agent new`)
 
 Skill version snapshots written by `skill_improver`. Each `v<N>.md` is a timestamped snapshot of `skill.md` at the time a proposal was applied. Pruned to `self_improvement.max_versions` snapshots. Inspect with `reyn skill versions <name>`.
 
-### `eval-results/<skill>/`
-
-One JSONL file per `reyn eval run` execution. Each line records a single case result: input, expected, actual `final_output`, score, passed flag, and `skill_version_hash`. Used by `reyn eval report` and `reyn eval compare`.
-
 ### `state/budget_ledger.jsonl`
 
 Durable, append-only budget record log (fsync per append). Holds one record per LLM call (token + USD usage) and one record per run spawn (`kind: "spawn"`). On startup Reyn re-aggregates the daily / monthly totals (auto-reset at midnight / the 1st of the month), the cumulative per-agent token + USD totals, and the per-chain spawn counts — so every budget cap survives a process restart or crash. This is the cap-critical source of truth. Inspect with `/budget` in `reyn chat`. Not affected by `/budget reset` (which only clears in-memory counters).
