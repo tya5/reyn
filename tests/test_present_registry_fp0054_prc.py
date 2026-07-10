@@ -523,3 +523,58 @@ def test_default_mode_stage3_records_null_fallback_stage(tmp_path: Path) -> None
     assert "note" not in ack
     ev = _presented(events)
     assert ev["fallback_stage"] is None
+
+
+def test_stage3_default_viewer_never_all_misses_so_generic_never_emitted(
+    tmp_path: Path,
+) -> None:
+    """Tier 2: (#2671) the presented event's `fallback_stage` is never `generic` —
+    stage-3's content-type default viewer always renders, so stage 4 is never
+    reached through the op path.
+
+    This completes the enum coverage honestly: the event's other two values
+    (`null`, `content_type_default`) are pinned by the tests above; this pins the
+    invariant that EXPLAINS the third. `generic` (stage 4) is currently
+    unreachable via `handle()` because every `default_viewer_blueprint` binds the
+    whole document (`$bind: ""`, always resolvable) or a zero-binding literal, so
+    stage 3 never reports `all_bindings_missed` — the sole trigger for the stage-4
+    generic viewer (FP-0054 §3 designs stage 3 as the shape-exhaustive universal
+    viewer and stage 4 as the defense-in-depth "always renders" final catch).
+
+    Drives a spread of data shapes (dict / list-of-dicts / list-of-scalars /
+    scalar / empty containers / binary marker / null-valued dict) through the REAL
+    op, on BOTH fallback entry points (unknown view name AND an all-missing inline
+    blueprint — each falls to stage 3), and asserts no emitted event ever carries
+    `fallback_stage == "generic"` (only `null` / `content_type_default`). Goes RED
+    if a future `default_viewer_blueprint` change makes stage 3 all-miss for any
+    shape — i.e. makes stage-4 generic reachable — which would then need its own
+    event-level coverage."""
+    shapes = [
+        {"author": "amy"},
+        [{"a": 1}, {"b": 2}],
+        [1, 2, 3],
+        "plain text",
+        42,
+        {},
+        [],
+        {"binary": True, "byte_size": 8},
+        {"a": None, "b": None},
+    ]
+    for data in shapes:
+        for op in (
+            # Unknown view → skips the requested stage, enters at stage 3.
+            PresentIROp(kind="present", data_inline=data, view="does_not_exist"),
+            # Inline blueprint whose sole binding misses → also falls to stage 3.
+            PresentIROp(
+                kind="present", data_inline=data,
+                blueprint=[{"component": "text", "text": {"$bind": "/absent"}}],
+            ),
+        ):
+            ctx, events = _ctx(tmp_path, registry=None, renderer=_RecordingRenderer())
+            _run(handle(op, ctx))
+            stage = _presented(events)["fallback_stage"]
+            assert stage != "generic", (
+                f"stage-4 generic unexpectedly emitted for data={data!r} — stage-3 "
+                "default viewer must always render (FP-0054 §3 universal viewer)"
+            )
+            assert stage in (None, "content_type_default")

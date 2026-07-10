@@ -299,6 +299,19 @@ def _resolve_presentation(
         return requested, stage3, fallback_stage
 
     # Stage 4 — generic YAML/text (always renders — the final catch).
+    #
+    # #2671: this branch (and therefore ``fallback_stage="generic"`` on the
+    # presented event) is currently UNREACHABLE via ``handle()``. Reaching it
+    # requires stage 3 to report ``all_bindings_missed``, but every
+    # ``default_viewer_blueprint`` binds the whole document (``$bind: ""``, which
+    # ``resolve_pointer`` always resolves) or a zero-binding literal, so stage 3
+    # never all-misses. This is BY DESIGN, not a gap: FP-0054 §3 frames stage 3 as
+    # the shape-exhaustive universal viewer and stage 4 as the defense-in-depth
+    # "always renders" final catch guaranteeing the "data always reaches the user"
+    # invariant. Kept as a construction-time safety net; a future
+    # ``default_viewer_blueprint`` change that CAN all-miss re-activates it (and is
+    # caught by test_stage3_default_viewer_never_all_misses_so_generic_never_emitted,
+    # which would then go RED and demand event-level coverage of this value).
     stage4 = resolve_bindings(
         validate_blueprint(generic_blueprint(data)), data, surface=surface, ref=ref,
     )
