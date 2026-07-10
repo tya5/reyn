@@ -34,13 +34,20 @@ _log = logging.getLogger(__name__)
 # wires the per-component seams (mcp / cron / hooks / per-agent capability / …).
 ReapplySeam = tuple[str, Callable[[dict], Awaitable[bool]]]
 
-# #2761 PR-2: an install op's ``source`` → the seam name(s) its IMMEDIATE mid-turn
-# apply must run (and ONLY those — not the whole reload). Skill / pipeline are the
-# two pure-in-memory rebuild types; ``mcp_install`` is added in PR-3 (its seam does
-# an external re-probe with a probe-then-commit + cancel/timeout contract).
+# #2761 PR-2/PR-3: an install op's ``source`` → the seam name(s) its IMMEDIATE mid-turn
+# apply must run (and ONLY those — not the whole reload). Skill / pipeline are the two
+# pure-in-memory rebuild types (PR-2); ``mcp_install`` (PR-3) additionally probes the
+# server (spawn/connect + list_tools) BEFORE its config write (probe-then-commit) so a
+# failed/cancelled probe leaves nothing committed — the seam here runs the live tool-set
+# swap (``_reapply_mcp`` → ``refresh_mcp_servers``) after that probe has already gated
+# the write.
 _INSTALL_SOURCE_SEAMS: "dict[str, tuple[str, ...]]" = {
     "skill_install": ("skills",),
     "pipeline_install": ("pipelines",),
+    "mcp_install": ("mcp",),
+    # mcp__install_local writes .reyn/mcp.yaml via a parallel path (tools/mcp_verbs)
+    # but reloads the SAME mcp seam — its distinct source label maps here too.
+    "mcp__install_local": ("mcp",),
 }
 
 
