@@ -39,7 +39,7 @@ Every layer has a corresponding engineering lens. The lenses don't partition the
 
 ### 1. [System Design](system-design.md)
 
-The macro shape: how control flow, state, and responsibility are distributed across layers. The current split is LLM-decides / OS-executes / feature-owns-its-domain — no new cross-layer coupling. *(This page's own body is currently stale; see its status banner.)*
+The macro shape: how control flow, state, and responsibility are distributed across layers. The current split is LLM-decides / OS-executes / feature-owns-its-domain — no new cross-layer coupling.
 
 ### 2. [Tool Contract Design](tool-contract-design.md)
 
@@ -78,7 +78,7 @@ Three of the eight lenses name a *discipline* whose *universal mechanism* is one
 - New to agent engineering generally? Read `CLAUDE.md`'s Constitution section and [charter.md](../architecture/charter.md) first — they're the current, grounded model. Come back here for the narrative per-lens walkthrough.
 - Coming from another framework? Skip to the lens you care most about; cross-links will pull you back to the others as needed.
 - Doing self-assessment for your own system? The "where it's still thin" passages — especially on Retrieval and Evaluation, the constitution's two honest thin areas — are the candid bits.
-- **A note on staleness**: five of these eight lens pages (System Design, Retrieval, Reliability, Security, Product Think) were written against the phase-graph skill engine deleted in an earlier engine-deletion arc, and each carries a status banner at the top naming exactly what's stale vs. still current. Tool Contract Design already went through this correction. Evaluation and Observability are newly written against the current model. A full de-drift pass on the remaining five is tracked as a follow-up, one page at a time — mirroring how `charter.md` itself was built family-by-family.
+- **A note on staleness**: four of these eight lens pages (Retrieval, Reliability, Security, Product Think) were written against the phase-graph skill engine deleted in an earlier engine-deletion arc, and each carries a status banner at the top naming exactly what's stale vs. still current. Tool Contract Design and System Design have already gone through a full rewrite; Evaluation and Observability are newly written against the current model. A full de-drift pass on the remaining four is tracked as a follow-up, one page at a time — mirroring how `charter.md` itself was built family-by-family.
 
 ## See also
 

@@ -39,7 +39,7 @@ Reyn は 8 つのエンジニアリング視点を通じて読み解けます。
 
 ### 1. [System Design](system-design.md)
 
-マクロ構造: 制御フロー、状態、責任をレイヤーを横断してどのように分散させるか。現行の分割は LLM が決定し、OS が実行し、feature が自分のドメインを所有する、という形で、新しいレイヤー横断の結合はありません。*(このページ自体の本文は現在 stale です — 状態バナーを参照してください。)*
+マクロ構造: 制御フロー、状態、責任をレイヤーを横断してどのように分散させるか。現行の分割は LLM が決定し、OS が実行し、feature が自分のドメインを所有する、という形で、新しいレイヤー横断の結合はありません。
 
 ### 2. [Tool Contract Design](tool-contract-design.md)
 
@@ -78,7 +78,7 @@ run 内で rubric に対して出力をスコアリングする(`judge_output`: 
 - agent エンジニアリング一般が初めてですか? まず `CLAUDE.md` の Constitution 節と [charter.md](../architecture/charter.md) を読んでください — それらが現行の grounded なモデルです。このページにはレンズごとのナラティブな解説のために戻ってきてください。
 - 別のフレームワークから来ていますか? 最も興味のあるレンズにスキップしてください。クロスリンクが必要に応じて他のレンズに引き戻します。
 - 自分のシステムの自己評価をしていますか? 「まだ薄い部分」の記述 — 特に憲章の 2 つの honest thin area である Retrieval と Evaluation — が率直な箇所です。
-- **staleness についての注記**: この 8 つのレンズページのうち 5 つ(System Design、Retrieval、Reliability、Security、Product Think)は、以前の engine 削除 arc で削除された phase-graph skill engine を前提に書かれており、それぞれ何が stale で何が現行かを明示する状態バナーをページ冒頭に持っています。Tool Contract Design はすでにこの訂正を経ています。Evaluation と Observability は現行モデルに対して新規に書かれました。残り 5 ページの完全な de-drift パスは follow-up として、1 ページずつ追跡されています — `charter.md` 自体が family ごとに構築された方法をなぞっています。
+- **staleness についての注記**: この 8 つのレンズページのうち 4 つ(Retrieval、Reliability、Security、Product Think)は、以前の engine 削除 arc で削除された phase-graph skill engine を前提に書かれており、それぞれ何が stale で何が現行かを明示する状態バナーをページ冒頭に持っています。Tool Contract Design と System Design はすでに完全な書き直しを経ています。Evaluation と Observability は現行モデルに対して新規に書かれました。残り 4 ページの完全な de-drift パスは follow-up として、1 ページずつ追跡されています — `charter.md` 自体が family ごとに構築された方法をなぞっています。
 
 ## 関連情報
 
