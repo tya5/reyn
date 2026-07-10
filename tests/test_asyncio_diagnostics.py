@@ -25,6 +25,10 @@ import logging
 from pathlib import Path
 
 import pytest
+from prompt_toolkit import PromptSession
+from prompt_toolkit.application.current import create_app_session
+from prompt_toolkit.input import create_pipe_input
+from prompt_toolkit.output import DummyOutput
 
 from reyn.core.events.asyncio_diagnostics import install_asyncio_exception_handler
 
@@ -115,4 +119,61 @@ def test_default_handler_still_invoked(
         "still-visible-in-logs" in str(record.message)
         or (record.exc_info and "still-visible-in-logs" in str(record.exc_info[1]))
         for record in caplog.records
+    )
+
+
+def test_durable_capture_survives_prompt_toolkit_prompt_wait(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Tier 2b: durable capture is not masked while a prompt_toolkit
+    Application (the REPL's prompt-wait, most of its wall-clock time) owns
+    the loop's asyncio exception handler.
+
+    Regression context (#2786): `Application.run_async` defaults to
+    `set_exception_handler=True`, which swaps the loop's exception handler
+    for its own for the whole call -- masking #2637's durable capture
+    installed by `install_asyncio_exception_handler`. `interfaces/repl/
+    repl.py`'s `prompt_session.prompt_async(...)` (and `interfaces/inline/
+    app.py`'s `Application.run_async(...)`) now both pass
+    `set_exception_handler=False` so reyn's handler stays wired. This drives
+    the exact call shape `repl.py` uses -- a real `PromptSession.prompt_async`
+    with `set_exception_handler=False` on a headless pipe input/DummyOutput
+    (prompt_toolkit's own sanctioned no-TTY test harness) -- and fires a
+    message-only `call_exception_handler` (no `exception` key: the
+    "Exception None" class this module's docstring describes) while the
+    prompt is still awaiting input, then asserts the event landed durably.
+    """
+    reyn_dir = tmp_path / ".reyn"
+    reyn_dir.mkdir()
+    monkeypatch.chdir(tmp_path)
+
+    async def _drive() -> str:
+        install_asyncio_exception_handler(asyncio.get_running_loop())
+        with create_pipe_input() as pipe_input:
+            with create_app_session(input=pipe_input, output=DummyOutput()):
+                session: PromptSession[str] = PromptSession()
+
+                async def _fire_then_type() -> None:
+                    # Let prompt_async actually start (and install its own
+                    # loop bindings) before firing, so this reproduces the
+                    # "exception arrives during the prompt wait" window.
+                    await asyncio.sleep(0)
+                    asyncio.get_running_loop().call_exception_handler(
+                        {"message": "message-only-context-during-prompt-wait"}
+                    )
+                    await asyncio.sleep(0)
+                    pipe_input.send_text("hello\r")
+
+                asyncio.create_task(_fire_then_type())
+                # The exact parameter repl.py's `_input_loop` now passes.
+                return await session.prompt_async(set_exception_handler=False)
+
+    result = asyncio.run(_drive())
+    assert result == "hello"  # the prompt itself still completed normally
+
+    events = _read_events_of_kind(reyn_dir / "events", "asyncio_unhandled_exception")
+    [event] = events  # exactly one event captured — unpack raises otherwise
+    assert (
+        event["data"]["context_message"]
+        == "message-only-context-during-prompt-wait"
     )

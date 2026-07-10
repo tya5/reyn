@@ -103,6 +103,18 @@ async def _input_loop(
                         # idle (default base renderer) → no toolbar shown.
                         bottom_toolbar=renderer.bottom_toolbar,
                         refresh_interval=0.1,
+                        # #2786: prompt_toolkit's default (True) swaps the
+                        # loop's asyncio exception handler for its own for the
+                        # duration of this call (application.py's
+                        # set_exception_handler_ctx contextmanager) -- and the
+                        # prompt-wait is most of the REPL's wall-clock time, so
+                        # that window masks #2637's durable
+                        # install_asyncio_exception_handler capture almost
+                        # permanently. False leaves reyn's handler wired
+                        # (prompt_toolkit's own KeyboardInterrupt/EOF handling
+                        # lives in the key-binding layer, not this handler, so
+                        # nothing else regresses -- see asyncio_diagnostics.py).
+                        set_exception_handler=False,
                     )
             else:
                 # Piped / scripted stdin: skip prompt_toolkit entirely. It

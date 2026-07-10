@@ -58,6 +58,7 @@ def _make_handler():
         # the existing stderr/logging behavior an operator already relies on.
         loop.default_exception_handler(context)
         _durably_capture(context)
+        _surface_while_app_running(context)
 
     return _handler
 
@@ -94,4 +95,58 @@ def _durably_capture(context: dict[str, Any]) -> None:
             task_repr=repr(task) if task is not None else "",
         )
     except Exception:  # noqa: BLE001 -- durable-capture must never crash the loop
+        pass
+
+
+def _surface_while_app_running(context: dict[str, Any]) -> None:
+    """Print the context's message on screen while a prompt_toolkit
+    Application owns the terminal (#2786 polish).
+
+    ``loop.default_exception_handler`` (called before this, in ``_handler``)
+    already logs ``context["message"]`` via the ``asyncio`` logger --
+    including the message-only case (no ``exception`` key) this module's
+    docstring describes, where the message is the ONLY diagnostic available.
+    That log line reaches stderr for every entrypoint EXCEPT reyn's own
+    interactive chat CUI: `_setup_interactive_logging`
+    (interfaces/cli/commands/chat.py) redirects the root logger to
+    `.reyn/logs/reyn.log` for the whole duration of that session, so the
+    message would otherwise never reach the screen there -- reproducing
+    exactly the "Exception None" blank-diagnostics symptom #2786 reports,
+    even after the loop's exception handler is no longer masked.
+
+    A bare ``print`` would also corrupt whichever prompt_toolkit
+    Application currently owns the terminal (the inline CUI's rule-bar
+    Application, or the `--cui` / non-TTY PromptSession's own Application),
+    so this goes through ``run_in_terminal`` -- the same mechanism
+    prompt_toolkit's own ``Application._handle_exception`` and reyn's REPL
+    output loop (``interfaces/repl/repl.py``) already use to interleave
+    ad-hoc output with a live render.
+
+    No-op when no Application is running (headless entrypoints -- web
+    server, chainlit, cron, dogfood -- are unaffected; their unredirected
+    logging already surfaces the message via the call above).
+    """
+    try:
+        from prompt_toolkit.application.current import get_app_or_none
+    except Exception:  # noqa: BLE001 -- optional at import time, never fatal
+        return
+    if get_app_or_none() is None:
+        return
+
+    exc = context.get("exception")
+    message = context.get("message") or "Unhandled exception in event loop"
+    tb_text = (
+        "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
+        if exc is not None else ""
+    )
+
+    def _emit() -> None:
+        print(f"\nUnhandled exception in event loop: {message}")
+        if tb_text:
+            print(tb_text)
+
+    try:
+        from prompt_toolkit.application import run_in_terminal
+        run_in_terminal(_emit)
+    except Exception:  # noqa: BLE001 -- surfacing must never crash the loop
         pass
