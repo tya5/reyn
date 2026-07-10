@@ -64,6 +64,23 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _neutralize_terminal(value: str) -> str:
+    """Strip ESC / control sequences from an LLM-derived intervention leaf before
+    it reaches any inline terminal renderer (#2770). Intervention content — the
+    prompt / detail / suggestions / choice labels — is untrusted (ask_user args
+    come straight from a model tool-call; permission prompts interpolate a
+    model-controlled path), and no downstream renderer neutralizes it. This
+    applies the SAME terminal neutralizer present's leaf seam uses
+    (``core/present/guard``, FP-0054), so a control/ESC sequence cannot drive the
+    terminal. Kept as a module helper so EVERY inline path that echoes
+    intervention content — the ``announce`` scrollback AND the unknown-choice
+    status hint (``deliver_answer_to``) — neutralizes identically: one seam, no
+    drift, no un-guarded echo path."""
+    from reyn.core.present.guard import get_neutralizer
+
+    return get_neutralizer("terminal").neutralize(value)[0]
+
+
 def _iv_meta(iv: UserIntervention) -> dict:
     """Standard ``meta`` payload for OutboxMessage announcing an intervention.
 
@@ -209,8 +226,12 @@ class InterventionHandler:
         )
         if not resolved and iv.choices:
             # No-match path: surface hint, but consume the input so the
-            # router doesn't run on a stray hotkey-attempt.
-            hint = " / ".join(c.label for c in iv.choices)
+            # router doesn't run on a stray hotkey-attempt. The choice labels are
+            # LLM-derived (ask_user options) and this status message reaches the
+            # SAME inline terminal surface as announce with no renderer-side
+            # guard — neutralize each label here too (#2770, GAP-1), or a control/
+            # ESC sequence in an option leaks through the invalid-choice path.
+            hint = " / ".join(_neutralize_terminal(c.label) for c in iv.choices)
             await self._put_outbox(OutboxMessage(
                 kind="status",
                 text=f"unknown choice; expected one of: {hint}",
@@ -290,12 +311,7 @@ class InterventionHandler:
 
         Corresponds to session._announce_intervention.
         """
-        from reyn.core.present.guard import get_neutralizer
-
-        neut = get_neutralizer("terminal")
-
-        def _clean(s: str) -> str:
-            return neut.neutralize(s)[0]
+        _clean = _neutralize_terminal
 
         # Plain-text fallback (msg.text) — neutralized so the non-inline renderers
         # that consume it raw are guarded too, not only the nodes path.

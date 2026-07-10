@@ -157,6 +157,54 @@ async def test_announce_neutralized_nodes_stay_inert_through_full_inline_render(
     assert "INJECT" in out
 
 
+# ── 1c. Security — the unknown-choice re-prompt hint (GAP-1) ─────────────────
+
+
+@pytest.mark.asyncio
+async def test_unknown_choice_hint_neutralizes_llm_choice_labels(tmp_path) -> None:
+    """Tier 2: the unknown-choice re-prompt hint echoes LLM-derived choice labels
+    to the SAME inline terminal surface as announce (deliver_answer_to no-match
+    path). Those labels are neutralized (ESC/control strip) so an invalid-choice
+    input cannot leak a terminal injection (#2770 GAP-1)."""
+    outbox: list[OutboxMessage] = []
+    handler, _ = _build_handler(tmp_path, outbox)
+
+    iv = _iv(
+        kind="ask_user",
+        prompt="pick one",
+        choices=[InterventionChoice(id="1", label=f"[1] {ESC}", hotkey="1")],
+    )
+    consumed = await handler.deliver_answer_to(iv, "does-not-match-any-hotkey")
+    assert consumed is True  # input consumed (re-prompt), not routed to a turn
+
+    hint = next(m for m in outbox if m.kind == "status" and "unknown choice" in m.text)
+    assert "\x1b" not in hint.text and "\x07" not in hint.text and "\x00" not in hint.text
+    assert "INJECT" in hint.text  # payload survives; only the control bytes go
+
+
+# ── 1d. Security — the /pending pending-op summary echo (GAP-2) ──────────────
+
+
+def test_pending_op_summary_neutralized_before_terminal_echo() -> None:
+    """Tier 2: the /pending list echo of a stalled intervention's summary (=
+    LLM-derived iv.prompt) is neutralized before it reaches the inline terminal
+    via reply() — an ask_user prompt with ESC/control cannot leak through the
+    /pending observe path (#2770 GAP-2). Real _render_list + real PendingOpView."""
+    from reyn.interfaces.slash.pending import _render_list
+    from reyn.runtime.pending_op_view import PendingOpView
+
+    view = PendingOpView(
+        id="abcd1234ef",
+        kind="intervention",
+        origin_channel_id="tui",
+        created_at="2026-01-01T00:00:00Z",
+        summary=f"approve deploy {ESC}?",
+    )
+    rendered = _render_list([view])
+    assert "\x1b" not in rendered and "\x07" not in rendered and "\x00" not in rendered
+    assert "INJECT" in rendered  # payload text survives; control bytes stripped
+
+
 # ── 2. Rendering consistency — same primitive as present ─────────────────────
 
 
