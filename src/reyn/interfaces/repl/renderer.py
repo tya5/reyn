@@ -740,6 +740,21 @@ class InlineChatRenderer(ChatRenderer):
         # though the ConditionalContainer stops rendering the working row the
         # moment _thinking becomes False.
         self._cancelling = False
+        # Working-indicator sub-state (owner: "Working… もっと状態細分化できないの?" →
+        # "何に待たされているのか知りたい"). Set/cleared from two DIFFERENT signals:
+        # tool_called/tool_returned/tool_failed arrive via on_chat_event (below,
+        # the SAME _chat_events subscription driving _thinking already); the
+        # user-wait state is NOT one of those — verified that ask_user.py is the
+        # ONLY one of the 6 intervention_bus.request() callers
+        # (permissions.py/limit_handler.py/mcp_install.py/elicitation.py/
+        # hooks/shell_runner.py all route through the SAME primitive but do NOT
+        # emit user_intervention_requested themselves) that emits the event pair
+        # directly — so this is driven by the outbox `kind="intervention"`
+        # message every intervention path announces through instead (see
+        # message() below), which all 6 paths DO share.
+        from reyn.interfaces.inline.app import _WAITING_ON_THINKING
+        self._waiting_on = _WAITING_ON_THINKING
+        self._waiting_on_since = 0.0
 
     def request_cancel(self) -> None:
         """Record ctrl-c cancel-in-flight; cleared automatically by on_chat_event on turn end."""
@@ -748,18 +763,37 @@ class InlineChatRenderer(ChatRenderer):
     def working_frags(self, now: float) -> list:
         """Current working-row fragments — delegates to app.working_line with live state."""
         from reyn.interfaces.inline.app import working_line  # deferred to avoid circular
-        return working_line(self._thinking, self._think_start, now, cancelling=self._cancelling)
+        return working_line(
+            self._thinking, self._think_start, now, cancelling=self._cancelling,
+            waiting_on=self._waiting_on, waiting_on_since=self._waiting_on_since,
+        )
+
+    def _set_waiting_on(self, waiting_on) -> None:
+        self._waiting_on = waiting_on
+        self._waiting_on_since = time.monotonic()
 
     def on_chat_event(self, event) -> None:
+        from reyn.interfaces.inline.app import _WAITING_ON_BY_EVENT, _WAITING_ON_THINKING
         etype = getattr(event, "type", None)
         if etype == "turn_started":
             self._thinking = True
             self._think_start = time.monotonic()
+            self._set_waiting_on(_WAITING_ON_THINKING)
         # turn_settled fires for every turn kind (incl. slash short-circuits);
         # turn_completed/turn_cancelled are kept as belt-and-suspenders.
         elif etype in ("turn_settled", "turn_completed", "turn_cancelled"):
             self._thinking = False
             self._cancelling = False
+            self._set_waiting_on(_WAITING_ON_THINKING)
+        elif etype in _WAITING_ON_BY_EVENT:
+            data = getattr(event, "data", None) or {}
+            self._set_waiting_on(_WAITING_ON_BY_EVENT[etype](data))
+        elif etype == "user_answered_intervention":
+            # The one signal common to ALL 6 intervention_bus.request() callers
+            # (see the __init__ note above) — fires when InterventionHandler
+            # records the user's answer, regardless of which kind of
+            # intervention it was.
+            self._set_waiting_on(_WAITING_ON_THINKING)
 
     def bottom_toolbar(self):
         """Animated working indicator while a turn runs (spinner + elapsed).
@@ -825,6 +859,17 @@ class InlineChatRenderer(ChatRenderer):
         self._flush()
 
     def message(self, msg: OutboxMessage) -> None:
+        # Working-indicator sub-state: an intervention announcement is the ONE
+        # signal common to ALL 6 intervention_bus.request() callers (ask_user,
+        # permission confirm, cost-warn, safety-limit checkpoint, MCP install
+        # confirm, elicitation, hook confirm) — InterventionHandler.announce()
+        # (intervention_handler.py) puts a kind="intervention" OutboxMessage for
+        # every one of them, unlike user_intervention_requested (ask_user only).
+        # The OUT transition is on_chat_event's user_answered_intervention
+        # handler (also common to all 6 — InterventionHandler.record_answer).
+        if msg.kind == "intervention":
+            from reyn.interfaces.inline.app import _WAITING_ON_FOR_USER
+            self._set_waiting_on(_WAITING_ON_FOR_USER)
         self._clear_transient()
         if wants_separator(msg.kind, self._seen_message):
             self._console.print()  # blank line between message blocks
