@@ -27,20 +27,18 @@ from reyn.tools.reyn_src import (
 # ── 1. REYN_SRC_LIST render_for_router byte-identity ────────────────────────
 
 def test_reyn_src_list_router_render_exact_description():
-    """Tier 2: REYN_SRC_LIST description is byte-identical to the legacy ToolSpec
-    description in router_tools.py. Any whitespace or punctuation diff is a stop
-    signal that would drift LLMReplay fixtures."""
+    """Tier 2: render_for_router() passes the ToolDefinition's own description
+    through unchanged (no router-side transformation/truncation).
+
+    Asserts against the imported ``_REYN_SRC_LIST_DESCRIPTION`` constant
+    (the single source of truth in reyn_src.py) rather than a second,
+    independently-typed literal copy — a duplicated-literal pin is exactly
+    what let the description drift stale in the first place (it referenced
+    a "docs/en/concepts" path from before the docs i18n restructure,
+    reliably steering agents into guessing nonexistent paths, caught via a
+    real dogfood-journal grep sweep). One string, one place to update."""
     rendered = REYN_SRC_LIST.render_for_router()
-    legacy_description = (
-        "List entries under a path inside Reyn's own repository "
-        "(= the project that built this agent). Pass \"\" for "
-        "the repo root. Returns names + types (file/dir). Use "
-        "this to discover Reyn's source/doc layout before "
-        "reading specific files. Examples: list \"\" for the "
-        "top-level layout, \"docs/en/concepts\" for concept "
-        "docs, or any subdirectory path for its contents."
-    )
-    assert rendered["function"]["description"] == legacy_description
+    assert rendered["function"]["description"] == _REYN_SRC_LIST_DESCRIPTION
 
 
 def test_reyn_src_list_router_render_exact_parameters():
