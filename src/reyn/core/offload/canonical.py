@@ -165,8 +165,92 @@ def canonical_declaration(
 
 def _is_error(result: dict) -> bool:
     """A result is an error when it explicitly flags one (MCP ``isError``) or its op-level
-    ``status`` is ``error`` (the sole error-path driver kept after meta-tightening)."""
+    ``status`` is ``error`` (the sole error-path driver kept after meta-tightening).
+
+    Retained after FP-0056 v2 piece #1 for the TWO producers whose ``status:"error"`` carries its
+    payload in a non-``error`` field (so the shared error seam intentionally does NOT intercept them,
+    and they keep their own ``meta.isError`` handling): ``mcp`` (message in ``content``) and
+    ``sandboxed_exec`` (a nonzero exit — output in ``stdout``/``stderr``, ``returncode`` as signal).
+    Also consulted by :func:`canonical_degraded_reason` (piece #2)."""
     return bool(result.get("isError")) or result.get("status") == "error"
+
+
+# FP-0056 v2 piece #1 — the shared error seam (the M1-class linchpin).
+#
+# The dedicated error-MESSAGE fields, in extractor priority order. This IS the true union of the
+# per-mapper error branches removed in piece #1 (``file``/``reyn_src``/``render_template``/``compact``/
+# ``present``/``judge_output``/``memory_body``/``web_search`` — and the recall/task_ops ``{ok:False,
+# error_message}`` that had NO branch, the #2698 gap). Every one of those producers surfaces its error
+# through one of these fields, so keying the predicate on them (not on the ambiguous ``status``/``ok``
+# values) makes removing the branches regression-free by construction.
+_ERROR_MESSAGE_FIELDS = ("error_message", "error", "error_kind")
+
+
+def is_error_result(result: object) -> bool:
+    """The union error predicate the shared error seam runs BEFORE a mapper's success-only logic
+    (FP-0056 v2 piece #1). True for the FIXED SET of known error shapes:
+
+    - ``{isError}`` (MCP-style explicit flag);
+    - a truthy dedicated error-message field — ``{error}`` / ``{error_message}`` / ``{error_kind}`` —
+      which subsumes the recall/task_ops ``{ok:False, error_message}`` + ``{error_kind}`` shapes, the
+      ``file`` ``denied``/``not_found`` (which carry ``error``), and every other per-mapper branch.
+
+    **Tightening A (the misclassification safety).** The seam runs on ALL mapper-path results, so the
+    predicate must NOT over-match a SUCCESS payload that happens to carry a data-meaning ``ok``/``status``
+    key. Two concrete hazards this predicate is designed around:
+
+    - a health-check-style ``{ok: False, service: "db"}`` (``ok:False`` MEANS "DB is down" — success
+      data) → NOT matched (no error-message field; a bare ``ok is False`` is never a trigger);
+    - ``sandboxed_exec``'s ``{status: "error", returncode: 2, stdout, stderr}`` (a nonzero exit is a
+      SUCCESSFUL execution whose output is ``stdout``/``stderr``) → NOT matched (no error-message
+      field). This is a REAL in-repo instance of the ``status`` data-meaning hazard: routing it through
+      :func:`error_to_canonical` would drop ``stdout``/``stderr`` on the router error path (which renders
+      ``text`` only, dropping attachments, when ``meta.isError``). So a bare ``status`` value is NOT a
+      standalone trigger — every real error producer pairs its status with an error-message field, and
+      the two producers that don't (``mcp`` content / ``sandboxed_exec`` stdout) keep their in-mapper
+      ``meta.isError`` handling (:func:`_is_error`) precisely because their payload is NOT a message.
+
+    Even were a misclassification to slip through, :func:`error_to_canonical` is LOSSLESS (whole dict →
+    structured attachment), so it only ever MIS-LABELS, never loses data."""
+    if not isinstance(result, dict):
+        return False
+    if result.get("isError"):
+        return True
+    return any(result.get(field) for field in _ERROR_MESSAGE_FIELDS)
+
+
+def _extract_error_message(result: dict) -> str:
+    """The union message extractor: read the first present error-message field in priority order,
+    ALWAYS returning a non-empty string (so an error never renders to empty ``text`` — the M1 fix).
+    A shape with an error signal but no readable message (e.g. a bare ``{error_kind}``) still yields a
+    non-empty line; the full dict is preserved in the structured attachment by :func:`error_to_canonical`."""
+    for field in ("error_message", "error"):
+        value = result.get(field)
+        if value:
+            return str(value)
+    error_kind = result.get("error_kind")
+    if error_kind:
+        return f"error: {error_kind}"
+    return "error"
+
+
+def error_to_canonical(result: dict) -> CanonicalToolResult:
+    """Render ANY :func:`is_error_result`-classified result to a LOSSLESS canonical error view
+    (FP-0056 v2 piece #1). Two guarantees:
+
+    - a NON-EMPTY ``text`` (the extracted union message) — eliminating the M1 silent-loss class where a
+      mapper with no error branch rendered an error to empty text (recall #2698 et al.);
+    - the WHOLE result dict as a ``structured`` attachment, plus ``meta.isError``. This losslessness is
+      what makes the fixed-set union predicate safe to run before every mapper (tightening A): even a
+      hypothetical misclassification of a success payload only MIS-LABELS it (``isError`` on a success)
+      — it NEVER loses data (the full payload survives in the attachment; the existing offload gate
+      handles it if large)."""
+    return CanonicalToolResult(
+        text=_extract_error_message(result),
+        attachments=[{"kind": "structured", "data": result}],
+        source_ref=None,
+        meta={"isError": True},
+    )
 
 
 def _explicit_empty(text: str, marker: str) -> str:
@@ -286,16 +370,16 @@ def web_fetch_to_canonical(result: dict) -> CanonicalToolResult:
 
 
 def web_search_to_canonical(result: dict) -> CanonicalToolResult:
-    """web_search result → canonical. The ``results`` list → a ``structured`` attachment (rendered as
-    frontmatter YAML, or offloaded to its own ref when large). An op-level failure (no ``results``,
-    ``status: error``) surfaces its message as ``text``. Transport (query/backend) is dropped."""
+    """web_search result → canonical (SUCCESS shape only — FP-0056 v2 piece #1 routes an error
+    ``{status:"error", error}`` through the shared ``error_to_canonical`` seam before this mapper runs).
+    The ``results`` list → a ``structured`` attachment (rendered as frontmatter YAML, or offloaded to
+    its own ref when large). Transport (query/backend) is dropped."""
     results = result.get("results")
     if results is not None:
         return CanonicalToolResult(
             text="", attachments=[{"kind": "structured", "data": results}], source_ref=None, meta={},
         )
-    text = str(result.get("error") or "") if result.get("status") == "error" else ""
-    return CanonicalToolResult(text=text, attachments=[], source_ref=None, meta={})
+    return CanonicalToolResult(text="", attachments=[], source_ref=None, meta={})
 
 
 def sandboxed_exec_to_canonical(result: dict) -> CanonicalToolResult:
@@ -383,19 +467,12 @@ def file_to_canonical(result: dict) -> CanonicalToolResult:
     - ``write`` / ``edit`` / ``delete`` / ``mkdir`` / ``move`` / ``stat`` / ``regenerate_index`` → a short
       status ``text``.
 
-    Any op whose result is an error (``status`` error/denied/not_found, or an ``error`` field) surfaces
-    the ``error`` message as ``text`` with ``meta.isError`` — the sole error-path driver."""
+    SUCCESS shape only — FP-0056 v2 piece #1 routes any error (``status`` error/denied/not_found, which
+    carry an ``error`` field) through the shared ``error_to_canonical`` seam before this mapper runs; the
+    whole result dict (incl. ``op``/``status``/``path``) is preserved in that error view's lossless
+    structured attachment."""
     op = result.get("op")
-    status = result.get("status")
     meta = _file_signal_meta(result)
-    if _is_error(result) or status in ("error", "denied", "not_found") or (
-        "error" in result and result.get("error")
-    ):
-        meta["isError"] = True
-        return CanonicalToolResult(
-            text=str(result.get("error") or ""), attachments=[], source_ref=None, meta=meta,
-        )
-
     if op == "read":
         attachments = [
             {"kind": "media", "block": block} for block in (result.get("media_blocks") or [])
@@ -480,11 +557,9 @@ def reyn_src_to_canonical(result: dict) -> CanonicalToolResult:
     - ``list`` (``entries``) → ``type: name`` lines as ``text``.
     - ``glob`` (``matches`` of paths) / ``grep`` (``matches`` of ``{path, line, snippet}``) → the
       rendered lines as ``text``.
-    - an ``error`` → the message as ``text`` with ``meta.isError``."""
-    if result.get("error"):
-        return CanonicalToolResult(
-            text=str(result["error"]), attachments=[], source_ref=None, meta={"isError": True},
-        )
+
+    SUCCESS shape only — FP-0056 v2 piece #1 routes an ``{error}`` result through the shared
+    ``error_to_canonical`` seam before this mapper runs."""
     if "content" in result:
         meta = {"path": result["path"]} if result.get("path") is not None else {}
         text = _explicit_empty(result.get("content", "") or "", "(empty file)")
@@ -519,13 +594,11 @@ def render_template_to_canonical(result: dict) -> CanonicalToolResult:
     (``rendered``) IS the LLM-readable body → ``text`` (NOT a whole-dict ``structured``
     blob). Signal meta: ``truncated`` (+ which bound fired, ``truncate_reason``) tells the LLM the
     output was capped mid-generate; ``undefined_vars`` (lenient mode) names the
-    referenced-but-unbound template variables so it can self-correct. An error
-    (``status="error"`` — syntax / SSTI-blocked / strict-undefined) surfaces the
-    message as ``text`` with ``meta.isError``."""
-    if _is_error(result):
-        return CanonicalToolResult(
-            text=str(result.get("error") or ""), attachments=[], source_ref=None, meta={"isError": True},
-        )
+    referenced-but-unbound template variables so it can self-correct.
+
+    SUCCESS shape only — FP-0056 v2 piece #1 routes an error (``status="error"``/``not_found`` — syntax /
+    SSTI-blocked / strict-undefined, which carry an ``error`` field) through the shared
+    ``error_to_canonical`` seam before this mapper runs."""
     meta: dict[str, Any] = {}
     if result.get("truncated"):
         meta["truncated"] = True
@@ -546,11 +619,10 @@ def compact_to_canonical(result: dict) -> CanonicalToolResult:
     axis compression fields when present) render as a short ``text`` summary; on error the ``error``
     message surfaces as ``text`` with ``meta.isError``. Result shape:
     ``{kind:"compact", status:"ok", freed_tokens?, free_window_after?, summarized_turns?,
-    compressed_tokens?, bridge_tokens?}`` (ok) or ``{status:"error", error_kind, error}`` (error)."""
-    if _is_error(result):
-        return CanonicalToolResult(
-            text=str(result.get("error") or ""), attachments=[], source_ref=None, meta={"isError": True},
-        )
+    compressed_tokens?, bridge_tokens?}`` (ok) or ``{status:"error", error_kind, error}`` (error).
+
+    SUCCESS shape only — FP-0056 v2 piece #1 routes the error shape through the shared
+    ``error_to_canonical`` seam before this mapper runs."""
     parts: list[str] = ["Compaction complete."]
     for label, key in (
         ("freed_tokens", "freed_tokens"),
@@ -571,15 +643,12 @@ def present_to_canonical(result: dict) -> CanonicalToolResult:
     AGENT-facing signal (did the presentation reach the user? did the view bind? which fallback fired?),
     NOT bulk content — so it renders as a short ``text`` line, not a whole-dict ``structured`` blob (the
     incident class). Success shape: ``{kind:"present", status:"ok", ok:True, mode, bindings_resolved,
-    bindings_dropped, rows, all_bindings_missed, note?}``. Any non-``ok`` status (``error`` — malformed
-    inline blueprint / XOR violation; ``not_found`` — missing ``data_ref``; ``denied`` — read-authority)
-    surfaces the ``error`` message as ``text`` with ``meta.isError`` so the LLM self-corrects."""
-    status = result.get("status")
-    if status not in (None, "ok"):
-        return CanonicalToolResult(
-            text=str(result.get("error") or f"present {status}"),
-            attachments=[], source_ref=None, meta={"isError": True},
-        )
+    bindings_dropped, rows, all_bindings_missed, note?}``.
+
+    SUCCESS shape only — FP-0056 v2 piece #1 routes any non-``ok`` status (``error`` — malformed inline
+    blueprint / XOR violation; ``not_found`` — missing ``data_ref``; ``denied`` — read-authority; each
+    carries an ``error`` field) through the shared ``error_to_canonical`` seam before this mapper runs,
+    so the LLM still self-corrects from a non-empty error message."""
     parts: list[str] = ["Presented to the user."]
     mode = result.get("mode")
     if mode is not None:
@@ -605,11 +674,10 @@ def judge_output_to_canonical(result: dict) -> CanonicalToolResult:
     the ``text``; ``score`` / ``passed`` / ``threshold`` / ``on_fail`` are signal meta (they drive the
     caller's next move — a failed judgment triggers ``on_fail``). An error surfaces the message as
     ``text`` with ``meta.isError``. Shape: ``{kind:"judge_output", score, passed, reason, threshold,
-    on_fail}`` (ok) or ``{status:"error", error}`` (error)."""
-    if _is_error(result) or (result.get("status") == "error"):
-        return CanonicalToolResult(
-            text=str(result.get("error") or ""), attachments=[], source_ref=None, meta={"isError": True},
-        )
+    on_fail}`` (ok) or ``{status:"error", error}`` (error).
+
+    SUCCESS shape only — FP-0056 v2 piece #1 routes the ``{status:"error", error}`` shape through the
+    shared ``error_to_canonical`` seam before this mapper runs."""
     meta: dict[str, Any] = {}
     for key in ("score", "passed", "threshold", "on_fail"):
         value = result.get(key)
@@ -628,11 +696,10 @@ def memory_body_to_canonical(result: dict) -> CanonicalToolResult:
     documented G12 empty-stop attractor (an LLM handed non-clean memory text stopped with an empty
     reply — router_loop._read_memory_body). ``layer`` / ``slug`` are signal meta (which entry). An
     error (``error`` field) surfaces the message as ``text`` with ``meta.isError``. Shape:
-    ``{content, layer?, slug?}`` (ok) or ``{error, layer?, slug?}`` (error)."""
-    if result.get("error"):
-        return CanonicalToolResult(
-            text=str(result["error"]), attachments=[], source_ref=None, meta={"isError": True},
-        )
+    ``{content, layer?, slug?}`` (ok) or ``{error, layer?, slug?}`` (error).
+
+    SUCCESS shape only — FP-0056 v2 piece #1 routes the ``{error, layer?, slug?}`` shape through the
+    shared ``error_to_canonical`` seam before this mapper runs."""
     meta: dict[str, Any] = {}
     for key in ("layer", "slug"):
         value = result.get(key)
@@ -678,7 +745,19 @@ def to_canonical(result: dict, *, source: "str | None" = None) -> CanonicalToolR
     - ``source`` ``None`` or unregistered (genuine unknown) → the same lossless whole-dict fallback
       (PR-F2 will emit ``canonical_fallback_used`` on the TODO + unknown paths). Nothing is ever lost."""
     declaration = canonical_declaration(source)
-    if declaration is None or declaration is STRUCTURED_PASSTHROUGH or declaration is CANONICAL_TODO:
+    # FP-0056 v2 piece #1 — the shared error seam, scope-limited to the MAPPER + CANONICAL_TODO paths
+    # (tightening A #3). A known error shape routes to the single lossless ``error_to_canonical`` BEFORE
+    # the mapper's (now success-only) logic OR the TODO whole-dict fallback — structurally eliminating
+    # the M1 class (a mapper with no error branch rendering an error to empty text). STRUCTURED_PASSTHROUGH
+    # (a reviewed "the whole dict IS the view") and unregistered/``None`` (a genuine unknown) are
+    # deliberately OUT of scope: they are already lossless whole-dict, M1 loss only occurs where a mapper
+    # would interpret the result, and keeping them on ``_fallback_structured`` preserves their
+    # ``canonical_fallback_used`` (PR-F2) visibility semantics.
+    if declaration is STRUCTURED_PASSTHROUGH or declaration is None:
+        return _fallback_structured(result)
+    if is_error_result(result):
+        return error_to_canonical(result)
+    if declaration is CANONICAL_TODO:
         return _fallback_structured(result)
     return declaration(result)
 
