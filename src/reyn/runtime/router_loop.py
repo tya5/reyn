@@ -3047,9 +3047,13 @@ class RouterLoop:
                         # blob exceeded the offload gate) emits a P6 audit event naming the source —
                         # degrade-with-audit, never silently (the dogfood incident was one silent
                         # fallback). Source id only; NEVER the result body.
+                        # FP-0056 v2 piece #3: passing ``canonical`` lets the classifier also fire on a
+                        # mapped producer whose inner discriminator missed (reason
+                        # ``"discriminator_miss"`` — M3, #2695), riding the same fallback event.
                         _fallback_reason = canonical_fallback_reason(
                             canonical_source,
                             structured_offloaded=frontmatter.get("structured") == "offloaded",
+                            canonical=canonical,
                         )
                         if _fallback_reason is not None:
                             _events = getattr(host, "events", None)

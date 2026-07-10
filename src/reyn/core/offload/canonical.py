@@ -47,6 +47,14 @@ A genuinely unregistered ``source`` (dynamic/edge, or ``None``) keeps the lossle
 PR-F2 adds the ``canonical_fallback_used`` visibility event (degrade-with-audit) on the TODO + unknown
 paths.
 
+FP-0056 v2 closes the three canonical silent-loss modes structurally: piece #1 the shared error seam
+(M1, ``error_to_canonical`` before every mapper), piece #2 the runtime ``canonical_degraded`` invariant
+(M2, a success-mapper returning empty), and piece #3 (this) the inner-dispatch FAIL-VISIBLE seam (M3):
+a mapper whose inner discriminator is missing/unknown raises :class:`CanonicalDiscriminatorMiss` instead
+of emitting status-only garbage (the #2695 ``"None: ok"`` — non-empty so M2's empty-check misses it, not
+an error so M1's seam misses it); :func:`to_canonical` catches it and rides the EXISTING whole-dict
+fallback + ``canonical_fallback_used`` (reason ``"discriminator_miss"``).
+
 P7: the source → canonical mapping is OS-level (no domain-specific vocabulary). The deref / paging /
 offload store machinery is reused unchanged — 案B removes only the field-guessing.
 """
@@ -117,6 +125,22 @@ class _Undeclared:
 # canonical choice; the coverage gate rejects it (red CI naming the tool). It exists so a missing
 # declaration is a loud gate failure, not a silent fallback.
 UNDECLARED = _Undeclared()
+
+
+class CanonicalDiscriminatorMiss(Exception):
+    """Raised by an inner-dispatch mapper when its inner discriminator (the sub-field it switches on —
+    ``file``'s ``op``, ``reyn_src``'s ``content``/``entries``/``matches`` body key) is MISSING or an
+    UNKNOWN value, so the mapper cannot render a success view (FP-0056 v2 piece #3, mode M3).
+
+    The mapper raises this instead of falling through to a status-only catch-all that interpolates the
+    (often ``None``) discriminator into text — the ``"None: ok"`` garbage the #2695 file glob/list bug
+    emitted (non-empty, so piece #2's ``canonical_degraded`` empty-check does NOT catch it; not an
+    error, so piece #1's shared error seam does NOT catch it either). :func:`to_canonical` catches this
+    and takes the SAME lossless whole-dict fallback a genuine unknown source would (:func:`_fallback_structured`),
+    marking it so the caller emits the EXISTING ``canonical_fallback_used`` audit-event (reason
+    ``"discriminator_miss"``) — the discriminator-miss renders the full dict (recoverable) + emits the
+    audit signal, instead of silent garbage. No new mechanism: M3 rides the existing whole-dict-fallback
+    visibility (the path #2695 should have taken)."""
 
 
 # A canonical declaration: a mapper, the reviewed passthrough opt-in, or the provisional TODO marker.
@@ -470,7 +494,13 @@ def file_to_canonical(result: dict) -> CanonicalToolResult:
     SUCCESS shape only — FP-0056 v2 piece #1 routes any error (``status`` error/denied/not_found, which
     carry an ``error`` field) through the shared ``error_to_canonical`` seam before this mapper runs; the
     whole result dict (incl. ``op``/``status``/``path``) is preserved in that error view's lossless
-    structured attachment."""
+    structured attachment.
+
+    ``op`` is the inner discriminator: when it is MISSING or an UNKNOWN value (the #2695 glob/list
+    adapters that normalized ``op`` away), this raises :class:`CanonicalDiscriminatorMiss` — FAIL-VISIBLE
+    (mode M3) — so :func:`to_canonical` takes the lossless whole-dict fallback + fires
+    ``canonical_fallback_used``, INSTEAD of the old status-only ``f"{op}: {status}"`` = ``"None: ok"``
+    garbage."""
     op = result.get("op")
     meta = _file_signal_meta(result)
     if op == "read":
@@ -496,10 +526,13 @@ def file_to_canonical(result: dict) -> CanonicalToolResult:
         text = "\n".join(str(m) for m in matches) if matches else "(no matches)"
         return CanonicalToolResult(text=text, attachments=[], source_ref=None, meta=meta)
 
-    # write / edit / delete / mkdir / move / stat / regenerate_index → a short status text.
-    return CanonicalToolResult(
-        text=_render_file_status(op, result), attachments=[], source_ref=None, meta=meta,
-    )
+    # write / edit / delete / mkdir / move / stat / regenerate_index → a short status text. A missing/
+    # unknown ``op`` is a discriminator-miss → fail-visible (M3), NEVER the old ``"None: ok"`` garbage.
+    if op in _FILE_STATUS_OPS:
+        return CanonicalToolResult(
+            text=_render_file_status(op, result), attachments=[], source_ref=None, meta=meta,
+        )
+    raise CanonicalDiscriminatorMiss(f"file_to_canonical: missing/unknown op {op!r}")
 
 
 def _render_file_grep(result: dict) -> str:
@@ -520,10 +553,20 @@ def _render_file_grep(result: dict) -> str:
     return "\n".join(lines)
 
 
+# The mutating / metadata ``file`` ops whose success view is a short status line (read/grep/glob are
+# handled earlier in ``file_to_canonical`` by their own body). Any ``op`` outside read/grep/glob AND
+# this set is a discriminator-miss → :class:`CanonicalDiscriminatorMiss` (M3), never status garbage.
+_FILE_STATUS_OPS = frozenset(
+    {"write", "edit", "delete", "mkdir", "move", "stat", "regenerate_index"}
+)
+
+
 def _render_file_status(op: "str | None", result: dict) -> str:
     """A short, human-readable status line for a mutating / metadata ``file`` op (write/edit/delete/
     mkdir/move/stat/regenerate_index). Descriptive, not JSON — the LLM acts on the outcome, not the
-    envelope."""
+    envelope. Only ever called with an ``op`` in :data:`_FILE_STATUS_OPS` (``file_to_canonical`` raises
+    :class:`CanonicalDiscriminatorMiss` for a missing/unknown ``op`` before reaching here), so there is
+    no status-only ``f"{op}: {status}"`` catch-all — that was the #2695 ``"None: ok"`` garbage."""
     path = result.get("path", "")
     if op == "write":
         text = f"Wrote {result.get('bytes_written', 0)} bytes to {path}."
@@ -543,7 +586,9 @@ def _render_file_status(op: "str | None", result: dict) -> str:
         return f"Regenerated index at {result.get('output_path', '')}: {result.get('entries', 0)} entries."
     if op == "stat":
         return f"stat {path}: {result.get('info')}"
-    return f"{op}: {result.get('status', 'ok')}"
+    # Unreachable for a valid op (caller guards with ``_FILE_STATUS_OPS``); defensive fail-visible
+    # rather than the removed ``f"{op}: {status}"`` = ``"None: ok"`` garbage catch-all.
+    raise CanonicalDiscriminatorMiss(f"_render_file_status: unhandled op {op!r}")
 
 
 def reyn_src_to_canonical(result: dict) -> CanonicalToolResult:
@@ -559,7 +604,11 @@ def reyn_src_to_canonical(result: dict) -> CanonicalToolResult:
       rendered lines as ``text``.
 
     SUCCESS shape only — FP-0056 v2 piece #1 routes an ``{error}`` result through the shared
-    ``error_to_canonical`` seam before this mapper runs."""
+    ``error_to_canonical`` seam before this mapper runs. The body key (``content``/``entries``/
+    ``matches``) is the inner discriminator: a result carrying NONE of them raises
+    :class:`CanonicalDiscriminatorMiss` (mode M3) so :func:`to_canonical` takes the lossless whole-dict
+    fallback + fires ``canonical_fallback_used`` — the SAME recoverable output as the old inline
+    whole-dict return, now AUDITED (fail-visible) rather than silently unmapped."""
     if "content" in result:
         meta = {"path": result["path"]} if result.get("path") is not None else {}
         text = _explicit_empty(result.get("content", "") or "", "(empty file)")
@@ -583,10 +632,11 @@ def reyn_src_to_canonical(result: dict) -> CanonicalToolResult:
         return CanonicalToolResult(
             text=text or "(no matches)", attachments=[], source_ref=None, meta={},
         )
-    # A reyn_src shape with none of the known bodies — keep the whole dict lossless as structured.
-    return CanonicalToolResult(
-        text="", attachments=[{"kind": "structured", "data": result}], source_ref=None, meta={},
-    )
+    # A reyn_src shape with none of the known bodies (content/entries/matches) — discriminator-miss.
+    # Fail-visible (M3): raise so ``to_canonical`` takes the lossless whole-dict fallback AND fires
+    # ``canonical_fallback_used``, instead of an inline whole-dict return that was recoverable but
+    # SILENT (unaudited).
+    raise CanonicalDiscriminatorMiss("reyn_src_to_canonical: no content/entries/matches body key")
 
 
 def render_template_to_canonical(result: dict) -> CanonicalToolResult:
@@ -737,16 +787,30 @@ def ask_user_to_canonical(result: dict) -> CanonicalToolResult:
     )
 
 
-def _fallback_structured(result: dict) -> CanonicalToolResult:
+# A private, NON-rendered marker key stamped on the whole-dict fallback canonical when it was taken
+# because an inner-dispatch mapper raised :class:`CanonicalDiscriminatorMiss` (FP-0056 v2 piece #3, M3).
+# It is a signal channel for :func:`canonical_fallback_reason` only — the renderer (``build_offload_body``
+# reads ``attachments``/``meta``) and the ctx reducer (``canonical_to_ctx_fields`` reads ``text``/
+# ``attachments``) never read it, so it never reaches the LLM body (unlike ``meta``, which renders as
+# frontmatter YAML).
+_DISCRIMINATOR_MISS_MARKER = "_discriminator_miss"
+
+
+def _fallback_structured(result: dict, *, discriminator_miss: bool = False) -> CanonicalToolResult:
     """The lossless whole-dict fallback: the entire result becomes a ``structured`` attachment
     (readable as frontmatter YAML, ``ctx.<name>.structured.<field>`` still programmatically reachable),
     ``text`` empty. Used for a declared ``STRUCTURED_PASSTHROUGH`` producer, a provisional
-    ``CANONICAL_TODO`` producer, AND a genuinely unregistered ``source`` (dynamic/edge). PR-F2 adds a
-    ``canonical_fallback_used`` event on the ``CANONICAL_TODO`` + unregistered paths (degrade-with-
-    audit) — but NOT on ``STRUCTURED_PASSTHROUGH`` (a reviewed, legitimate whole-dict view)."""
-    return CanonicalToolResult(
+    ``CANONICAL_TODO`` producer, a genuinely unregistered ``source`` (dynamic/edge), AND a mapped
+    producer whose inner discriminator missed (``discriminator_miss=True`` — FP-0056 v2 piece #3, M3).
+    PR-F2 emits ``canonical_fallback_used`` on the ``CANONICAL_TODO`` + unregistered paths, and piece #3
+    on the discriminator-miss path (degrade-with-audit) — but NOT on ``STRUCTURED_PASSTHROUGH`` (a
+    reviewed, legitimate whole-dict view)."""
+    canonical = CanonicalToolResult(
         text="", attachments=[{"kind": "structured", "data": result}], source_ref=None, meta={},
     )
+    if discriminator_miss:
+        canonical[_DISCRIMINATOR_MISS_MARKER] = True  # type: ignore[typeddict-unknown-key]
+    return canonical
 
 
 def to_canonical(result: dict, *, source: "str | None" = None) -> CanonicalToolResult:
@@ -774,7 +838,15 @@ def to_canonical(result: dict, *, source: "str | None" = None) -> CanonicalToolR
         return error_to_canonical(result)
     if declaration is CANONICAL_TODO:
         return _fallback_structured(result)
-    return declaration(result)
+    # FP-0056 v2 piece #3 — the M3 fail-visible seam. A mapper whose inner discriminator is missing/
+    # unknown raises ``CanonicalDiscriminatorMiss`` rather than emitting status-only garbage (#2695
+    # ``"None: ok"``). Route it to the SAME lossless whole-dict fallback a genuine unknown takes, marked
+    # so the caller emits ``canonical_fallback_used`` (reason ``"discriminator_miss"``) — full dict
+    # recoverable + audit signal, never silent garbage.
+    try:
+        return declaration(result)
+    except CanonicalDiscriminatorMiss:
+        return _fallback_structured(result, discriminator_miss=True)
 
 
 # The audit-event kind the two live ``to_canonical`` callers emit when a result took a VISIBLE
@@ -785,14 +857,23 @@ CANONICAL_FALLBACK_EVENT = "canonical_fallback_used"
 
 
 def canonical_fallback_reason(
-    source: "str | None", *, structured_offloaded: bool = False
+    source: "str | None",
+    *,
+    structured_offloaded: bool = False,
+    canonical: "CanonicalToolResult | None" = None,
 ) -> "str | None":
     """Return the audit reason a :data:`CANONICAL_FALLBACK_EVENT` should carry for ``source``'s
     canonicalization, or ``None`` when nothing should fire (FP-0056 PR-F2 — the visibility half).
 
-    A short category string is returned on each of the three fail-visible paths (owner decisions #2/#3
+    A short category string is returned on each of the four fail-visible paths (owner decisions #2/#3
     — degrade-with-audit, never silently):
 
+    - ``canonical`` carries the discriminator-miss marker — a MAPPED producer whose inner discriminator
+      was missing/unknown, so :func:`to_canonical` took the lossless whole-dict fallback instead of the
+      mapper's status-only garbage (FP-0056 v2 piece #3, mode M3) → ``"discriminator_miss"``. Checked
+      FIRST because it is the ONE fallback a real-mapper ``source`` can take; without it the declaration
+      lookup below would (wrongly) report ``None`` for a mapped producer that DID fall back. The #2695
+      ``"None: ok"`` class made runtime-visible.
     - ``source`` unregistered / ``None`` (a genuine unknown the registries can't enumerate → the
       lossless whole-dict fallback) → ``"unregistered"``.
     - ``source`` declared :data:`CANONICAL_TODO` (gate-satisfying debt, no real mapper yet → the same
@@ -803,9 +884,12 @@ def canonical_fallback_reason(
       this producer — make it visible). A SMALL (inline) passthrough is a reviewed, legitimate view →
       ``None`` (no event).
 
-    A real mapper always returns ``None`` — a mapped producer never took a fallback. Only a reason
-    CATEGORY is returned; NO result content is ever returned or logged (audit signal, not data — the
-    callers emit the ``source`` id + this reason, never the result body)."""
+    A real mapper that mapped cleanly always returns ``None`` — a mapped producer that did not fall back
+    never took a fallback. Only a reason CATEGORY is returned; NO result content is ever returned or
+    logged (audit signal, not data — the callers emit the ``source`` id + this reason, never the result
+    body)."""
+    if canonical is not None and canonical.get(_DISCRIMINATOR_MISS_MARKER):
+        return "discriminator_miss"
     declaration = canonical_declaration(source)
     if declaration is None:
         return "unregistered"
