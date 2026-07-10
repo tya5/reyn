@@ -272,24 +272,57 @@ class InterventionHandler:
         ``[actor#abcd]`` tag via ``meta["actor"]`` + ``meta["run_id_short"]``,
         so we don't repeat it in ``text``.
 
+        Rendering discipline (#2770, display-layer unification with ``present``):
+        intervention content is LLM-derived / untrusted (ask_user ``prompt`` /
+        ``suggestions`` come straight from a model tool-call; permission prompts
+        interpolate a model-controlled ``path``). Every leaf here is routed
+        through the SAME terminal neutralizer ``present``'s leaf seam uses
+        (``core/present/guard.get_neutralizer("terminal")`` — ESC/control strip,
+        FP-0054) BEFORE it reaches any renderer, closing a terminal-injection
+        surface. This is intervention's binding-seam analog of present's
+        ``resolve_bindings`` (neutralize at the source, render with the shared
+        pure primitive). ``meta["nodes"]`` is a ``present``-shaped render model
+        the inline CUI draws through the same ``render_presentation_nodes``
+        primitive as ``present`` (owner: "rendering consistency"); ``text`` stays
+        a plain neutralized string so every OTHER renderer that reads it (the
+        ``--cui`` ConsoleChatRenderer, the Rich Panel path, log fallbacks) is
+        equally guarded. The two-way-pause flow (registry / future) is untouched.
+
         Corresponds to session._announce_intervention.
         """
+        from reyn.core.present.guard import get_neutralizer
+
+        neut = get_neutralizer("terminal")
+
+        def _clean(s: str) -> str:
+            return neut.neutralize(s)[0]
+
+        # Plain-text fallback (msg.text) — neutralized so the non-inline renderers
+        # that consume it raw are guarded too, not only the nodes path.
         lines: list[str] = []
-        if iv.kind == "ask_user":
-            lines.append(f"Question: {iv.prompt}")
-        else:
-            lines.append(iv.prompt)
+        prompt_line = f"Question: {_clean(iv.prompt)}" if iv.kind == "ask_user" else _clean(iv.prompt)
+        lines.append(prompt_line)
         if iv.detail:
-            lines.append(f"  {iv.detail}")
+            lines.append(f"  {_clean(iv.detail)}")
         if iv.suggestions:
-            lines.append(f"  options: {' / '.join(iv.suggestions)}")
+            lines.append(f"  options: {' / '.join(_clean(s) for s in iv.suggestions)}")
         if iv.choices:
-            labels = " / ".join(c.label for c in iv.choices)
-            lines.append(f"  {labels}")
+            lines.append(f"  {' / '.join(_clean(c.label) for c in iv.choices)}")
+
+        # present-shaped render model (neutralized leaves) for the inline CUI's
+        # shared render_presentation_nodes path.
+        nodes: list[dict] = [{"component": "text", "text": prompt_line}]
+        if iv.detail:
+            nodes.append({"component": "text", "text": _clean(iv.detail)})
+        if iv.suggestions:
+            nodes.append({"component": "list", "items": [_clean(s) for s in iv.suggestions]})
+        if iv.choices:
+            nodes.append({"component": "list", "items": [_clean(c.label) for c in iv.choices]})
+
         await self._put_outbox(OutboxMessage(
             kind="intervention",
             text="\n".join(lines),
-            meta=_iv_meta(iv),
+            meta={**_iv_meta(iv), "nodes": nodes},
         ))
 
     async def dispatch(self, iv: UserIntervention) -> InterventionAnswer:
