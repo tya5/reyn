@@ -45,6 +45,13 @@ reyn mcp clear-secret <SERVER> [<KEY>]
 
 CLI とチャットは末端で `op_runtime/mcp_install.py` に合流するため、 permission gate、 シークレット検出、 audit event は同一です。
 
+**永続化の非対称性。** 2 つのパスは、サーバーに到達できない場合に新しい設定を書き込むかどうかという 1 点で異なります。
+
+- **チャット駆動の install、ターン途中、live な per-session reloader あり** — probe-then-commit: 何かを書き込む*前に*サーバーを probe します(spawn/connect + `list_tools`)。probe が失敗またはキャンセルされた場合、`.reyn/mcp.yaml` は変更されません(half-install なし)— LLM が同じターンでそのサーバーを使いたかったという immediate なユースケースに合っています。
+- **`reyn mcp install`(CLI)、または live reloader が attach されていない install** — probe せずに設定を書き込みます。サーバーが現在到達不能でも構いません — 後で立ち上がることを見込んで今のうちに設定しておく、という deferred なユースケースに合っています。
+
+書き込み(または非書き込み)の後は両パスとも再び合流します: permission gate、シークレット検出、audit event はどちらのパスが走ったかに影響されません。
+
 ---
 
 ## サブコマンド: `search`
