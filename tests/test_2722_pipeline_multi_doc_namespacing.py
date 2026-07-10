@@ -215,6 +215,62 @@ def test_unresolved_sibling_fail_loud_no_silent_fallback_per_entry(
     assert "ghost" in event["data"]["error"]
 
 
+def test_multi_doc_entry_registration_is_intra_file_atomic(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Tier 2: #2775 — a multi-``pipeline:``-doc entry commits ALL its documents
+    or NONE (intra-file atomicity). When a LATER document in the file fails to
+    resolve (doc 2's dot-less ``call`` targets a nonexistent sibling), an
+    EARLIER valid document in the SAME file (doc 1) must NOT be left registered:
+    the whole entry is skipped, matching the ``pipeline_load_failed`` event's
+    "skipped" semantics. A register-as-you-go loop left ``orders.alpha`` live +
+    callable while the event said the entry was skipped (a silent partial
+    success). Non-strict (session-factory) posture; a healthy OTHER entry still
+    loads (cross-entry isolation, #2641, is preserved — the entry is the atomic
+    unit)."""
+    reyn_dir = tmp_path / ".reyn"
+    reyn_dir.mkdir()
+    monkeypatch.chdir(tmp_path)
+    # doc 1 (alpha) is valid + register-able; doc 2 (beta) has an unresolved
+    # dot-less sibling — the OLD per-doc loop registered alpha before beta failed.
+    _write(
+        tmp_path / "p", "multi.yaml",
+        "pipeline: alpha\nsteps:\n  - transform: {value: \"1\", output: o}\n"
+        "---\n"
+        "pipeline: beta\nsteps:\n  - call: {pipeline: ghost, output: r}\n",
+    )
+    _write(tmp_path / "p", "ok.yaml", "pipeline: fine\nsteps:\n  - transform: {value: \"1\", output: o}\n")
+
+    registry = build_pipeline_registry(
+        {"entries": {"orders": {"path": "p/multi.yaml"}, "b": {"path": "p/ok.yaml"}}},
+        tmp_path,  # strict=False (default)
+    )
+
+    # ZERO pipelines from the failed multi-doc file — not the leaked ``orders.alpha``.
+    assert "orders.alpha" not in registry.names()
+    assert "orders.beta" not in registry.names()
+    # the healthy OTHER entry is unaffected (per-entry isolation is the atomic unit).
+    assert set(registry.names()) == {"b.fine"}
+    # the failure is durably recorded, naming the entry.
+    events = _read_events_of_kind(reyn_dir / "events", "pipeline_load_failed")
+    [event] = events
+    assert event["data"]["key"] == "orders"
+
+
+def test_multi_doc_entry_atomic_under_strict_re_raise(tmp_path: Path) -> None:
+    """Tier 2: #2775 — under the STRICT hot-reload posture the same multi-doc
+    failure re-raises atomically (last-good registry preserved by the caller),
+    committing nothing from the file. Complements the non-strict per-entry case."""
+    _write(
+        tmp_path / "p", "multi.yaml",
+        "pipeline: alpha\nsteps:\n  - transform: {value: \"1\", output: o}\n"
+        "---\n"
+        "pipeline: beta\nsteps:\n  - call: {pipeline: ghost, output: r}\n",
+    )
+    with pytest.raises(PipelineLoadError, match="dot-less call/match target 'ghost'"):
+        build_pipeline_registry({"entries": {"orders": {"path": "p/multi.yaml"}}}, tmp_path, strict=True)
+
+
 def test_r1_dot_in_entry_key_is_load_error(tmp_path: Path) -> None:
     """Tier 2: R1 — a config entry key containing the reserved '.' is a load
     error (it would make the derived ``{key}.{name}`` global name ambiguous)."""
