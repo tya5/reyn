@@ -407,6 +407,7 @@ def run(args: argparse.Namespace) -> None:
             events_config=session_cfg.config.events,
             cost_warn_config=session_cfg.config.cost_warn,  # #2230: wire the warn/block gate
             offload_config=session_cfg.config.offload,  # tool-result-schema-redesign §5
+            render_template_config=session_cfg.config.render_template,  # #2679: render_template output bounds
             state_log=state_log,
             budget_tracker=budget_tracker,
             hooks_config=session_cfg.config.hooks,  # #1800 slice 5b (pass-through, not bundled)

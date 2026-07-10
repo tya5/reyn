@@ -34,6 +34,7 @@ from reyn.config.chat import (
     OffloadConfig,
     OnLimitConfig,
     ReasoningConfig,
+    RenderTemplateConfig,
     SafetyConfig,
     TimeoutConfig,
 )
@@ -237,6 +238,9 @@ class ReynConfig:
     cost_warn: CostWarnConfig = field(default_factory=CostWarnConfig)
     # tool-result-schema-redesign §5: debug lever disabling all tool-result size gates.
     offload: OffloadConfig = field(default_factory=OffloadConfig)
+    # FP-0055 / #2679: operator-tunable output bounds for the render_template op
+    # (max_output_chars / wall_clock_seconds). Default → the safe in-handler bounds.
+    render_template: RenderTemplateConfig = field(default_factory=RenderTemplateConfig)
     # FP-0022 follow-up: declarative SSL config for web_fetch + MCP registry.
     # Priority: web.fetch.ca_bundle → web.fetch.verify_ssl → SSL_VERIFY env →
     # litellm.ssl_verify → SSL_CERT_FILE → True (default).

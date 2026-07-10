@@ -202,6 +202,7 @@ def build_agent_registry_from_project(
             events_config=config.events,
             cost_warn_config=config.cost_warn,
             offload_config=config.offload,
+            render_template_config=config.render_template,
             state_log=state_log,
             budget_tracker=budget_tracker,
             hooks_config=config.hooks,
