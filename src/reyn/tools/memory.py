@@ -610,14 +610,14 @@ def _regenerate_index(ctx: ToolContext, mem_dir: Path, index_path: Path) -> None
 # ── ToolDefinition instances ─────────────────────────────────────────────────────
 
 from reyn.core.offload.canonical import (  # noqa: E402
-    CANONICAL_TODO,
     forget_memory_to_canonical,
     memory_body_to_canonical,
+    memory_list_to_canonical,
     remember_to_canonical,
 )
 
 LIST_MEMORY = ToolDefinition(
-    canonical=CANONICAL_TODO,
+    canonical=memory_list_to_canonical,
     name="list_memory",
     router_dispatched=True,
     description=_LIST_MEMORY_DESCRIPTION,

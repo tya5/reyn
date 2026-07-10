@@ -11,6 +11,7 @@ from reyn.core.offload.canonical import (
     CANONICAL_TODO,
     STRUCTURED_PASSTHROUGH,
     canonical_declaration,
+    declare_canonical,
     to_canonical,
 )
 
@@ -58,14 +59,23 @@ def test_structured_passthrough_admin_result_passes_through_whole_dict() -> None
 
 
 def test_canonical_todo_producer_gets_the_whole_dict_fallback() -> None:
-    """Tier 1: a ``CANONICAL_TODO`` producer (declared, pending a real mapper) takes the SAME lossless
-    whole-dict fallback as an unknown source — behavior-preserving vs the pre-framework silent
-    fallback, but now an explicit, ratcheted, tracked declaration (issue #2681)."""
-    result = {"servers": [{"name": "acme"}], "status": "ok"}
-    canonical = to_canonical(result, source="list_mcp_servers")
+    """Tier 1: a ``CANONICAL_TODO``-declared producer takes the SAME lossless whole-dict fallback as
+    an unknown source — behavior-preserving vs the pre-framework silent fallback, but now an explicit,
+    ratcheted, tracked declaration (issue #2681).
+
+    Uses a SYNTHETIC fixture source declared ``CANONICAL_TODO`` rather than a real registered producer:
+    after the #2681 burn-down (Buckets A/B/C) the live ``CANONICAL_TODO`` set is EMPTY — no real
+    producer carries the marker anymore (the ratchet gate in
+    ``test_fp0056_canonical_coverage_gate.py`` now enforces an empty ledger). The SENTINEL's fallback
+    behavior is still live code (a future producer could be re-added to the ledger), so this exercises
+    it directly via ``declare_canonical``. Idempotent: re-declaring the same sentinel for the same
+    fixture id is a no-op, so repeated test runs / imports don't conflict."""
+    declare_canonical("fixture_canonical_todo_source", CANONICAL_TODO)
+    result = {"name": "acme", "status": "ok"}
+    canonical = to_canonical(result, source="fixture_canonical_todo_source")
     assert canonical["text"] == ""
     assert canonical["attachments"] == [{"kind": "structured", "data": result}]
-    assert canonical_declaration("list_mcp_servers") is CANONICAL_TODO
+    assert canonical_declaration("fixture_canonical_todo_source") is CANONICAL_TODO
 
 
 def test_triaged_text_shaped_producers_surface_their_text_not_a_blob() -> None:

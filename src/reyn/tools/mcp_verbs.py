@@ -587,14 +587,14 @@ async def _handle_mcp_call_tool(
 
 
 from reyn.core.offload.canonical import (  # noqa: E402
-    CANONICAL_TODO,
     mcp_install_local_verb_to_canonical,
     mcp_install_verb_to_canonical,
+    mcp_search_registry_to_canonical,
     mcp_to_canonical,
 )
 
 MCP_SEARCH_REGISTRY = ToolDefinition(
-    canonical=CANONICAL_TODO,
+    canonical=mcp_search_registry_to_canonical,
     name="mcp_search_registry",
     description=_MCP_SEARCH_REGISTRY_DESCRIPTION,
     parameters=_MCP_SEARCH_REGISTRY_PARAMETERS,
