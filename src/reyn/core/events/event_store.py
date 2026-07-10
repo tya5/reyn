@@ -249,8 +249,10 @@ class EventStore:
         `max_bytes` defaults to a nonzero 10MB, so `.stat()` used to fire a
         blocking syscall on literally EVERY `write()` call, not a rare path.
         The counter drifts (harmlessly) if an external process appends to the
-        same file, or after a FileNotFoundError recovery re-creates it — both
-        only shift the rotation point by a bounded amount, never break
+        same file, after a FileNotFoundError recovery re-creates it, or on
+        Windows where text-mode `\n` -> `\r\n` translation makes bytes-on-disk
+        exceed the counted `len(line.encode("utf-8")) + 1` — all three only
+        shift the rotation point by a bounded amount, never break
         correctness."""
         if self._active is None or self._active_started_at is None:
             return False
