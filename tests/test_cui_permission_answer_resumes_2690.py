@@ -17,9 +17,12 @@ NOT hang because a default-zone (in-project) read is auto-allowed — it never
 raises an intervention. The out-of-zone WRITE is the first intervention-
 requiring permission, so it is the first to hit the dead answer-delivery path.
 
-The fix (``repl._route_input_line``) delivers a non-slash line directly to the
-pending intervention via ``answer_oldest_intervention_text``, bypassing the
-inbox so the future resolves.
+The fix (``stream_client.route_input_line``) delivers a non-slash line directly
+to the pending intervention via the transport's ``answer_intervention_text``
+seam (wrapping ``answer_oldest_intervention_text``), bypassing the inbox so the
+future resolves. Here the client's ``ClientTransport`` is the local
+``InProcessTransport`` over a single-session registry — the same seam production
+uses.
 
 Policy (docs/deep-dives/contributing/testing.md): real instances only — a real
 ``Session`` + real ``PermissionResolver`` + the real intervention/permission
@@ -36,17 +39,28 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
 from reyn.core.events.state_log import StateLog
-from reyn.interfaces.repl.repl import _route_input_line
+from reyn.interfaces.repl.stream_client import route_input_line
+from reyn.interfaces.transport.in_process import InProcessTransport
 from reyn.llm.llm import LLMToolCallResult
 from reyn.llm.pricing import TokenUsage
 from reyn.runtime.session import DEFAULT_CHAT_CHANNEL_ID, Session
 from reyn.security.permissions.permissions import PermissionResolver
 
 _USAGE = TokenUsage(prompt_tokens=5, completion_tokens=3)
+
+
+def _transport_for(session) -> InProcessTransport:
+    """The local ClientTransport over a single-session registry — the production
+    send seam the ``--cui`` client routes input through."""
+    return InProcessTransport(
+        SimpleNamespace(attached_session=lambda: session),
+        intervention_channel=DEFAULT_CHAT_CHANNEL_ID,
+    )
 
 
 def _tool_call_result(name: str, args_json: str) -> LLMToolCallResult:
@@ -156,7 +170,7 @@ async def test_cui_write_approval_answer_resumes_blocked_turn(tmp_path, monkeypa
         # THE FIX under test: the --cui input loop delivers the typed answer to
         # the attached session. On the buggy tree this routes through
         # submit_user_text → inbox → never dequeued (deadlock).
-        await _route_input_line(session, "y", None)
+        await route_input_line(_transport_for(session), "y", None)
 
         assert await _poll(lambda: out.exists()), (
             "write never completed after answering y — the blocked turn did "
@@ -208,7 +222,7 @@ async def test_cui_read_approval_answer_resumes_identically(tmp_path, monkeypatc
         )
         assert session.interventions.head().kind == "permission.file.read"
 
-        await _route_input_line(session, "y", None)
+        await route_input_line(_transport_for(session), "y", None)
 
         assert await _poll(lambda: str(outside) in _granted_paths(session)), (
             "read never completed after answering y — the blocked turn did "
