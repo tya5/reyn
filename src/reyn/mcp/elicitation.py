@@ -89,6 +89,17 @@ enum -> a choice per enum value; string/number/integer -> free text (best-
 effort ``int``/``float`` coercion — a coercion failure falls back to the raw
 string; reyn does not re-implement full JSON-Schema validation client-side,
 the server is the source of truth for that).
+
+#2622 single-field collapse: when the schema is ONE closed-set field (a lone
+bool or enum), the gate and that field are two renders of the same question —
+the gate banner already carries the server's real message, and the field prompt
+only restates it against the meaningless scalar-wrapper name. So a single
+closed-set field renders ONE prompt: the attributed banner, whose value choices
+also carry an explicit ``decline`` choice (the gate's refuse-to-engage action
+folded in, so ``action="decline"`` stays reachable). A single FREE-TEXT field
+still shows a separate gate (a free-text prompt has no choice list to fold a
+decline into) and a sensitive field always shows its "sent to server" warning;
+both keep the gate. Multi-field keeps the gate (it previews the field list).
 """
 from __future__ import annotations
 
@@ -96,7 +107,7 @@ import logging
 import time
 from typing import TYPE_CHECKING, Any, Awaitable, Callable
 
-from reyn.intervention_choices import ACCEPT, elicitation_gate_choices
+from reyn.intervention_choices import ACCEPT, DECLINE, elicitation_gate_choices
 from reyn.user_intervention import InterventionChoice, UserIntervention
 
 if TYPE_CHECKING:
@@ -209,6 +220,26 @@ def _bool_choices() -> list[InterventionChoice]:
     ]
 
 
+def _is_closed_set(spec: dict[str, Any]) -> bool:
+    """A field whose value is picked from a fixed set — an enum, or a boolean
+    (yes/no). Its value affordance is a choice list, so the accept/decline gate
+    can fold into it as one extra choice (#2622 single-field collapse). A
+    free-text field is NOT closed-set: it has no choice list, so its gate is the
+    only place a decline can live and stays a separate prompt."""
+    return bool(spec["enum"]) or spec["type"] == "boolean"
+
+
+def _closed_set_value(spec: dict[str, Any]) -> tuple[list[InterventionChoice], Callable[[str], Any]]:
+    """Value choices + a ``choice_id -> value`` mapper for a closed-set field.
+    Enum ids are the value strings (matches the per-field enum path); boolean
+    ids ``"true"``/``"false"`` map to real ``bool`` (matches the per-field bool
+    path) so the collapsed single-field prompt yields the same content a
+    gate-then-field flow would have."""
+    if spec["enum"]:
+        return _enum_choices(list(spec["enum"])), lambda cid: cid
+    return _bool_choices(), lambda cid: cid == "true"
+
+
 class _Cancelled(Exception):
     """Internal signal: the elicitation deadline elapsed mid-flow."""
 
@@ -308,6 +339,43 @@ def build_elicitation_handler(
                     raise _Declined()
                 await _emit("mcp_elicitation_answered", field_keys=field_keys, action="accept")
                 return ElicitResult(action="accept", content={})
+
+            # #2622 single-field collapse: a lone CLOSED-SET field (bool / enum)
+            # was rendered as TWO prompts — the accept/decline gate banner, then
+            # a per-field prompt that only restated the ask against the
+            # meaningless scalar-wrapper name ("value: yes or no?"). The gate
+            # banner already carries the server's real message, so the field
+            # prompt is a redundant second render. Collapse to ONE prompt: the
+            # attributed banner is the prompt, the field's own value choices
+            # collect the answer, and an explicit decline choice preserves the
+            # gate's refuse-to-engage action (action=decline stays reachable — no
+            # semantic loss). A single FREE-TEXT field is excluded (no choice
+            # list to fold a decline into) and a sensitive field is excluded (its
+            # "value is SENT to the server" warning must never be bypassed) —
+            # both keep the gate. Multi-field keeps the gate too (it previews
+            # "will ask for: a, b, c").
+            if (
+                len(field_specs) == 1
+                and _is_closed_set(field_specs[0])
+                and not _is_sensitive_field(field_specs[0]["name"], field_specs[0]["description"])
+            ):
+                spec = field_specs[0]
+                value_choices, to_value = _closed_set_value(spec)
+                merged = UserIntervention(
+                    kind="mcp_elicitation",
+                    prompt=attributed,
+                    choices=[
+                        *value_choices,
+                        InterventionChoice(id=DECLINE, label="[d]ecline", hotkey="d"),
+                    ],
+                )
+                answer = await _ask(bus, merged, deadline)
+                if answer.choice_id is None or answer.choice_id == DECLINE:
+                    raise _Declined()
+                await _emit("mcp_elicitation_answered", field_keys=field_keys, action="accept")
+                return ElicitResult(
+                    action="accept", content={spec["name"]: to_value(answer.choice_id)}
+                )
 
             field_summary = ", ".join(f["name"] for f in field_specs)
             gate = UserIntervention(
