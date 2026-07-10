@@ -12,14 +12,28 @@ atomicity exactly — see `_execute_edit_sync`'s docstring. `grep_files`/
 `glob_files` have no such concern (pure reads); a single outer `to_thread` per
 call is the natural granularity (not per-candidate-file).
 
-Also verifies a scope-critical, easy-to-miss requirement discovered while
-implementing: `ctx.events.emit(...)` must NOT run inside the threaded call —
-`EventStore.write` (a chat_events subscriber) ultimately does an
-`asyncio.Queue.put_nowait` (DurabilityWorker, #2780), which is not
-thread-safe off the event loop thread. The emit call is placed AFTER the
-`await asyncio.to_thread(...)` returns, back on the loop thread.
+Also verifies a scope-critical, easy-to-miss requirement, caught in review
+(architect co-vet on the original PR) as a TRANSITIVE emit this module's
+tests initially missed: `Workspace.write_file_bytes` itself unconditionally
+emitted `workspace_updated` — called from INSIDE `_execute_edit_sync`
+(the threaded core), so the explicit `ctx.events.emit("tool_executed", ...)`
+being correctly deferred wasn't sufficient; the transitive one inside
+`write_file_bytes` still fired off-loop. The mechanism is subtler than "it
+would crash": a worker-thread emit reaching `EventStore.write` calls
+`asyncio.get_running_loop()`, which RAISES off-loop, falling to a
+non-serialized sync-fallback write path that mutates `EventStore`'s
+rotation state without the loop-thread-only serialization protecting it —
+racing the DurabilityWorker's own writes to the same JSONL file (a
+data-integrity hazard, not a crash, so a `bare EventLog()` with no
+subscriber — as this module's earlier tests used — can never catch it: the
+race lives inside `EventStore`, which only exists once actually subscribed).
+Fixed via `write_file_bytes(..., emit=False)` from the threaded core, with
+the async wrapper emitting `workspace_updated` itself after `to_thread`
+returns, mirroring `tool_executed`.
 
-Real `Workspace`/`EventLog`/`invoke_tool` throughout — no mocks.
+Real `Workspace`/`EventLog`/`invoke_tool` throughout — no mocks. The
+thread-identity wiring test below subscribes a REAL `EventStore` (not a bare
+`EventLog`) so a transitive off-loop emit is actually observable.
 
 Path-locking (serializing two SEPARATE to_thread jobs against the same path,
 for same-process concurrent-session edits) is explicitly DEFERRED — owner GO
@@ -32,6 +46,7 @@ import re
 import threading
 from pathlib import Path
 
+from reyn.core.events.event_store import EventStore
 from reyn.core.events.events import EventLog
 from reyn.core.op_runtime.file import _execute_grep_sync
 from reyn.data.workspace.workspace import Workspace
@@ -210,4 +225,51 @@ def test_glob_files_runs_off_the_main_thread(tmp_path, monkeypatch):
     assert result["status"] == "ok"
     assert seen_thread["ident"] != caller_thread, (
         "glob_files must run its directory walk on a worker thread (#2782)"
+    )
+
+
+def test_edit_file_never_emits_from_a_non_loop_thread(tmp_path, monkeypatch):
+    """Tier 2: #2782 — the load-bearing wiring test (architect co-vet finding):
+    edit_file must not emit ANY event — not just `tool_executed`, but the
+    TRANSITIVE `workspace_updated` emitted by `Workspace.write_file_bytes` —
+    from a non-loop thread. Subscribes a REAL `EventStore` (not a bare
+    `EventLog`, which cannot observe this: the race lives inside
+    `EventStore.write`'s off-loop fallback path, not in `EventLog.emit`
+    itself). A spy wraps `EventStore.write` and records which thread called
+    it; every call must match the calling (loop) thread's identity.
+
+    Before the emit-split fix landed for `write_file_bytes`, this failed:
+    `workspace_updated` fired from the `to_thread` worker thread."""
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "w.txt").write_text("hello world\n")
+
+    events = EventLog()
+    store = EventStore(tmp_path / "events")
+    events.add_subscriber(store)
+    ws = Workspace(events=events)
+    ctx = ToolContext(
+        events=events, permission_resolver=_resolver(tmp_path), workspace=ws,
+        caller_kind="router", router_state=RouterCallerState(),
+    )
+
+    caller_thread = threading.current_thread().ident
+    seen_threads: list[int | None] = []
+    orig_write = store.write
+
+    def _spy_write(event):
+        seen_threads.append(threading.current_thread().ident)
+        return orig_write(event)
+
+    monkeypatch.setattr(store, "write", _spy_write)
+
+    result = asyncio.run(invoke_tool(get_default_registry(), "edit_file",
+                                     {"path": "w.txt", "old_string": "hello", "new_string": "hi"}, ctx))
+    asyncio.run(store.flush())
+
+    assert result["status"] == "ok"
+    assert seen_threads, "EventStore.write must have been called (workspace_updated + tool_executed)"
+    assert all(t == caller_thread for t in seen_threads), (
+        "EventStore.write must NEVER be called from a non-loop thread — a worker-thread call "
+        "falls to EventStore's non-serialized sync-fallback path, racing the DurabilityWorker's "
+        "own writes to the same file (#2782 architect co-vet finding)"
     )

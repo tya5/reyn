@@ -603,7 +603,7 @@ def _changed_region_preview(
     return rendered
 
 
-def _execute_edit_sync(op: FileIROp, ctx: OpContext) -> tuple[dict, int | None]:
+def _execute_edit_sync(op: FileIROp, ctx: OpContext) -> tuple[dict, int | None, str | None]:
     """The read-modify-write core of ``edit_file`` — run WHOLESALE on a worker
     thread (#2782), preserving today's atomicity: no ``await`` used to appear
     between the read and the write (the whole stretch ran uninterrupted on the
@@ -613,14 +613,20 @@ def _execute_edit_sync(op: FileIROp, ctx: OpContext) -> tuple[dict, int | None]:
     an interleaving window (a concurrent session's edit landing between this
     read and this write) that does not exist today.
 
-    Returns ``(result, replacements_to_emit)``; the caller emits
-    ``tool_executed`` AFTER this returns, back on the event loop thread — see
-    ``_execute_grep_sync``'s docstring for why (EventStore's
-    ``asyncio.Queue.put_nowait`` is not thread-safe off the loop thread)."""
+    Returns ``(result, replacements_to_emit, written_path)``. NEITHER
+    ``tool_executed`` NOR ``workspace_updated`` may be emitted from inside this
+    function — ``ctx.workspace.write_file_bytes`` transitively emits
+    ``workspace_updated`` unconditionally (a bug caught in review: emitting
+    off-loop doesn't raise, it falls to ``EventStore``'s non-serialized
+    sync-fallback write path, racing the DurabilityWorker's own writes to the
+    same file — see ``write_file_bytes``'s docstring). Called with
+    ``emit=False`` here; the caller emits BOTH events AFTER this returns, back
+    on the event loop thread. See ``_execute_grep_sync``'s docstring for the
+    ``asyncio.Queue.put_nowait`` half of why off-loop emit is unsafe."""
     if op.old_string is None:
-        return {"kind": "file", "op": "edit", "status": "error", "error": "old_string is required"}, None
+        return {"kind": "file", "op": "edit", "status": "error", "error": "old_string is required"}, None, None
     if op.new_string is None:
-        return {"kind": "file", "op": "edit", "status": "error", "error": "new_string is required"}, None
+        return {"kind": "file", "op": "edit", "status": "error", "error": "new_string is required"}, None, None
 
     raw_bytes, found = ctx.workspace.read_file_bytes(op.path)
     if not found:
@@ -632,7 +638,7 @@ def _execute_edit_sync(op: FileIROp, ctx: OpContext) -> tuple[dict, int | None]:
             "status": "not_found",
             "error": f"file not found: {op.path}",
             "suggestions": suggestions,
-        }, None
+        }, None, None
 
     # #1452: decode via the shared codec ladder so a non-UTF-8 text file can be
     # edited in place (encoding preserved on write-back below). A binary file
@@ -643,15 +649,15 @@ def _execute_edit_sync(op: FileIROp, ctx: OpContext) -> tuple[dict, int | None]:
             "kind": "file", "op": "edit", "path": op.path, "status": "error",
             "binary": True,
             "error": "binary file — cannot edit as text (its bytes were not loaded).",
-        }, None
+        }, None, None
 
     count = content.count(op.old_string)
     if count == 0:
         return {"kind": "file", "op": "edit", "status": "error",
-                "error": "old_string not found in file"}, None
+                "error": "old_string not found in file"}, None, None
     if not op.replace_all and count > 1:
         return {"kind": "file", "op": "edit", "status": "error",
-                "error": f"old_string appears {count} times; set replace_all=true to replace all occurrences"}, None
+                "error": f"old_string appears {count} times; set replace_all=true to replace all occurrences"}, None, None
 
     new_content = content.replace(op.old_string, op.new_string) if op.replace_all \
         else content.replace(op.old_string, op.new_string, 1)
@@ -669,8 +675,8 @@ def _execute_edit_sync(op: FileIROp, ctx: OpContext) -> tuple[dict, int | None]:
                 f"({_encoding or 'utf-8'}) — file left unchanged. Some new "
                 "characters cannot be encoded there."
             ),
-        }, None
-    ctx.workspace.write_file_bytes(op.path, encoded)
+        }, None, None
+    written_path = ctx.workspace.write_file_bytes(op.path, encoded, emit=False)
     replacements = count if op.replace_all else 1
     # #1418: an additive, show-not-judge preview of the changed region so the
     # agent can SEE what landed (and at what indent), not just the count. For
@@ -682,12 +688,16 @@ def _execute_edit_sync(op: FileIROp, ctx: OpContext) -> tuple[dict, int | None]:
         "kind": "file", "op": "edit", "path": op.path, "status": "ok",
         "replacements": replacements, "preview": preview,
         **({"encoding": _encoding} if _encoding else {}),
-    }, replacements
+    }, replacements, written_path
 
 
 async def _execute_edit(op: FileIROp, ctx: OpContext) -> dict:
-    result, replacements = await asyncio.to_thread(_execute_edit_sync, op, ctx)
+    result, replacements, written_path = await asyncio.to_thread(_execute_edit_sync, op, ctx)
     if replacements is not None:
+        # Order matches pre-#2782 behavior: write_file_bytes's workspace_updated
+        # emit ran BEFORE the handler's tool_executed emit.
+        if written_path is not None:
+            ctx.events.emit("workspace_updated", path=written_path)
         ctx.events.emit("tool_executed", op="edit_file", path=op.path, replacements=replacements)
     return result
 
