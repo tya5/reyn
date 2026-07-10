@@ -15,14 +15,22 @@ audience: [human, agent]
 > `control`/`artifact`/`control_ir` エンベロープが現行ソースに存在しないことを直接
 > grep で確認済みです。第4節(統合 `ToolRegistry` 実装ログ)は現行アーキテクチャを
 > 記述しており正確ですが、`gates(phase=...)` への言及は今や vestigial です(消費する
-> phase surface が無い)。**§2.1 のツール一覧(「常時存在13 tools + 条件付き、13–22
-> tools」という記述)も stale だったため訂正済み** — これは FP-0034 以前の per-kind
-> ツール surface を記述しており、Phase 6(2026-05-16)以降 production の唯一の挙動と
-> なっている universal action catalog wrapper モードではありません。
-> `docs/concepts/tools-integrations/universal-catalog.md` と
-> `src/reyn/runtime/router_tools.py` の `_LEGACY_TOOL_NAMES` strip list、および
-> `ActionRetrievalConfig.universal_wrappers_enabled: bool = True`(production
-> デフォルト)で確認済みです。
+> phase surface が無い)。§2.1 のツール一覧の記述は今回で2度訂正されています: 最初は
+> 死んだ「常時存在13 tools + 条件付き」という per-kind リストから、universal action
+> catalog wrapper モードが chat レイヤーの production デフォルトであるという(誤った)
+> 主張へ訂正されましたが、その2度目の版**自体が誤りでした** — `src/reyn/config/execution.py`
+> の `ToolUseConfig`(`chat: str = "enumerate-all"`、`step`/`phase`:
+> `"universal-category"`)と `src/reyn/tools/scheme.py` の
+> `DEFAULT_SCHEME_NAME = "enumerate-all"` で確認したところ、ツール提示は
+> **pluggable な per-layer scheme**(`reyn.yaml` の `tool_use: {chat, step, phase}`)であり、
+> **chat レイヤーの実際のデフォルトは `enumerate-all`**(universal wrapper ではなく
+> flat な提示)です — owner 主導の意図的な H1 fix です(flat listing が
+> `invoke_action` の name-hallucination を防ぐ、30%→100% の non-hot-list tool-use
+> 精度が証拠)。このページが以前引用していた古い `action_retrieval.universal_wrappers_enabled`
+> という二値フラグは、この per-layer scheme selector に superseded/generalize されています
+> (`src/reyn/config/root.py` 自身のコメント: 「generalizes universal_wrappers_enabled」)。
+> `docs/feature-map.md` の Tool-Use Schemes セクション(この arc を通して既に正確)が、
+> このページが今合わせるべき canonical source です。
 
 ## 1. なぜこれが重要か
 
@@ -38,12 +46,12 @@ Reyn は `RouterLoop`(インタラクティブチャットセッション)経由
 
 **仕組み:** litellm 経由の `call_llm_tools` によるネイティブ LLM function calling。ツール定義は OpenAI `tools` 配列形式に従い、モデルはアシスタントメッセージ内の `tool_calls` で応答する。OS は各呼び出しをディスパッチし、`tool_result` を追記して、モデルが通常テキストを返すまで LLM を再呼び出しする。
 
-**ツール surface:** `src/reyn/runtime/router_tools.py` の `build_tools()` がツールリストを組み立て、引き続き OpenAI `tools` 配列形式を返すが、そのリストの **production デフォルトの形状は、もはやフラットな per-kind ツールリストではなく universal action catalog** である — 完全なモデルは [Universal Action Catalog](../tools-integrations/universal-catalog.md) を参照。production デフォルト設定(`action_retrieval.universal_wrappers_enabled: true`、FP-0034 PR-3b-iv 以降のデフォルト)では:
+**ツール surface:** `src/reyn/runtime/router_tools.py` の `build_tools()` がツールリストを組み立て、OpenAI `tools` 配列形式を返すが、**そのリストがどんな形になるかは pluggable な per-layer scheme** であり、単一の固定フォーマットではありません。`reyn.yaml` の `tool_use: {chat, step, phase}` がレイヤーごとに登録済みの `ToolUseScheme` を名前で選択し、どの scheme が有効でも、すべてのツール呼び出しは同じ `exclude → permission → dispatch` ゲートを通ります。完全なモデルは [Tool-Use Schemes](../tools-integrations/tool-use-schemes.md) と [Universal Action Catalog](../tools-integrations/universal-catalog.md) を参照してください。
 
-- **3〜4 個の universal wrapper**(`list_actions`、`describe_action`、`invoke_action`、加えて `action_retrieval.embedding_class` が設定され index が準備できている場合は `search_actions`)が、skill / peer agent / MCP / file / web / memory / RAG corpus / sandboxed exec を含むすべてのカテゴリを、種類ごとに別ツールを用意するのではなく単一の qualified-name dispatch パターン(`<category>__<entry>`)でカバーする。
-- **legacy な per-kind ツールはこのモードで `tools=` から除外される**(`router_tools.py` の `_LEGACY_TOOL_NAMES` セット)— `list_agents`、`describe_agent`、`delegate_to_agent`、`list_memory`、`read_memory_body`、`remember_shared`、`remember_agent`、`forget_memory`、`recall`、`read_file`、`write_file`、`delete_file`、`list_directory`、`web_search`、`web_fetch`、`list_mcp_servers`、`list_mcp_tools`、`call_mcp_tool` 等はもう LLM に見える tool list に現れない。それらのハンドラーは wrapper の backing implementation として registry に残り、`universal_dispatch.py` 経由で dispatch される。
-- **オプションの hot-list 直接エイリアス**(`hot_list_aliases`)を wrapper に加えて追加でき、頻用アクションについてのみ discover ステップを bypass できる。
-- **オペレーターの opt-out**: `action_retrieval.universal_wrappers_enabled: false` を設定すると FP-0034 以前のフラットな per-kind ツールリスト(このセクションがかつて無条件に記述していた形状)に戻る — これは config のエスケープハッチであり、デフォルトの operator 体験ではない。
+- **`chat` レイヤー(このページの `RouterLoop` surface)のデフォルトは `enumerate-all`** です — 使用可能なすべてのツールを universal-wrapper の discovery indirection なしで `tools=` にフラットに提示し、名前でディスパッチする flat-native-JSON baseline です。これは owner の意図的な H1 fix によるデフォルトです: flat listing が `invoke_action` の name-hallucination を防ぎ、30%→100% の non-hot-list tool-use 精度が証拠です。
+- **`step`/`phase` レイヤーのデフォルトは `universal-category`** です — 3〜4 個の universal wrapper(`list_actions`、`describe_action`、`invoke_action`、加えて設定されていれば `search_actions`)が、skill / peer agent / MCP / file / web / memory / RAG corpus / sandboxed exec を含むすべてのカテゴリを、種類ごとに別ツールを用意するのではなく単一の qualified-name dispatch パターン(`<category>__<entry>`)でカバーします。
+- **`retrieval`(RAG-over-tools)と `CodeAct`** は、それぞれ非常に大きなツールセットや weak model 向けの、レイヤーごとの opt-in scheme としてサポートされています。
+- **どのレイヤーの scheme も `reyn.yaml` の `tool_use.<layer>` でオペレーターが設定可能**です — 例えば、chat レイヤーをデフォルトの `enumerate-all` の代わりに `universal-category` に opt in させることもできます。
 
 **役割:** オーケストレーション — 次のサブコンポーネント（ワークフロー、Agent、plan、メモリ操作、直接テキスト応答）を選択する。
 

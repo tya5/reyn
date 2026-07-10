@@ -17,15 +17,25 @@ audience: [human, agent]
 > current source. Those sections have been removed. Section 4 (the unified
 > `ToolRegistry` implementation log) remains accurate — it documents the still-
 > current architecture — except that its `gates(phase=...)` references are now
-> vestigial (no phase surface consumes them). §2.1's tool-inventory list (the
-> "13 always-present + conditional, 13–22 tools" description) was **also stale
-> and has been corrected** — it described the pre-FP-0034 per-kind tool surface,
-> not the universal-action-catalog wrapper mode that has been the sole
-> production behaviour since Phase 6 (2026-05-16), confirmed via
-> `docs/concepts/tools-integrations/universal-catalog.md` and
-> `src/reyn/runtime/router_tools.py`'s `_LEGACY_TOOL_NAMES` strip list plus
-> `ActionRetrievalConfig.universal_wrappers_enabled: bool = True` (the
-> production default).
+> vestigial (no phase surface consumes them). §2.1's tool-inventory description
+> has been corrected twice now: first from the dead "13 always-present +
+> conditional" per-kind list to an (incorrect) claim that the universal-action-
+> catalog wrapper mode is the chat layer's production default; that second
+> version was **itself wrong** — verified via `src/reyn/config/execution.py`'s
+> `ToolUseConfig` (`chat: str = "enumerate-all"`, `step`/`phase`:
+> `"universal-category"`) and `src/reyn/tools/scheme.py`'s
+> `DEFAULT_SCHEME_NAME = "enumerate-all"` that tool presentation is a
+> **pluggable, per-layer scheme** (`tool_use: {chat, step, phase}` in
+> `reyn.yaml`), and the **chat layer's actual default is `enumerate-all`**
+> (flat presentation, not the universal wrapper) — a deliberate owner-driven
+> fix (flat listing prevents `invoke_action` name-hallucination,
+> 30%→100% non-hot-list tool-use accuracy in evidence). The older
+> `action_retrieval.universal_wrappers_enabled` binary flag this page
+> previously cited is superseded/generalized by this per-layer scheme
+> selector (`src/reyn/config/root.py`'s own comment: "generalizes
+> universal_wrappers_enabled"). `docs/feature-map.md`'s Tool-Use Schemes
+> section (already correct throughout this arc) is the canonical source this
+> page now matches.
 
 ## 1. Why this matters
 
@@ -41,12 +51,12 @@ Reyn invokes the LLM via native function-calling tools over `RouterLoop` (intera
 
 **Mechanism:** native LLM function calling via `call_llm_tools` (backed by litellm). Tool definitions follow the OpenAI `tools` array shape; the model replies with `tool_calls` in the assistant message. The OS dispatches each call, appends the `tool_result`, and re-invokes the LLM until it produces a plain text reply.
 
-**Tool surface:** `build_tools()` in `src/reyn/runtime/router_tools.py` assembles the tool list, still returning the OpenAI `tools` array shape, but the *production-default* shape of that list is now the universal action catalog, not a flat per-kind tool list — see [Universal Action Catalog](../tools-integrations/universal-catalog.md) for the full model. In production default config (`action_retrieval.universal_wrappers_enabled: true`, the default since FP-0034 PR-3b-iv):
+**Tool surface:** `build_tools()` in `src/reyn/runtime/router_tools.py` assembles the tool list, returning the OpenAI `tools` array shape — but *which shape that list takes* is a **pluggable, per-layer scheme**, not a single fixed format. `tool_use: {chat, step, phase}` in `reyn.yaml` selects a registered `ToolUseScheme` by name per layer; every scheme routes every tool call through the same `exclude → permission → dispatch` gate regardless of which is active. See [Tool-Use Schemes](../tools-integrations/tool-use-schemes.md) and [Universal Action Catalog](../tools-integrations/universal-catalog.md) for the full model.
 
-- **The 3–4 universal wrappers** (`list_actions`, `describe_action`, `invoke_action`, plus `search_actions` when `action_retrieval.embedding_class` is configured and its index is ready) address every category — skill, peer agent, MCP, file, web, memory, RAG corpus, sandboxed exec — through one qualified-name dispatch pattern (`<category>__<entry>`), rather than a separate tool per kind.
-- **Legacy per-kind tools are stripped** from `tools=` in this mode (`router_tools.py`'s `_LEGACY_TOOL_NAMES` set) — `list_agents`, `describe_agent`, `delegate_to_agent`, `list_memory`, `read_memory_body`, `remember_shared`, `remember_agent`, `forget_memory`, `recall`, `read_file`, `write_file`, `delete_file`, `list_directory`, `web_search`, `web_fetch`, `list_mcp_servers`, `list_mcp_tools`, `call_mcp_tool`, and more no longer appear in the LLM-visible tool list; their handlers remain registered as the wrappers' backing implementations, dispatched via `universal_dispatch.py`.
-- **Optional hot-list direct aliases** may be appended on top of the wrappers for frequently-used actions (`hot_list_aliases`), bypassing the discover step for those specific actions only.
-- **Operator opt-out**: setting `action_retrieval.universal_wrappers_enabled: false` restores the pre-FP-0034 flat per-kind tool list (the shape this section used to describe unconditionally) — this is a config escape hatch, not the default operator experience.
+- **The `chat` layer (this page's `RouterLoop` surface) defaults to `enumerate-all`** — a flat-native-JSON baseline that presents every usable tool flatly in `tools=` and dispatches by name, no universal-wrapper discovery indirection. This is a deliberate owner-driven default (an H1 fix): flat listing stops `invoke_action` name-hallucination, with 30%→100% non-hot-list tool-use accuracy as the evidence.
+- **The `step`/`phase` layers default to `universal-category`** — the 3–4 universal wrappers (`list_actions`, `describe_action`, `invoke_action`, plus `search_actions` when configured) addressing every category — skill, peer agent, MCP, file, web, memory, RAG corpus, sandboxed exec — through one qualified-name dispatch pattern (`<category>__<entry>`), rather than a separate tool per kind.
+- **`retrieval` (RAG-over-tools) and `CodeAct`** are supported, opt-in schemes per layer, for very large tool sets or weak models respectively.
+- **Any layer's scheme is operator-configurable** via `tool_use.<layer>` in `reyn.yaml` — an operator can, for example, opt the chat layer into `universal-category` instead of the `enumerate-all` default.
 
 **Role:** orchestration — pick the next sub-component (workflow, agent, plan, memory operation, direct text reply).
 
