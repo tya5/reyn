@@ -782,8 +782,10 @@ async def _run_tool_step(inv: "_StepInvocation") -> "tuple[Any, bool, dict[str, 
         # genuinely-unregistered tool) emits a P6 audit event naming the source — degrade-with-audit,
         # never silently. The passthrough-oversized case (owner decision #2) can't arise here: the
         # pipeline ctx path is NEVER offloaded/size-gated (full-value retention), so it is not probed.
+        # FP-0056 v2 piece #3: passing ``canonical`` lets the classifier also fire on a mapped
+        # producer whose inner discriminator missed (reason ``"discriminator_miss"`` — M3, #2695).
         # Source id only; NEVER the result body.
-        _fallback_reason = canonical_fallback_reason(canonical_source)
+        _fallback_reason = canonical_fallback_reason(canonical_source, canonical=canonical)
         if _fallback_reason is not None and inv.deps.events is not None:
             inv.deps.events.emit(
                 CANONICAL_FALLBACK_EVENT, source=canonical_source, reason=_fallback_reason,
