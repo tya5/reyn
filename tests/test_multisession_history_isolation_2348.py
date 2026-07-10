@@ -81,6 +81,10 @@ async def test_spawned_events_isolated_and_forwarder_survives_rewire(tmp_path, m
     msg = a.outbox.get_nowait()
     assert "budget warn" in msg.text, "ChatLifecycleForwarder must survive set_events_dir (no drop)"
 
+    # EventStore.write() is fire-and-forget off-loop (#2780) — flush before reading
+    # the file from outside the EventLog/EventStore's own machinery.
+    await a._event_store.flush()
+
     # the event reached A's NEW per-session store, and did NOT leak into main's shared tree.
     a_blob = "".join(p.read_text() for p in a.events_dir.rglob("*.jsonl"))
     assert "budget_warn" in a_blob, "event must be written to A's per-session events store"

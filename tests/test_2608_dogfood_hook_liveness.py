@@ -37,9 +37,14 @@ def _run(args: list[str]) -> tuple[str, int]:
     return result.stdout + result.stderr, result.returncode
 
 
-def _event_log(reyn_dir: Path) -> EventLog:
+def _event_log(reyn_dir: Path) -> tuple[EventLog, EventStore]:
+    """Returns (log, store) — the caller must ``await store.flush()`` after
+    the last ``log.emit(...)`` and before spawning the subprocess below,
+    since EventStore.write() is fire-and-forget (off-loop write, #2780) and
+    the subprocess reads the events file fresh from an external process —
+    nothing else synchronizes that ordering."""
     store = EventStore(reyn_dir / "events" / "agents" / "default" / "chat")
-    return EventLog(subscribers=[store])
+    return EventLog(subscribers=[store]), store
 
 
 @pytest.mark.asyncio
@@ -48,7 +53,7 @@ async def test_hook_push_that_ran_is_not_flagged_inert(tmp_path: Path):
     is reported as ran — the healthy pairing, not flagged INERT."""
     reyn_dir = tmp_path / ".reyn"
     wal = StateLog(reyn_dir / "state" / "wal.jsonl")
-    log = _event_log(reyn_dir)
+    log, store = _event_log(reyn_dir)
 
     await wal.append(
         "inbox_put", target="test-agent", session_id="main",
@@ -58,6 +63,7 @@ async def test_hook_push_that_ran_is_not_flagged_inert(tmp_path: Path):
     # The run-loop actually picks the push up and runs a turn (real EventLog.emit,
     # the same call site as Session._handle_inbox_message's turn_started emit).
     log.emit("turn_started", kind="hook", chain_id=None)
+    await store.flush()  # ensure the write lands before the subprocess reads it
 
     out, rc = _run(["--root", str(reyn_dir), "--mode", "hook-liveness"])
     assert rc == 0
@@ -73,7 +79,7 @@ async def test_inert_hook_push_is_flagged(tmp_path: Path):
     wal = StateLog(reyn_dir / "state" / "wal.jsonl")
     # An unrelated user-turn event exists (proves the mode doesn't just count
     # "any turn_started" — it specifically requires kind="hook").
-    log = _event_log(reyn_dir)
+    log, store = _event_log(reyn_dir)
     log.emit("turn_started", kind="user", chain_id=None)
 
     await wal.append(
@@ -82,6 +88,7 @@ async def test_inert_hook_push_is_flagged(tmp_path: Path):
         payload={"name": "cron_fired", "text": "tick", "wake": True, "_msg_id": "m2"},
     )
     # No turn_started(kind=hook) ever follows — the push sat in the inbox forever.
+    await store.flush()  # ensure the "user" event lands before the subprocess reads it
 
     out, rc = _run(["--root", str(reyn_dir), "--mode", "hook-liveness"])
     assert rc == 0
@@ -107,7 +114,7 @@ async def test_mixed_healthy_and_inert_pushes_both_counted(tmp_path: Path):
     reported, and the summary counts split correctly (not just a boolean)."""
     reyn_dir = tmp_path / ".reyn"
     wal = StateLog(reyn_dir / "state" / "wal.jsonl")
-    log = _event_log(reyn_dir)
+    log, store = _event_log(reyn_dir)
 
     await wal.append(
         "inbox_put", target="test-agent", session_id="main",
@@ -122,6 +129,7 @@ async def test_mixed_healthy_and_inert_pushes_both_counted(tmp_path: Path):
         payload={"name": "file_changed", "text": "b", "wake": True, "_msg_id": "inert1"},
     )
     # no turn_started follows for inert1
+    await store.flush()  # ensure the written event lands before the subprocess reads it
 
     out, rc = _run(["--root", str(reyn_dir), "--mode", "hook-liveness"])
     assert rc == 0
