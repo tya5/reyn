@@ -155,6 +155,18 @@ def _format_tool_call(msg: OutboxMessage) -> str:
 _AUTHOR_PRESENT = "📊 present"
 
 
+def _with_truncation_tail(body: str, node: dict) -> str:
+    """Append a `table`/`list` node's `truncation_tail` (§5 visible truncation
+    indicator, issue #2669) as an italic Markdown line below the body — the web
+    twin of `present_renderer.py`'s dim terminal tail, so a capped table is never
+    silently indistinguishable from an un-capped one on the browser surface.
+    No tail on the node → the body unchanged."""
+    tail = node.get("truncation_tail")
+    if not tail:
+        return body
+    return f"{body}\n\n_{tail}_"
+
+
 def _present_node_to_markdown(node: dict) -> str:
     """Render ONE `ResolvedPresentation` node (the FP-0054 render model — see
     `interfaces/repl/present_renderer.py` for the terminal twin) to a Markdown
@@ -175,7 +187,8 @@ def _present_node_to_markdown(node: dict) -> str:
             for row in node.get("rows", [])
         )
     if component == "list":
-        return "\n".join(f"- {item}" for item in node.get("items", []))
+        body = "\n".join(f"- {item}" for item in node.get("items", []))
+        return _with_truncation_tail(body, node)
     if component == "table":
         columns = node.get("columns", [])
         if not columns:
@@ -190,7 +203,7 @@ def _present_node_to_markdown(node: dict) -> str:
                 for c in columns
             ]
             lines.append("| " + " | ".join(cells) + " |")
-        return "\n".join(lines)
+        return _with_truncation_tail("\n".join(lines), node)
     if component == "image":
         alt = node.get("alt") or node.get("src") or ""
         return f"_[image: {alt}]_"
