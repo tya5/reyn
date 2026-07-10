@@ -251,8 +251,12 @@ no fallback `note` unless that default viewer itself degrades further to the
 stage-4 generic fallback.
 
 Event emitted: `presented` (P6 audit) — `{data_ref, view, mode, surface, ingested,
-bindings_resolved, bindings_dropped, rows}`. `view` is the registered name,
+bindings_resolved, bindings_dropped, rows, fallback_stage}`. `view` is the registered name,
 `blueprint:<hash>` for an inline blueprint, or `null` when neither was given.
+`fallback_stage` (`null` | `content_type_default` | `generic`) records which viewer actually
+reached the user — `null` when the requested rendering rendered directly, else the synthesized
+fallback stage — so a literal-only view (rendered as requested) is distinguishable from an
+unknown / all-missed view that fell through, which otherwise share `bindings_resolved=0`.
 `ingested` (`none` | `partial` |
 `full`) is **OS-computed** (was the data inline, or does a `read_file` on the ref
 appear earlier in the session), never LLM-self-reported. The event carries **refs

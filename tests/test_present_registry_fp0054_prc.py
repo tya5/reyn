@@ -445,3 +445,81 @@ def test_fallback_event_carries_no_content_bytes(tmp_path: Path) -> None:
         kind="present", data_inline={"note": secret}, view="does_not_exist"), ctx))
     ev = [e for e in events.all() if e.type == "presented"][-1]
     assert secret not in json.dumps(ev.data)
+
+
+# ── Tier 2 (#2671): fallback_stage disambiguates the audit record ─────────────
+
+
+def _presented(events: EventLog) -> dict:
+    """The newest `presented` event's data payload."""
+    return [e for e in events.all() if e.type == "presented"][-1].data
+
+
+def test_literal_only_view_records_null_fallback_stage(tmp_path: Path) -> None:
+    """Tier 2: (#2671) a literal-only view (zero bindings) rendered AS REQUESTED
+    records `fallback_stage: null` — no viewer took over.
+
+    This is one half of the ambiguous pair #2671 resolves: the event carries
+    `bindings_resolved=0, bindings_dropped=[]` (there was nothing to bind), which
+    used to be indistinguishable from an unknown-view fallback with the same
+    zero-binding signature. `fallback_stage` is what tells them apart."""
+    # A literal-only blueprint: one component, no `$bind` anywhere.
+    literal_blueprint = [{"component": "text", "text": "a fixed literal line"}]
+    ctx, events = _ctx(tmp_path, registry=None, renderer=_RecordingRenderer())
+    ack = _run(handle(PresentIROp(
+        kind="present", data_inline={"anything": 1}, blueprint=literal_blueprint), ctx))
+
+    assert ack["ok"] is True
+    assert "note" not in ack  # rendered as requested — no fallback note
+    ev = _presented(events)
+    assert ev["bindings_resolved"] == 0
+    assert ev["bindings_dropped"] == []
+    assert ev["fallback_stage"] is None  # THE disambiguator: rendered as requested
+
+
+def test_unknown_view_records_nonnull_fallback_stage(tmp_path: Path) -> None:
+    """Tier 2: (#2671) an UNKNOWN view name that falls through to the synthesized
+    content-type default viewer records a NON-null `fallback_stage`
+    (`content_type_default`) — even though its `bindings_resolved=0,
+    bindings_dropped=[]` signature is identical to the literal-only case above.
+
+    Together with the literal-only test, this proves the durable audit record can
+    now answer "what did the user actually see" on exactly the fallback dimension
+    the feature introduces (the gap #2671 reports)."""
+    registry = build_presentation_registry({"entries": {"authors": {"blueprint": _AUTHORS_TEMPLATE}}})
+    ctx, events = _ctx(tmp_path, registry=registry, renderer=_RecordingRenderer())
+    ack = _run(handle(PresentIROp(
+        kind="present", data_inline={"author": "amy"}, view="does_not_exist"), ctx))
+
+    assert ack["ok"] is True
+    assert "note" in ack  # a fallback fired
+    ev = _presented(events)
+    # Same zero-binding signature as the literal-only case …
+    assert ev["bindings_resolved"] == 0
+    assert ev["bindings_dropped"] == []
+    # … but fallback_stage now distinguishes it: a synthesized viewer took over.
+    assert ev["fallback_stage"] == "content_type_default"
+
+
+def test_matched_view_records_null_fallback_stage(tmp_path: Path) -> None:
+    """Tier 2: (#2671) a registered view whose bindings resolve records
+    `fallback_stage: null` (rendered as requested, no fallback)."""
+    data = {"results": [{"author": "amy"}, {"author": "bob"}]}
+    registry = build_presentation_registry({"entries": {"authors": {"blueprint": _AUTHORS_TEMPLATE}}})
+    ctx, events = _ctx(tmp_path, registry=registry, renderer=_RecordingRenderer())
+    _run(handle(PresentIROp(kind="present", data_inline=data, view="authors"), ctx))
+    ev = _presented(events)
+    assert ev["bindings_resolved"] >= 1
+    assert ev["fallback_stage"] is None
+
+
+def test_default_mode_stage3_records_null_fallback_stage(tmp_path: Path) -> None:
+    """Tier 2: (#2671) `mode: "default"` (neither view nor blueprint) rendering at
+    stage 3 records `fallback_stage: null` — the default viewer IS the requested
+    rendering here, not a fallback from anything (mirrors the ack's no-note rule)."""
+    ctx, events = _ctx(tmp_path, registry=None, renderer=_RecordingRenderer())
+    ack = _run(handle(PresentIROp(kind="present", data_inline={"author": "amy"}), ctx))
+    assert ack["mode"] == "default"
+    assert "note" not in ack
+    ev = _presented(events)
+    assert ev["fallback_stage"] is None
