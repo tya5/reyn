@@ -714,8 +714,23 @@ def memory_body_to_canonical(result: dict) -> CanonicalToolResult:
 def ask_user_to_canonical(result: dict) -> CanonicalToolResult:
     """``ask_user`` op result → canonical (FP-0056 PR-F1 triage: text-shaped). The user's ``answer``
     (free text or the chosen option) IS what the LLM acts on → ``text`` — not a whole-dict blob hiding
-    it behind ``kind``/``question``/``status`` transport. Shape:
-    ``{kind:"ask_user", question, answer, status:"ok"}``."""
+    it behind ``kind``/``question``/``status`` transport. Shapes:
+    ``{kind:"ask_user", question, answer, status:"ok"}`` (answered) or
+    ``{kind:"ask_user", question, answer:"", status:"refused", reason}`` (a #2708 P3-item3 refusal).
+
+    The ``refused`` shape is the THIRD in-mapper hybrid boundary (with ``mcp`` content / ``sandboxed_exec``
+    stdout — FP-0056 v2 piece #1): a DELIBERATE, reason'd refusal is a typed NON-error outcome, NOT a tool
+    error and NOT an empty answer. It carries no error-message field, so the shared error seam correctly
+    does not intercept it (it is not an error). But it MUST be handled here BEFORE the answer/explicit-empty
+    logic — otherwise ``_explicit_empty`` sees the empty ``answer`` and renders ``(no answer)``, silently
+    DROPPING the ``reason`` and re-introducing the very empty-answer the P3-item3 refusal design removed
+    (the LLM could then not tell a refusal from a blank answer). The reason is surfaced as ``text``; NO
+    ``meta.isError`` is set — framing a deliberate refusal as an error would contradict its
+    typed-non-error design."""
+    if result.get("status") == "refused":
+        reason = str(result.get("reason", "") or "")
+        text = f"(no answer — refused: {reason})" if reason else "(no answer — refused)"
+        return CanonicalToolResult(text=text, attachments=[], source_ref=None, meta={})
     text = _explicit_empty(str(result.get("answer", "") or ""), "(no answer)")
     return CanonicalToolResult(
         text=text, attachments=[], source_ref=None, meta={},

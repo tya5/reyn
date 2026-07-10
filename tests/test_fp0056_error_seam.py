@@ -186,6 +186,63 @@ def test_removed_branch_mappers_still_route_errors_through_the_seam() -> None:
         assert canonical["attachments"] == [{"kind": "structured", "data": result}], source
 
 
+def test_ask_user_refused_surfaces_reason_not_empty_and_is_not_error() -> None:
+    """Tier 1: the THIRD in-mapper hybrid boundary — ``ask_user``'s deliberate P3-item3 refusal
+    ``{status:"refused", reason, answer:""}`` is a typed NON-error outcome carrying no error-message
+    field (so the seam correctly does not intercept it). It MUST render the ``reason`` as NON-EMPTY
+    ``text`` and must NOT be error-framed (``meta.isError`` unset):
+
+    - RED against the pre-fix mapper, which saw the empty ``answer`` and rendered ``(no answer)``,
+      silently dropping the reason (an M1 loss + a cross-arc regression that re-introduced the very
+      empty-answer the #2708 P3-item3 refusal design removed — the LLM could not tell a refusal from a
+      blank answer)."""
+    refused = {
+        "kind": "ask_user", "question": "proceed?", "answer": "",
+        "status": "refused", "reason": "detached/headless spawn — no user attached",
+    }
+    # A refusal is a deliberate outcome, NOT a tool error.
+    assert is_error_result(refused) is False
+    canonical = to_canonical(refused, source="ask_user")
+    # The reason is surfaced (non-empty, NOT the silent "(no answer)").
+    assert canonical["text"].strip()
+    assert canonical["text"] != "(no answer)", "the refusal reason must not be silently dropped"
+    assert "detached/headless spawn" in canonical["text"]
+    # The text is distinguishable as a refusal (the LLM can tell refusal from a blank answer).
+    assert "refused" in canonical["text"].lower()
+    # NOT error-framed — a deliberate refusal is a typed non-error outcome.
+    assert not canonical["meta"].get("isError")
+
+    # A refusal with no reason string still renders a non-empty, refusal-distinguishable text.
+    no_reason = to_canonical(
+        {"kind": "ask_user", "answer": "", "status": "refused"}, source="ask_user"
+    )
+    assert no_reason["text"].strip() and "refused" in no_reason["text"].lower()
+    assert not no_reason["meta"].get("isError")
+
+
+def test_ask_user_legacy_empty_and_answered_paths_unchanged() -> None:
+    """Tier 1: NON-REGRESSION guard — the in-mapper refused branch keys STRICTLY on ``status=="refused"``
+    (the #2708 P3-item3 deliberate refusal) and must NOT alter the two neighbouring shapes the producer
+    distinguishes (ask_user.py):
+
+    - a legacy empty-string auto-refuse (``refused:False`` → ``{status:"ok", answer:""}``) still renders
+      the existing ``(no answer)`` marker (NOT the refusal wording, NOT dropped);
+    - a normal answered result (``{status:"ok", answer:<text>}``) still renders the answer as ``text``.
+
+    Neither is error-classified. This pins that the refused branch does not swallow a success shape."""
+    legacy_empty = to_canonical(
+        {"kind": "ask_user", "question": "q", "answer": "", "status": "ok"}, source="ask_user"
+    )
+    assert legacy_empty["text"] == "(no answer)"
+    assert not legacy_empty["meta"].get("isError")
+
+    answered = to_canonical(
+        {"kind": "ask_user", "question": "q", "answer": "yes", "status": "ok"}, source="ask_user"
+    )
+    assert answered["text"] == "yes"
+    assert not answered["meta"].get("isError")
+
+
 def test_sandboxed_exec_and_mcp_status_error_keep_in_mapper_handling() -> None:
     """Tier 1: the two producers whose ``status:"error"`` carries a NON-message payload are correctly
     NOT intercepted by the seam (their status is data-meaning) — they keep their in-mapper handling:
