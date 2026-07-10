@@ -279,6 +279,27 @@ def _load_one_entry(
     # Sibling-name set for dot-less `call`/`match` resolution (#2722).
     siblings = {p.name for p in pipelines}
 
+    # #2775: an entry's registration must be INTRA-FILE ATOMIC — a file with N
+    # `pipeline:` documents commits ALL N or NONE. Register-as-you-go left docs
+    # 1..N-1 live in the registry when doc N failed, while the per-entry
+    # isolation layer logged/recorded "the entry was skipped" (a silent partial
+    # success: `run_pipeline(name="{key}.doc1")` succeeded despite the skip
+    # event). So use a TWO-PASS commit:
+    #
+    #   Pass 1 (validate + resolve + collision pre-check — NO registry mutation):
+    #     namespace every pipeline (raises on an unresolved dot-less sibling) and
+    #     pre-check each resulting global name against both the already-populated
+    #     registry (a cross-entry collision) and the names staged so far. `siblings`
+    #     is known upfront and independent of registration order, so this pass
+    #     catches every failure the old per-doc loop could — with zero mutation.
+    #   Pass 2 (commit): every name is known-good + unique, so `register()` cannot
+    #     raise its duplicate guard — the whole file lands atomically.
+    #
+    # A failure in ANY doc raises PipelineLoadError out of pass 1 before pass 2
+    # begins, so the registry is untouched — exactly matching the "entry skipped"
+    # semantics the isolation layer reports.
+    staged: "list[object]" = []
+    seen: "set[str]" = set(registry.names())
     for pipeline in pipelines:
         if not pipeline.name:
             # parse_pipeline_docs requires a non-empty ``pipeline:`` name, so
@@ -290,17 +311,23 @@ def _load_one_entry(
         # Namespace: prefix the declared name AND every resolved dot-less sibling
         # ref with `{key}.` (raises PipelineLoadError for an unresolved sibling).
         namespaced = _namespace_pipeline(pipeline, key, siblings)
-        try:
-            registry.register(namespaced.name, namespaced, schema_registry)
-        except ValueError as exc:
-            # Duplicate GLOBAL name across entries — the registry's own
-            # re-registration guard. First-registered entry keeps the name; this
-            # (later) entry is the one that fails.
+        if namespaced.name in seen:
+            # A GLOBAL name collision — with an earlier ENTRY (first-registered
+            # wins) or (defensively) an earlier sibling in THIS file (R2 already
+            # prevents same declared names, so intra-file is unreachable, but the
+            # single check covers both). Raised in pass 1 → nothing from this file
+            # is committed.
             raise PipelineLoadError(
                 f"pipelines.entries.{key!r}: file {path} registers name "
                 f"{namespaced.name!r} which is already registered by an earlier "
-                f"entry: {exc}"
-            ) from exc
+                "entry."
+            )
+        seen.add(namespaced.name)
+        staged.append(namespaced)
+
+    # Pass 2: commit — names pre-validated absent + unique, so no register() raises.
+    for namespaced in staged:
+        registry.register(namespaced.name, namespaced, schema_registry)
 
 
 def build_pipeline_registry(
