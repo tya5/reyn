@@ -34,6 +34,30 @@ _log = logging.getLogger(__name__)
 # wires the per-component seams (mcp / cron / hooks / per-agent capability / …).
 ReapplySeam = tuple[str, Callable[[dict], Awaitable[bool]]]
 
+# #2761 PR-2: an install op's ``source`` → the seam name(s) its IMMEDIATE mid-turn
+# apply must run (and ONLY those — not the whole reload). Skill / pipeline are the
+# two pure-in-memory rebuild types; ``mcp_install`` is added in PR-3 (its seam does
+# an external re-probe with a probe-then-commit + cancel/timeout contract).
+_INSTALL_SOURCE_SEAMS: "dict[str, tuple[str, ...]]" = {
+    "skill_install": ("skills",),
+    "pipeline_install": ("pipelines",),
+}
+
+
+def is_pure_addition(name: str, existing_entries: "dict | None") -> bool:
+    """True iff ``name`` is NOT already registered — a pure addition (#2761 PR-2).
+
+    An install op gates its IMMEDIATE mid-turn reload on this: a brand-new name never
+    touches an in-USE entry, so applying it mid-turn cannot trigger the R7
+    in-use-replace hazard (``session._reapply_pipelines`` docstring note / issue
+    #2761). A same-name overwrite (``name`` already present) is NOT a pure addition —
+    it keeps the existing deferred turn-boundary path, preserving clobber-update
+    (skill/pipeline have no ``remove`` CLI, so re-install is their only update path)
+    and the documented mcp re-install fix, and confining R7 to the deferred path it
+    already lives on.
+    """
+    return name not in (existing_entries or {})
+
 
 def validate_in_set(in_set: "dict") -> "str | None":
     """Validate-before-apply (#2073 S2): a structural check of the re-read IN-set.
@@ -199,6 +223,74 @@ class HotReloader:
             )
         return {"source": source, "applied": applied, "failed": failed}
 
+    async def apply_now(self, *, source: str) -> "dict":
+        """#2761 PR-2: apply an install's reload IMMEDIATELY (mid-turn), running ONLY
+        the seam(s) that ``source`` affects — NOT the whole reload (that is
+        :meth:`apply_pending`'s turn-boundary job).
+
+        Used by an install op on the PURE-ADDITION path (the caller gates on
+        :func:`is_pure_addition` + a live per-session reloader), so the just-installed
+        NEW skill/pipeline is resolvable/usable in the SAME execution — the owner's
+        additive same-turn goal. Only *resolution* (looking a name up to run it) is
+        made immediate; *discovery* (the LLM's tool catalog / "## Skills" menu, built
+        once per turn) still updates next turn — so this does not over-claim mid-turn
+        LLM discovery.
+
+        Re-reads ONLY the IN-set (same safety boundary as :meth:`apply_pending` — the
+        OUT-set ``reyn.yaml`` is never opened) and runs validate-before-apply: a
+        malformed IN-set is REJECTED whole (no seam runs, live config unchanged). Never
+        raises out — a seam failure is isolated under ``failed`` so a misbehaving
+        reload can never break the turn. Does NOT touch the deferred ``pending`` flag
+        (the immediate path is independent of the operator ``/reload`` schedule).
+
+        Returns a ``{"source", "applied", "failed"}`` summary (or, on a rejected
+        IN-set, additionally ``"rejected"``). An unknown / unmapped ``source`` applies
+        nothing (defensive — callers pass a known install source)."""
+        target_seams = _INSTALL_SOURCE_SEAMS.get(source)
+        if not target_seams:
+            return {"source": source, "applied": [], "failed": []}
+
+        # Same IN-set safety boundary as apply_pending: the OUT-set is never opened.
+        in_set = load_hot_reload_config(self._project_root)
+
+        # Validate-before-apply (atomicity): a malformed IN-set is REJECTED whole — no
+        # seam runs, the live config is unchanged. Mirrors apply_pending exactly.
+        if self._validate is not None:
+            reason = self._validate(in_set)
+            if reason:
+                _log.warning(
+                    "hot-reload (immediate) REJECTED (invalid IN-set): %s — live config unchanged",
+                    reason,
+                )
+                if self._events is not None:
+                    self._events.emit(
+                        "config_reload_rejected",
+                        source=source or "unknown",
+                        reason=reason,
+                    )
+                return {"source": source, "rejected": reason, "applied": [], "failed": []}
+
+        applied: list[str] = []
+        failed: list[str] = []
+        for name, fn in self._seams:
+            if name not in target_seams:
+                continue  # immediate apply is scoped to the affected seam(s) only
+            try:
+                if await fn(in_set):
+                    applied.append(name)
+            except Exception as exc:  # noqa: BLE001 — a seam never breaks the turn
+                _log.warning("hot-reload (immediate) seam %r failed: %s", name, exc)
+                failed.append(name)
+
+        if self._events is not None:
+            self._events.emit(
+                "config_reloaded",
+                source=source or "unknown",
+                components=applied,
+                failed=failed,
+            )
+        return {"source": source, "applied": applied, "failed": failed}
+
 
 # ── process-wide active HotReloader (#2073 S3) ──────────────────────────────
 # The LLM-op hooks-write tool reaches the reloader to ``request_reload`` after
@@ -220,10 +312,43 @@ def get_active_hot_reloader() -> "HotReloader | None":
     return _active_hot_reloader
 
 
+async def dispatch_install_reload(
+    ctx_reloader: "HotReloader | None",
+    *,
+    source: str,
+    is_addition: bool,
+) -> None:
+    """#2761 PR-2: route an install op's post-write reload.
+
+    - **Pure addition + a live per-session reloader** (``ctx.hot_reloader``, the
+      #2073 S3 per-session route) → :meth:`HotReloader.apply_now` runs the affected
+      seam IMMEDIATELY so the just-installed NEW entry is resolvable this turn.
+    - **Otherwise** (a same-name overwrite, OR no per-session reloader — e.g. the CLI
+      ``reyn <kind> install`` running in a separate process) → the EXISTING deferred
+      turn-boundary behavior via the process-active reloader, UNCHANGED. This
+      preserves clobber-update (skill/pipeline's only update path) + the documented
+      mcp re-install fix, and confines the R7 in-use-replace hazard to the deferred
+      path it already lives on.
+
+    The per-session ``ctx_reloader`` is preferred over the process-global
+    :func:`get_active_hot_reloader` for the immediate path specifically, because the
+    process-global is the *last-registered* session's reloader (a multi-session
+    footgun the deferred path tolerates but the immediate path must not)."""
+    if is_addition and ctx_reloader is not None:
+        await ctx_reloader.apply_now(source=source)
+        return
+    # Deferred / clobber-update / no-per-session-reloader path — unchanged behavior.
+    reloader = get_active_hot_reloader()
+    if reloader is not None:
+        reloader.request_reload(source=source)
+
+
 __all__ = [
     "HotReloader",
     "ReapplySeam",
     "validate_in_set",
+    "is_pure_addition",
+    "dispatch_install_reload",
     "set_active_hot_reloader",
     "get_active_hot_reloader",
 ]

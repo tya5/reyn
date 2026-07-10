@@ -2069,6 +2069,12 @@ class RouterHostAdapter:
             current_task_id=(
                 self._current_task_id_fn() if self._current_task_id_fn else None
             ),
+            # #2761 PR-2: the per-session HotReloader so an install op (skill/pipeline)
+            # can apply a pure-addition reload IMMEDIATELY (mid-turn) → the new entry is
+            # resolvable this turn. This is the router-dispatched install path
+            # (skill_management__install_* / pipeline ops → build_legacy_op_context →
+            # this factory), so it is the load-bearing wiring for PR-2.
+            hot_reloader=self.hot_reloader,
         )
 
     def _set_cancel_event(self, event: asyncio.Event) -> None:

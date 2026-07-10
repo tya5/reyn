@@ -17,7 +17,10 @@ Local-path install (``op.source is None``):
   6. ``record_config_generation`` on the skills.yaml path AFTER write —
      the truncation-surviving recovery base (#2259 / CLAUDE.md recovery gate).
   7. Emit ``skill_installed`` event (P6 audit trail).
-  8. Request hot-reload so the installed skill goes live in the current session.
+  8. Reload so the installed skill goes live (#2761 PR-2): a PURE ADDITION on a
+     live per-session reloader (``ctx.hot_reloader``) applies IMMEDIATELY (mid-turn)
+     — the new skill is resolvable this same turn; a same-name overwrite
+     (clobber-update) or no per-session reloader keeps the deferred turn-boundary path.
 
 Source/git install (``op.source`` set — #2548 PR-D):
   Same pipeline as local, but step 0 fetches the skill first:
@@ -533,6 +536,11 @@ async def handle(
     }
     if op.source:
         entry["source"] = op.source
+    # #2761 PR-2: capture pure-addition-vs-overwrite BEFORE the write mutates entries,
+    # so step 8 can route a NEW name to the immediate mid-turn apply and a same-name
+    # overwrite (clobber-update — skill's only update path) to the deferred path.
+    from reyn.runtime.hot_reload import is_pure_addition  # noqa: PLC0415
+    _is_addition = is_pure_addition(name, existing["skills"]["entries"])
     existing["skills"]["entries"][name] = entry
     _write_yaml(config_path, existing)
 
@@ -551,10 +559,16 @@ async def handle(
     )
 
     # ── 8. Hot-reload: surface the installed skill in the current session ─────
-    from reyn.runtime.hot_reload import get_active_hot_reloader  # noqa: PLC0415
-    _reloader = get_active_hot_reloader()
-    if _reloader is not None:
-        _reloader.request_reload(source="skill_install")
+    # #2761 PR-2: a PURE ADDITION on a live per-session reloader (ctx.hot_reloader)
+    # applies IMMEDIATELY (mid-turn) so the just-installed NEW skill is resolvable this
+    # turn; a same-name overwrite (clobber-update) or no per-session reloader (CLI
+    # separate process) keeps the existing deferred turn-boundary behavior.
+    from reyn.runtime.hot_reload import dispatch_install_reload  # noqa: PLC0415
+    await dispatch_install_reload(
+        getattr(ctx, "hot_reloader", None),
+        source="skill_install",
+        is_addition=_is_addition,
+    )
 
     return {
         "status": "installed",
