@@ -132,10 +132,27 @@ def test_valid_reyn_src_shape_still_dispatches() -> None:
 # The registry-derived guard: NO registered mapper has a silent status-only catch-all.
 # --------------------------------------------------------------------------------------------------
 
+# Mappers with NO inner discriminator — they render the ENTIRE input value as ``text`` verbatim (no
+# per-field selection, so there is no sub-view to silently drop on a "miss"). The probe's heuristic
+# ("does the rendered text contain the bare status echoed back") cannot distinguish "the WHOLE input
+# legitimately IS ``{status: ...}``" from a discriminator-miss catch-all for such a mapper — narrowly
+# exempted by name, not blanket-skipped:
+# - ``shell_to_canonical`` (#2681 Bucket A): ``shell``'s stdout can be ANY JSON shape (including one
+#   whose only key happens to be ``status`` — a health-check-style command's own output), and the
+#   mapper's whole job is to render that value faithfully — never select/drop a sub-field the way
+#   ``file``/``reyn_src`` dispatch on ``op``/body-key. Nothing is ever dropped, so M3 cannot recur.
+_NO_INNER_DISCRIMINATOR_MAPPERS = frozenset({"shell_to_canonical"})
+
+
 def _registered_mappers() -> set:
     """Every distinct real canonical mapper function born at the two registration seams (the
-    sentinels STRUCTURED_PASSTHROUGH / CANONICAL_TODO are not callable → excluded)."""
-    return {d for d in _DECLARATIONS.values() if callable(d)}
+    sentinels STRUCTURED_PASSTHROUGH / CANONICAL_TODO are not callable → excluded), minus the
+    non-discriminating mappers this probe structurally cannot evaluate
+    (:data:`_NO_INNER_DISCRIMINATOR_MAPPERS`)."""
+    return {
+        d for d in _DECLARATIONS.values()
+        if callable(d) and d.__name__ not in _NO_INNER_DISCRIMINATOR_MAPPERS
+    }
 
 
 def _status_echo_offense(mapper) -> str | None:
