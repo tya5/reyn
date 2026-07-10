@@ -1462,7 +1462,17 @@ async def run_inline_input(registry, renderer, config=None) -> None:
     task_poll_task = asyncio.create_task(_task_poll())
     try:
         with patch_stdout():
-            await app.run_async()
+            # #2786: this Application.run_async() is the input driver for the
+            # DEFAULT interactive `reyn chat` (this renderer's uses_app_input()
+            # is what selects run_inline_input over repl.py's PromptSession
+            # path) -- prompt_toolkit's default (set_exception_handler=True)
+            # would mask #2637's durable asyncio exception capture for the
+            # exact same reason as the PromptSession path in
+            # interfaces/repl/repl.py (see that call site's comment): the app
+            # owns the loop's exception handler for its whole run, which is
+            # most of the REPL's wall-clock time. False keeps reyn's handler
+            # wired throughout.
+            await app.run_async(set_exception_handler=False)
     finally:
         poll_task.cancel()
         task_poll_task.cancel()
