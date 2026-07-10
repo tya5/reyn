@@ -23,6 +23,21 @@ if TYPE_CHECKING:
     from reyn.runtime.session import Session
 
 
+def _safe(text: str) -> str:
+    """Neutralize an LLM-derived leaf (a pending-op ``summary`` = the intervention
+    prompt) before it is echoed to the inline terminal via ``reply()`` (#2770
+    GAP-2). ``/pending list|discard|claim`` all render a stalled intervention's
+    summary through ``reply(kind="system")`` → the SAME inline CUI terminal
+    surface as the intervention announce, with no renderer-side guard — so a
+    control/ESC sequence in an ask_user prompt would reach the terminal through
+    this echo. Apply the SAME terminal neutralizer present's leaf seam uses
+    (``core/present/guard``, FP-0054) at this surface-aware render seam, keeping
+    ``PendingOpView`` itself channel-agnostic."""
+    from reyn.core.present.guard import get_neutralizer
+
+    return get_neutralizer("terminal").neutralize(text)[0]
+
+
 _USAGE = (
     "Usage: /pending [list | discard <id> | claim <id>]\n"
     "  list           — print stalled / cross-channel pending operations\n"
@@ -65,7 +80,7 @@ def _render_list(pending_ops: list) -> str:
         # wrapping into a ragged blob.
         lines.append(f"  {kind:<14} {iv_id_short}  ({origin})")
         if summary:
-            lines.append(f"      ↳ {summary[:60]}")
+            lines.append(f"      ↳ {_safe(summary)[:60]}")
     return "\n".join(lines)
 
 
@@ -181,7 +196,7 @@ async def _discard(session: "Session", supplied_id: str) -> None:
         if kind_hint:
             context = f" ({kind_hint}"
             if summary_hint:
-                context += f": {summary_hint[:40]}"
+                context += f": {_safe(summary_hint)[:40]}"
             context += ")"
         await reply(
             session,
@@ -233,5 +248,5 @@ async def _claim(session: "Session", supplied_id: str) -> None:
     await reply(
         session,
         f"claimed {iv_id[:8]} to {channel_id}"
-        + (f": {summary[:60]}" if summary else ""),
+        + (f": {_safe(summary)[:60]}" if summary else ""),
     )

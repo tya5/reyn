@@ -667,6 +667,17 @@ def format_inline_message(msg: OutboxMessage):
         err = meta.get("error_message") or meta.get("error_kind") or msg.text
         return _gutter_grid("  ⎿ ", _CC_ERR, Text(f"✗ {_short(err, 80)}", style=_CC_ERR))
 
+    # #2770: an intervention announcement carries a `present`-shaped render model
+    # (meta["nodes"], neutralized at the source in InterventionHandler.announce).
+    # Draw its body through the SAME markup-inert `render_presentation_nodes`
+    # primitive `present` uses (rendering consistency), keeping the "◆ needs you"
+    # amber gutter so the affordance survives. The two-way-pause flow is unchanged
+    # — this is display only.
+    if kind == "intervention" and meta.get("nodes") is not None:
+        from reyn.interfaces.repl.present_renderer import render_presentation_nodes
+        gutter, gutter_style, _ = _KIND_LINE["intervention"]
+        return _gutter_grid(gutter, gutter_style, render_presentation_nodes(meta["nodes"]))
+
     line = _KIND_LINE.get(kind)
     if line is None:
         return Text(f"{_meta_prefix(meta)}{msg.text}")

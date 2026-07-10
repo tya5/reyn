@@ -31,8 +31,18 @@ class InterventionElement:
         on_choose: Callable[[str, str], None],
     ) -> None:
         # choices: [(choice_id, label), ...]
+        # #2770: choice labels are LLM-derived (ask_user options) and reach the
+        # prompt_toolkit FormattedTextControl as raw f-string fragments (app.py)
+        # + the scrollback echo, neither of which guards. Neutralize labels at
+        # this data boundary through the SAME terminal neutralizer present's leaf
+        # seam uses (ESC/control strip, FP-0054) so control/ESC sequences can't
+        # drive the terminal. The choice_id (authoritative match key) is never
+        # displayed and stays raw.
+        from reyn.core.present.guard import get_neutralizer
+
+        neut = get_neutralizer("terminal")
         self._iv_id = iv_id
-        self._choices = list(choices)
+        self._choices = [(cid, neut.neutralize(label)[0]) for cid, label in choices]
         self._on_choose = on_choose
 
     @property
