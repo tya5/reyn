@@ -6,7 +6,7 @@ audience: [human, agent]
 
 # Operational Intelligence
 
-Reyn's P6 audit log records every state change — phase transitions, tool calls, LLM invocations, errors — as an append-only JSONL stream. Combine that with the RAG infrastructure from ADR-0033 and the result is **operational intelligence**: Reyn agents can recall their own execution history semantically rather than via linear event log scan. The same `recall` op used for document retrieval works on execution traces once the event log has been indexed into a source — using the same [`embed_and_index()`](rag.md) primitive as any other corpus, there is no dedicated events-indexing skill.
+Reyn's P6 audit log records every state change — phase transitions, tool calls, LLM invocations, errors — as an append-only JSONL stream. Combine that with the RAG infrastructure from ADR-0033 and the result is **operational intelligence**: Reyn agents can recall their own execution history semantically rather than via linear event log scan. The same `semantic_search` op (FP-0057 Phase 2a; renamed from `recall`) used for document retrieval works on execution traces once the event log has been indexed into a source — using the same [`embed_and_index()`](rag.md) primitive as any other corpus, there is no dedicated events-indexing skill.
 
 ## Architecture
 
@@ -15,7 +15,7 @@ P6 events ──┐
             ├─► your indexing step ──► embed_and_index(source="events") ──► .reyn/cache/index/events/ (sqlite)
             │                                                                        │
             │                                                                        ▼
-            │                                                          recall(sources=["events"])
+            │                                                          semantic_search(sources=["events"])
             │                                                                        │
             │                                       ┌────────────────────────────────┼─────────────────┐
             │                                       ▼                                ▼                 ▼
@@ -24,7 +24,7 @@ P6 events ──┐
             └─► raw file read fallback (`.reyn/events/*.jsonl`) when no index exists
 ```
 
-Indexing the event log is not a bundled skill — write a `python` step that reads `.reyn/events/*.jsonl`, groups events into per-run chunks, and calls `embed_and_index(chunks, source="events", ...)` the same way you would for any other corpus (see [Concepts: RAG — Quick start](rag.md#quick-start)). Once indexed, any phase can query the execution history with `recall(sources=["events"], query="...", top_k=N)`.
+Indexing the event log is not a bundled skill — write a `python` step that reads `.reyn/events/*.jsonl`, groups events into per-run chunks, and calls `embed_and_index(chunks, source="events", ...)` the same way you would for any other corpus (see [Concepts: RAG — Quick start](rag.md#quick-start)). Once indexed, any phase can query the execution history with `semantic_search(sources=["events"], query="...", top_k=N)`.
 
 ## Run-chunk format
 
@@ -49,12 +49,12 @@ Use `embed_and_index`'s `mode="append"` (see [Concepts: RAG — Limitations](rag
 
 ## Querying execution history
 
-Once a source has been indexed, `recall` can query it from any phase:
+Once a source has been indexed, `semantic_search` can query it from any phase:
 
 ```yaml
 - type: run_op
   op:
-    kind: recall
+    kind: semantic_search
     query: "failure patterns in my_agent"
     sources: ["events"]
     top_k: 10
@@ -91,5 +91,5 @@ See [Reference: `reyn cron`](../../reference/cli/cron.md) and [Reference: `reyn.
 ## See also
 
 - [FP-0009: Operational Intelligence](../../deep-dives/proposals/0009-operational-intelligence.md) — original design rationale (predates the skill-word removal; primitives described here are current, skill-based examples are not)
-- [Concepts: RAG](rag.md) — underlying index/recall primitives
+- [Concepts: RAG](rag.md) — underlying index/semantic-search primitives
 - [Concepts: Events](../runtime/events.md) — P6 event log structure and current event taxonomy

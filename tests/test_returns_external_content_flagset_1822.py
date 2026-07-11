@@ -20,7 +20,7 @@ from reyn.tools import get_default_registry
 # — external network / external store / user-written disk.
 _EXTERNAL = {
     "list_memory", "read_memory_body",   # user/agent-written .md
-    "recall",                            # RAG over user content (memory/docs/chat)
+    "semantic_search",                   # RAG over user content (memory/docs/chat); FP-0057 Phase 2a renamed from recall
     "call_mcp_tool", "mcp_call_tool",    # external MCP server result
     "list_mcp_tools", "describe_mcp_tool",  # external server-authored descriptions
     "mcp_search_registry",               # external registry listing
@@ -104,6 +104,13 @@ _NOT_EXTERNAL = {
     # API call; the returned vectors carry no external payload.) Same "derived
     # from input, not a relay" rationale as render_template.
     "embed",
+    # FP-0057 Phase 2a: index_update reconciles caller-supplied chunks into a
+    # source's own index and returns reconciliation COUNTS (added/updated/
+    # removed/skipped) + the source's own recorded chunk_count/embedding_model —
+    # an OS-assembled status summary, not relayed external content (the caller
+    # already supplied the chunk text; index_update never fetches anything
+    # itself). Same "derived from input, not a relay" rationale as embed.
+    "index_update",
     # — catalog / discovery (reyn-assembled or operator config) —
     "list_agents", "describe_agent",
     "list_actions", "search_actions", "describe_action",

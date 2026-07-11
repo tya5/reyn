@@ -167,10 +167,10 @@ fixtures:
 
   - id: rag_recall_semantic
     source: dogfood/scenarios/control_ir_ops.yaml
-    prompt: "Use the rag_operation__recall action to find documentation about 'phase rollback'."
-    expected_action: rag_operation__recall
+    prompt: "Use the rag_operation__semantic_search action to find documentation about 'phase rollback'."
+    expected_action: rag_operation__semantic_search
     expected_reach_path:
-      - 'rag_operation__recall({query: "phase rollback"})'
+      - 'rag_operation__semantic_search({query: "phase rollback"})'
     axis: [precision]
 
   - id: rag_drop_source_destructive

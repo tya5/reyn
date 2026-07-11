@@ -116,14 +116,15 @@ def test_resolve_invoke_action_memory_entry_routes_to_read_body() -> None:
 
 
 def test_resolve_invoke_action_rag_corpus_curries_single_source() -> None:
-    """Tier 2: rag_corpus__<name> → recall(sources=[name], query, top_k?).
+    """Tier 2: rag_corpus__<name> → semantic_search(sources=[name], query, top_k?)
+    (FP-0057 Phase 2a: renamed from recall).
 
     §D19 single-source resource invoke.
     """
     result = resolve_invoke_action(
         "rag_corpus__meetings", {"query": "Q3 plans", "top_k": 5},
     )
-    assert result.target_tool_name == "recall"
+    assert result.target_tool_name == "semantic_search"
     assert result.target_args == {
         "sources": ["meetings"],
         "query": "Q3 plans",
@@ -163,9 +164,9 @@ def test_resolve_invoke_action_rag_corpus_without_top_k() -> None:
         # reyn_source
         ("reyn_source__read", "reyn_src_read"),
         ("reyn_source__list", "reyn_src_list"),
-        # rag_operation
-        ("rag_operation__recall",      "recall"),
-        ("rag_operation__drop_source", "drop_source"),
+        # rag_operation (FP-0057 Phase 2a: rag_operation__recall renamed rag_operation__semantic_search)
+        ("rag_operation__semantic_search", "semantic_search"),
+        ("rag_operation__drop_source",     "drop_source"),
     ],
 )
 def test_operation_categories_route_passthrough(
@@ -309,11 +310,11 @@ def test_suggest_similar_names_empty_candidates_returns_empty() -> None:
         ("mcp__install_local",       "mcp_install_local"),
         ("mcp__drop_server",         "mcp_drop_server"),
         ("memory_entry__pref_dates", "read_memory_body"),
-        ("rag_corpus__meetings",     "recall"),
+        ("rag_corpus__meetings",     "semantic_search"),
         ("file__read",               "read_file"),
         ("web__search",              "web_search"),
         ("memory_operation__forget", "forget_memory"),
-        ("rag_operation__recall",    "recall"),
+        ("rag_operation__semantic_search", "semantic_search"),
     ],
 )
 def test_resolve_describe_returns_invoke_target(
@@ -362,7 +363,7 @@ def test_known_static_names_covers_all_operation_categories() -> None:
     # reyn_source (2 ops — read/list; glob/grep are future)
     assert {"reyn_source__read", "reyn_source__list"} <= names
     # rag_operation (2 ops)
-    assert {"rag_operation__recall", "rag_operation__drop_source"} <= names
+    assert {"rag_operation__semantic_search", "rag_operation__drop_source"} <= names
 
 
 def test_known_static_names_excludes_resource_categories() -> None:
@@ -567,7 +568,7 @@ _ROUTE_CONTRACT_SAMPLES: list[tuple[str, dict[str, Any]]] = [
     ("reyn_source__list", {"path": "."}),
     ("reyn_source__glob", {"pattern": "*.py"}),
     ("reyn_source__grep", {"pattern": "x"}),
-    ("rag_operation__recall",      {"query": "q", "sources": ["s"]}),
+    ("rag_operation__semantic_search", {"query": "q", "sources": ["s"]}),
     ("rag_operation__drop_source", {"source": "s"}),
     ("exec__sandboxed_exec",       {"argv": ["echo", "hi"]}),
     # task category (#1953 dynamic-wire) — args cover each IROp's required fields.

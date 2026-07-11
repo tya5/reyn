@@ -38,9 +38,10 @@ EXPECTED_TOOL_NAMES = [
     # public OSS repo, not the user's files, so no permission gate.
     "reyn_src_list",
     "reyn_src_read",
-    # recall + drop_source (H1/H2, ADR-0033 Phase 1) — always exposed
-    # when the ToolRegistry contains them (B17-S6-1 / B17-S8-2 fix).
-    "recall",
+    # semantic_search (renamed from recall, FP-0057 Phase 2a) + drop_source
+    # (H1/H2, ADR-0033 Phase 1) — always exposed when the ToolRegistry
+    # contains them (B17-S6-1 / B17-S8-2 fix).
+    "semantic_search",
     "drop_source",
     # present + render_template (#2692, part of the #2688 sweep) — always exposed
     # so chat can reach the existing present-layer ops (read-authority is enforced
@@ -352,19 +353,20 @@ def test_nested_objects_max_depth_1_full_permissions():
         )
 
 
-# ── B17-S6-1 / B17-S8-2 fix: recall + drop_source wiring tests ───────────────
+# ── B17-S6-1 / B17-S8-2 fix: semantic_search (renamed from recall) + drop_source wiring tests ──
 
 
 def test_recall_in_build_tools():
-    """Tier 2: recall ToolDefinition is exposed in build_tools() for router LLM.
+    """Tier 2: semantic_search ToolDefinition is exposed in build_tools() for router LLM.
 
-    B17-S6-1 fix: RECALL was registered in ToolRegistry but missing from
-    build_tools(), so the LLM could not see or call it (S5/S6 blocked).
+    B17-S6-1 fix: SEMANTIC_SEARCH (then RECALL) was registered in ToolRegistry
+    but missing from build_tools(), so the LLM could not see or call it (S5/S6
+    blocked).
     """
     tools = build_tools(SAMPLE_AGENTS)
     tool_names = [t["function"]["name"] for t in tools]
-    assert "recall" in tool_names, (
-        f"'recall' missing from build_tools() output; got: {tool_names}"
+    assert "semantic_search" in tool_names, (
+        f"'semantic_search' missing from build_tools() output; got: {tool_names}"
     )
 
 
@@ -382,15 +384,15 @@ def test_drop_source_in_build_tools():
 
 
 def test_recall_in_dispatch_registry():
-    """Tier 2: recall is in RouterLoop.REGISTRY_DISPATCH_TOOLS for runtime dispatch.
+    """Tier 2: semantic_search is in RouterLoop.REGISTRY_DISPATCH_TOOLS for runtime dispatch.
 
     B17-S6-1 fix: without this, dispatch_tool would fall through to the
-    legacy if/elif tree and return {"error": "unhandled tool: recall"}.
+    legacy if/elif tree and return {"error": "unhandled tool: semantic_search"}.
     REGISTRY_DISPATCH_TOOLS is a class attribute on RouterLoop.
     """
     from reyn.runtime.router_loop import RouterLoop
-    assert "recall" in RouterLoop.REGISTRY_DISPATCH_TOOLS, (
-        "'recall' missing from RouterLoop.REGISTRY_DISPATCH_TOOLS"
+    assert "semantic_search" in RouterLoop.REGISTRY_DISPATCH_TOOLS, (
+        "'semantic_search' missing from RouterLoop.REGISTRY_DISPATCH_TOOLS"
     )
 
 

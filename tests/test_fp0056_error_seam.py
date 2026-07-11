@@ -122,25 +122,26 @@ def test_error_to_canonical_extracts_message_in_priority_order() -> None:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# #2698 subsumed — recall's {ok:False, error_message} renders NON-EMPTY (the acceptance test)
+# #2698 subsumed — semantic_search's {ok:False, error_message} renders NON-EMPTY (the acceptance test)
 # ─────────────────────────────────────────────────────────────────────────────
 
 
 def test_recall_missing_arg_error_renders_non_empty_via_seam() -> None:
-    """Tier 1: #2698 SUBSUMED — recall's missing-arg error ``{ok:False, error_kind, error_message}``
-    (which ``chunks_to_canonical`` has NO branch for → rendered EMPTY on pre-#1 main, the M1 bug) now
-    routes through the shared seam to a NON-EMPTY ``text`` with ``meta.isError``. This is the RED→GREEN
-    acceptance test the #2698 issue asks for (RED against pre-#1 main / a neutered predicate)."""
+    """Tier 1: #2698 SUBSUMED — semantic_search's (FP-0057 Phase 2a; renamed from recall)
+    missing-arg error ``{ok:False, error_kind, error_message}`` (which ``chunks_to_canonical``
+    has NO branch for → rendered EMPTY on pre-#1 main, the M1 bug) now routes through the shared
+    seam to a NON-EMPTY ``text`` with ``meta.isError``. This is the RED→GREEN acceptance test the
+    #2698 issue asks for (RED against pre-#1 main / a neutered predicate)."""
     recall_error = {
         "ok": False,
         "error_kind": "missing_required_arg",
-        "error_message": "recall requires ['query', 'sources']. Available sources are listed under "
+        "error_message": "semantic_search requires ['query', 'sources']. Available sources are listed under "
         "'Indexed sources' in the system prompt.",
         "missing": ["query", "sources"],
     }
-    canonical = to_canonical(recall_error, source="recall")
-    assert canonical["text"].strip(), "recall error must render NON-EMPTY (the #2698 fix)"
-    assert "recall requires" in canonical["text"]
+    canonical = to_canonical(recall_error, source="semantic_search")
+    assert canonical["text"].strip(), "semantic_search error must render NON-EMPTY (the #2698 fix)"
+    assert "semantic_search requires" in canonical["text"]
     assert canonical["meta"].get("isError") is True
     # Lossless: the whole error dict (incl. ``missing``) survives in the attachment.
     assert canonical["attachments"] == [{"kind": "structured", "data": recall_error}]
@@ -274,32 +275,33 @@ def test_sandboxed_exec_and_mcp_status_error_keep_in_mapper_handling() -> None:
 
 @pytest.mark.asyncio
 async def test_recall_error_at_pipeline_chokepoint_renders_non_empty_no_degraded() -> None:
-    """Tier 2: a recall missing-arg error flowing through a real pipeline tool step renders a non-empty
-    canonical error view — and, because piece #1 guarantees an error is non-empty + error-classified, it
-    does NOT trip the piece #2 ``canonical_degraded`` invariant (which now unambiguously means "a SUCCESS
-    result was lost"). Real ``PipelineExecutor`` + real ``EventLog`` (no mocks)."""
+    """Tier 2: a semantic_search (FP-0057 Phase 2a; renamed from recall) missing-arg error flowing
+    through a real pipeline tool step renders a non-empty canonical error view — and, because piece
+    #1 guarantees an error is non-empty + error-classified, it does NOT trip the piece #2
+    ``canonical_degraded`` invariant (which now unambiguously means "a SUCCESS result was lost").
+    Real ``PipelineExecutor`` + real ``EventLog`` (no mocks)."""
     from reyn.core.offload.canonical import CANONICAL_DEGRADED_EVENT
 
     def _dispatch(name: str, args: dict) -> dict:
         return {
             "ok": False,
             "error_kind": "missing_required_arg",
-            "error_message": "recall requires ['query', 'sources'].",
+            "error_message": "semantic_search requires ['query', 'sources'].",
             "missing": ["query", "sources"],
-            "_canonical_source": "recall",
+            "_canonical_source": "semantic_search",
         }
 
     events = EventLog()
-    pipeline = Pipeline(steps=[ToolStep(name="recall", args={}, output="r")])
+    pipeline = Pipeline(steps=[ToolStep(name="semantic_search", args={}, output="r")])
     result = await PipelineExecutor().run(
         pipeline, None,
         tool_dispatch=_dispatch, state_log=None, run_id="run-fp0056-p1-recall", events=events,
     )
 
-    # The recall error surfaced into the step's ctx as non-empty text (the M1 fix, end-to-end).
+    # The semantic_search error surfaced into the step's ctx as non-empty text (the M1 fix, end-to-end).
     ctx_value = result.named_stores["r"]
-    assert ctx_value["text"].strip(), "recall error must reach ctx as non-empty text"
-    assert "recall requires" in ctx_value["text"]
+    assert ctx_value["text"].strip(), "semantic_search error must reach ctx as non-empty text"
+    assert "semantic_search requires" in ctx_value["text"]
     # An error is error-classified → it does NOT masquerade as a lost success → no degraded event.
     assert not [e for e in events.all() if e.type == CANONICAL_DEGRADED_EVENT], (
         "an error result (non-empty, error-classified) must not trip canonical_degraded"

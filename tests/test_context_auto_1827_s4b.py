@@ -61,7 +61,7 @@ def test_tainted_composes_untrusted_and_denies(tmp_path):
                    "exec__sandboxed_exec", "sandboxed_exec"):
         assert tool_contextually_denied(eff, denied), denied
     # a read tool stays allowed
-    assert not tool_contextually_denied(eff, "recall")
+    assert not tool_contextually_denied(eff, "semantic_search")
 
 
 def test_self_clears_when_taint_removed(tmp_path):

@@ -38,7 +38,7 @@ def test_builtin_denies_side_effecting_surfaces():
     ):
         assert layer.allows(CapabilityAxis.TOOL, denied) is False, denied
     # a read/query tool is NOT denied by the built-in (read + reason is allowed)
-    assert layer.allows(CapabilityAxis.TOOL, "recall") is True
+    assert layer.allows(CapabilityAxis.TOOL, "semantic_search") is True
 
 
 def test_load_untrusted_returns_builtin_when_no_override(tmp_path: Path):

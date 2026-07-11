@@ -490,9 +490,9 @@ def shell_to_canonical(result: dict) -> CanonicalToolResult:
 
 
 def chunks_to_canonical(result: dict) -> CanonicalToolResult:
-    """recall / index_query result → canonical. The retrieved ``chunks`` list → a ``structured``
-    attachment (frontmatter YAML, or its own ref when large). There is no text body. Transport
-    (``mode``) is dropped."""
+    """semantic_search (FP-0057 Phase 2a; renamed from recall) / index_query result → canonical. The
+    retrieved ``chunks`` list → a ``structured`` attachment (frontmatter YAML, or its own ref when
+    large). There is no text body. Transport (``mode``) is dropped."""
     chunks = result.get("chunks")
     attachments = [{"kind": "structured", "data": chunks}] if chunks is not None else []
     return CanonicalToolResult(text="", attachments=attachments, source_ref=None, meta={})
@@ -1037,6 +1037,32 @@ def _render_index_drop(result: dict) -> str:
 # tool wrapper — both surface the same handler's ``{removed, chunks_dropped}`` result verbatim.
 index_drop_to_canonical = make_status_text_mapper(
     render=_render_index_drop, meta_keys=("removed", "chunks_dropped"),
+)
+
+
+def _render_index_update(result: dict) -> str:
+    parts = [
+        f"added {result.get('added', 0)}",
+        f"updated {result.get('updated', 0)}",
+        f"removed {result.get('removed', 0)}",
+        f"skipped {result.get('skipped', 0)}",
+    ]
+    text = f"Indexed source {result.get('source', '')!r}: " + ", ".join(parts) + "."
+    warning = result.get("cost_warning")
+    if warning:
+        text += (
+            f" Cost warning: {warning.get('chunk_count')} chunks embedded "
+            f"(threshold {warning.get('threshold')})."
+        )
+    return text
+
+
+# ``index_update`` (core/op_runtime/index_update.py) — FP-0057 Phase 2a incremental ingestion.
+# ``chunk_count`` / ``embedding_model`` / ``cost_warning`` are small high-signal meta the LLM reads
+# inline; the reconciliation counts drive the readable text body.
+index_update_to_canonical = make_status_text_mapper(
+    render=_render_index_update,
+    meta_keys=("added", "updated", "removed", "skipped", "chunk_count", "embedding_model", "cost_warning"),
 )
 
 

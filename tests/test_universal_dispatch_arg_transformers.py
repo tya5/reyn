@@ -11,7 +11,7 @@ from reyn.tools.universal_dispatch import (
     _multi_agent_delegate_args,
     _multi_agent_list_peers_args,
     _passthrough_args,
-    _recall_single_source_args,
+    _semantic_search_single_source_args,
 )
 
 # ── _multi_agent_list_peers_args ──────────────────────────────────────────────
@@ -61,20 +61,20 @@ def test_multi_agent_delegate_args_other_keys_pass_through() -> None:
 
 def test_recall_single_source_args_includes_source_from_entry_name() -> None:
     """Tier 2: the entry_name is wrapped as sources=[entry_name]."""
-    result = _recall_single_source_args("corpus_a", {"query": "test"})
+    result = _semantic_search_single_source_args("corpus_a", {"query": "test"})
     assert result["sources"] == ["corpus_a"]
 
 
 def test_recall_single_source_args_passes_query_and_top_k() -> None:
     """Tier 2: query and top_k from args are forwarded."""
-    result = _recall_single_source_args("corpus_a", {"query": "find x", "top_k": 5})
+    result = _semantic_search_single_source_args("corpus_a", {"query": "find x", "top_k": 5})
     assert result["query"] == "find x"
     assert result["top_k"] == 5
 
 
 def test_recall_single_source_args_omits_optional_fields_when_absent() -> None:
     """Tier 2: missing query/top_k are not included in the result dict."""
-    result = _recall_single_source_args("corpus_b", {})
+    result = _semantic_search_single_source_args("corpus_b", {})
     assert "query" not in result
     assert "top_k" not in result
     assert result["sources"] == ["corpus_b"]

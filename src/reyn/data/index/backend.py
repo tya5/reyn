@@ -77,3 +77,17 @@ class IndexBackend(Protocol):
     async def existing_hashes(self, source: str) -> set[str]:
         """Content hashes already indexed for *source* (pre-embed resume key)."""
         ...
+
+    async def existing_hashes_by_path(self, source: str) -> "dict[str, set[str]]":
+        """Content hashes already indexed for *source*, grouped by
+        ``source_path`` (FP-0057 Phase 2a — the `index_update` delta-reconcile
+        key: which paths are already indexed, and under which hashes, so a
+        partial re-ingest can add/update/remove scoped to only the paths it
+        re-supplies chunks for)."""
+        ...
+
+    async def delete(self, source: str, content_hashes: "Iterable[str]") -> int:
+        """Delete rows by `content_hash` for *source* (FP-0057 Phase 2a — the
+        `index_update` remove-reconciliation primitive). Returns the count of
+        rows actually deleted."""
+        ...

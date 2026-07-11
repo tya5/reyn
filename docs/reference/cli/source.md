@@ -175,5 +175,5 @@ python my_project/index_docs.py   # see Concepts: RAG — Quick start
 ## See also
 
 - [Concepts: RAG](../../concepts/data-retrieval/rag.md) — indexing workflow, source model, and chunker overview
-- [`recall` tool](../../concepts/data-retrieval/rag.md) — LLM-facing retrieval tool
+- [`semantic_search` tool](../../concepts/data-retrieval/rag.md) — LLM-facing retrieval tool (FP-0057 Phase 2a; renamed from `recall`)
 - [Concepts: permission model](../../concepts/runtime/permission-model.md) — `index_drop` permission gate

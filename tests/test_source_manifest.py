@@ -128,7 +128,7 @@ async def test_format_for_prompt_with_entries(tmp_path: Path):
     assert "100 chunks" in text
     assert "**docs**" in text
     assert "50 chunks" in text
-    assert "`recall`" in text
+    assert "`semantic_search`" in text
     # No onboarding hint when sources exist
     assert "No indexed sources yet" not in text
 

@@ -110,17 +110,22 @@ from . import ask_user as _ask_user  # noqa: F401, E402
 # #272/#1128: voluntary LLM-initiated compaction op.
 from . import compact as _compact  # noqa: F401, E402
 
-# ADR-0033: RAG-extensible OS — index_* / recall ops.
+# ADR-0033: RAG-extensible OS — index_* / semantic_search ops.
 # #1303 Stage I: embed + index_write run-ops deleted (folded into
-# reyn.api.safe.embed_index; recall embeds provider-direct). index_query +
-# index_drop + recall remain.
+# reyn.api.safe.embed_index; semantic_search embeds provider-direct,
+# per-source-model). index_query + index_drop + semantic_search remain.
 # FP-0057 Phase 1: embed op RE-ADDED as the user-facing raw embedding
 # primitive (#1303's "no caller" rationale is obsolete post skill-engine
 # deletion, #2438).
+# FP-0057 Phase 2a: index_update — incremental/delta-reconcile ingestion,
+# the shared `embed` op's SECOND internal caller (alongside
+# semantic_search's query embed). `recall` renamed `semantic_search`
+# (clean-break, fixes the recall/search_actions/memory naming collision).
 from . import embed as _embed  # noqa: F401, E402
 from . import file as _file  # noqa: F401, E402
 from . import index_drop as _index_drop  # noqa: F401, E402
 from . import index_query as _index_query  # noqa: F401, E402
+from . import index_update as _index_update  # noqa: F401, E402
 from . import judge_output as _judge_output  # noqa: F401, E402
 from . import mcp as _mcp  # noqa: F401, E402
 from . import mcp_drop_server as _mcp_drop_server  # noqa: F401, E402
@@ -141,11 +146,11 @@ from . import pipeline_install as _pipeline_install  # noqa: F401, E402
 
 # FP-0054 PR-A: present op — user-facing presentation of bulk data (null renderer).
 from . import present as _present  # noqa: F401, E402
-from . import recall as _recall  # noqa: F401, E402
 
 # FP-0055 PR-2: render_template op — sandboxed Jinja2 text-templating producer.
 from . import render_template as _render_template  # noqa: F401, E402
 from . import sandboxed_exec as _sandboxed_exec  # noqa: F401, E402
+from . import semantic_search as _semantic_search  # noqa: F401, E402
 
 # #2548 PR-C: local skill install op (register a SKILL.md dir into skills.entries).
 from . import skill_install as _skill_install  # noqa: F401, E402

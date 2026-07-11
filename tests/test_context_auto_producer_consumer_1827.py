@@ -64,7 +64,7 @@ async def test_external_answer_narrows_next_turn_end_to_end(tmp_path):
     assert eff is not None
     assert tool_contextually_denied(eff, "exec__sandboxed_exec")
     assert tool_contextually_denied(eff, "memory_operation__remember_shared")
-    assert not tool_contextually_denied(eff, "recall")  # read stays allowed
+    assert not tool_contextually_denied(eff, "semantic_search")  # read stays allowed
 
 
 @pytest.mark.asyncio

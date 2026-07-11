@@ -97,7 +97,7 @@ def test_categories_no_duplicates() -> None:
         ("memory_entry__pref_dates", "memory_entry", "pref_dates"),
         ("memory_operation__remember_shared", "memory_operation", "remember_shared"),
         ("rag_corpus__meetings", "rag_corpus", "meetings"),
-        ("rag_operation__recall", "rag_operation", "recall"),
+        ("rag_operation__semantic_search", "rag_operation", "semantic_search"),
         ("reyn_source__read", "reyn_source", "read"),
         # Issue #879 collapsed mcp surface — verb_object actions.
         ("mcp__search_registry", "mcp", "search_registry"),

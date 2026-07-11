@@ -141,13 +141,14 @@ def _read_memory_body_args(
     return {"layer": "shared", "slug": entry_name}
 
 
-def _recall_single_source_args(
+def _semantic_search_single_source_args(
     entry_name: str, args: Mapping[str, Any],
 ) -> dict[str, Any]:
-    """``rag_corpus__<name>`` → ``recall({sources: [name], query, top_k?})``.
+    """``rag_corpus__<name>`` → ``semantic_search({sources: [name], query, top_k?})``
+    (FP-0057 Phase 2a; renamed from ``recall``).
 
     D19 resource invoke: invoking a rag corpus performs a single-source
-    recall against that source. The caller passes ``query`` and
+    semantic search against that source. The caller passes ``query`` and
     optionally ``top_k``; the source is curried from the entry name.
     """
     out: dict[str, Any] = {"sources": [entry_name]}
@@ -238,7 +239,7 @@ def _passthrough_args(
 # ``multi_agent`` verb category; resource rule removed.
 _RESOURCE_RULES: Final[dict[str, tuple[str, Callable[[str, Mapping[str, Any]], dict[str, Any]]]]] = {
     "memory_entry":  ("read_memory_body",    _read_memory_body_args),
-    "rag_corpus":    ("recall",              _recall_single_source_args),
+    "rag_corpus":    ("semantic_search",     _semantic_search_single_source_args),
     # #1647: per-tool MCP actions ``mcp__<server>__<tool>`` resolve here (the
     # full name is NOT a static verb in _OPERATION_RULES, so it falls through to
     # this per-category rule). entry_name = ``<server>__<tool>`` → wrapped into
@@ -282,9 +283,11 @@ _OPERATION_RULES: Final[dict[str, tuple[str, Callable[[str, Mapping[str, Any]], 
     "reyn_source__glob": ("reyn_src_glob", _passthrough_args),
     "reyn_source__grep": ("reyn_src_grep", _passthrough_args),
 
-    # rag_operation category
-    "rag_operation__recall":      ("recall",       _passthrough_args),
-    "rag_operation__drop_source": ("drop_source",  _passthrough_args),
+    # rag_operation category (FP-0057 Phase 2a: rag_operation__recall renamed
+    # rag_operation__semantic_search — clean-break alongside the recall ->
+    # semantic_search tool rename, no compat alias)
+    "rag_operation__semantic_search": ("semantic_search", _passthrough_args),
+    "rag_operation__drop_source":     ("drop_source",     _passthrough_args),
 
     # task category (#1953 dynamic-wire): the 12 task.* control-IR ops. Each
     # maps to the same-named ToolDefinition (tools/task_ops.py) whose handler

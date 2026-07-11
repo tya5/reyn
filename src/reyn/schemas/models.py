@@ -461,9 +461,14 @@ class ChunkMetadata(BaseModel):
 # `embed` is now the exposed USER-FACING primitive (user composes embed -> an
 # external MCP vector-DB via pipeline) AND the shared logic Phase 2's
 # `index_update`/`semantic_search` call internally — same EmbeddingProvider,
-# no duplicated embed logic, split only by audience surface. `recall` keeps
-# its own provider-direct embed call (unchanged) — it is not rewired onto
-# this op in Phase 1 (that is a Phase-2-adjacent internal-surface concern).
+# no duplicated embed logic, split only by audience surface.
+#
+# FP-0057 Phase 2a: `recall` is renamed `semantic_search` (clean-break — fixes
+# the observed `recall`/`search_actions`/`memory` naming collision) and its
+# query-embed call is rewired onto the multi-model-correct per-source-model
+# grouping below (see `op_runtime/semantic_search.py`). `index_update` is
+# NEW — incremental/delta-reconcile ingestion into a source's `IndexBackend`,
+# calling the `embed` op internally (no duplicated embed logic).
 
 
 class EmbedIROp(BaseModel):
@@ -497,18 +502,35 @@ class IndexQueryIROp(BaseModel):
     fallback_size_cap: int = 4096          # tokens, enumerate fallback cap
 
 
-class RecallIROp(BaseModel):
-    """Macro op: embed query → iterate index_query → merge top-K (ADR-0033 §2.1).
+class SemanticSearchIROp(BaseModel):
+    """Macro op: per-source-model embed query → iterate index_query → merge
+    top-K (ADR-0033 §2.1; FP-0057 Phase 2a renamed from `recall` — clean
+    break, fixes the observed `recall`/`search_actions`/`memory` naming
+    collision).
+
+    **Multi-model correctness**: each source's embedding model is
+    AUTO-ADOPTED from its recorded index model (`SourceManifest.
+    embedding_model`, falling back to the `IndexBackend.stat()` value —
+    never caller-supplied per-source). Sources are grouped by distinct
+    model; the query is embedded ONCE per distinct model, and each source is
+    queried with its matching model's vector. Cosine scores from DIFFERENT
+    embedding spaces are never directly compared (they are not
+    commensurable) — merging happens WITHIN a model group by score; across
+    groups results combine by an order-preserving interleave, never by
+    comparing raw score magnitudes cross-model. `embedding_model` is a
+    fallback default used ONLY for a source with no recorded model yet
+    (empty/unindexed source, where `index_query` falls back to
+    enumeration anyway).
 
     Handler dispatches sub-ops via the OS dispatch path (= iterate op
-    precedent). LLM-callable via ToolDefinition `recall`.
+    precedent). LLM-callable via ToolDefinition `semantic_search`.
     """
-    kind: Literal["recall"]
+    kind: Literal["semantic_search"]
     query: str
     sources: list[str]                     # required, no default
     top_k: int = 5
     filters: dict[str, str] = Field(default_factory=dict)
-    embedding_model: str = "standard"      # forwarded to embed sub-op
+    embedding_model: str = "standard"      # fallback only — see docstring
 
 
 class IndexDropIROp(BaseModel):
@@ -519,6 +541,52 @@ class IndexDropIROp(BaseModel):
     """
     kind: Literal["index_drop"]
     source: str
+
+
+class IndexUpdateIROp(BaseModel):
+    """Incremental / delta-reconcile ingestion into a source's `IndexBackend`
+    (FP-0057 Phase 2a). NO full-rebuild mode — a from-scratch rebuild is
+    `index_drop` -> `index_update` on an empty source.
+
+    The caller (a chunker — the Chunker registry itself is out of scope
+    here, Phase 2b/3) supplies `chunks`; each chunk carries a
+    `content_hash` + `source_path` in its `metadata`. Reconciled against the
+    source's CURRENT index, keyed by `content_hash` within each
+    `source_path` (content-addressed, chunk-dedup semantics — same
+    `content_hash` key `SqliteIndexBackend` already dedups on):
+
+    - **add**: `content_hash` not in the index, `source_path` not
+      previously indexed -> embed (via the `embed` op — same primitive, no
+      duplicated embed logic) + insert.
+    - **update**: `content_hash` not in the index, but `source_path` WAS
+      previously indexed (content changed under a path this call
+      re-supplies) -> embed the new chunk + insert; the path's now-stale
+      hash(es) are removed in the same reconciliation pass.
+    - **remove**: an indexed `content_hash` whose `source_path` IS among
+      this call's `chunks` but whose hash is NOT among this call's
+      `content_hash`es -> deleted. Reconciliation is scoped to the
+      `source_path`s THIS call supplies chunks for — a `source_path` this
+      call never mentions is left untouched (a partial re-ingest of a few
+      files never mass-deletes the rest of the source).
+    - **skip**: `content_hash` already indexed -> no-op (no re-embed, no
+      write).
+
+    **Source-model-bound**: the source's embedding model is recorded on
+    first ingestion and reused on every subsequent `index_update` for that
+    source (an existing source's `embedding_model` field is authoritative
+    over a caller-supplied override — a source is one embedding space).
+
+    `permissions.index_drop`-style ask-gate does NOT apply here (index_update
+    is additive/own-write, not destructive) — default-ALLOW, individually
+    name-gateable via `contextual_gate`, mirroring `embed`/`index_query`.
+    LLM-callable via ToolDefinition `index_update`.
+    """
+    kind: Literal["index_update"]
+    source: str
+    chunks: list[dict[str, Any]] = Field(default_factory=list)  # {text, metadata: {content_hash, source_path, ...}}
+    embedding_model: str = "standard"  # used only when the source has no recorded model yet
+    description: str | None = None     # SourceManifest description (first-index / override)
+    path: str | None = None            # SourceManifest path (first-index / override)
 
 
 class JudgeOutputIROp(BaseModel):
@@ -775,8 +843,13 @@ OP_KIND_MODEL_MAP: dict[str, type[BaseModel]] = {
     # internal embed logic — no duplication, split by audience surface).
     "embed":       EmbedIROp,
     "index_query": IndexQueryIROp,
-    "recall":      RecallIROp,
+    # FP-0057 Phase 2a: `recall` renamed `semantic_search` (clean-break —
+    # fixes the observed recall/search_actions/memory naming collision).
+    "semantic_search": SemanticSearchIROp,
     "index_drop":  IndexDropIROp,
+    # FP-0057 Phase 2a: incremental/delta-reconcile ingestion (add/update/
+    # remove/skip against a source's IndexBackend). No full-rebuild mode.
+    "index_update": IndexUpdateIROp,
     "sandboxed_exec": SandboxedExecIROp,
     "judge_output": JudgeOutputIROp,
     "compact": CompactIROp,
@@ -825,7 +898,8 @@ if TYPE_CHECKING:
             RenderTemplateIROp,
             WebFetchIROp, WebSearchIROp, MCPInstallIROp,
             MCPDropServerIROp,
-            EmbedIROp, IndexQueryIROp, RecallIROp, IndexDropIROp,
+            EmbedIROp, IndexQueryIROp, SemanticSearchIROp, IndexDropIROp,
+            IndexUpdateIROp,
             SandboxedExecIROp, JudgeOutputIROp, CompactIROp,
             TaskCreateIROp, TaskUpdateStatusIROp, TaskGetIROp, TaskListIROp,
             TaskAddDependencyIROp, TaskRemoveDependencyIROp, TaskRepointDependencyIROp,

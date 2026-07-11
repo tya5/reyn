@@ -23,7 +23,7 @@ def register(sub: argparse._SubParsersAction) -> None:
     parser = sub.add_parser(
         "source",
         help="Manage indexed sources (ADR-0033 RAG)",
-        description="Manage indexed sources for the recall tool.",
+        description="Manage indexed sources for the semantic_search tool.",
     )
     ssub = parser.add_subparsers(dest="source_action", metavar="<subcommand>")
     ssub.required = True
