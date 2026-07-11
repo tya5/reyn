@@ -4621,9 +4621,9 @@ class Session:
         # in-flight task to drain at shutdown.
 
     async def _handle_user_message(self, text: str, *, chain_id: str) -> None:
-        # Slash commands (`/list`, `/cancel <id>`, `/answer <id> <text>`) take
-        # precedence over both the active-intervention router and a fresh
-        # router turn.
+        # Slash commands (`/list`, `/tasks kill <id>`, `/answer <id> <text>`)
+        # take precedence over both the active-intervention router and a
+        # fresh router turn.
         if text.startswith("/"):
             if await self._maybe_handle_slash(text):
                 return

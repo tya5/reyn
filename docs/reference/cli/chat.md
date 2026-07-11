@@ -67,31 +67,30 @@ While a session is active, lines starting with `/` are intercepted and never rou
 | `/answer <id-prefix> <text>` | Answer a pending `ask_user` / permission prompt (id-prefix: any unique prefix of the intervention id) |
 | `/attach <name>` | Switch the REPL pointer to another agent (the previous one keeps running in the background) |
 | `/budget [reset]` | Full budget breakdown; `/budget reset` clears per-process counters (see [config/budget](../config/budget.md)) |
-| `/cancel <id-prefix>` | Cancel a running skill (accepts any unique prefix of the run_id) |
-| `/clear-history` | Wipe chat history (**destructive**; clears in-memory + persistent history) |
+| `/clear-history` (alias `/clear`) | Wipe chat history (**destructive**; clears in-memory + persistent history and the action-usage table; events/run-state/profile preserved) |
 | `/compact` | Compact the conversation history now to free up the context window (see [chat-compaction](../../concepts/data-retrieval/chat-compaction.md)) |
-| `/concept <term>` | Inline glossary lookup (T1-3) |
+| `/concept <term>` | Inline glossary lookup |
 | `/copy [N\|list]` | Copy an agent reply to the clipboard (1 = newest, 2 = one turn back, …) |
 | `/cost` | Quick token + USD cost summary for this agent |
 | `/exit` | Exit the chat (alias: `/quit`, Ctrl+D) |
 | `/help [<cmd>]` | Slash command help — list all, or focus on one |
-| `/image <path>` | Attach an image to the next user message (multimodal input) |
-| `/list` | List running skills and pending interventions |
+| `/hook on\|off <name>` | Enable/disable a hook for this session (live at the next dispatch; session-scoped — the hook still fires in the agent's other sessions; persists across restart) |
+| `/image <path>` (alias `/img`) | Attach an image to the next user message (multimodal input; png/jpg/jpeg/gif/webp/svg) |
+| `/list` | List pending interventions |
 | `/memory [list\|view <name>]` | Inspect project memory entries (see [concepts/memory](../../concepts/data-retrieval/memory.md)) |
 | `/model [<class>]` | Show the session's model class and any override, or set a per-session model-class override with `/model <class>` (validated against known classes; clears on restart) |
 | `/pending [list\|discard <id>\|claim <id>]` | List / discard / claim stalled cross-channel ops |
 | `/quit` | Exit the chat (alias: `/exit`, Ctrl+D) |
-| `/reset confirm` | Reset in-flight skill state (snapshots + WAL; audit logs preserved) |
+| `/reload` | Hot-reload runtime config (`.reyn/*.yaml`) at the next turn boundary |
+| `/reset confirm` | Reset in-flight run state (snapshots + WAL; audit logs preserved) |
 | `/rewind [seq]` | Time-travel to an earlier checkpoint — no arg opens the picker menu; `seq` jumps directly (see [Time-travel](../../concepts/runtime/time-travel.md) · [How-to](../../guide/for-users/time-travel.md)) |
 | `/session new \| switch <sid> \| list` | Open / switch / list conversation sessions for the attached agent (see [Sessions](../../concepts/multi-agent/sessions.md)) |
-| `/skill list` | Show active skill runs (id, name, current phase + parent lineage) |
-| `/skill discard <run_id>` | Abort a specific skill run + cleanup |
-| `/skills` | List available skills (stdlib, project, local) |
-| `/tasks` | Unified view of active skill runs. Same as `/tasks list` |
-| `/tasks status <prefix>` | Show current phase + elapsed for a specific skill run |
-| `/tasks kill <prefix>` | Cancel a specific skill run; prefix matches against skill run_ids |
+| `/tasks [list]` | List dynamic tasks the LLM created via `task__create` |
+| `/tasks status <task_id-prefix>` | Show a task's status + dependencies |
+| `/tasks kill <task_id-prefix>` | Abort a specific dynamic task |
+| `/visibility on\|off <tool\|mcp\|category> <name>` | Toggle this session's LLM visibility of a capability (hidden next turn / restored up to the agent's authorized envelope — an envelope-denied capability stays hidden) |
 
-`/list` / `/cancel` / `/answer` are foundational — they let multiple skill runs and interventions coexist without blocking the prompt. `/agents` / `/attach` / `/agent` are the multi-agent workflow primitives. `/skill` is the crash-recovery operator command that surfaces the per-skill-run lifecycle: inspect what is running or abort a stuck run. `/tasks` is the unified entry point for skill runs — the LLM also points users at `/tasks` after a skill is spawned. `/copy` is a conversation-pane utility; `/image` enables multimodal input.
+`/list` / `/answer` are foundational — they let pending interventions coexist without blocking the prompt. `/agents` / `/attach` / `/agent` are the multi-agent workflow primitives. `/tasks` is the entry point for dynamic tasks the LLM spawns via `task__create` — list what's running, inspect a specific one's status/dependencies, or kill it; the LLM also points users at `/tasks` after creating one. `/hook` / `/visibility` are session-scoped LLM-catalog controls, mirroring the status bar's `hook`/`tool`/`mcp`/`category` chips. `/copy` is a conversation-pane utility; `/image` enables multimodal input.
 
 ## Multi-agent behavior
 
