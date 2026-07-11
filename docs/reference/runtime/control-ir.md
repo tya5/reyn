@@ -548,15 +548,18 @@ Handler lifecycle:
 5. Writes `mcp.servers.<name>` to the target scope config file
 6. Emits `mcp_server_installed` event (P6) — key names only, no values
 
-> **Removed ops.** The `embed` and `index_write` control-IR ops were removed.
-> Embedding + index writing are now done **provider-direct** inside
-> `reyn.api.safe.embed_index.embed_and_index()` (a safe-mode `python` step
-> streams its own chunks into it — the bundled `index_docs` / `index_events`
-> chunkers were removed along with the stdlib skills that wrapped them) and
-> inside the `recall` op (query embedding). The `EmbeddingProvider` and
-> `SqliteIndexBackend` primitives are unchanged — only the run-op wrappers and
-> bundled chunkers are gone. Nothing emits `kind: embed` / `kind: index_write`
-> anymore.
+> **`index_write` removed (still); `embed` re-exposed (FP-0057 Phase 1).** The
+> `index_write` control-IR op stays removed — index writing is done
+> **provider-direct** inside `reyn.api.safe.embed_index.embed_and_index()` (a
+> safe-mode `python` step streams its own chunks into it — the bundled
+> `index_docs` / `index_events` chunkers were removed along with the stdlib
+> skills that wrapped them). `recall` still embeds its query provider-direct.
+> The `EmbeddingProvider` and `SqliteIndexBackend` primitives are unchanged.
+> The `embed` op, however, is **no longer removed**: FP-0057 Phase 1 re-added
+> it as the user-facing raw embedding primitive (see the [`embed`](#embed)
+> section above) — #1303's "no caller" rationale for removing it is obsolete
+> now that the primitive is exposed for user RAG composition. So `kind: embed`
+> is emitted again; only `kind: index_write` is not.
 
 ## `skill_install`
 
