@@ -150,9 +150,35 @@ Press `↓` from an empty input to focus the status bar, then:
 
 ---
 
+## Choosing which surfaces are hosted (`--enable` / `--disable`)
+
+`reyn web` hosts several surfaces at once. By default it exposes just what a
+browser/CLI operator needs: the **AG-UI** chat transport, the **Web UI**
+(the browser shell), the REST **`/api`** control plane, **`/health`**, and
+the resource-fetch routes. Two broad machine-integration surfaces —
+**A2A** and **MCP** — are **off by default** and must be opted in explicitly:
+
+```bash
+reyn web --enable a2a              # turn on the A2A JSON-RPC endpoint
+reyn web --enable a2a --enable mcp # turn on both (repeat the flag per surface)
+reyn web --disable api             # turn off a surface that's on by default
+```
+
+The same toggles are settable in `reyn.yaml` under `web.surfaces` (see the
+[`reyn.yaml` reference § web.surfaces](../../reference/config/reyn-yaml.md#websurfaces--per-surface-opt-inopt-out-fp-0058-p2))
+so an operator running the same project repeatedly doesn't need to repeat
+the CLI flags every launch. A `--enable`/`--disable` flag on the command
+line always wins over the config file.
+
+---
+
 ## A2A endpoint (advanced)
 
-The web server also exposes an [A2A](../../concepts/multi-agent/a2a.md) JSON-RPC endpoint for programmatic access and agent-to-agent communication:
+The web server can also expose an [A2A](../../concepts/multi-agent/a2a.md) JSON-RPC endpoint for programmatic access and agent-to-agent communication — **opt-in**, start the server with `--enable a2a` (see above):
+
+```bash
+reyn web --enable a2a
+```
 
 ```
 POST http://localhost:8080/a2a/agents/<agent-name>
@@ -191,11 +217,16 @@ By default the server binds to `127.0.0.1` (localhost only). Run with `--host 0.
 
 Pass `--token <secret>` (the token `reyn web` printed on launch, or your configured `web.auth.token`), or set `REYN_WEB_AUTH_TOKEN` in the environment.
 
+**A2A / MCP requests 404**
+
+A2A and MCP are off by default (secure-default; see [Choosing which surfaces are hosted](#choosing-which-surfaces-are-hosted---enable----disable) above). Start the server with `--enable a2a` / `--enable mcp`, or set `web.surfaces.a2a.enabled: true` / `web.surfaces.mcp.enabled: true` in `reyn.yaml`.
+
 ---
 
 ## See also
 
 - [Reference: CLI / chat](../../reference/cli/chat.md) — TUI slash commands, `--connect` / `--token` flags
 - [Reference: AG-UI transport](../../reference/runtime/agui-transport.md) — the wire protocol `--connect` and the browser both use
+- [`reyn.yaml` reference § web.surfaces](../../reference/config/reyn-yaml.md#websurfaces--per-surface-opt-inopt-out-fp-0058-p2) — the full per-surface secure-default table and precedence rules
 - [Reference: reyn.yaml § web.auth](../../reference/config/reyn-yaml.md) — token / TLS / transport-tier config
 - [Concepts: A2A](../../concepts/multi-agent/a2a.md) — agent-to-agent protocol

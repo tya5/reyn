@@ -24,6 +24,8 @@ reyn web [OPTIONS]
 | `--reload` | off | Hot-reload on source changes (development only). |
 | `--log-level LEVEL` | `info` | `critical` / `error` / `warning` / `info` / `debug` / `trace`. |
 | `--default-design SLUG` | unset | Sets `REYN_WEB_DEFAULT_DESIGN` for the OpenUI shell. |
+| `--enable SURFACE` | unset | Opt a surface in (repeatable — `--enable a2a --enable mcp`). Surfaces: `agui` / `webui` / `health` / `api` / `resources` (secure-default ON), `a2a` / `mcp` (secure-default OFF). |
+| `--disable SURFACE` | unset | Opt a surface out (repeatable). Precedence: `--enable`/`--disable` > `web.surfaces` config > secure-default — see [reyn.yaml § web.surfaces](../config/reyn-yaml.md#websurfaces--per-surface-opt-inopt-out-fp-0058-p2). |
 
 ## Requirements
 
@@ -39,11 +41,16 @@ Exits 1 with an install hint if FastAPI or Uvicorn is missing.
 |------|----------|
 | `/agui/chat/<name>/events` | AG-UI chat stream over SSE (server→client) — the single UI transport for the local CUI, the remote thin client, and the openui browser |
 | `/agui/chat/<name>` | AG-UI turn submit / HITL answer / cancel / seize / heartbeat (client→server POST) |
-| `/a2a/agents` | A2A agent discovery |
-| `/a2a/agents/<name>` | A2A JSON-RPC 2.0 per agent |
-| `/mcp/sse`, `/mcp/messages` | MCP-over-SSE |
+| `/a2a/agents` | A2A agent discovery — **opt-in**, `--enable a2a` |
+| `/a2a/agents/<name>` | A2A JSON-RPC 2.0 per agent — **opt-in**, `--enable a2a` |
+| `/mcp/sse`, `/mcp/messages` | MCP-over-SSE — **opt-in**, `--enable mcp` |
 | `/api/*` | REST (agents / skills / runs / budget / permissions) |
 | `/agents/<name>/tool-results/<artifact>` | HTTP fetch for `path_ref` bodies (resources) |
+
+A2A and MCP are broad machine-integration ports (peer agents / external LLM
+clients reaching into this process) and are **off by default** — every other
+surface above is on by default. See [`--enable`/`--disable`](#options) and
+[reyn.yaml § web.surfaces](../config/reyn-yaml.md#websurfaces--per-surface-opt-inopt-out-fp-0058-p2).
 
 ## Authentication
 
@@ -89,4 +96,6 @@ for the chat surface's per-handler details.
 reyn web
 reyn web --port 9000 --log-level debug
 reyn web --host 0.0.0.0 --port 8080
+reyn web --enable a2a --enable mcp   # opt in to the machine-integration surfaces
+reyn web --disable api               # turn off a surface that's on by default
 ```

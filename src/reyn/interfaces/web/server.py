@@ -1,13 +1,19 @@
 """FastAPI application entry point for the Reyn web gateway.
 
-Mounts all REST routers and the AG-UI SSE transport route. CORS is
-configured for localhost development; tighten `allow_origins` before
-exposing to the network.
+The app object + lifespan (cron / A2A run-registry / task backend /
+disposition sweep) live here; CORS + the P1 auth gate are installed here.
+Every hosted **surface** — AG-UI, the OpenUI web shell (`/`, `/static/*`,
+`/web/designs/*`), `/health`, the REST `/api` control plane, the
+resource-fetch routes, A2A, MCP — is mounted through the FP-0058 P2
+:mod:`reyn.interfaces.web.surfaces` ``SurfaceSpec`` registry
+(``mount_all``), which resolves each surface's opt-in/opt-out posture
+(CLI ``--enable``/``--disable`` > ``web.surfaces`` config > secure-default)
+before mounting it. See that module for the secure-default table and the
+per-surface mount functions. The webhook plugin surface (FP-0041) is
+mounted separately, unchanged, via its own ``webhooks.yaml`` opt-in.
 
-Static mounts (PR30 — OpenUI shell):
-    /                        → shell index.html (redirect to /static/index.html)
-    /static/{path}           → src/reyn/web/openui/static/
-    /web/designs/{slug}/{path} → design files from three roots (project → local → stdlib)
+CORS is configured for localhost development; tighten `allow_origins`
+before exposing to the network.
 
 Per P7: this module contains no domain-specific strings. All engine data
 passes through as opaque JSON payloads.
@@ -20,8 +26,6 @@ from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, RedirectResponse
-from fastapi.staticfiles import StaticFiles
 
 logger = logging.getLogger(__name__)
 
@@ -329,30 +333,16 @@ app.add_middleware(
 )
 
 
-# ── mount REST routers ──────────────────────────────────────────────────────
-
-from reyn.interfaces.web.routers import a2a as _a2a_router  # noqa: E402
-from reyn.interfaces.web.routers import agents as _agents_router  # noqa: E402
-from reyn.interfaces.web.routers import budget as _budget_router  # noqa: E402
-from reyn.interfaces.web.routers import mcp as _mcp_router  # noqa: E402
-from reyn.interfaces.web.routers import permissions as _perms_router  # noqa: E402
-from reyn.interfaces.web.routers import resources as _resources_router  # noqa: E402
-from reyn.interfaces.web.routers import topologies as _topos_router  # noqa: E402
-from reyn.interfaces.web.routers import web_config as _web_config_router  # noqa: E402
-from reyn.interfaces.web.routers import web_data as _web_data_router  # noqa: E402
-
-app.include_router(_agents_router.router, prefix="/api")
-app.include_router(_topos_router.router, prefix="/api")
-app.include_router(_perms_router.router, prefix="/api")
-app.include_router(_budget_router.router, prefix="/api")
-app.include_router(_web_config_router.router, prefix="/api")
-app.include_router(_web_data_router.router, prefix="/api")
-
+# ── mount surfaces (FP-0058 P2: SurfaceSpec registry) ───────────────────────
+#
 # FP-0041 #489 plugin framework: webhook plugins (= sample_slack / external
 # packages) are activated by ``webhooks.yaml`` (= dedicated file at the
 # project root, separate from reyn.yaml to keep core config lean) and
 # mounted by the plugin loader at app startup. Reyn core stays SDK-free;
-# per-transport protocol code lives in plugins.
+# per-transport protocol code lives in plugins. This surface stays outside
+# the SurfaceSpec registry below — it is unrelated to the core secure-default
+# table and keeps its own existing opt-in (``webhooks.yaml`` per-plugin
+# ``enabled:``), unchanged by FP-0058.
 app.state.gateway_tools = []
 try:
     from reyn.config import _find_project_root as _find_root_for_plugins
@@ -371,104 +361,25 @@ try:
 except Exception as _exc:  # noqa: BLE001 — defensive boot
     logger.warning("webhook plugin loading failed: %s", _exc)
 
-# MCP-over-SSE: GET /mcp/sse (event stream) + POST /mcp/messages (client → server).
-# The router carries the GET; the POST endpoint is a Starlette Mount because
-# SseServerTransport.handle_post_message is itself an ASGI app.
-# Mounting is best-effort: skip if the `mcp` SDK isn't importable so the rest
-# of the gateway still boots. The SDK now ships transitively via the core
-# `fastmcp` dependency, so this guard is defensive (broken install) rather than
-# an optional-extra gate.
-app.include_router(_mcp_router.router)
+# Core surfaces (AG-UI / OpenUI web shell / health / REST /api / resources /
+# A2A / MCP): each resolved enabled/disabled (CLI --enable/--disable >
+# web.surfaces config > secure-default) and mounted via the SAME
+# mount(app, config) -> APIRouter | None seam the plugin loader above already
+# used — see reyn.interfaces.web.surfaces for the registry, the secure-default
+# table, and the strip-gate falsification note.
+from reyn.interfaces.web.surfaces import mount_all  # noqa: E402
+
 try:
-    app.router.routes.append(_mcp_router.get_mcp_message_mount())
-except ImportError:  # pragma: no cover — mcp SDK unexpectedly missing
-    import logging as _logging
-    _logging.getLogger(__name__).info(
-        "mcp SDK not importable; /mcp/messages POST endpoint disabled. "
-        "The mcp SDK ships with the core `fastmcp` dependency — reinstall reyn "
-        "(e.g. pip install -e .) to enable MCP-over-SSE."
+    from reyn.config import load_config as _load_config_for_surfaces
+    _surfaces_config = _load_config_for_surfaces()
+except Exception as _exc:  # noqa: BLE001 — defensive boot
+    logger.warning(
+        "config load failed while resolving web surfaces (%s); "
+        "falling back to the secure-default table.", _exc,
     )
+    _surfaces_config = None
 
-# A2A (Agent2Agent) protocol: peer agents discover Reyn agents via
-# Agent Cards at GET /a2a/agents/<name>/.well-known/agent-card.json
-# and converse via JSON-RPC 2.0 POST /a2a/agents/<name>. Same backing
-# impl as MCP (send_to_agent_impl), different wire protocol.
-app.include_router(_a2a_router.router)
-
-# #385 β core impl sub-task 3: HTTP fetch surface for path_ref bodies
-# (= GET /agents/<agent>/tool-results/<artifact>). Cross-host consumers
-# (= A2A peers, MCP `resources/read` adapter, browser, curl) resolve a
-# resource_uri / url to a body via plain HTTP GET — fills the A2A
-# spec gap for resource fetch with the industry-standard pattern.
-app.include_router(_resources_router.router)
-
-# AG-UI thin-client transport (ADR-0039): the SSE endpoint that streams the
-# session's frame stream as AG-UI events (server→client) plus a turn-submit
-# POST, behind the P0 auth gate. This is the SINGLE UI transport (D2) for the
-# local CUI, the remote thin client, AND the browser; A2A is the internal spine
-# (D1), this is the AG-UI UI surface.
-from reyn.interfaces.transport.agui.endpoint import router as _agui_router  # noqa: E402
-
-app.include_router(_agui_router)
-
-
-# ── health check ────────────────────────────────────────────────────────────
-
-@app.get("/health", tags=["meta"])
-async def health() -> dict:
-    return {"status": "ok"}
-
-
-# ── static: OpenUI shell ─────────────────────────────────────────────────────
-
-_STATIC_DIR = Path(__file__).parent / "openui" / "static"
-
-# Serve /static/* from the shell's static directory.
-# Mount only if directory exists (avoids startup error in stripped installs).
-if _STATIC_DIR.is_dir():
-    app.mount("/static", StaticFiles(directory=str(_STATIC_DIR)), name="openui_static")
-
-
-@app.get("/", tags=["shell"], include_in_schema=False)
-async def shell_root() -> RedirectResponse:
-    """Redirect / → /static/index.html (the OpenUI shell entry point)."""
-    return RedirectResponse(url="/static/index.html", status_code=302)
-
-
-# ── design file serving ───────────────────────────────────────────────────────
-#
-# Serves design assets from three roots: project → local → stdlib (web/designs/).
-# The project root is determined from the env or from the runtime default.
-
-
-def _get_project_root_path() -> Path:
-    """Resolve project root for design serving.
-
-    Uses the same logic as deps.get_project_root but without FastAPI Depends
-    so it can be called from a plain route handler.
-    """
-    from reyn.interfaces.web.deps import _get_project_root
-    return _get_project_root()
-
-
-@app.get("/web/designs/{slug}/{file_path:path}", tags=["shell"], include_in_schema=False)
-async def serve_design_file(slug: str, file_path: str) -> FileResponse:
-    """Serve a file from the first matching design root (project > local > stdlib)."""
-    from fastapi import HTTPException
-
-    project_root = _get_project_root_path()
-    roots = [
-        project_root / "reyn" / "project" / "designs",
-        project_root / "reyn" / "local"   / "designs",
-        project_root / "web"  / "designs",
-    ]
-
-    for root in roots:
-        candidate = root / slug / file_path
-        if candidate.is_file():
-            return FileResponse(str(candidate))
-
-    raise HTTPException(status_code=404, detail=f"Design file not found: {slug}/{file_path}")
+mount_all(app, _surfaces_config)
 
 
 __all__ = ["app"]
