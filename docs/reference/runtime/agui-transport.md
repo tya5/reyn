@@ -69,15 +69,45 @@ of the renderer's two entry points (display vs working-indicator). The mapping:
 |-------------------|--------------------|----------------------------------------------|
 | `agent`           | text triplet       | the assistant reply text (see *text lifecycle*) |
 | `status`          | text triplet       | transient status line (`role: status`)       |
+| `reasoning`       | reasoning triplet  | the model's reasoning text (see *reasoning lifecycle*); emitted only when reasoning display is on |
 | `error`           | `RUN_ERROR`        | error text                                   |
-| `trace`           | `CUSTOM`           | reyn tool/step trace line                    |
 | `intervention`    | `CUSTOM`           | a prompt is displayed; the reyn client draws it natively and answers it by id (see "Human-in-the-loop answering") |
 | `presentation`    | `CUSTOM`           | a `present` op's render-node model (see *present-on-wire*) |
-| control sentinels | `CUSTOM`           | `__end__` and client-local control kinds     |
+| `__copy_last_reply__` / `__rewind_list__` | `CUSTOM` | client-consumed sentinels — forwarded (see *control sentinels*) |
+| `__attach_request__` | `CUSTOM`        | fail-safe profile entry; upstream-consumed (see *control sentinels*) |
+| `__end__` / `__session_switch_request__` | *(filtered)* | NOT forwarded (see *control sentinels*) |
 
-Any display kind not in this table still round-trips losslessly (it falls back to
-`CUSTOM` and is reconstructed from `_reyn`) — a new renderer kind can never
-silently vanish on the wire.
+Any other display kind still round-trips losslessly (it falls back to `CUSTOM` and
+is reconstructed from `_reyn`) — a new display kind can never silently vanish on
+the wire. The completeness gate that guarantees this enumerates the **authoritative
+producer domain** — every `OutboxMessage(kind=...)` literal across the source
+(direct constructions plus the call sites of kind-forwarder helpers), NOT a
+renderer-file proxy — and asserts each producer kind is *standard-mapped*,
+*profiled*, or *control-filtered*; anything else fails CI.
+
+#### Control sentinels (forwarded vs filtered)
+
+A few `__…__` display kinds get a **per-entry disposition**, decided by *where the
+sentinel is consumed* (never by negating a forward-set, which would wrongly drop
+renderable display kinds):
+
+- **Client-consumed → forwarded** (profiled `CUSTOM`, `_reyn`-lossless):
+  - `__copy_last_reply__` — `/copy`: the **client** does a real client-side
+    clipboard copy over the transport stream.
+  - `__rewind_list__` — `/rewind`: the **client** renders the rewind region picker.
+
+  In the thin-client model the transport *is* the AG-UI wire, so filtering these
+  would make remote `/copy` and `/rewind` silent no-ops — they must reach the wire.
+- **Filtered** (`CONTROL_FILTER_KINDS`, an explicit allowlist — the emitter emits
+  no wire event):
+  - `__end__` — the stream terminator (the emitter returns on it; the client's
+    loop also ends when the stream closes).
+  - `__session_switch_request__` — already swallowed upstream (`registry.py:3061`),
+    so it never reaches the AG-UI tap; filtering is a fail-safe.
+- **Upstream-consumed → fail-safe profile**: `__attach_request__` is swallowed
+  upstream (`registry.py:3052`) and never reaches the tap; its profile entry is a
+  fail-safe for a future tap-point change, not a live wire kind. (Remote
+  attach-label sync is designed separately, not via this legacy sentinel.)
 
 #### Text lifecycle (the conforming triplet)
 
@@ -93,6 +123,31 @@ Only the **CONTENT** event carries the `_reyn` reconstruction block; the START a
 END events are generic scaffold that the reyn client decodes to `None` and
 ignores. So the reconstruction invariant stays **one frame ⇄ one `_reyn`-bearing
 event**, and the reyn client rebuilds exactly one display frame per message.
+
+#### Reasoning lifecycle (the conforming triplet)
+
+reyn's model reasoning rides the AG-UI **Reasoning** message lifecycle so a
+generic client renders it as reasoning rather than as an opaque `CUSTOM` payload.
+The canonical Reasoning category has seven events; reyn is whole-message (no token
+streaming), so it maps the content-bearing inner triplet **`REASONING_MESSAGE_START`
+→ `REASONING_MESSAGE_CONTENT` → `REASONING_MESSAGE_END`, correlated by a shared
+`messageId`** with `role: "reasoning"` and the CONTENT `delta` carrying the whole
+reasoning text. This mirrors the text triplet exactly: only the CONTENT event
+carries the `_reyn` block (START/END decode to `None`), so the reyn client rebuilds
+exactly one reasoning display frame and its render is byte-unchanged.
+
+Two boundaries hold this signal in place:
+
+- **Display-gate by construction.** A reasoning display frame only exists when
+  the operator's reasoning-display toggle is on — reyn emits the frame at a single
+  chokepoint gated on that toggle. Display off ⇒ no reasoning frame ⇒ zero
+  `REASONING_*` events on the wire. The mapping adds no new gate and cannot become
+  a chain-of-thought exposure path that bypasses the toggle.
+- **Reasoning is a display signal, not observability.** The AG-UI display surface
+  is an operator's connected client, where display-on is intent-to-see. Reasoning
+  content is a transport-frame concern and is never routed to the observability
+  export — the OTLP exporter keeps its content-off default and receives no
+  reasoning chain-of-thought.
 
 ### Working-indicator path (turn lifecycle + tool axis)
 
@@ -234,10 +289,12 @@ Beyond the interoperable core, reyn names its own vocabulary under a reyn-owned
 namespace — the `CUSTOM`-event `name` for chrome with no standard analog, and the
 frontend-tool `toolName` for interventions. This namespace is a **documented,
 tested extension profile**: every `reyn.*` name reyn emits has a registry entry. A
-completeness gate enumerates the reyn-mapped vocabulary from the renderer's source
-vocabulary (plus the intervention frontend-tool encoder) and asserts each emitted
-name is profiled, so the profile cannot silently drift from what the codec puts on
-the wire.
+completeness gate enumerates the **authoritative producer domain** — every
+`OutboxMessage(kind=...)` literal across the source (direct constructions plus the
+call sites of kind-forwarder helpers), plus the intervention frontend-tool encoder
+— and asserts each producer kind is *standard-mapped*, *profiled*, or
+*control-filtered*, so the profile cannot silently drift from what the codec puts
+on the wire.
 
 Three namespaces:
 
@@ -248,11 +305,13 @@ A reyn display frame with no standard AG-UI analog. `value` is `{"text": <string
 
 | Custom `name`                     | Meaning                                              |
 |-----------------------------------|------------------------------------------------------|
-| `reyn.display.trace`              | a reyn tool/step trace line                           |
 | `reyn.display.intervention`       | an intervention prompt is displayed                   |
 | `reyn.display.presentation`       | a `present` op's text; the render-node model rides the `_reyn` block's `meta.nodes` (inert on the wire — see *present-on-wire*) |
-| `reyn.display.nodes`              | a raw render-node display line                         |
 | `reyn.display.user`               | a user-authored line echoed live to the scrollback (backlog user turns ride the standard `messages` array instead) |
+| `reyn.display.system`             | a reyn chrome line — a persisted lifecycle/status marker (compaction / budget / cost-warn) or the operator's "answered:" echo |
+| `reyn.display.__copy_last_reply__` | the `/copy` sentinel — forwarded (client-side clipboard copy); see *control sentinels* |
+| `reyn.display.__rewind_list__`    | the `/rewind` sentinel — forwarded (client-side rewind picker); see *control sentinels* |
+| `reyn.display.__attach_request__` | the attach-request sentinel — a fail-safe profile entry (upstream-consumed); see *control sentinels* |
 | `reyn.display.tool_call_started`  | a tool-call start trace line                           |
 | `reyn.display.tool_call_completed`| a tool-call completion trace line                     |
 | `reyn.display.tool_call_failed`   | a tool-call failure trace line                        |
@@ -314,10 +373,10 @@ loss.
 | Text       | 4                | 3           | **conforming triplet** — a whole message rides `TEXT_MESSAGE_START` → `TEXT_MESSAGE_CONTENT` → `TEXT_MESSAGE_END`, correlated by `messageId`; only the streaming `TEXT_MESSAGE_CHUNK` is unmapped (**intentional-scope** — reyn's outbox delivers whole messages, not token deltas) |
 | Special    | 2                | 1           | **intentional-scope** — reyn-private payloads are always structured (`CUSTOM`); the standard `RAW` passthrough event has no reyn use case |
 | Activity   | 2                | 0           | **intentional-scope** — reyn has no direct analog; the same information is already carried by the frame stream + `STATE_*` |
-| Reasoning  | 7                | 0           | **future-candidate** — the highest-value gap (see below) |
+| Reasoning  | 7                | 3           | **standard-mapped** — a whole reasoning message rides `REASONING_MESSAGE_START` → `REASONING_MESSAGE_CONTENT` → `REASONING_MESSAGE_END`, correlated by `messageId`; the outer `REASONING_START`/`REASONING_END` context wrapper and the streaming `REASONING_MESSAGE_CHUNK`/`REASONING_ENCRYPTED_VALUE` variants are **intentional-scope** (reyn is whole-message; no encrypted CoT) |
 
-**Totals**: reyn natively emits **12 of the 28** active-roster standard events
-(13/28 counting the `CUSTOM` catch-all itself as one). The 28-event roster is
+**Totals**: reyn natively emits **15 of the 28** active-roster standard events
+(16/28 counting the `CUSTOM` catch-all itself as one). The 28-event roster is
 Lifecycle (5) + Text (4) + Tool (5) + State (3) + Activity (2) + Reasoning (7)
 + Special (2), tallied from the canonical AG-UI event reference
 (<https://docs.ag-ui.com/concepts/events>). That reference self-reports up to
@@ -327,14 +386,18 @@ this page tracks the 28-event active roster, not the larger number.
 
 ### Why the gaps are dispositioned the way they are
 
-- **Reasoning (future-candidate, highest value).** reyn already treats
-  reasoning as a first-class concept; today a reasoning trace rides the
-  `trace` display kind → `CUSTOM`, invisible to a generic client. Mapping it
-  to the standard `Reasoning*` events would let a generic AG-UI client render
-  it directly. The gate that must be respected before shipping this: reyn's
-  **reasoning-display toggle** — when the operator has reasoning display
-  turned off, nothing should be emitted on the wire either, so a mapping must
-  not become a chain-of-thought exposure path that bypasses that toggle.
+- **Reasoning (standard-mapped).** reyn treats reasoning as a first-class
+  concept, and a reasoning display frame now maps to the standard reasoning
+  message triplet (`REASONING_MESSAGE_START` → `REASONING_MESSAGE_CONTENT` →
+  `REASONING_MESSAGE_END`), so a generic AG-UI client renders it directly
+  instead of skipping a `CUSTOM` payload. Two boundaries are respected (see
+  *reasoning lifecycle*): the **reasoning-display toggle** is honored by
+  construction — a reasoning frame only exists when display is on, so display
+  off ⇒ zero `REASONING_*` events, and the mapping adds no new gate — and the
+  reasoning chain-of-thought stays a display signal only, never routed to the
+  observability export (the OTLP content-off default is unaffected). The outer
+  `REASONING_START`/`REASONING_END` wrapper and the streaming chunk/encrypted
+  variants are intentional-scope (reyn is whole-message).
 - **Everything marked intentional-scope** reflects a real architectural
   difference (reyn's whole-message outbox, structured-only private payloads,
   no in-flight tool-args phase, no direct "activity" concept) rather than an

@@ -22,6 +22,7 @@ from __future__ import annotations
 from typing import AsyncIterator, Callable
 
 from reyn.interfaces.transport.agui.protocol import (
+    CONTROL_FILTER_KINDS,
     encode_frame_wire,
     encode_intervention_tool_result,
     encode_intervention_tool_start,
@@ -82,6 +83,24 @@ class AgUiEmitter:
         yield to_sse(encode_state_snapshot(self._model.snapshot(self._project())))
 
         async for frame in self._frames:
+            # Control sentinels in CONTROL_FILTER_KINDS are NOT forwarded on the
+            # AG-UI wire — the explicit per-entry allowlist (protocol.py), not the
+            # negation of any forward-set. It holds only ``__end__`` (the stream
+            # terminator; returns below) and ``__session_switch_request__`` (which
+            # the registry already swallows upstream — a fail-safe). Client-consumed
+            # sentinels ``__copy_last_reply__`` / ``__rewind_list__`` are DELIBERATELY
+            # NOT here: the client consumes them over the transport stream (real
+            # clipboard copy / rewind picker), so they are forwarded as profiled
+            # CUSTOM events — filtering them would make remote /copy / /rewind
+            # silent no-ops.
+            is_control = (
+                isinstance(frame, DisplayFrame)
+                and frame.message.kind in CONTROL_FILTER_KINDS
+            )
+            if is_control:
+                if frame.message.kind == "__end__":
+                    return
+                continue
             # A whole text message expands to the AG-UI START→CONTENT→END triplet
             # (conformance); every other frame is a single event. Only the
             # _reyn-bearing event round-trips to the reyn client — START/END are
@@ -111,8 +130,6 @@ class AgUiEmitter:
             delta = self._model.delta(self._project())
             if delta:
                 yield to_sse(encode_state_delta(delta))
-            if isinstance(frame, DisplayFrame) and frame.message.kind == "__end__":
-                return
 
 
 __all__ = ["AgUiEmitter"]
