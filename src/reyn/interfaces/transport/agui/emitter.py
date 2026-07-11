@@ -22,6 +22,7 @@ from __future__ import annotations
 from typing import AsyncIterator, Callable
 
 from reyn.interfaces.transport.agui.protocol import (
+    CONTROL_FILTER_KINDS,
     encode_frame_wire,
     encode_intervention_tool_result,
     encode_intervention_tool_start,
@@ -82,6 +83,21 @@ class AgUiEmitter:
         yield to_sse(encode_state_snapshot(self._model.snapshot(self._project())))
 
         async for frame in self._frames:
+            # Local-control sentinels (CONTROL_FILTER_KINDS) drive a LOCAL UI
+            # action with no remote-UI semantics, so they are NOT forwarded on the
+            # AG-UI wire — the explicit per-entry allowlist (protocol.py), not the
+            # negation of any forward-set. ``__end__`` additionally terminates the
+            # stream (the client's loop also ends on stream close). Note
+            # ``__attach_request__`` is NOT filtered — it IS forwarded (a CUSTOM
+            # display event), per the F13 #303 remote attach-label need.
+            is_control = (
+                isinstance(frame, DisplayFrame)
+                and frame.message.kind in CONTROL_FILTER_KINDS
+            )
+            if is_control:
+                if frame.message.kind == "__end__":
+                    return
+                continue
             # A whole text message expands to the AG-UI START→CONTENT→END triplet
             # (conformance); every other frame is a single event. Only the
             # _reyn-bearing event round-trips to the reyn client — START/END are
@@ -111,8 +127,6 @@ class AgUiEmitter:
             delta = self._model.delta(self._project())
             if delta:
                 yield to_sse(encode_state_delta(delta))
-            if isinstance(frame, DisplayFrame) and frame.message.kind == "__end__":
-                return
 
 
 __all__ = ["AgUiEmitter"]

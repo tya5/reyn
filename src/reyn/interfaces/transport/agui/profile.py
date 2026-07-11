@@ -100,6 +100,10 @@ CUSTOM_PROFILE: dict[str, CustomName] = _entries(
         "a reyn chrome line — a persisted lifecycle/status marker (compaction / budget / cost-warn) or the operator's 'answered:' echo; reyn-private, no standard AG-UI analog",
     ),
     CustomName(
+        "reyn.display.__attach_request__", DISPLAY_NS, "{text: str}",
+        "the attach-request sentinel — forwarded to remote clients (unlike the other local-control sentinels) because the TUI in --connect mode needs it to keep its attached-agent label + conv pane in sync on a server-side agent swap (F13 #303); reyn chrome, no standard AG-UI analog",
+    ),
+    CustomName(
         "reyn.display.tool_call_started", DISPLAY_NS, "{text: str}",
         "a tool-call start trace line",
     ),

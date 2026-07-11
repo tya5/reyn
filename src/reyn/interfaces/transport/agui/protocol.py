@@ -95,6 +95,34 @@ CUSTOM = "CUSTOM"
 # marker a generic client ignores and the reyn client reconstructs from.
 _REYN = "_reyn"
 
+# Local-control display sentinels — ``OutboxMessage.kind`` values that drive a
+# LOCAL UI action and carry NO remote-UI semantics, so the AG-UI emitter does NOT
+# forward them on the wire (:class:`~reyn.interfaces.transport.agui.emitter.AgUiEmitter`
+# consults this set). This is an EXPLICIT per-entry allowlist — deliberately NOT
+# the negation of any forward-set (negating a partial/legacy forward-set would
+# wrongly filter renderable display kinds like ``presentation`` / ``reasoning`` /
+# ``system`` / ``user`` that happen to be absent from it). Each entry is a
+# standalone decision:
+#
+# - ``__end__``                    — the stream terminator; the emitter returns on
+#                                    it (the client's loop also ends on stream close).
+# - ``__copy_last_reply__``        — ``/copy``: resolve + write the local clipboard.
+# - ``__rewind_list__``            — ``/rewind``: drive the local ↑↓ region picker.
+# - ``__session_switch_request__`` — focus-flip the local session view.
+#
+# ``__attach_request__`` is deliberately NOT here — it IS forwarded (profiled as a
+# CUSTOM display name) because of a specific remote need: the TUI in ``--connect``
+# mode owns the attached-agent label / conv-clear-on-switch UX and needs the
+# sentinel delivered remotely to keep the header label + conv pane in sync (F13
+# #303). That is a per-entry exception, not a general "match the web forward-set"
+# rule.
+CONTROL_FILTER_KINDS: "frozenset[str]" = frozenset({
+    "__end__",
+    "__copy_last_reply__",
+    "__rewind_list__",
+    "__session_switch_request__",
+})
+
 # Reserved frontend-tool namespace for the HITL round-trip (ADR-0039 P3, D6/R4).
 # An intervention rides the wire in TWO representations: the P2 ``DisplayFrame``
 # (kind ``intervention`` → the reyn client's NATIVE prompt UI) AND — added here —
@@ -514,6 +542,7 @@ __all__ = [
     "STATE_DELTA",
     "MESSAGES_SNAPSHOT",
     "CUSTOM",
+    "CONTROL_FILTER_KINDS",
     "encode_frame",
     "encode_frame_wire",
     "encode_state_snapshot",
