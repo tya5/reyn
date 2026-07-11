@@ -245,7 +245,7 @@ def _shell_exec_dispatcher(*, gate, run_shell, bus, hook_name="e2e-probe") -> Ho
 @pytest.mark.asyncio
 async def test_dispatcher_passes_bus_when_listener_present() -> None:
     """Tier 2: when ``consent_gate()`` is true (a listener is attached —
-    TUI/chainlit), the dispatcher hands the bus to the runner."""
+    TUI/web), the dispatcher hands the bus to the runner."""
     bus = _RecordingBus(YES)
     shell = _RecordingShell()
     disp = _shell_exec_dispatcher(gate=lambda: True, run_shell=shell, bus=bus)

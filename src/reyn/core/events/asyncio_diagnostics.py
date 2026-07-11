@@ -19,10 +19,10 @@ this process" durable-emit path (routes to
 ``.reyn/events/direct/cli/<date>.jsonl``, found by walking up from
 ``Path.cwd()``). Using ``emit_cli_event`` rather than a per-session
 ``EventLog`` is a deliberate choice: reyn has several distinct loop-owning
-entrypoints (`reyn chat`, `reyn web`, `reyn cron run`, `reyn dogfood`, the
-chainlit server) and not all of them have a single active session at the
-point an unhandled exception surfaces (the web server and chainlit app can
-have zero-to-many concurrently attached sessions sharing one loop) -- a
+entrypoints (`reyn chat`, `reyn web`, `reyn cron run`, `reyn dogfood`) and
+not all of them have a single active session at the point an unhandled
+exception surfaces (the web server can have zero-to-many concurrently
+attached sessions sharing one loop) -- a
 uniform, session-independent sink avoids having to special-case each
 entrypoint's session lifecycle just to find "the" EventLog to write to.
 
@@ -163,7 +163,7 @@ def _surface_while_app_running(context: dict[str, Any]) -> None:
     interleave ad-hoc output with a live render.
 
     No-op when no Application is running (headless entrypoints -- web
-    server, chainlit, cron, dogfood -- are unaffected; their unredirected
+    server, cron, dogfood -- are unaffected; their unredirected
     logging already surfaces the message via the call above).
     """
     try:

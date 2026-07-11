@@ -5,7 +5,7 @@ interceptor: a notify-configured cron job tags its inbox with the channel (→
 ``reply_to=ExternalRef`` → the interceptor relays the agent's final reply), and a
 job-execution FAILURE (errors = (b), runner-level) calls an injected failure
 notifier. opt-in default off — no ``notify`` reproduces today's event-log-only
-behaviour. These pin the runner hook + config parse chainlit/web-free (the
+behaviour. These pin the runner hook + config parse web-free (the
 mcp_dispatcher is injected, so no real broker/telegram is needed).
 
 Falsification (feedback_falsify_acceptance_test_before_proof): the opt-in tests red

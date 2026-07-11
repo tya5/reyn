@@ -1,7 +1,7 @@
 """FP-0043 Stage 4b-3a: cron-transport session routing (registry-only, unit-testable).
 
 Maps a fired cron job to its OWN conversation Session of the target agent via the
-routing-key primitive (registry.resolve_session). Kept free of any web / chainlit
+routing-key primitive (registry.resolve_session). Kept free of any web
 import so the mapping + run-binding is unit-tested directly with a registry; the
 web-server cron runner (``_inbox_pusher``) is the thin glue that supplies the
 registry + delivers the envelope.

@@ -1584,7 +1584,7 @@ async def recorded_acompletion(
     extra = routing if routing is not None else proxy_kwargs()
 
     # #2708 P3.2b: the ONE credential pre-check, at the single LLM funnel. Every
-    # surface (CLI / web / chainlit / dogfood / agent-step spawn / pipeline
+    # surface (CLI / web / dogfood / agent-step spawn / pipeline
     # driver) funnels here, so a friendly missing-cred error is universal BY
     # CONSTRUCTION — no per-surface startup gate to hand-wire or let drift. The
     # effective ``api_base`` (per-class routing OR global proxy) → skip (proxy

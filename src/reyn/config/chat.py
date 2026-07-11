@@ -447,7 +447,7 @@ class ReasoningConfig:
     ``continuity`` — persist reasoning to history and replay the recent turns'
       reasoning into the next turn's system prompt (cross-user-turn reasoning
       continuity, the #1212-mirror text-section). Opt-out to disable persist+replay.
-    ``display`` — surface reasoning to the UI (TUI + chainlit, collapsible).
+    ``display`` — surface reasoning to the UI (TUI + web, collapsible).
       Opt-out to hide it. Independent of ``continuity``.
     ``recent_turns`` — how many recent turns' reasoning to replay under
       ``continuity``. ``<= 0`` (e.g. 0 / -1) = unbounded (keep all). Bounding

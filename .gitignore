@@ -60,16 +60,6 @@ spike_results/
 # session context does not leak into repo history.
 .handoff/
 
-# Chainlit auto-created artifacts (= first `reyn chainlit` run drops
-# chainlit.md welcome page + .chainlit/{config.toml,translations/} +
-# public/ in cwd). User-editable but not part of reyn's source —
-# per-project customization belongs in operator's workspace, not the
-# repo. Anchored to repo root so the shipped assets under
-# src/reyn/chainlit_app/assets/ are tracked.
-/chainlit.md
-/.chainlit/
-/public/
-
 # Local dogfood/MCP sandbox scratch (traces, replay fixtures, test.db) — never commit
 .mcp-sandbox/
 

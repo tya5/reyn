@@ -33,8 +33,7 @@ This module makes that orphan **impossible by construction**:
 
 P1 is present-sink-specific and byte-identical: it moves WHERE the sink is provided (from
 the uniform `session.py` default to each frontend's explicit consumer) without changing
-any render behavior, except the forced chainlit fix (its incomplete outbox drain dropped
-the render model — now repaired, since chainlit is a human surface that cannot NA-dodge).
+any render behavior.
 The canonical user-reaching kind enum + full kind-complete typed consumer contract is P3.
 """
 from __future__ import annotations
@@ -70,9 +69,9 @@ class PresentationConsumer(Protocol):
 
 class OutboxPresentationConsumer:
     """Consumer for surfaces whose Session outbox is drained by a live loop that renders the
-    `"presentation"` message — the inline/plain CUI (`interfaces/repl/renderer.py`), chainlit
-    (`chainlit_app/adapter.py::outbox_to_chainlit`), and the registry base session whose outbox
-    is either drained by the REPL, overridden by `reyn pipe run` (self-delivering stdout), or
+    `"presentation"` message — the inline/plain CUI (`interfaces/repl/renderer.py`), and the
+    registry base session whose outbox is either drained by the REPL,
+    overridden by `reyn pipe run` (self-delivering stdout), or
     bridged to a parent (#2707 driver forward).
 
     `.sink()` is the SOLE `OutboxPresentationRenderer` construction site in `src/reyn` (AST

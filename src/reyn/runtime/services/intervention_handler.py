@@ -88,7 +88,7 @@ def _user_frame_meta(attribution: "dict | None") -> dict:
     Builds ``meta`` for the ``kind="user"`` outbox frame that broadcasts an
     intervention answer's DISPLAY text (ADR-0039 multi-client input-broadcast
     fix). ``attribution`` is ``None`` for every local UI caller (the inline
-    CUI's free-text-answer / choice-region paths, chainlit) → empty meta, the
+    CUI's free-text-answer / choice-region paths) → empty meta, the
     renderer shows the bare operator line. The AG-UI answer path
     (``endpoint.py._handle_answer``) passes ``auth_user_id`` /
     ``auth_connection_id`` — mirroring ``user_answered_intervention``'s own
@@ -239,7 +239,7 @@ class InterventionHandler:
         of ``text`` is structurally fenced; the future resolution, buffered
         answer, choice match, and audit event all stay raw so the A2A
         round-trip (buffer + choice-id matching) is unchanged. Local UI
-        callers (TUI / slash / chainlit) leave the default ``False`` →
+        callers (TUI / slash) leave the default ``False`` →
         unfenced.
 
         Corresponds to session._deliver_answer_to.

@@ -58,7 +58,7 @@ async def run_repl(registry: AgentRegistry, renderer: ChatRenderer, *, config=No
     # intervention listener channel (so ask_user / cost-warn / permission
     # prompts surface and can be answered — the session is built with
     # enforce_listener_presence=True, so an unregistered listener silently
-    # auto-refuses; DEFAULT_CHAT_CHANNEL_ID ("tui") mirrors the chainlit mount),
+    # auto-refuses; DEFAULT_CHAT_CHANNEL_ID ("tui") names the channel),
     # and starts the outbox → frame pump. The binding follows the FOCUSED
     # session across `/attach` (re-wired by the registry), so neither the
     # working indicator nor the intervention channel strands on the old session.

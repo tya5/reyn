@@ -11,10 +11,10 @@ LLM calls funnel through (#1190). This file pins the resulting OS invariants:
   are worse than false negatives).
 - ``recorded_acompletion`` RAISES ``MissingCredentialsError`` BEFORE it touches
   litellm when the model needs an unset key and no proxy is in effect. Because
-  every surface (CLI / web / chainlit / dogfood / agent-step spawn / pipeline
+  every surface (CLI / web / dogfood / agent-step spawn / pipeline
   driver) funnels here, this makes the friendly missing-cred error universal by
   construction — the property this PR delivers. RED on main (no funnel check
-  exists there; web/chainlit/dogfood skip the check entirely today).
+  exists there; web/dogfood skip the check entirely today).
 - The CLI error boundary (``reyn.interfaces.cli.main``) renders the typed error
   as the same actionable "no API key" message + exit 1 the removed startup gate
   printed.
@@ -125,7 +125,7 @@ async def test_funnel_raises_missing_credentials_before_litellm(_keys_unset) -> 
     """Tier 2: the single LLM funnel raises ``MissingCredentialsError`` when the
     model needs an unset key and no proxy is configured — BEFORE any provider
     call (no network). This is the universal-by-construction property: every
-    surface funnels through ``recorded_acompletion``, so CLI/web/chainlit/dogfood
+    surface funnels through ``recorded_acompletion``, so CLI/web/dogfood
     and every agent-step / pipeline-driver spawn get the friendly error for free.
     RED on main (the funnel has no cred check there)."""
     with pytest.raises(MissingCredentialsError) as exc:
