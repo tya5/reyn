@@ -114,6 +114,10 @@ from . import compact as _compact  # noqa: F401, E402
 # #1303 Stage I: embed + index_write run-ops deleted (folded into
 # reyn.api.safe.embed_index; recall embeds provider-direct). index_query +
 # index_drop + recall remain.
+# FP-0057 Phase 1: embed op RE-ADDED as the user-facing raw embedding
+# primitive (#1303's "no caller" rationale is obsolete post skill-engine
+# deletion, #2438).
+from . import embed as _embed  # noqa: F401, E402
 from . import file as _file  # noqa: F401, E402
 from . import index_drop as _index_drop  # noqa: F401, E402
 from . import index_query as _index_query  # noqa: F401, E402

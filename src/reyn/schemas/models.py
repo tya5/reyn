@@ -455,6 +455,32 @@ class ChunkMetadata(BaseModel):
 # reyn.api.safe.embed_index (provider.embed + SqliteIndexBackend directly) and
 # recall embeds the query provider-direct, so neither run-op has any caller.
 # EmbeddingProvider / SqliteIndexBackend / IndexQueryIROp / RecallIROp remain.
+#
+# FP-0057 Phase 1: EmbedIROp is RE-ADDED — #1303's rationale (no caller) is
+# obsolete (the skill engine that motivated the collapse is deleted, #2438).
+# `embed` is now the exposed USER-FACING primitive (user composes embed -> an
+# external MCP vector-DB via pipeline) AND the shared logic Phase 2's
+# `index_update`/`semantic_search` call internally — same EmbeddingProvider,
+# no duplicated embed logic, split only by audience surface. `recall` keeps
+# its own provider-direct embed call (unchanged) — it is not rewired onto
+# this op in Phase 1 (that is a Phase-2-adjacent internal-surface concern).
+
+
+class EmbedIROp(BaseModel):
+    """Raw embedding primitive — batch text -> vectors (FP-0057 Phase 1).
+
+    Batch-granular (list in -> list out); the `EmbeddingProvider` handles
+    internal batching (`embedding.batch_size` config, default 100) and the
+    local-sentence-transformers / API-class split — this op owns none of
+    that, it is a thin typed envelope over the existing provider.
+
+    Default-ALLOW (compute op, cost = the embedding API/compute, not a
+    workspace write); individually name-gateable via `contextual_gate`.
+    LLM-callable via ToolDefinition `embed`.
+    """
+    kind: Literal["embed"]
+    texts: list[str]
+    embedding_model: str = "standard"  # model class name or literal provider model id
 
 
 class IndexQueryIROp(BaseModel):
@@ -745,6 +771,9 @@ OP_KIND_MODEL_MAP: dict[str, type[BaseModel]] = {
     # here → a phase emitting it failed Op union validation. Added to restore
     # the control-ir.md ↔ map sync invariant.
     "mcp_drop_server": MCPDropServerIROp,
+    # FP-0057 Phase 1: raw embed primitive (user-facing; also Phase 2's shared
+    # internal embed logic — no duplication, split by audience surface).
+    "embed":       EmbedIROp,
     "index_query": IndexQueryIROp,
     "recall":      RecallIROp,
     "index_drop":  IndexDropIROp,
@@ -796,7 +825,7 @@ if TYPE_CHECKING:
             RenderTemplateIROp,
             WebFetchIROp, WebSearchIROp, MCPInstallIROp,
             MCPDropServerIROp,
-            IndexQueryIROp, RecallIROp, IndexDropIROp,
+            EmbedIROp, IndexQueryIROp, RecallIROp, IndexDropIROp,
             SandboxedExecIROp, JudgeOutputIROp, CompactIROp,
             TaskCreateIROp, TaskUpdateStatusIROp, TaskGetIROp, TaskListIROp,
             TaskAddDependencyIROp, TaskRemoveDependencyIROp, TaskRepointDependencyIROp,

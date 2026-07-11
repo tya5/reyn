@@ -97,6 +97,13 @@ _NOT_EXTERNAL = {
     # #2073 S3: hooks_add writes .reyn/hooks.yaml + schedules a reload — returns a
     # status dict (on / added / reload_scheduled / path), not external content.
     "hooks_add",
+    # FP-0057 Phase 1: embed returns VECTORS (float arrays derived from the
+    # input texts), not relayed external content — the numeric embedding is a
+    # transform of the caller's own texts, not fetched server/internet content.
+    # (The PRE-embed redaction-egress seam scrubs secrets before the outbound
+    # API call; the returned vectors carry no external payload.) Same "derived
+    # from input, not a relay" rationale as render_template.
+    "embed",
     # — catalog / discovery (reyn-assembled or operator config) —
     "list_agents", "describe_agent",
     "list_actions", "search_actions", "describe_action",

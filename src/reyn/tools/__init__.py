@@ -52,6 +52,7 @@ def get_default_registry() -> ToolRegistry:
     )
     from reyn.tools.delegate_to_agent import DELEGATE_TO_AGENT
     from reyn.tools.drop_source import DROP_SOURCE
+    from reyn.tools.embed import EMBED
 
     # Wave 2 additions (ADR-0026 M3 Wave 2)
     from reyn.tools.file import (
@@ -140,6 +141,9 @@ def get_default_registry() -> ToolRegistry:
     # RAG ops (ADR-0033 Phase 1)
     registry.register(RECALL)
     registry.register(DROP_SOURCE)
+    # FP-0057 Phase 1: raw embed primitive (user-facing; composes with an
+    # external MCP vector-DB via pipeline — reyn hosts no user RAG store).
+    registry.register(EMBED)
     registry.register(COMPACT)
     # #2692 (part of the #2688 sweep): present + render_template invocation surface.
     # One registration each opens BOTH chat (build_tools + gates.router="allow") and
