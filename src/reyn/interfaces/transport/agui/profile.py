@@ -110,6 +110,10 @@ CUSTOM_PROFILE: dict[str, CustomName] = _entries(
         "the attach-request sentinel — upstream-consumed at registry.py:3052 (swallowed with continue), so it never reaches the AG-UI tap; this profile entry is a fail-safe for a tap-point change, not a live wire kind (remote attach-label sync is designed in P6b, not via this legacy sentinel)",
     ),
     CustomName(
+        "reyn.display.trace", DISPLAY_NS, "{text: str}",
+        "a nested detail / trace line (dim, transient) — the generic trace kind rendered nested with the tool-call trace subtypes",
+    ),
+    CustomName(
         "reyn.display.tool_call_started", DISPLAY_NS, "{text: str}",
         "a tool-call start trace line",
     ),

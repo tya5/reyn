@@ -32,7 +32,11 @@ def _plain(kind: str, text: str, meta: dict | None = None, *, width: int = 80) -
     bare Text), so we render it through a Console to assert the marker/body
     contract on the visible output."""
     console = Console(width=width, file=io.StringIO(), color_system=None)
-    console.print(format_inline_message(OutboxMessage(kind=kind, text=text, meta=meta or {})))
+    # from_wire: these render tests exercise arbitrary kinds (incl. a wire-decoded
+    # unknown kind the renderer must degrade on) — the render path serves both
+    # local (validated) and remote-wire (lenient) frames, so bypass the producer
+    # vocabulary gate here.
+    console.print(format_inline_message(OutboxMessage.from_wire(kind=kind, text=text, meta=meta or {})))
     return console.file.getvalue()
 
 
@@ -41,7 +45,7 @@ def _render_ansi(kind: str, text: str, *, width: int = 30) -> str:
     background block emits a ``48;2;`` background SGR)."""
     console = Console(width=width, file=io.StringIO(), force_terminal=True,
                       color_system="truecolor")
-    console.print(format_inline_message(OutboxMessage(kind=kind, text=text)))
+    console.print(format_inline_message(OutboxMessage.from_wire(kind=kind, text=text)))
     return console.file.getvalue()
 
 

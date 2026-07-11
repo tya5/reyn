@@ -70,16 +70,25 @@ def test_end_sentinel_returns_end_role():
     ["__stream_user__", "__stream_agent__", "__stream_partial__", "trace"],
 )
 def test_dropped_kinds_return_none(kind: str):
-    """Tier 1: incremental / trace kinds are dropped (= return None)."""
-    msg = OutboxMessage(kind=kind, text="incremental")
+    """Tier 1: incremental / trace kinds are dropped (= return None).
+
+    ``__stream_*__`` are legacy TUI-only incremental kinds with no producer (the
+    adapter drops them defensively); they are not in the closed vocabulary, so
+    they are built via ``from_wire`` — the same lenient path a wire-decoded
+    unknown kind would take."""
+    msg = OutboxMessage.from_wire(kind=kind, text="incremental")
     assert outbox_to_chainlit(msg) is None
 
 
 def test_unknown_kind_falls_back_to_system_author():
     """Tier 1: unrecognised kind renders as a system message (not dropped),
     so a future kind addition surfaces in the browser instead of being silently
-    eaten."""
-    msg = OutboxMessage(kind="some_future_kind", text="future text")
+    eaten.
+
+    An unknown kind can only reach the adapter as a wire-decoded frame (the
+    producer vocabulary gate rejects it at construction), so build it via
+    ``from_wire`` — the lenient decode path."""
+    msg = OutboxMessage.from_wire(kind="some_future_kind", text="future text")
     payload = outbox_to_chainlit(msg)
     assert payload is not None
     assert payload.role == "message"
