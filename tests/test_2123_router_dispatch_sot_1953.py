@@ -43,6 +43,10 @@ _EXPECTED_DISPATCH: "frozenset[str]" = frozenset({
     "list_mcp_prompts", "get_mcp_prompt",
     "remember_shared", "remember_agent", "forget_memory", "list_memory", "read_memory_body",
     "recall", "drop_source", "compact",
+    # FP-0057 Phase 1: embed gained a router-dispatched ToolDefinition (the raw
+    # user-facing embedding primitive; default-allow) so chat + pipeline reach
+    # the new embed op handler.
+    "embed",
     # #2692 (part of the #2688 sweep): present + render_template gained a ToolDefinition
     # (router_dispatched=True) so chat + pipeline can reach the existing op handlers.
     "present", "render_template",

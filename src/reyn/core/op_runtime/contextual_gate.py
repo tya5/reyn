@@ -33,6 +33,11 @@ _OP_KIND_ALIASES: "dict[str, frozenset[str]]" = {
     "web_search": frozenset({"web__search"}),
     "web_fetch": frozenset({"web__fetch"}),
     # rag / memory-read
+    # FP-0057 Phase 1: embed is the raw user-facing embedding primitive — no
+    # distinct chat-tool qualified name (unlike recall/drop_source, which the
+    # universal_dispatch wrapper exposes under a `rag_operation__*` alias) →
+    # gated on its own kind name only, same shape as index_query.
+    "embed": frozenset(),
     "recall": frozenset({"rag_operation__recall"}),
     "index_query": frozenset(),
     "index_drop": frozenset({"rag_operation__drop_source"}),

@@ -47,6 +47,7 @@ mindmap
       web_fetch
       mcp
       mcp_install
+      embed
       index_query
       recall
       index_drop
@@ -314,13 +315,14 @@ The op kinds below mirror `OP_KIND_MODEL_MAP` in `schemas/models.py`.
 | `mcp_subscribe_resource` / `mcp_unsubscribe_resource` | Subscribe/unsubscribe to server-pushed `resources/updated` for one URI (requires a persistent connection; push lands as an `mcp_resource_updated` hook-event) |
 | `mcp_get_prompt` | Fetch one rendered MCP prompt's messages by name (permission-gated, same axis as `mcp`) |
 | `mcp_install` | Install / register an MCP server (registry / package / local source) |
+| `embed` | Raw embedding primitive: batch texts → vectors (FP-0057 Phase 1). User-facing (compose with an external MCP vector-DB via pipeline) AND the shared logic later internal RAG ops call; default-allow; PRE-embed redaction-egress seam | [Control IR § embed](reference/runtime/control-ir.md#embed) |
 | `index_query` | Vector similarity search over one indexed source |
 | `recall` | Macro: embed query → `index_query` per source → merge top-K |
 | `index_drop` | Destructive source removal — requires approval |
 | `compact` | Summarise / compact conversation history within budget |
 | `judge_output` | LLM scorer with rubric + threshold + `on_fail` policy |
 
-> The `embed` and `index_write` ops were removed — embedding and index-writing now run provider-direct inside `reyn.api.safe.embed_index` and the `recall` op, not as standalone ops. See [Control IR](reference/runtime/control-ir.md).
+> `recall` still embeds its query provider-direct (unchanged); `index_write` remains removed — index-writing runs provider-direct inside `reyn.api.safe.embed_index` (`embed_and_index`, the CodeAct-only ingestion entry), which `embed` does not yet retire (FP-0057 Phase 2 replaces it with `index_update`). See [Control IR](reference/runtime/control-ir.md).
 
 ---
 
