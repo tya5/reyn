@@ -160,54 +160,98 @@
   }
   window.OPENUI_DATA = initialData;
 
-  // ── 6. WebSocket setup ────────────────────────────────────────────────────
-  const wsProtocol = location.protocol === "https:" ? "wss:" : "ws:";
-  let ws = null;
-  let wsReady = false;
+  // ── 6. AG-UI SSE setup (ADR-0039 P6b) ─────────────────────────────────────
+  // The browser is a reyn-aware AG-UI client. Server→client is an EventSource
+  // over the P0-gated /agui/chat/{agent}/events SSE endpoint; each AG-UI event
+  // carries the exact reyn frame in its ``_reyn`` block, so we reconstruct the
+  // identical {kind,text,meta} the design's ``agent.message`` channel consumes
+  // (byte-preserved contract). Client→server is a POST to /agui/chat/{agent}
+  // (below in OPENUI_HOST.invoke).
+  let _es = null;               // EventSource (server→client display stream)
+  let _currentAgent = null;
+  const _connectionId = _newConnectionId();  // stable surface id (SSE + POSTs)
   const _channelHandlers = {};  // channel → Set<handler>
-  const _pendingMessages = [];  // buffer while ws is connecting
 
-  function _connectWS(agentName) {
-    if (ws) { try { ws.close(); } catch (_) {} }
-    // ADR-0039 P0: the gateway requires an authentication token on the
-    // loopback/network (browser) surface. The launch URL carries it as
-    // ?token=... (Jupyter-style); forward it on the ws connect so an
-    // unauthenticated browser is rejected (4401) rather than acting as the
-    // operator.
-    const _token = new URLSearchParams(location.search).get("token");
-    const _q = _token ? `?token=${encodeURIComponent(_token)}` : "";
-    ws = new WebSocket(`${wsProtocol}//${location.host}/ws/chat/${agentName}${_q}`);
-    wsReady = false;
+  // The AG-UI event types that can carry a ``_reyn.frame === "display"`` block
+  // (protocol.py ``_DISPLAY_KIND_EVENT`` + its CUSTOM fallback). Every display
+  // kind — known or future — encodes to one of these, so listening to the set is
+  // complete for the display stream. STATE_*/RUN_*/TOOL_CALL_*/MESSAGES_SNAPSHOT
+  // are NOT display frames and are ignored — live-only, display-kind-only
+  // forwarding (no backlog replay, no status side-channel), the same display
+  // shape the browser consumed before.
+  const _REYN_DISPLAY_EVENTS = [
+    "TEXT_MESSAGE_CONTENT", "REASONING_MESSAGE_CONTENT", "RUN_ERROR", "CUSTOM",
+  ];
 
-    ws.addEventListener("open", () => {
-      wsReady = true;
-      _pendingMessages.forEach(m => ws.send(JSON.stringify(m)));
-      _pendingMessages.length = 0;
-    });
+  function _newConnectionId() {
+    try {
+      if (window.crypto && crypto.randomUUID) return crypto.randomUUID();
+    } catch (_) {}
+    return "c" + Math.random().toString(16).slice(2) + Date.now().toString(16);
+  }
 
-    ws.addEventListener("message", (ev) => {
-      let msg;
-      try { msg = JSON.parse(ev.data); } catch (_) { return; }
+  // ADR-0039 P0/SR5: the gateway requires an auth token on the loopback/network
+  // (browser) surface. EventSource cannot set headers, so the token rides the
+  // query string (``?token=`` is the SR5-correct browser auth; the browser
+  // cannot use the UDS carve-out). ``connection_id`` correlates the SSE GET with
+  // its sibling POSTs so they share one surface identity.
+  function _authQuery(extra) {
+    const p = new URLSearchParams();
+    const t = new URLSearchParams(location.search).get("token");
+    if (t) p.set("token", t);
+    p.set("connection_id", _connectionId);
+    for (const k in (extra || {})) p.set(k, extra[k]);
+    const s = p.toString();
+    return s ? `?${s}` : "";
+  }
 
-      // Dispatch by kind to channel handlers.
-      // PR30: pass-through — design side handles kind taxonomy.
-      const kind = msg.kind;
+  function _onReynDisplayEvent(ev) {
+    let data;
+    try { data = JSON.parse(ev.data); } catch (_) { return; }
+    const reyn = data && data._reyn;
+    // Only reyn DISPLAY frames become agent.message. A generic/foreign event or
+    // a non-display reyn frame (event/state/intervention_tool) is ignored — the
+    // ignore-unknown / graceful-degrade contract (D6).
+    if (!reyn || reyn.frame !== "display") return;
+    const kind = reyn.kind || "";
+    // Control sentinels (__copy_last_reply__ / __rewind_list__ / __attach_request__)
+    // ride the wire as CUSTOM display frames for the terminal thin client, but the
+    // browser message-shell does not consume them and never received them before.
+    // Drop the __-prefixed control namespace.
+    if (kind.startsWith("__")) return;
+    // Reconstruct the exact {kind,text,meta} contract — designs unchanged.
+    _dispatch("agent.message", { kind, text: reyn.text || "", meta: reyn.meta || {} });
+  }
 
-      // Map WS kinds → OpenUI channels
-      // agent.message channel receives all forwarded WS messages
-      _dispatch("agent.message", msg);
+  function _connectSSE(agentName) {
+    if (_es) { try { _es.close(); } catch (_) {} }
+    _currentAgent = agentName;
+    _es = new EventSource(
+      `/agui/chat/${encodeURIComponent(agentName)}/events${_authQuery()}`
+    );
+    _REYN_DISPLAY_EVENTS.forEach(t => _es.addEventListener(t, _onReynDisplayEvent));
+    _es.addEventListener("error", (e) => console.warn("[shell] SSE error:", e));
+  }
 
-      // Future channels pre-wired (backend not yet emitting these)
-      if (kind === "run_started")    _dispatch("run.started",    msg.meta || {});
-      if (kind === "run_finished")   _dispatch("run.finished",   msg.meta || {});
-      if (kind === "phase_started")  _dispatch("phase.started",  msg.meta || {});
-      if (kind === "phase_finished") _dispatch("phase.finished", msg.meta || {});
-      if (kind === "state_delta")    _dispatch("state.delta",    msg.meta || {});
-      if (kind === "budget_updated") _dispatch("budget.updated", msg.meta || {});
-    });
-
-    ws.addEventListener("close", () => { wsReady = false; });
-    ws.addEventListener("error", (e) => console.warn("[shell] WS error:", e));
+  async function _postToAgent(agentName, payload) {
+    // Client→server over the AG-UI POST. ``user_message`` maps server-side to
+    // submit_user_text → pending-intervention resolution (the same user_message
+    // semantics the browser had before). A 401/403 means the auth token is
+    // missing or unauthorized (SR5) — surfaced to the console; no send-ack UX.
+    try {
+      const r = await fetch(
+        `/agui/chat/${encodeURIComponent(agentName)}${_authQuery()}`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        }
+      );
+      if (!r.ok) console.warn(`[shell] POST /agui/chat failed: ${r.status}`);
+      return r;
+    } catch (e) {
+      console.warn("[shell] POST /agui/chat error:", e);
+    }
   }
 
   function _dispatch(channel, event) {
@@ -231,27 +275,26 @@
     if (action === "agent.submit") {
       const { agentId, text } = payload || {};
       if (!agentId) throw new Error("agent.submit requires agentId");
-      // Connect WS to this agent if not already connected
-      if (!ws || ws.readyState === WebSocket.CLOSED || ws.readyState === WebSocket.CLOSING) {
-        _connectWS(agentId);
+      // Ensure the SSE stream is open for this agent (receive side), then POST
+      // the turn (send side). The POST is independent of the SSE connection, so
+      // no send-buffering / open-gate is needed.
+      if (!_es || _currentAgent !== agentId) {
+        _connectSSE(agentId);
       }
-      const msg = { type: "user_message", text: String(text || "") };
-      if (wsReady) {
-        ws.send(JSON.stringify(msg));
-      } else {
-        _pendingMessages.push(msg);
-      }
+      await _postToAgent(agentId, { type: "user_message", text: String(text || "") });
       return;
     }
 
     if (action === "agent.intervention.answer") {
       const { choiceId, text } = payload || {};
-      const msg = { type: "user_message", text: String(choiceId || text || "") };
-      if (ws && wsReady) {
-        ws.send(JSON.stringify(msg));
-      } else {
-        _pendingMessages.push(msg);
-      }
+      // Intervention answer uses the SAME user_message fallback as a submit:
+      // submit_user_text resolves the pending intervention server-side. Routed
+      // to the currently-connected agent (an answer only follows a live submit).
+      const agentName = _currentAgent;
+      if (!agentName) throw new Error("agent.intervention.answer: no active agent");
+      await _postToAgent(agentName, {
+        type: "user_message", text: String(choiceId || text || ""),
+      });
       return;
     }
 

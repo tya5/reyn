@@ -7,7 +7,7 @@ applies_to: [reyn web]
 
 # `reyn web`
 
-Start the Reyn FastAPI + WebSocket gateway server.
+Start the Reyn FastAPI gateway server (HTTP + SSE).
 
 ## Synopsis
 
@@ -37,7 +37,8 @@ Exits 1 with an install hint if FastAPI or Uvicorn is missing.
 
 | Path | Protocol |
 |------|----------|
-| `/ws/chat` | WebSocket chat |
+| `/agui/chat/<name>/events` | AG-UI chat stream over SSE (server→client) — the single UI transport for the local CUI, the remote thin client, and the openui browser |
+| `/agui/chat/<name>` | AG-UI turn submit / HITL answer / cancel / seize / heartbeat (client→server POST) |
 | `/a2a/agents` | A2A agent discovery |
 | `/a2a/agents/<name>` | A2A JSON-RPC 2.0 per agent |
 | `/mcp/sse`, `/mcp/messages` | MCP-over-SSE |
