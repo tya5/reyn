@@ -68,7 +68,7 @@ This proposal is built on a **wiring-coherence review** (§2) of how the surface
 
 ### D2 — Surface enablement (config + CLI opt-in)
 - **Config:** add `web.surfaces` to `WebConfig` (config/media.py:114, alongside `fetch`/`ws_max_size`/`auth`) — a `SurfacesConfig` dataclass with a per-surface `enabled: bool`, plus a `_build_surfaces_config` loader (mirrors the existing `_build_web_fetch_config` pattern). Operator-owned by the same model as `SandboxConfig`/`AuthConfig`.
-- **CLI:** `reyn web` (cli/commands/web.py) gains surface control. Two ergonomic shapes (owner to pick, §5): `--surfaces a,b,c` (explicit allowlist) and/or `--enable <s>` / `--disable <s>` (delta over config/default). Propagated to the server process by the established env-var channel (`REYN_WEB_*`, like `REYN_WEB_DEFAULT_DESIGN`).
+- **CLI:** `reyn web` (cli/commands/web.py) gains surface control via **`--enable <surface>` / `--disable <surface>` per-surface toggle** (owner-decided, §[b] — not a `--surfaces a,b,c` comma-allowlist), a delta over config/default. Propagated to the server process by the established env-var channel (`REYN_WEB_*`, like `REYN_WEB_DEFAULT_DESIGN`).
 - **Precedence:** CLI flag **>** `web.surfaces` config **>** secure-default (§D3). CLI overrides config, as owner specified.
 - **Operator-owned / LLM-untouchable (protect-at-use, permission-model.md:40):** surface enablement is read only at operator-driven `reyn web` **launch** — it is never on an LLM op path (the LLM cannot launch or reconfigure a running gateway), and CLI overrides config at each launch. So it is inherently operator-owned; no config-write carve-out is strictly required (defense-in-depth optional). State this explicitly.
 
@@ -114,12 +114,12 @@ Retire the parallel chainlit PoC browser UI (superseded by openui + AG-UI). Veri
 
 Ordering rationale: the security gap is real and owner-risk-relevant → first. Modularity mechanism → second. Default policy (a one-line change once the mechanism exists) → third. Cleanup → fourth. Optional dedup → last.
 
-## 5. Open questions for the owner
-- **(a) Secure-default line:** confirm **A2A/MCP default-OFF** (my recommendation, least-exposure) vs default-ON. (Everything else ON.)
-- **(b) CLI shape:** `--surfaces a,b` allowlist, `--enable/--disable <s>` delta, or both?
-- **(c) Auth-layer timing:** land D1 as a **standalone security PR first** (close the live gap early) vs in-arc phase-1?
-- **(d) resources surface:** gate it "ON-when-any-consumer-on" (my recommendation) vs give it its own explicit toggle?
-- **(e) Chainlit retire:** confirm same-arc (owner already leaned "retire"); any deprecation window, or immediate clean-break?
+## 5. Questions raised during design — all resolved (see "Owner ratification" above)
+- **(a) Secure-default line:** ✅ resolved — **A2A/MCP default-OFF** (least-exposure), everything else ON.
+- **(b) CLI shape:** ✅ resolved — **`--enable <s>` / `--disable <s>` per-surface toggle**, not a `--surfaces a,b` comma-allowlist.
+- **(c) Auth-layer timing:** ✅ resolved — landed as a **standalone security PR** (D1, PR #2837, already merged).
+- **(d) resources surface:** ✅ resolved — **"ON-when-any-consumer-on"**.
+- **(e) Chainlit retire:** ✅ resolved — **same-arc, clean-break** (no deprecation window).
 
 ## 6. Test plan (arc-level, beyond the per-phase gates)
 - **Auth:** per-surface identity-required assertions on a non-loopback bind; identity-class fencing preserved (A2A peer stays fenced); strip-falsify each surface's gate.
