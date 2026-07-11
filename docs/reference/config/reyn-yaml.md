@@ -1202,6 +1202,8 @@ mcp:
 | `command` | string | stdio | Executable to spawn. |
 | `args` | list[string] | stdio (optional) | Argument vector passed to `command`. |
 | `env` | map[string,string] | stdio (optional) | Extra environment variables for the spawned process. Values support `${VAR}` expansion. |
+| `network` | bool | stdio (optional) | Whether the sandboxed server may use the network. Defaults to the same single-source default as `sandboxed_exec`. Set `false` to isolate a server that should never reach the network. Operator-owned — the model cannot set it. |
+| `subprocess` | bool | stdio (optional) | Whether the sandboxed server may spawn child processes (fork). Defaults to `true` — most stdio servers launch via a fork-based launcher (`npx` → node, `uvx` → the tool) and must fork to start. Set `false` to harden a genuinely fork-free server. Operator-owned — the model cannot set it. |
 | `url` | string | http, sse | Endpoint URL. |
 | `headers` | map[string,string] | http, sse (optional) | Static request headers. Values support `${VAR}` expansion. |
 | `call_timeout_seconds` | float | all (optional) | Per-call request timeout passed to the MCP SDK's `read_timeout_seconds`. Unset → SDK default applies (= no Reyn-level override; the SDK's transport-specific timeout governs). Set when a specific server is known to be slow or known to be quick + you want `fail-fast`. Independent of `timeout` (which is the HTTP transport's connect timeout for `type: http`). |

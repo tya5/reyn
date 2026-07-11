@@ -1012,6 +1012,22 @@ class MCPClient:
         operator-ownership (the policy is the operator's, not the LLM's — the LLM
         cannot set it), not default-off; an operator who wants an isolated server
         sets ``network: false`` (see the migration hint surfaced on init failure).
+
+        ``subprocess`` is likewise OPERATOR-declared per server (``subprocess:
+        false`` to harden) and defaults to ``True`` (#2820 part C). A stdio MCP
+        server is, in the overwhelming common case, launched via a fork-based
+        launcher (``npx`` → node, ``uvx`` → the tool, a ``python`` wrapper) — it
+        forks to exist. The pre-#2820 default of ``False`` (SandboxPolicy's own
+        default, since this builder never set the field) emitted ``(deny
+        process-fork)`` and so silently killed the very launch it was wrapping,
+        with an opaque ``fork: Operation not permitted`` — the same launcher-fork
+        denial class as #2820. ``False`` here hardened nothing (the server never
+        started); it only hid the knob behind an unexplained failure. Default
+        ``True`` is the honest default per the operator-customizability posture;
+        the remaining boundaries (network gate, write scoping, read deny-list)
+        still bound the server and its children. An operator who runs a
+        genuinely fork-free server sets ``subprocess: false`` to harden it —
+        same operator-ownership model as ``network``.
         """
         from reyn.security.sandbox import SandboxPolicy
         from reyn.security.sandbox.policy import DEFAULT_SANDBOX_NETWORK
@@ -1019,6 +1035,7 @@ class MCPClient:
         cwd = self._config.get("cwd") or os.getcwd()
         return SandboxPolicy(
             network=bool(self._config.get("network", DEFAULT_SANDBOX_NETWORK)),
+            allow_subprocess=bool(self._config.get("subprocess", True)),
             write_paths=[cwd],
         )
 

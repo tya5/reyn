@@ -94,6 +94,45 @@ def test_seatbelt_wrap_network_opt_out(monkeypatch):
     client.close_stderr_capture()
 
 
+def test_seatbelt_wrap_subprocess_default_allows_fork(monkeypatch):
+    """Tier 2: #2820-C — with no `subprocess` override a stdio MCP server defaults
+    to allow-subprocess, so the Seatbelt profile grants `(allow process-fork)`. A
+    fork-based launcher (npx/uvx/python) is the common case and must be able to
+    fork to exist. FAILS on the pre-#2820 default (SandboxPolicy default False →
+    (deny process-fork), which silently killed the launch)."""
+    _patch_backend(monkeypatch, SeatbeltBackend())
+    client = _stdio_client()  # no `subprocess` key
+    _cmd, args = client._sandbox_wrap_stdio("my-mcp", [])
+    profile = Path(args[1]).read_text()
+    assert "(allow process-fork)" in profile
+    assert "(deny process-fork)" not in profile
+    client.close_stderr_capture()
+
+
+def test_seatbelt_wrap_subprocess_opt_out_denies_fork(monkeypatch):
+    """Tier 2: #2820-C — an operator-declared `subprocess: false` HARDENS the
+    server: the profile emits `(deny process-fork)` (the opt-OUT knob, for a
+    genuinely fork-free server). Operator-owned, same model as `network`."""
+    _patch_backend(monkeypatch, SeatbeltBackend())
+    client = _stdio_client(subprocess=False)
+    _cmd, args = client._sandbox_wrap_stdio("my-mcp", [])
+    profile = Path(args[1]).read_text()
+    assert "(deny process-fork)" in profile
+    assert "(allow process-fork)" not in profile
+    client.close_stderr_capture()
+
+
+def test_seatbelt_wrap_subprocess_opt_in_explicit(monkeypatch):
+    """Tier 2: #2820-C — an explicit `subprocess: true` is honored (allow fork),
+    same observable outcome as the default but operator-pinned."""
+    _patch_backend(monkeypatch, SeatbeltBackend())
+    client = _stdio_client(subprocess=True)
+    _cmd, args = client._sandbox_wrap_stdio("my-mcp", [])
+    profile = Path(args[1]).read_text()
+    assert "(allow process-fork)" in profile
+    client.close_stderr_capture()
+
+
 def test_landlock_wrap_uses_reexec_shim(monkeypatch):
     """Tier 2: under Landlock (#1344 follow-up E), wrap_command wraps the command
     as the reyn.security.sandbox.landlock_exec re-exec shim (python -m ... --policy

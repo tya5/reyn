@@ -733,6 +733,8 @@ mcp:
 | `command` | string | stdio | 起動する実行ファイル。 |
 | `args` | list[string] | stdio（任意） | `command` に渡す引数ベクター。 |
 | `env` | map[string,string] | stdio（任意） | 起動プロセスへの追加環境変数。値は `${VAR}` 展開に対応。 |
+| `network` | bool | stdio（任意） | サンドボックス化されたサーバーがネットワークを使用できるか。`sandboxed_exec` と同じ single-source デフォルトに従う。ネットワークに到達すべきでないサーバーを隔離するには `false`。オペレーター所有 — モデルは設定不可。 |
+| `subprocess` | bool | stdio（任意） | サンドボックス化されたサーバーが子プロセスを spawn（fork）できるか。デフォルト `true` — ほとんどの stdio サーバーは fork ベースの launcher（`npx` → node、`uvx` → tool）で起動し、起動に fork を要する。真に fork 不要なサーバーを hardening するには `false`。オペレーター所有 — モデルは設定不可。 |
 | `url` | string | http, sse | エンドポイント URL。 |
 | `headers` | map[string,string] | http, sse（任意） | 静的リクエストヘッダー。値は `${VAR}` 展開に対応。 |
 | `call_timeout_seconds` | float | すべて（任意） | MCP SDK の `read_timeout_seconds` に渡される per-call リクエストタイムアウト。 未設定の場合は SDK デフォルトが適用される（= Reyn 側で override しない、 transport-specific の SDK timeout が支配）。 特定 server が遅いと分かっている場合、 あるいは速い + fail-fast したい場合に設定する。 `timeout` (= `type: http` の HTTP transport connect timeout) とは独立。 |
