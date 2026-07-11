@@ -442,8 +442,10 @@ def decode_event(
         return None
     frame_tag = reyn.get("frame")
     if frame_tag == "display":
+        # UNTRUSTED wire value → from_wire (lenient): an unknown remote kind must
+        # ignore-unknown / graceful-degrade, never fail-close on __post_init__.
         return DisplayFrame(
-            OutboxMessage(
+            OutboxMessage.from_wire(
                 kind=reyn.get("kind", ""),
                 text=reyn.get("text", ""),
                 meta=dict(reyn.get("meta") or {}),
@@ -456,9 +458,11 @@ def decode_event(
     if frame_tag == "state_delta":
         return StateUpdate(delta=dict(reyn.get("delta") or {}))
     if frame_tag == "messages":
+        # UNTRUSTED wire values (reconnect backlog) → from_wire (lenient), same
+        # ignore-unknown contract as the single-display decode above.
         frames = [
             DisplayFrame(
-                OutboxMessage(
+                OutboxMessage.from_wire(
                     kind=m.get("kind", ""),
                     text=m.get("text", ""),
                     meta=dict(m.get("meta") or {}),

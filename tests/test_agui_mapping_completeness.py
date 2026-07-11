@@ -123,7 +123,11 @@ def test_every_display_kind_round_trips_over_the_wire() -> None:
     assert "heading_open" not in kinds
 
     for kind in kinds:
-        frame = DisplayFrame(OutboxMessage(kind=kind, text="body", meta={"k": "v"}))
+        # from_wire: this is a CODEC round-trip test over the renderer-scanned
+        # kind set, which over-reports phantom strings (e.g. ``nodes``) that are
+        # not producer kinds — the codec must round-trip any kind, so bypass the
+        # producer vocabulary gate on the test input.
+        frame = DisplayFrame(OutboxMessage.from_wire(kind=kind, text="body", meta={"k": "v"}))
         decoded = _roundtrip(frame)
         assert isinstance(decoded, DisplayFrame), f"{kind!r} did not decode to a DisplayFrame"
         assert decoded.message.kind == kind, f"{kind!r} kind mangled → {decoded.message.kind!r}"
