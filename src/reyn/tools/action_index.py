@@ -63,13 +63,16 @@ Concurrency:
     to whatever's on disk instead of duplicating the embed-API cost /
     duplicate sentence-transformers model load.
 
-Open for extension (FP-0057 Phase 2, not built here): today's catalog
-covers primitive tools, MCP tools, and pipelines (NOT skills — the
-catalog builder in ``universal_catalog.py`` has no per-skill resource
-category yet). The ``source``/``kind`` metadata captured on every chunk
-(``extra["kind"]``, derived from the qualified_name's category prefix)
-keeps the door open for a future per-kind source split or filter without
-requiring a storage-layer rewrite; Phase 0 does not add that filtering.
+Catalog coverage (FP-0057 Phase 2b re-check): today's catalog covers
+primitive tools, MCP tools, and pipelines. There is no separate per-skill
+runtime-invoke category to add — the skill ENGINE was deleted (#2438);
+``universal_catalog.CATEGORIES`` only carries ``skill_management`` (the
+install-plane), never a per-skill dynamic-dispatch category — so the prior
+"NOT skills" gap note no longer describes a live extension point. The
+``source``/``kind`` metadata captured on every chunk (``extra["kind"]``,
+derived from the qualified_name's category prefix) still keeps the door
+open for a future per-kind source split or filter without requiring a
+storage-layer rewrite, should a per-skill invoke category ever return.
 """
 from __future__ import annotations
 

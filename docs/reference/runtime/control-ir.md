@@ -549,19 +549,28 @@ Handler lifecycle:
 5. Writes `mcp.servers.<name>` to the target scope config file
 6. Emits `mcp_server_installed` event (P6) — key names only, no values
 
-> **`index_write` removed (still); `embed` re-exposed (FP-0057 Phase 1).** The
-> `index_write` control-IR op stays removed — index writing is done
-> **provider-direct** inside `reyn.api.safe.embed_index.embed_and_index()` (a
-> safe-mode `python` step streams its own chunks into it — the bundled
-> `index_docs` / `index_events` chunkers were removed along with the stdlib
-> skills that wrapped them). `semantic_search` (FP-0057 Phase 2a; renamed
-> from `recall`) still embeds its query provider-direct, per-source-model.
-> The `EmbeddingProvider` and `SqliteIndexBackend` primitives are unchanged.
-> The `embed` op, however, is **no longer removed**: FP-0057 Phase 1 re-added
-> it as the user-facing raw embedding primitive (see the [`embed`](#embed)
-> section above) — #1303's "no caller" rationale for removing it is obsolete
-> now that the primitive is exposed for user RAG composition. So `kind: embed`
-> is emitted again; only `kind: index_write` is not.
+> **`index_write` removed (still); `embed` re-exposed (FP-0057 Phase 1); `index_update`
+> added (FP-0057 Phase 2a) and its safe-mode entry point retired `embed_and_index`
+> clean-break (FP-0057 Phase 2b).** The `index_write` control-IR op stays removed.
+> Index writing for a safe-mode `python` step now goes through
+> `reyn.api.safe.index_update()` — a thin dispatch onto the `index_update` op
+> (incremental/delta-reconcile: add/update/remove/skip against the source's
+> current index), which itself calls the shared `embed` op (via `execute_op`, not
+> provider-direct) for the actual embedding. The old `reyn.api.safe.embed_index.
+> embed_and_index()` (provider-direct, append/replace) is **deleted, no shim** —
+> the bundled `index_docs` / `index_events` chunkers were removed earlier along
+> with the stdlib skills that wrapped them, unaffected by this later retirement.
+> `semantic_search` (FP-0057 Phase 2a; renamed from `recall`) also embeds its
+> query via the shared `embed` op (not provider-direct — the query-embed path was
+> switched onto `execute_op(EmbedIROp(...))` so it passes the same PRE-embed
+> redaction-egress seam as ingestion), per-source-model. The `EmbeddingProvider`
+> and `SqliteIndexBackend` primitives are unchanged. The `embed` op, however, is
+> **no longer removed**: FP-0057 Phase 1 re-added it as the user-facing raw
+> embedding primitive (see the [`embed`](#embed) section above) — #1303's "no
+> caller" rationale for removing it is obsolete now that the primitive is exposed
+> for user RAG composition AND is the shared internal mechanism `index_update` /
+> `semantic_search` dispatch through. So `kind: embed` is emitted again; only
+> `kind: index_write` is not.
 
 ## `skill_install`
 
@@ -735,7 +744,7 @@ Reuses the existing `EmbeddingProvider` (`RoutingEmbeddingProvider` via `get_pro
 
 Events: `embed_secret_redacted` (`count`, `model`) when the PRE-embed scan redacts one or more texts.
 
-Default-**ALLOW** (compute op — the cost is the embedding API/compute, not a workspace write); individually name-gateable via `contextual_gate` like every other op kind. Additive: does not retire `embed_and_index` (`reyn.api.safe.embed_index`, the CodeAct-only ingestion entry) — that clean-break is FP-0057 Phase 2.
+Default-**ALLOW** (compute op — the cost is the embedding API/compute, not a workspace write); individually name-gateable via `contextual_gate` like every other op kind. At Phase 1 this op was additive and did not retire `embed_and_index` (`reyn.api.safe.embed_index`, the CodeAct-only ingestion entry); that clean-break landed in FP-0057 Phase 2b — `embed_and_index` is deleted, and both `index_update` (ingestion) and `semantic_search` (query) now dispatch their embed calls through THIS op (see [`index_update`](#index_update) below).
 
 ## `index_query`
 

@@ -324,7 +324,7 @@ The op kinds below mirror `OP_KIND_MODEL_MAP` in `schemas/models.py`.
 | `compact` | Summarise / compact conversation history within budget |
 | `judge_output` | LLM scorer with rubric + threshold + `on_fail` policy |
 
-> `semantic_search` still embeds its query provider-direct (unchanged; renamed from `recall`, FP-0057 Phase 2a); `index_write` remains removed — index-writing runs provider-direct inside `reyn.api.safe.embed_index` (`embed_and_index`, the CodeAct-only ingestion entry), which the new `index_update` op does not yet retire (that clean-break + wiring `index_update`/`semantic_search` into the internal domains — tool-use/memory/events — is FP-0057 Phase 2b). See [Control IR](reference/runtime/control-ir.md).
+> `index_write` remains removed. FP-0057 Phase 2b: `semantic_search`'s query embed and `index_update`'s ingestion embed BOTH now dispatch through the shared `embed` op (`execute_op(EmbedIROp(...))`, not provider-direct) — the PRE-embed redaction-egress seam applies to both paths symmetrically. The CodeAct-only ingestion entry `reyn.api.safe.embed_index.embed_and_index` is **retired clean-break** (deleted, no shim) — safe-mode python steps now call `reyn.api.safe.index_update()`, a thin dispatch onto the `index_update` op. See [Control IR](reference/runtime/control-ir.md).
 
 ---
 
@@ -505,7 +505,7 @@ logic. Design: [content-threat scan proposal](deep-dives/proposals/0050-content-
 | Action embedding index | `ActionEmbeddingIndex` (class-swap detection, cross-process build lock) — backs the `search_actions` tool the chat LLM uses. FP-0057 Phase 0: a thin domain adapter over the same pluggable `IndexBackend` doc-RAG uses (unified cosine + advisory-lock + storage; was a separately-implemented SQLite-WAL index pre-consolidation) | [Universal catalog § search_actions](concepts/tools-integrations/universal-catalog.md#what-stays-out-of-phase-1) · [`reyn embeddings`](reference/cli/embeddings.md) |
 | Memory CRUD | `list` / `read` / `remember_shared` / `remember_agent` / `forget` | [Memory concepts](concepts/data-retrieval/memory.md) · [reyn memory CLI](reference/cli/memory.md) |
 
-> **Differentiation vs general agents:** beyond chat memory, Reyn ships a RAG *framework* — a safe-mode Python step calls `embed_and_index()` directly (you own the chunking logic) over a pluggable `IndexBackend`, with a credential-free local-embedding option. A foundation to build on, not a fixed memory feature.
+> **Differentiation vs general agents:** beyond chat memory, Reyn ships a RAG *framework* — a safe-mode Python step calls `index_update()` directly (you own the chunking logic) over a pluggable `IndexBackend`, with a credential-free local-embedding option. A foundation to build on, not a fixed memory feature.
 
 ---
 

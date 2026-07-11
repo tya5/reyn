@@ -6,21 +6,21 @@ audience: [human, agent]
 
 # RAG (Retrieval-Augmented Generation)
 
-reyn ships a RAG **framework foundation** — five primitive ops, an extensible `IndexBackend` protocol, an `EmbeddingProvider` protocol, and a safe-mode `embed_and_index()` entry point — that lets you index any document corpus and have the LLM retrieve relevant chunks at query time, without ever overloading the context window with the full corpus.
+reyn ships a RAG **framework foundation** — five primitive ops (`embed` / `index_query` / `index_drop` / `semantic_search` / `index_update`), an extensible `IndexBackend` protocol, an `EmbeddingProvider` protocol, and a safe-mode `index_update()` entry point — that lets you index any document corpus and have the LLM retrieve relevant chunks at query time, without ever overloading the context window with the full corpus.
 
 **The differentiation: retrieval is a built-in tool, not a library call.** LangChain and LlamaIndex give you a Python pipeline you call from your own driver code. reyn's `semantic_search` and `drop_source` are built-in tools the LLM itself calls during a normal `reyn chat` session — no orchestration code required on the search side.
 
 **Phase 1 scope (= 1.0 release).** The framework foundation, the SQLite default backend (≤100K chunks, sub-second query), and the LiteLLM embedding passthrough ship in 1.0. Vector store plugin variety (Qdrant / FAISS / Weaviate / Pinecone), advanced retrieval (rerank / HyDE / contextual retrieval), RAG eval frameworks, and IDE integration are post-1.0 (= phase 2) territory — see [../architecture/care-boundary.md](../architecture/care-boundary.md). If you need that ecosystem today, LangChain / LlamaIndex are the better fit.
 
-**TL;DR:** Search is automatic — the LLM calls the built-in `semantic_search` tool whenever it needs information from an indexed source. Creating a source requires a short safe-mode Python step that reads your files and calls `embed_and_index()` (there is no bundled one-command indexing skill).
+**TL;DR:** Search is automatic — the LLM calls the built-in `semantic_search` tool whenever it needs information from an indexed source. Creating a source requires a short safe-mode Python step that reads your files and calls `index_update()` (there is no bundled one-command indexing skill).
 
 ## Quick start
 
-Indexing a corpus is a small script run once as a safe-mode `python` step — read the files, split them into chunks, hand them to `embed_and_index`:
+Indexing a corpus is a small script run once as a safe-mode `python` step — read the files, split them into chunks, hand them to `index_update`:
 
 ```python
 # my_project/index_docs.py — run once via a `python` step (mode: safe by default)
-from reyn.api.safe import file, embed_index
+from reyn.api.safe import file, index_update as iu
 
 paths = file.glob("docs/**/*.md")
 chunks = []
@@ -35,15 +35,16 @@ for path in paths:
             "metadata": {"content_hash": f"{path}:{i}", "source_path": path},
         })
 
-embed_index.embed_and_index(
+iu.index_update(
     chunks,
     source="my_docs",
     model="text-embedding-3-small",
-    mode="replace",
     description="Project documentation",
     path="docs/**/*.md",
 )
 ```
+
+`index_update` is a **reconcile**, not an append/replace toggle — see [§Chunking is your own code](#chunking-is-your-own-code) and [§Limitations](#limitations) for the add/update/remove/skip contract (a re-run with the same chunks re-embeds nothing; a re-run with a changed `content_hash` under an already-indexed `source_path` re-embeds just that chunk and drops the stale one).
 
 ```bash
 # Start chatting — the LLM will recall chunks when needed
@@ -51,7 +52,7 @@ reyn chat
 > Summarise the authentication design from the docs
 ```
 
-Verified end-to-end with real `gemini-embedding-001` via the LiteLLM proxy: 21 EN concept docs → 418 chunks indexed (~$0.001), and natural concept queries ("What is X in Reyn?", "Explain Reyn's permission model") returned the indexed semantic answers in 3/3 chat runs (= batch 22, 2026-05-10). See `docs/deep-dives/journal/dogfood/2026-05-10-batch-22-affordance-bias-fix/findings.md`. (That run predates the `embed_and_index()` entry point and used the since-removed `index_docs` skill — the underlying embed/index/search mechanics are unchanged; `recall` was renamed `semantic_search` in FP-0057 Phase 2a.)
+Verified end-to-end with real `gemini-embedding-001` via the LiteLLM proxy: 21 EN concept docs → 418 chunks indexed (~$0.001), and natural concept queries ("What is X in Reyn?", "Explain Reyn's permission model") returned the indexed semantic answers in 3/3 chat runs (= batch 22, 2026-05-10). See `docs/deep-dives/journal/dogfood/2026-05-10-batch-22-affordance-bias-fix/findings.md`. (That run predates both the `embed_and_index()` entry point and its FP-0057 Phase 2b successor `index_update()`, and used the since-removed `index_docs` skill — the underlying embed/index/search mechanics are unchanged; `recall` was renamed `semantic_search` in FP-0057 Phase 2a.)
 
 Behind the scenes the LLM calls `semantic_search` and retrieves the top matching chunks:
 
@@ -109,9 +110,9 @@ drop_source(source="my_docs")
 
 ## Chunking is your own code
 
-There is no bundled chunker and no LLM-driven strategy selection — the chunking logic in the [Quick start](#quick-start) example (paragraph split) is plain Python you write and adapt per corpus. For specialised corpora — Python source code, SQL schemas, structured YAML — swap in whatever splitting logic fits (e.g. an AST-based splitter for source code, a heading-based splitter for Markdown) before calling `embed_and_index`.
+There is no bundled chunker and no LLM-driven strategy selection — the chunking logic in the [Quick start](#quick-start) example (paragraph split) is plain Python you write and adapt per corpus. For specialised corpora — Python source code, SQL schemas, structured YAML — swap in whatever splitting logic fits (e.g. an AST-based splitter for source code, a heading-based splitter for Markdown) before calling `index_update`.
 
-The chunking step runs deterministically in your `python` step — no LLM involvement, no attractor surface. `embed_and_index` handles embedding and index writes; everything upstream of that call (reading files, splitting into chunks) is ordinary Python.
+The chunking step runs deterministically in your `python` step — no LLM involvement, no attractor surface. `index_update` handles the add/update/remove/skip reconciliation, embedding, and index writes; everything upstream of that call (reading files, splitting into chunks) is ordinary Python. Pass the **full current chunk set** for whatever `source_path`s you are (re-)indexing in one call — reconciliation needs to see the complete set for a path to detect deletions (a partial re-ingest that only ever mentions a few files never mass-deletes the rest of the source).
 
 ## Storage location
 
@@ -142,11 +143,11 @@ One permission gate protects RAG operations on the LLM-facing side:
 |-----------|---------|---------|
 | `permissions.index_drop` | `ask` | `drop_source` tool call or `reyn source rm` |
 
-There is no dedicated permission gate on `embed_and_index()` itself — a safe-mode `python` step that calls it runs under the calling phase's ordinary python-step permissions, not a RAG-specific one.
+There is no dedicated permission gate on `index_update()` itself — a safe-mode `python` step that calls it runs under the calling phase's ordinary python-step permissions, not a RAG-specific one.
 
 ## Cost
 
-Embedding cost is linear in chunk count and depends on your corpus size and embedding model — `text-embedding-3-small` is the default. There is no built-in cost preflight or progress reporting for a hand-written indexing step (unlike the removed `index_docs` skill's wrapper) — estimate chunk count from your own file glob before running a large indexing job if cost matters.
+Embedding cost is linear in to-embed chunk count (after the add/update dedup — unchanged chunks are skipped, never re-embedded) and depends on your corpus size and embedding model — `text-embedding-3-small` is the default. Unlike the removed `index_docs` skill's wrapper, the safe-mode entry has no interactive cost preflight, but a large to-embed batch (over `embedding.cost_warn_threshold`, see [§Embedding configuration](#embedding-configuration)) now surfaces an `index_update_cost_warning` audit-event and a `cost_warning` field in the returned envelope — check `result["cost_warning"]` if you want to react to it in your indexing script.
 
 ## Embedding configuration
 
@@ -188,7 +189,6 @@ For chat-side action retrieval specifically (= `search_actions`), see [Guide: en
 
 **Included in Phase 1 (1.0 release):**
 
-- `embed_and_index()` safe-mode entry point for indexing (`reyn.api.safe.embed_index`)
 - `semantic_search` tool available to the LLM in every chat session
 - `drop_source` tool for cleanup
 - SQLite vector store backend
@@ -202,11 +202,11 @@ For chat-side action retrieval specifically (= `search_actions`), see [Guide: en
 **Landed post-1.0:**
 
 - Local embedding models via sentence-transformers (FP-0043) — see [§Local embedding backend](#local-embedding-backend-fp-0043). The chat-side `search_actions` surface is the first consumer; the same `local-mini` / `local-e5` classes are reachable from `embedding.default_class` for document indexing too.
+- **FP-0057 Phase 2a/2b**: `recall` renamed `semantic_search`; the safe-mode ingestion entry point is now `index_update()` (`reyn.api.safe.index_update`) — an incremental/delta-reconcile call (add/update/remove/skip against the source's current index), replacing the retired `embed_and_index()` (`reyn.api.safe.embed_index`, clean-break, no shim). This also closes the "no incremental indexing" gap below — reconcile detects deleted/changed source files by content_hash, no separate rebuild mode needed for ordinary file changes.
 
 **Deferred to Phase 2 (post-1.1):**
 
 - Alternative vector store backends (Qdrant, FAISS, Pinecone)
-- Incremental re-indexing on file change
 - Advanced retrieval (rerank, HyDE, contextual retrieval)
 - Additional local backends (ollama, ONNX, GGUF)
 - RAG evaluation framework
@@ -214,7 +214,7 @@ For chat-side action retrieval specifically (= `search_actions`), see [Guide: en
 ## Limitations
 
 - **100K chunks recommended maximum** per source for Phase 1 SQLite backend. Larger corpora will work but query latency increases.
-- **No incremental indexing.** `embed_and_index`'s `mode="append"` default skips chunks whose `content_hash` is already indexed but does not detect deleted/changed source files; pass `mode="replace"` to rebuild a source from scratch when files change.
+- **No full-rebuild mode.** `index_update` is reconcile-only (add/update/remove/skip against the current index) — there is no `mode="replace"` full-clear-and-rebuild call. To force a from-scratch rebuild, call the `index_drop` tool (or `reyn source rm`) on the source first, then re-run `index_update` on the empty source.
 - **Memory layer is unchanged in Phase 1.** Session memory still uses inline system-prompt expansion. The `semantic_search` tool and memory are independent systems in this release.
 - **No advanced retrieval.** Phase 1 uses cosine similarity only — no reranking, HyDE, or contextual retrieval.
 - **Sensitive data.** reyn does not redact sensitive content before indexing. Do not index secrets, credentials, or PII unless you understand the implications. A redaction policy is planned for Phase 2.
@@ -222,7 +222,7 @@ For chat-side action retrieval specifically (= `search_actions`), see [Guide: en
 
 ## Operational Intelligence — `semantic_search` on events
 
-The same `semantic_search` op works on Reyn's own P6 execution event log once it has been indexed into a source (conventionally named `"events"`) using the same `embed_and_index()` pattern as any other corpus. See [Concepts: Operational Intelligence](operational-intelligence.md) for the chunk-metadata shape, example queries, and the current state of that indexing path.
+The same `semantic_search` op works on Reyn's own P6 execution event log once it has been indexed into a source (conventionally named `"events"`) using the same `index_update()` pattern as any other corpus. See [Concepts: Operational Intelligence](operational-intelligence.md) for the chunk-metadata shape, example queries, and the current state of that indexing path.
 
 ## See also
 

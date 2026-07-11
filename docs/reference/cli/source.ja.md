@@ -7,7 +7,7 @@ applies_to: [reyn source]
 
 # `reyn source`
 
-safe-mode の indexing step が `embed_and_index()` を呼んで作成する index 済み source（名前付きドキュメントコレクション）を管理します。メンタルモデルと indexing ワークフローについては [コンセプト: RAG](../../concepts/data-retrieval/rag.md) を参照してください（一発コマンドの `reyn run index_docs` indexing skill はもうありません）。
+safe-mode の indexing step が `index_update()` を呼んで作成する index 済み source（名前付きドキュメントコレクション）を管理します。メンタルモデルと indexing ワークフローについては [コンセプト: RAG](../../concepts/data-retrieval/rag.md) を参照してください（一発コマンドの `reyn run index_docs` indexing skill はもうありません）。
 
 ## 概要
 
@@ -64,7 +64,7 @@ No indexed sources yet.
 Try: reyn run index_docs --source <name> --path "<glob>" --description "<description>"
 ```
 
-> このヒントテキストは stale です — 削除済みの `index_docs` skill を参照しています。現在 source を作成する CLI コマンドはありません。現行の safe-mode `embed_and_index()` 経路は [コンセプト: RAG — クイックスタート](../../concepts/data-retrieval/rag.md#quick-start) を参照してください。
+> このヒントテキストは stale です — 削除済みの `index_docs` skill を参照しています。現在 source を作成する CLI コマンドはありません。現行の safe-mode `index_update()` 経路は [コンセプト: RAG — クイックスタート](../../concepts/data-retrieval/rag.md#quick-start) を参照してください。
 
 ```bash
 # 機械可読な出力

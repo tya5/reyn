@@ -5,8 +5,10 @@
   - OS-side op handlers (index_query / index_drop) call require_file_read/write
     with the phase sandbox_policy ∩ BEFORE invoking the backend.
   - the WRITE path runs in the safe subprocess (no ctx): the sandbox write_paths
-    cap is forwarded into the subprocess (harness → embed_index) and
-    SqliteIndexBackend self-gates the DB path before sqlite3.connect (co-signed B).
+    cap is forwarded into the subprocess (harness → reyn.api.safe.index_update,
+    FP-0057 Phase 2b successor to the retired embed_index) which performs the
+    equivalent pre-flight self-gate on the DB path before dispatching the
+    index_update op (co-signed B).
 """
 from __future__ import annotations
 
@@ -78,7 +80,14 @@ def test_write_sandbox_falsification(tmp_path: Path) -> None:
     )))["written"] == 1
 
 
-# ── embed_index forwards the cap to the backend (subprocess context) ─────────
+# ── reyn.api.safe.index_update forwards the cap to the backend (subprocess
+#    context) ────────────────────────────────────────────────────────────────
+#
+# FP-0057 Phase 2b: the retired `reyn.api.safe.embed_index.embed_and_index`
+# (which forwarded the cap straight into `SqliteIndexBackend(sandbox_write_
+# paths=...)`) was replaced by `reyn.api.safe.index_update`, which performs
+# the equivalent pre-flight self-gate BEFORE dispatching the `index_update`
+# op (see that module's docstring) — this test now pins the new module.
 
 
 class _FakeProvider:
@@ -96,24 +105,25 @@ class _FakeProvider:
         return 4
 
 
-def test_embed_index_forwards_cap_to_backend(tmp_path: Path) -> None:
-    """Tier 2: the harness-set sandbox_write_paths context flows from embed_index
-    into SqliteIndexBackend → a restrictive cap DENIES the streamed index write."""
-    from reyn.api.safe import embed_index as ei
+def test_safe_index_update_forwards_cap_to_backend(tmp_path: Path) -> None:
+    """Tier 2: the harness-set sandbox_write_paths context flows from
+    reyn.api.safe.index_update's pre-flight self-gate → a restrictive cap
+    DENIES the index write before the op (and thus any embed call) runs."""
+    from reyn.api.safe import index_update as iu
     from reyn.data.embedding import register_provider
 
     register_provider("fake_s34", _FakeProvider)
-    ei._reset_context()
-    ei._set_context(
+    iu._reset_context()
+    iu._set_context(
         workspace_root=tmp_path, provider_name="fake_s34",
         sandbox_write_paths=["/sandboxed"],  # excludes tmp_path
     )
-    chunk = {"text": "hello", "metadata": {"content_hash": "h1"}}
+    chunk = {"text": "hello", "metadata": {"content_hash": "h1", "source_path": "src.md"}}
     try:
         with pytest.raises(PermissionError, match="sandbox"):
-            asyncio.run(ei.embed_and_index_async([chunk], "src", "standard"))
+            asyncio.run(iu.index_update_async([chunk], "src", "standard"))
     finally:
-        ei._reset_context()
+        iu._reset_context()
 
 
 # ── OS-side op-handler gates (read / drop) ───────────────────────────────────

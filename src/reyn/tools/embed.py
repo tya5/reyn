@@ -7,9 +7,10 @@ store, per the FP-0057 design). Default-ALLOW (compute op — cost is the
 embedding API/compute, not a workspace side effect); individually
 name-gateable via `contextual_gate` like every other op kind.
 
-ADDITIVE: this does NOT retire `embed_and_index` (`reyn.api.safe.embed_index`,
-the CodeAct-only ingestion entry) — that clean-break is FP-0057 Phase 2, when
-`index_update` replaces ingestion. Phase 1 only adds `embed`.
+ADDITIVE at Phase 1: this did NOT retire `embed_and_index` (the CodeAct-only
+ingestion entry) — that clean-break landed in FP-0057 Phase 2b, which
+replaced it with `reyn.api.safe.index_update` (a thin dispatch onto the
+`index_update` op below).
 
 Per ADR-0026: the ToolDefinition lives here; registration is in
 get_default_registry() in tools/__init__.py.

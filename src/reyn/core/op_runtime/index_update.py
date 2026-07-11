@@ -19,10 +19,12 @@ content-addressed by ``content_hash`` within each ``source_path``):
 Reuses the Phase 1 ``embed`` op for the actual embedding call (dispatched via
 ``execute_op`` — same primitive, no duplicated embed logic) and the existing
 ``SqliteIndexBackend`` / ``SourceManifest`` (ADR-0033 Phase 1 / FP-0057 Phase
-0) for storage — mirrors ``reyn.api.safe.embed_index.embed_and_index``'s
-resume-key pattern (dedup BEFORE embedding = the cost save) but adds the
-update/remove reconciliation legs that safe-mode ingestion (append-only) does
-not need.
+0) for storage — the resume-key pattern (dedup BEFORE embedding = the cost
+save) mirrors the retired ``reyn.api.safe.embed_index.embed_and_index``
+(FP-0057 Phase 2b clean-break: safe-mode python steps now call
+``reyn.api.safe.index_update`` instead, a thin dispatch onto THIS op), plus
+the update/remove reconciliation legs the old append-only safe-mode entry
+never had.
 
 **Source-model-bound**: the source's embedding model is recorded on first
 ingestion (``SourceManifest.embedding_model`` / the SQLite backend's
