@@ -1,0 +1,2242 @@
+{
+  "agent_spawn": {
+    "function": {
+      "description": "Create a new agent under your authority (org-design): give it a name + role. The new agent's capabilities are automatically capped at a SUBSET of your own (it can never do anything you can't). Use to design a team/org of agents; to narrow a member's capabilities further or wire who-can-message-whom, use topology_create.",
+      "name": "agent_spawn",
+      "parameters": {
+        "properties": {
+          "name": {
+            "description": "The new agent's identity (a unique agent name).",
+            "type": "string"
+          },
+          "role": {
+            "description": "The new agent's role/purpose (free text).",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "type": "object"
+      }
+    },
+    "type": "function"
+  },
+  "ask_user": {
+    "function": {
+      "description": "Pause the current phase and ask the user a clarifying question. The OS suspends execution, presents the question (and optional suggestions) to the user, waits for a free-text answer, and resumes the phase with the answer available as a control IR result. question: the question to display to the user. suggestions: optional list of suggested responses. required: if true (default), an empty answer is rejected.",
+      "name": "ask_user",
+      "parameters": {
+        "properties": {
+          "question": {
+            "type": "string"
+          },
+          "required": {
+            "type": "boolean"
+          },
+          "suggestions": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "question"
+        ],
+        "type": "object"
+      }
+    },
+    "type": "function"
+  },
+  "call_mcp_tool": {
+    "function": {
+      "description": "Invoke a mcp_tool on an MCP server. Construct args matching the mcp_tool's input schema (see describe_mcp_tool).",
+      "name": "call_mcp_tool",
+      "parameters": {
+        "properties": {
+          "mcp_tool_name": {
+            "description": "Dotted mcp_tool identifier: <server>.<tool> — choose from the enum. Use describe_mcp_tool for the full input schema.",
+            "type": "string"
+          },
+          "server": {
+            "description": "MCP server name — choose from the enum (verbatim).",
+            "type": "string"
+          },
+          "tool_args": {
+            "description": "The target MCP tool's OWN parameters (the shape from describe_mcp_tool), as a nested object here — NOT flat alongside server / mcp_tool_name.",
+            "type": "object"
+          }
+        },
+        "required": [
+          "server",
+          "mcp_tool_name",
+          "tool_args"
+        ],
+        "type": "object"
+      }
+    },
+    "type": "function"
+  },
+  "compact": {
+    "function": {
+      "description": "Compact the conversation history now: summarise older turns to free up context window. Use this when the 'Context window' status shows the free window getting low and you still have work to do — compacting first frees room so subsequent steps and large tool results fit. Returns the freed tokens and the free window afterwards (exact tokens). The system also compacts automatically as a backstop; this lets you do it proactively.",
+      "name": "compact",
+      "parameters": {
+        "properties": {
+          "reason": {
+            "description": "Optional short rationale for the audit trail (e.g. 'window low before reading large file'). Not interpreted by the OS.",
+            "type": "string"
+          }
+        },
+        "required": [],
+        "type": "object"
+      }
+    },
+    "type": "function"
+  },
+  "cron_disable": {
+    "function": {
+      "description": "Disable a cron job without removing it. The schedule stops firing until re-enabled via `cron__enable`. Use to pause a job temporarily.",
+      "name": "cron_disable",
+      "parameters": {
+        "properties": {
+          "name": {
+            "description": "Unique job identifier within the project (e.g. 'morning_news', 'weekly_report'). Reused across register/unregister/enable/disable.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "type": "object"
+      }
+    },
+    "type": "function"
+  },
+  "cron_enable": {
+    "function": {
+      "description": "Enable a previously-disabled cron job. The scheduler resumes firing it on its schedule. No-op if already enabled.",
+      "name": "cron_enable",
+      "parameters": {
+        "properties": {
+          "name": {
+            "description": "Unique job identifier within the project (e.g. 'morning_news', 'weekly_report'). Reused across register/unregister/enable/disable.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "type": "object"
+      }
+    },
+    "type": "function"
+  },
+  "cron_list": {
+    "function": {
+      "description": "List all currently-registered cron jobs (= both reyn.yaml legacy and .reyn/config/cron.yaml dynamic entries, unioned). Returns job name, target, message/action, schedule, enabled state, and next-run time.",
+      "name": "cron_list",
+      "parameters": {
+        "properties": {},
+        "type": "object"
+      }
+    },
+    "type": "function"
+  },
+  "cron_register": {
+    "function": {
+      "description": "Schedule a recurring message to a Reyn agent. The cron scheduler delivers the message to the target agent's inbox at each cron fire — the agent processes it as a normal attributed turn from a scheduled trigger. Idempotent on `name` (= replaces existing). Use for periodic checks, reminders, automated summaries.",
+      "name": "cron_register",
+      "parameters": {
+        "properties": {
+          "enabled": {
+            "description": "Whether the schedule fires immediately. Defaults to true. Set false to register a paused job and enable later via cron__enable.",
+            "type": "boolean"
+          },
+          "message": {
+            "description": "Free-form text dispatched to the agent. Treated as a user-turn-shaped message with sender='cron:<name>'.",
+            "type": "string"
+          },
+          "name": {
+            "description": "Unique job identifier within the project (e.g. 'morning_news', 'weekly_report'). Reused across register/unregister/enable/disable.",
+            "type": "string"
+          },
+          "schedule": {
+            "description": "5-field cron expression (e.g. '0 9 * * *' = daily 9am, '0 */6 * * *' = every 6 hours, '0 9 * * MON' = Mondays 9am).",
+            "type": "string"
+          },
+          "to": {
+            "description": "Target Reyn agent name. The scheduled message is delivered to this agent's inbox; the agent must exist in the project.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "to",
+          "message",
+          "schedule"
+        ],
+        "type": "object"
+      }
+    },
+    "type": "function"
+  },
+  "cron_unregister": {
+    "function": {
+      "description": "Remove a previously-registered cron job by name. The schedule stops firing immediately. No-op if the job doesn't exist.",
+      "name": "cron_unregister",
+      "parameters": {
+        "properties": {
+          "name": {
+            "description": "Unique job identifier within the project (e.g. 'morning_news', 'weekly_report'). Reused across register/unregister/enable/disable.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "type": "object"
+      }
+    },
+    "type": "function"
+  },
+  "delegate_to_agent": {
+    "function": {
+      "description": "Forward the request to a peer agent.",
+      "name": "delegate_to_agent",
+      "parameters": {
+        "properties": {
+          "request": {
+            "description": "Natural-language request paraphrased for the peer's context.",
+            "type": "string"
+          },
+          "to": {
+            "description": "Target agent name as listed by list_agents.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "to",
+          "request"
+        ],
+        "type": "object"
+      }
+    },
+    "type": "function"
+  },
+  "delete_file": {
+    "function": {
+      "description": "Delete a file under the agent's write scope.",
+      "name": "delete_file",
+      "parameters": {
+        "properties": {
+          "path": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "path"
+        ],
+        "type": "object"
+      }
+    },
+    "type": "function"
+  },
+  "describe_action": {
+    "function": {
+      "description": "WHAT: Get the full description, input schema, and metadata for one action or resource. Returns {description, input_schema, metadata}. WHEN: Use this before invoke_action when you need to know the exact argument shape of an action. Should be called whenever you have the qualified_name but are unsure of the required args. WHEN NOT: If you already know the input schema (from a previous call or the action takes no args), skip this and call invoke_action directly. PREFERRED OVER: Guessing argument names — describe_action returns the authoritative input_schema. On unknown action_name, returns an error with similar-name suggestions. POST_CALL: After describe_action, you MUST follow with invoke_action or explain in text why not. Never stop silently after investigation.",
+      "name": "describe_action",
+      "parameters": {
+        "properties": {
+          "action_name": {
+            "description": "Qualified name of the action/resource to describe (e.g. 'mcp__brave__search', 'rag_corpus__meetings').",
+            "type": "string"
+          }
+        },
+        "required": [
+          "action_name"
+        ],
+        "type": "object"
+      }
+    },
+    "type": "function"
+  },
+  "describe_agent": {
+    "function": {
+      "description": "Fetch full role / capabilities profile for one agent. Call before delegate_to_agent if uncertain.",
+      "name": "describe_agent",
+      "parameters": {
+        "properties": {
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "type": "object"
+      }
+    },
+    "type": "function"
+  },
+  "describe_mcp_tool": {
+    "function": {
+      "description": "Get the input schema for one mcp_tool registered on an MCP server. Call this before call_mcp_tool if you're unsure how to construct the args.",
+      "name": "describe_mcp_tool",
+      "parameters": {
+        "properties": {
+          "mcp_tool_name": {
+            "description": "Dotted mcp_tool identifier: <server>.<tool> — choose from the enum.",
+            "type": "string"
+          },
+          "server": {
+            "description": "MCP server name — choose from the enum (verbatim).",
+            "type": "string"
+          }
+        },
+        "required": [
+          "server",
+          "mcp_tool_name"
+        ],
+        "type": "object"
+      }
+    },
+    "type": "function"
+  },
+  "drop_source": {
+    "function": {
+      "description": "Remove an indexed source entirely (= delete its SQLite + manifest entry). Use when retiring trial sources or replacing with a different strategy. Permission-gated; user is prompted to confirm.",
+      "name": "drop_source",
+      "parameters": {
+        "properties": {
+          "source": {
+            "description": "Logical source name to remove (from Indexed sources list).",
+            "type": "string"
+          }
+        },
+        "required": [
+          "source"
+        ],
+        "type": "object"
+      }
+    },
+    "type": "function"
+  },
+  "edit_file": {
+    "function": {
+      "description": "Replace a unique string in a file under the agent's write scope. `old_string` MUST appear exactly once in the file; if it appears multiple times, the call fails with a count — re-call with a longer context-including snippet, or pass `replace_all=true` to replace every occurrence. Use this for partial edits instead of read+write for the whole file.",
+      "name": "edit_file",
+      "parameters": {
+        "properties": {
+          "new_string": {
+            "description": "Replacement text.",
+            "type": "string"
+          },
+          "old_string": {
+            "description": "Exact text to replace. Must appear exactly once unless replace_all is true; include surrounding context to make it unique.",
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          },
+          "replace_all": {
+            "description": "When true, every occurrence of old_string is replaced. Default false (= require uniqueness).",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "path",
+          "old_string",
+          "new_string"
+        ],
+        "type": "object"
+      }
+    },
+    "type": "function"
+  },
+  "embed": {
+    "function": {
+      "description": "Embed a batch of texts into vectors using reyn's configured embedding model (raw primitive — no storage). Returns one vector per input text, in the same order. Use this to build your OWN persistent RAG store: embed your texts, then hand the vectors to your own vector-DB MCP tools (store/upsert) to persist them, and again at query time to embed a query before calling that store's search tool. For reyn's OWN indexed sources / memory / tool-use retrieval, use `semantic_search` instead — it embeds and searches in one call over reyn-managed indexes.",
+      "name": "embed",
+      "parameters": {
+        "properties": {
+          "embedding_model": {
+            "default": "standard",
+            "description": "Embedding model class (light/standard/strong) or a full provider model id.",
+            "type": "string"
+          },
+          "texts": {
+            "description": "Texts to embed. Returned vectors preserve this order.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "texts"
+        ],
+        "type": "object"
+      }
+    },
+    "type": "function"
+  },
+  "forget_memory": {
+    "function": {
+      "description": "Delete a memory entry. Only when the user explicitly says 'forget' or the memory turned out wrong.",
+      "name": "forget_memory",
+      "parameters": {
+        "properties": {
+          "layer": {
+            "enum": [
+              "shared",
+              "agent"
+            ],
+            "type": "string"
+          },
+          "slug": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "layer",
+          "slug"
+        ],
+        "type": "object"
+      }
+    },
+    "type": "function"
+  },
+  "get_mcp_prompt": {
+    "function": {
+      "description": "Fetch one rendered MCP prompt's messages by name. Get the name (and its argument schema) from list_mcp_prompts.",
+      "name": "get_mcp_prompt",
+      "parameters": {
+        "properties": {
+          "arguments": {
+            "description": "Arguments to render the prompt with, matching the shape from list_mcp_prompts' arguments field. Optional — omit for a prompt that takes none.",
+            "type": "object"
+          },
+          "name": {
+            "description": "Prompt name, verbatim from list_mcp_prompts.",
+            "type": "string"
+          },
+          "server": {
+            "description": "MCP server name — choose from the enum (verbatim).",
+            "type": "string"
+          }
+        },
+        "required": [
+          "server",
+          "name"
+        ],
+        "type": "object"
+      }
+    },
+    "type": "function"
+  },
+  "glob_files": {
+    "function": {
+      "description": "Find files matching a glob pattern (e.g. '**/*.py') under the agent's read scope. Use `**` to recurse into subdirectories. Use this when you need to enumerate files by name pattern — do NOT use list_directory for glob intent. Returns a list of matching file paths.",
+      "name": "glob_files",
+      "parameters": {
+        "properties": {
+          "path": {
+            "description": "Root directory for the glob. Defaults to '.' (workspace root).",
+            "type": "string"
+          },
+          "pattern": {
+            "description": "Glob pattern. To match by name anywhere under a directory, always include `**` (e.g. '**/*.py' or 'src/**/*.md'). A bare name without `**` matches only at the exact root level, not recursively.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "pattern"
+        ],
+        "type": "object"
+      }
+    },
+    "type": "function"
+  },
+  "grep_files": {
+    "function": {
+      "description": "Search for a regex pattern across files under the agent's read scope. Use this when you need to find text or code patterns in files — do NOT use list_directory for grep/glob intent. Returns matching lines with file paths and line numbers.",
+      "name": "grep_files",
+      "parameters": {
+        "properties": {
+          "case_sensitive": {
+            "description": "When true, search is case-sensitive. Defaults to false.",
+            "type": "boolean"
+          },
+          "glob": {
+            "description": "File-glob filter (e.g. '**/*.py'). Searches all files when omitted.",
+            "type": "string"
+          },
+          "max_results": {
+            "description": "Maximum number of matches to return. Defaults to 50.",
+            "type": "integer"
+          },
+          "path": {
+            "description": "Directory or file to search. Defaults to '.' (workspace root).",
+            "type": "string"
+          },
+          "pattern": {
+            "description": "Regex pattern to search for.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "pattern"
+        ],
+        "type": "object"
+      }
+    },
+    "type": "function"
+  },
+  "hooks_add": {
+    "function": {
+      "description": "Add a push hook at an agent-lifecycle point (e.g. a turn_end self-continuation, or a context-inject). The hook is written to your runtime hooks layer (.reyn/config/hooks.yaml) and applied at the next turn boundary — it joins your existing hooks additively. Use for self-directed continuation or recurring injected context. Cannot touch startup config (reyn.yaml is restart-only).",
+      "name": "hooks_add",
+      "parameters": {
+        "properties": {
+          "message": {
+            "description": "The message pushed when the hook fires (a Jinja2 template is allowed).",
+            "type": "string"
+          },
+          "name": {
+            "description": "Optional label surfaced as the [hook:<name>] attribution prefix.",
+            "type": "string"
+          },
+          "on": {
+            "description": "The lifecycle point the hook fires at.",
+            "enum": [
+              "turn_start",
+              "turn_end",
+              "session_start",
+              "session_end",
+              "task_start",
+              "task_end"
+            ],
+            "type": "string"
+          },
+          "push_when": {
+            "description": "Optional Jinja2 → bool; when it renders false the push is skipped. Default 'true'.",
+            "type": "string"
+          },
+          "wake": {
+            "description": "true → the push starts a new turn (self-continuation, capability E); false → it rides along with the next turn as context (capability C). Default true.",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "on",
+          "message"
+        ],
+        "type": "object"
+      }
+    },
+    "type": "function"
+  },
+  "index_update": {
+    "function": {
+      "description": "Incrementally ingest chunks into an indexed source, reconciling against its current content: NEW content_hash values are embedded and added; a source_path whose chunks changed (new hash under a path already indexed) is updated (old chunks for that path replaced); a source_path this call re-supplies chunks for but whose old chunk hashes are absent from this call are removed; unchanged content_hash values are skipped (no re-embed). NO full-rebuild mode — to rebuild a source from scratch, call `drop_source` then `index_update` on the fresh (empty) source. The caller supplies pre-chunked text (chunking is the caller's responsibility, not this tool's).",
+      "name": "index_update",
+      "parameters": {
+        "properties": {
+          "chunks": {
+            "description": "Chunks to reconcile into the index.",
+            "items": {
+              "properties": {
+                "metadata": {
+                  "description": "content_hash (required, change-detection key), source_path (required, reconciliation-scope key), plus optional source_type / chunk_index / size_tokens / parent_context / extra.",
+                  "type": "object"
+                },
+                "text": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "text",
+                "metadata"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "description": {
+            "description": "SourceManifest description (first-index or override).",
+            "type": "string"
+          },
+          "embedding_model": {
+            "default": "standard",
+            "description": "Embedding model class, used ONLY when this source has no recorded model yet (first index_update for a new source) — an already-indexed source's recorded model always wins (a source is one embedding space).",
+            "type": "string"
+          },
+          "path": {
+            "description": "SourceManifest path label (first-index or override).",
+            "type": "string"
+          },
+          "source": {
+            "description": "Logical source name to ingest into.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "source",
+          "chunks"
+        ],
+        "type": "object"
+      }
+    },
+    "type": "function"
+  },
+  "invoke_action": {
+    "function": {
+      "description": "WHAT: Execute an action by qualified name (<category>__<entry>). Executes the action's default semantic operation. WHEN: Call this whenever you intend to run any action — MCP tool, file operation, web search, memory write, semantic search, etc. All catalog actions are invoked through this single entry point. WHEN NOT: For chitchat or self-questions, reply without tools. PREFERRED OVER: Legacy per-kind tools (call_mcp_tool, etc.) — invoke_action covers all 13 action categories uniformly. On unknown action_name, returns an error with similar-name suggestions. SPAWN-ACK HANDLING: when an action result is {status:'spawned', ...}, the router exits the current turn before this tool description applies; the OS emits the user-visible acknowledgment directly. You will not be asked to compose a reply for the spawn-ack turn. TASK_SPAWNED: an agent-role message starting with [task_spawned] is OS-emitted when an async task is launched (kind=agent, paired with chain_id). The structured header lets you correlate the spawn with the later [task_completed] message carrying the same identifier. The trailing human-readable line is what the user sees; the header is your correlation record. TASK_COMPLETED: a user-role message starting with [task_completed] is OS-injected when a previously-spawned async task finishes (kind=agent) or a spawned session completes (kind=spawned_session). The message carries the task's status + result fields. status='finished' means normal completion; other values ('loop_limit_exceeded', 'phase_budget_exceeded', 'budget_exceeded', 'error', or any non-'finished' value with result.error present) indicate the task did not complete normally. AGENT DELEGATION: For peer agent delegation, use action_name='multi_agent__delegate' with args {to: '<agent_name>', request: ...}; get its canonical args via describe_action(action_name='multi_agent__delegate'). Use when task is outside available actions but matches a peer agent's role, or when user explicitly addresses a named agent. Acknowledge delegation in 1 sentence.",
+      "name": "invoke_action",
+      "parameters": {
+        "properties": {
+          "action_name": {
+            "description": "Qualified name of the action/resource to invoke (e.g. 'mcp__brave__search', 'multi_agent__delegate').",
+            "type": "string"
+          },
+          "args": {
+            "description": "Arguments for the action; shape comes from describe_action.input_schema. May be omitted for resources whose canonical invoke takes no args (e.g. memory_entry__foo).",
+            "type": "object"
+          }
+        },
+        "required": [
+          "action_name"
+        ],
+        "type": "object"
+      }
+    },
+    "type": "function"
+  },
+  "list_actions": {
+    "function": {
+      "description": "WHAT: Discover actions in the FULL catalog (= a superset of the hot-list function entries you can see directly). The hot-list shown in your function list is a curated subset; this tool reveals the rest. Filter by category: `category=[...]` array (enum-restricted, exact category match). Omit or pass [] to enumerate everything visible. Returns {items: [{qualified_name, short_description}, ...], total: int}. An empty items array means no actions match — report this honestly. WHEN: PREFERRED FIRST for known-category enumeration (e.g. 'show me all memory_entry actions', 'what exec actions are available?') or exact-name lookup when you already know the category but not the exact entry. ALWAYS call list_actions BEFORE refusing a category-listable capability request. Refusing without a list_actions check is a FAILURE MODE (= the action you assumed missing may exist behind the hot-list). For known-category enumeration pass `category=['exec']` to narrow. WHEN NOT: For semantic / natural-language / free-text discovery (e.g. 'find an action that can ...', 'related to X', 'something for X' — the request may be phrased in any language, including Japanese and other non-English input) use search_actions instead — it returns relevance-ranked matches across categories rather than a flat enumeration. If you already know the exact action name, skip both and call invoke_action directly. PREFERRED OVER: Guessing action names + refusing capability requests — list_actions returns the canonical qualified names (e.g. mcp__call_tool, multi_agent__delegate) that invoke_action and describe_action expect. POST_CALL: After list_actions reveals at least one matching action, you MUST follow with describe_action or invoke_action. Do NOT reply directly — silent stop after enumeration is a failure mode. When items is empty, honestly tell the user no matching actions are available.",
+      "name": "list_actions",
+      "parameters": {
+        "properties": {
+          "category": {
+            "description": "Filter by category. Pass an array of category names (e.g. category=['exec'], category=['web', 'file']). Omit or pass [] to include all categories. Categories: multi_agent, mcp, file, web, memory_entry, memory_operation, reyn_source, rag_corpus, rag_operation, exec, task, skill_management, pipeline, pipeline_management.",
+            "items": {
+              "enum": [
+                "multi_agent",
+                "mcp",
+                "file",
+                "web",
+                "memory_entry",
+                "memory_operation",
+                "reyn_source",
+                "rag_corpus",
+                "rag_operation",
+                "exec",
+                "task",
+                "skill_management",
+                "pipeline",
+                "pipeline_management"
+              ],
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "limit": {
+            "default": 10,
+            "description": "Page size (default 10).",
+            "minimum": 1,
+            "type": "integer"
+          },
+          "offset": {
+            "default": 0,
+            "description": "Pagination offset (default 0).",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "type": "object"
+      }
+    },
+    "type": "function"
+  },
+  "list_agents": {
+    "function": {
+      "description": "Browse peer agents reachable via topology. Pass empty path for clusters; pass a cluster name for agents in it.",
+      "name": "list_agents",
+      "parameters": {
+        "properties": {
+          "path": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "path"
+        ],
+        "type": "object"
+      }
+    },
+    "type": "function"
+  },
+  "list_directory": {
+    "function": {
+      "description": "List contents of a directory under the agent's read scope. Returns names + types (file/dir).",
+      "name": "list_directory",
+      "parameters": {
+        "properties": {
+          "path": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "path"
+        ],
+        "type": "object"
+      }
+    },
+    "type": "function"
+  },
+  "list_mcp_prompts": {
+    "function": {
+      "description": "List prompts exposed by one MCP server (with name + description + arguments per prompt).",
+      "name": "list_mcp_prompts",
+      "parameters": {
+        "properties": {
+          "server": {
+            "description": "MCP server name — choose from the enum (verbatim).",
+            "type": "string"
+          }
+        },
+        "required": [
+          "server"
+        ],
+        "type": "object"
+      }
+    },
+    "type": "function"
+  },
+  "list_mcp_resource_templates": {
+    "function": {
+      "description": "List resource templates (parameterized URI patterns) exposed by one MCP server. Use list_mcp_resources for concrete resources.",
+      "name": "list_mcp_resource_templates",
+      "parameters": {
+        "properties": {
+          "server": {
+            "description": "MCP server name — choose from the enum (verbatim).",
+            "type": "string"
+          }
+        },
+        "required": [
+          "server"
+        ],
+        "type": "object"
+      }
+    },
+    "type": "function"
+  },
+  "list_mcp_resources": {
+    "function": {
+      "description": "List resources exposed by one MCP server (with uri + description per resource).",
+      "name": "list_mcp_resources",
+      "parameters": {
+        "properties": {
+          "server": {
+            "description": "MCP server name — choose from the enum (verbatim).",
+            "type": "string"
+          }
+        },
+        "required": [
+          "server"
+        ],
+        "type": "object"
+      }
+    },
+    "type": "function"
+  },
+  "list_mcp_servers": {
+    "function": {
+      "description": "List available MCP servers configured for this agent. Returns name + description per server.",
+      "name": "list_mcp_servers",
+      "parameters": {
+        "properties": {},
+        "required": [],
+        "type": "object"
+      }
+    },
+    "type": "function"
+  },
+  "list_mcp_tools": {
+    "function": {
+      "description": "List tools exposed by one MCP server (with description per tool).",
+      "name": "list_mcp_tools",
+      "parameters": {
+        "properties": {
+          "server": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "server"
+        ],
+        "type": "object"
+      }
+    },
+    "type": "function"
+  },
+  "list_memory": {
+    "function": {
+      "description": "Browse persisted memory hierarchically. Path = \"\" (roots) | \"shared\" | \"shared/user\" | \"agent/feedback\" etc. Returns child categories or item entries (slug + name + one-line description).",
+      "name": "list_memory",
+      "parameters": {
+        "properties": {
+          "path": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "path"
+        ],
+        "type": "object"
+      }
+    },
+    "type": "function"
+  },
+  "mcp_call_tool": {
+    "function": {
+      "description": "Call a tool on an installed MCP server — GENERIC FALLBACK. PREFER the per-tool 'mcp__<server>__<tool>' actions (e.g. 'mcp__time__get_current_time') when one is listed: they take the target tool's own parameters directly (authoritative input_schema via describe_action), with no generic envelope. Use this generic verb only as a fallback when no per-tool action is available. Pass the tool identifier in <server>__<tool> form (e.g. 'time__get_current_time') as returned by mcp__list_tools, plus the tool's own args dict.",
+      "name": "mcp_call_tool",
+      "parameters": {
+        "properties": {
+          "tool": {
+            "description": "<server>__<tool> identifier from mcp__list_tools (e.g. 'time__get_current_time').",
+            "type": "string"
+          },
+          "tool_args": {
+            "description": "Per-tool args dict (consult mcp__list_tools).",
+            "type": "object"
+          }
+        },
+        "required": [
+          "tool"
+        ],
+        "type": "object"
+      }
+    },
+    "type": "function"
+  },
+  "mcp_drop_server": {
+    "function": {
+      "description": "Remove a configured MCP server. Counter-op to mcp_install — deletes the server entry from reyn.local.yaml / reyn.yaml / ~/.reyn/config.yaml (scope is auto-detected when omitted). Optionally cleans the matching ${KEY} env entries from ~/.reyn/secrets.env. Permission-gated via mcp_drop_server (= distinct from mcp_install; install intent alone is insufficient).",
+      "name": "mcp_drop_server",
+      "parameters": {
+        "properties": {
+          "clear_secrets": {
+            "default": true,
+            "description": "When true (default), also remove the corresponding ${KEY} entries from ~/.reyn/secrets.env. Set false to keep the secrets for reinstall.",
+            "type": "boolean"
+          },
+          "scope": {
+            "description": "Config tier to remove from. Omit to auto-detect by walking local → project → user and removing from the first match.",
+            "enum": [
+              "local",
+              "project",
+              "user"
+            ],
+            "type": "string"
+          },
+          "server": {
+            "description": "Short server name as it appears under mcp.servers in configuration (e.g. 'filesystem', 'brave').",
+            "type": "string"
+          }
+        },
+        "required": [
+          "server"
+        ],
+        "type": "object"
+      }
+    },
+    "type": "function"
+  },
+  "mcp_install": {
+    "function": {
+      "description": "Install an MCP server from the registry. Fetches server.json, gates via permission resolver, prompts for secrets, and writes the server entry to the appropriate scope config file (local / project / user). Status: enabled — this tool's presence in your tool list means the required `file.write` and `http.get` permissions are verified. Call mcp_install directly; do not abort on permission concerns.",
+      "name": "mcp_install",
+      "parameters": {
+        "properties": {
+          "env_overrides": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "Pre-supplied env values for secret vars required by the server. Keys are env var names; values are the secrets. Values not provided here will be prompted interactively.",
+            "type": "object"
+          },
+          "scope": {
+            "description": "Config tier to write the server entry to. 'local' → reyn.local.yaml (default), 'project' → reyn.yaml, 'user' → ~/.reyn/config.yaml.",
+            "enum": [
+              "local",
+              "project",
+              "user"
+            ],
+            "type": "string"
+          },
+          "server_id": {
+            "description": "Registry identifier, e.g. 'io.github.modelcontextprotocol/server-filesystem'.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "server_id"
+        ],
+        "type": "object"
+      }
+    },
+    "type": "function"
+  },
+  "mcp_install_local": {
+    "function": {
+      "description": "Install a local MCP server by registering a {command, args} pair directly. Use for LLM-authored scripts or local development servers. Bypasses package registries — cannot auto-detect required secrets, so pass env_overrides inline when the server needs env-vars.",
+      "name": "mcp_install_local",
+      "parameters": {
+        "properties": {
+          "args": {
+            "description": "Command-line arguments. Typically the script path (e.g. ['/tmp/weather_mcp.py']) plus flags the server expects.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "command": {
+            "description": "Executable to spawn (e.g. 'python', 'node', 'uvx', or an absolute path).",
+            "type": "string"
+          },
+          "env_overrides": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "Inline env values for the spawned process.",
+            "type": "object"
+          },
+          "name": {
+            "description": "Short config key written under mcp.servers.<name> (e.g. 'weather'). Used as the server prefix in mcp__call_tool's '<server>__<tool>' identifier.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "command",
+          "args"
+        ],
+        "type": "object"
+      }
+    },
+    "type": "function"
+  },
+  "mcp_install_package": {
+    "function": {
+      "description": "Install an MCP server from a third-party package channel (npm / pypi / docker) or a GitHub repo URL. Use when the server isn't in the official registry (= mcp__search_registry returned no match). Secret detection works the same as install_registry for npm/pypi/docker; github URLs cannot pre-declare secrets.",
+      "name": "mcp_install_package",
+      "parameters": {
+        "properties": {
+          "env_overrides": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "Inline env values when the operator provides them; otherwise expect status='needs_secrets' on the first call (npm/pypi/docker only).",
+            "type": "object"
+          },
+          "identifier": {
+            "description": "npm: package name (e.g. '@scope/server-foo')\npypi: distribution name (e.g. 'my-mcp-server')\ndocker: image with optional tag (e.g. 'org/img:v1')\ngithub: full URL (e.g. 'https://github.com/owner/repo' or 'https://github.com/owner/repo/tree/<ref>/src/<sub>')",
+            "type": "string"
+          },
+          "kind": {
+            "description": "Package channel.",
+            "enum": [
+              "npm",
+              "pypi",
+              "docker",
+              "github"
+            ],
+            "type": "string"
+          },
+          "version": {
+            "description": "Version constraint. npm/pypi/docker only — ignored for github.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "identifier"
+        ],
+        "type": "object"
+      }
+    },
+    "type": "function"
+  },
+  "mcp_install_registry": {
+    "function": {
+      "description": "Install an MCP server from the official MCP registry by its registry name (server_id from mcp__search_registry candidates[].name). When the server requires secret environment variables that the operator has not yet set, the call returns status='needs_secrets' with a guide explaining the `reyn secret set <KEY>` command; relay that to the user and retry after they confirm secrets are set.",
+      "name": "mcp_install_registry",
+      "parameters": {
+        "properties": {
+          "env_overrides": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "Inline env values. Usually NOT needed — the first call returns status='needs_secrets' listing which keys to set via `reyn secret set <KEY>`; only pass this dict when the operator supplied values inline.",
+            "type": "object"
+          },
+          "server_id": {
+            "description": "Registry identifier from mcp__search_registry (= candidates[].name, e.g. 'io.github.modelcontextprotocol/server-time').",
+            "type": "string"
+          }
+        },
+        "required": [
+          "server_id"
+        ],
+        "type": "object"
+      }
+    },
+    "type": "function"
+  },
+  "mcp_search_registry": {
+    "function": {
+      "description": "Search the official MCP registry for servers matching a natural-language capability request. Returns candidates whose 'name' field feeds mcp__install_registry. Multilingual — accepts queries in any language.",
+      "name": "mcp_search_registry",
+      "parameters": {
+        "properties": {
+          "text": {
+            "description": "Natural-language capability request (e.g. \"github related\", \"image generation\", \"PDF handling\") — the query may be in any language, including Japanese and other non-English input.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "text"
+        ],
+        "type": "object"
+      }
+    },
+    "type": "function"
+  },
+  "pipeline_install_local": {
+    "function": {
+      "description": "Register a local pipeline DSL file into the project config by writing an entry to .reyn/config/pipelines.yaml. The pipeline is immediately available to sessions (as pipeline__<key>.<name> and run_pipeline) after the next hot-reload. Pass the direct path to the pipeline's *.yaml DSL file (which may hold multiple '---'-separated 'pipeline:' documents). Use 'name' to set the NAMESPACE KEY for the file; every pipeline in it registers as '<name>.<declared-pipeline-name>'. 'name' need not match any declared name and must not contain '.' (the reserved separator); it defaults to the DSL file stem when omitted.",
+      "name": "pipeline_install_local",
+      "parameters": {
+        "properties": {
+          "name": {
+            "description": "Optional namespace key for the file. Every pipeline in it registers as '<name>.<declared-pipeline-name>'. Need not match any declared name; must not contain '.'. Defaults to the DSL file stem when omitted.",
+            "type": "string"
+          },
+          "path": {
+            "description": "Direct path to the pipeline's *.yaml DSL file. May be absolute or project-root-relative.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "path"
+        ],
+        "type": "object"
+      }
+    },
+    "type": "function"
+  },
+  "pipeline_install_source": {
+    "function": {
+      "description": "Fetch a pipeline from a git/GitHub URL and install it into the project. The repo is shallow-cloned to .reyn/pipelines/<name>/, the DSL is parsed + threat-scanned, and an entry is written to .reyn/config/pipelines.yaml. The pipeline is immediately available to sessions after the next hot-reload. Requires http.get permission for the source host. Source format: 'https://github.com/user/repo' (repo root must contain exactly one *.yaml DSL file, or 'path' selects it) or 'https://github.com/user/repo//path/to/pipelines' (subdir form). Use 'path' to select the DSL file inside the clone when the repo/subdir contains more than one *.yaml file. Use 'name' to set the NAMESPACE KEY; every pipeline in the file registers as '<name>.<declared-pipeline-name>'. 'name' need not match any declared name and must not contain '.'; it defaults to the source basename.",
+      "name": "pipeline_install_source",
+      "parameters": {
+        "properties": {
+          "name": {
+            "description": "Optional namespace key. Every pipeline in the file registers as '<name>.<declared-pipeline-name>'. Need not match any declared name; must not contain '.'. Defaults to the source basename.",
+            "type": "string"
+          },
+          "path": {
+            "description": "Optional: path (relative to the repo root, or the subdir when the source URL uses the '//' convention) to the DSL *.yaml file. Required when the repo/subdir contains more than one *.yaml file.",
+            "type": "string"
+          },
+          "source": {
+            "description": "Git or GitHub URL of the pipeline repo. Examples: 'https://github.com/user/pipeline-repo' or 'https://github.com/user/monorepo//pipelines/my-pipeline'.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "source"
+        ],
+        "type": "object"
+      }
+    },
+    "type": "function"
+  },
+  "present": {
+    "function": {
+      "description": "Show bulk data to the user directly, WITHOUT re-typing it through your own output tokens. Use this after a tool returns a large result (a file, a query result, a list) that the user should see: pass a reference to it and the presentation layer renders it for them. Simple path — just pass 'data_ref' (a zone-readable path or an offloaded result ref) and it is shown with a sensible default view; you do not need to design anything. Optionally pass 'view' (a registered presentation name) to use a named layout, or 'blueprint' (advanced: a declarative component tree) for full control — at most one of the two. Pass 'data_inline' INSTEAD of 'data_ref' only for small data already in your context (exactly one of data_ref / data_inline). Reading a 'data_ref' requires the same file-read permission as reading the file. Returns a compact acknowledgement (what reached the user and whether the view bound), not the data itself.",
+      "name": "present",
+      "parameters": {
+        "properties": {
+          "blueprint": {
+            "description": "Optional (advanced): an inline declarative component tree with JSON-Pointer bindings for full control over the layout. Prefer the simple default (omit both view and blueprint) unless you specifically need a custom layout. At most one of view / blueprint.",
+            "type": "object"
+          },
+          "data_inline": {
+            "description": "Small data already in your context, passed directly instead of a ref. Provide exactly one of data_ref / data_inline.",
+            "type": "object"
+          },
+          "data_ref": {
+            "description": "What to show: a zone-readable path or an offloaded-result reference. Read under the same authority as file.read. Provide exactly one of data_ref / data_inline.",
+            "type": "string"
+          },
+          "view": {
+            "description": "Optional: the name of a registered presentation (presentations.yaml) to render with. Omit for the default view. At most one of view / blueprint.",
+            "type": "string"
+          }
+        },
+        "required": [],
+        "type": "object"
+      }
+    },
+    "type": "function"
+  },
+  "read_file": {
+    "function": {
+      "description": "Read a file's contents under the agent's read scope. Common conventions: README is at project root as `README.md`. CLAUDE.md, CHANGELOG.md, and configuration files (e.g. `reyn.yaml`, `pyproject.toml`) are at project root. Try these conventional paths directly instead of asking the user where the file lives.",
+      "name": "read_file",
+      "parameters": {
+        "properties": {
+          "limit": {
+            "description": "Number of lines to read from `offset`. Omit to read through end of file.",
+            "type": "integer"
+          },
+          "offset": {
+            "description": "Line number to start reading from (0-indexed). Omit to start at the beginning of the file.",
+            "type": "integer"
+          },
+          "path": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "path"
+        ],
+        "type": "object"
+      }
+    },
+    "type": "function"
+  },
+  "read_mcp_resource": {
+    "function": {
+      "description": "Read the contents of one MCP resource by URI. Get the uri from list_mcp_resources (or by resolving a list_mcp_resource_templates template).",
+      "name": "read_mcp_resource",
+      "parameters": {
+        "properties": {
+          "server": {
+            "description": "MCP server name — choose from the enum (verbatim).",
+            "type": "string"
+          },
+          "uri": {
+            "description": "Resource URI, verbatim from list_mcp_resources.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "server",
+          "uri"
+        ],
+        "type": "object"
+      }
+    },
+    "type": "function"
+  },
+  "read_memory_body": {
+    "function": {
+      "description": "Fetch the full body of one memory entry. Use only when list_memory's description is too vague to answer the user.",
+      "name": "read_memory_body",
+      "parameters": {
+        "properties": {
+          "layer": {
+            "enum": [
+              "shared",
+              "agent"
+            ],
+            "type": "string"
+          },
+          "limit": {
+            "description": "Number of lines to read from `offset`. Omit to read through end of body.",
+            "type": "integer"
+          },
+          "offset": {
+            "description": "Line number to start reading from (0-indexed), counted against the body after the YAML frontmatter is stripped. Omit to start at the beginning.",
+            "type": "integer"
+          },
+          "slug": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "layer",
+          "slug"
+        ],
+        "type": "object"
+      }
+    },
+    "type": "function"
+  },
+  "remember_agent": {
+    "function": {
+      "description": "Persist a durable fact to this agent's private memory. Use for agent-specific preferences, feedback, or context that should not propagate to all agents.",
+      "name": "remember_agent",
+      "parameters": {
+        "properties": {
+          "body": {
+            "description": "Full body markdown, typically <5 lines",
+            "type": "string"
+          },
+          "description": {
+            "description": "One-line summary; appears in memory listings",
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "slug": {
+            "description": "Filename stem, format <type>_<topic>, e.g. feedback_tone",
+            "type": "string"
+          },
+          "type": {
+            "enum": [
+              "user",
+              "feedback",
+              "project",
+              "reference"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "slug",
+          "name",
+          "description",
+          "type",
+          "body"
+        ],
+        "type": "object"
+      }
+    },
+    "type": "function"
+  },
+  "remember_shared": {
+    "function": {
+      "description": "Persist a durable fact to project-wide (shared) memory. Use for user role / project decisions / external references that benefit all agents.",
+      "name": "remember_shared",
+      "parameters": {
+        "properties": {
+          "body": {
+            "description": "Full body markdown, typically <5 lines",
+            "type": "string"
+          },
+          "description": {
+            "description": "One-line summary; appears in memory listings",
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "slug": {
+            "description": "Filename stem, format <type>_<topic>, e.g. user_role",
+            "type": "string"
+          },
+          "type": {
+            "enum": [
+              "user",
+              "feedback",
+              "project",
+              "reference"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "slug",
+          "name",
+          "description",
+          "type",
+          "body"
+        ],
+        "type": "object"
+      }
+    },
+    "type": "function"
+  },
+  "render_template": {
+    "function": {
+      "description": "Render a Jinja2 template against structured data into a plain string. A sandboxed producer: it writes nothing and shows nothing — it returns the rendered text, which you then route wherever you want (show it with 'present', write it with a file step, or pass it downstream in a pipeline). Provide exactly one template source (inline 'template' text, or 'template_ref' — a zone-readable template file path) and exactly one data source ('data_inline' — small data in your context, or 'data_ref' — a zone-readable path). The data binds under 'data' in the template (e.g. {{ data.results[0].title }}). 'undefined' controls unbound variables: 'strict' (default) errors naming the missing name; 'lenient' renders them empty and reports them. Reading a template_ref / data_ref requires the same permission as reading the file.",
+      "name": "render_template",
+      "parameters": {
+        "properties": {
+          "data_inline": {
+            "description": "Small data already in your context, bound under 'data' in the template. Provide exactly one of data_ref / data_inline.",
+            "type": "object"
+          },
+          "data_ref": {
+            "description": "A zone-readable path whose value binds under 'data' in the template. Read under the same authority as file.read. Provide exactly one of data_ref / data_inline.",
+            "type": "string"
+          },
+          "template": {
+            "description": "Inline Jinja2 source text. Provide exactly one of template / template_ref.",
+            "type": "string"
+          },
+          "template_ref": {
+            "description": "A zone-readable path to a template file (read as raw source text under file.read authority). Provide exactly one of template / template_ref.",
+            "type": "string"
+          },
+          "undefined": {
+            "description": "Undefined-variable policy. 'strict' (default) errors naming the missing variable; 'lenient' renders undefined as empty and reports the unbound names.",
+            "enum": [
+              "strict",
+              "lenient"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [],
+        "type": "object"
+      }
+    },
+    "type": "function"
+  },
+  "reyn_src_glob": {
+    "function": {
+      "description": "Find files in Reyn's own repository by glob pattern (e.g. 'docs/**/*.md', 'src/**/router*.py'). Returns up to 200 repo-root-relative paths, alphabetically sorted. Use this when you need to enumerate files matching a structural pattern; for content search use reyn_src_grep, for a single named file use reyn_src_read.",
+      "name": "reyn_src_glob",
+      "parameters": {
+        "properties": {
+          "pattern": {
+            "description": "Glob pattern (e.g. '**/*.py', 'docs/**/*.md').",
+            "type": "string"
+          }
+        },
+        "required": [
+          "pattern"
+        ],
+        "type": "object"
+      }
+    },
+    "type": "function"
+  },
+  "reyn_src_grep": {
+    "function": {
+      "description": "Search file contents in Reyn's own repository by regex. Returns up to 50 matches as {path, line, snippet}. `path` scopes the search (default = whole repo); `glob` further narrows by filename (e.g. '**/*.py'). Use this for 'where in the Reyn source is X handled' style questions; for structural enumeration use reyn_src_glob, for reading one known file use reyn_src_read.",
+      "name": "reyn_src_grep",
+      "parameters": {
+        "properties": {
+          "case_sensitive": {
+            "description": "Default false (= case-insensitive).",
+            "type": "boolean"
+          },
+          "glob": {
+            "description": "Optional filename glob filter (e.g. '**/*.py'). When omitted, all text files under `path` are searched.",
+            "type": "string"
+          },
+          "max_results": {
+            "description": "Cap on match count. Default 50.",
+            "type": "integer"
+          },
+          "path": {
+            "description": "Repo-relative directory or file to scope the search. Default = repo root. Use '' for repo root.",
+            "type": "string"
+          },
+          "pattern": {
+            "description": "Regex pattern (Python `re` syntax).",
+            "type": "string"
+          }
+        },
+        "required": [
+          "pattern"
+        ],
+        "type": "object"
+      }
+    },
+    "type": "function"
+  },
+  "reyn_src_list": {
+    "function": {
+      "description": "List entries under a path inside Reyn's own repository (= the project that built this agent). Pass \"\" for the repo root. Returns names + types (file/dir). Use this to discover Reyn's source/doc layout before reading specific files. Examples: list \"\" for the top-level layout, \"docs/concepts\" for concept docs (English; Japanese translations are the same path with a \".ja.md\" filename suffix, not a separate directory), or any subdirectory path for its contents.",
+      "name": "reyn_src_list",
+      "parameters": {
+        "properties": {
+          "path": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "path"
+        ],
+        "type": "object"
+      }
+    },
+    "type": "function"
+  },
+  "reyn_src_read": {
+    "function": {
+      "description": "Read a text file from Reyn's own repository by an exact repo-root-relative path. Use for: (a) reading a specific file the user named (e.g. README.md), or (b) navigating Reyn's source / docs when NO indexed source covers the topic. If an indexed source description mentions concepts / design / docs / Reyn, use `semantic_search` instead — guessing a file path is unreliable; semantic search over indexed chunks is not. Fallback entry point: reyn_src_read(\"README.md\") for the overview + curated map of deep-dive paths.",
+      "name": "reyn_src_read",
+      "parameters": {
+        "properties": {
+          "limit": {
+            "description": "Number of lines to read from `offset`. Omit to read through end of file.",
+            "type": "integer"
+          },
+          "offset": {
+            "description": "Line number to start reading from (0-indexed). Omit to start at the beginning of the file. When set (with or without limit), the 256-KB byte cap is bypassed by line-streaming only the requested slice.",
+            "type": "integer"
+          },
+          "path": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "path"
+        ],
+        "type": "object"
+      }
+    },
+    "type": "function"
+  },
+  "run_pipeline": {
+    "function": {
+      "description": "Run a REGISTERED pipeline by name to completion and return its final output. Blocks until the pipeline finishes (sync). 'input' seeds the pipeline's initial named context (ctx.*) for its first step. Fails clearly if 'name' is not a registered pipeline, or if any step fails.",
+      "name": "run_pipeline",
+      "parameters": {
+        "properties": {
+          "input": {
+            "description": "Initial named context (ctx.*) for the pipeline's first step. Omit for a pipeline that needs no seed input.",
+            "type": "object"
+          },
+          "name": {
+            "description": "The registered pipeline's name.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "type": "object"
+      }
+    },
+    "type": "function"
+  },
+  "run_pipeline_async": {
+    "function": {
+      "description": "Launch a REGISTERED pipeline by name in the background and return immediately with {status: started, run_id}. The pipeline runs in a dedicated crash-recoverable driver session; its final result arrives later as a [pipeline] message on your conversation. 'input' seeds the pipeline's initial named context (ctx.*) for its first step.",
+      "name": "run_pipeline_async",
+      "parameters": {
+        "properties": {
+          "input": {
+            "description": "Initial named context (ctx.*) for the pipeline's first step. Omit for a pipeline that needs no seed input.",
+            "type": "object"
+          },
+          "name": {
+            "description": "The registered pipeline's name.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "type": "object"
+      }
+    },
+    "type": "function"
+  },
+  "run_pipeline_inline": {
+    "function": {
+      "description": "Run an ad-hoc pipeline you DEFINE inline (no pre-registration) to completion and return its final output. Blocks until it finishes (sync). 'definition' is a pipeline DSL string (Appendix B); 'input' seeds the first step's ctx.*. The definition is statically validated (parse, schema refs, tool names, no nested pipeline launch, agent steps run as you) BEFORE anything is spawned — a bad definition fails clearly and runs nothing.",
+      "name": "run_pipeline_inline",
+      "parameters": {
+        "properties": {
+          "definition": {
+            "description": "The pipeline as a DSL string (Appendix B grammar): one or more '---'-separated YAML documents — exactly one 'pipeline:' document plus any 'schema:' documents its steps reference. Generated at call time; parsed + statically validated before anything runs.",
+            "type": "string"
+          },
+          "input": {
+            "description": "Initial named context (ctx.*) for the pipeline's first step. Omit for a pipeline that needs no seed input.",
+            "type": "object"
+          }
+        },
+        "required": [
+          "definition"
+        ],
+        "type": "object"
+      }
+    },
+    "type": "function"
+  },
+  "run_pipeline_inline_async": {
+    "function": {
+      "description": "Launch an ad-hoc pipeline you DEFINE inline in the background and return immediately with {status: started, run_id}. It runs in a dedicated crash-recoverable driver session; its final result arrives later as a [pipeline] message on your conversation. 'definition' is a pipeline DSL string (Appendix B), statically validated before spawn; 'input' seeds the first step's ctx.*.",
+      "name": "run_pipeline_inline_async",
+      "parameters": {
+        "properties": {
+          "definition": {
+            "description": "The pipeline as a DSL string (Appendix B grammar): one or more '---'-separated YAML documents — exactly one 'pipeline:' document plus any 'schema:' documents its steps reference. Generated at call time; parsed + statically validated before anything runs.",
+            "type": "string"
+          },
+          "input": {
+            "description": "Initial named context (ctx.*) for the pipeline's first step. Omit for a pipeline that needs no seed input.",
+            "type": "object"
+          }
+        },
+        "required": [
+          "definition"
+        ],
+        "type": "object"
+      }
+    },
+    "type": "function"
+  },
+  "sandboxed_exec": {
+    "function": {
+      "description": "Execute a command in a sandboxed environment (FP-0017). The sandbox policy (network access + filesystem scope) is the OPERATOR's, resolved by the OS — it is not chosen here. argv: command and arguments (argv[0] is the executable). timeout_seconds: wall-clock time limit in seconds (default 60).",
+      "name": "sandboxed_exec",
+      "parameters": {
+        "properties": {
+          "argv": {
+            "description": "Command and arguments; argv[0] is the executable.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "timeout_seconds": {
+            "description": "Wall-clock time limit in seconds (default 60).",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "argv"
+        ],
+        "type": "object"
+      }
+    },
+    "type": "function"
+  },
+  "search_actions": {
+    "function": {
+      "description": "WHAT: Semantic search across available actions — multilingual, embedding-based, relevance-ranked. Returns {items: [{qualified_name, short_description, score}, ...]}. WHEN: PREFERRED FIRST for semantic / natural-language / free-text queries — when the user asks to find / search for / something related to / similar to / something for X / actions about Y / find ... related to Z (the request may be phrased in any language, including Japanese and other non-English input), or describes an intent without naming a specific category. ALWAYS call search_actions BEFORE refusing a semantic-intent capability request. Refusing without a search_actions check is a FAILURE MODE (= relevance ranking may surface the action across categories that a flat enumeration would miss). Multilingual — works in any language (Japanese, English, etc.). Handles both semantic descriptions AND free-text keyword lookup (e.g. an action containing 'http'). WHEN NOT: For known-category enumeration (e.g. 'show me all exec actions', 'list of memory_entry actions' — again, phrasable in any language) use list_actions(category=[...]) instead — it returns the flat catalogue slice rather than relevance-ranked hits. If you already know the exact action name, skip both and call invoke_action directly. Available only when an embedding class is configured (reyn.yaml action_retrieval.embedding_class). POST_CALL: After search_actions reveals at least one matching action, you MUST follow with describe_action or invoke_action. Do NOT reply directly — silent stop after semantic search is a failure mode.",
+      "name": "search_actions",
+      "parameters": {
+        "properties": {
+          "category": {
+            "description": "Optional category restriction.",
+            "items": {
+              "enum": [
+                "multi_agent",
+                "mcp",
+                "file",
+                "web",
+                "memory_entry",
+                "memory_operation",
+                "reyn_source",
+                "rag_corpus",
+                "rag_operation",
+                "exec",
+                "task",
+                "skill_management",
+                "pipeline",
+                "pipeline_management"
+              ],
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "limit": {
+            "default": 10,
+            "description": "Top-K results to return (default 10).",
+            "minimum": 1,
+            "type": "integer"
+          },
+          "query": {
+            "description": "Natural-language query in any language.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "query"
+        ],
+        "type": "object"
+      }
+    },
+    "type": "function"
+  },
+  "semantic_search": {
+    "function": {
+      "description": "Search indexed sources by natural-language query. Returns top-K relevant chunks with text + metadata. Use this when the user's question is about a topic an indexed source covers — including 'what is X?', 'explain X', 'how does X work?' style questions. Pick sources from the 'Indexed sources' section in the system prompt; each source's description tells you what topics it covers. Prefer this over `reyn_src_read` / file_read when an indexed source description matches the question's topic — semantic search across indexed chunks is more reliable than guessing a file path.",
+      "name": "semantic_search",
+      "parameters": {
+        "properties": {
+          "embedding_model": {
+            "default": "standard",
+            "description": "Fallback embedding model class (light/standard/strong) or full model id, used ONLY for a source with no recorded model yet — every already-indexed source auto-adopts its OWN recorded model regardless of this value (multi-model correctness, FP-0057 Phase 2a).",
+            "type": "string"
+          },
+          "filters": {
+            "default": {},
+            "description": "ChunkMetadata field equality filters (e.g. source_path).",
+            "type": "object"
+          },
+          "query": {
+            "description": "Natural language query to search for.",
+            "type": "string"
+          },
+          "sources": {
+            "description": "Logical source names to search (from Indexed sources list).",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "top_k": {
+            "default": 5,
+            "description": "Number of top chunks to return.",
+            "maximum": 50,
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "query",
+          "sources"
+        ],
+        "type": "object"
+      }
+    },
+    "type": "function"
+  },
+  "session_spawn": {
+    "function": {
+      "description": "Spawn a fresh-context session under your agent to run a task in isolation. Choose mode='ephemeral' (auto-vanishes after the task) or 'persistent'. Optionally narrow the sub-session's capabilities (restrict-only). The session runs the task; its result stays in that session.",
+      "name": "session_spawn",
+      "parameters": {
+        "properties": {
+          "mode": {
+            "default": "persistent",
+            "description": "ephemeral = the session auto-vanishes after its task; persistent = it stays. Chosen at spawn time.",
+            "enum": [
+              "ephemeral",
+              "persistent"
+            ],
+            "type": "string"
+          },
+          "narrowing": {
+            "description": "Optional per-session capability narrowing (restrict-only, cannot widen your envelope): a capability_profile subset, e.g. {\"tool_deny\": [\"sandboxed_exec\"]}.",
+            "type": "object"
+          },
+          "request": {
+            "description": "The task for the fresh-context session to run.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "request"
+        ],
+        "type": "object"
+      }
+    },
+    "type": "function"
+  },
+  "shell": {
+    "function": {
+      "description": "Run a shell command (via sandboxed_exec) whose STDIN receives the previous pipeline step's pipe-data JSON-encoded, and whose STDOUT becomes this step's output. command: the shell command line (argv[0]='/bin/sh', argv[1]='-c'). timeout: wall-clock time limit in seconds (default 60). The sandbox policy (network access + filesystem scope) is the OPERATOR's, resolved by the OS — it is not chosen here.",
+      "name": "shell",
+      "parameters": {
+        "properties": {
+          "command": {
+            "description": "Shell command line, run as `/bin/sh -c <command>`.",
+            "type": "string"
+          },
+          "stdin_pipe": {
+            "description": "The previous pipeline step's pipe-data (JSON-encoded onto stdin)."
+          },
+          "timeout": {
+            "description": "Wall-clock time limit in seconds (default 60).",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "command"
+        ],
+        "type": "object"
+      }
+    },
+    "type": "function"
+  },
+  "skill_install_local": {
+    "function": {
+      "description": "Register a local skill directory into the project config by reading its SKILL.md frontmatter and writing an entry to .reyn/config/skills.yaml. The skill is immediately available to sessions after the next hot-reload. Pass the path to the directory containing SKILL.md (or the SKILL.md file directly). Use 'name' to override the config key when the directory name differs from the desired skill identifier.",
+      "name": "skill_install_local",
+      "parameters": {
+        "properties": {
+          "name": {
+            "description": "Config key written under skills.entries.<name>. When omitted, the frontmatter 'name:' field is used; if that is also absent, the directory basename is used.",
+            "type": "string"
+          },
+          "path": {
+            "description": "Path to the skill directory (containing SKILL.md) or the direct path to the SKILL.md file. May be absolute or project-root-relative.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "path"
+        ],
+        "type": "object"
+      }
+    },
+    "type": "function"
+  },
+  "skill_install_source": {
+    "function": {
+      "description": "Fetch a skill from a git/GitHub URL and install it into the project. The repo is shallow-cloned to .reyn/skills/<name>/, the SKILL.md is threat-scanned, and an entry is written to .reyn/config/skills.yaml. The skill is immediately available to sessions after the next hot-reload. Requires http.get permission for the source host in the skill's frontmatter. Source format: 'https://github.com/user/repo' (repo root must contain SKILL.md) or 'https://github.com/user/repo//path/to/skill' (subdir with SKILL.md). Use 'name' to override the config key when the default (from SKILL.md frontmatter or repo/subdir basename) differs from the desired skill identifier.",
+      "name": "skill_install_source",
+      "parameters": {
+        "properties": {
+          "name": {
+            "description": "Config key written under skills.entries.<name>. When omitted, the frontmatter 'name:' field is used; if that is also absent, the repo/subdir basename is used.",
+            "type": "string"
+          },
+          "source": {
+            "description": "Git or GitHub URL of the skill repo. The root (or subdir specified via '//' separator) must contain a SKILL.md file. Examples: 'https://github.com/user/skill-repo' or 'https://github.com/user/monorepo//skills/my-skill'.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "source"
+        ],
+        "type": "object"
+      }
+    },
+    "type": "function"
+  },
+  "subscribe_mcp_resource": {
+    "function": {
+      "description": "Subscribe to server-pushed updates for one MCP resource by URI. When the server-side content changes, a mcp_resource_updated event is recorded — call read_mcp_resource again to see the new content (the push notification itself carries no content, just a signal that something changed).",
+      "name": "subscribe_mcp_resource",
+      "parameters": {
+        "properties": {
+          "server": {
+            "description": "MCP server name — choose from the enum (verbatim).",
+            "type": "string"
+          },
+          "uri": {
+            "description": "Resource URI, verbatim from list_mcp_resources.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "server",
+          "uri"
+        ],
+        "type": "object"
+      }
+    },
+    "type": "function"
+  },
+  "task.abort": {
+    "function": {
+      "description": "Abort (delete) a task you requested + its sub-tree. Cooperative-terminal: the assignee's in-flight work is rejected at its next status-write.",
+      "name": "task.abort",
+      "parameters": {
+        "properties": {
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Reason"
+          },
+          "task_id": {
+            "title": "Task Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "task_id"
+        ],
+        "type": "object"
+      }
+    },
+    "type": "function"
+  },
+  "task.add_dependency": {
+    "function": {
+      "description": "Add a depends-on edge (you must be the requester/topology owner). Existence + cycle checked.",
+      "name": "task.add_dependency",
+      "parameters": {
+        "properties": {
+          "depends_on": {
+            "title": "Depends On",
+            "type": "string"
+          },
+          "task_id": {
+            "title": "Task Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "task_id",
+          "depends_on"
+        ],
+        "type": "object"
+      }
+    },
+    "type": "function"
+  },
+  "task.assign": {
+    "function": {
+      "description": "Assign a session to a task. An UNASSIGNED task (in the pending-assignment queue) may be CLAIMED by anyone — set `assignee` to the session that will execute it. An already-assigned task may be reassigned ONLY by its current assignee (owner-initiated hand-off; others must request it via conversation). The new assignee is woken to execute it.",
+      "name": "task.assign",
+      "parameters": {
+        "properties": {
+          "assignee": {
+            "title": "Assignee",
+            "type": "string"
+          },
+          "task_id": {
+            "title": "Task Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "task_id",
+          "assignee"
+        ],
+        "type": "object"
+      }
+    },
+    "type": "function"
+  },
+  "task.comment": {
+    "function": {
+      "description": "Append a comment to a task's thread (durable inter-agent / human-in-the-loop protocol).",
+      "name": "task.comment",
+      "parameters": {
+        "properties": {
+          "body": {
+            "title": "Body",
+            "type": "string"
+          },
+          "task_id": {
+            "title": "Task Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "task_id",
+          "body"
+        ],
+        "type": "object"
+      }
+    },
+    "type": "function"
+  },
+  "task.create": {
+    "function": {
+      "description": "Create a task. While you are EXECUTING a task, a task you create is automatically owned by it (a sub-task) and — if you omit `assignee` — assigned to you to execute. For a TOP-LEVEL task: omitting `assignee` leaves it UNASSIGNED (it waits in the pending-assignment queue until a session claims it via task.assign); to execute it YOURSELF, set `assignee` to your own session; set it to another session to delegate. `deps` are depends-on task ids (born blocked until they complete). Use to decompose a complex request into trackable units.",
+      "name": "task.create",
+      "parameters": {
+        "properties": {
+          "assignee": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Assignee"
+          },
+          "deps": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Deps",
+            "type": "array"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Description"
+          },
+          "link_type": {
+            "default": "awaited",
+            "enum": [
+              "awaited",
+              "background"
+            ],
+            "title": "Link Type",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "type": "object"
+      }
+    },
+    "type": "function"
+  },
+  "task.get": {
+    "function": {
+      "description": "Read one task record by id.",
+      "name": "task.get",
+      "parameters": {
+        "properties": {
+          "task_id": {
+            "title": "Task Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "task_id"
+        ],
+        "type": "object"
+      }
+    },
+    "type": "function"
+  },
+  "task.heartbeat": {
+    "function": {
+      "description": "Liveness ping for a blocked task; triggers unblock-predicate evaluation. Returns the current state.",
+      "name": "task.heartbeat",
+      "parameters": {
+        "properties": {
+          "task_id": {
+            "title": "Task Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "task_id"
+        ],
+        "type": "object"
+      }
+    },
+    "type": "function"
+  },
+  "task.list": {
+    "function": {
+      "description": "List tasks, optionally narrowed by assignee / requester / status. Narrowing by `requester` (a task id) lists the sub-tasks that task owns.",
+      "name": "task.list",
+      "parameters": {
+        "properties": {
+          "assignee": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Assignee"
+          },
+          "requester": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Requester"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Status"
+          }
+        },
+        "type": "object"
+      }
+    },
+    "type": "function"
+  },
+  "task.register_unblock_predicate": {
+    "function": {
+      "description": "Register a deterministic (code, no-LLM) unblock predicate evaluated at heartbeat; true → unblock.",
+      "name": "task.register_unblock_predicate",
+      "parameters": {
+        "properties": {
+          "predicate": {
+            "title": "Predicate",
+            "type": "string"
+          },
+          "task_id": {
+            "title": "Task Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "task_id",
+          "predicate"
+        ],
+        "type": "object"
+      }
+    },
+    "type": "function"
+  },
+  "task.remove_dependency": {
+    "function": {
+      "description": "Drop a depends-on edge (idempotent). Relaxing the graph may promote a now-ready dependent.",
+      "name": "task.remove_dependency",
+      "parameters": {
+        "properties": {
+          "depends_on": {
+            "title": "Depends On",
+            "type": "string"
+          },
+          "task_id": {
+            "title": "Task Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "task_id",
+          "depends_on"
+        ],
+        "type": "object"
+      }
+    },
+    "type": "function"
+  },
+  "task.repoint_dependency": {
+    "function": {
+      "description": "Atomically repoint a dependency edge from one task to a substitute (the primary recovery move). The new edge is cycle-checked before any mutation.",
+      "name": "task.repoint_dependency",
+      "parameters": {
+        "properties": {
+          "from_depends_on": {
+            "title": "From Depends On",
+            "type": "string"
+          },
+          "task_id": {
+            "title": "Task Id",
+            "type": "string"
+          },
+          "to_depends_on": {
+            "title": "To Depends On",
+            "type": "string"
+          }
+        },
+        "required": [
+          "task_id",
+          "from_depends_on",
+          "to_depends_on"
+        ],
+        "type": "object"
+      }
+    },
+    "type": "function"
+  },
+  "task.update_status": {
+    "function": {
+      "description": "Declare a status transition on a task you are the ASSIGNEE of (the single writer). Terminal tasks reject writes.",
+      "name": "task.update_status",
+      "parameters": {
+        "properties": {
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Reason"
+          },
+          "status": {
+            "enum": [
+              "running",
+              "done",
+              "failed"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "task_id": {
+            "title": "Task Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "task_id",
+          "status"
+        ],
+        "type": "object"
+      }
+    },
+    "type": "function"
+  },
+  "topology_create": {
+    "function": {
+      "description": "Wire agents you spawned into a topology (org-design): group them by kind (network = all-to-all, team = star around a leader, pipeline = ordered chain) to control who-can-message-whom, and optionally bind each member to a capability_profile to narrow it further. You may only include agents in your own spawn subtree (yourself or agents you created via agent_spawn) — a member's capabilities stay capped at a SUBSET of yours.",
+      "name": "topology_create",
+      "parameters": {
+        "properties": {
+          "kind": {
+            "description": "network = every member ↔ every member; team = star around a leader (requires 'leader'); pipeline = ordered chain (members[i] → members[i+1]).",
+            "enum": [
+              "network",
+              "team",
+              "pipeline"
+            ],
+            "type": "string"
+          },
+          "leader": {
+            "description": "For kind=team only: the member at the centre of the star.",
+            "type": "string"
+          },
+          "members": {
+            "description": "Agent names to wire — each must be in your spawn subtree (yourself or an agent you spawned).",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "name": {
+            "description": "The new topology's name (unique; 1-32 chars [a-z0-9_-]).",
+            "type": "string"
+          },
+          "profiles": {
+            "description": "Optional JSON object mapping a member name to a capability_profile name (both strings). A bound member's session is narrowed by that profile (it can only narrow within its ⊆-you envelope, never widen). Each key must be one of 'members'.",
+            "type": "object"
+          }
+        },
+        "required": [
+          "name",
+          "kind",
+          "members"
+        ],
+        "type": "object"
+      }
+    },
+    "type": "function"
+  },
+  "unsubscribe_mcp_resource": {
+    "function": {
+      "description": "Unsubscribe from server-pushed updates for one MCP resource by URI (previously subscribed via subscribe_mcp_resource).",
+      "name": "unsubscribe_mcp_resource",
+      "parameters": {
+        "properties": {
+          "server": {
+            "description": "MCP server name — choose from the enum (verbatim).",
+            "type": "string"
+          },
+          "uri": {
+            "description": "Resource URI, verbatim from list_mcp_resources.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "server",
+          "uri"
+        ],
+        "type": "object"
+      }
+    },
+    "type": "function"
+  },
+  "web_fetch": {
+    "function": {
+      "description": "Fetch a single URL. Returns a structured preview (title, outline, first paragraph, link count for HTML; first lines for text) plus a path_ref to the full body stored under .reyn/tool-results/. url: absolute http/https URL. max_length: cap on extracted body length (default 50000). Use after web_search to load a result page; call file__read(path) to read the full body.",
+      "name": "web_fetch",
+      "parameters": {
+        "properties": {
+          "max_length": {
+            "type": "integer"
+          },
+          "url": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "url"
+        ],
+        "type": "object"
+      }
+    },
+    "type": "function"
+  },
+  "web_search": {
+    "function": {
+      "description": "Search the public web with DuckDuckGo and return structured results. Standard search operators are supported in `query`: `site:<domain>` to scope to one site (e.g. `site:news.ycombinator.com`), `\"phrase\"` for exact match, `-term` to exclude. Use them when the user's intent is site-specific or phrase-anchored; plain keywords work otherwise. query: search string. max_results: cap on returned results (default 5).",
+      "name": "web_search",
+      "parameters": {
+        "properties": {
+          "max_results": {
+            "type": "integer"
+          },
+          "query": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "query"
+        ],
+        "type": "object"
+      }
+    },
+    "type": "function"
+  },
+  "write_file": {
+    "function": {
+      "description": "Write content to a file under the agent's write scope. Creates or overwrites the WHOLE file. For a partial or surgical change to an existing file, prefer the `file__edit` action instead of rewriting the whole file.",
+      "name": "write_file",
+      "parameters": {
+        "properties": {
+          "content": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "path",
+          "content"
+        ],
+        "type": "object"
+      }
+    },
+    "type": "function"
+  }
+}

@@ -13,22 +13,13 @@ from __future__ import annotations
 from typing import Any, Mapping
 
 from reyn.llm.model_resolver import resolve_purpose_class  # #1673
+from reyn.tools.descriptions import discovery
 from reyn.tools.types import ToolContext, ToolDefinition, ToolGates, ToolResult
 
-# Description must be byte-identical to the current router_tools.py
-# ToolSpec.description for web_search (= the operator-hint extended
-# string from commit 8af3444). Copied verbatim.
-_WEB_SEARCH_DESCRIPTION = (
-    "Search the public web with DuckDuckGo and return "
-    "structured results. Standard search operators are "
-    "supported in `query`: `site:<domain>` to scope to "
-    "one site (e.g. `site:news.ycombinator.com`), "
-    "`\"phrase\"` for exact match, `-term` to exclude. "
-    "Use them when the user's intent is site-specific "
-    "or phrase-anchored; plain keywords work otherwise. "
-    "query: search string. "
-    "max_results: cap on returned results (default 5)."
-)
+# Reviewable in src/reyn/tools/descriptions/discovery.py (Phase 1 of the
+# tool-description package refactor) — this alias keeps the call site
+# unchanged (byte-identical relocation, no LLM-facing text change).
+_WEB_SEARCH_DESCRIPTION = discovery.web_search.text
 
 # Parameters JSON schema must be byte-identical to the current
 # router_tools.py ToolSpec.parameters for web_search.

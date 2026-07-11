@@ -40,18 +40,16 @@ from __future__ import annotations
 from dataclasses import asdict
 from typing import Any, Mapping
 
+from reyn.tools.descriptions import discovery
 from reyn.tools.mcp import _MCP_TOOL_ARGS_KEY  # #1646: single-source the inner-args key
 from reyn.tools.types import ToolContext, ToolDefinition, ToolGates, ToolResult
 
 # ── mcp__search_registry ──────────────────────────────────────────────────────
 
-
-_MCP_SEARCH_REGISTRY_DESCRIPTION = (
-    "Search the official MCP registry for servers matching a "
-    "natural-language capability request. Returns candidates whose "
-    "'name' field feeds mcp__install_registry. Multilingual — accepts "
-    "queries in any language."
-)
+# Reviewable in src/reyn/tools/descriptions/discovery.py (Phase 1 of the
+# tool-description package refactor) — this alias keeps the call site
+# unchanged (byte-identical relocation, no LLM-facing text change).
+_MCP_SEARCH_REGISTRY_DESCRIPTION = discovery.mcp_search_registry.text
 
 _MCP_SEARCH_REGISTRY_PARAMETERS: dict[str, Any] = {
     "type": "object",
