@@ -151,6 +151,76 @@ def test_malicious_version_token_is_rejected(tmp_path: Path, monkeypatch, payloa
     assert resolved.endswith("/.pyenv/shims/python3")  # fail open, no path built
 
 
+def test_token_past_the_read_cap_is_invisible_fail_open(tmp_path: Path, monkeypatch):
+    """Tier 2: FALSIFYING byte-bound witness. The version token is pushed PAST the
+    4 KB read cap by 5000 leading spaces, so only whitespace lands in the bounded
+    head → no token → fail open to the shim. This flips between implementations:
+    strip the cap (read the whole file) and the full-line strip recovers ``3.12.7``
+    → resolves to the real binary → RED. A plain "valid token then junk" file would
+    NOT witness the bound (an unbounded read returns the same head token), so this
+    construction is what actually pins the memory bound."""
+    root, _real = _pyenv_layout(tmp_path, "3.12.7")
+    # token lives at byte 5000 (> the 4096 cap); the first 4096 bytes are spaces
+    (tmp_path / ".python-version").write_text((" " * 5000) + "3.12.7\n")
+    monkeypatch.setenv("PYENV_ROOT", str(root))
+    monkeypatch.delenv("PYENV_VERSION", raising=False)
+    env_path = f"{root / 'shims'}:{os.environ.get('PATH', '')}"
+
+    resolved = resolve_real_executable("python3", env_path=env_path, cwd=str(tmp_path))
+    # bounded head saw only whitespace → token invisible → fail open to shim.
+    # (unbounded read_text would recover 3.12.7 and resolve to the real binary.)
+    assert resolved.endswith("/.pyenv/shims/python3")
+
+
+def test_device_symlink_version_file_is_skipped(tmp_path: Path, monkeypatch):
+    """Tier 2: a ``.python-version`` symlinked to a character device (/dev/zero)
+    is not a regular file → skipped (never opened for an endless read), and
+    resolution falls through to the global version."""
+    root, real = _pyenv_layout(tmp_path, "3.11.9")
+    (root / "version").write_text("3.11.9\n")
+    devnull_target = Path("/dev/zero")
+    if devnull_target.exists():
+        (tmp_path / ".python-version").symlink_to(devnull_target)
+    monkeypatch.setenv("PYENV_ROOT", str(root))
+    monkeypatch.delenv("PYENV_VERSION", raising=False)
+    env_path = f"{root / 'shims'}:{os.environ.get('PATH', '')}"
+
+    resolved = resolve_real_executable("python3", env_path=env_path, cwd=str(tmp_path))
+    assert resolved == str(real)  # device symlink skipped, global used
+
+
+def test_malicious_version_from_env_is_also_rejected(tmp_path: Path, monkeypatch):
+    """Tier 2: token validation applies to the ENV source too (not just files) —
+    a crafted PYENV_VERSION cannot become a path any more than a crafted file can."""
+    root, _real = _pyenv_layout(tmp_path, "3.12.7")
+    monkeypatch.setenv("PYENV_ROOT", str(root))
+    monkeypatch.setenv("PYENV_VERSION", "../../../../etc")
+    env_path = f"{root / 'shims'}:{os.environ.get('PATH', '')}"
+
+    resolved = resolve_real_executable("python3", env_path=env_path, cwd=str(tmp_path))
+    assert resolved.endswith("/.pyenv/shims/python3")  # fail open, no path built
+
+
+def test_resolved_bin_symlink_escaping_versions_root_fails_open(tmp_path: Path, monkeypatch):
+    """Tier 2: even a valid version whose ``versions/<v>/bin/python3`` is a symlink
+    pointing OUT of ``<root>/versions/`` fails open — the realpath containment
+    check refuses to hand back a target outside the managed tree."""
+    root = tmp_path / ".pyenv"
+    _make_executable(root / "shims" / "python3", "#!/bin/sh\necho x\n")
+    outside = tmp_path / "outside" / "python3"
+    _make_executable(outside, "#!/bin/sh\necho evil\n")
+    bin_dir = root / "versions" / "3.12.7" / "bin"
+    bin_dir.mkdir(parents=True)
+    (bin_dir / "python3").symlink_to(outside)  # escapes versions/
+    (tmp_path / ".python-version").write_text("3.12.7\n")
+    monkeypatch.setenv("PYENV_ROOT", str(root))
+    monkeypatch.delenv("PYENV_VERSION", raising=False)
+    env_path = f"{root / 'shims'}:{os.environ.get('PATH', '')}"
+
+    resolved = resolve_real_executable("python3", env_path=env_path, cwd=str(tmp_path))
+    assert resolved.endswith("/.pyenv/shims/python3")  # containment refused the escape
+
+
 def test_mise_shim_fails_open_without_reading_config(tmp_path: Path, monkeypatch):
     """Tier 2: a mise shim is recognized but NEVER resolved — the manager is not
     invoked and its (possibly template-exec'ing) config is not even read. This is
