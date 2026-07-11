@@ -49,7 +49,42 @@ Failure modes
 - Model download fails (= no network, registry error): propagates the
   underlying exception; the index build path swallows it and leaves
   the index unbuilt (= ``is_ready()`` returns False, search_actions
-  stays hidden).
+  stays hidden). See ``router_loop._build_action_embedding_index_background``
+  / ``_action_index_build_failure_warning`` for the decision-enabling
+  operator warning this produces (#1458/#1616).
+
+Offline / air-gapped networks (= HF_HUB_OFFLINE opt-in, FP-0057 Phase 4)
+-----------------------------------------------------------------------------
+On a corporate / firewalled network where Hugging Face is unreachable, the
+FIRST ``_load()`` call still tries the real network and only fails after
+whatever connect-timeout the underlying HTTP stack uses — a real but
+avoidable UX cost once the operator already knows they are offline.
+
+Setting the HuggingFace-STANDARD ``HF_HUB_OFFLINE=1`` (or
+``TRANSFORMERS_OFFLINE=1``) opts into ``local_files_only=True`` on the
+``SentenceTransformer`` constructor: no network attempt is made at all, so
+an uncached model fails immediately and deterministically instead of
+hanging on a timeout. We deliberately respect the ecosystem-standard env
+vars rather than a reyn-native knob (air-gapped operators already know and
+set these). reyn passes ``local_files_only`` EXPLICITLY (belt-and-
+suspenders) so the fast-fail does not depend on the pinned
+``sentence_transformers`` version internally honouring the env var.
+
+This is a **never silent, always explicit** opt-in (= the operator sets
+it, reyn never infers "you look offline" and flips it automatically) —
+matching the "no silent auto-egress" stance: reyn also never
+auto-falls-back to an API-backed embedding class on a local-model
+failure; that requires the operator to set
+``action_retrieval.embedding_class: standard`` (or another API class)
+themselves.
+
+To use ``local-mini`` / ``local-e5`` fully offline: pre-download the
+model once on a connected machine (with the offline flag UNSET there),
+then copy its ``<cache_root>/sentence-transformers/`` directory (see
+``_resolve_cache_dir`` precedence) to the air-gapped machine before
+setting ``HF_HUB_OFFLINE=1`` there. See
+``docs/guide/for-users/enable-semantic-search.md`` § "Offline /
+air-gapped networks" for the full walkthrough.
 """
 from __future__ import annotations
 
@@ -131,6 +166,39 @@ def _resolve_device() -> str:
         stacklevel=2,
     )
     return "cpu"
+
+
+_TRUTHY = {"1", "true", "yes"}
+
+# FP-0057 Phase 4: the HuggingFace-ecosystem STANDARD offline env vars.
+# We deliberately respect these rather than inventing a reyn-native knob
+# ("no reinventing existing" — air-gapped/corporate operators already know
+# and set these). Either being truthy opts into local-files-only loading.
+_OFFLINE_ENV_VARS = ("HF_HUB_OFFLINE", "TRANSFORMERS_OFFLINE")
+
+
+def _resolve_offline_mode() -> bool:
+    """Whether the standard HF offline env vars request local-files-only loading.
+
+    FP-0057 Phase 4: reads the HuggingFace-standard ``HF_HUB_OFFLINE`` /
+    ``TRANSFORMERS_OFFLINE`` (either truthy → offline). This is an
+    explicit, never-inferred opt-in (all unset/blank/non-truthy → "no",
+    the safe default of attempting a real load, matching pre-Phase-4
+    behaviour). When truthy, ``_load`` passes ``local_files_only=True`` to
+    the ``SentenceTransformer`` constructor.
+
+    Belt-and-suspenders (architect): reyn passes ``local_files_only``
+    EXPLICITLY rather than relying on the pinned ``sentence_transformers``
+    version to internally honour the env var — so the fast-fail is
+    version-robust and testable as reyn's own behaviour. An air-gapped
+    operator who already set the standard offline flag gets a fast,
+    deterministic failure instead of a connect-timeout hang on every
+    uncached model, regardless of library internals.
+    """
+    return any(
+        os.environ.get(name, "").strip().lower() in _TRUTHY
+        for name in _OFFLINE_ENV_VARS
+    )
 
 
 def _strip_prefix(model: str) -> str:
@@ -251,33 +319,53 @@ class SentenceTransformersEmbeddingProvider:
 
         hf_id = _strip_prefix(resolved_model)
         self._cache_dir.mkdir(parents=True, exist_ok=True)
+        offline = _resolve_offline_mode()
         self._emit(
             "status",
             f"loading embedding model {resolved_model!r} "
-            f"(first run may download ~20-120 MB)",
+            f"(first run may download ~20-120 MB)"
+            + (" [HF_HUB_OFFLINE: local cache only, no network]" if offline else ""),
             {
                 "model": resolved_model,
                 "target_dir": str(self._cache_dir),
                 "device": self._device,
+                "offline": offline,
             },
         )
+        load_kwargs: dict[str, Any] = {
+            "cache_folder": str(self._cache_dir),
+            "device": self._device,
+        }
+        if offline:
+            load_kwargs["local_files_only"] = True
         try:
-            model = SentenceTransformer(
-                hf_id,
-                cache_folder=str(self._cache_dir),
-                device=self._device,
-            )
+            model = SentenceTransformer(hf_id, **load_kwargs)
         except Exception as exc:
+            retry_hint = (
+                (
+                    "HF_HUB_OFFLINE is set (local-files-only mode) and this "
+                    "model is not in the local cache. Either pre-download it on a "
+                    "connected machine (unset HF_HUB_OFFLINE there) and copy "
+                    f"{self._cache_dir} over, or unset HF_HUB_OFFLINE to allow "
+                    "a real network attempt, or use an API-backed embedding class "
+                    "(e.g. `standard`)."
+                )
+                if offline
+                else (
+                    "Check network connectivity, then retry. If the "
+                    "cache is partial / corrupt, run "
+                    "`reyn embeddings clear` to wipe and start fresh. On an "
+                    "air-gapped / firewalled network, set HF_HUB_OFFLINE=1 "
+                    "to fail fast instead of waiting on a connect timeout next time."
+                )
+            )
             self._emit(
                 "error",
                 f"failed to load {resolved_model!r}: {exc}",
                 {
                     "model": resolved_model,
-                    "retry_hint": (
-                        "Check network connectivity, then retry. If the "
-                        "cache is partial / corrupt, run "
-                        "`reyn embeddings clear` to wipe and start fresh."
-                    ),
+                    "retry_hint": retry_hint,
+                    "offline": offline,
                 },
             )
             raise
@@ -369,4 +457,5 @@ __all__ = [
     "_PREFIX",  # exported for the routing layer
     "_resolve_cache_dir",  # exported for tests
     "_resolve_device",
+    "_resolve_offline_mode",
 ]

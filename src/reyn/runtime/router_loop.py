@@ -451,20 +451,41 @@ def _is_unsupported_param_error(exc: BaseException) -> bool:
     )
 
 
-def _action_index_build_failure_warning(exc: BaseException, model_class: Any) -> str:
-    """#1616: cause-aware operator guidance for a failed action-embedding-index build.
+def _is_embed_offline_mode() -> bool:
+    """FP-0057 Phase 4: whether the HF-standard offline env vars are set.
 
-    Two distinct failure modes need two distinct operator actions, so branch on
-    the cause instead of emitting one misleading message (the #1458 warning was
-    HF-download-specific):
+    Reads the HuggingFace-standard ``HF_HUB_OFFLINE`` / ``TRANSFORMERS_OFFLINE``
+    (either truthy → offline). Local re-check (rather than importing the ST
+    provider helper) keeps this module's cause-selection unit-testable without
+    a ``sentence_transformers`` import; the truthy-value + env-var contract
+    mirrors ``sentence_transformers_provider._resolve_offline_mode`` exactly.
+    """
+    return any(
+        os.environ.get(name, "").strip().lower() in {"1", "true", "yes"}
+        for name in ("HF_HUB_OFFLINE", "TRANSFORMERS_OFFLINE")
+    )
+
+
+def _action_index_build_failure_warning(exc: BaseException, model_class: Any) -> str:
+    """#1616/FP-0057 Phase 4: cause-aware operator guidance for a failed build.
+
+    Three distinct failure modes need three distinct operator actions, so branch
+    on the cause instead of emitting one misleading message (the #1458 warning
+    was HF-download-specific):
 
     * **Unsupported-param** (``UnsupportedParamsError`` — the embedding provider
       rejected a param, typically ``encoding_format`` on a gemini-routed embedding
       behind a LiteLLM proxy): point to the recommended *proxy-side* fix
       (``litellm_settings: drop_params: true``), since reyn cannot suppress a
       param the proxy injects.
-    * **Otherwise** (e.g. a Hugging Face model download failed): the pre-existing
-      offline/cache guidance.
+    * **HF_HUB_OFFLINE / TRANSFORMERS_OFFLINE set** (= the operator already
+      opted into local-files-only mode and the model is not cached): name that
+      explicitly and give the preload-and-copy-cache recipe — never suggest
+      "just wait for the download", since offline mode means no network attempt
+      was made.
+    * **Otherwise** (e.g. a Hugging Face model download failed against a real
+      network): the pre-existing offline/cache guidance, now also naming the
+      standard ``HF_HUB_OFFLINE=1`` as a fast-fail opt-in for next time.
 
     Returned as a fully-formatted string so the cause-selection is unit-testable
     without driving the whole index build.
@@ -480,6 +501,18 @@ def _action_index_build_failure_warning(exc: BaseException, model_class: Any) ->
             "behaviour), OR use an OpenAI-compatible embedding class. Options to "
             "opt out: set `action_retrieval.embedding_class: null`."
         )
+    if _is_embed_offline_mode():
+        return (
+            "Semantic search_actions disabled for this session: HF_HUB_OFFLINE "
+            f"is set (local-files-only mode) and model class {model_class!r} is not "
+            f"in the local cache ({type(exc).__name__}). No network attempt was "
+            "made — that's what offline mode means. Options: (1) pre-download the "
+            "model on a connected machine (with HF_HUB_OFFLINE unset there), "
+            "then copy its sentence-transformers cache directory to this machine, "
+            "(2) unset HF_HUB_OFFLINE here to allow a real network attempt, "
+            "(3) set `action_retrieval.embedding_class: null` to opt out, "
+            "(4) use an API-backed class (e.g. `standard`)."
+        )
     return (
         "Semantic search_actions disabled for this session: action embedding "
         f"index build failed for model class {model_class!r} "
@@ -487,7 +520,9 @@ def _action_index_build_failure_warning(exc: BaseException, model_class: Any) ->
         "Hugging Face unreachable (offline / corporate network?). Options: "
         "(1) pre-download the model on a connected machine so it is in the HF "
         "cache, (2) set `action_retrieval.embedding_class: null` to opt out, "
-        "(3) use an API-backed class (e.g. `standard`)."
+        "(3) use an API-backed class (e.g. `standard`), (4) on an air-gapped / "
+        "firewalled network, set the standard `HF_HUB_OFFLINE=1` so future "
+        "attempts fail fast instead of waiting on a connect timeout."
     )
 
 

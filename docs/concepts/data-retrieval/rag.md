@@ -183,6 +183,8 @@ This pulls `sentence-transformers >= 2.7` and `torch >= 2.0`. The model itself d
 
 Device selection is `cpu` by default; opt into GPU acceleration via the `REYN_EMBED_DEVICE` env var (`mps` for Apple Silicon, `cuda` for NVIDIA). Invalid values warn and fall back to `cpu`.
 
+On an air-gapped / firewalled network where Hugging Face is unreachable, set the HuggingFace-standard `HF_HUB_OFFLINE=1` (or `TRANSFORMERS_OFFLINE=1`) (FP-0057 Phase 4) — reyn respects the ecosystem-standard offline flag (rather than a reyn-native knob) and passes `local_files_only=True` explicitly, so an uncached model then fails fast and deterministically instead of hanging on a connect timeout. This is always an explicit operator opt-in; reyn never infers offline-ness or silently falls back to an API-backed embedding class. See [Guide § Offline / air-gapped networks](../../guide/for-users/enable-semantic-search.md#offline--air-gapped-networks) for the full preload-and-copy-cache walkthrough.
+
 For chat-side action retrieval specifically (= `search_actions`), see [Guide: enable semantic search](../../guide/for-users/enable-semantic-search.md) and the [`reyn embeddings`](../../reference/cli/embeddings.md) CLI for cache management.
 
 ## Phase 1 scope
