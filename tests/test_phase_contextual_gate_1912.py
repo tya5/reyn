@@ -27,7 +27,7 @@ def test_shared_gate_denies_and_allows():
     """Tier 2: tool_contextually_denied — the single seam every path calls."""
     ctx = ContextualPermission(tool_deny=frozenset({"exec__sandboxed_exec"}))
     assert tool_contextually_denied(ctx, "exec__sandboxed_exec") is True
-    assert tool_contextually_denied(ctx, "recall") is False
+    assert tool_contextually_denied(ctx, "semantic_search") is False
     # None contextual is inert (⊤) → byte-identical to pre-#1827.
     assert tool_contextually_denied(None, "exec__sandboxed_exec") is False
 

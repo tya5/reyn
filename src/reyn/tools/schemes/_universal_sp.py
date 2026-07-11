@@ -182,10 +182,10 @@ def build_universal_tool_use_slots(
             "- **reyn_source** — Reyn source/docs (read-only)."
         )
         _r2.append(
-            "- **rag_corpus** — indexed corpora; invoke with `query` for single-source recall."
+            "- **rag_corpus** — indexed corpora; invoke with `query` for single-source semantic search."
         )
         _r2.append(
-            "- **rag_operation** — RAG management (multi-source recall, drop_source)."
+            "- **rag_operation** — RAG management (multi-source semantic_search, drop_source)."
         )
         _r2.append(
             "- **exec** — sandboxed argv execution (only when sandbox backend is enabled)."

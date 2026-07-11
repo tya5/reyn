@@ -274,7 +274,7 @@ class SourceManifest:
                 f"- **{entry.name}** — {entry.description} ({entry.chunk_count} chunks)"
             )
         lines.append("")
-        lines.append("Use the `recall` tool with `sources=[<name>, ...]` to search.")
+        lines.append("Use the `semantic_search` tool with `sources=[<name>, ...]` to search.")
         return "\n".join(lines)
 
     @asynccontextmanager

@@ -1,13 +1,19 @@
-"""recall ToolDefinition (ADR-0033 Phase 1).
+"""semantic_search ToolDefinition (ADR-0033 Phase 1; FP-0057 Phase 2a renamed
+from `recall` — clean break, fixes the observed
+`recall`/`search_actions`/`memory` naming collision).
 
-RECALL is both router-callable and phase-callable (gates.router=allow,
+SEMANTIC_SEARCH is both router-callable and phase-callable (gates.router=allow,
 gates.phase=allow). It is the primary LLM entry point for semantic search
 over indexed sources.
 
-The handler delegates to op_runtime.recall.handle, which orchestrates:
-  1. embed sub-op (query → vector)
-  2. index_query sub-op for each source
-  3. merge + top-K ranking
+The handler delegates to op_runtime.semantic_search.handle, which
+orchestrates:
+  1. per-source-model resolution (auto-adopt from SourceManifest / index stat)
+  2. one embed call per DISTINCT model group (never once-for-all — the
+     multi-model correctness fix, co-vet #1)
+  3. index_query sub-op for each source, with its group's matching vector
+  4. merge WITHIN each model group by score; combine ACROSS groups by
+     round-robin (never comparing cross-model score magnitudes)
 
 Per ADR-0026: the ToolDefinition lives here; registration is in
 get_default_registry() in tools/__init__.py.
@@ -24,11 +30,12 @@ from reyn.tools.types import ToolContext, ToolDefinition, ToolGates, ToolResult
 # the description to specific source names (= per A4 constraint, the SP
 # carries the source list, this description must be source-agnostic).
 #
-# B23-PRE-1 SP role-separation note: recall vs memory disambiguation that
-# previously lived in the SP disambiguation block is now in
-# _RECALL_DESCRIPTION_HIDE_LEGACY below. _RECALL_DESCRIPTION remains
-# byte-identical to preserve LLMReplay fixture stability.
-_RECALL_DESCRIPTION = (
+# B23-PRE-1 SP role-separation note: semantic_search vs memory disambiguation
+# that previously lived in the SP disambiguation block is now in
+# _SEMANTIC_SEARCH_DESCRIPTION_HIDE_LEGACY below. _SEMANTIC_SEARCH_DESCRIPTION
+# remains byte-identical to the pre-rename _RECALL_DESCRIPTION text to
+# preserve LLMReplay fixture stability.
+_SEMANTIC_SEARCH_DESCRIPTION = (
     "Search indexed sources by natural-language query. Returns top-K "
     "relevant chunks with text + metadata. Use this when the user's "
     "question is about a topic an indexed source covers — including "
@@ -41,11 +48,11 @@ _RECALL_DESCRIPTION = (
 )
 
 # B23-PRE-1 SP role-separation: enriched WHAT/WHEN/WHEN_NOT variant for
-# wrapper-only path. Carries the recall vs memory disambiguation that
-# previously lived in the SP disambiguation block. _RECALL_DESCRIPTION
+# wrapper-only path. Carries the semantic_search vs memory disambiguation that
+# previously lived in the SP disambiguation block. _SEMANTIC_SEARCH_DESCRIPTION
 # (above) stays byte-identical for LLMReplay fixture stability.
 # Tests check this constant; describe_action in wrapper mode can expose it.
-_RECALL_DESCRIPTION_HIDE_LEGACY = (
+_SEMANTIC_SEARCH_DESCRIPTION_HIDE_LEGACY = (
     "WHAT: Semantic search over indexed corpora (= RAG retrieval). "
     "Returns top-K relevant chunks with text + metadata. "
     "WHEN: Use when user asks 'search', 'find in docs', 'lookup', or any "
@@ -53,7 +60,7 @@ _RECALL_DESCRIPTION_HIDE_LEGACY = (
     "an indexed source covers the topic. Multilingual — works across languages. "
     "WHEN NOT: "
     "For personal memory retrieval, use the memory_entry actions "
-    "(memory_entry__<name>). recall is for indexed corpora, NOT memory. "
+    "(memory_entry__<name>). semantic_search is for indexed corpora, NOT memory. "
     "The word 'recall' in user input refers to THIS tool — never map it "
     "to memory_entry / memory_operation actions. "
     "PREFERRED OVER: memory_entry actions when content is indexed (source-"
@@ -65,7 +72,7 @@ _RECALL_DESCRIPTION_HIDE_LEGACY = (
     "indexed chunks is more reliable than guessing a file path."
 )
 
-_RECALL_PARAMETERS: dict[str, Any] = {
+_SEMANTIC_SEARCH_PARAMETERS: dict[str, Any] = {
     "type": "object",
     "properties": {
         "query": {
@@ -97,7 +104,11 @@ _RECALL_PARAMETERS: dict[str, Any] = {
             "type": "string",
             "default": "standard",
             "description": (
-                "Embedding model class (light/standard/strong) or full model id."
+                "Fallback embedding model class (light/standard/strong) or "
+                "full model id, used ONLY for a source with no recorded "
+                "model yet — every already-indexed source auto-adopts its "
+                "OWN recorded model regardless of this value (multi-model "
+                "correctness, FP-0057 Phase 2a)."
             ),
         },
     },
@@ -105,25 +116,26 @@ _RECALL_PARAMETERS: dict[str, Any] = {
 }
 
 
-async def _handle_recall(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
-    """Dispatch the recall macro op via op_runtime.
+async def _handle_semantic_search(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
+    """Dispatch the semantic_search macro op via op_runtime.
 
-    Builds a RecallIROp from args and calls the registered recall handler.
-    OpContext is obtained from ctx.router_state.op_context_factory when
-    available, or constructed minimally otherwise.
+    Builds a SemanticSearchIROp from args and calls the registered
+    semantic_search handler. OpContext is obtained from
+    ctx.router_state.op_context_factory when available, or constructed
+    minimally otherwise.
     """
     from reyn.core.op_runtime import execute_op
     from reyn.core.op_runtime.context import OpContext
-    from reyn.schemas.models import RecallIROp
+    from reyn.schemas.models import SemanticSearchIROp
     from reyn.security.permissions.permissions import PermissionDecl
 
-    # Defensive arg validation. LLMs sometimes call `recall` without
+    # Defensive arg validation. LLMs sometimes call `semantic_search` without
     # the required keys (= when no "Indexed sources" appears in the
     # system prompt, or when the LLM forgets the schema). Raising a
     # raw KeyError leaks the literal Python exception into the
     # tool_failed event and the user-facing reply (observed in
-    # dogfood B45/B46 W3 `recall_indexed_source` scenario). Return a
-    # structured tool result instead so the LLM can compose a clean
+    # dogfood B45/B46 W3 `recall_indexed_source` scenario, pre-rename). Return
+    # a structured tool result instead so the LLM can compose a clean
     # "no indexed sources" reply.
     missing = [k for k in ("query", "sources") if not args.get(k)]
     if missing:
@@ -131,7 +143,7 @@ async def _handle_recall(args: Mapping[str, Any], ctx: ToolContext) -> ToolResul
             "ok": False,
             "error_kind": "missing_required_arg",
             "error_message": (
-                f"recall requires {missing}. "
+                f"semantic_search requires {missing}. "
                 "Available sources are listed under 'Indexed sources' in "
                 "the system prompt; if none are listed, no sources have "
                 "been indexed yet for this agent."
@@ -139,8 +151,8 @@ async def _handle_recall(args: Mapping[str, Any], ctx: ToolContext) -> ToolResul
             "missing": missing,
         }
 
-    op = RecallIROp(
-        kind="recall",
+    op = SemanticSearchIROp(
+        kind="semantic_search",
         query=str(args["query"]),
         sources=list(args["sources"]),
         top_k=int(args.get("top_k", 5)),
@@ -156,7 +168,7 @@ async def _handle_recall(args: Mapping[str, Any], ctx: ToolContext) -> ToolResul
         legacy_ctx = ctx.router_state.op_context_factory()
     else:
         # Minimal context for router-side calls without a factory.
-        # Recall is read-only with respect to the workspace (no writes).
+        # semantic_search is read-only with respect to the workspace (no writes).
         legacy_ctx = OpContext(
             workspace=ctx.workspace,
             events=ctx.events,
@@ -165,9 +177,10 @@ async def _handle_recall(args: Mapping[str, Any], ctx: ToolContext) -> ToolResul
             actor="",
             subscribers=getattr(ctx.events, "subscribers", []),
             # #1673: thread the config-aware resolver so this OpContext is never
-            # resolver=None (the bug-class invariant). recall uses op.embedding_model
-            # for its embedding call — no chat-LLM sink here — but the uniform
-            # threading keeps the "no tool OpContext is resolver=None" invariant.
+            # resolver=None (the bug-class invariant). semantic_search uses
+            # per-source auto-adopted embedding_model for its embedding calls
+            # — no chat-LLM sink here — but the uniform threading keeps the
+            # "no tool OpContext is resolver=None" invariant.
             resolver=ctx.resolver,
         )
 
@@ -176,14 +189,14 @@ async def _handle_recall(args: Mapping[str, Any], ctx: ToolContext) -> ToolResul
 
 from reyn.core.offload.canonical import chunks_to_canonical  # noqa: E402
 
-RECALL = ToolDefinition(
+SEMANTIC_SEARCH = ToolDefinition(
     canonical=chunks_to_canonical,
-    name="recall",
+    name="semantic_search",
     router_dispatched=True,
-    description=_RECALL_DESCRIPTION,
-    parameters=_RECALL_PARAMETERS,
+    description=_SEMANTIC_SEARCH_DESCRIPTION,
+    parameters=_SEMANTIC_SEARCH_PARAMETERS,
     gates=ToolGates(router="allow", phase="allow"),
-    handler=_handle_recall,
+    handler=_handle_semantic_search,
     category="discovery",
     purity="read_only",
     returns_external_content=True,  # FP-0050/#1822: RAG over user content (memory/docs/chat)

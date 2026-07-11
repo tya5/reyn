@@ -49,8 +49,9 @@ mindmap
       mcp_install
       embed
       index_query
-      recall
+      semantic_search
       index_drop
+      index_update
       compact
       judge_output
     🔧 Tool-Use Schemes
@@ -315,14 +316,15 @@ The op kinds below mirror `OP_KIND_MODEL_MAP` in `schemas/models.py`.
 | `mcp_subscribe_resource` / `mcp_unsubscribe_resource` | Subscribe/unsubscribe to server-pushed `resources/updated` for one URI (requires a persistent connection; push lands as an `mcp_resource_updated` hook-event) |
 | `mcp_get_prompt` | Fetch one rendered MCP prompt's messages by name (permission-gated, same axis as `mcp`) |
 | `mcp_install` | Install / register an MCP server (registry / package / local source) |
-| `embed` | Raw embedding primitive: batch texts → vectors (FP-0057 Phase 1). User-facing (compose with an external MCP vector-DB via pipeline) AND the shared logic later internal RAG ops call; default-allow; PRE-embed redaction-egress seam | [Control IR § embed](reference/runtime/control-ir.md#embed) |
+| `embed` | Raw embedding primitive: batch texts → vectors (FP-0057 Phase 1). User-facing (compose with an external MCP vector-DB via pipeline) AND the shared logic internal RAG ops call; default-allow; PRE-embed redaction-egress seam | [Control IR § embed](reference/runtime/control-ir.md#embed) |
 | `index_query` | Vector similarity search over one indexed source |
-| `recall` | Macro: embed query → `index_query` per source → merge top-K |
+| `semantic_search` | Macro (FP-0057 Phase 2a; renamed from `recall` — clean-break, fixes the recall/search_actions/memory naming collision): per-source-model embed query → `index_query` per source → merge top-K. Multi-model correct: each source's model is auto-adopted from its own recorded index (never caller-supplied); cross-model scores are never directly compared | [Control IR § semantic_search](reference/runtime/control-ir.md#semantic_search) |
 | `index_drop` | Destructive source removal — requires approval |
+| `index_update` | Incremental/delta-reconcile ingestion into a source's index (FP-0057 Phase 2a): add/update/remove/skip against `content_hash`, source-model-bound, cost-warn surfacing; no full-rebuild mode | [Control IR § index_update](reference/runtime/control-ir.md#index_update) |
 | `compact` | Summarise / compact conversation history within budget |
 | `judge_output` | LLM scorer with rubric + threshold + `on_fail` policy |
 
-> `recall` still embeds its query provider-direct (unchanged); `index_write` remains removed — index-writing runs provider-direct inside `reyn.api.safe.embed_index` (`embed_and_index`, the CodeAct-only ingestion entry), which `embed` does not yet retire (FP-0057 Phase 2 replaces it with `index_update`). See [Control IR](reference/runtime/control-ir.md).
+> `semantic_search` still embeds its query provider-direct (unchanged; renamed from `recall`, FP-0057 Phase 2a); `index_write` remains removed — index-writing runs provider-direct inside `reyn.api.safe.embed_index` (`embed_and_index`, the CodeAct-only ingestion entry), which the new `index_update` op does not yet retire (that clean-break + wiring `index_update`/`semantic_search` into the internal domains — tool-use/memory/events — is FP-0057 Phase 2b). See [Control IR](reference/runtime/control-ir.md).
 
 ---
 
@@ -498,7 +500,8 @@ logic. Design: [content-threat scan proposal](deep-dives/proposals/0050-content-
 | Dimension table | Static lookup for OpenAI / Voyage / Cohere | [RAG concepts](concepts/data-retrieval/rag.md) |
 | SQLite index per source | `.reyn/index/<source>/index.db` with WAL mode | [RAG concepts](concepts/data-retrieval/rag.md) |
 | Chunk dedup | `content_hash` upsert prevents re-indexing | [RAG concepts](concepts/data-retrieval/rag.md) |
-| `recall` op | embed → `index_query` per source → merge top-K globally | [Control IR](reference/runtime/control-ir.md) |
+| `semantic_search` op | per-source-model embed → `index_query` per source → merge top-K globally (FP-0057 Phase 2a; renamed from `recall`) | [Control IR](reference/runtime/control-ir.md) |
+| `index_update` op | incremental/delta-reconcile ingestion (add/update/remove/skip), source-model-bound, cost-warn surfacing (FP-0057 Phase 2a) | [Control IR](reference/runtime/control-ir.md) |
 | Action embedding index | `ActionEmbeddingIndex` (class-swap detection, cross-process build lock) — backs the `search_actions` tool the chat LLM uses. FP-0057 Phase 0: a thin domain adapter over the same pluggable `IndexBackend` doc-RAG uses (unified cosine + advisory-lock + storage; was a separately-implemented SQLite-WAL index pre-consolidation) | [Universal catalog § search_actions](concepts/tools-integrations/universal-catalog.md#what-stays-out-of-phase-1) · [`reyn embeddings`](reference/cli/embeddings.md) |
 | Memory CRUD | `list` / `read` / `remember_shared` / `remember_agent` / `forget` | [Memory concepts](concepts/data-retrieval/memory.md) · [reyn memory CLI](reference/cli/memory.md) |
 

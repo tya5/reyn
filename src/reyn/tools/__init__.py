@@ -65,6 +65,7 @@ def get_default_registry() -> ToolRegistry:
         WRITE_FILE,
     )
     from reyn.tools.hooks import HOOKS_ADD
+    from reyn.tools.index_update import INDEX_UPDATE
     from reyn.tools.mcp import (
         CALL_MCP_TOOL,
         DESCRIBE_MCP_TOOL,
@@ -105,7 +106,6 @@ def get_default_registry() -> ToolRegistry:
         RUN_PIPELINE_INLINE_ASYNC,
     )
     from reyn.tools.present import PRESENT
-    from reyn.tools.recall import RECALL
     from reyn.tools.render_template import RENDER_TEMPLATE
     from reyn.tools.reyn_src import (
         REYN_SRC_GLOB,
@@ -114,6 +114,7 @@ def get_default_registry() -> ToolRegistry:
         REYN_SRC_READ,
     )
     from reyn.tools.sandboxed_exec import SANDBOXED_EXEC
+    from reyn.tools.semantic_search import SEMANTIC_SEARCH
     from reyn.tools.session_spawn import SESSION_SPAWN
     from reyn.tools.shell import SHELL
     from reyn.tools.skill_verbs import SKILL_INSTALL_LOCAL, SKILL_INSTALL_SOURCE
@@ -138,12 +139,15 @@ def get_default_registry() -> ToolRegistry:
     # file__read(path) (the refs are plain files under .reyn/tool-results/), and
     # its image guard is superseded by file__read's #365 media-blocks + #1449
     # binary guard. The cross-host resource_uri path was a never-implemented stub.
-    # RAG ops (ADR-0033 Phase 1)
-    registry.register(RECALL)
+    # RAG ops (ADR-0033 Phase 1; FP-0057 Phase 2a renamed recall -> semantic_search)
+    registry.register(SEMANTIC_SEARCH)
     registry.register(DROP_SOURCE)
     # FP-0057 Phase 1: raw embed primitive (user-facing; composes with an
     # external MCP vector-DB via pipeline — reyn hosts no user RAG store).
     registry.register(EMBED)
+    # FP-0057 Phase 2a: incremental/delta-reconcile ingestion (add/update/
+    # remove/skip) — the internal-RAG counterpart to embed's user-facing surface.
+    registry.register(INDEX_UPDATE)
     registry.register(COMPACT)
     # #2692 (part of the #2688 sweep): present + render_template invocation surface.
     # One registration each opens BOTH chat (build_tools + gates.router="allow") and

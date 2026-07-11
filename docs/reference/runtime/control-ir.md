@@ -35,8 +35,9 @@ Control IR is the list of side-effect operations the LLM may emit. The OS dispat
 | `pipeline_install` | Register a pipeline (local DSL file or git/URL source) into the project pipelines config | `file.write: [.reyn/config/pipelines.yaml]` in skill frontmatter; `http.get: [{host: <source_host>}]` when `source` is set |
 | `embed` | Raw embedding primitive: batch texts -> vectors (FP-0057 Phase 1; the user-facing primitive AND the shared logic later internal RAG ops call) | none (default-allow; embedding API cost) |
 | `index_query` | Semantic vector search over one indexed source | none |
-| `recall` | Macro: embed query (provider-direct) → index_query per source → merge top-K | none (embedding API cost) |
+| `semantic_search` | Macro (FP-0057 Phase 2a; renamed from `recall`): per-source-model embed query → index_query per source → merge top-K (multi-model correct) | none (embedding API cost) |
 | `index_drop` | Remove an indexed source entirely (destructive) | `permissions.index_drop: ask` in skill frontmatter |
+| `index_update` | Incremental/delta-reconcile ingestion into a source's index (add/update/remove/skip; FP-0057 Phase 2a) | none (default-allow; own-write; embedding API cost) |
 | `judge_output` | LLM scorer: rubric + threshold + `on_fail` policy | none (LLM cost) |
 | `compact` | Voluntarily compact the conversation history (advisory) | none (LLM cost; the mandatory `retry_loop` backstop is independent) |
 | `task.create` | Create a Task (`deps` for ordering; `link_type` `awaited`/`background` sets whether a sub-task gates the parent's completion — §2187; sub-task ownership is OS-derived from execution context — §16) | requester-gated (caller becomes requester) |
@@ -553,7 +554,8 @@ Handler lifecycle:
 > **provider-direct** inside `reyn.api.safe.embed_index.embed_and_index()` (a
 > safe-mode `python` step streams its own chunks into it — the bundled
 > `index_docs` / `index_events` chunkers were removed along with the stdlib
-> skills that wrapped them). `recall` still embeds its query provider-direct.
+> skills that wrapped them). `semantic_search` (FP-0057 Phase 2a; renamed
+> from `recall`) still embeds its query provider-direct, per-source-model.
 > The `EmbeddingProvider` and `SqliteIndexBackend` primitives are unchanged.
 > The `embed` op, however, is **no longer removed**: FP-0057 Phase 1 re-added
 > it as the user-facing raw embedding primitive (see the [`embed`](#embed)
@@ -759,13 +761,13 @@ Fields:
 
 Returns: `{"kind": "index_query", "source": str, "results": [{"text": str, "score": float, "metadata": dict}]}`.
 
-## `recall`
+## `semantic_search`
 
-Macro op: embed a query → call `index_query` per source → merge and return top-K results globally. The preferred high-level op for RAG retrieval.
+Macro op: embed a query → call `index_query` per source → merge and return top-K results globally. The preferred high-level op for RAG retrieval. **FP-0057 Phase 2a: renamed from `recall`** (clean break — fixes the observed `recall`/`search_actions`/`memory` naming collision; no compat alias).
 
 ```json
 {
-  "kind": "recall",
+  "kind": "semantic_search",
   "query": "How does crash recovery work?",
   "sources": ["project_docs", "api_reference"],
   "top_k": 5,
@@ -777,13 +779,15 @@ Fields:
 
 - `query` (str, required) — natural-language query to embed and search.
 - `sources` (list[str], required) — logical source names to search. Must not be empty.
-- `top_k` (int, default `5`) — number of results returned after global merge.
+- `top_k` (int, default `5`) — number of results returned after the merge/combine step (see below).
 - `filters` (dict[str, str], optional) — forwarded to each `index_query` sub-op.
-- `embedding_model` (str, default `"standard"`) — model class forwarded to the `embed` sub-op.
+- `embedding_model` (str, default `"standard"`) — fallback model class used ONLY when a source has no recorded model yet (an empty/unindexed source). An already-indexed source's OWN recorded model always wins.
 
-Returns: `{"kind": "recall", "results": [{"text": str, "score": float, "source": str, "metadata": dict}]}`.
+**Multi-model correctness (co-vet #1, load-bearing):** each source's embedding model is **auto-adopted** from its recorded index (`SourceManifest.embedding_model`, falling back to the SQLite backend's `stat().embedding_model`) — never caller-supplied per source. Sources are grouped by DISTINCT resolved model; the query is embedded **once per distinct model** (not once total, not once per source), and each source is queried with its matching model's vector. Cosine scores from different embedding spaces are not commensurable, so the merge is two-tiered: **within** a model group, chunks are merged and sorted by score (safe, same space — this is byte-identical to the pre-rename single-model `recall` behaviour when all sources share one model); **across** groups, each group's already-ranked top-K is combined via an order-preserving round-robin interleave (group order = first appearance in `sources`), capped at `top_k` — raw score magnitudes are never compared across groups.
 
-Events: `recall_embed_failed` if the embed sub-op fails (query, error).
+Returns: `{"kind": "semantic_search", "chunks": [{"text": str, "score": float, "metadata": dict}], "mode": "semantic" | "fallback" | "mixed"}`.
+
+Events: `semantic_search_embed_failed` if a model group's embed call fails (query, model, error).
 
 ## `index_drop`
 
@@ -803,6 +807,43 @@ Fields:
 Returns: `{"kind": "index_drop", "source": str, "chunks_dropped": int}`.
 
 Events: `index_dropped` (`source`, `chunks_dropped`).
+
+## `index_update`
+
+Incremental / delta-reconcile ingestion into a source's `IndexBackend` (FP-0057 Phase 2a). **NO full-rebuild mode** — a from-scratch rebuild is `index_drop` → `index_update` on the now-empty source. The caller (a chunker) supplies pre-chunked `chunks`; each chunk carries `content_hash` + `source_path` in its `metadata`. Reconciled against the source's current index, content-addressed by `content_hash` within each `source_path`:
+
+- **add** — new `content_hash`, new `source_path` → embed (via the `embed` op — same primitive, no duplicated embed logic) + insert.
+- **update** — new `content_hash`, `source_path` already indexed (content changed) → embed + insert; the path's stale hash(es) are removed in the same pass.
+- **remove** — an indexed hash whose `source_path` IS among this call's chunks but whose hash is NOT → deleted. Scoped to the `source_path`s THIS call supplies chunks for — a path never mentioned is left untouched (a partial re-ingest of a few files never mass-deletes the rest of the source).
+- **skip** — `content_hash` already indexed → no-op (no re-embed).
+
+```json
+{
+  "kind": "index_update",
+  "source": "project_docs",
+  "chunks": [
+    {"text": "...", "metadata": {"content_hash": "abc123", "source_path": "docs/a.md"}}
+  ],
+  "embedding_model": "standard"
+}
+```
+
+Fields:
+
+- `source` (str, required) — logical source name to ingest into.
+- `chunks` (list[dict], default `[]`) — chunks to reconcile; each `{text, metadata}` with `metadata.content_hash` / `metadata.source_path` required.
+- `embedding_model` (str, default `"standard"`) — used ONLY when this source has no recorded model yet (first `index_update` for a new source) — an already-indexed source's recorded model always wins (a source is one embedding space).
+- `description` / `path` (str, optional) — `SourceManifest` fields, set on first index or override.
+
+**Source-model-bound**: the source's embedding model is recorded on first ingestion and reused on every subsequent `index_update` call for that source.
+
+**Cost surfacing**: `EmbeddingProvider.estimate_tokens` is consulted on the to-embed batch (post pre-embed dedup skip) and compared against `embedding.cost_warn_threshold` (`reyn.yaml`). Exceeding it does not block the op — it emits an `index_update_cost_warning` audit-event and the returned envelope carries a `cost_warning` field, so a large ingestion surfaces its cost instead of embedding silently.
+
+Returns: `{"kind": "index_update", "source": str, "added": int, "updated": int, "removed": int, "skipped": int, "chunk_count": int, "embedding_model": str, "cost_warning": dict | null}`.
+
+Events: `index_update_cost_warning` (`source`, `chunk_count`, `estimated_tokens`, `threshold`) when the to-embed batch exceeds the configured threshold; `index_updated` (`source`, `added`, `updated`, `removed`, `skipped`) on completion.
+
+Default-**ALLOW** (own-write op — writes only to the source's OWN index + manifest, not a destructive cross-cutting op like `index_drop`); individually name-gateable via `contextual_gate`.
 
 ## `judge_output`
 

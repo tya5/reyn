@@ -423,7 +423,7 @@ _INVOKE_ACTION_DESCRIPTION = (
     "WHAT: Execute an action by qualified name (<category>__<entry>). "
     "Executes the action's default semantic operation. "
     "WHEN: Call this whenever you intend to run any action — MCP tool, "
-    "file operation, web search, memory write, recall, etc. All catalog actions "
+    "file operation, web search, memory write, semantic search, etc. All catalog actions "
     "are invoked through this single entry point. "
     "WHEN NOT: For chitchat or self-questions, reply without tools. "
     "PREFERRED OVER: Legacy per-kind tools (call_mcp_tool, etc.) — "
@@ -746,7 +746,7 @@ def _enumerate_category(category: str, ctx: ToolContext) -> list[dict[str, str]]
         # entries (D19 resource invoke, ``universal_dispatch._RESOURCE_
         # RULES["pipeline"]`` curries ``name`` and forwards ``input`` to
         # ``run_pipeline`` — same pattern as ``rag_corpus__<name>`` currying
-        # ``sources`` into ``recall``). None registry (narrow test hosts / a
+        # ``sources`` into ``semantic_search``). None registry (narrow test hosts / a
         # host that doesn't support run_pipeline) → static verbs only.
         items = list(_enumerate_static_category("pipeline"))
         pipeline_registry = getattr(rs, "pipeline_registry", None) if rs is not None else None
@@ -1335,7 +1335,7 @@ def _resource_input_schema(
       - ``agent.peer__<name>`` — ``delegate_to_agent`` parameters minus ``to``.
       - ``mcp.server__<name>`` — empty object (``list_mcp_tools`` takes
         only the curried ``server`` arg).
-      - ``rag_corpus__<name>`` — ``recall`` parameters minus ``sources``.
+      - ``rag_corpus__<name>`` — ``semantic_search`` parameters minus ``sources``.
       - ``mcp__<server>__<tool>`` — scans ``ctx.router_state.mcp_servers``
         for the tool's declared ``inputSchema`` (#1647 per-tool action; static
         mcp verbs fall through to the verb's parameters).
@@ -1355,7 +1355,7 @@ def _resource_input_schema(
         return None
 
     if category == "rag_corpus":
-        tool = registry.lookup("recall")
+        tool = registry.lookup("semantic_search")
         if tool is None:
             return None
         return _drop_field_from_schema(tool.parameters, "sources")
@@ -1418,7 +1418,7 @@ def _resource_description(
 
     Falls through to ``target.description`` (= caller default) for:
       - ``rag_corpus__<name>`` — no per-corpus description metadata
-        surface today; caller falls back to the ``recall`` tool
+        surface today; caller falls back to the ``semantic_search`` tool
         description (= acceptable generic context for LLM narration).
       - ``memory_entry__<name>`` — memory entries don't carry description
         fields; caller falls back to ``read_memory_body`` description.

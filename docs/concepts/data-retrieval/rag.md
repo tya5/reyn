@@ -8,11 +8,11 @@ audience: [human, agent]
 
 reyn ships a RAG **framework foundation** — five primitive ops, an extensible `IndexBackend` protocol, an `EmbeddingProvider` protocol, and a safe-mode `embed_and_index()` entry point — that lets you index any document corpus and have the LLM retrieve relevant chunks at query time, without ever overloading the context window with the full corpus.
 
-**The differentiation: retrieval is a built-in tool, not a library call.** LangChain and LlamaIndex give you a Python pipeline you call from your own driver code. reyn's `recall` and `drop_source` are built-in tools the LLM itself calls during a normal `reyn chat` session — no orchestration code required on the search side.
+**The differentiation: retrieval is a built-in tool, not a library call.** LangChain and LlamaIndex give you a Python pipeline you call from your own driver code. reyn's `semantic_search` and `drop_source` are built-in tools the LLM itself calls during a normal `reyn chat` session — no orchestration code required on the search side.
 
 **Phase 1 scope (= 1.0 release).** The framework foundation, the SQLite default backend (≤100K chunks, sub-second query), and the LiteLLM embedding passthrough ship in 1.0. Vector store plugin variety (Qdrant / FAISS / Weaviate / Pinecone), advanced retrieval (rerank / HyDE / contextual retrieval), RAG eval frameworks, and IDE integration are post-1.0 (= phase 2) territory — see [../architecture/care-boundary.md](../architecture/care-boundary.md). If you need that ecosystem today, LangChain / LlamaIndex are the better fit.
 
-**TL;DR:** Search is automatic — the LLM calls the built-in `recall` tool whenever it needs information from an indexed source. Creating a source requires a short safe-mode Python step that reads your files and calls `embed_and_index()` (there is no bundled one-command indexing skill).
+**TL;DR:** Search is automatic — the LLM calls the built-in `semantic_search` tool whenever it needs information from an indexed source. Creating a source requires a short safe-mode Python step that reads your files and calls `embed_and_index()` (there is no bundled one-command indexing skill).
 
 ## Quick start
 
@@ -51,12 +51,12 @@ reyn chat
 > Summarise the authentication design from the docs
 ```
 
-Verified end-to-end with real `gemini-embedding-001` via the LiteLLM proxy: 21 EN concept docs → 418 chunks indexed (~$0.001), and natural concept queries ("What is X in Reyn?", "Explain Reyn's permission model") returned the indexed semantic answers in 3/3 chat runs (= batch 22, 2026-05-10). See `docs/deep-dives/journal/dogfood/2026-05-10-batch-22-affordance-bias-fix/findings.md`. (That run predates the `embed_and_index()` entry point and used the since-removed `index_docs` skill — the underlying embed/index/recall mechanics are unchanged.)
+Verified end-to-end with real `gemini-embedding-001` via the LiteLLM proxy: 21 EN concept docs → 418 chunks indexed (~$0.001), and natural concept queries ("What is X in Reyn?", "Explain Reyn's permission model") returned the indexed semantic answers in 3/3 chat runs (= batch 22, 2026-05-10). See `docs/deep-dives/journal/dogfood/2026-05-10-batch-22-affordance-bias-fix/findings.md`. (That run predates the `embed_and_index()` entry point and used the since-removed `index_docs` skill — the underlying embed/index/search mechanics are unchanged; `recall` was renamed `semantic_search` in FP-0057 Phase 2a.)
 
-Behind the scenes the LLM calls `recall` and retrieves the top matching chunks:
+Behind the scenes the LLM calls `semantic_search` and retrieves the top matching chunks:
 
 ```
-LLM internally calls: recall(query="authentication design", sources=["my_docs"], top_k=5)
+LLM internally calls: semantic_search(query="authentication design", sources=["my_docs"], top_k=5)
 ```
 
 The same script pattern indexes any file glob — user notes, source code, or JSONL logs — just point `file.glob()` at a different path and pick a `source` name.
@@ -67,14 +67,14 @@ A **source** is a named collection of chunks from a set of files. You give it:
 
 | Field | Example | Purpose |
 |-------|---------|---------|
-| `source` | `my_docs` | Logical name used in `recall` calls and `reyn source` commands |
+| `source` | `my_docs` | Logical name used in `semantic_search` calls and `reyn source` commands |
 | `path` | `docs/**/*.md` | Single glob pattern — all matching files are indexed together |
 | `description` | `"Project documentation"` | Required. Helps the LLM decide when to search this source |
 
 One indexing run covers one source, one path, one chunking approach. To index multiple file types with different chunking, run the indexing script once per source and then combine them at query time using `sources=[...]`:
 
 ```
-recall(query="...", sources=["python_src", "my_docs", "memory"], top_k=5)
+semantic_search(query="...", sources=["python_src", "my_docs", "memory"], top_k=5)
 ```
 
 Source metadata is persisted in `.reyn/index/sources.yaml`. Once indexed, a source appears automatically in the LLM's context on every chat turn:
@@ -86,20 +86,20 @@ Source metadata is persisted in `.reyn/index/sources.yaml`. Once indexed, a sour
 - **reyn_code** — Reyn Python framework code (1247 chunks)
 - **my_docs** — Project documentation (89 chunks)
 
-Use the `recall` tool with `sources=[<name>, ...]` to search.
+Use the `semantic_search` tool with `sources=[<name>, ...]` to search.
 ```
 
-## The `recall` tool
+## The `semantic_search` tool
 
-`recall` is a built-in tool available to the LLM in every chat session. It takes a natural-language query, searches the requested sources, and returns the top-K matching chunks:
+`semantic_search` is a built-in tool available to the LLM in every chat session (FP-0057 Phase 2a; renamed from `recall` — clean-break, fixes the observed recall/search_actions/memory naming collision). It takes a natural-language query, searches the requested sources, and returns the top-K matching chunks:
 
 ```
-recall(query="plan-mode discussion", sources=["memory"], top_k=5)
+semantic_search(query="plan-mode discussion", sources=["memory"], top_k=5)
 ```
 
 The LLM picks which sources to search based on the source descriptions you provided at index time. You do not need to configure which sources a workflow may use — any indexed source is accessible.
 
-Internally, `recall` embeds the query using the same model used for indexing, runs a cosine-similarity search against each source's SQLite index, and merges results ranked by similarity score. The entire operation is deterministic; the LLM sees only the top-K chunks as text, never the raw vectors.
+Internally, `semantic_search` embeds the query using the same model used for indexing (once per DISTINCT model when sources span more than one — never a caller-supplied model per source), runs a cosine-similarity search against each source's SQLite index, and merges results ranked by similarity score. The entire operation is deterministic; the LLM sees only the top-K chunks as text, never the raw vectors.
 
 A second built-in tool, `drop_source`, lets the LLM drop an index on your behalf — useful when iterating on a chunking strategy:
 
@@ -189,7 +189,7 @@ For chat-side action retrieval specifically (= `search_actions`), see [Guide: en
 **Included in Phase 1 (1.0 release):**
 
 - `embed_and_index()` safe-mode entry point for indexing (`reyn.api.safe.embed_index`)
-- `recall` tool available to the LLM in every chat session
+- `semantic_search` tool available to the LLM in every chat session
 - `drop_source` tool for cleanup
 - SQLite vector store backend
 - `reyn source list / describe / rm` CLI
@@ -197,7 +197,7 @@ For chat-side action retrieval specifically (= `search_actions`), see [Guide: en
 
 **Deferred to Phase 1.5 (1.1+):**
 
-- Memory layer migration from inline expansion to `recall(sources=["memory"])`. Memory continues to work as-is in 1.0.
+- Memory layer migration from inline expansion to `semantic_search(sources=["memory"])`. Memory continues to work as-is in 1.0.
 
 **Landed post-1.0:**
 
@@ -215,14 +215,14 @@ For chat-side action retrieval specifically (= `search_actions`), see [Guide: en
 
 - **100K chunks recommended maximum** per source for Phase 1 SQLite backend. Larger corpora will work but query latency increases.
 - **No incremental indexing.** `embed_and_index`'s `mode="append"` default skips chunks whose `content_hash` is already indexed but does not detect deleted/changed source files; pass `mode="replace"` to rebuild a source from scratch when files change.
-- **Memory layer is unchanged in Phase 1.** Session memory still uses inline system-prompt expansion. The `recall` tool and memory are independent systems in this release.
+- **Memory layer is unchanged in Phase 1.** Session memory still uses inline system-prompt expansion. The `semantic_search` tool and memory are independent systems in this release.
 - **No advanced retrieval.** Phase 1 uses cosine similarity only — no reranking, HyDE, or contextual retrieval.
 - **Sensitive data.** reyn does not redact sensitive content before indexing. Do not index secrets, credentials, or PII unless you understand the implications. A redaction policy is planned for Phase 2.
-- **Embedding requires either an API key OR local-embed extras.** OpenAI-backed classes (`light` / `standard` / `strong`) need `OPENAI_API_KEY`; local classes (`local-mini` / `local-e5`) need `pip install 'reyn[local-embed]'` and a one-time model download. See [§Embedding configuration](#embedding-configuration). A fully credential-free, zero-extras `recall` path is not yet available.
+- **Embedding requires either an API key OR local-embed extras.** OpenAI-backed classes (`light` / `standard` / `strong`) need `OPENAI_API_KEY`; local classes (`local-mini` / `local-e5`) need `pip install 'reyn[local-embed]'` and a one-time model download. See [§Embedding configuration](#embedding-configuration). A fully credential-free, zero-extras `semantic_search` path is not yet available.
 
-## Operational Intelligence — `recall` on events
+## Operational Intelligence — `semantic_search` on events
 
-The same `recall` op works on Reyn's own P6 execution event log once it has been indexed into a source (conventionally named `"events"`) using the same `embed_and_index()` pattern as any other corpus. See [Concepts: Operational Intelligence](operational-intelligence.md) for the chunk-metadata shape, example queries, and the current state of that indexing path.
+The same `semantic_search` op works on Reyn's own P6 execution event log once it has been indexed into a source (conventionally named `"events"`) using the same `embed_and_index()` pattern as any other corpus. See [Concepts: Operational Intelligence](operational-intelligence.md) for the chunk-metadata shape, example queries, and the current state of that indexing path.
 
 ## See also
 

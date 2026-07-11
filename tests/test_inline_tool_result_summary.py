@@ -177,21 +177,22 @@ def test_memory_forget_shows_forgot_slug() -> None:
 
 
 def test_recall_success_shows_chunk_count() -> None:
-    """Tier 2: rag_operation__recall success ({chunks, mode}) shows 'N chunks'.
+    """Tier 2: rag_operation__semantic_search success ({chunks, mode}) shows 'N chunks'.
 
-    recall returns {"chunks": [...], "mode": "recall"} with no op/status/matches/
-    entries key, so without this branch the raw dict repr leaked into the ⎿ row.
+    semantic_search (FP-0057 Phase 2a; renamed from recall) returns
+    {"chunks": [...], "mode": "semantic"} with no op/status/matches/entries
+    key, so without this branch the raw dict repr leaked into the ⎿ row.
     """
     assert summarize_tool_result(
-        "rag_operation__recall",
-        {"chunks": [{"text": "a"}, {"text": "b"}, {"text": "c"}], "mode": "recall"},
+        "rag_operation__semantic_search",
+        {"chunks": [{"text": "a"}, {"text": "b"}, {"text": "c"}], "mode": "semantic"},
     ) == "3 chunks"
     assert summarize_tool_result(
-        "rag_operation__recall",
-        {"chunks": [{"text": "only"}], "mode": "recall"},
+        "rag_operation__semantic_search",
+        {"chunks": [{"text": "only"}], "mode": "semantic"},
     ) == "1 chunk"
     assert summarize_tool_result(
-        "rag_operation__recall",
+        "rag_operation__semantic_search",
         {"chunks": [], "mode": "fallback"},
     ) == "0 chunks"
 
@@ -199,22 +200,22 @@ def test_recall_success_shows_chunk_count() -> None:
 def test_error_message_field_shown_not_raw_dict() -> None:
     """Tier 2: dicts with 'error_message' (no 'error' key) show '✗ <message>'.
 
-    recall validation errors return {"ok": False, "error_kind": ..., "error_message": ...}
+    semantic_search validation errors return {"ok": False, "error_kind": ..., "error_message": ...}
     and task_ops returns the same shape for invalid-args/no-context errors.
     Without the error_message fallback both fell through to raw dict repr.
     The '✗' prefix ensures the ⎿ row renders in red (tool_call_completed + ✗ → _CC_ERR).
     """
     out = summarize_tool_result(
-        "rag_operation__recall",
+        "rag_operation__semantic_search",
         {
             "ok": False,
             "error_kind": "missing_required_arg",
-            "error_message": "recall requires ['query']. Available sources are listed …",
+            "error_message": "semantic_search requires ['query']. Available sources are listed …",
             "missing": ["query"],
         },
     )
     assert out.startswith("✗"), "error_message result must carry '✗' failure prefix"
-    assert "recall requires" in out
+    assert "semantic_search requires" in out
     assert "{" not in out, "raw dict repr must not leak"
     assert "ok" not in out.lower() or "False" not in out, "must not dump raw repr"
 

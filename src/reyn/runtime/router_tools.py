@@ -567,10 +567,11 @@ def build_tools(
 
     # ── H. RAG tools (always present when registered) ────────────────────────
     #
-    # `recall` performs semantic search over indexed sources; `drop_source`
-    # removes an indexed source (permission-gated at the op level via the
-    # index_drop permission resolver gate).  Both are gated only by registry
-    # gates (= gates.router="allow"); no operator config is required to expose
+    # `semantic_search` (FP-0057 Phase 2a; renamed from `recall`) performs
+    # semantic search over indexed sources; `drop_source` removes an indexed
+    # source (permission-gated at the op level via the index_drop permission
+    # resolver gate).  Both are gated only by registry gates (=
+    # gates.router="allow"); no operator config is required to expose
     # them — they appear unconditionally when the registry contains them.
     #
     # ADR-0033 Phase 1: wired here after the reyn_src cluster (F) and before
@@ -580,15 +581,15 @@ def build_tools(
     # B17-S6-1 / B17-S8-2 fix: these were registered in ToolRegistry but
     # missing from build_tools(), so the LLM could not see or call them.
 
-    # ── H1: recall ───────────────────────────────────────────────────────────
-    _recall_def = _registry.lookup("recall")
-    if _recall_def is not None and _recall_def.gates.router == "allow":
-        _recall_rendered = _recall_def.render_for_router()
+    # ── H1: semantic_search ────────────────────────────────────────────────
+    _semantic_search_def = _registry.lookup("semantic_search")
+    if _semantic_search_def is not None and _semantic_search_def.gates.router == "allow":
+        _semantic_search_rendered = _semantic_search_def.render_for_router()
         specs.append(ToolSpec(
-            name=_recall_rendered["function"]["name"],
-            description=_recall_rendered["function"]["description"],
-            parameters=_recall_rendered["function"]["parameters"],
-            dispatch_kind=_recall_def.dispatch_kind,
+            name=_semantic_search_rendered["function"]["name"],
+            description=_semantic_search_rendered["function"]["description"],
+            parameters=_semantic_search_rendered["function"]["parameters"],
+            dispatch_kind=_semantic_search_def.dispatch_kind,
         ))
 
     # ── H2: drop_source ──────────────────────────────────────────────────────
@@ -620,7 +621,7 @@ def build_tools(
         ))
 
     # ── #2692: present + render_template (presentation surface) ─────────────────
-    # part of the #2688 sweep. Unconditional (like recall/drop_source §H): present
+    # part of the #2688 sweep. Unconditional (like semantic_search/drop_source §H): present
     # has no natural window-fill visibility gate — the agent may want to display
     # bulk data on any turn, and read-authority is enforced at op-exec (data_ref ==
     # file.read), not by catalog exclusion (the web_fetch posture). Registering one
@@ -911,7 +912,7 @@ def build_tools(
             "call_mcp_tool", "describe_mcp_tool",
             "list_memory", "read_memory_body",
             "remember_shared", "remember_agent", "forget_memory",
-            "recall", "drop_source",
+            "semantic_search", "drop_source",
             "read_file", "write_file", "delete_file", "list_directory",
             "web_search", "web_fetch",
             "reyn_src_list", "reyn_src_read",

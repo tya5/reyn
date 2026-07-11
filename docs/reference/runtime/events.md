@@ -48,8 +48,10 @@ Each Control IR op kind emits its own event:
 | `mcp_install_cancelled`, `mcp_prompt_get_cancelled`, `mcp_resource_read_cancelled`, `mcp_resource_subscribe_cancelled`, `mcp_resource_unsubscribe_cancelled` | #2813 — a Ctrl-C `cancel_event` interrupted the corresponding op (install probe / get-prompt / read-resource / subscribe / unsubscribe) before it completed; the op returns `status:"cancelled"` and nothing is committed |
 | `web_search_started`, `web_search_completed`, `web_search_failed` | web_search ops — `started`: `query`, `backend`; `completed`: adds `result_count`; `failed`: adds `error` |
 | `web_fetch_started`, `web_fetch_completed`, `web_fetch_failed` | web_fetch ops — `started`: `url`; `completed`: `url`, `status_code`, `content_length`, `extractor`; `failed`: `url`, `status` (`"timeout"` or `"error"`), `error` |
-| `recall_embed_failed` | `recall` op — emitted when the embed sub-op fails; `query`, `error` |
+| `semantic_search_embed_failed` | `semantic_search` op (FP-0057 Phase 2a; renamed from `recall_embed_failed`) — emitted when a model group's embed call fails; `query`, `model`, `error` |
 | `index_dropped` | `index_drop` op — `source`, `chunks_dropped: int` |
+| `index_update_cost_warning` | `index_update` op (FP-0057 Phase 2a) — the to-embed batch exceeds `embedding.cost_warn_threshold`; `source`, `chunk_count`, `estimated_tokens`, `threshold` |
+| `index_updated` | `index_update` op — `source`, `added: int`, `updated: int`, `removed: int`, `skipped: int` |
 | `control_ir_skipped`, `control_ir_failed` | dispatch failures (`control_ir_skipped` reasons include `handler_not_implemented`) |
 | `permission_denied` | When an op is denied by the resolver |
 

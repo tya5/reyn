@@ -271,6 +271,72 @@ class SqliteIndexBackend:
         return {r[0] for r in rows if r[0]}
 
     # ------------------------------------------------------------------
+    # existing_hashes_by_path (FP-0057 Phase 2a — index_update reconcile key)
+    # ------------------------------------------------------------------
+
+    async def existing_hashes_by_path(self, source: str) -> dict[str, set[str]]:
+        """Content hashes already indexed for *source*, grouped by
+        ``source_path``. Returns ``{}`` when the source DB is absent."""
+        db_file = _db_path(self._root, source)
+        if not db_file.exists():
+            return {}
+        conn = sqlite3.connect(str(db_file), check_same_thread=False)
+        conn.execute("PRAGMA journal_mode=WAL")
+        try:
+            rows = conn.execute(
+                "SELECT source_path, content_hash FROM chunks"
+            ).fetchall()
+        finally:
+            conn.close()
+        result: dict[str, set[str]] = {}
+        for source_path, content_hash in rows:
+            if not content_hash:
+                continue
+            result.setdefault(source_path, set()).add(content_hash)
+        return result
+
+    # ------------------------------------------------------------------
+    # delete (FP-0057 Phase 2a — index_update remove-reconciliation)
+    # ------------------------------------------------------------------
+
+    async def delete(self, source: str, content_hashes: Iterable[str]) -> int:
+        """Delete rows by ``content_hash`` for *source*. Returns the count of
+        rows actually deleted. No-op (returns 0) when the source DB is
+        absent or ``content_hashes`` is empty."""
+        hashes = list(content_hashes)
+        if not hashes:
+            return 0
+        db_file = _db_path(self._root, source)
+        if not db_file.exists():
+            return 0
+        # #1199 S3.4 Part1: same sandbox write-path gate as `write` — delete
+        # is a write, not a read.
+        if self._sandbox_write_paths is not None and not _within_paths(
+            db_file, self._sandbox_write_paths
+        ):
+            raise PermissionError(
+                f"index delete on {str(db_file)!r} denied by the active sandbox "
+                f"policy (path outside write_paths={self._sandbox_write_paths!r})."
+            )
+        conn = _open_db(db_file)
+        deleted = 0
+        try:
+            with conn:
+                placeholders = ",".join("?" for _ in hashes)
+                cur = conn.execute(
+                    f"DELETE FROM chunks WHERE content_hash IN ({placeholders})",
+                    hashes,
+                )
+                deleted = cur.rowcount if cur.rowcount and cur.rowcount > 0 else 0
+                conn.execute(
+                    "INSERT OR REPLACE INTO meta (key, value) VALUES ('last_indexed', ?)",
+                    (_now_iso(),),
+                )
+        finally:
+            conn.close()
+        return deleted
+
+    # ------------------------------------------------------------------
     # query
     # ------------------------------------------------------------------
 

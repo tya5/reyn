@@ -102,14 +102,14 @@ def test_degraded_reason_none_for_error_classified_result() -> None:
 def test_degraded_reason_none_for_data_empty_attachment() -> None:
     """Tier 1: a ``data: []`` structured attachment is an EXPLICIT empty the LLM sees → attachments is
     non-empty → does NOT fire. There is deliberately NO 'trivial attachment' check. Verified through the
-    real ``web_search`` (empty results) and ``recall`` (empty chunks) mappers."""
+    real ``web_search`` (empty results) and ``semantic_search`` (empty chunks) mappers."""
     ws = web_search_to_canonical({"kind": "web_search", "status": "ok", "results": []})
     assert ws["text"] == "" and ws["attachments"] == [{"kind": "structured", "data": []}]
     assert canonical_degraded_reason({"kind": "web_search", "status": "ok", "results": []}, ws) is None
 
-    chunks = chunks_to_canonical({"kind": "recall", "chunks": []})
+    chunks = chunks_to_canonical({"kind": "semantic_search", "chunks": []})
     assert chunks["attachments"] == [{"kind": "structured", "data": []}]
-    assert canonical_degraded_reason({"kind": "recall", "chunks": []}, chunks) is None
+    assert canonical_degraded_reason({"kind": "semantic_search", "chunks": []}, chunks) is None
 
 
 def test_degraded_reason_none_for_legit_empty_now_explicit_mappers() -> None:

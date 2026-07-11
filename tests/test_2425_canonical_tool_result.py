@@ -84,8 +84,9 @@ def test_sandboxed_exec_stdout_is_text_nonzero_returncode_is_signal():
 
 
 def test_recall_and_index_query_chunks_become_structured():
-    """Tier 1: recall / index_query → the ``chunks`` list is a structured attachment (no text)."""
-    for kind in ("recall", "index_query"):
+    """Tier 1: semantic_search (FP-0057 Phase 2a; renamed from recall) / index_query →
+    the ``chunks`` list is a structured attachment (no text)."""
+    for kind in ("semantic_search", "index_query"):
         c = to_canonical({"kind": kind, "chunks": [{"id": 1}], "mode": "semantic"}, source=kind)
         assert c["text"] == ""
         assert c["attachments"] == [{"kind": "structured", "data": [{"id": 1}]}]

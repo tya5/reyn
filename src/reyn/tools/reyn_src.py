@@ -77,7 +77,7 @@ _REYN_SRC_READ_DESCRIPTION = (
     "user named (e.g. README.md), or (b) navigating "
     "Reyn's source / docs when NO indexed source covers the topic. "
     "If an indexed source description mentions concepts / design / "
-    "docs / Reyn, use `recall` instead — guessing a file path is "
+    "docs / Reyn, use `semantic_search` instead — guessing a file path is "
     "unreliable; semantic search over indexed chunks is not. Fallback "
     "entry point: reyn_src_read(\"README.md\") for the overview + "
     "curated map of deep-dive paths."

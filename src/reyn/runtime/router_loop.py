@@ -1045,8 +1045,8 @@ def _resource_alias_metadata(
       - ``mcp.server__<name>`` (step 1) — accepts ``{}``; rule curries
         ``server=<name>``. The action IS "list this server's tools".
       - ``rag_corpus__<name>`` (step 1) — accepts ``{query, top_k?, ...}``;
-        rule curries ``sources=[<name>]``. Source: ``recall`` parameters
-        minus ``sources``.
+        rule curries ``sources=[<name>]``. Source: ``semantic_search``
+        parameters minus ``sources``.
       - ``mcp.tool__<server>.<tool>`` (step 3) — caller supplies
         ``mcp_tool_lookup`` keyed by qualified name with ``{description?,
         input_schema?}`` from the MCP server's declared tool schema.
@@ -1080,13 +1080,13 @@ def _resource_alias_metadata(
         return description, params
 
     if category == "rag_corpus":
-        tool = registry.lookup("recall")
+        tool = registry.lookup("semantic_search")
         if tool is None:
             return None
         params = _drop_required_field(dict(tool.parameters), "sources")
         first_line = tool.description.splitlines()[0] if tool.description else ""
         description = (
-            f"Recall (semantic search) against indexed source {entry_name!r}. "
+            f"Semantic search against indexed source {entry_name!r}. "
             f"Single-source variant of: {first_line}"
         )
         return description, params
