@@ -1099,8 +1099,12 @@ class Session:
                     event_sink=_embedding_event_sink,
                 )
                 self._embedding_model_class = self._action_retrieval.embedding_class
+                # FP-0057 Phase 0: unified onto IndexBackend's cache
+                # convention (.reyn/cache/index/<source>/); the old
+                # .reyn/cache/action_index/ path is no longer read or
+                # written (clean-break — cache is regenerable).
                 self._action_embedding_index = ActionEmbeddingIndex(
-                    persist_dir=Path(".reyn") / "cache" / "action_index",
+                    workspace_root=Path.cwd(),
                 )
             except Exception:
                 # If provider construction fails for any reason (= missing

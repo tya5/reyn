@@ -33,6 +33,8 @@ from pathlib import Path
 from typing import Any
 
 from reyn.config import load_config
+from reyn.data.index.backend import cache_dir_for_source
+from reyn.tools.action_index import DEFAULT_ACTION_SOURCE
 
 # ── data shape ────────────────────────────────────────────────────────────────
 
@@ -56,11 +58,15 @@ class ClassRow:
 def _resolve_action_index_dir(project_root: Path) -> Path:
     """Return the directory the action index SQLite lives in.
 
-    Mirrors the convention RouterLoop uses: ``<project>/.reyn/cache/action_index/``.
-    The presence of the directory is the source of truth for "has been
-    built at least once"; the absence is a clean state.
+    FP-0057 Phase 0: the action index now rides the unified ``IndexBackend``
+    cache convention (``<project>/.reyn/cache/index/<source>/``, shared
+    with doc-RAG sources) instead of the old private
+    ``.reyn/cache/action_index/`` — clean-break, no migration; the old
+    directory is simply no longer read or written. The presence of the
+    directory is the source of truth for "has been built at least once";
+    the absence is a clean state.
     """
-    return project_root / ".reyn" / "cache" / "action_index"
+    return cache_dir_for_source(project_root, DEFAULT_ACTION_SOURCE)
 
 
 def _resolve_st_cache_dir() -> Path:
@@ -107,10 +113,11 @@ def _dir_size_mb(path: Path) -> float:
 def _read_index_state(index_dir: Path) -> tuple[int, str]:
     """Return ``(indexed_actions, last_built_iso)`` from the SQLite cache.
 
-    ``indexed_actions`` is the row count of the ``vectors`` table;
-    ``last_built_iso`` is the file mtime of ``index.db`` formatted as
-    an ISO 8601 string. Both default to (0, "(never)") when the file
-    is absent or unreadable.
+    ``indexed_actions`` is the row count of the unified backend's
+    ``chunks`` table (FP-0057 Phase 0: was a private ``vectors`` table
+    pre-consolidation); ``last_built_iso`` is the file mtime of
+    ``index.db`` formatted as an ISO 8601 string. Both default to
+    (0, "(never)") when the file is absent or unreadable.
     """
     db_path = index_dir / "index.db"
     if not db_path.exists():
@@ -119,7 +126,7 @@ def _read_index_state(index_dir: Path) -> tuple[int, str]:
         con = sqlite3.connect(str(db_path))
         try:
             row = con.execute(
-                "SELECT COUNT(*) FROM vectors"
+                "SELECT COUNT(*) FROM chunks"
             ).fetchone()
             n = int(row[0]) if row else 0
         finally:
@@ -149,11 +156,14 @@ def _collect_status_rows(project_root: Path) -> list[ClassRow]:
     """Build one ``ClassRow`` per configured embedding class.
 
     The on-disk index state (= ``indexed_actions`` / ``last_built``)
-    is shared across classes — the SQLite cache stores one ``model_class``
+    is shared across classes — the SQLite cache stores one model class
     at a time per FP-0043 Component E. We attribute the state to the
-    class currently recorded in ``meta.model_class``; other classes
-    get the zero/never defaults so the operator can see "this class
-    has not been built yet" without an external probe.
+    class currently recorded in ``meta.embedding_model`` (FP-0057 Phase 0:
+    the unified backend persists the caller-supplied ``model_class`` string
+    under its ``embedding_model`` meta key — was ``meta.model_class`` in
+    the pre-consolidation private schema); other classes get the
+    zero/never defaults so the operator can see "this class has not
+    been built yet" without an external probe.
     """
     cfg = load_config()
     classes = cfg.embedding.classes
@@ -172,7 +182,7 @@ def _collect_status_rows(project_root: Path) -> list[ClassRow]:
                     "SELECT key, value FROM meta"
                 ).fetchall()
                 meta = {k: v for k, v in meta_rows}
-                on_disk_class = meta.get("model_class")
+                on_disk_class = meta.get("embedding_model")
             finally:
                 con.close()
             if on_disk_class:
@@ -339,7 +349,8 @@ def run_rebuild(args: argparse.Namespace) -> None:
 def run_clear(args: argparse.Namespace) -> None:
     """``reyn embeddings clear`` — wipe action index + sentence-transformers cache.
 
-    Aggressive: removes the entire ``.reyn/cache/action_index/`` directory
+    Aggressive: removes the entire action-index cache directory (the
+    unified ``.reyn/cache/index/actions/`` since FP-0057 Phase 0)
     AND the sentence-transformers HF model cache resolved per the
     REYN_CACHE_DIR / XDG_CACHE_HOME precedence. Useful for "the cache
     is corrupted" or "I want to switch backends and reclaim disk".
@@ -425,7 +436,7 @@ def register(sub: Any) -> None:
         "clear",
         help="Wipe the action index and the local model cache directory",
         description=(
-            "Remove .reyn/cache/action_index/ AND the sentence-transformers "
+            "Remove .reyn/cache/index/actions/ AND the sentence-transformers "
             "model cache directory. Aggressive: useful for cache "
             "corruption or backend swap reclamation."
         ),

@@ -12,7 +12,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Iterable, Literal
 
-from reyn.data.index.backend import ChunkRecord, DropResult, StatResult, WriteResult
+from reyn.data.index.backend import (
+    ChunkRecord,
+    DropResult,
+    StatResult,
+    WriteResult,
+    cache_dir_for_source,
+)
 
 if TYPE_CHECKING:
     import numpy as np  # pragma: no cover
@@ -50,7 +56,7 @@ _BATCH_SIZE = 500
 
 
 def _db_path(workspace_root: Path, source: str) -> Path:
-    return workspace_root / ".reyn" / "cache" / "index" / source / "index.db"
+    return cache_dir_for_source(workspace_root, source) / "index.db"
 
 
 def _within_paths(path: Path, roots: "list[str]") -> bool:
@@ -120,6 +126,13 @@ class SqliteIndexBackend:
             lock cannot go on the read_file/write_file abstraction); only the
             path is checked, before ``sqlite3.connect``.
     """
+
+    # FP-0057 Phase 0: SqliteIndexBackend supports the pre-embed
+    # ``existing_hashes`` dedup key (it's a plain SELECT over the local
+    # DB). The flag is the in-core-backend pluggability seam — a future
+    # alternate in-core backend that can't answer it cheaply declares
+    # False.
+    existing_hashes_capable: bool = True
 
     def __init__(
         self,
@@ -315,8 +328,16 @@ class SqliteIndexBackend:
             row_norms = np.where(row_norms == 0.0, 1e-10, row_norms)
             scores = (vectors @ q_vec) / (row_norms * q_norm)
 
-        # Descending sort, take top_k
-        top_indices = np.argsort(scores)[::-1][:top_k]
+        # Descending sort, take top_k. Sort ``-scores`` ascending with
+        # ``kind="stable"`` (FP-0057 Phase 0 non-regression gate) rather
+        # than ``np.argsort(scores)[::-1]``: reversing an ascending-stable
+        # result also reverses the internal order of tied groups, which
+        # is NOT the same as a stable descending sort. Negating the key
+        # and sorting ascending-stable preserves original row order among
+        # ties — matching Python's ``list.sort(reverse=True)`` (stable,
+        # ties keep original order), which is what the pre-consolidation
+        # hand-rolled cosine loop used.
+        top_indices = np.argsort(-scores, kind="stable")[:top_k]
 
         results: list[ChunkRecord] = []
         for idx in top_indices:
