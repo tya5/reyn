@@ -46,7 +46,7 @@ After any rewind or fork, the picker switches to a **tree view** showing all bra
 
 ## Web edit (Phase 2d)
 
-When using Reyn through the web interface (WebSocket / A2A), `/rewind` opens the same checkpoint picker. After selecting a checkpoint to branch from, the web edit flow presents the original message for you to retype your edited version and submit — inline prefill is not supported in the web surface, so you enter the replacement text directly. Submitting creates a new fork from the rewound checkpoint.
+When using Reyn through the web interface (AG-UI SSE / A2A), `/rewind` opens the same checkpoint picker. After selecting a checkpoint to branch from, the web edit flow presents the original message for you to retype your edited version and submit — inline prefill is not supported in the web surface, so you enter the replacement text directly. Submitting creates a new fork from the rewound checkpoint.
 
 ## Pending features
 
@@ -54,7 +54,7 @@ When using Reyn through the web interface (WebSocket / A2A), `/rewind` opens the
 |---------|--------|
 | `/rewind` with in-turn edit (`ctrl+t`) to create a new fork-and-edit branch | ✅ Phase 2c, landed |
 | Retention window config (`retention: keep_generations: N`) to GC old checkpoints | ⏳ designed, not yet wired |
-| `/rewind` picker over WebSocket / A2A web surface; web edit via `AskUserMessage` UX | ✅ Phase 2d, landed |
+| `/rewind` picker over AG-UI SSE / A2A web surface; web edit via `AskUserMessage` UX | ✅ Phase 2d, landed |
 
 ## See also
 

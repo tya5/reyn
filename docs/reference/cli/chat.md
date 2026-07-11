@@ -34,7 +34,7 @@ Chat-specific flags:
 | `--eager-embedding-build` | off | Await action embedding index build synchronously on the first turn (pays ~2–5 s once so `search_actions` is immediately available). |
 | `--grant-file-write` | off | Grant `file.read`/`file.write` at the resolver layer for this session, scoped to the sandbox write zone. For non-interactive/scripted use — when you know the agent will need to edit the working tree and want to avoid the per-skill permission prompt. |
 | `--exclude-tools NAMES` | — | Comma-separated tool names to hide from the agent's LLM-visible catalog (e.g. `web__search,web__fetch`). The tools still exist and still run if the agent calls them by name; they are just not offered to the model's discovery surface this session. |
-| `--connect <WS_URL>` | off | Connect to a remote `reyn web` server over WebSocket (e.g. `--connect ws://localhost:8080`). The positional `agent_name` selects which agent on the server. Requires `pip install reyn[web]`. Right panel features that need local file access render in "remote — limited" v1 mode. |
+| `--connect <URL>` | off | Attach to a remote `reyn web` server over AG-UI (HTTP+SSE) instead of running a local session (e.g. `--connect http://127.0.0.1:8080`). The positional `agent_name` selects which agent on the server. Requires `pip install reyn[web]`. Right panel features that need local file access render in "remote — limited" v1 mode. |
 
 ## Agent workspace
 
