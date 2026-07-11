@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from collections import deque
 
-from reyn.interfaces.repl.repl import _copy_target
+from reyn.interfaces.repl.stream_client import _copy_target
 
 
 def test_default_selects_newest_reply() -> None:

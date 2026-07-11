@@ -7,7 +7,7 @@ raise ModuleNotFoundError when the function runs, not at module load).
 """
 from __future__ import annotations
 
-from reyn.interfaces.repl.repl import _simple_status
+from reyn.interfaces.repl.stream_client import _simple_status
 from reyn.runtime.outbox import OutboxMessage
 
 

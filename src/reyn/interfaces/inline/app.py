@@ -829,7 +829,7 @@ def _snapshot(registry, task_cache=None, config=None):
     }
 
 
-async def run_inline_input(registry, renderer, config=None) -> None:
+async def run_inline_input(registry, renderer, config=None, transport=None) -> None:
     """Run the interactive inline input Application until the user quits.
 
     Returns on quit (Ctrl-C/D/Q or /quit /exit) so run_repl can tear down (cost
@@ -839,6 +839,13 @@ async def run_inline_input(registry, renderer, config=None) -> None:
     ``_snapshot`` so the ``…`` overflow chip can list cron jobs / mcp servers /
     hooks. When None (--cui / non-inline path) the overflow panel shows empty
     sections — backward-compatible.
+
+    ``transport`` is the :class:`~reyn.interfaces.transport.client_transport.ClientTransport`
+    (ADR-0039 P1) this driver's WRITE side routes through — turn submit,
+    intervention answers, the user echo, cancel, and shutdown all go through the
+    transport's send seam rather than touching the session directly. (Status-bar
+    panel READS + the local command-UI plumbing still read the registry; a full
+    client-side read-model is P3.)
     """
     attached = registry.attached_session()
     if attached is None:
@@ -1100,7 +1107,7 @@ async def run_inline_input(registry, renderer, config=None) -> None:
         # plain text, intervention answers, other slash — flows through
         # submit_user_text and routes inside the session unchanged.
         if stripped in ("/quit", "/exit"):
-            event.app.create_background_task(_quit(registry, event.app, quitting))
+            event.app.create_background_task(_quit(transport, event.app, quitting))
         else:
             # Echo the submitted line into the scrollback BEFORE the turn runs.
             # The live input field is cleared on submit (buf.reset above), so
@@ -1110,8 +1117,8 @@ async def run_inline_input(registry, renderer, config=None) -> None:
             # it lands just above the agent reply — mirroring the PromptSession
             # path, where the typed line stays committed in the terminal.
             from reyn.runtime.outbox import OutboxMessage
-            registry.repl_outbox.put_nowait(OutboxMessage(kind="user", text=stripped))
-            event.app.create_background_task(_submit(registry, stripped))
+            transport.put_display(OutboxMessage(kind="user", text=stripped))
+            event.app.create_background_task(_submit(transport, stripped))
 
     # Owner spec: Enter=submit, Shift+Enter=newline. See the module-level
     # _SHIFT_ENTER_RAW_DATA / _is_shift_enter_escape / _down_arrow_action
@@ -1189,7 +1196,7 @@ async def run_inline_input(registry, renderer, config=None) -> None:
             _cat_close()
         else:
             _menu_close()
-        app.create_background_task(_submit(registry, text))
+        app.create_background_task(_submit(transport, text))
 
     def _fill_menu_region(expansion, snap, *, live_task: bool = False) -> None:
         """Build one chip/category's element(s) fresh and host them in
@@ -1331,14 +1338,14 @@ async def run_inline_input(registry, renderer, config=None) -> None:
             rc = getattr(renderer, "request_cancel", None)
             if callable(rc):
                 rc()
-            event.app.create_background_task(_cancel_turn(registry))
+            event.app.create_background_task(_cancel_turn(transport))
         else:
-            event.app.create_background_task(_quit(registry, event.app, quitting))
+            event.app.create_background_task(_quit(transport, event.app, quitting))
 
     @kb.add("c-d")
     @kb.add("c-q")
     def _quit_key(event) -> None:
-        event.app.create_background_task(_quit(registry, event.app, quitting))
+        event.app.create_background_task(_quit(transport, event.app, quitting))
 
     # Above-region focus navigation (inert until a consumer registers an element,
     # since the region stays invisible + unfocusable while empty). ↑↓ move the
@@ -1382,7 +1389,7 @@ async def run_inline_input(registry, renderer, config=None) -> None:
         s = registry.attached_session()
         if s is not None:
             s.set_pending_command_ui(None)  # consume the request
-        app.create_background_task(_submit(registry, text))
+        app.create_background_task(_submit(transport, text))
 
     def _sync_region() -> None:
         """Sync the above-region with the session's pending UI: the head closed-set
@@ -1398,7 +1405,7 @@ async def run_inline_input(registry, renderer, config=None) -> None:
                 _show(build_intervention_element(
                     head,
                     lambda cid, label: app.create_background_task(
-                        _deliver_intervention_choice(registry, cid, label)
+                        _deliver_intervention_choice(transport, cid, label)
                     ),
                 ), key)
             return
@@ -1478,20 +1485,18 @@ async def run_inline_input(registry, renderer, config=None) -> None:
         task_poll_task.cancel()
 
 
-async def _deliver_intervention_choice(registry, choice_id: str, label: str) -> None:
+async def _deliver_intervention_choice(transport, choice_id: str, label: str) -> None:
     """Deliver a region-selected intervention choice + echo it to scrollback.
 
-    The chosen choice id is delivered authoritatively (choice_id_override). On
-    success, a uniform ``answered: <label>`` line is put on the outbox so EVERY
-    resolved intervention leaves a trace in the conversation — not just the ones
-    (like permission) whose side effect happens to be visible. ask_user /
+    The chosen choice id is delivered authoritatively via the transport send
+    seam (``answer_intervention_choice``). On success, a uniform
+    ``answered: <label>`` line is put on the display stream so EVERY resolved
+    intervention leaves a trace in the conversation — not just the ones (like
+    permission) whose side effect happens to be visible. ask_user /
     safety-limit interventions otherwise vanish from scrollback on resolution.
     """
-    s = registry.attached_session()
-    if s is None:
-        return
     try:
-        delivered = await s.answer_oldest_intervention_choice(choice_id)
+        delivered = await transport.answer_intervention_choice(choice_id)
     except Exception:
         logger.exception("inline: delivering intervention choice failed")
         return
@@ -1503,29 +1508,26 @@ async def _deliver_intervention_choice(registry, choice_id: str, label: str) -> 
         # persist, but renders with the amber ◆ "needs-you" glyph — misleading for
         # a resolved-answer confirmation. "system" correctly signals historical
         # record (same visual weight as compaction / budget-warn markers).
-        registry.repl_outbox.put_nowait(
+        transport.put_display(
             OutboxMessage(kind="system", text=f"answered: {label}")
         )
 
 
-async def _submit(registry, text: str) -> None:
-    s = registry.attached_session()
-    if s is None:
-        return
+async def _submit(transport, text: str) -> None:
     # Launched as a background task, so an uncaught error here goes to asyncio's
     # exception handler (invisible above the live app) and the user sees the input
     # field clear with no response — a silent failure. Contain it: log + surface a
-    # visible error line via the outbox the output loop already drains.
+    # visible error line via the transport's display seam the output loop drains.
     try:
         # Route free-text input to any pending free-text intervention rather than
         # starting a new chat turn. Free-text = no choices (ask_user, mcp_install.secret,
         # etc.). Closed-set interventions (choices non-empty) are handled by the region
         # dropdown and never reach this path — matching build_intervention_element logic.
-        head = s.interventions.head()
+        head = transport.pending_intervention_head()
         if head is not None and not head.choices:
-            await s.answer_oldest_intervention_text(text)
+            await transport.answer_intervention_text(text)
             return
-        await s.submit_user_text(text)
+        await transport.submit_user_text(text)
     except Exception as e:
         logger.exception("inline submit failed")
         detail = f"{type(e).__name__}: {e}"
@@ -1533,27 +1535,22 @@ async def _submit(registry, text: str) -> None:
             detail = detail[:69] + "…"
         try:
             from reyn.runtime.outbox import OutboxMessage
-            registry.repl_outbox.put_nowait(
+            transport.put_display(
                 OutboxMessage(kind="error", text=f"input could not be submitted: {detail}")
             )
         except Exception:
             pass
 
 
-async def _cancel_turn(registry) -> None:
-    """Cancel the in-flight turn via session.cancel_inflight() — cooperative seam."""
-    s = registry.attached_session()
-    if s is None:
-        return
-    cancel_fn = getattr(s, "cancel_inflight", None)
-    if callable(cancel_fn):
-        try:
-            await cancel_fn()
-        except Exception:
-            logger.exception("cancel_inflight failed")
+async def _cancel_turn(transport) -> None:
+    """Cancel the in-flight turn via the transport's cancel seam — cooperative."""
+    try:
+        await transport.cancel_inflight()
+    except Exception:
+        logger.exception("cancel_inflight failed")
 
 
-async def _quit(registry, app, state: dict) -> None:
+async def _quit(transport, app, state: dict) -> None:
     # Idempotent: shutdown has a grace window, so a second quit (rapid Ctrl-C /
     # `/quit` then Ctrl-C) could race the first to app.exit() ("Return value
     # already set"). The check+set is synchronous (before the first await), so in
@@ -1562,7 +1559,7 @@ async def _quit(registry, app, state: dict) -> None:
         return
     state["quitting"] = True
     try:
-        await registry.shutdown()
+        await transport.shutdown()
     except Exception:
         # Log and suppress — a shutdown exception must not prevent app.exit()
         # from running (the PT app would hang with no escape path).

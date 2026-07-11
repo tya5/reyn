@@ -13,9 +13,18 @@ from types import SimpleNamespace
 import pytest
 
 from reyn.interfaces.inline.app import _quit, _submit
+from reyn.interfaces.transport.in_process import InProcessTransport
+
+
+def _tx(registry):
+    """Wrap a fake registry in the real local transport — the send seam the
+    inline driver's helpers write through (no mocks)."""
+    return InProcessTransport(registry, intervention_channel="tui")
 
 
 class _RaisingSession:
+    interventions = SimpleNamespace(head=lambda: None)
+
     async def submit_user_text(self, text: str) -> None:
         raise RuntimeError("simulated submit failure")
 
@@ -28,7 +37,7 @@ async def test_submit_surfaces_error_instead_of_failing_silently() -> None:
         attached_session=lambda: _RaisingSession(),
         repl_outbox=asyncio.Queue(),
     )
-    await _submit(registry, "hello")  # must not raise out of the background task
+    await _submit(_tx(registry), "hello")  # must not raise out of the background task
     msg = registry.repl_outbox.get_nowait()
     assert msg.kind == "error"
     assert msg.text  # a non-empty, user-visible message
@@ -53,7 +62,7 @@ async def test_quit_is_idempotent_under_rapid_double_quit() -> None:
     app = _CountingApp()
     state: dict = {}
     await asyncio.gather(
-        _quit(registry, app, state),
-        _quit(registry, app, state),
+        _quit(_tx(registry), app, state),
+        _quit(_tx(registry), app, state),
     )
     assert app.exit_calls == 1

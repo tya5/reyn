@@ -15,6 +15,13 @@ import pytest
 
 from reyn.core.events.state_log import StateLog
 from reyn.interfaces.inline.app import _deliver_intervention_choice, _submit
+from reyn.interfaces.transport.in_process import InProcessTransport
+
+
+def _tx(registry):
+    """Wrap a fake registry in the real local transport — the send seam the
+    inline driver's helpers write through (no mocks)."""
+    return InProcessTransport(registry, intervention_channel="tui")
 from reyn.interfaces.inline.intervention_region import (
     InterventionElement,
     build_intervention_element,
@@ -136,7 +143,7 @@ async def test_deliver_choice_echoes_answer_to_scrollback() -> None:
     queue: asyncio.Queue = asyncio.Queue()
     registry = SimpleNamespace(attached_session=lambda: session, repl_outbox=queue)
 
-    await _deliver_intervention_choice(registry, "just_path", "[j]ust this path always")
+    await _deliver_intervention_choice(_tx(registry), "just_path", "[j]ust this path always")
 
     assert session.delivered == ["just_path"]  # authoritative id delivered
     msg = queue.get_nowait()
@@ -155,7 +162,7 @@ async def test_deliver_choice_no_echo_when_nothing_delivered() -> None:
     registry = SimpleNamespace(
         attached_session=lambda: _AnsweringSession(ok=False), repl_outbox=queue
     )
-    await _deliver_intervention_choice(registry, "x", "lbl")
+    await _deliver_intervention_choice(_tx(registry), "x", "lbl")
     assert queue.empty()
 
 
@@ -232,7 +239,7 @@ async def test_submit_routes_to_intervention_bus_when_ask_user_pending() -> None
     build_intervention_element logic.
     """
     registry, answered, submitted = _stub_registry(choices=[])
-    await _submit(registry, "hello ask_user")
+    await _submit(_tx(registry), "hello ask_user")
 
     assert answered == ["hello ask_user"], "text must reach intervention bus"
     assert submitted == [], "submit_user_text must NOT be called while free-text iv pending"
@@ -248,7 +255,7 @@ async def test_submit_routes_to_intervention_bus_for_mcp_install_secret() -> Non
     secret that never arrives.
     """
     registry, answered, submitted = _stub_registry(choices=[])
-    await _submit(registry, "mysecretvalue")
+    await _submit(_tx(registry), "mysecretvalue")
 
     assert answered == ["mysecretvalue"], "secret must reach intervention bus"
     assert submitted == [], "submit_user_text must NOT be called for mcp_install.secret"

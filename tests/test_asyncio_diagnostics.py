@@ -32,7 +32,7 @@ from prompt_toolkit.input import create_pipe_input
 from prompt_toolkit.output import DummyOutput
 
 import reyn.interfaces.inline.app as inline_app_mod
-import reyn.interfaces.repl.repl as repl_mod
+import reyn.interfaces.repl.stream_client as stream_client_mod
 from reyn.core.events.asyncio_diagnostics import install_asyncio_exception_handler
 
 
@@ -213,7 +213,7 @@ def test_repl_prompt_call_sites_disable_prompt_toolkit_exception_handler() -> No
     The durable-capture test above hardcodes the parameter in its own driver,
     so it would stay green even if a future edit dropped the argument from the
     production call sites -- i.e. it verifies the mechanism, not the wiring.
-    This pins the wiring itself: if ``interfaces/repl/repl.py``'s
+    This pins the wiring itself: if ``interfaces/repl/stream_client.py``'s
     ``prompt_session.prompt_async(...)`` (the ``--cui`` / non-TTY path) or
     ``interfaces/inline/app.py``'s ``app.run_async(...)`` (the default
     interactive ``reyn chat`` path) loses the argument, prompt_toolkit's
@@ -221,11 +221,11 @@ def test_repl_prompt_call_sites_disable_prompt_toolkit_exception_handler() -> No
     regression -- and this goes RED. Reads the real module source (AST), no
     mocks.
     """
-    repl_src = Path(repl_mod.__file__).read_text()
+    stream_client_src = Path(stream_client_mod.__file__).read_text()
     inline_src = Path(inline_app_mod.__file__).read_text()
 
-    assert _call_passes_set_exception_handler_false(repl_src, "prompt_async"), (
-        "repl.py's prompt_session.prompt_async(...) must pass "
+    assert _call_passes_set_exception_handler_false(stream_client_src, "prompt_async"), (
+        "stream_client.py's prompt_session.prompt_async(...) must pass "
         "set_exception_handler=False (else prompt_toolkit re-masks #2637 capture)"
     )
     assert _call_passes_set_exception_handler_false(inline_src, "run_async"), (
