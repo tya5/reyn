@@ -18,6 +18,15 @@ Pins the operator-facing CLI surface:
      the sentence-transformers cache directory; absent paths are
      reported as skipped.
 
+FP-0057 Phase 0 (#2843): the action index now rides the unified
+``IndexBackend`` (``chunks``/``meta`` schema, ``.reyn/cache/index/actions/``)
+instead of a private ``vectors``/``meta`` schema under
+``.reyn/cache/action_index/`` — the fixture writer below stands up the
+unified schema directly (real on-disk SQLite, same shape
+``SqliteIndexBackend`` writes) rather than going through the CLI's own
+production code, so this stays a fixture, not a round-trip test of the
+backend itself (that's ``tests/test_index_backend.py``'s job).
+
 No mocks. Tests work against real on-disk state in ``tmp_path`` with
 ``monkeypatch.chdir(tmp_path)`` so the CLI's cwd-based project-root
 resolution is exercised end-to-end.
@@ -25,10 +34,10 @@ resolution is exercised end-to-end.
 from __future__ import annotations
 
 import json
-import struct
 from argparse import Namespace
 from pathlib import Path
 
+import numpy as np
 import pytest
 
 from reyn.interfaces.cli.commands.embeddings import (
@@ -40,35 +49,51 @@ from reyn.interfaces.cli.commands.embeddings import (
 )
 
 
+def _unified_index_dir(project_root: Path) -> Path:
+    return project_root / ".reyn" / "cache" / "index" / "actions"
+
+
 def _write_index_db(
     index_dir: Path, class_name: str, vectors: dict[str, list[float]],
 ) -> None:
-    """Stand up a real SQLite ``index.db`` matching ActionEmbeddingIndex shape."""
+    """Stand up a real SQLite ``index.db`` matching the unified IndexBackend
+    schema (``SqliteIndexBackend``'s ``chunks``/``meta`` tables)."""
     import sqlite3
     index_dir.mkdir(parents=True, exist_ok=True)
     db_path = index_dir / "index.db"
     con = sqlite3.connect(str(db_path))
     try:
         con.execute(
+            "CREATE TABLE IF NOT EXISTS chunks ("
+            "id INTEGER PRIMARY KEY AUTOINCREMENT, "
+            "content_hash TEXT UNIQUE NOT NULL, "
+            "text TEXT NOT NULL, vector BLOB NOT NULL, "
+            "metadata_json TEXT NOT NULL, source_path TEXT NOT NULL, "
+            "source_type TEXT NOT NULL, embedding_model TEXT NOT NULL, "
+            "chunk_index INTEGER NOT NULL, size_tokens INTEGER NOT NULL, "
+            "parent_context TEXT)"
+        )
+        con.execute(
             "CREATE TABLE IF NOT EXISTS meta "
-            "(key TEXT PRIMARY KEY, value TEXT NOT NULL)"
+            "(key TEXT PRIMARY KEY, value TEXT)"
         )
         con.execute(
-            "CREATE TABLE IF NOT EXISTS vectors "
-            "(qualified_name TEXT PRIMARY KEY, item_json TEXT NOT NULL, "
-            "vector_blob BLOB NOT NULL)"
-        )
-        con.execute(
-            "INSERT OR REPLACE INTO meta VALUES ('model_class', ?)",
+            "INSERT OR REPLACE INTO meta VALUES ('embedding_model', ?)",
             (class_name,),
         )
         con.execute(
-            "INSERT OR REPLACE INTO meta VALUES ('catalog_hash', 'h')",
+            "INSERT OR REPLACE INTO meta VALUES ('last_indexed', '2026-01-01T00:00:00+00:00')",
         )
         for qn, vec in vectors.items():
-            con.executemany(
-                "INSERT OR REPLACE INTO vectors VALUES (?, ?, ?)",
-                [(qn, '{}', struct.pack(f"{len(vec)}d", *vec))],
+            content_hash = f"hash-{qn}"
+            vec_blob = np.asarray(vec, dtype=np.float32).tobytes()
+            con.execute(
+                "INSERT OR REPLACE INTO chunks "
+                "(content_hash, text, vector, metadata_json, source_path, "
+                " source_type, embedding_model, chunk_index, size_tokens, "
+                " parent_context) VALUES (?,?,?,?,?,?,?,?,?,?)",
+                (content_hash, qn, vec_blob, "{}", qn, "action",
+                 class_name, 0, 0, None),
             )
         con.commit()
     finally:
@@ -118,7 +143,7 @@ def test_status_rows_attribute_count_to_on_disk_class_only(
     matches the recorded meta.model_class. Other rows show 0 / "(never)".
     """
     monkeypatch.chdir(tmp_path)
-    index_dir = tmp_path / ".reyn" / "cache" / "action_index"
+    index_dir = _unified_index_dir(tmp_path)
     _write_index_db(
         index_dir,
         class_name="local-mini",
@@ -187,7 +212,7 @@ def test_rebuild_removes_index_files_when_present(
 ) -> None:
     """Tier 2: rebuild drops index.db + WAL sidecars + .build.lock."""
     monkeypatch.chdir(tmp_path)
-    index_dir = tmp_path / ".reyn" / "cache" / "action_index"
+    index_dir = _unified_index_dir(tmp_path)
     _write_index_db(index_dir, "standard", {"file__read": [0.1, 0.2]})
     (index_dir / ".build.lock").write_text("{}", encoding="utf-8")
     run_rebuild(Namespace(name=None))
@@ -238,7 +263,7 @@ def test_rebuild_known_class_name_notes_shared_cache(
     emits a clear note about the shared cache being wiped.
     """
     monkeypatch.chdir(tmp_path)
-    index_dir = tmp_path / ".reyn" / "cache" / "action_index"
+    index_dir = _unified_index_dir(tmp_path)
     _write_index_db(index_dir, "local-mini", {"file__read": [0.1, 0.2]})
     run_rebuild(Namespace(name="local-mini"))
     out = capsys.readouterr().out
@@ -261,7 +286,7 @@ def test_clear_removes_index_dir_and_st_cache_dir(
     # without touching the developer's real ~/.cache.
     monkeypatch.setenv("REYN_CACHE_DIR", str(tmp_path / "reyn-cache"))
     monkeypatch.chdir(tmp_path)
-    index_dir = tmp_path / ".reyn" / "cache" / "action_index"
+    index_dir = _unified_index_dir(tmp_path)
     _write_index_db(index_dir, "standard", {"file__read": [0.1, 0.2]})
     st_cache = tmp_path / "reyn-cache" / "sentence-transformers"
     st_cache.mkdir(parents=True)
