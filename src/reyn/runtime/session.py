@@ -58,6 +58,7 @@ from reyn.runtime.limits.limit_handler import (
     reset_run_extensions,
 )
 from reyn.runtime.outbox import OutboxMessage
+from reyn.runtime.outbox_hub import OutboxHub
 from reyn.runtime.pending_op_view import PendingOpView
 from reyn.runtime.presentation_consumer import OutboxPresentationConsumer
 from reyn.runtime.services import (
@@ -1420,6 +1421,13 @@ class Session:
         self.history: list[ChatMessage] = []
         self.inbox: asyncio.Queue = asyncio.Queue()
         self.outbox: asyncio.Queue = asyncio.Queue()
+        # ADR-0039 P6b: the outbox is single-consumer (asyncio.Queue hands each
+        # item to exactly ONE getter). The hub is the SOLE ``outbox.get()``
+        # consumer and fans every message out to N per-surface subscriptions, so
+        # the local REPL forwarder and each AG-UI surface receive the FULL stream
+        # instead of stealing frames from one another. Drain starts lazily on the
+        # first ``subscribe`` (no running loop needed here at construction).
+        self.outbox_hub = OutboxHub(self.outbox, name=self.agent_name)
         # #2103 S1bc-exec: sid → original-task record for sessions THIS session spawned.
         # When a spawned session's result routes back, the result header renders
         # ``task=<the spawner's OWN request>`` from THIS trusted record (keyed by the

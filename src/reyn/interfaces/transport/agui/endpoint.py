@@ -56,6 +56,8 @@ from reyn.interfaces.transport.frames import (
 )
 from reyn.interfaces.web.auth import AuthContext, ConnectionIdentity
 from reyn.interfaces.web.deps import get_registry
+from reyn.runtime.outbox import OutboxMessage
+from reyn.runtime.outbox_hub import DEFAULT_SURFACE_MAXSIZE
 from reyn.runtime.session import DEFAULT_CHAT_CHANNEL_ID
 from reyn.runtime.session_buses import NO_SURFACE_REFUSAL_REASON
 
@@ -191,6 +193,7 @@ class _SessionFrameSource:
             session, "_chat_events", None
         )
         self._drain_task: "asyncio.Task | None" = None
+        self._sub = None
 
     def _on_chat_event(self, event) -> None:
         if getattr(event, "type", None) in self._forward:
@@ -204,13 +207,25 @@ class _SessionFrameSource:
     def close(self) -> None:
         if self._events is not None:
             self._events.remove_subscriber(self._on_chat_event)
+        if self._sub is not None:
+            self._sub.close()
         if self._drain_task is not None:
             self._drain_task.cancel()
 
     async def _drain_outbox(self) -> None:
-        outbox = self._session.outbox
+        # ADR-0039 P6b: subscribe to the session's outbox *hub* (a bounded
+        # per-surface queue) instead of draining ``session.outbox`` directly.
+        # This surface therefore receives the FULL stream even when other AG-UI
+        # / local surfaces are attached (asyncio.Queue's single-getter steal is
+        # resolved by the hub's single-drain fan-out). A stuck SSE reader is
+        # disconnect-slow'd by the hub — ``get()`` then returns ``None`` and we
+        # end this surface's stream with a synthetic terminal frame.
+        self._sub = self._session.outbox_hub.subscribe(maxsize=DEFAULT_SURFACE_MAXSIZE)
         while True:
-            msg = await outbox.get()
+            msg = await self._sub.get()
+            if msg is None:
+                self._q.put_nowait(DisplayFrame(OutboxMessage(kind="__end__", text="")))
+                return
             self._q.put_nowait(DisplayFrame(msg))
             if msg.kind == "__end__":
                 return

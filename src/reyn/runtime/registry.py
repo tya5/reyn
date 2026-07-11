@@ -3037,46 +3037,62 @@ class AgentRegistry:
         session is the attached one; otherwise drops the message (transient
         kinds were already dropped at source, durable narration is in history).
         Special kind `__attach_request__` is consumed here as a control signal.
+
+        ADR-0039 P6b: subscribes to the session's outbox *hub* (unbounded local
+        sink) instead of draining ``session.outbox`` directly — so this local
+        REPL forwarder and any concurrent AG-UI surface each receive the full
+        stream rather than stealing frames. Delivery is byte-identical to the
+        pre-hub direct drain (an unbounded subscription is a transparent 1:1
+        pipe and is never disconnected-slow).
         """
         key = (name, sid)
         agent = self._peek_session(name, sid)
-        while True:
-            msg = await agent.outbox.get()
-            if msg.kind == "__end__":
-                # Session shut down — propagate to REPL only if we're the
-                # attached one (otherwise REPL would terminate spuriously
-                # on a detached session's shutdown).
+        sub = agent.outbox_hub.subscribe()  # maxsize=0 → unbounded local sink
+        try:
+            while True:
+                msg = await sub.get()
+                if msg is None:
+                    # Subscription force-closed (disconnect-slow). An unbounded
+                    # local sink never reaches this, but end cleanly if it ever does.
+                    return
+                if msg.kind == "__end__":
+                    # Session shut down — propagate to REPL only if we're the
+                    # attached one (otherwise REPL would terminate spuriously
+                    # on a detached session's shutdown).
+                    if key == self._attached:
+                        await self.repl_outbox.put(msg)
+                    return
+                if msg.kind == "__attach_request__":
+                    # User typed `/attach <other>` while this agent was attached.
+                    if msg.text and self.exists(msg.text):
+                        await self.attach(msg.text)
+                        # (Issue #191 re-post removed: that forwarded msg to the
+                        # Textual TUI's _on_attach_request for header refresh.
+                        # TUI deleted — re-post is dead code; _output_loop never
+                        # handled this kind, so only effect was a bare-text leak.)
+                    continue
+                if msg.kind == "__session_switch_request__":
+                    # FP-0043 Stage 4a: `/session switch <sid>` — focus another
+                    # session of the CURRENT agent (msg.text = target sid). Routed
+                    # through the forwarder (mirroring __attach_request__) so the
+                    # focus flip + display re-wire are sequenced on the registry
+                    # side, not raced by a direct call from the slash handler.
+                    # Graceful on a bad sid: drop (the slash handler validated
+                    # existence + replied before posting).
+                    if msg.text:
+                        try:
+                            await self.attach_session(name, msg.text)
+                        except KeyError:
+                            pass  # session vanished between validate + switch — no-op
+                        # (re-post removed: was for Textual TUI header refresh —
+                        # dead code after TUI deletion; _output_loop never used it.)
+                    continue
                 if key == self._attached:
                     await self.repl_outbox.put(msg)
-                return
-            if msg.kind == "__attach_request__":
-                # User typed `/attach <other>` while this agent was attached.
-                if msg.text and self.exists(msg.text):
-                    await self.attach(msg.text)
-                    # (Issue #191 re-post removed: that forwarded msg to the
-                    # Textual TUI's _on_attach_request for header refresh.
-                    # TUI deleted — re-post is dead code; _output_loop never
-                    # handled this kind, so only effect was a bare-text leak.)
-                continue
-            if msg.kind == "__session_switch_request__":
-                # FP-0043 Stage 4a: `/session switch <sid>` — focus another session
-                # of the CURRENT agent (msg.text = target sid). Routed through the
-                # forwarder (mirroring __attach_request__) so the focus flip +
-                # display re-wire are sequenced on the registry side, not raced by a
-                # direct call from the slash handler. Graceful on a bad sid: drop
-                # (the slash handler validated existence + replied before posting).
-                if msg.text:
-                    try:
-                        await self.attach_session(name, msg.text)
-                    except KeyError:
-                        pass  # session vanished between validate + switch — no-op
-                    # (re-post removed: was for Textual TUI header refresh — dead
-                    # code after TUI deletion; _output_loop never consumed it.)
-                continue
-            if key == self._attached:
-                await self.repl_outbox.put(msg)
-            # else: drop — session is detached, transient kinds were already
-            # dropped at source, durable narration is in history.jsonl
+                # else: drop — session is detached, transient kinds were already
+                # dropped at source, durable narration is in history.jsonl
+        finally:
+            sub.close()
 
     def detach(self) -> None:
         """Mark the attached session as detached without stopping its task."""
