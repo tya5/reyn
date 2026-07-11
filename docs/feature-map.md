@@ -494,7 +494,7 @@ logic. Design: [content-threat scan proposal](deep-dives/proposals/0050-content-
 | Feature | Description | Documentation |
 |---------|-------------|---------------|
 | LiteLLM embedding backend | Any provider via named model class config | [RAG concepts](concepts/data-retrieval/rag.md) |
-| Local embedding backend | sentence-transformers via `pip install 'reyn[local-embed]'` — `local-mini` / `local-e5` classes, credential-free, GPU-optional via `REYN_EMBED_DEVICE` | [RAG concepts § Local embedding backend](concepts/data-retrieval/rag.md#local-embedding-backend-fp-0043) · [Guide](guide/for-users/enable-semantic-search.md) |
+| Local embedding backend | sentence-transformers via `pip install 'reyn[local-embed]'` — `local-mini` / `local-e5` classes, credential-free, GPU-optional via `REYN_EMBED_DEVICE`; air-gapped fast-fail opt-in via the HF-standard `HF_HUB_OFFLINE` / `TRANSFORMERS_OFFLINE` → explicit `local_files_only` (FP-0057 Phase 4) | [RAG concepts § Local embedding backend](concepts/data-retrieval/rag.md#local-embedding-backend-fp-0043) · [Guide § Offline / air-gapped networks](guide/for-users/enable-semantic-search.md#offline--air-gapped-networks) |
 | Provider-prefix routing | `sentence-transformers/` → local backend; anything else → LiteLLM | [RAG concepts § Embedding configuration](concepts/data-retrieval/rag.md#embedding-configuration) |
 | Batch embed | Configurable `batch_size` with concurrency semaphore | [RAG concepts](concepts/data-retrieval/rag.md) |
 | Dimension table | Static lookup for OpenAI / Voyage / Cohere | [RAG concepts](concepts/data-retrieval/rag.md) |

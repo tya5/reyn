@@ -200,6 +200,83 @@ def test_helper_generic_failure_keeps_hf_guidance() -> None:
     assert "drop_params" not in msg
 
 
+# ── FP-0057 Phase 4: HF_HUB_OFFLINE-aware guidance ────────────────────────────
+
+
+def _clear_offline_env(monkeypatch) -> None:
+    monkeypatch.delenv("HF_HUB_OFFLINE", raising=False)
+    monkeypatch.delenv("TRANSFORMERS_OFFLINE", raising=False)
+
+
+def test_helper_generic_failure_names_offline_fast_fail_opt_in(monkeypatch) -> None:
+    """Tier 2: FP-0057 Phase 4 — the generic (real-network) HF-unreachable message
+    now also names the standard HF_HUB_OFFLINE=1 as the fast-fail opt-in."""
+    from reyn.runtime.router_loop import _action_index_build_failure_warning
+
+    _clear_offline_env(monkeypatch)
+    exc = RuntimeError("Name or service not known (HF unreachable)")
+    msg = _action_index_build_failure_warning(exc, "local-mini").lower()
+    assert "hf_hub_offline" in msg
+
+
+def test_helper_offline_mode_set_names_it_explicitly(monkeypatch) -> None:
+    """Tier 2: FP-0057 Phase 4 — when HF_HUB_OFFLINE is set, the failure
+    message names offline mode explicitly and gives the preload-and-copy-cache
+    recipe, distinct from the generic "check network connectivity" message
+    (offline mode made no network attempt at all — that distinction matters
+    to the operator)."""
+    from reyn.runtime.router_loop import _action_index_build_failure_warning
+
+    _clear_offline_env(monkeypatch)
+    monkeypatch.setenv("HF_HUB_OFFLINE", "1")
+    exc = OSError("Cannot find an appropriate cached snapshot folder")
+    msg = _action_index_build_failure_warning(exc, "local-mini").lower()
+    assert "hf_hub_offline" in msg
+    assert "no network attempt was made" in msg
+    assert "standard" in msg or "api" in msg
+
+
+def test_helper_offline_mode_via_transformers_offline_env(monkeypatch) -> None:
+    """Tier 2: FP-0057 Phase 4 — TRANSFORMERS_OFFLINE (the sibling HF-standard
+    var) also selects the offline-specific branch, not just HF_HUB_OFFLINE."""
+    from reyn.runtime.router_loop import _action_index_build_failure_warning
+
+    _clear_offline_env(monkeypatch)
+    monkeypatch.setenv("TRANSFORMERS_OFFLINE", "1")
+    exc = OSError("Cannot find an appropriate cached snapshot folder")
+    msg = _action_index_build_failure_warning(exc, "local-mini").lower()
+    assert "no network attempt was made" in msg
+
+
+def test_helper_offline_mode_unset_gives_generic_message(monkeypatch) -> None:
+    """Tier 2: FP-0057 Phase 4 — with the offline env unset, the offline-mode
+    branch is not taken; the generic network-failure message is used instead."""
+    from reyn.runtime.router_loop import _action_index_build_failure_warning
+
+    _clear_offline_env(monkeypatch)
+    exc = RuntimeError("Name or service not known (HF unreachable)")
+    msg = _action_index_build_failure_warning(exc, "local-mini").lower()
+    assert "no network attempt was made" not in msg
+
+
+def test_build_failure_offline_mode_warns_with_offline_guidance(monkeypatch, caplog) -> None:
+    """Tier 2: FP-0057 Phase 4 — driving the real build path with HF_HUB_OFFLINE
+    set logs the offline-specific guidance (not the generic "check connectivity"
+    message), so the operator is never told to "just wait" when no network
+    attempt was ever made."""
+    _clear_offline_env(monkeypatch)
+    monkeypatch.setenv("HF_HUB_OFFLINE", "1")
+    loop = _LoopWithFailingBuild()
+    with caplog.at_level(logging.WARNING, logger="reyn.runtime.router_loop"):
+        _run_build(loop)
+
+    text = " ".join(
+        r.getMessage() for r in caplog.records if r.levelno == logging.WARNING
+    ).lower()
+    assert "hf_hub_offline" in text
+    assert "no network attempt was made" in text
+
+
 def test_build_failure_unsupported_param_warns_proxy_fix(caplog) -> None:
     """Tier 2: #1616 — driving the real build path with a provider that raises the
     proxy-rejects-param error logs the proxy drop_params guidance (the operator is

@@ -77,6 +77,26 @@ export REYN_EMBED_DEVICE=cuda   # NVIDIA GPU
 
 Default is `cpu`. The encode latency drops to ~5–15 ms per query on `mps`, which is enough of a step-change to be perceptible in long chat sessions. Invalid values warn and fall back to `cpu` rather than failing.
 
+## Offline / air-gapped networks
+
+`local-mini` / `local-e5` download from Hugging Face on first use. On a corporate or firewalled network where Hugging Face is unreachable, the first `reyn chat` session that reaches `search_actions` still tries the real network — it eventually fails gracefully (see below), but only after paying a connect-timeout, which can feel like a hang.
+
+**What you'll see**: a `reyn.runtime.router_loop` WARNING log (and an `action_index_build_failed` audit-event) naming the cause and your options — `search_actions` stays hidden for the rest of that session (no crash, no silent-empty index; `list_actions` still works normally).
+
+**If you already know you're offline**, skip the network attempt entirely and fail fast instead by setting the HuggingFace-standard offline flag (the same variable air-gapped operators already use across the HF ecosystem — Reyn respects it rather than inventing its own knob):
+
+```bash
+export HF_HUB_OFFLINE=1     # (or the equivalent TRANSFORMERS_OFFLINE=1)
+```
+
+With this set, an uncached model fails immediately (no connect-timeout wait) with a message pointing at your options. To actually *use* `local-mini` / `local-e5` on an air-gapped machine:
+
+1. On a **connected** machine, run `pip install 'reyn[local-embed]'` and trigger one `search_actions` call (or `reyn embeddings status` after a chat session) so the model downloads into `<cache_root>/sentence-transformers/` (default `~/.cache/reyn/sentence-transformers/`; see `REYN_CACHE_DIR` / `XDG_CACHE_HOME` above for overrides).
+2. Copy that `sentence-transformers/` directory to the same cache location on the air-gapped machine.
+3. Set `HF_HUB_OFFLINE=1` on the air-gapped machine — the model now loads from the copied cache with no network attempt.
+
+If you'd rather not manage a model cache at all, the escape hatch is the same as [Path B](#path-b--openai-embeddings-slightly-higher-quality) above — an API-backed class works over your normal HTTPS egress instead of Hugging Face. Reyn never switches to this automatically; it's an explicit `reyn.yaml` edit (`action_retrieval.embedding_class: standard`), never a silent fallback.
+
 ## How Reyn tells you when it's not configured
 
 If you skip both Path A and Path B and still ask the LLM to "find an action for …", the response from `list_actions` carries a structured **hint** field listing the install / config paths above. The LLM relays the hint to you so the install is self-discoverable mid-chat — no need to memorise this guide. The hint disappears the moment `search_actions` becomes available.
@@ -86,6 +106,8 @@ If you skip both Path A and Path B and still ask the LLM to "find an action for 
 **`search_actions` doesn't appear in the LLM's tool list** — the embedding index hasn't finished building yet (= cold start, ~5–10 s) OR the configured class points at a backend whose extras aren't installed. Check `reyn embeddings status` — a configured class with `ACTIONS = 0` and `LAST_BUILT = (never)` means the build hasn't completed.
 
 **"failed to load \<model>" in TUI / events** — partial cache state. Run `reyn embeddings clear` to wipe and start fresh; the next chat session re-downloads cleanly.
+
+**Corporate/firewalled network, HF download times out or fails** — see [§ Offline / air-gapped networks](#offline--air-gapped-networks) above; set the standard `HF_HUB_OFFLINE=1` once you know you're offline to fail fast instead of waiting on the connect timeout every session.
 
 **Swapping classes returns stale results** — Reyn's cache stores one `model_class` at a time. Class swaps trigger automatic re-embedding on the next session, but you can force it eagerly with `reyn embeddings rebuild`.
 
