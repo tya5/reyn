@@ -126,4 +126,4 @@ Ordering rationale: the security gap is real and owner-risk-relevant → first. 
 - **Modularity:** enable/disable → mount vs 404; CLI > config precedence; the secure-default ON-set on a fresh install.
 - **Reachability (COMPLETE-means-reachable):** an *enabled* surface is actually reachable end-to-end; a *disabled* one 404s — assert both, not just "the flag parses."
 - **Chainlit:** retire completeness (src grep = 0, tests removed, current-doc purge).
-- **Doc-surface (arc-closure gate):** a discoverable how-to for `--surfaces`/`--enable`; feature-map rows for the surface-modularity feature + the auth-layer; drift-purge of any "all surfaces always on" wording. *(Applying the doc-surface completeness gate from the ADR-0039 closure lesson.)*
+- **Doc-surface (arc-closure gate):** a discoverable how-to for `--enable`/`--disable`; feature-map rows for the surface-modularity feature + the auth-layer; drift-purge of any "all surfaces always on" wording. *(Applying the doc-surface completeness gate from the ADR-0039 closure lesson.)*
