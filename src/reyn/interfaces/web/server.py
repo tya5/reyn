@@ -1,8 +1,8 @@
 """FastAPI application entry point for the Reyn web gateway.
 
-Mounts all REST routers and WebSocket routes. CORS is configured for
-localhost development; tighten `allow_origins` before exposing to the
-network.
+Mounts all REST routers and the AG-UI SSE transport route. CORS is
+configured for localhost development; tighten `allow_origins` before
+exposing to the network.
 
 Static mounts (PR30 — OpenUI shell):
     /                        → shell index.html (redirect to /static/index.html)
@@ -133,7 +133,7 @@ async def _lifespan(app: FastAPI):
     install_asyncio_exception_handler(asyncio.get_running_loop())
 
     # ── Server-side authentication context (ADR-0039 P0) ──────────────────────
-    # Built once per process; read on every WebSocket connection to gate the
+    # Built once per process; read on every AG-UI SSE connection to gate the
     # answer / permission-grant paths. The effective token is handed in from the
     # CLI via REYN_WEB_AUTH_TOKEN (or web.auth.token); when neither is set a
     # token is generated so the surface is never left unauthenticated — the
@@ -274,7 +274,7 @@ async def _lifespan(app: FastAPI):
 app = FastAPI(
     title="Reyn Web Gateway",
     description=(
-        "Thin HTTP + WebSocket gateway wrapping the Reyn agent engine. "
+        "Thin HTTP + AG-UI SSE gateway wrapping the Reyn agent engine. "
         "App surface and Studio surface share the same API; the frontend "
         "decides which vocabulary to expose."
     ),

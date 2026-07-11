@@ -1,6 +1,6 @@
 """`reyn web` — Web UI ゲートウェイサーバを起動する。
 
-FastAPI + WebSocket ゲートウェイ (reyn.interfaces.web.server) を uvicorn で起動します。
+FastAPI + AG-UI SSE ゲートウェイ (reyn.interfaces.web.server) を uvicorn で起動します。
 フロントエンドを http://localhost:<port> から利用できます。
 
 このコマンドは reyn の `[web]` オプション依存を必要とします:
@@ -19,7 +19,7 @@ def register(sub) -> None:
         "web",
         help="Web UI ゲートウェイサーバを起動する",
         description=(
-            "FastAPI + WebSocket ゲートウェイを uvicorn で起動します。\n"
+            "FastAPI + AG-UI SSE ゲートウェイを uvicorn で起動します。\n"
             "インストール: pip install -e \".[web]\""
         ),
     )
