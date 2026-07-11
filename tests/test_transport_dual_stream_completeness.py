@@ -33,6 +33,12 @@ def _renderer_consumed_event_literals() -> set[str]:
 
     Collecting only strings inside ``ast.Compare`` nodes excludes incidental
     literals like ``getattr(event, "type")`` — those are Call args, not compares.
+
+    UNDER-CAPTURE GUARD: this scans compares *directly inside* ``on_chat_event``.
+    If a renderer moves its ``etype ==`` branch into a helper that
+    ``on_chat_event`` merely calls, the literal leaves this function body and is
+    silently dropped — widen the scan to follow the helper (or inline the branch)
+    before that refactor lands. (ADR-0039 P2 drive-by.)
     """
     tree = ast.parse(_RENDERER.read_text(encoding="utf-8"))
     consumed: set[str] = set()
