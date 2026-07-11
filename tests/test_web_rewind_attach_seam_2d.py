@@ -1,7 +1,7 @@
 """Tier 2: OS invariant — 2d web checkout restores the runtime substrate via the
 registry attach-seam (ADR-0038 2d-2, #1533).
 
-The 2d merge-critical gating. The web/Chainlit session is acquired via
+The 2d merge-critical gating. The web session is acquired via
 ``registry.attach`` → ``get_or_load`` (registry.py), which **auto-attaches** the
 shared anchor store. This gate proves that auto-attach makes a web-path-acquired
 session's ``checkout`` revert the runtime substrate AND record the rewind-timeline

@@ -1,7 +1,7 @@
 """Tier 2: #1402 — scoped Session construction is single-sourced (src-wide).
 
-Multiple frontends (chat-CLI / web-deps A2A / mcp-serve / dogfood / chainlit)
-built a Session with overlapping-but-divergent scoped wiring. A scoped
+Multiple frontends (chat-CLI / web-deps A2A / mcp-serve / dogfood) built a
+Session with overlapping-but-divergent scoped wiring. A scoped
 capability hand-added to one factory silently leaked from the others — the
 forwarding-gap class (sibling to base_dir #1410 / permission-zone #1415 /
 exec-seam #1419 / empty-stop #1424). (The issue named "3 factories"; a flow-trace
@@ -20,7 +20,7 @@ Pinned invariants:
   anywhere in ``src/reyn`` — every other module routes through
   ``build_scoped_chat_session`` (falsifiable: a new/unmigrated/HIDDEN
   construction site anywhere in src/ fails this, naming file:line; this is what
-  caught the dogfood/chainlit under-count).
+  caught the dogfood under-count).
 - The scoped capability + per-session config params are REQUIRED keyword-only
   args on ``build_scoped_chat_session`` (no defaults) — so a new factory cannot
   silently omit one (completeness-by-construction). A scoped param gaining a

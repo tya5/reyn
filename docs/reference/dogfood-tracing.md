@@ -260,7 +260,7 @@ found` — the mode never crashes on missing files.
 reyn installs a durable-capture `asyncio` exception handler
 (`reyn.core.events.asyncio_diagnostics.install_asyncio_exception_handler`) on
 every real loop-owning entrypoint (`reyn chat`, `reyn web`, `reyn cron run`,
-`reyn dogfood`, the chainlit server). Before this existed, a fire-and-forget
+`reyn dogfood`). Before this existed, a fire-and-forget
 background task (`asyncio.create_task(...)` whose result nobody awaits or
 checks) that raised was caught only by Python's own
 `asyncio.BaseEventLoop.default_exception_handler` — logged to stderr and then

@@ -13,9 +13,7 @@ silently re-forking the UI transport:
    ``registry.attach`` started the forwarder on the same shared session (two
    concurrent getters that stole frames). With it deleted, every UI surface
    consumes through the P6b broadcast hub's single drain; the shared session's
-   outbox has exactly one getter. (The ``chainlit_app`` PoC is a SEPARATE
-   frontend that drains its OWN per-cl-session ``web:<thread>`` outbox and never
-   hub-subscribes, so it is deliberately outside this UI-transport scope.)
+   outbox has exactly one getter.
 """
 from __future__ import annotations
 

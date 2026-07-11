@@ -7,13 +7,12 @@ moment a run is *about to* make its first LLM call, instead of a cryptic litellm
 This lives in ``reyn.llm`` (not ``interfaces.cli``) on purpose: the check now
 rides the **LLM-call axis** — ``recorded_acompletion`` is the one place ALL LLM
 calls funnel through (#1190 AST-guarded) — rather than the un-enumerable
-surface axis. Every surface (CLI / web / chainlit / dogfood / agent-step spawn /
+surface axis. Every surface (CLI / web / dogfood / agent-step spawn /
 pipeline driver) reaches the funnel, so the friendly missing-cred error is
 universal *by construction*: no per-surface startup gate to hand-wire, forget,
 or let drift (the #2708 divergence class). Each surface's existing error
 boundary renders :class:`MissingCredentialsError` like any other typed error
-(CLI → friendly stderr + exit; web/A2A → 4xx; chainlit → error bubble; mcp →
-error result).
+(CLI → friendly stderr + exit; web/A2A → 4xx; mcp → error result).
 
 The check is deliberately **narrow**: false positives (rejecting a setup that
 would actually work) are worse than false negatives (a late litellm error for

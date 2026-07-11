@@ -32,7 +32,7 @@ def test_null_consumer_refuses_non_reviewed_surface() -> None:
     with pytest.raises(ValueError):
         NullPresentationConsumer("chat")
     with pytest.raises(ValueError):
-        NullPresentationConsumer("chainlit")
+        NullPresentationConsumer("tui")
 
 
 def test_null_consumer_yields_noop_sink_for_reviewed_surface() -> None:

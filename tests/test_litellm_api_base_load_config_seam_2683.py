@@ -1,7 +1,7 @@
 """Tier 2: OS invariant — #2683 removal-safety regression for the proxy seam.
 
 #2683 deleted the inline ``LITELLM_API_BASE`` exports from
-``InvocationContext.from_args`` (chat/run/mcp-serve/chainlit) and
+``InvocationContext.from_args`` (chat/run/mcp-serve) and
 ``web/deps._get_registry`` on the basis that ``load_config()`` — which both call
 before their first LLM call — is now the single canonical writer. This test
 falsifies the "the removal silently re-broke proxy routing" failure mode: it

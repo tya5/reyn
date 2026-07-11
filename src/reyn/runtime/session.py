@@ -488,7 +488,7 @@ def _user_frame_meta(attribution: "dict | None") -> dict:
     ``attribution`` mirrors the P3 ``user_answered_intervention`` shape
     (``auth_user_id`` / ``auth_connection_id`` — see
     ``agui/endpoint.py._handle_answer``): the AG-UI POST identity for a remote
-    submit/answer. Local/in-process callers (the inline CUI, slash, chainlit)
+    submit/answer. Local/in-process callers (the inline CUI, slash)
     pass ``None`` — the frame carries no attribution, so the renderer's
     ``_meta_prefix`` (``interfaces/repl/renderer.py``) shows the bare operator
     line, byte-identical to the pre-fix single-client echo.
@@ -1063,8 +1063,8 @@ class Session:
 
                 # FP-0043 Component C.3: surface the sentence-transformers
                 # lazy model-load lifecycle (= downloading / loaded /
-                # error) via the session's events bus so the TUI /
-                # chainlit surfaces can render a sticky status row + a
+                # error) via the session's events bus so the TUI
+                # surface can render a sticky status row + a
                 # green "done" frame + a retry-hint error row. The sink
                 # is called from the embed worker thread; events.emit is
                 # GIL-protected + sync so this is safe without a
@@ -1392,7 +1392,7 @@ class Session:
             sandbox_backend=self._sandbox_backend,
             # #2095: route a not-yet-allowlisted shell-hook's consent prompt
             # through this session's RequestBus, but ONLY when a live
-            # intervention listener is attached (TUI / chainlit / A2A-override) —
+            # intervention listener is attached (TUI / web / A2A-override) —
             # i.e. a surface that will actually answer. ``has_active_listener``
             # is checked per-dispatch (listeners attach/detach after this
             # construction: TUI mount, A2A request windows). Plain mcp-serve and
@@ -2958,8 +2958,7 @@ class Session:
         """Read-only accessor for the per-session image upload queue.
 
         Tests and slash commands inspect this queue to verify that an
-        uploaded image landed (= ``/image`` slash + chainlit attachment
-        button both feed the same list). The write side stays on
+        uploaded image landed (= ``/image`` slash feeds this list). The write side stays on
         ``self._pending_user_images`` so the lifecycle (= drain on
         send, reset to []) is visible in the production call sites.
         """
@@ -5124,8 +5123,8 @@ class Session:
         ``external_source`` (FP-0050 / #1862, EP7) marks an untrusted peer
         answer so its history-bound copy is fenced. Set only by
         ``answer_pending_intervention`` (the A2A / webhook entry); the
-        default ``False`` keeps all local UI callers (TUI / slash /
-        chainlit) unfenced.
+        default ``False`` keeps all local UI callers (TUI / slash)
+        unfenced.
 
         ``attribution`` (ADR-0039 P3) stamps *who granted* — the
         authenticated ``auth_user_id`` + connection id — onto the

@@ -114,7 +114,7 @@ async def test_local_answer_is_not_fenced(tmp_path, monkeypatch):
     """Tier 2: a local answer (default external_source) is NOT fenced (c — falsify gate).
 
     Proves the source gate is load-bearing: the SAME injection text delivered
-    via a local path (TUI / slash / chainlit → default ``external_source=False``)
+    via a local path (TUI / slash → default ``external_source=False``)
     passes through verbatim — only external peers are fenced.
     """
     monkeypatch.chdir(tmp_path)

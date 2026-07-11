@@ -608,7 +608,6 @@ still use the plain `ConsoleChatRenderer`.
 | Tool-result summaries | `summarize_tool_result` renders a best-effort one-line, per-tool summary (e.g. `Read 42 lines`, `3 matches`); always degrades gracefully to a truncated repr, never a full content preview | — |
 | Above-input region | Closed-set interventions (confirm/select/grant-deny) and command UIs (e.g. the `/rewind` checkpoint picker) render as a selectable row list above the input, rather than a modal | [Permission model](concepts/runtime/permission-model.md) |
 | Input + slash-command completion | Input bar with `/`-prefixed command autocomplete (`/rewind`, `/compact`, `/model`, `/help`, `/clear-history`, …) | — |
-| Chainlit web chat (⚗ PoC) | Alternative browser chat UI sharing the same agent — `reyn chainlit` + `chainlit_app/` (agent picker, settings, uploads, slash routing); coexists with the inline CUI | — |
 
 > **Differentiation vs general agents:** Reyn's chat surface is a local, inspectable CLI with live audit chips (agents / cost / permissions) beside the conversation — the operator sees what the agent is doing and spending in real time.
 

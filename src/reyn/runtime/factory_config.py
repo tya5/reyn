@@ -1,9 +1,9 @@
 """#2093: the shared session-factory config bundle — completeness-by-construction.
 
-The five session-factory sites (cli/chat, cli/dogfood, web/deps, chainlit, cli/mcp)
+The four session-factory sites (cli/chat, cli/dogfood, web/deps, cli/mcp)
 each thread a set of UNIFORM, reyn.yaml-config-derived args identically into
 ``build_scoped_chat_session`` (8) and ``AgentRegistry`` (3). Historically a new uniform
-arg had to be added at all five sites by hand — and was silently missed at one
+arg had to be added at all four sites by hand — and was silently missed at one
 (``sandbox_config`` at the A2A factory; ``delegation_capability_default`` at
 ``mcp.py``).
 

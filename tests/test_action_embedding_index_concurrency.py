@@ -165,7 +165,7 @@ def test_disk_load_accepts_matching_class_and_catalog(tmp_path: Path) -> None:
 def test_concurrent_build_skips_when_lock_held_by_live_pid(tmp_path: Path) -> None:
     """Tier 2: another live process holding .build.lock → embed call skipped.
 
-    Simulates the chainlit + reyn-web parallel-session race tui-coder
+    Simulates the multi-surface parallel-session race tui-coder
     reported: both decide to rebuild simultaneously. Without the file
     lock both would call provider.embed() and one would lose the disk
     write race. With the lock, only the holder rebuilds; the other

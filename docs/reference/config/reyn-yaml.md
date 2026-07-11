@@ -181,7 +181,7 @@ models:
 
 > **Reasoning text IS captured, displayed, and replayed.** A non-zero
 > `reasoning_effort` sets the provider's `includeThoughts=true`; reyn captures the
-> reasoning text, displays it (TUI + chainlit, collapsible — `chat.reasoning.display`),
+> reasoning text, displays it (TUI + web, collapsible — `chat.reasoning.display`),
 > and replays recent turns' reasoning into the next prompt (`chat.reasoning.continuity`).
 > See the [`chat` block](#chat-block) for the toggles. (For OpenAI models the displayed
 > text is the *summary* and only when the dict `summary` opt-in is set — see above.)
@@ -358,7 +358,7 @@ model reasoning/"thinking" text handling.
 chat:
   reasoning:
     continuity: true      # persist reasoning to history + replay recent turns
-    display: true         # show reasoning in the UI (TUI + chainlit, collapsible)
+    display: true         # show reasoning in the UI (TUI + web, collapsible)
     recent_turns: 3       # turns of reasoning to replay; <=0 = unbounded
 ```
 
@@ -370,7 +370,7 @@ what happens afterwards. Both `continuity` and `display` default **on**.
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `continuity` | bool | `true` | Persist reasoning to history **and** replay the recent turns' reasoning into the next turn's system prompt (cross-user-turn reasoning continuity, a text-section mirroring `act_turn_reasoning`). Opt-out to disable persist + replay. |
-| `display` | bool | `true` | Surface reasoning in the UI (TUI + chainlit, collapsible). Opt-out to hide it. Independent of `continuity`. |
+| `display` | bool | `true` | Surface reasoning in the UI (TUI + web, collapsible). Opt-out to hide it. Independent of `continuity`. |
 | `recent_turns` | int | `3` | How many recent turns' reasoning to replay under `continuity`. `<= 0` (e.g. `0` / `-1`) = unbounded (keep all). Bounding matters on Gemini — there is no provider auto-filter, so reasoning accumulates and is billed in full. |
 
 > **Provider note**: on the Gemini-via-proxy path the reasoning is replayed as a

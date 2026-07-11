@@ -9,7 +9,6 @@ from __future__ import annotations
 from . import agent as agent
 from . import audit as audit
 from . import auth as auth
-from . import chainlit as chainlit
 from . import chat as chat
 from . import config as config
 from . import cron as cron
@@ -29,4 +28,4 @@ from . import topology as topology
 from . import web as web
 
 # Order is the order shown in `reyn --help`.
-ALL = [init, config, run_once, chat, agent, topology, memory, permissions, auth, events, web, chainlit, mcp, pipe, secret, source, cron, dogfood, embeddings, support_bundle, audit]
+ALL = [init, config, run_once, chat, agent, topology, memory, permissions, auth, events, web, mcp, pipe, secret, source, cron, dogfood, embeddings, support_bundle, audit]

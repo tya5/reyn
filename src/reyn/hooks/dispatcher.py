@@ -108,7 +108,7 @@ class HookDispatcher:
         # command's prompt surfaces on the answering surface (TUI Pending tab)
         # rather than the stdin prompt. ``_consent_bus_now()`` returns the bus
         # ONLY when ``consent_gate()`` is true at dispatch time (a listener is
-        # registered — TUI/chainlit/A2A-override); otherwise None, so the runner
+        # registered — TUI/web/A2A-override); otherwise None, so the runner
         # takes its stdin / fail-closed path (plain mcp-serve, headless, and
         # ``reyn run`` with no listener all hit this). Evaluated per-dispatch
         # because listeners attach/detach after construction (TUI mount, A2A

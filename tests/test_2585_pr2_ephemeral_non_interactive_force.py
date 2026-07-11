@@ -5,7 +5,7 @@
 prompt via ``MessageBus.request`` and returns — structurally headless, no interactive
 user on the other end. But the spawned session is constructed via the SAME shared
 ``session_factory`` the registry was built with (captured from whichever frontend
-launched the pipeline — A2A/MCP/chainlit/dogfood all deliberately set
+launched the pipeline — A2A/MCP/web/dogfood all deliberately set
 ``non_interactive=False``, "interactive byte-identical"). Without an override, an
 ephemeral worker could inherit ``non_interactive=False`` and land on the SP's "ask ONE
 clarifying question" branch with no one to answer it.
@@ -42,7 +42,7 @@ from reyn.runtime.session import Session
 
 
 def _make_registry(tmp_path: Path) -> AgentRegistry:
-    """A registry whose factory mirrors an interactive frontend (chainlit/A2A/MCP/
+    """A registry whose factory mirrors an interactive frontend (web/A2A/MCP/
     dogfood): every constructed session gets ``non_interactive=False`` — the shared
     default per ``scoped_session_factory.py``'s "interactive byte-identical" comment."""
     state_log = StateLog(tmp_path / "wal.jsonl")
