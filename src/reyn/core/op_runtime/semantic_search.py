@@ -56,11 +56,15 @@ from reyn.data.index.source_manifest import get_source_manifest
 from reyn.schemas.models import EmbedIROp, IndexQueryIROp, SemanticSearchIROp
 
 from . import execute_op, register
-from .context import OpContext
+from .context import OpContext, sandbox_policy_from_ctx
 
 
 async def _resolve_source_model(
-    source: str, workspace_root, fallback_model: str,
+    source: str,
+    workspace_root,
+    fallback_model: str,
+    *,
+    sandbox_write_paths: "list[str] | None" = None,
 ) -> str:
     """AUTO-ADOPT the embedding model for *source* (co-vet #1) — never
     caller-supplied. Preference order: `SourceManifest.embedding_model`
@@ -68,12 +72,20 @@ async def _resolve_source_model(
     recorded model (populated straight from index writes even when no
     manifest entry exists, e.g. in tests that seed the backend directly) ->
     `fallback_model` (an empty/unindexed source, where `index_query` falls
-    back to enumeration anyway — the model choice there is moot)."""
+    back to enumeration anyway — the model choice there is moot).
+
+    ``sandbox_write_paths`` (#2856 Part B): forwarded into the
+    `SqliteIndexBackend` construction for the same uniform-seam reason as
+    `index_query` — this call only reads (`stat`), so it does not trip the
+    backend's write self-gate, but the construction site now takes the SAME
+    cap-resolution shape as the other 3 index ops."""
     manifest = get_source_manifest(workspace_root)
     entry = await manifest.get(source)
     if entry is not None and entry.embedding_model:
         return entry.embedding_model
-    backend = SqliteIndexBackend(workspace_root=workspace_root)
+    backend = SqliteIndexBackend(
+        workspace_root=workspace_root, sandbox_write_paths=sandbox_write_paths,
+    )
     stat = await backend.stat(source)
     if stat.get("embedding_model"):
         return stat["embedding_model"]
@@ -101,6 +113,11 @@ async def handle(
 
     workspace_root = ctx.workspace.base_dir if ctx.workspace is not None else None
 
+    # #2856 Part B: resolved unconditionally, forwarded into `_resolve_source_model`'s
+    # backend construction below.
+    sandbox_policy = sandbox_policy_from_ctx(ctx)
+    sandbox_write_paths = sandbox_policy.write_paths if sandbox_policy is not None else None
+
     # ── 1. Resolve each source's model + group sources by distinct model ───
     source_models: dict[str, str] = {}
     for source in op.sources:
@@ -109,6 +126,7 @@ async def handle(
         else:
             source_models[source] = await _resolve_source_model(
                 source, workspace_root, op.embedding_model,
+                sandbox_write_paths=sandbox_write_paths,
             )
 
     # Group order = first-appearance order in op.sources (deterministic,

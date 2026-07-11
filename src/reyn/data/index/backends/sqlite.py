@@ -423,6 +423,19 @@ class SqliteIndexBackend:
 
     async def drop(self, source: str) -> DropResult:
         source_dir = self._root / ".reyn" / "cache" / "index" / source
+        # #2856 Part B: same sandbox write-path gate as `write`/`delete` —
+        # drop is a destructive write, and (unlike write/delete) this method
+        # previously had NO self-gate at all, so a cap-forward with no op-layer
+        # `require_file_write` in front of it (e.g. a future safe-mode drop
+        # entry, or a direct `handle()` call with `permission_resolver=None`)
+        # would silently pass through. Gate BEFORE the exists()/rmtree side effect.
+        if self._sandbox_write_paths is not None and not _within_paths(
+            source_dir, self._sandbox_write_paths
+        ):
+            raise PermissionError(
+                f"index drop on {str(source_dir)!r} denied by the active sandbox "
+                f"policy (path outside write_paths={self._sandbox_write_paths!r})."
+            )
         if not source_dir.exists():
             return DropResult(removed=False, chunks_dropped=0)
 

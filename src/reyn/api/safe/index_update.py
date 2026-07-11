@@ -51,23 +51,42 @@ self-loading, so the python harness needs no extra wiring:
   ``REYN_EMBEDDING_PROVIDER`` env var for the duration of the override (test
   hook only — production callers never override this).
 
-Sandbox self-gate (#1199 S3.4 Part1 parity)
---------------------------------------------
-The retired module forwarded the phase's `default_sandbox_policy.write_paths`
-cap straight into `SqliteIndexBackend(sandbox_write_paths=...)` so a
-subprocess-side self-gate applied even with no `ctx.permission_resolver`
-(the subprocess has none). The `index_update` op's own `SqliteIndexBackend`
-construction does not accept that cap, so this module performs the
-EQUIVALENT pre-flight check itself (same `_within_paths` primitive the
-backend uses) before dispatching the op — preserving the prior safety
-property without needing an op-layer change. The pre-flight gates BOTH
-writes the op performs: the source's own `index.db` (via
-`cache_dir_for_source`) AND the source manifest `sources.yaml` (via
-`sources_manifest_path`) — mirroring the LLM-tool path's own permission
-gate (`core/op_runtime/index_update.py`, resolver != None), which declares
-`file.write` authority over both paths. Before this parity fix, only the DB
-path was self-gated here, so a `write_paths` cap that excluded
-`.reyn/config/` still let a safe-mode call mutate the manifest.
+Sandbox self-gate (#2856 Part B — real-write-site, no wrapper pre-flight)
+--------------------------------------------------------------------------
+This module used to carry its OWN pre-flight `_within_paths` check (the
+#2851 db-path gate, later widened to the manifest path by the F3 fix) —
+a hand-duplicated re-derivation of the SAME gate `SqliteIndexBackend`/
+`SourceManifest` apply at their real write sites. #2856 Part B closes the
+gap that made the duplication necessary: `index_update`'s op handler
+(`core/op_runtime/index_update.py`) now forwards
+`sandbox_policy_from_ctx(ctx).write_paths` into BOTH the
+`SqliteIndexBackend` construction and the `SourceManifest.upsert` call,
+unconditionally (not just when `ctx.permission_resolver is not None`) — so
+setting `default_sandbox_policy={"write_paths": ...}` on the `OpContext`
+built below is now sufficient; the backend/manifest self-gate at the real
+write site enforces the SAME cap this module used to pre-flight-check by
+hand. The pre-flight block is retired — one gate, at the write, no
+reconstructed path-check to drift out of sync with the actual write path.
+
+Note: `execute_op` catches `PermissionError` and returns
+`{"status": "denied", ...}` (it never raises for op-level failures) — so a
+denied call here returns that dict rather than raising, unlike the retired
+pre-flight (which raised before `execute_op` was ever called). Callers that
+need to detect a sandbox denial should check `result["status"] == "denied"`.
+
+Intentional consequence (cost-before-denial, ACCEPTED — not an oversight):
+cap enforcement is at the REAL write site (post-embed), not a caller
+pre-check. So an out-of-`write_paths` safe-mode write incurs the embed cost
+BEFORE the denial fires (unlike the retired pre-flight, which denied before
+any cost). This is intentional and accepted: (1) it affects ONLY the
+safe-mode path — the LLM-tool path's `require_file_write` (inside
+`if ctx.permission_resolver is not None`) already fails fast before embed;
+(2) it is a rare anomaly path (a python step attempting a write outside its
+sandbox = misconfiguration/malice, not happy-path); (3) it is
+security-neutral (`write_paths` gates only local writes; embed egress is
+orthogonal, protected by redaction; the out-of-cap write is still denied);
+(4) keeping a single authoritative gate at the write site is the point of
+#2856 Part B — a second op-level pre-check would split the authority.
 
 Internal layering
 ------------------
@@ -170,46 +189,10 @@ async def index_update_async(
     from reyn.core.events.events import EventLog
     from reyn.core.op_runtime import execute_op
     from reyn.core.op_runtime.context import OpContext
-    from reyn.data.index.backend import cache_dir_for_source, sources_manifest_path
-    from reyn.data.index.backends.sqlite import _within_paths
     from reyn.schemas.models import IndexUpdateIROp
     from reyn.security.permissions.permissions import PermissionDecl
 
     workspace_root = _resolve_workspace_root()
-
-    # #1199 S3.4 Part1 parity: self-gate the index DB path against the
-    # phase sandbox write_paths cap (the op has no ctx.permission_resolver
-    # here to gate through, mirroring the retired embed_and_index's direct
-    # SqliteIndexBackend(sandbox_write_paths=...) construction). The DB path
-    # is derived via the SAME `cache_dir_for_source` helper `SqliteIndexBackend.
-    # _db_path` uses for the actual write — so the gate checks exactly the path
-    # the backend writes, guaranteed-equal by construction (not by two
-    # hand-agreeing hardcoded formulas).
-    #
-    # F3 (RAG FP-0057 post-merge sweep): the op ALSO upserts the source
-    # manifest (`sources.yaml`) on every call (see
-    # `core/op_runtime/index_update.py`'s `SourceManifest.upsert`) — a write
-    # this self-gate previously did not constrain, unlike the LLM-tool path
-    # (resolver != None), which gates both the DB path AND the manifest path.
-    # Gate the manifest path too, via the SAME `sources_manifest_path` SSoT
-    # helper `SourceManifest.__init__` and the op's own permission-check path
-    # use for the actual write, so the gated path is guaranteed-equal to the
-    # write path by construction (not a third hand-agreed literal).
-    if _sandbox_write_paths is not None:
-        db_path = cache_dir_for_source(workspace_root, source) / "index.db"
-        if not _within_paths(db_path, _sandbox_write_paths):
-            raise PermissionError(
-                f"index_update: source {source!r} index path is outside the "
-                f"phase sandbox write_paths policy "
-                f"(write_paths={_sandbox_write_paths!r})."
-            )
-        sources_yaml = sources_manifest_path(workspace_root)
-        if not _within_paths(sources_yaml, _sandbox_write_paths):
-            raise PermissionError(
-                f"index_update: source {source!r} manifest path "
-                f"({sources_yaml}) is outside the phase sandbox write_paths "
-                f"policy (write_paths={_sandbox_write_paths!r})."
-            )
 
     events = EventLog()
     ctx = OpContext(
@@ -223,6 +206,19 @@ async def index_update_async(
         # decision the LLM already makes before the step runs.
         permission_resolver=None,
         actor="safe_mode_index_update",
+        # #2856 Part B: promote the harness-set sandbox_write_paths onto the
+        # ctx's `default_sandbox_policy` — the `index_update` op reads it via
+        # `sandbox_policy_from_ctx(ctx)` and forwards it into the
+        # `SqliteIndexBackend`/`SourceManifest` construction UNCONDITIONALLY
+        # (not gated on `permission_resolver is not None`), so the backend's
+        # own write self-gate (sqlite.py) and the manifest's own write
+        # self-gate (source_manifest.py) now enforce this cap at the REAL
+        # write site — no wrapper-side pre-flight re-derivation needed.
+        default_sandbox_policy=(
+            {"write_paths": _sandbox_write_paths}
+            if _sandbox_write_paths is not None
+            else None
+        ),
     )
 
     op = IndexUpdateIROp(
