@@ -122,27 +122,22 @@ def _restore_overrides() -> None:
 
 
 # ---------------------------------------------------------------------------
-# 1. Routes are mounted
-# ---------------------------------------------------------------------------
-
-
-def test_a2a_routes_mounted() -> None:
-    """Tier 2: the A2A router exposes the three documented routes.
-
-    Pins the wiring without exercising the protocol. A renamed router
-    or a missing ``include_router`` would trip this test.
-    """
-    from reyn.interfaces.web.server import app
-
-    paths = {getattr(r, "path", None) for r in app.routes}
-    assert "/a2a/agents" in paths
-    assert "/a2a/agents/{agent_name}/.well-known/agent-card.json" in paths
-    assert "/a2a/agents/{agent_name}" in paths
-
-
-# ---------------------------------------------------------------------------
 # 2. Agent Card discovery
 # ---------------------------------------------------------------------------
+#
+# (A former "routes are mounted" test lived here, pinning literal
+# ``app.routes`` path strings. FastAPI 0.139 changed how ``include_router``
+# is represented internally (routes now surface as a lazy ``_IncludedRouter``
+# wrapper rather than flattened ``Route`` objects with a ``.path``), which
+# made the introspection-based pin fail even though the routes remain fully
+# reachable — exactly the "NEVER pin internal structure" trap the testing
+# policy warns about. Deleted as a redundant duplicate: mount reachability
+# for these same three routes is already proven behaviorally below
+# (``test_agent_card_returns_canonical_shape`` / `..._unknown_agent_returns_404``
+# hit ``GET /a2a/agents/{name}/.well-known/agent-card.json``;
+# ``test_list_a2a_agents_enumerates_registered`` hits ``GET /a2a/agents``;
+# ``test_message_send_returns_a2a_message`` hits ``POST /a2a/agents/{name}``)
+# and by ``tests/web/test_surface_registry.py::test_enabling_a2a_makes_it_reachable``.)
 
 
 def test_agent_card_returns_canonical_shape(tmp_path):

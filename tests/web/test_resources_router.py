@@ -187,19 +187,22 @@ def test_get_unknown_agent_returns_404(tmp_project: Path):
 
 
 # ── router registration ────────────────────────────────────────────────
-
-
-def test_resources_route_is_mounted_on_app():
-    """Tier 2: the resources router is registered on the gateway. Without
-    this, every other test in this module would still pass via 404 from
-    FastAPI's default-not-found, masking a route-mount regression.
-    """
-    from reyn.interfaces.web.server import app
-    paths = {getattr(r, "path", "") for r in app.routes}
-    assert any(
-        "/agents/" in p and "/tool-results/" in p
-        for p in paths
-    ), f"resources route not mounted; routes seen: {sorted(paths)}"
+#
+# (A former "router is registered" test lived here, pinning literal
+# ``app.routes`` path strings. FastAPI 0.139 changed how
+# ``include_router`` is represented internally (routes now surface as a
+# lazy ``_IncludedRouter`` wrapper, not a flattened ``Route`` with a
+# ``.path``), so the pin failed even though the route remains fully
+# reachable — the exact "NEVER pin internal structure" trap the testing
+# policy warns about. Deleted as a redundant duplicate: the mount is
+# already proven live by every 200/404 response above in THIS module
+# (``test_get_serves_minted_path_ref_body`` gets a real 200 body back —
+# only possible if the route is mounted; ``test_get_missing_file_returns_404``
+# / ``test_get_unknown_agent_returns_404`` distinguish a genuine "not
+# found" from FastAPI's blanket unmounted-path 404 precisely because the
+# happy-path test in the same module proves the route exists at all).
+# ``resources`` is also one of the owner-locked always-ON surfaces per
+# ``tests/web/test_surface_registry.py::test_fresh_install_default_on_set_excludes_a2a_and_mcp``.)
 
 
 # ── Browser hardening (#442) ───────────────────────────────────────────

@@ -526,18 +526,16 @@ def test_async_mode_with_unknown_agent_returns_internal_error(tmp_path) -> None:
 # ---------------------------------------------------------------------------
 # 9. New routes are mounted
 # ---------------------------------------------------------------------------
-
-
-def test_fp0001_routes_mounted() -> None:
-    """Tier 2: the task lifecycle routes added by FP-0001 are present in
-    the FastAPI app's route table.
-
-    Pins that include_router wired them correctly without accidentally
-    shadowing or dropping any existing route.
-    """
-    from reyn.interfaces.web.server import app
-
-    paths = {getattr(r, "path", None) for r in app.routes}
-    assert "/a2a/tasks/{run_id}" in paths, "GET /a2a/tasks/{run_id} must be mounted"
-    assert "/a2a/tasks/{run_id}/cancel" in paths, "POST /a2a/tasks/{run_id}/cancel must be mounted"
-    assert "/a2a/tasks/{run_id}/events" in paths, "GET /a2a/tasks/{run_id}/events must be mounted"
+#
+# (A former "routes are mounted" test lived here, pinning literal
+# ``app.routes`` path strings for the three task-lifecycle routes.
+# FastAPI 0.139 changed ``include_router``'s internal representation
+# (routes now surface as a lazy ``_IncludedRouter`` wrapper, not a
+# flattened ``Route`` with a ``.path``), so the pin failed even though
+# all three routes remain reachable — the exact "NEVER pin internal
+# structure" trap the testing policy warns about. Deleted as a
+# redundant duplicate: each route is already hit with a real request
+# elsewhere in this module (``GET /a2a/tasks/{run_id}`` at line ~92,
+# ``POST /a2a/tasks/{run_id}/cancel`` at line ~141, ``GET
+# /a2a/tasks/{run_id}/events`` at line ~190 — each returns a real 200
+# body, which only a mounted route can produce).
