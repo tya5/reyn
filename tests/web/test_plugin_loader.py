@@ -25,6 +25,7 @@ from pathlib import Path
 
 import pytest
 from fastapi import APIRouter, FastAPI
+from fastapi.testclient import TestClient
 
 from reyn.interfaces.web.plugin_loader import load_webhook_plugins, load_webhooks_yaml
 
@@ -260,22 +261,28 @@ def test_loader_continues_after_register_raises(_patch_entry_points):
 def test_loader_disambiguates_via_package_field(_patch_entry_points):
     """Tier 2: when two packages register the same plugin name, the
     ``package:`` field in webhooks.yaml selects which one is mounted.
-    Verified via the entry-point's distribution name reaching through
-    to ``register_router`` (= each fake builds a router with a marker
-    path so the test can identify which one mounted).
+
+    Verified behaviorally via a real ``TestClient`` request rather than
+    ``app.routes`` introspection (each fake builds a router with a
+    marker path so the test can tell which one mounted by which path
+    actually answers) — FastAPI 0.139 changed ``include_router``'s
+    internal representation (routes now surface as a lazy
+    ``_IncludedRouter`` wrapper, not a flattened ``Route`` with a
+    ``.path``), which made a literal-path ``app.routes`` pin here rot
+    even though the disambiguation still works correctly.
     """
     def _from_a(config):
         r = APIRouter()
         @r.get("/from-pkg-a")
         async def _h():
-            return {}
+            return {"pkg": "a"}
         return r
 
     def _from_b(config):
         r = APIRouter()
         @r.get("/from-pkg-b")
         async def _h():
-            return {}
+            return {"pkg": "b"}
         return r
 
     _patch_entry_points.append(_stub_entry_point("sample_slack", "pkg_a", _from_a))
@@ -287,7 +294,12 @@ def test_loader_disambiguates_via_package_field(_patch_entry_points):
         webhooks_config={"sample_slack": {"package": "pkg_b"}},
     )
     assert mounted == 1
-    # The pkg_b router (= /from-pkg-b path) should be the one mounted.
-    paths = {getattr(r, "path", "") for r in app.routes}
-    assert "/from-pkg-b" in paths
-    assert "/from-pkg-a" not in paths
+
+    client = TestClient(app, raise_server_exceptions=False)
+    # The pkg_b router should be the one mounted — its route answers...
+    resp_b = client.get("/from-pkg-b")
+    assert resp_b.status_code == 200, resp_b.text
+    assert resp_b.json() == {"pkg": "b"}
+    # ...while pkg_a's route was never mounted, so it 404s.
+    resp_a = client.get("/from-pkg-a")
+    assert resp_a.status_code == 404, resp_a.text

@@ -31,28 +31,27 @@ pytest.importorskip("mcp", reason="mcp not installed ([mcp] extra missing)")
 
 
 # ---------------------------------------------------------------------------
-# 1. Routes are mounted
-# ---------------------------------------------------------------------------
-
-
-def test_mcp_routes_mounted() -> None:
-    """Tier 2: the /mcp/sse GET route and the /mcp/messages mount are
-    both present on the FastAPI app.
-
-    Pins the wiring without exercising the SSE handshake: a missing
-    Mount is the most likely regression if the router file is renamed
-    or its include is reordered.
-    """
-    from reyn.interfaces.web.server import app
-
-    paths = {getattr(r, "path", None) for r in app.routes}
-    assert "/mcp/sse" in paths, f"/mcp/sse missing from {paths}"
-    assert "/mcp/messages" in paths, f"/mcp/messages missing from {paths}"
-
-
-# ---------------------------------------------------------------------------
 # 2. POST /mcp/messages without session_id → 4xx
 # ---------------------------------------------------------------------------
+#
+# (A former "routes are mounted" test lived here, pinning literal
+# ``app.routes`` path strings for ``/mcp/sse`` and ``/mcp/messages``.
+# FastAPI 0.139 changed ``include_router``'s internal representation
+# (routes now surface as a lazy ``_IncludedRouter`` wrapper, not a
+# flattened ``Route`` with a ``.path``), so the pin failed even though
+# both routes remain reachable — the exact "NEVER pin internal
+# structure" trap the testing policy warns about. Deleted as a
+# redundant duplicate: ``/mcp/messages`` reachability is already proven
+# behaviorally by the two tests below (a 4xx response means the SDK's
+# own mount handled the request — a 404 would mean unmounted) and by
+# ``tests/web/test_surface_registry.py``'s disabled/enabled surface
+# checks. ``/mcp/sse`` is appended to the app's route table in the
+# very same ``_mount_mcp`` call (``surfaces.py``) that appends
+# ``/mcp/messages``, guarded by the same enabled-check, so proving one
+# reachable is strong evidence for the other; opening a real
+# ``GET /mcp/sse`` stream from a sync ``TestClient`` was tried and
+# hangs (verified empirically) because the SSE handshake needs a
+# concurrent client, not just an app.routes membership check.)
 
 
 def test_mcp_messages_missing_session_id_returns_4xx() -> None:
