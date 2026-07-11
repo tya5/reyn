@@ -318,8 +318,8 @@ A reyn display frame with no standard AG-UI analog. `value` is `{"text": <string
 |-----------------------------------|------------------------------------------------------|
 | `reyn.display.intervention`       | an intervention prompt is displayed                   |
 | `reyn.display.presentation`       | a `present` op's text; the render-node model rides the `_reyn` block's `meta.nodes` (inert on the wire — see *present-on-wire*) |
-| `reyn.display.user`               | a user-authored line echoed live to the scrollback (backlog user turns ride the standard `messages` array instead) |
-| `reyn.display.system`             | a reyn chrome line — a persisted lifecycle/status marker (compaction / budget / cost-warn) or the operator's "answered:" echo |
+| `reyn.display.user`               | a user-authored line — a submitted turn OR a resolved intervention answer — broadcast (via the outbox fan-out, same as agent output) to EVERY attached client, not only the one that produced it; `meta` optionally carries `auth_user_id` / `auth_connection_id` attribution for a multi-client render (backlog user turns ride the standard `messages` array instead) |
+| `reyn.display.system`             | a reyn chrome line — a persisted lifecycle/status marker (compaction / budget / cost-warn) |
 | `reyn.display.__copy_last_reply__` | the `/copy` sentinel — forwarded (client-side clipboard copy); see *control sentinels* |
 | `reyn.display.__rewind_list__`    | the `/rewind` sentinel — forwarded (client-side rewind picker); see *control sentinels* |
 | `reyn.display.__attach_request__` | the attach-request sentinel — a fail-safe profile entry (upstream-consumed); see *control sentinels* |
@@ -372,6 +372,17 @@ behind the `_inline_interactive` predicate), and both `reyn chat` and `reyn chat
 region / task poll through the read-model: a `RegistryReadModel` off the local
 session, or a `RemoteReadModel` off the `STATE_*` view above — so an interactive
 remote attach renders the inline CUI, not a plain fallback.
+
+**Local ≡ remote holds for INPUT too, symmetric with output.** A submitted turn
+(`Session.submit_user_text`) and a resolved intervention answer
+(`InterventionHandler.deliver_answer_to` — the one funnel every answer path
+shares: TUI free-text, TUI choice-region, an A2A peer, and the AG-UI HITL
+round-trip above) each put a `kind="user"` frame on the SAME `session.outbox`
+the agent's reply rides, so it fans out through the identical `OutboxHub`
+broadcast to every attached surface. The submitting client renders its own
+line from that broadcast frame too (no separate local echo) — with 2+ clients
+attached, everyone sees every turn and every answer, not only the agent's
+replies to them.
 
 ## AG-UI event coverage — reading the numbers honestly
 

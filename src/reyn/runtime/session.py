@@ -481,6 +481,32 @@ def _new_chain_id() -> str:
     return uuid.uuid4().hex
 
 
+def _user_frame_meta(attribution: "dict | None") -> dict:
+    """Build ``meta`` for a ``kind="user"`` outbox frame (ADR-0039 multi-client
+    input-broadcast fix).
+
+    ``attribution`` mirrors the P3 ``user_answered_intervention`` shape
+    (``auth_user_id`` / ``auth_connection_id`` — see
+    ``agui/endpoint.py._handle_answer``): the AG-UI POST identity for a remote
+    submit/answer. Local/in-process callers (the inline CUI, slash, chainlit)
+    pass ``None`` — the frame carries no attribution, so the renderer's
+    ``_meta_prefix`` (``interfaces/repl/renderer.py``) shows the bare operator
+    line, byte-identical to the pre-fix single-client echo.
+
+    When ``auth_user_id`` is present it is ALSO copied to the generic
+    ``actor`` key so the EXISTING ``_meta_prefix`` provenance-prefix path
+    (already used for agent / status kind lines) renders it as ``[alice] ``
+    with no new renderer branch — one prefix mechanism for every kind.
+    """
+    if not attribution:
+        return {}
+    meta = dict(attribution)
+    auth_user_id = attribution.get("auth_user_id")
+    if auth_user_id:
+        meta["actor"] = auth_user_id
+    return meta
+
+
 def _format_hook_attribution(name: str, text: str) -> str:
     """Render an attributed hook message (#1800 slice 5b). The single source for
     the ``[hook:<name>]`` system-role prefix, shared by the staged-context
@@ -3434,13 +3460,39 @@ class Session:
 
     # ── inbox API ───────────────────────────────────────────────────────────────
 
-    async def submit_user_text(self, text: str) -> None:
+    async def submit_user_text(
+        self, text: str, *, attribution: "dict | None" = None,
+    ) -> None:
         # PR14: every top-level user submission starts a fresh chain_id that
         # propagates through any agent_request / agent_response generated in
         # response. Logged in history meta + events.jsonl for cross-agent trace.
         await self._put_inbox(
             "user", {"text": text, "chain_id": _new_chain_id()},
         )
+        # ADR-0039 multi-client input-broadcast fix: put the user's OWN turn on
+        # `session.outbox` too (not just the inbox that drives the turn), so it
+        # rides the SAME `outbox_hub` fan-out (P6b-1) the agent's reply already
+        # broadcasts through. Before this, a 2nd+ thin client (`reyn chat
+        # --connect`) saw the agent's reply with no prompt (half a conversation)
+        # — the local scrollback echo was a LOCAL-ONLY `transport.put_display`
+        # injection that never reached the hub (removed from
+        # `interfaces/inline/app.py._do_submit`; every client, including this
+        # submitting one, now renders its own line from THIS broadcast frame —
+        # single source of truth, no double-render).
+        #
+        # The DISPLAY copy is neutralized (ESC/control strip — same
+        # `core/present/guard.get_neutralizer("terminal")` seam #2770 uses for
+        # intervention content) because this text now reaches every attached
+        # peer's terminal, not only the operator's own (a new cross-client
+        # surface a purely-local echo never had). The INBOX copy above (what the
+        # agent/router actually reads) stays raw — display neutralization never
+        # touches conversation content.
+        from reyn.core.present.guard import get_neutralizer
+        await self._put_outbox(OutboxMessage(
+            kind="user",
+            text=get_neutralizer("terminal").neutralize(text)[0],
+            meta=_user_frame_meta(attribution),
+        ))
 
     async def submit_agent_request(
         self, *, from_agent: str, request: str, depth: int, chain_id: str,
@@ -5088,6 +5140,8 @@ class Session:
         self,
         run_id: str,
         answer: "InterventionAnswer",
+        *,
+        attribution: "dict | None" = None,
     ) -> bool:
         """Deliver ``answer`` to the outstanding intervention for ``run_id``.
 
@@ -5106,6 +5160,15 @@ class Session:
         ``user_answered_intervention`` event + outbox cleanup all fire
         the same way as TUI answers — observers on the audit trail
         see a consistent shape regardless of answer origin.
+
+        ``attribution`` (ADR-0039 multi-client input-broadcast fix, symmetric
+        with ``answer_intervention_by_id``'s AG-UI path) threads through to the
+        ``kind="user"`` broadcast frame so a peer-answer is attributable, same
+        shape as ``user_answered_intervention``. A2A currently has no
+        per-request identity to plumb here (unlike the AG-UI auth gate), so
+        today's only caller passes ``None`` — the answer still broadcasts
+        (unattributed, rendered as the bare operator line), leaving this a
+        structurally-ready seam rather than a fabricated identity.
 
         Returns True when the future was resolved; False for unknown
         run_id, already-answered iv, malformed ``choice_id``, or no
@@ -5126,6 +5189,7 @@ class Session:
                 # external so its history-bound copy is fenced before it
                 # reaches conversation context.
                 external_source=True,
+                attribution=attribution,
             )
         return False
 

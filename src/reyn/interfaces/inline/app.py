@@ -1112,15 +1112,21 @@ async def run_inline_input(read_model, renderer, config=None, transport=None) ->
         if stripped in ("/quit", "/exit"):
             event.app.create_background_task(_quit(transport, event.app, quitting))
         else:
-            # Echo the submitted line into the scrollback BEFORE the turn runs.
-            # The live input field is cleared on submit (buf.reset above), so
-            # without this the user's own message never appears in the
-            # conversation (only the agent reply does). kind="user" persists (not
-            # a transient status), and the output loop drains the outbox FIFO, so
-            # it lands just above the agent reply — mirroring the PromptSession
-            # path, where the typed line stays committed in the terminal.
-            from reyn.runtime.outbox import OutboxMessage
-            transport.put_display(OutboxMessage(kind="user", text=stripped))
+            # The submitted line is NOT echoed locally here (ADR-0039
+            # multi-client input-broadcast fix — removed the local-only
+            # `transport.put_display(kind="user", ...)` injection that used to
+            # live in this branch). The live input field still clears on
+            # submit (buf.reset above), but the scrollback line now comes from
+            # `session.outbox` instead: `Session.submit_user_text` (normal
+            # turns) / `InterventionHandler.deliver_answer_to` (intervention
+            # answers) both put a kind="user" frame on the outbox, which
+            # broadcasts via `outbox_hub` to EVERY attached surface — this
+            # client renders its OWN line from that SAME broadcast frame,
+            # identical to how a peer thin client sees it (single source of
+            # truth, local == remote by construction). Without the broadcast
+            # frame the user's own message would never appear (only the agent
+            # reply does) — this invariant is now carried by the outbox path
+            # instead of a local echo.
             event.app.create_background_task(_submit(transport, stripped))
 
     # Owner spec: Enter=submit, Shift+Enter=newline. See the module-level
@@ -1487,31 +1493,29 @@ async def run_inline_input(read_model, renderer, config=None, transport=None) ->
 
 
 async def _deliver_intervention_choice(transport, choice_id: str, label: str) -> None:
-    """Deliver a region-selected intervention choice + echo it to scrollback.
+    """Deliver a region-selected intervention choice.
 
     The chosen choice id is delivered authoritatively via the transport send
-    seam (``answer_intervention_choice``). On success, a uniform
-    ``answered: <label>`` line is put on the display stream so EVERY resolved
-    intervention leaves a trace in the conversation — not just the ones (like
-    permission) whose side effect happens to be visible. ask_user /
-    safety-limit interventions otherwise vanish from scrollback on resolution.
+    seam (``answer_intervention_choice``), which resolves through
+    ``InterventionHandler.deliver_answer_to`` — the ONE funnel every answer
+    path (TUI free-text, TUI choice-region, A2A peer, AG-UI HITL) shares.
+
+    No local echo here anymore (ADR-0039 multi-client input-broadcast fix):
+    this used to ``transport.put_display(kind="system", text=f"answered:
+    {label}")`` on success — a LOCAL-ONLY injection that never reached a peer
+    thin client. ``deliver_answer_to`` now puts a ``kind="user"`` frame
+    (``text=label``, neutralized) on the SESSION outbox for every resolved
+    answer, which broadcasts via ``outbox_hub`` to this AND every other
+    attached surface. Re-adding a local echo here would double-render this
+    client's own line (once from this call, once from the broadcast it also
+    receives) — ``label`` is kept as a parameter for call-site compatibility
+    with ``build_intervention_element``'s callback shape, even though it is no
+    longer read in this body.
     """
     try:
-        delivered = await transport.answer_intervention_choice(choice_id)
+        await transport.answer_intervention_choice(choice_id)
     except Exception:
         logger.exception("inline: delivering intervention choice failed")
-        return
-    if delivered:
-        from reyn.runtime.outbox import OutboxMessage
-        # kind="system" (not "status"/"trace") so the echo PERSISTS in scrollback
-        # as a dim lifecycle marker (· glyph). "status"/"trace" are transient and
-        # would be erased before the user sees them. "intervention" would also
-        # persist, but renders with the amber ◆ "needs-you" glyph — misleading for
-        # a resolved-answer confirmation. "system" correctly signals historical
-        # record (same visual weight as compaction / budget-warn markers).
-        transport.put_display(
-            OutboxMessage(kind="system", text=f"answered: {label}")
-        )
 
 
 async def _submit(transport, text: str) -> None:

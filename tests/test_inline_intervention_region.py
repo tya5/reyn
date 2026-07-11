@@ -135,24 +135,26 @@ class _AnsweringSession:
 
 
 @pytest.mark.asyncio
-async def test_deliver_choice_echoes_answer_to_scrollback() -> None:
-    """Tier 2: a delivered choice is sent authoritatively AND a uniform
-    'answered: <label>' system marker is put on the outbox (so every resolved
-    intervention leaves a scrollback trace, not just permission's side effect)."""
+async def test_deliver_choice_delivers_authoritatively_without_local_echo() -> None:
+    """Tier 2: a delivered choice is sent authoritatively; the local uniform
+    'answered: <label>' system marker this used to put on ``registry.repl_outbox``
+    directly is GONE (ADR-0039 multi-client input-broadcast fix,
+    ``tests/test_user_echo_broadcast.py``). It was a LOCAL-ONLY injection that
+    never reached a peer thin client — ``InterventionHandler.deliver_answer_to``
+    now broadcasts a ``kind="user"`` frame (``text=<choice label>``) via
+    ``session.outbox`` -> ``outbox_hub`` for every resolved answer instead, so
+    re-adding this local echo here would double-render this client's own line.
+    See ``test_user_echo_broadcast.py::test_deliver_intervention_choice_no_longer_locally_echoes``
+    and ``::test_choice_answer_broadcasts_user_frame_with_label`` for the new
+    invariant this replaces."""
     session = _AnsweringSession(ok=True)
     queue: asyncio.Queue = asyncio.Queue()
     registry = SimpleNamespace(attached_session=lambda: session, repl_outbox=queue)
 
     await _deliver_intervention_choice(_tx(registry), "just_path", "[j]ust this path always")
 
-    assert session.delivered == ["just_path"]  # authoritative id delivered
-    msg = queue.get_nowait()
-    # kind="system" → dim · marker (persistent, not transient "status"/"trace").
-    # "intervention" would also persist but renders with amber ◆ "needs-you" glyph
-    # — semantically wrong for a resolved-answer confirmation.
-    assert msg.kind == "system"
-    assert "answered:" in msg.text
-    assert "[j]ust this path always" in msg.text
+    assert session.delivered == ["just_path"]  # authoritative id still delivered
+    assert queue.empty()  # no local echo left — the outbox broadcast is the only trace
 
 
 @pytest.mark.asyncio

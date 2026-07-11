@@ -81,6 +81,30 @@ def _neutralize_terminal(value: str) -> str:
     return get_neutralizer("terminal").neutralize(value)[0]
 
 
+def _user_frame_meta(attribution: "dict | None") -> dict:
+    """Mirrors ``session._user_frame_meta`` (kept in sync — see that
+    docstring for the full rationale).
+
+    Builds ``meta`` for the ``kind="user"`` outbox frame that broadcasts an
+    intervention answer's DISPLAY text (ADR-0039 multi-client input-broadcast
+    fix). ``attribution`` is ``None`` for every local UI caller (the inline
+    CUI's free-text-answer / choice-region paths, chainlit) → empty meta, the
+    renderer shows the bare operator line. The AG-UI answer path
+    (``endpoint.py._handle_answer``) passes ``auth_user_id`` /
+    ``auth_connection_id`` — mirroring ``user_answered_intervention``'s own
+    attribution shape below — copied here to ``actor`` too, so the renderer's
+    EXISTING ``_meta_prefix`` provenance prefix (already used for agent /
+    status lines) picks it up as ``[alice] `` with no new renderer branch.
+    """
+    if not attribution:
+        return {}
+    meta = dict(attribution)
+    auth_user_id = attribution.get("auth_user_id")
+    if auth_user_id:
+        meta["actor"] = auth_user_id
+    return meta
+
+
 def _iv_meta(iv: UserIntervention) -> dict:
     """Standard ``meta`` payload for OutboxMessage announcing an intervention.
 
@@ -290,6 +314,32 @@ class InterventionHandler:
             answer_text=text if not iv.choices else "",
             **attrib,
         )
+        # ADR-0039 multi-client input-broadcast fix: broadcast the answer's
+        # DISPLAY text too (kind="user") — every answer path (TUI free-text /
+        # TUI choice-region / A2A peer / AG-UI HITL) shares this ONE funnel, so
+        # this single emit site covers all of them uniformly. A peer thin
+        # client previously saw only the agent's NEXT reply with no trace the
+        # intervention was ever answered (unless the local TUI happened to
+        # ALSO put a local-only "answered: <label>" system echo — removed from
+        # ``interfaces/inline/app.py._deliver_intervention_choice`` as part of
+        # this fix, to avoid a double-render now that this broadcasts).
+        #
+        # Uses ``choice.label`` (when a choice was matched) or the raw
+        # ``text`` — NEVER ``history_text`` (the fenced context-bound copy
+        # above): display and context are orthogonal sinks. The fence exists
+        # so an external peer's answer cannot inject itself into the AGENT's
+        # context; broadcasting the SAME answer to human observers' terminals
+        # doesn't touch context at all, so it stays unfenced (an operator
+        # watching a peer answer a prompt should see what was actually
+        # answered). Neutralized (ESC/control strip) because it now reaches
+        # every attached peer's terminal — the SAME ``_neutralize_terminal``
+        # seam ``announce``'s scrollback echo uses (#2770).
+        display_text = _neutralize_terminal(choice.label if choice is not None else text)
+        await self._put_outbox(OutboxMessage(
+            kind="user",
+            text=display_text,
+            meta=_user_frame_meta(attribution),
+        ))
         return True
 
     async def announce(self, iv: UserIntervention) -> None:
