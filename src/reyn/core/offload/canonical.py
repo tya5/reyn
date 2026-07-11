@@ -829,7 +829,17 @@ def make_status_text_mapper(
 
     SUCCESS shape only — FP-0056 v2 piece #1 (the shared error seam) routes any
     :func:`is_error_result` shape through ``error_to_canonical`` BEFORE a mapper runs, so ``render``
-    only ever sees a success/status dict."""
+    only ever sees a success/status dict.
+
+    ``status:"cancelled"`` (#2813) is DELIBERATELY not folded into the shared error seam —
+    :func:`is_error_result`'s own docstring (Tightening A) explains why a bare ``status`` value must
+    never be a standalone error trigger (a producer may give ``status`` a success-data meaning, e.g.
+    sandboxed_exec's nonzero-exit). So this factory checks for it directly, BEFORE calling ``render``:
+    every ``make_status_text_mapper``-built canonical (mcp_install / mcp_install_local /
+    mcp_subscribe_resource / mcp_unsubscribe_resource, at present) would otherwise fall through to
+    ``render``'s SUCCESS-only phrasing (e.g. "Installed MCP server '…'.") for a cancelled install that
+    wrote NOTHING — a false-positive success report caught in #2813 co-vet. ``meta_keys`` still ride
+    along (server_id/server_name/uri/... identify WHICH call was cancelled)."""
 
     def _mapper(result: dict) -> CanonicalToolResult:
         meta: dict[str, Any] = {}
@@ -837,6 +847,8 @@ def make_status_text_mapper(
             value = result.get(key)
             if value is not None:
                 meta[key] = value
+        if result.get("status") == "cancelled":
+            return CanonicalToolResult(text="Cancelled.", attachments=[], source_ref=None, meta=meta)
         text = _explicit_empty(render(result), empty_marker)
         return CanonicalToolResult(text=text, attachments=[], source_ref=None, meta=meta)
 

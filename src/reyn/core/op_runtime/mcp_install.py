@@ -28,9 +28,12 @@ from __future__ import annotations
 
 import shutil
 from pathlib import Path
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 from reyn.schemas.models import MCPInstallIROp
+
+if TYPE_CHECKING:
+    import asyncio
 
 from . import register
 from .context import OpContext
@@ -156,25 +159,36 @@ def _build_server_entry(pkg_raw: dict, env_keys: list[str]) -> dict:
 
 async def probe_mcp_server(
     server_name: str, server_entry: dict, *, agent_id: str | None = None,
+    cancel_event: "asyncio.Event | None" = None,
 ) -> "str | None":
     """#2761 PR-3: probe a prospective MCP server (spawn/connect + ``list_tools``)
     BEFORE its config is committed — the probe-then-commit atomicity gate.
 
     Returns ``None`` on a successful probe (the server is reachable and advertises
-    tools) or an error string on failure. The caller writes the config ONLY on
-    ``None`` — so a failed probe leaves NOTHING written (no half-install, no rollback).
+    tools) or an error string on failure — including a Ctrl-C cancel (#2813; see
+    below). The caller writes the config ONLY on ``None`` — so a failed OR
+    cancelled probe leaves NOTHING written (no half-install, no rollback).
 
     Routed through the crash-safe :class:`~reyn.mcp.gateway.MCPGateway` seam (#2421):
     open + list + teardown inside one contain-all boundary + a per-server timeout,
     task-affine so the SDK's stdio_client/ClientSession scopes close in the same task.
     The gateway raises ONLY :class:`MCPFault` for a transport/timeout fault (contained
-    here → error string); a genuine Ctrl+C ``CancelledError`` is re-raised by the
-    gateway as control flow and propagates OUT of this probe — the pool's ``__aexit__``
-    has already torn the transport down (stdio subprocess kill via ``kill_process_tree``
-    / HTTP close), and because the config write is strictly AFTER this probe, a cancel
-    leaves nothing committed. **Transport-uniform**: stdio and remote (http/sse) share
-    this one path — ``MCPClient.__aexit__`` owns the transport-appropriate teardown, so
-    the probe never branches on transport (mirrors ``Session._mcp_list_tools``)."""
+    here → error string), or PROPAGATES control flow: a genuine Ctrl+C
+    ``CancelledError`` (host-task cancel, e.g. ``Session.shutdown``'s hard-cancel), or
+    :class:`~reyn.core.cancellable.Cancelled` if ``cancel_event`` fires first (#2813 —
+    pass the per-turn ``OpContext.cancel_event`` here so a Ctrl-C during install
+    interrupts the probe IMMEDIATELY instead of waiting out its own
+    ``call_timeout_seconds``; ``None`` — the default — preserves the pre-#2813
+    behavior of running to the probe's own timeout). ``Cancelled`` is deliberately NOT
+    caught here — it propagates to the install caller, which translates it to a
+    ``status:"cancelled"`` result (uniform with the ``mcp``/resource op cancel
+    surface), rather than being flattened into a generic probe-error string. Either
+    way the pool's ``__aexit__`` has already torn the transport down (stdio subprocess
+    kill via ``kill_process_tree`` / HTTP close) by the time this function returns/
+    raises, and because the config write is strictly AFTER this probe, nothing gets
+    committed. **Transport-uniform**: stdio and remote (http/sse) share this one path —
+    ``MCPClient.__aexit__`` owns the transport-appropriate teardown, so the probe never
+    branches on transport (mirrors ``Session._mcp_list_tools``)."""
     from reyn.mcp.client import expand_env  # noqa: PLC0415
     from reyn.mcp.gateway import MCPFault, MCPGateway  # noqa: PLC0415
 
@@ -184,7 +198,7 @@ async def probe_mcp_server(
     # A url-only remote entry defaults to http (mirrors _mcp_list_tools).
     if "type" not in expanded and expanded.get("url"):
         expanded = {**expanded, "type": "http"}
-    gateway = MCPGateway(agent_id=agent_id)
+    gateway = MCPGateway(agent_id=agent_id, cancel_event=cancel_event)
     try:
         await gateway.list_tools(server_name, expanded)
     except MCPFault as exc:
@@ -567,6 +581,7 @@ async def handle(
     # rollback). A same-name overwrite (the documented `reyn mcp install` re-install
     # fix) or no per-session reloader keeps the existing deferred turn-boundary path
     # (unchanged), confining any in-use-replace to the deferred path.
+    from reyn.core.cancellable import Cancelled  # noqa: PLC0415
     from reyn.runtime.hot_reload import (  # noqa: PLC0415
         dispatch_install_reload,
         is_pure_addition,
@@ -574,9 +589,22 @@ async def handle(
     _is_addition = is_pure_addition(server_name, existing["mcp"]["servers"])
     _reloader = getattr(ctx, "hot_reloader", None)
     if _is_addition and _reloader is not None:
-        _probe_err = await probe_mcp_server(
-            server_name, server_entry, agent_id=getattr(ctx, "agent_id", None),
-        )
+        try:
+            _probe_err = await probe_mcp_server(
+                server_name, server_entry, agent_id=getattr(ctx, "agent_id", None),
+                cancel_event=ctx.cancel_event,
+            )
+        except Cancelled:
+            # #2813: Ctrl-C during the probe → uniform status:"cancelled" (matches the
+            # mcp/resource op cancel surface), nothing written (commit is strictly after).
+            ctx.events.emit(
+                "mcp_install_cancelled", server_id=op.server_id, server_name=server_name,
+            )
+            return {
+                "kind": "mcp_install", "status": "cancelled",
+                "server_id": op.server_id, "server_name": server_name,
+                "source": op.source or "",
+            }
         if _probe_err is not None:
             ctx.events.emit(
                 "mcp_install_probe_failed",

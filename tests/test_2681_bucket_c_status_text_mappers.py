@@ -161,6 +161,53 @@ def test_mcp_subscribe_resource_renders_status_text() -> None:
     assert canonical["meta"]["server"] == "docs"
 
 
+def test_mcp_install_registry_cancelled_does_not_render_as_installed() -> None:
+    """Tier 1: #2813 co-vet catch — a Ctrl-C-cancelled ``mcp_install_registry``/``mcp_install_package``
+    result (``status:"cancelled"``, nothing written) must NOT render the SUCCESS phrasing
+    ("Installed MCP server '...'.") — that would be a false-positive success report to the LLM/user
+    for an install that wrote nothing. ``make_status_text_mapper`` special-cases ``status:"cancelled"``
+    BEFORE calling the producer's own ``render`` (which only knows success shapes)."""
+    cancelled = {
+        "kind": "mcp_install", "status": "cancelled",
+        "server_id": "io.example/server-time", "server_name": "server-time", "source": "",
+    }
+    canonical = to_canonical(cancelled, source="mcp_install_registry")
+    assert canonical["text"] == "Cancelled."
+    assert "Installed" not in canonical["text"]
+    assert canonical["meta"]["server_name"] == "server-time"
+
+
+def test_mcp_install_local_cancelled_does_not_render_as_installed() -> None:
+    """Tier 1: #2813 — same false-success hazard for ``mcp_install_local`` (the reported-incident
+    path). Real regression caught in review: the verb's cancelled return originally put
+    ``status:"cancelled"`` only at the OUTER {status,data} envelope level — unwrap_dispatch_envelope
+    peels that wrapper down to ``data`` before the mapper ever runs, so the status must ALSO live
+    inside ``data`` (mirrors the success shape's own field placement) or this mapper never sees it."""
+    cancelled = {"kind": "mcp_install_local", "status": "cancelled", "name": "jq"}
+    canonical = to_canonical(cancelled, source="mcp_install_local")
+    assert canonical["text"] == "Cancelled."
+    assert "Installed" not in canonical["text"]
+    assert canonical["meta"]["name"] == "jq"
+
+
+def test_mcp_subscribe_resource_cancelled_does_not_render_as_subscribed() -> None:
+    """Tier 1: #2813 — same false-success hazard for mcp_subscribe_resource."""
+    cancelled = {"kind": "mcp_subscribe_resource", "status": "cancelled", "server": "docs", "uri": "docs://readme"}
+    canonical = to_canonical(cancelled, source="subscribe_mcp_resource")
+    assert canonical["text"] == "Cancelled."
+    assert "Subscribed" not in canonical["text"]
+    assert canonical["meta"]["uri"] == "docs://readme"
+
+
+def test_mcp_unsubscribe_resource_cancelled_does_not_render_as_unsubscribed() -> None:
+    """Tier 1: #2813 — same false-success hazard for mcp_unsubscribe_resource."""
+    cancelled = {"kind": "mcp_unsubscribe_resource", "status": "cancelled", "server": "docs", "uri": "docs://readme"}
+    canonical = to_canonical(cancelled, source="unsubscribe_mcp_resource")
+    assert canonical["text"] == "Cancelled."
+    assert "Unsubscribed" not in canonical["text"]
+    assert canonical["meta"]["uri"] == "docs://readme"
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Error shape still routes through the shared error seam (piece #1) — unaffected by the new mappers
 # ─────────────────────────────────────────────────────────────────────────────

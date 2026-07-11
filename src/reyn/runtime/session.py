@@ -5911,6 +5911,7 @@ class Session:
 
     async def _mcp_list_tools(self, server: str) -> list[dict]:
         """Query the MCP server for its tools list."""
+        from reyn.core.cancellable import Cancelled
         from reyn.mcp.client import expand_env
         from reyn.mcp.gateway import MCPFault, MCPGateway
 
@@ -5937,12 +5938,17 @@ class Session:
         # one-shot pool (no injected pool — list is not batched across ops), since holding a
         # connection open for a sub-second-lived session is pure churn.
         gateway = (
-            MCPGateway(pool=self._mcp_connection_service, agent_id=self._agent_id)
+            MCPGateway(
+                pool=self._mcp_connection_service, agent_id=self._agent_id,
+                cancel_event=self._loop_driver.cancel_event,
+            )
             if not self._ephemeral
-            else MCPGateway(agent_id=self._agent_id)
+            else MCPGateway(agent_id=self._agent_id, cancel_event=self._loop_driver.cancel_event)
         )
         try:
             return await gateway.list_tools(server, expanded)
+        except Cancelled:
+            return [{"error": "cancelled"}]
         except MCPFault as exc:
             return [{"error": str(exc)}]
 
@@ -5956,6 +5962,7 @@ class Session:
         observability (list_tools has no analogous event; this ask is
         explicit per the #2597 ②a slice spec).
         """
+        from reyn.core.cancellable import Cancelled
         from reyn.mcp.client import expand_env
         from reyn.mcp.gateway import MCPFault, MCPGateway
 
@@ -5973,12 +5980,17 @@ class Session:
             expanded = {**expanded, "type": "http"}
 
         gateway = (
-            MCPGateway(pool=self._mcp_connection_service, agent_id=self._agent_id)
+            MCPGateway(
+                pool=self._mcp_connection_service, agent_id=self._agent_id,
+                cancel_event=self._loop_driver.cancel_event,
+            )
             if not self._ephemeral
-            else MCPGateway(agent_id=self._agent_id)
+            else MCPGateway(agent_id=self._agent_id, cancel_event=self._loop_driver.cancel_event)
         )
         try:
             resources = await gateway.list_resources(server, expanded)
+        except Cancelled:
+            return [{"error": "cancelled"}]
         except MCPFault as exc:
             return [{"error": str(exc)}]
         self._chat_events.emit(
@@ -5993,6 +6005,7 @@ class Session:
         permission-gated). Empty list is a normal result for a server that
         registers no templates.
         """
+        from reyn.core.cancellable import Cancelled
         from reyn.mcp.client import expand_env
         from reyn.mcp.gateway import MCPFault, MCPGateway
 
@@ -6010,12 +6023,17 @@ class Session:
             expanded = {**expanded, "type": "http"}
 
         gateway = (
-            MCPGateway(pool=self._mcp_connection_service, agent_id=self._agent_id)
+            MCPGateway(
+                pool=self._mcp_connection_service, agent_id=self._agent_id,
+                cancel_event=self._loop_driver.cancel_event,
+            )
             if not self._ephemeral
-            else MCPGateway(agent_id=self._agent_id)
+            else MCPGateway(agent_id=self._agent_id, cancel_event=self._loop_driver.cancel_event)
         )
         try:
             return await gateway.list_resource_templates(server, expanded)
+        except Cancelled:
+            return [{"error": "cancelled"}]
         except MCPFault as exc:
             return [{"error": str(exc)}]
 
@@ -6129,6 +6147,7 @@ class Session:
         session, one-shot pool otherwise). Emits ``mcp_prompts_listed`` for
         observability, same rationale as ``mcp_resources_listed``.
         """
+        from reyn.core.cancellable import Cancelled
         from reyn.mcp.client import expand_env
         from reyn.mcp.gateway import MCPFault, MCPGateway
 
@@ -6146,12 +6165,17 @@ class Session:
             expanded = {**expanded, "type": "http"}
 
         gateway = (
-            MCPGateway(pool=self._mcp_connection_service, agent_id=self._agent_id)
+            MCPGateway(
+                pool=self._mcp_connection_service, agent_id=self._agent_id,
+                cancel_event=self._loop_driver.cancel_event,
+            )
             if not self._ephemeral
-            else MCPGateway(agent_id=self._agent_id)
+            else MCPGateway(agent_id=self._agent_id, cancel_event=self._loop_driver.cancel_event)
         )
         try:
             prompts = await gateway.list_prompts(server, expanded)
+        except Cancelled:
+            return [{"error": "cancelled"}]
         except MCPFault as exc:
             return [{"error": str(exc)}]
         self._chat_events.emit(

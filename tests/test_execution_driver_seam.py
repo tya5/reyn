@@ -40,6 +40,11 @@ class FakeDriver:
     def is_cancel_requested(self) -> bool:
         return self._cancel_requested
 
+    @property
+    def cancel_event(self) -> None:
+        """#2813: no interactive-turn cancel_event concept for this fake."""
+        return None
+
     def request_cancel(self) -> None:
         self._cancel_requested = True
 

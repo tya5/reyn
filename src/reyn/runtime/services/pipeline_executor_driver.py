@@ -283,6 +283,15 @@ class PipelineExecutorDriver:
         pipeline turn (the executor's own step list is the bound)."""
         return None
 
+    @property
+    def cancel_event(self) -> None:
+        """#2813: no interactive-turn cancel_event concept here — cancellation is
+        the bare ``_cancel_requested`` bool polled at step boundaries (see
+        ``request_cancel``'s docstring). Any bounded MCP/network call this
+        driver's turn makes falls back to running to its own internal timeout on
+        Ctrl-C, same as every pre-#2813 caller with no cancel_event to pass."""
+        return None
+
     # ── internals ──────────────────────────────────────────────────────────────
 
     def _pipeline_registry(self) -> Any:

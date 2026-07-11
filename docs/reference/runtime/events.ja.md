@@ -43,8 +43,9 @@ Reyn はすべての状態変化に対して構造化イベントを発行しま
 |------|------|
 | `read_file`、`write_file`、`edit_file`、`delete_file`、`glob_files`、`grep`、`regenerate_index` | `file` op のバリアント — すべて `tool_executed`（`op=<sub_op>`）経由 |
 | `sandboxed_exec_started`、`sandboxed_exec_completed` | `sandboxed_exec` op — `started`: `argv`、`backend`; `completed`: `argv`、`backend`、`returncode` |
-| `mcp_called`、`mcp_completed`、`mcp_failed` | MCP ツール op |
+| `mcp_called`、`mcp_completed`、`mcp_failed`、`mcp_cancelled` | MCP ツール op — `mcp_cancelled`（#2813）は Ctrl-C の `cancel_event` が実行中の呼び出しを完了前に中断したとき、`mcp_completed`/`mcp_failed` の代わりに発火 |
 | `mcp_server_installed` | `mcp_install` op — `name`、キー名のみ（値は含まない） |
+| `mcp_install_cancelled`、`mcp_prompt_get_cancelled`、`mcp_resource_read_cancelled`、`mcp_resource_subscribe_cancelled`、`mcp_resource_unsubscribe_cancelled` | #2813 — Ctrl-C の `cancel_event` が該当 op（install probe / get-prompt / read-resource / subscribe / unsubscribe）を完了前に中断。op は `status:"cancelled"` を返し、何もコミットされない |
 | `web_search_started`、`web_search_completed`、`web_search_failed` | web_search op — `started`: `query`、`backend`; `completed`: `result_count` を追加; `failed`: `error` を追加 |
 | `web_fetch_started`、`web_fetch_completed`、`web_fetch_failed` | web_fetch op — `started`: `url`; `completed`: `url`、`status_code`、`content_length`、`extractor`; `failed`: `url`、`status`（`"timeout"` または `"error"`）、`error` |
 | `recall_embed_failed` | `recall` op — embed サブ op が失敗したとき: `query`、`error` |

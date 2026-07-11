@@ -101,15 +101,23 @@ def _session_ctx(session: Session, tmp: Path) -> _Ctx:
     return _Ctx(tmp, _RS(session._router_host.make_router_op_context, None))
 
 
-def _reloader_ctx(reloader: HotReloader, tmp: Path) -> _Ctx:
+def _reloader_ctx(
+    reloader: HotReloader, tmp: Path, *, cancel_event: "asyncio.Event | None" = None,
+) -> _Ctx:
     """A ctx whose factory returns a bare OpContext carrying ``reloader`` — for the
-    probe-then-commit tests that only need the immediate path to fire (no full roster)."""
+    probe-then-commit tests that only need the immediate path to fire (no full roster).
+
+    ``cancel_event`` (#2813): threaded onto the OpContext so a probe started through
+    this ctx races against it — used by the fast-cancel tests below, distinct from the
+    plain-``task.cancel()`` tests above (which exercise the pre-#2813 propagation path,
+    unaffected by this parameter when left ``None``)."""
     op_ctx = OpContext(
         workspace=Workspace(events=EventLog(), base_dir=tmp),
         events=EventLog(),
         permission_decl=PermissionDecl(),
         permission_resolver=None,
         hot_reloader=reloader,
+        cancel_event=cancel_event,
     )
     return _Ctx(tmp, _RS(lambda: op_ctx, None))
 
@@ -318,3 +326,92 @@ async def test_local_install_probe_cancel_writes_nothing(
     assert "hung" not in _servers_on_disk(tmp_path), (
         "a cancelled probe must leave NOTHING written (write is strictly after the probe)"
     )
+
+
+@pytest.mark.asyncio
+async def test_local_install_probe_cancel_event_interrupts_immediately(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Tier 2: #2813 — the LIVE incident this fixes. Before this fix, Ctrl-C during
+    ``mcp__install_local``'s probe did NOT interrupt it: the probe ran to its own full
+    ``call_timeout_seconds`` (120s default) regardless, and only the SURROUNDING turn's
+    cooperative cancel flag was set (checked between tool-iteration boundaries, per
+    ``Session.cancel_inflight``'s documented V1 boundary) — so the user's Ctrl-C
+    appeared to hang for up to 2 minutes.
+
+    This drives the REAL production path (``_handle_mcp_install_local``, the exact
+    ``mcp__install_local`` tool the incident used — NOT the parallel ``mcp_install``
+    op path, which has its own equivalent test above) with a genuinely hung stdio
+    subprocess, sets ``cancel_event`` shortly after the probe starts (mirroring
+    ``Session.cancel_inflight()``), and asserts the call returns FAST — well under the
+    120s timeout — proving genuine early interruption, not eventual timeout expiry.
+    Distinct from ``test_local_install_probe_cancel_writes_nothing`` above, which
+    exercises the OTHER (still-valid, unaffected) cancellation path: an external
+    ``task.cancel()`` on the whole call chain, with no ``cancel_event`` involved at
+    all — this test is RED before the #2813 fix (would take ~120s to return, this
+    assertion's deadline would fail) and GREEN after."""
+    monkeypatch.chdir(tmp_path)
+    reloader = HotReloader(project_root=tmp_path, events=EventLog())
+    cancel_event = asyncio.Event()
+    ctx = _reloader_ctx(reloader, tmp_path, cancel_event=cancel_event)
+
+    task = asyncio.ensure_future(_handle_mcp_install_local(
+        {"name": "hung", "command": sys.executable, "args": ["-c", "import time; time.sleep(60)"]},
+        ctx,
+    ))
+    await asyncio.sleep(0.6)  # let the probe start + the subprocess spawn
+    cancel_event.set()
+
+    try:
+        result = await asyncio.wait_for(task, timeout=10.0)
+    except asyncio.TimeoutError:
+        pytest.fail(
+            "cancel_event must interrupt the in-flight probe within a few seconds — "
+            "NOT wait out its own ~120s call_timeout_seconds (#2813)"
+        )
+
+    # #2813: uniform status:"cancelled" (matches the mcp/resource op cancel surface),
+    # not a generic probe-error string.
+    assert result["status"] == "cancelled"
+    assert "hung" not in _servers_on_disk(tmp_path), (
+        "a cancel_event-cancelled probe must leave NOTHING written too"
+    )
+
+
+@pytest.mark.asyncio
+async def test_session_cancel_inflight_interrupts_a_real_hung_probe(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Tier 2: #2813 production-wiring test — drives the REAL Session.cancel_inflight()
+    (the actual method the TUI's Ctrl-C handler calls), NOT a hand-built OpContext with
+    cancel_event set directly. test_local_install_probe_cancel_event_interrupts_immediately
+    above proves the mechanism works when cancel_event is threaded in; THIS test proves
+    the threading itself is wired end to end: Session construction → RouterLoopDriver's
+    _set_cancel_event onto the router_host → make_router_op_context → OpContext.cancel_event
+    → probe_mcp_server → MCPGateway → race_cancellable.
+
+    A wiring-only test that hand-constructs an OpContext with cancel_event= would pass
+    even if THIS production chain were entirely disconnected (a real regression class —
+    see the #2788/#2801/#2802 co-vet precedent for exactly this failure mode: a
+    mechanism-test green while the production call-site is silently unwired)."""
+    monkeypatch.chdir(tmp_path)
+    session = _session(tmp_path)
+
+    task = asyncio.ensure_future(_handle_mcp_install_local(
+        {"name": "hung", "command": sys.executable, "args": ["-c", "import time; time.sleep(60)"]},
+        _session_ctx(session, tmp_path),
+    ))
+    await asyncio.sleep(0.6)  # let the probe start + the subprocess spawn
+    await session.cancel_inflight()  # the REAL production seam (TUI Ctrl-C → this call)
+
+    try:
+        result = await asyncio.wait_for(task, timeout=10.0)
+    except asyncio.TimeoutError:
+        pytest.fail(
+            "Session.cancel_inflight() must interrupt the in-flight probe within a few "
+            "seconds via the real production wiring chain — NOT wait out the probe's own "
+            "~120s call_timeout_seconds (#2813)"
+        )
+
+    assert result["status"] == "cancelled"
+    assert "hung" not in _servers_on_disk(tmp_path)
