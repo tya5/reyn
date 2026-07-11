@@ -31,7 +31,11 @@ chat 固有のフラグ:
 | `--no-restore` | オフ | 起動時にディスクからの進行中 Skill ステートの復元をスキップ。デバッグやクリーンなセッション開始に便利。 |
 | `--reset` | オフ | 起動前に進行中 Skill ステート（スナップショット + WAL）を消去。`.reyn/events/` の監査ログは保持されます。 |
 | `--banner` | オフ | ASCII アートの起動バナー（グラデーション REYN ロゴ + agent/モデル情報）を表示。 |
-| `--eager-embedding-build` | オフ | 初回ターンでアクション埋め込みインデックスのビルドを同期的に待機（1 回のみ約 2〜5 秒）。`search_actions` を即時利用可能にする。 |
+| `--eager-embedding-build` | オフ | 初回ターンでアクション埋め込みインデックスのビルドを同期的に待機(1 回のみ約 2〜5 秒)。`search_actions` を即時利用可能にする。 |
+| `--grant-file-write` | オフ | このセッションのリゾルバ層で `file.read`/`file.write` を許可(サンドボックスの書き込みゾーンにスコープ)。非対話/スクリプト用途向け — agent がワーキングツリーを編集する必要があると分かっていて、Skill ごとの許可プロンプトを避けたい場合に。 |
+| `--exclude-tools NAMES` | — | agent の LLM 可視カタログから隠すツール名(カンマ区切り、例 `web__search,web__fetch`)。ツール自体は存在し、agent が名前で呼び出せば実行されるが、このセッションではモデルの発見サーフェスには表示されない。 |
+| `--connect <URL>` | オフ | ローカルセッションを起動する代わりに、リモートの `reyn web` サーバーへ AG-UI(HTTP+SSE)経由でアタッチする(例: `--connect http://127.0.0.1:8080`)。位置引数 `agent_name` でサーバー上の agent を選択。`pip install reyn[web]` が必要。TTY であっても常にプレーンコンソールセッションとして描画される(`--cui` と同じ出力スタイル)— インラインステータスバーやスラッシュ補完メニューは無し。`/rewind` はインタラクティブピッカーでなくプレーンなテキストリストにフォールバック。[How-to: リモートシンクライアント](../../guide/for-users/chat-and-web-ui.ja.md#reyn-chat-connect) 参照。 |
+| `--token <SECRET>` | オフ | `--connect` 用のベアラートークン(`reyn web` が起動時に表示するシークレット、または `web.auth.token` で設定したトークン)。`REYN_WEB_AUTH_TOKEN` 環境変数にフォールバック。同一マシンの UDS サーバーではトークン不要な場合がある。 |
 
 ## agent Workspace
 
