@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import json
 
+from reyn.prompt.retrieval import SEARCH_SP_NON_TERMINAL, SEARCH_SP_TERMINAL
 from reyn.tools.scheme import (
     ExecContext,
     Execute,
@@ -49,20 +50,9 @@ def _search_sp(*, terminal: bool) -> str:
 
     ``terminal`` (= convergence reached, the search tool was dropped) flips the
     instruction from "search first" to "call one of the presented matches"."""
-    if terminal:
-        return (
-            "## Finding tools\n"
-            "The tools matching your search are now available above. Call the "
-            "one that fits the request directly."
-        )
-    return (
-        "## Finding tools\n"
-        "You are not shown the full tool catalog up front. To act, first call "
-        "`search_actions(query=...)` with a natural-language description of what "
-        "you need; the matching tools are then presented for you to call "
-        "directly. Search before you act, and refine the query if the first "
-        "matches do not fit."
-    )
+    # Content moved to reyn.prompt.retrieval (byte-identical relocation,
+    # SP Phase 1 §D).
+    return SEARCH_SP_TERMINAL if terminal else SEARCH_SP_NON_TERMINAL
 
 
 def _search_tool_schema() -> dict:

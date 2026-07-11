@@ -14,6 +14,18 @@ from __future__ import annotations
 import re
 from collections import defaultdict
 
+from reyn.prompt.router_frame import (
+    BEHAVIOUR_STATIC_CORE,
+    DEFAULT_CWD_HOW_CLAUSE,
+    IDENTITY_PREAMBLE,
+    MEMORY_GUIDANCE_BULLET,
+    PROJECT_CONTEXT_HEADER,
+    PROJECT_CONTEXT_PREFERENCE_NOTE,
+    ambiguity_rule,
+    cwd_reference_mapping_sentence,
+    output_language_directive,
+    role_stamp,
+)
 from reyn.runtime.router_tools import MAX_DESC_LEN_FOR_LISTING
 
 # ---------------------------------------------------------------------------
@@ -108,31 +120,11 @@ def build_system_prompt(
     # ==========================================================================
 
     # ── 1. OS-level identity preamble ──────────────────────────────────────
-    parts.append(
-        "# Identity"
-        "\n\n"
-        "You are a Reyn agent (open-source LLM workflow OS). "
-        "To learn the project's runtime, see the Capabilities routing "
-        "guide below — the \"About Reyn itself\" path is the canonical entry."
-        "\n\n"
-        "**Identity rules:**"
-        "\n"
-        "- When asked who or what you are (or otherwise describing yourself), "
-        "identify as \"a Reyn agent\". This applies ONLY to identity questions — "
-        "do NOT prepend it to answers on unrelated topics. A normal reply must "
-        "begin with its actual content, never with \"I am a Reyn agent\"."
-        "\n"
-        "- Always apply: MUST NOT identify as Google, OpenAI, Anthropic, or any "
-        "LLM vendor."
-        "\n"
-        "- Always apply: MUST NOT begin with \"I am a large language model\"."
-    )
+    parts.append(IDENTITY_PREAMBLE)
     parts.append("")
 
     # ── 2. Role ─────────────────────────────────────────────────────────────
-    parts.append(
-        f"Role: chat router for agent {agent_name} (role: {agent_role})."
-    )
+    parts.append(role_stamp(agent_name, agent_role))
     parts.append("")
 
     # #1627 Stage 4: normalise tool_use_sp into a positional slot-map.
@@ -184,15 +176,9 @@ def build_system_prompt(
             # isinstance / shape-check on slot-map).
             _cwd_how = _slots.get(
                 "slot_in_environment",
-                "read the contents using your available actions within the cwd's read scope.",
+                DEFAULT_CWD_HOW_CLAUSE,
             )
-            parts.append(
-                "When the user refers to \"this repo\", \"this code\", \"the codebase\","
-                " \"this project\", \"here\" (in any language, including Japanese and"
-                " other non-English input), or any other unqualified reference to"
-                " surrounding source, interpret it as the project at the cwd above."
-                " Do NOT ask for a repository URL or path — " + _cwd_how
-            )
+            parts.append(cwd_reference_mapping_sentence(_cwd_how))
             parts.append("")
 
     # ── 3.5. Universal catalog + discovery mandate (R2) ─────────────────────
@@ -207,60 +193,22 @@ def build_system_prompt(
     # Cross-cutting rules that apply regardless of which tool was last called.
     # #1627: tool-use routing guidance is scheme-owned (delivered via the slot-map);
     # the OS keeps only these scheme-agnostic behaviour rules here.
-    parts.extend([
-        "  - Errors MUST surface verbatim. Never narrate an error as success.",
-        "    Optimism bias on errors is the single largest router-narration"
-        " failure mode.",
-        # #1791 A1 (adopted by design judgment): TASK_COMPLETION — anti-fabrication
-        # + finish-the-task + honest-blocker. Static-core, all-model, cached.
-        "  - Finishing the job: when asked to build, run, or verify something, the"
-        " deliverable is a working result backed by REAL tool output — not a"
-        " description of one. Do not stop after a stub, a plan, or a single command;"
-        " keep working until you have actually produced the requested result, then"
-        " report what real execution returned. Only end your turn when the request"
-        " is fully resolved or genuinely blocked: never yield half-done to ask"
-        " whether to continue, and when an approach fails, try an alternative"
-        " before stopping. If a real blocker remains, report it honestly.",
-        "  - NEVER substitute fabricated output (invented data, file contents, or"
-        " tool/command results) for results you could not actually produce. If a tool"
-        " or call fails and blocks the real path, say so directly and try an"
-        " alternative — reporting a blocker honestly is always better than inventing"
-        " a result.",
-    ])
+    # #1791 A1 (adopted by design judgment): TASK_COMPLETION — anti-fabrication
+    # + finish-the-task + honest-blocker. Static-core, all-model, cached.
+    # Content moved to reyn.prompt.router_frame.BEHAVIOUR_STATIC_CORE.
+    parts.extend(BEHAVIOUR_STATIC_CORE)
     # sp-autonomy-revision: ambiguity/proceed-vs-ask Behaviour rule, promoted to
     # the OS frame (was scheme-owned in _universal_sp.py, which only reached the
     # universal/enumerate/retrieval schemes — CodeAct's tool_use_sp REPLACES that
     # scheme's SP region entirely, so it never got the rule). Living here in the
     # static core makes it scheme-agnostic and reaches every scheme, incl CodeAct.
-    parts.append(
-        "  - Ambiguous or missing information: default to proceeding — make the"
-        " most reasonable assumption, state it explicitly, and continue. Ask ONE"
-        " targeted clarifying question ONLY when the ambiguity is BOTH"
-        " consequential (a wrong guess causes real, hard-to-undo work) AND cannot"
-        " be resolved from context or by inspecting the workspace. When the user"
-        " asks HOW to approach something, or whether to do it, answer first — do"
-        " not jump into actions they haven't asked for."
-        if non_interactive else
-        "  - Ambiguous or missing information: prefer proceeding with a stated,"
-        " reasonable assumption over asking. Ask ONE targeted clarifying question"
-        " ONLY when the ambiguity is BOTH consequential (a wrong guess causes"
-        " real, hard-to-undo work) AND cannot be resolved from context or by"
-        " inspecting the workspace. When the user asks HOW to approach something,"
-        " or whether to do it, answer first — do not jump into actions they"
-        " haven't asked for."
-    )
+    parts.append(ambiguity_rule(non_interactive=non_interactive))
 
     # #1791 #3 (adopted by design judgment, GATED): memory-quality guidance, rendered
     # ONLY when the memory tool is active (memory_index present) — mirrors Hermes
     # MEMORY_GUIDANCE; gating keeps the cost off non-memory agents (SP-minimize-compatible).
     if memory_index.get("status") == "ok":
-        parts.append(
-            "  - Memory guidance: save durable facts only (user preferences, recurring"
-            " corrections, environment quirks, stable conventions). Do NOT save PR or"
-            " issue numbers, commit SHAs, completed-task logs, or anything that will be"
-            " stale within a week. Write memories as declarative facts, not instructions"
-            " to yourself."
-        )
+        parts.append(MEMORY_GUIDANCE_BULLET)
 
     # ── FP-0025 D — Plan decomposition Behaviour rule ─────────────────────────
     # B23-PRE-1 SP role-separation: ## Plan decomposition subsection (detail)
@@ -286,16 +234,11 @@ def build_system_prompt(
     # preamble above). Inject only when non-empty so an unset / empty
     # REYN.md doesn't leak placeholder text into the prompt.
     if project_context.strip():
-        parts.append("## About this project (project_context)")
+        parts.append(PROJECT_CONTEXT_HEADER)
         parts.append("")
         parts.append(project_context.strip())
         parts.append("")
-        parts.append(
-            "Prefer project_context (above) as the primary source when "
-            "answering questions about this project. Use `web__search` only as "
-            "a supplementary source when project_context lacks the "
-            "information needed."
-        )
+        parts.append(PROJECT_CONTEXT_PREFERENCE_NOTE)
         parts.append("")
 
     # ── 7 & 8. Agents catalog ────────────────────────────────────────────────
@@ -336,10 +279,7 @@ def build_system_prompt(
     # the reply language based on the user's input naturally instead of
     # being forced into a Reyn default. (Q2 follow-up to F11 fix.)
     if output_language:
-        parts.append(
-            f"  - Always reply in language: {output_language}."
-            "  Do NOT switch language even for error messages or clarifying questions."
-        )
+        parts.append(output_language_directive(output_language))
 
     # ── 13b. Scheme-owned SP fragment (#1593) / slot_post_catalog (#1627 Stage 3) ─
     # A tool-use scheme whose tool-use instructions are genuinely new content

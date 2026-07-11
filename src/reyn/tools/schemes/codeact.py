@@ -28,6 +28,7 @@ import re
 from typing import Any
 
 from reyn.core.kernel.codeact_runner import CodeActRunner
+from reyn.prompt.codeact import CODEACT_STATIC_HEADER
 
 
 def _sanitize_identifier(name: str) -> str:
@@ -93,27 +94,10 @@ def _render_code_api(entries: list[dict], ident_by_qn: "dict[str, str]") -> str:
     the OS drops the universal invoke_action / list_actions vocab for this region), so
     it carries the whole CodeAct contract: act = a single fenced python block; prose =
     the terminal final answer (the loop-unify contract — prose ends the turn)."""
-    lines = [
-        "## Tool use — this agent acts by running Python, not JSON tool calls",
-        "",
-        "To DO anything (read a file, call an action, compute), respond with a "
-        "SINGLE fenced ```python block and NOTHING else — no prose before or after it, "
-        "no \"I am a Reyn agent\" preamble on an action turn. Inside the block, call the "
-        "available functions DIRECTLY by name and assign your final value to `result`:",
-        "",
-        "    result = file__read(path=\"README.md\")",
-        "",
-        "Each function returns the action's result, or raises if the action is denied / "
-        "excluded / unknown. The Python standard library is available; filesystem / "
-        "network / subprocess are sandboxed — reach the outside world ONLY by calling "
-        "these functions.",
-        "",
-        "When you are DONE (answer in hand, no more actions to run): reply in plain "
-        "prose with NO code block — that ends the turn. A turn is EITHER one fenced "
-        "```python block OR a plain-prose final answer, never both.",
-        "",
-        "Available functions:",
-    ]
+    # Static header moved to reyn.prompt.codeact.CODEACT_STATIC_HEADER
+    # (byte-identical relocation, SP Phase 1 §C); the per-entry loop below
+    # renders LIVE catalog data and stays here (not fixed text).
+    lines = list(CODEACT_STATIC_HEADER)
     for entry in entries:
         name = entry.get("name", "")
         ident = ident_by_qn.get(name, _sanitize_identifier(name))

@@ -263,5 +263,72 @@ class TestSPToolNamesResolveToLiveTools:
         )
 
 
+# The bare (non-qualified, no "__") tool-registry-internal names the SP prose
+# is DELIBERATELY allowed to reference by bare backtick — the universal-
+# wrapper vocabulary itself. Any OTHER bare backtick token that happens to
+# match a live registry tool's internal name (e.g. a stray `read_file`
+# instead of the qualified `file__read` the dispatch table expects) is a
+# smell: either a copy-paste of the internal implementation name into SP
+# prose (which the LLM cannot call — dispatch is keyed by qualified name,
+# not this internal name), or a new wrapper-style verb that needs this
+# watch-list extended deliberately (closes the curated-subset trap: adding a
+# 5th SP-referenced bare name must be a conscious edit here, not silent).
+_CURATED_BARE_NAME_WATCHLIST = frozenset(
+    {"list_actions", "search_actions", "invoke_action", "describe_action"}
+)
+_BARE_BACKTICK_TOKEN_RE = re.compile(r"`([a-zA-Z_][a-zA-Z0-9_.]*)`")
+
+
+class TestBareBacktickTokensAreWatchlisted:
+    """Tier 2b: bare-name meta-guard (SP Phase 1 prompt-package co-vet). Any
+    backtick-bare token in the assembled SP that matches a LIVE registered
+    tool's internal name, but is NOT one of the 4 curated universal-wrapper
+    verbs, fails — forcing the watch-list to be extended deliberately as the
+    SP's bare-name vocabulary evolves, instead of silently growing unchecked."""
+
+    def test_bare_backtick_tokens_matching_registered_tools_are_watchlisted(self):
+        """Tier 2b: every bare backtick token in the assembled SP that
+        matches a live registered tool name is on the curated watch-list."""
+        registry = get_default_registry()
+        registry_names = {tool.name for tool in registry}
+        unexpected: list[tuple[str, str]] = []
+        for path, text in _all_assembled_system_prompts():
+            for m in _BARE_BACKTICK_TOKEN_RE.finditer(text):
+                token = m.group(1)
+                if token in registry_names and token not in _CURATED_BARE_NAME_WATCHLIST:
+                    unexpected.append((path, token))
+        assert unexpected == [], (
+            "SP prose contains bare backtick token(s) matching a live "
+            "registered tool name that are NOT on the curated watch-list "
+            "(extend _CURATED_BARE_NAME_WATCHLIST deliberately if this is "
+            f"intentional new SP vocabulary): {sorted(set(unexpected))!r}"
+        )
+
+    def test_strip_falsify_unwatchlisted_bare_name_is_detected(self):
+        """Tier 2b: a bare backtick token matching a live registry tool name
+        that is NOT on the watch-list must be flagged (falsification) —
+        proves the scan is live, not vacuously passing."""
+        registry = get_default_registry()
+        registry_names = {tool.name for tool in registry}
+        # `read_file` is a real internal registry name (per get_default_registry())
+        # but is NOT one of the 4 curated wrapper verbs — a bare reference to
+        # it in SP prose must be flagged.
+        assert "read_file" in registry_names, (
+            "precondition: read_file should be a live registered tool name"
+        )
+        assert "read_file" not in _CURATED_BARE_NAME_WATCHLIST, (
+            "precondition: read_file must not already be on the watch-list"
+        )
+        poisoned_text = "Some SP prose accidentally names `read_file` bare."
+        hits = [
+            m.group(1) for m in _BARE_BACKTICK_TOKEN_RE.finditer(poisoned_text)
+            if m.group(1) in registry_names and m.group(1) not in _CURATED_BARE_NAME_WATCHLIST
+        ]
+        assert hits == ["read_file"], (
+            "strip-falsify: an unwatchlisted bare registry-tool-name token "
+            "was not detected — the meta-guard is not live"
+        )
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
