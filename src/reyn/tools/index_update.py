@@ -20,20 +20,13 @@ from __future__ import annotations
 from typing import Any, Mapping
 
 from reyn.core.offload.canonical import index_update_to_canonical
+from reyn.tools.descriptions import io as _io_descriptions
 from reyn.tools.types import ToolContext, ToolDefinition, ToolGates, ToolResult
 
-_INDEX_UPDATE_DESCRIPTION = (
-    "Incrementally ingest chunks into an indexed source, reconciling "
-    "against its current content: NEW content_hash values are embedded and "
-    "added; a source_path whose chunks changed (new hash under a path "
-    "already indexed) is updated (old chunks for that path replaced); a "
-    "source_path this call re-supplies chunks for but whose old chunk "
-    "hashes are absent from this call are removed; unchanged content_hash "
-    "values are skipped (no re-embed). NO full-rebuild mode — to rebuild a "
-    "source from scratch, call `drop_source` then `index_update` on the "
-    "fresh (empty) source. The caller supplies pre-chunked text (chunking "
-    "is the caller's responsibility, not this tool's)."
-)
+# Reviewable in src/reyn/tools/descriptions/io.py (Phase 2 of the
+# tool-description package refactor) — this alias keeps the call site
+# unchanged (byte-identical relocation, no LLM-facing text change).
+_INDEX_UPDATE_DESCRIPTION = _io_descriptions.index_update.text
 
 _INDEX_UPDATE_PARAMETERS: dict[str, Any] = {
     "type": "object",

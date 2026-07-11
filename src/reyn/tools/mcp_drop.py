@@ -26,17 +26,13 @@ from __future__ import annotations
 
 from typing import Any, Mapping
 
+from reyn.tools.descriptions import mcp as _mcp_descriptions
 from reyn.tools.types import ToolContext, ToolDefinition, ToolGates, ToolResult
 
-_MCP_DROP_SERVER_DESCRIPTION = (
-    "Remove a configured MCP server. "
-    "Counter-op to mcp_install — deletes the server entry from "
-    "reyn.local.yaml / reyn.yaml / ~/.reyn/config.yaml (scope is "
-    "auto-detected when omitted). Optionally cleans the matching "
-    "${KEY} env entries from ~/.reyn/secrets.env. "
-    "Permission-gated via mcp_drop_server (= distinct from "
-    "mcp_install; install intent alone is insufficient)."
-)
+# Reviewable in src/reyn/tools/descriptions/mcp.py (Phase 2 of the
+# tool-description package refactor) — this alias keeps the call site
+# unchanged (byte-identical relocation, no LLM-facing text change).
+_MCP_DROP_SERVER_DESCRIPTION = _mcp_descriptions.mcp_drop_server.text
 
 
 _MCP_DROP_SERVER_PARAMETERS: dict[str, Any] = {

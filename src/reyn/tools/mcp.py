@@ -61,33 +61,25 @@ from __future__ import annotations
 import copy
 from typing import TYPE_CHECKING, Any, Final, Mapping
 
+from reyn.tools.descriptions import mcp as _mcp_descriptions
 from reyn.tools.types import ToolContext, ToolDefinition, ToolGates, ToolResult
 
 if TYPE_CHECKING:
     from reyn.tools.types import RouterCallerState
 
 # ── Description constants (byte-identical to router_tools.py D1/D2/D3) ────────
+#
+# Reviewable in src/reyn/tools/descriptions/mcp.py (Phase 2 of the
+# tool-description package refactor) — these aliases keep the call sites
+# unchanged (byte-identical relocation, no LLM-facing text change).
 
-_LIST_MCP_SERVERS_DESCRIPTION = (
-    "List available MCP servers configured for this agent. "
-    "Returns name + description per server."
-)
+_LIST_MCP_SERVERS_DESCRIPTION = _mcp_descriptions.list_mcp_servers.text
 
-_LIST_MCP_TOOLS_DESCRIPTION = (
-    "List tools exposed by one MCP server "
-    "(with description per tool)."
-)
+_LIST_MCP_TOOLS_DESCRIPTION = _mcp_descriptions.list_mcp_tools.text
 
-_CALL_MCP_TOOL_DESCRIPTION = (
-    "Invoke a mcp_tool on an MCP server. Construct args matching "
-    "the mcp_tool's input schema (see describe_mcp_tool)."
-)
+_CALL_MCP_TOOL_DESCRIPTION = _mcp_descriptions.call_mcp_tool.text
 
-_DESCRIBE_MCP_TOOL_DESCRIPTION = (
-    "Get the input schema for one mcp_tool registered on an MCP server. "
-    "Call this before call_mcp_tool if you're unsure how to "
-    "construct the args."
-)
+_DESCRIBE_MCP_TOOL_DESCRIPTION = _mcp_descriptions.describe_mcp_tool.text
 
 
 # ── Parameters JSON schemas (byte-identical to router_tools.py D1/D2/D3) ──────
@@ -162,10 +154,7 @@ _DESCRIBE_MCP_TOOL_PARAMETERS: dict[str, Any] = {
 
 # ── #2597 slice ②a: resources consumption parameters ──────────────────────────
 
-_LIST_MCP_RESOURCES_DESCRIPTION = (
-    "List resources exposed by one MCP server "
-    "(with uri + description per resource)."
-)
+_LIST_MCP_RESOURCES_DESCRIPTION = _mcp_descriptions.list_mcp_resources.text
 
 _LIST_MCP_RESOURCES_PARAMETERS: dict[str, Any] = {
     "type": "object",
@@ -178,10 +167,7 @@ _LIST_MCP_RESOURCES_PARAMETERS: dict[str, Any] = {
     "required": ["server"],
 }
 
-_LIST_MCP_RESOURCE_TEMPLATES_DESCRIPTION = (
-    "List resource templates (parameterized URI patterns) exposed by one "
-    "MCP server. Use list_mcp_resources for concrete resources."
-)
+_LIST_MCP_RESOURCE_TEMPLATES_DESCRIPTION = _mcp_descriptions.list_mcp_resource_templates.text
 
 _LIST_MCP_RESOURCE_TEMPLATES_PARAMETERS: dict[str, Any] = {
     "type": "object",
@@ -194,11 +180,7 @@ _LIST_MCP_RESOURCE_TEMPLATES_PARAMETERS: dict[str, Any] = {
     "required": ["server"],
 }
 
-_READ_MCP_RESOURCE_DESCRIPTION = (
-    "Read the contents of one MCP resource by URI. Get the uri from "
-    "list_mcp_resources (or by resolving a list_mcp_resource_templates "
-    "template)."
-)
+_READ_MCP_RESOURCE_DESCRIPTION = _mcp_descriptions.read_mcp_resource.text
 
 _READ_MCP_RESOURCE_PARAMETERS: dict[str, Any] = {
     "type": "object",
@@ -218,12 +200,7 @@ _READ_MCP_RESOURCE_PARAMETERS: dict[str, Any] = {
 
 # ── #2597 slice ②b: resource subscriptions parameters ─────────────────────────
 
-_SUBSCRIBE_MCP_RESOURCE_DESCRIPTION = (
-    "Subscribe to server-pushed updates for one MCP resource by URI. When the "
-    "server-side content changes, a mcp_resource_updated event is recorded — "
-    "call read_mcp_resource again to see the new content (the push notification "
-    "itself carries no content, just a signal that something changed)."
-)
+_SUBSCRIBE_MCP_RESOURCE_DESCRIPTION = _mcp_descriptions.subscribe_mcp_resource.text
 
 _SUBSCRIBE_MCP_RESOURCE_PARAMETERS: dict[str, Any] = {
     "type": "object",
@@ -240,10 +217,7 @@ _SUBSCRIBE_MCP_RESOURCE_PARAMETERS: dict[str, Any] = {
     "required": ["server", "uri"],
 }
 
-_UNSUBSCRIBE_MCP_RESOURCE_DESCRIPTION = (
-    "Unsubscribe from server-pushed updates for one MCP resource by URI "
-    "(previously subscribed via subscribe_mcp_resource)."
-)
+_UNSUBSCRIBE_MCP_RESOURCE_DESCRIPTION = _mcp_descriptions.unsubscribe_mcp_resource.text
 
 _UNSUBSCRIBE_MCP_RESOURCE_PARAMETERS: dict[str, Any] = {
     "type": "object",
@@ -263,10 +237,7 @@ _UNSUBSCRIBE_MCP_RESOURCE_PARAMETERS: dict[str, Any] = {
 
 # ── #2597 slice ②c: prompts consumption parameters ────────────────────────────
 
-_LIST_MCP_PROMPTS_DESCRIPTION = (
-    "List prompts exposed by one MCP server "
-    "(with name + description + arguments per prompt)."
-)
+_LIST_MCP_PROMPTS_DESCRIPTION = _mcp_descriptions.list_mcp_prompts.text
 
 _LIST_MCP_PROMPTS_PARAMETERS: dict[str, Any] = {
     "type": "object",
@@ -279,10 +250,7 @@ _LIST_MCP_PROMPTS_PARAMETERS: dict[str, Any] = {
     "required": ["server"],
 }
 
-_GET_MCP_PROMPT_DESCRIPTION = (
-    "Fetch one rendered MCP prompt's messages by name. Get the name (and its "
-    "argument schema) from list_mcp_prompts."
-)
+_GET_MCP_PROMPT_DESCRIPTION = _mcp_descriptions.get_mcp_prompt.text
 
 _GET_MCP_PROMPT_PARAMETERS: dict[str, Any] = {
     "type": "object",

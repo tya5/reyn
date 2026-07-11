@@ -17,13 +17,13 @@ from __future__ import annotations
 
 from typing import Any, Mapping
 
+from reyn.tools.descriptions import io as _io_descriptions
 from reyn.tools.types import ToolContext, ToolDefinition, ToolGates, ToolResult
 
-_DROP_SOURCE_DESCRIPTION = (
-    "Remove an indexed source entirely (= delete its SQLite + manifest entry). "
-    "Use when retiring trial sources or replacing with a different strategy. "
-    "Permission-gated; user is prompted to confirm."
-)
+# Reviewable in src/reyn/tools/descriptions/io.py (Phase 2 of the
+# tool-description package refactor) — this alias keeps the call site
+# unchanged (byte-identical relocation, no LLM-facing text change).
+_DROP_SOURCE_DESCRIPTION = _io_descriptions.drop_source.text
 
 _DROP_SOURCE_PARAMETERS: dict[str, Any] = {
     "type": "object",
