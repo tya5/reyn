@@ -1,0 +1,93 @@
+"""Tier 1: tool-description package relocation is byte-identical (Phase 1: discovery).
+
+Phase 1 of the tool-description package refactor (`src/reyn/tools/descriptions/`)
+relocates each ``discovery``-category ToolDefinition's ``description`` string
+into a reviewable ``ToolDescription`` record, with the origin tool module
+aliasing its ``_X_DESCRIPTION`` constant to ``descriptions.discovery.NAME.text``.
+This is a pure move — no LLM-facing text change — so the full rendered
+``tools[]`` schema (description AND parameters, per every registered
+ToolDefinition) must be byte-for-byte identical to the pre-migration baseline
+captured before the relocation. This is the Public Python API surface the
+router-side LLM-tool boundary depends on (Tier 1 per testing.md: "Public
+Python API surface").
+
+Companion checks:
+  - liveness: every ``ToolDescription.tool_name`` in
+    ``reyn.tools.descriptions.ALL`` resolves to a real registered tool.
+  - completeness: every entry has non-empty surfaced/purpose/ja/text.
+"""
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+from reyn.tools import get_default_registry
+from reyn.tools.descriptions import ALL as ALL_DESCRIPTIONS
+
+_BASELINE_PATH = Path(__file__).parent / "_pre_migration_tool_schemas_baseline.json"
+
+
+def _render_all_tools() -> dict[str, dict]:
+    """Render every registered ToolDefinition via render_for_router().
+
+    Mirrors the shape ``scripts/dogfood_trace.py --mode llm-payloads``
+    reflects from a real assembled ``tools=[...]`` payload: the
+    ``{"type": "function", "function": {"name", "description",
+    "parameters"}}`` entry per tool, keyed here by tool name for a stable
+    comparison (dict key order is not pinned; only content equality is
+    asserted below — see the module's NEVER-pin-dict-iteration-order rule).
+    """
+    registry = get_default_registry()
+    return {t.name: t.render_for_router() for t in registry}
+
+
+def test_full_schema_contract_matches_baseline() -> None:
+    """Tier 1: rendered tools[] schema (description + parameters) is unchanged.
+
+    Compares every registered tool's FULL render_for_router() output —
+    not just .description — against the committed pre-migration baseline
+    fixture, content-for-content. A mismatch means the relocation changed
+    LLM-facing text (forbidden) or dropped/added a registered tool.
+    """
+    baseline: dict[str, dict] = json.loads(_BASELINE_PATH.read_text(encoding="utf-8"))
+    current = _render_all_tools()
+
+    assert set(current) == set(baseline), (
+        "registered tool set changed vs the pre-migration baseline — "
+        f"missing={set(baseline) - set(current)!r} "
+        f"added={set(current) - set(baseline)!r}"
+    )
+    for name in baseline:
+        assert current[name] == baseline[name], (
+            f"tool {name!r} render_for_router() output diverged from the "
+            "pre-migration baseline (byte-identical relocation is required)"
+        )
+
+
+def test_description_registry_entries_resolve_to_real_tools() -> None:
+    """Tier 1: every ToolDescription.tool_name in ALL is a registered tool.
+
+    Catches a package entry left behind for a renamed/deleted tool (the
+    inverse of the completeness check below).
+    """
+    registry = get_default_registry()
+    registered_names = set(registry.names())
+    for key, desc in ALL_DESCRIPTIONS.items():
+        assert desc.tool_name in registered_names, (
+            f"descriptions.ALL[{key!r}].tool_name={desc.tool_name!r} does not "
+            "resolve to any registered ToolDefinition"
+        )
+
+
+def test_description_registry_entries_are_complete() -> None:
+    """Tier 1: every ToolDescription has non-empty surfaced/purpose/text/ja.
+
+    A blank review-aid field would silently defeat the "auditable in one
+    place" purpose of the package.
+    """
+    for key, desc in ALL_DESCRIPTIONS.items():
+        assert desc.tool_name.strip(), f"{key!r}: empty tool_name"
+        assert desc.surfaced.strip(), f"{key!r}: empty surfaced"
+        assert desc.purpose.strip(), f"{key!r}: empty purpose"
+        assert desc.text.strip(), f"{key!r}: empty text"
+        assert desc.ja.strip(), f"{key!r}: empty ja"

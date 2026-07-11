@@ -40,6 +40,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, Collection, Final, Mapping
 
+from reyn.tools.descriptions import discovery
 from reyn.tools.types import ToolContext, ToolDefinition, ToolGates, ToolResult
 
 # Lazy-imported at function-body level to break the circular dependency
@@ -278,36 +279,10 @@ def visible_categories(
 # concrete, with a usage hint pointing at the companion wrappers).
 
 
-_LIST_ACTIONS_DESCRIPTION = (
-    "WHAT: Discover actions in the FULL catalog (= a superset of the hot-list "
-    "function entries you can see directly). The hot-list shown in your "
-    "function list is a curated subset; this tool reveals the rest. "
-    "Filter by category: `category=[...]` array (enum-restricted, exact "
-    "category match). Omit or pass [] to enumerate everything visible. "
-    "Returns {items: [{qualified_name, short_description}, ...], total: int}. "
-    "An empty items array means no actions match — report this honestly. "
-    "WHEN: PREFERRED FIRST for known-category enumeration (e.g. 'show me all "
-    "memory_entry actions', 'what exec actions are available?') or exact-name "
-    "lookup when you already know the category but not the exact entry. "
-    "ALWAYS call list_actions BEFORE refusing a category-listable capability "
-    "request. Refusing without a list_actions check is a FAILURE MODE "
-    "(= the action you assumed missing may exist behind the hot-list). "
-    "For known-category enumeration pass `category=['exec']` to narrow. "
-    "WHEN NOT: For semantic / natural-language / free-text discovery (e.g. "
-    "'find an action that can ...', 'related to X', 'something for X' — the "
-    "request may be phrased in any language, including Japanese and other "
-    "non-English input) use search_actions instead — it returns relevance-ranked matches across "
-    "categories rather than a flat enumeration. If you already know the "
-    "exact action name, skip both and call invoke_action directly. "
-    "PREFERRED OVER: Guessing action names + refusing capability requests — "
-    "list_actions returns the canonical qualified names (e.g. "
-    "mcp__call_tool, multi_agent__delegate) that invoke_action and "
-    "describe_action expect. "
-    "POST_CALL: After list_actions reveals at least one matching action, you "
-    "MUST follow with describe_action or invoke_action. Do NOT reply directly "
-    "— silent stop after enumeration is a failure mode. When items is empty, "
-    "honestly tell the user no matching actions are available."
-)
+# Reviewable in src/reyn/tools/descriptions/discovery.py (Phase 1 of the
+# tool-description package refactor) — this alias keeps the call site
+# unchanged (byte-identical relocation, no LLM-facing text change).
+_LIST_ACTIONS_DESCRIPTION = discovery.list_actions.text
 
 
 _LIST_ACTIONS_PARAMETERS: dict[str, Any] = {
@@ -339,34 +314,10 @@ _LIST_ACTIONS_PARAMETERS: dict[str, Any] = {
 }
 
 
-_SEARCH_ACTIONS_DESCRIPTION = (
-    "WHAT: Semantic search across available actions — multilingual, "
-    "embedding-based, relevance-ranked. "
-    "Returns {items: [{qualified_name, short_description, score}, ...]}. "
-    "WHEN: PREFERRED FIRST for semantic / natural-language / free-text "
-    "queries — when the user asks to find / search for / something related "
-    "to / similar to / something for X / actions about Y / find ... related "
-    "to Z (the request may be phrased in any language, including Japanese "
-    "and other non-English input), or describes "
-    "an intent without naming a specific category. ALWAYS call search_actions "
-    "BEFORE refusing a semantic-intent capability request. Refusing without "
-    "a search_actions check is a FAILURE MODE (= relevance ranking may surface "
-    "the action across categories that a flat enumeration would miss). "
-    "Multilingual — works in any language (Japanese, English, etc.). "
-    "Handles both semantic descriptions AND free-text keyword lookup "
-    "(e.g. an action containing 'http'). "
-    "WHEN NOT: For known-category enumeration (e.g. 'show me all exec actions', "
-    "'list of memory_entry actions' — again, phrasable in any language) "
-    "use list_actions(category=[...]) instead — "
-    "it returns the flat catalogue slice rather than relevance-ranked hits. "
-    "If you already know the exact action name, skip both and call "
-    "invoke_action directly. "
-    "Available only when an embedding class is configured (reyn.yaml "
-    "action_retrieval.embedding_class). "
-    "POST_CALL: After search_actions reveals at least one matching action, "
-    "you MUST follow with describe_action or invoke_action. Do NOT reply "
-    "directly — silent stop after semantic search is a failure mode."
-)
+# Reviewable in src/reyn/tools/descriptions/discovery.py (Phase 1 of the
+# tool-description package refactor) — this alias keeps the call site
+# unchanged (byte-identical relocation, no LLM-facing text change).
+_SEARCH_ACTIONS_DESCRIPTION = discovery.search_actions.text
 
 
 _SEARCH_ACTIONS_PARAMETERS: dict[str, Any] = {
@@ -392,20 +343,10 @@ _SEARCH_ACTIONS_PARAMETERS: dict[str, Any] = {
 }
 
 
-_DESCRIBE_ACTION_DESCRIPTION = (
-    "WHAT: Get the full description, input schema, and metadata for one action "
-    "or resource. Returns {description, input_schema, metadata}. "
-    "WHEN: Use this before invoke_action when you need to know the exact "
-    "argument shape of an action. Should be called whenever you have the "
-    "qualified_name but are unsure of the required args. "
-    "WHEN NOT: If you already know the input schema (from a previous call or "
-    "the action takes no args), skip this and call invoke_action directly. "
-    "PREFERRED OVER: Guessing argument names — describe_action returns the "
-    "authoritative input_schema. On unknown action_name, returns an error "
-    "with similar-name suggestions. "
-    "POST_CALL: After describe_action, you MUST follow with invoke_action or "
-    "explain in text why not. Never stop silently after investigation."
-)
+# Reviewable in src/reyn/tools/descriptions/discovery.py (Phase 1 of the
+# tool-description package refactor) — this alias keeps the call site
+# unchanged (byte-identical relocation, no LLM-facing text change).
+_DESCRIBE_ACTION_DESCRIPTION = discovery.describe_action.text
 
 
 _DESCRIBE_ACTION_PARAMETERS: dict[str, Any] = {

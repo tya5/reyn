@@ -22,6 +22,7 @@ from __future__ import annotations
 
 from typing import Any, Mapping
 
+from reyn.tools.descriptions import discovery
 from reyn.tools.types import ToolContext, ToolDefinition, ToolGates, ToolResult
 
 # B22 schema-layer fix: strengthen affordance signal with concrete use-case
@@ -30,47 +31,23 @@ from reyn.tools.types import ToolContext, ToolDefinition, ToolGates, ToolResult
 # the description to specific source names (= per A4 constraint, the SP
 # carries the source list, this description must be source-agnostic).
 #
+# Reviewable in src/reyn/tools/descriptions/discovery.py (Phase 1 of the
+# tool-description package refactor) — these aliases keep the call sites
+# unchanged (byte-identical relocation, no LLM-facing text change).
+#
 # B23-PRE-1 SP role-separation note: semantic_search vs memory disambiguation
 # that previously lived in the SP disambiguation block is now in
 # _SEMANTIC_SEARCH_DESCRIPTION_HIDE_LEGACY below. _SEMANTIC_SEARCH_DESCRIPTION
 # remains byte-identical to the pre-rename _RECALL_DESCRIPTION text to
 # preserve LLMReplay fixture stability.
-_SEMANTIC_SEARCH_DESCRIPTION = (
-    "Search indexed sources by natural-language query. Returns top-K "
-    "relevant chunks with text + metadata. Use this when the user's "
-    "question is about a topic an indexed source covers — including "
-    "'what is X?', 'explain X', 'how does X work?' style questions. "
-    "Pick sources from the 'Indexed sources' section in the system "
-    "prompt; each source's description tells you what topics it covers. "
-    "Prefer this over `reyn_src_read` / file_read when an indexed source "
-    "description matches the question's topic — semantic search across "
-    "indexed chunks is more reliable than guessing a file path."
-)
+_SEMANTIC_SEARCH_DESCRIPTION = discovery.semantic_search.text
 
 # B23-PRE-1 SP role-separation: enriched WHAT/WHEN/WHEN_NOT variant for
 # wrapper-only path. Carries the semantic_search vs memory disambiguation that
 # previously lived in the SP disambiguation block. _SEMANTIC_SEARCH_DESCRIPTION
 # (above) stays byte-identical for LLMReplay fixture stability.
 # Tests check this constant; describe_action in wrapper mode can expose it.
-_SEMANTIC_SEARCH_DESCRIPTION_HIDE_LEGACY = (
-    "WHAT: Semantic search over indexed corpora (= RAG retrieval). "
-    "Returns top-K relevant chunks with text + metadata. "
-    "WHEN: Use when user asks 'search', 'find in docs', 'lookup', or any "
-    "'what is X?' / 'explain X' / 'how does X work?' style question when "
-    "an indexed source covers the topic. Multilingual — works across languages. "
-    "WHEN NOT: "
-    "For personal memory retrieval, use the memory_entry actions "
-    "(memory_entry__<name>). semantic_search is for indexed corpora, NOT memory. "
-    "The word 'recall' in user input refers to THIS tool — never map it "
-    "to memory_entry / memory_operation actions. "
-    "PREFERRED OVER: memory_entry actions when content is indexed (source-"
-    "level), not personal memory. "
-    "Pick sources from the 'Indexed sources' section in the system prompt; "
-    "each source's description tells you what topics it covers. "
-    "Prefer this over reyn_src_read / file_read when an indexed source "
-    "description matches the question's topic — semantic search across "
-    "indexed chunks is more reliable than guessing a file path."
-)
+_SEMANTIC_SEARCH_DESCRIPTION_HIDE_LEGACY = discovery.semantic_search_hide_legacy.text
 
 _SEMANTIC_SEARCH_PARAMETERS: dict[str, Any] = {
     "type": "object",

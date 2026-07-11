@@ -20,19 +20,13 @@ from __future__ import annotations
 from typing import Any, Mapping
 
 from reyn.core.offload.canonical import embed_to_canonical
+from reyn.tools.descriptions import discovery
 from reyn.tools.types import ToolContext, ToolDefinition, ToolGates, ToolResult
 
-_EMBED_DESCRIPTION = (
-    "Embed a batch of texts into vectors using reyn's configured embedding "
-    "model (raw primitive — no storage). Returns one vector per input text, "
-    "in the same order. Use this to build your OWN persistent RAG store: "
-    "embed your texts, then hand the vectors to your own vector-DB MCP "
-    "tools (store/upsert) to persist them, and again at query time to embed "
-    "a query before calling that store's search tool. For reyn's OWN "
-    "indexed sources / memory / tool-use retrieval, use `semantic_search` "
-    "instead — "
-    "it embeds and searches in one call over reyn-managed indexes."
-)
+# Reviewable in src/reyn/tools/descriptions/discovery.py (Phase 1 of the
+# tool-description package refactor) — this alias keeps the call site
+# unchanged (byte-identical relocation, no LLM-facing text change).
+_EMBED_DESCRIPTION = discovery.embed.text
 
 _EMBED_PARAMETERS: dict[str, Any] = {
     "type": "object",

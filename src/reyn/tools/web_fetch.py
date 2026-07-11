@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from typing import Any, Mapping
 
+from reyn.tools.descriptions import discovery
 from reyn.tools.types import ToolContext, ToolDefinition, ToolGates, ToolResult
 
 # Description updated by #385 PoC PR-D: when MediaStore is available
@@ -22,15 +23,11 @@ from reyn.tools.types import ToolContext, ToolDefinition, ToolGates, ToolResult
 # behavioural guidance about WHEN to expand (= sandbox_2 cofounder
 # warning (b): keep the LLM's decision driven by the tool schema, not
 # by prompt-engineered instructions).
-_WEB_FETCH_DESCRIPTION = (
-    "Fetch a single URL. Returns a structured preview "
-    "(title, outline, first paragraph, link count for HTML; "
-    "first lines for text) plus a path_ref to the full body "
-    "stored under .reyn/tool-results/. url: absolute http/https URL. "
-    "max_length: cap on extracted body length (default 50000). "
-    "Use after web_search to load a result page; call "
-    "file__read(path) to read the full body."
-)
+#
+# Reviewable in src/reyn/tools/descriptions/discovery.py (Phase 1 of the
+# tool-description package refactor) — this alias keeps the call site
+# unchanged (byte-identical relocation, no LLM-facing text change).
+_WEB_FETCH_DESCRIPTION = discovery.web_fetch.text
 
 # Parameters JSON schema must be byte-identical to the current
 # router_tools.py ToolSpec.parameters for web_fetch.
