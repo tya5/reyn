@@ -111,17 +111,46 @@ class AuthConfig:
 
 
 @dataclass
+class SurfacesConfig:
+    """`web.surfaces:` — FP-0058 P2 per-surface opt-in/opt-out overrides.
+
+    Launch-time-only, operator-owned config (protect-at-use, per
+    ``permission-model.md``): the LLM has no launch authority over which
+    surfaces this gateway hosts, so this is read once when ``reyn web``
+    boots — never hot-reloaded, never LLM-settable.
+
+    ``enabled`` maps a surface name (``"a2a"``, ``"mcp"``, ``"api"``,
+    ``"resources"``, ``"agui"``, ``"webui"``, ``"health"``) to an explicit
+    override; a name absent from the map means "no override" — the
+    surface's secure-default applies (see
+    ``reyn.interfaces.web.surfaces.build_registry``'s ``default_enabled``).
+    CLI ``--enable``/``--disable`` beats this config, which beats the
+    secure-default.
+
+    Example::
+
+        web:
+          surfaces:
+            a2a: {enabled: true}    # opt in to A2A
+            mcp: {enabled: true}    # opt in to MCP
+    """
+    enabled: dict[str, bool] = field(default_factory=dict)
+
+
+@dataclass
 class WebConfig:
     """`web:` — web settings.
 
     Aggregates the ``web.fetch`` sub-section (web_fetch operation knobs),
-    ``ws_max_size`` (the gateway WebSocket inbound-frame ceiling), and
-    ``web.auth`` (the gateway authentication model). Extend here when
-    ``web.search`` gets its own knobs.
+    ``ws_max_size`` (the gateway WebSocket inbound-frame ceiling),
+    ``web.auth`` (the gateway authentication model), and ``web.surfaces``
+    (FP-0058 P2: per-surface opt-in/opt-out mount overrides). Extend here
+    when ``web.search`` gets its own knobs.
     """
     fetch: WebFetchConfig = field(default_factory=WebFetchConfig)
     ws_max_size: int = DEFAULT_WS_MAX_SIZE
     auth: AuthConfig = field(default_factory=AuthConfig)
+    surfaces: SurfacesConfig = field(default_factory=SurfacesConfig)
 
 
 def _build_web_fetch_config(raw: object) -> WebFetchConfig:
@@ -176,6 +205,28 @@ def _build_auth_config(raw: object) -> AuthConfig:
     )
 
 
+def _build_surfaces_config(raw: object) -> SurfacesConfig:
+    """Parse the ``web.surfaces:`` sub-section (mirrors ``_build_web_fetch_config``).
+
+    Accepts both a long form (``{a2a: {enabled: true}}``) and a tolerated
+    short form (``{a2a: true}``). Malformed / missing input returns an empty
+    (= no overrides) config rather than raising.
+    """
+    if not isinstance(raw, dict):
+        return SurfacesConfig()
+    overrides: dict[str, bool] = {}
+    for name, val in raw.items():
+        if not isinstance(name, str) or not name:
+            continue
+        enabled_raw = val.get("enabled") if isinstance(val, dict) else val
+        if enabled_raw is None:
+            continue
+        overrides[name] = enabled_raw is True or (
+            isinstance(enabled_raw, str) and enabled_raw.strip().lower() in ("1", "true", "yes", "on")
+        )
+    return SurfacesConfig(enabled=overrides)
+
+
 def _build_web_config(raw: object) -> WebConfig:
     """Parse the ``web:`` section. Empty / missing returns full defaults."""
     if not isinstance(raw, dict):
@@ -191,6 +242,7 @@ def _build_web_config(raw: object) -> WebConfig:
         fetch=_build_web_fetch_config(fetch_raw),
         ws_max_size=ws_max_size,
         auth=_build_auth_config(raw.get("auth")),
+        surfaces=_build_surfaces_config(raw.get("surfaces")),
     )
 
 

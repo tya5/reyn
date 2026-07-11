@@ -29,7 +29,7 @@ models:
 | `output_language` | string | Default output language code (e.g. `en`, `ja`). Override with `--output-language`. |
 | `safety` | map | Runtime stop conditions: loop-detection caps, timeouts, on-limit policy. See below. |
 | `cost` | map | Budget caps and rate limits (per-agent, daily, monthly). See below. |
-| `web` | map | SSL settings for `web_fetch` and MCP registry calls. See below. |
+| `web` | map | SSL settings for `web_fetch` and MCP registry calls, the gateway auth model, and (`web.surfaces`) which `reyn web` surfaces are mounted. See below. |
 | `sandbox` | map | Sandboxed-exec backend selection, unsupported-platform policy, and the agent-level sandbox policy. See below. |
 | `hooks` | list | Agent-lifecycle hooks — template_push / shell_exec / shell_push hooks at lifecycle points. See below. |
 | `action_retrieval` | map | Universal catalog visibility + retrieval settings. See below. |
@@ -557,6 +557,45 @@ Priority chain (highest first):
 | `web.auth.tls_keyfile` | str | `null` | Operator TLS private key (PEM) paired with `tls_certfile`. Setting only one of the two is a startup error. |
 
 **Transport tiers** (secure-by-default). The gateway identifies every connection: **T1** in-process (the operator's own process, no auth); **T2** same-machine cross-process over a UNIX domain socket (`reyn web --uds PATH`) identified by OS peer credentials, or loopback TCP as a fallback; **T3** cross-machine network, which requires `web.auth.token` and runs over TLS. An intervention answer is a permission grant, so an unauthenticated connection cannot answer.
+
+### `web.surfaces` — per-surface opt-in/opt-out (FP-0058 P2)
+
+`reyn web` hosts several surfaces on the one gateway process; each can be
+independently enabled or disabled. **Secure-default**: AG-UI, the web UI
+(OpenUI shell + `/web/designs`), the REST `/api` control plane, `/health`,
+and the resource-fetch routes (`/agents/*/tool-results/*`) are **ON** — the
+operator's own browser/CLI need them to function at all. **A2A** and **MCP**
+are **OFF** by default — they are broad machine-integration ports (peer
+agents / external LLM clients reaching into this process), so they require
+explicit opt-in.
+
+```yaml
+web:
+  surfaces:
+    a2a:
+      enabled: true   # opt in to the Agent2Agent JSON-RPC surface
+    mcp:
+      enabled: true   # opt in to the MCP-over-SSE surface
+```
+
+| Surface | Secure-default | What it hosts |
+|---------|-----------------|----------------|
+| `agui` | ON | The AG-UI SSE transport (chat, self-gated per-handler). |
+| `webui` | ON | The OpenUI shell (`/`, `/static/*`) and `/web/designs/*`. |
+| `health` | ON | `GET /health`. |
+| `api` | ON | The REST `/api` control plane (agents / topologies / permissions / budget / web-config / web-data), auth-gated `operator` class. |
+| `resources` | ON | `/agents/<agent>/tool-results/<artifact>`, auth-gated `resource` class. |
+| `a2a` | **OFF** (opt-in) | The Agent2Agent JSON-RPC spine, auth-gated `peer` class. |
+| `mcp` | **OFF** (opt-in) | MCP-over-SSE (`/mcp/sse`, `/mcp/messages`), auth-gated `client` class. |
+
+Also settable per-surface from the CLI — `reyn web --enable a2a --enable mcp`
+or `reyn web --disable api` (repeatable per-surface flags, not a comma-list).
+**Precedence: CLI `--enable`/`--disable` > `web.surfaces` config > the
+secure-default table above.** This is launch-time-only, operator-owned
+config — read once when `reyn web` boots, never hot-reloadable and never
+LLM-settable (the LLM has no launch authority over which surfaces this
+gateway hosts). The webhook plugin surface (`webhooks.yaml`) is unrelated to
+this table and keeps its own separate, pre-existing opt-in.
 
 ## `hooks` block
 

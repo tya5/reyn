@@ -114,6 +114,34 @@ def register(sub) -> None:
             "(`reyn chat --exclude-tools` と同等)。"
         ),
     )
+    # FP-0058 P2: per-surface opt-in/opt-out mount toggles. Repeatable
+    # per-surface flags (NOT a comma-list) — `--enable a2a --enable mcp`.
+    # Precedence: CLI > `web.surfaces` config > secure-default. Surface
+    # names: agui / webui / health / api / resources (secure-default ON),
+    # a2a / mcp (secure-default OFF, opt-in). See
+    # reyn.interfaces.web.surfaces.build_registry for the authoritative list.
+    p.add_argument(
+        "--enable",
+        dest="enable_surfaces",
+        action="append",
+        default=None,
+        metavar="SURFACE",
+        help=(
+            "指定した surface を opt-in で有効化する (繰り返し指定可、例 "
+            "--enable a2a --enable mcp)。CLI > config > secure-default。"
+        ),
+    )
+    p.add_argument(
+        "--disable",
+        dest="disable_surfaces",
+        action="append",
+        default=None,
+        metavar="SURFACE",
+        help=(
+            "指定した surface を無効化する (繰り返し指定可、例 --disable api)。"
+            "CLI > config > secure-default。"
+        ),
+    )
     p.set_defaults(func=run)
 
 
@@ -192,6 +220,17 @@ def run(args: argparse.Namespace) -> None:
     # `reyn chat --eager-embedding-build` (= B25-S5-1).
     if getattr(args, "eager_embedding_build", False):
         os.environ["REYN_WEB_EAGER_EMBEDDING_BUILD"] = "1"
+
+    # FP-0058 P2: --enable/--disable surface toggles — propagate via the
+    # comma-separated env vars reyn.interfaces.web.surfaces.mount_all reads at
+    # server-module-import time (mirrors the --default-design pattern above).
+    from reyn.interfaces.web.surfaces import DISABLE_SURFACES_ENV_VAR, ENABLE_SURFACES_ENV_VAR
+    enable_surfaces = getattr(args, "enable_surfaces", None) or []
+    disable_surfaces = getattr(args, "disable_surfaces", None) or []
+    if enable_surfaces:
+        os.environ[ENABLE_SURFACES_ENV_VAR] = ",".join(enable_surfaces)
+    if disable_surfaces:
+        os.environ[DISABLE_SURFACES_ENV_VAR] = ",".join(disable_surfaces)
 
     # #1401: thread the scoped capabilities to the A2A server path (before
     # uvicorn.run so the lazy session factory / perm resolver read them).

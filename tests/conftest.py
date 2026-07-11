@@ -41,6 +41,30 @@ _REPO_ROOT = str(Path(__file__).resolve().parent.parent)
 if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 
+# ── FP-0058 P2: A2A/MCP opt-in for pre-existing protocol tests ──────────────
+#
+# A2A and MCP are now secure-default OFF (``reyn.interfaces.web.surfaces`` —
+# opt-in, broad machine-integration ports). Pre-existing A2A/MCP protocol
+# tests across the suite (``tests/web/test_a2a.py``, ``tests/web/test_mcp_sse.py``,
+# ``tests/test_fp0001_a2a_endpoints.py``, ``tests/test_a2a_runentry_task_migration_1981.py``)
+# exercise those surfaces directly and were written against the previous
+# always-on mount behaviour; they need the surfaces opted back in to keep
+# testing what they test (this is the FP-0058 "consumer audit" for the
+# secure-default flip, not a workaround — the tests are legitimate, the
+# environment they assumed changed).
+#
+# The FastAPI ``app`` singleton in ``reyn.interfaces.web.server`` mounts its
+# surfaces once, at the module's first import, for the WHOLE pytest process
+# — so this override must be set at collection time, here in the root
+# conftest (loaded before any test module's first import), not inside an
+# individual test file, which could run after some other file already
+# triggered the import with the surfaces still off.
+#
+# ``tests/web/test_surface_registry.py`` (the FP-0058 P2 registry's own
+# tests) force a fresh re-import of ``reyn.interfaces.web.server`` per test —
+# it does not rely on, or get affected by, this session-wide default.
+os.environ.setdefault("REYN_WEB_ENABLE_SURFACES", "a2a,mcp")
+
 # ── Secret store isolation ─────────────────────────────────────────────────────
 
 
