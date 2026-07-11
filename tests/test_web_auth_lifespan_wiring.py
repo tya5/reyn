@@ -1,6 +1,6 @@
-"""Tier 2: the server lifespan builds the AuthContext read by the ws gate.
+"""Tier 2: the server lifespan builds the AuthContext read by the auth gate.
 
-ADR-0039 P0. The auth gate in ``ws_chat`` reads ``app.state.auth``; if the
+ADR-0039 P0. The AG-UI endpoint auth gate reads ``app.state.auth``; if the
 lifespan did not build it the gate would fail closed for every client. This
 pins the wiring: after startup ``app.state.auth`` is a real AuthContext, and an
 operator-configured ``web.auth.token`` is the effective secret (not silently

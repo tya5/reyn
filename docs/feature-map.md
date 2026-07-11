@@ -148,7 +148,7 @@ mindmap
       Registration
     🌐 Web and Protocol
       FastAPI gateway
-      WebSocket chat
+      AG-UI SSE chat
       A2A sync message/send
       A2A async tasks
       Webhook push
@@ -375,7 +375,7 @@ How tools are presented to the LLM and how its calls are dispatched is a **plugg
 | `reyn config` | Show, query, and set effective configuration | [Reference](reference/cli/config.md) |
 | `reyn auth` | Manage OAuth credentials — `login` (RFC 8628 device grant against `auth.providers`) / `list` / `revoke` | [reyn.yaml § auth](reference/config/reyn-yaml.md) |
 | `reyn cron` | Manage and run cron-scheduled skill jobs — foreground scheduler / list jobs + next-run / status | [reyn.yaml § cron](reference/config/reyn-yaml.md) |
-| `reyn web` | Start FastAPI + WebSocket gateway server | [Reference](reference/cli/web.md) |
+| `reyn web` | Start FastAPI gateway server (HTTP + SSE) | [Reference](reference/cli/web.md) |
 | `reyn init` | Scaffold `reyn.yaml` and `.reyn/` in current directory | [Reference](reference/cli/init.md) |
 
 ---
@@ -568,8 +568,8 @@ logic. Design: [content-threat scan proposal](deep-dives/proposals/0050-content-
 
 | Feature | Description | Documentation |
 |---------|-------------|---------------|
-| FastAPI gateway | REST + WebSocket server on `localhost:8080` | [reyn web CLI](reference/cli/web.md) |
-| WebSocket chat | `/ws/chat` for interactive browser sessions | [reyn web CLI](reference/cli/web.md) |
+| FastAPI gateway | REST + SSE server on `localhost:8080` | [reyn web CLI](reference/cli/web.md) |
+| AG-UI browser chat | The openui browser streams the session over the AG-UI SSE endpoint (`/agui/chat/<name>/events`) and submits turns / HITL answers via POST — the same single UI transport as the local CUI and the remote thin client | [Reference: AG-UI transport](reference/runtime/agui-transport.md) |
 | AG-UI remote chat (`reyn chat --connect`) | Attach a thin CUI client to a single-writer server over AG-UI/SSE: display + turn submit + human-in-the-loop answering (answer by id), an active-driver token with symmetric seize, and fail-close with a grace window when the last operator surface is lost | [Reference: AG-UI transport](reference/runtime/agui-transport.md) |
 | A2A Agent Card | Per-agent `/.well-known/agent-card.json` capability declaration | [reyn web CLI](reference/cli/web.md) |
 | A2A `message/send` | Synchronous JSON-RPC 2.0 single-turn endpoint per agent | [reyn web CLI](reference/cli/web.md) |

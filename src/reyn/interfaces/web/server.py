@@ -371,19 +371,14 @@ app.include_router(_a2a_router.router)
 # spec gap for resource fetch with the industry-standard pattern.
 app.include_router(_resources_router.router)
 
-# AG-UI thin-client transport (ADR-0039 P2): a new SSE endpoint that streams
-# the session's frame stream as AG-UI events (server→client) plus a turn-submit
-# POST, behind the P0 auth gate. Distinct from ws/chat (that consolidation is
-# P6); A2A is the internal spine (D1), this is the AG-UI UI surface.
+# AG-UI thin-client transport (ADR-0039): the SSE endpoint that streams the
+# session's frame stream as AG-UI events (server→client) plus a turn-submit
+# POST, behind the P0 auth gate. This is the SINGLE UI transport (D2) for the
+# local CUI, the remote thin client, AND the browser; A2A is the internal spine
+# (D1), this is the AG-UI UI surface.
 from reyn.interfaces.transport.agui.endpoint import router as _agui_router  # noqa: E402
 
 app.include_router(_agui_router)
-
-# ── WebSocket routes ────────────────────────────────────────────────────────
-
-from reyn.interfaces.web.ws import chat as _ws_chat  # noqa: E402
-
-app.include_router(_ws_chat.router)
 
 
 # ── health check ────────────────────────────────────────────────────────────

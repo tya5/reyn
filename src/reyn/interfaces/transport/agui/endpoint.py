@@ -1,13 +1,14 @@
 """FastAPI AG-UI transport endpoint — HTTP+SSE, behind the P0 auth gate (P2/P3).
 
-The wire surface for the remote thin client (D2): an SSE endpoint that streams
-the server session's :class:`~reyn.interfaces.transport.frames.Frame` stream as
-AG-UI events (via :class:`~reyn.interfaces.transport.agui.emitter.AgUiEmitter`),
-plus a POST for client→server turn submit, HITL answers, cancel, seize, and
-heartbeat. It is modelled on the existing A2A SSE pattern (``StreamingResponse``
-/ ``text/event-stream``) — A2A is the internal spine (D1); this is the AG-UI UI
-surface, a distinct endpoint that does NOT touch ``ws/chat`` (that consolidation
-is P6).
+The wire surface for every UI client (D2): the local CUI, the remote thin
+client, AND the openui browser. An SSE endpoint that streams the server
+session's :class:`~reyn.interfaces.transport.frames.Frame` stream as AG-UI events
+(via :class:`~reyn.interfaces.transport.agui.emitter.AgUiEmitter`), plus a POST
+for client→server turn submit, HITL answers, cancel, seize, and heartbeat. It is
+modelled on the existing A2A SSE pattern (``StreamingResponse`` /
+``text/event-stream``) — A2A is the internal spine (D1); this is the SINGLE
+AG-UI UI surface (the legacy per-client WebSocket chat route was retired once the
+browser migrated here).
 
 Every connection is gated by the **P0 auth context** (``app.state.auth``): the
 request identity is resolved through the SAME

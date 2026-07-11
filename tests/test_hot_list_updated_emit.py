@@ -2,8 +2,7 @@
 
 ``on_hot_list_updated`` is not implemented in ChatLifecycleForwarder.
 A ``hot_list_updated`` event on the chat_events bus produces no outbox
-message (no live consumer: ws path drops this kind via ``_FORWARDED_KINDS``;
-``_output_loop`` never handled it).
+message (no live consumer: no display surface renders this kind).
 
 The underlying tracker event still fires on ``_chat_events``; only the
 outbox-forwarding path is absent.
