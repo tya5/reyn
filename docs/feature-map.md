@@ -400,6 +400,7 @@ Main reference: **[`reyn.yaml`](reference/config/reyn-yaml.md)**
 | `permissions` | Project-wide default capability policy | [Permissions config](reference/config/permissions.md) |
 | `multi-agent` | Agent and topology defaults | [Multi-agent config](reference/config/multi-agent.md) |
 | `state_dir` | Runtime state directory (default `.reyn/`) | [State dir](reference/config/state-dir.md) |
+| `observability` | OTLP endpoint / headers / service name / content-capture toggle for the opt-in OpenTelemetry exporter | [reyn-yaml § observability](reference/config/reyn-yaml.md#observability-block) · [Observability reference](reference/runtime/observability.md) |
 | `auth` | OAuth provider definitions for `reyn auth login` (RFC 8628 device grant) | [reyn-yaml](reference/config/reyn-yaml.md) |
 | `mcp` | Configured external MCP server connections (transport + env) | [Concepts: MCP](concepts/tools-integrations/mcp.md) |
 | `multimodal` | Media handling caps (`max_bytes`, per-part token cost) | [reyn-yaml](reference/config/reyn-yaml.md) |
@@ -578,6 +579,7 @@ logic. Design: [content-threat scan proposal](deep-dives/proposals/0050-content-
 | Webhook push | Status-transition POSTs to `params.webhook_url` for async tasks (`reyn.web.notifications`) | [A2A concepts](concepts/multi-agent/a2a.md) |
 | MCP-over-SSE | `/mcp/sse` + `/mcp/messages` for MCP client connections | [reyn web CLI](reference/cli/web.md) · [reyn mcp CLI](reference/cli/mcp.md) |
 | REST API | `/api/*` for agents / skills / runs / topologies / budget / permissions | [reyn web CLI](reference/cli/web.md) |
+| OpenTelemetry (OTLP) export | Opt-in, fail-open subscriber on the P6 audit-event log — maps events to OTLP spans/metrics/log records (GenAI semantic conventions, pinned version), off unless an endpoint is configured, content-capture off by default. Never a recovery source: `.reyn/events` + the WAL are unaffected and unchanged whether or not it is attached | [Reference: Observability](reference/runtime/observability.md) |
 
 > **Differentiation vs general agents:** competitors specialise in broad, deep connectivity to the messaging apps you already use. Reyn keeps connectivity to standard protocols — MCP (client + server), A2A (sync + async tasks with webhook push), and a REST / AG-UI SSE gateway — rather than per-app integrations.
 
