@@ -407,9 +407,27 @@ def web_search_to_canonical(result: dict) -> CanonicalToolResult:
     return CanonicalToolResult(text="", attachments=[], source_ref=None, meta={})
 
 
+def _fork_denial_note(argv0_resolved: str | None) -> str:
+    """The operator/LLM-facing explanation prepended to a launcher-fork denial
+    (#2820). It exists to KILL the weak-model self-narrative ("I can't execute
+    tools") by stating plainly this is an environment/config condition, not a
+    tool-availability one, and that an identical retry will fail identically."""
+    where = f" '{argv0_resolved}'" if argv0_resolved else ""
+    return (
+        "[sandbox] Blocked at the launcher layer: the sandbox denies process "
+        f"fork(), and the command{where} resolves to a version-manager shim "
+        "(pyenv/asdf/mise) or a spawn-based launcher (npx/uvx) that forks "
+        "internally. This is an environment / sandbox-configuration problem — "
+        "NOT a missing tool and NOT a lack of tool-calling ability; retrying the "
+        "same command will fail identically. Fix: invoke the real binary by "
+        "absolute path, or allow subprocess for this command."
+    )
+
+
 def sandboxed_exec_to_canonical(result: dict) -> CanonicalToolResult:
     """sandboxed_exec result → canonical. ``stdout`` (+ ``stderr`` when present) → ``text``; a NONZERO
     ``returncode`` → signal meta (it changes what the LLM does next — a zero code is not signal).
+    A ``denial_class`` (#2820) prepends an explicit environment-vs-tool note and surfaces as meta.
     Transport (backend/truncated) is dropped."""
     stdout = result.get("stdout") or ""
     stderr = result.get("stderr") or ""
@@ -424,6 +442,13 @@ def sandboxed_exec_to_canonical(result: dict) -> CanonicalToolResult:
     returncode = result.get("returncode")
     if returncode:  # nonzero (or truthy) only — a 0 exit is not actionable signal
         meta["returncode"] = returncode
+    # #2820: a launcher-fork denial is opaque as raw stderr — name it and prepend the explanation so
+    # the LLM does not misread it as "I cannot execute tools" (the exact failure mode that motivated it).
+    denial_class = result.get("denial_class")
+    if denial_class:
+        meta["denial_class"] = denial_class
+        if denial_class == "fork_denied":
+            text = f"{_fork_denial_note(result.get('argv0_resolved'))}\n\n{text}"
     return CanonicalToolResult(text=text, attachments=[], source_ref=None, meta=meta)
 
 

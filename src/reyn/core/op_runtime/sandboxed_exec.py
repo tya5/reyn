@@ -9,13 +9,28 @@ Emits `sandboxed_exec_started` / `sandboxed_exec_completed` events (P6).
 """
 from __future__ import annotations
 
+import os
+import shutil
 from typing import Literal
 
 from reyn.schemas.models import SandboxedExecIROp
 from reyn.security.sandbox import SandboxPolicy, get_default_backend
+from reyn.security.sandbox.denial import classify_denial
 
 from . import register
 from .context import OpContext
+
+
+def _resolve_argv0(argv0: str) -> str | None:
+    """Best-effort realpath of *argv0* as the sandbox child would resolve it —
+    READ-ONLY (no exec). Records what a bare command name actually points at so a
+    launcher-fork denial (#2820) is legible in the trace without re-deriving PATH:
+    a bare ``python3`` that resolves to ``~/.pyenv/shims/python3`` is the entire
+    tell. ``None`` when the name is not found on PATH."""
+    found = shutil.which(argv0)
+    if found is None:
+        return None
+    return os.path.realpath(found)
 
 
 async def handle(
@@ -78,9 +93,16 @@ async def handle(
     # not the op's request fields — the operator-or-default policy wins over op
     # fields, so the trace must show what was enforced (a network:true op under
     # a network:false policy ran WITHOUT network, and the event must say so).
+    # #2820: record what argv[0] actually resolves to. When a launcher-fork
+    # denial happens (bare command → pyenv/asdf/mise shim or npx/uvx that forks
+    # internally under (deny process-fork)), this field is the diagnostic that
+    # would otherwise take a live PATH re-derivation to recover.
+    argv0_resolved = _resolve_argv0(op.argv[0]) if op.argv else None
+
     ctx.events.emit(
         "sandboxed_exec_started",
         argv=list(op.argv),
+        argv0_resolved=argv0_resolved,
         backend=backend.name,
         timeout_seconds=policy.timeout_seconds,
         network=policy.network,
@@ -114,14 +136,22 @@ async def handle(
             "truncated": False,
         }
 
+    # #2820: classify a launcher-fork denial (pure fn of returncode+stderr). None
+    # for any normal (even nonzero) exit — only a genuine sandbox denial is named,
+    # so the canonical layer can tell the LLM "environment/config, not tool
+    # availability" and the audit trail records the class.
+    denial_class = classify_denial(result.returncode, result.stderr)
+
     ctx.events.emit(
         "sandboxed_exec_completed",
         argv=list(op.argv),
+        argv0_resolved=argv0_resolved,
         backend=backend.name,
         returncode=result.returncode,
         stdout_len=len(stdout_text),
         stderr_len=len(stderr_text),
         truncated=result.truncated,
+        denial_class=denial_class,
     )
 
     status = "ok" if result.returncode == 0 else ("timeout" if result.returncode == -1 else "error")
@@ -133,6 +163,8 @@ async def handle(
         "stdout": stdout_text,
         "stderr": stderr_text,
         "truncated": result.truncated,
+        "denial_class": denial_class,
+        "argv0_resolved": argv0_resolved,
     }
 
 
