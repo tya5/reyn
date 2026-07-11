@@ -829,28 +829,31 @@ def _snapshot(registry, task_cache=None, config=None):
     }
 
 
-async def run_inline_input(registry, renderer, config=None, transport=None) -> None:
+async def run_inline_input(read_model, renderer, config=None, transport=None) -> None:
     """Run the interactive inline input Application until the user quits.
 
-    Returns on quit (Ctrl-C/D/Q or /quit /exit) so run_repl can tear down (cost
+    Returns on quit (Ctrl-C/D/Q or /quit /exit) so the driver can tear down (cost
     summary) via its FIRST_COMPLETED wait.
 
-    ``config`` is the loaded ReynConfig (or None), threaded read-only into
-    ``_snapshot`` so the ``…`` overflow chip can list cron jobs / mcp servers /
+    ``config`` is the loaded ReynConfig (or None), threaded read-only into the
+    status snapshot so the ``…`` overflow chip can list cron jobs / mcp servers /
     hooks. When None (--cui / non-inline path) the overflow panel shows empty
     sections — backward-compatible.
+
+    ``read_model`` is the :class:`~reyn.interfaces.repl.read_model.ChatReadModel`
+    (ADR-0039 P3) this driver READS all of its status/region/task state through —
+    the status snapshot, the intervention-region head, the ``/rewind`` command-UI,
+    the task poll, and the input-history path. A :class:`RegistryReadModel` (local)
+    reads them off the attached session; a :class:`RemoteReadModel` reads the
+    server's ``STATE_*`` status view over the wire. This is what removed the last
+    local-only coupling, so the inline CUI now renders on ``reyn chat --connect``.
 
     ``transport`` is the :class:`~reyn.interfaces.transport.client_transport.ClientTransport`
     (ADR-0039 P1) this driver's WRITE side routes through — turn submit,
     intervention answers, the user echo, cancel, and shutdown all go through the
-    transport's send seam rather than touching the session directly. (Status-bar
-    panel READS + the local command-UI plumbing still read the registry; a full
-    client-side read-model is P3.)
+    transport's send seam.
     """
-    attached = registry.attached_session()
-    if attached is None:
-        raise RuntimeError("run_inline_input: no session attached (call registry.attach() first)")
-    history = FileHistory(str(attached.workspace_dir / ".input_history"))
+    history = FileHistory(str(read_model.history_path))
     # multiline=True: Enter=submit / Shift+Enter=newline (owner spec) instead of
     # prompt_toolkit's own multiline default (Enter=newline, Meta+Enter=submit) —
     # see the "enter" binding below, which inverts it. FileHistory already
@@ -937,7 +940,7 @@ async def run_inline_input(registry, renderer, config=None, transport=None) -> N
     inputrow = VSplit([prompt_sym, input_win])
 
     def status_fragments() -> list:
-        snap = _snapshot(registry, task_cache, config)
+        snap = read_model.snapshot(task_cache, config)
         if snap is None:
             return [(f"fg:{_CC_DIM}", " /quit to exit · ↑ history")]
         focused = get_app().layout.has_focus(status_win)
@@ -985,7 +988,7 @@ async def run_inline_input(registry, renderer, config=None, transport=None) -> N
         # Same rendering shape as status_fragments, one level down. Stays
         # visible (as a breadcrumb) even while a sub-chip's own category
         # dropdown (level 2) is open below it.
-        snap = _snapshot(registry, task_cache, config)
+        snap = read_model.snapshot(task_cache, config)
         if snap is None:
             return []
         frags: list = []
@@ -1233,7 +1236,7 @@ async def run_inline_input(registry, renderer, config=None, transport=None) -> N
             menu["open"] = True
             menu["cat_open"] = False
             return
-        snap = _snapshot(registry, task_cache, config)
+        snap = read_model.snapshot(task_cache, config)
         _fill_menu_region(spec.expansion, snap, live_task=(spec.key == "task"))
         menu["open"] = True
 
@@ -1247,7 +1250,7 @@ async def run_inline_input(registry, renderer, config=None, transport=None) -> N
     def _cat_open() -> None:
         # Enter the selected SUB-chip's category (level 2) — "more" only.
         spec = _MORE_SUB_CHIP_SPECS[menu["sub_sel"]]
-        snap = _snapshot(registry, task_cache, config)
+        snap = read_model.snapshot(task_cache, config)
         _fill_menu_region(spec.expansion, snap)
         menu["cat_open"] = True
 
@@ -1372,9 +1375,7 @@ async def run_inline_input(registry, renderer, config=None, transport=None) -> N
         # would leave the user unable to resolve a blocking intervention.
         key = region_holder["key"]
         if key and key.startswith("cmd:"):
-            s = registry.attached_session()
-            if s is not None:
-                s.set_pending_command_ui(None)
+            read_model.clear_pending_command_ui()
             above_region.clear()
             region_holder["key"] = None
             event.app.layout.focus(input_win)
@@ -1386,19 +1387,21 @@ async def run_inline_input(registry, renderer, config=None, transport=None) -> N
         app.layout.focus(above_region_win)
 
     def _cmd_submit(text: str) -> None:
-        s = registry.attached_session()
-        if s is not None:
-            s.set_pending_command_ui(None)  # consume the request
+        read_model.clear_pending_command_ui()  # consume the request
         app.create_background_task(_submit(transport, text))
 
     def _sync_region() -> None:
-        """Sync the above-region with the session's pending UI: the head closed-set
+        """Sync the above-region with the pending UI: the head closed-set
         intervention (priority — it blocks a turn), else a command-UI request (the
         /rewind picker etc.). Poll-driven, like the status chips. Inert when
         nothing is pending — same as an empty region.
+
+        Both reads come through the read-model: a REMOTE read-model returns None
+        for both (interventions ride the display prompt + input line over the wire;
+        command-UI is not on the wire), so the region stays inert on a remote
+        client and closed-set answers flow through the input field instead.
         """
-        s = registry.attached_session()
-        head = s.interventions.head() if s is not None else None
+        head = read_model.intervention_head()
         if head is not None and getattr(head, "choices", None):
             key = f"iv:{head.id}"
             if key != region_holder["key"]:
@@ -1409,7 +1412,7 @@ async def run_inline_input(registry, renderer, config=None, transport=None) -> N
                     ),
                 ), key)
             return
-        cmd = s.pending_command_ui if s is not None else None
+        cmd = read_model.pending_command_ui()
         if cmd is not None and cmd.get("kind") == "rewind":
             key = f"cmd:{id(cmd)}"
             if key != region_holder["key"]:
@@ -1425,9 +1428,7 @@ async def run_inline_input(registry, renderer, config=None, transport=None) -> N
         while True:
             await asyncio.sleep(1.0)
             try:
-                tasks = await registry.task_backend.list()
-                dicts = [t.to_dict() for t in tasks]
-                active = [d for d in dicts if d["status"] not in ("done", "failed", "aborted")]
+                active = await read_model.list_active_tasks()
                 task_cache["tree"] = _build_task_tree(active)
                 task_cache["count"] = len(active)
             except Exception:
@@ -1523,8 +1524,13 @@ async def _submit(transport, text: str) -> None:
         # starting a new chat turn. Free-text = no choices (ask_user, mcp_install.secret,
         # etc.). Closed-set interventions (choices non-empty) are handled by the region
         # dropdown and never reach this path — matching build_intervention_element logic.
+        # Shape-safe: the LOCAL transport's head is an Intervention (``.choices``);
+        # the REMOTE transport's head is a bare intervention-id string (ADR-0039
+        # P3 — choices are not carried, the prompt rides the display frame). Either
+        # way, a free-text (no-choices) intervention takes the answer path; a
+        # remote head (no ``.choices`` attr) is always answered as free text here.
         head = transport.pending_intervention_head()
-        if head is not None and not head.choices:
+        if head is not None and not getattr(head, "choices", None):
             await transport.answer_intervention_text(text)
             return
         await transport.submit_user_text(text)
@@ -1563,7 +1569,7 @@ async def _quit(transport, app, state: dict) -> None:
     except Exception:
         # Log and suppress — a shutdown exception must not prevent app.exit()
         # from running (the PT app would hang with no escape path).
-        logger.exception("registry shutdown failed during quit")
+        logger.exception("transport shutdown failed during quit")
     finally:
         # asyncio.CancelledError (BaseException, not caught by `except Exception`
         # above) must also reach app.exit() — without finally, a cancelled _quit

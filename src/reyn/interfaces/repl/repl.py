@@ -15,18 +15,15 @@ switch, and both the input and output sides funnel through the registry-owned
 """
 from __future__ import annotations
 
-import asyncio
 import logging
 import sys
-
-from prompt_toolkit import PromptSession
-from prompt_toolkit.history import FileHistory
 
 from reyn.interfaces.transport.in_process import InProcessTransport
 from reyn.runtime.registry import AgentRegistry  # #312 PR-A: registry stays in the runtime pkg
 
+from .client_driver import run_chat_client
+from .read_model import RegistryReadModel
 from .renderer import ChatRenderer
-from .stream_client import run_input_loop, run_output_loop
 
 logger = logging.getLogger(__name__)
 
@@ -39,14 +36,18 @@ async def run_repl(registry: AgentRegistry, renderer: ChatRenderer, *, config=No
 
     ``config`` is the loaded ReynConfig (or None). When supplied it is threaded
     read-only to ``run_inline_input`` so the ``…`` overflow chip can surface
-    cron / mcp / hooks state. The --cui / non-TTY path is not affected (it uses
-    ``run_input_loop`` and never receives ``config``).
+    cron / mcp / hooks state. The --cui / non-TTY path is not affected.
+
+    ADR-0039 P3: the LOCAL half of the unified chat client — it constructs the
+    transport-specific pair (an :class:`InProcessTransport` + a
+    :class:`RegistryReadModel`) and hands off to the SHARED
+    :func:`~reyn.interfaces.repl.client_driver.run_chat_client` driver, which owns
+    the banner + renderer-loop selection + output loop identically for local and
+    remote. Only the transport lifecycle and the cost summary stay here.
     """
     attached = registry.attached_session()
     if attached is None:
         raise RuntimeError("run_repl requires an attached agent; call registry.attach() first")
-
-    history_path = attached.workspace_dir / ".input_history"
 
     # The transport is the client's sole seam to the session. It composes the
     # two pre-existing render paths behind ONE unified frame stream:
@@ -67,48 +68,23 @@ async def run_repl(registry: AgentRegistry, renderer: ChatRenderer, *, config=No
     )
     transport.start()
 
-    renderer.banner(attached.agent_name)
-
-    # `set` = "no reply pending" (the input loop's pacing gate is open).
-    # `clear` = "a turn is in flight" (the gate blocks until the output
-    # loop renders the reply). Start opened so the first read isn't gated.
-    reply_seen: asyncio.Event = asyncio.Event()
-    reply_seen.set()
-
-    # Interactive TTY inline renderer → its own rule-bar Application input
-    # driver. --cui / non-TTY (pipe / script) keep the PromptSession input loop
-    # (plain invariance + the piped reply_seen pacing). The output loop is
-    # shared: run_in_terminal prints above whichever input is live.
-    if renderer.uses_app_input() and sys.stdin.isatty():
-        from reyn.interfaces.inline.app import run_inline_input
-        inputs = asyncio.create_task(run_inline_input(registry, renderer, config, transport))
-    else:
-        from prompt_toolkit.styles import Style
-        prompt_session: PromptSession[str] = PromptSession(
-            history=FileHistory(str(history_path)),
-            # Working-indicator toolbar as a dim status line, not the default
-            # heavy reversed bar.
-            style=Style.from_dict({"bottom-toolbar": "noreverse bg:default"}),
-        )
-        inputs = asyncio.create_task(
-            run_input_loop(transport, prompt_session, renderer, reply_seen)
-        )
-    outputs = asyncio.create_task(
-        run_output_loop(transport, renderer, reply_seen)
-    )
+    # The LOCAL read-model reads status/region/tasks off the attached session —
+    # byte-identical to the pre-P3 inline reads.
+    read_model = RegistryReadModel(registry)
 
     try:
-        # Wait until one of the loops returns (user `/quit` or EOF).
-        await asyncio.wait(
-            {inputs, outputs}, return_when=asyncio.FIRST_COMPLETED,
+        await run_chat_client(
+            transport=transport,
+            renderer=renderer,
+            read_model=read_model,
+            agent_name=attached.agent_name,
+            is_tty=sys.stdin.isatty(),
+            config=config,
         )
     finally:
         # Unwire the transport from the LIVE attached session (handles a switch
         # before quit) and stop the frame pump.
         transport.close()
-        inputs.cancel()
-        outputs.cancel()
-        await asyncio.gather(inputs, outputs, return_exceptions=True)
         from reyn.llm.pricing import TokenUsage
         total_usage = TokenUsage()
         total_cost = 0.0

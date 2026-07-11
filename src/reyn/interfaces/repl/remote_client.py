@@ -74,11 +74,10 @@ async def run_remote_repl(
         print(missing_dep_message(e, "httpx", "web"), file=sys.stderr)
         sys.exit(1)
 
-    from prompt_toolkit import PromptSession
-
     from reyn.interfaces.transport.agui.client import AgUiTransport
 
-    from .stream_client import run_input_loop, run_output_loop
+    from .client_driver import run_chat_client
+    from .read_model import RemoteReadModel
 
     base_url = base_url.rstrip("/")
     events_url = f"{base_url}/agui/chat/{agent_name}/events"
@@ -122,26 +121,26 @@ async def run_remote_repl(
                         yield line
 
                 transport = AgUiTransport(sse_lines(), send)
-                renderer.banner(agent_name)
-                reply_seen: asyncio.Event = asyncio.Event()
-                reply_seen.set()
-                prompt_session: PromptSession[str] = PromptSession()
-
-                inputs = asyncio.create_task(
-                    run_input_loop(transport, prompt_session, renderer, reply_seen)
-                )
-                outputs = asyncio.create_task(
-                    run_output_loop(transport, renderer, reply_seen)
-                )
+                # ADR-0039 P3: the REMOTE half of the unified chat client. It
+                # constructs the transport-specific pair (an ``AgUiTransport`` +
+                # a ``RemoteReadModel`` reading the server's STATE_* status view
+                # over the wire) and hands off to the SAME shared driver the local
+                # path uses — so an interactive TTY remote attach renders the inline
+                # CUI (with the frame-available status bar), not the plain console.
+                read_model = RemoteReadModel(transport)
                 hb = asyncio.create_task(heartbeat())
                 try:
-                    await asyncio.wait(
-                        {inputs, outputs}, return_when=asyncio.FIRST_COMPLETED
+                    await run_chat_client(
+                        transport=transport,
+                        renderer=renderer,
+                        read_model=read_model,
+                        agent_name=agent_name,
+                        is_tty=sys.stdin.isatty(),
+                        config=config,
                     )
                 finally:
-                    for t in (inputs, outputs, hb):
-                        t.cancel()
-                    await asyncio.gather(inputs, outputs, hb, return_exceptions=True)
+                    hb.cancel()
+                    await asyncio.gather(hb, return_exceptions=True)
         except httpx.ConnectError:
             print(
                 f"Error: could not connect to {base_url}. Is `reyn web` running there?",

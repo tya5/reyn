@@ -270,25 +270,64 @@ def _setup_interactive_logging(project_root: Path) -> None:
         pass
 
 
-def _run_remote(args: argparse.Namespace) -> None:
+def _run_remote(
+    args: argparse.Namespace,
+    *,
+    run_remote=None,
+    stdin_isatty: "bool | None" = None,
+    stdout_isatty: "bool | None" = None,
+) -> None:
     """ADR-0039 P3: attach to a remote server over AG-UI (`--connect <url>`).
 
     A thin transport-only path — no local Session / registry / workspace is built
     (the server is the sole writer). The same stream-consuming client renders the
     remote frame stream and routes input back over the wire.
+
+    Renderer selection is UNIFIED with the local path (D2, local ≡ remote): the
+    SAME ``_inline_interactive`` predicate + ``make_renderer`` seam picks the Claude
+    Code-style inline CUI on an interactive TTY (with the frame-available status
+    bar streamed over ``STATE_*``) and the plain console renderer for ``--cui`` /
+    non-TTY / piped. Before P3 this hard-coded the plain renderer, so a remote
+    attach on a TTY looked nothing like local — this wiring is the fix, so it is
+    guarded directly (``test_agui_remote_inline_p3``).
+
+    ``run_remote`` / ``stdin_isatty`` / ``stdout_isatty`` are injectable seams (same
+    recording-double-not-mock pattern as ``_run_once``): a test drives THIS function
+    with forced TTY flags and a recording ``run_remote`` to pin that the real
+    call-site selects the inline renderer, so a revert to a hard-coded renderer goes
+    RED. Production leaves them None → the real ``run_remote_repl`` + ``sys`` TTYs.
     """
     import os
 
-    from reyn.interfaces.repl.remote_client import run_remote_repl
     from reyn.llm.llm import run_async
 
-    from ..logger_factory import make_chat_renderer
+    from ..logger_factory import make_renderer
+
+    if run_remote is None:
+        from reyn.interfaces.repl.remote_client import run_remote_repl
+        run_remote = run_remote_repl
+    if stdin_isatty is None:
+        stdin_isatty = sys.stdin.isatty()
+    if stdout_isatty is None:
+        stdout_isatty = sys.stdout.isatty()
 
     agent_name = args.agent_name or "default"
     token = getattr(args, "token", None) or os.environ.get("REYN_WEB_AUTH_TOKEN")
-    renderer = make_chat_renderer()
+    # Same predicate as the local path: inline CUI only when not --cui and BOTH
+    # std streams are TTYs (the inline live region needs a TTY stdout).
+    is_interactive = _inline_interactive(
+        cui=getattr(args, "cui", False),
+        stdin_isatty=stdin_isatty,
+        stdout_isatty=stdout_isatty,
+    )
+    # The inline CUI owns the terminal; route library warnings / tracebacks to a
+    # log file so they don't corrupt the live region (same rationale as local).
+    if is_interactive:
+        from reyn.config import _find_project_root
+        _setup_interactive_logging(_find_project_root(Path.cwd()) or Path.cwd())
+    renderer = make_renderer(is_interactive)
     run_async(
-        run_remote_repl(
+        run_remote(
             base_url=args.connect,
             agent_name=agent_name,
             token=token,
@@ -559,13 +598,13 @@ def run(args: argparse.Namespace) -> None:
 
     from reyn.interfaces.repl.repl import run_repl
 
-    from ..logger_factory import make_chat_renderer, make_inline_renderer
+    from ..logger_factory import make_renderer
 
     # Interactive TTY (no --cui) → Claude Code-style inline CUI, the default
     # human-facing surface. --cui or a non-TTY (pipe / script / run-once) →
     # plain console output. Both drive the same run_repl loop; only the
-    # renderer differs.
-    renderer = make_inline_renderer() if is_interactive else make_chat_renderer()
+    # renderer differs. The SAME make_renderer seam picks it on the remote path.
+    renderer = make_renderer(is_interactive)
 
     async def _main_chat() -> None:
         # PR21: replay WAL into per-agent snapshots before any new state
