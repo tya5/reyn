@@ -60,7 +60,9 @@ _MCP_SEARCH_REGISTRY_PARAMETERS: dict[str, Any] = {
             "type": "string",
             "description": (
                 "Natural-language capability request (e.g. \"github "
-                "related\", \"image generation\", \"PDF を扱える\")."
+                "related\", \"image generation\", \"PDF handling\") — "
+                "the query may be in any language, including Japanese "
+                "and other non-English input."
             ),
         },
     },

@@ -188,7 +188,8 @@ def build_system_prompt(
             )
             parts.append(
                 "When the user refers to \"this repo\", \"this code\", \"the codebase\","
-                " \"this project\", \"ここ\", or any other unqualified reference to"
+                " \"this project\", \"here\" (in any language, including Japanese and"
+                " other non-English input), or any other unqualified reference to"
                 " surrounding source, interpret it as the project at the cwd above."
                 " Do NOT ask for a repository URL or path — " + _cwd_how
             )

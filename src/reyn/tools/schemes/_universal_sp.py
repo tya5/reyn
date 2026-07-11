@@ -251,8 +251,10 @@ def build_universal_tool_use_slots(
             _r3.extend([
                 "  - Never invent action names; only use those returned by",
                 "    `list_actions` or `search_actions`.",
-                "  - For semantic / natural-language / keyword queries (= 「探し"
-                "たい」 「関連」 「something for X」 「similar to」 「'http' を含む」),",
+                "  - For semantic / natural-language / keyword queries (e.g.",
+                "    'find X', 'related to', 'something for X', 'similar to',",
+                "    'contains http' — the query may be in any language,",
+                "    including Japanese and other non-English input),",
                 "    USE `search_actions(query=...)`. For category enumeration,",
                 "    USE `list_actions(category=[...])`.",
             ])
