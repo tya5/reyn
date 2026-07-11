@@ -96,6 +96,10 @@ CUSTOM_PROFILE: dict[str, CustomName] = _entries(
         "a user-authored line echoed live to the scrollback (backlog user turns ride the standard messages array)",
     ),
     CustomName(
+        "reyn.display.system", DISPLAY_NS, "{text: str}",
+        "a reyn chrome line — a persisted lifecycle/status marker (compaction / budget / cost-warn) or the operator's 'answered:' echo; reyn-private, no standard AG-UI analog",
+    ),
+    CustomName(
         "reyn.display.tool_call_started", DISPLAY_NS, "{text: str}",
         "a tool-call start trace line",
     ),

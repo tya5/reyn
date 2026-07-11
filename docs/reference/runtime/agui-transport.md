@@ -279,6 +279,7 @@ A reyn display frame with no standard AG-UI analog. `value` is `{"text": <string
 | `reyn.display.presentation`       | a `present` op's text; the render-node model rides the `_reyn` block's `meta.nodes` (inert on the wire — see *present-on-wire*) |
 | `reyn.display.nodes`              | a raw render-node display line                         |
 | `reyn.display.user`               | a user-authored line echoed live to the scrollback (backlog user turns ride the standard `messages` array instead) |
+| `reyn.display.system`             | a reyn chrome line — a persisted lifecycle/status marker (compaction / budget / cost-warn) or the operator's "answered:" echo |
 | `reyn.display.tool_call_started`  | a tool-call start trace line                           |
 | `reyn.display.tool_call_completed`| a tool-call completion trace line                     |
 | `reyn.display.tool_call_failed`   | a tool-call failure trace line                        |

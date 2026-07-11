@@ -271,6 +271,7 @@ display 行のテキストである。
 | `reyn.display.presentation`       | `present` op のテキスト。render-node モデルは `_reyn` ブロックの `meta.nodes` に乗る(ワイヤー上は inert — *present-on-wire* 参照) |
 | `reyn.display.nodes`              | 生の render-node display 行                            |
 | `reyn.display.user`               | scrollback にライブでエコーされる user-authored な行(backlog の user ターンは代わりに標準の `messages` 配列に乗る) |
+| `reyn.display.system`             | reyn chrome 行 — 永続化されるライフサイクル/ステータスマーカー(compaction / budget / cost-warn)または operator の「answered:」エコー |
 | `reyn.display.tool_call_started`  | tool-call 開始のトレース行                              |
 | `reyn.display.tool_call_completed`| tool-call 完了のトレース行                              |
 | `reyn.display.tool_call_failed`   | tool-call 失敗のトレース行                              |

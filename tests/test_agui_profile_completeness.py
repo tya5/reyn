@@ -41,12 +41,61 @@ _RENDERER = (
 _DISPLAY_DISPATCH_FUNCS = {"message", "format_inline_message"}
 
 
+def _string_literals(node: ast.AST) -> "set[str]":
+    """The string keys of a ``Dict`` / string elements of a ``Set`` /
+    ``frozenset({...})`` literal — the members of a constant collection."""
+    out: set[str] = set()
+    if isinstance(node, ast.Dict):
+        elems: list = list(node.keys)
+    elif isinstance(node, ast.Set):
+        elems = list(node.elts)
+    elif isinstance(node, ast.Call) and getattr(node.func, "id", None) == "frozenset":
+        elems = []
+        for arg in node.args:
+            if isinstance(arg, (ast.Set, ast.List, ast.Tuple)):
+                elems.extend(arg.elts)
+    else:
+        return out
+    for e in elems:
+        if isinstance(e, ast.Constant) and isinstance(e.value, str):
+            out.add(e.value)
+    return out
+
+
 def _renderer_display_kinds() -> set[str]:
-    """Every ``kind`` literal the renderer's display-dispatch functions compare
-    against — the DisplayFrame vocabulary, read from renderer source (not the
-    codec's tables), so the enumeration is independent of the profile."""
+    """Every ``kind`` literal the renderer dispatches on — the DisplayFrame
+    vocabulary, read from renderer source (not the codec's tables), so the
+    enumeration is independent of the profile.
+
+    A ``kind`` is reached two ways, and BOTH are scanned UNFILTERED (no
+    hand-listed kind set — enumerate from the source of truth, never a marker
+    subset):
+
+    - **(a) Compare branches** — ``msg.kind == "x"`` inside a display-dispatch
+      function.
+    - **(b) Module/class-level constant collections** — the kind-keyed dispatch
+      tables (``_KIND_LINE`` / ``_PREFIX`` / ``_NESTED_KINDS`` and any future
+      sibling), i.e. every ``Dict`` / ``Set`` / ``frozenset`` literal defined at
+      module or class scope. Collections *built inside a method body* (e.g. the
+      markdown-token → style map) are runtime construction, not kind dispatch, so
+      they are excluded.
+
+    Scanning only (a) hid the **dict-only** kinds (``reasoning`` / ``system``) — a
+    real blind spot: ``reyn.display.system`` was an emitted-but-unprofiled Custom
+    name the gate could not see. (b) closes it without a ``known_kinds`` filter,
+    so a NEW dict-only kind surfaces automatically."""
     tree = ast.parse(_RENDERER.read_text(encoding="utf-8"))
+
+    # Nodes inside any function/method body — excluded from (b) so runtime-built
+    # dicts (markdown-token maps etc.) do not masquerade as kind tables.
+    in_function: set[int] = set()
+    for fn in ast.walk(tree):
+        if isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            for n in ast.walk(fn):
+                in_function.add(id(n))
+
     kinds: set[str] = set()
+    # (a) Compare branches in the display-dispatch functions.
     for node in ast.walk(tree):
         if not (isinstance(node, ast.FunctionDef) and node.name in _DISPLAY_DISPATCH_FUNCS):
             continue
@@ -56,6 +105,11 @@ def _renderer_display_kinds() -> set[str]:
             for lit in ast.walk(cmp_node):
                 if isinstance(lit, ast.Constant) and isinstance(lit.value, str):
                     kinds.add(lit.value)
+    # (b) Module/class-level constant collections (kind dispatch tables).
+    for node in ast.walk(tree):
+        if id(node) in in_function:
+            continue
+        kinds |= _string_literals(node)
     return kinds
 
 
@@ -80,8 +134,14 @@ def test_every_custom_mapped_frame_is_profiled() -> None:
     emitted = _emitted_custom_names()
 
     # Sanity: the enumeration found the real Custom vocabulary (a broken scan
-    # that found nothing must not vacuously pass).
-    assert {"reyn.display.trace", "reyn.event.user_answered_intervention"} <= emitted
+    # that found nothing must not vacuously pass), INCLUDING the dict-only
+    # ``system`` kind (``reyn.display.system``) — proof the dict-key scan closed
+    # the AST-Compare blind spot and is not silently enumerating nothing new.
+    assert {
+        "reyn.display.trace",
+        "reyn.display.system",
+        "reyn.event.user_answered_intervention",
+    } <= emitted
 
     missing = {name for name in emitted if not is_profiled(name)}
     assert not missing, f"unprofiled reyn.* Custom names (add to profile): {sorted(missing)}"

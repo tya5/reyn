@@ -47,20 +47,58 @@ _RENDERER = (
 _DISPLAY_DISPATCH_FUNCS = {"message", "format_inline_message"}
 
 
+def _string_literals(node: ast.AST) -> "set[str]":
+    """The string keys of a ``Dict`` / string elements of a ``Set`` /
+    ``frozenset({...})`` literal — the members of a constant collection."""
+    out: set[str] = set()
+    if isinstance(node, ast.Dict):
+        elems: list = list(node.keys)
+    elif isinstance(node, ast.Set):
+        elems = list(node.elts)
+    elif isinstance(node, ast.Call) and getattr(node.func, "id", None) == "frozenset":
+        elems = []
+        for arg in node.args:
+            if isinstance(arg, (ast.Set, ast.List, ast.Tuple)):
+                elems.extend(arg.elts)
+    else:
+        return out
+    for e in elems:
+        if isinstance(e, ast.Constant) and isinstance(e.value, str):
+            out.add(e.value)
+    return out
+
+
 def _renderer_display_kinds() -> set[str]:
-    """Every ``kind`` string literal the renderer's display-dispatch functions
-    compare against — the DisplayFrame vocabulary, read from renderer source."""
+    """Every ``kind`` literal the renderer dispatches on — the DisplayFrame
+    vocabulary, read from renderer source, UNFILTERED (no hand-listed kind set).
+
+    Two dispatch shapes, both scanned: (a) an ``ast.Compare`` (``msg.kind == "x"``)
+    in a display-dispatch function; (b) a member of a module/class-level constant
+    collection (``_KIND_LINE`` / ``_PREFIX`` / ``_NESTED_KINDS`` and siblings) —
+    every ``Dict`` / ``Set`` / ``frozenset`` at module or class scope. Collections
+    built inside a method body (the markdown-token map etc.) are runtime
+    construction, not kind dispatch, so they are excluded. Scanning only (a) hid
+    the dict-only kinds (``reasoning`` / ``system``) from the round-trip check."""
     tree = ast.parse(_RENDERER.read_text(encoding="utf-8"))
+
+    in_function: set[int] = set()
+    for fn in ast.walk(tree):
+        if isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            for n in ast.walk(fn):
+                in_function.add(id(n))
+
     kinds: set[str] = set()
     for node in ast.walk(tree):
-        if not (isinstance(node, ast.FunctionDef) and node.name in _DISPLAY_DISPATCH_FUNCS):
-            continue
-        for cmp_node in ast.walk(node):
-            if not isinstance(cmp_node, ast.Compare):
-                continue
-            for lit in ast.walk(cmp_node):
-                if isinstance(lit, ast.Constant) and isinstance(lit.value, str):
-                    kinds.add(lit.value)
+        if isinstance(node, ast.FunctionDef) and node.name in _DISPLAY_DISPATCH_FUNCS:
+            for cmp_node in ast.walk(node):
+                if not isinstance(cmp_node, ast.Compare):
+                    continue
+                for lit in ast.walk(cmp_node):
+                    if isinstance(lit, ast.Constant) and isinstance(lit.value, str):
+                        kinds.add(lit.value)
+    for node in ast.walk(tree):
+        if id(node) not in in_function:
+            kinds |= _string_literals(node)
     return kinds
 
 
@@ -77,8 +115,12 @@ def test_every_display_kind_round_trips_over_the_wire() -> None:
     kinds = _renderer_display_kinds()
 
     # Sanity: the scan actually found the renderer's vocabulary (a broken scan
-    # that found nothing must not vacuously pass).
-    assert {"agent", "error", "presentation", "intervention"} <= kinds
+    # that found nothing must not vacuously pass), INCLUDING the dict-only kinds
+    # ``reasoning`` / ``system`` (proof the constant-collection scan sees kinds
+    # that never appear in an ``ast.Compare`` branch), and EXCLUDING the
+    # markdown-token map key ``heading_open`` (built inside a method, not a kind).
+    assert {"agent", "error", "presentation", "intervention", "reasoning", "system"} <= kinds
+    assert "heading_open" not in kinds
 
     for kind in kinds:
         frame = DisplayFrame(OutboxMessage(kind=kind, text="body", meta={"k": "v"}))
