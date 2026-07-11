@@ -7,6 +7,7 @@ from reyn.data.index.backend import (
     IndexBackend,
     StatResult,
     WriteResult,
+    cache_dir_for_source,
 )
 from reyn.data.index.backends.sqlite import SqliteIndexBackend
 
@@ -33,4 +34,5 @@ __all__ = [
     "SqliteIndexBackend",
     "register_backend",
     "get_backend",
+    "cache_dir_for_source",
 ]

@@ -17,6 +17,8 @@ from typing import Any, AsyncIterator
 
 import yaml
 
+from reyn.data.index.build_lock import pid_alive as _pid_alive
+
 # ── Data model ────────────────────────────────────────────────────────────────
 
 
@@ -78,18 +80,6 @@ class SourceEntry:
 
 class SourceLockedError(Exception):
     """Raised when acquire_source_lock fails because source is in use."""
-
-
-# ── Helpers ───────────────────────────────────────────────────────────────────
-
-
-def _pid_alive(pid: int) -> bool:
-    """Check if a PID is alive without sending a signal that kills it."""
-    try:
-        os.kill(pid, 0)
-        return True
-    except (OSError, ProcessLookupError):
-        return False
 
 
 # ── Main class ────────────────────────────────────────────────────────────────

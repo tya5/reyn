@@ -1,20 +1,27 @@
 """Tier 2: FP-0043 Component E — concurrency + class-swap detection contract.
 
-Pins ActionEmbeddingIndex behaviour added by the Component E PR:
+Pins ActionEmbeddingIndex behaviour added by the Component E PR. FP-0057
+Phase 0 (#2843) folded the storage + advisory-lock layer onto the unified
+``IndexBackend`` + shared ``reyn.data.index.build_lock`` module — the
+contract below is unchanged from the caller's point of view; only the
+storage/lock *directory* moved from a flat ``persist_dir`` to the unified
+per-source convention (``<workspace_root>/.reyn/cache/index/actions/``).
 
   1. **Class-swap detection**: rebuilding with a different ``model_class``
      against an identical catalog re-invokes the provider (= vectors
      from the previous model are NOT silently reused).
-  2. **Cross-process advisory lock**: when ``persist_dir/.build.lock``
-     carries a live PID, a concurrent ``build()`` skips the embed call
-     (= no duplicate API cost / duplicate sentence-transformers model
-     load). The lock file marks holder PID + timestamp atomically.
+  2. **Cross-process advisory lock**: when the unified cache dir's
+     ``.build.lock`` carries a live PID, a concurrent ``build()`` skips
+     the embed call (= no duplicate API cost / duplicate
+     sentence-transformers model load). The lock file marks holder PID +
+     timestamp atomically.
   3. **Stale-lock reaping**: a ``.build.lock`` whose recorded PID is
      dead is taken over (= no permanent deadlock after a crash).
-  4. **Disk persistence carries model_class**: ``_save_to_disk`` writes
-     ``model_class`` into the meta table; ``_try_load_from_disk`` checks
-     it. Same catalog hash + same model class → load. Same catalog
-     hash + different model class → reject (= rebuild).
+  4. **Disk persistence carries model_class**: the on-disk state records
+     ``model_class`` (via the unified backend's ``embedding_model`` meta
+     key) and the whole-catalog hash (via a small sidecar). Same catalog
+     hash + same model class → load. Same catalog hash + different model
+     class → reject (= rebuild).
 
 No mocks. Real ActionEmbeddingIndex + real ``_FakeProvider`` counting
 embed calls + real filesystem operations.
@@ -24,24 +31,23 @@ from __future__ import annotations
 import asyncio
 import json
 import os
-import struct
 import time
 from pathlib import Path
 from typing import Any
 
-import pytest
-
 from reyn.data.embedding.provider import EmbedBatchResult
-from reyn.tools.action_index import (
-    ActionEmbeddingIndex,
-    _pid_alive,
-    _try_acquire_build_lock,
-    compute_catalog_hash,
-)
+from reyn.data.index.backend import cache_dir_for_source
+from reyn.data.index.build_lock import pid_alive, try_acquire_build_lock
+from reyn.tools.action_index import ActionEmbeddingIndex, compute_catalog_hash
 
 
 def _run(coro):
     return asyncio.run(coro)
+
+
+def _lock_dir(workspace_root: Path) -> Path:
+    """The unified cache dir the advisory build lock lives under."""
+    return cache_dir_for_source(workspace_root, "actions")
 
 
 class _FakeProvider:
@@ -79,7 +85,7 @@ def _items() -> list[dict[str, Any]]:
 def test_same_catalog_different_class_triggers_rebuild(tmp_path: Path) -> None:
     """Tier 2: identical items + new model_class → provider.embed called again."""
     provider = _FakeProvider()
-    idx = ActionEmbeddingIndex(persist_dir=tmp_path)
+    idx = ActionEmbeddingIndex(workspace_root=tmp_path)
 
     _run(idx.build(_items(), provider, "openai/text-embedding-3-small"))
     assert provider.embed_calls == ["openai/text-embedding-3-small"]
@@ -102,7 +108,7 @@ def test_same_catalog_same_class_remains_idempotent(tmp_path: Path) -> None:
     class must skip the embed call.
     """
     provider = _FakeProvider()
-    idx = ActionEmbeddingIndex(persist_dir=tmp_path)
+    idx = ActionEmbeddingIndex(workspace_root=tmp_path)
 
     _run(idx.build(_items(), provider, "standard"))
     _run(idx.build(_items(), provider, "standard"))
@@ -115,22 +121,22 @@ def test_same_catalog_same_class_remains_idempotent(tmp_path: Path) -> None:
 def test_disk_load_rejects_model_class_mismatch(tmp_path: Path) -> None:
     """Tier 2: cross-process cache reuse blocked when model class differs.
 
-    Mirrors the scenario where two reyn processes share .reyn/cache/action_index/
-    but configured against different embedding classes. The first process
-    persists vectors tagged with its class; the second loads, sees the
-    mismatch, and rebuilds with its own provider rather than serving
-    foreign-model vectors.
+    Mirrors the scenario where two reyn processes share the unified
+    actions cache but configured against different embedding classes.
+    The first process persists vectors tagged with its class; the second
+    loads, sees the mismatch, and rebuilds with its own provider rather
+    than serving foreign-model vectors.
     """
     provider_a = _FakeProvider()
-    idx_a = ActionEmbeddingIndex(persist_dir=tmp_path)
+    idx_a = ActionEmbeddingIndex(workspace_root=tmp_path)
     _run(idx_a.build(_items(), provider_a, "openai/text-embedding-3-small"))
     assert provider_a.embed_calls == ["openai/text-embedding-3-small"]
 
-    # Fresh instance pointing at the same persist_dir but with a different
-    # model class — must re-embed because the on-disk meta records the
-    # other class.
+    # Fresh instance pointing at the same workspace_root but with a
+    # different model class — must re-embed because the on-disk meta
+    # records the other class.
     provider_b = _FakeProvider()
-    idx_b = ActionEmbeddingIndex(persist_dir=tmp_path)
+    idx_b = ActionEmbeddingIndex(workspace_root=tmp_path)
     _run(idx_b.build(_items(), provider_b, "sentence-transformers/all-MiniLM-L6-v2"))
     assert provider_b.embed_calls == ["sentence-transformers/all-MiniLM-L6-v2"]
 
@@ -139,14 +145,14 @@ def test_disk_load_accepts_matching_class_and_catalog(tmp_path: Path) -> None:
     """Tier 2: process restart with same class + catalog → disk-only path.
 
     The second instance does NOT invoke its provider; the vectors are
-    loaded from SQLite.
+    loaded from the unified backend.
     """
     provider_a = _FakeProvider()
-    idx_a = ActionEmbeddingIndex(persist_dir=tmp_path)
+    idx_a = ActionEmbeddingIndex(workspace_root=tmp_path)
     _run(idx_a.build(_items(), provider_a, "standard"))
 
     provider_b = _FakeProvider()
-    idx_b = ActionEmbeddingIndex(persist_dir=tmp_path)
+    idx_b = ActionEmbeddingIndex(workspace_root=tmp_path)
     _run(idx_b.build(_items(), provider_b, "standard"))
     assert provider_b.embed_calls == []  # loaded from disk; embed not called
     assert idx_b.is_ready()
@@ -168,15 +174,16 @@ def test_concurrent_build_skips_when_lock_held_by_live_pid(tmp_path: Path) -> No
     on the next build() call).
     """
     # Stage: write a lock file claiming the current (live) PID is mid-build.
-    lock_path = tmp_path / ".build.lock"
-    tmp_path.mkdir(parents=True, exist_ok=True)
+    lock_dir = _lock_dir(tmp_path)
+    lock_path = lock_dir / ".build.lock"
+    lock_dir.mkdir(parents=True, exist_ok=True)
     lock_path.write_text(
         json.dumps({"pid": os.getpid(), "ts": time.time()}),
         encoding="utf-8",
     )
 
     provider = _FakeProvider()
-    idx = ActionEmbeddingIndex(persist_dir=tmp_path)
+    idx = ActionEmbeddingIndex(workspace_root=tmp_path)
     _run(idx.build(_items(), provider, "standard"))
 
     # The lock was held → embed must NOT have been called.
@@ -190,13 +197,14 @@ def test_concurrent_build_skips_when_lock_held_by_live_pid(tmp_path: Path) -> No
 
 def test_stale_lock_is_reaped(tmp_path: Path) -> None:
     """Tier 2: a .build.lock whose PID is dead is taken over (no deadlock)."""
-    lock_path = tmp_path / ".build.lock"
-    tmp_path.mkdir(parents=True, exist_ok=True)
+    lock_dir = _lock_dir(tmp_path)
+    lock_path = lock_dir / ".build.lock"
+    lock_dir.mkdir(parents=True, exist_ok=True)
     # Pick a PID that's almost certainly dead (= a very large number
     # well outside the typical PID range). os.kill(pid, 0) will surface
     # ProcessLookupError for it.
     dead_pid = 2**31 - 1  # max int32; not allocated by any kernel
-    assert not _pid_alive(dead_pid), (
+    assert not pid_alive(dead_pid), (
         f"precondition: PID {dead_pid} must not be alive for this test"
     )
     lock_path.write_text(
@@ -205,7 +213,7 @@ def test_stale_lock_is_reaped(tmp_path: Path) -> None:
     )
 
     provider = _FakeProvider()
-    idx = ActionEmbeddingIndex(persist_dir=tmp_path)
+    idx = ActionEmbeddingIndex(workspace_root=tmp_path)
     _run(idx.build(_items(), provider, "standard"))
 
     # Stale lock reaped → embed called normally; build completed.
@@ -221,23 +229,24 @@ def test_corrupt_lock_file_is_treated_as_stale(tmp_path: Path) -> None:
     A crashed previous process may leave a half-written lock; the next
     builder should treat it as stale rather than wedging forever.
     """
-    lock_path = tmp_path / ".build.lock"
-    tmp_path.mkdir(parents=True, exist_ok=True)
+    lock_dir = _lock_dir(tmp_path)
+    lock_path = lock_dir / ".build.lock"
+    lock_dir.mkdir(parents=True, exist_ok=True)
     lock_path.write_text("not json at all }}}", encoding="utf-8")
 
     provider = _FakeProvider()
-    idx = ActionEmbeddingIndex(persist_dir=tmp_path)
+    idx = ActionEmbeddingIndex(workspace_root=tmp_path)
     _run(idx.build(_items(), provider, "standard"))
 
     assert provider.embed_calls == ["standard"]
 
 
-# ── 4. Lock helper unit invariants ──────────────────────────────────────────
+# ── 4. Lock helper unit invariants (reyn.data.index.build_lock) ────────────
 
 
 def test_try_acquire_lock_yields_true_then_releases(tmp_path: Path) -> None:
     """Tier 2: helper acquires the lock and removes the marker on exit."""
-    with _try_acquire_build_lock(tmp_path) as got:
+    with try_acquire_build_lock(tmp_path) as got:
         assert got is True
         assert (tmp_path / ".build.lock").exists()
     assert not (tmp_path / ".build.lock").exists()
@@ -250,7 +259,7 @@ def test_try_acquire_lock_yields_false_when_holder_alive(tmp_path: Path) -> None
         json.dumps({"pid": os.getpid(), "ts": time.time()}),
         encoding="utf-8",
     )
-    with _try_acquire_build_lock(tmp_path) as got:
+    with try_acquire_build_lock(tmp_path) as got:
         assert got is False
     # Holder lock is preserved (= we did not unlink someone else's marker).
     assert (tmp_path / ".build.lock").exists()
@@ -258,13 +267,13 @@ def test_try_acquire_lock_yields_false_when_holder_alive(tmp_path: Path) -> None
 
 
 def test_pid_alive_dead_pid_returns_false() -> None:
-    """Tier 2: _pid_alive sanity — a huge PID returns False (= no false-positive)."""
-    assert _pid_alive(2**31 - 1) is False
+    """Tier 2: pid_alive sanity — a huge PID returns False (= no false-positive)."""
+    assert pid_alive(2**31 - 1) is False
 
 
 def test_pid_alive_self_returns_true() -> None:
-    """Tier 2: _pid_alive of os.getpid() returns True."""
-    assert _pid_alive(os.getpid()) is True
+    """Tier 2: pid_alive of os.getpid() returns True."""
+    assert pid_alive(os.getpid()) is True
 
 
 # ── 5. Empty catalog records model_class too ────────────────────────────────
@@ -278,7 +287,7 @@ def test_empty_catalog_records_class_for_subsequent_match(tmp_path: Path) -> Non
     step 2 empty-catalog short-circuit).
     """
     provider = _FakeProvider()
-    idx = ActionEmbeddingIndex(persist_dir=tmp_path)
+    idx = ActionEmbeddingIndex(workspace_root=tmp_path)
     _run(idx.build([], provider, "standard"))
     assert idx.model_class == "standard"
     # Same args → no-op (no second embed call).

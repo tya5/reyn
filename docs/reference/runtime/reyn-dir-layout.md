@@ -25,7 +25,7 @@ Everything else is excluded, by one of four reasons:
 | **recovery-core** | captured + restored (reconstructed) | `state/`, `config/` |
 | **persist** (knowledge / decisions) | survives rewind — never reverted | `memory/`, `approvals.yaml` |
 | **audit** (write-only record) | kept as a record, never restored | `events/`, `traces/`, `logs/`, `audit-trail/`, `tool-results/`, `media/` |
-| **cache** (derived) | rebuilt after restore | `cache/` (`index/`, `action_index/`, `registry-cache/`, `*_cursor`) |
+| **cache** (derived) | rebuilt after restore | `cache/` (`index/` — includes the `actions` source since FP-0057 Phase 0 — `registry-cache/`, `*_cursor`) |
 | **outside** (operator/user-owned) | not Reyn-managed for time-travel | `reyn.yaml`, `secrets.env`, `oauth_tokens.json`, `capability_profiles/` |
 
 ## Canonical layout
@@ -51,8 +51,11 @@ Everything else is excluded, by one of four reasons:
 ├── events/ traces/ logs/   AUDIT — append-only forensic record; never restored
 │   audit-trail/ tool-results/ media/
 ├── cache/                  DERIVED — rebuilt after restore
-│   ├── index/              rag index data (sqlite)
-│   ├── action_index/       action-index db
+│   ├── index/              rag index data (sqlite), one dir per source —
+│   │   └── actions/        includes the tool-use action catalog since
+│   │                       FP-0057 Phase 0 (was the separate action_index/
+│   │                       implementation pre-consolidation; clean-break,
+│   │                       no migration — see `reyn.tools.action_index`)
 │   └── registry-cache/     mcp registry cache
 └── topologies/             RECOVERY-CORE — agent topologies (reconstructed from topology_* WAL)
 ```

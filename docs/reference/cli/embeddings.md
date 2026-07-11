@@ -9,6 +9,8 @@ applies_to: [reyn embeddings]
 
 Inspect and manage the action embedding index that backs `search_actions`. Reads on-disk state only — no network probes; matches the cheap-by-default posture of `reyn mcp list`.
 
+The action index rides the same pluggable `IndexBackend` doc-RAG sources use (one cosine implementation, one advisory-lock, one storage/dedup path — unified in FP-0057 Phase 0); its cache lives at `.reyn/cache/index/actions/` alongside other indexed sources. Pre-consolidation it had a separate, hand-rolled SQLite schema and cosine implementation under `.reyn/cache/action_index/` — that path is no longer read or written (clean-break; the cache is fully regenerable, so no migration was needed).
+
 See [Concepts: enable semantic search](../../guide/for-users/enable-semantic-search.md) for the onboarding walkthrough, and [Concepts: RAG — Embedding configuration](../../concepts/data-retrieval/rag.md#embedding-configuration) for the underlying `embedding.classes` map.
 
 ## Synopsis
@@ -23,18 +25,18 @@ reyn embeddings clear
 
 ### `status [--json]`
 
-Show one row per configured embedding class with `name / backend / model / cache_path / size_mb / indexed_actions / last_built`. Reads `reyn.yaml` for the class list and `.reyn/action_index/index.db` for the current on-disk binding.
+Show one row per configured embedding class with `name / backend / model / cache_path / size_mb / indexed_actions / last_built`. Reads `reyn.yaml` for the class list and `.reyn/cache/index/actions/index.db` for the current on-disk binding.
 
 ```bash
 $ reyn embeddings status
 
 NAME        BACKEND                MODEL                                                 CACHE_PATH                                            SIZE_MB  ACTIONS  LAST_BUILT
 ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-light       litellm                openai/text-embedding-3-small                         .reyn/action_index                                       0.00        0  (never)
+light       litellm                openai/text-embedding-3-small                         .reyn/cache/index/actions                                       0.00        0  (never)
 local-e5    sentence-transformers  sentence-transformers/intfloat/multilingual-e5-small  ~/.cache/reyn/sentence-transformers                      0.00        0  (never)
 local-mini  sentence-transformers  sentence-transformers/all-MiniLM-L6-v2                ~/.cache/reyn/sentence-transformers                     22.43      87  2026-05-27T19:02:00+00:00
-standard    litellm                openai/text-embedding-3-small                         .reyn/action_index                                       0.00        0  (never)
-strong      litellm                openai/text-embedding-3-large                         .reyn/action_index                                       0.00        0  (never)
+standard    litellm                openai/text-embedding-3-small                         .reyn/cache/index/actions                                       0.00        0  (never)
+strong      litellm                openai/text-embedding-3-large                         .reyn/cache/index/actions                                       0.00        0  (never)
 ```
 
 The SQLite cache stores one `model_class` at a time (= one row carries the current `indexed_actions` / `last_built`; the rest report `0 / "(never)"`). This avoids ambiguity about which class owns the on-disk index after a class swap.
@@ -55,11 +57,11 @@ reyn embeddings rebuild
 # The next chat session will re-embed.
 ```
 
-A clean project state (= no `.reyn/action_index/index.db`) reports "nothing to rebuild" without erroring:
+A clean project state (= no `.reyn/cache/index/actions/index.db`) reports "nothing to rebuild" without erroring:
 
 ```bash
 reyn embeddings rebuild
-# no action index found at .reyn/action_index/index.db; nothing to rebuild.
+# no action index found at .reyn/cache/index/actions/index.db; nothing to rebuild.
 ```
 
 `<class_name>` is accepted for forward compatibility with a future per-class cache. Today the SQLite layout stores one `model_class` at a time, so passing a name verifies the class exists in `reyn.yaml` and notes the cache-shared semantics:
@@ -80,11 +82,11 @@ reyn embeddings rebuild lcal-mini   # typo
 
 ### `clear`
 
-Aggressive cleanup. Removes BOTH `.reyn/action_index/` (= SQLite + build lock) AND the sentence-transformers HF model cache directory (resolved via `REYN_CACHE_DIR > XDG_CACHE_HOME > ~/.cache/reyn` precedence, matching the runtime backend).
+Aggressive cleanup. Removes BOTH `.reyn/cache/index/actions/` (= SQLite + build lock) AND the sentence-transformers HF model cache directory (resolved via `REYN_CACHE_DIR > XDG_CACHE_HOME > ~/.cache/reyn` precedence, matching the runtime backend).
 
 ```bash
 reyn embeddings clear
-# removed /path/to/.reyn/action_index
+# removed /path/to/.reyn/cache/index/actions
 # removed /Users/.../.cache/reyn/sentence-transformers
 # freed ~22.43 MB
 ```
