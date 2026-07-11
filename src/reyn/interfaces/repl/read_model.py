@@ -26,14 +26,15 @@ status/region/task state from, with two implementations —
 **Frame-sufficiency (what a remote client CAN show).** The server projects only
 the MAIN-bar subset onto the wire (``state.py``'s ``project_status`` /
 ``_WIRE_KEYS``): ``model`` · ``attached_name`` · ``cost_agent`` / ``cost_total``
-/ ``agent_tokens`` · ``ctx_used`` / ``ctx_window`` · ``task_count`` ·
-``waiting_on``. Those chip VALUES render on remote. The dropdown EXPANSIONS
-(cost/ctx detail tuples, the ``/model`` class picker, the agent/session tree, the
-task tree, the ``…`` sub-bar toggle counts) and the interactive intervention /
-rewind PICKERS are session-local and are NOT on the wire — the remote model
-returns empty/``—`` for them (graceful degrade), never a fake value. Extending
-any of those is an additive ``project_status`` key (a follow-up vocabulary
-change), not a client rewrite.
+/ ``agent_tokens`` · ``ctx_used`` / ``ctx_window`` · ``waiting_on``. Those chip
+VALUES render on remote. The dropdown EXPANSIONS (cost/ctx detail tuples, the
+``/model`` class picker, the agent/session tree, the task tree, the ``…`` sub-bar
+toggle counts), the interactive intervention / rewind PICKERS, and the ``task``
+chip count are session-local and are NOT on the wire — the remote model returns
+empty/``—``/0 for them (graceful degrade), never a fake value. (The ``task`` chip
+is degraded rather than streamed because the task system is a deprecation
+candidate; adding any other field back is an additive ``project_status`` key, not
+a client rewrite.)
 """
 from __future__ import annotations
 
@@ -161,8 +162,11 @@ def project_remote_snapshot(values: "dict | None") -> dict:
         "agent_tokens": v.get("agent_tokens", 0),
         "ctx_used": v.get("ctx_used", 0),
         "ctx_window": v.get("ctx_window", 0),
-        "task_count": v.get("task_count", 0),
-        # -- expansion-only keys (NOT on the wire) → graceful empty --
+        # -- session-local keys (NOT on the wire) → graceful empty/zero --
+        # task_count is degraded to 0 on remote: the task system is a deprecation
+        # candidate, so it is deliberately NOT streamed (no per-connection poll) —
+        # the remote `task` chip reads 0, like the other non-frame-available chips.
+        "task_count": 0,
         "model_active_class": None,
         "model_classes": [],
         "agent_names": [],

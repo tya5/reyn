@@ -259,7 +259,7 @@ state, and only the render-relevant subset is streamed.
 
 - `STATE_SNAPSHOT` — emitted **on connect**, the full read-model. Fields:
   `attached_name`, `model`, `cost_agent`, `cost_total`, `agent_tokens`,
-  `ctx_used`, `ctx_window`, `task_count`, `waiting_on`.
+  `ctx_used`, `ctx_window`, `waiting_on`.
 - `STATE_DELTA` — emitted **on change**, carrying only the changed keys. An idle
   stream emits no deltas.
 
@@ -268,14 +268,14 @@ remote status panel always reflects the server's values.
 
 These are exactly the **main status-bar chip values** the inline CUI renders, so a
 remote client on an interactive TTY draws the same status bar as a local one
-(`agent` · `model` · `cost` · `ctx%` · `task`, plus the working indicator).
-`task_count` is the active-task count; the server folds it in from a task-backend
-poll (the count only — the task *tree* the dropdown expands is session-local and
-not streamed). The **dropdown expansions** (cost/ctx detail, the `/model` class
-picker, the agent/session tree, the task tree, the `…` overflow toggle counts) and
-the interactive intervention / `/rewind` **pickers** are session-local state, not
-on the wire — a remote client shows the chip values and degrades those to
-empty/`—`. Adding one is an additive `STATE_*` key, not a client change.
+(`agent` · `model` · `cost` · `ctx%`, plus the working indicator). The **dropdown
+expansions** (cost/ctx detail, the `/model` class picker, the agent/session tree,
+the task tree, the `…` overflow toggle counts), the interactive intervention /
+`/rewind` **pickers**, and the **`task` chip count** are session-local state, not
+on the wire — a remote client shows the streamed chip values and degrades those to
+empty/`—`/0. (The `task` chip is degraded rather than streamed because the task
+system is a deprecation candidate — deliberately no per-connection poll; adding any
+other field is an additive `STATE_*` key, not a client change.)
 
 ## Reconnect
 

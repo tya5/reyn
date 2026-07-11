@@ -12,11 +12,13 @@ These pin the invariants that keep the two paths in lockstep:
 - **Renderer selection is one shared seam** (``make_renderer`` + the
   ``_inline_interactive`` predicate) — interactive → inline, non-TTY / --cui →
   console, for BOTH paths.
-- **The status bar is frame-available on remote**: the ``task_count`` MAIN-bar
-  field rides ``STATE_*`` and the ``RemoteReadModel`` projects it (+ the other
-  wire keys) into the snapshot the chips read.
+- **The status bar is frame-available on remote**: the MAIN-bar chip values ride
+  ``STATE_*`` and the ``RemoteReadModel`` projects them into the snapshot the chips
+  read.
 - **The read-model degrades gracefully**: session-local affordances (intervention
-  region, command-UI, task tree) are empty on remote, never faked.
+  region, command-UI, task tree, and the ``task`` chip count — the task system is
+  a deprecation candidate, so it is NOT streamed) are empty/0 on remote, never
+  faked.
 - **The shared driver drives EITHER transport to termination.**
 
 Real emitter / codec / AgUiTransport / renderers throughout — no mocks.
@@ -27,7 +29,7 @@ import asyncio
 
 import pytest
 
-from reyn.interfaces.cli.commands.chat import _inline_interactive
+from reyn.interfaces.cli.commands.chat import _inline_interactive, _run_remote
 from reyn.interfaces.cli.logger_factory import make_renderer
 from reyn.interfaces.repl.client_driver import run_chat_client
 from reyn.interfaces.repl.read_model import (
@@ -37,7 +39,6 @@ from reyn.interfaces.repl.read_model import (
 from reyn.interfaces.repl.renderer import ConsoleChatRenderer, InlineChatRenderer
 from reyn.interfaces.transport.agui.client import AgUiTransport
 from reyn.interfaces.transport.agui.emitter import AgUiEmitter
-from reyn.interfaces.transport.agui.state import _WIRE_KEYS, project_status
 from reyn.interfaces.transport.frames import DisplayFrame
 from reyn.runtime.outbox import OutboxMessage
 
@@ -72,22 +73,16 @@ def test_inline_interactive_predicate_gates_both_paths() -> None:
     assert _inline_interactive(cui=True, stdin_isatty=True, stdout_isatty=True) is False
 
 
-# --- status bar frame-availability: task_count rides STATE_* -------------------
-
-
-def test_task_count_is_on_the_wire_projection() -> None:
-    """Tier 2: `task_count` is part of the STATE_* status read-model vocabulary
-    (MAIN-bar parity for the remote `task` chip)."""
-    assert "task_count" in _WIRE_KEYS
-    projected = project_status({"task_count": 4}, waiting_on=None)
-    assert projected["task_count"] == 4
+# --- status bar frame-availability: MAIN-bar chip values ride STATE_* ----------
 
 
 @pytest.mark.asyncio
-async def test_remote_read_model_projects_wire_status_incl_task_count() -> None:
+async def test_remote_read_model_projects_wire_status() -> None:
     """Tier 2: driving a real emitter → wire → AgUiTransport populates the
-    RemoteStatusView, and the RemoteReadModel projects the MAIN-bar fields —
-    including task_count — into the snapshot shape the inline chips read."""
+    RemoteStatusView, and the RemoteReadModel projects the MAIN-bar chip values
+    into the snapshot shape the inline chips read. `task_count` is NOT streamed
+    (task system is a deprecation candidate) → it degrades to 0 even though the
+    server-side snapshot carried a non-zero value."""
     state = {
         "attached_name": "researcher", "model": "opus",
         "cost_agent": 1.5, "cost_total": 3.0, "agent_tokens": 42,
@@ -101,6 +96,8 @@ async def test_remote_read_model_projects_wire_status_incl_task_count() -> None:
     emitter = AgUiEmitter(frames(), lambda: dict(state))
     sse = "".join([chunk async for chunk in emitter.stream()])
     assert "STATE_SNAPSHOT" in sse
+    # task_count must NOT ride the wire (no poll, deprecation candidate).
+    assert "task_count" not in sse
 
     async def _noop_send(_payload):
         return None
@@ -114,8 +111,8 @@ async def test_remote_read_model_projects_wire_status_incl_task_count() -> None:
     assert snap["model"] == "opus"
     assert snap["cost_agent"] == 1.5
     assert snap["ctx_window"] == 1000
-    # The MAIN-bar parity field the remote `task` chip reads.
-    assert snap["task_count"] == 3
+    # Degraded to 0 despite the server-side value — never streamed, never faked.
+    assert snap["task_count"] == 0
 
 
 # --- graceful degrade: session-local affordances are empty, never faked --------
@@ -151,6 +148,77 @@ def test_project_remote_snapshot_expansion_keys_are_empty() -> None:
     assert snap["session_tree"] == []
     assert snap["ctx_compaction_status_fn"] is None
     assert snap["pipelines"] == []
+
+
+# --- call-site wiring: _run_remote itself selects the inline renderer ----------
+
+
+def _connect_args(**over):
+    import argparse
+    ns = argparse.Namespace(
+        connect="http://127.0.0.1:9/never", agent_name=None, token=None, cui=False,
+    )
+    for k, v in over.items():
+        setattr(ns, k, v)
+    return ns
+
+
+def _capture_remote_renderer(args, *, stdin_isatty, stdout_isatty, tmp_path, monkeypatch):
+    """Drive the REAL `_run_remote` with a recording runner (not a mock — the same
+    injectable-double pattern `_run_once` uses) and return the renderer it wired.
+    Isolated: cwd → tmp, root-logging handlers saved/restored (the interactive
+    branch installs a file log handler)."""
+    import logging
+
+    captured: dict = {}
+
+    async def _recording_run(*, base_url, agent_name, token, renderer):
+        captured["renderer"] = renderer
+        captured["base_url"] = base_url
+        captured["agent_name"] = agent_name
+
+    monkeypatch.chdir(tmp_path)
+    saved_handlers = logging.root.handlers[:]
+    saved_level = logging.root.level
+    try:
+        _run_remote(
+            args, run_remote=_recording_run,
+            stdin_isatty=stdin_isatty, stdout_isatty=stdout_isatty,
+        )
+    finally:
+        logging.root.handlers[:] = saved_handlers
+        logging.root.setLevel(saved_level)
+    return captured
+
+
+def test_run_remote_selects_inline_renderer_on_interactive_tty(tmp_path, monkeypatch) -> None:
+    """Tier 2c: (regression guard for the ORIGINAL bug) the real `_run_remote`
+    call-site — not just the `make_renderer` helper in isolation — hands the inline
+    renderer to the remote runner on an interactive TTY, and the plain console
+    renderer when piped. Strip-falsify: revert `_run_remote` to a hard-coded
+    `renderer = make_chat_renderer()` and the interactive assertion goes RED."""
+    interactive = _capture_remote_renderer(
+        _connect_args(), stdin_isatty=True, stdout_isatty=True,
+        tmp_path=tmp_path, monkeypatch=monkeypatch,
+    )
+    assert isinstance(interactive["renderer"], InlineChatRenderer)
+    # Sanity: the rest of the composition (base_url / default agent) is wired too.
+    assert interactive["base_url"] == "http://127.0.0.1:9/never"
+    assert interactive["agent_name"] == "default"
+
+    # Piped stdout (reyn chat --connect | tee) → console fallback, same as local.
+    piped = _capture_remote_renderer(
+        _connect_args(), stdin_isatty=True, stdout_isatty=False,
+        tmp_path=tmp_path, monkeypatch=monkeypatch,
+    )
+    assert isinstance(piped["renderer"], ConsoleChatRenderer)
+
+    # --cui forces console even on a full TTY.
+    forced = _capture_remote_renderer(
+        _connect_args(cui=True), stdin_isatty=True, stdout_isatty=True,
+        tmp_path=tmp_path, monkeypatch=monkeypatch,
+    )
+    assert isinstance(forced["renderer"], ConsoleChatRenderer)
 
 
 # --- shared driver: one body drives the remote transport to termination --------

@@ -270,7 +270,13 @@ def _setup_interactive_logging(project_root: Path) -> None:
         pass
 
 
-def _run_remote(args: argparse.Namespace) -> None:
+def _run_remote(
+    args: argparse.Namespace,
+    *,
+    run_remote=None,
+    stdin_isatty: "bool | None" = None,
+    stdout_isatty: "bool | None" = None,
+) -> None:
     """ADR-0039 P3: attach to a remote server over AG-UI (`--connect <url>`).
 
     A thin transport-only path — no local Session / registry / workspace is built
@@ -282,14 +288,28 @@ def _run_remote(args: argparse.Namespace) -> None:
     Code-style inline CUI on an interactive TTY (with the frame-available status
     bar streamed over ``STATE_*``) and the plain console renderer for ``--cui`` /
     non-TTY / piped. Before P3 this hard-coded the plain renderer, so a remote
-    attach on a TTY looked nothing like local.
+    attach on a TTY looked nothing like local — this wiring is the fix, so it is
+    guarded directly (``test_agui_remote_inline_p3``).
+
+    ``run_remote`` / ``stdin_isatty`` / ``stdout_isatty`` are injectable seams (same
+    recording-double-not-mock pattern as ``_run_once``): a test drives THIS function
+    with forced TTY flags and a recording ``run_remote`` to pin that the real
+    call-site selects the inline renderer, so a revert to a hard-coded renderer goes
+    RED. Production leaves them None → the real ``run_remote_repl`` + ``sys`` TTYs.
     """
     import os
 
-    from reyn.interfaces.repl.remote_client import run_remote_repl
     from reyn.llm.llm import run_async
 
     from ..logger_factory import make_renderer
+
+    if run_remote is None:
+        from reyn.interfaces.repl.remote_client import run_remote_repl
+        run_remote = run_remote_repl
+    if stdin_isatty is None:
+        stdin_isatty = sys.stdin.isatty()
+    if stdout_isatty is None:
+        stdout_isatty = sys.stdout.isatty()
 
     agent_name = args.agent_name or "default"
     token = getattr(args, "token", None) or os.environ.get("REYN_WEB_AUTH_TOKEN")
@@ -297,8 +317,8 @@ def _run_remote(args: argparse.Namespace) -> None:
     # std streams are TTYs (the inline live region needs a TTY stdout).
     is_interactive = _inline_interactive(
         cui=getattr(args, "cui", False),
-        stdin_isatty=sys.stdin.isatty(),
-        stdout_isatty=sys.stdout.isatty(),
+        stdin_isatty=stdin_isatty,
+        stdout_isatty=stdout_isatty,
     )
     # The inline CUI owns the terminal; route library warnings / tracebacks to a
     # log file so they don't corrupt the live region (same rationale as local).
@@ -307,7 +327,7 @@ def _run_remote(args: argparse.Namespace) -> None:
         _setup_interactive_logging(_find_project_root(Path.cwd()) or Path.cwd())
     renderer = make_renderer(is_interactive)
     run_async(
-        run_remote_repl(
+        run_remote(
             base_url=args.connect,
             agent_name=agent_name,
             token=token,
