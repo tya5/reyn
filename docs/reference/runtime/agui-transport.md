@@ -25,6 +25,9 @@ A2A; tools are MCP; observability export is OTEL. Those are separate surfaces.)
   - `{"type": "cancel_inflight"}` — cooperatively cancel the in-flight turn (the
     Ctrl-C seam).
   - `{"type": "heartbeat"}` — a liveness keepalive.
+
+  An input type the server does not model is a **graceful no-op** (a `200` ack),
+  never a `500` — the server half of ignore-unknown.
 - `POST /agui/chat/{agent}/seize` — take the active-driver token (see "Active
   driver and seize").
 
@@ -64,8 +67,8 @@ of the renderer's two entry points (display vs working-indicator). The mapping:
 
 | reyn display kind | AG-UI event        | Notes                                        |
 |-------------------|--------------------|----------------------------------------------|
-| `agent`           | `TEXT_MESSAGE_CONTENT` | the assistant reply text                  |
-| `status`          | `TEXT_MESSAGE_CONTENT` | transient status line (`role: status`)    |
+| `agent`           | text triplet       | the assistant reply text (see *text lifecycle*) |
+| `status`          | text triplet       | transient status line (`role: status`)       |
 | `error`           | `RUN_ERROR`        | error text                                   |
 | `trace`           | `CUSTOM`           | reyn tool/step trace line                    |
 | `intervention`    | `CUSTOM`           | a prompt is displayed; the reyn client draws it natively and answers it by id (see "Human-in-the-loop answering") |
@@ -76,6 +79,21 @@ Any display kind not in this table still round-trips losslessly (it falls back t
 `CUSTOM` and is reconstructed from `_reyn`) — a new renderer kind can never
 silently vanish on the wire.
 
+#### Text lifecycle (the conforming triplet)
+
+The AG-UI spec mandates the text lifecycle **`TEXT_MESSAGE_START` → one or more
+`TEXT_MESSAGE_CONTENT` → `TEXT_MESSAGE_END`, all correlated by a `messageId`**; a
+bare `TEXT_MESSAGE_CONTENT` is invalid (a strict generic client drops it). A whole
+reyn text message therefore rides the wire as that triplet, with a generated
+per-message id (reyn's outbox has no stable message id) and the CONTENT `delta`
+carrying the full message text (reyn is whole-message; token-streaming is out of
+scope).
+
+Only the **CONTENT** event carries the `_reyn` reconstruction block; the START and
+END events are generic scaffold that the reyn client decodes to `None` and
+ignores. So the reconstruction invariant stays **one frame ⇄ one `_reyn`-bearing
+event**, and the reyn client rebuilds exactly one display frame per message.
+
 ### Working-indicator path (turn lifecycle + tool axis)
 
 | reyn chat-event               | AG-UI event      |
@@ -83,11 +101,16 @@ silently vanish on the wire.
 | `turn_started`                | `RUN_STARTED`    |
 | `turn_settled` / `turn_completed` / `turn_cancelled` | `RUN_FINISHED` |
 | `tool_called`                 | `TOOL_CALL_START`|
-| `tool_returned` / `tool_failed` | `TOOL_CALL_END`|
+| `tool_returned` / `tool_failed` | `TOOL_CALL_END` (with `status`) |
 | `user_answered_intervention`  | `CUSTOM`         |
 
 These eight are the exact set the renderer's working / running / waiting-for-you
 indicator consumes; the transport forwards precisely this set.
+
+`TOOL_CALL_END` carries a standard `status` field (`"ok"` / `"error"`) derived
+from the etype — `tool_failed` → `"error"`, `tool_returned` → `"ok"` — so a
+generic client sees a tool failure. The reyn client still exact-recovers the
+precise etype from `_reyn`.
 
 ### Intervention frontend-tool
 
@@ -198,6 +221,70 @@ On connect (or reconnect) the server replays, before any live event:
 
 Live events (and `STATE_DELTA`s) follow.
 
+The `MESSAGES_SNAPSHOT` `messages` field is a **standard `[{role, content}]`
+array of conversation turns only** — `agent` → `assistant`, `user` → `user` — the
+shape a generic client expects. reyn chrome (status / error / present /
+intervention / trace) is not a conversation turn and is excluded from the standard
+array; the reyn client rebuilds the full backlog (chrome included) from the
+`_reyn` block, so its scrollback is unchanged.
+
+## The reyn extension profile
+
+Beyond the interoperable core, reyn names its own vocabulary under a reyn-owned
+namespace — the `CUSTOM`-event `name` for chrome with no standard analog, and the
+frontend-tool `toolName` for interventions. This namespace is a **documented,
+tested extension profile**: every `reyn.*` name reyn emits has a registry entry. A
+completeness gate enumerates the reyn-mapped vocabulary from the renderer's source
+vocabulary (plus the intervention frontend-tool encoder) and asserts each emitted
+name is profiled, so the profile cannot silently drift from what the codec puts on
+the wire.
+
+Three namespaces:
+
+### `reyn.display.<kind>`
+
+A reyn display frame with no standard AG-UI analog. `value` is `{"text": <string>}`
+— the display line text.
+
+| Custom `name`                     | Meaning                                              |
+|-----------------------------------|------------------------------------------------------|
+| `reyn.display.trace`              | a reyn tool/step trace line                           |
+| `reyn.display.intervention`       | an intervention prompt is displayed                   |
+| `reyn.display.presentation`       | a `present` op's text; the render-node model rides the `_reyn` block's `meta.nodes` (inert on the wire — see *present-on-wire*) |
+| `reyn.display.nodes`              | a raw render-node display line                         |
+| `reyn.display.user`               | a user-authored line echoed live to the scrollback (backlog user turns ride the standard `messages` array instead) |
+| `reyn.display.tool_call_started`  | a tool-call start trace line                           |
+| `reyn.display.tool_call_completed`| a tool-call completion trace line                     |
+| `reyn.display.tool_call_failed`   | a tool-call failure trace line                        |
+
+### `reyn.event.<etype>`
+
+A reyn chat-event (working-indicator axis) with no standard AG-UI analog. `value`
+is the event's data object.
+
+| Custom `name`                        | Meaning                                          |
+|--------------------------------------|--------------------------------------------------|
+| `reyn.event.user_answered_intervention` | the user answered an intervention             |
+
+### `reyn.intervention.<kind>`
+
+An **open namespace** carried differently from the two above: it is the `toolName`
+of the HITL **frontend-tool** `TOOL_CALL_START` (a standard event, not a `CUSTOM`
+one — see *Intervention frontend-tool*), so a generic client can render and answer
+an intervention as an ordinary tool call. `<kind>` is the intervention kind
+(`ask_user`, `permission.*`, …) — caller-supplied, so this is profiled at the
+**namespace** level (fixed value schema), not as a closed member set.
+
+- **`toolCallId`** — the intervention id (the answer-correlation anchor a client
+  echoes back verbatim in a `TOOL_CALL_RESULT`).
+- **`args`** — `{prompt, detail, choices, suggestions}`, what a generic client
+  renders to pose the question.
+
+The `reyn.display.*` and `reyn.event.*` namespaces above are `CUSTOM`-event names a
+generic client ignores (skipped, not fatal); the reyn client reconstructs the exact
+frame from the `_reyn` block. An unknown `reyn.*` name a client predates is likewise
+skipped, not fatal.
+
 ## Local ≡ remote
 
 The server serializes the SAME unified frame stream the local in-process
@@ -223,14 +310,14 @@ loss.
 |------------|-----------------|-------------|--------------|
 | State      | 3                | 3           | **complete** |
 | Lifecycle  | 5                | 3           | **intentional-scope** — the 2 Step events fold into the `STATE_*` read-model's `waiting_on` field instead of a separate standard event (see *STATE_\* — the status read-model* above) |
-| Tool       | 5                | 2 (→3 planned) | **next-phase** for `TOOL_CALL_RESULT` (lands with a later phase's HITL frontend-tool answer round-trip); the `TOOL_CALL_ARGS`/`_CHUNK` pair is **intentional-scope** (a tool call is already complete by the time reyn emits it — there is no in-flight args stream to chunk) |
-| Text       | 4                | 1           | **intentional-scope** — reyn's outbox delivers whole messages, not token deltas, so a single `TEXT_MESSAGE_CONTENT` per message is the honest mapping; there is no `_START`/`_END`/streaming-chunk phase to map |
+| Tool       | 5                | 3           | **complete for the HITL round-trip** — `TOOL_CALL_START` + `TOOL_CALL_END` (with a standard `status` field) + `TOOL_CALL_RESULT` (the intervention frontend-tool answer round-trip); the `TOOL_CALL_ARGS`/`_CHUNK` pair is **intentional-scope** (a tool call is already complete by the time reyn emits it — there is no in-flight args stream to chunk) |
+| Text       | 4                | 3           | **conforming triplet** — a whole message rides `TEXT_MESSAGE_START` → `TEXT_MESSAGE_CONTENT` → `TEXT_MESSAGE_END`, correlated by `messageId`; only the streaming `TEXT_MESSAGE_CHUNK` is unmapped (**intentional-scope** — reyn's outbox delivers whole messages, not token deltas) |
 | Special    | 2                | 1           | **intentional-scope** — reyn-private payloads are always structured (`CUSTOM`); the standard `RAW` passthrough event has no reyn use case |
 | Activity   | 2                | 0           | **intentional-scope** — reyn has no direct analog; the same information is already carried by the frame stream + `STATE_*` |
 | Reasoning  | 7                | 0           | **future-candidate** — the highest-value gap (see below) |
 
-**Totals**: reyn natively emits **9 of the 28** active-roster standard events
-(10/28 counting the `CUSTOM` catch-all itself as one). The 28-event roster is
+**Totals**: reyn natively emits **12 of the 28** active-roster standard events
+(13/28 counting the `CUSTOM` catch-all itself as one). The 28-event roster is
 Lifecycle (5) + Text (4) + Tool (5) + State (3) + Activity (2) + Reasoning (7)
 + Special (2), tallied from the canonical AG-UI event reference
 (<https://docs.ag-ui.com/concepts/events>). That reference self-reports up to
@@ -248,13 +335,6 @@ this page tracks the 28-event active roster, not the larger number.
   **reasoning-display toggle** — when the operator has reasoning display
   turned off, nothing should be emitted on the wire either, so a mapping must
   not become a chain-of-thought exposure path that bypasses that toggle.
-- **Tool result fidelity (non-blocking, low cost).** A generic client cannot
-  currently distinguish `tool_failed` from `tool_returned` — both collapse to
-  the standard `TOOL_CALL_END` event, with the failure fact recoverable only
-  from `_reyn` (which a generic client skips). reyn-client fidelity is
-  unaffected; a future pass could surface an error/status field on the
-  standard `TOOL_CALL_END` payload itself for generic-client visibility, at
-  low implementation cost.
 - **Everything marked intentional-scope** reflects a real architectural
   difference (reyn's whole-message outbox, structured-only private payloads,
   no in-flight tool-args phase, no direct "activity" concept) rather than an

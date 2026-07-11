@@ -10,17 +10,19 @@ transports feed off the identical frame source, *local ≡ remote by constructio
 
 On connect it replays the reconnect snapshots (A4): ``MESSAGES_SNAPSHOT`` (the
 display backlog) then ``STATE_SNAPSHOT`` (the status read-model). It then streams
-one SSE event per frame, and after each frame emits a ``STATE_DELTA`` when the
-projected status changed — the current WaitingOn label is tracked off the
-chat-event stream so the remote status panel follows Thinking / Running /
-Waiting-for-you without a second source.
+each frame as its AG-UI **wire sequence** (:func:`encode_frame_wire` — a whole
+text message is the canonical ``TEXT_MESSAGE_START`` → ``…_CONTENT`` →
+``…_END`` triplet, P4; every other frame is a single event), and after each frame
+emits a ``STATE_DELTA`` when the projected status changed — the current WaitingOn
+label is tracked off the chat-event stream so the remote status panel follows
+Thinking / Running / Waiting-for-you without a second source.
 """
 from __future__ import annotations
 
 from typing import AsyncIterator, Callable
 
 from reyn.interfaces.transport.agui.protocol import (
-    encode_frame,
+    encode_frame_wire,
     encode_intervention_tool_result,
     encode_intervention_tool_start,
     encode_messages_snapshot,
@@ -80,7 +82,13 @@ class AgUiEmitter:
         yield to_sse(encode_state_snapshot(self._model.snapshot(self._project())))
 
         async for frame in self._frames:
-            yield to_sse(encode_frame(frame))
+            # A whole text message expands to the AG-UI START→CONTENT→END triplet
+            # (conformance); every other frame is a single event. Only the
+            # _reyn-bearing event round-trips to the reyn client — START/END are
+            # generic scaffold. An ``intervention`` kind is CUSTOM (a single
+            # event), so the triplet never disturbs the frontend-tool path below.
+            for event in encode_frame_wire(frame):
+                yield to_sse(event)
             # HITL frontend-tool lifecycle (ADR-0039 P3, R4). An intervention
             # rides the wire in TWO representations: the DisplayFrame above (the
             # reyn client's native prompt UI) AND a companion frontend-tool
