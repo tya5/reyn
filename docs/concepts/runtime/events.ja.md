@@ -24,7 +24,7 @@ OS が唯一のミューテーターであり（P3）、すべてのミューテ
 主なバケットのいくつか：
 
 - **LLM とコンテキスト** — `llm_called`。
-- **Control IR** — op の種類ごとに 1 つの audit-event（`read_file`、`sandboxed_exec_started`、`mcp_called`、`web_search_started`、`recall_embed_failed` など）と `permission_denied`。
+- **Control IR** — op の種類ごとに 1 つの audit-event（`read_file`、`sandboxed_exec_started`、`mcp_called`、`web_search_started`、`semantic_search_embed_failed` など）と `permission_denied`。
 - **ユーザーとのやり取り** — `user_message_received`、`user_intervention_received`、`chat_started`、`chat_stopped`、`turn_cancelled`。
 - **Agent 間メッセージング** — `agent_message_sent`、`agent_request_received`、`agent_response_received`、`agent_message_refused`、`chain_timeout`。各 audit-event は `chain_id` を持つため、1 つのユーザーリクエストを複数のホップにまたがって追跡できます。
 - **Task 管理** — `task_op`、`task_readiness`、`task_disposition`、`task_dependency_aborted`。

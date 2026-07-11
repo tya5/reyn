@@ -60,7 +60,14 @@ subprocess-side self-gate applied even with no `ctx.permission_resolver`
 construction does not accept that cap, so this module performs the
 EQUIVALENT pre-flight check itself (same `_within_paths` primitive the
 backend uses) before dispatching the op — preserving the prior safety
-property without needing an op-layer change.
+property without needing an op-layer change. The pre-flight gates BOTH
+writes the op performs: the source's own `index.db` (via
+`cache_dir_for_source`) AND the source manifest `sources.yaml` (via
+`sources_manifest_path`) — mirroring the LLM-tool path's own permission
+gate (`core/op_runtime/index_update.py`, resolver != None), which declares
+`file.write` authority over both paths. Before this parity fix, only the DB
+path was self-gated here, so a `write_paths` cap that excluded
+`.reyn/config/` still let a safe-mode call mutate the manifest.
 
 Internal layering
 ------------------
@@ -163,7 +170,7 @@ async def index_update_async(
     from reyn.core.events.events import EventLog
     from reyn.core.op_runtime import execute_op
     from reyn.core.op_runtime.context import OpContext
-    from reyn.data.index.backend import cache_dir_for_source
+    from reyn.data.index.backend import cache_dir_for_source, sources_manifest_path
     from reyn.data.index.backends.sqlite import _within_paths
     from reyn.schemas.models import IndexUpdateIROp
     from reyn.security.permissions.permissions import PermissionDecl
@@ -178,6 +185,16 @@ async def index_update_async(
     # _db_path` uses for the actual write — so the gate checks exactly the path
     # the backend writes, guaranteed-equal by construction (not by two
     # hand-agreeing hardcoded formulas).
+    #
+    # F3 (RAG FP-0057 post-merge sweep): the op ALSO upserts the source
+    # manifest (`sources.yaml`) on every call (see
+    # `core/op_runtime/index_update.py`'s `SourceManifest.upsert`) — a write
+    # this self-gate previously did not constrain, unlike the LLM-tool path
+    # (resolver != None), which gates both the DB path AND the manifest path.
+    # Gate the manifest path too, via the SAME `sources_manifest_path` SSoT
+    # helper `SourceManifest.__init__` and the op's own permission-check path
+    # use for the actual write, so the gated path is guaranteed-equal to the
+    # write path by construction (not a third hand-agreed literal).
     if _sandbox_write_paths is not None:
         db_path = cache_dir_for_source(workspace_root, source) / "index.db"
         if not _within_paths(db_path, _sandbox_write_paths):
@@ -185,6 +202,13 @@ async def index_update_async(
                 f"index_update: source {source!r} index path is outside the "
                 f"phase sandbox write_paths policy "
                 f"(write_paths={_sandbox_write_paths!r})."
+            )
+        sources_yaml = sources_manifest_path(workspace_root)
+        if not _within_paths(sources_yaml, _sandbox_write_paths):
+            raise PermissionError(
+                f"index_update: source {source!r} manifest path "
+                f"({sources_yaml}) is outside the phase sandbox write_paths "
+                f"policy (write_paths={_sandbox_write_paths!r})."
             )
 
     events = EventLog()

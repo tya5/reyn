@@ -17,6 +17,7 @@ from typing import Any, AsyncIterator
 
 import yaml
 
+from reyn.data.index.backend import sources_manifest_path
 from reyn.data.index.build_lock import pid_alive as _pid_alive
 
 # ── Data model ────────────────────────────────────────────────────────────────
@@ -105,7 +106,7 @@ class SourceManifest:
 
     def __init__(self, workspace_root: Path) -> None:
         self._workspace_root = workspace_root
-        self._path = workspace_root / ".reyn" / "config" / "index" / "sources.yaml"
+        self._path = sources_manifest_path(workspace_root)
         self._cache: dict[str, SourceEntry] | None = None
         self._loaded_mtime: float | None = None
         self._lock = asyncio.Lock()  # async safety for concurrent updates

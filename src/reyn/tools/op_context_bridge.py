@@ -57,7 +57,7 @@ def build_legacy_op_context(ctx: "ToolContext") -> Any:
         # ONE shared bridge gives every delegating tool a real resolver instead of
         # the OpContext default resolver=None (+ literal "standard"). Eliminates the
         # resolver=None → litellm-BadRequestError class by construction for all
-        # bridge-using tools (recall / web_fetch / compact / file / …).
+        # bridge-using tools (semantic_search / web_fetch / compact / file / …).
         model=resolve_purpose_class(None, ctx.resolver, "tool"),
         resolver=ctx.resolver,
     )

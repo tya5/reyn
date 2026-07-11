@@ -198,7 +198,7 @@ async def _handle_mcp_install_registry(
     decl.secret_write = ["*"]
 
     # #1442 follow-up: get the OpContext from the SINGLE-SOURCE bridge (the same
-    # one file/compact/recall/web_fetch/sandboxed_exec use), not a hand-built one.
+    # one file/compact/semantic_search/web_fetch/sandboxed_exec use), not a hand-built one.
     # On the chat-router path this yields the real Workspace rooted at the agent's
     # workspace_base_dir; hand-building from ctx.workspace (None there) wrote the
     # config to cwd. Only the install-specific decl + actor are overridden.

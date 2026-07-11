@@ -67,8 +67,8 @@ adds an entry to the `CATEGORIES` tuple and one routing rule.
 | `memory_entry` | Persistent memory records | read the entry's body |
 | `memory_operation` | Memory CRUD ops | `remember_shared` / `remember_agent` / `forget` |
 | `reyn_source` | Reyn source / docs (read-only) | read or list |
-| `rag_corpus` | Indexed corpora (resource) | recall against this single source |
-| `rag_operation` | RAG management ops | multi-source recall / drop source |
+| `rag_corpus` | Indexed corpora (resource) | semantic_search against this single source |
+| `rag_operation` | RAG management ops | multi-source semantic_search / drop source |
 | `exec` | Sandboxed argv execution | run argv under the sandbox backend |
 
 The `mcp` category provides six verb_object actions that cover the LLM-visible surface:
@@ -191,14 +191,14 @@ resource runs the *canonical default operation* for that kind:
 | `skill` | run the workflow |
 | `agent.peer` | delegate a message |
 | `memory_entry` | read the body |
-| `rag_corpus` | single-source recall |
+| `rag_corpus` | single-source semantic_search |
 
 The previous `mcp.server` / `mcp.tool` resource entries are removed; per-MCP-server / per-MCP-tool dispatch now flows through the verb actions in the `mcp` category (= `mcp__list_tools` →
 `mcp__call_tool({tool: "<server>__<tool>", tool_args})`).
 
 This means an LLM can say `invoke_action("rag_corpus__meetings",
 {"query": "Q3 roadmap"})` and the wrapper expands it to
-`recall(sources=["meetings"], query="Q3 roadmap")` without the LLM
+`semantic_search(sources=["meetings"], query="Q3 roadmap")` without the LLM
 needing to remember the underlying call shape. The canonical default
 is documented in `describe_action`'s response.
 

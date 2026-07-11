@@ -29,7 +29,8 @@ _EMBED_DESCRIPTION = (
     "embed your texts, then hand the vectors to your own vector-DB MCP "
     "tools (store/upsert) to persist them, and again at query time to embed "
     "a query before calling that store's search tool. For reyn's OWN "
-    "indexed sources / memory / tool-use retrieval, use `recall` instead — "
+    "indexed sources / memory / tool-use retrieval, use `semantic_search` "
+    "instead — "
     "it embeds and searches in one call over reyn-managed indexes."
 )
 
@@ -55,7 +56,7 @@ _EMBED_PARAMETERS: dict[str, Any] = {
 
 
 async def _handle_embed(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
-    """Dispatch an EmbedIROp via op_runtime (mirrors tools/recall.py's shape)."""
+    """Dispatch an EmbedIROp via op_runtime (mirrors tools/semantic_search.py's shape)."""
     from reyn.core.op_runtime import execute_op
     from reyn.core.op_runtime.context import OpContext
     from reyn.schemas.models import EmbedIROp
@@ -85,7 +86,7 @@ async def _handle_embed(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult
         # Minimal context for router-side calls without a factory. embed has
         # no workspace side effect (read-only w.r.t. the workspace; its only
         # effect is the outbound embedding API call), so a workspace-less
-        # OpContext is safe here — same posture as tools/recall.py.
+        # OpContext is safe here — same posture as tools/semantic_search.py.
         legacy_ctx = OpContext(
             workspace=ctx.workspace,
             events=ctx.events,
