@@ -744,7 +744,7 @@ mcp:
 
 サーバーは設定ソースをまたいでマージされます: `~/.reyn/config.yaml` ⊕ `reyn.yaml` ⊕ `reyn.local.yaml`。マージは `mcp.servers` キーの shallow union です。マシンごとの `reyn.local.yaml` が残りを再宣言せずに単一サーバーを追加・上書きできます。
 
-MCP ランタイムはオプション依存です。`fastmcp` を取り込むには `pip install -e ".[mcp]"` でインストールします。
+MCP ランタイムはコアインストールに同梱されます。`fastmcp` はコア依存（MCP クライアントは各セッションで構築されます）なので extra は不要です。（既存の `pip install -e ".[mcp]"` が解決し続けられるよう、空の `[mcp]` extra を後方互換エイリアスとして残しています。）
 
 ### `mcp.search_threshold`
 

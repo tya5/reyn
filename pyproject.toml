@@ -49,6 +49,7 @@ dependencies = [
     "numpy>=1.24",           # RAG index backend cosine similarity (ADR-0033)
     "croniter>=2.0",         # cron expression parsing for FP-0009 Component B
     "charset-normalizer>=3.0",  # #1452 file__read encoding detection (MIT, pure-python)
+    "fastmcp==3.4.2",        # MCP client is a first-class capability Session.__init__ always constructs (import chain: session -> mcp.connection_service -> mcp.message_handler -> fastmcp), so fastmcp is effectively required — promoted from the former [mcp] extra so a core `reyn chat` no longer ImportErrors on fresh installs.
 ]
 
 [project.urls]
@@ -100,7 +101,11 @@ web = [
 # `reyn chainlit` PoC: Chainlit を別 surface として共存させる薄い CLI 起動口。
 # Web UI (= `reyn web` + openui) と TUI (= `reyn chat`) と並列に動かす。
 chainlit = ["chainlit>=2.0"]
-mcp = ["fastmcp==3.4.2"]
+# `mcp` is now a no-op back-compat alias: `fastmcp` moved into core `dependencies`
+# above (the MCP client is always constructed by `Session.__init__`). Kept as an
+# empty extra so existing `pip install -e ".[mcp]"` invocations (CI, user docs,
+# `reyn[mcp]`) keep resolving instead of erroring on an unknown extra.
+mcp = []
 # #2608 H4: filesystem watcher external-event source (`fs_watch:` config block ->
 # `file_changed` hook). Extras-only — a build with no fs_watch config configured
 # never imports this, and a build WITH config but no extra installed degrades to

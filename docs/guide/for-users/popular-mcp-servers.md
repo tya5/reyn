@@ -61,7 +61,7 @@ Servers covered:
 
 - `node` + `npx` (most servers are npm packages)
 - `uv` + `uvx` (= Python servers; `brew install uv`)
-- Reyn installed with the `[mcp]` extra: `pip install -e ".[mcp]"`
+- Reyn installed (the MCP runtime ships in the core install — no extra needed)
 - For chat usage: pre-approve the per-server permission once per
   server (= one-liner shown in each section).
 

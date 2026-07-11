@@ -1214,7 +1214,7 @@ mcp:
 
 Servers are merged across config sources: `~/.reyn/config.yaml` ⊕ `reyn.yaml` ⊕ `reyn.local.yaml`. The merge is a shallow union on `mcp.servers` keys — a per-machine `reyn.local.yaml` can add or override a single server without re-stating the rest.
 
-The MCP runtime is an optional dependency: install with `pip install -e ".[mcp]"` to pull in `fastmcp`. Without the extra, configured servers are still parsed but any `mcp` op fails at dispatch.
+The MCP runtime ships in the core install — `fastmcp` is a core dependency (the MCP client is constructed by every session), so no extra is required. (A now-empty `[mcp]` extra is retained as a back-compat alias so existing `pip install -e ".[mcp]"` invocations keep resolving.)
 
 ### `mcp.search_threshold`
 

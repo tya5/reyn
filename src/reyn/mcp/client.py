@@ -524,7 +524,8 @@ class MCPClient:
         except ImportError as exc:
             raise MCPError(
                 "The 'fastmcp' package is required for MCP support. "
-                "Install with: pip install reyn[mcp]"
+                "It is a core reyn dependency, so this usually means a broken "
+                "install — reinstall reyn (e.g. pip install -e .)."
             ) from exc
 
         try:

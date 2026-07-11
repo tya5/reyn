@@ -346,16 +346,19 @@ except Exception as _exc:  # noqa: BLE001 — defensive boot
 # MCP-over-SSE: GET /mcp/sse (event stream) + POST /mcp/messages (client → server).
 # The router carries the GET; the POST endpoint is a Starlette Mount because
 # SseServerTransport.handle_post_message is itself an ASGI app.
-# Mounting is best-effort: skip if `[mcp]` extra isn't installed so the rest
-# of the gateway still boots.
+# Mounting is best-effort: skip if the `mcp` SDK isn't importable so the rest
+# of the gateway still boots. The SDK now ships transitively via the core
+# `fastmcp` dependency, so this guard is defensive (broken install) rather than
+# an optional-extra gate.
 app.include_router(_mcp_router.router)
 try:
     app.router.routes.append(_mcp_router.get_mcp_message_mount())
-except ImportError:  # pragma: no cover — `[mcp]` extra not installed
+except ImportError:  # pragma: no cover — mcp SDK unexpectedly missing
     import logging as _logging
     _logging.getLogger(__name__).info(
-        "mcp SDK not installed; /mcp/messages POST endpoint disabled. "
-        "Install with `pip install -e .[mcp]` to enable MCP-over-SSE."
+        "mcp SDK not importable; /mcp/messages POST endpoint disabled. "
+        "The mcp SDK ships with the core `fastmcp` dependency — reinstall reyn "
+        "(e.g. pip install -e .) to enable MCP-over-SSE."
     )
 
 # A2A (Agent2Agent) protocol: peer agents discover Reyn agents via
