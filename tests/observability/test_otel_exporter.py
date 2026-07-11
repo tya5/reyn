@@ -359,6 +359,35 @@ def test_content_off_by_default_no_raw_body_in_telemetry() -> None:
     assert resp not in blob
 
 
+def test_reasoning_cot_not_routed_to_otel_under_default() -> None:
+    """Tier 2: SR3 (P6a boundary) — reasoning chain-of-thought never reaches the
+    OTEL export under the content-off default. The AG-UI display path (P6a) surfaces
+    reasoning to a connected operator client, but the observability backend must NOT
+    receive CoT: reasoning is a transport-frame concern, not an audit-event, so no
+    reasoning event is subscribed, and even a reasoning string carried on an
+    llm_response payload stays out of every span attribute / log body."""
+    cap = _Capture()  # capture_content defaults False
+    cot = "REASONING-COT-should-never-reach-observability-17*23=391"
+    events = [
+        _ev("session_started", agent_name="alice", agent_id=_AID),
+        _ev("turn_started", kind="user", run_id=_RID, agent_id=_AID),
+        _ev("llm_called", model="gpt-4o", run_id=_RID, agent_id=_AID),
+        _ev(
+            "llm_response_received",
+            reasoning=cot, reasoning_content=cot,
+            prompt_tokens=5, completion_tokens=5, cost_usd=0.0,
+            run_id=_RID, agent_id=_AID,
+        ),
+        _ev("turn_completed", chain_id="c", run_id=_RID, agent_id=_AID),
+        _ev("session_completed", agent_name="alice", agent_id=_AID),
+    ]
+    for e in events:
+        cap.exporter(e)
+    cap.exporter.shutdown()
+
+    assert cot not in _all_telemetry_text(cap)
+
+
 def _all_telemetry_text(cap: _Capture) -> str:
     parts: list[str] = []
     for span in cap.spans():

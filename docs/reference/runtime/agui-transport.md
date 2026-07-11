@@ -69,6 +69,7 @@ of the renderer's two entry points (display vs working-indicator). The mapping:
 |-------------------|--------------------|----------------------------------------------|
 | `agent`           | text triplet       | the assistant reply text (see *text lifecycle*) |
 | `status`          | text triplet       | transient status line (`role: status`)       |
+| `reasoning`       | reasoning triplet  | the model's reasoning text (see *reasoning lifecycle*); emitted only when reasoning display is on |
 | `error`           | `RUN_ERROR`        | error text                                   |
 | `trace`           | `CUSTOM`           | reyn tool/step trace line                    |
 | `intervention`    | `CUSTOM`           | a prompt is displayed; the reyn client draws it natively and answers it by id (see "Human-in-the-loop answering") |
@@ -93,6 +94,31 @@ Only the **CONTENT** event carries the `_reyn` reconstruction block; the START a
 END events are generic scaffold that the reyn client decodes to `None` and
 ignores. So the reconstruction invariant stays **one frame ⇄ one `_reyn`-bearing
 event**, and the reyn client rebuilds exactly one display frame per message.
+
+#### Reasoning lifecycle (the conforming triplet)
+
+reyn's model reasoning rides the AG-UI **Reasoning** message lifecycle so a
+generic client renders it as reasoning rather than as an opaque `CUSTOM` payload.
+The canonical Reasoning category has seven events; reyn is whole-message (no token
+streaming), so it maps the content-bearing inner triplet **`REASONING_MESSAGE_START`
+→ `REASONING_MESSAGE_CONTENT` → `REASONING_MESSAGE_END`, correlated by a shared
+`messageId`** with `role: "reasoning"` and the CONTENT `delta` carrying the whole
+reasoning text. This mirrors the text triplet exactly: only the CONTENT event
+carries the `_reyn` block (START/END decode to `None`), so the reyn client rebuilds
+exactly one reasoning display frame and its render is byte-unchanged.
+
+Two boundaries hold this signal in place:
+
+- **Display-gate by construction.** A reasoning display frame only exists when
+  the operator's reasoning-display toggle is on — reyn emits the frame at a single
+  chokepoint gated on that toggle. Display off ⇒ no reasoning frame ⇒ zero
+  `REASONING_*` events on the wire. The mapping adds no new gate and cannot become
+  a chain-of-thought exposure path that bypasses the toggle.
+- **Reasoning is a display signal, not observability.** The AG-UI display surface
+  is an operator's connected client, where display-on is intent-to-see. Reasoning
+  content is a transport-frame concern and is never routed to the observability
+  export — the OTLP exporter keeps its content-off default and receives no
+  reasoning chain-of-thought.
 
 ### Working-indicator path (turn lifecycle + tool axis)
 
@@ -314,10 +340,10 @@ loss.
 | Text       | 4                | 3           | **conforming triplet** — a whole message rides `TEXT_MESSAGE_START` → `TEXT_MESSAGE_CONTENT` → `TEXT_MESSAGE_END`, correlated by `messageId`; only the streaming `TEXT_MESSAGE_CHUNK` is unmapped (**intentional-scope** — reyn's outbox delivers whole messages, not token deltas) |
 | Special    | 2                | 1           | **intentional-scope** — reyn-private payloads are always structured (`CUSTOM`); the standard `RAW` passthrough event has no reyn use case |
 | Activity   | 2                | 0           | **intentional-scope** — reyn has no direct analog; the same information is already carried by the frame stream + `STATE_*` |
-| Reasoning  | 7                | 0           | **future-candidate** — the highest-value gap (see below) |
+| Reasoning  | 7                | 3           | **standard-mapped** — a whole reasoning message rides `REASONING_MESSAGE_START` → `REASONING_MESSAGE_CONTENT` → `REASONING_MESSAGE_END`, correlated by `messageId`; the outer `REASONING_START`/`REASONING_END` context wrapper and the streaming `REASONING_MESSAGE_CHUNK`/`REASONING_ENCRYPTED_VALUE` variants are **intentional-scope** (reyn is whole-message; no encrypted CoT) |
 
-**Totals**: reyn natively emits **12 of the 28** active-roster standard events
-(13/28 counting the `CUSTOM` catch-all itself as one). The 28-event roster is
+**Totals**: reyn natively emits **15 of the 28** active-roster standard events
+(16/28 counting the `CUSTOM` catch-all itself as one). The 28-event roster is
 Lifecycle (5) + Text (4) + Tool (5) + State (3) + Activity (2) + Reasoning (7)
 + Special (2), tallied from the canonical AG-UI event reference
 (<https://docs.ag-ui.com/concepts/events>). That reference self-reports up to
@@ -327,14 +353,18 @@ this page tracks the 28-event active roster, not the larger number.
 
 ### Why the gaps are dispositioned the way they are
 
-- **Reasoning (future-candidate, highest value).** reyn already treats
-  reasoning as a first-class concept; today a reasoning trace rides the
-  `trace` display kind → `CUSTOM`, invisible to a generic client. Mapping it
-  to the standard `Reasoning*` events would let a generic AG-UI client render
-  it directly. The gate that must be respected before shipping this: reyn's
-  **reasoning-display toggle** — when the operator has reasoning display
-  turned off, nothing should be emitted on the wire either, so a mapping must
-  not become a chain-of-thought exposure path that bypasses that toggle.
+- **Reasoning (standard-mapped).** reyn treats reasoning as a first-class
+  concept, and a reasoning display frame now maps to the standard reasoning
+  message triplet (`REASONING_MESSAGE_START` → `REASONING_MESSAGE_CONTENT` →
+  `REASONING_MESSAGE_END`), so a generic AG-UI client renders it directly
+  instead of skipping a `CUSTOM` payload. Two boundaries are respected (see
+  *reasoning lifecycle*): the **reasoning-display toggle** is honored by
+  construction — a reasoning frame only exists when display is on, so display
+  off ⇒ zero `REASONING_*` events, and the mapping adds no new gate — and the
+  reasoning chain-of-thought stays a display signal only, never routed to the
+  observability export (the OTLP content-off default is unaffected). The outer
+  `REASONING_START`/`REASONING_END` wrapper and the streaming chunk/encrypted
+  variants are intentional-scope (reyn is whole-message).
 - **Everything marked intentional-scope** reflects a real architectural
   difference (reyn's whole-message outbox, structured-only private payloads,
   no in-flight tool-args phase, no direct "activity" concept) rather than an

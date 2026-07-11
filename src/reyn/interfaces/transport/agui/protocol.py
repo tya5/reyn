@@ -68,6 +68,18 @@ from reyn.runtime.outbox import OutboxMessage
 TEXT_MESSAGE_START = "TEXT_MESSAGE_START"
 TEXT_MESSAGE_CONTENT = "TEXT_MESSAGE_CONTENT"
 TEXT_MESSAGE_END = "TEXT_MESSAGE_END"
+# AG-UI Reasoning message lifecycle (ADR-0039 P6a). The canonical Reasoning
+# category has seven events; reyn is whole-message (no token streaming), so it
+# maps the content-bearing inner triplet — ``REASONING_MESSAGE_START`` →
+# ``REASONING_MESSAGE_CONTENT`` → ``REASONING_MESSAGE_END``, correlated by
+# ``messageId`` with ``role: "reasoning"`` — the minimal valid sequence a generic
+# AG-UI client (CopilotKit) renders as a reasoning message. The outer
+# ``REASONING_START`` / ``REASONING_END`` context wrapper and the streaming
+# ``REASONING_MESSAGE_CHUNK`` / ``REASONING_ENCRYPTED_VALUE`` variants are not
+# emitted (no streaming, no encrypted CoT).
+REASONING_MESSAGE_START = "REASONING_MESSAGE_START"
+REASONING_MESSAGE_CONTENT = "REASONING_MESSAGE_CONTENT"
+REASONING_MESSAGE_END = "REASONING_MESSAGE_END"
 RUN_STARTED = "RUN_STARTED"
 RUN_FINISHED = "RUN_FINISHED"
 RUN_ERROR = "RUN_ERROR"
@@ -104,6 +116,7 @@ _INTERVENTION_TOOL_PREFIX = "reyn.intervention."
 _DISPLAY_KIND_EVENT: dict[str, str] = {
     "agent": TEXT_MESSAGE_CONTENT,
     "status": TEXT_MESSAGE_CONTENT,
+    "reasoning": REASONING_MESSAGE_CONTENT,
     "error": RUN_ERROR,
     "intervention": CUSTOM,
     "trace": CUSTOM,
@@ -225,6 +238,15 @@ def _encode_display(frame: DisplayFrame) -> AgUiEvent:
             "role": "assistant" if kind == "agent" else "status",
             "delta": text,
         }
+    elif ag_type is REASONING_MESSAGE_CONTENT:
+        # Whole-frame reasoning (P6a). ``messageId`` correlates the reasoning
+        # triplet (:func:`encode_frame_wire`); ``role`` is the spec-mandated
+        # ``"reasoning"``; ``delta`` is the whole reasoning text.
+        std = {
+            "messageId": _new_message_id(),
+            "role": "reasoning",
+            "delta": text,
+        }
     elif ag_type is RUN_ERROR:
         std = {"message": text}
     else:  # CUSTOM — reyn-private (presentation / trace / intervention / control)
@@ -255,27 +277,40 @@ def _encode_event(frame: EventFrame) -> AgUiEvent:
     return AgUiEvent(type=ag_type, data={**std, _REYN: reyn})
 
 
-def encode_frame_wire(frame: Frame) -> "list[AgUiEvent]":
-    """Encode one ``Frame`` to its full AG-UI **wire sequence** (P4).
+# Content events that require the canonical START → CONTENT → END lifecycle
+# scaffold. A bare ``*_CONTENT`` is invalid per the AG-UI spec (a strict generic
+# client drops it), so :func:`encode_frame_wire` brackets each with its
+# ``(START, END)`` pair correlated by a shared ``messageId``. Text (P4) and
+# reasoning (P6a) share the exact same discipline.
+_CONTENT_TRIPLET: dict[str, "tuple[str, str]"] = {
+    TEXT_MESSAGE_CONTENT: (TEXT_MESSAGE_START, TEXT_MESSAGE_END),
+    REASONING_MESSAGE_CONTENT: (REASONING_MESSAGE_START, REASONING_MESSAGE_END),
+}
 
-    Most frames are a single event. A whole text message expands to the canonical
-    AG-UI lifecycle triplet — ``TEXT_MESSAGE_START`` → ``TEXT_MESSAGE_CONTENT`` →
-    ``TEXT_MESSAGE_END``, correlated by a shared ``messageId`` — because a bare
-    ``TEXT_MESSAGE_CONTENT`` is invalid per the spec (a strict generic client
-    drops it). Only the CONTENT event carries the ``_reyn`` reconstruction block;
-    START/END are generic scaffold that :func:`decode_event` returns ``None`` for,
-    so the invariant stays **1 frame ⇄ 1 ``_reyn``-bearing event** and the reyn
-    client's render is unchanged.
+
+def encode_frame_wire(frame: Frame) -> "list[AgUiEvent]":
+    """Encode one ``Frame`` to its full AG-UI **wire sequence** (P4/P6a).
+
+    Most frames are a single event. A whole text message (P4) or a whole
+    reasoning message (P6a) expands to the canonical AG-UI lifecycle triplet —
+    ``*_MESSAGE_START`` → ``*_MESSAGE_CONTENT`` → ``*_MESSAGE_END``, correlated by
+    a shared ``messageId`` — because a bare ``*_MESSAGE_CONTENT`` is invalid per
+    the spec (a strict generic client drops it). Only the CONTENT event carries
+    the ``_reyn`` reconstruction block; START/END are generic scaffold that
+    :func:`decode_event` returns ``None`` for, so the invariant stays **1 frame ⇄
+    1 ``_reyn``-bearing event** and the reyn client's render is unchanged.
     """
     event = encode_frame(frame)
-    if event.type != TEXT_MESSAGE_CONTENT:
+    triplet = _CONTENT_TRIPLET.get(event.type)
+    if triplet is None:
         return [event]
+    start_type, end_type = triplet
     message_id = event.data.get("messageId")
     start = AgUiEvent(
-        type=TEXT_MESSAGE_START,
+        type=start_type,
         data={"messageId": message_id, "role": event.data.get("role")},
     )
-    end = AgUiEvent(type=TEXT_MESSAGE_END, data={"messageId": message_id})
+    end = AgUiEvent(type=end_type, data={"messageId": message_id})
     return [start, event, end]
 
 
@@ -466,6 +501,9 @@ __all__ = [
     "TEXT_MESSAGE_START",
     "TEXT_MESSAGE_CONTENT",
     "TEXT_MESSAGE_END",
+    "REASONING_MESSAGE_START",
+    "REASONING_MESSAGE_CONTENT",
+    "REASONING_MESSAGE_END",
     "RUN_STARTED",
     "RUN_FINISHED",
     "RUN_ERROR",

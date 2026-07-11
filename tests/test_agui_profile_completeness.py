@@ -20,9 +20,10 @@ import ast
 from pathlib import Path
 
 from reyn.core.events.events import Event
-from reyn.interfaces.transport.agui.profile import is_profiled
+from reyn.interfaces.transport.agui.profile import is_profiled, profiled_names
 from reyn.interfaces.transport.agui.protocol import (
     CUSTOM,
+    REASONING_MESSAGE_CONTENT,
     encode_frame,
     encode_intervention_tool_start,
 )
@@ -103,3 +104,27 @@ def test_intervention_frontend_tool_toolname_is_profiled() -> None:
     # The empty-kind fallback (``reyn.intervention.ask_user``) is also profiled.
     ev = encode_intervention_tool_start({"intervention_id": "iv-2", "intervention_kind": ""})
     assert is_profiled(ev.data["toolName"])
+
+
+def test_reasoning_is_standard_mapped_not_a_custom_profile_entry() -> None:
+    """Tier 2: P6a — the reasoning frame is STANDARD-mapped (a Reasoning* event),
+    so it needs NO reyn.* Custom profile entry. The completeness gate must expect
+    reasoning as standard-mapped, not demand a ``reyn.display.reasoning`` Custom
+    entry for a now-standard signal.
+
+    Strip-falsify: remove ``"reasoning"`` from ``_DISPLAY_KIND_EVENT`` → the frame
+    reverts to CUSTOM (``reyn.display.reasoning``) → the standard-mapped assertion
+    below goes RED (and the general completeness gate would then demand a Custom
+    entry that no longer exists)."""
+    ev = encode_frame(DisplayFrame(OutboxMessage(kind="reasoning", text="thinking")))
+
+    # Standard-mapped, not CUSTOM: no reyn.* Custom name is emitted for reasoning.
+    assert ev.type == REASONING_MESSAGE_CONTENT
+    assert ev.type != CUSTOM
+    assert "name" not in ev.data, "a standard Reasoning* event carries no CUSTOM name"
+
+    # The move's consequence: there is NO Custom profile entry for reasoning, and
+    # the completeness gate does not require one (a standard event needs no
+    # extension-profile entry).
+    assert "reyn.display.reasoning" not in profiled_names()
+    assert "reyn.display.reasoning" not in _emitted_custom_names()
