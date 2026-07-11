@@ -49,8 +49,14 @@ async def handle(
     # per-source granularity is not preserved (= drop is destructive
     # and the per-source distinction was operator-UX rather than
     # security).
+    # #2856 Part B: resolve unconditionally — forwarded into the backend
+    # below regardless of whether a permission_resolver is present, so the
+    # destructive drop self-gates at the real write site on every
+    # caller/surface (mirrors index_update).
+    sandbox_policy = sandbox_policy_from_ctx(ctx)
+    sandbox_write_paths = sandbox_policy.write_paths if sandbox_policy is not None else None
+
     if ctx.permission_resolver is not None:
-        sandbox_policy = sandbox_policy_from_ctx(ctx)
         sources_yaml = workspace_root / ".reyn" / "config" / "index" / "sources.yaml"
         await ctx.permission_resolver.require_file_write(
             ctx.permission_decl, str(sources_yaml), ctx.actor,
@@ -66,11 +72,19 @@ async def handle(
             sandbox_policy=sandbox_policy,
         )
 
-    backend = SqliteIndexBackend(workspace_root=workspace_root)
+    # #2856 Part B: forward the cap into the backend — `drop` now self-gates
+    # the source dir at the real deletion site (sqlite.py), not just via the
+    # require_file_write above (which is skipped entirely when
+    # permission_resolver is None, e.g. a future safe-mode drop entry point).
+    backend = SqliteIndexBackend(
+        workspace_root=workspace_root, sandbox_write_paths=sandbox_write_paths,
+    )
     manifest = get_source_manifest(workspace_root)
 
     drop_result = await backend.drop(op.source)
-    removed_from_manifest = await manifest.remove(op.source)
+    removed_from_manifest = await manifest.remove(
+        op.source, sandbox_write_paths=sandbox_write_paths,
+    )
 
     # #2259 PR-1: record the FULL post-drop sources registry as a truncation-surviving config
     # generation so it recovers (the yaml is a derived projection). The helper guards

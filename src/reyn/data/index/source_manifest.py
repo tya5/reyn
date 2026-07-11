@@ -18,6 +18,7 @@ from typing import Any, AsyncIterator
 import yaml
 
 from reyn.data.index.backend import sources_manifest_path
+from reyn.data.index.backends.sqlite import _within_paths
 from reyn.data.index.build_lock import pid_alive as _pid_alive
 
 # ── Data model ────────────────────────────────────────────────────────────────
@@ -163,13 +164,36 @@ class SourceManifest:
             self._cache = {}
             self._loaded_mtime = None
 
-    async def _atomic_write(self) -> None:
+    async def _atomic_write(
+        self, *, sandbox_write_paths: "list[str] | None" = None,
+    ) -> None:
         """Write current mem cache to disk atomically (write → fsync → rename).
 
         Caller MUST hold ``self._lock``.  Updates ``_loaded_mtime`` to the
         newly written file so the next ``get_all`` does not trigger an
         unnecessary reload.
+
+        #2856 Part B: ``sandbox_write_paths``, when set (the phase sandbox
+        policy's ``write_paths``, forwarded by the op — mirrors
+        ``SqliteIndexBackend``'s own ``write``/``delete``/``drop`` self-gate),
+        self-gates ``sources.yaml`` against the cap BEFORE the write — this is
+        the manifest's OWN write site (the backend's ``db_file`` self-gate
+        does not cover it — F3). Taken as a per-call arg (not stored on
+        ``__init__``/the instance) because ``SourceManifest`` is a
+        per-workspace SINGLETON (``get_source_manifest``); storing the cap on
+        the instance would let one caller's cap leak into (or be clobbered
+        by) a concurrent caller's request on the same workspace. ``None`` =
+        no cap (current behavior, in-process callers already gated at the op
+        layer).
         """
+        if sandbox_write_paths is not None and not _within_paths(
+            self._path, sandbox_write_paths
+        ):
+            raise PermissionError(
+                f"source manifest write to {str(self._path)!r} denied by the "
+                f"active sandbox policy (path outside "
+                f"write_paths={sandbox_write_paths!r})."
+            )
         self._path.parent.mkdir(parents=True, exist_ok=True)
         tmp = self._path.with_suffix(".yaml.tmp")
         payload = {
@@ -213,19 +237,29 @@ class SourceManifest:
         entries = await self.get_all()
         return entries.get(name)
 
-    async def upsert(self, entry: SourceEntry) -> None:
-        """Add or update entry. Atomic file write + mem cache update."""
+    async def upsert(
+        self, entry: SourceEntry, *, sandbox_write_paths: "list[str] | None" = None,
+    ) -> None:
+        """Add or update entry. Atomic file write + mem cache update.
+
+        ``sandbox_write_paths``: #2856 Part B — the phase sandbox cap,
+        forwarded by the caller (op) at the real write site. See
+        ``_atomic_write``.
+        """
         async with self._lock:
             if self._cache is None:
                 await self._reload_from_file()
             assert self._cache is not None
             self._cache[entry.name] = entry
-            await self._atomic_write()
+            await self._atomic_write(sandbox_write_paths=sandbox_write_paths)
 
-    async def remove(self, name: str) -> bool:
+    async def remove(
+        self, name: str, *, sandbox_write_paths: "list[str] | None" = None,
+    ) -> bool:
         """Remove entry. Returns True if removed, False if it didn't exist.
 
-        Atomic file write + mem cache update.
+        Atomic file write + mem cache update. ``sandbox_write_paths``: see
+        ``upsert``/``_atomic_write`` (#2856 Part B).
         """
         async with self._lock:
             if self._cache is None:
@@ -234,7 +268,7 @@ class SourceManifest:
             if name not in self._cache:
                 return False
             del self._cache[name]
-            await self._atomic_write()
+            await self._atomic_write(sandbox_write_paths=sandbox_write_paths)
             return True
 
     async def format_for_prompt(self) -> str:

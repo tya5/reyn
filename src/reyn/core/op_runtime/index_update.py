@@ -87,6 +87,16 @@ async def handle(op: IndexUpdateIROp, ctx: OpContext) -> dict:
 
     workspace_root = ctx.workspace.base_dir
 
+    # #2856 Part B: resolve the sandbox cap ONCE, unconditionally (not just
+    # inside the `permission_resolver is not None` branch below) — it is
+    # forwarded into the backend/manifest regardless of whether a
+    # permission_resolver is present, so the safe-mode path (resolver=None,
+    # e.g. `reyn.api.safe.index_update`) gets the SAME real-write-site
+    # self-gate as the LLM-tool path, closing the asymmetry the wrapper's
+    # retired pre-flight used to paper over.
+    sandbox_policy = sandbox_policy_from_ctx(ctx)
+    sandbox_write_paths = sandbox_policy.write_paths if sandbox_policy is not None else None
+
     # Permission gate — own-write (not destructive), same shape as
     # index_query's read gate / index_drop's write gate: declares
     # file.write authority over this source's own index + the sources.yaml
@@ -94,7 +104,6 @@ async def handle(op: IndexUpdateIROp, ctx: OpContext) -> dict:
     # posture (no ask-gate) comes from the ToolGates on the `index_update`
     # ToolDefinition, not from this call.
     if ctx.permission_resolver is not None:
-        sandbox_policy = sandbox_policy_from_ctx(ctx)
         # Derive the DB path via the SAME `cache_dir_for_source` helper
         # `SqliteIndexBackend._db_path` uses for the actual write, so the gate
         # checks exactly the path the backend writes (guaranteed-equal by
@@ -110,7 +119,13 @@ async def handle(op: IndexUpdateIROp, ctx: OpContext) -> dict:
             sandbox_policy=sandbox_policy,
         )
 
-    backend = SqliteIndexBackend(workspace_root=workspace_root)
+    # #2856 Part B: forward the cap into the backend — its own self-gate on
+    # `db_file` (sqlite.py `write`/`delete`) now fires at the REAL write site
+    # for every caller/surface, not just the LLM-tool path's pre-embed
+    # require_file_write above.
+    backend = SqliteIndexBackend(
+        workspace_root=workspace_root, sandbox_write_paths=sandbox_write_paths,
+    )
     manifest = get_source_manifest(workspace_root)
 
     # ── Source-model-bound: resolve the model to embed with ────────────────
@@ -233,15 +248,18 @@ async def handle(op: IndexUpdateIROp, ctx: OpContext) -> dict:
         pth = existing_entry.path
     else:
         pth = "(unknown)"
-    await manifest.upsert(SourceEntry(
-        name=op.source,
-        description=desc,
-        path=pth,
-        backend="sqlite",
-        last_indexed=datetime.now(timezone.utc).isoformat(),
-        chunk_count=stat["chunk_count"],
-        embedding_model=stat["embedding_model"] or model,
-    ))
+    await manifest.upsert(
+        SourceEntry(
+            name=op.source,
+            description=desc,
+            path=pth,
+            backend="sqlite",
+            last_indexed=datetime.now(timezone.utc).isoformat(),
+            chunk_count=stat["chunk_count"],
+            embedding_model=stat["embedding_model"] or model,
+        ),
+        sandbox_write_paths=sandbox_write_paths,
+    )
 
     # P6 audit trail
     ctx.events.emit(

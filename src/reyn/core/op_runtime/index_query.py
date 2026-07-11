@@ -72,6 +72,8 @@ async def handle(
 
     workspace_root = ctx.workspace.base_dir
 
+    sandbox_policy = sandbox_policy_from_ctx(ctx)
+
     # #1199 S3.4 Part1: route the index FS-op through the permission gate (the
     # SQLite I/O itself stays host-direct — random-access/lock can't go on the
     # read_file abstraction — so we gate the DB path BEFORE the backend opens
@@ -81,10 +83,19 @@ async def handle(
         db_path = workspace_root / ".reyn" / "cache" / "index" / op.source / "index.db"
         await ctx.permission_resolver.require_file_read(
             ctx.permission_decl, str(db_path), ctx.actor,
-            sandbox_policy=sandbox_policy_from_ctx(ctx),
+            sandbox_policy=sandbox_policy,
         )
 
-    backend = SqliteIndexBackend(workspace_root=workspace_root)
+    # #2856 Part B: forward the same cap-resolution seam into the backend as
+    # the other 3 index ops (uniform construction site — even though `query`
+    # is read-only and the backend has no write self-gate to trip here, this
+    # keeps `SqliteIndexBackend(...)` construction identical in shape across
+    # all 4 ops, so a future read-path self-gate has one seam to land on, not
+    # three-out-of-four).
+    backend = SqliteIndexBackend(
+        workspace_root=workspace_root,
+        sandbox_write_paths=sandbox_policy.write_paths if sandbox_policy is not None else None,
+    )
 
     try:
         chunks = await backend.query(
