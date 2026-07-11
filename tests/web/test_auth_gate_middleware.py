@@ -71,6 +71,22 @@ def gated(tmp_project: Path, monkeypatch: pytest.MonkeyPatch):
     """
     _reset_singletons()
     monkeypatch.setattr("reyn.config._find_project_root", lambda _: tmp_project)
+    # #2845/#2860 (task-sqlite-lock flake): the lifespan resolves its sqlite Task
+    # backend at ``.reyn/state/tasks.db`` relative to the process CWD, NOT the
+    # (monkeypatched) project root above — so without this chdir every test in
+    # this module opens/closes a real connection against the ACTUAL repo's
+    # ``<repo>/.reyn/state/tasks.db``, shared with every other test file that
+    # also forgets to isolate cwd (e.g. test_surface_registry.py) and, under
+    # ``pytest -n auto``, with concurrent xdist worker PROCESSES hitting the
+    # same on-disk file at the same time. ``busy_timeout=0`` (deliberate
+    # fail-fast) then raises ``sqlite3.OperationalError: database is locked``
+    # instead of waiting — an order/schedule-dependent flake, reproducible via
+    # ``pytest tests/web/test_auth_gate_middleware.py tests/web/test_surface_registry.py
+    # -n 4`` without this chdir. Isolating cwd to the per-test ``tmp_project``
+    # mirrors the sibling lifespan-driving tests (``test_lifespan_task_backend_close.py``,
+    # ``test_web_auth_lifespan_wiring.py``, ``test_fp0009_b_web_lifespan.py``), all of
+    # which already chdir for exactly this reason.
+    monkeypatch.chdir(tmp_project)
     from reyn.interfaces.web.server import app
 
     app.dependency_overrides.clear()

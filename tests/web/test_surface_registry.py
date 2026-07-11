@@ -110,6 +110,16 @@ def _fresh_app(
     monkeypatch.setenv(_ENABLE_ENV, enable)
     monkeypatch.setenv(_DISABLE_ENV, disable)
 
+    # #2845/#2860 (task-sqlite-lock flake): the lifespan resolves its sqlite Task
+    # backend at ``.reyn/state/tasks.db`` relative to the process CWD, not the
+    # ``project_root`` patched above — without this chdir every test here opens a
+    # real connection against the actual repo's shared ``<repo>/.reyn/state/tasks.db``,
+    # colliding (``busy_timeout=0`` → ``database is locked``) with any other test
+    # file that also drives the real lifespan without isolating cwd (e.g.
+    # test_auth_gate_middleware.py), including concurrent ``pytest -n auto`` xdist
+    # workers. Mirrors the sibling lifespan tests, which already chdir.
+    monkeypatch.chdir(project_root)
+
     # Also steer reyn.interfaces.web.deps' own project-root/config lookups
     # (a separate lazy-import call site) so any handler that reads them
     # (e.g. /api/agents) resolves against the same tmp project.
