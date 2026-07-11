@@ -722,6 +722,12 @@ class Session:
         chat_tool_use_scheme: str = "enumerate-all",
         embedding_config: "EmbeddingConfig | None" = None,
         eager_embedding_build: bool = False,
+        # P5 ADR-0039: the resolved ``observability:`` block (ObservabilityConfig).
+        # Opt-in OTLP export — the OtelExporter is attached to this session's
+        # EventLog ONLY when an OTLP endpoint is configured (config value or the
+        # OTEL_EXPORTER_OTLP_ENDPOINT env). None / no-endpoint → not attached, zero
+        # overhead, behavior byte-identical to no OTEL.
+        observability_config: "object | None" = None,
         # #1829 S3b: reyn.yaml llm.router.* — set on the LLM chokepoint's
         # ContextVar at construction (mirrors set_llm_request_event_log). None →
         # the chokepoint's env+default fallback (back-compat). Runs
@@ -1435,6 +1441,21 @@ class Session:
             subscribers=[self._event_store],
             agent_id=self._agent_id,  # FP-0016 E: auto-inject agent_id into every event
         )
+        # P5 ADR-0039: opt-in OpenTelemetry export. Attaches a fail-open,
+        # off-loop OTLP subscriber to this session's EventLog ONLY when an OTLP
+        # endpoint is configured (observability.otel.endpoint or the
+        # OTEL_EXPORTER_OTLP_ENDPOINT env). With no endpoint build_otel_exporter
+        # returns None → nothing attached, zero overhead, behavior byte-identical
+        # to no OTEL. The exporter is a lossy downstream: it never writes to
+        # .reyn/events or the WAL, so recovery/replay is independent of it (SR4).
+        self._otel_exporter = None
+        try:
+            from reyn.observability.otel_exporter import build_otel_exporter
+            self._otel_exporter = build_otel_exporter(observability_config)
+            if self._otel_exporter is not None:
+                self._chat_events.add_subscriber(self._otel_exporter)
+        except Exception:  # noqa: BLE001 — OTEL attach must never break session init
+            self._otel_exporter = None
         # #2073 S1: the config hot-reloader. Reads ONLY the IN-set (.reyn/*.yaml);
         # the OUT-set (reyn.yaml) is restart-only. Applies at the turn_end safe-point
         # (apply_pending below). Per-component reapply seams are registered in S2.

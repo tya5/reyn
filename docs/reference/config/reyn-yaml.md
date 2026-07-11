@@ -37,6 +37,7 @@ models:
 | `chat` | map | Chat-session compaction settings. See below. |
 | `voice` | map | Voice input (Whisper) settings for the chat TUI. See below. |
 | `events` | map | Audit-log rotation policy for chat-session event files. See below. |
+| `observability` | map | Opt-in OpenTelemetry (OTLP) export of P6 audit-events. Off by default. See below. |
 | `tool_use` | map | Chat-layer tool-use scheme selector (`chat`). See below. |
 | `mcp` | map | MCP server definitions and `search_threshold`. See below. |
 | `python` | map | Python preprocessor additional allowed-modules. See below. |
@@ -735,6 +736,39 @@ agent:
 The default `reyn/<hostname>` gives a fresh install a usable identity without operator action. Override in `reyn.yaml` when running multi-agent fleets or enterprise deployments that need a stable per-role identifier.
 
 See [Concepts: multi-agent — Agent ID propagation](../../concepts/multi-agent/multi-agent.md) for cross-agent tracing and A2A header forwarding.
+
+## `observability` block
+
+Opt-in OpenTelemetry (OTLP) export of the P6 audit-event stream to spans,
+metrics, and log records. **Off by default** — with no endpoint the exporter is
+never attached and behavior is byte-identical to having no OTEL. It is a lossy,
+fire-and-forget downstream: it never writes to `.reyn/events` or the WAL, so
+recovery and replay are independent of it.
+
+```yaml
+observability:
+  otel:
+    endpoint: "http://localhost:4318"     # OTLP HTTP base URL; "" disables
+    headers:
+      Authorization: "Bearer ${OTEL_TOKEN}"
+    service_name: "reyn"
+    capture_content: false                # SR3: raw prompt/response OFF by default
+```
+
+### `observability.otel` fields
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `otel.endpoint` | string | `""` | OTLP HTTP base URL (e.g. `http://localhost:4318`). Empty = not attached; the standard `OTEL_EXPORTER_OTLP_ENDPOINT` env var is honored as a fallback, so OTEL can be enabled purely from the environment. |
+| `otel.headers` | map | `{}` | Per-request HTTP headers (auth tokens, tenant ids). Values support `${VAR}` env interpolation. |
+| `otel.service_name` | string | `reyn` | The `service.name` resource attribute reported to the collector. |
+| `otel.capture_content` | bool | `false` | GenAI content-capture gate. `false` (default) emits refs and token/cost counts only — never a raw prompt/response body in a span or log. Set `true` to opt into content capture (only against a trusted collector). |
+
+Requires the OTEL SDK: `pip install reyn[observability]`. An endpoint configured
+without the SDK installed logs once and stays not-attached (fail-open) — the
+session is unaffected. Full event→span/metric/log mapping, the pinned GenAI
+convention version, and the fail-open / recovery-independence guarantees are in
+[Reference: observability (OTEL export)](../runtime/observability.md).
 
 ## `delegation` block
 

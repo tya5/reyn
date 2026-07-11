@@ -35,6 +35,7 @@ models:
 | `chat` | マップ | チャットセッションの Head/Body/Tail 圧縮設定。以下参照。 |
 | `voice` | マップ | チャット TUI の音声入力（Whisper）設定。以下参照。 |
 | `events` | マップ | チャットセッションイベントファイルの監査ログローテーションポリシー。以下参照。 |
+| `observability` | マップ | P6 監査イベントの OpenTelemetry (OTLP) エクスポート（オプトイン）。デフォルトは無効。以下参照。 |
 | `mcp` | マップ | MCP サーバー定義と `search_threshold`。以下参照。 |
 | `python` | マップ | Python preprocessor の追加許可モジュール。以下参照。 |
 | `agent` | マップ | P6 イベント監査証跡と送信 HTTP ヘッダー用のエージェント識別子。以下参照。 |
@@ -404,6 +405,41 @@ agent:
 デフォルト `reyn/<hostname>` により、フレッシュインストールでも operator の設定なしに使用可能な識別子が付与されます。マルチエージェントフリートや安定したロール単位の識別子が必要なエンタープライズデプロイでは `reyn.yaml` でオーバーライドしてください。
 
 [コンセプト: マルチエージェント — Agent ID 伝播](../../concepts/multi-agent/multi-agent.md) でクロスエージェントトレースと A2A ヘッダー転送の詳細を参照してください。
+
+## `observability` ブロック
+
+P6 監査イベントストリームを OpenTelemetry (OTLP) の span / metric / log record
+としてエクスポートする、オプトインのサーフェス。**デフォルトは無効** —
+エンドポイント未設定ならエクスポーターは attach されず、OTEL 無しのビルドと
+バイト単位で同一の挙動になります。lossy かつ fire-and-forget な downstream で
+あり、`.reyn/events` や WAL には一切書き込まないため、recovery と replay は OTEL
+から独立しています。
+
+```yaml
+observability:
+  otel:
+    endpoint: "http://localhost:4318"     # OTLP HTTP ベース URL; "" で無効
+    headers:
+      Authorization: "Bearer ${OTEL_TOKEN}"
+    service_name: "reyn"
+    capture_content: false                # SR3: 生の prompt/response はデフォルト OFF
+```
+
+### `observability.otel` フィールド
+
+| フィールド | 型 | デフォルト | 説明 |
+|-------|------|---------|-------------|
+| `otel.endpoint` | 文字列 | `""` | OTLP HTTP ベース URL（例: `http://localhost:4318`）。空 = 未 attach。標準の `OTEL_EXPORTER_OTLP_ENDPOINT` 環境変数がフォールバックとして尊重されるため、環境変数のみで有効化できます。 |
+| `otel.headers` | マップ | `{}` | リクエストごとの HTTP ヘッダー（認証トークン等）。値は `${VAR}` 環境変数展開をサポート。 |
+| `otel.service_name` | 文字列 | `reyn` | コレクターへ報告する `service.name` リソース属性。 |
+| `otel.capture_content` | bool | `false` | GenAI content-capture ゲート。`false`（デフォルト）は ref と token/cost カウントのみ — 生の prompt/response body は span/log に出しません。`true` で content capture にオプトイン（信頼できるコレクター限定）。 |
+
+OTEL SDK が必要です: `pip install reyn[observability]`。SDK 未インストールで
+エンドポイントを設定した場合は一度だけ警告ログを出し、未 attach（fail-open）の
+まま — セッションには影響しません。イベント → span/metric/log の完全なマッピング、
+pin された GenAI convention バージョン、fail-open / recovery-independence 保証は
+[リファレンス: observability (OTEL エクスポート)](../runtime/observability.md)
+を参照してください。
 
 ## `auth` ブロック
 

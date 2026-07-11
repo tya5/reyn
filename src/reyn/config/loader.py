@@ -38,6 +38,9 @@ from reyn.config.media import (  # #1682 #3 cross-section
     _build_voice_config,
     _build_web_config,
 )
+from reyn.config.observability import (
+    _build_observability_config,
+)
 from reyn.config.root import ReynConfig, _build_model_class_by_purpose  # #1682 #3 cross-section
 from reyn.runtime.budget.budget import CostConfig, CostLimitConfig
 
@@ -542,6 +545,7 @@ def load_config(cwd: Path | None = None) -> ReynConfig:
         auth=_build_auth_config(merged.get("auth")),
         chat=_build_chat_config(merged.get("chat")),
         events=_build_events_config(merged.get("events")),
+        observability=_build_observability_config(merged.get("observability")),
         cost=cost,
         tool_use=_build_tool_use_config(merged.get("tool_use")),
         voice=_build_voice_config(merged.get("voice")),

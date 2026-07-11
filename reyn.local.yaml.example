@@ -365,6 +365,28 @@
 
 
 # -----------------------------------------------------------------------------
+# observability: downstream OpenTelemetry (OTLP) export. OPT-IN and OFF by
+# default — with no ``observability.otel.endpoint`` (and no
+# ``OTEL_EXPORTER_OTLP_ENDPOINT`` env var) the exporter is never attached and
+# behavior is byte-identical to having no OTEL. This is a LOSSY, fire-and-forget
+# downstream: it maps P6 audit-events to OTLP spans/metrics/logs off-loop and
+# fail-open, and NEVER touches the durable ``.reyn/events`` + WAL recovery
+# Source-of-Truth. Requires the OTEL SDK: ``pip install reyn[observability]``.
+#
+# ``capture_content``: SR3 privacy gate. Default ``false`` = refs + token/cost
+# counts only, never a raw prompt/response body in a span or log. Set ``true``
+# to opt into GenAI content capture (only against a trusted collector).
+# -----------------------------------------------------------------------------
+# observability:
+#   otel:
+#     endpoint: "http://localhost:4318"   # OTLP HTTP base URL; "" = not attached
+#     headers:                            # optional per-request headers
+#       Authorization: "Bearer ${OTEL_TOKEN}"
+#     service_name: "reyn"                # service.name resource attribute
+#     capture_content: false              # SR3: raw prompt/response OFF by default
+
+
+# -----------------------------------------------------------------------------
 # cost: budget / rate-limit policy. Each ``CostLimitConfig`` has a
 # ``hard_limit`` (null = unlimited), ``warn_ratio`` (= warn when usage hits
 # this fraction), and ``extension_calls`` (= per-grant extension amount;
