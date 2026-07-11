@@ -15,6 +15,14 @@ layer modules. No OS module imports this.
 """
 from __future__ import annotations
 
+from reyn.prompt.universal_slots import (
+    build_action_categories_slot,
+    build_behaviour_slot,
+    build_capabilities_routing_guide,
+    build_environment_how_clause,
+    build_skills_slot,
+)
+
 
 def build_universal_tool_use_slots(
     *,
@@ -60,304 +68,44 @@ def build_universal_tool_use_slots(
     slots: dict[str, str] = {}
 
     # ── R1: ## Capabilities (routing guide) ──────────────────────────────────
-    # #1977: the wrapper vocab (`list_actions` / `search_actions` /
-    # `describe_action` / `invoke_action`) is universal-scheme-only. Gate it on
-    # ``universal_wrappers_enabled`` so a wrappers-off scheme (enumerate-all,
-    # the default) gets flat-call phrasing instead — it advertises the actions
-    # directly (no wrappers), and instructing wrapper vocab it cannot call
-    # produced ``plan_invalid`` (the model wrote `invoke_action` into plan steps
-    # the enumerate catalog rejects). The ON branch is byte-identical (the prior
-    # behaviour for universal-category).
-    if universal_wrappers_enabled:
-        _wrapper_names_slot = ["`list_actions`"]
-        if search_actions_enabled:
-            _wrapper_names_slot.append("`search_actions`")
-        _wrapper_names_slot.extend(["`describe_action`", "`invoke_action`"])
-        _wrapper_chain_slot = " → ".join(_wrapper_names_slot)
-
-        if discovery_mandate:
-            _otherwise_slot = (
-                "Otherwise — i.e. for any action that is NOT obvious or a named "
-                "action above — your FIRST tool call MUST be `list_actions` before "
-                "reading, writing, or editing anything (the visible tools are "
-                "universal wrappers, not the full catalog; do NOT skip it, refuse, "
-                f"or guess). Then {_wrapper_chain_slot}. To edit a file you MUST use "
-                "`file__edit`, found via `list_actions`."
-            )
-        else:
-            _otherwise_slot = f"Otherwise {_wrapper_chain_slot}."
-        _reyn_self_call = (
-            " `invoke_action(action_name=\"reyn_source__read\","
-            " args={\"path\": \"README.md\"})`"
-        )
-    else:
-        # wrappers-off (enumerate-all): the full action set is advertised flat;
-        # the model calls actions DIRECTLY by qualified name — no wrapper vocab.
-        if discovery_mandate:
-            _otherwise_slot = (
-                "Otherwise — i.e. for any action that is NOT obvious or a named "
-                "action above — call the matching action DIRECTLY by its qualified "
-                "`<category>__<entry>` name from your available tools (do NOT "
-                "refuse or guess). To edit a file you MUST use `file__edit`."
-            )
-        else:
-            _otherwise_slot = (
-                "Otherwise call the matching action directly by its qualified "
-                "`<category>__<entry>` name from your available tools."
-            )
-        _reyn_self_call = " `reyn_source__read(path=\"README.md\")`"
-
-    _r1: list[str] = []
-    _r1.append("## Capabilities (routing guide)")
-    _r1.append("")
-    _r1.extend([
-        "Decide what the user wants. Multi-step routing is fine — explore"
-        " briefly when the right path is uncertain, but don't loop.",
-        "",
-        "**Conversation** (\"hi\", \"thanks\", \"who are you?\") → reply"
-        " directly, no tools.",
-        "",
-        "**A question with a substantive answer** — figure out where the"
-        " answer lives:",
-        "- About Reyn itself (how Reyn works, Reyn's CLI / runtime /"
-        " protocols / project conventions):"
-        + _reyn_self_call
-        + " → synthesize from README."
-        " (README has the overview + curated map of deep-dive paths;"
-        " chain to a specific doc if README points there.)",
-        "- About external / current information: `web__search` or"
-        " `web__fetch`.",
-        "- Already in your training: answer directly.",
-        "",
-        "**A task to perform** — pick by target shape:",
-        "- Single-target action (= one file, one URL, one"
-        " item): if the action is obvious (`file__read` for \"read this"
-        " file\", `reyn_source__read` for \"open Reyn doc X\", `web__fetch`"
-        " for a specific URL), invoke directly. " + _otherwise_slot,
-        "- Multi-target / iteration (= \"do X for each Y\", \"process N"
-        " files\", \"run X on every Y\") or multi-step work worth"
-        " tracking: decompose into sub-tasks — `task__create` one per"
-        " target/step (use `deps` to order them, plus a final aggregate"
-        " task depending on the rest), then track via `task__list` /"
-        " `task__update_status`, or delegate a sub-task to another agent"
-        " via `task__create`'s `assignee`. Do NOT invoke a per-target"
-        " action directly without decomposition — it loses the iteration"
-        " shape and gets stuck on the first item.",
-        "",
-    ])
-    slots["slot_pre_environment"] = "\n".join(_r1)
+    # Content moved to reyn.prompt.universal_slots.build_capabilities_routing_guide
+    # (byte-identical relocation, SP Phase 1 §B) — the gating booleans are the
+    # SAME ones this function receives; only the assembly moved.
+    slots["slot_pre_environment"] = build_capabilities_routing_guide(
+        universal_wrappers_enabled=universal_wrappers_enabled,
+        search_actions_enabled=search_actions_enabled,
+        discovery_mandate=discovery_mandate,
+    )
 
     # ── R2: ## Action categories + hot-list + discovery-mandate ──────────────
-    _r2: list[str] = []
-    if universal_wrappers_enabled:
-        _r2.append("## Action categories")
-        _r2.append("")
-        _r2.append(
-            "Actions are addressed by qualified name (`<category>__<entry>`)."
-            " Names in backticks of the form `<category>__<entry>` are invocable action names."
-            " Discover via `list_actions(category=[...])`; describe via"
-            " `describe_action(action_name=...)`; execute via"
-            " `invoke_action(action_name=..., args={...})`."
-        )
-        _r2.append("")
-        _r2.append(
-            "- **multi_agent** — delegate / list / describe peer agents in this network."
-        )
-        _r2.append(
-            "- **mcp** — MCP server management + tool dispatch."
-        )
-        _r2.append(
-            "- **file** — workspace file ops (read/write/delete/list)."
-        )
-        _r2.append(
-            "- **web** — web search and content fetch."
-        )
-        _r2.append(
-            "- **memory_entry** — persistent memory records; invoke to read body."
-        )
-        _r2.append(
-            "- **memory_operation** — memory CRUD (remember_shared / remember_agent / forget)."
-        )
-        _r2.append(
-            "- **reyn_source** — Reyn source/docs (read-only)."
-        )
-        _r2.append(
-            "- **rag_corpus** — indexed corpora; invoke with `query` for single-source semantic search."
-        )
-        _r2.append(
-            "- **rag_operation** — RAG management (multi-source semantic_search, drop_source)."
-        )
-        _r2.append(
-            "- **exec** — sandboxed argv execution (only when sandbox backend is enabled)."
-        )
-        _r2.append(
-            "- **task** — dynamically create + manage sub-tasks: decompose a "
-            "complex request into trackable units (`task__create` — `deps` order "
-            "them, `assignee` delegates to another session), then "
-            "`task__update_status` / `task__list` / `task__abort`. Use when a "
-            "request needs multi-step tracking or delegation, not a single reply."
-        )
-        _r2.append(
-            "- **skill_management** — manage skill definitions: "
-            "`skill_management__install_local` to register a local skill directory "
-            "(one containing a SKILL.md file) into .reyn/config/skills.yaml; "
-            "`skill_management__install_source` to fetch and install a skill from "
-            "a git/GitHub URL (shallow-clones to .reyn/skills/<name>/)."
-        )
-        _r2.append(
-            "- **pipeline** — launch a registered pipeline: "
-            "`pipeline__run` runs a REGISTERED pipeline by name to completion "
-            "and returns its final output (synchronous — blocks until done)."
-        )
-        _r2.append(
-            "- **pipeline_management** — manage pipeline definitions: "
-            "`pipeline_management__install_local` to register a local pipeline "
-            "DSL file into .reyn/config/pipelines.yaml; "
-            "`pipeline_management__install_source` to fetch and install a "
-            "pipeline from a git/GitHub URL (shallow-clones to "
-            ".reyn/pipelines/<name>/)."
-        )
-        _r2.append("")
-        if has_hot_list_aliases:
-            _r2.append(
-                "The function list visible to you is a HOT-LIST (= a subset of "
-                "the full catalog). Whenever the user requests a capability and "
-                "no listed tool obviously matches, ALWAYS call `list_actions` "
-                "(narrow with `category=[...]` when you know the category) to "
-                "discover the rest of the catalog BEFORE refusing. Refusing "
-                "without that check is a failure mode — the action you assumed "
-                "missing often exists."
-            )
-            _r2.append("")
-    # #1977: the list_actions discovery-mandate is universal-wrapper-only — under
-    # enumerate-all the full action set is already advertised flat (nothing to
-    # discover). Gate on universal_wrappers_enabled so wrappers-off emits no
-    # wrapper vocab. ON branch is unchanged (True ⇒ same condition as before).
-    if discovery_mandate and universal_wrappers_enabled:
-        _r2.append(
-            "When no visible tool obviously matches the action you need, "
-            "calling list_actions is MANDATORY and comes FIRST — before any "
-            "read, write, or edit. Treat the visible list as a subset, never "
-            "as complete."
-        )
-        _r2.append("")
-    if _r2:
-        slots["slot_post_environment"] = "\n".join(_r2)
+    # Content moved to reyn.prompt.universal_slots.build_action_categories_slot.
+    _r2_slot = build_action_categories_slot(
+        universal_wrappers_enabled=universal_wrappers_enabled,
+        has_hot_list_aliases=has_hot_list_aliases,
+        discovery_mandate=discovery_mandate,
+    )
+    if _r2_slot is not None:
+        slots["slot_post_environment"] = _r2_slot
 
     # ── R3: never-invent / search guidance + ROUTING RULE ────────────────────
-    _r3: list[str] = []
-    if universal_wrappers_enabled:
-        if search_actions_enabled:
-            _r3.extend([
-                "  - Never invent action names; only use those returned by",
-                "    `list_actions` or `search_actions`.",
-                "  - For semantic / natural-language / keyword queries (e.g.",
-                "    'find X', 'related to', 'something for X', 'similar to',",
-                "    'contains http' — the query may be in any language,",
-                "    including Japanese and other non-English input),",
-                "    USE `search_actions(query=...)`. For category enumeration,",
-                "    USE `list_actions(category=[...])`.",
-            ])
-        else:
-            _r3.extend([
-                "  - Never invent action names; only use those returned by",
-                "    `list_actions`.",
-                "  - For category enumeration, USE `list_actions(category=[...])`.",
-            ])
-    else:
-        # #1977 wrappers-off (enumerate-all): actions are advertised directly;
-        # "available list" = the visible tools the validator checks. No wrapper vocab.
-        _r3.extend([
-            "  - Never invent action names; only call tools that appear in your",
-            "    available tools list (the names shown to you).",
-        ])
-    _r3.append("")
-    if universal_wrappers_enabled:
-        _r3.extend([
-            "  ROUTING RULE (ABSOLUTE): When the user message contains an action"
-            " name (= valid `invoke_action` action_name, e.g. `mcp__brave__search`),"
-            " call `invoke_action` immediately. NO clarifying questions. NO text replies.",
-            "",
-        ])
-    else:
-        # #1977 wrappers-off: call the action directly (no invoke_action wrapper).
-        _r3.extend([
-            "  ROUTING RULE (ABSOLUTE): When the user message contains an action"
-            " name (e.g. `mcp__brave__search`), call that action directly by its"
-            " name immediately. NO clarifying questions. NO text replies.",
-            "",
-        ])
-    if non_claude:
-        # #1791 A2 (adopted by design judgment, non-Claude gated): operational
-        # hygiene for non-Claude models. abs-path + non-interactive dropped (Reyn's
-        # tool layer handles them structurally — see #1791 rejects); keep-going
-        # dropped (subsumed by the OS Behaviour TASK_COMPLETION rule, A1).
-        _r3.extend([
-            "  - Verify before acting: read/inspect file contents and project"
-            " structure before changing them; never guess at file contents.",
-            "  - Check dependencies: do not assume a library is available — confirm"
-            " it is declared (manifest / imports) before relying on it.",
-            "  - Be concise: keep explanatory text brief — a few sentences, not"
-            " paragraphs; favor actions and results over narration.",
-            "",
-        ])
-    slots["slot_in_behaviour"] = "\n".join(_r3)
+    # Content moved to reyn.prompt.universal_slots.build_behaviour_slot.
+    slots["slot_in_behaviour"] = build_behaviour_slot(
+        universal_wrappers_enabled=universal_wrappers_enabled,
+        search_actions_enabled=search_actions_enabled,
+        non_claude=non_claude,
+    )
 
     # ── R4: cwd-idiom file-discovery HOW clause (slot_in_environment) ────────
-    slots["slot_in_environment"] = (
-        (
-            "discover the contents with `list_actions(category=['file'])` →"
-            " `invoke_action(file__list, ...)` → `invoke_action(file__read, ...)`"
-            " within the cwd's read scope."
-        )
-        if universal_wrappers_enabled else
-        # #1977 wrappers-off: flat file actions, no wrapper vocab.
-        (
-            "discover the contents with `file__list(...)` → `file__read(...)`"
-            " within the cwd's read scope."
-        )
+    # Content moved to reyn.prompt.universal_slots.build_environment_how_clause.
+    slots["slot_in_environment"] = build_environment_how_clause(
+        universal_wrappers_enabled=universal_wrappers_enabled,
     )
 
     # ── slot_post_skills: ## Skills block (#2548 PR-A) ──────────────────────
-    # DEDICATED slot (NOT slot_post_catalog): retrieval.py overwrites
-    # slot_post_catalog with its search-guidance block AFTER calling this
-    # builder, which would clobber the skills block. A separate slot lets the
-    # OS frame inject both independently. Only included when there is at least
-    # one enabled=True + auto_invoke=True skill; omitted entirely otherwise.
-    if available_skills:
-        _sp_skills = [
-            s for s in available_skills
-            if getattr(s, "enabled", True) and getattr(s, "auto_invoke", True)
-        ]
-        if _sp_skills:
-            _s_lines: list[str] = []
-            _s_lines.append("## Skills")
-            _s_lines.append("")
-            _s_lines.append(
-                "Skills are reusable, task-specific instruction sets."
-                " Each entry is `name — description [file]`."
-            )
-            _s_lines.append(
-                "The description tells you when a skill applies; the full instructions"
-                " live in its file. When the"
-            )
-            _s_lines.append(
-                "current task matches a skill, read its file to load the instructions"
-                " (and any files it references),"
-            )
-            _s_lines.append(
-                "then follow them for that task. This list is a menu: read a skill only"
-                " when it is relevant — do not"
-            )
-            _s_lines.append(
-                "preload or apply skills that do not fit the task. If none apply,"
-                " proceed normally."
-            )
-            _s_lines.append("")
-            for _sk in _sp_skills:
-                _s_lines.append(
-                    f"- {_sk.name} — {_sk.description} [{_sk.path}]"
-                )
-            slots["slot_post_skills"] = "\n".join(_s_lines)
+    # Content moved to reyn.prompt.universal_slots.build_skills_slot.
+    _skills_slot = build_skills_slot(available_skills)
+    if _skills_slot is not None:
+        slots["slot_post_skills"] = _skills_slot
 
     return slots
+
