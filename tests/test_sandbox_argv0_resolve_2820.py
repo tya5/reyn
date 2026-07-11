@@ -151,19 +151,25 @@ def test_malicious_version_token_is_rejected(tmp_path: Path, monkeypatch, payloa
     assert resolved.endswith("/.pyenv/shims/python3")  # fail open, no path built
 
 
-def test_oversize_version_file_is_read_bounded(tmp_path: Path, monkeypatch):
-    """Tier 2: a ``.python-version`` in the (attacker-writable) cwd is read with a
-    byte cap, so a huge planted file cannot DoS resolution. A valid token at the
-    head still resolves; megabytes of trailing junk are never read into memory."""
-    root, real = _pyenv_layout(tmp_path, "3.12.7")
-    # valid token first line, then ~8 MB of junk that must never be fully read
-    (tmp_path / ".python-version").write_text("3.12.7\n" + ("A" * (8 * 1024 * 1024)))
+def test_token_past_the_read_cap_is_invisible_fail_open(tmp_path: Path, monkeypatch):
+    """Tier 2: FALSIFYING byte-bound witness. The version token is pushed PAST the
+    4 KB read cap by 5000 leading spaces, so only whitespace lands in the bounded
+    head → no token → fail open to the shim. This flips between implementations:
+    strip the cap (read the whole file) and the full-line strip recovers ``3.12.7``
+    → resolves to the real binary → RED. A plain "valid token then junk" file would
+    NOT witness the bound (an unbounded read returns the same head token), so this
+    construction is what actually pins the memory bound."""
+    root, _real = _pyenv_layout(tmp_path, "3.12.7")
+    # token lives at byte 5000 (> the 4096 cap); the first 4096 bytes are spaces
+    (tmp_path / ".python-version").write_text((" " * 5000) + "3.12.7\n")
     monkeypatch.setenv("PYENV_ROOT", str(root))
     monkeypatch.delenv("PYENV_VERSION", raising=False)
     env_path = f"{root / 'shims'}:{os.environ.get('PATH', '')}"
 
     resolved = resolve_real_executable("python3", env_path=env_path, cwd=str(tmp_path))
-    assert resolved == str(real)  # head token resolved, no unbounded read
+    # bounded head saw only whitespace → token invisible → fail open to shim.
+    # (unbounded read_text would recover 3.12.7 and resolve to the real binary.)
+    assert resolved.endswith("/.pyenv/shims/python3")
 
 
 def test_device_symlink_version_file_is_skipped(tmp_path: Path, monkeypatch):
