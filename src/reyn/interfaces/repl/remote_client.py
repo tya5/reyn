@@ -18,15 +18,44 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import sys
+import time
 import uuid
 from typing import AsyncIterator
 
 logger = logging.getLogger(__name__)
 
+
+def _env_float(name: str, default: float) -> float:
+    """Read a positive float override from the environment, else ``default``."""
+    raw = os.environ.get(name, "").strip()
+    if not raw:
+        return default
+    try:
+        value = float(raw)
+    except ValueError:
+        return default
+    return value if value > 0 else default
+
+
 # Client→server heartbeat cadence (seconds). Comfortably under the server's
-# default liveness timeout so a live client is never swept as dead.
-_HEARTBEAT_INTERVAL = 10.0
+# liveness timeout (``DEFAULT_LIVENESS_TIMEOUT`` in
+# ``interfaces/transport/agui/surface.py``, 60s) so a live client is never
+# swept as dead — 25s keeps a 2.4x margin, in line with the idiomatic
+# heartbeat/timeout ratio used by Socket.IO (25s/60s), Phoenix (30s) and
+# SignalR (15s + 2x timeout). Overridable per-deployment via
+# ``REYN_AGUI_HEARTBEAT_INTERVAL_S``; MUST stay below the server's timeout.
+_HEARTBEAT_INTERVAL = _env_float("REYN_AGUI_HEARTBEAT_INTERVAL_S", 25.0)
+
+
+def _heartbeat_due(last_send: float, now: float, interval: float = _HEARTBEAT_INTERVAL) -> bool:
+    """Piggyback decision: True iff no client→server POST (real traffic or a
+    prior heartbeat) landed within the last ``interval`` seconds, so the
+    dedicated heartbeat ping is not redundant. A pure function of the last-send
+    timestamp so the policy is unit-testable without a live event loop / socket.
+    """
+    return (now - last_send) >= interval
 
 
 def connect_failure_message(status: int, agent_name: str, base_url: str) -> str:
@@ -88,11 +117,19 @@ async def run_remote_repl(
         params["token"] = token
 
     async with httpx.AsyncClient(timeout=httpx.Timeout(None, connect=10.0)) as client:
+        # Monotonic timestamp of the last client→server POST of ANY kind (a real
+        # turn/answer/cancel, or a prior heartbeat). The heartbeat loop piggybacks
+        # on real traffic: if one already crossed the wire within the interval
+        # window, the dedicated ping is redundant and is skipped — real activity
+        # already refreshed the server-side liveness timestamp (``agui_submit``
+        # refreshes it for every accepted POST, not just ``type: heartbeat``).
+        last_send = [0.0]
 
         async def send(payload: dict) -> bool:
             """POST one client→server message; True iff the server accepted it
             (2xx). A rejected HITL answer (403/409) returns False so the client
             falls back to an ordinary turn instead of silently dropping input."""
+            last_send[0] = time.monotonic()
             try:
                 resp = await client.post(submit_url, params=params, json=payload)
             except Exception:  # noqa: BLE001 — a transport error is a non-delivery
@@ -103,7 +140,8 @@ async def run_remote_repl(
         async def heartbeat() -> None:
             while True:
                 await asyncio.sleep(_HEARTBEAT_INTERVAL)
-                await send({"type": "heartbeat"})
+                if _heartbeat_due(last_send[0], time.monotonic()):
+                    await send({"type": "heartbeat"})
 
         try:
             async with client.stream("GET", events_url, params=params) as resp:
