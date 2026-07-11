@@ -36,7 +36,7 @@ Reyn で人気のローカル MCP サーバー 5 種を、コピー&ペースト
 
 - `node` + `npx`（ほとんどのサーバーは npm パッケージ）
 - `uv` + `uvx`（= Python サーバー; `brew install uv`）
-- `[mcp]` extra 付きでインストールされた Reyn: `pip install -e ".[mcp]"`
+- インストール済みの Reyn（MCP ランタイムはコアインストールに同梱され、extra は不要です）
 - チャット利用の場合: サーバーごとに 1 度だけ per-server permission を事前承認（= 各セクションに示す 1 行）。
 
 smoke ランナー `scripts/mcp_smoke.py` はチャットルーターをバイパスして直接 `reyn.mcp.client.MCPClient` に向かいます。接続性の健全性確認に便利です。エージェント駆動の利用（= 典型的なエンドユーザーの形）では、チャットルーターが汎用の `mcp__call_tool` / `invoke_action` ディスパッチ経由でサーバーを呼びます。

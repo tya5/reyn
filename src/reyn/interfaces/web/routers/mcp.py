@@ -48,9 +48,9 @@ router = APIRouter(tags=["mcp"])
 # this across two instances would mean POSTs land on a transport that
 # never saw the corresponding GET, and every client message would 404.
 #
-# Lazy construction: the SDK import lives inside the factory so
-# environments without `[mcp]` installed can still import this module
-# (e.g., during help-text generation).
+# Lazy construction: the SDK import lives inside the factory so this module
+# imports cleanly even if the mcp SDK is somehow unavailable (e.g., during
+# help-text generation). The SDK ships with the core `fastmcp` dependency.
 _sse_transport = None
 
 
