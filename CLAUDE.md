@@ -12,7 +12,7 @@ Every new feature is read through **eight engineering lenses** and must stand on
 ### The eight lenses — each line is the pass-line (a gate for new work)
 1. **System Design** — responsibility sits at the right layer (LLM decides / OS executes / feature owns its domain); no new cross-layer coupling.
 2. **Tool Contract** — every side effect rides a typed, validated envelope (Control IR / a typed op), never an untyped string the LLM free-forms.
-3. **Retrieval** — the right context is delivered deterministically at the right time (`recall` + the preprocessor step), not stuffed unconditionally into the prompt.
+3. **Retrieval** — the right context is delivered deterministically at the right time (`recall` + a pluggable `IndexBackend` a safe-mode Python step can call directly), not stuffed unconditionally into the prompt.
 4. **Reliability** — it recovers from failure (schema-validate + re-prompt, bounded loops with graceful force-close, timeout + opt-in provider-retry); any derived state survives WAL truncation.
 5. **Security** — it is permission-gated and sandbox-scoped; no capability reaches the world without passing the gatekeeper.
 6. **Evaluation** — its output can be scored against a rubric in-run (`judge_output`: LLM scorer + threshold + `on_fail` policy).
