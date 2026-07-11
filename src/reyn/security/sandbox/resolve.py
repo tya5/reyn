@@ -76,6 +76,13 @@ def _resolvable_manager_root(path: str) -> str | None:
     return None
 
 
+# A version file is a handful of bytes. A ``.python-version`` sits in the
+# agent/tool-writable cwd, so cap the read: an attacker who plants a multi-GB
+# regular file (or a symlink to one) must not turn resolution into a memory DoS.
+# The version token lives at the very start, so the head is all we ever need.
+_VERSION_FILE_READ_CAP = 4096
+
+
 def _first_token(text: str) -> str | None:
     """First whitespace/colon-free token of the first non-empty line of *text*,
     or None. (``PYENV_VERSION`` uses ``:`` to list multiple; files use lines.)"""
@@ -85,6 +92,21 @@ def _first_token(text: str) -> str | None:
             continue
         return line.split(":")[0].split()[0]
     return None
+
+
+def _read_version_file(path: Path) -> str | None:
+    """First token of *path*'s head, or None. Bounded read (a version file is
+    tiny) so an attacker-planted huge file cannot DoS resolution; ``is_file()``
+    already excludes devices/FIFOs, so a symlink to ``/dev/zero`` never reaches
+    here."""
+    if not path.is_file():
+        return None
+    try:
+        with path.open("rb") as fh:
+            head = fh.read(_VERSION_FILE_READ_CAP)
+    except OSError:
+        return None
+    return _first_token(head.decode("utf-8", errors="replace"))
 
 
 def _selected_version(root: str, cwd: str | None) -> str | None:
@@ -102,20 +124,10 @@ def _selected_version(root: str, cwd: str | None) -> str | None:
         return None
     for parent in (start, *start.parents):
         for fname in (".python-version", ".ruby-version"):
-            vf = parent / fname
-            if vf.is_file():
-                try:
-                    return _first_token(vf.read_text(encoding="utf-8", errors="replace"))
-                except OSError:
-                    return None
+            if (tok := _read_version_file(parent / fname)) is not None:
+                return tok
 
-    gv = Path(root) / "version"
-    if gv.is_file():
-        try:
-            return _first_token(gv.read_text(encoding="utf-8", errors="replace"))
-        except OSError:
-            return None
-    return None
+    return _read_version_file(Path(root) / "version")
 
 
 def resolve_real_executable(
