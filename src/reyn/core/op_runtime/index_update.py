@@ -49,7 +49,11 @@ from datetime import datetime, timezone
 
 from reyn.data.embedding import get_provider
 from reyn.data.index import SqliteIndexBackend
-from reyn.data.index.backend import ChunkRecord, cache_dir_for_source
+from reyn.data.index.backend import (
+    ChunkRecord,
+    cache_dir_for_source,
+    sources_manifest_path,
+)
 from reyn.data.index.source_manifest import SourceEntry, get_source_manifest
 from reyn.schemas.models import EmbedIROp, IndexUpdateIROp
 
@@ -58,7 +62,7 @@ from .context import OpContext, sandbox_policy_from_ctx
 
 
 def _resolve_embedding_config() -> dict:
-    """Mirrors embed/recall's config resolution (env override + reyn.yaml)."""
+    """Mirrors embed/semantic_search's config resolution (env override + reyn.yaml)."""
     try:
         from reyn.config import load_config
         return load_config().embedding or {}
@@ -100,7 +104,7 @@ async def handle(op: IndexUpdateIROp, ctx: OpContext) -> dict:
             ctx.permission_decl, str(db_path), ctx.actor,
             sandbox_policy=sandbox_policy,
         )
-        sources_yaml = workspace_root / ".reyn" / "config" / "index" / "sources.yaml"
+        sources_yaml = sources_manifest_path(workspace_root)
         await ctx.permission_resolver.require_file_write(
             ctx.permission_decl, str(sources_yaml), ctx.actor,
             sandbox_policy=sandbox_policy,

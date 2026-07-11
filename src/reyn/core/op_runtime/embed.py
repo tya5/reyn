@@ -42,15 +42,15 @@ from .context import OpContext
 def _resolve_provider():
     """Resolve the embedding provider (env override + reyn.yaml embedding config).
 
-    Mirrors `op_runtime.recall._resolve_provider` — both call sites resolve the
-    SAME shared `EmbeddingProvider` (`RoutingEmbeddingProvider` via
-    `get_provider`); recall's provider-direct query embed and this op's batch
-    embed are independent call sites into one shared provider, not duplicated
-    embedding logic. Kept as a small local helper (not a cross-module import
-    of recall's private function) so each op-runtime module stays
-    self-contained and independently testable via monkeypatching its own
-    module-level `get_provider` name (established op_runtime test convention,
-    see `tests/test_op_recall.py`).
+    Mirrors `op_runtime.semantic_search._resolve_provider` — both call sites
+    resolve the SAME shared `EmbeddingProvider` (`RoutingEmbeddingProvider` via
+    `get_provider`); semantic_search's provider-direct query embed and this
+    op's batch embed are independent call sites into one shared provider, not
+    duplicated embedding logic. Kept as a small local helper (not a
+    cross-module import of semantic_search's private function) so each
+    op-runtime module stays self-contained and independently testable via
+    monkeypatching its own module-level `get_provider` name (established
+    op_runtime test convention, see `tests/test_op_semantic_search.py`).
     """
     name = os.environ.get("REYN_EMBEDDING_PROVIDER", "litellm")
     if name == "litellm":

@@ -6,7 +6,7 @@ audience: [human, agent]
 
 # Operational Intelligence
 
-Reyn の P6 監査ログは、フェーズ遷移・ツール呼び出し・LLM 呼び出し・エラーといったすべての状態変化を append-only の JSONL ストリームとして記録します。これを ADR-0033 の RAG インフラと組み合わせると **operational intelligence** が生まれます。つまり Reyn エージェントは、自分自身の実行履歴を線形スキャンではなくセマンティック検索で参照できるようになります。ドキュメント取得に使うのと同じ `recall` op は、イベントログを他のコーパスと同じ [`index_update()`](rag.ja.md) プリミティブ（FP-0057 Phase 2b の safe-mode エントリーポイント。retire された `embed_and_index()` の後継)で source に index した後なら実行トレースにも機能します — イベント専用の indexing skill は存在しません。**これは DIY パターンであり、バンドル済みの turnkey events indexer ではありません** — `.reyn/events/*.jsonl` を読んで `index_update` を呼ぶ python step は自分で書きます。定期実行については [§スケジューリング](#スケジューリング) を参照。
+Reyn の P6 監査ログは、フェーズ遷移・ツール呼び出し・LLM 呼び出し・エラーといったすべての状態変化を append-only の JSONL ストリームとして記録します。これを ADR-0033 の RAG インフラと組み合わせると **operational intelligence** が生まれます。つまり Reyn エージェントは、自分自身の実行履歴を線形スキャンではなくセマンティック検索で参照できるようになります。ドキュメント取得に使うのと同じ `semantic_search` op（FP-0057 Phase 2a; `recall` から rename）は、イベントログを他のコーパスと同じ [`index_update()`](rag.ja.md) プリミティブ（FP-0057 Phase 2b の safe-mode エントリーポイント。retire された `embed_and_index()` の後継)で source に index した後なら実行トレースにも機能します — イベント専用の indexing skill は存在しません。**これは DIY パターンであり、バンドル済みの turnkey events indexer ではありません** — `.reyn/events/*.jsonl` を読んで `index_update` を呼ぶ python step は自分で書きます。定期実行については [§スケジューリング](#スケジューリング) を参照。
 
 ## アーキテクチャ
 
@@ -15,7 +15,7 @@ P6 events ──┐
             ├─► 自作の indexing step ──► index_update(source="events") ──► .reyn/cache/index/events/ (sqlite)
             │                                                                        │
             │                                                                        ▼
-            │                                                          recall(sources=["events"])
+            │                                                  semantic_search(sources=["events"])
             │                                                                        │
             │                                       ┌────────────────────────────────┼─────────────────┐
             │                                       ▼                                ▼                 ▼
@@ -24,7 +24,7 @@ P6 events ──┐
             └─► index が存在しない場合は raw ファイル読み取り(`.reyn/events/*.jsonl`)にフォールバック
 ```
 
-イベントログの indexing はバンドルされた skill ではありません — `.reyn/events/*.jsonl` を読み、イベントを run 単位のチャンクにグルーピングし、他のコーパスと同じように `index_update(chunks, source="events", ...)` を呼ぶ `python` step を自分で書きます（[コンセプト: RAG — クイックスタート](rag.ja.md#クイックスタート) 参照）。index 後は任意のフェーズから `recall(sources=["events"], query="...", top_k=N)` で実行履歴をクエリできます。
+イベントログの indexing はバンドルされた skill ではありません — `.reyn/events/*.jsonl` を読み、イベントを run 単位のチャンクにグルーピングし、他のコーパスと同じように `index_update(chunks, source="events", ...)` を呼ぶ `python` step を自分で書きます（[コンセプト: RAG — クイックスタート](rag.ja.md#クイックスタート) 参照）。index 後は任意のフェーズから `semantic_search(sources=["events"], query="...", top_k=N)` で実行履歴をクエリできます。
 
 ## run チャンク形式
 
@@ -49,12 +49,12 @@ cost_usd: 0.18   ← run 全体の llm_response_received.cost_usd を集計
 
 ## 実行履歴のクエリ
 
-source を index した後は、任意のフェーズから `recall` でクエリできます:
+source を index した後は、任意のフェーズから `semantic_search` でクエリできます:
 
 ```yaml
 - type: run_op
   op:
-    kind: recall
+    kind: semantic_search
     query: "my_agent の失敗パターン"
     sources: ["events"]
     top_k: 10
@@ -91,5 +91,5 @@ cron:
 ## 関連情報
 
 - [FP-0009: Operational Intelligence](../../deep-dives/proposals/0009-operational-intelligence.ja.md) — 元の設計根拠（skill-word 除去より前の記述。ここで説明したプリミティブは現行、skill ベースの例は現行ではない)
-- [コンセプト: RAG](rag.ja.md) — 基盤となる index/recall プリミティブ
+- [コンセプト: RAG](rag.ja.md) — 基盤となる index/semantic_search プリミティブ
 - [コンセプト: Events](../runtime/events.ja.md) — P6 イベントログの構造と現行のイベント分類

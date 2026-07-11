@@ -14,7 +14,7 @@ closure so the registry advertises memory write as phase-eligible.
 
 Status (post-FP-0039 audit, 2026-05-18): coarse-kind phase dispatch
 (= file / mcp / ask_user / web_fetch /
-web_search / mcp_install / recall / sandboxed_exec) is wired through
+web_search / mcp_install / semantic_search / sandboxed_exec) is wired through
 ``invoke_tool(get_default_registry(), op.kind, ...)``.  The fine-grained memory names
 (``list_memory`` / ``read_memory_body`` / ``remember_*`` / ``forget_memory``)
 are NOT in ``OP_KIND_MODEL_MAP``, so phase Control IR cannot emit them

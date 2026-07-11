@@ -55,7 +55,7 @@ async def handle(
         return await _fallback_enumerate(op, ctx)
 
     # B48-NF-W2-S7 fix (2026-05-22): ctx.workspace may be None when the
-    # caller (= recall tool or similar router-side path) propagates a
+    # caller (= semantic_search tool or similar router-side path) propagates a
     # workspace-less ToolContext. Raise a clear ValueError instead of the
     # opaque ``AttributeError: 'NoneType' object has no attribute 'base_dir'``
     # so the failure is actionable to the LLM and to operators reading the
@@ -66,7 +66,7 @@ async def handle(
             "index_query: op_runtime context has no workspace. Index ops "
             "require a workspace to locate the SQLite backend; pass an "
             "OpContext with a populated `workspace` field. This typically "
-            "indicates the calling tool (e.g. recall, drop_source) was "
+            "indicates the calling tool (e.g. semantic_search, drop_source) was "
             "invoked from a router-side path without a workspace."
         )
 

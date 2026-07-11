@@ -57,8 +57,8 @@ hallucination 0/35)。
 | `memory_entry` | 永続 memory record | entry の body を read |
 | `memory_operation` | memory CRUD op | `remember_shared` / `remember_agent` / `forget` |
 | `reyn_source` | Reyn source / docs (read-only) | read または list |
-| `rag_corpus` | indexed corpora (resource) | この single source に対して recall |
-| `rag_operation` | RAG 管理 op | multi-source recall / drop source |
+| `rag_corpus` | indexed corpora (resource) | この single source に対して semantic_search |
+| `rag_operation` | RAG 管理 op | multi-source semantic_search / drop source |
 | `exec` | sandboxed argv 実行 | sandbox backend 下で argv 実行 |
 
 `exec` は `is_exec_available()` で gate される — 本物の sandbox backend
@@ -178,7 +178,7 @@ invoke すると、 その種別の *canonical default operation* が走る:
 | `skill` | ワークフローを実行 |
 | `agent.peer` | message を delegate |
 | `memory_entry` | body を read |
-| `rag_corpus` | single-source recall |
+| `rag_corpus` | single-source semantic_search |
 
 旧 `mcp.server` / `mcp.tool` の resource entry は削除。
 per-MCP-server / per-MCP-tool dispatch は `mcp` category 内の verb
@@ -186,7 +186,7 @@ actions 経由 (= `mcp__list_tools` →
 `mcp__call_tool({tool: "<server>__<tool>", tool_args})`) で flow する。
 
 これにより LLM は `invoke_action("rag_corpus__meetings", {"query": "Q3
-roadmap"})` と書くだけで wrapper が `recall(sources=["meetings"],
+roadmap"})` と書くだけで wrapper が `semantic_search(sources=["meetings"],
 query="Q3 roadmap")` に展開してくれる — 元 call の shape を LLM が記憶
 する必要がない。 canonical default は `describe_action` の response に
 明示される。

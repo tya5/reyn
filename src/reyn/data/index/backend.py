@@ -20,6 +20,23 @@ def cache_dir_for_source(workspace_root: Path, source: str) -> Path:
     return workspace_root / ".reyn" / "cache" / "index" / source
 
 
+def sources_manifest_path(workspace_root: Path) -> Path:
+    """Shared path convention for the source manifest (``sources.yaml``).
+
+    F3 (RAG FP-0057 post-merge sweep): previously this path was hardcoded as
+    ``workspace_root / ".reyn" / "config" / "index" / "sources.yaml"`` in two
+    independent places — ``SourceManifest.__init__``
+    (``data/index/source_manifest.py``) and the ``index_update`` op's own
+    permission-check path (``core/op_runtime/index_update.py``) — with a
+    third copy about to be added for the safe-mode wrapper's pre-flight
+    sandbox gate (``api/safe/index_update.py``). This is the single canonical
+    definition, mirroring ``cache_dir_for_source`` above: all three call
+    sites route through this helper so the gated path is byte-identical to
+    the actual write path by construction.
+    """
+    return workspace_root / ".reyn" / "config" / "index" / "sources.yaml"
+
+
 class WriteResult(TypedDict):
     written: int
     skipped: int  # dedup'd via content_hash

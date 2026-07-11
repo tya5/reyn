@@ -47,7 +47,7 @@ iu.index_update(
 `index_update` is a **reconcile**, not an append/replace toggle — see [§Chunking is your own code](#chunking-is-your-own-code) and [§Limitations](#limitations) for the add/update/remove/skip contract (a re-run with the same chunks re-embeds nothing; a re-run with a changed `content_hash` under an already-indexed `source_path` re-embeds just that chunk and drops the stale one).
 
 ```bash
-# Start chatting — the LLM will recall chunks when needed
+# Start chatting — the LLM will fetch chunks via semantic_search when needed
 reyn chat
 > Summarise the authentication design from the docs
 ```

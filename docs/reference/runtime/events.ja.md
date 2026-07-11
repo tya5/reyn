@@ -48,7 +48,7 @@ Reyn はすべての状態変化に対して構造化イベントを発行しま
 | `mcp_install_cancelled`、`mcp_prompt_get_cancelled`、`mcp_resource_read_cancelled`、`mcp_resource_subscribe_cancelled`、`mcp_resource_unsubscribe_cancelled` | #2813 — Ctrl-C の `cancel_event` が該当 op（install probe / get-prompt / read-resource / subscribe / unsubscribe）を完了前に中断。op は `status:"cancelled"` を返し、何もコミットされない |
 | `web_search_started`、`web_search_completed`、`web_search_failed` | web_search op — `started`: `query`、`backend`; `completed`: `result_count` を追加; `failed`: `error` を追加 |
 | `web_fetch_started`、`web_fetch_completed`、`web_fetch_failed` | web_fetch op — `started`: `url`; `completed`: `url`、`status_code`、`content_length`、`extractor`; `failed`: `url`、`status`（`"timeout"` または `"error"`）、`error` |
-| `recall_embed_failed` | `recall` op — embed サブ op が失敗したとき: `query`、`error` |
+| `semantic_search_embed_failed` | `semantic_search` op（FP-0057 Phase 2a; `recall` から rename）— モデルグループの embed 呼び出しが失敗したとき: `query`、`model`、`error` |
 | `index_dropped` | `index_drop` op — `source`、`chunks_dropped: int` |
 | `control_ir_skipped`、`control_ir_failed` | ディスパッチ失敗（`control_ir_skipped` の理由には `handler_not_implemented` を含む） |
 | `permission_denied` | op がリゾルバーに拒否されたとき |

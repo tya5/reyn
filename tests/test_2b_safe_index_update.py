@@ -200,11 +200,43 @@ async def test_sandbox_write_paths_self_gate_denies_outside_path(tmp_path: Path)
 
 @pytest.mark.asyncio
 async def test_sandbox_write_paths_self_gate_allows_within_path(tmp_path: Path) -> None:
-    """Tier 2: the sandbox self-gate allows a write inside the declared cap."""
+    """Tier 2: the sandbox self-gate allows a write when the cap covers BOTH
+    writes the op performs — the source's own index.db AND the source
+    manifest sources.yaml (see test_sandbox_write_paths_manifest_gate_denies_
+    outside_config_dir below for the manifest-path-excluded case)."""
     iu._set_context(
-        sandbox_write_paths=[str(tmp_path / ".reyn" / "cache" / "index")],
+        sandbox_write_paths=[str(tmp_path / ".reyn")],
     )
     result = await iu.index_update_async(
         [_chunk("within cap", "d.md")], source="d", model="standard",
     )
     assert result["added"] == 1
+
+
+@pytest.mark.asyncio
+async def test_sandbox_write_paths_manifest_gate_denies_outside_config_dir(
+    tmp_path: Path,
+) -> None:
+    """Tier 2: F3 falsify — `index_update` also upserts the source manifest
+    (`.reyn/config/index/sources.yaml`) on every call, not just the source's
+    own `.reyn/cache/index/<source>/index.db`. A write_paths cap that covers
+    the index cache dir but EXCLUDES `.reyn/config/` must still deny the call
+    (manifest write is gated), matching the LLM-tool path's own permission
+    gate (`core/op_runtime/index_update.py`), which declares file.write
+    authority over both paths. Before the F3 fix, only the DB path was
+    self-gated here, so this cap would have silently let the manifest write
+    through — a source-description poisoning vector under a python-step
+    write_paths cap."""
+    iu._set_context(
+        sandbox_write_paths=[str(tmp_path / ".reyn" / "cache" / "index")],
+    )
+    with pytest.raises(PermissionError):
+        await iu.index_update_async(
+            [_chunk("manifest write should be denied", "d.md")],
+            source="d", model="standard",
+        )
+    # The DB write happens (embed + backend.write) BEFORE the manifest
+    # upsert in the op's own handler, but the pre-flight self-gate here runs
+    # BEFORE either write is dispatched — so no chunk was embedded either.
+    assert CountingFakeProvider.embedded_texts == 0
+    assert not (tmp_path / ".reyn" / "config" / "index" / "sources.yaml").exists()
