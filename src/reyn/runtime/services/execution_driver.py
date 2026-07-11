@@ -12,13 +12,24 @@ Methods mirrored from ``RouterLoopDriver`` (the sole current implementor):
 - ``is_cancel_requested()`` — poll the cooperative turn-cancel flag.
 - ``request_cancel()`` — set the cancel flag + asyncio.Event.
 - ``_check_cap(user_text)`` — enforce the per-turn router invocation cap.
+- ``cancel_event`` — the per-turn ``asyncio.Event`` (#2813), or ``None`` for a
+  driver with no interactive-turn cancel concept (``PipelineExecutorDriver``
+  uses a bare bool flag, no event). ``Session._mcp_list_tools`` and its 3
+  siblings read this to race an in-flight MCP call against Ctrl-C — it must
+  be declared here so BOTH implementors stay safe to access unconditionally
+  (a bare ``self._loop_driver.cancel_event`` would ``AttributeError`` on
+  ``PipelineExecutorDriver`` otherwise; this was caught in #2813 co-vet
+  before it shipped).
 
 The Protocol is ``runtime_checkable`` so ``isinstance()`` can be used in
 assertion / diagnostic paths without importing the concrete class.
 """
 from __future__ import annotations
 
-from typing import Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
+
+if TYPE_CHECKING:
+    import asyncio
 
 
 @runtime_checkable
@@ -44,4 +55,9 @@ class ExecutionDriver(Protocol):
 
     async def _check_cap(self, user_text: str) -> None:
         """Enforce the per-turn router invocation cap."""
+        ...
+
+    @property
+    def cancel_event(self) -> "asyncio.Event | None":
+        """Per-turn asyncio.Event set by request_cancel(), or None (#2813)."""
         ...

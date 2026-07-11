@@ -459,6 +459,7 @@ async def _handle_mcp_install_local(
     # overwrite or no per-session reloader keeps the existing deferred behavior. The
     # per-session reloader (ctx.hot_reloader, #2761 PR-2) is reached via the router's
     # op-context factory (the single tool→op ctx source); absent (test / CLI) → deferred.
+    from reyn.core.cancellable import Cancelled
     from reyn.core.op_runtime.mcp_install import probe_mcp_server
     from reyn.runtime.hot_reload import dispatch_install_reload, is_pure_addition
 
@@ -470,9 +471,34 @@ async def _handle_mcp_install_local(
     _reloader = getattr(_op_ctx, "hot_reloader", None) if _op_ctx is not None else None
     _is_addition = is_pure_addition(name, servers)
     if _is_addition and _reloader is not None:
-        _probe_err = await probe_mcp_server(
-            name, entry, agent_id=getattr(_op_ctx, "agent_id", None),
-        )
+        try:
+            _probe_err = await probe_mcp_server(
+                name, entry, agent_id=getattr(_op_ctx, "agent_id", None),
+                # #2813: a Ctrl-C during this probe now interrupts it immediately instead of
+                # waiting out its own call_timeout_seconds (this is the reported-incident path —
+                # mcp__install_local writes .reyn/config/mcp.yaml directly, bypassing the
+                # mcp_install op entirely, so it needs its own cancel_event wiring).
+                cancel_event=getattr(_op_ctx, "cancel_event", None),
+            )
+        except Cancelled:
+            # #2813: uniform status:"cancelled" (matches the mcp/resource op cancel surface
+            # + the mcp_install op path); nothing written (commit is strictly after).
+            #
+            # status:"cancelled" MUST live INSIDE data too (not just the outer envelope) —
+            # unwrap_dispatch_envelope peels the {status, data} wrapper down to `data`
+            # before the canonical mapper ever sees this result (mirrors how the SUCCESS
+            # case's data carries no envelope-only fields, and how mcp_install's own op
+            # result already nests status alongside kind). Omitting it here was a co-vet
+            # catch: the mapper's cancelled check (canonical.py's make_status_text_mapper)
+            # would silently miss it and render "Installed local MCP server '...'." for a
+            # cancelled install that wrote NOTHING.
+            events = getattr(_op_ctx, "events", None)
+            if events is not None:
+                events.emit("mcp_install_cancelled", server_name=name)
+            return {
+                "status": "cancelled",
+                "data": {"kind": "mcp_install_local", "status": "cancelled", "name": name},
+            }
         if _probe_err is not None:
             return {
                 "status": "error",

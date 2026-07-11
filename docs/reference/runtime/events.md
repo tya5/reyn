@@ -43,8 +43,9 @@ Each Control IR op kind emits its own event:
 |------|------|
 | `read_file`, `write_file`, `edit_file`, `delete_file`, `glob_files`, `grep`, `regenerate_index` | `file` op variants — all via `tool_executed` with `op=<sub_op>` |
 | `sandboxed_exec_started`, `sandboxed_exec_completed` | `sandboxed_exec` op — `started`: `argv`, `backend`; `completed`: `argv`, `backend`, `returncode` |
-| `mcp_called`, `mcp_completed`, `mcp_failed` | MCP tool ops |
+| `mcp_called`, `mcp_completed`, `mcp_failed`, `mcp_cancelled` | MCP tool ops — `mcp_cancelled` (#2813) fires instead of `mcp_completed`/`mcp_failed` when a Ctrl-C `cancel_event` interrupts an in-flight call before it completes |
 | `mcp_server_installed` | `mcp_install` op — `name`, key names only (no values) |
+| `mcp_install_cancelled`, `mcp_prompt_get_cancelled`, `mcp_resource_read_cancelled`, `mcp_resource_subscribe_cancelled`, `mcp_resource_unsubscribe_cancelled` | #2813 — a Ctrl-C `cancel_event` interrupted the corresponding op (install probe / get-prompt / read-resource / subscribe / unsubscribe) before it completed; the op returns `status:"cancelled"` and nothing is committed |
 | `web_search_started`, `web_search_completed`, `web_search_failed` | web_search ops — `started`: `query`, `backend`; `completed`: adds `result_count`; `failed`: adds `error` |
 | `web_fetch_started`, `web_fetch_completed`, `web_fetch_failed` | web_fetch ops — `started`: `url`; `completed`: `url`, `status_code`, `content_length`, `extractor`; `failed`: `url`, `status` (`"timeout"` or `"error"`), `error` |
 | `recall_embed_failed` | `recall` op — emitted when the embed sub-op fails; `query`, `error` |

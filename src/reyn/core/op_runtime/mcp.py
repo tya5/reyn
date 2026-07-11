@@ -19,6 +19,7 @@ from .context import OpContext
 
 
 async def _execute(op: MCPIROp, ctx: OpContext) -> dict:
+    from reyn.core.cancellable import Cancelled
     from reyn.mcp.client import expand_env
     from reyn.mcp.gateway import MCPFault, MCPGateway
 
@@ -83,11 +84,20 @@ async def _execute(op: MCPIROp, ctx: OpContext) -> dict:
     # connect, a bad config, a malformed response, or a transport group all surface here as a clean
     # MCPFault → contained error tool-result (owner req: MCP misbehavior must not crash the router
     # loop). Cancellation is never swallowed (is_real_control_flow re-raises genuine cancel/KI/SE).
-    gateway = MCPGateway(pool=ctx.mcp_connection_service or ctx.mcp_pool, agent_id=ctx.agent_id)
+    # #2813: cancel_event races the whole open+call — a Ctrl-C now interrupts an in-flight MCP
+    # call immediately instead of waiting out its own call_timeout_seconds.
+    gateway = MCPGateway(
+        pool=ctx.mcp_connection_service or ctx.mcp_pool, agent_id=ctx.agent_id,
+        cancel_event=ctx.cancel_event,
+    )
     try:
         result = await gateway.call_tool(
             op.server, op.tool, op.args, expanded, progress_cb=_on_progress,
         )
+    except Cancelled:
+        # #2813: distinct from a transport fault (P6 audit) — mirrors sandboxed_exec_cancelled.
+        ctx.events.emit("mcp_cancelled", server=op.server, tool=op.tool)
+        return {"kind": "mcp", "status": "cancelled", "server": op.server, "tool": op.tool}
     except MCPFault as fault_exc:
         # Owner req: feed the fault CONTENT back to the LLM (type + message, group members
         # aggregated) via the standard op-error result — so it can retry/adapt, not a silent error.

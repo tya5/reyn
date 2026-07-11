@@ -27,6 +27,7 @@ from .context import OpContext
 
 
 async def _execute(op: MCPGetPromptIROp, ctx: OpContext) -> dict:
+    from reyn.core.cancellable import Cancelled
     from reyn.mcp.client import expand_env
     from reyn.mcp.gateway import MCPFault, MCPGateway
 
@@ -51,9 +52,15 @@ async def _execute(op: MCPGetPromptIROp, ctx: OpContext) -> dict:
                 "name": op.name, "error": "no MCP client pool on this context"}
 
     ctx.events.emit("mcp_prompt_get", server=op.server, name=op.name)
-    gateway = MCPGateway(pool=ctx.mcp_connection_service or ctx.mcp_pool, agent_id=ctx.agent_id)
+    gateway = MCPGateway(
+        pool=ctx.mcp_connection_service or ctx.mcp_pool, agent_id=ctx.agent_id,
+        cancel_event=ctx.cancel_event,
+    )
     try:
         result = await gateway.get_prompt(op.server, op.name, op.arguments, expanded)
+    except Cancelled:
+        ctx.events.emit("mcp_prompt_get_cancelled", server=op.server, name=op.name)
+        return {"kind": "mcp_get_prompt", "status": "cancelled", "server": op.server, "name": op.name}
     except MCPFault as fault_exc:
         fault = str(fault_exc)
         ctx.events.emit("mcp_prompt_get_failed", server=op.server, name=op.name, error=fault)

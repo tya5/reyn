@@ -27,6 +27,7 @@ import asyncio
 from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, Any, Awaitable, Callable
 
+from reyn.core.cancellable import race_cancellable
 from reyn.mcp.client import MCPClient
 from reyn.mcp.pool import MCPClientPool, describe_fault, is_real_control_flow
 
@@ -72,6 +73,15 @@ class MCPGateway:
     :class:`~reyn.mcp.connection_service.MCPConnectionService` (#2597 S2a — held open for the
     whole session, cross-task-safe). The gateway itself never constructs either; it only calls
     ``get()`` on whatever the caller injects.
+
+    ``cancel_event`` (#2813): when passed (the per-turn ``asyncio.Event`` set by
+    ``Session.cancel_inflight()`` on Ctrl-C, threaded from ``OpContext.cancel_event``), every op
+    races against it via :func:`reyn.core.cancellable.race_cancellable` — a Ctrl-C during a
+    list/call/probe now cancels the in-flight MCP transport IMMEDIATELY (raising
+    :class:`reyn.core.cancellable.Cancelled`) instead of waiting out the op's own
+    ``call_timeout_seconds`` deadline. Mirrors the pattern already proven for ``sandboxed_exec``'s
+    seatbelt/landlock/noop backends. ``None`` (the default) preserves prior behavior exactly —
+    every existing caller that doesn't pass one is unaffected.
     """
 
     def __init__(
@@ -79,9 +89,11 @@ class MCPGateway:
         *,
         pool: "MCPClientPool | MCPConnectionService | None" = None,
         agent_id: str | None = None,
+        cancel_event: "asyncio.Event | None" = None,
     ) -> None:
         self._injected_pool = pool
         self._agent_id = agent_id
+        self._cancel_event = cancel_event
 
     @asynccontextmanager
     async def _acquire(self, server: str, config: dict):
@@ -97,28 +109,42 @@ class MCPGateway:
         self, server: str, config: dict, op: Callable[[MCPClient], Awaitable[Any]],
         *, timeout: "float | None",
     ) -> Any:
-        """Open a client and run ``op`` inside the contain-all boundary + a finite timeout. Raises
-        :class:`MCPFault` for any non-control-flow fault (incl. teardown groups); re-raises genuine
-        control flow untouched.
+        """Open a client and run ``op`` inside the contain-all boundary + a finite timeout, racing
+        the whole thing against ``self._cancel_event`` (#2813) if one was passed. Raises
+        :class:`MCPFault` for any non-control-flow fault (incl. teardown groups);
+        :class:`~reyn.core.cancellable.Cancelled` if ``cancel_event`` won the race; re-raises any
+        OTHER genuine control flow untouched.
 
         The timeout wraps the WHOLE ``acquire + op`` — the OPEN (initialize handshake) as well as the
         call — so a server that HANGS ON INIT is bounded too (else a fresh one-shot open for a
         list/probe would hang unbounded). On timeout ``asyncio.timeout`` surfaces a ``TimeoutError``
-        (an Exception, our task not cancelling), which the boundary contains as an ``MCPFault``."""
-        try:
-            if timeout is not None:
-                async with asyncio.timeout(timeout):
+        (an Exception, our task not cancelling), which the boundary contains as an ``MCPFault``.
+
+        ``race_cancellable`` runs ``_do()`` as its OWN task — when ``cancel_event`` fires, it calls
+        ``task.cancel()`` on THAT task, which is exactly the "our task IS genuinely cancelling"
+        condition ``is_real_control_flow`` already checks for (``asyncio.current_task().cancelling()
+        > 0``, evaluated from inside ``_do()``'s own frame) — so this reuses the SAME
+        already-correct transport-teardown path #2421 built for a real Ctrl-C, just now actually
+        reachable (previously nothing ever called ``task.cancel()`` on this seam; a Ctrl-C only set
+        a cooperative flag checked between tool-iteration boundaries, so an in-flight MCP call
+        always ran to its own timeout regardless)."""
+        async def _do() -> Any:
+            try:
+                if timeout is not None:
+                    async with asyncio.timeout(timeout):
+                        async with self._acquire(server, config) as client:
+                            return await op(client)
+                else:
                     async with self._acquire(server, config) as client:
                         return await op(client)
-            else:
-                async with self._acquire(server, config) as client:
-                    return await op(client)
-        except MCPFault:
-            raise
-        except BaseException as exc:  # noqa: BLE001 — the seam contains ALL non-control-flow faults
-            if is_real_control_flow(exc):
+            except MCPFault:
                 raise
-            raise MCPFault(describe_fault(exc)) from exc
+            except BaseException as exc:  # noqa: BLE001 — contains ALL non-control-flow faults
+                if is_real_control_flow(exc):
+                    raise
+                raise MCPFault(describe_fault(exc)) from exc
+
+        return await race_cancellable(_do(), cancel_event=self._cancel_event)
 
     async def list_tools(self, server: str, config: dict) -> list[dict]:
         """Return the server's advertised tools. Raises :class:`MCPFault` on any contained fault."""

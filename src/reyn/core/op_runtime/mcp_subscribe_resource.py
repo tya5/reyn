@@ -29,6 +29,7 @@ from .context import OpContext
 
 
 async def _execute(op: MCPSubscribeResourceIROp, ctx: OpContext) -> dict:
+    from reyn.core.cancellable import Cancelled
     from reyn.mcp.client import expand_env
     from reyn.mcp.gateway import MCPFault, MCPGateway
 
@@ -57,9 +58,12 @@ async def _execute(op: MCPSubscribeResourceIROp, ctx: OpContext) -> dict:
         }
 
     ctx.events.emit("mcp_resource_subscribe", server=op.server, uri=op.uri)
-    gateway = MCPGateway(pool=ctx.mcp_connection_service, agent_id=ctx.agent_id)
+    gateway = MCPGateway(pool=ctx.mcp_connection_service, agent_id=ctx.agent_id, cancel_event=ctx.cancel_event)
     try:
         await gateway.subscribe_resource(op.server, op.uri, expanded)
+    except Cancelled:
+        ctx.events.emit("mcp_resource_subscribe_cancelled", server=op.server, uri=op.uri)
+        return {"kind": "mcp_subscribe_resource", "status": "cancelled", "server": op.server, "uri": op.uri}
     except MCPFault as fault_exc:
         fault = str(fault_exc)
         ctx.events.emit(
