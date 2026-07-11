@@ -74,6 +74,20 @@ denied call here returns that dict rather than raising, unlike the retired
 pre-flight (which raised before `execute_op` was ever called). Callers that
 need to detect a sandbox denial should check `result["status"] == "denied"`.
 
+Intentional consequence (cost-before-denial, ACCEPTED — not an oversight):
+cap enforcement is at the REAL write site (post-embed), not a caller
+pre-check. So an out-of-`write_paths` safe-mode write incurs the embed cost
+BEFORE the denial fires (unlike the retired pre-flight, which denied before
+any cost). This is intentional and accepted: (1) it affects ONLY the
+safe-mode path — the LLM-tool path's `require_file_write` (inside
+`if ctx.permission_resolver is not None`) already fails fast before embed;
+(2) it is a rare anomaly path (a python step attempting a write outside its
+sandbox = misconfiguration/malice, not happy-path); (3) it is
+security-neutral (`write_paths` gates only local writes; embed egress is
+orthogonal, protected by redaction; the out-of-cap write is still denied);
+(4) keeping a single authoritative gate at the write site is the point of
+#2856 Part B — a second op-level pre-check would split the authority.
+
 Internal layering
 ------------------
 This module is reyn-package internal code (= not subject to the safe-mode
