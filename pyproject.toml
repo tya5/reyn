@@ -122,8 +122,12 @@ voice = [
     "sounddevice>=0.4.6",
     "faster-whisper>=1.0.0",
 ]
-eval = [
+# OpenTelemetry (OTLP) export surface — opt-in observability. Reyn core stays
+# SDK-free unless an operator activates OTEL export (an OTLP endpoint plus this
+# extra); when the SDK isn't installed the exporter stays not-attached, fail-open.
+observability = [
     "opentelemetry-exporter-otlp-proto-http>=1.20",
+    "opentelemetry-sdk>=1.20",
 ]
 # FP-0041 #489 plugins-api PR-2: sample webhook plugins use OSS SDKs.
 # Reyn core stays SDK-free for operators who don't activate the

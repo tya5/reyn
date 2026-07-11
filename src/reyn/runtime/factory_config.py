@@ -36,6 +36,10 @@ class SessionFactoryConfig:
     router_config: Any
     retry_config: Any
     chat_tool_use_scheme: str
+    # P5 ADR-0039: the resolved ``observability:`` block (ObservabilityConfig).
+    # Opt-in OTLP export surface — reaches every factory site so a session on any
+    # frontend attaches the OtelExporter when (and only when) an endpoint is set.
+    observability_config: Any
     # #2548 PR-A: enabled skill registry snapshot (list[SkillEntry]), built from
     # config.skills. Uniform config-derived arg → reaches all factory sites.
     available_skills: Any
@@ -98,6 +102,7 @@ class SessionFactoryConfig:
             router_config=config.llm.router,
             retry_config=config.llm.retry,
             chat_tool_use_scheme=config.tool_use.chat,
+            observability_config=config.observability,
             # #2548 PR-A: build the enabled skill registry once here (filtered to
             # enabled=True) so every factory site threads the same snapshot.
             available_skills=build_skill_registry(config.skills),

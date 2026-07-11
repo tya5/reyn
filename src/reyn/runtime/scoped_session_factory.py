@@ -133,5 +133,6 @@ def build_scoped_chat_session(
         available_skills=factory_config.available_skills,  # #2548 PR-A
         pipeline_registry=factory_config.pipeline_registry,  # #2575
         presentation_registry=factory_config.presentation_registry,  # FP-0054 PR-C
+        observability_config=factory_config.observability_config,  # P5 ADR-0039
         **base,
     )

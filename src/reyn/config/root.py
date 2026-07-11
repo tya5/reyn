@@ -61,6 +61,9 @@ from reyn.config.media import (
     VoiceConfig,
     WebConfig,
 )
+from reyn.config.observability import (
+    ObservabilityConfig,
+)
 from reyn.runtime.budget.budget import CostConfig, CostLimitConfig
 
 
@@ -195,6 +198,11 @@ class ReynConfig:
     chat: ChatConfig = field(default_factory=ChatConfig)
     # Audit-log rotation policy (PR20).
     events: EventsConfig = field(default_factory=EventsConfig)
+    # Downstream observability export (OTLP/OpenTelemetry). Opt-in + off by
+    # default: no `observability.otel.endpoint` (and no OTEL_EXPORTER_OTLP_ENDPOINT
+    # env) → the OtelExporter is never built and behavior is byte-identical to
+    # having no OTEL. A lossy downstream — never touches the durable events/WAL.
+    observability: ObservabilityConfig = field(default_factory=ObservabilityConfig)
     # Budget / rate-limit policy (PR22).
     cost: CostConfig = field(default_factory=CostConfig)
     # #1593 — chat-layer tool-use scheme selector. Default enumerate-all (#1657).
