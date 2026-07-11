@@ -40,6 +40,11 @@ from reyn.observability.otel_exporter import (
 )
 from reyn.schemas.models import Event
 
+# The OTEL SDK is an OPT-IN dependency (reyn[observability]). CI installs the
+# extra so these tests run with real in-memory OTLP capture; a dev/env without
+# the extra skips the whole module gracefully rather than erroring on import.
+pytest.importorskip("opentelemetry.sdk.trace")
+
 pytestmark = pytest.mark.filterwarnings("ignore")
 
 
