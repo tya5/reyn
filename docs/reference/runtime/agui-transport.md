@@ -118,3 +118,58 @@ transport produces (display outbox + the renderer-relevant chat-event subset).
 The AG-UI transport adds only wire framing, never new render semantics — so the
 remote renderer's display bytes and working-indicator transitions are identical
 to the local ones.
+
+## AG-UI event coverage — reading the numbers honestly
+
+**Frame loss is zero and reyn-client fidelity is 100%, regardless of the
+numbers below.** Every event carries the reyn-private `_reyn` reconstruction
+block (see *Standard envelope, reyn-private richness* above); the reyn client
+always recovers the exact original frame from it. The coverage figures in this
+section describe something different: **how much of the AG-UI *standard*
+event vocabulary** — the signal a *generic*, non-reyn AG-UI client can render
+without any reyn-specific knowledge — reyn currently emits natively, as
+opposed to folding into a `CUSTOM` event a generic client has to skip. A low
+number here is a statement about generic-client richness, not about data
+loss.
+
+| Category   | Standard events | reyn-mapped | Disposition |
+|------------|-----------------|-------------|--------------|
+| State      | 3                | 3           | **complete** |
+| Lifecycle  | 5                | 3           | **intentional-scope** — the 2 Step events fold into the `STATE_*` read-model's `waiting_on` field instead of a separate standard event (see *STATE_\* — the status read-model* above) |
+| Tool       | 5                | 2 (→3 planned) | **next-phase** for `TOOL_CALL_RESULT` (lands with a later phase's HITL frontend-tool answer round-trip); the `TOOL_CALL_ARGS`/`_CHUNK` pair is **intentional-scope** (a tool call is already complete by the time reyn emits it — there is no in-flight args stream to chunk) |
+| Text       | 4                | 1           | **intentional-scope** — reyn's outbox delivers whole messages, not token deltas, so a single `TEXT_MESSAGE_CONTENT` per message is the honest mapping; there is no `_START`/`_END`/streaming-chunk phase to map |
+| Special    | 2                | 1           | **intentional-scope** — reyn-private payloads are always structured (`CUSTOM`); the standard `RAW` passthrough event has no reyn use case |
+| Activity   | 2                | 0           | **intentional-scope** — reyn has no direct analog; the same information is already carried by the frame stream + `STATE_*` |
+| Reasoning  | 7                | 0           | **future-candidate** — the highest-value gap (see below) |
+
+**Totals**: reyn natively emits **9 of the 28** active-roster standard events
+(10/28 counting the `CUSTOM` catch-all itself as one). The 28-event roster is
+Lifecycle (5) + Text (4) + Tool (5) + State (3) + Activity (2) + Reasoning (7)
++ Special (2), tallied from the canonical AG-UI event reference
+(<https://docs.ag-ui.com/concepts/events>). That reference self-reports up to
+~34 event names in total when meta/deprecated/draft entries outside the
+active roster are counted — the exact figure is spec-version dependent, so
+this page tracks the 28-event active roster, not the larger number.
+
+### Why the gaps are dispositioned the way they are
+
+- **Reasoning (future-candidate, highest value).** reyn already treats
+  reasoning as a first-class concept; today a reasoning trace rides the
+  `trace` display kind → `CUSTOM`, invisible to a generic client. Mapping it
+  to the standard `Reasoning*` events would let a generic AG-UI client render
+  it directly. The gate that must be respected before shipping this: reyn's
+  **reasoning-display toggle** — when the operator has reasoning display
+  turned off, nothing should be emitted on the wire either, so a mapping must
+  not become a chain-of-thought exposure path that bypasses that toggle.
+- **Tool result fidelity (non-blocking, low cost).** A generic client cannot
+  currently distinguish `tool_failed` from `tool_returned` — both collapse to
+  the standard `TOOL_CALL_END` event, with the failure fact recoverable only
+  from `_reyn` (which a generic client skips). reyn-client fidelity is
+  unaffected; a future pass could surface an error/status field on the
+  standard `TOOL_CALL_END` payload itself for generic-client visibility, at
+  low implementation cost.
+- **Everything marked intentional-scope** reflects a real architectural
+  difference (reyn's whole-message outbox, structured-only private payloads,
+  no in-flight tool-args phase, no direct "activity" concept) rather than an
+  oversight — closing these gaps would mean inventing streaming/chunking
+  machinery reyn's design deliberately does not have, not fixing a bug.
