@@ -51,10 +51,10 @@ _RUNTIME_CMD: dict[str, str] = {
 }
 
 _RUNTIME_INSTALL_HINT: dict[str, str] = {
-    "npx":    "Node.js が必要です: https://nodejs.org",
-    "uvx":    "uv が必要です: https://docs.astral.sh/uv/",
-    "docker": "Docker が必要です: https://docs.docker.com/get-docker/",
-    "dnx":    ".NET SDK が必要です: https://dotnet.microsoft.com/download",
+    "npx":    "Node.js is required: https://nodejs.org",
+    "uvx":    "uv is required: https://docs.astral.sh/uv/",
+    "docker": "Docker is required: https://docs.docker.com/get-docker/",
+    "dnx":    ".NET SDK is required: https://dotnet.microsoft.com/download",
 }
 
 # ---------------------------------------------------------------------------
@@ -348,12 +348,12 @@ async def handle(
     if runtime and runtime in _RUNTIME_CMD:
         cmd = _RUNTIME_CMD[runtime]
         if shutil.which(cmd) is None:
-            hint = _RUNTIME_INSTALL_HINT.get(runtime, f"'{cmd}' が見つかりません")
+            hint = _RUNTIME_INSTALL_HINT.get(runtime, f"'{cmd}' was not found")
             return {
                 "kind": "mcp_install",
                 "status": "error",
                 "server_id": op.server_id,
-                "error": f"必要なランタイムが見つかりません: '{cmd}'. {hint}",
+                "error": f"Required runtime not found: '{cmd}'. {hint}",
             }
 
     # ── 2.5 Install-time threat scan (#1863 / FP-0050 BP2) ────────────────────
@@ -561,9 +561,9 @@ async def handle(
             "status": "error",
             "source": op.source or "",
             "error": (
-                f"GitHub URL '{op.source}' のランタイムを自動判定できませんでした。"
-                " npm: / pypi: / docker: prefix を明示するか、"
-                " mcp__install_local で command/args を直接指定してください。"
+                f"Could not auto-detect the runtime for GitHub URL '{op.source}'."
+                " Specify an npm: / pypi: / docker: prefix explicitly, or use"
+                " mcp__install_local to set command/args directly."
             ),
         }
 
