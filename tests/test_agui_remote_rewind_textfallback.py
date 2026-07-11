@@ -86,11 +86,39 @@ class _AppInputRenderer(ConsoleChatRenderer):
 
 
 @pytest.mark.asyncio
-async def test_app_input_renderer_skips_the_text_list() -> None:
+async def test_app_input_renderer_with_local_region_skips_the_text_list() -> None:
     """Tier 2: the fallback branch is load-bearing — a uses_app_input renderer
-    SKIPS the text list (it expects a local picker). This is why the remote
-    thin client uses the plain ConsoleChatRenderer, not the inline one."""
+    WITH a local command-UI region (command_ui_region=True, the LOCAL inline case)
+    SKIPS the text list because its ``pending_command_ui`` drives the region
+    selector instead."""
+    # command_ui_region defaults to True → the local inline case.
     out = await _run_remote(_AppInputRenderer())
-    # Skipped: the picker-driven path renders nothing for __rewind_list__ (the
-    # local pending_command_ui drives the region selector instead).
     assert "turn-3 abc" not in out
+
+
+@pytest.mark.asyncio
+async def test_app_input_renderer_without_region_takes_text_fallback() -> None:
+    """Tier 2: (ADR-0039 P3) a uses_app_input renderer WITHOUT a local command-UI
+    region (command_ui_region=False, the REMOTE inline client) must STILL render
+    the rewind list as text — command-UI is not on the AG-UI wire, so a remote
+    inline client has no picker to defer to and would otherwise swallow /rewind."""
+    emitter = AgUiEmitter(_frame_source(_script()), lambda: None)
+    sse = "".join([chunk async for chunk in emitter.stream()])
+
+    async def _noop_send(_payload):
+        return None
+
+    transport = AgUiTransport(_sse_lines(sse), _noop_send)
+    buf = StringIO()
+    old = sys.__stdout__
+    sys.__stdout__ = buf
+    try:
+        await asyncio.wait_for(
+            run_output_loop(transport, _AppInputRenderer(), command_ui_region=False),
+            timeout=2.0,
+        )
+    finally:
+        sys.__stdout__ = old
+    out = buf.getvalue()
+    assert "turn-3 abc" in out
+    assert "turn-1 ghi" in out

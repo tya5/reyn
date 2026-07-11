@@ -72,7 +72,8 @@ Replies, tool activity, and status stream in as they happen on the server. A hum
 
 ### What's different from local `reyn chat`
 
-- **Plain console rendering, even on a TTY.** `--connect` always uses the same plain output style as `reyn chat --cui` — no inline status bar (the local session's model / agent / cost / context chips) and no floating slash-command autocomplete menu. Typing a slash command still works; it's just not suggested as you type.
+- **Same inline CUI, streamed status bar.** On an interactive TTY, `--connect` renders the same inline CUI as local `reyn chat`, including the main status bar — `model` / `agent` / `cost` / `ctx%` / `task` chips and the working indicator — with those values streamed live from the server. (`--cui`, a non-TTY, or piped output still falls back to the plain console style, exactly like local.)
+- **Status-bar *dropdowns* and pickers are local-only.** The chip *values* stream over the wire, but opening a chip's dropdown (the cost/context detail, the `/model` class picker, the agent / task tree, the `…` overflow toggles) shows an empty panel on a remote attach — that detail is session-local and not on the wire. A closed-set human-in-the-loop prompt (a permission `[y]es` / `[n]o`) is answered by **typing** the choice on the input line rather than through the ↑↓ region picker.
 - **`/rewind` is a text list, not the picker.** Locally `/rewind` opens an interactive ↑↓ region picker; over `--connect` it prints the same checkpoints as a plain numbered list instead.
 - **No local file access.** `--connect` is a pure transport client — it never touches a local session, workspace, or tool. Everything runs on the server's machine.
 

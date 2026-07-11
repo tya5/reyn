@@ -279,18 +279,44 @@ async def agui_events(request: Request, agent_name: str):
     source = _SessionFrameSource(session)
     source.start()
 
+    # ADR-0039 P3: the active-task COUNT rides the STATE_* status read-model so the
+    # remote inline status bar's `task` chip reaches MAIN-bar parity. A bare
+    # `_snapshot(registry)` reports task_count=0 (it takes no task_cache), and the
+    # task backend's `list()` is async while the emitter's status provider is sync
+    # — so we mirror the local inline CUI's `_task_poll`: a background poll updates
+    # a cache the sync provider folds in. The task TREE (dropdown) is NOT wired.
+    _task_count_cache = {"count": 0}
+
+    async def _poll_task_count() -> None:
+        while True:
+            await asyncio.sleep(1.0)
+            try:
+                tasks = await registry.task_backend.list()
+                active = [
+                    t for t in tasks
+                    if getattr(t, "status", None) not in ("done", "failed", "aborted")
+                ]
+                _task_count_cache["count"] = len(active)
+            except Exception:  # noqa: BLE001 — a poll miss must never break the stream
+                logger.debug("agui task-count poll failed", exc_info=True)
+
     def _status_provider():
         from reyn.interfaces.inline.app import _snapshot  # noqa: PLC0415
 
-        return _snapshot(registry)
+        snap = _snapshot(registry)
+        if snap is not None:
+            snap = {**snap, "task_count": _task_count_cache["count"]}
+        return snap
 
     emitter = AgUiEmitter(source.frames(), _status_provider)
 
     async def gen():
+        poll = asyncio.create_task(_poll_task_count())
         try:
             async for chunk in emitter.stream():
                 yield chunk
         finally:
+            poll.cancel()
             source.close()
             now2 = monotonic()
             manager.detach(connection_id, now2)

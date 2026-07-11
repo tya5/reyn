@@ -38,6 +38,7 @@ _WIRE_KEYS = (
     "agent_tokens",
     "ctx_used",
     "ctx_window",
+    "task_count",
     "waiting_on",
 )
 
@@ -59,6 +60,13 @@ def project_status(snapshot: "dict | None", *, waiting_on: "str | None" = None) 
         "agent_tokens": snap.get("agent_tokens", 0),
         "ctx_used": snap.get("ctx_used", 0),
         "ctx_window": snap.get("ctx_window", 0),
+        # #ADR-0039 P3: the active-task count rides the wire so the remote inline
+        # status bar's `task` chip reaches MAIN-bar parity with local (the task
+        # TREE — the dropdown expansion — is NOT projected; a remote task chip is
+        # a count only, the tree degrades to empty). The server's status snapshot
+        # only carries a non-zero count when its status provider folds in a
+        # task-backend poll (endpoint.py) — a bare `_snapshot(registry)` is 0.
+        "task_count": snap.get("task_count", 0),
         "waiting_on": waiting_on,
     }
     return out

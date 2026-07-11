@@ -23,3 +23,15 @@ def make_inline_renderer():
     """Return the Claude Code-style inline renderer (default interactive TTY)."""
     from reyn.interfaces.repl.renderer import InlineChatRenderer
     return InlineChatRenderer()
+
+
+def make_renderer(is_interactive: bool):
+    """Single renderer-selection seam shared by the LOCAL and REMOTE chat paths.
+
+    ADR-0039 P3: ``reyn chat`` and ``reyn chat --connect`` must choose the SAME
+    renderer for the SAME terminal condition (D2, local ≡ remote). ``is_interactive``
+    is the ``_inline_interactive`` predicate (TTY stdin AND stdout, no ``--cui``):
+    True → the Claude Code-style inline CUI; False → the plain console renderer
+    (piped / scripted / ``--cui``). Both paths call THIS so the choice can never
+    diverge again (the remote path previously hard-coded the plain renderer)."""
+    return make_inline_renderer() if is_interactive else make_chat_renderer()

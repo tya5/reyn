@@ -200,6 +200,8 @@ async def run_output_loop(
     transport: ClientTransport,
     renderer: ChatRenderer,
     reply_seen: "asyncio.Event | None" = None,
+    *,
+    command_ui_region: bool = True,
 ) -> None:
     is_tty = sys.stdout.isatty()
     # Newest-first ring of recent agent replies so `/copy [N]` can grab the
@@ -223,10 +225,14 @@ async def run_output_loop(
             # line instead of the (unhandled) sentinel — no more silent no-op.
             msg = await _handle_copy_sentinel(recent_replies, msg.text)
         elif msg.kind == "__rewind_list__":
-            # /rewind picker (F4): the inline path shows a ↑↓ region selector
+            # /rewind picker (F4): the LOCAL inline path shows a ↑↓ region selector
             # (driven by session.pending_command_ui), so skip the text list there;
-            # the plain --cui path renders it as the fallback.
-            if renderer.uses_app_input():
+            # the plain --cui path renders it as the fallback. command_ui_region is
+            # False for a REMOTE inline client (ADR-0039 P3): command-UI is not on
+            # the AG-UI wire, so with the inline renderer selected remotely we must
+            # STILL take the text fallback — otherwise remote /rewind would be
+            # swallowed for a picker that never arrives.
+            if renderer.uses_app_input() and command_ui_region:
                 continue
             # persistent kind (not transient "status") so the list stays readable
             msg = OutboxMessage(kind="intervention", text=msg.text)
