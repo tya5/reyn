@@ -113,7 +113,7 @@ The internal `index_update`/`semantic_search` **call the same `embed` primitive*
 ## Phasing (implementation — awaits GO)
 
 0. **Foundation — consolidate the two indexes.** Fold `ActionEmbeddingIndex` into the pluggable `IndexBackend` (unify cosine + advisory-lock + dedup); add an `IndexBackend` capability flag (`existing_hashes` support). Everything else rides this unified store, so it goes first.
-1. **`embed` typed op/tool** (user-facing; batch list→vectors, `batch_size=100`; preserve `existing_hashes`). Retires the CodeAct-only entry.
+1. **`embed` typed op/tool** (user-facing; batch list→vectors, `batch_size=100`; preserve `existing_hashes`). **New Control-IR op kind** → the CLAUDE.md **hard rule applies**: add to `OP_KIND_MODEL_MAP` (`schemas/models.py`) **and** a `control-ir.md` section in the SAME PR, **and** register in `contextual_gate` `_OP_KIND_ALIASES` (the op-gate completeness test pins ALL_OP_KINDS). **Additive** — `embed_and_index` / the CodeAct-only entry is retired in **Phase 2** (when `index_update` replaces ingestion), NOT here.
 2. **`index_update` (incremental/delta, source-bound model, cost-estimator wired) + `semantic_search` (renamed from `recall`, auto-adopts source model)** encapsulated tools over the in-core backend. Wire tool-use (via the consolidated action source) / memory-semantic / events onto them.
 3. **Ephemeral attachment RAG**: transient (in-core) backend + TTL teardown (recovery-core-excluded) + **size-gate** + **firm redaction at embed egress**.
 4. Cross-cutting: **offline/air-gapped** degrade for the default local-MiniLM.
