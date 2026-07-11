@@ -31,6 +31,10 @@ from typing import Any, Mapping
 
 import pytest
 
+from reyn.core.events.events import EventLog
+from reyn.core.op_runtime.context import OpContext
+from reyn.data.workspace.workspace import Workspace
+from reyn.security.permissions.permissions import PermissionDecl
 from reyn.tools import get_default_registry
 from reyn.tools.types import (
     RouterCallerState,
@@ -246,10 +250,28 @@ class _StubProvider:
         }
 
 
-def _ready_index_with(items):
+def _op_ctx_for(provider: Any, monkeypatch: pytest.MonkeyPatch) -> OpContext:
+    """Build a real OpContext whose `embed` op resolves to ``provider``.
+
+    FP-0057 #2856 Part A: ``ActionEmbeddingIndex.build()``/``query()`` and
+    the `search_actions` handler now route the embed call through
+    ``execute_op(EmbedIROp(...), ctx)`` (the shared `embed` op) instead of
+    calling a caller-held provider directly — tests monkeypatch the
+    op-runtime module's ``get_provider`` (the established convention, see
+    ``tests/test_op_embed.py``) instead of threading the fake provider
+    positionally.
+    """
+    import reyn.core.op_runtime.embed as _embed_mod
+    monkeypatch.setattr(_embed_mod, "get_provider", lambda *a, **kw: provider)
+    events = EventLog()
+    ws = Workspace(events=events)
+    return OpContext(workspace=ws, events=events, permission_decl=PermissionDecl())
+
+
+def _ready_index_with(items, ctx: OpContext):
     from reyn.tools.action_index import ActionEmbeddingIndex
     idx = ActionEmbeddingIndex()
-    _run(idx.build(items, _StubProvider(), "standard"))
+    _run(idx.build(items, ctx, "standard"))
     return idx
 
 
@@ -288,18 +310,27 @@ def test_search_actions_no_index_returns_empty() -> None:
     assert result == {"items": [], "total": 0}
 
 
-def test_search_actions_returns_ranked_items() -> None:
+def test_search_actions_returns_ranked_items(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Tier 2: handler returns ranked items with score from the index."""
     items = [
         {"qualified_name": "skill__alpha", "short_description": "Alpha skill"},
         {"qualified_name": "skill__beta", "short_description": "Beta skill"},
         {"qualified_name": "skill__gamma", "short_description": "Gamma skill"},
     ]
-    idx = _ready_index_with(items)
+    provider = _StubProvider()
+    op_ctx = _op_ctx_for(provider, monkeypatch)
+    idx = _ready_index_with(items, op_ctx)
     rs = RouterCallerState(
         action_embedding_index=idx,
-        embedding_provider=_StubProvider(),
+        embedding_provider=provider,
         embedding_model_class="standard",
+        # FP-0057 #2856 Part A: search_actions now needs an OpContext (built
+        # via this factory) to route the query embed through the shared
+        # `embed` op — same field production wires from
+        # host.make_router_op_context.
+        op_context_factory=lambda: op_ctx,
     )
     result = _run(SEARCH_ACTIONS.handler(
         {"query": "alpha", "limit": 2}, _make_ctx(rs),
@@ -311,7 +342,9 @@ def test_search_actions_returns_ranked_items() -> None:
         assert "score" in it
 
 
-def test_search_actions_filters_by_category() -> None:
+def test_search_actions_filters_by_category(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Tier 2: category filter restricts to qualified_names in those categories."""
     items = [
         {"qualified_name": "memory_entry__alpha", "short_description": "Alpha"},
@@ -319,11 +352,14 @@ def test_search_actions_filters_by_category() -> None:
         {"qualified_name": "memory_entry__beta", "short_description": "Beta"},
         {"qualified_name": "file__write", "short_description": "Write"},
     ]
-    idx = _ready_index_with(items)
+    provider = _StubProvider()
+    op_ctx = _op_ctx_for(provider, monkeypatch)
+    idx = _ready_index_with(items, op_ctx)
     rs = RouterCallerState(
         action_embedding_index=idx,
-        embedding_provider=_StubProvider(),
+        embedding_provider=provider,
         embedding_model_class="standard",
+        op_context_factory=lambda: op_ctx,
     )
     result = _run(SEARCH_ACTIONS.handler(
         {"query": "x", "category": ["memory_entry"], "limit": 10}, _make_ctx(rs),

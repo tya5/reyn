@@ -39,7 +39,7 @@ from . import register
 from .context import OpContext
 
 
-def _resolve_provider():
+def _resolve_provider(event_sink=None):
     """Resolve the embedding provider (env override + reyn.yaml embedding config).
 
     Mirrors `op_runtime.semantic_search._resolve_provider` — both call sites
@@ -51,6 +51,12 @@ def _resolve_provider():
     op-runtime module stays self-contained and independently testable via
     monkeypatching its own module-level `get_provider` name (established
     op_runtime test convention, see `tests/test_op_semantic_search.py`).
+
+    FP-0057 #2856 Part A: ``event_sink`` (from ``ctx.embedding_event_sink``) is
+    forwarded to ``get_provider`` so a session-scoped TUI model-download status
+    sink still fires even though this call resolves a FRESH provider per op call
+    (the caller — e.g. ``ActionEmbeddingIndex`` via the tool-use `embed` op path
+    — no longer holds its own long-lived provider instance).
     """
     name = os.environ.get("REYN_EMBEDDING_PROVIDER", "litellm")
     if name == "litellm":
@@ -59,8 +65,8 @@ def _resolve_provider():
             cfg = load_config().embedding
         except Exception:
             cfg = None
-        return get_provider(name, config=cfg or {})
-    return get_provider(name, config={})
+        return get_provider(name, config=cfg or {}, event_sink=event_sink)
+    return get_provider(name, config={}, event_sink=event_sink)
 
 
 async def handle(op: EmbedIROp, ctx: OpContext) -> dict:
@@ -71,7 +77,13 @@ async def handle(op: EmbedIROp, ctx: OpContext) -> dict:
          through `redact_secrets()` before it reaches the provider, i.e.
          before the egress boundary to an external embedding API.
       2. `provider.embed(scanned_texts, model)` — batches internally; list in,
-         list out, vector order preserved.
+         list out, vector order preserved. The provider is resolved fresh per
+         call via `_resolve_provider(event_sink=ctx.embedding_event_sink)`
+         (FP-0057 #2856 Part A) — `ctx.embedding_event_sink` forwards the
+         caller's TUI model-download status sink through WITHOUT the caller
+         holding its own provider instance, so a tool-use caller (e.g.
+         `ActionEmbeddingIndex`) routes through this op (inheriting the
+         redaction seam above) while keeping its download-status rows.
 
     Returns: `{"kind": "embed", "vectors": list[list[float]], "model": str,
     "total_tokens": int}`. Errors propagate to the shared `execute_op`
@@ -91,7 +103,7 @@ async def handle(op: EmbedIROp, ctx: OpContext) -> dict:
             model=op.embedding_model,
         )
 
-    provider = _resolve_provider()
+    provider = _resolve_provider(event_sink=ctx.embedding_event_sink)
     result = await provider.embed(scanned_texts, op.embedding_model)
 
     return {

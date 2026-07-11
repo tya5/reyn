@@ -278,6 +278,19 @@ class OpContext:
     # ``_create`` read-side stays fixed. None = not executing a task-as-request.
     current_task_id: "str | None" = None
 
+    # FP-0057 #2856 Part A: the TUI model-download status sink for the `embed`
+    # op's provider resolution. Carries ONLY the event_sink CALLABLE
+    # (``(kind, text, meta) -> None``, precedent: sentence_transformers_provider's
+    # ``EventSink``) — NOT a provider instance, so provider lifecycle/construction
+    # stays owned by the embed op handler (which still does its own redaction-egress
+    # scan before calling it). This is the seam that lets ``ActionEmbeddingIndex``
+    # route tool-use embeds through the shared `embed` op (inheriting the redaction
+    # seam) while preserving the session's TUI download-status rows, instead of
+    # calling `provider.embed()` provider-direct (the pre-#2856 redaction bypass).
+    # None = no TUI-observable download status (tests / non-chat construction) —
+    # the provider falls back to its own no-op default.
+    embedding_event_sink: "Callable[[str, str, dict], None] | None" = None
+
 
 def sandbox_policy_from_ctx(ctx: "OpContext") -> "SandboxPolicy | None":
     """Build the ``SandboxPolicy`` from ``ctx.default_sandbox_policy`` (the

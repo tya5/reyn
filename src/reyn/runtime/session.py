@@ -1048,6 +1048,14 @@ class Session:
         self._action_embedding_index: Any = None
         self._embedding_provider: Any = None
         self._embedding_model_class: str | None = None
+        # FP-0057 #2856 Part A: the TUI model-download status sink CALLABLE
+        # (set below, alongside ``_embedding_provider``), threaded onto every
+        # router OpContext as ``ctx.embedding_event_sink`` so the `embed` op
+        # (which ``ActionEmbeddingIndex`` now routes through instead of
+        # calling ``provider.embed()`` directly) can forward it into the
+        # FRESH per-call provider it resolves — preserving the download-status
+        # rows without the caller holding a long-lived provider instance.
+        self._embedding_event_sink: Any = None
         if (
             self._action_retrieval.universal_wrappers_enabled
             and self._action_retrieval.embedding_class
@@ -1098,6 +1106,12 @@ class Session:
                     embedding_config,
                     event_sink=_embedding_event_sink,
                 )
+                # FP-0057 #2856 Part A: keep the sink CALLABLE addressable on
+                # its own so it can be threaded onto router OpContexts
+                # (ctx.embedding_event_sink) independently of
+                # ``_embedding_provider`` (which stays for non-tool-use /
+                # legacy callers until they migrate).
+                self._embedding_event_sink = _embedding_event_sink
                 self._embedding_model_class = self._action_retrieval.embedding_class
                 # FP-0057 Phase 0: unified onto IndexBackend's cache
                 # convention (.reyn/cache/index/<source>/); the old
@@ -1114,6 +1128,7 @@ class Session:
                 self._embedding_provider = None
                 self._action_embedding_index = None
                 self._embedding_model_class = None
+                self._embedding_event_sink = None
         # FP-0034 Phase 2 step 5: ActionUsageTracker for hot list freq+recency.
         # Created when universal_wrappers_enabled=True and hot_list_n > 0.
         # Per-agent compacted table at
@@ -1752,6 +1767,7 @@ class Session:
             action_embedding_index=self._action_embedding_index,
             embedding_provider=self._embedding_provider,
             embedding_model_class=self._embedding_model_class,
+            embedding_event_sink=self._embedding_event_sink,  # FP-0057 #2856 Part A: forwarded to make_router_op_context
             # FP-0034 Phase 2 step 5: ActionUsageTracker for hot list.
             action_usage_tracker=self._action_usage_tracker,
             uncompacted_tool_call_records_fn=(
@@ -5913,6 +5929,7 @@ class Session:
             current_task_id=self._current_task_id,  # #1953 §16: ownership-derivation for task.create (enumerate ALL op-ctx builders)
             hot_reloader=self._hot_reloader,  # #2761 PR-2: per-session reloader (both router op-ctx builders complete-by-construction)
             render_template_bounds=self._render_template_bounds,  # #2679: operator bounds (both router op-ctx builders complete-by-construction)
+            embedding_event_sink=self._embedding_event_sink,  # FP-0057 #2856 Part A: TUI model-download status sink for the embed op
         )
 
     async def _file_op(self, op_dict: dict) -> dict:

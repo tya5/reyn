@@ -2900,7 +2900,11 @@ class RouterLoop:
         if index is None or provider is None:
             return []
         try:
-            results = await index.query(query, provider, model_class, top_k=top_k)
+            # FP-0057 #2856 Part A: idx.query() routes through the shared
+            # `embed` op (execute_op) instead of calling ``provider`` directly
+            # — needs an OpContext, not the provider instance itself.
+            op_ctx = self.host.make_router_op_context()
+            results = await index.query(query, op_ctx, model_class, top_k=top_k)
         except Exception as e:  # noqa: BLE001 — search is best-effort presentation aid
             import logging
             logging.getLogger(__name__).warning("search_actions failed: %s", e)
@@ -3345,6 +3349,15 @@ class RouterLoop:
         hash skipped) and serialised by the index's internal lock,
         so concurrent calls are safe.
 
+        ``provider`` is retained as the caller's pre-existing "embedding
+        configured" signal (callers gate on ``provider is not None`` before
+        spawning this background build) but is no longer passed to
+        ``idx.build()`` — FP-0057 #2856 Part A routes the actual embed call
+        through ``execute_op(EmbedIROp(...), op_ctx)`` (see
+        ``ActionEmbeddingIndex._embed_via_op``), so ``idx.build()`` now takes
+        an ``OpContext`` (built the same way as the other router op-ctx call
+        sites: ``self.host.make_router_op_context()``).
+
         Errors are swallowed, flagged on the RouterLoop instance, and surfaced
         as an operator-visible warning log so a misconfigured embedding provider
         does not crash the chat session — the next turn finds ``is_ready()``
@@ -3378,7 +3391,8 @@ class RouterLoop:
                 return
             result = await list_actions_def.handler({}, tool_ctx)
             items = result.get("items", []) if isinstance(result, dict) else []
-            await idx.build(items, provider, model_class)
+            op_ctx = self.host.make_router_op_context()
+            await idx.build(items, op_ctx, model_class)
         except Exception as exc:
             # #1458: memoize the failure so subsequent turns do not retry.
             self._action_index_build_failed = True

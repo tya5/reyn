@@ -1066,6 +1066,16 @@ async def _handle_search_actions(
     if idx is None or provider is None or not model_class:
         return {"items": [], "total": 0}
 
+    # FP-0057 #2856 Part A: idx.query() now routes through the shared `embed`
+    # op (execute_op) rather than calling ``provider`` directly, so it needs
+    # an OpContext — built via the same factory (rs.op_context_factory =
+    # host.make_router_op_context) other tool-use ops already thread. The
+    # ``provider`` None-check above stays as the D14 configured-signal.
+    op_ctx_factory = rs.op_context_factory
+    if op_ctx_factory is None:
+        return {"items": [], "total": 0}
+    op_ctx = op_ctx_factory()
+
     # Optional category restriction (§D14 schema), default = all.
     # #934: validate up-front; stale-enum entries surface as an explicit
     # error envelope rather than silently dropping.
@@ -1084,7 +1094,7 @@ async def _handle_search_actions(
     # Over-fetch when filtering by category so we still return up to
     # ``limit`` after the post-filter cut.
     raw_top_k = limit * len(CATEGORIES) if category_set else limit
-    results = await idx.query(query, provider, model_class, top_k=raw_top_k)
+    results = await idx.query(query, op_ctx, model_class, top_k=raw_top_k)
 
     if category_set:
         from reyn.tools.universal_catalog import split_qualified_name

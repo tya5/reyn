@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from typing import Any
 
 from reyn.runtime.router_loop import RouterLoop
 
@@ -56,6 +57,18 @@ class _MinimalEvents:
 class _MinimalHost:
     def __init__(self) -> None:
         self.events = _MinimalEvents()
+        # FP-0057 #2856 Part A: _build_action_embedding_index_background now
+        # builds an OpContext via ``host.make_router_op_context()`` and passes
+        # THAT (not the raw provider) as idx.build()'s second positional arg
+        # (idx.build() itself now routes the embed call through the shared
+        # `embed` op). These tests' fake indexes still reach into that
+        # second arg expecting the fake provider (to trigger the SAME
+        # provider-raised exception the production embed op would surface),
+        # so this stub just returns whatever provider the test stashed here.
+        self.op_ctx_stub: Any = None
+
+    def make_router_op_context(self) -> Any:
+        return self.op_ctx_stub
 
 
 class _LoopWithFailingBuild(RouterLoop):
@@ -75,6 +88,7 @@ class _LoopWithFailingBuild(RouterLoop):
 def _run_build(loop: _LoopWithFailingBuild) -> None:
     idx = _FailingIndex()
     provider = _FailingProvider()
+    loop.host.op_ctx_stub = provider  # see _MinimalHost.make_router_op_context
     asyncio.run(loop._build_action_embedding_index_background(idx, provider, "local-mini"))
 
 
@@ -113,6 +127,7 @@ def test_build_failure_search_stays_hidden() -> None:
     assert idx.is_ready() is False
     provider = _FailingProvider()
     loop = _LoopWithFailingBuild()
+    loop.host.op_ctx_stub = provider  # see _MinimalHost.make_router_op_context
     asyncio.run(loop._build_action_embedding_index_background(idx, provider, "local-mini"))
     # is_ready() still False after failure — search stays hidden.
     assert idx.is_ready() is False
@@ -284,6 +299,7 @@ def test_build_failure_unsupported_param_warns_proxy_fix(caplog) -> None:
     loop = _LoopWithFailingBuild()
     idx = _UnsupportedParamIndex()
     provider = _UnsupportedParamProvider()
+    loop.host.op_ctx_stub = provider  # see _MinimalHost.make_router_op_context
     with caplog.at_level(logging.WARNING, logger="reyn.runtime.router_loop"):
         asyncio.run(loop._build_action_embedding_index_background(idx, provider, "standard"))
 
