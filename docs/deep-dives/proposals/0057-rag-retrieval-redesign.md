@@ -19,8 +19,8 @@ Retrieval is a charter "thin area." Current state (primary-mapped):
 ## Core frame: **shared embed + pluggable vessel**, split by **audience surface**
 
 Two axes:
-- **SHARED — `embed` (EmbeddingProvider)**: reyn is the **sole embedder**, one config → model consistency across every use-case (vectors from reyn's embed land in whatever vessel; no cross-boundary model lockstep problem).
-- **PLUGGABLE — vessel = `IndexBackend`** (already a registry): chosen per source/use-case.
+- **SHARED — `embed` (EmbeddingProvider)**: reyn is the **sole embedder**, one config → model consistency across every use-case.
+- **STORE split by AUDIENCE, not a single pluggable interface**: **`IndexBackend` is IN-CORE ONLY** (reyn-internal store; pluggable among *in-core* impls, NOT extended to external/MCP). **User RAG's store lives entirely OUTSIDE reyn** — the user's external MCP vector-DB — and reyn never hosts a user DB. reyn provides `embed`; the user's external MCP server does store/retrieve via its own MCP tools.
 
 ### Two surfaces (by audience)
 
@@ -31,15 +31,13 @@ Two axes:
 
 The embedding **logic** is shared (same `EmbeddingProvider` behind the user `embed` tool and inside `index_update`/`semantic_search`) — different surfaces, one logic. `embed` is a **user-facing** tool; reyn merely also uses the same logic internally.
 
-### Vessel backends (pluggable `IndexBackend`)
+### Stores — by audience
 
-- **in-core SQLite** → reyn-internal (tool-use = `action_retrieval` exists; memory = make semantic, old Phase 1.5; events = operational-intelligence recall). store/retrieve closed in-core.
-- **NEW MCP-backed adapter** → user intentional RAG. `write`/`query` delegate to the user's MCP vector-DB. reyn provides embed + calls MCP; **does not manage the vessel**.
-- **ephemeral/transient** → attachment RAG. Throwaway + TTL teardown, classified **cache, NOT recovery-core** (must not become a WAL-derived recovery source). **Size-gate**: small attachment → full-context (Anthropic long-context philosophy: no RAG below ~110k–200k tokens); large → ephemeral index. (Industry: "ephemeral" = persistent-but-expiring TTL; vectorize at attach time.)
+- **in-core `IndexBackend` (SQLite)** → **reyn-internal ONLY** (tool-use = `action_retrieval` exists; memory = make semantic, old Phase 1.5; events = operational-intelligence recall). store/retrieve closed in-core. `IndexBackend` is pluggable among **in-core** impls, but is **not** extended to external/MCP.
+- **ephemeral/transient (in-core)** → attachment RAG. Throwaway + TTL teardown, classified **cache, NOT recovery-core** (must not become a WAL-derived recovery source). **Size-gate**: small attachment → full-context (Anthropic long-context philosophy: no RAG below ~110k–200k tokens); large → ephemeral index. (Industry: "ephemeral" = persistent-but-expiring TTL; vectorize at attach time.)
+- **user RAG store = EXTERNAL, never in-core.** reyn provides `embed`; the user's **external MCP vector-DB** does store/retrieve **via its own MCP tools** (already exposed through reyn's MCP client). The user composes `embed` → those MCP tools **via pipeline**. **reyn builds NO adapter / NO MCP `IndexBackend`** — there is no reyn-side store code for user RAG. A **batteries-included builtin MCP vector-DB server** (for users without their own DB) is a **separate arc — task #66 (builtin mcp)**, NOT part of FP-0057; if built it is used exactly like any external MCP vessel (MCP tools), still not in-core.
 
-`recall` / ingestion are **backend-agnostic** (operate over whatever backend the source is configured with).
-
-**Backend capability caveat (incremental × MCP) (co-vet #4):** `index_update`'s delta-reconcile relies on the backend's `existing_hashes`. SQLite supports it; an **MCP vector-DB backend may not expose "which content_hashes exist"**. Order of preference: (1) `existing_hashes` if the backend supports it; else (2) **PREFER MCP-native upsert-by-id** (most vector-DBs have it) — preserves the delta-cost philosophy; (3) full-replace **only** when neither exists — a last resort (full re-embed on every `index_update` is a cost surprise on large user vessels). Never silently no-op. `IndexBackend` carries a capability flag. **`cost_estimator` wiring must cover the MCP-fallback path**, not just SQLite.
+reyn's `index_update` / `semantic_search` are **in-core only** (they operate over the in-core `IndexBackend`); user RAG does not go through them.
 
 ### 🔑 Consolidate the two parallel indexes (the headline no-tech-debt refactor)
 
@@ -117,10 +115,11 @@ The internal `index_update`/`semantic_search` **call the same `embed` primitive*
 0. **Foundation — consolidate the two indexes.** Fold `ActionEmbeddingIndex` into the pluggable `IndexBackend` (unify cosine + advisory-lock + dedup); add an `IndexBackend` capability flag (`existing_hashes` support). Everything else rides this unified store, so it goes first.
 1. **`embed` typed op/tool** (user-facing; batch list→vectors, `batch_size=100`; preserve `existing_hashes`). Retires the CodeAct-only entry.
 2. **`index_update` (incremental/delta, source-bound model, cost-estimator wired) + `semantic_search` (renamed from `recall`, auto-adopts source model)** encapsulated tools over the in-core backend. Wire tool-use (via the consolidated action source) / memory-semantic / events onto them.
-3. **MCP-backed `IndexBackend` adapter** (user vessel; thin delegate on `register_backend`; declares `existing_hashes` capability + incremental fallback).
-4. **Ephemeral attachment RAG**: transient backend + TTL teardown (recovery-core-excluded) + **size-gate** + a **redaction hook** consideration.
-5. Cross-cutting: **offline/air-gapped** degrade for the default local-MiniLM.
-6. Later / separate arc: **auto-insert seam** (reyn embeds query + calls configured retrieve + injects — owns the seam, not the store); **builtin ingestion pipeline** (task #66); advanced (rerank/hybrid/ANN).
+3. **Ephemeral attachment RAG**: transient (in-core) backend + TTL teardown (recovery-core-excluded) + **size-gate** + **firm redaction at embed egress**.
+4. Cross-cutting: **offline/air-gapped** degrade for the default local-MiniLM.
+5. Later / separate arc: **auto-insert seam** (reyn embeds query + calls configured retrieve + injects — owns the seam, not the store); advanced (rerank/hybrid/ANN).
+
+**NOT in FP-0057** (all in-core + `embed`; the whole arc is in-core): **user RAG store** = the user's external MCP vector-DB via its own MCP tools + `embed` composed by pipeline — **no reyn store code**. A **batteries-included builtin MCP vector-DB server** + the **builtin ingestion pipeline** are the **separate builtin-mcp arc (task #66)**.
 
 ## Follow-on / open
 
