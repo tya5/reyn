@@ -35,14 +35,37 @@ import time
 from pathlib import Path
 from typing import Any
 
+import pytest
+
+from reyn.core.events.events import EventLog
+from reyn.core.op_runtime.context import OpContext
 from reyn.data.embedding.provider import EmbedBatchResult
 from reyn.data.index.backend import cache_dir_for_source
 from reyn.data.index.build_lock import pid_alive, try_acquire_build_lock
+from reyn.data.workspace.workspace import Workspace
+from reyn.security.permissions.permissions import PermissionDecl
 from reyn.tools.action_index import ActionEmbeddingIndex, compute_catalog_hash
 
 
 def _run(coro):
     return asyncio.run(coro)
+
+
+def _ctx_for(provider: Any, monkeypatch: pytest.MonkeyPatch) -> OpContext:
+    """Build a real OpContext whose `embed` op resolves to ``provider``.
+
+    FP-0057 #2856 Part A: ``ActionEmbeddingIndex.build()``/``query()`` now
+    route the embed call through ``execute_op(EmbedIROp(...), ctx)`` (the
+    shared `embed` op) instead of calling a caller-held provider directly —
+    tests monkeypatch the op-runtime module's ``get_provider`` (the
+    established convention, see ``tests/test_op_embed.py``) instead of
+    passing the fake provider as a positional argument.
+    """
+    import reyn.core.op_runtime.embed as _embed_mod
+    monkeypatch.setattr(_embed_mod, "get_provider", lambda *a, **kw: provider)
+    events = EventLog()
+    ws = Workspace(events=events)
+    return OpContext(workspace=ws, events=events, permission_decl=PermissionDecl())
 
 
 def _lock_dir(workspace_root: Path) -> Path:
@@ -82,16 +105,19 @@ def _items() -> list[dict[str, Any]]:
 # ── 1. Class-swap detection ──────────────────────────────────────────────────
 
 
-def test_same_catalog_different_class_triggers_rebuild(tmp_path: Path) -> None:
+def test_same_catalog_different_class_triggers_rebuild(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Tier 2: identical items + new model_class → provider.embed called again."""
     provider = _FakeProvider()
+    ctx = _ctx_for(provider, monkeypatch)
     idx = ActionEmbeddingIndex(workspace_root=tmp_path)
 
-    _run(idx.build(_items(), provider, "openai/text-embedding-3-small"))
+    _run(idx.build(_items(), ctx, "openai/text-embedding-3-small"))
     assert provider.embed_calls == ["openai/text-embedding-3-small"]
 
     # Same catalog, different class — must re-embed even though hash matches.
-    _run(idx.build(_items(), provider, "sentence-transformers/all-MiniLM-L6-v2"))
+    _run(idx.build(_items(), ctx, "sentence-transformers/all-MiniLM-L6-v2"))
     assert provider.embed_calls == [
         "openai/text-embedding-3-small",
         "sentence-transformers/all-MiniLM-L6-v2",
@@ -100,7 +126,9 @@ def test_same_catalog_different_class_triggers_rebuild(tmp_path: Path) -> None:
     assert idx.model_class == "sentence-transformers/all-MiniLM-L6-v2"
 
 
-def test_same_catalog_same_class_remains_idempotent(tmp_path: Path) -> None:
+def test_same_catalog_same_class_remains_idempotent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Tier 2: regression guard — class match preserves Phase 2 step 2 idempotency.
 
     The class-swap check must not break the existing "same hash → no-op"
@@ -108,17 +136,20 @@ def test_same_catalog_same_class_remains_idempotent(tmp_path: Path) -> None:
     class must skip the embed call.
     """
     provider = _FakeProvider()
+    ctx = _ctx_for(provider, monkeypatch)
     idx = ActionEmbeddingIndex(workspace_root=tmp_path)
 
-    _run(idx.build(_items(), provider, "standard"))
-    _run(idx.build(_items(), provider, "standard"))
+    _run(idx.build(_items(), ctx, "standard"))
+    _run(idx.build(_items(), ctx, "standard"))
     assert provider.embed_calls == ["standard"]  # second call short-circuited
 
 
 # ── 2. Disk persistence carries model_class ──────────────────────────────────
 
 
-def test_disk_load_rejects_model_class_mismatch(tmp_path: Path) -> None:
+def test_disk_load_rejects_model_class_mismatch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Tier 2: cross-process cache reuse blocked when model class differs.
 
     Mirrors the scenario where two reyn processes share the unified
@@ -128,32 +159,38 @@ def test_disk_load_rejects_model_class_mismatch(tmp_path: Path) -> None:
     than serving foreign-model vectors.
     """
     provider_a = _FakeProvider()
+    ctx_a = _ctx_for(provider_a, monkeypatch)
     idx_a = ActionEmbeddingIndex(workspace_root=tmp_path)
-    _run(idx_a.build(_items(), provider_a, "openai/text-embedding-3-small"))
+    _run(idx_a.build(_items(), ctx_a, "openai/text-embedding-3-small"))
     assert provider_a.embed_calls == ["openai/text-embedding-3-small"]
 
     # Fresh instance pointing at the same workspace_root but with a
     # different model class — must re-embed because the on-disk meta
     # records the other class.
     provider_b = _FakeProvider()
+    ctx_b = _ctx_for(provider_b, monkeypatch)
     idx_b = ActionEmbeddingIndex(workspace_root=tmp_path)
-    _run(idx_b.build(_items(), provider_b, "sentence-transformers/all-MiniLM-L6-v2"))
+    _run(idx_b.build(_items(), ctx_b, "sentence-transformers/all-MiniLM-L6-v2"))
     assert provider_b.embed_calls == ["sentence-transformers/all-MiniLM-L6-v2"]
 
 
-def test_disk_load_accepts_matching_class_and_catalog(tmp_path: Path) -> None:
+def test_disk_load_accepts_matching_class_and_catalog(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Tier 2: process restart with same class + catalog → disk-only path.
 
     The second instance does NOT invoke its provider; the vectors are
     loaded from the unified backend.
     """
     provider_a = _FakeProvider()
+    ctx_a = _ctx_for(provider_a, monkeypatch)
     idx_a = ActionEmbeddingIndex(workspace_root=tmp_path)
-    _run(idx_a.build(_items(), provider_a, "standard"))
+    _run(idx_a.build(_items(), ctx_a, "standard"))
 
     provider_b = _FakeProvider()
+    ctx_b = _ctx_for(provider_b, monkeypatch)
     idx_b = ActionEmbeddingIndex(workspace_root=tmp_path)
-    _run(idx_b.build(_items(), provider_b, "standard"))
+    _run(idx_b.build(_items(), ctx_b, "standard"))
     assert provider_b.embed_calls == []  # loaded from disk; embed not called
     assert idx_b.is_ready()
     assert idx_b.model_class == "standard"
@@ -162,7 +199,9 @@ def test_disk_load_accepts_matching_class_and_catalog(tmp_path: Path) -> None:
 # ── 3. Cross-process advisory lock ──────────────────────────────────────────
 
 
-def test_concurrent_build_skips_when_lock_held_by_live_pid(tmp_path: Path) -> None:
+def test_concurrent_build_skips_when_lock_held_by_live_pid(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Tier 2: another live process holding .build.lock → embed call skipped.
 
     Simulates the multi-surface parallel-session race tui-coder
@@ -183,8 +222,9 @@ def test_concurrent_build_skips_when_lock_held_by_live_pid(tmp_path: Path) -> No
     )
 
     provider = _FakeProvider()
+    ctx = _ctx_for(provider, monkeypatch)
     idx = ActionEmbeddingIndex(workspace_root=tmp_path)
-    _run(idx.build(_items(), provider, "standard"))
+    _run(idx.build(_items(), ctx, "standard"))
 
     # The lock was held → embed must NOT have been called.
     assert provider.embed_calls == []
@@ -195,7 +235,9 @@ def test_concurrent_build_skips_when_lock_held_by_live_pid(tmp_path: Path) -> No
     lock_path.unlink(missing_ok=True)
 
 
-def test_stale_lock_is_reaped(tmp_path: Path) -> None:
+def test_stale_lock_is_reaped(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Tier 2: a .build.lock whose PID is dead is taken over (no deadlock)."""
     lock_dir = _lock_dir(tmp_path)
     lock_path = lock_dir / ".build.lock"
@@ -213,8 +255,9 @@ def test_stale_lock_is_reaped(tmp_path: Path) -> None:
     )
 
     provider = _FakeProvider()
+    ctx = _ctx_for(provider, monkeypatch)
     idx = ActionEmbeddingIndex(workspace_root=tmp_path)
-    _run(idx.build(_items(), provider, "standard"))
+    _run(idx.build(_items(), ctx, "standard"))
 
     # Stale lock reaped → embed called normally; build completed.
     assert provider.embed_calls == ["standard"]
@@ -223,7 +266,9 @@ def test_stale_lock_is_reaped(tmp_path: Path) -> None:
     assert not lock_path.exists()
 
 
-def test_corrupt_lock_file_is_treated_as_stale(tmp_path: Path) -> None:
+def test_corrupt_lock_file_is_treated_as_stale(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Tier 2: malformed .build.lock (= partial write, garbage) is recoverable.
 
     A crashed previous process may leave a half-written lock; the next
@@ -235,8 +280,9 @@ def test_corrupt_lock_file_is_treated_as_stale(tmp_path: Path) -> None:
     lock_path.write_text("not json at all }}}", encoding="utf-8")
 
     provider = _FakeProvider()
+    ctx = _ctx_for(provider, monkeypatch)
     idx = ActionEmbeddingIndex(workspace_root=tmp_path)
-    _run(idx.build(_items(), provider, "standard"))
+    _run(idx.build(_items(), ctx, "standard"))
 
     assert provider.embed_calls == ["standard"]
 
@@ -279,7 +325,9 @@ def test_pid_alive_self_returns_true() -> None:
 # ── 5. Empty catalog records model_class too ────────────────────────────────
 
 
-def test_empty_catalog_records_class_for_subsequent_match(tmp_path: Path) -> None:
+def test_empty_catalog_records_class_for_subsequent_match(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Tier 2: building over an empty catalog still imprints model_class.
 
     Otherwise the next call with the same empty catalog + same class
@@ -287,9 +335,10 @@ def test_empty_catalog_records_class_for_subsequent_match(tmp_path: Path) -> Non
     step 2 empty-catalog short-circuit).
     """
     provider = _FakeProvider()
+    ctx = _ctx_for(provider, monkeypatch)
     idx = ActionEmbeddingIndex(workspace_root=tmp_path)
-    _run(idx.build([], provider, "standard"))
+    _run(idx.build([], ctx, "standard"))
     assert idx.model_class == "standard"
     # Same args → no-op (no second embed call).
-    _run(idx.build([], provider, "standard"))
+    _run(idx.build([], ctx, "standard"))
     assert provider.embed_calls == []  # empty catalog never calls embed

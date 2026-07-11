@@ -26,10 +26,31 @@ from typing import Any
 
 import pytest
 
+from reyn.core.events.events import EventLog
+from reyn.core.op_runtime.context import OpContext
+from reyn.data.workspace.workspace import Workspace
+from reyn.security.permissions.permissions import PermissionDecl
 from reyn.tools.action_index import (
     ActionEmbeddingIndex,
     compute_catalog_hash,
 )
+
+
+def _ctx_for(provider: Any, monkeypatch: pytest.MonkeyPatch) -> OpContext:
+    """Build a real OpContext whose `embed` op resolves to ``provider``.
+
+    FP-0057 #2856 Part A: ``ActionEmbeddingIndex.build()``/``query()`` now
+    route the embed call through ``execute_op(EmbedIROp(...), ctx)`` (the
+    shared `embed` op) instead of calling a caller-held provider directly —
+    tests monkeypatch the op-runtime module's ``get_provider`` (the
+    established convention, see ``tests/test_op_embed.py``) instead of
+    passing the fake provider as a positional argument.
+    """
+    import reyn.core.op_runtime.embed as _embed_mod
+    monkeypatch.setattr(_embed_mod, "get_provider", lambda *a, **kw: provider)
+    events = EventLog()
+    ws = Workspace(events=events)
+    return OpContext(workspace=ws, events=events, permission_decl=PermissionDecl())
 
 # ── Fake EmbeddingProvider ────────────────────────────────────────────────
 
@@ -83,12 +104,13 @@ def test_initial_state_not_ready() -> None:
     assert idx.catalog_hash() is None
 
 
-def test_build_then_ready() -> None:
+def test_build_then_ready(monkeypatch: pytest.MonkeyPatch) -> None:
     """Tier 2: build() transitions index to ready."""
     idx = ActionEmbeddingIndex()
+    ctx = _ctx_for(_FakeEmbeddingProvider(), monkeypatch)
     _run(idx.build(
         [{"qualified_name": "skill__a", "short_description": "A"}],
-        _FakeEmbeddingProvider(),
+        ctx,
         "standard",
     ))
     assert idx.is_ready() is True
@@ -122,30 +144,32 @@ def test_catalog_hash_changes_when_names_change() -> None:
     assert a != b
 
 
-def test_idempotent_rebuild_with_same_catalog() -> None:
+def test_idempotent_rebuild_with_same_catalog(monkeypatch: pytest.MonkeyPatch) -> None:
     """Tier 2: second build() with same catalog is a no-op (no re-embed)."""
     items = [
         {"qualified_name": "skill__a", "short_description": "A"},
         {"qualified_name": "skill__b", "short_description": "B"},
     ]
     provider = _FakeEmbeddingProvider()
+    ctx = _ctx_for(provider, monkeypatch)
     idx = ActionEmbeddingIndex()
-    _run(idx.build(items, provider, "standard"))
+    _run(idx.build(items, ctx, "standard"))
     first_call_count = len(provider.calls)
-    _run(idx.build(items, provider, "standard"))
+    _run(idx.build(items, ctx, "standard"))
     assert len(provider.calls) == first_call_count, (
         "Second build with identical catalog must not re-embed; "
         f"provider.calls grew from {first_call_count} to {len(provider.calls)}"
     )
 
 
-def test_rebuild_when_catalog_changes() -> None:
+def test_rebuild_when_catalog_changes(monkeypatch: pytest.MonkeyPatch) -> None:
     """Tier 2: changing the qualified_name set triggers a fresh build."""
     provider = _FakeEmbeddingProvider()
+    ctx = _ctx_for(provider, monkeypatch)
     idx = ActionEmbeddingIndex()
     _run(idx.build(
         [{"qualified_name": "skill__a", "short_description": "A"}],
-        provider, "standard",
+        ctx, "standard",
     ))
     first_call_count = len(provider.calls)
     _run(idx.build(
@@ -153,7 +177,7 @@ def test_rebuild_when_catalog_changes() -> None:
             {"qualified_name": "skill__a", "short_description": "A"},
             {"qualified_name": "skill__b", "short_description": "B"},
         ],
-        provider, "standard",
+        ctx, "standard",
     ))
     assert len(provider.calls) > first_call_count
     assert idx.size() == 2
@@ -162,16 +186,16 @@ def test_rebuild_when_catalog_changes() -> None:
 # ── 3. query() — top-K ranking ────────────────────────────────────────────
 
 
-def test_query_returns_top_k_items() -> None:
+def test_query_returns_top_k_items(monkeypatch: pytest.MonkeyPatch) -> None:
     """Tier 2: query returns top_k results sorted by score descending."""
     items = [
         {"qualified_name": f"skill__item_{i}", "short_description": f"Item {i}"}
         for i in range(5)
     ]
     idx = ActionEmbeddingIndex()
-    _run(idx.build(items, _FakeEmbeddingProvider(), "standard"))
-    results = _run(idx.query("query for item 0", _FakeEmbeddingProvider(),
-                              "standard", top_k=3))
+    ctx = _ctx_for(_FakeEmbeddingProvider(), monkeypatch)
+    _run(idx.build(items, ctx, "standard"))
+    results = _run(idx.query("query for item 0", ctx, "standard", top_k=3))
     (r0, r1, r2) = results
     # Scores must be monotonically non-increasing.
     scores = [r["score"] for r in (r0, r1, r2)]
@@ -184,92 +208,96 @@ def test_query_returns_top_k_items() -> None:
         assert -1.0 <= r["score"] <= 1.0
 
 
-def test_query_top_k_larger_than_catalog_returns_all() -> None:
+def test_query_top_k_larger_than_catalog_returns_all(monkeypatch: pytest.MonkeyPatch) -> None:
     """Tier 2: top_k > catalog size returns the full catalog."""
     items = [
         {"qualified_name": "skill__only", "short_description": "Only one"},
     ]
     idx = ActionEmbeddingIndex()
-    _run(idx.build(items, _FakeEmbeddingProvider(), "standard"))
-    results = _run(idx.query("anything", _FakeEmbeddingProvider(),
-                              "standard", top_k=10))
+    ctx = _ctx_for(_FakeEmbeddingProvider(), monkeypatch)
+    _run(idx.build(items, ctx, "standard"))
+    results = _run(idx.query("anything", ctx, "standard", top_k=10))
     (only,) = results
 
 
 # ── 4. Graceful degradation ───────────────────────────────────────────────
 
 
-def test_query_not_ready_returns_empty() -> None:
+def test_query_not_ready_returns_empty(monkeypatch: pytest.MonkeyPatch) -> None:
     """Tier 2: querying before build() returns []."""
     idx = ActionEmbeddingIndex()
-    assert _run(idx.query("anything", _FakeEmbeddingProvider(), "standard")) == []
+    ctx = _ctx_for(_FakeEmbeddingProvider(), monkeypatch)
+    assert _run(idx.query("anything", ctx, "standard")) == []
 
 
-def test_query_empty_string_returns_empty() -> None:
+def test_query_empty_string_returns_empty(monkeypatch: pytest.MonkeyPatch) -> None:
     """Tier 2: empty query returns [] (skip wasteful embedding call)."""
     idx = ActionEmbeddingIndex()
+    ctx = _ctx_for(_FakeEmbeddingProvider(), monkeypatch)
     _run(idx.build(
         [{"qualified_name": "skill__a", "short_description": "A"}],
-        _FakeEmbeddingProvider(), "standard",
+        ctx, "standard",
     ))
-    assert _run(idx.query("", _FakeEmbeddingProvider(), "standard")) == []
-    assert _run(idx.query("   ", _FakeEmbeddingProvider(), "standard")) == []
+    assert _run(idx.query("", ctx, "standard")) == []
+    assert _run(idx.query("   ", ctx, "standard")) == []
 
 
-def test_query_zero_top_k_returns_empty() -> None:
+def test_query_zero_top_k_returns_empty(monkeypatch: pytest.MonkeyPatch) -> None:
     """Tier 2: top_k <= 0 returns []."""
     idx = ActionEmbeddingIndex()
+    ctx = _ctx_for(_FakeEmbeddingProvider(), monkeypatch)
     _run(idx.build(
         [{"qualified_name": "skill__a", "short_description": "A"}],
-        _FakeEmbeddingProvider(), "standard",
+        ctx, "standard",
     ))
-    assert _run(idx.query("q", _FakeEmbeddingProvider(),
-                           "standard", top_k=0)) == []
-    assert _run(idx.query("q", _FakeEmbeddingProvider(),
-                           "standard", top_k=-1)) == []
+    assert _run(idx.query("q", ctx, "standard", top_k=0)) == []
+    assert _run(idx.query("q", ctx, "standard", top_k=-1)) == []
 
 
 # ── 5. Edge cases ─────────────────────────────────────────────────────────
 
 
-def test_empty_catalog_records_hash_no_vectors() -> None:
+def test_empty_catalog_records_hash_no_vectors(monkeypatch: pytest.MonkeyPatch) -> None:
     """Tier 2: build() with empty items still records the empty hash."""
     idx = ActionEmbeddingIndex()
-    _run(idx.build([], _FakeEmbeddingProvider(), "standard"))
+    ctx = _ctx_for(_FakeEmbeddingProvider(), monkeypatch)
+    _run(idx.build([], ctx, "standard"))
     assert idx.is_ready() is True
     assert idx.size() == 0
     assert idx.catalog_hash() is not None
 
 
-def test_items_without_qualified_name_dropped() -> None:
+def test_items_without_qualified_name_dropped(monkeypatch: pytest.MonkeyPatch) -> None:
     """Tier 2: items missing qualified_name are silently skipped."""
     idx = ActionEmbeddingIndex()
+    ctx = _ctx_for(_FakeEmbeddingProvider(), monkeypatch)
     _run(idx.build(
         [
             {"qualified_name": "skill__valid", "short_description": "Valid"},
             {"short_description": "No qualified_name field"},  # dropped
             {"qualified_name": "", "short_description": "Empty name"},  # dropped
         ],
-        _FakeEmbeddingProvider(),
+        ctx,
         "standard",
     ))
     assert idx.size() == 1
 
 
-def test_mismatched_vector_count_refuses_partial_build() -> None:
+def test_mismatched_vector_count_refuses_partial_build(monkeypatch: pytest.MonkeyPatch) -> None:
     """Tier 2: provider returning wrong vector count → RuntimeError, no state.
 
     Refuses partial state so we don't end up with a corrupt half-populated
     index.  The catalog hash stays None so the next build retries.
     """
     idx = ActionEmbeddingIndex()
+    ctx = _ctx_for(_DegenerateFakeProvider(), monkeypatch)
     with pytest.raises(RuntimeError, match="refusing partial build"):
         _run(idx.build(
             [
                 {"qualified_name": "skill__a"},
                 {"qualified_name": "skill__b"},  # 2 items but provider returns 1
             ],
-            _DegenerateFakeProvider(),
+            ctx,
             "standard",
         ))
     assert idx.is_ready() is False
@@ -287,11 +315,14 @@ def test_mismatched_vector_count_refuses_partial_build() -> None:
 # private-storage-format pin the testing policy forbids.
 
 
-def test_workspace_root_build_creates_db_file(tmp_path: "Path") -> None:
+def test_workspace_root_build_creates_db_file(
+    tmp_path: "Path", monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Tier 2: build() with a workspace_root creates the unified index.db."""
     items = [{"qualified_name": "skill__a", "short_description": "A"}]
     idx = ActionEmbeddingIndex(workspace_root=tmp_path)
-    _run(idx.build(items, _FakeEmbeddingProvider(), "standard"))
+    ctx = _ctx_for(_FakeEmbeddingProvider(), monkeypatch)
+    _run(idx.build(items, ctx, "standard"))
 
     assert idx.db_path is not None and idx.db_path.exists(), (
         "index.db must be created after build()"
@@ -300,14 +331,17 @@ def test_workspace_root_build_creates_db_file(tmp_path: "Path") -> None:
     assert idx.catalog_hash() is not None
 
 
-def test_unified_path_replaces_old_action_index_dir(tmp_path: "Path") -> None:
+def test_unified_path_replaces_old_action_index_dir(
+    tmp_path: "Path", monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Tier 2: FP-0057 Phase 0 clean-break — storage lands under the unified
     ``.reyn/cache/index/<source>/`` convention, NOT the old private
     ``.reyn/cache/action_index/`` directory (which is no longer read or
     written; regenerable cache, no migration needed)."""
     items = [{"qualified_name": "skill__a", "short_description": "A"}]
     idx = ActionEmbeddingIndex(workspace_root=tmp_path)
-    _run(idx.build(items, _FakeEmbeddingProvider(), "standard"))
+    ctx = _ctx_for(_FakeEmbeddingProvider(), monkeypatch)
+    _run(idx.build(items, ctx, "standard"))
 
     old_dir = tmp_path / ".reyn" / "cache" / "action_index"
     assert not old_dir.exists(), (
@@ -318,7 +352,9 @@ def test_unified_path_replaces_old_action_index_dir(tmp_path: "Path") -> None:
     assert idx.db_path.parent == tmp_path / ".reyn" / "cache" / "index" / "actions"
 
 
-def test_workspace_root_loads_from_disk_skips_embed(tmp_path: "Path") -> None:
+def test_workspace_root_loads_from_disk_skips_embed(
+    tmp_path: "Path", monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Tier 2: second index with the same workspace_root loads from disk,
     skips embed.
 
@@ -334,13 +370,15 @@ def test_workspace_root_loads_from_disk_skips_embed(tmp_path: "Path") -> None:
     # First process — build + persist
     idx1 = ActionEmbeddingIndex(workspace_root=tmp_path)
     provider1 = _FakeEmbeddingProvider()
-    _run(idx1.build(items, provider1, "standard"))
+    ctx1 = _ctx_for(provider1, monkeypatch)
+    _run(idx1.build(items, ctx1, "standard"))
     (only_call,) = provider1.calls
 
     # Second process (simulated) — fresh index, same catalog
     idx2 = ActionEmbeddingIndex(workspace_root=tmp_path)
     provider2 = _FakeEmbeddingProvider()
-    _run(idx2.build(items, provider2, "standard"))
+    ctx2 = _ctx_for(provider2, monkeypatch)
+    _run(idx2.build(items, ctx2, "standard"))
 
     assert not provider2.calls, (
         "build() must load from disk and skip the embed call on cache hit"
@@ -350,7 +388,9 @@ def test_workspace_root_loads_from_disk_skips_embed(tmp_path: "Path") -> None:
     assert idx2.catalog_hash() == idx1.catalog_hash()
 
 
-def test_workspace_root_rebuilds_on_stale_disk_hash(tmp_path: "Path") -> None:
+def test_workspace_root_rebuilds_on_stale_disk_hash(
+    tmp_path: "Path", monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Tier 2: changed catalog triggers re-embed and overwrites disk hash."""
     items_v1 = [{"qualified_name": "skill__a", "short_description": "A"}]
     items_v2 = [
@@ -359,13 +399,15 @@ def test_workspace_root_rebuilds_on_stale_disk_hash(tmp_path: "Path") -> None:
     ]
 
     idx1 = ActionEmbeddingIndex(workspace_root=tmp_path)
-    _run(idx1.build(items_v1, _FakeEmbeddingProvider(), "standard"))
+    ctx1 = _ctx_for(_FakeEmbeddingProvider(), monkeypatch)
+    _run(idx1.build(items_v1, ctx1, "standard"))
     hash_v1 = idx1.catalog_hash()
 
     # Fresh index — different catalog → must re-embed, not load v1 from disk
     idx2 = ActionEmbeddingIndex(workspace_root=tmp_path)
     provider2 = _FakeEmbeddingProvider()
-    _run(idx2.build(items_v2, provider2, "standard"))
+    ctx2 = _ctx_for(provider2, monkeypatch)
+    _run(idx2.build(items_v2, ctx2, "standard"))
 
     (only_call,) = provider2.calls  # stale disk hash must trigger re-embed
     assert idx2.size() == 2
@@ -375,6 +417,44 @@ def test_workspace_root_rebuilds_on_stale_disk_hash(tmp_path: "Path") -> None:
     # the new hash (= the disk write-through actually took).
     idx3 = ActionEmbeddingIndex(workspace_root=tmp_path)
     provider3 = _FakeEmbeddingProvider()
-    _run(idx3.build(items_v2, provider3, "standard"))
+    ctx3 = _ctx_for(provider3, monkeypatch)
+    _run(idx3.build(items_v2, ctx3, "standard"))
     assert not provider3.calls
     assert idx3.catalog_hash() == idx2.catalog_hash()
+
+
+# ── 7. FP-0057 #2856 Part A — redaction-bypass closed ────────────────────
+#
+# Pre-#2856, build()/query() called `provider.embed(...)` PROVIDER-DIRECT,
+# bypassing the shared `embed` op's PRE-embed redaction-egress scan
+# (co-vet #3 in core/op_runtime/embed.py). Routing through
+# execute_op(EmbedIROp(...), ctx) (Part A) means a secret-shaped string
+# anywhere in the catalog (e.g. a tool's short_description) is redacted
+# BEFORE it reaches the (fake, in-test) embedding provider — the same
+# egress boundary an external embedding API would sit behind in production.
+
+
+def test_build_redacts_secret_in_short_description_before_embed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Tier 2: a secret-shaped short_description is redacted at the embed
+    egress BEFORE the (fake) provider ever sees it — the tool-use
+    provider-direct redaction bypass this Part A closes."""
+    provider = _FakeEmbeddingProvider()
+    ctx = _ctx_for(provider, monkeypatch)
+    idx = ActionEmbeddingIndex()
+    secret_desc = 'api_key = "abcdefghijklmnopqrstuvwxyz123456"'
+    _run(idx.build(
+        [{"qualified_name": "skill__leaky", "short_description": secret_desc}],
+        ctx,
+        "standard",
+    ))
+    ((embedded_texts, _model),) = provider.calls
+    (embedded_text,) = embedded_texts
+    assert "abcdefghijklmnopqrstuvwxyz123456" not in embedded_text, (
+        "the raw secret must never reach the embedding provider"
+    )
+    assert "REDACTED" in embedded_text
+    # The seam firing is observable (P6 audit-event trace) on the ctx used
+    # for the build.
+    assert any(e.type == "embed_secret_redacted" for e in ctx.events.all())

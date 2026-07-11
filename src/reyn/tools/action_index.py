@@ -29,22 +29,35 @@ first build after upgrading rebuilds from scratch at the new path — no
 migration code, since the action index is cache (regenerable, not
 recovery-core). See ``docs/reference/runtime/reyn-dir-layout.md``.
 
-Lifecycle (unchanged from the caller's point of view):
+Lifecycle:
   1. Construction: empty index, ``is_ready() == False``.
-  2. ``await build(items, provider, model_class)`` — embeds each item's
-     ``"{qualified_name}: {short_description}"`` text via the
-     ``EmbeddingProvider``, stores the vectors via the backend, and
-     records a catalog snapshot hash. On completion ``is_ready()``
-     returns True.
+  2. ``await build(items, ctx, model_class)`` — embeds each item's
+     ``"{qualified_name}: {short_description}"`` text via
+     ``execute_op(EmbedIROp(...), ctx)`` (FP-0057 #2856 Part A — the shared
+     `embed` op, not a provider-direct call), stores the vectors via the
+     backend, and records a catalog snapshot hash. On completion
+     ``is_ready()`` returns True.
      Disk shortcut: when the on-disk backend state already carries the
      same catalog hash + model class, the embed call is skipped and the
      in-memory state is adopted from disk (= process-restart cache hit).
-  3. ``await query(text, provider, model_class, top_k=10)`` — embeds
-     the query once, asks the backend to rank all stored vectors by
-     cosine similarity, and returns the top-K items with their
-     ``score``. When the index is not ready, returns ``[]`` so callers
-     (= ``search_actions`` handler) gracefully degrade instead of
+  3. ``await query(text, ctx, model_class, top_k=10)`` — embeds
+     the query once (same `embed`-op route), asks the backend to rank all
+     stored vectors by cosine similarity, and returns the top-K items with
+     their ``score``. When the index is not ready, returns ``[]`` so
+     callers (= ``search_actions`` handler) gracefully degrade instead of
      crashing.
+
+FP-0057 #2856 Part A (redaction-bypass close-out): ``build()``/``query()``
+used to call ``provider.embed(...)`` PROVIDER-DIRECT, carrying a session-
+scoped provider whose only reason for living on this class was to also
+carry the TUI's model-download-status ``event_sink`` — a bypass of the
+shared `embed` op's PRE-embed redaction-egress scan (a secret in the tool
+catalog's ``short_description`` would previously leave the process
+unredacted). Both methods now take an ``OpContext`` instead of an
+``EmbeddingProvider`` and route through ``execute_op(EmbedIROp(...), ctx)``;
+the event_sink is preserved via ``ctx.embedding_event_sink`` (a callable,
+not a provider instance) forwarded to the op's own fresh provider
+resolution (see ``core/op_runtime/embed.py``).
 
 Catalog hash semantics:
   - Hash is over the SORTED tuple of qualified_names.
@@ -87,7 +100,7 @@ from reyn.data.index.backend import ChunkRecord, cache_dir_for_source
 from reyn.data.index.build_lock import try_acquire_build_lock
 
 if TYPE_CHECKING:
-    from reyn.data.embedding.provider import EmbeddingProvider
+    from reyn.core.op_runtime.context import OpContext
 
 import asyncio
 
@@ -291,10 +304,37 @@ class ActionEmbeddingIndex:
         self._size = stat["chunk_count"]
         return True
 
+    async def _embed_via_op(
+        self, texts: list[str], ctx: "OpContext", model_class: str,
+    ) -> list[list[float]]:
+        """Embed ``texts`` via the shared `embed` op (FP-0057 #2856 Part A).
+
+        Replaces the pre-#2856 ``provider.embed(...)`` provider-direct call —
+        routing through ``execute_op`` inherits the op's PRE-embed redaction-
+        egress scan (``embed.py``'s co-vet #3 seam) instead of bypassing it.
+        ``ctx.embedding_event_sink`` (forwarded by the caller) still reaches
+        the op's freshly-resolved provider, so the TUI model-download status
+        rows are unaffected by this routing change.
+
+        Raises ``RuntimeError`` on an op-level failure (mirrors the previous
+        provider-direct exception-propagation contract — ``build()``'s
+        all-or-nothing partial-build guard depends on this raising rather
+        than returning a partial/empty vector list silently).
+        """
+        from reyn.core.op_runtime import execute_op
+        from reyn.schemas.models import EmbedIROp
+
+        result = await execute_op(
+            EmbedIROp(kind="embed", texts=texts, embedding_model=model_class), ctx,
+        )
+        if result.get("status") == "error":
+            raise RuntimeError(f"embed op failed: {result.get('error')}")
+        return list(result.get("vectors", []))
+
     async def build(
         self,
         items: list[Mapping[str, Any]],
-        provider: "EmbeddingProvider",
+        ctx: "OpContext",
         model_class: str,
     ) -> None:
         """Embed each item and store the vector via the backend.
@@ -318,6 +358,12 @@ class ActionEmbeddingIndex:
         concurrent builds across OS processes. If another live process
         is mid-build, this call falls back to the disk state without
         invoking the embedding provider.
+
+        FP-0057 #2856 Part A: ``ctx`` (an ``OpContext``) replaces the prior
+        ``provider`` (``EmbeddingProvider``) argument — the embed call now
+        routes through ``execute_op(EmbedIROp(...), ctx)`` (see
+        ``_embed_via_op``) instead of calling a caller-held provider
+        directly.
         """
         async with self._build_lock:
             new_hash = compute_catalog_hash(list(items))
@@ -364,8 +410,7 @@ class ActionEmbeddingIndex:
                 self._building = True
                 _built_ok = False
                 try:
-                    result = await provider.embed(texts, model_class)
-                    vectors = list(result["vectors"])
+                    vectors = await self._embed_via_op(texts, ctx, model_class)
                     if len(vectors) != len(valid_items):
                         raise RuntimeError(
                             f"EmbeddingProvider returned {len(vectors)} "
@@ -393,7 +438,7 @@ class ActionEmbeddingIndex:
     async def query(
         self,
         query_text: str,
-        provider: "EmbeddingProvider",
+        ctx: "OpContext",
         model_class: str,
         top_k: int = 10,
     ) -> list[dict[str, Any]]:
@@ -407,6 +452,10 @@ class ActionEmbeddingIndex:
         gracefully degrades.
 
         Empty / whitespace-only query → empty result.
+
+        FP-0057 #2856 Part A: ``ctx`` (an ``OpContext``) replaces the prior
+        ``provider`` (``EmbeddingProvider``) argument — see ``build()``'s
+        docstring / ``_embed_via_op``.
         """
         if not self.is_ready():
             return []
@@ -415,8 +464,7 @@ class ActionEmbeddingIndex:
         if top_k <= 0:
             return []
 
-        query_result = await provider.embed([query_text], model_class)
-        query_vectors = list(query_result["vectors"])
+        query_vectors = await self._embed_via_op([query_text], ctx, model_class)
         if not query_vectors:
             return []
         query_vec = query_vectors[0]

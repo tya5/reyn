@@ -76,6 +76,7 @@ def build_router_op_context(
     current_task_id: str | None = None,  # #1953 §16: the task this turn is executing → task.create ownership
     hot_reloader: Any = None,  # #2761 PR-2: this session's HotReloader → immediate mid-turn install apply
     render_template_bounds: Any = None,  # #2679: operator RenderTemplateBounds → the render_template op cap. None → the op's in-handler defaults.
+    embedding_event_sink: Any = None,  # FP-0057 #2856 Part A: TUI model-download status sink for the `embed` op's provider resolution (ActionEmbeddingIndex build/query path). None → no TUI-observable download status.
 ) -> Any:
     """Build the chat-router OpContext (the single source for both hosts).
 
@@ -163,4 +164,5 @@ def build_router_op_context(
         current_task_id=current_task_id,  # #1953 §16: ownership-derivation context
         hot_reloader=hot_reloader,  # #2761 PR-2: per-session reloader for immediate mid-turn install apply
         render_template_bounds=render_template_bounds,  # #2679: operator render_template output cap
+        embedding_event_sink=embedding_event_sink,  # FP-0057 #2856 Part A: TUI model-download status sink for the embed op
     )

@@ -39,7 +39,13 @@ import math
 from pathlib import Path
 from typing import Any
 
+import pytest
+
+from reyn.core.events.events import EventLog
+from reyn.core.op_runtime.context import OpContext
 from reyn.data.index.backends.sqlite import SqliteIndexBackend
+from reyn.data.workspace.workspace import Workspace
+from reyn.security.permissions.permissions import PermissionDecl
 from reyn.tools.action_index import ActionEmbeddingIndex
 
 MODEL_CLASS = "standard"
@@ -49,6 +55,23 @@ _DIM = 8
 
 def _run(coro: Any) -> Any:
     return asyncio.run(coro)
+
+
+def _ctx_for(provider: Any, monkeypatch: pytest.MonkeyPatch) -> OpContext:
+    """Build a real OpContext whose `embed` op resolves to ``provider``.
+
+    FP-0057 #2856 Part A: ``ActionEmbeddingIndex.build()``/``query()`` now
+    route the embed call through ``execute_op(EmbedIROp(...), ctx)`` (the
+    shared `embed` op) instead of calling a caller-held provider directly —
+    tests monkeypatch the op-runtime module's ``get_provider`` (the
+    established convention, see ``tests/test_op_embed.py``) instead of
+    passing the fake provider as a positional argument.
+    """
+    import reyn.core.op_runtime.embed as _embed_mod
+    monkeypatch.setattr(_embed_mod, "get_provider", lambda *a, **kw: provider)
+    events = EventLog()
+    ws = Workspace(events=events)
+    return OpContext(workspace=ws, events=events, permission_decl=PermissionDecl())
 
 
 # ── 1. Capability seam ───────────────────────────────────────────────────
@@ -172,7 +195,7 @@ class _CraftedVectorProvider:
 
 
 def test_topk_ranking_identical_to_pre_consolidation_oracle(
-    tmp_path: Path,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Tier 2: co-vet #2 non-regression gate.
 
@@ -210,9 +233,10 @@ def test_topk_ranking_identical_to_pre_consolidation_oracle(
 
     # ── production: real ActionEmbeddingIndex riding SqliteIndexBackend ──
     provider = _CraftedVectorProvider(affinity_by_qn)
+    ctx = _ctx_for(provider, monkeypatch)
     idx = ActionEmbeddingIndex(workspace_root=tmp_path)
-    _run(idx.build(catalog_items, provider, MODEL_CLASS))
-    results = _run(idx.query(QUERY_TEXT, provider, MODEL_CLASS, top_k=top_k))
+    _run(idx.build(catalog_items, ctx, MODEL_CLASS))
+    results = _run(idx.query(QUERY_TEXT, ctx, MODEL_CLASS, top_k=top_k))
 
     production_qns = [r["qualified_name"] for r in results]
     production_scores = [r["score"] for r in results]

@@ -45,13 +45,14 @@ class FakeEmbeddingProvider:
         return 3
 
 
-def _make_ctx(tmp_path: Path) -> OpContext:
+def _make_ctx(tmp_path: Path, *, embedding_event_sink=None) -> OpContext:
     events = EventLog()
     ws = Workspace(events=events)
     return OpContext(
         workspace=ws,
         events=events,
         permission_decl=PermissionDecl(),
+        embedding_event_sink=embedding_event_sink,
     )
 
 
@@ -238,3 +239,82 @@ async def test_embed_no_redaction_event_when_no_secret_present(
     assert result.get("status") != "error", result
     assert fake.received_texts == ["just some ordinary sentence"]
     assert not any(e.type == "embed_secret_redacted" for e in ctx.events.all())
+
+
+# ---------------------------------------------------------------------------
+# Tier 2: FP-0057 #2856 Part A — ctx.embedding_event_sink forwarding seam
+# ---------------------------------------------------------------------------
+#
+# ActionEmbeddingIndex used to call `provider.embed(...)` PROVIDER-DIRECT so
+# it could carry a session-scoped provider's TUI model-download-status
+# event_sink — bypassing this op's PRE-embed redaction-egress seam above.
+# Part A closes that bypass by having ActionEmbeddingIndex route through this
+# op instead; the seam that makes that possible WITHOUT losing the TUI
+# status rows is this op forwarding `ctx.embedding_event_sink` into its own
+# per-call `_resolve_provider(event_sink=...)` — verified here directly
+# (independent of ActionEmbeddingIndex, which has its own coverage in
+# tests/test_action_embedding_index.py).
+
+@pytest.mark.asyncio
+async def test_embed_forwards_ctx_embedding_event_sink_to_provider_resolution(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Tier 2: when ctx carries an embedding_event_sink, the op forwards THAT
+    exact callable into get_provider(event_sink=...) — the seam that keeps
+    the TUI model-download status rows alive for a caller (ActionEmbeddingIndex)
+    that no longer holds its own provider instance."""
+    fake = FakeEmbeddingProvider()
+    received_event_sinks: list[object] = []
+
+    def _spy_get_provider(*_args, event_sink=None, **_kwargs):
+        received_event_sinks.append(event_sink)
+        return fake
+
+    import reyn.core.op_runtime.embed as _embed_mod
+    monkeypatch.setattr(_embed_mod, "get_provider", _spy_get_provider)
+
+    def _tui_sink(kind: str, text: str, meta: dict) -> None:
+        pass
+
+    ctx = _make_ctx(tmp_path, embedding_event_sink=_tui_sink)
+    op = EmbedIROp(kind="embed", texts=["hello"], embedding_model="standard")
+    result = await execute_op(op, ctx)
+
+    assert result.get("status") != "error", result
+    # unpack: exactly one get_provider() call was made for this single embed
+    (forwarded_sink,) = received_event_sinks
+    assert forwarded_sink is _tui_sink, (
+        "ctx.embedding_event_sink must reach get_provider(event_sink=...) "
+        "UNCHANGED (identity), not wrapped/dropped"
+    )
+
+
+@pytest.mark.asyncio
+async def test_embed_forwards_none_when_ctx_embedding_event_sink_stripped(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Tier 2: falsify — stripping ctx.embedding_event_sink (force None — the
+    OpContext default) means get_provider() receives event_sink=None — the
+    RED counterpart of the test above, confirming the forwarding is actually
+    load-bearing (not a no-op wiring that would "pass" either way)."""
+    fake = FakeEmbeddingProvider()
+    received_event_sinks: list[object] = []
+
+    def _spy_get_provider(*_args, event_sink=None, **_kwargs):
+        received_event_sinks.append(event_sink)
+        return fake
+
+    import reyn.core.op_runtime.embed as _embed_mod
+    monkeypatch.setattr(_embed_mod, "get_provider", _spy_get_provider)
+
+    ctx = _make_ctx(tmp_path)  # embedding_event_sink defaults to None
+    assert ctx.embedding_event_sink is None
+    op = EmbedIROp(kind="embed", texts=["hello"], embedding_model="standard")
+    result = await execute_op(op, ctx)
+
+    assert result.get("status") != "error", result
+    (forwarded_sink,) = received_event_sinks
+    assert forwarded_sink is None, (
+        "with no sink on ctx, get_provider() must receive event_sink=None "
+        "(no TUI status forwarded) — the RED case for the test above"
+    )
