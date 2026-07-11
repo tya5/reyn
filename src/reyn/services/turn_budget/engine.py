@@ -33,59 +33,17 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from reyn.prompt.turn_budget import WRAP_UP_SYSTEM_PROMPT as _WRAP_UP_SYSTEM_PROMPT
+from reyn.prompt.turn_budget import wrap_up_system_prompt
 from reyn.services.compaction.engine import estimate_tokens
 
 if TYPE_CHECKING:
     from reyn.llm.model_resolver import ModelResolver
 
-
-# Axis-independent (P7-clean) + field-agnostic (P8-clean): the prompt switches
-# the model's role to "consolidate and stop", but does NOT name any skill,
-# phase, or artifact type, and does NOT enumerate the output schema or describe
-# the Control IR format — the OS injects the finish-only candidate at call time
-# (the same seam the rest of the OS uses), and the per-axis "what was done so
-# far" context is injected separately at force-close time (§8: one SP + per-axis
-# context injection). Sibling of compaction's summariser SP.
-_WRAP_UP_SYSTEM_PROMPT = """\
-You are being asked to WRAP UP the current unit of work. Do NOT continue the \
-task and do NOT request or call any further tools or operations. Your only job \
-now is to consolidate what has happened so far into a single, final hand-off \
-so a fresh continuation can pick the work up without re-reading the raw history.
-
-Cover, compactly:
-
-- What is DONE — the essential conclusions, findings, and results produced so \
-far, distilled as knowledge. Summarise large inputs you read down to what \
-matters; do not paste their contents back.
-- Where the OUTPUTS live — reference any files or stored artifacts by their \
-location rather than inlining large data.
-- What REMAINS — the next concrete step(s) still needed to finish.
-- What must NOT be repeated — actions already completed that a continuation \
-should not redo.
-
-Keep it concise and self-contained, and prefer references over large inline \
-content. This consolidation replaces the raw working history for the next step, \
-so anything omitted here is lost: capture the essence, not the volume."""
-
-
-def wrap_up_system_prompt(reason: "str | None" = None) -> str:
-    """The axis-independent wrap-up system prompt (the single SP of §8).
-
-    Exposed as a function (not just the constant) so callers depend on a stable
-    surface and a future templated variant stays source-compatible.
-
-    Args:
-        reason: Optional cause for the wrap-up (e.g. "router reached iteration
-            limit (5)"). When provided, prepended to the SP so the LLM knows
-            WHY it is being asked to wrap up. Placed in the SP (not as a
-            trailing user message) to avoid breaking provider function-call
-            pairing rules (Gemini rejects a user turn immediately after a
-            tool_result). ``None`` (= cumulative-axis path) keeps the prompt
-            cause-neutral so existing replay fixtures are unaffected.
-    """
-    if reason is None:
-        return _WRAP_UP_SYSTEM_PROMPT
-    return f"This wrap-up is triggered because: {reason}.\n\n{_WRAP_UP_SYSTEM_PROMPT}"
+# _WRAP_UP_SYSTEM_PROMPT / wrap_up_system_prompt: relocated to
+# reyn.prompt.turn_budget (SP prompt-package, Phase 2 §F) — imported above,
+# the constant aliased back to this underscore name so every call-site below
+# is unchanged.
 
 
 @dataclass(frozen=True)

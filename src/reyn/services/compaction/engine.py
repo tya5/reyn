@@ -52,6 +52,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Awaitable, Callable
 
 from reyn.llm.json_parse import loads_lenient
+from reyn.prompt import compaction as _prompt_compaction
 
 if TYPE_CHECKING:
     from reyn.config import (
@@ -456,66 +457,12 @@ class UnrecoveredError(Exception):
 # Deterministic helpers
 # ---------------------------------------------------------------------------
 
-# Compact system prompt (equivalent to phases/compact.md, ~35 lines).
-# PR-N6: strengthened with immutable-base + verbatim-preservation directives.
-_COMPACTION_SYSTEM_PROMPT = """\
-You are summarising a chunk of chat history into a structured rolling summary.
-
-CRITICAL — previous_summary handling:
-Treat `previous_summary` as an IMMUTABLE BASE. You MUST NOT re-summarise,
-rephrase, or modify any content already present in `previous_summary`.
-Your only task is to APPEND new information from `new_turns` to it.
-If `previous_summary` is null, start fresh from `new_turns`.
-
-Fold the new_turns into the previous_summary (or start fresh if null).
-Produce a JSON object with these keys:
-  topic_arc         — 1-3 sentences on the current topic. Update when topic shifts.
-  decisions         — array of bullet strings for choices made. Drop oldest minor ones if over cap.
-  pending           — array of open items (questions, tasks, follow-ups). Remove resolved items.
-  session_user_facts — array of user attributes learned this session, not yet in memory. Drop oldest if over cap.
-  artifacts_referenced — array of files/PRs/commits/issues in scope. Drop ones no longer relevant.
-  new_turn_seqs     — VERBATIM list of every `seq` value from input new_turns, in order. Do NOT sort, filter, or compute the max.
-
-Retention rules:
-- Never drop architectural decisions or items labelled as final.
-- Match the user's language for free-text fields.
-- Include tool-activity items (file edits, web fetches) only when they inform the reply going forward.
-- Do NOT transcribe raw quotes unless they are the verbatim text of a decision or pending item.
-
-VERBATIM PRESERVATION (do NOT paraphrase or omit):
-- File paths (e.g. src/reyn/runtime/session.py)
-- Line numbers (e.g. line 4916)
-- Commit hashes (e.g. a26c3e9c)
-- Decision identifiers (e.g. PR-N6, FP-0008, issue #1035)
-- Temporal markers (e.g. 2026-05-29, v8)
-- Exit codes and error codes
-
-section_token_caps gives soft per-section token budgets. Trim the LEAST IMPORTANT items first when over budget.
-Output ONLY the JSON object — no explanation, no markdown fences.
-"""
-
-
-# #271 re-summarize (T2): a DISTINCT prompt for the overshoot case. The main
-# compaction SP forbids re-summarising `previous_summary` (immutable base); this
-# one EXPLICITLY relaxes that — it is the controlled re-compression pass invoked
-# only when the produced topic_arc overshoots body_budget. LLM-judgment loss
-# (preserve decision-relevant, drop least essential) replaces the blind char-cut
-# of hard_truncate; the deterministic floor (T3) still applies after.
-_RESUMMARIZE_SYSTEM_PROMPT = """\
-You are compressing a single rolling-summary narrative (the `topic_arc`) that
-overshot its token budget. Rewrite it to fit within the target budget.
-
-You MAY re-compress, rephrase, and drop content — this is an explicit
-re-summarisation pass (unlike the main compaction step, here re-summarising is
-REQUIRED to shrink the text).
-
-Rules:
-- Preserve the MOST decision-relevant content; drop the least essential.
-- Keep VERBATIM: file paths, line numbers, commit hashes, decision identifiers
-  (PR-N6, FP-0008, issue #1035), temporal markers, exit/error codes.
-- Match the original language.
-- Output ONLY the rewritten narrative text — no JSON, no markdown, no preamble.
-"""
+# _COMPACTION_SYSTEM_PROMPT / _RESUMMARIZE_SYSTEM_PROMPT: relocated to
+# reyn.prompt.compaction (SP prompt-package, Phase 2 §E) — module aliased
+# above, re-bound to these underscore names so every call-site below (and the
+# existing tests importing them from this module) is unchanged.
+_COMPACTION_SYSTEM_PROMPT = _prompt_compaction.COMPACTION_SYSTEM_PROMPT
+_RESUMMARIZE_SYSTEM_PROMPT = _prompt_compaction.RESUMMARIZE_SYSTEM_PROMPT
 
 
 def compute_covers_through_seq(new_turn_seqs: list) -> int:
@@ -1177,22 +1124,10 @@ def _get_learner_class() -> type:
 # Phase act-results compaction (control_ir_results)
 # ---------------------------------------------------------------------------
 
-_PHASE_COMPACTION_SYSTEM_PROMPT = """\
-You are summarising older `control_ir_results` from a phase's act loop
-to keep the next prompt within the model's context budget.
-
-For each older result, preserve op-kind-specific structured data:
-  - grep:      keep matched paths + line numbers (e.g. "src/foo.py:42, src/bar.py:18")
-  - file_read: keep path + byte size + line range (e.g. "src/foo.py L1-200, 8.3 KB")
-  - shell:     keep cmd + exit code + last 5 lines of stdout (head/tail acceptable)
-  - file_write / file_edit: keep path + byte delta + summary of change
-  - web_fetch: keep url + http status + content-type
-  - other:     keep kind + status + a short fact line
-
-Do NOT generalise away path names, line numbers, exit codes, or http status
-codes — the LLM uses these to plan its next op. Keep section budgets
-tight; brevity matters more than narrative.
-"""
+# _PHASE_COMPACTION_SYSTEM_PROMPT: relocated to reyn.prompt.compaction (SP
+# prompt-package, Phase 2 §E) — module aliased above, re-bound to this
+# underscore name so every call-site below is unchanged.
+_PHASE_COMPACTION_SYSTEM_PROMPT = _prompt_compaction.PHASE_COMPACTION_SYSTEM_PROMPT
 
 
 async def compact_control_ir_results(
