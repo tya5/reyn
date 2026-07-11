@@ -163,6 +163,7 @@ async def index_update_async(
     from reyn.core.events.events import EventLog
     from reyn.core.op_runtime import execute_op
     from reyn.core.op_runtime.context import OpContext
+    from reyn.data.index.backend import cache_dir_for_source
     from reyn.data.index.backends.sqlite import _within_paths
     from reyn.schemas.models import IndexUpdateIROp
     from reyn.security.permissions.permissions import PermissionDecl
@@ -172,9 +173,13 @@ async def index_update_async(
     # #1199 S3.4 Part1 parity: self-gate the index DB path against the
     # phase sandbox write_paths cap (the op has no ctx.permission_resolver
     # here to gate through, mirroring the retired embed_and_index's direct
-    # SqliteIndexBackend(sandbox_write_paths=...) construction).
+    # SqliteIndexBackend(sandbox_write_paths=...) construction). The DB path
+    # is derived via the SAME `cache_dir_for_source` helper `SqliteIndexBackend.
+    # _db_path` uses for the actual write — so the gate checks exactly the path
+    # the backend writes, guaranteed-equal by construction (not by two
+    # hand-agreeing hardcoded formulas).
     if _sandbox_write_paths is not None:
-        db_path = workspace_root / ".reyn" / "cache" / "index" / source / "index.db"
+        db_path = cache_dir_for_source(workspace_root, source) / "index.db"
         if not _within_paths(db_path, _sandbox_write_paths):
             raise PermissionError(
                 f"index_update: source {source!r} index path is outside the "

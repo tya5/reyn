@@ -49,7 +49,7 @@ from datetime import datetime, timezone
 
 from reyn.data.embedding import get_provider
 from reyn.data.index import SqliteIndexBackend
-from reyn.data.index.backend import ChunkRecord
+from reyn.data.index.backend import ChunkRecord, cache_dir_for_source
 from reyn.data.index.source_manifest import SourceEntry, get_source_manifest
 from reyn.schemas.models import EmbedIROp, IndexUpdateIROp
 
@@ -91,7 +91,11 @@ async def handle(op: IndexUpdateIROp, ctx: OpContext) -> dict:
     # ToolDefinition, not from this call.
     if ctx.permission_resolver is not None:
         sandbox_policy = sandbox_policy_from_ctx(ctx)
-        db_path = workspace_root / ".reyn" / "cache" / "index" / op.source / "index.db"
+        # Derive the DB path via the SAME `cache_dir_for_source` helper
+        # `SqliteIndexBackend._db_path` uses for the actual write, so the gate
+        # checks exactly the path the backend writes (guaranteed-equal by
+        # construction — not two hand-agreeing hardcoded formulas).
+        db_path = cache_dir_for_source(workspace_root, op.source) / "index.db"
         await ctx.permission_resolver.require_file_write(
             ctx.permission_decl, str(db_path), ctx.actor,
             sandbox_policy=sandbox_policy,
