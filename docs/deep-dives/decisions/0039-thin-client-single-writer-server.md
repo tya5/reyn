@@ -276,6 +276,19 @@ synthesis. (And since no tool locks a workspace across processes — all
 isolate or run single-process-async — the single-writer choice is
 industry-aligned, not exotic.)
 
+Read from the client side rather than the server side, the same design is a
+**session multiplexer** — the same shape as a terminal multiplexer (tmux) or
+Jupyter's shared kernel, applied to an agent runtime: one server multiplexes N
+agent sessions across M attached client surfaces (attach/detach, broadcast via
+`OutboxHub`, seize). Single-writer and multiplexer are two faces of one
+design, not two designs — "single-writer" names the server-side property,
+"multiplexer" names the client-side experience it produces. Multiplexing
+itself is not new (tmux, Jupyter, LSP all do it); what's new here is applying
+it to a **typed, permissioned, auditable** agent runtime rather than a plain
+shell or kernel process — the multiplexed unit is a governed runtime, attach
+works identically local or over the network, and any standard AG-UI client can
+attach, not just reyn's own.
+
 ---
 
 ## Consequences / honest ceiling
