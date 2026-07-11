@@ -20,6 +20,7 @@ from pathlib import Path
 import pytest
 
 from reyn.runtime.outbox import OutboxMessage
+from reyn.runtime.outbox_hub import OutboxHub
 
 
 class _FakeInterventions:
@@ -32,6 +33,11 @@ class _FakeSession:
 
     def __init__(self) -> None:
         self.outbox: asyncio.Queue = asyncio.Queue()
+        # ADR-0039 P6b: the forwarder subscribes to the session's outbox hub
+        # (the sole outbox.get() consumer) rather than draining outbox directly.
+        # A real OutboxHub over this fake's real outbox preserves the test's
+        # producer→forwarder path (no mock).
+        self.outbox_hub = OutboxHub(self.outbox)
         self.is_attached: bool = False
         self._interventions = _FakeInterventions()
 
