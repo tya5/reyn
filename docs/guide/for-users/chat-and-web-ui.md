@@ -39,7 +39,48 @@ reyn web --port 9000            # change port
 reyn web --host 0.0.0.0         # accept connections from other machines (LAN)
 ```
 
-> **Security note**: The default `127.0.0.1` binding accepts connections from localhost only. Use `--host 0.0.0.0` only on trusted networks.
+> **Security note**: The default `127.0.0.1` binding accepts connections from localhost only. A non-loopback bind (like `--host 0.0.0.0`) refuses to start unless a bearer token is configured (`web.auth.token` in `reyn.yaml`) — the gateway never exposes itself to the network unauthenticated.
+
+---
+
+## Remote thin client (`reyn chat --connect`)
+
+`reyn chat --connect` attaches a thin terminal client to a `reyn web` server someone else is running (or one you started earlier) — the server holds the session; your terminal just streams the conversation and relays your input.
+
+### Start the server
+
+```bash
+reyn web --host 0.0.0.0 --port 8080
+```
+
+On the default loopback bind (`127.0.0.1`), reyn generates a launch token and prints it in the startup URL (`http://127.0.0.1:8080/?token=...`). On a non-loopback bind, reyn refuses to start unless you've configured `web.auth.token` in `reyn.yaml` — copy that token (or the printed URL) before connecting from elsewhere.
+
+### Connect
+
+```bash
+pip install reyn[web]   # once, for the httpx client dependency
+reyn chat --connect http://<host>:8080 --token <secret> [agent_name]
+```
+
+- `agent_name` is optional and picks which agent on the server you attach to (same as local `reyn chat <agent_name>`).
+- `--token` can be omitted if `REYN_WEB_AUTH_TOKEN` is already set in your environment.
+- The connection is plain HTTP + Server-Sent Events (AG-UI) — there's nothing else to open or forward besides the one port.
+
+### What you get
+
+Replies, tool activity, and status stream in as they happen on the server. A human-in-the-loop prompt (a permission ask, a clarifying question) can be answered from the remote terminal exactly like a local one — your answer is delivered to the server by id, so it lands correctly even with other clients attached to the same agent.
+
+### What's different from local `reyn chat`
+
+- **Plain console rendering, even on a TTY.** `--connect` always uses the same plain output style as `reyn chat --cui` — no inline status bar (the local session's model / agent / cost / context chips) and no floating slash-command autocomplete menu. Typing a slash command still works; it's just not suggested as you type.
+- **`/rewind` is a text list, not the picker.** Locally `/rewind` opens an interactive ↑↓ region picker; over `--connect` it prints the same checkpoints as a plain numbered list instead.
+- **No local file access.** `--connect` is a pure transport client — it never touches a local session, workspace, or tool. Everything runs on the server's machine.
+
+### Security notes
+
+- For same-machine thin-client use, prefer a UNIX domain socket instead of a token: `reyn web --uds /path/to/socket` — the connection is authenticated by OS peer credentials, no token needed.
+- Any network bind (anything other than loopback) always requires `web.auth.token` and runs over TLS (self-signed by default; reyn prints the certificate fingerprint to pin on first connect).
+- Treat the printed token/URL like a password — anyone who has it can act as the operator.
 
 ---
 
@@ -67,51 +108,41 @@ The two processes are independent. Stopping one does not affect the other.
 
 ## TUI keyboard shortcuts
 
-The TUI footer shows a five-key strip — handy at a glance but not exhaustive.
-Press `Ctrl+B` to open the right panel and switch to the **Keys** tab for the
-full live list (the tab reflects the actual bindings the app is loaded with,
-including any voice-mode keys when recording).
-
-The shortcuts you reach for daily:
+The default interactive `reyn chat` (any TTY) is an inline CUI — the conversation
+prints into your terminal's own scrollback, with a status bar and an input box
+below it. There's no separate panel to toggle; the status bar's chips (`model`,
+`agent`, `task`, `cost`, `ctx`, and a `more` chip for `tool`/`mcp`/`skill`/`pipe`/
+`hook`/`cron`) are always visible and drill down in place.
 
 ### Input
 
 | Key | Action |
 |-----|--------|
-| `Enter` | Send the current prompt |
-| `Ctrl+J` | Insert a newline (paste a multi-line prompt) |
-| `Ctrl+U` | Clear the input buffer (single- or multi-line) |
-| `↑` / `↓` | Walk through past prompts (when the slash picker is closed) |
-| `Tab` | Confirm-without-send when the slash picker is open |
-| `Esc` | Dismiss the slash picker / docs filter / pending hint |
+| `Enter` | Send the current prompt (or insert a newline, if your terminal sends Shift+Enter as a distinguishable escape) |
+| `Ctrl+J` | Insert a newline — the guaranteed-works fallback on any terminal, for pasting or writing a multi-line prompt |
+| `↑` | Walk back through prompt history (from an empty input, or the first line of one) |
+| `↓` | Walk forward through history, move the cursor down inside a multi-line prompt, or (from an empty input) move focus down to the status bar |
+| `Tab` / `Enter` | Accept the highlighted entry when the `/` slash-command completion menu is open |
 
-### Conversation
+### Status bar
 
-| Key | Action |
-|-----|--------|
-| `Ctrl+P` / `Ctrl+N` | Jump to the previous / next turn header |
-| `Ctrl+L` | Clear the conversation pane (engine state untouched) |
-| `Ctrl+C` | Cancel the in-flight workflow run / LLM call / intervention modal |
-
-### Right panel
+Press `↓` from an empty input to focus the status bar, then:
 
 | Key | Action |
 |-----|--------|
-| `Ctrl+B` | Toggle the right panel |
-| `Ctrl+W` | Cycle to the next tab (Keys → Events → Agents → Memory → Cost → Docs → Pending) |
-| `h` / `l` | Widen / narrow the panel |
-| `j` / `k` | Scroll the current tab |
-| `space` | Toggle the preview pane for the cursor row (events / agents / memory / docs / pending only) |
-| `c` | Copy the current view; on the Pending tab, claim the cursor's intervention |
+| `←` / `→` | Move between chips (or between sub-bar chips, once `more` is open) |
+| `Enter` | Open the focused chip's detail view (or, for an actionable one like `model`, apply the selected row) |
+| `↑` / `↓` | Navigate rows inside an open detail view; at the top, `↑` closes it and returns focus to the input |
+| `Esc` | Close the open detail view / sub-bar |
 
-### Quit
+### Turn control
 
 | Key | Action |
 |-----|--------|
-| `Ctrl+D` | Quit the TUI (also `/quit`) |
+| `Ctrl+C` | Cancel the in-flight turn (a second `Ctrl+C` quits) |
+| `Ctrl+D` / `Ctrl+Q` | Quit (also `/quit`) |
 
-> Slash commands like `/copy`, `/cancel`, `/list`, `/skill`, `/plan`,
-> `/agents`, `/attach`, `/tasks` are documented in the
+> Slash commands are documented in the
 > [`reyn chat` reference](../../reference/cli/chat.md#slash-commands).
 
 ---
@@ -145,11 +176,17 @@ reyn web --port 8081
 
 **Can't connect from another device**
 
-By default the server binds to `127.0.0.1` (localhost only). Run with `--host 0.0.0.0` to accept LAN connections.
+By default the server binds to `127.0.0.1` (localhost only). Run with `--host 0.0.0.0` to accept LAN connections, and configure `web.auth.token` in `reyn.yaml` first — a non-loopback bind refuses to start without one.
+
+**`--connect` says "authentication required / rejected by the server"**
+
+Pass `--token <secret>` (the token `reyn web` printed on launch, or your configured `web.auth.token`), or set `REYN_WEB_AUTH_TOKEN` in the environment.
 
 ---
 
 ## See also
 
-- [Reference: CLI / chat](../../reference/cli/chat.md) — TUI slash commands
+- [Reference: CLI / chat](../../reference/cli/chat.md) — TUI slash commands, `--connect` / `--token` flags
+- [Reference: AG-UI transport](../../reference/runtime/agui-transport.md) — the wire protocol `--connect` and the browser both use
+- [Reference: reyn.yaml § web.auth](../../reference/config/reyn-yaml.md) — token / TLS / transport-tier config
 - [Concepts: A2A](../../concepts/multi-agent/a2a.md) — agent-to-agent protocol
