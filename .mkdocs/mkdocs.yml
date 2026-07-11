@@ -139,6 +139,7 @@ nav:
           - reference/runtime/control-ir.md
           - reference/runtime/events.md
           - reference/runtime/pipeline-dsl.md
+          - reference/runtime/agui-transport.md
       - Config:
           - Core:
               - reference/config/reyn-yaml.md
