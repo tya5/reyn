@@ -6,13 +6,13 @@ audience: [human, agent]
 
 # Operational Intelligence
 
-Reyn's P6 audit log records every state change — phase transitions, tool calls, LLM invocations, errors — as an append-only JSONL stream. Combine that with the RAG infrastructure from ADR-0033 and the result is **operational intelligence**: Reyn agents can recall their own execution history semantically rather than via linear event log scan. The same `semantic_search` op (FP-0057 Phase 2a; renamed from `recall`) used for document retrieval works on execution traces once the event log has been indexed into a source — using the same [`embed_and_index()`](rag.md) primitive as any other corpus, there is no dedicated events-indexing skill.
+Reyn's P6 audit log records every state change — phase transitions, tool calls, LLM invocations, errors — as an append-only JSONL stream. Combine that with the RAG infrastructure from ADR-0033 and the result is **operational intelligence**: Reyn agents can recall their own execution history semantically rather than via linear event log scan. The same `semantic_search` op (FP-0057 Phase 2a; renamed from `recall`) used for document retrieval works on execution traces once the event log has been indexed into a source — using the same [`index_update()`](rag.md) primitive (FP-0057 Phase 2b; the safe-mode entry point, replacing the retired `embed_and_index()`) as any other corpus, there is no dedicated events-indexing skill. **This is a DIY pattern, not a bundled turnkey events indexer** — you write the python step that reads `.reyn/events/*.jsonl` and calls `index_update`; see [§Scheduling](#scheduling) for keeping it current on a cadence.
 
 ## Architecture
 
 ```
 P6 events ──┐
-            ├─► your indexing step ──► embed_and_index(source="events") ──► .reyn/cache/index/events/ (sqlite)
+            ├─► your indexing step ──► index_update(source="events") ──► .reyn/cache/index/events/ (sqlite)
             │                                                                        │
             │                                                                        ▼
             │                                                          semantic_search(sources=["events"])
@@ -24,11 +24,11 @@ P6 events ──┐
             └─► raw file read fallback (`.reyn/events/*.jsonl`) when no index exists
 ```
 
-Indexing the event log is not a bundled skill — write a `python` step that reads `.reyn/events/*.jsonl`, groups events into per-run chunks, and calls `embed_and_index(chunks, source="events", ...)` the same way you would for any other corpus (see [Concepts: RAG — Quick start](rag.md#quick-start)). Once indexed, any phase can query the execution history with `semantic_search(sources=["events"], query="...", top_k=N)`.
+Indexing the event log is not a bundled skill — write a `python` step that reads `.reyn/events/*.jsonl`, groups events into per-run chunks, and calls `index_update(chunks, source="events", ...)` the same way you would for any other corpus (see [Concepts: RAG — Quick start](rag.md#quick-start)). Once indexed, any phase can query the execution history with `semantic_search(sources=["events"], query="...", top_k=N)`.
 
 ## Run-chunk format
 
-Events are stored one-per-line in JSONL, but the meaningful unit for operational intelligence is **one run** (from `run_skill_started` to `run_skill_completed`). Group each run into a single structured chunk before calling `embed_and_index`:
+Events are stored one-per-line in JSONL, but the meaningful unit for operational intelligence is **one run** (from `run_skill_started` to `run_skill_completed`). Group each run into a single structured chunk before calling `index_update`:
 
 ```
 [run chunk]
@@ -45,7 +45,7 @@ Failed runs should retain error details as additional chunk metadata so queries 
 
 ## Incremental indexing
 
-Use `embed_and_index`'s `mode="append"` (see [Concepts: RAG — Limitations](rag.md#limitations)) and track your own last-indexed timestamp (e.g. a cursor file under `.reyn/cache/`) so repeated indexing only processes events since the last run.
+`index_update` is reconcile-only by construction (see [Concepts: RAG — Limitations](rag.md#limitations)) — a re-run naturally skips run-chunks whose `content_hash` is already indexed, no explicit append/replace mode to choose. Still track your own last-processed timestamp (e.g. a cursor file under `.reyn/cache/`) so repeated indexing runs don't re-read + re-hash the entire `.reyn/events/*.jsonl` history on every pass — the dedup happens at `content_hash` comparison time, but reading + re-chunking the full log every run is wasted I/O the cursor avoids.
 
 ## Querying execution history
 
@@ -70,7 +70,7 @@ From `/chat`:
 
 ## Relationship to RAG Phase 1
 
-Indexing the event log uses the exact same `embed_and_index()` entry point as indexing documents (see [Concepts: RAG](rag.md)) — the only difference is what you chunk (one chunk per run, instead of per passage) and how you track incremental progress (a timestamp cursor, instead of `content_hash` dedup).
+Indexing the event log uses the exact same `index_update()` entry point as indexing documents (see [Concepts: RAG](rag.md)) — the only difference is what you chunk (one chunk per run, instead of per passage) and how you track incremental progress (a timestamp cursor to skip already-processed events, on top of `index_update`'s own `content_hash` dedup).
 
 ## Scheduling
 

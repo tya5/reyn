@@ -19,10 +19,12 @@ content-addressed by ``content_hash`` within each ``source_path``):
 Reuses the Phase 1 ``embed`` op for the actual embedding call (dispatched via
 ``execute_op`` — same primitive, no duplicated embed logic) and the existing
 ``SqliteIndexBackend`` / ``SourceManifest`` (ADR-0033 Phase 1 / FP-0057 Phase
-0) for storage — mirrors ``reyn.api.safe.embed_index.embed_and_index``'s
-resume-key pattern (dedup BEFORE embedding = the cost save) but adds the
-update/remove reconciliation legs that safe-mode ingestion (append-only) does
-not need.
+0) for storage — the resume-key pattern (dedup BEFORE embedding = the cost
+save) mirrors the retired ``reyn.api.safe.embed_index.embed_and_index``
+(FP-0057 Phase 2b clean-break: safe-mode python steps now call
+``reyn.api.safe.index_update`` instead, a thin dispatch onto THIS op), plus
+the update/remove reconciliation legs the old append-only safe-mode entry
+never had.
 
 **Source-model-bound**: the source's embedding model is recorded on first
 ingestion (``SourceManifest.embedding_model`` / the SQLite backend's
@@ -47,7 +49,7 @@ from datetime import datetime, timezone
 
 from reyn.data.embedding import get_provider
 from reyn.data.index import SqliteIndexBackend
-from reyn.data.index.backend import ChunkRecord
+from reyn.data.index.backend import ChunkRecord, cache_dir_for_source
 from reyn.data.index.source_manifest import SourceEntry, get_source_manifest
 from reyn.schemas.models import EmbedIROp, IndexUpdateIROp
 
@@ -89,7 +91,11 @@ async def handle(op: IndexUpdateIROp, ctx: OpContext) -> dict:
     # ToolDefinition, not from this call.
     if ctx.permission_resolver is not None:
         sandbox_policy = sandbox_policy_from_ctx(ctx)
-        db_path = workspace_root / ".reyn" / "cache" / "index" / op.source / "index.db"
+        # Derive the DB path via the SAME `cache_dir_for_source` helper
+        # `SqliteIndexBackend._db_path` uses for the actual write, so the gate
+        # checks exactly the path the backend writes (guaranteed-equal by
+        # construction — not two hand-agreeing hardcoded formulas).
+        db_path = cache_dir_for_source(workspace_root, op.source) / "index.db"
         await ctx.permission_resolver.require_file_write(
             ctx.permission_decl, str(db_path), ctx.actor,
             sandbox_policy=sandbox_policy,

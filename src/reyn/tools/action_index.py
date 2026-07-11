@@ -4,8 +4,9 @@ FP-0034 §D13 / §D15 spec — Phase 2 step 2 added SQLite-WAL persistence so
 that re-embedding is skipped across process restarts when the catalog has
 not changed. FP-0057 Phase 0 (#2843) folds the storage/cosine/lock layer
 that used to be hand-rolled here onto the pluggable ``IndexBackend`` (the
-same substrate ``embed_and_index`` / doc-RAG ``recall`` already uses) —
-this class is now a thin **domain adapter**: it owns the action-catalog-
+same substrate doc-RAG ingestion — ``index_update`` / the safe-mode
+``reyn.api.safe.index_update``, FP-0057 Phase 2b — and query — ``semantic_search``
+— ride) — this class is now a thin **domain adapter**: it owns the action-catalog-
 specific dual-axis (catalog-hash + model-class) invalidation policy and
 delegates vector storage, cosine ranking, and content-hash dedup to the
 backend. What moved out (single canonical implementation now, no more
@@ -63,13 +64,16 @@ Concurrency:
     to whatever's on disk instead of duplicating the embed-API cost /
     duplicate sentence-transformers model load.
 
-Open for extension (FP-0057 Phase 2, not built here): today's catalog
-covers primitive tools, MCP tools, and pipelines (NOT skills — the
-catalog builder in ``universal_catalog.py`` has no per-skill resource
-category yet). The ``source``/``kind`` metadata captured on every chunk
-(``extra["kind"]``, derived from the qualified_name's category prefix)
-keeps the door open for a future per-kind source split or filter without
-requiring a storage-layer rewrite; Phase 0 does not add that filtering.
+Catalog coverage (FP-0057 Phase 2b re-check): today's catalog covers
+primitive tools, MCP tools, and pipelines. There is no separate per-skill
+runtime-invoke category to add — the skill ENGINE was deleted (#2438);
+``universal_catalog.CATEGORIES`` only carries ``skill_management`` (the
+install-plane), never a per-skill dynamic-dispatch category — so the prior
+"NOT skills" gap note no longer describes a live extension point. The
+``source``/``kind`` metadata captured on every chunk (``extra["kind"]``,
+derived from the qualified_name's category prefix) still keeps the door
+open for a future per-kind source split or filter without requiring a
+storage-layer rewrite, should a per-skill invoke category ever return.
 """
 from __future__ import annotations
 

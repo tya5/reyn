@@ -121,6 +121,11 @@ from . import compact as _compact  # noqa: F401, E402
 # the shared `embed` op's SECOND internal caller (alongside
 # semantic_search's query embed). `recall` renamed `semantic_search`
 # (clean-break, fixes the recall/search_actions/memory naming collision).
+# FP-0057 Phase 2b: `reyn.api.safe.embed_index.embed_and_index` (the
+# CodeAct-only entry #1303 folded here) retired clean-break — replaced by
+# `reyn.api.safe.index_update`, a thin safe-mode dispatch onto this SAME
+# `index_update` op (no more provider-direct embed path from safe-mode
+# python steps).
 from . import embed as _embed  # noqa: F401, E402
 from . import file as _file  # noqa: F401, E402
 from . import index_drop as _index_drop  # noqa: F401, E402

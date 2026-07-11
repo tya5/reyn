@@ -7,7 +7,7 @@ applies_to: [reyn source]
 
 # `reyn source`
 
-Manage indexed sources — the named document collections created by a safe-mode indexing step calling `embed_and_index()`. See [Concepts: RAG](../../concepts/data-retrieval/rag.md) for the mental model and indexing workflow (there is no `reyn run index_docs` one-command indexing skill).
+Manage indexed sources — the named document collections created by a safe-mode indexing step calling `index_update()`. See [Concepts: RAG](../../concepts/data-retrieval/rag.md) for the mental model and indexing workflow (there is no `reyn run index_docs` one-command indexing skill).
 
 ## Synopsis
 
@@ -64,7 +64,7 @@ No indexed sources yet.
 Try: reyn run index_docs --source <name> --path "<glob>" --description "<description>"
 ```
 
-> This hint text is stale — it references the removed `index_docs` skill. There is no CLI command to create a source today; see [Concepts: RAG — Quick start](../../concepts/data-retrieval/rag.md#quick-start) for the current safe-mode `embed_and_index()` path.
+> This hint text is stale — it references the removed `index_docs` skill. There is no CLI command to create a source today; see [Concepts: RAG — Quick start](../../concepts/data-retrieval/rag.md#quick-start) for the current safe-mode `index_update()` path.
 
 ```bash
 # Machine-readable output
