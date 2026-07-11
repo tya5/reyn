@@ -81,7 +81,6 @@ def _entries(*entries: CustomName) -> "dict[str, CustomName]":
 # vocabulary (a new Custom-mapped kind/etype with no entry here fails CI).
 CUSTOM_PROFILE: dict[str, CustomName] = _entries(
     # ── reyn.display.<kind> — display frames with no standard AG-UI analog ──
-    CustomName("reyn.display.trace", DISPLAY_NS, "{text: str}", "a reyn tool/step trace line"),
     CustomName(
         "reyn.display.intervention", DISPLAY_NS, "{text: str}",
         "an intervention prompt is displayed (the reyn client draws it natively; the answer round-trip rides the reyn.intervention.* frontend-tool)",
@@ -90,7 +89,6 @@ CUSTOM_PROFILE: dict[str, CustomName] = _entries(
         "reyn.display.presentation", DISPLAY_NS, "{text: str}",
         "a present op's text; the render-node model rides the _reyn block's meta.nodes, inert on the wire",
     ),
-    CustomName("reyn.display.nodes", DISPLAY_NS, "{text: str}", "a raw render-node display line"),
     CustomName(
         "reyn.display.user", DISPLAY_NS, "{text: str}",
         "a user-authored line echoed live to the scrollback (backlog user turns ride the standard messages array)",
@@ -100,8 +98,16 @@ CUSTOM_PROFILE: dict[str, CustomName] = _entries(
         "a reyn chrome line — a persisted lifecycle/status marker (compaction / budget / cost-warn) or the operator's 'answered:' echo; reyn-private, no standard AG-UI analog",
     ),
     CustomName(
+        "reyn.display.__copy_last_reply__", DISPLAY_NS, "{text: str}",
+        "the /copy sentinel — FORWARDED (not a local-control filter): the CLIENT consumes it over the transport stream and does a real client-side clipboard copy (stream_client._handle_copy_sentinel), so filtering it would make remote /copy a silent no-op",
+    ),
+    CustomName(
+        "reyn.display.__rewind_list__", DISPLAY_NS, "{text: str}",
+        "the /rewind sentinel — FORWARDED (not a local-control filter): the CLIENT consumes it over the transport stream and renders the rewind region picker, so filtering it would make remote /rewind a silent no-op",
+    ),
+    CustomName(
         "reyn.display.__attach_request__", DISPLAY_NS, "{text: str}",
-        "the attach-request sentinel — forwarded to remote clients (unlike the other local-control sentinels) because the TUI in --connect mode needs it to keep its attached-agent label + conv pane in sync on a server-side agent swap (F13 #303); reyn chrome, no standard AG-UI analog",
+        "the attach-request sentinel — upstream-consumed at registry.py:3052 (swallowed with continue), so it never reaches the AG-UI tap; this profile entry is a fail-safe for a tap-point change, not a live wire kind (remote attach-label sync is designed in P6b, not via this legacy sentinel)",
     ),
     CustomName(
         "reyn.display.tool_call_started", DISPLAY_NS, "{text: str}",

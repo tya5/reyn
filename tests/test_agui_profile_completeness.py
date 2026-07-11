@@ -211,30 +211,35 @@ def test_every_producer_kind_is_dispositioned() -> None:
     )
 
 
-def test_control_sentinels_are_filtered_attach_request_is_forwarded() -> None:
-    """Tier 2: the per-entry disposition of the four control sentinels.
+def test_control_sentinel_dispositions_client_consumed_forward_upstream_consumed_filter() -> None:
+    """Tier 2: the per-entry disposition of the `__…__` control sentinels.
 
-    The three purely-local sentinels are control-filtered (no remote-UI semantics);
-    ``__attach_request__`` is the exception that IS forwarded (profiled CUSTOM) —
-    the TUI --connect attach-label sync (F13 #303) needs it delivered remotely."""
-    for local_only in (
-        "__copy_last_reply__", "__rewind_list__", "__session_switch_request__",
-    ):
-        assert _disposition(local_only) == "control", local_only
-    assert "__end__" in CONTROL_FILTER_KINDS
+    - ``__copy_last_reply__`` / ``__rewind_list__`` are **client-consumed** over the
+      transport stream (real client-side clipboard copy / rewind picker), so they
+      are FORWARDED (profiled CUSTOM) and round-trip losslessly — filtering them
+      would make remote ``/copy`` / ``/rewind`` silent no-ops.
+    - ``__end__`` (terminal) and ``__session_switch_request__`` (upstream-consumed
+      at registry.py:3061) are control-filtered.
+    - ``__attach_request__`` is upstream-consumed at registry.py:3052; its profile
+      entry is a fail-safe (not a live wire kind)."""
+    # Client-consumed → forwarded + profiled + lossless round-trip.
+    for client_kind in ("__copy_last_reply__", "__rewind_list__"):
+        assert client_kind not in CONTROL_FILTER_KINDS, client_kind
+        assert _disposition(client_kind) == "profiled", client_kind
+        ev = encode_frame(DisplayFrame(OutboxMessage(kind=client_kind, text="x")))
+        assert ev.data["name"] == f"reyn.display.{client_kind}"
+        decoded = decode_event(ev.type, ev.data)
+        assert isinstance(decoded, DisplayFrame)
+        assert decoded.message.kind == client_kind
 
-    # __attach_request__ is forwarded, so it is NOT control-filtered and MUST be
-    # profiled (a real wire leak otherwise — it rides web's forward path too).
+    # Terminal + upstream-consumed → control-filtered.
+    assert _disposition("__end__") == "control"
+    assert _disposition("__session_switch_request__") == "control"
+
+    # __attach_request__ profile entry is a fail-safe (kept profiled).
     assert "__attach_request__" not in CONTROL_FILTER_KINDS
     assert _disposition("__attach_request__") == "profiled"
-    ev = encode_frame(DisplayFrame(OutboxMessage(kind="__attach_request__", text="x")))
-    assert ev.data["name"] == "reyn.display.__attach_request__"
-    assert is_profiled(ev.data["name"])
-
-    # It is forwarded, so it must round-trip losslessly for the reyn client.
-    decoded = decode_event(ev.type, ev.data)
-    assert isinstance(decoded, DisplayFrame)
-    assert decoded.message.kind == "__attach_request__"
+    assert is_profiled("reyn.display.__attach_request__")
 
 
 def test_every_custom_mapped_frame_is_profiled() -> None:

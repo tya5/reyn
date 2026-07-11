@@ -95,31 +95,33 @@ CUSTOM = "CUSTOM"
 # marker a generic client ignores and the reyn client reconstructs from.
 _REYN = "_reyn"
 
-# Local-control display sentinels — ``OutboxMessage.kind`` values that drive a
-# LOCAL UI action and carry NO remote-UI semantics, so the AG-UI emitter does NOT
-# forward them on the wire (:class:`~reyn.interfaces.transport.agui.emitter.AgUiEmitter`
-# consults this set). This is an EXPLICIT per-entry allowlist — deliberately NOT
-# the negation of any forward-set (negating a partial/legacy forward-set would
-# wrongly filter renderable display kinds like ``presentation`` / ``reasoning`` /
-# ``system`` / ``user`` that happen to be absent from it). Each entry is a
-# standalone decision:
+# Control sentinels the AG-UI emitter does NOT forward on the wire
+# (:class:`~reyn.interfaces.transport.agui.emitter.AgUiEmitter` consults this set).
+# An EXPLICIT per-entry allowlist — deliberately NOT the negation of any
+# forward-set (negating a partial/legacy forward-set would wrongly filter
+# renderable display kinds like ``presentation`` / ``reasoning`` / ``system`` /
+# ``user`` that happen to be absent from it). Each entry is a standalone decision:
 #
 # - ``__end__``                    — the stream terminator; the emitter returns on
 #                                    it (the client's loop also ends on stream close).
-# - ``__copy_last_reply__``        — ``/copy``: resolve + write the local clipboard.
-# - ``__rewind_list__``            — ``/rewind``: drive the local ↑↓ region picker.
-# - ``__session_switch_request__`` — focus-flip the local session view.
+# - ``__session_switch_request__`` — upstream-consumed at ``registry.py:3061`` (the
+#                                    registry swallows it with ``continue``), so it
+#                                    never reaches the AG-UI tap; filtering it is a
+#                                    fail-safe for a future tap-point change.
 #
-# ``__attach_request__`` is deliberately NOT here — it IS forwarded (profiled as a
-# CUSTOM display name) because of a specific remote need: the TUI in ``--connect``
-# mode owns the attached-agent label / conv-clear-on-switch UX and needs the
-# sentinel delivered remotely to keep the header label + conv pane in sync (F13
-# #303). That is a per-entry exception, not a general "match the web forward-set"
-# rule.
+# NOT here (deliberately forwarded — profiled CUSTOM display names):
+# - ``__copy_last_reply__`` / ``__rewind_list__`` are consumed by the CLIENT over
+#   the transport stream — ``/copy`` does a real client-side clipboard copy
+#   (``stream_client._handle_copy_sentinel``) and ``/rewind`` renders a client-side
+#   picker. In the thin-client model transport IS the AG-UI wire, so filtering them
+#   would make remote ``/copy`` / ``/rewind`` silent no-ops. They MUST reach the
+#   wire (``_reyn``-lossless; generic clients ignore-unknown safely).
+# - ``__attach_request__`` is upstream-consumed at ``registry.py:3052`` (also
+#   swallowed with ``continue``); its profile entry is a fail-safe for a tap-point
+#   change, NOT a live wire kind. (Remote attach-label sync is designed in P6b, not
+#   via this legacy sentinel.)
 CONTROL_FILTER_KINDS: "frozenset[str]" = frozenset({
     "__end__",
-    "__copy_last_reply__",
-    "__rewind_list__",
     "__session_switch_request__",
 })
 

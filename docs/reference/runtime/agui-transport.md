@@ -71,11 +71,11 @@ of the renderer's two entry points (display vs working-indicator). The mapping:
 | `status`          | text triplet       | transient status line (`role: status`)       |
 | `reasoning`       | reasoning triplet  | the model's reasoning text (see *reasoning lifecycle*); emitted only when reasoning display is on |
 | `error`           | `RUN_ERROR`        | error text                                   |
-| `trace`           | `CUSTOM`           | reyn tool/step trace line                    |
 | `intervention`    | `CUSTOM`           | a prompt is displayed; the reyn client draws it natively and answers it by id (see "Human-in-the-loop answering") |
 | `presentation`    | `CUSTOM`           | a `present` op's render-node model (see *present-on-wire*) |
-| `__attach_request__` | `CUSTOM`        | the attach-request sentinel — forwarded to remote clients (see *control sentinels*) |
-| other control sentinels | *(filtered)* | `__end__` / `__copy_last_reply__` / `__rewind_list__` / `__session_switch_request__` are NOT forwarded (see *control sentinels*) |
+| `__copy_last_reply__` / `__rewind_list__` | `CUSTOM` | client-consumed sentinels — forwarded (see *control sentinels*) |
+| `__attach_request__` | `CUSTOM`        | fail-safe profile entry; upstream-consumed (see *control sentinels*) |
+| `__end__` / `__session_switch_request__` | *(filtered)* | NOT forwarded (see *control sentinels*) |
 
 Any other display kind still round-trips losslessly (it falls back to `CUSTOM` and
 is reconstructed from `_reyn`) — a new display kind can never silently vanish on
@@ -85,24 +85,29 @@ producer domain** — every `OutboxMessage(kind=...)` literal across the source
 renderer-file proxy — and asserts each producer kind is *standard-mapped*,
 *profiled*, or *control-filtered*; anything else fails CI.
 
-#### Control sentinels (filtered vs forwarded)
+#### Control sentinels (forwarded vs filtered)
 
-A few `__…__` display kinds are **local-control sentinels** — they drive a local
-UI action and carry no remote-UI semantics, so the emitter does **not** forward
-them on the AG-UI wire (an explicit allowlist, `CONTROL_FILTER_KINDS` — never the
-negation of a forward-set, which would wrongly drop renderable display kinds):
+A few `__…__` display kinds get a **per-entry disposition**, decided by *where the
+sentinel is consumed* (never by negating a forward-set, which would wrongly drop
+renderable display kinds):
 
-- `__end__` — the stream terminator (the emitter returns on it; the client's loop
-  also ends when the stream closes).
-- `__copy_last_reply__` — `/copy`: resolve and write the local clipboard.
-- `__rewind_list__` — `/rewind`: drive the local ↑↓ region picker.
-- `__session_switch_request__` — focus-flip the local session view.
+- **Client-consumed → forwarded** (profiled `CUSTOM`, `_reyn`-lossless):
+  - `__copy_last_reply__` — `/copy`: the **client** does a real client-side
+    clipboard copy over the transport stream.
+  - `__rewind_list__` — `/rewind`: the **client** renders the rewind region picker.
 
-`__attach_request__` is the **one exception that IS forwarded** (as a `CUSTOM`
-display event): the TUI in `--connect` mode owns the attached-agent label /
-conv-clear-on-switch UX and needs the sentinel delivered remotely to keep the
-header label and conversation pane in sync on a server-side agent swap. This is a
-per-entry decision, not a general "forward everything except `__end__`" rule.
+  In the thin-client model the transport *is* the AG-UI wire, so filtering these
+  would make remote `/copy` and `/rewind` silent no-ops — they must reach the wire.
+- **Filtered** (`CONTROL_FILTER_KINDS`, an explicit allowlist — the emitter emits
+  no wire event):
+  - `__end__` — the stream terminator (the emitter returns on it; the client's
+    loop also ends when the stream closes).
+  - `__session_switch_request__` — already swallowed upstream (`registry.py:3061`),
+    so it never reaches the AG-UI tap; filtering is a fail-safe.
+- **Upstream-consumed → fail-safe profile**: `__attach_request__` is swallowed
+  upstream (`registry.py:3052`) and never reaches the tap; its profile entry is a
+  fail-safe for a future tap-point change, not a live wire kind. (Remote
+  attach-label sync is designed separately, not via this legacy sentinel.)
 
 #### Text lifecycle (the conforming triplet)
 
@@ -300,13 +305,13 @@ A reyn display frame with no standard AG-UI analog. `value` is `{"text": <string
 
 | Custom `name`                     | Meaning                                              |
 |-----------------------------------|------------------------------------------------------|
-| `reyn.display.trace`              | a reyn tool/step trace line                           |
 | `reyn.display.intervention`       | an intervention prompt is displayed                   |
 | `reyn.display.presentation`       | a `present` op's text; the render-node model rides the `_reyn` block's `meta.nodes` (inert on the wire — see *present-on-wire*) |
-| `reyn.display.nodes`              | a raw render-node display line                         |
 | `reyn.display.user`               | a user-authored line echoed live to the scrollback (backlog user turns ride the standard `messages` array instead) |
 | `reyn.display.system`             | a reyn chrome line — a persisted lifecycle/status marker (compaction / budget / cost-warn) or the operator's "answered:" echo |
-| `reyn.display.__attach_request__` | the attach-request sentinel — the one control sentinel that is forwarded remotely (F13 attach-label sync); see *control sentinels* |
+| `reyn.display.__copy_last_reply__` | the `/copy` sentinel — forwarded (client-side clipboard copy); see *control sentinels* |
+| `reyn.display.__rewind_list__`    | the `/rewind` sentinel — forwarded (client-side rewind picker); see *control sentinels* |
+| `reyn.display.__attach_request__` | the attach-request sentinel — a fail-safe profile entry (upstream-consumed); see *control sentinels* |
 | `reyn.display.tool_call_started`  | a tool-call start trace line                           |
 | `reyn.display.tool_call_completed`| a tool-call completion trace line                     |
 | `reyn.display.tool_call_failed`   | a tool-call failure trace line                        |

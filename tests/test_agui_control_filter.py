@@ -1,20 +1,19 @@
-"""Tier 2: local-control sentinels are not forwarded on the AG-UI wire (ADR-0039).
+"""Tier 2: the AG-UI emitter's control-sentinel disposition (ADR-0039 P6a).
 
-reyn's producer outbox carries a few ``__...__`` display sentinels that drive a
-LOCAL UI action and have no remote-UI semantics. The AG-UI emitter must NOT put
-these on the wire — otherwise a remote client receives an unprofiled ``CUSTOM``
-event with nothing to render. This is an EXPLICIT per-entry allowlist
-(:data:`~reyn.interfaces.transport.agui.protocol.CONTROL_FILTER_KINDS`), never the
-negation of a forward-set (which would wrongly drop renderable display kinds).
+A few ``__…__`` display sentinels get per-entry dispositions on the AG-UI wire:
 
-Two halves pinned here:
-
-- **Filtered**: ``__copy_last_reply__`` / ``__rewind_list__`` /
-  ``__session_switch_request__`` / ``__end__`` produce ZERO wire events; ``__end__``
-  additionally terminates the stream.
-- **Not filtered**: ``__attach_request__`` IS forwarded (a profiled ``CUSTOM``
-  display event) — the TUI ``--connect`` attach-label sync (F13 #303) needs it
-  delivered remotely. Ordinary display frames (``agent``) are unaffected.
+- **Client-consumed → FORWARDED** (profiled ``CUSTOM``): ``__copy_last_reply__`` /
+  ``__rewind_list__`` are consumed by the CLIENT over the transport stream (a real
+  client-side clipboard copy / rewind picker). In the thin-client model transport
+  IS the AG-UI wire, so they MUST reach it — filtering them would make remote
+  ``/copy`` / ``/rewind`` silent no-ops.
+- **Filtered** (``CONTROL_FILTER_KINDS``, an explicit per-entry allowlist — never
+  the negation of a forward-set): ``__end__`` (the stream terminator) and
+  ``__session_switch_request__`` (already swallowed upstream at registry.py:3061 —
+  a fail-safe) produce ZERO wire events.
+- ``__attach_request__`` is upstream-consumed at registry.py:3052; it never
+  reaches the tap, so its emitter disposition is moot — the profiled fail-safe
+  means it would be forwarded if the tap point ever changed.
 
 Real instances only — a real ``AgUiEmitter`` over real SSE text; no mocks.
 """
@@ -53,24 +52,40 @@ def _reyn_display_names(events) -> set[str]:
 
 
 @pytest.mark.asyncio
-async def test_local_control_sentinels_are_not_on_the_wire() -> None:
-    """Tier 2: the three purely-local sentinels produce ZERO wire events; the
-    ``agent`` frame around them is forwarded normally (the filter is per-kind, not
-    a stream-wide drop)."""
+async def test_client_consumed_sentinels_are_forwarded_on_the_wire() -> None:
+    """Tier 2: wire-existence probe — ``__copy_last_reply__`` / ``__rewind_list__``
+    ARE forwarded (a NON-zero AG-UI event each), because the client consumes them
+    over the transport stream. Filtering them would break remote /copy and /rewind."""
     frames = [
         DisplayFrame(OutboxMessage(kind="__copy_last_reply__", text="c")),
-        DisplayFrame(OutboxMessage(kind="agent", text="hello")),
         DisplayFrame(OutboxMessage(kind="__rewind_list__", text="r")),
-        DisplayFrame(OutboxMessage(kind="__session_switch_request__", text="s")),
         DisplayFrame(OutboxMessage(kind="__end__", text="")),
     ]
     events = await _wire_events(frames)
     names = _reyn_display_names(events)
 
-    for sentinel in ("__copy_last_reply__", "__rewind_list__", "__session_switch_request__"):
-        assert f"reyn.display.{sentinel}" not in names, sentinel
+    assert "reyn.display.__copy_last_reply__" in names
+    assert "reyn.display.__rewind_list__" in names
+    # Neither is in the filter set (the disposition backing the forward).
+    assert "__copy_last_reply__" not in CONTROL_FILTER_KINDS
+    assert "__rewind_list__" not in CONTROL_FILTER_KINDS
+
+
+@pytest.mark.asyncio
+async def test_filtered_control_sentinels_are_not_on_the_wire() -> None:
+    """Tier 2: the filtered sentinels (``__session_switch_request__`` / ``__end__``)
+    produce ZERO wire events; a surrounding ``agent`` frame is forwarded normally
+    (the filter is per-kind, not a stream-wide drop)."""
+    frames = [
+        DisplayFrame(OutboxMessage(kind="__session_switch_request__", text="s")),
+        DisplayFrame(OutboxMessage(kind="agent", text="hello")),
+        DisplayFrame(OutboxMessage(kind="__end__", text="")),
+    ]
+    events = await _wire_events(frames)
+    names = _reyn_display_names(events)
+
+    assert "reyn.display.__session_switch_request__" not in names
     assert "reyn.display.__end__" not in names
-    # The ordinary agent frame between them IS forwarded (its text triplet).
     assert "reyn.display.agent" in names
 
 
@@ -87,16 +102,3 @@ async def test_end_sentinel_terminates_the_stream() -> None:
     blob = "".join(str(ev.data) for ev in events)
     assert "before end" in blob
     assert "AFTER end" not in blob
-
-
-@pytest.mark.asyncio
-async def test_attach_request_is_forwarded_as_profiled_custom() -> None:
-    """Tier 2: ``__attach_request__`` is the exception — it IS forwarded (a
-    ``CUSTOM`` display event), NOT filtered, per the F13 #303 remote need."""
-    assert "__attach_request__" not in CONTROL_FILTER_KINDS
-    frames = [
-        DisplayFrame(OutboxMessage(kind="__attach_request__", text="agent-b")),
-        DisplayFrame(OutboxMessage(kind="__end__", text="")),
-    ]
-    events = await _wire_events(frames)
-    assert "reyn.display.__attach_request__" in _reyn_display_names(events)
