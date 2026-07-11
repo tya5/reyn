@@ -70,6 +70,8 @@ reyn chat --connect http://<host>:8080 --token <secret> [agent_name]
 
 Replies, tool activity, and status stream in as they happen on the server. A human-in-the-loop prompt (a permission ask, a clarifying question) can be answered from the remote terminal exactly like a local one — your answer is delivered to the server by id, so it lands correctly even with other clients attached to the same agent.
 
+**Multiple clients see each other's turns.** If two or more clients (a local `reyn chat` and one or more `--connect` terminals, or several `--connect` terminals) attach to the same agent, everyone sees the full conversation — not just the agent's replies. Whoever types a message or answers a human-in-the-loop prompt, every OTHER attached client sees that line too, tagged with who sent it (e.g. `user [alice]:`) when more than one identity is attached; a single attached client shows the plain line with no tag.
+
 ### What's different from local `reyn chat`
 
 - **Same inline CUI, streamed status bar.** On an interactive TTY, `--connect` renders the same inline CUI as local `reyn chat`, including the main status bar — `model` / `agent` / `cost` / `ctx%` chips and the working indicator — with those values streamed live from the server. (`--cui`, a non-TTY, or piped output still falls back to the plain console style, exactly like local.)

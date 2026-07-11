@@ -270,6 +270,25 @@ async def _lifespan(app: FastAPI):
         from reyn.runtime.cron import set_active_scheduler
         set_active_scheduler(None)
 
+    # #1953 slice 5a: close the sqlite task backend opened at startup. Without
+    # this the sqlite connection (and its WAL lock on ``.reyn/state/tasks.db``)
+    # is leaked on every lifespan shutdown — the module-level ``app`` singleton
+    # overwrites ``app.state.task_backend`` on the next startup and the orphaned
+    # connection lingers until GC. Because the backend opens with
+    # ``PRAGMA busy_timeout=0`` (deliberate fail-fast — a lock contention raises
+    # immediately rather than waiting), an un-GC'd orphan overlapping the next
+    # open surfaces as ``sqlite3.OperationalError: database is locked``. Under a
+    # TestClient-per-test suite this is order-dependent flake; in production it
+    # is a genuine fd/lock leak across gateway restarts. Closing here mirrors
+    # the sweep-task cancel + cron-scheduler stop above (defensive: never let a
+    # shutdown error mask the exit).
+    task_backend = getattr(app.state, "task_backend", None)
+    if task_backend is not None:
+        try:
+            task_backend.close()
+        except Exception as exc:  # noqa: BLE001 — defensive shutdown
+            logger.warning("Task backend close failed: %s", exc)
+
 
 app = FastAPI(
     title="Reyn Web Gateway",

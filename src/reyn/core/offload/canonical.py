@@ -498,6 +498,17 @@ def chunks_to_canonical(result: dict) -> CanonicalToolResult:
     return CanonicalToolResult(text="", attachments=attachments, source_ref=None, meta={})
 
 
+def embed_to_canonical(result: dict) -> CanonicalToolResult:
+    """embed op result → canonical (FP-0057 Phase 1). ``vectors`` are large float arrays with no
+    natural text body — carried as a ``structured`` attachment (mirrors ``chunks_to_canonical`` for
+    the RAG op family). ``model`` / ``total_tokens`` are small high-signal meta the LLM reads inline;
+    the raw ``kind`` transport echo is dropped."""
+    vectors = result.get("vectors")
+    attachments = [{"kind": "structured", "data": vectors}] if vectors is not None else []
+    meta = {k: result[k] for k in ("model", "total_tokens") if k in result}
+    return CanonicalToolResult(text="", attachments=attachments, source_ref=None, meta=meta)
+
+
 def run_pipeline_to_canonical(result: dict) -> CanonicalToolResult:
     """Sync run_pipeline result → canonical. The final ``output`` is the whole thing the calling LLM
     wants: a str output → ``text``; a non-str output → a ``structured`` attachment. ``run_id`` and

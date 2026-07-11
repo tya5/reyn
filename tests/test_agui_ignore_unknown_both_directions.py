@@ -60,7 +60,7 @@ class _FakeSession:
         self.submitted: list[str] = []
         self.answers: list[str] = []
 
-    async def submit_user_text(self, text: str) -> None:
+    async def submit_user_text(self, text: str, *, attribution: "dict | None" = None) -> None:
         self.submitted.append(text)
 
     async def answer_intervention_by_id(self, iv_id: str, text: str, **kw) -> bool:

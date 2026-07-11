@@ -47,6 +47,7 @@ mindmap
       web_fetch
       mcp
       mcp_install
+      embed
       index_query
       recall
       index_drop
@@ -314,13 +315,14 @@ The op kinds below mirror `OP_KIND_MODEL_MAP` in `schemas/models.py`.
 | `mcp_subscribe_resource` / `mcp_unsubscribe_resource` | Subscribe/unsubscribe to server-pushed `resources/updated` for one URI (requires a persistent connection; push lands as an `mcp_resource_updated` hook-event) |
 | `mcp_get_prompt` | Fetch one rendered MCP prompt's messages by name (permission-gated, same axis as `mcp`) |
 | `mcp_install` | Install / register an MCP server (registry / package / local source) |
+| `embed` | Raw embedding primitive: batch texts → vectors (FP-0057 Phase 1). User-facing (compose with an external MCP vector-DB via pipeline) AND the shared logic later internal RAG ops call; default-allow; PRE-embed redaction-egress seam | [Control IR § embed](reference/runtime/control-ir.md#embed) |
 | `index_query` | Vector similarity search over one indexed source |
 | `recall` | Macro: embed query → `index_query` per source → merge top-K |
 | `index_drop` | Destructive source removal — requires approval |
 | `compact` | Summarise / compact conversation history within budget |
 | `judge_output` | LLM scorer with rubric + threshold + `on_fail` policy |
 
-> The `embed` and `index_write` ops were removed — embedding and index-writing now run provider-direct inside `reyn.api.safe.embed_index` and the `recall` op, not as standalone ops. See [Control IR](reference/runtime/control-ir.md).
+> `recall` still embeds its query provider-direct (unchanged); `index_write` remains removed — index-writing runs provider-direct inside `reyn.api.safe.embed_index` (`embed_and_index`, the CodeAct-only ingestion entry), which `embed` does not yet retire (FP-0057 Phase 2 replaces it with `index_update`). See [Control IR](reference/runtime/control-ir.md).
 
 ---
 
@@ -497,7 +499,7 @@ logic. Design: [content-threat scan proposal](deep-dives/proposals/0050-content-
 | SQLite index per source | `.reyn/index/<source>/index.db` with WAL mode | [RAG concepts](concepts/data-retrieval/rag.md) |
 | Chunk dedup | `content_hash` upsert prevents re-indexing | [RAG concepts](concepts/data-retrieval/rag.md) |
 | `recall` op | embed → `index_query` per source → merge top-K globally | [Control IR](reference/runtime/control-ir.md) |
-| Action embedding index | `ActionEmbeddingIndex` (SQLite-WAL, class-swap detection, cross-process build lock) — backs the `search_actions` tool the chat LLM uses | [Universal catalog § search_actions](concepts/tools-integrations/universal-catalog.md#what-stays-out-of-phase-1) · [`reyn embeddings`](reference/cli/embeddings.md) |
+| Action embedding index | `ActionEmbeddingIndex` (class-swap detection, cross-process build lock) — backs the `search_actions` tool the chat LLM uses. FP-0057 Phase 0: a thin domain adapter over the same pluggable `IndexBackend` doc-RAG uses (unified cosine + advisory-lock + storage; was a separately-implemented SQLite-WAL index pre-consolidation) | [Universal catalog § search_actions](concepts/tools-integrations/universal-catalog.md#what-stays-out-of-phase-1) · [`reyn embeddings`](reference/cli/embeddings.md) |
 | Memory CRUD | `list` / `read` / `remember_shared` / `remember_agent` / `forget` | [Memory concepts](concepts/data-retrieval/memory.md) · [reyn memory CLI](reference/cli/memory.md) |
 
 > **Differentiation vs general agents:** beyond chat memory, Reyn ships a RAG *framework* — a safe-mode Python step calls `embed_and_index()` directly (you own the chunking logic) over a pluggable `IndexBackend`, with a credential-free local-embedding option. A foundation to build on, not a fixed memory feature.
@@ -571,7 +573,7 @@ logic. Design: [content-threat scan proposal](deep-dives/proposals/0050-content-
 |---------|-------------|---------------|
 | FastAPI gateway | REST + SSE server on `localhost:8080` | [reyn web CLI](reference/cli/web.md) |
 | AG-UI browser chat | The openui browser streams the session over the AG-UI SSE endpoint (`/agui/chat/<name>/events`) and submits turns / HITL answers via POST — the same single UI transport as the local CUI and the remote thin client | [Reference: AG-UI transport](reference/runtime/agui-transport.md) |
-| AG-UI remote chat (`reyn chat --connect`) | Attach a thin CUI client to a single-writer server over AG-UI/SSE: display + turn submit + human-in-the-loop answering (answer by id), an active-driver token with symmetric seize, and fail-close with a grace window when the last operator surface is lost. Renders the SAME inline CUI as local on an interactive TTY (renderer selection + input/output loop are one shared driver; the main status bar — agent / model / cost / ctx% / working indicator — streams over `STATE_*` via a client-side read-model), degrading session-local dropdowns / pickers / the `task` chip to empty/0/text on the wire | [Reference: AG-UI transport](reference/runtime/agui-transport.md) |
+| AG-UI remote chat (`reyn chat --connect`) | Attach a thin CUI client to a single-writer server over AG-UI/SSE: display + turn submit + human-in-the-loop answering (answer by id), an active-driver token with symmetric seize, and fail-close with a grace window when the last operator surface is lost. Renders the SAME inline CUI as local on an interactive TTY (renderer selection + input/output loop are one shared driver; the main status bar — agent / model / cost / ctx% / working indicator — streams over `STATE_*` via a client-side read-model), degrading session-local dropdowns / pickers / the `task` chip to empty/0/text on the wire. With 2+ clients attached (local + `--connect`, or several `--connect`), a submitted turn and a resolved HITL answer broadcast to every OTHER attached client too (same `OutboxHub` fan-out as agent output), carrying optional `auth_user_id` / `auth_connection_id` attribution — not just the agent's replies | [Reference: AG-UI transport](reference/runtime/agui-transport.md) |
 | A2A Agent Card | Per-agent `/.well-known/agent-card.json` capability declaration | [reyn web CLI](reference/cli/web.md) |
 | A2A `message/send` | Synchronous JSON-RPC 2.0 single-turn endpoint per agent | [reyn web CLI](reference/cli/web.md) |
 | A2A agent discovery | `GET /a2a/agents` server-level listing | [reyn web CLI](reference/cli/web.md) |

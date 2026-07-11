@@ -445,7 +445,18 @@ async def agui_submit(request: Request, agent_name: str):
     if ptype == "user_message":
         text = str(payload.get("text", "")).strip()
         if text:
-            await session.submit_user_text(text)
+            # ADR-0039 multi-client input-broadcast fix: attribute this
+            # submit the same way `_handle_answer` attributes a HITL grant
+            # (auth_user_id + connection id) — `submit_user_text` broadcasts
+            # a kind="user" frame via outbox_hub so every OTHER attached
+            # surface sees this client's turn, not just the agent's reply.
+            await session.submit_user_text(
+                text,
+                attribution={
+                    "auth_user_id": identity.user_id,
+                    "auth_connection_id": connection_id,
+                },
+            )
     elif ptype == "cancel_inflight":
         cancel_fn = getattr(session, "cancel_inflight", None)
         if callable(cancel_fn):

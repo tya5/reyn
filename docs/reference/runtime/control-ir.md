@@ -33,6 +33,7 @@ Control IR is the list of side-effect operations the LLM may emit. The OS dispat
 | `mcp_drop_server` | Remove an MCP server from project/local/user config (inverse of `mcp_install`) | `permissions.mcp_drop_server: true` in skill frontmatter |
 | `skill_install` | Register a skill (local dir or git/URL source) into the project skills config | `file.write: [.reyn/config/skills.yaml]` in skill frontmatter; `http.get: [{host: <source_host>}]` when `source` is set |
 | `pipeline_install` | Register a pipeline (local DSL file or git/URL source) into the project pipelines config | `file.write: [.reyn/config/pipelines.yaml]` in skill frontmatter; `http.get: [{host: <source_host>}]` when `source` is set |
+| `embed` | Raw embedding primitive: batch texts -> vectors (FP-0057 Phase 1; the user-facing primitive AND the shared logic later internal RAG ops call) | none (default-allow; embedding API cost) |
 | `index_query` | Semantic vector search over one indexed source | none |
 | `recall` | Macro: embed query (provider-direct) → index_query per source → merge top-K | none (embedding API cost) |
 | `index_drop` | Remove an indexed source entirely (destructive) | `permissions.index_drop: ask` in skill frontmatter |
@@ -547,15 +548,18 @@ Handler lifecycle:
 5. Writes `mcp.servers.<name>` to the target scope config file
 6. Emits `mcp_server_installed` event (P6) — key names only, no values
 
-> **Removed ops.** The `embed` and `index_write` control-IR ops were removed.
-> Embedding + index writing are now done **provider-direct** inside
-> `reyn.api.safe.embed_index.embed_and_index()` (a safe-mode `python` step
-> streams its own chunks into it — the bundled `index_docs` / `index_events`
-> chunkers were removed along with the stdlib skills that wrapped them) and
-> inside the `recall` op (query embedding). The `EmbeddingProvider` and
-> `SqliteIndexBackend` primitives are unchanged — only the run-op wrappers and
-> bundled chunkers are gone. Nothing emits `kind: embed` / `kind: index_write`
-> anymore.
+> **`index_write` removed (still); `embed` re-exposed (FP-0057 Phase 1).** The
+> `index_write` control-IR op stays removed — index writing is done
+> **provider-direct** inside `reyn.api.safe.embed_index.embed_and_index()` (a
+> safe-mode `python` step streams its own chunks into it — the bundled
+> `index_docs` / `index_events` chunkers were removed along with the stdlib
+> skills that wrapped them). `recall` still embeds its query provider-direct.
+> The `EmbeddingProvider` and `SqliteIndexBackend` primitives are unchanged.
+> The `embed` op, however, is **no longer removed**: FP-0057 Phase 1 re-added
+> it as the user-facing raw embedding primitive (see the [`embed`](#embed)
+> section above) — #1303's "no caller" rationale for removing it is obsolete
+> now that the primitive is exposed for user RAG composition. So `kind: embed`
+> is emitted again; only `kind: index_write` is not.
 
 ## `skill_install`
 
@@ -703,6 +707,33 @@ Result fields: `status` (`"installed"` / `"blocked"` / `"error"`), `name`, `path
 
 Events emitted: `pipeline_install_threat_match`, `pipeline_install_threat_blocked` (threat scan),
 `pipeline_installed` (P6 on success).
+
+## `embed`
+
+Raw embedding primitive (FP-0057 Phase 1): a batch of texts in, one vector per text out, in the same order. `embed` is the **user-facing** primitive — the user composes `embed` -> their own external MCP vector-DB's store/search tools via pipeline (reyn hosts no user RAG store). It is also the SHARED logic later internal RAG ops (`index_update` / `semantic_search`, FP-0057 Phase 2) call — same `EmbeddingProvider`, no duplicated embed logic, split only by audience surface.
+
+```json
+{
+  "kind": "embed",
+  "texts": ["first chunk of text", "second chunk of text"],
+  "embedding_model": "standard"
+}
+```
+
+Fields:
+
+- `texts` (list[str], required) — texts to embed. Returned vectors preserve this order.
+- `embedding_model` (str, default `"standard"`) — model class (light/standard/strong) or a literal provider model id, forwarded to `EmbeddingProvider.embed`.
+
+Returns: `{"kind": "embed", "vectors": list[list[float]], "model": str, "total_tokens": int}`.
+
+Reuses the existing `EmbeddingProvider` (`RoutingEmbeddingProvider` via `get_provider` — the sole embedder, local sentence-transformers + API classes handled inside the provider); this op is a thin typed envelope, not a re-implementation. Batching (`embedding.batch_size`, default 100) happens inside the provider — the op contract itself is list-in/list-out, batch-granular.
+
+**Redaction-egress seam**: embedding via an API-backed provider sends text content to an external embedding API — a data-egress point. Every text in the batch is passed through a PRE-embed scan (`redact_secrets`, the existing FP-0050 secret-redaction primitive) *before* `provider.embed()` is called, unconditionally (no caller-supplied bypass). A redaction hit fires an `embed_secret_redacted` audit-event. This is a Phase 1 scaffold of the seam using the existing generic secret-redaction pass; the full firm ephemeral-attachment content policy is FP-0057 Phase 3.
+
+Events: `embed_secret_redacted` (`count`, `model`) when the PRE-embed scan redacts one or more texts.
+
+Default-**ALLOW** (compute op — the cost is the embedding API/compute, not a workspace write); individually name-gateable via `contextual_gate` like every other op kind. Additive: does not retire `embed_and_index` (`reyn.api.safe.embed_index`, the CodeAct-only ingestion entry) — that clean-break is FP-0057 Phase 2.
 
 ## `index_query`
 

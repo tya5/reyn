@@ -277,58 +277,68 @@ def test_mismatched_vector_count_refuses_partial_build() -> None:
     assert idx.catalog_hash() is None
 
 
-# ── 6. SQLite persistence (Phase 2 step 2) ───────────────────────────────
+# ── 6. Unified-backend persistence (FP-0057 Phase 0) ─────────────────────
+#
+# ActionEmbeddingIndex now delegates storage to the pluggable IndexBackend
+# (the same SqliteIndexBackend doc-RAG uses) instead of a private SQLite
+# schema, so these tests assert through the PUBLIC surface (is_ready() /
+# size() / catalog_hash() / db_path existence) rather than reaching into
+# table names/columns — reaching into the on-disk schema would be a
+# private-storage-format pin the testing policy forbids.
 
 
-def test_persist_dir_build_creates_db_file(tmp_path: "Path") -> None:
-    """Tier 2: build() with persist_dir writes catalog_hash to index.db."""
-    from pathlib import Path
-
-    persist_dir = tmp_path / "action_index"
+def test_workspace_root_build_creates_db_file(tmp_path: "Path") -> None:
+    """Tier 2: build() with a workspace_root creates the unified index.db."""
     items = [{"qualified_name": "skill__a", "short_description": "A"}]
-    idx = ActionEmbeddingIndex(persist_dir=persist_dir)
+    idx = ActionEmbeddingIndex(workspace_root=tmp_path)
     _run(idx.build(items, _FakeEmbeddingProvider(), "standard"))
 
-    db_path = persist_dir / "index.db"
-    assert db_path.exists(), "index.db must be created after build()"
-
-    import sqlite3
-    con = sqlite3.connect(str(db_path))
-    try:
-        row = con.execute(
-            "SELECT value FROM meta WHERE key='catalog_hash'"
-        ).fetchone()
-        assert row is not None
-        assert row[0] == idx.catalog_hash()
-
-        rows = con.execute("SELECT qualified_name FROM vectors").fetchall()
-        (only_row,) = rows
-        assert only_row[0] == "skill__a"
-    finally:
-        con.close()
+    assert idx.db_path is not None and idx.db_path.exists(), (
+        "index.db must be created after build()"
+    )
+    assert idx.size() == 1
+    assert idx.catalog_hash() is not None
 
 
-def test_persist_dir_loads_from_disk_skips_embed(tmp_path: "Path") -> None:
-    """Tier 2: second index with same persist_dir loads from disk, skips embed.
+def test_unified_path_replaces_old_action_index_dir(tmp_path: "Path") -> None:
+    """Tier 2: FP-0057 Phase 0 clean-break — storage lands under the unified
+    ``.reyn/cache/index/<source>/`` convention, NOT the old private
+    ``.reyn/cache/action_index/`` directory (which is no longer read or
+    written; regenerable cache, no migration needed)."""
+    items = [{"qualified_name": "skill__a", "short_description": "A"}]
+    idx = ActionEmbeddingIndex(workspace_root=tmp_path)
+    _run(idx.build(items, _FakeEmbeddingProvider(), "standard"))
+
+    old_dir = tmp_path / ".reyn" / "cache" / "action_index"
+    assert not old_dir.exists(), (
+        "the old pre-consolidation action_index cache dir must not be "
+        "written by the unified adapter"
+    )
+    assert idx.db_path is not None
+    assert idx.db_path.parent == tmp_path / ".reyn" / "cache" / "index" / "actions"
+
+
+def test_workspace_root_loads_from_disk_skips_embed(tmp_path: "Path") -> None:
+    """Tier 2: second index with the same workspace_root loads from disk,
+    skips embed.
 
     Simulates a process restart: a fresh ActionEmbeddingIndex is created
     (empty in-memory state) and build() is called with the same catalog.
     The disk cache hit must prevent any embed call.
     """
-    persist_dir = tmp_path / "action_index"
     items = [
         {"qualified_name": "skill__a", "short_description": "A"},
         {"qualified_name": "skill__b", "short_description": "B"},
     ]
 
     # First process — build + persist
-    idx1 = ActionEmbeddingIndex(persist_dir=persist_dir)
+    idx1 = ActionEmbeddingIndex(workspace_root=tmp_path)
     provider1 = _FakeEmbeddingProvider()
     _run(idx1.build(items, provider1, "standard"))
     (only_call,) = provider1.calls
 
     # Second process (simulated) — fresh index, same catalog
-    idx2 = ActionEmbeddingIndex(persist_dir=persist_dir)
+    idx2 = ActionEmbeddingIndex(workspace_root=tmp_path)
     provider2 = _FakeEmbeddingProvider()
     _run(idx2.build(items, provider2, "standard"))
 
@@ -340,21 +350,20 @@ def test_persist_dir_loads_from_disk_skips_embed(tmp_path: "Path") -> None:
     assert idx2.catalog_hash() == idx1.catalog_hash()
 
 
-def test_persist_dir_rebuilds_on_stale_disk_hash(tmp_path: "Path") -> None:
+def test_workspace_root_rebuilds_on_stale_disk_hash(tmp_path: "Path") -> None:
     """Tier 2: changed catalog triggers re-embed and overwrites disk hash."""
-    persist_dir = tmp_path / "action_index"
     items_v1 = [{"qualified_name": "skill__a", "short_description": "A"}]
     items_v2 = [
         {"qualified_name": "skill__a", "short_description": "A"},
         {"qualified_name": "skill__b", "short_description": "B"},
     ]
 
-    idx1 = ActionEmbeddingIndex(persist_dir=persist_dir)
+    idx1 = ActionEmbeddingIndex(workspace_root=tmp_path)
     _run(idx1.build(items_v1, _FakeEmbeddingProvider(), "standard"))
     hash_v1 = idx1.catalog_hash()
 
     # Fresh index — different catalog → must re-embed, not load v1 from disk
-    idx2 = ActionEmbeddingIndex(persist_dir=persist_dir)
+    idx2 = ActionEmbeddingIndex(workspace_root=tmp_path)
     provider2 = _FakeEmbeddingProvider()
     _run(idx2.build(items_v2, provider2, "standard"))
 
@@ -362,23 +371,10 @@ def test_persist_dir_rebuilds_on_stale_disk_hash(tmp_path: "Path") -> None:
     assert idx2.size() == 2
     assert idx2.catalog_hash() != hash_v1
 
-    # Disk must now carry the new hash
-    import sqlite3
-    con = sqlite3.connect(str(persist_dir / "index.db"))
-    try:
-        row = con.execute(
-            "SELECT value FROM meta WHERE key='catalog_hash'"
-        ).fetchone()
-        assert row is not None
-        assert row[0] == idx2.catalog_hash()
-    finally:
-        con.close()
-
-
-def test_no_persist_dir_no_file_created(tmp_path: "Path") -> None:
-    """Tier 2: without persist_dir, no file is written (pure in-memory mode)."""
-    items = [{"qualified_name": "skill__a", "short_description": "A"}]
-    idx = ActionEmbeddingIndex(persist_dir=None)
-    _run(idx.build(items, _FakeEmbeddingProvider(), "standard"))
-    assert idx.is_ready() is True
-    assert idx.db_path is None
+    # A third fresh instance against the same workspace_root now observes
+    # the new hash (= the disk write-through actually took).
+    idx3 = ActionEmbeddingIndex(workspace_root=tmp_path)
+    provider3 = _FakeEmbeddingProvider()
+    _run(idx3.build(items_v2, provider3, "standard"))
+    assert not provider3.calls
+    assert idx3.catalog_hash() == idx2.catalog_hash()
