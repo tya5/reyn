@@ -1,63 +1,121 @@
-"""Resolve a launcher-shim ``argv[0]`` to the real binary OUTSIDE the sandbox (#2820, part A).
+"""Resolve a launcher-shim ``argv[0]`` to the real binary — FILESYSTEM-ONLY (#2820, part A).
 
-This is the actual fix for the launcher-fork denial that part B (``denial.py``)
-only names. Under ``(deny process-fork)`` a bare command (``python3``) resolves
-on PATH to a version-manager *shim* (``~/.pyenv/shims/python3`` → ``pyenv exec
-…``); the shim's own ``fork()`` is blocked inside the sandbox even though the
-workload never forks, so the whole exec dies with ``fork: Operation not
-permitted``.
+This is the fix for the launcher-fork denial that part B (``denial.py``) only
+names. Under ``(deny process-fork)`` a bare command (``python3``) resolves on
+PATH to a version-manager *shim* (``~/.pyenv/shims/python3`` → ``pyenv exec …``);
+the shim's own ``fork()`` is blocked inside the sandbox even though the workload
+never forks, so the whole exec dies with ``fork: Operation not permitted``.
 
-The fix keeps the boundary intact and moves the *launch machinery* out of it:
-resolve ``argv[0]`` to the real interpreter/binary in the TRUSTED PARENT (which
-may fork freely) and hand the sandbox child a real absolute path that does not
-need to fork. The sandbox still enforces ``(deny process-fork)`` on the workload
-— a program that itself tries to spawn is still denied; only the *shim*, whose
-sole job is to pick and exec the real binary, is lifted out.
+The fix strips the shim indirection by reading the version-manager's ON-DISK
+layout — **no subprocess, no exec**. A bare ``python3`` that resolves to a pyenv
+shim is rewritten to ``$PYENV_ROOT/versions/<selected>/bin/python3``, a real
+binary that runs directly under the sandbox without a launch fork. The
+``(deny process-fork)`` boundary is unchanged — a program that itself tries to
+spawn is still denied; only the shim's indirection is removed.
 
-Version-manager fidelity: a shim's target depends on the manager's own selection
-(``.python-version`` / ``.tool-versions`` in the run's cwd), so the real binary
-is obtained by asking the manager (``pyenv which python3`` &c.) **with that cwd**,
-not by grabbing the next same-named file on PATH (which could be a different,
-wrong version). Every failure path is fail-open: if anything about the
-resolution is uncertain, the original ``argv[0]`` is returned unchanged and the
-pre-existing behavior (now *explained* by part B) stands — resolution never
-changes *what* runs except to strip a shim indirection.
+Why filesystem-only (not ``<manager> which``): invoking the manager would run it
+as an UNSANDBOXED subprocess with the child's (agent/tool-writable) ``cwd`` and
+the full parent env. Some managers evaluate their per-directory config as a
+template that can ``exec()`` (e.g. ``mise`` / CVE-2026-33646), so an attacker who
+writes a crafted config into the workspace could achieve RCE **outside** the
+sandbox — strictly worse than the denial we set out to fix. Reading the layout
+as plain data has no such surface: an attacker-writable ``.python-version`` is
+consumed only as a version *token* (strictly validated), which at most selects a
+different already-installed version's real binary (still sandboxed — no
+escalation). Managers whose selection cannot be reproduced safely from disk
+(``asdf`` / ``mise``) FAIL OPEN — never invoked — leaving the pre-existing denial,
+now *explained* by part B. Every failure path returns the original argv[0]
+unchanged: resolution never changes *what* runs except to strip a shim.
 """
 from __future__ import annotations
 
 import os
+import re
 import shutil
-import subprocess
+from pathlib import Path
 
-# A resolved path under one of these directory segments is a version-manager shim
-# whose launch machinery forks. Keyed to the manager so we can ask the right tool.
-_SHIM_MANAGERS: tuple[tuple[str, str], ...] = (
-    ("/.pyenv/", "pyenv"),
-    ("/pyenv/", "pyenv"),
-    ("/.asdf/", "asdf"),
-    ("/asdf/", "asdf"),
-    ("/mise/", "mise"),
-    ("/.local/share/mise/", "mise"),
-    ("/rbenv/", "rbenv"),
-    ("/.rbenv/", "rbenv"),
-)
-
+# A resolved path under one of these directory segments is a version-manager
+# shim whose launch machinery forks. Only managers we can resolve SAFELY from
+# on-disk layout (a ``versions/<v>/bin`` tree) are listed; asdf/mise are
+# deliberately absent so they fail open rather than being invoked (see docstring).
 _SHIM_MARKER = "/shims/"
 
-# Managers whose ``<manager> which <prog>`` prints the real absolute binary path.
-_MANAGER_WHICH_TIMEOUT = 10.0
+# manager marker segment → (env var for its root, default root under $HOME).
+# Only managers resolvable SAFELY from a ``versions/<v>/bin`` layout are listed.
+# asdf/mise are deliberately ABSENT: they are recognized as shims (so we fail
+# open rather than run them) but never resolved, because reproducing their
+# selection would mean reading configs a manager may template-``exec()``.
+_RESOLVABLE_MANAGERS: tuple[tuple[str, str, str], ...] = (
+    ("/.pyenv/", "PYENV_ROOT", ".pyenv"),
+    ("/pyenv/", "PYENV_ROOT", ".pyenv"),
+    ("/.rbenv/", "RBENV_ROOT", ".rbenv"),
+    ("/rbenv/", "RBENV_ROOT", ".rbenv"),
+)
+
+# A valid version token: begins alphanumeric, then word/dot/dash/plus only. No
+# path separators, no leading dot — so an attacker-supplied version string can
+# never traverse out of ``<root>/versions/``.
+_VERSION_TOKEN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._+-]*\Z")
+
+# ``.python-version`` / global ``version`` may list several versions; the first
+# is primary. ``system`` means "use the OS binary, not a managed one".
+_NOT_A_MANAGED_VERSION = frozenset({"system"})
 
 
-def _shim_manager(path: str) -> str | None:
-    """Return the version-manager name if *path* is one of its shims, else None."""
+def _resolvable_manager_root(path: str) -> str | None:
+    """If *path* is a shim of a manager we resolve from disk, return that
+    manager's root directory; else None."""
     if _SHIM_MARKER not in path:
         return None
-    for marker, manager in _SHIM_MANAGERS:
+    for marker, env_var, default_dir in _RESOLVABLE_MANAGERS:
         if marker in path:
-            return manager
-    # A ``/shims/`` path we can't attribute to a known manager — treat as a shim
-    # with no resolver (caller fails open), rather than guessing wrong.
-    return "?"
+            root = os.environ.get(env_var)
+            if root:
+                return root
+            return str(Path.home() / default_dir)
+    return None
+
+
+def _first_token(text: str) -> str | None:
+    """First whitespace/colon-free token of the first non-empty line of *text*,
+    or None. (``PYENV_VERSION`` uses ``:`` to list multiple; files use lines.)"""
+    for line in text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        return line.split(":")[0].split()[0]
+    return None
+
+
+def _selected_version(root: str, cwd: str | None) -> str | None:
+    """The version a pyenv/rbenv-style manager would select, read as plain data:
+    ``PYENV_VERSION`` env → nearest ``.python-version`` walking up from *cwd* →
+    global ``<root>/version``. Never executes anything."""
+    env_v = os.environ.get("PYENV_VERSION") or os.environ.get("RBENV_VERSION")
+    if env_v and (tok := _first_token(env_v)):
+        return tok
+
+    start = Path(cwd or os.getcwd())
+    try:
+        start = start.resolve()
+    except OSError:
+        return None
+    for parent in (start, *start.parents):
+        for fname in (".python-version", ".ruby-version"):
+            vf = parent / fname
+            if vf.is_file():
+                try:
+                    return _first_token(vf.read_text(encoding="utf-8", errors="replace"))
+                except OSError:
+                    return None
+
+    gv = Path(root) / "version"
+    if gv.is_file():
+        try:
+            return _first_token(gv.read_text(encoding="utf-8", errors="replace"))
+        except OSError:
+            return None
+    return None
 
 
 def resolve_real_executable(
@@ -67,13 +125,13 @@ def resolve_real_executable(
     cwd: str | None = None,
 ) -> str:
     """Return an absolute path to run in place of *argv0*, stripping a version-
-    manager shim indirection when present. Fail-open: returns the plain PATH
-    resolution (or *argv0* unchanged) whenever real resolution is unavailable.
+    manager shim indirection when it can be resolved SAFELY from disk. Fail-open:
+    returns the plain PATH resolution (or *argv0* unchanged) otherwise.
 
     *env_path* is the ``PATH`` the sandbox child will see (so resolution matches
     what the child would resolve); *cwd* is the child's working directory (so the
-    manager selects the version it would select for that directory). Both default
-    to the parent process's values.
+    manager's per-directory version file is read from the right place). No
+    subprocess is ever spawned — the manager's on-disk layout is read as data.
     """
     found = shutil.which(argv0, path=env_path)
     if found is None:
@@ -81,37 +139,31 @@ def resolve_real_executable(
         # produces its normal "not found" error (unchanged behavior).
         return argv0
 
-    manager = _shim_manager(found) or _shim_manager(os.path.realpath(found))
-    if manager is None:
+    if _SHIM_MARKER not in found and _SHIM_MARKER not in os.path.realpath(found):
         # A real binary already — return its absolute path (no shim indirection).
         return found
-    if manager == "?":
-        # A shim we can't resolve via a known manager — fail open to the shim.
+
+    root = _resolvable_manager_root(found) or _resolvable_manager_root(os.path.realpath(found))
+    if root is None:
+        # A shim of a manager we deliberately do not resolve (asdf/mise — never
+        # invoked, its config can exec) or an unattributable shim: fail open to
+        # the shim path, leaving the denial for part B to explain.
         return found
 
-    manager_bin = shutil.which(manager, path=env_path)
-    if manager_bin is None:
+    version = _selected_version(root, cwd)
+    if version is None or version in _NOT_A_MANAGED_VERSION:
+        return found
+    if not _VERSION_TOKEN.match(version):
+        # Attacker-crafted / templated version string — never build a path from it.
         return found
 
     prog = os.path.basename(argv0)
-    run_env = dict(os.environ)
-    if env_path is not None:
-        run_env["PATH"] = env_path
-    try:
-        proc = subprocess.run(
-            [manager_bin, "which", prog],
-            capture_output=True,
-            text=True,
-            timeout=_MANAGER_WHICH_TIMEOUT,
-            cwd=cwd,
-            env=run_env,
-            check=False,
-        )
-    except (OSError, subprocess.SubprocessError):
+    candidate = os.path.join(root, "versions", version, "bin", prog)
+    # Defense-in-depth: the built path must stay under ``<root>/versions/`` (the
+    # token regex already forbids separators, this guards against symlink games).
+    versions_root = os.path.realpath(os.path.join(root, "versions"))
+    if not os.path.realpath(candidate).startswith(versions_root + os.sep):
         return found
-
-    if proc.returncode == 0:
-        resolved = proc.stdout.strip()
-        if resolved and os.path.isabs(resolved) and os.path.exists(resolved):
-            return resolved
+    if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
+        return candidate
     return found
