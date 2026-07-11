@@ -10,27 +10,15 @@ Emits `sandboxed_exec_started` / `sandboxed_exec_completed` events (P6).
 from __future__ import annotations
 
 import os
-import shutil
 from typing import Literal
 
 from reyn.schemas.models import SandboxedExecIROp
 from reyn.security.sandbox import SandboxPolicy, get_default_backend
 from reyn.security.sandbox.denial import classify_denial
+from reyn.security.sandbox.resolve import resolve_real_executable
 
 from . import register
 from .context import OpContext
-
-
-def _resolve_argv0(argv0: str) -> str | None:
-    """Best-effort realpath of *argv0* as the sandbox child would resolve it —
-    READ-ONLY (no exec). Records what a bare command name actually points at so a
-    launcher-fork denial (#2820) is legible in the trace without re-deriving PATH:
-    a bare ``python3`` that resolves to ``~/.pyenv/shims/python3`` is the entire
-    tell. ``None`` when the name is not found on PATH."""
-    found = shutil.which(argv0)
-    if found is None:
-        return None
-    return os.path.realpath(found)
 
 
 async def handle(
@@ -89,16 +77,26 @@ async def handle(
     # container backend) may ignore this host path and use its own baked cwd.
     cwd = str(ctx.workspace.base_dir)
 
+    # #2820 part A: resolve argv[0] past any version-manager shim OUTSIDE the
+    # sandbox, so the shim's launch-fork runs in the trusted parent instead of
+    # dying under (deny process-fork). The workload's own fork is still denied —
+    # only the shim indirection is stripped. Resolution runs `<manager> which`
+    # with the child's cwd so the manager picks the version it would for that dir.
+    # Fail-open: unchanged argv[0] when resolution is unavailable (the denial then
+    # stands, now explained by part B's denial_class). `argv0_resolved` records
+    # what actually ran — the tell for a launcher-fork denial that survives.
+    env_path = os.environ.get("PATH")
+    argv0_resolved = (
+        resolve_real_executable(op.argv[0], env_path=env_path, cwd=cwd)
+        if op.argv
+        else None
+    )
+    effective_argv = [argv0_resolved, *op.argv[1:]] if op.argv else list(op.argv)
+
     # #1339: emit the ACTUAL enforced policy values (from the resolved policy),
     # not the op's request fields — the operator-or-default policy wins over op
     # fields, so the trace must show what was enforced (a network:true op under
     # a network:false policy ran WITHOUT network, and the event must say so).
-    # #2820: record what argv[0] actually resolves to. When a launcher-fork
-    # denial happens (bare command → pyenv/asdf/mise shim or npx/uvx that forks
-    # internally under (deny process-fork)), this field is the diagnostic that
-    # would otherwise take a live PATH re-derivation to recover.
-    argv0_resolved = _resolve_argv0(op.argv[0]) if op.argv else None
-
     ctx.events.emit(
         "sandboxed_exec_started",
         argv=list(op.argv),
@@ -110,7 +108,7 @@ async def handle(
     )
 
     result = await backend.run(
-        list(op.argv), policy, cwd=cwd, cancel_event=ctx.cancel_event, stdin=op.stdin,
+        effective_argv, policy, cwd=cwd, cancel_event=ctx.cancel_event, stdin=op.stdin,
     )
 
     stdout_text = result.stdout.decode("utf-8", errors="replace")
