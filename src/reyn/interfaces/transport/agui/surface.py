@@ -26,15 +26,37 @@ intervention with a live listener survives an operator-surface loss).
 """
 from __future__ import annotations
 
+import os
 import time
 from dataclasses import dataclass
 from typing import Callable
 
+
+def _env_float(name: str, default: float) -> float:
+    """Read a positive float override from the environment, else ``default``."""
+    raw = os.environ.get(name, "").strip()
+    if not raw:
+        return default
+    try:
+        value = float(raw)
+    except ValueError:
+        return default
+    return value if value > 0 else default
+
+
 # Defaults (seconds). Grace T is the reconnect window; liveness timeout is how
 # long a surface may go without a heartbeat before it is swept as dead. Both are
 # constructor-overridable so an operator/test can tune or shrink them.
+#
+# ``DEFAULT_LIVENESS_TIMEOUT`` MUST stay well above the client's heartbeat
+# cadence (``_HEARTBEAT_INTERVAL`` in ``interfaces/repl/remote_client.py``, 25s)
+# — 2-3x is the idiomatic ratio (Socket.IO / Phoenix / SignalR all keep a
+# similar margin) so a live-but-idle client is never false-swept as dead. The
+# heartbeat POST is a *half-open* backstop only: a normal disconnect is caught
+# immediately via the SSE handler's ``finally: manager.detach(...)`` — this
+# timeout only matters for a client that hangs without sending a TCP FIN.
 DEFAULT_GRACE_SECONDS = 20.0
-DEFAULT_LIVENESS_TIMEOUT = 45.0
+DEFAULT_LIVENESS_TIMEOUT = _env_float("REYN_AGUI_LIVENESS_TIMEOUT_S", 60.0)
 
 
 @dataclass

@@ -233,6 +233,22 @@ A liveness signal (a periodic heartbeat) means a half-open connection cannot
 hide a dead surface: a surface that stops heart-beating past the liveness
 timeout is detected as lost.
 
+The heartbeat POST is a **half-open backstop only** — a normal disconnect (the
+client closes cleanly) is caught immediately by the SSE handler's own
+`finally: manager.detach(...)`, not the heartbeat. The dedicated ping only
+matters for a client that hangs without ever sending a TCP FIN. The remote thin
+client (`reyn chat --connect`) sends a heartbeat every 25s
+(`REYN_AGUI_HEARTBEAT_INTERVAL_S` overrides it), skipping the dedicated ping
+whenever a real client→server POST (a turn, an answer, a cancel) already
+landed within that window — piggybacking on real traffic instead of adding
+redundant load. The server's liveness timeout is 60s
+(`REYN_AGUI_LIVENESS_TIMEOUT_S` overrides it) — comfortably above the client
+interval (the idiomatic ratio: Socket.IO 25s/60s, Phoenix 30s, SignalR
+15s+2×timeout) so a live, idle client is never false-swept as dead. The client
+interval MUST stay below the server timeout, which in turn stays below
+timeout+grace, so the half-open backstop and the grace window together always
+cover detection.
+
 The refusal is scoped **per intervention**: an intervention still answerable
 by another live surface (for example one an external agent peer is answering)
 is left pending even when the operator terminals are all gone.

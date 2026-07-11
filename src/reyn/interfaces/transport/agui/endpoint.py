@@ -396,10 +396,6 @@ async def agui_submit(request: Request, agent_name: str):
     if not identity.authenticated:
         return JSONResponse({"error": "authentication required"}, status_code=401)
 
-    registry = get_registry()
-    if not registry.exists(agent_name):
-        return JSONResponse({"error": f"agent {agent_name!r} not found"}, status_code=404)
-
     try:
         payload = await request.json()
     except Exception:
@@ -409,13 +405,31 @@ async def agui_submit(request: Request, agent_name: str):
 
     ptype = payload.get("type")
 
-    # Heartbeat (liveness): refresh the surface's keepalive so a half-open
-    # connection cannot hide a dead surface. No write authority needed.
+    # Heartbeat fast-path (liveness): a pure in-memory refresh of the surface's
+    # keepalive timestamp, deliberately dispatched BEFORE ``registry.exists()``
+    # below — that call is a filesystem stat (``Path.is_file()`` on the agent's
+    # profile). An already-attached connection is tracked in the in-process
+    # SurfaceManager; its liveness ping needs no re-verification that the agent
+    # profile still exists on disk. The auth gate above still applies (a
+    # heartbeat requires an authenticated connection) — only the disk stat is
+    # skipped. An unattached / unknown connection's heartbeat is a harmless
+    # no-op (``manager`` or the surface lookup misses; no side effect).
+    if ptype == "heartbeat":
+        manager = surface_registry().get(agent_name)
+        if manager is not None:
+            manager.heartbeat(connection_id, monotonic())
+        return JSONResponse({"status": "ok"})
+
+    registry = get_registry()
+    if not registry.exists(agent_name):
+        return JSONResponse({"error": f"agent {agent_name!r} not found"}, status_code=404)
+
+    # Liveness refresh for non-heartbeat traffic too (piggyback): any accepted
+    # POST counts as proof of life, so the client's own dedicated heartbeat
+    # loop can skip its ping when real traffic already refreshed this.
     manager = surface_registry().get(agent_name)
     if manager is not None:
         manager.heartbeat(connection_id, monotonic())
-    if ptype == "heartbeat":
-        return JSONResponse({"status": "ok"})
 
     # HITL answer (R1 by-id) — delivery-time authorized.
     if ptype == "TOOL_CALL_RESULT":
