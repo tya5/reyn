@@ -71,6 +71,32 @@ def register(sub) -> None:
             "environments. The interactive default is the inline CUI."
         ),
     )
+    # ADR-0039 P3: attach to a REMOTE single-writer server instead of running a
+    # local session. The same stream-consuming client drives a different
+    # transport (AG-UI over HTTP+SSE) — local ≡ remote by construction (D2).
+    p.add_argument(
+        "--connect",
+        default=None,
+        metavar="URL",
+        dest="connect",
+        help=(
+            "Attach to a remote reyn server over AG-UI (e.g. "
+            "http://127.0.0.1:8080) instead of a local session. The server is "
+            "started with `reyn web`. Answers, turns, and interventions round-trip "
+            "over the wire; the server remains the sole writer."
+        ),
+    )
+    p.add_argument(
+        "--token",
+        default=None,
+        metavar="SECRET",
+        dest="token",
+        help=(
+            "Bearer token for --connect (the secret `reyn web` prints on launch). "
+            "Falls back to REYN_WEB_AUTH_TOKEN. A same-machine UDS / loopback "
+            "server may need none."
+        ),
+    )
     p.add_argument(
         "--no-restore",
         action="store_true",
@@ -244,7 +270,41 @@ def _setup_interactive_logging(project_root: Path) -> None:
         pass
 
 
+def _run_remote(args: argparse.Namespace) -> None:
+    """ADR-0039 P3: attach to a remote server over AG-UI (`--connect <url>`).
+
+    A thin transport-only path — no local Session / registry / workspace is built
+    (the server is the sole writer). The same stream-consuming client renders the
+    remote frame stream and routes input back over the wire.
+    """
+    import os
+
+    from reyn.interfaces.repl.remote_client import run_remote_repl
+    from reyn.llm.llm import run_async
+
+    from ..logger_factory import make_chat_renderer
+
+    agent_name = args.agent_name or "default"
+    token = getattr(args, "token", None) or os.environ.get("REYN_WEB_AUTH_TOKEN")
+    renderer = make_chat_renderer()
+    run_async(
+        run_remote_repl(
+            base_url=args.connect,
+            agent_name=agent_name,
+            token=token,
+            renderer=renderer,
+        )
+    )
+
+
 def run(args: argparse.Namespace) -> None:
+    # ADR-0039 P3: `--connect <url>` short-circuits to the remote thin client
+    # before any local session machinery is built (the remote server owns the
+    # session; this process is pure I/O).
+    if getattr(args, "connect", None):
+        _run_remote(args)
+        return
+
     from reyn.config import _find_project_root, load_project_context
     from reyn.interfaces.repl.repl import run_repl
     from reyn.runtime.factory_config import SessionFactoryConfig

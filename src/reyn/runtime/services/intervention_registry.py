@@ -388,6 +388,38 @@ class InterventionRegistry:
             pass
         return True
 
+    def deny_unanswerable_active(self, reason: str) -> list[UserIntervention]:
+        """Fail-close (ADR-0039 P3): typed-DENY every ACTIVE iv whose answerable
+        surface set is now empty. Returns the interventions that were denied.
+
+        Per-intervention scope (R2), NOT a blanket "all clients gone" sweep: an
+        iv origin-pinned to a channel that STILL has a live listener (e.g. an A2A
+        ``a2a:<run_id>`` peer) is SKIPPED — an operator-surface loss must not DENY
+        an intervention another live surface can answer. An unpinned
+        (``origin_channel_id is None``) iv is answerable by any listener, so it is
+        denied only when NO listener remains at all.
+
+        The DENY reuses the #2773 terminal SHAPE — the future is resolved with a
+        typed ``InterventionAnswer(refused=True, reason=...)`` (R5: reuse the DENY
+        shape/audit, do not route through the dispatch-time bridge). The awaiting
+        ``dispatch`` coroutine wakes, sees the refusal, and its ``finally`` clause
+        removes the entry — so we do not pop here (avoid double-removal races).
+        """
+        denied: list[UserIntervention] = []
+        for iv_id in list(self._order):
+            iv = self._active.get(iv_id)
+            if iv is None or iv.future.done():
+                continue
+            origin = iv.origin_channel_id
+            if origin is None:
+                if self.has_active_listener():
+                    continue  # answerable by some still-live listener
+            elif self.has_listener(origin):
+                continue  # pinned channel still has a live listener (R2)
+            iv.future.set_result(InterventionAnswer(refused=True, reason=reason))
+            denied.append(iv)
+        return denied
+
     async def maybe_answer_head(self, text: str) -> bool:
         """If any intervention is pending, deliver *text* to the head and
         return True.  Stale (already-resolved) entries are evicted first."""

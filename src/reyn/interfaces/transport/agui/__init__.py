@@ -22,13 +22,18 @@ from reyn.interfaces.transport.agui.client import AgUiTransport
 from reyn.interfaces.transport.agui.emitter import AgUiEmitter
 from reyn.interfaces.transport.agui.protocol import (
     AgUiEvent,
+    InterventionTool,
+    InterventionToolResult,
     MessagesSnapshot,
     StateUpdate,
     decode_event,
     encode_frame,
+    encode_intervention_tool_result,
+    encode_intervention_tool_start,
     encode_messages_snapshot,
     encode_state_delta,
     encode_state_snapshot,
+    intervention_tool_name,
     parse_sse_blocks,
     to_sse,
 )
@@ -38,22 +43,35 @@ from reyn.interfaces.transport.agui.state import (
     project_status,
     reguard_nodes,
 )
+from reyn.interfaces.transport.agui.surface import (
+    SurfaceManager,
+    SurfaceRegistry,
+    surface_registry,
+)
 
 __all__ = [
     "AgUiTransport",
     "AgUiEmitter",
     "AgUiEvent",
+    "InterventionTool",
+    "InterventionToolResult",
     "MessagesSnapshot",
     "StateUpdate",
     "decode_event",
     "encode_frame",
+    "encode_intervention_tool_result",
+    "encode_intervention_tool_start",
     "encode_messages_snapshot",
     "encode_state_delta",
     "encode_state_snapshot",
+    "intervention_tool_name",
     "parse_sse_blocks",
     "to_sse",
     "RemoteStatusView",
     "StatusModel",
     "project_status",
     "reguard_nodes",
+    "SurfaceManager",
+    "SurfaceRegistry",
+    "surface_registry",
 ]

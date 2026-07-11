@@ -16,17 +16,23 @@ to the :class:`~reyn.interfaces.transport.agui.state.RemoteStatusView`
 side-channel, and the reconnect MESSAGES/STATE snapshots — while re-guarding
 presentation nodes at the edge (A5).
 
-Phase boundary: P2 is DISPLAY + basic turn submit only. The intervention-answer
-methods exist to satisfy the ABC but are the HITL answer round-trip = P3; here
-they best-effort POST and the client does not introspect the server's
-intervention queue (:meth:`pending_intervention_head` is ``None``), so
-``route_input_line`` always takes the ordinary turn-submit path.
+P3 (HITL answer round-trip): the client tracks the pending intervention BY ID
+off the intervention frontend-tool (:class:`InterventionTool`) the server emits
+alongside the display frame, and an operator line is delivered to THAT id via a
+``TOOL_CALL_RESULT`` POST (:meth:`answer_intervention_text` /
+:meth:`answer_intervention_choice`) — never answer-oldest (R1). The frontend-tool
+is used ONLY for answer-correlation; the prompt is drawn from the P2 DisplayFrame,
+so there is no double-render. ``shutdown`` is a **client-local disconnect only** —
+a client can NEVER tear down the single-writer server (that closes the ws
+footgun where a client kills the server).
 """
 from __future__ import annotations
 
 from typing import AsyncIterator, Awaitable, Callable
 
 from reyn.interfaces.transport.agui.protocol import (
+    InterventionTool,
+    InterventionToolResult,
     MessagesSnapshot,
     StateUpdate,
     decode_event,
@@ -43,7 +49,7 @@ class AgUiTransport(ClientTransport):
     def __init__(
         self,
         sse_lines: "AsyncIterator[str]",
-        send: "Callable[[dict], Awaitable[None]]",
+        send: "Callable[[dict], Awaitable[bool | None]]",
         *,
         status_view: "RemoteStatusView | None" = None,
         reguard_surface: str = "terminal",
@@ -54,6 +60,10 @@ class AgUiTransport(ClientTransport):
         self._status = status_view if status_view is not None else RemoteStatusView()
         self._reguard_surface = reguard_surface
         self._connected = connected
+        # The intervention currently awaiting an answer (its id = the
+        # TOOL_CALL_RESULT toolCallId, P3/R1). Set when the server emits the
+        # intervention frontend-tool; cleared when it resolves (answered / DENY).
+        self._pending_intervention_id: "str | None" = None
 
     # -- lifecycle ----------------------------------------------------------
 
@@ -104,6 +114,15 @@ class AgUiTransport(ClientTransport):
                     self._status.apply_delta(decoded.delta)
             elif isinstance(decoded, MessagesSnapshot):
                 out.extend(self._reguard_frame(f) for f in decoded.frames)
+            elif isinstance(decoded, InterventionTool):
+                # Answer-correlation only (R4-ii): record which intervention is
+                # pending so an operator line routes to it BY ID (R1). NOT a
+                # render frame — the prompt is drawn from the DisplayFrame.
+                self._pending_intervention_id = decoded.intervention_id or None
+            elif isinstance(decoded, InterventionToolResult):
+                # Terminal (answered / DENY): the pending frontend-tool resolved.
+                if decoded.intervention_id == self._pending_intervention_id:
+                    self._pending_intervention_id = None
             else:  # a Frame
                 out.append(self._reguard_frame(decoded))
         return out
@@ -135,23 +154,50 @@ class AgUiTransport(ClientTransport):
         return self._connected
 
     def pending_intervention_head(self) -> "object | None":
-        # P2 is display-only for interventions; the client does not introspect
-        # the server's intervention queue (that is P3), so input always takes
-        # the ordinary turn-submit path in route_input_line.
-        return None
+        # P3: the id of the intervention awaiting an answer, tracked off the
+        # server's intervention frontend-tool. Non-None routes an operator line
+        # to answer_intervention_text (delivered BY ID, R1) instead of a new turn.
+        return self._pending_intervention_id
 
     async def submit_user_text(self, text: str) -> None:
         await self._send({"type": "user_message", "text": text})
 
     async def answer_intervention_text(self, text: str) -> bool:
-        # P3 (HITL answer round-trip). Best-effort POST for forward-wiring; P2
-        # never routes here because pending_intervention_head() is None.
-        await self._send({"type": "answer_intervention", "text": text})
-        return False
+        # P3 HITL answer: POST a TOOL_CALL_RESULT correlated to the pending
+        # intervention BY ID (toolCallId, R1). The server re-authorizes at
+        # delivery (identity + active-driver) and resolves by id; a rejected or
+        # unroutable answer returns False so the caller falls back to a turn.
+        iv_id = self._pending_intervention_id
+        if iv_id is None:
+            return False
+        return await self._post_answer(iv_id, text=text)
 
     async def answer_intervention_choice(self, choice_id: str) -> bool:
-        await self._send({"type": "answer_intervention", "text": choice_id})
-        return False
+        iv_id = self._pending_intervention_id
+        if iv_id is None:
+            return False
+        return await self._post_answer(iv_id, choice_id=choice_id)
+
+    async def _post_answer(
+        self, intervention_id: str, *, text: str = "", choice_id: str | None = None
+    ) -> bool:
+        # The client echoes ONLY (toolCallId, text|choiceId) — the server
+        # validates against its own registry entry; the client's copy of the
+        # prompt/choices is not trusted (R6). ``send`` returns the server's
+        # accepted/rejected verdict (True iff the grant was delivered).
+        payload: dict = {"type": "TOOL_CALL_RESULT", "toolCallId": intervention_id}
+        if choice_id is not None:
+            payload["choiceId"] = choice_id
+        else:
+            payload["text"] = text
+        accepted = await self._send(payload)
+        if accepted:
+            # The grant landed — consume the local correlation so a follow-up
+            # line is a fresh turn (the server's terminal TOOL_CALL_RESULT, which
+            # arrives on a later frame, is then a no-op for this client).
+            if self._pending_intervention_id == intervention_id:
+                self._pending_intervention_id = None
+        return bool(accepted)
 
     def put_display(self, msg) -> None:
         # A remote client cannot inject into the server's outbox; client-authored
@@ -162,8 +208,10 @@ class AgUiTransport(ClientTransport):
         await self._send({"type": "cancel_inflight"})
 
     async def shutdown(self) -> None:
+        # Client-LOCAL disconnect only (A3). A client can never tear down the
+        # single-writer server — no shutdown is sent over the wire (closing the
+        # ws footgun where a client kills the server). Just drop the connection.
         self._connected = False
-        await self._send({"type": "shutdown"})
 
 
 __all__ = ["AgUiTransport"]

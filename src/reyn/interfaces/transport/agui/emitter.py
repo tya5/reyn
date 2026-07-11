@@ -21,6 +21,8 @@ from typing import AsyncIterator, Callable
 
 from reyn.interfaces.transport.agui.protocol import (
     encode_frame,
+    encode_intervention_tool_result,
+    encode_intervention_tool_start,
     encode_messages_snapshot,
     encode_state_delta,
     encode_state_snapshot,
@@ -79,12 +81,25 @@ class AgUiEmitter:
 
         async for frame in self._frames:
             yield to_sse(encode_frame(frame))
+            # HITL frontend-tool lifecycle (ADR-0039 P3, R4). An intervention
+            # rides the wire in TWO representations: the DisplayFrame above (the
+            # reyn client's native prompt UI) AND a companion frontend-tool
+            # TOOL_CALL_START — the generic-client render + the answer-correlation
+            # anchor (toolCallId = intervention id, R1). On answer we emit the
+            # terminal TOOL_CALL_RESULT so a pending frontend-tool never dangles.
+            if isinstance(frame, DisplayFrame):
+                msg = frame.message
+                if msg.kind == "intervention" and (msg.meta or {}).get("intervention_id"):
+                    yield to_sse(encode_intervention_tool_start(dict(msg.meta)))
             if isinstance(frame, EventFrame):
                 ev = frame.event
-                self._waiting_on = _waiting_on_after(
-                    getattr(ev, "type", "") or "", dict(getattr(ev, "data", {}) or {}),
-                    self._waiting_on,
-                )
+                etype = getattr(ev, "type", "") or ""
+                edata = dict(getattr(ev, "data", {}) or {})
+                if etype == "user_answered_intervention" and edata.get("intervention_id"):
+                    yield to_sse(
+                        encode_intervention_tool_result(edata["intervention_id"], "answered")
+                    )
+                self._waiting_on = _waiting_on_after(etype, edata, self._waiting_on)
             delta = self._model.delta(self._project())
             if delta:
                 yield to_sse(encode_state_delta(delta))
