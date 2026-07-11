@@ -39,11 +39,13 @@ The embedding **logic** is shared (same `EmbeddingProvider` behind the user `emb
 
 `recall` / ingestion are **backend-agnostic** (operate over whatever backend the source is configured with).
 
-**Backend capability caveat (incremental × MCP):** `index_update`'s delta-reconcile relies on the backend's `existing_hashes`. SQLite supports it; an **MCP vector-DB backend may not expose "which content_hashes exist"** → incremental can't run there. The MCP adapter must declare capability: if `existing_hashes` is unsupported, either delegate to the MCP server's own upsert semantics or fall back to full-replace — never silently no-op. `IndexBackend` should carry a capability flag.
+**Backend capability caveat (incremental × MCP) (co-vet #4):** `index_update`'s delta-reconcile relies on the backend's `existing_hashes`. SQLite supports it; an **MCP vector-DB backend may not expose "which content_hashes exist"**. Order of preference: (1) `existing_hashes` if the backend supports it; else (2) **PREFER MCP-native upsert-by-id** (most vector-DBs have it) — preserves the delta-cost philosophy; (3) full-replace **only** when neither exists — a last resort (full re-embed on every `index_update` is a cost surprise on large user vessels). Never silently no-op. `IndexBackend` carries a capability flag. **`cost_estimator` wiring must cover the MCP-fallback path**, not just SQLite.
 
 ### 🔑 Consolidate the two parallel indexes (the headline no-tech-debt refactor)
 
-Today `SqliteIndexBackend` (doc RAG, `.reyn/cache/index/<source>/`) and `ActionEmbeddingIndex` (tool-use RAG, `.reyn/cache/action_index/`) are **structurally parallel but separately implemented** — duplicated cosine math (numpy vs hand-rolled), duplicated PID advisory-lock (two shapes), duplicated catalog/content-hash dedup. **Fold `ActionEmbeddingIndex` into the pluggable `IndexBackend`**: tool-use becomes "just another source on a backend" (its catalog = a source, its chunker = 1-action-per-chunk). Kills the duplication; `search_actions` keeps its surface but rides the unified store. This is the concrete realization of "shared embed + pluggable vessel" and the primary clean-up.
+Today `SqliteIndexBackend` (doc RAG, `.reyn/cache/index/<source>/`) and `ActionEmbeddingIndex` (tool-use RAG, `.reyn/cache/action_index/`) are **structurally parallel but separately implemented** — duplicated cosine math (numpy vs hand-rolled `math.sqrt`, `action_index.py:172`), duplicated PID advisory-lock (two shapes), duplicated catalog/content-hash dedup. **Fold `ActionEmbeddingIndex` into the pluggable `IndexBackend`**: tool-use becomes "just another source on a backend" (its catalog = a source, its chunker = 1-action-per-chunk). Kills the duplication; `search_actions` keeps its surface but rides the unified store. This is the concrete realization of "shared embed + pluggable vessel" and the primary clean-up.
+
+**NON-REGRESSION gate (co-vet #2, reliability):** `action_retrieval`/`search_actions` is **live and used in real runs**. Swapping its hand-rolled cosine for numpy cosine can shift ranking at float-precision boundaries. Phase 0 MUST include a gate pinning **top-K byte-identical (stable tie-break + order)** for the same query pre/post consolidation — validate the cosine-impl swap does not change results on the real sink, not just "surface preserved."
 
 ### Chunking (pluggable `Chunker` registry — an extensibility **hedge**; the shipped defaults do the real work, no heavy near-term investment)
 
@@ -72,7 +74,7 @@ Principle: exact/structured access (memory search, events filter) stays; the red
 
 - **`index_update` (single source) / `semantic_search` (one or more sources)** are **source-parameterized** — confirmed existing (`embed_and_index(source=…)`, `recall(sources=[…])`). Kept.
 - **Each source is bound to ONE embedding model** — already recorded (`SourceManifest.embedding_model` + index `meta.embedding_model`; `embedding_model` is also a per-chunk column + query filter). So models are separated at **source granularity** (different model → different source).
-- **Correctness hardening (redesign):** `semantic_search(source)` must **auto-adopt the source's recorded embedding model** (read from the manifest) rather than a caller/config-supplied model — today `recall` embeds the query with `op.embedding_model`, with no strong guard that it matches the source's indexed model (a mismatch → meaningless cosine, silent bug). Enforce per-source model consistency.
+- **Correctness hardening (redesign) — CRITICAL, multi-source aware (co-vet #1):** today `recall` takes **MULTIPLE sources** (`recall.py:145`) but embeds the query **ONCE** with `op.embedding_model` (`recall.py:56`) — so the silent-mismatch bug is precisely at **multi-source mixed-model** (source A=model X, B=model Y, both hit with one query-vector). Single-source "auto-adopt the source's model" does NOT resolve this. **`semantic_search` MUST embed the query once per DISTINCT source-model, query each source with its matching vector, then merge** — OR explicitly **reject** a mixed-model multi-source call. Per-source model is already recorded (`SourceManifest.embedding_model` + index `meta`); the redesign enforces model-consistent querying across the source set.
 
 ### `index_update` = incremental / delta-reconcile ONLY
 
@@ -102,7 +104,7 @@ The internal `index_update`/`semantic_search` **call the same `embed` primitive*
 
 - **Permissions**: `embed` / `index_update` / `semantic_search` = **default ALLOW** (compute / read / own-index-write; gating = friction), individually name-gateable via `contextual_gate`. `index_drop` (destructive) stays **gated (ask)**.
 - **Cost/budget (band)**: embed has real cost (API $ or compute) yet is default-allow and `cost_estimator` is currently dead-code from the ingestion caller. **Wire `cost_estimator` + `cost_warn_threshold` into `index_update`** so large ingestions surface/warn cost even without a permission prompt (do not leave cost unbounded + the estimator dead).
-- **Security (redaction)**: ingestion has **no PII/secret scan** today (doc just warns operators). Esp. for **ephemeral attachments** (user attaches a secret-bearing file → embedded). Consider a redaction/scan hook on the ingestion path (at least flag; align with the Memory-write threat-scan precedent).
+- **Security (redaction) — FIRM, gate at EMBED egress (co-vet #3)**: embedding via an API provider **sends content to an external embedding API = data egress**, so a secret-bearing ephemeral attachment leaks **at embed time**, before any vessel write. Redaction/secret-scan is therefore a **firm gate fired at the PRE point of the embed call (the egress point)** — not a soft "consider a hook," and not at vessel-write. Match the (firm) Memory-write threat-scan. At minimum: ephemeral attachments + API-provider embed.
 - **Offline/air-gapped**: see the local-MiniLM section — default embed downloads from HF; make the degrade clean.
 - **Recovery classification**: ephemeral store = cache, written OUTSIDE the `.reyn/` recovery-core write-gate (not a WAL-derived recovery source); explicit teardown.
 
@@ -123,6 +125,8 @@ The internal `index_update`/`semantic_search` **call the same `embed` primitive*
 ## Follow-on / open
 
 - **Builtin mechanism** (task #66): reyn ships builtin mcp/skill/pipeline; the RAG ingestion turnkey = a **builtin pipeline**. After RAG parts land.
-- **Doc reconciliation**: CLAUDE.md charter "preprocessor step" quote is stale — fix.
+- **Doc reconciliation (co-vet #5)**: the stale CLAUDE.md "preprocessor step" quote is a Tier-1 **charter-accuracy** defect (not mere doc-cleanup) — **already reconciled** by #2842 (CLAUDE.md Retrieval lens synced to `charter.md:64`). When the redesign lands, update the **`charter.md` Retrieval cell + CLAUDE.md quote again** as the arc's doc-surface (the Retrieval lens pass-line changes when retrieval does).
+- **Evaluation lens (note)**: no retrieval-quality eval hook ("are the returned chunks good?") — acceptable near-term (cosine); address in the rerank/hybrid arc.
+- **Naming (note)**: two search tools remain (`semantic_search` + `search_actions`) — defensible, tool-discovery is a separate always-on use-case.
 - Advanced (rerank / hybrid / ANN) deferred; cosine sufficient near-term.
 - Clean-break, no compat shim (owner).
