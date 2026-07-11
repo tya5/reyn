@@ -29,10 +29,35 @@ Design (the load-bearing invariants this module carries):
 STATE (the status read-model) and MESSAGES snapshots ride the same SSE stream but
 are not ``Frame``\\s — they decode to :class:`StateUpdate` / :class:`MessagesSnapshot`
 so the client demuxes render frames from the status side-channel.
+
+**Generic-client conformance (ADR-0039 P4).** The standard surface is widened so a
+stock AG-UI client with zero reyn knowledge renders a functional chat:
+
+- **Text triplet.** A bare ``TEXT_MESSAGE_CONTENT`` is invalid per the AG-UI spec,
+  which mandates ``TEXT_MESSAGE_START`` → one-or-more ``TEXT_MESSAGE_CONTENT`` →
+  ``TEXT_MESSAGE_END``, correlated by ``messageId``. :func:`encode_frame_wire`
+  expands a whole text message into that triplet with a shared generated id
+  (reyn's outbox has no stable message id). Only the CONTENT event carries the
+  ``_reyn`` reconstruction block — START/END are generic scaffold the reyn client
+  decodes to ``None`` — so the invariant stays **1 frame ⇄ 1 ``_reyn``-bearing
+  event** and reyn bit-identity is unchanged. (Token-streaming is out of scope;
+  reyn is whole-message.)
+- **Standard ``messages`` array.** ``MESSAGES_SNAPSHOT`` carries a standard
+  ``[{role, content}]`` array of **conversation turns only** (``agent`` →
+  ``assistant``, ``user`` → ``user``); reyn chrome (status / error / present /
+  intervention / trace) replays to the reyn client via ``_reyn`` and is NOT in the
+  standard array.
+- **Standard tool status.** ``TOOL_CALL_END`` carries a standard ``status``
+  (``"ok"`` / ``"error"``, derived from the frame etype) so a generic client sees
+  a tool failure; the reyn client still exact-recovers from ``_reyn``.
+
+The ``reyn.*`` Custom namespace is a documented, tested extension profile — see
+:mod:`reyn.interfaces.transport.agui.profile`.
 """
 from __future__ import annotations
 
 import json
+import uuid
 from dataclasses import dataclass, field
 
 from reyn.core.events.events import Event
@@ -40,7 +65,9 @@ from reyn.interfaces.transport.frames import DisplayFrame, EventFrame, Frame
 from reyn.runtime.outbox import OutboxMessage
 
 # ── AG-UI event type names (hand-rolled; the SDK is not a dependency) ─────────
+TEXT_MESSAGE_START = "TEXT_MESSAGE_START"
 TEXT_MESSAGE_CONTENT = "TEXT_MESSAGE_CONTENT"
+TEXT_MESSAGE_END = "TEXT_MESSAGE_END"
 RUN_STARTED = "RUN_STARTED"
 RUN_FINISHED = "RUN_FINISHED"
 RUN_ERROR = "RUN_ERROR"
@@ -154,12 +181,23 @@ class InterventionToolResult:
     status: str = "answered"
 
 
+# Display kinds that are conversation TURNS (vs reyn chrome) — the only kinds
+# that go into the standard MESSAGES_SNAPSHOT ``[{role, content}]`` array. Their
+# standard AG-UI ``role``: agent → assistant, user → user.
+_CONVERSATION_KINDS: dict[str, str] = {"agent": "assistant", "user": "user"}
+
+
 def _display_event_type(kind: str) -> str:
     return _DISPLAY_KIND_EVENT.get(kind, CUSTOM)
 
 
 def _event_event_type(etype: str) -> str:
     return _EVENT_TYPE_EVENT.get(etype, CUSTOM)
+
+
+def _new_message_id() -> str:
+    """A per-message id for the text triplet (reyn's outbox has no stable id)."""
+    return uuid.uuid4().hex
 
 
 # ── encode: Frame → AgUiEvent ────────────────────────────────────────────────
@@ -180,7 +218,13 @@ def _encode_display(frame: DisplayFrame) -> AgUiEvent:
     reyn = {"frame": "display", "kind": kind, "text": text, "meta": meta}
     # Standard AG-UI surface a generic client renders (best-effort).
     if ag_type is TEXT_MESSAGE_CONTENT:
-        std = {"role": "assistant" if kind == "agent" else "status", "delta": text}
+        # ``messageId`` correlates the START/CONTENT/END triplet
+        # (:func:`encode_frame_wire`); ``delta`` is the whole message text.
+        std = {
+            "messageId": _new_message_id(),
+            "role": "assistant" if kind == "agent" else "status",
+            "delta": text,
+        }
     elif ag_type is RUN_ERROR:
         std = {"message": text}
     else:  # CUSTOM — reyn-private (presentation / trace / intervention / control)
@@ -194,13 +238,45 @@ def _encode_event(frame: EventFrame) -> AgUiEvent:
     edata = dict(getattr(ev, "data", {}) or {})
     ag_type = _event_event_type(etype)
     reyn = {"frame": "event", "type": etype, "data": edata}
-    if ag_type in (TOOL_CALL_START, TOOL_CALL_END):
+    if ag_type is TOOL_CALL_START:
         std = {"toolName": edata.get("tool"), "step": edata.get("tool")}
+    elif ag_type is TOOL_CALL_END:
+        # Standard failure field: a generic client sees the failure; the reyn
+        # client still exact-recovers the etype from ``_reyn``.
+        std = {
+            "toolName": edata.get("tool"),
+            "step": edata.get("tool"),
+            "status": "error" if etype == "tool_failed" else "ok",
+        }
     elif ag_type in (RUN_STARTED, RUN_FINISHED):
         std = {"phase": etype}
     else:  # CUSTOM — user_answered_intervention et al.
         std = {"name": f"reyn.event.{etype}", "value": edata}
     return AgUiEvent(type=ag_type, data={**std, _REYN: reyn})
+
+
+def encode_frame_wire(frame: Frame) -> "list[AgUiEvent]":
+    """Encode one ``Frame`` to its full AG-UI **wire sequence** (P4).
+
+    Most frames are a single event. A whole text message expands to the canonical
+    AG-UI lifecycle triplet — ``TEXT_MESSAGE_START`` → ``TEXT_MESSAGE_CONTENT`` →
+    ``TEXT_MESSAGE_END``, correlated by a shared ``messageId`` — because a bare
+    ``TEXT_MESSAGE_CONTENT`` is invalid per the spec (a strict generic client
+    drops it). Only the CONTENT event carries the ``_reyn`` reconstruction block;
+    START/END are generic scaffold that :func:`decode_event` returns ``None`` for,
+    so the invariant stays **1 frame ⇄ 1 ``_reyn``-bearing event** and the reyn
+    client's render is unchanged.
+    """
+    event = encode_frame(frame)
+    if event.type != TEXT_MESSAGE_CONTENT:
+        return [event]
+    message_id = event.data.get("messageId")
+    start = AgUiEvent(
+        type=TEXT_MESSAGE_START,
+        data={"messageId": message_id, "role": event.data.get("role")},
+    )
+    end = AgUiEvent(type=TEXT_MESSAGE_END, data={"messageId": message_id})
+    return [start, event, end]
 
 
 def encode_state_snapshot(snapshot: dict) -> AgUiEvent:
@@ -220,11 +296,25 @@ def encode_state_delta(delta: dict) -> AgUiEvent:
 
 
 def encode_messages_snapshot(frames: "list[Frame]") -> AgUiEvent:
-    """MESSAGES_SNAPSHOT — the display backlog replayed on connect (A4)."""
-    payload = [_encode_display(f).data[_REYN] for f in frames if isinstance(f, DisplayFrame)]
+    """MESSAGES_SNAPSHOT — the display backlog replayed on connect (A4).
+
+    The standard ``messages`` field is a ``[{role, content}]`` array of
+    **conversation turns only** (P4) — the shape a generic AG-UI client expects;
+    reyn chrome (status / error / present / intervention / trace) is NOT a
+    conversation turn and is excluded. The reyn client rebuilds the FULL backlog
+    (all display frames) from the ``_reyn`` block, so its scrollback is unchanged.
+    """
+    reyn_payload = [
+        _encode_display(f).data[_REYN] for f in frames if isinstance(f, DisplayFrame)
+    ]
+    standard = [
+        {"role": _CONVERSATION_KINDS[f.message.kind], "content": f.message.text}
+        for f in frames
+        if isinstance(f, DisplayFrame) and f.message.kind in _CONVERSATION_KINDS
+    ]
     return AgUiEvent(
         type=MESSAGES_SNAPSHOT,
-        data={"messages": payload, _REYN: {"frame": "messages", "messages": payload}},
+        data={"messages": standard, _REYN: {"frame": "messages", "messages": reyn_payload}},
     )
 
 
@@ -373,7 +463,9 @@ __all__ = [
     "MessagesSnapshot",
     "InterventionTool",
     "InterventionToolResult",
+    "TEXT_MESSAGE_START",
     "TEXT_MESSAGE_CONTENT",
+    "TEXT_MESSAGE_END",
     "RUN_STARTED",
     "RUN_FINISHED",
     "RUN_ERROR",
@@ -385,6 +477,7 @@ __all__ = [
     "MESSAGES_SNAPSHOT",
     "CUSTOM",
     "encode_frame",
+    "encode_frame_wire",
     "encode_state_snapshot",
     "encode_state_delta",
     "encode_messages_snapshot",

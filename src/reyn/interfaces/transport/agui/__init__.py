@@ -20,6 +20,12 @@ from __future__ import annotations
 
 from reyn.interfaces.transport.agui.client import AgUiTransport
 from reyn.interfaces.transport.agui.emitter import AgUiEmitter
+from reyn.interfaces.transport.agui.profile import (
+    CUSTOM_PROFILE,
+    CustomName,
+    is_profiled,
+    profiled_names,
+)
 from reyn.interfaces.transport.agui.protocol import (
     AgUiEvent,
     InterventionTool,
@@ -28,6 +34,7 @@ from reyn.interfaces.transport.agui.protocol import (
     StateUpdate,
     decode_event,
     encode_frame,
+    encode_frame_wire,
     encode_intervention_tool_result,
     encode_intervention_tool_start,
     encode_messages_snapshot,
@@ -59,6 +66,7 @@ __all__ = [
     "StateUpdate",
     "decode_event",
     "encode_frame",
+    "encode_frame_wire",
     "encode_intervention_tool_result",
     "encode_intervention_tool_start",
     "encode_messages_snapshot",
@@ -74,4 +82,8 @@ __all__ = [
     "SurfaceManager",
     "SurfaceRegistry",
     "surface_registry",
+    "CUSTOM_PROFILE",
+    "CustomName",
+    "is_profiled",
+    "profiled_names",
 ]

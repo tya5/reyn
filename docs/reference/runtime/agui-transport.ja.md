@@ -1,103 +1,332 @@
-# AG-UI transport — thin-client wire protocol
+# AG-UI transport — シンクライアントのワイヤープロトコル
 
-Reyn の chat client は stream-consuming な UI です: セッションの出力を描画し、ユーザー入力をルーティングし、セッションには **transport seam を通じてのみ**触れます。この 1 つの seam の背後に 2 つの transport があります — ローカルの in-process transport と、この **AG-UI transport**(HTTP + Server-Sent Events / SSE 経由)です。両方とも同一のレンダラーにフィードするため、remote client はローカルと byte-for-byte 同じものを描画します。
+Reyn のチャットクライアントはストリームを消費する UI である — セッションの出力を描画し、
+ユーザー入力をルーティングし、セッションには**transport seam を通じてのみ**接触する。この
+1 つの seam の背後には 2 つの transport がある — ローカルの in-process transport と、この
+**AG-UI transport**(HTTP + Server-Sent Events / SSE 経由)だ。両方とも同一のレンダラーへ
+フィードするため、リモートクライアントはローカルのものと byte-for-byte 同一の描画を行う。
 
-このページは wire contract です: SSE エンドポイント、reyn-frame ⇄ AG-UI-event マッピング、`STATE_*` ステータス read-model。
+このページは wire contract そのものである。SSE エンドポイント、reyn-frame ⇄ AG-UI-event の
+マッピング、そして `STATE_*` ステータス read-model を扱う。
 
 ## Surfaces
 
-この transport は **AG-UI のみ** を話します — それは UI であり、agent ではありません。(agent↔agent は A2A、tool は MCP、observability export は OTEL — それぞれ別の surface です。)
+この transport が話すのは **AG-UI のみ**である — これは UI であり、agent ではない
+(agent↔agent は A2A、tool は MCP、observability export は OTEL — それぞれ別の surface で
+ある)。
 
-- `GET /agui/chat/{agent}/events` — server→client の SSE ストリーム。各 SSE ブロックは `event: <TYPE>\ndata: <json>\n\n`。
-- `POST /agui/chat/{agent}` — client→server のチャンネル。Body は JSON object で、現在のメッセージ type は `{"type": "user_message", "text": "..."}`(ターンの submit)。
+- `GET /agui/chat/{agent}/events` — server→client の SSE ストリーム。各 SSE ブロックは
+  `event: <TYPE>\ndata: <json>\n\n` である。
+- `POST /agui/chat/{agent}` — client→server のチャンネル。Body は JSON object で、サポート
+  されるメッセージ type は以下の通り:
+  - `{"type": "user_message", "text": "..."}` — ターンを submit する。
+  - `{"type": "TOOL_CALL_RESULT", "toolCallId": "<intervention-id>", "text": "..."}` または
+    `{..., "choiceId": "<id>"}` — pending 中の intervention に回答する(HITL の round-trip;
+    下記「Human-in-the-loop answering」参照)。
+  - `{"type": "cancel_inflight"}` — in-flight なターンを協調的にキャンセルする(Ctrl-C
+    seam)。
+  - `{"type": "heartbeat"}` — liveness の keepalive。
 
-両方とも server の authentication context でゲートされます: 接続は token を `?token=` または `Authorization: Bearer <token>` ヘッダーとして提示します(同一マシン上の UDS 接続は代わりに OS peer credential で識別されます)。未認証の接続は、どのセッションにも attach される前に `401` で拒否されます。
+  server がモデル化していない入力 type は**グレースフルな no-op**(`200` の ack)であり、
+  `500` にはならない — これが server 側の ignore-unknown である。
+- `POST /agui/chat/{agent}/seize` — active-driver トークンを取得する(「Active driver and
+  seize」参照)。
+
+client が server をシャットダウンすることは決してできない — shutdown メッセージは存在せず、
+client の `/quit` はローカルな切断にすぎない。server が唯一の writer である。
+
+connection は `connection_id` クエリパラメータ(または `X-Reyn-Connection` ヘッダー)で自身を
+識別し、その値は SSE ストリームと POST を通じて安定している。
+
+両方とも server の authentication context によってゲートされる: connection は token を
+`?token=` または `Authorization: Bearer <token>` ヘッダーとして提示する(同一マシン上の UDS
+connection は代わりに OS の peer credential で識別される)。未認証の connection は、どの
+session にも attach される前に `401` で拒否される。この transport を開く operator 向けの
+コマンドは `reyn chat --connect <url>`(bearer token 用の `--token <secret>`、フォールバック
+として `REYN_WEB_AUTH_TOKEN` 環境変数)である。
 
 ## Standard envelope, reyn-private richness
 
-すべての event は **両方**を持ちます:
+すべての event は**両方**を運ぶ:
 
-- **標準 AG-UI field shape** — 汎用の AG-UI client が相互運用可能なコア(text / tool / run / error / state)を描画できるようにするため。そして
-- reyn-private な `_reyn` 再構築ブロック — reyn client がこれから正確な render frame を再構築します。
+- **標準的な AG-UI field shape** — 汎用の AG-UI client が相互運用可能なコア(text / tool /
+  run / error / state)を描画できるようにするため。そして
+- reyn-private な `_reyn` 再構成ブロック — reyn client がこれから正確な render frame を
+  再構築する。
 
-汎用 client は理解できないものを無視します: `_reyn` ブロックを持たない event(または汎用 client がモデル化しない reyn の `CUSTOM` event)は **スキップされる、致命的ではない** — reyn がこの ignore-unknown contract を所有します。
+汎用 client は理解できないものを無視する: `_reyn` ブロックを持たない event(または汎用
+client がモデル化しない reyn の `CUSTOM` event)は**スキップされる、致命的ではない** —
+reyn がこの ignore-unknown contract を所有する。
 
 ## Event mapping
 
-client は 1 つの順序付き SSE ストリームを消費し、各 event をレンダラーの 2 つのエントリーポイント(display か working-indicator か)のいずれかにディスパッチします。マッピング:
+client は 1 つの順序付き SSE ストリームを消費し、各 event をレンダラーの 2 つのエントリー
+ポイント(display か working-indicator か)のいずれかにディスパッチする。マッピングは
+以下の通り。
 
 ### Display path(agent 出力 → scrollback)
 
-| reyn display kind | AG-UI event        | 備考                                        |
+| reyn display kind | AG-UI event        | Notes                                        |
 |-------------------|--------------------|----------------------------------------------|
-| `agent`           | `TEXT_MESSAGE_CONTENT` | assistant の返信テキスト                  |
-| `status`          | `TEXT_MESSAGE_CONTENT` | 一時的なステータス行(`role: status`)    |
-| `error`           | `RUN_ERROR`        | エラーテキスト                                   |
+| `agent`           | text triplet       | assistant の返信テキスト(*text lifecycle* 参照) |
+| `status`          | text triplet       | 一時的なステータス行(`role: status`)        |
+| `error`           | `RUN_ERROR`        | エラーテキスト                                |
 | `trace`           | `CUSTOM`           | reyn の tool/step トレース行                    |
-| `intervention`    | `CUSTOM`           | プロンプトが表示される(回答の round-trip は後のフェーズ) |
+| `intervention`    | `CUSTOM`           | プロンプトが表示される。reyn client はそれをネイティブに描画し、id で回答する(「Human-in-the-loop answering」参照) |
 | `presentation`    | `CUSTOM`           | `present` op の render-node モデル(*present-on-wire* 参照) |
-| control sentinel  | `CUSTOM`           | `__end__` と client-local な control kind     |
+| control sentinels | `CUSTOM`           | `__end__` と client-local な control kind     |
 
-この表にない display kind もすべて losslessly round-trip します(`CUSTOM` にフォールバックし `_reyn` から再構築される)— 新しいレンダラー kind が wire 上で黙って消えることはありません。
+この表にない display kind もすべて損失なく round-trip する(`CUSTOM` にフォールバックし
+`_reyn` から再構成される)— 新しい renderer kind がワイヤー上で静かに消えることは決してない。
 
-### Working-indicator path(ターンライフサイクル + tool 軸)
+#### Text lifecycle(適合する triplet)
+
+AG-UI 仕様は、text lifecycle として**`TEXT_MESSAGE_START` → 1 つ以上の
+`TEXT_MESSAGE_CONTENT` → `TEXT_MESSAGE_END`、すべて `messageId` で相関付けられる**ことを
+必須としている。裸の `TEXT_MESSAGE_CONTENT` は不正である(厳格な汎用クライアントはそれを
+破棄する)。したがって reyn のテキストメッセージ 1 件はこの triplet としてワイヤーに乗り、
+メッセージごとに生成される id を伴い(reyn の outbox には安定した message id がない)、
+CONTENT の `delta` がメッセージ全文を運ぶ(reyn は whole-message であり、トークン
+ストリーミングは scope 外である)。
+
+`_reyn` 再構成ブロックを運ぶのは **CONTENT** イベントのみである。START と END イベントは
+汎用のスキャフォールドであり、reyn client はそれらを `None` にデコードして無視する。その
+ため再構成の invariant は**1 フレーム ⇄ 1 つの `_reyn` 保持イベント**のままであり、reyn
+client はメッセージごとにちょうど 1 つの display frame を再構築する。
+
+### Working-indicator path(turn lifecycle + tool 軸)
 
 | reyn chat-event               | AG-UI event      |
 |-------------------------------|------------------|
 | `turn_started`                | `RUN_STARTED`    |
 | `turn_settled` / `turn_completed` / `turn_cancelled` | `RUN_FINISHED` |
 | `tool_called`                 | `TOOL_CALL_START`|
-| `tool_returned` / `tool_failed` | `TOOL_CALL_END`|
+| `tool_returned` / `tool_failed` | `TOOL_CALL_END` (with `status`) |
 | `user_answered_intervention`  | `CUSTOM`         |
 
-この 8 つが、レンダラーの working / running / waiting-for-you インジケーターが消費する正確なセットです — transport はこのセットをそのまま転送します。
+これらの 8 つが、レンダラーの working / running / waiting-for-you インジケーターが消費する
+正確なセットである — transport はこのセットをそのまま転送する。
+
+`TOOL_CALL_END` は etype から導出された標準の `status` フィールド(`"ok"` / `"error"`)を
+運ぶ — `tool_failed` → `"error"`、`tool_returned` → `"ok"` — これにより汎用クライアントも
+ツールの失敗を認識できる。reyn client は依然として `_reyn` から正確な etype を
+exact-recover する。
+
+### Intervention frontend-tool
+
+display frame と並行して、server は `toolName` が `reyn.intervention.<kind>`、`toolCallId`
+が intervention id であるような、対になる `TOOL_CALL_START` **frontend-tool** を発行する。
+汎用 AG-UI client はこれを通常の tool call として描画・回答できる。reyn client はこれを、
+どの intervention が pending かを知るためだけに使う — プロンプト自体は display frame から
+自ら描画するため、二重描画は発生しない。intervention が解決(回答または拒否)されると、
+server は終端の `TOOL_CALL_RESULT` を発行するため、pending の frontend-tool が宙に浮くこと
+はない。
+
+## Human-in-the-loop answering
+
+intervention への回答は permission grant **そのもの**であり、すべての回答は配信時に認証
+**かつ**認可される。client は信頼されない: server は identity を再認可し、回答を
+intervention 自身の**自前のコピー**(id、および choice id があればそれ)に照らして検証する
+— client がエコーする prompt / choices は信頼されない。
+
+回答は**id によって**配信される: `TOOL_CALL_RESULT` の `toolCallId` は operator に提示され
+た正確な intervention を指定するため、grant はその prompt に着地し、別のキュー中の
+intervention に着地することは決してない。未知の id、または既に回答済みの id は拒否される
+(client は通常のターンにフォールバックする)— 最も古いものに回答するというフォールバック
+は存在しない。
+
+認証済みの人間の operator による回答は unfenced である(信頼された operator 入力として
+扱われる)。internal な agent-to-agent path 経由で外部の agent peer から届く回答は fenced
+のままである(異なる、信頼されない trust class)。
+
+Attribution: 回答済みの各 grant は、認証済みの user id とその発信元 connection とともに
+audit trail に記録される。attach / seize / detach も同様に監査される。
+
+## Active driver and seize
+
+複数の terminal が 1 つの session に attach でき、すべてが同じ出力を見る。ある時点で厳密に
+1 つの connection だけが **active-driver token**(回答/操作する権限)を保持する。これは
+UX 上の調整トークンであり、security control ではない。
+
+認可された任意の connection は、handshake なしにトークンを**seize**(`POST
+/agui/chat/{agent}/seize`)できる — 想定されるケースは、1 人の operator がノート PC と
+デスクトップを行き来する場合である。以前の保持者は保持しない対等な peer となり、seize し
+返すこともできる。
+
+seize は、未認証 / 未認可の connection、または attach された surface を持たない connection
+に対しては拒否される。地位を追われた保持者の in-flight な回答は配信時に拒否される(もはや
+active driver ではないため)。
+
+## Fail-close and the grace window
+
+pending の intervention が、いなくなった operator を待って永遠にハングすることは決してあっ
+てはならない。ある intervention に対する最後の回答可能な operator surface が失われたとき
+— in-process な detach、または network の切断 / heartbeat タイムアウトのいずれか — その
+intervention は型付けされた拒否(run がそこから継続する fail-closed な回答)で解決され、
+放置されることはない。
+
+これが起きるのは**grace window**を経過した後のみである: window 内での短い切断と再接続は
+intervention を pending のまま保ち、正常に再開する。surface がゼロのまま grace window を
+丸ごと経過した場合にのみ拒否がトリガーされる。
+
+liveness signal(定期的な heartbeat)により、half-open な connection が死んだ surface を
+隠すことはできない: liveness タイムアウトを超えて heartbeat を止めた surface は失われたと
+検出される。
+
+拒否は**intervention ごと**に scope される: 別の live な surface(例えば外部の agent peer
+が回答しているもの)がまだ回答可能な intervention は、operator の terminal がすべていなく
+なっても pending のまま残される。
 
 ## present-on-wire
 
-`present` op の render モデルは render node の `list[dict]` であり、**構築時に neutralize** されています(すべての leaf string からターミナル制御 / ESC シーケンスが除去済み)— そのため wire に到達する前に inert です。これは `presentation` display kind の下で `CUSTOM` event に乗り、`meta.nodes` に格納されます。
+`present` op の render モデルは render node の `list[dict]` であり、**構築時に neutralize**
+されている(すべての leaf 文字列からターミナル制御 / ESC シーケンスが除去済み)ため、どの
+wire に到達する前にも inert である。これは `presentation` display kind の下で `CUSTOM`
+event に乗り、`meta.nodes` に格納される。
 
-AG-UI client はさらに、**transport edge で**、接続ごとに、すべての node leaf に対して surface neutralizer を再実行します — 構築 seam が既に neutralize した leaf に対しては冪等ですが、upstream が neutralize しなかった(または別の surface 用に neutralize した)heterogeneous-surface client にとっては load-bearing な defense-in-depth です。
+AG-UI client はさらに、**transport edge で**、接続ごとに、すべての node leaf に対して
+surface neutralizer を再実行する — 構築 seam が既に neutralize した leaf に対しては冪等だ
+が、upstream が neutralize しなかった(あるいは別の surface 用に neutralize した)
+heterogeneous-surface client にとっては load-bearing な defense-in-depth である。
 
 ## STATE_* — ステータス read-model
 
-ステータスバー(attached agent、model、cost、token、context 使用量、現在の WaitingOn ラベル)は **read-model** であり、ファイルミラーではありません: セッションの live な cost / token / context アクセサと working-indicator の状態から導出され、render に関連するサブセットのみがストリームされます。
+ステータスバー(attached agent、model、cost、tokens、context usage、そして現在の
+WaitingOn ラベル)は**read-model**であり、ファイルミラーではない: これはセッションの生き
+た cost / token / context アクセサと working-indicator の状態から導出され、render に関連
+する部分集合のみがストリームされる。
 
-- `STATE_SNAPSHOT` — **接続時**に発行される、完全な read-model。フィールド: `attached_name`、`model`、`cost_agent`、`cost_total`、`agent_tokens`、`ctx_used`、`ctx_window`、`waiting_on`。
-- `STATE_DELTA` — **変更時**に発行される、変更されたキーのみを運ぶ。アイドルなストリームは delta を発行しません。
+- `STATE_SNAPSHOT` — **接続時**に発行される、read-model 全体。フィールド: `attached_name`、
+  `model`、`cost_agent`、`cost_total`、`agent_tokens`、`ctx_used`、`ctx_window`、
+  `waiting_on`。
+- `STATE_DELTA` — **変更時**に発行され、変更されたキーのみを運ぶ。アイドルなストリームは
+  delta を発行しない。
 
-client はスナップショットから自身のステータスビューを seed し、各 delta をマージするため、remote のステータスパネルは常に server の値を反映します。
+client は snapshot から自身のステータスビューを seed し、各 delta をマージするため、
+remote のステータスパネルは常に server の値を反映する。
 
 ## Reconnect
 
-接続(または再接続)時、server は以下を、どのライブ event よりも前に再生します:
+接続(または再接続)時、server はどのライブ event よりも前に、以下を replay する:
 
-1. `MESSAGES_SNAPSHOT` — display のバックログ(既に生成されたメッセージ)。再接続する client が自身の scrollback を再構築できるようにする。それから
+1. `MESSAGES_SNAPSHOT` — display のバックログ(既に生成されたメッセージ)。再接続する
+   client が自身の scrollback を再構築できるようにする。続いて
 2. `STATE_SNAPSHOT` — 上記のステータス read-model。
 
-ライブ event(と `STATE_DELTA`)がそれに続きます。
+その後にライブ event(および `STATE_DELTA`)が続く。
+
+`MESSAGES_SNAPSHOT` の `messages` フィールドは、会話ターンのみからなる標準的な
+`[{role, content}]` **配列**である — `agent` → `assistant`、`user` → `user` — これは汎用
+client が期待する形状である。reyn の chrome(status / error / present / intervention /
+trace)は会話ターンではないため、この標準配列からは除外される。reyn client は `_reyn`
+ブロックからバックログ全体(chrome を含む)を再構築するため、その scrollback は変わらない。
+
+## The reyn extension profile
+
+相互運用可能なコアを超えて、reyn は reyn 所有の namespace の下に自分自身の語彙を名付ける
+— 標準的な対応物を持たない chrome のための `CUSTOM`-event `name`、そして intervention の
+ための frontend-tool `toolName` である。この namespace は**文書化され、テストされた拡張
+プロファイル**である: reyn が発行するすべての `reyn.*` name はレジストリエントリを持つ。
+completeness gate が、レンダラーのソース語彙(および intervention frontend-tool エンコー
+ダー)から reyn-mapped な語彙を列挙し、発行される各 name がプロファイル済みであることを
+assert するため、このプロファイルは codec がワイヤーに乗せるものから静かにドリフトする
+ことがない。
+
+3 つの namespace がある:
+
+### `reyn.display.<kind>`
+
+標準的な AG-UI 対応物を持たない reyn の display frame。`value` は `{"text": <string>}` —
+display 行のテキストである。
+
+| Custom `name`                     | Meaning                                              |
+|-----------------------------------|------------------------------------------------------|
+| `reyn.display.trace`              | reyn の tool/step トレース行                           |
+| `reyn.display.intervention`       | intervention プロンプトが表示される                     |
+| `reyn.display.presentation`       | `present` op のテキスト。render-node モデルは `_reyn` ブロックの `meta.nodes` に乗る(ワイヤー上は inert — *present-on-wire* 参照) |
+| `reyn.display.nodes`              | 生の render-node display 行                            |
+| `reyn.display.user`               | scrollback にライブでエコーされる user-authored な行(backlog の user ターンは代わりに標準の `messages` 配列に乗る) |
+| `reyn.display.tool_call_started`  | tool-call 開始のトレース行                              |
+| `reyn.display.tool_call_completed`| tool-call 完了のトレース行                              |
+| `reyn.display.tool_call_failed`   | tool-call 失敗のトレース行                              |
+
+### `reyn.event.<etype>`
+
+標準的な AG-UI 対応物を持たない reyn の chat-event(working-indicator 軸)。`value` は
+そのイベントのデータオブジェクトである。
+
+| Custom `name`                        | Meaning                                          |
+|--------------------------------------|--------------------------------------------------|
+| `reyn.event.user_answered_intervention` | ユーザーが intervention に回答した              |
+
+### `reyn.intervention.<kind>`
+
+上記の 2 つとは異なる形で運ばれる**open namespace**である: これは HITL **frontend-tool**
+の `TOOL_CALL_START`(`CUSTOM` ではなく標準 event — *Intervention frontend-tool* 参照)の
+`toolName` であり、そのため汎用 client は intervention を通常の tool call として描画・
+回答できる。`<kind>` は intervention の種類(`ask_user`、`permission.*`、…)であり、呼び
+出し元が与えるものであるため、これは閉じたメンバー集合としてではなく、**namespace** レベル
+(固定された値 schema)でプロファイルされる。
+
+- **`toolCallId`** — intervention id(client が `TOOL_CALL_RESULT` でそのまま echo し返す、
+  回答の相関アンカー)。
+- **`args`** — `{prompt, detail, choices, suggestions}`、汎用 client が質問を提示するため
+  に描画するもの。
+
+上記の `reyn.display.*` と `reyn.event.*` の namespace は、汎用 client が無視する
+`CUSTOM`-event name である(スキップされ、致命的エラーにはならない); reyn client は
+`_reyn` ブロックから正確な frame を再構成する。client がまだ知らない未知の `reyn.*` name
+も同様にスキップされ、致命的エラーにはならない。
 
 ## Local ≡ remote
 
-server はローカルの in-process transport が生成するのと**同じ**統一 frame stream(display outbox + レンダラーに関連する chat-event のサブセット)をシリアライズします。AG-UI transport が加えるのは wire framing のみで、新しい render semantics は一切加えません — そのため remote レンダラーの display バイトと working-indicator の遷移は、ローカルのものと同一です。
+server は、ローカルの in-process transport が生成するのと**同一の**統一 frame stream
+(display outbox + レンダラーに関連する chat-event の部分集合)をシリアライズする。AG-UI
+transport が加えるのは wire framing のみであり、新しい render semantics は一切加えない —
+そのため remote レンダラーの display バイト列と working-indicator の遷移は、ローカルの
+ものと同一である。
 
 ## AG-UI event coverage — 数字を正直に読む
 
-**以下の数字にかかわらず、frame loss はゼロ、reyn-client の fidelity は 100% です。** すべての event は reyn-private な `_reyn` 再構築ブロックを運びます(上記の *Standard envelope, reyn-private richness* 参照)。reyn client は常にこれから正確な元の frame を復元します。このセクションの coverage の数字が記述しているのは別のことです: **AG-UI の *標準*イベント語彙のうちどれだけを reyn がネイティブに発行しているか**(= reyn の知識なしに描画できる、汎用の非-reyn AG-UI client が見る信号)であり、`CUSTOM` event に折りたたまれ汎用 client がスキップせざるを得ないものとの対比です。ここでの低い数字は、汎用-client の richness についての記述であり、data loss についての記述ではありません。
+**以下の数字にかかわらず、frame loss はゼロであり、reyn-client の fidelity は 100% で
+ある。** すべての event は reyn-private な `_reyn` 再構成ブロックを運ぶ(上記の
+*Standard envelope, reyn-private richness* 参照)。reyn client は常にこれから正確な元の
+frame を復元する。このセクションの coverage の数字が記述しているのは別のことである:
+**AG-UI の *標準* event 語彙のうちどれだけを** — reyn 固有の知識なしに描画できる、汎用の
+非-reyn AG-UI client が見る信号を — reyn が現在ネイティブに発行しているか、対して汎用
+client がスキップせざるを得ない `CUSTOM` event に折りたたんでいるか、である。ここでの
+低い数字は、汎用-client の richness についての記述であり、data loss についての記述では
+ない。
 
-| Category   | 標準 event 数 | reyn-mapped | Disposition |
+| Category   | Standard events | reyn-mapped | Disposition |
 |------------|-----------------|-------------|--------------|
 | State      | 3                | 3           | **complete** |
-| Lifecycle  | 5                | 3           | **intentional-scope** — 2 つの Step event は独立した標準 event としてではなく `STATE_*` read-model の `waiting_on` フィールドに fold される(上記 *STATE_\* — ステータス read-model* 参照) |
-| Tool       | 5                | 2(→3 予定) | `TOOL_CALL_RESULT` は **next-phase**(後のフェーズの HITL frontend-tool 回答 round-trip で追加される); `TOOL_CALL_ARGS`/`_CHUNK` のペアは **intentional-scope**(reyn が発行する時点で tool call は既に完了しており、chunk 化すべき in-flight な args ストリームが存在しない) |
-| Text       | 4                | 1           | **intentional-scope** — reyn の outbox はトークン差分ではなく whole message を配信するため、メッセージごとに 1 つの `TEXT_MESSAGE_CONTENT` が正直なマッピングです。マップすべき `_START`/`_END`/streaming-chunk フェーズは存在しません |
-| Special    | 2                | 1           | **intentional-scope** — reyn-private なペイロードは常に構造化されている(`CUSTOM`)。標準の `RAW` passthrough event に reyn の use case はありません |
-| Activity   | 2                | 0           | **intentional-scope** — reyn に直接の analog がありません。同じ情報は既に frame stream + `STATE_*` が運んでいます |
+| Lifecycle  | 5                | 3           | **intentional-scope** — 2 つの Step event は、独立した標準 event としてではなく `STATE_*` read-model の `waiting_on` フィールドに fold される(上記 *STATE_\* — the status read-model* 参照) |
+| Tool       | 5                | 3           | **complete for the HITL round-trip** — `TOOL_CALL_START` + `TOOL_CALL_END`(標準の `status` フィールド付き)+ `TOOL_CALL_RESULT`(intervention frontend-tool の回答 round-trip); `TOOL_CALL_ARGS`/`_CHUNK` のペアは **intentional-scope** である(reyn が発行する時点で tool call は既に完了しており、chunk 化すべき in-flight な args ストリームは存在しない) |
+| Text       | 4                | 3           | **conforming triplet** — メッセージ 1 件全体が `TEXT_MESSAGE_START` → `TEXT_MESSAGE_CONTENT` → `TEXT_MESSAGE_END` に乗り、`messageId` で相関付けられる。マップされていないのはストリーミング用の `TEXT_MESSAGE_CHUNK` のみである(**intentional-scope** — reyn の outbox はトークン差分ではなく whole message を配信する) |
+| Special    | 2                | 1           | **intentional-scope** — reyn-private なペイロードは常に構造化されている(`CUSTOM`)。標準の `RAW` passthrough event に reyn の use case はない |
+| Activity   | 2                | 0           | **intentional-scope** — reyn に直接の analog はない。同じ情報は既に frame stream + `STATE_*` が運んでいる |
 | Reasoning  | 7                | 0           | **future-candidate** — 最も価値の高いギャップ(下記参照) |
 
-**合計**: reyn は active-roster の標準 event **28 件中 9 件**をネイティブに発行しています(`CUSTOM` catch-all 自体を 1 件と数えると 10/28)。この 28 件の roster は Lifecycle(5)+ Text(4)+ Tool(5)+ State(3)+ Activity(2)+ Reasoning(7)+ Special(2)で、canonical な AG-UI event reference(<https://docs.ag-ui.com/concepts/events>)から集計しています。この reference は、active roster 外の meta/deprecated/draft entry を含めると最大で ~34 件の event 名を自称しています — 正確な数字は spec version に依存するため、このページは(より大きい数字ではなく)28 件の active roster を追跡対象としています。
+**合計**: reyn は active-roster の標準 event **28 件中 12 件**をネイティブに発行している
+(`CUSTOM` catch-all 自体を 1 件と数えると 13/28)。この 28 件の roster は、Lifecycle
+(5)+ Text(4)+ Tool(5)+ State(3)+ Activity(2)+ Reasoning(7)+ Special(2)であり、
+canonical な AG-UI event reference(<https://docs.ag-ui.com/concepts/events>)から集計
+している。この reference は、active roster 外の meta/deprecated/draft entry を含めると
+最大で ~34 件の event 名を自称している — 正確な数字は spec version に依存するため、この
+ページは(より大きい数字ではなく)28 件の active roster を追跡対象とする。
 
 ### なぜこのようにギャップが disposition されているか
 
-- **Reasoning(future-candidate、最高価値)。** reyn は既に reasoning を first-class な概念として扱っています。現在、reasoning トレースは `trace` display kind に乗り `CUSTOM` になるため、汎用 client には見えません。これを標準の `Reasoning*` event にマッピングすれば、汎用 AG-UI client がそれを直接描画できるようになります。この機能を出荷する前に尊重しなければならないゲート: reyn の **reasoning-display トグル** — operator が reasoning display を off にしている場合、wire 上にも何も発行されるべきではありません。マッピングがそのトグルを迂回する chain-of-thought 露出経路になってはいけません。
-- **Tool result の fidelity(non-blocking、低コスト)。** 汎用 client は現在、`tool_failed` と `tool_returned` を区別できません — どちらも標準の `TOOL_CALL_END` event に collapse し、失敗の事実は `_reyn`(汎用 client がスキップする)からしか復元できません。reyn-client の fidelity には影響しません。将来のパスで、汎用-client の可視性のために標準の `TOOL_CALL_END` ペイロード自体に error/status フィールドを表面化させることができ、実装コストは低いです。
-- **intentional-scope とマークされたものはすべて**、見落としではなく本物のアーキテクチャ上の違い(reyn の whole-message outbox、構造化のみの private ペイロード、in-flight な tool-args フェーズが無いこと、直接の "activity" 概念が無いこと)を反映しています — これらのギャップを埋めることは、バグを直すことではなく、reyn の設計が意図的に持っていない streaming/chunking の機構を発明することを意味します。
+- **Reasoning(future-candidate、最高価値)。** reyn は既に reasoning を first-class な
+  概念として扱っている。現在、reasoning トレースは `trace` display kind に乗り `CUSTOM`
+  になるため、汎用 client には見えない。これを標準の `Reasoning*` event にマッピングすれ
+  ば、汎用 AG-UI client がそれを直接描画できるようになる。これを出荷する前に尊重しなけれ
+  ばならないゲート: reyn の **reasoning-display トグル** — operator が reasoning display
+  を off にしている場合、wire 上にも何も発行されるべきではない。マッピングが、そのトグル
+  を迂回する chain-of-thought 露出経路になってはならない。
+- **intentional-scope とマークされたものはすべて**、見落としではなく本物のアーキテクチャ
+  上の違い(reyn の whole-message outbox、構造化のみの private ペイロード、in-flight な
+  tool-args フェーズが無いこと、直接の "activity" 概念が無いこと)を反映している —
+  これらのギャップを埋めることは、バグを直すことではなく、reyn の設計が意図的に持ってい
+  ない streaming/chunking の機構を発明することを意味する。
