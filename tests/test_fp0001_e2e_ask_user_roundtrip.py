@@ -236,8 +236,6 @@ def test_async_mode_message_send_returns_task_envelope(tmp_path, monkeypatch):
     """
     monkeypatch.chdir(tmp_path)
 
-    from fastapi.testclient import TestClient
-
     from reyn.interfaces.web.a2a_webhook_registry import A2AWebhookRegistry
     from reyn.interfaces.web.deps import (
         get_a2a_webhook_registry,
@@ -248,6 +246,7 @@ def test_async_mode_message_send_returns_task_envelope(tmp_path, monkeypatch):
     from reyn.interfaces.web.run_registry import RunRegistry
     from reyn.interfaces.web.server import app
     from reyn.task import InMemoryTaskBackend
+    from tests._support.web_auth import local_operator_client
 
     registry = _build_registry_for_test(tmp_path)
     # FP-0009 B: RunRegistry now lives in the FastAPI lifespan startup.
@@ -259,7 +258,7 @@ def test_async_mode_message_send_returns_task_envelope(tmp_path, monkeypatch):
     app.dependency_overrides[get_run_registry] = lambda: run_registry
     app.dependency_overrides[get_task_backend] = lambda: task_backend
     app.dependency_overrides[get_a2a_webhook_registry] = lambda: A2AWebhookRegistry()
-    client = TestClient(app, raise_server_exceptions=False)
+    client = local_operator_client(app, raise_server_exceptions=False)
 
     try:
         r = client.post(
@@ -317,8 +316,6 @@ def test_e2e_create_with_webhook_then_cancel_fires_disposition(tmp_path, monkeyp
     """
     monkeypatch.chdir(tmp_path)
 
-    from fastapi.testclient import TestClient
-
     import reyn.interfaces.web.routers.a2a as a2a_mod
     from reyn.interfaces.web.a2a_webhook_registry import (
         A2AWebhookRegistry,
@@ -333,6 +330,7 @@ def test_e2e_create_with_webhook_then_cancel_fires_disposition(tmp_path, monkeyp
     from reyn.interfaces.web.run_registry import RunRegistry
     from reyn.interfaces.web.server import app
     from reyn.task import InMemoryTaskBackend
+    from tests._support.web_auth import local_operator_client
 
     # Real injected collaborators (no mocks): a fast agent-send stub so the
     # background run doesn't reach the LLM, and a recording webhook poster.
@@ -363,7 +361,7 @@ def test_e2e_create_with_webhook_then_cancel_fires_disposition(tmp_path, monkeyp
     app.dependency_overrides[get_run_registry] = lambda: run_registry
     app.dependency_overrides[get_task_backend] = lambda: task_backend
     app.dependency_overrides[get_a2a_webhook_registry] = lambda: webhook_registry
-    client = TestClient(app, raise_server_exceptions=False)
+    client = local_operator_client(app, raise_server_exceptions=False)
 
     hook_url = "https://client.example/disposition-hook"
     try:
@@ -418,12 +416,11 @@ def test_get_task_returns_a2a_envelope_from_task_backend(tmp_path, monkeypatch):
 
     monkeypatch.chdir(tmp_path)
 
-    from fastapi.testclient import TestClient
-
     from reyn.interfaces.web.deps import get_registry, get_run_registry, get_task_backend
     from reyn.interfaces.web.run_registry import RunRegistry
     from reyn.interfaces.web.server import app
     from reyn.task import InMemoryTaskBackend, Task, TaskState
+    from tests._support.web_auth import local_operator_client
 
     registry = _build_registry_for_test(tmp_path)
     backend = InMemoryTaskBackend()
@@ -434,7 +431,7 @@ def test_get_task_returns_a2a_envelope_from_task_backend(tmp_path, monkeypatch):
     app.dependency_overrides[get_registry] = lambda: registry
     app.dependency_overrides[get_run_registry] = lambda: RunRegistry()
     app.dependency_overrides[get_task_backend] = lambda: backend
-    client = TestClient(app, raise_server_exceptions=False)
+    client = local_operator_client(app, raise_server_exceptions=False)
 
     try:
         r = client.get("/a2a/tasks/t-1")

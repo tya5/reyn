@@ -71,9 +71,8 @@ def tmp_project(tmp_path: Path) -> Path:
 def _make_client(tmp_project: Path, monkeypatch, env_overrides: dict | None = None):
     """Build a TestClient with singletons reset to use tmp_project."""
 
-    from fastapi.testclient import TestClient
-
     import reyn.interfaces.web.deps as deps
+    from tests._support.web_auth import local_operator_client
 
     # Reset cached singletons
     deps._get_project_root.cache_clear()
@@ -92,7 +91,7 @@ def _make_client(tmp_project: Path, monkeypatch, env_overrides: dict | None = No
         monkeypatch.delenv("REYN_WEB_DEFAULT_DESIGN", raising=False)
 
     from reyn.interfaces.web.server import app
-    client = TestClient(app, raise_server_exceptions=False)
+    client = local_operator_client(app, raise_server_exceptions=False)
     return client
 
 

@@ -48,14 +48,13 @@ def _a2a_task(task_id, ctx, status=TaskState.RUNNING):
 
 
 def _sse_client(run_registry, task_backend):
-    from fastapi.testclient import TestClient
-
     from reyn.interfaces.web.deps import get_run_registry, get_task_backend
     from reyn.interfaces.web.server import app
+    from tests._support.web_auth import local_operator_client
 
     app.dependency_overrides[get_run_registry] = lambda: run_registry
     app.dependency_overrides[get_task_backend] = lambda: task_backend
-    return TestClient(app, raise_server_exceptions=False)
+    return local_operator_client(app, raise_server_exceptions=False)
 
 
 def test_sse_closes_when_task_is_terminal_even_if_runentry_running():

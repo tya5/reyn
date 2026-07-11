@@ -108,11 +108,10 @@ def tmp_project(tmp_path: Path) -> Path:
 
 def test_get_agents_200(tmp_project: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Tier 2c: GET /api/agents returns 200 and a list containing 'default'."""
-    from fastapi.testclient import TestClient
-
     # Patch _find_project_root and the lru_cache-based singletons so the test
     # uses our tmp_project directory instead of the real project root.
     import reyn.interfaces.web.deps as deps
+    from tests._support.web_auth import local_operator_client
 
     # Clear cached singletons from previous test runs.
     deps._get_project_root.cache_clear()
@@ -128,7 +127,7 @@ def test_get_agents_200(tmp_project: Path, monkeypatch: pytest.MonkeyPatch) -> N
     )
 
     from reyn.interfaces.web.server import app
-    client = TestClient(app, raise_server_exceptions=False)
+    client = local_operator_client(app, raise_server_exceptions=False)
     response = client.get("/api/agents")
 
     # Restore cached state for other tests.
@@ -150,11 +149,10 @@ def test_get_agents_200(tmp_project: Path, monkeypatch: pytest.MonkeyPatch) -> N
 
 def test_health_endpoint() -> None:
     """Tier 2c: GET /health returns {status: ok}."""
-    from fastapi.testclient import TestClient
-
     from reyn.interfaces.web.server import app
+    from tests._support.web_auth import local_operator_client
 
-    client = TestClient(app, raise_server_exceptions=False)
+    client = local_operator_client(app, raise_server_exceptions=False)
     response = client.get("/health")
     assert response.status_code == 200
     assert response.json() == {"status": "ok"}

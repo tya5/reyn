@@ -93,8 +93,6 @@ def _client_with_registry(tmp_path: Path, agents: list[tuple[str, str]]):
     (= FP-0009 B moved RunRegistry init into the FastAPI lifespan;
     TestClient without ``with ...`` doesn't fire lifespan).
     """
-    from fastapi.testclient import TestClient
-
     from reyn.interfaces.web.a2a_webhook_registry import A2AWebhookRegistry
     from reyn.interfaces.web.deps import (
         get_a2a_webhook_registry,
@@ -105,6 +103,7 @@ def _client_with_registry(tmp_path: Path, agents: list[tuple[str, str]]):
     from reyn.interfaces.web.run_registry import RunRegistry
     from reyn.interfaces.web.server import app
     from reyn.task import InMemoryTaskBackend
+    from tests._support.web_auth import local_operator_client
 
     registry = _build_registry(tmp_path, agents)
     run_registry = RunRegistry()
@@ -112,7 +111,7 @@ def _client_with_registry(tmp_path: Path, agents: list[tuple[str, str]]):
     app.dependency_overrides[get_run_registry] = lambda: run_registry
     app.dependency_overrides[get_task_backend] = lambda: InMemoryTaskBackend()
     app.dependency_overrides[get_a2a_webhook_registry] = lambda: A2AWebhookRegistry()
-    client = TestClient(app, raise_server_exceptions=False)
+    client = local_operator_client(app, raise_server_exceptions=False)
     return client, registry
 
 

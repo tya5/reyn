@@ -43,6 +43,38 @@ Exits 1 with an install hint if FastAPI or Uvicorn is missing.
 | `/a2a/agents/<name>` | A2A JSON-RPC 2.0 per agent |
 | `/mcp/sse`, `/mcp/messages` | MCP-over-SSE |
 | `/api/*` | REST (agents / skills / runs / budget / permissions) |
+| `/agents/<name>/tool-results/<artifact>` | HTTP fetch for `path_ref` bodies (resources) |
+
+## Authentication
+
+**Every functional surface is authenticated by the same transport-tier model** —
+not just the AG-UI chat routes. A request to `/api/*`, `/a2a/*`, `/mcp/*`, or a
+resource-fetch route is resolved to a connection identity before it reaches the
+handler; an unauthenticated request is refused with `401`. Authentication is
+uniform across the surfaces (one operator token), so the same token that drives
+the browser / thin client also authorizes the REST control plane and the A2A /
+MCP surfaces.
+
+The tier determines what is required:
+
+- **Same-machine UDS** (`--uds PATH`) — identified by OS peer credentials; no
+  token needed.
+- **Loopback / network TCP** — the bearer token is required, presented as
+  `?token=<secret>` or an `Authorization: Bearer <secret>` header. A non-loopback
+  bind refuses to start without `web.auth.token` configured (fail-closed); a
+  loopback bind generates an ephemeral token at startup and prints it in the
+  launch URL.
+
+Open (unauthenticated) surfaces are only the non-sensitive ones: the OpenUI
+shell assets (`/`, `/static/*`, `/web/designs/*`) — the browser loads them
+*before* it has the token, then supplies the token on the API calls it makes —
+and `/health`. Webhook plugin routes (`/webhook/*`) do their own HMAC
+verification and are not double-gated. A CORS preflight (`OPTIONS`) is answered
+without a token.
+
+See [reyn.yaml § web.auth](../config/reyn-yaml.md) for the token / TLS /
+transport-tier configuration and [AG-UI transport](../runtime/agui-transport.md)
+for the chat surface's per-handler details.
 
 ## Exit codes
 

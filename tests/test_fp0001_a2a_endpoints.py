@@ -47,8 +47,6 @@ def _make_client_with_registry(registry: RunRegistry, task_backend=None, webhook
     override. A default in-memory Task backend + A2A webhook registry satisfy
     a2a_jsonrpc's get_task_backend / get_a2a_webhook_registry dependencies for
     tests that don't exercise them."""
-    from fastapi.testclient import TestClient
-
     from reyn.interfaces.web.a2a_webhook_registry import A2AWebhookRegistry
     from reyn.interfaces.web.deps import (
         get_a2a_webhook_registry,
@@ -57,13 +55,14 @@ def _make_client_with_registry(registry: RunRegistry, task_backend=None, webhook
     )
     from reyn.interfaces.web.server import app
     from reyn.task import InMemoryTaskBackend
+    from tests._support.web_auth import local_operator_client
 
     backend = task_backend if task_backend is not None else InMemoryTaskBackend()
     reg = webhook_registry if webhook_registry is not None else A2AWebhookRegistry()
     app.dependency_overrides[get_run_registry] = lambda: registry
     app.dependency_overrides[get_task_backend] = lambda: backend
     app.dependency_overrides[get_a2a_webhook_registry] = lambda: reg
-    client = TestClient(app, raise_server_exceptions=False)
+    client = local_operator_client(app, raise_server_exceptions=False)
     return client
 
 
@@ -237,8 +236,6 @@ def test_agent_card_shows_streaming_and_push_notifications_true(tmp_path) -> Non
     are wired. Each claim is pinned to its concrete in-source wire by
     ``tests/test_a2a_capability_claim_interim.py``.
     """
-    from fastapi.testclient import TestClient
-
     from reyn.core.events.state_log import StateLog
     from reyn.interfaces.web.deps import get_registry
     from reyn.interfaces.web.server import app
@@ -246,6 +243,7 @@ def test_agent_card_shows_streaming_and_push_notifications_true(tmp_path) -> Non
     from reyn.runtime.profile import AgentProfile
     from reyn.runtime.registry import AgentRegistry
     from reyn.runtime.session import Session
+    from tests._support.web_auth import local_operator_client
 
     state_log = StateLog(tmp_path / ".reyn" / "state" / "wal.jsonl")
 
@@ -276,7 +274,7 @@ def test_agent_card_shows_streaming_and_push_notifications_true(tmp_path) -> Non
     app.dependency_overrides[get_registry] = lambda: registry
     app.dependency_overrides[get_run_registry] = lambda: run_registry
     app.dependency_overrides[get_task_backend] = lambda: InMemoryTaskBackend()
-    client = TestClient(app, raise_server_exceptions=False)
+    client = local_operator_client(app, raise_server_exceptions=False)
     try:
         r = client.get("/a2a/agents/demo/.well-known/agent-card.json")
         assert r.status_code == 200, r.text
@@ -310,8 +308,6 @@ def test_answer_injection_delivers_to_pending_intervention(tmp_path) -> None:
     up the agent via the RunEntry's ``agent_name`` and calls
     ``Session.answer_pending_intervention``.
     """
-    from fastapi.testclient import TestClient
-
     from reyn.core.events.state_log import StateLog
     from reyn.interfaces.web.deps import get_registry, get_run_registry
     from reyn.interfaces.web.server import app
@@ -320,6 +316,7 @@ def test_answer_injection_delivers_to_pending_intervention(tmp_path) -> None:
     from reyn.runtime.registry import AgentRegistry
     from reyn.runtime.session import Session
     from reyn.user_intervention import UserIntervention
+    from tests._support.web_auth import local_operator_client
 
     state_log = StateLog(tmp_path / ".reyn" / "state" / "wal.jsonl")
 
@@ -385,7 +382,7 @@ def test_answer_injection_delivers_to_pending_intervention(tmp_path) -> None:
         app.dependency_overrides[get_run_registry] = lambda: run_registry
         app.dependency_overrides[get_task_backend] = lambda: InMemoryTaskBackend()
         app.dependency_overrides[get_a2a_webhook_registry] = lambda: A2AWebhookRegistry()
-        client = TestClient(app, raise_server_exceptions=False)
+        client = local_operator_client(app, raise_server_exceptions=False)
         try:
             r = client.post(
                 "/a2a/agents/demo",
@@ -424,8 +421,6 @@ def test_answer_injection_delivers_to_pending_intervention(tmp_path) -> None:
 def test_answer_injection_returns_answered_false_for_unknown_task(tmp_path) -> None:
     """Tier 2: POST /a2a/agents/{name} with params.task_id for a run that
     doesn't exist returns {"answered": False, "reason": "not found"}."""
-    from fastapi.testclient import TestClient
-
     from reyn.core.events.state_log import StateLog
     from reyn.interfaces.web.a2a_webhook_registry import A2AWebhookRegistry
     from reyn.interfaces.web.deps import (
@@ -440,6 +435,7 @@ def test_answer_injection_returns_answered_false_for_unknown_task(tmp_path) -> N
     from reyn.runtime.registry import AgentRegistry
     from reyn.runtime.session import Session
     from reyn.task import InMemoryTaskBackend
+    from tests._support.web_auth import local_operator_client
 
     state_log = StateLog(tmp_path / ".reyn" / "state" / "wal.jsonl")
 
@@ -469,7 +465,7 @@ def test_answer_injection_returns_answered_false_for_unknown_task(tmp_path) -> N
     app.dependency_overrides[get_run_registry] = lambda: run_registry
     app.dependency_overrides[get_task_backend] = lambda: InMemoryTaskBackend()
     app.dependency_overrides[get_a2a_webhook_registry] = lambda: A2AWebhookRegistry()
-    client = TestClient(app, raise_server_exceptions=False)
+    client = local_operator_client(app, raise_server_exceptions=False)
     try:
         r = client.post(
             "/a2a/agents/demo",

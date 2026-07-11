@@ -80,10 +80,9 @@ def tmp_project(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 
 def _client():
-    from fastapi.testclient import TestClient
-
     from reyn.interfaces.web.server import app
-    return TestClient(app, raise_server_exceptions=False)
+    from tests._support.web_auth import local_operator_client
+    return local_operator_client(app, raise_server_exceptions=False)
 
 
 def _mint_path_ref(tmp_project: Path, content: str = "hello world\n") -> dict:
