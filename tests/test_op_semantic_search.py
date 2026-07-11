@@ -89,8 +89,8 @@ def _chunk(text: str, vec: list[float], ch: str, model: str = "m") -> ChunkRecor
 async def test_recall_happy_path_returns_chunks(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Tier 2: recall macro embeds query, queries source, returns merged top-K."""
     fake = FakeEmbeddingProvider()
-    import reyn.core.op_runtime.semantic_search as _recall_mod
-    monkeypatch.setattr(_recall_mod, "get_provider", lambda *a, **kw: fake)
+    import reyn.core.op_runtime.embed as _embed_mod
+    monkeypatch.setattr(_embed_mod, "get_provider", lambda *a, **kw: fake)
 
     import os
     monkeypatch.chdir(tmp_path)
@@ -120,8 +120,8 @@ async def test_recall_happy_path_returns_chunks(tmp_path: Path, monkeypatch: pyt
 async def test_recall_empty_sources_returns_fallback(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Tier 2: recall with empty sources list returns fallback immediately."""
     fake = FakeEmbeddingProvider()
-    import reyn.core.op_runtime.semantic_search as _recall_mod
-    monkeypatch.setattr(_recall_mod, "get_provider", lambda *a, **kw: fake)
+    import reyn.core.op_runtime.embed as _embed_mod
+    monkeypatch.setattr(_embed_mod, "get_provider", lambda *a, **kw: fake)
 
     import os
     monkeypatch.chdir(tmp_path)
@@ -145,8 +145,8 @@ async def test_recall_empty_sources_returns_fallback(tmp_path: Path, monkeypatch
 async def test_recall_merges_multiple_sources(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Tier 2: recall merges chunks from multiple sources, sorted by score."""
     fake = FakeEmbeddingProvider()
-    import reyn.core.op_runtime.semantic_search as _recall_mod
-    monkeypatch.setattr(_recall_mod, "get_provider", lambda *a, **kw: fake)
+    import reyn.core.op_runtime.embed as _embed_mod
+    monkeypatch.setattr(_embed_mod, "get_provider", lambda *a, **kw: fake)
 
     import os
     monkeypatch.chdir(tmp_path)
@@ -174,8 +174,8 @@ async def test_recall_merges_multiple_sources(tmp_path: Path, monkeypatch: pytes
 async def test_recall_top_k_limits_merged_results(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Tier 2: recall top_k limits total chunks returned across all sources."""
     fake = FakeEmbeddingProvider()
-    import reyn.core.op_runtime.semantic_search as _recall_mod
-    monkeypatch.setattr(_recall_mod, "get_provider", lambda *a, **kw: fake)
+    import reyn.core.op_runtime.embed as _embed_mod
+    monkeypatch.setattr(_embed_mod, "get_provider", lambda *a, **kw: fake)
 
     import os
     monkeypatch.chdir(tmp_path)
@@ -203,8 +203,8 @@ async def test_recall_top_k_limits_merged_results(tmp_path: Path, monkeypatch: p
 async def test_recall_mode_all_semantic(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Tier 2: when all sources return semantic results, mode='semantic'."""
     fake = FakeEmbeddingProvider()
-    import reyn.core.op_runtime.semantic_search as _recall_mod
-    monkeypatch.setattr(_recall_mod, "get_provider", lambda *a, **kw: fake)
+    import reyn.core.op_runtime.embed as _embed_mod
+    monkeypatch.setattr(_embed_mod, "get_provider", lambda *a, **kw: fake)
 
     import os
     monkeypatch.chdir(tmp_path)
@@ -244,8 +244,8 @@ async def test_recall_embed_failure_falls_back(tmp_path: Path, monkeypatch: pyte
         def get_dimension(self, model: str) -> int:
             return 3
 
-    import reyn.core.op_runtime.semantic_search as _recall_mod
-    monkeypatch.setattr(_recall_mod, "get_provider", lambda *a, **kw: _RaisingProvider())
+    import reyn.core.op_runtime.embed as _embed_mod
+    monkeypatch.setattr(_embed_mod, "get_provider", lambda *a, **kw: _RaisingProvider())
     monkeypatch.chdir(tmp_path)
 
     ctx = _make_ctx(tmp_path)
@@ -311,8 +311,8 @@ async def test_semantic_search_multi_model_embeds_once_per_distinct_model(
     space. This test goes RED under that regression.
     """
     fake = _PerModelEmbeddingProvider()
-    import reyn.core.op_runtime.semantic_search as _mod
-    monkeypatch.setattr(_mod, "get_provider", lambda *a, **kw: fake)
+    import reyn.core.op_runtime.embed as _embed_mod
+    monkeypatch.setattr(_embed_mod, "get_provider", lambda *a, **kw: fake)
     monkeypatch.chdir(tmp_path)
 
     # src_a: indexed under modelA. Only the modelA query vector [1,0,0]
@@ -367,8 +367,8 @@ async def test_semantic_search_single_model_multi_source_embeds_once(
     (not once per source) — the multi-model grouping does not regress the
     pre-existing single-model-multi-source cost posture."""
     fake = _PerModelEmbeddingProvider()
-    import reyn.core.op_runtime.semantic_search as _mod
-    monkeypatch.setattr(_mod, "get_provider", lambda *a, **kw: fake)
+    import reyn.core.op_runtime.embed as _embed_mod
+    monkeypatch.setattr(_embed_mod, "get_provider", lambda *a, **kw: fake)
     monkeypatch.chdir(tmp_path)
 
     await _seed(tmp_path, "s1", [_chunk("from s1", [1.0, 0.0, 0.0], "c1", model="modelA")])
@@ -396,8 +396,8 @@ async def test_semantic_search_auto_adopts_source_model_ignores_caller_override(
     source). Passing a mismatching `embedding_model` does not change which
     model the already-indexed source is queried with."""
     fake = _PerModelEmbeddingProvider()
-    import reyn.core.op_runtime.semantic_search as _mod
-    monkeypatch.setattr(_mod, "get_provider", lambda *a, **kw: fake)
+    import reyn.core.op_runtime.embed as _embed_mod
+    monkeypatch.setattr(_embed_mod, "get_provider", lambda *a, **kw: fake)
     monkeypatch.chdir(tmp_path)
 
     await _seed(tmp_path, "src_a", [
@@ -418,3 +418,78 @@ async def test_semantic_search_auto_adopts_source_model_ignores_caller_override(
     # Only modelA was ever called — the source's OWN recorded model, not the
     # caller-supplied fallback.
     assert [model for _texts, model in fake.calls] == ["modelA"]
+
+
+# ---------------------------------------------------------------------------
+# co-vet fix — query-embed redaction-egress seam (symmetric with index_update)
+# ---------------------------------------------------------------------------
+
+class _RecordingEmbeddingProvider:
+    """Real EmbeddingProvider-protocol instance that records the EXACT texts
+    it was handed — the egress boundary to the external embedding API. Used to
+    prove the query text reaching the provider has been redacted (never the
+    raw secret)."""
+
+    def __init__(self) -> None:
+        self._batch_size = 10
+        self.received_texts: list[str] = []
+
+    async def embed(self, texts: list[str], model: str) -> EmbedBatchResult:
+        self.received_texts.extend(texts)
+        return EmbedBatchResult(
+            vectors=[[1.0, 0.0, 0.0] for _ in texts], model=model, total_tokens=len(texts),
+        )
+
+    def estimate_tokens(self, texts: list[str]) -> int:
+        return len(texts)
+
+    def get_dimension(self, model: str) -> int:
+        return 3
+
+
+@pytest.mark.asyncio
+async def test_semantic_search_query_embed_redacts_secret_at_egress(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Tier 2: co-vet fix — a secret-pattern QUERY is redacted BEFORE it
+    reaches the embedding provider (the egress boundary to the external
+    embedding API), and the `embed_secret_redacted` audit-event fires on the
+    query path. This is because the query embed now dispatches through the
+    shared `embed` op (`execute_op(EmbedIROp(...))`), inheriting the Phase 1
+    PRE-embed `redact_secrets` egress seam — symmetric with `index_update`'s
+    ingestion embed (architect ruling (a): one redaction-gated embed
+    mechanism, no provider-direct bypass).
+
+    FALSIFY: revert the query embed in `semantic_search.handle` to
+    provider-direct (`provider.embed([op.query], model)`) → the raw secret
+    reaches the provider AND no `embed_secret_redacted` event fires → both
+    asserts below go RED. (Verified locally: strip → RED, restore → GREEN.)
+    """
+    fake = _RecordingEmbeddingProvider()
+    # The embed op resolves its provider via op_runtime.embed.get_provider —
+    # patch THAT (the query embed now routes through the embed op, not a
+    # provider-direct call in semantic_search).
+    import reyn.core.op_runtime.embed as _embed_mod
+    monkeypatch.setattr(_embed_mod, "get_provider", lambda *a, **kw: fake)
+    monkeypatch.chdir(tmp_path)
+
+    await _seed(tmp_path, "docs", [_chunk("some chunk", [1.0, 0.0, 0.0], "c1")])
+
+    ctx = _make_ctx(tmp_path)
+    # A secret-shaped query (matches the FP-0050 redact_secrets patterns —
+    # same shape as tests/test_op_embed.py's PRE-embed seam test).
+    secret_query = 'api_key = "abcdefghijklmnopqrstuvwxyz123456"'
+    op = SemanticSearchIROp(
+        kind="semantic_search", query=secret_query, sources=["docs"], top_k=5,
+    )
+    result = await execute_op(op, ctx)
+
+    assert result.get("status") != "error", result
+    # The provider (= egress boundary to the external embedding API) never
+    # receives the raw secret value; it sees the redacted form.
+    assert fake.received_texts, "provider must have been called for the query embed"
+    assert "abcdefghijklmnopqrstuvwxyz123456" not in fake.received_texts[0]
+    assert "REDACTED" in fake.received_texts[0]
+    # The seam firing on the QUERY path is observable (P6 audit-event) —
+    # mirrors index_update's ingestion redaction.
+    assert any(e.type == "embed_secret_redacted" for e in ctx.events.all())

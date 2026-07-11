@@ -36,35 +36,27 @@ even guaranteed to share a value range). So:
 Single-source and same-model multi-source calls are BYTE-IDENTICAL in
 behaviour to the pre-rename `recall` (exactly one model group, same merge).
 
+**Query-embed goes through the shared `embed` op (redaction-egress seam).**
+The per-distinct-model query embed is dispatched via `execute_op(EmbedIROp(
+...))`, NOT provider-direct — so the query (which IS an egress to the
+external embedding API) passes through the Phase 1 `embed` op's PRE-embed
+`redact_secrets` scan + `embed_secret_redacted` audit-event, symmetric with
+`index_update`'s ingestion embed (co-vet fix, architect ruling (a)): the
+ingestion path and the query path share ONE redaction-gated embed mechanism,
+no provider-direct bypass. Multi-model correctness (#1) is unchanged — the
+embed op is still called once per distinct model; only the call mechanism
+changed.
+
 ADR-0033 §2.1: macro op.
 """
 from __future__ import annotations
 
-import os
-
-from reyn.data.embedding import get_provider
 from reyn.data.index import SqliteIndexBackend
 from reyn.data.index.source_manifest import get_source_manifest
-from reyn.schemas.models import IndexQueryIROp, SemanticSearchIROp
+from reyn.schemas.models import EmbedIROp, IndexQueryIROp, SemanticSearchIROp
 
 from . import execute_op, register
 from .context import OpContext
-
-
-def _resolve_provider():
-    """Resolve the embedding provider the same way the old embed op did
-    (env override + reyn.yaml embedding config); kept inline so
-    semantic_search has no dependency on the embed op (which #1303 S-I.5
-    deletes)."""
-    name = os.environ.get("REYN_EMBEDDING_PROVIDER", "litellm")
-    if name == "litellm":
-        try:
-            from reyn.config import load_config
-            cfg = load_config().embedding
-        except Exception:
-            cfg = None
-        return get_provider(name, config=cfg or {})
-    return get_provider(name, config={})
 
 
 async def _resolve_source_model(
@@ -126,20 +118,30 @@ async def handle(
         model_groups.setdefault(source_models[source], []).append(source)
 
     # ── 2. Embed the query ONCE per distinct model ──────────────────────────
-    provider = _resolve_provider()
+    # Via the shared `embed` op (execute_op) — NOT provider-direct — so the
+    # query, which IS an egress to the external embedding API, passes through
+    # the Phase 1 embed op's PRE-embed redaction-egress seam (`redact_secrets`
+    # + `embed_secret_redacted` audit-event). Symmetric with index_update's
+    # ingestion embed (co-vet fix, architect ruling (a)): both the ingestion
+    # path and the query path share ONE redaction-gated embed mechanism, no
+    # provider-direct bypass. Multi-model correctness (#1) is UNCHANGED — the
+    # embed op is still called once per DISTINCT model, each source queried
+    # with its matching model's vector; only the call mechanism changed from
+    # provider-direct to execute_op(EmbedIROp).
     query_vectors: dict[str, list[float]] = {}
     for model in model_groups:
-        try:
-            embed_result = await provider.embed([op.query], model)
-            vectors = embed_result.get("vectors", [])
-        except Exception as exc:  # provider/config failure → graceful fallback
+        embed_result = await execute_op(
+            EmbedIROp(kind="embed", texts=[op.query], embedding_model=model), ctx,
+        )
+        if embed_result.get("status") == "error":
             ctx.events.emit(
                 "semantic_search_embed_failed",
                 query=op.query,
                 model=model,
-                error=str(exc),
+                error=embed_result.get("error", ""),
             )
-            vectors = []
+            continue
+        vectors = embed_result.get("vectors", [])
         if vectors:
             query_vectors[model] = vectors[0]
 
