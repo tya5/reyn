@@ -17,13 +17,30 @@ A2A; tools are MCP; observability export is OTEL. Those are separate surfaces.)
 - `GET /agui/chat/{agent}/events` — the server→client SSE stream. Each SSE block
   is `event: <TYPE>\ndata: <json>\n\n`.
 - `POST /agui/chat/{agent}` — the client→server channel. Body is a JSON object;
-  the current message type is `{"type": "user_message", "text": "..."}` (submit
-  a turn).
+  the supported message types are:
+  - `{"type": "user_message", "text": "..."}` — submit a turn.
+  - `{"type": "TOOL_CALL_RESULT", "toolCallId": "<intervention-id>", "text": "..."}`
+    or `{..., "choiceId": "<id>"}` — answer a pending intervention (the HITL
+    round-trip; see "Human-in-the-loop answering" below).
+  - `{"type": "cancel_inflight"}` — cooperatively cancel the in-flight turn (the
+    Ctrl-C seam).
+  - `{"type": "heartbeat"}` — a liveness keepalive.
+- `POST /agui/chat/{agent}/seize` — take the active-driver token (see "Active
+  driver and seize").
+
+A client can never shut the server down — there is no shutdown message; a
+client's `/quit` is a local disconnect only. The server is the sole writer.
+
+A connection identifies itself with a `connection_id` query param (or an
+`X-Reyn-Connection` header), stable across its SSE stream and its POSTs.
 
 Both are gated by the server's authentication context: a connection presents its
 token as `?token=` or an `Authorization: Bearer <token>` header (same-machine
 UDS connections are identified by OS peer credentials instead). An
 unauthenticated connection is refused with `401` before any session is attached.
+The operator-facing command that opens this transport is `reyn chat --connect
+<url>` (`--token <secret>` for the bearer token, falling back to the
+`REYN_WEB_AUTH_TOKEN` environment variable).
 
 ## Standard envelope, reyn-private richness
 
@@ -51,7 +68,7 @@ of the renderer's two entry points (display vs working-indicator). The mapping:
 | `status`          | `TEXT_MESSAGE_CONTENT` | transient status line (`role: status`)    |
 | `error`           | `RUN_ERROR`        | error text                                   |
 | `trace`           | `CUSTOM`           | reyn tool/step trace line                    |
-| `intervention`    | `CUSTOM`           | a prompt is displayed (answer round-trip is a later phase) |
+| `intervention`    | `CUSTOM`           | a prompt is displayed; the reyn client draws it natively and answers it by id (see "Human-in-the-loop answering") |
 | `presentation`    | `CUSTOM`           | a `present` op's render-node model (see *present-on-wire*) |
 | control sentinels | `CUSTOM`           | `__end__` and client-local control kinds     |
 
@@ -71,6 +88,76 @@ silently vanish on the wire.
 
 These eight are the exact set the renderer's working / running / waiting-for-you
 indicator consumes; the transport forwards precisely this set.
+
+### Intervention frontend-tool
+
+Alongside the display frame, the server emits a companion `TOOL_CALL_START`
+**frontend-tool** whose `toolName` is `reyn.intervention.<kind>` and whose
+`toolCallId` is the intervention id. A generic AG-UI client can render and
+answer it as an ordinary tool call; the reyn client uses it only to know which
+intervention is pending — it draws the prompt itself from the display frame,
+so there is no double render. When the intervention resolves (answered or
+denied) the server emits a terminal `TOOL_CALL_RESULT`, so a pending
+frontend-tool never dangles.
+
+## Human-in-the-loop answering
+
+Answering an intervention IS a permission grant, so every answer is
+authenticated AND authorized at delivery time. The client is untrusted: the
+server re-authorizes the identity and validates the answer against its OWN
+copy of the intervention (the id, and any choice id) — the client's echoed
+prompt / choices are not trusted.
+
+Answers are delivered **by id**: the `toolCallId` in a `TOOL_CALL_RESULT`
+names the exact intervention the operator was shown, so a grant lands on that
+prompt and never on a different queued one. An unknown or already-answered id
+is rejected (the client falls back to an ordinary turn); there is no
+answer-the-oldest fallback.
+
+An authenticated human operator's answer is unfenced (treated as trusted
+operator input). An answer arriving from an external agent peer over the
+internal agent-to-agent path stays fenced (a different, untrusted trust
+class).
+
+Attribution: each answered grant is recorded on the audit trail with the
+authenticated user id and the connection it came from; attach / seize / detach
+are also audited.
+
+## Active driver and seize
+
+Multiple terminals may attach to one session and all see the same output.
+Exactly one connection at a time holds the **active-driver token** — the
+authority to answer / drive. This is a UX coordination token, not a security
+control.
+
+Any authorized connection may **seize** the token
+(`POST /agui/chat/{agent}/seize`) with no handshake — the intended case is one
+operator across a laptop and a desktop. The previous holder becomes a
+non-holding equal peer and may seize back.
+
+A seize is refused for an unauthenticated / unauthorized connection, or one
+with no attached surface. A deposed holder's in-flight answer is rejected at
+delivery (it is no longer the active driver).
+
+## Fail-close and the grace window
+
+A pending intervention must never hang forever waiting on an operator who has
+gone. When the last answerable operator surface for an intervention is lost —
+an in-process detach OR a network break / heartbeat timeout — the
+intervention is resolved with a typed refusal (a fail-closed answer the run
+continues from), never left parked.
+
+This only happens after a **grace window**: a brief disconnect and reconnect
+within the window keeps the intervention pending and resumes normally. Only a
+full grace window with zero surfaces triggers the refusal.
+
+A liveness signal (a periodic heartbeat) means a half-open connection cannot
+hide a dead surface: a surface that stops heart-beating past the liveness
+timeout is detected as lost.
+
+The refusal is scoped **per intervention**: an intervention still answerable
+by another live surface (for example one an external agent peer is answering)
+is left pending even when the operator terminals are all gone.
 
 ## present-on-wire
 

@@ -5028,6 +5028,7 @@ class Session:
         *,
         choice_id_override: str | None = None,
         external_source: bool = False,
+        attribution: "dict | None" = None,
     ) -> bool:
         """Thin wrapper → InterventionHandler.deliver_answer_to.
 
@@ -5040,11 +5041,18 @@ class Session:
         ``answer_pending_intervention`` (the A2A / webhook entry); the
         default ``False`` keeps all local UI callers (TUI / slash /
         chainlit) unfenced.
+
+        ``attribution`` (ADR-0039 P3) stamps *who granted* — the
+        authenticated ``auth_user_id`` + connection id — onto the
+        ``user_answered_intervention`` audit event, so a 2-on-1 grant is
+        attributable to the identity AND the terminal. Local UI callers pass
+        ``None`` (the operator's own process needs no wire attribution).
         """
         return await self._intervention_handler.deliver_answer_to(
             iv, text,
             choice_id_override=choice_id_override,
             external_source=external_source,
+            attribution=attribution,
         )
 
     async def answer_pending_intervention(
@@ -5091,6 +5099,80 @@ class Session:
                 external_source=True,
             )
         return False
+
+    async def answer_intervention_by_id(
+        self,
+        intervention_id: str,
+        text: str = "",
+        *,
+        choice_id_override: str | None = None,
+        external_source: bool = False,
+        attribution: "dict | None" = None,
+    ) -> bool:
+        """Deliver an answer to the intervention identified BY ID (ADR-0039 P3, R1).
+
+        The AG-UI HITL round-trip correlates a ``TOOL_CALL_RESULT`` to its
+        intervention by the ``toolCallId`` (= this id), so the grant lands on the
+        EXACT intervention the operator was shown — never the head-of-queue,
+        which a second queued prompt could have displaced between display and
+        answer (the answer-oldest race). An unknown or already-resolved id is a
+        typed reject (returns ``False``) with **no** head fallback: the caller
+        surfaces it as a rejected grant, never silently redirects it.
+
+        The lookup + ``choice_id`` validation are server-side against this
+        session's own registry entry — the client echoes only ``(id, text |
+        choice_id)`` and its copy of the prompt/choices is not trusted (R6).
+        """
+        iv = self._interventions.get(intervention_id)
+        if iv is None or iv.future.done():
+            return False
+        await self._deliver_answer_to(
+            iv, text,
+            choice_id_override=choice_id_override,
+            external_source=external_source,
+            attribution=attribution,
+        )
+        # Report whether the intervention was actually RESOLVED (the grant
+        # landed), not merely whether the input was consumed: an unrecognized
+        # choice emits a re-prompt hint (consumed) but leaves the future pending,
+        # which the wire caller must see as a rejected answer — the operator's
+        # terminal keeps the frontend-tool pending and the hint frame explains why.
+        return iv.future.done()
+
+    async def fail_close_interventions(self, reason: str) -> list[str]:
+        """Typed-DENY every pending intervention whose answerable surface is gone.
+
+        The load-bearing safety terminal (ADR-0039 D5(b)/P3): when the last
+        operator surface for this session is lost and the grace window elapses,
+        a pending ``ask_user`` / permission / safety-limit prompt must resolve to
+        a typed refusal — never park unbounded. Per-intervention scope (R2): an
+        intervention still answerable by a live listener (an A2A origin-pin peer)
+        is left pending. Reuses the #2773 DENY shape (``refused=True`` + reason)
+        and emits a P6 audit event per denied intervention (R5). Returns the
+        denied intervention ids.
+        """
+        denied = self._interventions.deny_unanswerable_active(reason)
+        for iv in denied:
+            self._chat_events.emit(
+                "intervention_denied",
+                intervention_id=iv.id,
+                kind=iv.kind,
+                run_id=iv.run_id,
+                actor=iv.actor,
+                reason=reason,
+            )
+        return [iv.id for iv in denied]
+
+    def emit_audit_event(self, event_type: str, **data) -> None:
+        """Emit a P6 audit event on this session's event log (ADR-0039 P3).
+
+        Narrow public seam for the AG-UI transport to record surface-lifecycle
+        attribution — ``client_attached`` / ``client_seized`` / ``client_detached``
+        — onto the durable ``.reyn/events`` audit trail (who attached which
+        terminal, when authority moved). These types are not in the renderer
+        forward-set, so they are audit-only (never a render frame).
+        """
+        self._chat_events.emit(event_type, **data)
 
     async def _announce_intervention(self, iv: UserIntervention) -> None:
         """Thin wrapper → InterventionHandler.announce."""

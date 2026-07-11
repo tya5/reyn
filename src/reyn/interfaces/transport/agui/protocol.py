@@ -46,6 +46,7 @@ RUN_FINISHED = "RUN_FINISHED"
 RUN_ERROR = "RUN_ERROR"
 TOOL_CALL_START = "TOOL_CALL_START"
 TOOL_CALL_END = "TOOL_CALL_END"
+TOOL_CALL_RESULT = "TOOL_CALL_RESULT"
 STATE_SNAPSHOT = "STATE_SNAPSHOT"
 STATE_DELTA = "STATE_DELTA"
 MESSAGES_SNAPSHOT = "MESSAGES_SNAPSHOT"
@@ -54,6 +55,19 @@ CUSTOM = "CUSTOM"
 # Namespaced reconstruction key. Its presence is the "this is a reyn frame"
 # marker a generic client ignores and the reyn client reconstructs from.
 _REYN = "_reyn"
+
+# Reserved frontend-tool namespace for the HITL round-trip (ADR-0039 P3, D6/R4).
+# An intervention rides the wire in TWO representations: the P2 ``DisplayFrame``
+# (kind ``intervention`` → the reyn client's NATIVE prompt UI) AND — added here —
+# a companion ``TOOL_CALL_START`` **frontend-tool** whose ``toolName`` is
+# ``reyn.intervention.<kind>``. The namespace lets a generic AG-UI client tell a
+# "you must answer this" frontend-tool from an ordinary (passive) tool event, and
+# the ``toolCallId`` (= the intervention id, a space distinct from chat tool-call
+# ids) is the answer-correlation anchor a client echoes back verbatim in a
+# ``TOOL_CALL_RESULT`` (R1: answer BY-ID, never answer-oldest). The reyn client
+# uses the frontend-tool ONLY for that correlation — it draws the prompt from the
+# DisplayFrame, so there is no double-render (R4-ii).
+_INTERVENTION_TOOL_PREFIX = "reyn.intervention."
 
 # DisplayFrame ``OutboxMessage.kind`` → AG-UI event type. Kinds not listed here
 # (control sentinels like ``__end__`` / ``__copy_last_reply__``, and any future
@@ -110,6 +124,34 @@ class MessagesSnapshot:
     """A decoded MESSAGES_SNAPSHOT — the reconnect display backlog (A4)."""
 
     frames: list = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class InterventionTool:
+    """A decoded intervention frontend-tool ``TOOL_CALL_START`` (P3, R4).
+
+    NOT a render frame — the reyn client uses it only to track which
+    intervention is pending an answer (``intervention_id`` = the ``toolCallId``
+    answer-correlation anchor), so a subsequent operator line is delivered to
+    the RIGHT intervention by id (R1), never the head-of-queue. Display is driven
+    by the P2 ``DisplayFrame``, so this is never rendered (no double-draw).
+    """
+
+    intervention_id: str
+    kind: str = ""
+
+
+@dataclass(frozen=True)
+class InterventionToolResult:
+    """A decoded terminal ``TOOL_CALL_RESULT`` for a pending intervention (P3).
+
+    Emitted server→client when an intervention leaves the pending set (answered
+    or fail-close DENY), so a client's pending frontend-tool does not dangle.
+    ``status`` is ``"answered"`` or ``"denied"``.
+    """
+
+    intervention_id: str
+    status: str = "answered"
 
 
 def _display_event_type(kind: str) -> str:
@@ -186,11 +228,54 @@ def encode_messages_snapshot(frames: "list[Frame]") -> AgUiEvent:
     )
 
 
+def intervention_tool_name(kind: str) -> str:
+    """The reserved frontend-tool ``toolName`` for an intervention of ``kind``."""
+    return f"{_INTERVENTION_TOOL_PREFIX}{kind or 'ask_user'}"
+
+
+def encode_intervention_tool_start(iv_meta: dict) -> AgUiEvent:
+    """Encode an intervention as a HITL frontend-tool ``TOOL_CALL_START`` (P3, R4).
+
+    ``iv_meta`` is the announce ``OutboxMessage.meta`` (``_iv_meta`` shape):
+    ``intervention_id`` / ``intervention_kind`` / ``prompt`` / optional
+    ``detail`` / ``choices`` / ``suggestions``. The ``args`` carry the
+    prompt/choices a generic client renders; ``_reyn`` reconstructs the typed
+    :class:`InterventionTool` for the reyn client's answer-correlation.
+    """
+    iv_id = str(iv_meta.get("intervention_id") or "")
+    kind = str(iv_meta.get("intervention_kind") or "")
+    args = {
+        "prompt": iv_meta.get("prompt", ""),
+        "detail": iv_meta.get("detail", ""),
+        "choices": iv_meta.get("choices", []),
+        "suggestions": iv_meta.get("suggestions", []),
+    }
+    std = {
+        "toolCallId": iv_id,
+        "toolName": intervention_tool_name(kind),
+        "args": args,
+    }
+    reyn = {"frame": "intervention_tool", "intervention_id": iv_id, "kind": kind}
+    return AgUiEvent(type=TOOL_CALL_START, data={**std, _REYN: reyn})
+
+
+def encode_intervention_tool_result(intervention_id: str, status: str = "answered") -> AgUiEvent:
+    """Encode the terminal ``TOOL_CALL_RESULT`` for a resolved intervention (P3).
+
+    ``status`` is ``"answered"`` (operator answered) or ``"denied"`` (fail-close
+    typed DENY). Sent so a client's pending frontend-tool never dangles.
+    """
+    iv_id = str(intervention_id or "")
+    std = {"toolCallId": iv_id, "result": {"status": status}}
+    reyn = {"frame": "intervention_tool_result", "intervention_id": iv_id, "status": status}
+    return AgUiEvent(type=TOOL_CALL_RESULT, data={**std, _REYN: reyn})
+
+
 # ── decode: AgUiEvent → Frame | StateUpdate | MessagesSnapshot | None ─────────
 
 def decode_event(
     ag_type: str, data: dict
-) -> "Frame | StateUpdate | MessagesSnapshot | None":
+) -> "Frame | StateUpdate | MessagesSnapshot | InterventionTool | InterventionToolResult | None":
     """Invert :func:`encode_frame` (and the STATE / MESSAGES encoders).
 
     Reconstructs the exact reyn object from the ``_reyn`` block. An event with no
@@ -227,6 +312,16 @@ def decode_event(
             for m in (reyn.get("messages") or [])
         ]
         return MessagesSnapshot(frames=frames)
+    if frame_tag == "intervention_tool":
+        return InterventionTool(
+            intervention_id=str(reyn.get("intervention_id") or ""),
+            kind=str(reyn.get("kind") or ""),
+        )
+    if frame_tag == "intervention_tool_result":
+        return InterventionToolResult(
+            intervention_id=str(reyn.get("intervention_id") or ""),
+            status=str(reyn.get("status") or "answered"),
+        )
     return None
 
 
@@ -276,12 +371,15 @@ __all__ = [
     "AgUiEvent",
     "StateUpdate",
     "MessagesSnapshot",
+    "InterventionTool",
+    "InterventionToolResult",
     "TEXT_MESSAGE_CONTENT",
     "RUN_STARTED",
     "RUN_FINISHED",
     "RUN_ERROR",
     "TOOL_CALL_START",
     "TOOL_CALL_END",
+    "TOOL_CALL_RESULT",
     "STATE_SNAPSHOT",
     "STATE_DELTA",
     "MESSAGES_SNAPSHOT",
@@ -290,6 +388,9 @@ __all__ = [
     "encode_state_snapshot",
     "encode_state_delta",
     "encode_messages_snapshot",
+    "encode_intervention_tool_start",
+    "encode_intervention_tool_result",
+    "intervention_tool_name",
     "decode_event",
     "to_sse",
     "parse_sse_blocks",

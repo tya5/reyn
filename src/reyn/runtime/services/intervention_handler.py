@@ -198,6 +198,7 @@ class InterventionHandler:
         *,
         choice_id_override: str | None = None,
         external_source: bool = False,
+        attribution: "dict | None" = None,
     ) -> bool:
         """Resolve ``iv`` with ``text``, append a user-history entry, emit the
         ``user_answered_intervention`` event.
@@ -275,6 +276,10 @@ class InterventionHandler:
             # reyn.security.permissions.capability_profile.UNTRUSTED_META_KEY.
             meta["external_source"] = True
         self._append_history("user", history_text, _now_iso(), meta)
+        # ADR-0039 P3: fold in wire attribution (auth_user_id + connection id) so
+        # a remote grant is attributable to WHO granted (the identity) and WHICH
+        # terminal (the connection). Local UI callers pass None → shape unchanged.
+        attrib = dict(attribution) if attribution else {}
         self._events.emit(
             "user_answered_intervention",
             intervention_id=iv.id,
@@ -283,6 +288,7 @@ class InterventionHandler:
             actor=iv.actor,
             choice_id=choice.id if choice else None,
             answer_text=text if not iv.choices else "",
+            **attrib,
         )
         return True
 
