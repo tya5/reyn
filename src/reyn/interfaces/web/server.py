@@ -282,6 +282,15 @@ app = FastAPI(
     lifespan=_lifespan,
 )
 
+# ── Auth gate (ADR-0039 P1): mount-front authentication for the non-AG-UI
+# surfaces (/api, /a2a, /mcp, resources). Reuses the P0 auth substrate; adds no
+# new auth. Added BEFORE the CORS middleware so CORS stays OUTERMOST (Starlette
+# prepends, so last-added wraps first-added): a CORS preflight OPTIONS is
+# answered without a token, and only then does the auth gate see the request.
+from reyn.interfaces.web.auth_gate import AuthGateMiddleware  # noqa: E402
+
+app.add_middleware(AuthGateMiddleware)
+
 # ── CORS: localhost only (dev). Tighten before production. ──────────────────
 app.add_middleware(
     CORSMiddleware,

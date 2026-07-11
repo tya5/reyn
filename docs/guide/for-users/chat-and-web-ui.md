@@ -158,6 +158,12 @@ POST http://localhost:8080/a2a/agents/<agent-name>
 This is useful for scripting, CI pipelines, or connecting Reyn to another agent system.
 See [concepts/a2a](../../concepts/multi-agent/a2a.md) for the protocol details.
 
+> **Authentication applies here too.** The A2A, MCP, and REST (`/api`) surfaces
+> are gated by the same transport-tier auth as the browser / thin client: on a
+> non-loopback bind they require the token (`?token=` or `Authorization: Bearer`);
+> a same-machine UDS bind uses OS peer credentials instead. See the
+> [`reyn web` reference § Authentication](../../reference/cli/web.md#authentication).
+
 ---
 
 ## Troubleshooting

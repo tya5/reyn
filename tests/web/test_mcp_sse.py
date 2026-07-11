@@ -64,11 +64,10 @@ def test_mcp_messages_missing_session_id_returns_4xx() -> None:
     ASGI app in something that swallows its own response (= regression
     we want to catch).
     """
-    from fastapi.testclient import TestClient
-
     from reyn.interfaces.web.server import app
+    from tests._support.web_auth import local_operator_client
 
-    client = TestClient(app, raise_server_exceptions=False)
+    client = local_operator_client(app, raise_server_exceptions=False)
     response = client.post("/mcp/messages", json={"jsonrpc": "2.0", "id": 1, "method": "ping"})
     assert 400 <= response.status_code < 500, (
         f"Expected 4xx for missing session_id, got {response.status_code}: {response.text}"
@@ -85,11 +84,10 @@ def test_mcp_messages_invalid_session_id_returns_4xx() -> None:
     4xx, not 5xx. Pins the same delegation contract as the previous
     test on a different bad-input path.
     """
-    from fastapi.testclient import TestClient
-
     from reyn.interfaces.web.server import app
+    from tests._support.web_auth import local_operator_client
 
-    client = TestClient(app, raise_server_exceptions=False)
+    client = local_operator_client(app, raise_server_exceptions=False)
     response = client.post(
         "/mcp/messages?session_id=not-a-uuid",
         json={"jsonrpc": "2.0", "id": 1, "method": "ping"},
