@@ -4,7 +4,7 @@ FastAPI + AG-UI SSE ゲートウェイ (reyn.interfaces.web.server) を uvicorn 
 フロントエンドを http://localhost:<port> から利用できます。
 
 このコマンドは reyn の `[web]` オプション依存を必要とします:
-    pip install -e ".[web]"
+    python -m pip install -e '.[web]'
 """
 from __future__ import annotations
 
@@ -20,7 +20,7 @@ def register(sub) -> None:
         help="Web UI ゲートウェイサーバを起動する",
         description=(
             "FastAPI + AG-UI SSE ゲートウェイを uvicorn で起動します。\n"
-            "インストール: pip install -e \".[web]\""
+            "インストール: python -m pip install -e '.[web]'"
         ),
     )
     p.add_argument(
@@ -168,24 +168,18 @@ def _apply_cli_scoped_overrides(args: argparse.Namespace) -> None:
 
 
 def run(args: argparse.Namespace) -> None:
+    from reyn.interfaces.install_guard import missing_dep_message
+
     try:
         import uvicorn
-    except ImportError:
-        print(
-            "Error: uvicorn is not installed. "
-            "Run `pip install -e \".[web]\"` to install the web gateway dependencies.",
-            file=sys.stderr,
-        )
+    except ImportError as e:
+        print(missing_dep_message(e, "uvicorn", "web"), file=sys.stderr)
         sys.exit(1)
 
     try:
         import fastapi  # noqa: F401
-    except ImportError:
-        print(
-            "Error: fastapi is not installed. "
-            "Run `pip install -e \".[web]\"` to install the web gateway dependencies.",
-            file=sys.stderr,
-        )
+    except ImportError as e:
+        print(missing_dep_message(e, "fastapi", "web"), file=sys.stderr)
         sys.exit(1)
 
     # --default-design flag: propagate via env so web_config router can read it.

@@ -29,6 +29,28 @@ logger = logging.getLogger(__name__)
 _HEARTBEAT_INTERVAL = 10.0
 
 
+def connect_failure_message(status: int, agent_name: str, base_url: str) -> str:
+    """Map an SSE-connect HTTP status to an actionable, cause-naming message.
+
+    A bare "server refused the connection (404)" hides the real cause: a 404 on
+    ``reyn chat --connect`` almost always means the *agent* wasn't found (the
+    client defaults to agent ``"default"`` when none is passed), and a 401 is an
+    auth-token problem. Name the cause and give the next step for each.
+    """
+    if status == 404:
+        return (
+            f"Error: agent '{agent_name}' not found on the server (404). "
+            f"List available agents: curl {base_url}/a2a/agents . "
+            "(If you didn't pass an agent name, it defaults to 'default'.)"
+        )
+    if status == 401:
+        return (
+            "Error: authentication failed (401) — pass --token <secret> "
+            "(the token `reyn web` prints on launch), or set REYN_WEB_AUTH_TOKEN."
+        )
+    return f"Error: server refused the connection ({status}) at {base_url}."
+
+
 async def run_remote_repl(
     *,
     base_url: str,
@@ -46,12 +68,10 @@ async def run_remote_repl(
     """
     try:
         import httpx
-    except ImportError:
-        print(
-            "Error: httpx is not installed. `reyn chat --connect` needs the web "
-            'client deps: pip install -e ".[web]"',
-            file=sys.stderr,
-        )
+    except ImportError as e:
+        from reyn.interfaces.install_guard import missing_dep_message
+
+        print(missing_dep_message(e, "httpx", "web"), file=sys.stderr)
         sys.exit(1)
 
     from prompt_toolkit import PromptSession
@@ -88,16 +108,11 @@ async def run_remote_repl(
 
         try:
             async with client.stream("GET", events_url, params=params) as resp:
-                if resp.status_code == 401:
-                    print(
-                        "Error: authentication required / rejected by the server. "
-                        "Pass --token <secret> (or set REYN_WEB_AUTH_TOKEN).",
-                        file=sys.stderr,
-                    )
-                    sys.exit(1)
                 if resp.status_code >= 400:
                     print(
-                        f"Error: server refused the connection ({resp.status_code}).",
+                        connect_failure_message(
+                            resp.status_code, agent_name, base_url
+                        ),
                         file=sys.stderr,
                     )
                     sys.exit(1)
