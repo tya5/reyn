@@ -702,7 +702,7 @@ hook-driven wake does, so a self-stimulating composed→wake chain (a
 composer whose input is fed by a lifecycle point its own consumer hook's
 next turn re-triggers) is bounded by the session's existing
 `max_hook_driven_turns` cap with zero additional bounding logic — see
-[Concepts: hooks § Async Bus and Composer](../../concepts/runtime/hooks.md#async-bus-and-composer--event-correlation).
+[Concepts: hooks § Async Bus and Composer](../../concepts/runtime/hooks.md#async-bus-and-composer-event-correlation).
 
 Composers are read from the SAME 4-layer additive combine as `hooks:`
 (`reyn.yaml` startup ∪ `.reyn/config/hooks.yaml` runtime ∪ per-agent ∪
