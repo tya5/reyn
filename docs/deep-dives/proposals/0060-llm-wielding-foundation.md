@@ -222,10 +222,16 @@ Why the split matters (the band — *agency bounded by construction*):
 
 Policy (enforced in §3-L, and this is the load-bearing part of the loop):
 
-- **Provenance is a first-class, audited attribute.** Every authored/promoted
-  part records `provenance ∈ {user_directed, auto_improvement}` in P6.
-  Non-negotiable: a runaway self-improvement loop is indistinguishable from
-  legitimate user work without it.
+- **Provenance is a first-class, audited, OS-authoritative attribute.** Every
+  authored/promoted part records `provenance ∈ {builtin, user_directed,
+  auto_improvement}` in P6. **The value is set structurally by the OS from the
+  actor + turn-context that drove the install — never self-reported by the
+  LLM/action** (isomorphic to `emit_hook_event`'s ctx-side kind construction,
+  0059 ②B): an auto-improvement must not be able to self-declare
+  `user_directed` to bypass the Phase-4 gate. `builtin` is OS-stamped by the
+  builtin-tier loader at load, so it cannot be forged either. Non-negotiable:
+  a runaway self-improvement loop is indistinguishable from legitimate user
+  work without it.
 - **Auto-improvement proposes; it does not activate.** Default: an
   auto-improved part is authored **inert/proposed** (mirroring builtin-inert,
   F3), requiring an explicit operator — or next-user-turn — ratification to
@@ -242,7 +248,8 @@ The SP routing model (F2) must teach the model *which mode it is in* and that
 auto-improvement is propose-only. This distinction is a **Phase-4 (L-layer)
 design gate**, but F2/F4 must not preclude it — e.g. the present-view install
 op (F4) and the catalog registration path must carry the provenance field
-from the start (cheap now, expensive to retrofit).
+**and its OS-authoritative source** from the start (cheap now, expensive to
+retrofit; a field without a pinned source is a Phase-4 hole — Addendum A).
 
 ## 3. Proposed architecture
 
@@ -253,7 +260,12 @@ from the start (cheap now, expensive to retrofit).
   presentation axis (views); role-structured category taxonomy.
   *Completeness gate*: a registry-derived CI check — every registered
   part-type has a category row; no curated subset (same shape as the
-  `OP_KIND_MODEL_MAP` ↔ `control-ir.md` hard rule).
+  `OP_KIND_MODEL_MAP` ↔ `control-ir.md` hard rule). **SSoT finding
+  (grounded)**: no single part-type registry exists today
+  (skills/pipelines/presentations are separate registries with no unified
+  enumeration), so the gate needs a **thin part-type meta-registry** as its
+  walk source — the same SSoT the builtin tier (F3) populates and the catalog
+  reads (Addendum A).
 - **F2. SP routing model** in the OS-frame: the part×role map, a
   mechanism-selection decision tree (hooks made visible for the first time),
   author-vs-reuse heuristics, and authoring-quality one-liners
@@ -263,12 +275,20 @@ from the start (cheap now, expensive to retrofit).
 - **F3. Builtin exemplar set** (the "show" layer): one canonical exemplar
   per axis + **one through-chain** (hook input → pipeline/skill processing →
   present output) that demonstrates the composition thesis end-to-end.
-  Builtins use the established two-layer pattern (code-shipped builtin layer,
-  operator/LLM extension layer) and **ship inert**: discoverable in the
-  catalog, never auto-enabled (a builtin hook firing by default would be a
-  surprise-execution surface). Candidate exemplars exercise reyn's own
-  idioms: retrieve-then-synthesize (semantic_search), self-review step
-  (judge_output), zero-token status card (present).
+  Builtins **ship inert**: discoverable in the catalog, never auto-enabled (a
+  builtin hook firing by default would be a surprise-execution surface —
+  feasible today via skills' `auto_invoke=False` and pipelines'/views'
+  invoke-by-name inertness). Candidate exemplars exercise reyn's own idioms:
+  retrieve-then-synthesize (semantic_search), self-review step (judge_output),
+  zero-token status card (present). **Feasibility (grounded, corrects an
+  earlier assumption)**: unlike hooks (`BUILTIN_HOOK_SCHEMAS`),
+  skills/pipelines/present-views have **no code-shipped builtin layer today** —
+  registration is operator-config-only. So F3's prerequisite is a **new
+  builtin tier** in the config loader (mirror the hook-schema pattern),
+  physically shipped by repurposing the dead `stdlib/**` package-data glob to
+  `builtin/**` (Addendum A). This is plumbing, not just config-authoring. The
+  named "builtin" is deliberate — `BUILTIN_HOOK_SCHEMAS`-consistent; **`stdlib`
+  is abolished** (Addendum A).
 - **F4. `presentation_management__install_*`** — the LLM-authorable
   present-view registry op, mirroring skill/pipeline install (gated,
   threat-scanned, generation-recorded). Closes the output-axis asymmetry
@@ -293,8 +313,8 @@ from the start (cheap now, expensive to retrofit).
 ### L — the closing loop (assetization, on top of the floor)
 
 - **L0. Provenance split (§2.7) is the governing invariant of this layer.**
-  Every promotion path carries `provenance ∈ {user_directed,
-  auto_improvement}`, recorded in P6. The two paths diverge on gate,
+  Every promotion path carries `provenance ∈ {builtin, user_directed,
+  auto_improvement}` (OS-set, unspoofable — §2.7), recorded in P6. The two paths diverge on gate,
   activation default, and eval requirement (below). Design this before L1/L2
   mechanics — it is what keeps auto-improvement bounded-by-construction.
 - **L1. Promotion as idiom, not mechanism**: a successful ad-hoc composition
@@ -358,9 +378,13 @@ phase. No "we shipped it, trust us".
 
 ## 6. Phasing sketch (dependency order, not a schedule)
 
-1. **Phase 0**: E3 defect fix; E2 packaging verify; baseline scenarios (§5).
-2. **Phase 1 (floor)**: F1 catalog completion + taxonomy gate → F2 SP routing
-   model → F4 present install op.
+1. **Phase 0**: E3 defect fix (#2895); E2 packaging verify (**done —
+   docs NOT packaged, Addendum A/§7b**); baseline scenarios (§5); **`stdlib`
+   abolition** (cheap dead-code removal, Addendum A2 — clears the packaging
+   glob for the builtin tier).
+2. **Phase 1 (floor)**: F1 catalog completion + taxonomy gate (on the part-type
+   meta-registry SSoT, Addendum A6) → F2 SP routing model → F4 present install
+   op (carrying OS-authoritative provenance, Addendum A5).
 3. **Phase 2 (show)**: F3 builtin exemplars + through-chain.
 4. **Phase 3 (enhancement)**: E2 corpus (post-verify), docs-convention
    ratification.
@@ -374,8 +398,75 @@ metric is re-examined before the next lands.
 - **(a)** retrieval default-promotion: keep opt-in (floor-first, this
   proposal's stance) vs promote the retrieval scheme to default once E-layer
   matures — revisit after Phase 3 with §5 data.
-- **(b)** E2 corpus shape if docs aren't packaged: package `reference/` vs
-  distilled bundled guide.
+- **(b)** E2 corpus shape — **docs are confirmed NOT packaged in the wheel**
+  (grounded: package-data ships only `py.typed` / `environment/*.Dockerfile` /
+  the empty `stdlib/**` glob; `docs/` sits outside `src/reyn`). So the fork is
+  *how* to ship the corpus, not *if*: a `reference/` subset packaged into the
+  wheel vs a distilled bundled guide. Corollary: wheel-only installs have no
+  `docs/` — dev-only doc-grep features degrade; make dev-deploy-vs-installed
+  explicit (Addendum A).
 - **(c)** builtin exemplar curation: which concrete exemplars ship (proposal:
   minimum viable = the through-chain + one per axis; resist builtin sprawl —
   every builtin must earn its place as a teacher).
+
+## Addendum A — grounded feasibility (2026-07-12, post-ratification)
+
+Verified against main after #2894 landed; records the builtin-set feasibility,
+the provenance-source structural rule, and the packaging reality that the
+ratified body now references. These sharpen the ratified design; they do not
+change its direction.
+
+**A1. Placement — the builtin set needs new plumbing (small, well-scoped).**
+Skills/pipelines/present-views have **no code-shipped builtin layer** — the
+config loader's tier order is nine operator-config tiers with no
+package-shipped tier below `reyn.yaml` (each registry's docstring states
+"registered PURELY via explicit `entries`… clean break" from the old
+directory-scan model). Only hooks have a compiled builtin
+(`BUILTIN_HOOK_SCHEMAS`). To ship builtins present-by-default, add a **builtin
+tier** (mirror the hook-schema pattern) as the lowest merge tier. Physical
+shipping is half-wired already: `pyproject.toml` package-data has a
+`stdlib/**/*` glob that currently matches **zero files** — repurpose it to
+`builtin/**/*` over a new `src/reyn/builtin/` dir.
+
+**A2. `stdlib` abolition = the same move, and it is cheap.** `stdlib` is a
+legacy old-skill-feature remnant with **zero load-bearing footprint** today:
+no `src/reyn/stdlib/` package, no config key, no registry populated through
+it, no runtime import. Remnants to delete/rename: the dead package-data glob,
+two doc-stub pages (`docs/reference/stdlib/`), a stale `scan_dirs` comment, a
+misleadingly-named permission test, and one possibly-stale dogfood scenario
+(`stdlib_skills_core.yaml`). Abolishing `stdlib` and creating the `builtin`
+tier are one rename/repurpose.
+
+**A3. Inert shipping is representable per-type.** Skills carry two axes
+(`enabled`, `auto_invoke`) → `enabled=True, auto_invoke=False` =
+registered-but-not-auto-invoked. Pipelines and present-views have only
+`enabled`, but are invoke-by-name (a pipeline runs when launched; a view
+renders only when a `present` op names it) → inherently inert until
+referenced. So builtins ship discoverable-but-dormant without new state.
+
+**A4. Through-chain wireability — WIREABLE with one nuance.** (a) hook →
+pipeline: ✓ (`HookDef.pipeline_launch`). (b) pipeline step → any Control-IR op
+(`judge_output` / `present` / `semantic_search`): ✓ (`ToolStep` dispatches any
+registered op by name). (c) present reading a prior step's output: **partial**
+— pipeline step output is in-memory only, never auto-written to the workspace,
+while `present`'s `data_ref` reads the workspace file tree. **Resolution**: the
+flagship through-chain builtin should render `present` from **`data_inline`**
+(the step's value bound as an arg), avoiding a workspace round-trip; the
+`data_ref` path would need an explicit `write_file` step. Verify the exact
+inline-binding form during F3.
+
+**A5. Provenance source (the load-bearing security rule).** Provenance is
+OS-authoritative and unspoofable: `builtin` is stamped by the builtin-tier
+loader at load; `user_directed` vs `auto_improvement` is derived by the OS from
+the actor + human-turn-boundary that drove the install — **never self-reported
+by the LLM or the authoring action** (isomorphic to `emit_hook_event` ②B).
+Applies to **all** install paths (skills/pipelines/present-views), not just
+present. Locking this in Phase-1 (field + source) is what makes the Phase-4
+auto-improvement gate structural rather than advisory.
+
+**A6. The SSoT trinity.** One **part-type meta-registry** should be the single
+source for three consumers that today have none in common: the taxonomy
+completeness CI gate (walks it), the builtin tier (populates it), and the
+catalog (reads it). Deciding this SSoT in Phase-1 keeps F1 (taxonomy), F3
+(builtin tier), and catalog completion coherent instead of three parallel
+enumerations.
