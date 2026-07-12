@@ -396,12 +396,85 @@ The last hook only fires for a `github`-server resource under
 `docs/` — and, when it does, launches the `reindex_docs` pipeline
 asynchronously with the changed URI as input.
 
+## Async Bus and Composer — event correlation
+
+Everything above is the **Sync** path: an awaited, per-hook dispatch at each
+lifecycle/external point. reyn also has a per-Session **Async Bus** —
+independent pub/sub broadcast of the same events, with no consume semantics
+(every subscriber observes the same broadcast simultaneously) — and, built on
+top of it, a **Composer** that correlates multiple events into one derived
+"composed" event.
+
+A **Composer** watches the Bus, buffers matching events per its configured
+op, and — once the op's condition is met — publishes ONE new event with
+`kind = "composed:<name>"` back to the same Bus. Seven ops:
+
+| Op | Fires when |
+|---|---|
+| `all` | every one of N distinct inputs has arrived (per correlation key) |
+| `any` | the first matching input arrives (stateless) |
+| `seq` | the inputs' kinds arrive in the CONFIGURED order (an out-of-order arrival resets progress) |
+| `window` | `ttl` seconds have elapsed since the FIRST matching event — fires with everything buffered |
+| `debounce` | `ttl` seconds have elapsed since the LAST matching event with no newer one in between |
+| `correlate_by` | like `all`, but keyed by a payload field (e.g. a request id) instead of one global bucket |
+| `count` | `threshold` matching events have arrived (per key) |
+
+```yaml
+composers:
+  - name: deploy_approved
+    op: all
+    inputs:
+      - { kind: builtin:external:mcp_resource_updated, match: { server: "github" } }
+      - { kind: mcp:approval-server:approved }
+    policy: { capacity: 10, overflow: reject, ttl: 5m }
+    emit: { kind: composed:deploy_approved }
+```
+
+**Correlate on payload, never on `source`.** Every event on the Bus carries
+`source="builtin"` — `kind` already encodes the source TYPE
+(`mcp_resource_updated` vs `file_changed` vs ...) and `payload` already
+carries the source INSTANCE (`payload.server` / `payload.path` /
+`payload.job_name` / `payload.transport`). A Composer input naming a
+`source` other than `"builtin"` can never match anything the Bus carries and
+is rejected at config-load time (the same typo-resistance posture the
+matcher's schema validation already has for payload fields).
+
+**Reliability posture — best-effort, not a recovery feature.** A Composer's
+in-flight correlation state is held in memory only and is lost on a process
+crash (a partially-matched `all`/`seq`/`correlate_by` simply never fires).
+This is a deliberate v1 scope decision, not an oversight: the Bus itself is
+already lossy under backpressure (a slow subscriber drops the oldest
+unread event), so a Composer built on top of it cannot promise more
+reliability than its input. Overflow of a Composer's own pending state
+follows one of three policies — `drop_oldest` / `drop_newest` / `reject`
+(no publisher-blocking backpressure) — and every drop, whether from
+overflow or a `ttl`-aged incomplete correlation, is surfaced as a
+`composer_dropped` P6 event (metadata only: composer name + correlation key
++ reason, never the buffered payload content) so a composition that quietly
+never fires is never silent. A successful fire is `composer_fired`
+(same metadata-only shape).
+
+**Composed events are Bus-only.** A `composed:<name>` event lives on the
+Bus; it is not looped back into the Sync `HookDispatcher` — wiring a
+`composed:*` kind as a `hooks:` `on:` target (i.e. a Sync side-effect
+triggered by a composition) is not yet supported, to keep the composition
+graph a finite DAG whose leaves cannot feed back into the loop-valved
+self-continuation path. A composer config that would create a composition
+cycle (composer A depends on composer B's output which depends on A's) is
+rejected at config-load time, never discovered at runtime.
+
 ## Deferred
 
 The following capabilities are designed but not yet implemented:
 
 - **Agent-level and phase-level hooks** — fine-grained points inside a turn
   (rare use cases; session/turn/task covers the common ones).
+- **Composer config wiring** — `composers:` is parsed and the correlation
+  engine (`reyn.hooks.composer`) is implemented and tested, but a Session
+  does not yet read `composers:` from `reyn.yaml`/`.reyn/config/hooks.yaml`
+  and start it automatically; that wiring, plus a `WalBackedPendingStore`
+  (recovery-feature-gated) and consuming `composed:*` as a Sync `on:`
+  target, are follow-ups.
 
 ## See also
 
