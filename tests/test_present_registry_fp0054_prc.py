@@ -133,7 +133,13 @@ def test_config_roundtrip_named_template_reaches_registry(tmp_path: Path) -> Non
 
     registry = build_presentation_registry(cfg.presentations)
     assert registry.has("authors")
-    assert registry.names() == ["authors"]
+    # "authors" reached the registry via the operator config entry (the
+    # behavior under test); the exact full name list is NOT pinned here —
+    # cfg.presentations is the merged cascade, which also carries the
+    # builtin-tier's own presentation entries (proposal 0060 F3b,
+    # e.g. "status_card") as the lowest config tier (see
+    # reyn.builtin.registry.build_builtin_config).
+    assert "authors" in registry.names()
     nodes = registry.get("authors")
     # Stored as the NORMALIZED validated node list (structure preserved).
     assert nodes[0]["component"] == "table"

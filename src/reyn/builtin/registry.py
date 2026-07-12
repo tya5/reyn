@@ -35,12 +35,17 @@ registering one is already inert until something names it (Addendum A3) —
 forcing an ``auto_invoke``-shaped field on them would invent state that does
 not exist in their schemas.
 
-F3a (this PR) ships ``BUILTIN_SKILLS`` / ``BUILTIN_PIPELINES`` /
-``BUILTIN_PRESENTATIONS`` EMPTY — the exemplar content is F3b (proposal §3
-F3, a later phase). ``build_builtin_config()`` on an empty registry returns
-three empty ``entries`` dicts, a no-op merge (byte-identical to pre-F3a
-config resolution) — this is what "ships inert" means at the mechanism
-level: zero behavior change until content lands.
+F3a shipped ``BUILTIN_SKILLS`` / ``BUILTIN_PIPELINES`` / ``BUILTIN_PRESENTATIONS``
+EMPTY (mechanism only) — ``build_builtin_config()`` on that empty registry
+returned three empty ``entries`` dicts, a no-op merge (byte-identical to
+pre-F3a config resolution): this is what "ships inert" means at the
+mechanism level, zero behavior change until content lands. F3b (proposal §3
+F3, Addendum D9.5's curated-5) populated the maps with the exemplar content
+across two PRs: the core spine (``reyn_cheat_sheet`` skill + the ``flagship``
+pipeline, #2912) and this sibling PR's remaining two exemplars
+(``draft_judge_revise`` skill + the ``status_card`` presentation). Every
+entry still carries ``provenance="builtin"`` and ships inert (A3) — the
+mechanism guarantee is unchanged, only the content maps are no longer empty.
 """
 from __future__ import annotations
 
@@ -48,13 +53,14 @@ from pathlib import Path
 from typing import Any
 
 # ---------------------------------------------------------------------------
-# The builtin content maps. F3b (this phase) populates the SKILLS + PIPELINES
-# maps with the curated core-spine content (proposal 0060 Addendum D6: the
-# "reyn cheat sheet" skill is THE flagship builtin — the gap-filler between
-# "reyn has these parts" and "the LLM uses them" — plus the flagship
-# through-chain pipeline it documents). PRESENTATIONS ships empty in this
-# phase — the status-card present-view exemplar is proposed as a sibling PR
-# (see this PR's body for the split rationale). Shape mirrors the operator
+# The builtin content maps. F3b populates the SKILLS + PIPELINES maps with
+# the curated core-spine content (proposal 0060 Addendum D6: the "reyn cheat
+# sheet" skill is THE flagship builtin — the gap-filler between "reyn has
+# these parts" and "the LLM uses them" — plus the flagship through-chain
+# pipeline it documents). This F3b sibling PR adds the 2 remaining curated-5
+# exemplars (Addendum D9.5 #3/#4): the `draft_judge_revise` workflow skill
+# (Evaluation idiom) and the `status_card` present-view (the status/results
+# card, invoke-by-name, zero-token exemplar). Shape mirrors the operator
 # config entry shape exactly:
 #   BUILTIN_SKILLS = {"<name>": {"description": "...", "path": "...", "enabled": True, "auto_invoke": True}}
 #   BUILTIN_PIPELINES = {"<key>": {"path": "...", "description": "...", "enabled": True}}
@@ -87,6 +93,18 @@ BUILTIN_SKILLS: "dict[str, dict[str, Any]]" = {
         # kept explicit for readability, not because it changes anything.
         "auto_invoke": False,
     },
+    "draft_judge_revise": {
+        "description": (
+            "Draft an artifact, score it with judge_output against a rubric, "
+            "and revise on failure -- the standard Evaluation-gated workflow "
+            "for any 'produce then check quality' task (a summary, a doc "
+            "section, an email). Read this before handing off a "
+            "self-authored artifact you have not gated."
+        ),
+        "path": str(_BUILTIN_DIR / "skills" / "draft_judge_revise" / "SKILL.md"),
+        "enabled": True,
+        "auto_invoke": False,
+    },
 }
 BUILTIN_PIPELINES: "dict[str, dict[str, Any]]" = {
     "flagship": {
@@ -99,7 +117,36 @@ BUILTIN_PIPELINES: "dict[str, dict[str, Any]]" = {
         "enabled": True,
     },
 }
-BUILTIN_PRESENTATIONS: "dict[str, dict[str, Any]]" = {}
+BUILTIN_PRESENTATIONS: "dict[str, dict[str, Any]]" = {
+    # The status/results card exemplar (proposal 0060 Addendum D9.5 curated-5
+    # #4): a declarative blueprint -- fixed component set + `$bind` JSON
+    # Pointer, zero token cost -- rendering "show a result" as a card rather
+    # than as prose. Invoke by name: present(view="status_card",
+    # data_inline={"title": "...", "status": "...", "summary": "...",
+    # "duration": "..."}); any of the 4 fields may be omitted -- a missing
+    # $bind target soft-skips at render (present.md), it does not error.
+    "status_card": {
+        "description": (
+            "Status/results card -- a zero-token present blueprint showing "
+            "a title, status, summary, and duration as a compact card "
+            "instead of prose. Invoke by name: present(view='status_card', "
+            "data_inline={'title': ..., 'status': ..., 'summary': ..., "
+            "'duration': ...})."
+        ),
+        "blueprint": [
+            {"component": "markdown", "text": {"$bind": "/title"}},
+            {
+                "component": "keyvalue",
+                "rows": [
+                    {"label": "status", "value": {"$bind": "/status"}},
+                    {"label": "summary", "value": {"$bind": "/summary"}},
+                    {"label": "duration", "value": {"$bind": "/duration"}},
+                ],
+            },
+        ],
+        "enabled": True,
+    },
+}
 
 
 def _stamp_builtin_entry(entry: "dict[str, Any]", *, force_auto_invoke_false: bool) -> "dict[str, Any]":
