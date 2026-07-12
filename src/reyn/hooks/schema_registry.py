@@ -5,8 +5,19 @@
 Two-layer split (proposal §4 review-pass — the v0.2 draft's IN/OUT-set
 contradiction, fixed): this module is the **builtin layer** — code-shipped,
 versioned with reyn itself, and the operator CANNOT edit it. (An operator
-**extension** layer for webhook-provider schemas / ``llm:*`` whitelists is a
-later phase — OUT-set, ``reyn.yaml``-only, restart-only. Not built here.)
+**extension** layer for webhook-provider schemas / a per-``event_name``
+``llm:*`` allowlist is a later phase — OUT-set, ``reyn.yaml``-only,
+restart-only. Not built here.)
+
+``is_emittable_llm_kind`` below (Hook-Event Redesign Phase 5 part 2, §8.4
+item 3) fills the STRUCTURAL half of that reserved OUT-set slot NOW: a
+static, code-shipped KIND-SHAPE whitelist for the ``emit_hook_event`` op
+(``reyn.core.op_runtime.emit_hook_event``) — the only kind an LLM may ever
+emit is its OWN session's ``llm:<session_id>:*`` namespace; every other
+namespace (``builtin:*``/``composed:*``/``webhook:*``/``mcp:*``, and any
+OTHER session's ``llm:*``) is rejected. This is a shape gate, not (yet) a
+per-``event_name`` value allowlist — the future OUT-set config file layers
+name-level curation ON TOP of this structural gate, it does not replace it.
 
 ``BUILTIN_HOOK_SCHEMAS`` is the single source of truth for what field-set
 each of reyn's 10 builtin hook-points carries — mirroring the
@@ -158,6 +169,51 @@ def build_hook_payload(point: str, **fields: object) -> dict:
     return payload
 
 
+# ---------------------------------------------------------------------------
+# LLM-emit OUT-set whitelist (§8/§8.4 item 3, Hook-Event Redesign Phase 5
+# part 2) — the KIND dimension of the emit_hook_event autonomy boundary.
+# ---------------------------------------------------------------------------
+
+_LLM_KIND_PREFIX = "llm:"
+
+
+def is_emittable_llm_kind(kind: str, session_id: str) -> bool:
+    """OUT-set whitelist gate for the ``emit_hook_event`` op (proposal §8.4
+    item 3): ``True`` iff ``kind`` is exactly this ``session_id``'s OWN
+    ``llm:<session_id>:<event_name>`` namespace (a non-empty ``event_name``
+    suffix required).
+
+    Enforced BY THE HANDLER (``reyn.core.op_runtime.emit_hook_event``)
+    BEFORE ``HookBus.publish`` — ``HookBus.publish`` is synchronous, never
+    raises, and broadcasts to every live subscriber (``reyn.hooks.bus``), so
+    there is no downstream gate once an event reaches the bus; this
+    function is the ONLY defense line.
+
+    Everything else is REJECTED, deliberately, by omission — this is a
+    static allowlist, not a denylist, so a future namespace addition to
+    ``reyn.hooks.schema_registry``/the Kind Namespace (proposal §2) does
+    NOT silently become emittable:
+      - ``builtin:*`` — spoofs Reyn's own lifecycle/ingress events.
+      - ``composed:*`` — spoofs a Composer's CORRELATED output; an LLM
+        forging this would let it fire a ``composed:*``-only hook (e.g. an
+        approval-gated deploy) WITHOUT the Composer's actual correlation
+        logic ever running — a privilege-escalation shortcut around the
+        entire point of Composer (``reyn.hooks.composer`` invariant #5:
+        only a Composer ever calls ``HookBus.publish``).
+      - ``webhook:*`` / ``mcp:*`` — spoofs external ingress sources.
+      - another session's ``llm:<OTHER-session-id>:*`` — cross-session
+        emission; ``session_id`` here is ALWAYS ``OpContext.session_id``
+        (never LLM-supplied — see ``EmitHookEventIROp``'s docstring for the
+        structural session-binding this depends on), so this branch only
+        matters if a caller ever passes a session_id it does not itself
+        own, which the handler never does.
+    """
+    if not session_id:
+        return False
+    prefix = f"{_LLM_KIND_PREFIX}{session_id}:"
+    return kind.startswith(prefix) and len(kind) > len(prefix)
+
+
 __all__ = [
     "ALLOWED_HOOK_KINDS",
     "BARE_TO_KIND",
@@ -166,6 +222,7 @@ __all__ = [
     "HookSchemaError",
     "bare_point",
     "build_hook_payload",
+    "is_emittable_llm_kind",
     "canonical_kind",
     "validate_payload",
 ]

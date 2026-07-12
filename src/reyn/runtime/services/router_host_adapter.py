@@ -175,6 +175,7 @@ class RouterHostAdapter:
         task_waker: Any = None,  # #1953 slice 7 / #2107: the OS TaskWaker for the router op-ctx
         task_subscription_writer: Any = None,  # #2187 backend-master: the Task subscription WAL writer
         hook_dispatcher: Any = None,  # #1800 slice 5c: the Session's HookDispatcher
+        hook_bus: Any = None,  # Hook-Event Redesign Phase 5 part 2: the Session's HookBus → emit_hook_event
         # FP-0034 Phase 2 step 1: ActionEmbeddingIndex + EmbeddingProvider
         # for search_actions.  When all three are set (= operator configured
         # ``action_retrieval.embedding_class`` AND Session built a
@@ -339,6 +340,7 @@ class RouterHostAdapter:
         self._task_waker = task_waker  # #1953 slice 7 / #2107: OS TaskWaker for router task ops
         self._task_subscription_writer = task_subscription_writer  # #2187 backend-master: the Task subscription WAL writer
         self._hook_dispatcher = hook_dispatcher  # #1800 slice 5c: task_start/end dispatch
+        self._hook_bus = hook_bus  # Hook-Event Redesign Phase 5 part 2: emit_hook_event's publish target
         self._turn_budget_engine = turn_budget_engine
         self._turn_cancel_fn = turn_cancel_fn  # #1468
         self._agent_name = agent_name
@@ -2077,6 +2079,7 @@ class RouterHostAdapter:
             task_waker=self._task_waker,
             task_subscription_writer=self._task_subscription_writer,  # #2187 backend-master: the Task subscription WAL writer
             hook_dispatcher=self._hook_dispatcher,  # #1800 slice 5c
+            hook_bus=self._hook_bus,  # Hook-Event Redesign Phase 5 part 2: emit_hook_event's publish target
             # #1953 §16: the per-turn execution context (set by the session in
             # run_one_iteration). Read via the callback — it varies per turn, so the
             # fixed init value would be stale (cf. live_session_id_fn). None when the

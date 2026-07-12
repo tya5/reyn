@@ -6,6 +6,11 @@ agent-self-reload trigger that writes to the runtime hooks layer
 (``.reyn/config/hooks.yaml``). ``.text`` is copied verbatim from
 ``tools/hooks.py``; the origin module now aliases
 ``_HOOKS_ADD_DESCRIPTION`` to ``hooks.hooks_add.text``.
+
+``emit_hook_event`` (Hook-Event Redesign Phase 5 part 2, proposal
+``docs/deep-dives/proposals/0059-hook-event-redesign.md`` §8): the
+``emit_hook_event`` Control-IR op's LLM-facing description, aliased onto
+``tools/emit_hook_event.py``'s ``_EMIT_HOOK_EVENT_DESCRIPTION`` the same way.
 """
 from __future__ import annotations
 
@@ -36,8 +41,36 @@ hooks_add = ToolDescription(
     ),
 )
 
+emit_hook_event = ToolDescription(
+    tool_name="emit_hook_event",
+    surfaced="router only (gates.router=allow, gates.phase=deny)",
+    purpose=(
+        "Let the agent emit its OWN llm:<session_id>:<event_name> hook-event "
+        "onto this session's HookBus, so a Composer / a hook registered "
+        "on: llm:<event_name> can react to it. Structurally session-scoped — "
+        "there is no way to name a different session or namespace."
+    ),
+    text=(
+        "Emit a hook-event named event_name, scoped to YOUR OWN session "
+        "(the actual kind is llm:<your-session-id>:<event_name> — you cannot "
+        "target another session or another namespace like builtin:*/composed:*/"
+        "webhook:*). Use this to signal completion of something a Composer or "
+        "a hooks_add-registered hook is watching for. payload is an optional "
+        "dict carried on the event for a matcher/Composer to inspect."
+    ),
+    ja=(
+        "event_name という名前の hook-event を、あなた自身のセッションに"
+        "スコープして（実際の kind は llm:<あなたのセッション ID>:<event_name>"
+        "— 他セッションや builtin:*/composed:*/webhook:* 等の他 namespace は"
+        "対象にできない）発行する。Composer や hooks_add で登録したフックが"
+        "待っている完了シグナルを送るのに使う。payload は matcher/Composer が"
+        "参照できる任意の dict。"
+    ),
+)
+
 ALL: dict[str, ToolDescription] = {
     "hooks_add": hooks_add,
+    "emit_hook_event": emit_hook_event,
 }
 
 
@@ -71,6 +104,22 @@ PARAMS: dict[str, dict[str, ParamDescription]] = {
         "name": ParamDescription(
             text="Optional label surfaced as the [hook:<name>] attribution prefix.",
             ja="[hook:<name>] という帰属プレフィックスとして表示される任意ラベル。",
+        ),
+    },
+    "emit_hook_event": {
+        "event_name": ParamDescription(
+            text=(
+                "The event's name (becomes the llm:<your-session-id>:<event_name> "
+                "kind — you supply only this suffix, never the session component)."
+            ),
+            ja=(
+                "イベント名（llm:<あなたのセッション ID>:<event_name> の kind になる"
+                "— あなたが指定できるのはこの suffix のみで、セッション部分は指定不可）。"
+            ),
+        ),
+        "payload": ParamDescription(
+            text="Optional dict of fields carried on the event for a matcher/Composer to read.",
+            ja="matcher/Composer が読める、イベントに付随する任意の dict フィールド。",
         ),
     },
 }

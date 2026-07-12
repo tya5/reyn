@@ -127,6 +127,10 @@ from . import compact as _compact  # noqa: F401, E402
 # `index_update` op (no more provider-direct embed path from safe-mode
 # python steps).
 from . import embed as _embed  # noqa: F401, E402
+
+# Hook-Event Redesign Phase 5 part 2 (proposal 0059 §8): emit_hook_event —
+# LLM-authored hook-event emission onto the caller's own HookBus.
+from . import emit_hook_event as _emit_hook_event  # noqa: F401, E402
 from . import file as _file  # noqa: F401, E402
 from . import index_drop as _index_drop  # noqa: F401, E402
 from . import index_query as _index_query  # noqa: F401, E402

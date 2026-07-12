@@ -52,6 +52,7 @@ Control IR is the list of side-effect operations the LLM may emit. The OS dispat
 | `task.register_unblock_predicate` | Register a deterministic unblock predicate | assignee-gated |
 | `task.comment` | Append a comment to a Task's thread | none |
 | `task.assign` | Assign a session to a Task (§27-31 pending-assignment queue): claim an UNASSIGNED task or reassign an assigned one; rebinds the WAL subscription + OS-derives the now-startable status + wakes the new assignee | UNASSIGNED → any session may claim; assigned → current-assignee-gated (owner hand-off) |
+| `emit_hook_event` | Emit an LLM-authored `llm:<session_id>:<event_name>` hook-event onto the caller's OWN session `HookBus` (Hook-Event Redesign Phase 5 part 2) | none (structural session-binding + a static kind whitelist gate the autonomy boundary — see dedicated section below) |
 
 ## Common envelope
 
@@ -1057,6 +1058,98 @@ webhook disposition sweep.
 
 Still landing in later slices: per-task liveness (unblock-predicate / heartbeat
 evaluation) — the residual non-terminal-stuck backstop.
+
+## `emit_hook_event`
+
+LLM-authored hook-event emission (Hook-Event Redesign Phase 5 part 2, proposal
+[0059-hook-event-redesign.md](../../deep-dives/proposals/0059-hook-event-redesign.md)
+§8/§8.4) — the FIRST place an LLM can put a `HookEvent` onto a live per-session
+`HookBus` (Phase 4a); every prior producer (`HookDispatcher.dispatch` at the 10
+builtin points, a `Composer`'s correlated output, the Ingress Adapters) is
+OS-internal code, never an LLM tool call. Router-only (`gates.phase="deny"`) —
+the handler needs a live, session-bound `HookBus` + `session_id`, which only a
+chat-router `OpContext` wires.
+
+```json
+{
+  "kind": "emit_hook_event",
+  "event_name": "deploy_ready",
+  "payload": {"artifact": "build-42"}
+}
+```
+
+Fields:
+
+- `event_name` (str, default `""`) — the event's name; the router tool
+  schema exposes ONLY this + `payload`. The emitted kind is ALWAYS
+  `llm:<session_id>:<event_name>` — the session component comes SOLELY from
+  `OpContext.session_id` at handler-execution time, never from an LLM-supplied
+  value (there is no session field on this schema for the well-behaved
+  tool-call path to set).
+- `target_kind` (str | None, default `None`) — a defense-in-depth escape
+  hatch on the Pydantic model, **deliberately NOT exposed in the router
+  tool's JSON schema** (unreachable from a normal LLM tool call). Exists so
+  the kind whitelist below has a real, exercisable subject for any OTHER
+  caller of this Op (e.g. a future Control-IR JSON surface), and so the
+  security co-vet suite can test the reject path directly.
+- `payload` (dict, default `{}`) — carried on the emitted `HookEvent` for a
+  matcher / Composer to inspect; never rendered into a hook message template
+  by this op itself (§8.4 item 1's `context_safe` template-interpolation
+  discipline is Composer/render's concern, not emit's).
+
+Returns: `{"kind": "emit_hook_event", "status": "ok", "emitted_kind": str}` on
+success; `{"status": "denied", "error": str}` when the autonomy boundary
+rejects the emit; `{"status": "error", "error": str}` for a malformed
+`event_name`/`target_kind`.
+
+Events: `hook_event_emitted` (`kind`, `session_id`, `event_id`) — metadata
+only, mirrors `hook_push_fired`'s never-the-message-body discipline (the
+payload may carry LLM-authored free text).
+
+**The autonomy boundary (§8.4 item 3, the security crux) is enforced in TWO
+SEPARATE dimensions, both BEFORE `HookBus.publish`** (`HookBus.publish` is
+synchronous, never raises, and broadcasts to every live subscriber — there is
+no downstream gate once an event reaches the bus; the handler
+(`reyn.core.op_runtime.emit_hook_event`) is the ONLY defense line):
+
+1. **KIND dimension** — a static OUT-set whitelist
+   (`reyn.hooks.schema_registry.is_emittable_llm_kind`, an ALLOW-list, not a
+   DENY-list): only this session's own `llm:<session_id>:*` namespace may
+   ever be emitted. `builtin:*` (spoofs Reyn's own lifecycle/ingress events),
+   `composed:*` (spoofs a Composer's CORRELATED output — letting an LLM fire
+   a `composed:*`-only hook, e.g. an approval-gated deploy, WITHOUT the
+   Composer's actual correlation logic ever running), `webhook:*`/`mcp:*`
+   (spoof external ingress), and another session's `llm:*` are all rejected.
+2. **SESSION dimension** — structural for the normal (`event_name`) path: the
+   session component of the kind is built ONLY from `ctx.session_id`: nothing
+   on the schema for a well-behaved tool call to override. The `target_kind`
+   escape hatch is instead validated by the SAME whitelist — either way, the
+   handler never looks up a bus by session id (`ctx.hook_bus` is a single
+   fixed reference to THIS session's own bus), so there is no code path that
+   could route a mismatched kind's event to a different session's bus even
+   absent the whitelist check.
+
+**`OpContext.hook_bus`** (this session's `HookBus`, Phase 4a) is the new seam
+this op reaches through — threaded down the same Session → router / kernel
+chain as `OpContext.hook_dispatcher` (mirrors that field's threading exactly:
+`Session.__init__` constructs one `HookBus` per session and passes it into
+`RouterHostAdapter` / `build_router_op_context`, exactly like
+`hook_dispatcher`). Downstream, an emitted event a Composer correlates into
+`composed:*` traverses the EXISTING `composed:*` → `ComposedEventConsumer` →
+`HookDispatcher.dispatch_bus_event` → inbox `kind="hook"` E-path (Phase 5 part
+1, #2881) unchanged — the `max_hook_driven_turns` loop-valve counts an
+emit-origin wake turn with ZERO new bounding logic, the same "every wake path
+traverses `kind="hook`" invariant Phase 5 part 1 already pins.
+
+**Out of scope for this phase** (tracked in #2884, a separate recovery-gated
+arc): making `_hook_driven_turns` (the loop-valve counter) WAL/snapshot-backed
+across a crash. It remains in-memory-only (proposal §11 future list item 2);
+`emit_hook_event` increases the NUMBER of hook-driven-turn-generating paths
+but does not change this counter's crash-durability posture. #2884 additionally
+tracks a NEW risk dimension this phase's producer surfaces: a WAL-replay-driven
+re-emit (an `emit_hook_event` op re-executed during crash-recovery WAL replay)
+is a distinct hazard from the counter's own in-memory reset, and is
+out-of-scope here too.
 
 ---
 

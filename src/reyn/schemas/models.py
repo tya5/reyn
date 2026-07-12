@@ -429,6 +429,46 @@ class PipelineInstallIROp(BaseModel):
     source: str | None = None                   # git/GitHub URL (installs to .reyn/pipelines/<name>/)
 
 
+class EmitHookEventIROp(BaseModel):
+    """Emit an LLM-authored hook-event onto this session's ``HookBus`` (Hook-Event
+    Redesign Phase 5 part 2, proposal ``docs/deep-dives/proposals/
+    0059-hook-event-redesign.md`` §8/§8.4).
+
+    **Normal (tool-facing) use**: set only ``event_name`` (+ optional
+    ``payload``). The emitted kind is ALWAYS ``llm:<session_id>:<event_name>``
+    — the session component is supplied ONLY by ``OpContext.session_id`` at
+    handler-execution time (structural session-binding, §8.4 item 3): the
+    router tool schema (``reyn.tools.emit_hook_event``) exposes ONLY
+    ``event_name``/``payload``, never a session, so a well-behaved LLM tool
+    call cannot even express a foreign session.
+
+    ``target_kind`` is a **defense-in-depth escape hatch, deliberately NOT
+    exposed in the router tool's JSON schema** (an LLM function-call cannot
+    set it through the normal path). It exists so (a) the OUT-set kind
+    whitelist (``reyn.hooks.schema_registry.is_emittable_llm_kind``) has a
+    REAL, exercisable subject — proposal §8.4 item 3 requires the whitelist
+    be an enforced reject, not a dormant check that can never actually fire
+    — and (b) any OTHER caller of this Op model (e.g. a future Control-IR
+    surface) is held to the exact same gate. The handler validates
+    ``target_kind`` (when set) through the SAME ``is_emittable_llm_kind``
+    whitelist BEFORE ``HookBus.publish`` — a non-self-session or
+    non-``llm:*`` ``target_kind`` (``builtin:*``/``composed:*``/
+    ``webhook:*``/``mcp:*``, or another session's ``llm:*``) is REJECTED,
+    never reaches the bus, and is never used to route anywhere (this
+    OpContext's ``hook_bus`` is a single fixed reference — there is no
+    lookup-by-session-id path for the handler to route a mismatched
+    ``target_kind`` to a different session's bus even if the whitelist were
+    absent). ``composed:*`` in particular must never be LLM-forgeable — a
+    forged ``composed:*`` event would fire a composed-only hook without the
+    correlation logic a real Composer enforces before publishing
+    (anti-spoofing, proposal §1/§2)."""
+
+    kind: Literal["emit_hook_event"]
+    event_name: str = ""
+    target_kind: str | None = None
+    payload: dict = Field(default_factory=dict)
+
+
 # ---------------------------------------------------------------------------
 # RAG-extensible OS (ADR-0033) — embed / index_* / recall ops + ChunkMetadata
 # ---------------------------------------------------------------------------
@@ -871,6 +911,11 @@ OP_KIND_MODEL_MAP: dict[str, type[BaseModel]] = {
     # pipeline install — register a pipeline DSL file into pipelines.entries
     # (mirrors skill_install writing skills.entries; parallel install mechanism).
     "pipeline_install": PipelineInstallIROp,
+    # Hook-Event Redesign Phase 5 part 2 (proposal 0059 §8): LLM-authored
+    # hook-event emission onto the caller's own HookBus. See EmitHookEventIROp's
+    # docstring for the structural session-binding + kind-whitelist security
+    # discipline enforced by the handler (op_runtime/emit_hook_event.py).
+    "emit_hook_event": EmitHookEventIROp,
 }
 
 # Frozenset of op kinds — DSL linter, contextual gate.
@@ -908,6 +953,7 @@ if TYPE_CHECKING:
             TaskCommentIROp,
             SkillInstallIROp,
             PipelineInstallIROp,
+            EmitHookEventIROp,
         ],
         Field(discriminator="kind"),
     ]

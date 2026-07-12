@@ -257,6 +257,18 @@ class OpContext:
     # construction or no hooks) → the dispatch site is skipped.
     hook_dispatcher: "object | None" = None
 
+    # Hook-Event Redesign Phase 5 part 2 (proposal 0059 §8): this SESSION's
+    # HookBus (Phase 4a, `reyn.hooks.bus.HookBus`), threaded down the SAME
+    # Session -> router / kernel chain as `hook_dispatcher` above (mirrors that
+    # field's threading exactly — same construction site in Session, same
+    # RouterHostAdapter / build_router_op_context seams). The `emit_hook_event`
+    # op handler publishes the LLM-authored `HookEvent` here
+    # (`ctx.hook_bus.publish(event)`); it NEVER routes through
+    # `hook_dispatcher`'s cross-session push seam. None = no bus wired
+    # (direct/test construction, or a non-chat OpContext e.g. CLI/preprocessor)
+    # -> the emit_hook_event handler fails closed (no silent no-op emit).
+    hook_bus: "object | None" = None
+
     # #1953 slice 3 (rework): the caller's session identity (#1814 per-contextId
     # routing-key ``Session._session_id``), threaded down the same chain. This is
     # the single-writer key for Task ``update_status`` — the backend CAS-rejects

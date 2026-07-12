@@ -73,6 +73,7 @@ def build_router_op_context(
     task_waker: Any = None,  # #2107: OS TaskWaker so a router task.* terminal wakes the requester
     task_subscription_writer: Any = None,  # #2187 backend-master: the Task subscription WAL writer
     hook_dispatcher: Any = None,  # #1800 slice 5c: the Session's HookDispatcher
+    hook_bus: Any = None,  # Hook-Event Redesign Phase 5 part 2: the Session's HookBus → emit_hook_event
     current_task_id: str | None = None,  # #1953 §16: the task this turn is executing → task.create ownership
     hot_reloader: Any = None,  # #2761 PR-2: this session's HotReloader → immediate mid-turn install apply
     render_template_bounds: Any = None,  # #2679: operator RenderTemplateBounds → the render_template op cap. None → the op's in-handler defaults.
@@ -161,6 +162,7 @@ def build_router_op_context(
         task_waker=task_waker,  # #2107: a router task.* terminal wakes the requester
         task_subscription_writer=task_subscription_writer,  # #2187 backend-master: the Task subscription WAL writer
         hook_dispatcher=hook_dispatcher,  # #1800 slice 5c: task_start/end dispatch
+        hook_bus=hook_bus,  # Hook-Event Redesign Phase 5 part 2: emit_hook_event's publish target
         current_task_id=current_task_id,  # #1953 §16: ownership-derivation context
         hot_reloader=hot_reloader,  # #2761 PR-2: per-session reloader for immediate mid-turn install apply
         render_template_bounds=render_template_bounds,  # #2679: operator render_template output cap
