@@ -146,6 +146,31 @@ composers:
   (fire after `ttl` from the FIRST match, with everything buffered),
   `debounce` (fire `ttl` after the LAST match with no newer one), `correlate_by`
   (like `all`, keyed by a payload field), `count` (N matching events per key).
+- **`inputs` arity**: `seq` requires **at least 2** inputs (a load-time
+  error otherwise) — every other op accepts a **single** input, including
+  `all`/`any` (both fire immediately on that one input's first arrival) and
+  `count` (fires once `count` matching events of that one kind have arrived).
+  A single-input Composer is the common shape for reacting to just one
+  `llm:*` signal:
+  ```yaml
+  composers:
+    - name: deploy_ready
+      op: any                       # any/all are equivalent with 1 input
+      inputs:
+        - kind: llm:main:deploy_ready
+      emit: { kind: composed:deploy_ready }
+  ```
+- **What the composed event carries.** `_emit_composed` builds the emitted
+  event's payload as `{"inputs": [<matched event's payload dict>, ...],
+  "correlation_key": <key or "__default__">}` — so a downstream hook's
+  template vars are `{{ inputs }}` (a list) and `{{ correlation_key }}`, NOT
+  the original event's fields flattened at the top level. **Order caveat**:
+  `inputs[]` is in ARRIVAL order, not declared-config order, for every op
+  except `seq` (whose whole point is enforcing the declared order) — and
+  each entry is the bare payload dict with no `kind` tag to identify which
+  declared input it came from. So `{{ inputs[0].<field> }}` is only reliably
+  "the first *declared* input's field" when the Composer uses `op: seq`, or
+  has exactly one input (nothing else can arrive first).
 - A `composed:<name>` event becomes a normal Sync `on:` target — add a
   `hooks:` entry with `on: composed:deploy_approved` to react to it (see the
   worked example [below](#async-bus-and-composer-event-correlation)).
@@ -214,11 +239,20 @@ first connection (there is nothing to resync).
 
 Fires when a file under an operator-declared watch path is created, modified,
 or deleted. Requires the `watchdog` extra (`pip install reyn[fs-watch]`) and
-at least one path under `fs_watch.paths` in `reyn.yaml` — see
-[reyn-yaml § `fs_watch` block](../../reference/config/reyn-yaml.md#fs_watch-block).
-Without either, the feature is off (a clear warning is logged once if paths
-are configured but the extra is missing; no config at all is silently
-byte-identical to a build with no watcher).
+at least one path under `fs_watch.paths` in `reyn.yaml`:
+
+```yaml
+fs_watch:
+  paths:
+    - /repo/src
+    - /repo/docs
+  debounce_seconds: 0.2   # coalesce a write-burst on one path into ONE fire
+```
+
+Full field reference: [reyn-yaml § `fs_watch` block](../../reference/config/reyn-yaml.md#fs_watch-block).
+Without either the extra or a configured path, the feature is off (a clear
+warning is logged once if paths are configured but the extra is missing; no
+config at all is silently byte-identical to a build with no watcher).
 
 Template vars:
 
@@ -686,13 +720,17 @@ So `emit_hook_event`'s output is always consumed as a Composer
 value must name the actual session id**, not just the event name — the
 default session's id is `main` (see [Sessions](../multi-agent/sessions.md)
 for named/multi-session setups). Worked example — the LLM signals it
-finished preparing a deploy; a Composer waits for that alongside an
-external approval, then a Sync hook reacts to the correlated result:
+finished preparing a deploy (with the artifact id in `payload`); a Composer
+waits for that alongside an external approval, then a Sync hook reacts to
+the correlated result and reads the artifact id back out. Using `op: seq`
+here (not `all`) is deliberate — it's the one op that GUARANTEES `inputs[]`
+lands in the declared order, so `inputs[0]` is reliably the `llm:*` event's
+payload, not whichever of the two happened to arrive first:
 
 ```yaml
 composers:
   - name: deploy_approved
-    op: all
+    op: seq                              # order-guaranteed — inputs[0] is always the llm:* event below
     inputs:
       - kind: llm:main:deploy_ready       # the default session's id is "main"
       - kind: mcp:approval-server:approved
@@ -701,7 +739,7 @@ composers:
 hooks:
   - on: composed:deploy_approved
     template_push:
-      message: "Deploy artifact ready and approved — proceeding."
+      message: "Deploy artifact {{ inputs[0].artifact }} approved — proceeding."
       wake: false
 ```
 
