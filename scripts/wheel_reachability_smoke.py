@@ -37,6 +37,7 @@ failure alike.
 """
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 import sys
@@ -47,163 +48,12 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
-# Real dev-checkout content the wheel-side reads are compared against for
-# byte-identity. Read here (in THIS process, off the source tree) — not
-# inside the venv subprocess, so there's no ambiguity about which tree the
-# "expected" bytes came from.
-_EXPECTED_README = (REPO_ROOT / "README.md").read_bytes()
-_EXPECTED_DOC = (REPO_ROOT / "docs" / "index.md").read_bytes()
-_EXPECTED_SOURCE = (REPO_ROOT / "src" / "reyn" / "runtime" / "reyn_src.py").read_bytes()
-
-# The probe runs INSIDE the venv's own interpreter (so imports resolve against
-# the installed wheel, never this repo's src/ tree via sys.path/PYTHONPATH
-# leaking in). It is handed to the venv python as a `-c` script rather than a
-# file under REPO_ROOT so there is no chance of an accidental relative import
-# resolving back into the source checkout. Expected bytes are passed in via
-# repr() literals (README/docs/source content) baked into the script text.
-_PROBE_SRC = r"""
-import sys
-from pathlib import Path
-
-_CHECK_NAMES = [
-    "dev-mask guard (reyn.__file__ under venv, not source tree)",
-    "resolve_reyn_root: wheel mode detected (_bundled/ present)",
-    "reyn_src read: README.md byte-identical to dev checkout",
-    "reyn_src read: docs/index.md byte-identical to dev checkout",
-    "reyn_src read: src/reyn/runtime/reyn_src.py byte-identical to dev checkout",
-    "reyn_src read: non-declared path (pyproject.toml) refused",
-    "read_builtin_body_bytes: reyn_cheat_sheet SKILL.md reachable",
-    "read_builtin_body_bytes: flagship pipeline yaml reachable",
-    "read_builtin_body_bytes: non-body .py path returns None (least-privilege)",
-]
-
-results = []
-
-def check(name, fn):
-    try:
-        fn()
-        results.append((name, True, ""))
-    except Exception as exc:  # noqa: BLE001 - report every failure, don't stop early
-        results.append((name, False, f"{type(exc).__name__}: {exc}"))
-
-import reyn
-
-def _dev_mask_guard():
-    reyn_file = Path(reyn.__file__).resolve()
-    venv_root = Path(sys.prefix).resolve()
-    assert str(reyn_file).startswith(str(venv_root)), (
-        f"reyn.__file__ ({reyn_file}) is NOT under the venv ({venv_root}) -- "
-        "this probe is reading the source checkout, not the installed wheel; "
-        "every check below would be meaningless"
-    )
-    repo_root_marker = Path(r"__REPO_ROOT__").resolve()
-    assert not str(reyn_file).startswith(str(repo_root_marker)), (
-        f"reyn.__file__ ({reyn_file}) resolves under the repo checkout "
-        f"({repo_root_marker}) -- dev-tree leakage into the venv"
-    )
-
-check(_CHECK_NAMES[0], _dev_mask_guard)
-
-from reyn.runtime.reyn_src import read_text, resolve_reyn_root, safe_resolve_inside
-
-def _check_wheel_mode_detected():
-    resolve_reyn_root.cache_clear()
-    root = resolve_reyn_root()
-    assert (root / "_bundled").is_dir(), (
-        f"resolve_reyn_root() returned {root}, expected a wheel package dir "
-        "with an adjacent _bundled/ directory (0061 SS3.2 wheel-mode signal)"
-    )
-
-check(_CHECK_NAMES[1], _check_wheel_mode_detected)
-
-def _read_logical(logical_path):
-    root = resolve_reyn_root()
-    target = safe_resolve_inside(root, logical_path)
-    result = read_text(target, logical_path)
-    assert "content" in result, f"read_text({logical_path!r}) returned no content: {result}"
-    return result["content"].encode("utf-8")
-
-def _check_readme_byte_identical():
-    got = _read_logical("README.md")
-    assert got == __EXPECTED_README__, (
-        f"README.md via wheel-mode reyn_src ({len(got)} bytes) does not match "
-        f"the dev checkout ({len(__EXPECTED_README__)} bytes)"
-    )
-
-check(_CHECK_NAMES[2], _check_readme_byte_identical)
-
-def _check_docs_byte_identical():
-    got = _read_logical("docs/index.md")
-    assert got == __EXPECTED_DOC__, (
-        f"docs/index.md via wheel-mode reyn_src ({len(got)} bytes) does not match "
-        f"the dev checkout ({len(__EXPECTED_DOC__)} bytes)"
-    )
-
-check(_CHECK_NAMES[3], _check_docs_byte_identical)
-
-def _check_source_byte_identical():
-    got = _read_logical("src/reyn/runtime/reyn_src.py")
-    assert got == __EXPECTED_SOURCE__, (
-        f"src/reyn/runtime/reyn_src.py via wheel-mode reyn_src ({len(got)} bytes) "
-        f"does not match the dev checkout ({len(__EXPECTED_SOURCE__)} bytes)"
-    )
-
-check(_CHECK_NAMES[4], _check_source_byte_identical)
-
-def _check_non_declared_path_refused():
-    root = resolve_reyn_root()
-    try:
-        safe_resolve_inside(root, "pyproject.toml")
-    except ValueError as exc:
-        assert "reachable set" in str(exc), f"wrong refusal reason: {exc}"
-        return
-    raise AssertionError("pyproject.toml resolved instead of being refused")
-
-check(_CHECK_NAMES[5], _check_non_declared_path_refused)
-
-from reyn.builtin.docs import read_builtin_body_bytes
-from reyn.builtin.registry import BUILTIN_SKILLS, BUILTIN_PIPELINES
-
-def _check_cheat_sheet():
-    path = BUILTIN_SKILLS["reyn_cheat_sheet"]["path"]
-    body = read_builtin_body_bytes(path)
-    assert body is not None, f"read_builtin_body_bytes({path!r}) returned None"
-    assert len(body) > 0, "reyn_cheat_sheet SKILL.md body is empty"
-    assert b"reyn_cheat_sheet" in body, "reyn_cheat_sheet SKILL.md missing its own name marker"
-
-check(_CHECK_NAMES[6], _check_cheat_sheet)
-
-def _check_flagship_pipeline():
-    path = BUILTIN_PIPELINES["flagship"]["path"]
-    body = read_builtin_body_bytes(path)
-    assert body is not None, f"read_builtin_body_bytes({path!r}) returned None"
-    assert len(body) > 0, "flagship pipeline yaml body is empty"
-
-check(_CHECK_NAMES[7], _check_flagship_pipeline)
-
-def _check_negative_non_body_py():
-    import reyn.builtin.registry as registry_mod
-    non_body_path = registry_mod.__file__
-    result = read_builtin_body_bytes(non_body_path)
-    assert result is None, (
-        f"read_builtin_body_bytes({non_body_path!r}) returned {len(result) if result else 0} "
-        "bytes -- expected None (in-package .py is NOT a legitimate body read)"
-    )
-
-check(_CHECK_NAMES[8], _check_negative_non_body_py)
-
-any_fail = False
-for name, ok, detail in results:
-    status = "PASS" if ok else "FAIL"
-    if not ok:
-        any_fail = True
-    line = f"[{status}] {name}"
-    if detail:
-        line += f" -- {detail}"
-    print(line)
-
-sys.exit(1 if any_fail else 0)
-"""
+# The in-venv probe is a NORMAL committed .py file (not a generated / string-
+# templated sub-script, not a `python -c` payload). It is run directly by the
+# venv interpreter — `<venv>/bin/python scripts/wheel_parity_probe.py` — and
+# reads the dev repo root at RUNTIME from the `REYN_DEV_REPO_ROOT` env var, so
+# no file content is ever embedded in any .py source. See its module docstring.
+_PROBE_SCRIPT = REPO_ROOT / "scripts" / "wheel_parity_probe.py"
 
 
 def _run(cmd: list[str], **kwargs) -> subprocess.CompletedProcess:
@@ -294,17 +144,21 @@ def main() -> int:
 
         _run([str(venv_python), "-m", "pip", "install", "--no-deps", "--quiet", str(wheel_path)])
 
-        # 3-6. Run the probe INSIDE the venv interpreter.
-        probe_src = (
-            _PROBE_SRC.replace("__REPO_ROOT__", str(REPO_ROOT))
-            .replace("__EXPECTED_README__", repr(_EXPECTED_README))
-            .replace("__EXPECTED_DOC__", repr(_EXPECTED_DOC))
-            .replace("__EXPECTED_SOURCE__", repr(_EXPECTED_SOURCE))
-        )
+        # 3-6. Run the committed probe .py directly with the venv interpreter.
+        # The dev repo root is passed at RUNTIME via the REYN_DEV_REPO_ROOT env
+        # var (no code-generation, no `.replace()` templating, no file content
+        # baked into any .py source). The probe reads BOTH sides of every
+        # byte-identity comparison at runtime — see scripts/wheel_parity_probe.py.
+        probe_env = {**os.environ, "REYN_DEV_REPO_ROOT": str(REPO_ROOT)}
+        # Strip PYTHONPATH so an inherited `src`-on-path can't leak the dev
+        # source tree into the venv interpreter (the dev-mask guard in the
+        # probe would catch it, but preventing it is cleaner).
+        probe_env.pop("PYTHONPATH", None)
         result = subprocess.run(
-            [str(venv_python), "-c", probe_src],
+            [str(venv_python), str(_PROBE_SCRIPT)],
             capture_output=True,
             text=True,
+            env=probe_env,
         )
         print(result.stdout, end="")
         if result.stderr:
