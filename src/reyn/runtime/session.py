@@ -1376,7 +1376,17 @@ class Session:
         # ``hooks:`` block; None/absent → empty registry → every dispatch() is a
         # no-op (run-loop byte-identical to a hooks-free build). Constructed
         # unconditionally so the 4 lifecycle dispatch() sites are uniform.
+        from reyn.hooks.bus import HookBus
         from reyn.hooks.dispatcher import HookDispatcher
+        # Hook-Event Redesign Phase 4a (proposal 0059 §3.2/§3.3): one HookBus
+        # PER SESSION, constructed here alongside the HookDispatcher it feeds
+        # and never shared across sessions (§3.3 v1 = per-Session scope — no
+        # cross-session event observation/correlation). No subscriber ever
+        # attaches unless something explicitly calls ``session._hook_bus.
+        # subscribe()`` (nothing does yet in Phase 4a — the Composer, Phase
+        # 4b, is the first consumer) — until then this is a no-op alongside
+        # every dispatch() call (see HookBus.publish's zero-subscriber path).
+        self._hook_bus = HookBus()
         # #2073 S2b: hooks are LAYERED — the reyn.yaml startup layer (OUT-set,
         # captured once here, NEVER re-read on a reload) ∪ the .reyn/hooks.yaml
         # runtime layer (IN-set, hot-reloadable; the LLM-op writes it in S3).
@@ -1425,6 +1435,9 @@ class Session:
             # Lambda defers ``self._chat_events`` (assigned below this point);
             # only called at dispatch time.
             emit_event=lambda et, **d: self._chat_events.emit(et, **d),
+            # Phase 4a: broadcast every dispatched HookEvent to this session's
+            # own bus, independently of the Sync hooks_for() loop above.
+            bus=self._hook_bus,
         )
         # #2073 S4: track the RUNTIME (.reyn/cron.yaml) cron job names so the cron
         # reapply seam can unschedule jobs removed from the runtime file WITHOUT

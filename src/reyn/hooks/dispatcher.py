@@ -30,6 +30,7 @@ import json
 import logging
 from typing import Any, Awaitable, Callable
 
+from reyn.hooks.bus import HookBus
 from reyn.hooks.event import HookEvent
 from reyn.hooks.event_pattern import from_legacy_matcher
 from reyn.hooks.event_pattern import matches as event_pattern_matches
@@ -81,8 +82,16 @@ class HookDispatcher:
         cross_session_put: "Callable[..., Any] | None" = None,
         current_session_id: "str | None" = None,
         is_hook_disabled: "Callable[[HookDef], bool] | None" = None,
+        bus: "HookBus | None" = None,
     ) -> None:
         self._registry = registry
+        # Hook-Event Redesign Phase 4a (proposal 0059 §3.2/§3.3): the optional
+        # per-Session Async Bus. None (the default — every pre-Phase-4a call
+        # site, including every pre-Phase-4a test) keeps dispatch() byte-
+        # identical to before this module existed; when set, dispatch()
+        # broadcasts a copy-free HookEvent to it INDEPENDENTLY of the Sync
+        # hooks_for() loop below (see dispatch()'s docstring).
+        self._bus = bus
         # #2285: per-session hook APPLICABILITY gate — consulted at dispatch time (live) so a hook
         # disabled for THIS session is skipped. Deferred (a callable, not a snapshot) so a toggle
         # applies to the next dispatch without rebuilding the dispatcher. ``None`` → no gate
@@ -168,11 +177,24 @@ class HookDispatcher:
         legitimately be dispatched with an arbitrary/partial dict (tests, and
         any future non-builtin point), and this per-hook-isolation boundary is
         about a HOOK's action failing, not about producer-schema drift.
+
+        Hook-Event Redesign Phase 4a (proposal 0059 §3.2): immediately after
+        constructing ``event``, it is broadcast to this dispatcher's (optional)
+        ``HookBus`` — UNCONDITIONALLY, before the Sync ``hooks_for()`` loop
+        below runs and regardless of whether that loop finds any registered
+        hook for ``point``. This is what makes Sync and Bus independent (§3.2):
+        a Bus-only subscriber observes every dispatched event even with zero
+        Sync hooks configured for ``point``, and a Sync hook's execution below
+        is entirely unaffected by whether any Bus subscriber exists. ``bus is
+        None`` (the default) skips this line — the no-bus happy path stays
+        byte-identical to pre-Phase-4a.
         """
         event = HookEvent(
             kind=canonical_kind(point), payload=template_vars,
             chain_id=template_vars.get("chain_id"),
         )
+        if self._bus is not None:
+            self._bus.publish(event)
         for hook in self._registry.hooks_for(point):
             if self._is_hook_disabled is not None and self._is_hook_disabled(hook):
                 continue  # #2285: hook disabled for THIS session (live applicability toggle)
