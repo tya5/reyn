@@ -40,27 +40,23 @@ _HOOKS_ADD_PARAMETERS: dict[str, Any] = {
     "properties": {
         "on": {
             "type": "string", "enum": _HOOK_POINTS,
-            "description": "The lifecycle point the hook fires at.",
+            "description": _hooks_descriptions.PARAMS["hooks_add"]["on"].text,
         },
         "message": {
             "type": "string",
-            "description": "The message pushed when the hook fires (a Jinja2 template is allowed).",
+            "description": _hooks_descriptions.PARAMS["hooks_add"]["message"].text,
         },
         "wake": {
             "type": "boolean",
-            "description": (
-                "true → the push starts a new turn (self-continuation, capability E); "
-                "false → it rides along with the next turn as context (capability C). "
-                "Default true."
-            ),
+            "description": _hooks_descriptions.PARAMS["hooks_add"]["wake"].text,
         },
         "push_when": {
             "type": "string",
-            "description": "Optional Jinja2 → bool; when it renders false the push is skipped. Default 'true'.",
+            "description": _hooks_descriptions.PARAMS["hooks_add"]["push_when"].text,
         },
         "name": {
             "type": "string",
-            "description": "Optional label surfaced as the [hook:<name>] attribution prefix.",
+            "description": _hooks_descriptions.PARAMS["hooks_add"]["name"].text,
         },
     },
     "required": ["on", "message"],

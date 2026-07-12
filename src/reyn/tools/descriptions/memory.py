@@ -13,7 +13,7 @@ forget_memory.
 """
 from __future__ import annotations
 
-from reyn.tools.descriptions._types import ToolDescription
+from reyn.tools.descriptions._types import ParamDescription, ToolDescription
 
 list_memory = ToolDescription(
     tool_name="list_memory",
@@ -131,4 +131,64 @@ ALL: dict[str, ToolDescription] = {
     "remember_shared": remember_shared,
     "remember_agent": remember_agent,
     "forget_memory": forget_memory,
+}
+
+
+# ── Phase 4: per-parameter descriptions (byte-identical relocation) ──────────
+#
+# list_memory / forget_memory have no param-level descriptions in their
+# origin schemas (path/layer/slug are bare-typed) — no entries needed.
+
+_description_desc = ParamDescription(
+    text="One-line summary; appears in memory listings",
+    ja="1行の要約。メモリ一覧に表示される。",
+)
+_body_desc = ParamDescription(
+    text="Full body markdown, typically <5 lines",
+    ja="本文の markdown。通常5行未満。",
+)
+
+PARAMS: dict[str, dict[str, ParamDescription]] = {
+    "read_memory_body": {
+        "offset": ParamDescription(
+            text=(
+                "Line number to start reading from (0-indexed), counted "
+                "against the body after the YAML frontmatter is stripped. "
+                "Omit to start at the beginning."
+            ),
+            ja=(
+                "読み取り開始行（0始まり）。YAML フロントマターを除いた本文"
+                "に対してカウントする。省略時は先頭から。"
+            ),
+        ),
+        "limit": ParamDescription(
+            text=(
+                "Number of lines to read from `offset`. "
+                "Omit to read through end of body."
+            ),
+            ja="`offset` から読む行数。省略時は本文末尾まで読む。",
+        ),
+    },
+    "remember_shared": {
+        "slug": ParamDescription(
+            text=(
+                "Filename stem, format <type>_<topic>, "
+                "e.g. user_role"
+            ),
+            ja="ファイル名の幹（<type>_<topic> 形式、例 user_role）。",
+        ),
+        "description": _description_desc,
+        "body": _body_desc,
+    },
+    "remember_agent": {
+        "slug": ParamDescription(
+            text=(
+                "Filename stem, format <type>_<topic>, "
+                "e.g. feedback_tone"
+            ),
+            ja="ファイル名の幹（<type>_<topic> 形式、例 feedback_tone）。",
+        ),
+        "description": _description_desc,
+        "body": _body_desc,
+    },
 }

@@ -26,10 +26,7 @@ _COMPACT_PARAMETERS: dict[str, Any] = {
     "properties": {
         "reason": {
             "type": "string",
-            "description": (
-                "Optional short rationale for the audit trail (e.g. 'window "
-                "low before reading large file'). Not interpreted by the OS."
-            ),
+            "description": _context_descriptions.PARAMS["compact"]["reason"].text,
         },
     },
     "required": [],

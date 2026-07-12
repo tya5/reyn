@@ -40,3 +40,29 @@ class ToolDescription:
     purpose: str
     text: str
     ja: str
+
+
+@dataclass(frozen=True)
+class ParamDescription:
+    """One JSON-schema parameter's LLM-facing ``description`` plus a Japanese gloss.
+
+    Phase 4 of the tool-description package refactor extends the reviewable
+    package below tool-LEVEL text to PARAM-level text: the per-field
+    ``"description": "..."`` strings inside a ``ToolDefinition.parameters``
+    JSON-schema (``properties.<field>.description``). Not every tool has
+    param-level descriptions — many params are self-evident from their name
+    + type alone, so a bucket's ``PARAMS`` dict only carries entries for
+    fields that actually declare one in the origin schema.
+
+    Attributes:
+        text: The EXACT string sent to the LLM as
+            ``parameters["properties"][field]["description"]``. Must be
+            byte-identical to the pre-migration string.
+        ja: Purpose-based Japanese gloss of what the field is / why it
+            matters — NOT a literal translation of ``text`` — for a
+            reviewer who reads Japanese faster than English prose. Never
+            sent to the LLM.
+    """
+
+    text: str
+    ja: str

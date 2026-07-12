@@ -18,7 +18,7 @@ I/O), matching the Phase 2 dispatch brief, not by its literal
 """
 from __future__ import annotations
 
-from reyn.tools.descriptions._types import ToolDescription
+from reyn.tools.descriptions._types import ParamDescription, ToolDescription
 
 read_file = ToolDescription(
     tool_name="read_file",
@@ -223,4 +223,147 @@ ALL: dict[str, ToolDescription] = {
     "list_directory": list_directory,
     "drop_source": drop_source,
     "index_update": index_update,
+}
+
+
+# ── Phase 4: per-parameter descriptions (byte-identical relocation) ──────────
+#
+# Only fields that actually declare a "description" in the origin
+# ``parameters`` JSON-schema get an entry here — many params (e.g. `path`
+# on read_file) are bare `{"type": "string"}` with no description.
+
+PARAMS: dict[str, dict[str, ParamDescription]] = {
+    "read_file": {
+        "offset": ParamDescription(
+            text=(
+                "Line number to start reading from (0-indexed). "
+                "Omit to start at the beginning of the file."
+            ),
+            ja="読み取り開始行（0始まり）。省略時はファイル先頭から。",
+        ),
+        "limit": ParamDescription(
+            text=(
+                "Number of lines to read from `offset`. "
+                "Omit to read through end of file."
+            ),
+            ja="`offset` から読む行数。省略時はファイル末尾まで読む。",
+        ),
+    },
+    "edit_file": {
+        "old_string": ParamDescription(
+            text=(
+                "Exact text to replace. Must appear exactly once unless "
+                "replace_all is true; include surrounding context to "
+                "make it unique."
+            ),
+            ja=(
+                "置換対象の完全一致テキスト。replace_all=true でない限り"
+                "ファイル内に1回だけ出現する必要があるので、周辺文脈を含めて"
+                "一意にする。"
+            ),
+        ),
+        "new_string": ParamDescription(
+            text="Replacement text.",
+            ja="置換後のテキスト。",
+        ),
+        "replace_all": ParamDescription(
+            text=(
+                "When true, every occurrence of old_string is replaced. "
+                "Default false (= require uniqueness)."
+            ),
+            ja="true なら old_string の全出現を置換。デフォルト false（一意性を要求）。",
+        ),
+    },
+    "grep_files": {
+        "pattern": ParamDescription(
+            text="Regex pattern to search for.",
+            ja="検索する正規表現パターン。",
+        ),
+        "path": ParamDescription(
+            text="Directory or file to search. Defaults to '.' (workspace root).",
+            ja="検索対象のディレクトリまたはファイル。デフォルトは '.'（ワークスペースルート）。",
+        ),
+        "glob": ParamDescription(
+            text="File-glob filter (e.g. '**/*.py'). Searches all files when omitted.",
+            ja="ファイル glob フィルタ（例 '**/*.py'）。省略時は全ファイルを検索。",
+        ),
+        "case_sensitive": ParamDescription(
+            text="When true, search is case-sensitive. Defaults to false.",
+            ja="true なら大文字小文字を区別。デフォルト false。",
+        ),
+        "max_results": ParamDescription(
+            text="Maximum number of matches to return. Defaults to 50.",
+            ja="返す一致件数の上限。デフォルト 50。",
+        ),
+    },
+    "glob_files": {
+        "pattern": ParamDescription(
+            text=(
+                "Glob pattern. To match by name anywhere under a directory, "
+                "always include `**` (e.g. '**/*.py' or 'src/**/*.md'). "
+                "A bare name without `**` matches only at the exact root "
+                "level, not recursively."
+            ),
+            ja=(
+                "glob パターン。ディレクトリ配下のどこでも名前一致させたいなら"
+                "必ず `**` を含める（例 '**/*.py'）。`**` のない裸の名前は"
+                "ルート直下のみ一致し再帰しない。"
+            ),
+        ),
+        "path": ParamDescription(
+            text="Root directory for the glob. Defaults to '.' (workspace root).",
+            ja="glob 検索の起点ディレクトリ。デフォルトは '.'（ワークスペースルート）。",
+        ),
+    },
+    "drop_source": {
+        "source": ParamDescription(
+            text="Logical source name to remove (from Indexed sources list).",
+            ja="削除する論理ソース名（Indexed sources 一覧から）。",
+        ),
+    },
+    "index_update": {
+        "source": ParamDescription(
+            text="Logical source name to ingest into.",
+            ja="投入先の論理ソース名。",
+        ),
+        "chunks": ParamDescription(
+            text="Chunks to reconcile into the index.",
+            ja="インデックスに反映するチャンク群。",
+        ),
+        "chunks.metadata": ParamDescription(
+            text=(
+                "content_hash (required, change-detection key), "
+                "source_path (required, reconciliation-scope "
+                "key), plus optional source_type / chunk_index "
+                "/ size_tokens / parent_context / extra."
+            ),
+            ja=(
+                "content_hash（必須、変更検知キー）、source_path（必須、"
+                "reconcile 範囲キー）、任意で source_type / chunk_index / "
+                "size_tokens / parent_context / extra。"
+            ),
+        ),
+        "embedding_model": ParamDescription(
+            text=(
+                "Embedding model class, used ONLY when this source has no "
+                "recorded model yet (first index_update for a new source) "
+                "— an already-indexed source's recorded model always wins "
+                "(a source is one embedding space)."
+            ),
+            ja=(
+                "埋め込みモデルクラス。このソースに記録済みモデルがまだない"
+                "場合（新規ソースの最初の index_update）のみ使用される — "
+                "既にインデックス済みのソースは記録済みモデルが常に優先"
+                "（1ソース=1埋め込み空間）。"
+            ),
+        ),
+        "description": ParamDescription(
+            text="SourceManifest description (first-index or override).",
+            ja="SourceManifest の説明文（初回インデックス時または上書き）。",
+        ),
+        "path": ParamDescription(
+            text="SourceManifest path label (first-index or override).",
+            ja="SourceManifest のパスラベル（初回インデックス時または上書き）。",
+        ),
+    },
 }

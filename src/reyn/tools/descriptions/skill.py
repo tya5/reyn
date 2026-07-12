@@ -15,7 +15,7 @@ mirror of the ``category`` field).
 """
 from __future__ import annotations
 
-from reyn.tools.descriptions._types import ToolDescription
+from reyn.tools.descriptions._types import ParamDescription, ToolDescription
 
 skill_install_local = ToolDescription(
     tool_name="skill_install_local",
@@ -71,4 +71,65 @@ skill_install_source = ToolDescription(
 ALL: dict[str, ToolDescription] = {
     "skill_install_local": skill_install_local,
     "skill_install_source": skill_install_source,
+}
+
+
+# ── Phase 4: per-parameter descriptions (byte-identical relocation) ──────────
+
+_name_key_desc = ParamDescription(
+    text=(
+        "Config key written under skills.entries.<name>. "
+        "When omitted, the frontmatter 'name:' field is used; "
+        "if that is also absent, the directory basename is used."
+    ),
+    ja=(
+        "skills.entries.<name> に書き込まれる設定キー。省略時は"
+        "フロントマターの 'name:' フィールドを使い、それも無ければ"
+        "ディレクトリのベース名を使う。"
+    ),
+)
+
+PARAMS: dict[str, dict[str, ParamDescription]] = {
+    "skill_install_local": {
+        "path": ParamDescription(
+            text=(
+                "Path to the skill directory (containing SKILL.md) or "
+                "the direct path to the SKILL.md file. May be absolute "
+                "or project-root-relative."
+            ),
+            ja=(
+                "SKILL.md を含むスキルディレクトリへのパス、または SKILL.md "
+                "ファイルへの直接パス。絶対パスまたはプロジェクトルート相対。"
+            ),
+        ),
+        "name": _name_key_desc,
+    },
+    "skill_install_source": {
+        "source": ParamDescription(
+            text=(
+                "Git or GitHub URL of the skill repo. The root (or subdir "
+                "specified via '//' separator) must contain a SKILL.md file. "
+                "Examples: 'https://github.com/user/skill-repo' or "
+                "'https://github.com/user/monorepo//skills/my-skill'."
+            ),
+            ja=(
+                "スキルリポジトリの Git/GitHub URL。ルート（または '//' "
+                "区切りで指定したサブディレクトリ）に SKILL.md が必要。例 "
+                "'https://github.com/user/skill-repo' や "
+                "'https://github.com/user/monorepo//skills/my-skill'。"
+            ),
+        ),
+        "name": ParamDescription(
+            text=(
+                "Config key written under skills.entries.<name>. "
+                "When omitted, the frontmatter 'name:' field is used; "
+                "if that is also absent, the repo/subdir basename is used."
+            ),
+            ja=(
+                "skills.entries.<name> に書き込まれる設定キー。省略時は"
+                "フロントマターの 'name:' フィールドを使い、それも無ければ"
+                "repo/subdir のベース名を使う。"
+            ),
+        ),
+    },
 }

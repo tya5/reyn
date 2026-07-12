@@ -33,24 +33,17 @@ _SESSION_SPAWN_PARAMETERS: dict[str, Any] = {
     "properties": {
         "request": {
             "type": "string",
-            "description": "The task for the fresh-context session to run.",
+            "description": _delegation_descriptions.PARAMS["session_spawn"]["request"].text,
         },
         "mode": {
             "type": "string",
             "enum": ["ephemeral", "persistent"],
             "default": "persistent",
-            "description": (
-                "ephemeral = the session auto-vanishes after its task; "
-                "persistent = it stays. Chosen at spawn time."
-            ),
+            "description": _delegation_descriptions.PARAMS["session_spawn"]["mode"].text,
         },
         "narrowing": {
             "type": "object",
-            "description": (
-                "Optional per-session capability narrowing (restrict-only, cannot "
-                "widen your envelope): a capability_profile subset, e.g. "
-                "{\"tool_deny\": [\"sandboxed_exec\"]}."
-            ),
+            "description": _delegation_descriptions.PARAMS["session_spawn"]["narrowing"].text,
         },
     },
     "required": ["request"],

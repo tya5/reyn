@@ -33,7 +33,7 @@ _INDEX_UPDATE_PARAMETERS: dict[str, Any] = {
     "properties": {
         "source": {
             "type": "string",
-            "description": "Logical source name to ingest into.",
+            "description": _io_descriptions.PARAMS["index_update"]["source"].text,
         },
         "chunks": {
             "type": "array",
@@ -43,35 +43,27 @@ _INDEX_UPDATE_PARAMETERS: dict[str, Any] = {
                     "text": {"type": "string"},
                     "metadata": {
                         "type": "object",
-                        "description": (
-                            "content_hash (required, change-detection key), "
-                            "source_path (required, reconciliation-scope "
-                            "key), plus optional source_type / chunk_index "
-                            "/ size_tokens / parent_context / extra."
-                        ),
+                        "description": _io_descriptions.PARAMS["index_update"][
+                            "chunks.metadata"
+                        ].text,
                     },
                 },
                 "required": ["text", "metadata"],
             },
-            "description": "Chunks to reconcile into the index.",
+            "description": _io_descriptions.PARAMS["index_update"]["chunks"].text,
         },
         "embedding_model": {
             "type": "string",
             "default": "standard",
-            "description": (
-                "Embedding model class, used ONLY when this source has no "
-                "recorded model yet (first index_update for a new source) "
-                "— an already-indexed source's recorded model always wins "
-                "(a source is one embedding space)."
-            ),
+            "description": _io_descriptions.PARAMS["index_update"]["embedding_model"].text,
         },
         "description": {
             "type": "string",
-            "description": "SourceManifest description (first-index or override).",
+            "description": _io_descriptions.PARAMS["index_update"]["description"].text,
         },
         "path": {
             "type": "string",
-            "description": "SourceManifest path label (first-index or override).",
+            "description": _io_descriptions.PARAMS["index_update"]["path"].text,
         },
     },
     "required": ["source", "chunks"],

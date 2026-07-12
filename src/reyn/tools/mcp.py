@@ -112,22 +112,15 @@ _CALL_MCP_TOOL_PARAMETERS: dict[str, Any] = {
     "properties": {
         "server": {
             "type": "string",
-            "description": "MCP server name — choose from the enum (verbatim).",
+            "description": _mcp_descriptions.PARAMS["call_mcp_tool"]["server"].text,
         },
         "mcp_tool_name": {
             "type": "string",
-            "description": (
-                "Dotted mcp_tool identifier: <server>.<tool> — choose from "
-                "the enum. Use describe_mcp_tool for the full input schema."
-            ),
+            "description": _mcp_descriptions.PARAMS["call_mcp_tool"]["mcp_tool_name"].text,
         },
         _MCP_TOOL_ARGS_KEY: {
             "type": "object",
-            "description": (
-                "The target MCP tool's OWN parameters (the shape from "
-                "describe_mcp_tool), as a nested object here — NOT flat alongside "
-                "server / mcp_tool_name."
-            ),
+            "description": _mcp_descriptions.PARAMS["call_mcp_tool"]["tool_args"].text,
         },
     },
     "required": ["server", "mcp_tool_name", _MCP_TOOL_ARGS_KEY],
@@ -138,14 +131,11 @@ _DESCRIBE_MCP_TOOL_PARAMETERS: dict[str, Any] = {
     "properties": {
         "server": {
             "type": "string",
-            "description": "MCP server name — choose from the enum (verbatim).",
+            "description": _mcp_descriptions.PARAMS["describe_mcp_tool"]["server"].text,
         },
         "mcp_tool_name": {
             "type": "string",
-            "description": (
-                "Dotted mcp_tool identifier: <server>.<tool> — choose from "
-                "the enum."
-            ),
+            "description": _mcp_descriptions.PARAMS["describe_mcp_tool"]["mcp_tool_name"].text,
         },
     },
     "required": ["server", "mcp_tool_name"],
@@ -161,7 +151,7 @@ _LIST_MCP_RESOURCES_PARAMETERS: dict[str, Any] = {
     "properties": {
         "server": {
             "type": "string",
-            "description": "MCP server name — choose from the enum (verbatim).",
+            "description": _mcp_descriptions.PARAMS["list_mcp_resources"]["server"].text,
         },
     },
     "required": ["server"],
@@ -174,7 +164,7 @@ _LIST_MCP_RESOURCE_TEMPLATES_PARAMETERS: dict[str, Any] = {
     "properties": {
         "server": {
             "type": "string",
-            "description": "MCP server name — choose from the enum (verbatim).",
+            "description": _mcp_descriptions.PARAMS["list_mcp_resource_templates"]["server"].text,
         },
     },
     "required": ["server"],
@@ -187,11 +177,11 @@ _READ_MCP_RESOURCE_PARAMETERS: dict[str, Any] = {
     "properties": {
         "server": {
             "type": "string",
-            "description": "MCP server name — choose from the enum (verbatim).",
+            "description": _mcp_descriptions.PARAMS["read_mcp_resource"]["server"].text,
         },
         "uri": {
             "type": "string",
-            "description": "Resource URI, verbatim from list_mcp_resources.",
+            "description": _mcp_descriptions.PARAMS["read_mcp_resource"]["uri"].text,
         },
     },
     "required": ["server", "uri"],
@@ -207,11 +197,11 @@ _SUBSCRIBE_MCP_RESOURCE_PARAMETERS: dict[str, Any] = {
     "properties": {
         "server": {
             "type": "string",
-            "description": "MCP server name — choose from the enum (verbatim).",
+            "description": _mcp_descriptions.PARAMS["subscribe_mcp_resource"]["server"].text,
         },
         "uri": {
             "type": "string",
-            "description": "Resource URI, verbatim from list_mcp_resources.",
+            "description": _mcp_descriptions.PARAMS["subscribe_mcp_resource"]["uri"].text,
         },
     },
     "required": ["server", "uri"],
@@ -224,11 +214,11 @@ _UNSUBSCRIBE_MCP_RESOURCE_PARAMETERS: dict[str, Any] = {
     "properties": {
         "server": {
             "type": "string",
-            "description": "MCP server name — choose from the enum (verbatim).",
+            "description": _mcp_descriptions.PARAMS["unsubscribe_mcp_resource"]["server"].text,
         },
         "uri": {
             "type": "string",
-            "description": "Resource URI, verbatim from list_mcp_resources.",
+            "description": _mcp_descriptions.PARAMS["unsubscribe_mcp_resource"]["uri"].text,
         },
     },
     "required": ["server", "uri"],
@@ -244,7 +234,7 @@ _LIST_MCP_PROMPTS_PARAMETERS: dict[str, Any] = {
     "properties": {
         "server": {
             "type": "string",
-            "description": "MCP server name — choose from the enum (verbatim).",
+            "description": _mcp_descriptions.PARAMS["list_mcp_prompts"]["server"].text,
         },
     },
     "required": ["server"],
@@ -257,19 +247,15 @@ _GET_MCP_PROMPT_PARAMETERS: dict[str, Any] = {
     "properties": {
         "server": {
             "type": "string",
-            "description": "MCP server name — choose from the enum (verbatim).",
+            "description": _mcp_descriptions.PARAMS["get_mcp_prompt"]["server"].text,
         },
         "name": {
             "type": "string",
-            "description": "Prompt name, verbatim from list_mcp_prompts.",
+            "description": _mcp_descriptions.PARAMS["get_mcp_prompt"]["name"].text,
         },
         "arguments": {
             "type": "object",
-            "description": (
-                "Arguments to render the prompt with, matching the shape "
-                "from list_mcp_prompts' arguments field. Optional — omit "
-                "for a prompt that takes none."
-            ),
+            "description": _mcp_descriptions.PARAMS["get_mcp_prompt"]["arguments"].text,
         },
     },
     "required": ["server", "name"],

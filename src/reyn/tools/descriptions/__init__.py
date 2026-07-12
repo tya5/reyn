@@ -54,7 +54,7 @@ from reyn.tools.descriptions import (
     skill,
     task,
 )
-from reyn.tools.descriptions._types import ToolDescription
+from reyn.tools.descriptions._types import ParamDescription, ToolDescription
 
 ALL: dict[str, ToolDescription] = {
     **discovery.ALL,
@@ -76,7 +76,33 @@ ALL: dict[str, ToolDescription] = {
     **task.ALL,
 }
 
+# Phase 4 (param-level relocation): each bucket that has at least one
+# per-parameter description exposes a ``PARAMS: dict[str, dict[str,
+# ParamDescription]]`` — keyed by the SAME entry name as that bucket's
+# ``ALL`` (tool_name for nearly every bucket; the ``task`` bucket has no
+# PARAMS module yet — its 12 op-kind entries carry no per-param text in
+# their origin schemas). ``interactive`` (ask_user) also has none. Buckets
+# without a PARAMS module are simply omitted from this merge.
+ALL_PARAMS: dict[str, dict[str, ParamDescription]] = {
+    **discovery.PARAMS,
+    **io.PARAMS,
+    **memory.PARAMS,
+    **mcp.PARAMS,
+    **execution.PARAMS,
+    **delegation.PARAMS,
+    **cron.PARAMS,
+    **hooks.PARAMS,
+    **presentation.PARAMS,
+    **catalog.PARAMS,
+    **context.PARAMS,
+    **pipeline.PARAMS,
+    **pipeline_management.PARAMS,
+    **skill.PARAMS,
+    **dev.PARAMS,
+}
+
 __all__ = [
+    "ParamDescription",
     "ToolDescription",
     "discovery",
     "io",
@@ -96,4 +122,5 @@ __all__ = [
     "dev",
     "task",
     "ALL",
+    "ALL_PARAMS",
 ]

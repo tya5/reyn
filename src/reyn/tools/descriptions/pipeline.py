@@ -16,7 +16,7 @@ mirror of the ``category`` field).
 """
 from __future__ import annotations
 
-from reyn.tools.descriptions._types import ToolDescription
+from reyn.tools.descriptions._types import ParamDescription, ToolDescription
 
 run_pipeline = ToolDescription(
     tool_name="run_pipeline",
@@ -120,4 +120,59 @@ ALL: dict[str, ToolDescription] = {
     "run_pipeline_async": run_pipeline_async,
     "run_pipeline_inline": run_pipeline_inline,
     "run_pipeline_inline_async": run_pipeline_inline_async,
+}
+
+
+# ── Phase 4: per-parameter descriptions (byte-identical relocation) ──────────
+#
+# run_pipeline / run_pipeline_async share ONE parameters schema in the origin
+# module (``_RUN_PIPELINE_PARAMETERS``); run_pipeline_inline /
+# run_pipeline_inline_async likewise share ``_RUN_PIPELINE_INLINE_PARAMETERS``.
+# Keyed here by the base verb name; the origin module reuses the same dict
+# object for both the sync and async ToolDefinition.
+
+PARAMS: dict[str, dict[str, ParamDescription]] = {
+    "run_pipeline": {
+        "name": ParamDescription(
+            text="The registered pipeline's name.",
+            ja="登録済みパイプラインの名前。",
+        ),
+        "input": ParamDescription(
+            text=(
+                "Initial named context (ctx.*) for the pipeline's first "
+                "step. Omit for a pipeline that needs no seed input."
+            ),
+            ja=(
+                "パイプライン最初のステップ向けの初期名前付きコンテキスト"
+                "（ctx.*）。シード入力が不要なパイプラインなら省略可。"
+            ),
+        ),
+    },
+    "run_pipeline_inline": {
+        "definition": ParamDescription(
+            text=(
+                "The pipeline as a DSL string (Appendix B grammar): one or "
+                "more '---'-separated YAML documents — exactly one 'pipeline:' "
+                "document plus any 'schema:' documents its steps reference. "
+                "Generated at call time; parsed + statically validated before "
+                "anything runs."
+            ),
+            ja=(
+                "DSL文字列としてのパイプライン（Appendix B 文法）。1つ以上の "
+                "'---' 区切り YAML ドキュメント — 'pipeline:' ドキュメントが"
+                "1つ必須、ステップが参照する 'schema:' ドキュメントは任意。"
+                "呼び出し時に生成され、実行前にパースと静的検証を受ける。"
+            ),
+        ),
+        "input": ParamDescription(
+            text=(
+                "Initial named context (ctx.*) for the pipeline's first step. "
+                "Omit for a pipeline that needs no seed input."
+            ),
+            ja=(
+                "パイプライン最初のステップ向けの初期名前付きコンテキスト"
+                "（ctx.*）。シード入力が不要なパイプラインなら省略可。"
+            ),
+        ),
+    },
 }

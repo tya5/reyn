@@ -43,14 +43,14 @@ _SHELL_PARAMETERS: dict[str, Any] = {
     "properties": {
         "command": {
             "type": "string",
-            "description": "Shell command line, run as `/bin/sh -c <command>`.",
+            "description": _execution_descriptions.PARAMS["shell"]["command"].text,
         },
         "stdin_pipe": {
-            "description": "The previous pipeline step's pipe-data (JSON-encoded onto stdin).",
+            "description": _execution_descriptions.PARAMS["shell"]["stdin_pipe"].text,
         },
         "timeout": {
             "type": "integer",
-            "description": "Wall-clock time limit in seconds (default 60).",
+            "description": _execution_descriptions.PARAMS["shell"]["timeout"].text,
         },
     },
     "required": ["command"],

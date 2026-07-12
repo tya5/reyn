@@ -39,19 +39,11 @@ _SKILL_INSTALL_LOCAL_PARAMETERS: dict[str, Any] = {
     "properties": {
         "path": {
             "type": "string",
-            "description": (
-                "Path to the skill directory (containing SKILL.md) or "
-                "the direct path to the SKILL.md file. May be absolute "
-                "or project-root-relative."
-            ),
+            "description": _skill_descriptions.PARAMS["skill_install_local"]["path"].text,
         },
         "name": {
             "type": "string",
-            "description": (
-                "Config key written under skills.entries.<name>. "
-                "When omitted, the frontmatter 'name:' field is used; "
-                "if that is also absent, the directory basename is used."
-            ),
+            "description": _skill_descriptions.PARAMS["skill_install_local"]["name"].text,
         },
     },
     "required": ["path"],
@@ -118,20 +110,11 @@ _SKILL_INSTALL_SOURCE_PARAMETERS: dict[str, Any] = {
     "properties": {
         "source": {
             "type": "string",
-            "description": (
-                "Git or GitHub URL of the skill repo. The root (or subdir "
-                "specified via '//' separator) must contain a SKILL.md file. "
-                "Examples: 'https://github.com/user/skill-repo' or "
-                "'https://github.com/user/monorepo//skills/my-skill'."
-            ),
+            "description": _skill_descriptions.PARAMS["skill_install_source"]["source"].text,
         },
         "name": {
             "type": "string",
-            "description": (
-                "Config key written under skills.entries.<name>. "
-                "When omitted, the frontmatter 'name:' field is used; "
-                "if that is also absent, the repo/subdir basename is used."
-            ),
+            "description": _skill_descriptions.PARAMS["skill_install_source"]["name"].text,
         },
     },
     "required": ["source"],

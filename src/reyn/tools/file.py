@@ -64,17 +64,11 @@ _READ_FILE_PARAMETERS: dict[str, Any] = {
         "path": {"type": "string"},
         "offset": {
             "type": "integer",
-            "description": (
-                "Line number to start reading from (0-indexed). "
-                "Omit to start at the beginning of the file."
-            ),
+            "description": _io_descriptions.PARAMS["read_file"]["offset"].text,
         },
         "limit": {
             "type": "integer",
-            "description": (
-                "Number of lines to read from `offset`. "
-                "Omit to read through end of file."
-            ),
+            "description": _io_descriptions.PARAMS["read_file"]["limit"].text,
         },
     },
     "required": ["path"],
@@ -103,22 +97,15 @@ _EDIT_FILE_PARAMETERS: dict[str, Any] = {
         "path": {"type": "string"},
         "old_string": {
             "type": "string",
-            "description": (
-                "Exact text to replace. Must appear exactly once unless "
-                "replace_all is true; include surrounding context to "
-                "make it unique."
-            ),
+            "description": _io_descriptions.PARAMS["edit_file"]["old_string"].text,
         },
         "new_string": {
             "type": "string",
-            "description": "Replacement text.",
+            "description": _io_descriptions.PARAMS["edit_file"]["new_string"].text,
         },
         "replace_all": {
             "type": "boolean",
-            "description": (
-                "When true, every occurrence of old_string is replaced. "
-                "Default false (= require uniqueness)."
-            ),
+            "description": _io_descriptions.PARAMS["edit_file"]["replace_all"].text,
         },
     },
     "required": ["path", "old_string", "new_string"],
@@ -129,23 +116,23 @@ _GREP_FILES_PARAMETERS: dict[str, Any] = {
     "properties": {
         "pattern": {
             "type": "string",
-            "description": "Regex pattern to search for.",
+            "description": _io_descriptions.PARAMS["grep_files"]["pattern"].text,
         },
         "path": {
             "type": "string",
-            "description": "Directory or file to search. Defaults to '.' (workspace root).",
+            "description": _io_descriptions.PARAMS["grep_files"]["path"].text,
         },
         "glob": {
             "type": "string",
-            "description": "File-glob filter (e.g. '**/*.py'). Searches all files when omitted.",
+            "description": _io_descriptions.PARAMS["grep_files"]["glob"].text,
         },
         "case_sensitive": {
             "type": "boolean",
-            "description": "When true, search is case-sensitive. Defaults to false.",
+            "description": _io_descriptions.PARAMS["grep_files"]["case_sensitive"].text,
         },
         "max_results": {
             "type": "integer",
-            "description": "Maximum number of matches to return. Defaults to 50.",
+            "description": _io_descriptions.PARAMS["grep_files"]["max_results"].text,
         },
     },
     "required": ["pattern"],
@@ -156,16 +143,11 @@ _GLOB_FILES_PARAMETERS: dict[str, Any] = {
     "properties": {
         "pattern": {
             "type": "string",
-            "description": (
-                "Glob pattern. To match by name anywhere under a directory, "
-                "always include `**` (e.g. '**/*.py' or 'src/**/*.md'). "
-                "A bare name without `**` matches only at the exact root "
-                "level, not recursively."
-            ),
+            "description": _io_descriptions.PARAMS["glob_files"]["pattern"].text,
         },
         "path": {
             "type": "string",
-            "description": "Root directory for the glob. Defaults to '.' (workspace root).",
+            "description": _io_descriptions.PARAMS["glob_files"]["path"].text,
         },
     },
     "required": ["pattern"],

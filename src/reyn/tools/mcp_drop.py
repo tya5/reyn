@@ -40,28 +40,17 @@ _MCP_DROP_SERVER_PARAMETERS: dict[str, Any] = {
     "properties": {
         "server": {
             "type": "string",
-            "description": (
-                "Short server name as it appears under mcp.servers in "
-                "configuration (e.g. 'filesystem', 'brave')."
-            ),
+            "description": _mcp_descriptions.PARAMS["mcp_drop_server"]["server"].text,
         },
         "scope": {
             "type": "string",
             "enum": ["local", "project", "user"],
-            "description": (
-                "Config tier to remove from. Omit to auto-detect by "
-                "walking local → project → user and removing from the "
-                "first match."
-            ),
+            "description": _mcp_descriptions.PARAMS["mcp_drop_server"]["scope"].text,
         },
         "clear_secrets": {
             "type": "boolean",
             "default": True,
-            "description": (
-                "When true (default), also remove the corresponding "
-                "${KEY} entries from ~/.reyn/secrets.env. Set false to "
-                "keep the secrets for reinstall."
-            ),
+            "description": _mcp_descriptions.PARAMS["mcp_drop_server"]["clear_secrets"].text,
         },
     },
     "required": ["server"],

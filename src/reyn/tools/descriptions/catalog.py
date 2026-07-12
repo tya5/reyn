@@ -19,7 +19,7 @@ conceptual, not a literal mirror of the ``category`` field).
 """
 from __future__ import annotations
 
-from reyn.tools.descriptions._types import ToolDescription
+from reyn.tools.descriptions._types import ParamDescription, ToolDescription
 
 list_agents = ToolDescription(
     tool_name="list_agents",
@@ -124,4 +124,38 @@ ALL: dict[str, ToolDescription] = {
     "list_agents": list_agents,
     "describe_agent": describe_agent,
     "invoke_action": invoke_action,
+}
+
+
+# ── Phase 4: per-parameter descriptions (byte-identical relocation) ──────────
+#
+# list_agents / describe_agent have no param-level descriptions (bare-typed
+# `path` / `name`) — no entries needed.
+
+PARAMS: dict[str, dict[str, ParamDescription]] = {
+    "invoke_action": {
+        "action_name": ParamDescription(
+            text=(
+                "Qualified name of the action/resource to invoke "
+                "(e.g. 'mcp__brave__search', 'multi_agent__delegate')."
+            ),
+            ja=(
+                "呼び出すアクション/リソースの修飾名（例 "
+                "'mcp__brave__search', 'multi_agent__delegate'）。"
+            ),
+        ),
+        "args": ParamDescription(
+            text=(
+                "Arguments for the action; shape comes from "
+                "describe_action.input_schema. May be omitted for "
+                "resources whose canonical invoke takes no args "
+                "(e.g. memory_entry__foo)."
+            ),
+            ja=(
+                "アクションへの引数。形は describe_action.input_schema から"
+                "得る。正規の呼び出しが引数を取らないリソース（例 "
+                "memory_entry__foo）では省略可。"
+            ),
+        ),
+    },
 }

@@ -35,11 +35,11 @@ _SANDBOXED_EXEC_PARAMETERS: dict[str, Any] = {
         "argv": {
             "type": "array",
             "items": {"type": "string"},
-            "description": "Command and arguments; argv[0] is the executable.",
+            "description": _execution_descriptions.PARAMS["sandboxed_exec"]["argv"].text,
         },
         "timeout_seconds": {
             "type": "integer",
-            "description": "Wall-clock time limit in seconds (default 60).",
+            "description": _execution_descriptions.PARAMS["sandboxed_exec"]["timeout_seconds"].text,
         },
     },
     "required": ["argv"],

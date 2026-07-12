@@ -34,15 +34,12 @@ _EMBED_PARAMETERS: dict[str, Any] = {
         "texts": {
             "type": "array",
             "items": {"type": "string"},
-            "description": "Texts to embed. Returned vectors preserve this order.",
+            "description": discovery.PARAMS["embed"]["texts"].text,
         },
         "embedding_model": {
             "type": "string",
             "default": "standard",
-            "description": (
-                "Embedding model class (light/standard/strong) or a full "
-                "provider model id."
-            ),
+            "description": discovery.PARAMS["embed"]["embedding_model"].text,
         },
     },
     "required": ["texts"],

@@ -30,28 +30,16 @@ _MCP_INSTALL_PARAMETERS: dict[str, Any] = {
     "properties": {
         "server_id": {
             "type": "string",
-            "description": (
-                "Registry identifier, e.g. "
-                "'io.github.modelcontextprotocol/server-filesystem'."
-            ),
+            "description": _mcp_descriptions.PARAMS["mcp_install"]["server_id"].text,
         },
         "scope": {
             "type": "string",
             "enum": ["local", "project", "user"],
-            "description": (
-                "Config tier to write the server entry to. "
-                "'local' → reyn.local.yaml (default), "
-                "'project' → reyn.yaml, "
-                "'user' → ~/.reyn/config.yaml."
-            ),
+            "description": _mcp_descriptions.PARAMS["mcp_install"]["scope"].text,
         },
         "env_overrides": {
             "type": "object",
-            "description": (
-                "Pre-supplied env values for secret vars required by the server. "
-                "Keys are env var names; values are the secrets. "
-                "Values not provided here will be prompted interactively."
-            ),
+            "description": _mcp_descriptions.PARAMS["mcp_install"]["env_overrides"].text,
             "additionalProperties": {"type": "string"},
         },
     },

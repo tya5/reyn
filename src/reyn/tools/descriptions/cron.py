@@ -9,7 +9,7 @@ module now aliases its ``_CRON_*_DESCRIPTION`` module constants to
 """
 from __future__ import annotations
 
-from reyn.tools.descriptions._types import ToolDescription
+from reyn.tools.descriptions._types import ParamDescription, ToolDescription
 
 cron_register = ToolDescription(
     tool_name="cron_register",
@@ -102,4 +102,76 @@ ALL: dict[str, ToolDescription] = {
     "cron_list": cron_list,
     "cron_enable": cron_enable,
     "cron_disable": cron_disable,
+}
+
+
+# ── Phase 4: per-parameter descriptions (byte-identical relocation) ──────────
+#
+# ``name`` is shared across register/unregister/enable/disable (the origin
+# module builds ``_CRON_NAME_PARAM`` once and reuses it) — kept as one entry
+# reused below rather than duplicated per tool, matching that structure.
+
+_name_param = ParamDescription(
+    text=(
+        "Unique job identifier within the project (e.g. "
+        "'morning_news', 'weekly_report'). Reused across "
+        "register/unregister/enable/disable."
+    ),
+    ja=(
+        "プロジェクト内で一意なジョブ識別子（例 'morning_news', "
+        "'weekly_report'）。register/unregister/enable/disable で共通に使う。"
+    ),
+)
+
+PARAMS: dict[str, dict[str, ParamDescription]] = {
+    "cron_register": {
+        "name": _name_param,
+        "to": ParamDescription(
+            text=(
+                "Target Reyn agent name. The scheduled message is "
+                "delivered to this agent's inbox; the agent must "
+                "exist in the project."
+            ),
+            ja=(
+                "送信先の Reyn エージェント名。スケジュールされたメッセージは"
+                "このエージェントの inbox に届く。プロジェクト内に実在する"
+                "必要がある。"
+            ),
+        ),
+        "message": ParamDescription(
+            text=(
+                "Free-form text dispatched to the agent. Treated as a "
+                "user-turn-shaped message with sender='cron:<name>'."
+            ),
+            ja=(
+                "エージェントに送る自由記述テキスト。sender='cron:<name>' の"
+                "ユーザーターン形式のメッセージとして扱われる。"
+            ),
+        ),
+        "schedule": ParamDescription(
+            text=(
+                "5-field cron expression (e.g. '0 9 * * *' = daily 9am, "
+                "'0 */6 * * *' = every 6 hours, '0 9 * * MON' = Mondays "
+                "9am)."
+            ),
+            ja=(
+                "5フィールドの cron 式（例 '0 9 * * *' = 毎日9時、"
+                "'0 */6 * * *' = 6時間毎、'0 9 * * MON' = 毎週月曜9時）。"
+            ),
+        ),
+        "enabled": ParamDescription(
+            text=(
+                "Whether the schedule fires immediately. Defaults to "
+                "true. Set false to register a paused job and enable "
+                "later via cron__enable."
+            ),
+            ja=(
+                "スケジュールを即座に有効化するか。デフォルト true。false に"
+                "すると一時停止状態で登録し、後で cron__enable で有効化できる。"
+            ),
+        ),
+    },
+    "cron_unregister": {"name": _name_param},
+    "cron_enable": {"name": _name_param},
+    "cron_disable": {"name": _name_param},
 }

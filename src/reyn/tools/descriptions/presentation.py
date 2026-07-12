@@ -10,7 +10,7 @@ origin module now aliases its ``_X_DESCRIPTION`` constant to
 """
 from __future__ import annotations
 
-from reyn.tools.descriptions._types import ToolDescription
+from reyn.tools.descriptions._types import ParamDescription, ToolDescription
 
 present = ToolDescription(
     tool_name="present",
@@ -71,4 +71,111 @@ render_template = ToolDescription(
 ALL: dict[str, ToolDescription] = {
     "present": present,
     "render_template": render_template,
+}
+
+
+# ── Phase 4: per-parameter descriptions (byte-identical relocation) ──────────
+
+PARAMS: dict[str, dict[str, ParamDescription]] = {
+    "present": {
+        "data_ref": ParamDescription(
+            text=(
+                "What to show: a zone-readable path or an offloaded-result reference. Read under the "
+                "same authority as file.read. Provide exactly one of data_ref / data_inline."
+            ),
+            ja=(
+                "表示するもの: ゾーン読み取り可能なパス、またはオフロードされた"
+                "結果への参照。file.read と同じ権限で読む。data_ref / "
+                "data_inline のどちらか一方のみ指定する。"
+            ),
+        ),
+        "data_inline": ParamDescription(
+            text=(
+                "Small data already in your context, passed directly instead of a ref. Provide "
+                "exactly one of data_ref / data_inline."
+            ),
+            ja=(
+                "既にコンテキストにある小さなデータを参照の代わりに直接渡す。"
+                "data_ref / data_inline のどちらか一方のみ指定する。"
+            ),
+        ),
+        "view": ParamDescription(
+            text=(
+                "Optional: the name of a registered presentation (presentations.yaml) to render "
+                "with. Omit for the default view. At most one of view / blueprint."
+            ),
+            ja=(
+                "任意: レンダリングに使う登録済みプレゼンテーション名"
+                "（presentations.yaml）。省略時はデフォルトビュー。view / "
+                "blueprint はどちらか一方のみ。"
+            ),
+        ),
+        "blueprint": ParamDescription(
+            text=(
+                "Optional (advanced): an inline declarative component tree with JSON-Pointer "
+                "bindings for full control over the layout. Prefer the simple default (omit both "
+                "view and blueprint) unless you specifically need a custom layout. At most one of "
+                "view / blueprint."
+            ),
+            ja=(
+                "任意（上級者向け）: レイアウトを完全制御するインラインの"
+                "宣言的コンポーネントツリー（JSON-Pointer バインディング付き）。"
+                "カスタムレイアウトが特に必要でない限り、view/blueprint 両方"
+                "省略のシンプルなデフォルトを推奨。view / blueprint はどちらか"
+                "一方のみ。"
+            ),
+        ),
+    },
+    "render_template": {
+        "template": ParamDescription(
+            text=(
+                "Inline Jinja2 source text. Provide exactly one of template / template_ref."
+            ),
+            ja="インラインの Jinja2 ソーステキスト。template / template_ref のどちらか一方のみ指定する。",
+        ),
+        "template_ref": ParamDescription(
+            text=(
+                "A zone-readable path to a template file (read as raw source text under file.read "
+                "authority). Provide exactly one of template / template_ref."
+            ),
+            ja=(
+                "テンプレートファイルへのゾーン読み取り可能なパス（file.read "
+                "権限で生テキストとして読む）。template / template_ref の"
+                "どちらか一方のみ指定する。"
+            ),
+        ),
+        "data_ref": ParamDescription(
+            text=(
+                "A zone-readable path whose value binds under 'data' in the template. Read under the "
+                "same authority as file.read. Provide exactly one of data_ref / data_inline."
+            ),
+            ja=(
+                "値がテンプレート内の 'data' にバインドされるゾーン読み取り"
+                "可能なパス。file.read と同じ権限で読む。data_ref / "
+                "data_inline のどちらか一方のみ指定する。"
+            ),
+        ),
+        "data_inline": ParamDescription(
+            text=(
+                "Small data already in your context, bound under 'data' in the template. Provide "
+                "exactly one of data_ref / data_inline."
+            ),
+            ja=(
+                "既にコンテキストにある小さなデータをテンプレート内の 'data' "
+                "にバインドする。data_ref / data_inline のどちらか一方のみ"
+                "指定する。"
+            ),
+        ),
+        "undefined": ParamDescription(
+            text=(
+                "Undefined-variable policy. 'strict' (default) errors naming the missing variable; "
+                "'lenient' renders undefined as empty and reports the unbound names."
+            ),
+            ja=(
+                "未定義変数のポリシー。'strict'（デフォルト）は不足変数名を"
+                "示すエラーを出す。'lenient' は未定義を空としてレンダリングし"
+                "未束縛の名前を報告する。"
+            ),
+        ),
+    },
 }
