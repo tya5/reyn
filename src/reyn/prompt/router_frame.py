@@ -234,3 +234,100 @@ def output_language_directive(output_language: str) -> str:
         f"  - Always reply in language: {output_language}."
         "  Do NOT switch language even for error messages or clarifying questions."
     )
+
+
+# ── Mechanism routing (part x role) — 0060 Addendum C, Layer C ─────────────
+# WHEN: always, scheme-independent, static cache-prefix section.
+# WHERE: build_system_prompt() -> a dedicated "## Mechanism routing" section,
+#        placed in the STATIC block (before "## Behaviour") -- NOT a
+#        scheme-owned tool_use_sp slot. It therefore holds across all four
+#        tool-use schemes (universal / enumerate / retrieval / codeact): they
+#        all funnel through this one OS-frame builder, and none of them can
+#        omit or overwrite this section the way a scheme-owned slot could.
+# WHY: proposal 0060 Addendum C (C1/C2) -- the model needs a standing map of
+#      WHICH mechanism to reach for by role (input / workflow / output), not
+#      just a flat action catalog, and hooks (today entirely absent from the
+#      SP) need to become visible. C3 (load-bearing): the part x role rows
+#      are DERIVED from reyn.core.part_type_registry.PART_TYPE_REGISTRY's
+#      ``roles`` frozensets -- NEVER a hand-written parallel table (the
+#      #2899 completeness discipline applied at the SP layer). A new marked
+#      part-type dropped into reyn.core.part_types auto-appears here with
+#      zero edits to this module.
+# 日本語訳: 常に描画される、scheme非依存の静的節。「入力/処理/出力」の各役割に
+#      どの機構を使うべきかの地図を提示し、これまでSPに一切現れなかった hook を
+#      可視化する。表の各行は PART_TYPE_REGISTRY の roles frozenset から導出され、
+#      手書きの並行テーブルは禁止（#2899 の完全性規律をSP層に適用）。
+MECHANISM_ROUTING_HEADER = "## Mechanism routing (part x role)"
+
+MECHANISM_DECISION_TREE = (
+    "Pick the mechanism by what you need, not by habit:\n"
+    "  - need INPUT (new data or a reactive trigger) -> hook | mcp | retrieval\n"
+    "  - need WORKFLOW (multi-step orchestration) -> skill | pipeline | mcp-step\n"
+    "  - need OUTPUT (present, render, or write externally) -> present | render | mcp-write"
+)
+
+AUTHOR_VS_REUSE_HEURISTIC = (
+    "Reuse before authoring: check the existing catalog (list_actions) for a "
+    "part that already covers the need before writing a new one. Author only "
+    "when nothing existing fits. Any authored part must be typed, "
+    "permissioned, and evaluated (judge_output) before it is promoted for "
+    "reuse -- an ungated authored part is a liability, not a shortcut."
+)
+
+# Cost-discipline (C1): a hard per-part-type-row character cap so the derived
+# map stays within the cache-static budget as the meta-registry grows -- the
+# frame carries the routing MODEL, never the pull-side catalog.
+MAX_PART_TYPE_ROW_CHARS = 100
+
+
+def _format_part_type_row(spec: object) -> str:
+    """Render one derived row -- ``name (category): role, role`` -- from a
+    ``PartTypeSpec``-shaped object (duck-typed on ``.name``/``.category``/
+    ``.roles`` to avoid a hard import of ``reyn.core.part_type_registry`` at
+    module scope). Raises if the row would exceed
+    :data:`MAX_PART_TYPE_ROW_CHARS`, so an over-verbose future part-type spec
+    fails loud instead of silently bloating every turn's SP as the registry
+    grows (0060 Addendum C, co-vet pin 3)."""
+    roles = ", ".join(sorted(spec.roles))
+    row = f"  - {spec.name} ({spec.category}): {roles}"
+    if len(row) > MAX_PART_TYPE_ROW_CHARS:
+        raise ValueError(
+            f"part-type row for {spec.name!r} is {len(row)} chars, over the "
+            f"{MAX_PART_TYPE_ROW_CHARS}-char per-row cache-static budget "
+            "(0060 Addendum C) -- shorten its category/name"
+        )
+    return row
+
+
+def render_part_role_map(registry: "dict[str, object] | None" = None) -> str:
+    """Render the part x role routing map, DERIVED from
+    ``reyn.core.part_type_registry.PART_TYPE_REGISTRY`` (0060 Addendum C, C3
+    -- the load-bearing decision: never a hand-written parallel table).
+
+    ``registry`` defaults to the live ``PART_TYPE_REGISTRY``; passing a
+    different ``dict[str, PartTypeSpec]`` lets tests exercise a
+    synthetic/rebuilt registry (the auto-appear and char-budget co-vet
+    witnesses) without mutating the shipped one."""
+    if registry is None:
+        from reyn.core.part_type_registry import PART_TYPE_REGISTRY
+
+        registry = PART_TYPE_REGISTRY
+    return "\n".join(
+        _format_part_type_row(spec) for _, spec in sorted(registry.items())
+    )
+
+
+def render_mechanism_routing_frame(registry: "dict[str, object] | None" = None) -> str:
+    """Full "## Mechanism routing" section: header + the derived part x role
+    map + the mechanism-selection decision tree + the author-vs-reuse
+    heuristic. This is what ``build_system_prompt`` injects into the static
+    cache-prefix (0060 Addendum C, C1) -- scheme-independent, appears
+    identically under every tool-use scheme."""
+    return "\n\n".join(
+        [
+            MECHANISM_ROUTING_HEADER,
+            render_part_role_map(registry),
+            MECHANISM_DECISION_TREE,
+            AUTHOR_VS_REUSE_HEURISTIC,
+        ]
+    )
