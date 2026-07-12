@@ -18,6 +18,178 @@ channel that feeds messages into a turn) and the **P6 lifecycle** (the event
 stream). No new OS machinery — a new workflow that uses hooks does not require any
 OS change (P7).
 
+## Syntax quick reference
+
+Everything below is detailed further on; this section is a self-contained
+lookup for authoring a `hooks:` (and, if needed, `composers:`) block without
+reading the rest of the page.
+
+### `on:` values — what a hook's `on:` accepts vs. what a Composer's `inputs[].kind` accepts
+
+**These are two different, non-interchangeable vocabularies** — a value
+valid in one is not necessarily valid in the other:
+
+| Bare form | Namespaced form (also accepted) | Fires | Valid as a hook's `on:`? | Valid as a Composer `inputs[].kind`? |
+|---|---|---|:---:|:---:|
+| `session_start` | `builtin:lifecycle:session_start` | session opens | ✅ | ✅ |
+| `session_end` | `builtin:lifecycle:session_end` | session closes | ✅ | ✅ |
+| `turn_start` | `builtin:lifecycle:turn_start` | a turn begins | ✅ | ✅ |
+| `turn_end` | `builtin:lifecycle:turn_end` | a turn's terminal `stop_reason` | ✅ | ✅ |
+| `task_start` | `builtin:lifecycle:task_start` | a dynamic task is created | ✅ | ✅ |
+| `task_end` | `builtin:lifecycle:task_end` | a dynamic task completes or aborts | ✅ | ✅ |
+| `mcp_resource_updated` | `builtin:external:mcp_resource_updated` | a subscribed MCP resource pushes an update | ✅ | ✅ |
+| `file_changed` | `builtin:external:file_changed` | a watched path changes ([`fs_watch`](../../reference/config/reyn-yaml.md#fs_watch-block) required) | ✅ | ✅ |
+| `cron_fired` | `builtin:external:cron_fired` | a message-based `cron:` job delivers | ✅ | ✅ |
+| `webhook_received` | `builtin:external:webhook_received` | an inbound webhook resolves to this session | ✅ | ✅ |
+| — (open) | `composed:<name>` | a Composer (see below) publishes its correlated output | ✅ | ✅ (chaining — another Composer's output) |
+| — (open) | `llm:<session_id>:<event_name>` | the LLM itself emits one via `emit_hook_event` (always its own session) | ❌ **rejected at load** (`HookConfigError`) | ✅ |
+
+**`llm:*` can never be a hook's `on:` value — only a Composer input.** A
+`hooks:` entry only accepts the 10 builtin bare/namespaced forms above or a
+`composed:<name>` prefix; anything else (including a well-formed
+`llm:<session_id>:<event_name>`) is a load-time `HookConfigError`. To react
+to an LLM-emitted event, correlate it through a `composers:` entry into a
+`composed:<name>` event, then put your `hooks:` entry's `on:` on THAT
+composed kind — see the [worked example](#llm-authored-hook-events-emit_hook_event)
+below. The bare/namespaced-form duality only applies within the 10 builtin
+points — it does not extend `on:`'s acceptance to `llm:*`.
+
+### The 4 config schemes — every field
+
+A hook entry sets exactly one scheme. Every scheme accepts the two
+top-level fields `on` (required, see above) and `name` (optional string,
+defaults to the `on` value — becomes the `[hook:<name>]` attribution prefix)
+plus the optional `matcher` (see [below](#matcher-narrowing-which-events-fire-a-hook)).
+
+**`template_push`** — a Jinja2-templated inbox push:
+
+| Field | Type | Default | Meaning |
+|---|---|---|---|
+| `message` | str (Jinja2) | _required_ | Rendered text of the pushed `[hook:name]` message. |
+| `wake` | bool \| str (Jinja2 → bool) | `true` | `true` starts a new turn (self-continuation, **E**); `false` rides passively into the next turn (context-inject, **C**). |
+| `push_when` | str (Jinja2 → bool) | `"true"` | `false` skips the push entirely (conditional push). |
+| `session` | str \| None | `None` (current session) | Routes the push to a *different* session's inbox — [cross-session push](#cross-session-push). |
+
+**`shell_exec`** — a sandboxed side-effect command:
+
+| Field | Type | Default | Meaning |
+|---|---|---|---|
+| `shell_exec` | str (**static** — not Jinja2) | _required_ | The command line. stdout/stderr are ignored; the event is written to the command's stdin as JSON. |
+
+**`shell_exec` is deliberately NOT templated.** Unlike `message`/`input_template`
+above, the command line is split with `shlex.split` and run as-is — event/context
+data is never interpolated into it. This is an intentional command-injection
+guard, not an oversight: if you need the firing event's data inside the
+command, read it from **stdin**, which always carries the event's payload as
+JSON (e.g. a composed event's `{"inputs": [...], "correlation_key": ...}`) —
+the command must read and parse stdin itself, never expect `{{ ... }}`
+substitution in its own argv.
+
+**`shell_push`** — a sandboxed command whose stdout IS a push directive:
+
+| Field | Type | Default | Meaning |
+|---|---|---|---|
+| `shell_push` | str | _required_ | The command line. stdout must be pure JSON: `{"push_when": bool, "wake": bool, "message": str, "session"?: str}` (first three required). Any failure (non-zero exit, invalid JSON, missing/wrong-typed field) skips the push, fail-safe. |
+
+**`pipeline_launch`** — launch a registered pipeline, async/detached:
+
+| Field | Type | Default | Meaning |
+|---|---|---|---|
+| `name` | str | _required_ | The pipeline's registered name, resolved at dispatch time. Unregistered → warning + skip, lifecycle point still completes. |
+| `input_template` | dict \| str \| None | `None` | `dict`: every string leaf (recursively) is Jinja2-rendered. `str`: rendered once, output parsed as a JSON object. `None`: launches with no input. |
+
+### `matcher` grammar
+
+`matcher: {field: pattern, ...}` — evaluated against the firing event's
+template vars before the hook's action runs.
+
+- Match rule by field **name**: `uri` and `path` use a shell-style glob
+  (`fnmatch`); every other field name is exact string equality.
+- Absent or empty `matcher` → the hook always fires.
+- For the 10 builtin points, a matcher field outside that point's payload
+  (a typo, or a field the point never carries) is a **load-time
+  `HookConfigError`** — rejected before the hook can ever run.
+- For a hook's `matcher` on a `composed:*` `on:` target, or a Composer
+  input's `match` on an `llm:*` `inputs[].kind` (neither has a builtin
+  schema entry — the open set), a field the event doesn't carry never
+  matches at runtime (nothing to validate against at load time).
+
+### `composers:` block — every field
+
+A Composer correlates multiple Bus events into one derived `composed:<name>`
+event, independent of the `hooks:` block (see
+[Async Bus and Composer](#async-bus-and-composer-event-correlation) below
+for the full model):
+
+```yaml
+composers:
+  - name: deploy_approved          # required, unique
+    op: all                        # required: all | any | seq | window | debounce | correlate_by | count
+    inputs:                        # required, non-empty list
+      - kind: builtin:external:mcp_resource_updated   # required
+        match: {server: "github"}                     # optional — same field->pattern grammar as `matcher`
+      - kind: mcp:approval-server:approved
+    emit:
+      kind: composed:deploy_approved   # required, MUST start with `composed:`
+    policy:                         # optional
+      capacity: 10                  # int, default 10
+      overflow: reject               # drop_oldest (default) | drop_newest | reject
+      ttl: 5m                        # duration: plain seconds, or "<N>s"/"<N>m"/"<N>h" — default 5m
+    correlate_by: request_id        # required IFF op: correlate_by — the payload field to key on
+    count: 3                        # required IFF op: count — the threshold
+```
+
+- `inputs[].kind` names a builtin namespaced kind (`builtin:lifecycle:*` /
+  `builtin:external:*`), an `llm:<session_id>:<event_name>` kind an LLM emits
+  via `emit_hook_event` in that same session, a `composed:*` kind from
+  another Composer (chaining — cycles are rejected at load time), or an
+  external-plugin kind (`mcp:<server>:<event>`, etc.). The LLM can only ever
+  *produce* an `llm:*` event (via `emit_hook_event`); it cannot author a
+  `composers:` block itself (that's an operator-owned config), only supply
+  the events one correlates on.
+- `inputs[].source`, if present, must be omitted or `"builtin"` — anything
+  else is a load-time error (the Bus only ever carries `source="builtin"`;
+  correlate on a payload field instead).
+- The 7 `op` values: `all` (every input arrived), `any` (first arrival,
+  stateless), `seq` (inputs' kinds arrive in the declared order), `window`
+  (fire after `ttl` from the FIRST match, with everything buffered),
+  `debounce` (fire `ttl` after the LAST match with no newer one), `correlate_by`
+  (like `all`, keyed by a payload field), `count` (N matching events per key).
+- **`inputs` arity**: `seq` requires **at least 2** inputs (a load-time
+  error otherwise) — every other op accepts a **single** input, including
+  `all`/`any` (both fire immediately on that one input's first arrival) and
+  `count` (fires once `count` matching events of that one kind have arrived).
+  A single-input Composer is the common shape for reacting to just one
+  `llm:*` signal:
+  ```yaml
+  composers:
+    - name: deploy_ready
+      op: any                       # any/all are equivalent with 1 input
+      inputs:
+        - kind: llm:main:deploy_ready
+      emit: { kind: composed:deploy_ready }
+  ```
+- **What the composed event carries.** `_emit_composed` builds the emitted
+  event's payload as `{"inputs": [<matched event's payload dict>, ...],
+  "correlation_key": <key or "__default__">}` — so a downstream hook's
+  template vars are `{{ inputs }}` (a list) and `{{ correlation_key }}`, NOT
+  the original event's fields flattened at the top level. **Order caveat**:
+  `inputs[]` is in ARRIVAL order, not declared-config order, for every op
+  except `seq` (whose whole point is enforcing the declared order) — and
+  each entry is the bare payload dict with no `kind` tag to identify which
+  declared input it came from. So `{{ inputs[0].<field> }}` is only reliably
+  "the first *declared* input's field" when the Composer uses `op: seq`, or
+  has exactly one input (nothing else can arrive first).
+- A `composed:<name>` event becomes a normal Sync `on:` target — add a
+  `hooks:` entry with `on: composed:deploy_approved` to react to it (see the
+  worked example [below](#async-bus-and-composer-event-correlation)).
+
+### `emit_hook_event` — LLM-authored hook-events
+
+The LLM's own tool for putting an event onto its session's Bus — see
+[LLM-authored hook-events](#llm-authored-hook-events-emit_hook_event) below
+for the full syntax, autonomy boundary, and a worked example.
+
 ## Lifecycle points
 
 Hooks fire at six lifecycle points, one for each combination of scope and direction:
@@ -76,11 +248,20 @@ first connection (there is nothing to resync).
 
 Fires when a file under an operator-declared watch path is created, modified,
 or deleted. Requires the `watchdog` extra (`pip install reyn[fs-watch]`) and
-at least one path under `fs_watch.paths` in `reyn.yaml` — see
-[reyn-yaml § `fs_watch` block](../../reference/config/reyn-yaml.md#fs_watch-block).
-Without either, the feature is off (a clear warning is logged once if paths
-are configured but the extra is missing; no config at all is silently
-byte-identical to a build with no watcher).
+at least one path under `fs_watch.paths` in `reyn.yaml`:
+
+```yaml
+fs_watch:
+  paths:
+    - /repo/src
+    - /repo/docs
+  debounce_seconds: 0.2   # coalesce a write-burst on one path into ONE fire
+```
+
+Full field reference: [reyn-yaml § `fs_watch` block](../../reference/config/reyn-yaml.md#fs_watch-block).
+Without either the extra or a configured path, the feature is off (a clear
+warning is logged once if paths are configured but the extra is missing; no
+config at all is silently byte-identical to a build with no watcher).
 
 Template vars:
 
@@ -508,6 +689,69 @@ non-reentry → valve-metered allow" transition (proposal
 pinned by a flip-witness Tier-2 test that drives a chain whose natural turn
 count is unbounded and asserts the force-close fires at the cap.
 
+## LLM-authored hook-events (`emit_hook_event`)
+
+Everything above is fired by the OS (a lifecycle point, an external-event
+source) or by a Composer's correlation logic. `emit_hook_event` is the ONE
+Control-IR op that lets the LLM itself put an event onto its own session's
+Bus — the first LLM-reachable producer in an otherwise OS-internal pipeline.
+
+```json
+{"kind": "emit_hook_event", "event_name": "deploy_ready", "payload": {"artifact": "build-42"}}
+```
+
+- `event_name` (str, required) — the emitted kind is ALWAYS
+  `llm:<session_id>:<event_name>`; the session component comes solely from
+  the caller's own session at execution time — there is no field the LLM
+  can set to target a different session.
+- `payload` (dict, optional, default `{}`) — carried on the event for a
+  `matcher` / Composer to inspect. Never itself rendered into a hook
+  message template by this op.
+
+**The autonomy boundary — a static ALLOW-list, not a deny-list.** Only this
+session's own `llm:<session_id>:*` namespace may ever be emitted:
+
+- `builtin:*` is rejected — an LLM cannot spoof Reyn's own
+  lifecycle/external-event kinds.
+- `composed:*` is rejected — an LLM cannot spoof a Composer's *correlated*
+  output; forging one would fire a `composed:*`-gated hook (e.g. an
+  approval-gated deploy) without the Composer's actual correlation logic
+  ever running.
+- `webhook:*` / `mcp:*` (or any other session's `llm:*`) are rejected — an
+  LLM cannot spoof external ingress or another session's identity.
+
+**An emitted `llm:*` event only reaches a `hooks:` entry through a
+Composer** — there is no direct Sync path from a raw `llm:*` Bus event to a
+`hooks:` `on:` entry (only `composed:*` events are bridged to Sync dispatch;
+see [Async Bus and Composer](#async-bus-and-composer-event-correlation)).
+So `emit_hook_event`'s output is always consumed as a Composer
+`inputs[].kind`, never directly as a hook's `on:`. **The `inputs[].kind`
+value must name the actual session id**, not just the event name — the
+default session's id is `main` (see [Sessions](../multi-agent/sessions.md)
+for named/multi-session setups). Worked example — the LLM signals it
+finished preparing a deploy (with the artifact id in `payload`); a Composer
+waits for that alongside an external approval, then a Sync hook reacts to
+the correlated result and reads the artifact id back out. Using `op: seq`
+here (not `all`) is deliberate — it's the one op that GUARANTEES `inputs[]`
+lands in the declared order, so `inputs[0]` is reliably the `llm:*` event's
+payload, not whichever of the two happened to arrive first:
+
+```yaml
+composers:
+  - name: deploy_approved
+    op: seq                              # order-guaranteed — inputs[0] is always the llm:* event below
+    inputs:
+      - kind: llm:main:deploy_ready       # the default session's id is "main"
+      - kind: mcp:approval-server:approved
+    emit: { kind: composed:deploy_approved }
+
+hooks:
+  - on: composed:deploy_approved
+    template_push:
+      message: "Deploy artifact {{ inputs[0].artifact }} approved — proceeding."
+      wake: false
+```
+
 ## Deferred
 
 The following capabilities are designed but not yet implemented:
@@ -519,11 +763,6 @@ The following capabilities are designed but not yet implemented:
   truncate-falsify PR gate applies). Composer pending state stays
   best-effort/crash-non-durable until then (by design, not an oversight —
   see the reliability posture above).
-- **`emit_hook_event`** — an LLM-emit Control-IR op (Hook-Event Redesign
-  Phase 5's LLM-emit slice, proposal §8) letting the LLM itself emit a
-  hook-event that a Composer can correlate on. Not built yet; today's
-  composed→wake reachability path (#2881) is driven entirely by
-  builtin/external hook-events, no LLM-emit involved.
 - **valve-persist** — `_hook_driven_turns` (the loop-valve counter) is
   in-memory-only (resets on crash); a separate, recovery-gated follow-up
   would make it snapshot-backed. Flagged as more load-bearing now that the
