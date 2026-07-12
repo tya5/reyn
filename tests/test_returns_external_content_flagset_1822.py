@@ -97,6 +97,12 @@ _NOT_EXTERNAL = {
     # #2073 S3: hooks_add writes .reyn/hooks.yaml + schedules a reload — returns a
     # status dict (on / added / reload_scheduled / path), not external content.
     "hooks_add",
+    # Hook-Event Redesign Phase 5 part 2: emit_hook_event publishes an
+    # LLM-authored hook-event to this session's OWN internal per-Session
+    # HookBus and returns a status dict (kind / status / emitted_kind), never
+    # external/untrusted content — the payload is LLM-authored (already inside
+    # the trust boundary), not fetched from a server/internet/foreign session.
+    "emit_hook_event",
     # FP-0057 Phase 1: embed returns VECTORS (float arrays derived from the
     # input texts), not relayed external content — the numeric embedding is a
     # transform of the caller's own texts, not fetched server/internet content.

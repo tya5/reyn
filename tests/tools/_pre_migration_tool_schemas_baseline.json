@@ -382,6 +382,29 @@
     },
     "type": "function"
   },
+  "emit_hook_event": {
+    "type": "function",
+    "function": {
+      "name": "emit_hook_event",
+      "description": "Emit a hook-event named event_name, scoped to YOUR OWN session (the actual kind is llm:<your-session-id>:<event_name> \u2014 you cannot target another session or another namespace like builtin:*/composed:*/webhook:*). Use this to signal completion of something a Composer or a hooks_add-registered hook is watching for. payload is an optional dict carried on the event for a matcher/Composer to inspect.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "event_name": {
+            "type": "string",
+            "description": "The event's name (becomes the llm:<your-session-id>:<event_name> kind \u2014 you supply only this suffix, never the session component)."
+          },
+          "payload": {
+            "type": "object",
+            "description": "Optional dict of fields carried on the event for a matcher/Composer to read."
+          }
+        },
+        "required": [
+          "event_name"
+        ]
+      }
+    }
+  },
   "forget_memory": {
     "function": {
       "description": "Delete a memory entry. Only when the user explicitly says 'forget' or the memory turned out wrong.",
