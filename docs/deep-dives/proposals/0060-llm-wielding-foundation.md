@@ -590,8 +590,14 @@ hand-listed meta-registry would have.
 2. **Scheme-independence.** The routing model appears under all four
    tool-use schemes. Move it from the OS-frame into a scheme-owned slot →
    it is missing under ≥1 scheme → RED.
-3. **Char-budget / cache-static.** The frame sits in the static cache-prefix,
-   not the dynamic tail; it carries the model, not the catalog.
+3. **Char-budget / cache-static — bounded per part-type.** The frame sits in
+   the static cache-prefix, not the dynamic tail; it carries the model, not the
+   catalog. Because the part×role map is *derived* (C3), it **grows with the
+   meta-registry** — so the budget is not just a fixed total but a **per-part-
+   type derived-row cap**: adding the Nth part-type must keep the frame within
+   its cache-static budget (a verbose per-type row would bloat the every-turn
+   SP as the SSoT grows). 5 part-types is within budget today; the pin is that
+   the per-type derived-row cost stays bounded (cost-discipline lens).
 
 **Scope:** small — SP prose in `router_frame.py` derived from the meta-registry;
 no security surface (unlike Layer A). Lower risk. Layer C completes F1's floor
