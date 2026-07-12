@@ -45,7 +45,14 @@ Hook-Event Redesign Phase 3 (proposal 0059 §10 Q-reyn-4) additionally exposes:
     validate_event_pattern_against_schema — OPT-IN static validation: flag an
                      ``EventPattern`` payload field not in a kind's builtin
                      schema (typo-resistance).
+
+Hook-Event Redesign Phase 4a (proposal 0059 §3.2/§3.3) additionally exposes:
+    HookBus        — the per-Session pub/sub broadcast bus (``reyn.hooks.
+                     bus``); ``HookDispatcher.dispatch`` broadcasts to it
+                     independently of the Sync hook loop when injected.
+    HookBusSubscription — a subscriber's handle on a ``HookBus``.
 """
+from reyn.hooks.bus import HookBus, HookBusSubscription
 from reyn.hooks.event import HookEvent
 from reyn.hooks.event_pattern import EventPattern
 from reyn.hooks.event_pattern import from_legacy_matcher as event_pattern_from_legacy_matcher
@@ -63,6 +70,8 @@ from reyn.hooks.shell_runner import run_shell_hook
 
 __all__ = [
     "EventPattern",
+    "HookBus",
+    "HookBusSubscription",
     "HookDef",
     "HookEvent",
     "PushBlock",
