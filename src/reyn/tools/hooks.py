@@ -35,6 +35,13 @@ _HOOK_POINTS = [
 # package refactor — byte-identical, no LLM-facing text change).
 _HOOKS_ADD_DESCRIPTION = _hooks_descriptions.hooks_add.text
 
+# proposal 0060 D5d: the same doc this description already hand-points at
+# (descriptions/hooks.py) — generalized here as the first-class structured
+# field (the exemplar the reachability audit (D2) singled out as the ONE
+# REACHABLE part-type; other ops get this same field, not a hand-written
+# sentence, going forward).
+_HOOKS_ADD_DOC_REF = "docs/concepts/runtime/hooks.md"
+
 _HOOKS_ADD_PARAMETERS: dict[str, Any] = {
     "type": "object",
     "properties": {
@@ -200,4 +207,5 @@ HOOKS_ADD = ToolDefinition(
     handler=_handle_hooks_add,
     category="hooks",
     purity="side_effect",
+    doc_ref=_HOOKS_ADD_DOC_REF,
 )

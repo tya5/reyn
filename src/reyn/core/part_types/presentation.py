@@ -14,4 +14,5 @@ PART_TYPE_SPEC = PartTypeSpec(
     category="presentation",
     registry_ref="reyn.data.presentations.registry:build_presentation_registry",
     description="A named, operator-facing presentation/render template.",
+    doc_ref="docs/concepts/runtime/present.md",
 )

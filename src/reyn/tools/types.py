@@ -415,6 +415,17 @@ class ToolDefinition:
         kw_only=True, default=UNDECLARED,
     )
 
+    # Proposal 0060 Addendum D, D5d: a structured pointer at the reference doc
+    # that fully specifies this tool's format (the reachability audit found
+    # "Control-IR ops (class)" BROKEN — no op names a doc at all, unlike
+    # hooks_add's hand-written pointer). None = not yet declared (most tools;
+    # not every tool needs one — this is populated for the reachability-audit
+    # spec-bearing set, see tests/test_0060_d5d_doc_ref_registry_gate.py).
+    # Surfaced at describe_action (universal_dispatch.py) and consumed by the
+    # D5c error-rail (reyn.core.doc_ref_rail) to teach a parse/validation
+    # failure where the full spec lives.
+    doc_ref: str | None = field(kw_only=True, default=None)
+
     # Future metadata anchors (commented out; surface as needed):
     # cost_weight: float = 1.0
     # rate_limit_class: str | None = None

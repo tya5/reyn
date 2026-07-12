@@ -117,4 +117,7 @@ MCP_INSTALL_OP = ToolDefinition(
     handler=_handle_mcp_install_op,
     category="io",
     purity="side_effect",
+    # proposal 0060 D5d: mirrors the "mcp" PartTypeSpec's doc_ref
+    # (reyn.core.part_types.mcp) — same part-type, install-op axis.
+    doc_ref="docs/concepts/tools-integrations/mcp.md",
 )

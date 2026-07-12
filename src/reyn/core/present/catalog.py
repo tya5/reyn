@@ -49,7 +49,19 @@ _BIND_KEY = "$bind"
 class PresentBlueprintError(ValueError):
     """A blueprint failed the structural gate (non-catalog component / non-path
     binding / malformed slot). A hard rejection — distinct from a runtime binding
-    miss, which soft-skips."""
+    miss, which soft-skips.
+
+    Proposal 0060 D5c error-rail: every message is annotated with a pointer to
+    the present concept doc (the catalog + `$bind` spec) — wired once here,
+    not at each of this module's many raise sites.
+    """
+
+    _DOC_REF = "docs/concepts/runtime/present.md"
+
+    def __init__(self, message: str) -> None:
+        from reyn.core.doc_ref_rail import with_doc_pointer
+
+        super().__init__(with_doc_pointer(message, self._DOC_REF))
 
 
 def is_binding(node: Any) -> bool:

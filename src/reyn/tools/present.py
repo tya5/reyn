@@ -36,6 +36,11 @@ from reyn.tools.types import ToolContext, ToolDefinition, ToolGates, ToolResult
 # package refactor — byte-identical, no LLM-facing text change).
 _PRESENT_DESCRIPTION = _presentation_descriptions.present.text
 
+# proposal 0060 D5d: the single doc_ref for the present op — used both as the
+# ToolDefinition's structured pointer field and (D5c) the error-rail pointer
+# appended to a schema-validation failure below.
+_PRESENT_DOC_REF = "docs/concepts/runtime/present.md"
+
 _PRESENT_PARAMETERS: dict[str, Any] = {
     "type": "object",
     "properties": {
@@ -85,7 +90,14 @@ async def _handle_present(args: Mapping[str, Any], ctx: ToolContext) -> ToolResu
             blueprint=args.get("blueprint"),
         )
     except ValidationError as exc:
-        return {"kind": "present", "status": "error", "ok": False, "error": str(exc)}
+        from reyn.core.doc_ref_rail import with_doc_pointer
+
+        return {
+            "kind": "present",
+            "status": "error",
+            "ok": False,
+            "error": with_doc_pointer(str(exc), _PRESENT_DOC_REF),
+        }
 
     if (
         ctx.router_state is not None
@@ -120,4 +132,5 @@ PRESENT = ToolDefinition(
     handler=_handle_present,
     category="presentation",
     purity="side_effect",
+    doc_ref=_PRESENT_DOC_REF,
 )

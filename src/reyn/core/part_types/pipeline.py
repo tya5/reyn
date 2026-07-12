@@ -13,4 +13,5 @@ PART_TYPE_SPEC = PartTypeSpec(
     category="pipeline_management",
     registry_ref="reyn.data.pipelines.registry:build_pipeline_registry",
     description="A registered multi-step orchestration DSL document.",
+    doc_ref="docs/reference/runtime/pipeline-dsl.md",
 )
