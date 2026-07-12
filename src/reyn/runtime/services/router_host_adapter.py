@@ -126,6 +126,7 @@ class RouterHostAdapter:
         record_spawned_task: "Callable[[str, str], None] | None" = None,  # #2103 S1bc-exec
         live_session_id_fn: "Callable[[], str | None] | None" = None,     # #2103 S1bc-exec
         current_task_id_fn: "Callable[[], str | None] | None" = None,     # #1953 §16
+        turn_origin_fn: "Callable[[], str | None] | None" = None,  # proposal 0060 Phase 1 (A7)
         agent_workspace_dir: Path,
         # File op callbacks
         file_read: Callable[..., Awaitable[dict]],
@@ -385,6 +386,7 @@ class RouterHostAdapter:
         self._record_spawned_task = record_spawned_task   # #2103 S1bc-exec
         self._live_session_id_fn = live_session_id_fn      # #2103 S1bc-exec
         self._current_task_id_fn = current_task_id_fn      # #1953 §16
+        self._turn_origin_fn = turn_origin_fn      # proposal 0060 Phase 1 (A7)
         self._workspace_dir = Path(agent_workspace_dir)
         # File callbacks
         self._file_read_cb = file_read
@@ -2087,6 +2089,14 @@ class RouterHostAdapter:
             # session-owned (the original model).
             current_task_id=(
                 self._current_task_id_fn() if self._current_task_id_fn else None
+            ),
+            # proposal 0060 Phase 1 (A7): mirrors current_task_id's live-callback
+            # read exactly (varies per turn, so the fixed init value would be stale).
+            # This is the router-dispatched install path (skill_management__install_*
+            # / pipeline / presentation_management__install_* → this factory), so it
+            # is the load-bearing wiring for A9's per-handler provenance stamp.
+            turn_origin=(
+                self._turn_origin_fn() if self._turn_origin_fn else None
             ),
             # #2761 PR-2: the per-session HotReloader so an install op (skill/pipeline)
             # can apply a pure-addition reload IMMEDIATELY (mid-turn) → the new entry is

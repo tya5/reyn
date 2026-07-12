@@ -901,6 +901,15 @@ class Session:
         # task (a user / hook / recovery turn). Slice B extends the lifetime to a
         # persistent assignment spanning continuation + recovery turns.
         self._current_task_id: "str | None" = None
+        # proposal 0060 Phase 1 Layer A (A7): the OS-authoritative provenance
+        # classification of the turn currently being processed, mirroring
+        # ``_current_task_id`` exactly (same seam, same threading). Set per-turn
+        # in ``_stamp_execution_context``; read by the router op-ctx builders so
+        # install-op handlers (skill/pipeline/present, A9) stamp
+        # ``entry["provenance"]`` from a single OS-set source the LLM cannot
+        # spoof. Initialized to the STRICTER value (fail-safe: never default to
+        # "user_directed" before the first turn is classified).
+        self._current_turn_origin: str = "auto_improvement"
         # #2103: a spawned EPHEMERAL session (spawn-time mode="ephemeral") auto-vanishes
         # once its task is done. Set post-construction by the registry on an ephemeral
         # spawn; the main session + persistent spawns leave it False. ``_vanish_scheduled``
@@ -1813,6 +1822,9 @@ class Session:
             # #1953 §16: the per-turn execution context (set in run_one_iteration),
             # read at op-ctx-build time so a router task.create derives ownership.
             current_task_id_fn=lambda: self._current_task_id,
+            # proposal 0060 Phase 1 (A7): mirrors current_task_id_fn exactly — a live
+            # callback (not a fixed init value) because turn_origin varies per turn.
+            turn_origin_fn=lambda: self._current_turn_origin,
             agent_workspace_dir=self.workspace_dir,
             file_read=self._file_read,
             file_write=self._file_write,
@@ -4743,7 +4755,21 @@ class Session:
         ownership-cascade fires on ABORT (a COMPLETED T is skipped), and a
         linger-owned sub-task's own recovery still routes to T's assignee. The
         clear-on-terminal alternative adds op→session coupling for no functional gain,
-        so it is intentionally NOT done."""
+        so it is intentionally NOT done.
+
+        proposal 0060 Phase 1 Layer A (A7): also derives ``self._current_turn_origin``
+        — the OS-authoritative provenance classification of this turn, threaded into
+        ``OpContext.turn_origin`` at both ctx-build sites exactly like
+        ``current_task_id`` above. Only an explicit ``kind == "user"`` turn grants
+        ``"user_directed"``; EVERY other kind — hook, pipeline_result, the wake family,
+        sub-agent ``agent_request``/``agent_response``, or any future kind this method
+        does not yet know about — resolves to the strictER ``"auto_improvement"``. This
+        is an if/else fail-safe, not a lookup table: there is no path by which an
+        unmapped kind can silently fall through to ``"user_directed"`` (0060 §2.7 —
+        that would let an autonomous turn bypass the Phase-4 auto-improvement gate).
+        Sub-agent turns are deliberately `"auto_improvement"` (lead-adjudicated,
+        Addendum B A7): a human directed the PARENT task, not necessarily this
+        install action."""
         meta = payload.get("meta", {})
         if kind == WAKE_READY_KIND:
             self._current_task_id = meta.get("task_id")
@@ -4753,6 +4779,8 @@ class Session:
             pass  # PRESERVE: self-continuation / response to the agent's own action
         else:
             self._current_task_id = None  # user / agent_request / unknown → new context
+        # A7: fail-safe if/else — "user" is the ONLY kind granting user_directed.
+        self._current_turn_origin = "user_directed" if kind == "user" else "auto_improvement"
 
     async def _handle_task_wake(self, payload: dict) -> None:
         """#1953 slice 7: surface a Task dep-graph wake (``task_ready`` /
@@ -6140,6 +6168,7 @@ class Session:
             hook_dispatcher=self._hook_dispatcher,  # #1800 slice 5c: complete-by-construction (both router callers)
             hook_bus=self._hook_bus,  # Hook-Event Redesign Phase 5 part 2: emit_hook_event's publish target (both router op-ctx builders complete-by-construction)
             current_task_id=self._current_task_id,  # #1953 §16: ownership-derivation for task.create (enumerate ALL op-ctx builders)
+            turn_origin=self._current_turn_origin,  # proposal 0060 Phase 1 (A7): OS-authoritative provenance source (enumerate ALL op-ctx builders)
             hot_reloader=self._hot_reloader,  # #2761 PR-2: per-session reloader (both router op-ctx builders complete-by-construction)
             render_template_bounds=self._render_template_bounds,  # #2679: operator bounds (both router op-ctx builders complete-by-construction)
             embedding_event_sink=self._embedding_event_sink,  # FP-0057 #2856 Part A: TUI model-download status sink for the embed op

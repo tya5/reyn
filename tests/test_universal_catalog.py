@@ -74,6 +74,11 @@ def test_categories_master_table_order() -> None:
         # ``pipeline__`` resource category; management plane (mirrors
         # ``skill_management``).
         "pipeline_management",
+        # proposal 0060 Phase 1 Layer A (A8): presentation management ops
+        # (install). Management plane (mirrors skill_management /
+        # pipeline_management); required for presentation_management__install to
+        # dispatch.
+        "presentation_management",
     )
 
 

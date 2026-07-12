@@ -156,6 +156,11 @@ from . import pipeline_install as _pipeline_install  # noqa: F401, E402
 # FP-0054 PR-A: present op — user-facing presentation of bulk data (null renderer).
 from . import present as _present  # noqa: F401, E402
 
+# proposal 0060 Phase 1 Layer A (A8): present-view install op (register a named
+# presentation template into presentations.entries — mirrors skill_install/
+# pipeline_install; lower threat, validate_blueprint is the structural gate).
+from . import presentation_install as _presentation_install  # noqa: F401, E402
+
 # FP-0055 PR-2: render_template op — sandboxed Jinja2 text-templating producer.
 from . import render_template as _render_template  # noqa: F401, E402
 from . import sandboxed_exec as _sandboxed_exec  # noqa: F401, E402

@@ -44,6 +44,10 @@ ReapplySeam = tuple[str, Callable[[dict], Awaitable[bool]]]
 _INSTALL_SOURCE_SEAMS: "dict[str, tuple[str, ...]]" = {
     "skill_install": ("skills",),
     "pipeline_install": ("pipelines",),
+    # proposal 0060 Phase 1 Layer A (A8): the presentation_install op writes
+    # .reyn/config/presentations.yaml — reload the SAME "presentations" seam
+    # FP-0054 PR-C already registers for operator edits to that file.
+    "presentation_install": ("presentations",),
     "mcp_install": ("mcp",),
     # mcp__install_local writes .reyn/mcp.yaml via a parallel path (tools/mcp_verbs)
     # but reloads the SAME mcp seam — its distinct source label maps here too.

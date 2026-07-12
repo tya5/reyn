@@ -1111,6 +1111,21 @@ skill_install_verb_to_canonical = make_status_text_mapper(
 )
 
 
+def _render_presentation_install_verb(result: dict) -> str:
+    return f"Installed presentation '{result.get('name', '')}'."
+
+
+# ``presentation_management__install_local`` (tools/presentation_management_verbs.py,
+# proposal 0060 Phase 1 Layer A / A8) — delegates to
+# ``op_runtime.presentation_install.handle`` and surfaces its
+# ``{status:"installed", name, config_path}`` verbatim (envelope peeled the same
+# way as the pipeline/skill install verbs).
+presentation_install_verb_to_canonical = make_status_text_mapper(
+    render=_render_presentation_install_verb,
+    meta_keys=("name", "config_path"),
+)
+
+
 def _render_mcp_install_local_verb(result: dict) -> str:
     return f"Installed local MCP server '{result.get('name', '')}'."
 

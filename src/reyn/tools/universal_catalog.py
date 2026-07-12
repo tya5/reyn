@@ -98,6 +98,11 @@ CATEGORIES: Final[tuple[str, ...]] = (
     # ``pipeline__`` resource category (per-registered-pipeline dynamic
     # dispatch); this is the management plane — mirrors ``skill_management``.
     "pipeline_management",
+    # proposal 0060 Phase 1 Layer A (A8): presentation management ops (install).
+    # Single verb (no source/git-fetch counterpart — a blueprint is inline
+    # declarative data). Management plane — mirrors ``skill_management`` /
+    # ``pipeline_management``.
+    "presentation_management",
 )
 
 
@@ -580,6 +585,11 @@ def _enumerate_category(category: str, ctx: ToolContext) -> list[dict[str, str]]
         # repeat the same gap.
         "skill_management",
         "pipeline_management",
+        # proposal 0060 Phase 1 Layer A (A8): same enumeration wiring as
+        # skill_management / pipeline_management so
+        # list_actions(category=["presentation_management"]) surfaces the
+        # install verb (not just dispatchable-but-invisible).
+        "presentation_management",
     ):
         return _enumerate_static_category(category)
 

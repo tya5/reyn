@@ -52,6 +52,7 @@ from reyn.security.content_guard import first_blocking_match, scan_for_threats
 
 from . import register
 from .context import OpContext
+from .context import provenance_from_ctx as _provenance_from_ctx
 from .context import sandbox_policy_from_ctx as _sandbox_policy_from_ctx
 
 # ---------------------------------------------------------------------------
@@ -536,6 +537,16 @@ async def handle(
     }
     if op.source:
         entry["source"] = op.source
+    # proposal 0060 Phase 1 Layer A (A9): provenance is stamped from the single
+    # OS-authoritative source (ctx.turn_origin, set by Session._stamp_execution_context
+    # — A7) — never from an op field, so an auto-improvement turn cannot self-declare
+    # "user_directed" to bypass the Phase-4 gate. The `builtin` value is stamped on a
+    # DIFFERENT seam (the future builtin-tier registry-build loader, not this install
+    # path) — never written here. LOAD-BEARING fail-safe: provenance_from_ctx
+    # collapses an unset ctx.turn_origin (a bridge-fallback path that didn't thread
+    # it) to the stricter "auto_improvement" — a provenance=None install would be
+    # UNGATED (escape the Phase-4 gate), so this closes that gate-bypass.
+    entry["provenance"] = _provenance_from_ctx(ctx)
     # #2761 PR-2: capture pure-addition-vs-overwrite BEFORE the write mutates entries,
     # so step 8 can route a NEW name to the immediate mid-turn apply and a same-name
     # overwrite (clobber-update — skill's only update path) to the deferred path.
