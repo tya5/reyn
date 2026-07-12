@@ -86,6 +86,37 @@ jobs:
       - name: Build docs (strict)
         run: mkdocs build --strict -f .mkdocs/mkdocs.yml
 
+  lock-check:
+    name: uv lock --check
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - uses: actions/checkout@v6
+
+      # No existing workflow installs uv (test/lint/docs jobs all use pip),
+      # so this uses astral-sh's official setup-uv action — the canonical
+      # install path for uv in GitHub Actions.
+      #
+      # version is pinned (not floating-latest): uv is pre-1.0 and has
+      # historically bumped the lockfile format across minor releases. This
+      # is a required, merge-blocking gate — an unpinned auto-upgrade of uv
+      # could make `uv lock --check` spuriously reject the committed
+      # (format-stable) uv.lock and block every unrelated PR. 0.11.28 is the
+      # version this gate is currently green against; bump deliberately,
+      # together with `[tool.uv].required-version` in pyproject.toml, if
+      # uv.lock is ever re-locked with a newer uv.
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          version: "0.11.28"
+
+      # Fails if uv.lock has drifted from pyproject.toml (#2852: two silent
+      # drifts merged with no gate catching them — a fastmcp promotion
+      # without re-lock, and a near-miss chainlit-extra removal).
+      - name: Check uv.lock is up to date
+        run: uv lock --check
+
   audit:
     name: test-tier audit
     runs-on: ubuntu-latest

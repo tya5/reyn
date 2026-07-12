@@ -166,6 +166,14 @@ sample_line = "reyn.gateway.sample_line:register_router"
 # When the SDK isn't installed, ``register_router`` returns ``None``
 # with a clear log message so reyn boots without crashing.
 
+[tool.uv]
+# Keep local `uv lock` runs compatible with the CI `lock-check` gate's pinned
+# uv version (see .github/workflows/test.yml). uv is pre-1.0 and has bumped
+# the lockfile format across minor releases; without this, a contributor
+# on a newer/older uv minor could re-lock uv.lock into a format the
+# CI-pinned uv rejects, making a locally-green `uv lock --check` fail in CI.
+required-version = ">=0.11,<0.12"
+
 [tool.pytest.ini_options]
 asyncio_mode = "strict"
 pythonpath = ["src"]
