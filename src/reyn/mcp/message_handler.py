@@ -61,8 +61,6 @@ from typing import Any, Callable
 from fastmcp.client.messages import MessageHandler
 from fastmcp.client.tasks import TaskNotificationHandler
 
-from reyn.hooks.schema_registry import build_hook_payload
-
 logger = logging.getLogger(__name__)
 
 # Matches EventLog.emit(type: str, **data) -> Event; a plain callable sink lets callers
@@ -70,14 +68,20 @@ logger = logging.getLogger(__name__)
 # MCPConnectionService's emit_sink wiring.
 EmitSink = Callable[..., Any]
 ToolsCacheInvalidate = Callable[[str], None]
-# #2608 H1: SYNCHRONOUS enqueue callable (never awaited here — the handler runs on the
-# receive-loop task, see module docstring's "synchronous hook bodies"). Matches
-# ``MCPConnectionService.enqueue_external_event(point, template_vars)`` — a bounded,
-# non-blocking hand-off to the session's async HookDispatcher, drained by a task on the
-# session's own event loop. None = no external-event hook bridge (byte-identical to
-# pre-H1 behaviour — the ephemeral MCPClientPool path and any session with no
-# ``mcp_resource_updated`` hook configured never wire this).
-OnExternalEvent = Callable[[str, dict], None]
+# #2608 H1 / Hook-Event Redesign #2875 F1 (proposal 0059 §6 completion): SYNCHRONOUS
+# raw-signal callable (never awaited here — the handler runs on the receive-loop task,
+# see module docstring's "synchronous hook bodies"). Carries the RAW MCP signal
+# (uri, resync) — NOT a pre-built payload — so the payload-construction step (Phase 1's
+# ``build_hook_payload``) happens exactly once, inside
+# ``reyn.hooks.ingress.McpIngressAdapter.to_event`` (the adapter this handler's caller,
+# ``MCPConnectionService``, binds this callback to per-server). Before #2875 this
+# handler built the payload itself via ``build_hook_payload`` directly, bypassing
+# ``McpIngressAdapter.to_event`` entirely — the 1 of 4 ingress sources (MCP/Fs/Cron/
+# Webhook) not actually funnelling through its own adapter's ``to_event``, per the §6
+# unify. None = no external-event hook bridge (byte-identical to pre-H1 behaviour — the
+# ephemeral MCPClientPool path and any session with no ``mcp_resource_updated`` hook
+# configured never wire this).
+OnExternalEvent = Callable[[str | None, bool], None]
 
 
 class ReynMCPMessageHandler(TaskNotificationHandler):
@@ -214,20 +218,24 @@ class ReynMCPMessageHandler(TaskNotificationHandler):
         only the added ``resync`` field distinguishes a synthetic re-signal
         from a real push for anyone inspecting the payload. Never raises: a
         fault in either downstream path must not break the receive loop (real
-        push) or the reconnect (synthetic path)."""
+        push) or the reconnect (synthetic path).
+
+        Hook-Event Redesign #2875 F1 (proposal 0059 §6 completion): this method
+        passes the RAW signal (``uri``, ``resync``) to ``_on_external_event`` —
+        it does NOT call ``build_hook_payload`` itself. Payload construction
+        happens exactly once, downstream, inside
+        ``reyn.hooks.ingress.McpIngressAdapter.to_event`` (bound per-server by
+        ``MCPConnectionService``, the sole production wirer of
+        ``_on_external_event`` — see its ``_ensure_open``). Before #2875 this
+        method built the payload inline via ``build_hook_payload`` directly,
+        which meant ``McpIngressAdapter.to_event`` — despite existing since
+        Phase 2 (#2872) — was never actually reached in production for MCP,
+        the 1 of 4 ingress sources (MCP/Fs/Cron/Webhook) not funnelling
+        through its own adapter's ``to_event``."""
         self._emit("mcp_resource_updated", server=self._server_name, uri=uri, resync=resync)
         if self._on_external_event is not None:
             try:
-                self._on_external_event(
-                    "mcp_resource_updated",
-                    build_hook_payload(
-                        "mcp_resource_updated",
-                        server=self._server_name,
-                        uri=uri,
-                        agent_name=self._agent_name,
-                        resync=resync,
-                    ),
-                )
+                self._on_external_event(uri, resync)
             except Exception:  # noqa: BLE001 — a trigger fault must not break the receive loop
                 logger.warning(
                     "ReynMCPMessageHandler: on_external_event failed for %r on server %r",

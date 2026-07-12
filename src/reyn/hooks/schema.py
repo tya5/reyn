@@ -22,12 +22,23 @@ event loop. ``HookDef.matcher`` stayed reserved/uninterpreted for this
 point in H1 (scoping was via which resources the user subscribed to).
 
 #2608 H2 interprets ``matcher``: a ``dict[str, str]`` of field -> pattern,
-evaluated against the event's ``template_vars`` BEFORE the hook's action runs
-(``reyn.hooks.matcher.matches``, called from ``HookDispatcher.dispatch``).
+evaluated against the event's ``template_vars`` BEFORE the hook's action runs.
 For ``mcp_resource_updated`` the two matchable fields are ``server`` (exact
 match) and ``uri`` (glob via ``fnmatch``) — e.g. ``{"server": "github", "uri":
 "file:///repo/**"}``. Absent/empty matcher -> fires always (unchanged for
 every pre-H2 hook, lifecycle or external-event).
+
+Hook-Event Redesign Phase 3 (proposal 0059 §10 Q-reyn-4): ``HookDispatcher.
+dispatch`` no longer calls ``reyn.hooks.matcher.matches`` on ``hook.matcher``
+directly — every ``matcher`` is wrapped into a payload-only ``EventPattern``
+(``reyn.hooks.event_pattern.from_legacy_matcher``) and evaluated through
+``reyn.hooks.event_pattern.matches`` (whose payload predicate still delegates
+to the unchanged ``reyn.hooks.matcher.matches``, so every existing
+``hooks.yaml`` entry's match semantics are byte-identical — this field's own
+dict-of-field->pattern shape and validation, below, are unaffected). Phase 3
+also makes an out-of-schema matcher field FAIL-LOUD at ``load_hooks`` time
+(``HookConfigError``, typo-resistance against the Phase-1 Schema Registry)
+rather than silently never matching at dispatch time.
 
 #2608 H3 adds the 4th action, ``pipeline_launch`` — a hook can launch a
 REGISTERED Pipeline (``reyn.core.pipeline.registry.PipelineRegistry.get``)
