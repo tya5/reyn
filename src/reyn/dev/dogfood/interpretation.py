@@ -31,27 +31,16 @@ from __future__ import annotations
 import json
 from typing import TYPE_CHECKING
 
+# reyn.prompt.dogfood (SP prompt-package, Phase 3 §H) — imported and re-bound
+# to the original private name so this module is otherwise unchanged.
+from reyn.prompt.dogfood import DOGFOOD_INTERPRETATION_SYSTEM_PROMPT as _SYSTEM_PROMPT
+
 if TYPE_CHECKING:
     from reyn.dev.dogfood.runner import ScenarioRunResult
     from reyn.dev.dogfood.scenarios import Scenario
 
 
 DEFAULT_MODEL = "openai/gemini-2.5-flash-lite"
-
-_SYSTEM_PROMPT = (
-    "You read a single dogfood scenario result and write a 3-line summary "
-    "for human reviewers. Each line is one sentence.\n"
-    "\n"
-    "Line 1: Did the run match the scenario's expectations? "
-    "(\"matched\" / \"partially matched\" / \"diverged\")\n"
-    "Line 2: The most salient observation (reply tone / event presence / "
-    "tool usage). One concrete fact.\n"
-    "Line 3: If diverged or partially matched, what was missing or wrong. "
-    "If matched, what evidence supports it.\n"
-    "\n"
-    "Use the same language as the scenario input. Stay under 80 chars per "
-    "line. Output plain text only — no markdown, no JSON, no quoting."
-)
 
 
 def _format_expected(scenario: "Scenario") -> str:

@@ -12,6 +12,8 @@ import re
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING
 
+from reyn.prompt.dogfood import dogfood_judge_system_prompt
+
 from .types import VerifierResult
 
 if TYPE_CHECKING:
@@ -34,13 +36,9 @@ async def _default_judge_fn(rubric: list[str], reply_text: str) -> dict:
     import json
 
     rubric_text = "\n".join(f"- {item}" for item in rubric)
-    system_text = (
-        "You are a strict evaluator. Score the following reply against the rubric.\n"
-        'Output ONLY a JSON object: {"score": 0.0-1.0, "reason": "..."}.\n'
-        "score must be a float between 0.0 and 1.0 inclusive.\n"
-        "reason must be a short explanation of the score.\n\n"
-        f"Rubric:\n{rubric_text}"
-    )
+    # reyn.prompt.dogfood (SP prompt-package, Phase 3 §H) owns the static
+    # header + "Rubric:" label; this reassembles them exactly as before.
+    system_text = dogfood_judge_system_prompt(rubric_text)
     user_text = f"Reply to evaluate:\n{reply_text}"
     messages = [
         {"role": "system", "content": system_text},

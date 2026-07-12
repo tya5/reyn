@@ -1,11 +1,24 @@
-"""§C — CodeAct's static code-API instructional header.
+"""§C / §M — CodeAct's static code-API instructional header, and (Phase 3)
+the CodeAct observation-turn's fixed labels.
 
-Feeds ``reyn.tools.schemes.codeact._render_code_api``. That function mixes a
-static instructional header (this module) with a per-catalog-entry loop that
-renders LIVE catalog data (function signatures from the currently installed
-tool catalog) — the loop is NOT extractable (it varies with the installed
-catalog, it is not fixed text), so it stays in ``codeact.py`` (the scheme
-module) as assembly logic. Only the static header lines move here.
+**§C** feeds ``reyn.tools.schemes.codeact._render_code_api``. That function
+mixes a static instructional header (this module) with a per-catalog-entry
+loop that renders LIVE catalog data (function signatures from the currently
+installed tool catalog) — the loop is NOT extractable (it varies with the
+installed catalog, it is not fixed text), so it stays in ``codeact.py`` (the
+scheme module) as assembly logic. Only the static header lines move here.
+
+**§M** feeds ``reyn.tools.schemes.codeact._format_codeact_observation`` — the
+fixed ``[codeact result]`` / ``[codeact stdout]`` / ``[codeact stderr]``
+labels that prefix the observation-turn message appended to ``messages``
+after a code-block execution (mid-request-stream, like §I-L, NOT part of the
+assembled system prompt). These labels ARE LLM-facing (the model reads the
+observation turn on its next call) even though the body they wrap is dynamic
+execution data. The ``[codeact {kind}]`` error-kind label is NOT relocated —
+``kind`` is a dynamic envelope field (``Error``/``Timeout``/etc., sourced
+from ``CodeActRunner``), so only the fixed ``[codeact `` / ``]`` wrapping
+would move, which is not a meaningful independent LLM-facing string; it stays
+inline in ``_format_codeact_observation``.
 """
 from __future__ import annotations
 
@@ -41,3 +54,18 @@ CODEACT_STATIC_HEADER: list[str] = [
     "",
     "Available functions:",
 ]
+
+
+# ── §M observation-turn labels (Phase 3, mid-request-stream) ────────────────
+# WHEN: always — every CodeAct observation turn (the user-role message
+#       appended after a code-block execution) is prefixed with exactly one
+#       of these three labels, depending on the execution outcome shape.
+# WHERE: reyn.tools.schemes.codeact._format_codeact_observation.
+# WHY: lets the model visually distinguish a bound `result` value from
+#      captured stdout output from stderr output within the same observation
+#      turn, without a schema (CodeAct's turns are plain-text, not JSON).
+# 日本語訳: コード実行後に付与される observation ターンの先頭ラベル。
+#      result / stdout / stderr のどれかを視覚的に区別させる。
+CODEACT_RESULT_LABEL = "[codeact result]"
+CODEACT_STDOUT_LABEL = "[codeact stdout]"
+CODEACT_STDERR_LABEL = "[codeact stderr]"

@@ -1,5 +1,6 @@
 """Tier 2b: every ``reyn.prompt.*`` (Phase 1: router_frame/universal_slots/
-codeact/retrieval; Phase 2: compaction/turn_budget/judge) string constant is
+codeact/retrieval; Phase 2: compaction/turn_budget/judge; Phase 3:
+loop_control/dogfood + codeact's §M observation labels) string constant is
 exercised — appears in at least one fixture's ASSEMBLED (rendered) output —
 across a representative gate matrix.
 
@@ -31,21 +32,30 @@ import pytest
 
 import reyn.prompt.codeact as _codeact_mod
 import reyn.prompt.compaction as _compaction_mod
+import reyn.prompt.dogfood as _dogfood_mod
 import reyn.prompt.judge as _judge_mod
+import reyn.prompt.loop_control as _loop_control_mod
 import reyn.prompt.retrieval as _retrieval_mod
 import reyn.prompt.router_frame as _router_frame_mod
 import reyn.prompt.turn_budget as _turn_budget_mod
 import reyn.prompt.universal_slots as _universal_slots_mod
+from reyn.prompt.dogfood import dogfood_judge_system_prompt
 from reyn.prompt.judge import judge_system_prompt
+from reyn.prompt.loop_control import tool_call_cap_notice
+from reyn.runtime.reasoning_continuity import render_reasoning_section
 from reyn.runtime.router_system_prompt import build_system_prompt
 from reyn.services.turn_budget.engine import wrap_up_system_prompt
 from reyn.tools.schemes._universal_sp import build_universal_tool_use_slots
-from reyn.tools.schemes.codeact import _build_actions_map, _render_code_api
+from reyn.tools.schemes.codeact import (
+    _build_actions_map,
+    _format_codeact_observation,
+    _render_code_api,
+)
 from reyn.tools.schemes.retrieval import _search_sp
 
 _PROMPT_MODULES = [
     _router_frame_mod, _universal_slots_mod, _codeact_mod, _retrieval_mod,
-    _compaction_mod, _turn_budget_mod, _judge_mod,
+    _compaction_mod, _turn_budget_mod, _judge_mod, _loop_control_mod, _dogfood_mod,
 ]
 
 _BOOL_NAMES = [
@@ -175,6 +185,26 @@ def _assembled_output_corpus() -> str:
 
     # §G judge_output scorer SP: exercises the header+"Rubric:"+rubric seam.
     chunks.append(judge_system_prompt("Score 0-1: is the summary non-empty?"))
+
+    # §I-L loop-control nudges (Phase 3): rendered at their own mid-request-
+    # stream injection points, not via build_system_prompt.
+    chunks.append(_loop_control_mod.EMPTY_STOP_RETRY_DIRECTIVE)
+    chunks.append(_loop_control_mod.G12_SIGNAL_ERROR_TEXT)
+    chunks.append(tool_call_cap_notice(attempted=7, kept=3)["content"])
+    chunks.append(render_reasoning_section(["a prior reasoning entry"]))
+
+    # §M CodeAct observation-turn labels (Phase 3): exercise all three label
+    # branches (result / stdout-fallback / stderr-appended).
+    chunks.append(_format_codeact_observation({"ok": True, "result": {"x": 1}, "stdout": "", "stderr": ""}))
+    chunks.append(_format_codeact_observation({"ok": True, "result": None, "stdout": "printed text", "stderr": ""}))
+    chunks.append(_format_codeact_observation(
+        {"ok": True, "result": {"x": 1}, "stdout": "", "stderr": "warning text"}
+    ))
+
+    # §H dev/dogfood judge SPs (Phase 3): sent verbatim / via the header+
+    # "Rubric:"+rubric seam, mirroring §G's judge_output shape.
+    chunks.append(_dogfood_mod.DOGFOOD_INTERPRETATION_SYSTEM_PROMPT)
+    chunks.append(dogfood_judge_system_prompt("- reply is on-topic\n- reply is polite"))
 
     return "\n\x00\n".join(chunks)  # NUL-joined so constants can't false-match across chunk boundaries
 

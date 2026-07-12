@@ -17,6 +17,10 @@ from reyn.core.dispatch import DispatchContext, dispatch_tool
 from reyn.data.index.source_manifest import get_source_manifest
 from reyn.llm.llm import call_llm_tools
 from reyn.llm.pricing import TokenUsage
+from reyn.prompt.loop_control import (
+    EMPTY_STOP_RETRY_DIRECTIVE,
+)
+from reyn.prompt.loop_control import tool_call_cap_notice as _tool_call_cap_notice_text
 from reyn.runtime.router_system_prompt import (
     build_system_prompt,
 )
@@ -126,7 +130,10 @@ _AGENT_SPAWN_ACK_MSG: dict[str, str] = {
 # previous per-site directives (chat "write your reply" / plan "step report") were
 # unevidenced differentiation — and the chat one's "Do not call another tool"
 # was itself anti-invoke. Iterate per-site ONLY if a measured problem appears.
-EMPTY_STOP_RETRY_DIRECTIVE = "resume"
+# reyn.prompt.loop_control (SP prompt-package, Phase 3 §I) — imported above,
+# re-bound to the original public name so every consumer
+# (``from reyn.runtime.router_loop import EMPTY_STOP_RETRY_DIRECTIVE``) is
+# unchanged.
 
 
 def _strip_frontmatter(content: str) -> str:
@@ -3198,17 +3205,12 @@ class RouterLoop:
     def _tool_call_cap_notice(self, attempted: int, kept: int) -> dict:
         """#1666: the single decision-enabling notice appended after a capped
         round's results so the model re-grounds (deny-message-is-decision-enabling:
-        states what happened + what to do, with the true attempted count)."""
-        return {
-            "role": "user",
-            "content": (
-                f"[system notice] Your last turn emitted {attempted} tool_calls, "
-                f"which exceeds the per-turn cap of {kept}. Only the first {kept} "
-                "were executed; the rest were dropped. This usually means the model "
-                "is looping or over-fanning-out — issue far fewer tool_calls "
-                "(typically one to a few) and proceed step by step."
-            ),
-        }
+        states what happened + what to do, with the true attempted count).
+
+        reyn.prompt.loop_control (SP prompt-package, Phase 3 §K) owns the
+        literal template text; this method is now a thin call-through kept
+        for source/behaviour compatibility with existing callers."""
+        return _tool_call_cap_notice_text(attempted, kept)
 
     async def _run_execute_round(self, interp) -> "tuple[list[dict], list[dict]]":
         """The ``Execute`` arm — **byte-identical** to the former

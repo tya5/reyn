@@ -28,7 +28,12 @@ import re
 from typing import Any
 
 from reyn.core.kernel.codeact_runner import CodeActRunner
-from reyn.prompt.codeact import CODEACT_STATIC_HEADER
+from reyn.prompt.codeact import (
+    CODEACT_RESULT_LABEL,
+    CODEACT_STATIC_HEADER,
+    CODEACT_STDERR_LABEL,
+    CODEACT_STDOUT_LABEL,
+)
 
 
 def _sanitize_identifier(name: str) -> str:
@@ -144,17 +149,17 @@ def _format_codeact_observation(out: dict) -> str:
         stdout = (out.get("stdout") or "").strip()
         if result is not None:
             body = json.dumps(result, default=str, ensure_ascii=False)
-            obs = f"[codeact result]\n{body}"
+            obs = f"{CODEACT_RESULT_LABEL}\n{body}"
         elif stdout:
             # #1618 root-2 (#6): the snippet print()d instead of binding ``result`` —
             # surface the captured stdout so the observation is not empty (the model
             # otherwise sees nothing and retries / gives up).
-            obs = f"[codeact stdout]\n{stdout}"
+            obs = f"{CODEACT_STDOUT_LABEL}\n{stdout}"
         else:
-            obs = f"[codeact result]\n{json.dumps(result, default=str)}"
+            obs = f"{CODEACT_RESULT_LABEL}\n{json.dumps(result, default=str)}"
         stderr = (out.get("stderr") or "").strip()
         if stderr:
-            obs = f"{obs}\n[codeact stderr]\n{stderr}"
+            obs = f"{obs}\n{CODEACT_STDERR_LABEL}\n{stderr}"
         return obs
     kind = out.get("kind", "Error")
     return f"[codeact {kind}]\n{out.get('error', '')}"
