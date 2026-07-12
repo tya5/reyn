@@ -26,7 +26,7 @@ Covers, by origin module:
 """
 from __future__ import annotations
 
-from reyn.tools.descriptions._types import ToolDescription
+from reyn.tools.descriptions._types import ParamDescription, ToolDescription
 
 list_mcp_servers = ToolDescription(
     tool_name="list_mcp_servers",
@@ -383,4 +383,276 @@ ALL: dict[str, ToolDescription] = {
     "mcp_call_tool": mcp_call_tool,
     "mcp_install": mcp_install,
     "mcp_drop_server": mcp_drop_server,
+}
+
+
+# ── Phase 4: per-parameter descriptions (byte-identical relocation) ──────────
+#
+# ``server_mcp_name_param`` / ``server_uri_param`` are re-used across
+# several entries below wherever the origin schema repeats the exact same
+# literal string (mirrors the origin file's own repetition, not a new
+# dedup).
+
+_server_param = ParamDescription(
+    text="MCP server name — choose from the enum (verbatim).",
+    ja="MCP サーバー名 — enum からそのまま選ぶ。",
+)
+_resource_uri_param = ParamDescription(
+    text="Resource URI, verbatim from list_mcp_resources.",
+    ja="list_mcp_resources から得たリソース URI（そのまま）。",
+)
+
+PARAMS: dict[str, dict[str, ParamDescription]] = {
+    "call_mcp_tool": {
+        "server": _server_param,
+        "mcp_tool_name": ParamDescription(
+            text=(
+                "Dotted mcp_tool identifier: <server>.<tool> — choose from "
+                "the enum. Use describe_mcp_tool for the full input schema."
+            ),
+            ja=(
+                "ドット区切りの mcp_tool 識別子: <server>.<tool> — enum から"
+                "選ぶ。完全な入力スキーマは describe_mcp_tool で取得。"
+            ),
+        ),
+        "tool_args": ParamDescription(
+            text=(
+                "The target MCP tool's OWN parameters (the shape from "
+                "describe_mcp_tool), as a nested object here — NOT flat alongside "
+                "server / mcp_tool_name."
+            ),
+            ja=(
+                "対象 MCP ツール自体のパラメータ（describe_mcp_tool の形）。"
+                "ここではネストされたオブジェクトとして渡す — server / "
+                "mcp_tool_name と同じ階層に平らに置かない。"
+            ),
+        ),
+    },
+    "describe_mcp_tool": {
+        "server": _server_param,
+        "mcp_tool_name": ParamDescription(
+            text=(
+                "Dotted mcp_tool identifier: <server>.<tool> — choose from "
+                "the enum."
+            ),
+            ja="ドット区切りの mcp_tool 識別子: <server>.<tool> — enum から選ぶ。",
+        ),
+    },
+    "list_mcp_resources": {"server": _server_param},
+    "list_mcp_resource_templates": {"server": _server_param},
+    "read_mcp_resource": {
+        "server": _server_param,
+        "uri": _resource_uri_param,
+    },
+    "subscribe_mcp_resource": {
+        "server": _server_param,
+        "uri": _resource_uri_param,
+    },
+    "unsubscribe_mcp_resource": {
+        "server": _server_param,
+        "uri": _resource_uri_param,
+    },
+    "list_mcp_prompts": {"server": _server_param},
+    "get_mcp_prompt": {
+        "server": _server_param,
+        "name": ParamDescription(
+            text="Prompt name, verbatim from list_mcp_prompts.",
+            ja="list_mcp_prompts から得たプロンプト名（そのまま）。",
+        ),
+        "arguments": ParamDescription(
+            text=(
+                "Arguments to render the prompt with, matching the shape "
+                "from list_mcp_prompts' arguments field. Optional — omit "
+                "for a prompt that takes none."
+            ),
+            ja=(
+                "プロンプトをレンダリングする引数。list_mcp_prompts の "
+                "arguments フィールドの形に一致させる。任意 — 引数を取らな"
+                "いプロンプトなら省略可。"
+            ),
+        ),
+    },
+    "mcp_install": {
+        "server_id": ParamDescription(
+            text=(
+                "Registry identifier, e.g. "
+                "'io.github.modelcontextprotocol/server-filesystem'."
+            ),
+            ja="レジストリ識別子（例 'io.github.modelcontextprotocol/server-filesystem'）。",
+        ),
+        "scope": ParamDescription(
+            text=(
+                "Config tier to write the server entry to. "
+                "'local' → reyn.local.yaml (default), "
+                "'project' → reyn.yaml, "
+                "'user' → ~/.reyn/config.yaml."
+            ),
+            ja=(
+                "サーバーエントリを書き込む設定階層。'local' → "
+                "reyn.local.yaml（デフォルト）、'project' → reyn.yaml、"
+                "'user' → ~/.reyn/config.yaml。"
+            ),
+        ),
+        "env_overrides": ParamDescription(
+            text=(
+                "Pre-supplied env values for secret vars required by the server. "
+                "Keys are env var names; values are the secrets. "
+                "Values not provided here will be prompted interactively."
+            ),
+            ja=(
+                "サーバーが必要とするシークレット変数への事前供給値。キーは"
+                "環境変数名、値はシークレット。ここで与えられない値は対話的"
+                "に確認される。"
+            ),
+        ),
+    },
+    "mcp_drop_server": {
+        "server": ParamDescription(
+            text=(
+                "Short server name as it appears under mcp.servers in "
+                "configuration (e.g. 'filesystem', 'brave')."
+            ),
+            ja="設定の mcp.servers に現れる短いサーバー名（例 'filesystem', 'brave'）。",
+        ),
+        "scope": ParamDescription(
+            text=(
+                "Config tier to remove from. Omit to auto-detect by "
+                "walking local → project → user and removing from the "
+                "first match."
+            ),
+            ja=(
+                "削除元の設定階層。省略すると local → project → user の順に"
+                "探索し最初に一致した階層から削除する。"
+            ),
+        ),
+        "clear_secrets": ParamDescription(
+            text=(
+                "When true (default), also remove the corresponding "
+                "${KEY} entries from ~/.reyn/secrets.env. Set false to "
+                "keep the secrets for reinstall."
+            ),
+            ja=(
+                "true（デフォルト）なら ~/.reyn/secrets.env の対応する "
+                "${KEY} エントリも削除する。再インストール用に残すなら "
+                "false にする。"
+            ),
+        ),
+    },
+    "mcp_install_registry": {
+        "server_id": ParamDescription(
+            text=(
+                "Registry identifier from mcp__search_registry "
+                "(= candidates[].name, "
+                "e.g. 'io.github.modelcontextprotocol/server-time')."
+            ),
+            ja=(
+                "mcp__search_registry から得たレジストリ識別子"
+                "（= candidates[].name、例 'io.github.modelcontextprotocol/server-time'）。"
+            ),
+        ),
+        "env_overrides": ParamDescription(
+            text=(
+                "Inline env values. Usually NOT needed — the first call "
+                "returns status='needs_secrets' listing which keys to "
+                "set via `reyn secret set <KEY>`; only pass this dict "
+                "when the operator supplied values inline."
+            ),
+            ja=(
+                "インラインの環境変数値。通常は不要 — 最初の呼び出しは "
+                "status='needs_secrets' を返し `reyn secret set <KEY>` で"
+                "設定すべきキーを列挙する。オペレーターが値をインラインで"
+                "供給した場合のみこの辞書を渡す。"
+            ),
+        ),
+    },
+    "mcp_install_package": {
+        "kind": ParamDescription(
+            text="Package channel.",
+            ja="パッケージのチャネル種別。",
+        ),
+        "identifier": ParamDescription(
+            text=(
+                "npm: package name (e.g. '@scope/server-foo')\n"
+                "pypi: distribution name (e.g. 'my-mcp-server')\n"
+                "docker: image with optional tag "
+                "(e.g. 'org/img:v1')\n"
+                "github: full URL "
+                "(e.g. 'https://github.com/owner/repo' or "
+                "'https://github.com/owner/repo/tree/<ref>/src/<sub>')"
+            ),
+            ja=(
+                "npm: パッケージ名（例 '@scope/server-foo'）／pypi: 配布名"
+                "（例 'my-mcp-server'）／docker: タグ付きイメージ（例 "
+                "'org/img:v1'）／github: フル URL。"
+            ),
+        ),
+        "version": ParamDescription(
+            text=(
+                "Version constraint. npm/pypi/docker only — "
+                "ignored for github."
+            ),
+            ja="バージョン制約。npm/pypi/docker のみ有効 — github では無視される。",
+        ),
+        "env_overrides": ParamDescription(
+            text=(
+                "Inline env values when the operator provides them; "
+                "otherwise expect status='needs_secrets' on the "
+                "first call (npm/pypi/docker only)."
+            ),
+            ja=(
+                "オペレーターが値を提供する場合のインライン環境変数値。"
+                "それ以外は最初の呼び出しで status='needs_secrets' を"
+                "想定する（npm/pypi/docker のみ）。"
+            ),
+        ),
+    },
+    "mcp_install_local": {
+        "name": ParamDescription(
+            text=(
+                "Short config key written under mcp.servers.<name> "
+                "(e.g. 'weather'). Used as the server prefix in "
+                "mcp__call_tool's '<server>__<tool>' identifier."
+            ),
+            ja=(
+                "mcp.servers.<name> に書き込まれる短い設定キー（例 "
+                "'weather'）。mcp__call_tool の '<server>__<tool>' 識別子の"
+                "サーバー部分として使われる。"
+            ),
+        ),
+        "command": ParamDescription(
+            text=(
+                "Executable to spawn (e.g. 'python', 'node', 'uvx', "
+                "or an absolute path)."
+            ),
+            ja="起動する実行ファイル（例 'python', 'node', 'uvx'、または絶対パス）。",
+        ),
+        "args": ParamDescription(
+            text=(
+                "Command-line arguments. Typically the script path "
+                "(e.g. ['/tmp/weather_mcp.py']) plus flags the server "
+                "expects."
+            ),
+            ja=(
+                "コマンドライン引数。通常はスクリプトパス（例 "
+                "['/tmp/weather_mcp.py']）とサーバーが要求するフラグ。"
+            ),
+        ),
+        "env_overrides": ParamDescription(
+            text="Inline env values for the spawned process.",
+            ja="起動するプロセスへのインライン環境変数値。",
+        ),
+    },
+    "mcp_call_tool": {
+        "tool": ParamDescription(
+            text=(
+                "<server>__<tool> identifier from mcp__list_tools "
+                "(e.g. 'time__get_current_time')."
+            ),
+            ja="mcp__list_tools から得た <server>__<tool> 識別子（例 'time__get_current_time'）。",
+        ),
+        "tool_args": ParamDescription(
+            text="Per-tool args dict (consult mcp__list_tools).",
+            ja="ツール毎の引数辞書（mcp__list_tools を参照）。",
+        ),
+    },
 }

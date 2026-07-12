@@ -16,7 +16,7 @@ mirror of the ``category`` field).
 """
 from __future__ import annotations
 
-from reyn.tools.descriptions._types import ToolDescription
+from reyn.tools.descriptions._types import ParamDescription, ToolDescription
 
 pipeline_install_local = ToolDescription(
     tool_name="pipeline_install_local",
@@ -80,4 +80,74 @@ pipeline_install_source = ToolDescription(
 ALL: dict[str, ToolDescription] = {
     "pipeline_install_local": pipeline_install_local,
     "pipeline_install_source": pipeline_install_source,
+}
+
+
+# ── Phase 4: per-parameter descriptions (byte-identical relocation) ──────────
+
+PARAMS: dict[str, dict[str, ParamDescription]] = {
+    "pipeline_install_local": {
+        "path": ParamDescription(
+            text=(
+                "Direct path to the pipeline's *.yaml DSL file. May be "
+                "absolute or project-root-relative."
+            ),
+            ja="パイプラインの *.yaml DSL ファイルへの直接パス。絶対パスまたはプロジェクトルート相対。",
+        ),
+        "name": ParamDescription(
+            text=(
+                "Optional namespace key for the file. Every pipeline in it "
+                "registers as '<name>.<declared-pipeline-name>'. Need not "
+                "match any declared name; must not contain '.'. Defaults to "
+                "the DSL file stem when omitted."
+            ),
+            ja=(
+                "ファイルの任意の名前空間キー。ファイル内の各パイプラインは "
+                "'<name>.<declared-pipeline-name>' として登録される。宣言名"
+                "と一致する必要はなく '.' を含んではならない。省略時は DSL "
+                "ファイルの stem を使う。"
+            ),
+        ),
+    },
+    "pipeline_install_source": {
+        "source": ParamDescription(
+            text=(
+                "Git or GitHub URL of the pipeline repo. Examples: "
+                "'https://github.com/user/pipeline-repo' or "
+                "'https://github.com/user/monorepo//pipelines/my-pipeline'."
+            ),
+            ja=(
+                "パイプラインリポジトリの Git/GitHub URL。例 "
+                "'https://github.com/user/pipeline-repo' や "
+                "'https://github.com/user/monorepo//pipelines/my-pipeline'。"
+            ),
+        ),
+        "path": ParamDescription(
+            text=(
+                "Optional: path (relative to the repo root, or the subdir "
+                "when the source URL uses the '//' convention) to the DSL "
+                "*.yaml file. Required when the repo/subdir contains more "
+                "than one *.yaml file."
+            ),
+            ja=(
+                "任意: DSL *.yaml ファイルへのパス（リポジトリルート相対、"
+                "または source URL が '//' 規約を使う場合はサブディレクトリ"
+                "相対）。repo/subdir に *.yaml が複数ある場合は必須。"
+            ),
+        ),
+        "name": ParamDescription(
+            text=(
+                "Optional namespace key. Every pipeline in the file registers "
+                "as '<name>.<declared-pipeline-name>'. Need not match any "
+                "declared name; must not contain '.'. Defaults to the source "
+                "basename."
+            ),
+            ja=(
+                "任意の名前空間キー。ファイル内の各パイプラインは "
+                "'<name>.<declared-pipeline-name>' として登録される。宣言名"
+                "と一致する必要はなく '.' を含んではならない。省略時は "
+                "source のベース名を使う。"
+            ),
+        ),
+    },
 }

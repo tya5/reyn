@@ -159,14 +159,11 @@ _RUN_PIPELINE_PARAMETERS: dict[str, Any] = {
     "properties": {
         "name": {
             "type": "string",
-            "description": "The registered pipeline's name.",
+            "description": _pipeline_descriptions.PARAMS["run_pipeline"]["name"].text,
         },
         "input": {
             "type": "object",
-            "description": (
-                "Initial named context (ctx.*) for the pipeline's first "
-                "step. Omit for a pipeline that needs no seed input."
-            ),
+            "description": _pipeline_descriptions.PARAMS["run_pipeline"]["input"].text,
         },
     },
     "required": ["name"],
@@ -502,20 +499,11 @@ _RUN_PIPELINE_INLINE_PARAMETERS: dict[str, Any] = {
     "properties": {
         "definition": {
             "type": "string",
-            "description": (
-                "The pipeline as a DSL string (Appendix B grammar): one or "
-                "more '---'-separated YAML documents — exactly one 'pipeline:' "
-                "document plus any 'schema:' documents its steps reference. "
-                "Generated at call time; parsed + statically validated before "
-                "anything runs."
-            ),
+            "description": _pipeline_descriptions.PARAMS["run_pipeline_inline"]["definition"].text,
         },
         "input": {
             "type": "object",
-            "description": (
-                "Initial named context (ctx.*) for the pipeline's first step. "
-                "Omit for a pipeline that needs no seed input."
-            ),
+            "description": _pipeline_descriptions.PARAMS["run_pipeline_inline"]["input"].text,
         },
     },
     "required": ["definition"],

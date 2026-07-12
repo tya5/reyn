@@ -15,7 +15,7 @@ LLM drives directly, never a phase-authored Control IR op.
 """
 from __future__ import annotations
 
-from reyn.tools.descriptions._types import ToolDescription
+from reyn.tools.descriptions._types import ParamDescription, ToolDescription
 
 agent_spawn = ToolDescription(
     tool_name="agent_spawn",
@@ -113,4 +113,107 @@ ALL: dict[str, ToolDescription] = {
     "delegate_to_agent": delegate_to_agent,
     "session_spawn": session_spawn,
     "topology_create": topology_create,
+}
+
+
+# ── Phase 4: per-parameter descriptions (byte-identical relocation) ──────────
+
+PARAMS: dict[str, dict[str, ParamDescription]] = {
+    "agent_spawn": {
+        "name": ParamDescription(
+            text="The new agent's identity (a unique agent name).",
+            ja="新しいエージェントの識別子（一意なエージェント名）。",
+        ),
+        "role": ParamDescription(
+            text="The new agent's role/purpose (free text).",
+            ja="新しいエージェントの役割・目的（自由記述）。",
+        ),
+    },
+    "delegate_to_agent": {
+        "to": ParamDescription(
+            text="Target agent name as listed by list_agents.",
+            ja="list_agents に列挙される委任先エージェント名。",
+        ),
+        "request": ParamDescription(
+            text=(
+                "Natural-language request paraphrased "
+                "for the peer's context."
+            ),
+            ja="相手エージェントの文脈向けに言い換えた自然言語のリクエスト。",
+        ),
+    },
+    "session_spawn": {
+        "request": ParamDescription(
+            text="The task for the fresh-context session to run.",
+            ja="新規コンテキストのセッションに実行させるタスク。",
+        ),
+        "mode": ParamDescription(
+            text=(
+                "ephemeral = the session auto-vanishes after its task; "
+                "persistent = it stays. Chosen at spawn time."
+            ),
+            ja=(
+                "ephemeral はタスク後にセッションが自動消滅、persistent は"
+                "残る。スポーン時に選択する。"
+            ),
+        ),
+        "narrowing": ParamDescription(
+            text=(
+                "Optional per-session capability narrowing (restrict-only, cannot "
+                "widen your envelope): a capability_profile subset, e.g. "
+                "{\"tool_deny\": [\"sandboxed_exec\"]}."
+            ),
+            ja=(
+                "任意のセッション単位の権限絞り込み（restrict-only、自分の"
+                "権限範囲を広げることはできない）: capability_profile の"
+                "サブセット、例 {\"tool_deny\": [\"sandboxed_exec\"]}。"
+            ),
+        ),
+    },
+    "topology_create": {
+        "name": ParamDescription(
+            text="The new topology's name (unique; 1-32 chars [a-z0-9_-]).",
+            ja="新しいトポロジー名（一意、1〜32文字 [a-z0-9_-]）。",
+        ),
+        "kind": ParamDescription(
+            text=(
+                "network = every member ↔ every member; team = star around a leader "
+                "(requires 'leader'); pipeline = ordered chain (members[i] → members[i+1])."
+            ),
+            ja=(
+                "network=全メンバー相互接続、team=leader中心のスター"
+                "（'leader'必須）、pipeline=順序付きチェーン"
+                "（members[i] → members[i+1]）。"
+            ),
+        ),
+        "members": ParamDescription(
+            text=(
+                "Agent names to wire — each must be in your spawn subtree (yourself or "
+                "an agent you spawned)."
+            ),
+            ja=(
+                "接続するエージェント名 — それぞれ自分のスポーンサブツリー内"
+                "（自分自身か自分がスポーンしたエージェント）である必要がある。"
+            ),
+        ),
+        "leader": ParamDescription(
+            text="For kind=team only: the member at the centre of the star.",
+            ja="kind=team のときのみ: スターの中心となるメンバー。",
+        ),
+        "profiles": ParamDescription(
+            text=(
+                "Optional JSON object mapping a member name to a capability_profile name "
+                "(both strings). A bound member's session is narrowed by that profile (it "
+                "can only narrow within its ⊆-you envelope, never widen). Each key must be "
+                "one of 'members'."
+            ),
+            ja=(
+                "任意: メンバー名を capability_profile 名にマッピングする JSON "
+                "オブジェクト（両方とも文字列）。束縛されたメンバーのセッションは"
+                "そのプロファイルで絞り込まれる（⊆自分の範囲内でのみ絞り込め、"
+                "広げることはできない）。各キーは 'members' のいずれかである"
+                "必要がある。"
+            ),
+        ),
+    },
 }

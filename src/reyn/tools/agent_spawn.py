@@ -31,11 +31,11 @@ _AGENT_SPAWN_PARAMETERS: dict[str, Any] = {
     "properties": {
         "name": {
             "type": "string",
-            "description": "The new agent's identity (a unique agent name).",
+            "description": _delegation_descriptions.PARAMS["agent_spawn"]["name"].text,
         },
         "role": {
             "type": "string",
-            "description": "The new agent's role/purpose (free text).",
+            "description": _delegation_descriptions.PARAMS["agent_spawn"]["role"].text,
         },
     },
     "required": ["name"],

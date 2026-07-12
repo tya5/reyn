@@ -60,11 +60,7 @@ _CRON_DISABLE_DESCRIPTION = _cron_descriptions.cron_disable.text
 _CRON_NAME_PARAM = {
     "name": {
         "type": "string",
-        "description": (
-            "Unique job identifier within the project (e.g. "
-            "'morning_news', 'weekly_report'). Reused across "
-            "register/unregister/enable/disable."
-        ),
+        "description": _cron_descriptions.PARAMS["cron_register"]["name"].text,
     },
 }
 
@@ -74,34 +70,19 @@ _CRON_REGISTER_PARAMETERS: dict[str, Any] = {
         **_CRON_NAME_PARAM,
         "to": {
             "type": "string",
-            "description": (
-                "Target Reyn agent name. The scheduled message is "
-                "delivered to this agent's inbox; the agent must "
-                "exist in the project."
-            ),
+            "description": _cron_descriptions.PARAMS["cron_register"]["to"].text,
         },
         "message": {
             "type": "string",
-            "description": (
-                "Free-form text dispatched to the agent. Treated as a "
-                "user-turn-shaped message with sender='cron:<name>'."
-            ),
+            "description": _cron_descriptions.PARAMS["cron_register"]["message"].text,
         },
         "schedule": {
             "type": "string",
-            "description": (
-                "5-field cron expression (e.g. '0 9 * * *' = daily 9am, "
-                "'0 */6 * * *' = every 6 hours, '0 9 * * MON' = Mondays "
-                "9am)."
-            ),
+            "description": _cron_descriptions.PARAMS["cron_register"]["schedule"].text,
         },
         "enabled": {
             "type": "boolean",
-            "description": (
-                "Whether the schedule fires immediately. Defaults to "
-                "true. Set false to register a paused job and enable "
-                "later via cron__enable."
-            ),
+            "description": _cron_descriptions.PARAMS["cron_register"]["enabled"].text,
         },
     },
     "required": ["name", "to", "message", "schedule"],

@@ -46,17 +46,13 @@ _PIPELINE_INSTALL_LOCAL_PARAMETERS: dict[str, Any] = {
         "path": {
             "type": "string",
             "description": (
-                "Direct path to the pipeline's *.yaml DSL file. May be "
-                "absolute or project-root-relative."
+                _pipeline_management_descriptions.PARAMS["pipeline_install_local"]["path"].text
             ),
         },
         "name": {
             "type": "string",
             "description": (
-                "Optional namespace key for the file. Every pipeline in it "
-                "registers as '<name>.<declared-pipeline-name>'. Need not "
-                "match any declared name; must not contain '.'. Defaults to "
-                "the DSL file stem when omitted."
+                _pipeline_management_descriptions.PARAMS["pipeline_install_local"]["name"].text
             ),
         },
     },
@@ -129,27 +125,19 @@ _PIPELINE_INSTALL_SOURCE_PARAMETERS: dict[str, Any] = {
         "source": {
             "type": "string",
             "description": (
-                "Git or GitHub URL of the pipeline repo. Examples: "
-                "'https://github.com/user/pipeline-repo' or "
-                "'https://github.com/user/monorepo//pipelines/my-pipeline'."
+                _pipeline_management_descriptions.PARAMS["pipeline_install_source"]["source"].text
             ),
         },
         "path": {
             "type": "string",
             "description": (
-                "Optional: path (relative to the repo root, or the subdir "
-                "when the source URL uses the '//' convention) to the DSL "
-                "*.yaml file. Required when the repo/subdir contains more "
-                "than one *.yaml file."
+                _pipeline_management_descriptions.PARAMS["pipeline_install_source"]["path"].text
             ),
         },
         "name": {
             "type": "string",
             "description": (
-                "Optional namespace key. Every pipeline in the file registers "
-                "as '<name>.<declared-pipeline-name>'. Need not match any "
-                "declared name; must not contain '.'. Defaults to the source "
-                "basename."
+                _pipeline_management_descriptions.PARAMS["pipeline_install_source"]["name"].text
             ),
         },
     },

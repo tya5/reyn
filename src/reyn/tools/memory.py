@@ -83,18 +83,11 @@ _READ_MEMORY_BODY_PARAMETERS: dict[str, Any] = {
         "slug": {"type": "string"},
         "offset": {
             "type": "integer",
-            "description": (
-                "Line number to start reading from (0-indexed), counted "
-                "against the body after the YAML frontmatter is stripped. "
-                "Omit to start at the beginning."
-            ),
+            "description": _memory_descriptions.PARAMS["read_memory_body"]["offset"].text,
         },
         "limit": {
             "type": "integer",
-            "description": (
-                "Number of lines to read from `offset`. "
-                "Omit to read through end of body."
-            ),
+            "description": _memory_descriptions.PARAMS["read_memory_body"]["limit"].text,
         },
     },
     "required": ["layer", "slug"],
@@ -105,17 +98,12 @@ _REMEMBER_SHARED_PARAMETERS: dict[str, Any] = {
     "properties": {
         "slug": {
             "type": "string",
-            "description": (
-                "Filename stem, format <type>_<topic>, "
-                "e.g. user_role"
-            ),
+            "description": _memory_descriptions.PARAMS["remember_shared"]["slug"].text,
         },
         "name": {"type": "string"},
         "description": {
             "type": "string",
-            "description": (
-                "One-line summary; appears in memory listings"
-            ),
+            "description": _memory_descriptions.PARAMS["remember_shared"]["description"].text,
         },
         "type": {
             "type": "string",
@@ -123,9 +111,7 @@ _REMEMBER_SHARED_PARAMETERS: dict[str, Any] = {
         },
         "body": {
             "type": "string",
-            "description": (
-                "Full body markdown, typically <5 lines"
-            ),
+            "description": _memory_descriptions.PARAMS["remember_shared"]["body"].text,
         },
     },
     "required": ["slug", "name", "description", "type", "body"],
@@ -136,17 +122,12 @@ _REMEMBER_AGENT_PARAMETERS: dict[str, Any] = {
     "properties": {
         "slug": {
             "type": "string",
-            "description": (
-                "Filename stem, format <type>_<topic>, "
-                "e.g. feedback_tone"
-            ),
+            "description": _memory_descriptions.PARAMS["remember_agent"]["slug"].text,
         },
         "name": {"type": "string"},
         "description": {
             "type": "string",
-            "description": (
-                "One-line summary; appears in memory listings"
-            ),
+            "description": _memory_descriptions.PARAMS["remember_agent"]["description"].text,
         },
         "type": {
             "type": "string",
@@ -154,9 +135,7 @@ _REMEMBER_AGENT_PARAMETERS: dict[str, Any] = {
         },
         "body": {
             "type": "string",
-            "description": (
-                "Full body markdown, typically <5 lines"
-            ),
+            "description": _memory_descriptions.PARAMS["remember_agent"]["body"].text,
         },
     },
     "required": ["slug", "name", "description", "type", "body"],

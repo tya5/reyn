@@ -13,7 +13,7 @@ pipeline DSL sugar over sandboxed_exec, #2593).
 """
 from __future__ import annotations
 
-from reyn.tools.descriptions._types import ToolDescription
+from reyn.tools.descriptions._types import ParamDescription, ToolDescription
 
 sandboxed_exec = ToolDescription(
     tool_name="sandboxed_exec",
@@ -74,4 +74,33 @@ shell = ToolDescription(
 ALL: dict[str, ToolDescription] = {
     "sandboxed_exec": sandboxed_exec,
     "shell": shell,
+}
+
+
+# ── Phase 4: per-parameter descriptions (byte-identical relocation) ──────────
+
+_timeout_seconds_desc = ParamDescription(
+    text="Wall-clock time limit in seconds (default 60).",
+    ja="実時間タイムアウト秒数（デフォルト 60）。",
+)
+
+PARAMS: dict[str, dict[str, ParamDescription]] = {
+    "sandboxed_exec": {
+        "argv": ParamDescription(
+            text="Command and arguments; argv[0] is the executable.",
+            ja="コマンドと引数。argv[0] が実行ファイル。",
+        ),
+        "timeout_seconds": _timeout_seconds_desc,
+    },
+    "shell": {
+        "command": ParamDescription(
+            text="Shell command line, run as `/bin/sh -c <command>`.",
+            ja="`/bin/sh -c <command>` として実行されるシェルコマンド行。",
+        ),
+        "stdin_pipe": ParamDescription(
+            text="The previous pipeline step's pipe-data (JSON-encoded onto stdin).",
+            ja="直前のパイプラインステップのパイプデータ（JSON エンコードして stdin に渡す）。",
+        ),
+        "timeout": _timeout_seconds_desc,
+    },
 }

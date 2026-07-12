@@ -10,7 +10,7 @@ repository — ``reyn_src_list`` / ``reyn_src_read`` / ``reyn_src_glob`` /
 """
 from __future__ import annotations
 
-from reyn.tools.descriptions._types import ToolDescription
+from reyn.tools.descriptions._types import ParamDescription, ToolDescription
 
 reyn_src_list = ToolDescription(
     tool_name="reyn_src_list",
@@ -120,4 +120,69 @@ ALL: dict[str, ToolDescription] = {
     "reyn_src_read": reyn_src_read,
     "reyn_src_glob": reyn_src_glob,
     "reyn_src_grep": reyn_src_grep,
+}
+
+
+# ── Phase 4: per-parameter descriptions (byte-identical relocation) ──────────
+#
+# reyn_src_list has no param-level description (path is bare-typed) — no
+# entry needed.
+
+PARAMS: dict[str, dict[str, ParamDescription]] = {
+    "reyn_src_read": {
+        "offset": ParamDescription(
+            text=(
+                "Line number to start reading from (0-indexed). "
+                "Omit to start at the beginning of the file. When set "
+                "(with or without limit), the 256-KB byte cap is "
+                "bypassed by line-streaming only the requested slice."
+            ),
+            ja=(
+                "読み取り開始行（0始まり）。省略時はファイル先頭から。"
+                "設定時（limit有無に関わらず）は256KBのバイト上限を"
+                "回避し、要求された範囲のみを行単位でストリームする。"
+            ),
+        ),
+        "limit": ParamDescription(
+            text=(
+                "Number of lines to read from `offset`. "
+                "Omit to read through end of file."
+            ),
+            ja="`offset` から読む行数。省略時はファイル末尾まで読む。",
+        ),
+    },
+    "reyn_src_glob": {
+        "pattern": ParamDescription(
+            text="Glob pattern (e.g. '**/*.py', 'docs/**/*.md').",
+            ja="glob パターン（例 '**/*.py', 'docs/**/*.md'）。",
+        ),
+    },
+    "reyn_src_grep": {
+        "pattern": ParamDescription(
+            text="Regex pattern (Python `re` syntax).",
+            ja="正規表現パターン（Python `re` 構文）。",
+        ),
+        "path": ParamDescription(
+            text=(
+                "Repo-relative directory or file to scope the search. "
+                "Default = repo root. Use '' for repo root."
+            ),
+            ja="検索範囲をリポジトリ相対のディレクトリ/ファイルに絞る。デフォルトはリポジトリルート。",
+        ),
+        "glob": ParamDescription(
+            text=(
+                "Optional filename glob filter (e.g. '**/*.py'). "
+                "When omitted, all text files under `path` are searched."
+            ),
+            ja="任意のファイル名 glob フィルタ（例 '**/*.py'）。省略時は `path` 配下の全テキストファイルを検索。",
+        ),
+        "case_sensitive": ParamDescription(
+            text="Default false (= case-insensitive).",
+            ja="デフォルト false（大文字小文字を区別しない）。",
+        ),
+        "max_results": ParamDescription(
+            text="Cap on match count. Default 50.",
+            ja="一致件数の上限。デフォルト 50。",
+        ),
+    },
 }

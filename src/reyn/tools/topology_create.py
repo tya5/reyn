@@ -34,36 +34,25 @@ _TOPOLOGY_CREATE_PARAMETERS: dict[str, Any] = {
     "properties": {
         "name": {
             "type": "string",
-            "description": "The new topology's name (unique; 1-32 chars [a-z0-9_-]).",
+            "description": _delegation_descriptions.PARAMS["topology_create"]["name"].text,
         },
         "kind": {
             "type": "string",
             "enum": ["network", "team", "pipeline"],
-            "description": (
-                "network = every member ↔ every member; team = star around a leader "
-                "(requires 'leader'); pipeline = ordered chain (members[i] → members[i+1])."
-            ),
+            "description": _delegation_descriptions.PARAMS["topology_create"]["kind"].text,
         },
         "members": {
             "type": "array",
             "items": {"type": "string"},
-            "description": (
-                "Agent names to wire — each must be in your spawn subtree (yourself or "
-                "an agent you spawned)."
-            ),
+            "description": _delegation_descriptions.PARAMS["topology_create"]["members"].text,
         },
         "leader": {
             "type": "string",
-            "description": "For kind=team only: the member at the centre of the star.",
+            "description": _delegation_descriptions.PARAMS["topology_create"]["leader"].text,
         },
         "profiles": {
             "type": "object",
-            "description": (
-                "Optional JSON object mapping a member name to a capability_profile name "
-                "(both strings). A bound member's session is narrowed by that profile (it "
-                "can only narrow within its ⊆-you envelope, never widen). Each key must be "
-                "one of 'members'."
-            ),
+            "description": _delegation_descriptions.PARAMS["topology_create"]["profiles"].text,
         },
     },
     "required": ["name", "kind", "members"],

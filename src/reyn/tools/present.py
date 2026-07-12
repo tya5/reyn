@@ -41,33 +41,19 @@ _PRESENT_PARAMETERS: dict[str, Any] = {
     "properties": {
         "data_ref": {
             "type": "string",
-            "description": (
-                "What to show: a zone-readable path or an offloaded-result reference. Read under the "
-                "same authority as file.read. Provide exactly one of data_ref / data_inline."
-            ),
+            "description": _presentation_descriptions.PARAMS["present"]["data_ref"].text,
         },
         "data_inline": {
             "type": "object",
-            "description": (
-                "Small data already in your context, passed directly instead of a ref. Provide "
-                "exactly one of data_ref / data_inline."
-            ),
+            "description": _presentation_descriptions.PARAMS["present"]["data_inline"].text,
         },
         "view": {
             "type": "string",
-            "description": (
-                "Optional: the name of a registered presentation (presentations.yaml) to render "
-                "with. Omit for the default view. At most one of view / blueprint."
-            ),
+            "description": _presentation_descriptions.PARAMS["present"]["view"].text,
         },
         "blueprint": {
             "type": "object",
-            "description": (
-                "Optional (advanced): an inline declarative component tree with JSON-Pointer "
-                "bindings for full control over the layout. Prefer the simple default (omit both "
-                "view and blueprint) unless you specifically need a custom layout. At most one of "
-                "view / blueprint."
-            ),
+            "description": _presentation_descriptions.PARAMS["present"]["blueprint"].text,
         },
     },
     "required": [],

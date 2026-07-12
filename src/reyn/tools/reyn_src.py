@@ -79,19 +79,11 @@ _REYN_SRC_READ_PARAMETERS: dict[str, Any] = {
         "path": {"type": "string"},
         "offset": {
             "type": "integer",
-            "description": (
-                "Line number to start reading from (0-indexed). "
-                "Omit to start at the beginning of the file. When set "
-                "(with or without limit), the 256-KB byte cap is "
-                "bypassed by line-streaming only the requested slice."
-            ),
+            "description": _dev_descriptions.PARAMS["reyn_src_read"]["offset"].text,
         },
         "limit": {
             "type": "integer",
-            "description": (
-                "Number of lines to read from `offset`. "
-                "Omit to read through end of file."
-            ),
+            "description": _dev_descriptions.PARAMS["reyn_src_read"]["limit"].text,
         },
     },
     "required": ["path"],
@@ -166,7 +158,7 @@ _REYN_SRC_GLOB_PARAMETERS: dict[str, Any] = {
     "properties": {
         "pattern": {
             "type": "string",
-            "description": "Glob pattern (e.g. '**/*.py', 'docs/**/*.md').",
+            "description": _dev_descriptions.PARAMS["reyn_src_glob"]["pattern"].text,
         },
     },
     "required": ["pattern"],
@@ -181,29 +173,23 @@ _REYN_SRC_GREP_PARAMETERS: dict[str, Any] = {
     "properties": {
         "pattern": {
             "type": "string",
-            "description": "Regex pattern (Python `re` syntax).",
+            "description": _dev_descriptions.PARAMS["reyn_src_grep"]["pattern"].text,
         },
         "path": {
             "type": "string",
-            "description": (
-                "Repo-relative directory or file to scope the search. "
-                "Default = repo root. Use '' for repo root."
-            ),
+            "description": _dev_descriptions.PARAMS["reyn_src_grep"]["path"].text,
         },
         "glob": {
             "type": "string",
-            "description": (
-                "Optional filename glob filter (e.g. '**/*.py'). "
-                "When omitted, all text files under `path` are searched."
-            ),
+            "description": _dev_descriptions.PARAMS["reyn_src_grep"]["glob"].text,
         },
         "case_sensitive": {
             "type": "boolean",
-            "description": "Default false (= case-insensitive).",
+            "description": _dev_descriptions.PARAMS["reyn_src_grep"]["case_sensitive"].text,
         },
         "max_results": {
             "type": "integer",
-            "description": "Cap on match count. Default 50.",
+            "description": _dev_descriptions.PARAMS["reyn_src_grep"]["max_results"].text,
         },
     },
     "required": ["pattern"],

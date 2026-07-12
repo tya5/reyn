@@ -15,7 +15,7 @@ search_actions / describe_action.
 """
 from __future__ import annotations
 
-from reyn.tools.descriptions._types import ToolDescription
+from reyn.tools.descriptions._types import ParamDescription, ToolDescription
 
 embed = ToolDescription(
     tool_name="embed",
@@ -320,4 +320,128 @@ ALL: dict[str, ToolDescription] = {
     "list_actions": list_actions,
     "search_actions": search_actions,
     "describe_action": describe_action,
+}
+
+
+# ── Phase 4: per-parameter descriptions (byte-identical relocation) ──────────
+#
+# web_fetch / web_search have no param-level descriptions in their origin
+# schemas (url/max_length/query are bare-typed) — no entries needed here.
+
+PARAMS: dict[str, dict[str, ParamDescription]] = {
+    "embed": {
+        "texts": ParamDescription(
+            text="Texts to embed. Returned vectors preserve this order.",
+            ja="埋め込み対象のテキスト群。返るベクトルはこの順序を保持する。",
+        ),
+        "embedding_model": ParamDescription(
+            text=(
+                "Embedding model class (light/standard/strong) or a full "
+                "provider model id."
+            ),
+            ja="埋め込みモデルクラス（light/standard/strong）またはプロバイダのフルモデルID。",
+        ),
+    },
+    "semantic_search": {
+        "query": ParamDescription(
+            text="Natural language query to search for.",
+            ja="検索する自然言語クエリ。",
+        ),
+        "sources": ParamDescription(
+            text="Logical source names to search (from Indexed sources list).",
+            ja="検索対象の論理ソース名（Indexed sources 一覧から）。",
+        ),
+        "top_k": ParamDescription(
+            text="Number of top chunks to return.",
+            ja="返す上位チャンク数。",
+        ),
+        "filters": ParamDescription(
+            text="ChunkMetadata field equality filters (e.g. source_path).",
+            ja="ChunkMetadata フィールドの等価フィルタ（例 source_path）。",
+        ),
+        "embedding_model": ParamDescription(
+            text=(
+                "Fallback embedding model class (light/standard/strong) or "
+                "full model id, used ONLY for a source with no recorded "
+                "model yet — every already-indexed source auto-adopts its "
+                "OWN recorded model regardless of this value (multi-model "
+                "correctness, FP-0057 Phase 2a)."
+            ),
+            ja=(
+                "フォールバックの埋め込みモデルクラス（light/standard/strong）"
+                "またはフルモデルID。まだ記録済みモデルがないソースにのみ使わ"
+                "れる — 既にインデックス済みのソースはこの値に関係なく自身の"
+                "記録済みモデルを自動採用する（マルチモデル正当性、FP-0057 "
+                "Phase 2a）。"
+            ),
+        ),
+    },
+    "mcp_search_registry": {
+        "text": ParamDescription(
+            text=(
+                "Natural-language capability request (e.g. \"github "
+                "related\", \"image generation\", \"PDF handling\") — "
+                "the query may be in any language, including Japanese "
+                "and other non-English input."
+            ),
+            ja=(
+                "自然言語での能力リクエスト（例「github関連」「画像生成」"
+                "「PDF処理」） — 日本語を含むどの言語でもよい。"
+            ),
+        ),
+    },
+    "list_actions": {
+        # NOTE: the origin schema appends ``", ".join(CATEGORIES) + "."`` to
+        # this text at import time (the live category list, not a literal) —
+        # ``.text`` here is the STATIC prefix only; the origin module still
+        # does the concatenation so the byte-identical rendered string is
+        # unchanged.
+        "category": ParamDescription(
+            text=(
+                "Filter by category. Pass an array of category names "
+                "(e.g. category=['exec'], category=['web', 'file']). "
+                "Omit or pass [] to include all categories. "
+                "Categories: "
+            ),
+            ja=(
+                "カテゴリで絞り込む。カテゴリ名の配列を渡す（例 "
+                "category=['exec']）。省略または [] で全カテゴリを含む。"
+                "（末尾に実際のカテゴリ一覧が動的に付加される）"
+            ),
+        ),
+        "offset": ParamDescription(
+            text="Pagination offset (default 0).",
+            ja="ページングオフセット（デフォルト 0）。",
+        ),
+        "limit": ParamDescription(
+            text="Page size (default 10).",
+            ja="1ページのサイズ（デフォルト 10）。",
+        ),
+    },
+    "search_actions": {
+        "query": ParamDescription(
+            text="Natural-language query in any language.",
+            ja="任意の言語での自然言語クエリ。",
+        ),
+        "category": ParamDescription(
+            text="Optional category restriction.",
+            ja="任意のカテゴリ制限。",
+        ),
+        "limit": ParamDescription(
+            text="Top-K results to return (default 10).",
+            ja="返す上位K件の結果数（デフォルト 10）。",
+        ),
+    },
+    "describe_action": {
+        "action_name": ParamDescription(
+            text=(
+                "Qualified name of the action/resource to describe "
+                "(e.g. 'mcp__brave__search', 'rag_corpus__meetings')."
+            ),
+            ja=(
+                "説明対象のアクション/リソースの修飾名（例 "
+                "'mcp__brave__search', 'rag_corpus__meetings'）。"
+            ),
+        ),
+    },
 }

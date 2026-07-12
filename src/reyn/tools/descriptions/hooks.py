@@ -9,7 +9,7 @@ agent-self-reload trigger that writes to the runtime hooks layer
 """
 from __future__ import annotations
 
-from reyn.tools.descriptions._types import ToolDescription
+from reyn.tools.descriptions._types import ParamDescription, ToolDescription
 
 hooks_add = ToolDescription(
     tool_name="hooks_add",
@@ -38,4 +38,39 @@ hooks_add = ToolDescription(
 
 ALL: dict[str, ToolDescription] = {
     "hooks_add": hooks_add,
+}
+
+
+# ── Phase 4: per-parameter descriptions (byte-identical relocation) ──────────
+
+PARAMS: dict[str, dict[str, ParamDescription]] = {
+    "hooks_add": {
+        "on": ParamDescription(
+            text="The lifecycle point the hook fires at.",
+            ja="フックが発火するライフサイクルポイント。",
+        ),
+        "message": ParamDescription(
+            text="The message pushed when the hook fires (a Jinja2 template is allowed).",
+            ja="フック発火時にプッシュされるメッセージ（Jinja2 テンプレート可）。",
+        ),
+        "wake": ParamDescription(
+            text=(
+                "true → the push starts a new turn (self-continuation, capability E); "
+                "false → it rides along with the next turn as context (capability C). "
+                "Default true."
+            ),
+            ja=(
+                "true なら新しいターンを開始（自己継続、capability E）、false なら"
+                "次のターンにコンテキストとして相乗り（capability C）。デフォルト true。"
+            ),
+        ),
+        "push_when": ParamDescription(
+            text="Optional Jinja2 → bool; when it renders false the push is skipped. Default 'true'.",
+            ja="任意の Jinja2 → bool 条件。false になるとプッシュはスキップされる。デフォルト 'true'。",
+        ),
+        "name": ParamDescription(
+            text="Optional label surfaced as the [hook:<name>] attribution prefix.",
+            ja="[hook:<name>] という帰属プレフィックスとして表示される任意ラベル。",
+        ),
+    },
 }

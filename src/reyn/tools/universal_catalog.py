@@ -292,24 +292,26 @@ _LIST_ACTIONS_PARAMETERS: dict[str, Any] = {
         "category": {
             "type": "array",
             "items": {"type": "string", "enum": list(CATEGORIES)},
+            # The reviewable ``.text`` is the STATIC prefix ending in
+            # "Categories: "; the live CATEGORIES list is appended here so
+            # the rendered string stays byte-identical to the pre-migration
+            # literal (see discovery.PARAMS's docstring note on this entry).
             "description": (
-                "Filter by category. Pass an array of category names "
-                "(e.g. category=['exec'], category=['web', 'file']). "
-                "Omit or pass [] to include all categories. "
-                "Categories: " + ", ".join(CATEGORIES) + "."
+                discovery.PARAMS["list_actions"]["category"].text
+                + ", ".join(CATEGORIES) + "."
             ),
         },
         "offset": {
             "type": "integer",
             "minimum": 0,
             "default": 0,
-            "description": "Pagination offset (default 0).",
+            "description": discovery.PARAMS["list_actions"]["offset"].text,
         },
         "limit": {
             "type": "integer",
             "minimum": 1,
             "default": 10,
-            "description": "Page size (default 10).",
+            "description": discovery.PARAMS["list_actions"]["limit"].text,
         },
     },
 }
@@ -326,18 +328,18 @@ _SEARCH_ACTIONS_PARAMETERS: dict[str, Any] = {
     "properties": {
         "query": {
             "type": "string",
-            "description": "Natural-language query in any language.",
+            "description": discovery.PARAMS["search_actions"]["query"].text,
         },
         "category": {
             "type": "array",
             "items": {"type": "string", "enum": list(CATEGORIES)},
-            "description": "Optional category restriction.",
+            "description": discovery.PARAMS["search_actions"]["category"].text,
         },
         "limit": {
             "type": "integer",
             "minimum": 1,
             "default": 10,
-            "description": "Top-K results to return (default 10).",
+            "description": discovery.PARAMS["search_actions"]["limit"].text,
         },
     },
     "required": ["query"],
@@ -355,10 +357,7 @@ _DESCRIBE_ACTION_PARAMETERS: dict[str, Any] = {
     "properties": {
         "action_name": {
             "type": "string",
-            "description": (
-                "Qualified name of the action/resource to describe "
-                "(e.g. 'mcp__brave__search', 'rag_corpus__meetings')."
-            ),
+            "description": discovery.PARAMS["describe_action"]["action_name"].text,
         },
     },
     "required": ["action_name"],
@@ -375,19 +374,11 @@ _INVOKE_ACTION_PARAMETERS: dict[str, Any] = {
     "properties": {
         "action_name": {
             "type": "string",
-            "description": (
-                "Qualified name of the action/resource to invoke "
-                "(e.g. 'mcp__brave__search', 'multi_agent__delegate')."
-            ),
+            "description": _catalog_descriptions.PARAMS["invoke_action"]["action_name"].text,
         },
         "args": {
             "type": "object",
-            "description": (
-                "Arguments for the action; shape comes from "
-                "describe_action.input_schema. May be omitted for "
-                "resources whose canonical invoke takes no args "
-                "(e.g. memory_entry__foo)."
-            ),
+            "description": _catalog_descriptions.PARAMS["invoke_action"]["args"].text,
         },
     },
     "required": ["action_name"],

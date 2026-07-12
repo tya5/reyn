@@ -53,16 +53,11 @@ _DELEGATE_TO_AGENT_PARAMETERS: dict[str, Any] = {
     "properties": {
         "to": {
             "type": "string",
-            "description": (
-                "Target agent name as listed by list_agents."
-            ),
+            "description": _delegation_descriptions.PARAMS["delegate_to_agent"]["to"].text,
         },
         "request": {
             "type": "string",
-            "description": (
-                "Natural-language request paraphrased "
-                "for the peer's context."
-            ),
+            "description": _delegation_descriptions.PARAMS["delegate_to_agent"]["request"].text,
         },
     },
     "required": ["to", "request"],

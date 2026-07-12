@@ -8,7 +8,7 @@ to ``context.compact.text``.
 """
 from __future__ import annotations
 
-from reyn.tools.descriptions._types import ToolDescription
+from reyn.tools.descriptions._types import ParamDescription, ToolDescription
 
 compact = ToolDescription(
     tool_name="compact",
@@ -37,4 +37,22 @@ compact = ToolDescription(
 
 ALL: dict[str, ToolDescription] = {
     "compact": compact,
+}
+
+
+# ── Phase 4: per-parameter descriptions (byte-identical relocation) ──────────
+
+PARAMS: dict[str, dict[str, ParamDescription]] = {
+    "compact": {
+        "reason": ParamDescription(
+            text=(
+                "Optional short rationale for the audit trail (e.g. 'window "
+                "low before reading large file'). Not interpreted by the OS."
+            ),
+            ja=(
+                "監査証跡向けの任意の短い理由（例：'大きなファイルを読む前に"
+                "空きが少ない'）。OS はこの値を解釈しない。"
+            ),
+        ),
+    },
 }

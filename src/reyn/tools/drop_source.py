@@ -30,9 +30,7 @@ _DROP_SOURCE_PARAMETERS: dict[str, Any] = {
     "properties": {
         "source": {
             "type": "string",
-            "description": (
-                "Logical source name to remove (from Indexed sources list)."
-            ),
+            "description": _io_descriptions.PARAMS["drop_source"]["source"].text,
         },
     },
     "required": ["source"],

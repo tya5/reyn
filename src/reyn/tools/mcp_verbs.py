@@ -57,12 +57,7 @@ _MCP_SEARCH_REGISTRY_PARAMETERS: dict[str, Any] = {
     "properties": {
         "text": {
             "type": "string",
-            "description": (
-                "Natural-language capability request (e.g. \"github "
-                "related\", \"image generation\", \"PDF handling\") — "
-                "the query may be in any language, including Japanese "
-                "and other non-English input."
-            ),
+            "description": discovery.PARAMS["mcp_search_registry"]["text"].text,
         },
     },
     "required": ["text"],
@@ -125,20 +120,11 @@ _MCP_INSTALL_REGISTRY_PARAMETERS: dict[str, Any] = {
     "properties": {
         "server_id": {
             "type": "string",
-            "description": (
-                "Registry identifier from mcp__search_registry "
-                "(= candidates[].name, "
-                "e.g. 'io.github.modelcontextprotocol/server-time')."
-            ),
+            "description": _mcp_descriptions.PARAMS["mcp_install_registry"]["server_id"].text,
         },
         "env_overrides": {
             "type": "object",
-            "description": (
-                "Inline env values. Usually NOT needed — the first call "
-                "returns status='needs_secrets' listing which keys to "
-                "set via `reyn secret set <KEY>`; only pass this dict "
-                "when the operator supplied values inline."
-            ),
+            "description": _mcp_descriptions.PARAMS["mcp_install_registry"]["env_overrides"].text,
             "additionalProperties": {"type": "string"},
         },
     },
@@ -221,34 +207,19 @@ _MCP_INSTALL_PACKAGE_PARAMETERS: dict[str, Any] = {
         "kind": {
             "type": "string",
             "enum": ["npm", "pypi", "docker", "github"],
-            "description": "Package channel.",
+            "description": _mcp_descriptions.PARAMS["mcp_install_package"]["kind"].text,
         },
         "identifier": {
             "type": "string",
-            "description": (
-                "npm: package name (e.g. '@scope/server-foo')\n"
-                "pypi: distribution name (e.g. 'my-mcp-server')\n"
-                "docker: image with optional tag "
-                "(e.g. 'org/img:v1')\n"
-                "github: full URL "
-                "(e.g. 'https://github.com/owner/repo' or "
-                "'https://github.com/owner/repo/tree/<ref>/src/<sub>')"
-            ),
+            "description": _mcp_descriptions.PARAMS["mcp_install_package"]["identifier"].text,
         },
         "version": {
             "type": "string",
-            "description": (
-                "Version constraint. npm/pypi/docker only — "
-                "ignored for github."
-            ),
+            "description": _mcp_descriptions.PARAMS["mcp_install_package"]["version"].text,
         },
         "env_overrides": {
             "type": "object",
-            "description": (
-                "Inline env values when the operator provides them; "
-                "otherwise expect status='needs_secrets' on the "
-                "first call (npm/pypi/docker only)."
-            ),
+            "description": _mcp_descriptions.PARAMS["mcp_install_package"]["env_overrides"].text,
             "additionalProperties": {"type": "string"},
         },
     },
@@ -346,31 +317,20 @@ _MCP_INSTALL_LOCAL_PARAMETERS: dict[str, Any] = {
     "properties": {
         "name": {
             "type": "string",
-            "description": (
-                "Short config key written under mcp.servers.<name> "
-                "(e.g. 'weather'). Used as the server prefix in "
-                "mcp__call_tool's '<server>__<tool>' identifier."
-            ),
+            "description": _mcp_descriptions.PARAMS["mcp_install_local"]["name"].text,
         },
         "command": {
             "type": "string",
-            "description": (
-                "Executable to spawn (e.g. 'python', 'node', 'uvx', "
-                "or an absolute path)."
-            ),
+            "description": _mcp_descriptions.PARAMS["mcp_install_local"]["command"].text,
         },
         "args": {
             "type": "array",
             "items": {"type": "string"},
-            "description": (
-                "Command-line arguments. Typically the script path "
-                "(e.g. ['/tmp/weather_mcp.py']) plus flags the server "
-                "expects."
-            ),
+            "description": _mcp_descriptions.PARAMS["mcp_install_local"]["args"].text,
         },
         "env_overrides": {
             "type": "object",
-            "description": "Inline env values for the spawned process.",
+            "description": _mcp_descriptions.PARAMS["mcp_install_local"]["env_overrides"].text,
             "additionalProperties": {"type": "string"},
         },
     },
@@ -535,10 +495,7 @@ _MCP_CALL_TOOL_PARAMETERS: dict[str, Any] = {
     "properties": {
         "tool": {
             "type": "string",
-            "description": (
-                "<server>__<tool> identifier from mcp__list_tools "
-                "(e.g. 'time__get_current_time')."
-            ),
+            "description": _mcp_descriptions.PARAMS["mcp_call_tool"]["tool"].text,
         },
         # #1646: the target tool's params nest under "tool_args", NOT "args" — the
         # universal-scheme live path is invoke_action(action_name="mcp__call_tool",
@@ -546,7 +503,7 @@ _MCP_CALL_TOOL_PARAMETERS: dict[str, Any] = {
         # invoke_action's own "args" (the LLM collapsed it → empty at the MCP call).
         _MCP_TOOL_ARGS_KEY: {
             "type": "object",
-            "description": "Per-tool args dict (consult mcp__list_tools).",
+            "description": _mcp_descriptions.PARAMS["mcp_call_tool"]["tool_args"].text,
         },
     },
     "required": ["tool"],

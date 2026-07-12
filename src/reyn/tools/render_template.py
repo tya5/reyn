@@ -40,38 +40,28 @@ _RENDER_TEMPLATE_PARAMETERS: dict[str, Any] = {
     "properties": {
         "template": {
             "type": "string",
-            "description": (
-                "Inline Jinja2 source text. Provide exactly one of template / template_ref."
-            ),
+            "description": _presentation_descriptions.PARAMS["render_template"]["template"].text,
         },
         "template_ref": {
             "type": "string",
             "description": (
-                "A zone-readable path to a template file (read as raw source text under file.read "
-                "authority). Provide exactly one of template / template_ref."
+                _presentation_descriptions.PARAMS["render_template"]["template_ref"].text
             ),
         },
         "data_ref": {
             "type": "string",
-            "description": (
-                "A zone-readable path whose value binds under 'data' in the template. Read under the "
-                "same authority as file.read. Provide exactly one of data_ref / data_inline."
-            ),
+            "description": _presentation_descriptions.PARAMS["render_template"]["data_ref"].text,
         },
         "data_inline": {
             "type": "object",
             "description": (
-                "Small data already in your context, bound under 'data' in the template. Provide "
-                "exactly one of data_ref / data_inline."
+                _presentation_descriptions.PARAMS["render_template"]["data_inline"].text
             ),
         },
         "undefined": {
             "type": "string",
             "enum": ["strict", "lenient"],
-            "description": (
-                "Undefined-variable policy. 'strict' (default) errors naming the missing variable; "
-                "'lenient' renders undefined as empty and reports the unbound names."
-            ),
+            "description": _presentation_descriptions.PARAMS["render_template"]["undefined"].text,
         },
     },
     "required": [],

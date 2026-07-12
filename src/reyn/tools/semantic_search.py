@@ -54,39 +54,29 @@ _SEMANTIC_SEARCH_PARAMETERS: dict[str, Any] = {
     "properties": {
         "query": {
             "type": "string",
-            "description": "Natural language query to search for.",
+            "description": discovery.PARAMS["semantic_search"]["query"].text,
         },
         "sources": {
             "type": "array",
             "items": {"type": "string"},
-            "description": (
-                "Logical source names to search (from Indexed sources list)."
-            ),
+            "description": discovery.PARAMS["semantic_search"]["sources"].text,
         },
         "top_k": {
             "type": "integer",
             "default": 5,
             "minimum": 1,
             "maximum": 50,
-            "description": "Number of top chunks to return.",
+            "description": discovery.PARAMS["semantic_search"]["top_k"].text,
         },
         "filters": {
             "type": "object",
             "default": {},
-            "description": (
-                "ChunkMetadata field equality filters (e.g. source_path)."
-            ),
+            "description": discovery.PARAMS["semantic_search"]["filters"].text,
         },
         "embedding_model": {
             "type": "string",
             "default": "standard",
-            "description": (
-                "Fallback embedding model class (light/standard/strong) or "
-                "full model id, used ONLY for a source with no recorded "
-                "model yet — every already-indexed source auto-adopts its "
-                "OWN recorded model regardless of this value (multi-model "
-                "correctness, FP-0057 Phase 2a)."
-            ),
+            "description": discovery.PARAMS["semantic_search"]["embedding_model"].text,
         },
     },
     "required": ["query", "sources"],
