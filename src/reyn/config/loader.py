@@ -560,6 +560,10 @@ def load_config(cwd: Path | None = None) -> ReynConfig:
         # #1800 slice 5b: the raw ``hooks:`` block, passed through (parsed by
         # ``load_hooks`` at Session construction). None/absent → empty list.
         hooks=merged.get("hooks") or [],
+        # Hook-Event Redesign Phase 4b/5 (#2880/#2881): the raw ``composers:``
+        # block, passed through (parsed by ``load_composers`` at Session
+        # construction). None/absent → empty list → no Composer starts.
+        composers=merged.get("composers") or [],
         action_retrieval=_build_action_retrieval_config(merged.get("action_retrieval")),
         cron=_build_cron_config(merged.get("cron")),
         # #2608 H4: OUT-set only — read from ``merged`` (reyn.yaml/reyn.local.yaml),

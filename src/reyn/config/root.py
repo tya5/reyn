@@ -263,6 +263,13 @@ class ReynConfig:
     # here and parsed via ``load_hooks`` at Session construction. Empty (default)
     # → empty registry → the HookDispatcher is a no-op.
     hooks: list = field(default_factory=list)
+    # Hook-Event Redesign Phase 4b/5 (proposal 0059 §5/§9, #2880/#2881): the raw
+    # ``composers:`` block (a list of Composer definitions). Kept raw here and
+    # parsed via ``reyn.hooks.composer.load_composers`` at Session construction
+    # (the startup/OUT-set layer of the same 4-layer additive combine ``hooks:``
+    # uses). Empty (default) → no composers → ``start_composers`` is never
+    # called → byte-identical to pre-Composer behavior.
+    composers: list = field(default_factory=list)
     # FP-0034: universal catalog gating + action retrieval (D13 / D14).
     # Default-off so existing chat behaviour is byte-identical until the
     # operator explicitly opts in; will flip in PR-3b-iii after LLMReplay

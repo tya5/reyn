@@ -809,6 +809,30 @@
 #   - name: dynamic            # stdout decides whether/what/how to push
 #     on: turn_end
 #     shell_push: "scripts/decide-next.sh"   # emits e.g. {"push_when":true,"wake":true,"message":"..."}
+#   - on: composed:deploy_approved   # subscribe to a composer's output (below) — a
+#     shell_exec: "reyn deploy.sh"   # Sync side-effect triggered by the composition.
+
+
+# -----------------------------------------------------------------------------
+# composers: event correlation (Hook-Event Redesign Phase 4b/5, #2880/#2881) — a
+# Composer subscribes to this session's per-process HookBus (independent pub/sub
+# broadcast of every hook-event, NOT the P6 audit-event/WAL-event stream), buffers
+# matching events per its ``op``, and publishes ONE new ``composed:<name>`` event
+# back to the same bus when the op's condition is met. ``on: composed:<name>``
+# (above, in ``hooks:``) subscribes a Sync hook to that output — a composed->wake
+# chain is bounded by the SAME ``max_hook_driven_turns`` loop-valve as any other
+# hook-driven turn (every wake push traverses inbox kind="hook", counted
+# unconditionally). Seven ops: all / any / seq / window / debounce / correlate_by
+# / count — see docs/concepts/runtime/hooks.md § "Async Bus and Composer".
+# -----------------------------------------------------------------------------
+# composers:
+#   - name: deploy_approved
+#     op: all
+#     inputs:
+#       - { kind: builtin:external:mcp_resource_updated, match: { server: "github" } }
+#       - { kind: mcp:approval-server:approved }
+#     policy: { capacity: 10, overflow: reject, ttl: 5m }
+#     emit: { kind: composed:deploy_approved }
 
 
 # -----------------------------------------------------------------------------

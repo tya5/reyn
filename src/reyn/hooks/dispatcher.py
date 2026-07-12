@@ -209,6 +209,43 @@ class HookDispatcher:
                     point, hook, type(exc).__name__, exc,
                 )
 
+    async def dispatch_bus_event(self, event: HookEvent) -> None:
+        """Hook-Event Redesign Phase 5 part 1 (proposal 0059 §9 item 3 / #2881):
+        run every Sync-registered hook whose ``on:`` equals ``event.kind``,
+        for an event that arrived via the Bus rather than through
+        ``dispatch()``'s own lifecycle call sites — the consumer half of the
+        composed->wake path (``reyn.hooks.composed_consumer.
+        ComposedEventConsumer`` calls this for every Bus-observed
+        ``composed:<name>`` event).
+
+        Unlike ``dispatch()``, this method does NOT construct a new
+        ``HookEvent`` and does NOT re-publish to ``self._bus`` — ``event``
+        already arrived via the bus, so re-broadcasting it here would be a
+        duplicate delivery to any sibling Composer/subscriber correlating on
+        the same kind. Per-hook isolation and the matcher/applicability gates
+        are otherwise identical to ``dispatch()``'s Sync loop.
+
+        A ``template_push`` hook's wake=true action lands in the inbox via
+        the SAME ``_push_resolved`` E-path (``HOOK_INBOX_KIND``/kind="hook")
+        every other hook-driven wake uses, so a composed->wake turn is
+        counted by the Session's existing ``max_hook_driven_turns`` loop-valve
+        with zero new bounding logic (architect-ratified §224
+        valve-metered-allow)."""
+        point = event.kind
+        for hook in self._registry.hooks_for(point):
+            if self._is_hook_disabled is not None and self._is_hook_disabled(hook):
+                continue
+            if not event_pattern_matches(from_legacy_matcher(hook.matcher), event):
+                continue
+            try:
+                await self._dispatch_one(hook, point, event)
+            except Exception as exc:  # noqa: BLE001 — per-hook isolation boundary
+                _log.warning(
+                    "Bus-consumed hook at kind %r raised — skipped (siblings proceed). "
+                    "hook=%r error=%s: %s",
+                    point, hook, type(exc).__name__, exc,
+                )
+
     async def _dispatch_one(self, hook: HookDef, point: str, event: HookEvent) -> None:
         """Dispatch a single hook by scheme: template_push (C/E) / shell_exec (F)
         / shell_push (run + parse stdout → the same C/E path as template_push)

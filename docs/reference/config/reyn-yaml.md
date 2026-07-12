@@ -646,13 +646,70 @@ hooks:
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `on` | string | _required_ | Lifecycle point (`turn_start`, `turn_end`, `session_start`, `session_end`, `task_start`, `task_end`) or an external-event point — `mcp_resource_updated` (a subscribed MCP resource changing), `file_changed` (a watched path changing, requires [`fs_watch`](#fs_watch-block)), `cron_fired` (a message-based cron job fires), or `webhook_received` (an inbound webhook resolves to a session). `cron_fired`/`webhook_received` are non-blocking relative to their ingress — dispatch never delays the cron job's delivery or the webhook's HTTP response. See [Concepts: hooks § External-event points](../../concepts/runtime/hooks.md#external-event-points). |
+| `on` | string | _required_ | Lifecycle point (`turn_start`, `turn_end`, `session_start`, `session_end`, `task_start`, `task_end`), an external-event point — `mcp_resource_updated` (a subscribed MCP resource changing), `file_changed` (a watched path changing, requires [`fs_watch`](#fs_watch-block)), `cron_fired` (a message-based cron job fires), or `webhook_received` (an inbound webhook resolves to a session) — or a `composed:<name>` composed-event kind (an OPEN namespace, one entry per [`composers:`](#composers-block) config's `emit.kind`; a composed→wake chain is bounded by the same `max_hook_driven_turns` loop-valve as any other hook-driven turn). `cron_fired`/`webhook_received` are non-blocking relative to their ingress — dispatch never delays the cron job's delivery or the webhook's HTTP response. See [Concepts: hooks § External-event points](../../concepts/runtime/hooks.md#external-event-points). |
 | `name` | string | _the point_ | Optional operator label surfaced as the `[hook:<name>]` attribution prefix on a push. Absent → defaults to the hook-point (e.g. `[hook:turn_end]`). |
 | `matcher` | map[string,string] | _none_ | Optional filter, evaluated against the firing event's template vars before the hook's action runs. Every named field must match: exact string equality, except `uri`/`path` (shell-style glob via `fnmatch`). Absent/empty → the hook always fires (unaffected for lifecycle hooks, which carry no `server`/`uri`/`path`). **Validated at load** for the 10 builtin hook points: a matcher field name outside that point's builtin schema (e.g. a typo, or a lifecycle point's matcher naming `server`/`uri`) is a `HookConfigError` at config-load time, not a silently-dead matcher. A future/custom point with no builtin schema entry keeps the pre-validation behavior — a field the event doesn't carry never matches at runtime. |
 | `template_push` | map | _none_ | Inbox-push hook from a Jinja2 template (one of the four schemes). `message` (Jinja2 → text), `wake` (bool/Jinja2, default `true`: `true` starts a new turn = self-continuation; `false` rides along with the next turn as passive context), `push_when` (Jinja2 → bool, default `true`; `false` skips), `session` (parsed + carried; naming a different session routes the push to that session's inbox — **cross-session push**; omitted or the current session → the local path). |
 | `shell_exec` | string | _none_ | A shell command run as a pure side-effect (one of the four schemes). Sandbox-gated + consent-allowlisted; stdout/stderr are logs, never parsed. |
 | `shell_push` | string | _none_ | A shell command whose **stdout is a single JSON object** `{"push_when": bool, "wake": bool, "message": str, "session"?: str}` (first three required), pushed via the same path as `template_push`. stdout must be pure JSON (logs → stderr). Sandbox-gated + consent-allowlisted. Any failure (non-zero exit, invalid JSON, missing/wrong-typed field) skips the push (fail-safe). |
 | `pipeline_launch` | map | _none_ | Launch a registered pipeline (one of the four schemes). `name` (required — the pipeline's registered name; unregistered → warns and skips the launch, the hook point still completes), `input_template` (optional — a `dict`'s string leaves are each Jinja2-rendered against the event's template vars; a plain string is rendered once and its output parsed as a JSON object; omitted → `input=None`). Async/detached: the result arrives later on this session's own inbox as a `pipeline_result` message. |
+
+## `composers` block
+
+Event correlation (Hook-Event Redesign Phase 4b/5, proposal
+[0059](../../deep-dives/proposals/0059-hook-event-redesign.md) §5/§9). A
+**Composer** subscribes to this session's per-process `HookBus`
+(independent pub/sub broadcast of every hook-event — NOT the P6
+audit-event/WAL-event stream), buffers matching events per its `op`, and —
+once the op's condition is met — publishes ONE new event with
+`kind = "composed:<name>"` back to the same bus. A `composed:<name>` kind
+is then a normal `hooks:` `on:` target ([`hooks` block](#hooks-block) above)
+— subscribing a Sync side-effect to the composition's output.
+
+```yaml
+composers:
+  - name: deploy_approved
+    op: all
+    inputs:
+      - { kind: builtin:external:mcp_resource_updated, match: { server: "github" } }
+      - { kind: mcp:approval-server:approved }
+    policy: { capacity: 10, overflow: reject, ttl: 5m }
+    emit: { kind: composed:deploy_approved }
+```
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `name` | string | _required_ | The composer's identifier — also the correlation-key namespace and the `composer_fired`/`composer_dropped` P6 event's `composer` field. |
+| `op` | string | _required_ | One of `all` (every input arrives, per key), `any` (first matching input, stateless), `seq` (inputs' kinds arrive in the configured order), `window` (fires `ttl` seconds after the first matching event, with everything buffered), `debounce` (fires `ttl` seconds after the last matching event with no newer one in between), `correlate_by` (like `all`, keyed by a payload field), `count` (fires once `count` matching events arrive, per key). |
+| `inputs` | list[map] | _required_ | Each entry: `kind` (a hook-event kind — a builtin `builtin:lifecycle:*`/`builtin:external:*` kind, or any other kind observed on the bus) + optional `match` (a payload field→pattern filter, same semantics as a hook's `matcher`). `source` is NOT settable — every bus event carries `source="builtin"` (kind + payload already encode the source type/instance); naming any other `source` value is a load-time error. |
+| `policy` | map | `{capacity: 10, overflow: drop_oldest, ttl: 5m}` | `capacity` (max concurrent pending correlation keys), `overflow` (`drop_oldest`/`drop_newest`/`reject` — no publisher-blocking backpressure), `ttl` (seconds, or a `<N><unit>` string with unit `s`/`m`/`h`; an incomplete `all`/`seq`/`correlate_by`/`count` pending record older than `ttl` is evicted — for `window`/`debounce`, `ttl` IS the fire timer). |
+| `correlate_by` | string | _none_ | Required when `op: correlate_by` — the payload field read as the correlation key (instead of one global bucket). |
+| `count` | integer | _none_ | Required when `op: count` — the threshold of matching events before firing. |
+| `emit.kind` | string | _required_ | The composed event's kind — MUST start with `composed:` (namespace-enforced at load time; collides otherwise with the P6 audit-event surface). |
+
+**Reliability posture: best-effort, not a recovery feature.** A Composer's
+in-flight correlation state is held in memory only and is lost on a process
+crash (a partially-matched `all`/`seq`/`correlate_by` simply never fires) —
+a deliberate v1 scope decision (the Bus itself is already lossy under
+backpressure, so a Composer built on it cannot promise more). Every fire
+emits `composer_fired`; every drop (overflow or `ttl`-eviction) emits
+`composer_dropped` — both metadata-only (composer name + correlation key +
+reason, never the buffered payload content).
+
+**The composed→wake loop-valve bound.** A `composed:<name>` hook's
+wake=true push traverses the exact same inbox `kind="hook"` path any other
+hook-driven wake does, so a self-stimulating composed→wake chain (a
+composer whose input is fed by a lifecycle point its own consumer hook's
+next turn re-triggers) is bounded by the session's existing
+`max_hook_driven_turns` cap with zero additional bounding logic — see
+[Concepts: hooks § Async Bus and Composer](../../concepts/runtime/hooks.md#async-bus-and-composer--event-correlation).
+
+Composers are read from the SAME 4-layer additive combine as `hooks:`
+(`reyn.yaml` startup ∪ `.reyn/config/hooks.yaml` runtime ∪ per-agent ∪
+per-session) but are **startup-only** — added/removed composer entries take
+effect on the next session start, not via the hooks hot-reload seam (a live
+Composer's in-flight `PendingStore` correlation state has no analogous
+reload-time reconciliation yet).
 
 ## `fs_watch` block
 

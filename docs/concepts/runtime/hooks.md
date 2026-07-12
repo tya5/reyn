@@ -454,14 +454,59 @@ overflow or a `ttl`-aged incomplete correlation, is surfaced as a
 never fires is never silent. A successful fire is `composer_fired`
 (same metadata-only shape).
 
-**Composed events are Bus-only.** A `composed:<name>` event lives on the
-Bus; it is not looped back into the Sync `HookDispatcher` — wiring a
-`composed:*` kind as a `hooks:` `on:` target (i.e. a Sync side-effect
-triggered by a composition) is not yet supported, to keep the composition
-graph a finite DAG whose leaves cannot feed back into the loop-valved
-self-continuation path. A composer config that would create a composition
-cycle (composer A depends on composer B's output which depends on A's) is
-rejected at config-load time, never discovered at runtime.
+**Composed events reach Sync via a dedicated bridge, never `HookDispatcher.
+dispatch()` itself.** A `composed:<name>` event is published ONLY to the
+Bus by the Composer (invariant #5 above stays true — a Composer never calls
+`HookDispatcher.dispatch()`/`hooks_for()` directly). Hook-Event Redesign
+Phase 5 part 1 ([#2881](https://github.com/tya5/reyn/issues/2881)) opened
+`composed:<name>` as a subscribable Sync `on:` target — a
+`reyn.hooks.composed_consumer.ComposedEventConsumer` subscribes to the same
+session `HookBus` and, for every observed `composed:*` event, runs any
+Sync-registered hook whose `on:` names that kind
+(`HookDispatcher.dispatch_bus_event`) — WITHOUT re-publishing to the bus
+(re-broadcasting an already-bus-delivered event would double-deliver it to
+any sibling Composer correlating on the same kind). A composer config that
+would create a composition cycle (composer A depends on composer B's output
+which depends on A's) is still rejected at config-load time, never
+discovered at runtime — that DAG check is independent of, and unaffected
+by, this Sync consumer.
+
+```yaml
+hooks:
+  - on: composed:deploy_approved      # a composed event as a Sync on: target
+    shell_exec: "reyn deploy.sh"
+
+composers:
+  - name: deploy_approved
+    op: all
+    inputs:
+      - { kind: builtin:external:mcp_resource_updated, match: { server: "github" } }
+      - { kind: mcp:approval-server:approved }
+    policy: { capacity: 10, overflow: reject, ttl: 5m }
+    emit: { kind: composed:deploy_approved }
+```
+
+A Session reads `composers:` from the SAME 4-layer additive combine as
+`hooks:` (`reyn.yaml` startup ∪ `.reyn/config/hooks.yaml` runtime ∪
+per-agent ∪ per-session) and starts every configured Composer automatically
+(`start_composers`, called from `run()` alongside the filesystem watcher's
+own start) — no manual wiring required. Composers are **startup-only**: a
+config change takes effect on the next session start, not via the hooks
+hot-reload seam (a live Composer's in-flight `PendingStore` correlation
+state has no reload-time reconciliation yet).
+
+**The composed→wake loop-valve bound.** A `composed:<name>` hook's
+wake=true push lands in the inbox via the exact same `kind="hook"` E-path
+every other hook-driven wake uses, so a self-stimulating composed→wake
+chain (a composer counting a lifecycle point its own consumer hook's next
+turn re-triggers — e.g. `turn_end`) is bounded by the session's existing
+`max_hook_driven_turns` loop-valve with **zero new bounding logic**: every
+wake path, composed→wake included, is counted by the same
+`_hook_driven_turns` cap check. This is the architect-ratified "structural
+non-reentry → valve-metered allow" transition (proposal
+[0059](../../deep-dives/proposals/0059-hook-event-redesign.md) §9 item 3) —
+pinned by a flip-witness Tier-2 test that drives a chain whose natural turn
+count is unbounded and asserts the force-close fires at the cap.
 
 ## Deferred
 
@@ -469,14 +514,20 @@ The following capabilities are designed but not yet implemented:
 
 - **Agent-level and phase-level hooks** — fine-grained points inside a turn
   (rare use cases; session/turn/task covers the common ones).
-- **Composer config wiring** — `composers:` is parsed and the correlation
-  engine (`reyn.hooks.composer`) is implemented and tested, but a Session
-  does not yet read `composers:` from `reyn.yaml`/`.reyn/config/hooks.yaml`
-  and start it automatically; that wiring, plus a `WalBackedPendingStore`
-  (recovery-feature-gated) and consuming `composed:*` as a Sync `on:`
-  target, are follow-ups tracked in
-  [#2881](https://github.com/tya5/reyn/issues/2881) (producer-wire +
-  consumer-open + loop-valve + e2e reachability assert).
+- **`WalBackedPendingStore`** — a crash-durable swap for a Composer's
+  `PendingStore` seam (recovery-feature-gated: the moment it lands, CLAUDE.md's
+  truncate-falsify PR gate applies). Composer pending state stays
+  best-effort/crash-non-durable until then (by design, not an oversight —
+  see the reliability posture above).
+- **`emit_hook_event`** — an LLM-emit Control-IR op (Hook-Event Redesign
+  Phase 5's LLM-emit slice, proposal §8) letting the LLM itself emit a
+  hook-event that a Composer can correlate on. Not built yet; today's
+  composed→wake reachability path (#2881) is driven entirely by
+  builtin/external hook-events, no LLM-emit involved.
+- **valve-persist** — `_hook_driven_turns` (the loop-valve counter) is
+  in-memory-only (resets on crash); a separate, recovery-gated follow-up
+  would make it snapshot-backed. Flagged as more load-bearing now that the
+  Composer/Bus redesign adds new hook-driven-turn-generating paths.
 
 ## See also
 
