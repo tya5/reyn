@@ -53,6 +53,7 @@ def get_default_registry() -> ToolRegistry:
     from reyn.tools.delegate_to_agent import DELEGATE_TO_AGENT
     from reyn.tools.drop_source import DROP_SOURCE
     from reyn.tools.embed import EMBED
+    from reyn.tools.emit_hook_event import EMIT_HOOK_EVENT
 
     # Wave 2 additions (ADR-0026 M3 Wave 2)
     from reyn.tools.file import (
@@ -228,6 +229,10 @@ def get_default_registry() -> ToolRegistry:
     # #2073 S3: the hooks-write self-reload tool (the agent adds its own runtime
     # hooks to .reyn/hooks.yaml + reloads at the turn boundary). Router-only.
     registry.register(HOOKS_ADD)
+    # Hook-Event Redesign Phase 5 part 2 (proposal 0059 §8): LLM-authored
+    # hook-event emission onto the caller's own HookBus. Router-only (the
+    # handler needs a live session-bound HookBus/session_id).
+    registry.register(EMIT_HOOK_EVENT)
     # FP-0038 (#171) S2 + S3: glob / grep for Reyn's own repo, mirroring
     # the file__glob / file__grep surfaces but scoped to the OS source tree.
     registry.register(REYN_SRC_GLOB)

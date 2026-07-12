@@ -1762,6 +1762,7 @@ class Session:
             task_waker=self._task_waker,  # #2107: thread the TaskWaker into the router op-ctx
             task_subscription_writer=self._task_subscription_writer,  # #2187 backend-master: the Task subscription WAL writer
             hook_dispatcher=self._hook_dispatcher,  # #1800 slice 5c: task_start/end (router path)
+            hook_bus=self._hook_bus,  # Hook-Event Redesign Phase 5 part 2: emit_hook_event's publish target
             agent_name=self.agent_name,
             agent_role=self._agent_role,
             output_language=self.output_language,
@@ -6084,6 +6085,7 @@ class Session:
             media_store=self._media_store,
             contextual_permission=self._contextual_permission,  # #1827 S3 → control-IR OpContext
             hook_dispatcher=self._hook_dispatcher,  # #1800 slice 5c: complete-by-construction (both router callers)
+            hook_bus=self._hook_bus,  # Hook-Event Redesign Phase 5 part 2: emit_hook_event's publish target (both router op-ctx builders complete-by-construction)
             current_task_id=self._current_task_id,  # #1953 §16: ownership-derivation for task.create (enumerate ALL op-ctx builders)
             hot_reloader=self._hot_reloader,  # #2761 PR-2: per-session reloader (both router op-ctx builders complete-by-construction)
             render_template_bounds=self._render_template_bounds,  # #2679: operator bounds (both router op-ctx builders complete-by-construction)

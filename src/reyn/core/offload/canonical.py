@@ -936,6 +936,18 @@ cron_unregister_to_canonical = make_status_text_mapper(
 )
 
 
+def _render_emit_hook_event(result: dict) -> str:
+    return f"Emitted hook-event '{result.get('emitted_kind', '')}'."
+
+
+# ``emit_hook_event`` (Hook-Event Redesign Phase 5 part 2, op_runtime/emit_hook_event.py) —
+# ``{kind, status, emitted_kind}`` on success (a denied/error result is routed through the
+# shared error seam before this mapper ever runs — see make_status_text_mapper's docstring).
+emit_hook_event_to_canonical = make_status_text_mapper(
+    render=_render_emit_hook_event, meta_keys=("emitted_kind",),
+)
+
+
 def _render_cron_set_enabled(result: dict) -> str:
     state = "enabled" if result.get("enabled") else "disabled"
     return f"Cron job '{result.get('name', '')}' {state}."
