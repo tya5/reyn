@@ -74,7 +74,16 @@ plus the optional `matcher` (see [below](#matcher-narrowing-which-events-fire-a-
 
 | Field | Type | Default | Meaning |
 |---|---|---|---|
-| `shell_exec` | str | _required_ | The command line. stdout/stderr are ignored; the event is written to the command's stdin as JSON. |
+| `shell_exec` | str (**static** — not Jinja2) | _required_ | The command line. stdout/stderr are ignored; the event is written to the command's stdin as JSON. |
+
+**`shell_exec` is deliberately NOT templated.** Unlike `message`/`input_template`
+above, the command line is split with `shlex.split` and run as-is — event/context
+data is never interpolated into it. This is an intentional command-injection
+guard, not an oversight: if you need the firing event's data inside the
+command, read it from **stdin**, which always carries the event's payload as
+JSON (e.g. a composed event's `{"inputs": [...], "correlation_key": ...}`) —
+the command must read and parse stdin itself, never expect `{{ ... }}`
+substitution in its own argv.
 
 **`shell_push`** — a sandboxed command whose stdout IS a push directive:
 
