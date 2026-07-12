@@ -7,6 +7,7 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Any, Literal
 
+from reyn.builtin.docs import read_builtin_body_bytes
 from reyn.data.workspace.text_codec import decode_text_or_none, encode_text
 from reyn.schemas.models import FileIROp
 
@@ -200,6 +201,19 @@ def _resolve_for_gate(ctx: OpContext, path_str: str) -> str:
 
 
 async def handle(op: FileIROp, ctx: OpContext) -> dict:
+    # #2913: a builtin skill/pipeline BODY (`reyn.builtin.registry`'s
+    # `path` entries) resolves outside `project_root` in EVERY deploy
+    # (F3a — the path is package-directory-relative, not project-relative),
+    # so the standard out-of-root read-zone gate below would hard-deny it
+    # non-interactively in production. `read_builtin_body_bytes` returns
+    # non-None ONLY when `op.path` falls inside the `reyn.builtin` package
+    # directory (= it IS builtin-provenance content — nothing else lives
+    # there); every operator (non-builtin) path gets None and falls through
+    # to the unmodified `_in_default_read_zone` gate below, unchanged.
+    _builtin_bytes: "bytes | None" = (
+        read_builtin_body_bytes(op.path) if op.op == "read" else None
+    )
+
     # Permission check (single point for both frontends). For
     # `regenerate_index` the file actually written is `output_path`, not
     # `path`; everything else writes to `path`.
@@ -221,8 +235,11 @@ async def handle(op: FileIROp, ctx: OpContext) -> dict:
                     ctx.permission_decl, _resolve_for_gate(ctx, op.dest_path), ctx.actor,
                     sandbox_policy=_sandbox, bus=ctx.intervention_bus,
                 )
-        elif op.op in _READ_OPS:
-            # read / glob / grep / stat — gate against read scope
+        elif op.op in _READ_OPS and _builtin_bytes is None:
+            # read / glob / grep / stat — gate against read scope. Skipped
+            # for a builtin body read (#2913, above) — that content is
+            # code-shipped and non-editable, the same trust tier as the
+            # source code the operator already has repo/package access to.
             await ctx.permission_resolver.require_file_read(
                 ctx.permission_decl, _resolve_for_gate(ctx, op.path), ctx.actor,
                 sandbox_policy=_sandbox, bus=ctx.intervention_bus,
@@ -277,7 +294,14 @@ async def handle(op: FileIROp, ctx: OpContext) -> dict:
         # short-circuited above via the #365 media-blocks path.) Permission
         # gating is identical — read_file_bytes resolves the read-zone the same
         # way read_file does.
-        raw_bytes, found = ctx.workspace.read_file_bytes(op.path)
+        # #2913: a builtin body's bytes come from importlib.resources (see the
+        # short-circuit at the top of `handle`), not the workspace file read —
+        # everything below (decode ladder, offset/limit paging, truncation) is
+        # unchanged either way.
+        if _builtin_bytes is not None:
+            raw_bytes, found = _builtin_bytes, True
+        else:
+            raw_bytes, found = ctx.workspace.read_file_bytes(op.path)
         if not found:
             suggestions = _nearby_files(ctx.workspace, op.path)
             ctx.events.emit("tool_executed", op="read_file", path=op.path, found=False)
