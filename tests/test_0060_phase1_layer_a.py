@@ -357,3 +357,125 @@ async def test_unset_turn_origin_fails_safe_to_auto_improvement(tmp_path):
     prov = written["presentations"]["entries"]["bridged"]["provenance"]
     assert prov == "auto_improvement"  # RED if the None→auto default is stripped
     assert prov is not None
+
+
+# ── Test 6 + 7: per-stamper fail-safe strip-witnesses (skill + pipeline) ─────
+#
+# The present-install strip-witness (test 5) only pins ONE of the three install
+# stampers. The skill and pipeline stampers use the SAME provenance_from_ctx
+# fail-safe, but without their OWN strip-witness a future revert of either to
+# raw ``entry["provenance"] = ctx.turn_origin`` would silent-ship (green-on-
+# strip) — re-opening the gate-bypass on those 2 paths. These two witnesses pin
+# each independently (architect co-vet on #2903, the #2900 STEP-4 green-on-strip
+# class).
+
+
+def _skill_ctx(tmp_path: Path) -> OpContext:
+    """A real OpContext approving skills.yaml writes, turn_origin UNSET (None) —
+    the bridge-fallback shape (mirrors test_skill_install_pr_c.py's _make_ctx)."""
+    config_path = tmp_path / ".reyn" / "config" / "skills.yaml"
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    resolver = PermissionResolver(
+        config_permissions={}, project_root=tmp_path, interactive=False,
+    )
+    resolver.session_approve_path(str(config_path), "test", "file.write")
+    decl = PermissionDecl(file_write=[{"path": str(config_path), "scope": "just_path"}])
+    return OpContext(
+        workspace=_StubWorkspace(base_dir=tmp_path),
+        events=_Events(),
+        permission_decl=decl,
+        permission_resolver=resolver,
+        actor="test",
+        intervention_bus=None,
+        subscribers=[],
+        state_log=None,
+    )  # turn_origin defaults to None — the unset/bridge-fallback shape
+
+
+def _pipeline_ctx(tmp_path: Path) -> OpContext:
+    """A real OpContext approving pipelines.yaml writes, turn_origin UNSET (None)."""
+    config_path = tmp_path / ".reyn" / "config" / "pipelines.yaml"
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    resolver = PermissionResolver(
+        config_permissions={}, project_root=tmp_path, interactive=False,
+    )
+    resolver.session_approve_path(str(config_path), "test", "file.write")
+    decl = PermissionDecl(file_write=[{"path": str(config_path), "scope": "just_path"}])
+    return OpContext(
+        workspace=_StubWorkspace(base_dir=tmp_path),
+        events=_Events(),
+        permission_decl=decl,
+        permission_resolver=resolver,
+        actor="test",
+        intervention_bus=None,
+        subscribers=[],
+        state_log=None,
+    )  # turn_origin defaults to None
+
+
+@pytest.mark.asyncio
+async def test_skill_install_unset_turn_origin_fails_safe_to_auto_improvement(tmp_path):
+    """Tier 2: LOAD-BEARING fail-safe strip-witness for the SKILL stamper
+    (#2903 co-vet). A real skill_install with ctx.turn_origin=None/unset (the
+    bridge-fallback shape) writes provenance="auto_improvement", never None.
+    FALSIFY: revert skill_install's ``entry["provenance"] = _provenance_from_ctx(ctx)``
+    to raw ``ctx.turn_origin`` (or strip provenance_from_ctx's None→auto for its
+    path) → the entry lands provenance=None → RED. Pins the skill path's
+    gate-bypass guard independently of present's (test 5)."""
+    from reyn.core.op_runtime.skill_install import handle as skill_install_handle
+    from reyn.schemas.models import SkillInstallIROp
+
+    skill_dir = tmp_path / "skills" / "my-skill"
+    skill_dir.mkdir(parents=True, exist_ok=True)
+    (skill_dir / "SKILL.md").write_text(
+        "---\nname: my-skill\ndescription: A test skill\n---\n\nSkill body.\n",
+        encoding="utf-8",
+    )
+    ctx = _skill_ctx(tmp_path)
+    assert ctx.turn_origin is None  # precondition: the risky input really is unset
+
+    result = await skill_install_handle(
+        SkillInstallIROp(kind="skill_install", path=str(skill_dir)), ctx,
+    )
+    assert result["status"] == "installed"
+
+    config_path = tmp_path / ".reyn" / "config" / "skills.yaml"
+    written = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    prov = written["skills"]["entries"]["my-skill"]["provenance"]
+    assert prov == "auto_improvement"  # RED if the skill stamper's fail-safe is stripped
+    assert prov is not None
+
+
+@pytest.mark.asyncio
+async def test_pipeline_install_unset_turn_origin_fails_safe_to_auto_improvement(tmp_path):
+    """Tier 2: LOAD-BEARING fail-safe strip-witness for the PIPELINE stamper
+    (#2903 co-vet). A real pipeline_install with ctx.turn_origin=None/unset
+    writes provenance="auto_improvement", never None. FALSIFY: revert
+    pipeline_install's ``entry["provenance"] = _provenance_from_ctx(ctx)`` to raw
+    ``ctx.turn_origin`` → the entry lands provenance=None → RED. Pins the
+    pipeline path's gate-bypass guard independently of present's (test 5)."""
+    from reyn.core.op_runtime.pipeline_install import handle as pipeline_install_handle
+    from reyn.schemas.models import PipelineInstallIROp
+
+    dsl_path = tmp_path / "pipelines" / "hello.yaml"
+    dsl_path.parent.mkdir(parents=True, exist_ok=True)
+    dsl_path.write_text(
+        "pipeline: hello\n"
+        "description: A test pipeline\n"
+        "steps:\n"
+        "  - transform: {value: \"1 + 1\", output: two}\n",
+        encoding="utf-8",
+    )
+    ctx = _pipeline_ctx(tmp_path)
+    assert ctx.turn_origin is None  # precondition: the risky input really is unset
+
+    result = await pipeline_install_handle(
+        PipelineInstallIROp(kind="pipeline_install", path=str(dsl_path)), ctx,
+    )
+    assert result["status"] == "installed"
+
+    config_path = tmp_path / ".reyn" / "config" / "pipelines.yaml"
+    written = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    prov = written["pipelines"]["entries"]["hello"]["provenance"]
+    assert prov == "auto_improvement"  # RED if the pipeline stamper's fail-safe is stripped
+    assert prov is not None
