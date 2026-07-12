@@ -31,7 +31,7 @@ In scope:
 - Vulnerabilities in Reyn's OS layer — the validation gate, permission
   enforcement, Control IR execution, event log integrity, and persistence
   (snapshot / WAL) mechanisms.
-- Sandbox / privilege escalation issues in stdlib skill execution paths.
+- Sandbox / privilege escalation issues in tool, hook, or skill execution paths (`sandboxed_exec`, shell hooks, MCP subprocess launchers).
 
 Out of scope:
 - Issues caused by user-supplied skills or `reyn.yaml` configurations that

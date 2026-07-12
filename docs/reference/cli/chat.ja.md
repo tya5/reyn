@@ -7,7 +7,7 @@ applies_to: [reyn chat]
 
 # `reyn chat`
 
-agent にアタッチされたインタラクティブな REPL セッションを開始します。各ユーザーターンは `skill_router` stdlib Skill を通じてディスパッチされ、意図を分類して直接返信、プロジェクト/stdlib Skill の実行、または別の agent への委任を行います。
+agent にアタッチされたインタラクティブな REPL セッションを開始します。各ユーザーターンは chat router を通じてディスパッチされ、意図を分類して直接返信、Skill の実行、または別の agent への委任を行います。
 
 Memory の検索と書き込みはルーター Phase の内部で自動的に行われます。[コンセプト/memory](../../concepts/data-retrieval/memory.md) を参照してください。
 

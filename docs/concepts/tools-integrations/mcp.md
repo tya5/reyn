@@ -308,9 +308,9 @@ Three audit events are emitted per call:
 
 Filter for them with `reyn events tail | grep mcp_` or `grep '"mcp_called"' .reyn/events.jsonl`.
 
-## Stdlib workflows that use MCP
+## Skills that use MCP
 
-Stdlib workflows declare `permissions.mcp: [<server>]` in the phase, emit `mcp` ops with `tool: <name>` (or whatever the server advertises), and let the OS handle the rest. See the how-to for a full quickstart on authoring your own MCP-backed workflow.
+A skill declares `permissions.mcp: [<server>]` in the phase, emits `mcp` ops with `tool: <name>` (or whatever the server advertises), and lets the OS handle the rest. See the how-to for a full quickstart on authoring your own MCP-backed skill.
 
 ## Role 2: MCP server — external clients call Reyn
 
