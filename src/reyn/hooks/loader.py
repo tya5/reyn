@@ -178,7 +178,11 @@ def _parse_matcher(raw: object, entry_index: int) -> "dict[str, str] | None":
     return matcher
 
 
-def _parse_entry(raw: object, entry_index: int) -> HookDef:
+def _parse_entry(
+    raw: object,
+    entry_index: int,
+    composed_schemas: "dict[str, frozenset[str]] | None" = None,
+) -> HookDef:
     """Validate one raw hooks list entry and return a ``HookDef``."""
     if not isinstance(raw, dict):
         raise HookConfigError(
@@ -216,16 +220,37 @@ def _parse_entry(raw: object, entry_index: int) -> HookDef:
     # namespace (one entry per ``composers:`` config's ``emit.kind``, not a
     # fixed enum), so it is accepted by PREFIX here rather than being added to
     # ``ALLOWED_HOOK_POINTS`` (a closed frozenset of the 10 builtin points).
-    # A composed-kind hook is NOT looked up via the builtin Schema Registry
-    # (``BUILTIN_HOOK_SCHEMAS`` has no ``composed:*`` entry, so a ``matcher``
-    # on one stays permissive/open-set below, same as any other non-builtin
-    # point) — its consumer is ``reyn.hooks.composed_consumer.
+    # Its consumer is ``reyn.hooks.composed_consumer.
     # ComposedEventConsumer``, not ``HookDispatcher.dispatch()``'s Sync loop.
+    # #2889: a composed-kind hook's ``matcher`` IS now schema-validated below,
+    # against ``composed_schemas`` (every composed event's payload shape is
+    # the fixed ``{"inputs", "correlation_key"}`` — see ``event_pattern.
+    # validate_against_schema``'s docstring) — closing the Phase-3 open-set
+    # gap this class of hook was left in.
     if on_key not in ALLOWED_HOOK_POINTS and not on_key.startswith(COMPOSED_KIND_PREFIX):
         sorted_points = ", ".join(sorted(ALLOWED_HOOK_POINTS))
         raise HookConfigError(
             f"hooks[{entry_index}].on={on_raw!r} is not a recognised hook-point. "
             f"Allowed: {sorted_points}, or a {COMPOSED_KIND_PREFIX}<name> composed-event kind."
+        )
+    # #2889 sub-decision (b), included: a dangling composed-kind subscription
+    # (``on: composed:X`` with NO configured composer producing ``composed:X``)
+    # can never fire — the SAME silent-never-fire class the matcher check
+    # below closes, and the reorder in ``Session.__init__`` (composer defs
+    # built before hooks) makes the FULL known composed-kind universe
+    # available here. ``composed_schemas is None`` (the default — a caller
+    # with no composer configuration to thread, e.g. a bare ``load_hooks(raw)``
+    # test call) skips this check entirely, preserving the pre-#2889
+    # permissive posture for every such caller.
+    if (
+        composed_schemas is not None
+        and on_key.startswith(COMPOSED_KIND_PREFIX)
+        and on_key not in composed_schemas
+    ):
+        raise HookConfigError(
+            f"hooks[{entry_index}].on={on_raw!r} names a composed kind no configured "
+            f"composer produces — it would never fire. Known composed kinds: "
+            f"{sorted(composed_schemas) or '(none configured)'}."
         )
 
     # ── scheme: exactly one of template_push / shell_exec / shell_push /
@@ -274,19 +299,24 @@ def _parse_entry(raw: object, entry_index: int) -> HookDef:
     # ── matcher (optional, #2608 H2 — a field->pattern filter dict) ────────
     matcher: "dict[str, str] | None" = _parse_matcher(raw.get("matcher", None), entry_index)
 
-    # Hook-Event Redesign Phase 3 (proposal 0059 §10 Q-reyn-4): a matcher that
-    # names a payload field the hook-point's builtin schema does NOT carry is
+    # Hook-Event Redesign Phase 3 (proposal 0059 §10 Q-reyn-4) + #2889: a
+    # matcher that names a payload field the kind's schema does NOT carry is
     # a silent "never fire" footgun (a ``srever`` typo matches nothing, and the
     # operator gets no signal). ∴ fail-loud at load — validate the matcher (as
-    # a payload-only ``EventPattern``) against the point's ``BUILTIN_HOOK_SCHEMAS``
-    # entry. A point with NO builtin schema (a future/custom point — the
-    # schema-driven OPEN SET) stays permissive: ``validate_against_schema`` is a
-    # no-op there (proposal §4 open-set posture, preserved). This is additive
-    # correctness — a schema-VALID matcher still parses/evaluates byte-identically;
-    # only a schema-EXTERNAL (dead) matcher now surfaces as a HookConfigError.
+    # a payload-only ``EventPattern``) against the kind's schema: a builtin
+    # point's ``BUILTIN_HOOK_SCHEMAS`` entry, OR (#2889) a ``composed:*``
+    # kind's entry in ``composed_schemas`` (the fixed ``{"inputs",
+    # "correlation_key"}`` shape every Composer emits — closes the Phase-3
+    # open-set gap ``composed:*`` was left in). A kind with NO schema in
+    # either source (a future/custom point, or a composed kind when the
+    # caller passed no ``composed_schemas`` — the schema-driven OPEN SET)
+    # stays permissive: ``validate_against_schema`` is a no-op there (proposal
+    # §4 open-set posture, preserved). This is additive correctness — a
+    # schema-VALID matcher still parses/evaluates byte-identically; only a
+    # schema-EXTERNAL (dead) matcher now surfaces as a HookConfigError.
     if matcher is not None:
         try:
-            validate_event_pattern(from_legacy_matcher(matcher), on_key)
+            validate_event_pattern(from_legacy_matcher(matcher), on_key, composed_schemas)
         except HookSchemaError as exc:
             raise HookConfigError(f"hooks[{entry_index}].matcher: {exc}") from exc
 
@@ -316,7 +346,10 @@ def _parse_entry(raw: object, entry_index: int) -> HookDef:
 # ---------------------------------------------------------------------------
 
 
-def load_hooks(raw: object) -> HookRegistry:
+def load_hooks(
+    raw: object,
+    composed_schemas: "dict[str, frozenset[str]] | None" = None,
+) -> HookRegistry:
     """Parse and validate the ``hooks:`` value from a reyn.yaml dict.
 
     Parameters
@@ -325,6 +358,16 @@ def load_hooks(raw: object) -> HookRegistry:
         The value of the ``hooks:`` key from the config dict.  May be
         ``None`` (absent), an empty list, or a list of hook dicts.
         Any other type is logged as a warning and treated as empty.
+    composed_schemas:
+        #2889 — a ``{emit_kind: frozenset(field_names)}`` map for every
+        currently-configured ``composed:*`` kind (``reyn.runtime.session.
+        Session`` builds this from ``self._composer_defs`` and passes it
+        here). Used to (a) schema-validate a ``composed:*`` hook's
+        ``matcher`` (mirrors the Phase-3 builtin-point enforce-at-load path)
+        and (b) fail loud on a ``composed:*`` subscription with no producing
+        composer. ``None`` (the default) skips both checks — the pre-#2889
+        permissive posture, for callers with no composer configuration to
+        thread (most direct ``load_hooks(raw)`` test calls).
 
     Returns
     -------
@@ -350,6 +393,6 @@ def load_hooks(raw: object) -> HookRegistry:
 
     defs: list[HookDef] = []
     for idx, entry in enumerate(raw):
-        defs.append(_parse_entry(entry, idx))
+        defs.append(_parse_entry(entry, idx, composed_schemas))
 
     return HookRegistry(defs)

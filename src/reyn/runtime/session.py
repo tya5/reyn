@@ -1415,6 +1415,25 @@ class Session:
         _boot_in_set = _load_in_set(
             getattr(self._registry, "_project_root", None) or Path.cwd()
         )
+        # Hook-Event Redesign — composed:* matcher schema-validation footgun
+        # close (#2889, mirrors the Phase-3 #2873 enforce-at-load fix for
+        # builtin points). ``_build_composer_defs`` is a pure/side-effect-free
+        # parse (confirmed — no hook-registry interaction), so it is SAFE to
+        # move ahead of ``_build_hook_registry`` here: knowing the full set of
+        # configured composers (all 4 layers) BEFORE hooks are validated lets
+        # a ``composed:*`` hook's ``matcher`` be schema-checked too, closing
+        # the open-set gap Phase 3 left for composed kinds (every composed
+        # event, across all 7 Composer ops, is emitted by the single
+        # ``_emit_composed`` producer with the FIXED payload shape
+        # ``{"inputs": [...], "correlation_key": <key>}`` — composer.py:336-338
+        # — so this schema is knowable and identical for every composer, keyed
+        # by its ``emit_kind``). Composers are v1 startup-only (no hot-reload
+        # seam), so this map is computed once and reused by the hooks reapply
+        # seam (``_reapply_hooks``) too — see ``self._composed_schemas`` below.
+        self._composer_defs = self._build_composer_defs(_boot_in_set)
+        self._composed_schemas: "dict[str, frozenset[str]]" = {
+            d.emit_kind: frozenset({"inputs", "correlation_key"}) for d in self._composer_defs
+        }
         self._hook_dispatcher = HookDispatcher(
             self._build_hook_registry(_boot_in_set),
             put_inbox=self._put_inbox,
@@ -1457,16 +1476,16 @@ class Session:
             bus=self._hook_bus,
         )
         # Hook-Event Redesign Phase 4b/5 (#2880/#2881): the Composer definitions
-        # (built from the same layered raw config `_build_composer_defs` reads)
-        # + the composed:*->Sync consumer bridge. Neither is STARTED here
-        # (starting means spawning background asyncio tasks, which belongs in
-        # ``run()``, this session's async entry point — construction here is
-        # synchronous); `run()` calls `self._composer_registry.start()` /
-        # `self._composed_consumer.start()` once. `stop()`ed in `run()`'s
-        # shutdown `finally` (mirrors the FsWatcher start/stop shape).
+        # (``self._composer_defs``, built above — ahead of the hook registry,
+        # #2889) + the composed:*->Sync consumer bridge. Neither is STARTED
+        # here (starting means spawning background asyncio tasks, which
+        # belongs in ``run()``, this session's async entry point —
+        # construction here is synchronous); `run()` calls
+        # `self._composer_registry.start()` / `self._composed_consumer.
+        # start()` once. `stop()`ed in `run()`'s shutdown `finally` (mirrors
+        # the FsWatcher start/stop shape).
         from reyn.hooks.composed_consumer import ComposedEventConsumer
         from reyn.hooks.composer import Composer, ComposerRegistry
-        self._composer_defs = self._build_composer_defs(_boot_in_set)
         self._composer_registry = ComposerRegistry(
             composers=[
                 Composer(
@@ -3790,6 +3809,13 @@ class Session:
         Rebuilding from scratch each call means a removed hook (runtime or per-agent)
         simply isn't in the new registry — removal handled by construction.
 
+        Threads ``self._composed_schemas`` (#2889 — computed once in
+        ``__init__`` from ``self._composer_defs``, BEFORE this is first
+        called; composers are startup-only, so the map never changes) into
+        every ``load_hooks`` call below, so a ``composed:*`` hook's
+        ``matcher`` is schema-validated exactly like a builtin point's,
+        closing the Phase-3 open-set gap ``composed:*`` was left in.
+
         **Per-LAYER boot resilience (the add-on refinement):** ``load_hooks`` raises
         ``HookConfigError`` on a malformed layer, and BOTH boot AND the reload path call
         this — a malformed persisted ``.reyn/hooks.yaml`` or per-agent file must NOT
@@ -3805,7 +3831,8 @@ class Session:
         per_agent_list = self._read_per_agent_hooks()
         per_session_list = self._read_per_session_hooks()  # #2285: the 4th, most-specific layer
         combined = list(self._startup_hooks_raw)
-        registry = load_hooks(combined)  # trusted startup must load — else fail loud
+        composed_schemas = getattr(self, "_composed_schemas", None)
+        registry = load_hooks(combined, composed_schemas)  # trusted startup must load — else fail loud
         for label, layer in (
             ("runtime", runtime_list),
             ("per-agent", per_agent_list),
@@ -3814,7 +3841,7 @@ class Session:
             if not layer:
                 continue
             try:
-                registry = load_hooks(combined + layer)  # validate the cumulative add
+                registry = load_hooks(combined + layer, composed_schemas)  # validate the cumulative add
                 combined = combined + layer
             except HookConfigError as exc:
                 logger.warning(
