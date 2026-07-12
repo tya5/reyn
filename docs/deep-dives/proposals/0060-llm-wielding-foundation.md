@@ -470,3 +470,82 @@ completeness CI gate (walks it), the builtin tier (populates it), and the
 catalog (reads it). Deciding this SSoT in Phase-1 keeps F1 (taxonomy), F3
 (builtin tier), and catalog completion coherent instead of three parallel
 enumerations.
+
+## Addendum B — Layer A design (settled 2026-07-12, grounded + pressure-tested)
+
+Layer A = the provenance plumbing + the present-view install op (the §2.7
+provenance split made structural). Grounded against main after #2899; the
+sub-agent-turn ruling below is lead-adjudicated. This is the design record the
+Layer-A implementation follows. (Layer C — the SP part×role routing frame — is
+a **separate small PR**, dispatchable in parallel; SP prose is a different kind
+of change from this security-sensitive plumbing.)
+
+**A7. Turn-origin seam — mirror the proven `_current_task_id` pattern.** The
+turn `kind` (user / hook / pipeline_result / wake / …) is a local in
+`run_one_iteration`, but `_stamp_execution_context(kind, payload)`
+(session.py:4651-4699) is already the single OS-side seam that classifies the
+turn kind into a persisted field (`_current_task_id`), threaded into
+`OpContext.current_task_id` at both ctx-build sites (session.py:6089 +
+router_host_adapter.py:2088 via a live callback). `turn_origin` mirrors this
+exactly: derive `self._current_turn_origin` from `kind` inside
+`_stamp_execution_context`, thread it through `build_router_op_context` into a
+new `OpContext.turn_origin` field at both sites. No new mechanism — a
+duplicate of an existing, proven seam.
+- **kind → origin map (load-bearing semantic):** `user` → `user_directed`;
+  **everything else** (hook, pipeline_result, wake kinds, and any *unmapped*
+  kind) → `auto_improvement`. Only an explicit `user` turn grants
+  `user_directed`; the default is the stricter `auto_improvement`.
+  **Silent-default-to-`user_directed` is forbidden** — it would let an
+  unmapped/autonomous turn bypass the Phase-4 auto-improvement gate (§2.7).
+- **Sub-agent turns (`agent_request`/`agent_response`) = `auto_improvement`**
+  (lead-adjudicated, conservative). Rationale: "a human directed the parent
+  task" ≠ "a human directed *this* install action" — the same principle as a
+  human-configured hook (A human configuring the hook is the condition that
+  produces the turn, not the direction of the action). `auto_improvement` is
+  the stricter gate = safe side, within §2.7's intent. An owner may later relax
+  sub-agent installs to `user_directed`; the safe default is `auto`.
+
+**A8. Present-view install op — mirror skill-install structure; threat is
+LOWER than `emit_hook_event`, not emit-class.** Present has no install op today
+(inline-only; `presentations.yaml` is operator-only). The new
+`presentation_management__install_*` mirrors skill-install's **structure**:
+tool def with gates, a `file_write` permission gate on
+`.reyn/config/presentations.yaml`, `record_config_generation` after the write,
+and hot-reload of a pure addition. But the **threat-scan is asymmetric**:
+skill/pipeline install scans only the free-text `description` via
+`scan_for_threats`; a present blueprint is **structurally non-executable by
+construction** (catalog.py: 8 fixed components; every non-literal value is a
+`$bind` RFC-6901 JSON-Pointer; no template-ref / eval / exec surface;
+`image.src` renders as a label, no fetch/SSRF). `validate_blueprint` **already
+fills the role** `scan_for_threats` fills for skill/pipeline description text.
+So present-install is ≈ skill-install in plumbing, **lower** in payload-threat
+(a non-executable blueprint vs free-text the model reads), and **not**
+`emit_hook_event`-class (which is a live-effect op). `record_config_generation`
+inherits the existing config crash-recovery — **no new recovery-gated
+obligation** (no truncate-falsify test owed for this op).
+
+**A9. Uniform provenance = uniform SOURCE, not a uniform write-site.** There is
+no shared install helper (skill/pipeline/present handlers each orchestrate,
+sharing only three primitives: `record_config_generation`, hot-reload,
+`scan_for_threats`). The security property (unspoofable) therefore lives in the
+**source**: every handler stamps `entry["provenance"] = ctx.turn_origin`
+(OS-set, A7) at entry-construction — a per-handler write whose *value* is
+single-sourced and cannot be supplied by the LLM. (Wrapping
+`record_config_generation` was considered, but it does not touch entry shape
+today; per-handler stamping from the shared OS-set source is cleaner.) The
+`builtin` value is stamped on a **different** seam — the registry-build loader
+path (`build_*_registry` at session-factory construction), where the future
+builtin tier (F3) loads — never via the install-op path.
+
+**Co-vet pins for Layer A (isomorphic to `emit_hook_event` ②B falsify):**
+1. **Provenance is ②B-structural.** The install op schema has **no**
+   `provenance` field; the handler stamps only from `ctx.turn_origin`. Falsify:
+   add a `provenance` field to the op schema and read it in the handler → an
+   `auto` turn supplies `user_directed` → if the spoofed value survives, RED.
+2. **`turn_origin` completeness is fail-safe.** Every turn kind maps; an
+   unmapped kind resolves to `auto_improvement`, never `user_directed`.
+   Falsify: introduce a new turn kind with no mapping → if it resolves to
+   `user_directed`, RED.
+3. **Present-install threat gate is `validate_blueprint`.** Strip
+   `validate_blueprint` from the install path → a malformed / non-catalog
+   blueprint installs → RED.
