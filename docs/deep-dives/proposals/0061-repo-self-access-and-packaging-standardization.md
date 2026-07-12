@@ -130,6 +130,22 @@ makes dev and wheel expose *exactly the same set by construction*: dev does not
 over-expose `tests/` / `.git/`; wheel does not under-expose. This obeys
 `preflight-gate-must-derive-path-from-ssot`.
 
+**Tradeoff — dev-mode narrowing (owner-visible, needs sign-off).** Today the
+dev-only `reyn_src` reads the **whole repo**; parity forces dev to narrow to
+the declared set. So paths reachable today but **excluded** by
+`{README, CHANGELOG, docs, src/reyn}` become unreachable via `reyn_repo` in
+*both* modes: `pyproject.toml`, `CLAUDE.md` + other root files, `tests/`,
+`scripts/`, `dogfood/`, `pipelines/`, `website/`. This is justified (parity is
+the point, and the primary self-explanation surface — source + docs + README —
+is preserved), but it **drops** two present dev use-cases: reading
+`pyproject.toml` for config questions and `tests/` for usage examples. Owner
+sign-off required (`ratified-design-tiebreaker`: an out-of-scope that removes
+an existing owner use-case must be explicit, not silent). **Cheap option:** add
+`pyproject.toml` (and optionally `CLAUDE.md`) to the declared set — it
+force-includes as a tiny file and keeps config-question self-explanation. The
+declared set is the single knob; widening it is one line in the SSoT +
+force-include. **Owner decision pending** (§7).
+
 ### 3.4 dev == wheel parity (the anti-confusion invariant + gate)
 
 **Invariant:** for every logical path in the declared set, a dev install and a
@@ -152,7 +168,11 @@ namespace parity"):
 **Retire** (all serve the dormant `read_builtin_doc` path or the mirror hack):
 `read_builtin_doc`, `scripts/mirror_reference_docs.py`, the `build_py`
 cmdclass, the byte-gate test (`tests/test_0060_d5b_docs_mirror.py`), the
-git-ignored `src/reyn/builtin/reference/` mirror.
+git-ignored `src/reyn/builtin/reference/` mirror, and
+**`scripts/wheel_reachability_smoke.py`** — the #2920 smoke hard-imports and
+calls `read_builtin_doc` (L112,116), so it must be retired **into** the §3.4
+parity gate (which supersedes it); leaving it would either break on the
+`read_builtin_doc` deletion or survive as a dead-function-calling straggler.
 
 **Keep untouched:** `read_builtin_body_bytes` — it is **production-LIVE**
 (`src/reyn/core/op_runtime/file.py:214`, the `read` op reading builtin
@@ -296,9 +316,12 @@ reachable, dev==wheel parity", `semantic_search` opt-in intact.
 1. Hatchling migration (config enumerate→map→gate) + `force-include`
    (README/CHANGELOG/docs). Wheel-contents CI check.
 2. `reyn_repo` resolver dual-mode (bundled-dir detection + normalization) +
-   reachable-set SSoT + dev-allowlist derivation.
-3. dev==wheel parity gate (positive + negative flip-witness); retire #2920's
-   narrower gate into it.
+   reachable-set SSoT + dev-allowlist derivation. **Pin the canonical logical
+   prefix here** (§7 open — `src/reyn/` vs `reyn/`): the parity gate's
+   "same logical path" assert depends on it, so it must be fixed *before*
+   step 3, not left ambiguous.
+3. dev==wheel parity gate (positive + negative flip-witness) over the pinned
+   namespace; retire #2920's narrower gate + its smoke script (§3.5) into it.
 4. Retirements (§3.5) — after the parity gate is green (so reachability never
    regresses through the swap).
 5. Rename `reyn_src`/`reyn_source` → `reyn_repo` (live surfaces, journals
