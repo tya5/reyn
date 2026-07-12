@@ -30,6 +30,14 @@ _HOOK_POINTS = [
     "turn_start", "turn_end", "session_start", "session_end",
     "task_start", "task_end",
 ]
+# Isolation note (#2898): the schema below embeds ``list(_HOOK_POINTS)`` — a
+# defensive copy — NOT the module list by reference. ``render_for_router`` only
+# shallow-copies ``parameters``, so a by-reference embed would alias the module
+# list into every rendered schema; any later mutation of ``_HOOK_POINTS`` would
+# then silently corrupt every ``hooks_add`` render for the rest of the process
+# (a shared-mutable-state × test-order flake vector). The copy decouples the
+# rendered enum from the module list (same convention as
+# ``universal_catalog.py``'s ``"enum": list(CATEGORIES)``).
 
 # Relocated to reyn.tools.descriptions.hooks (Phase 3 tool-description
 # package refactor — byte-identical, no LLM-facing text change).
@@ -46,7 +54,7 @@ _HOOKS_ADD_PARAMETERS: dict[str, Any] = {
     "type": "object",
     "properties": {
         "on": {
-            "type": "string", "enum": _HOOK_POINTS,
+            "type": "string", "enum": list(_HOOK_POINTS),
             "description": _hooks_descriptions.PARAMS["hooks_add"]["on"].text,
         },
         "message": {
