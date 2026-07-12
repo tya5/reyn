@@ -173,11 +173,15 @@ wire (hook `on:` → pipeline → present) → test-fire → observe via audit
 events. *Risk: no through-chain exemplar = the composition idea itself
 never occurs to the model; this is the single highest-leverage builtin.*
 
-**J-D. Promote (amortization, cross-session)**
-inline composition succeeds → SP idiom nudge (L1) → optional judge_output
-gate (L2) → install via existing op → **next session**: J-A finds it as an
-instance. *Risk: friction at inline→install (file-write ergonomics, open
-question) silently kills the loop; nothing amortizes.*
+**J-D. Promote (amortization, cross-session) — provenance-split (§2.7)**
+inline composition succeeds → SP idiom nudge (L1) → **branch on provenance**:
+*user-directed* (the user asked for this) → standard gate → install → active;
+*auto-improvement* (the model chose to promote) → **mandatory** judge_output
+gate (L2) → install **inert/proposed** → operator/next-turn ratification →
+active. Either way **next session**: J-A finds it as an instance. *Risk:
+friction at inline→install silently kills the loop (nothing amortizes); and
+conflating the two provenances either over-gates user work or under-gates
+autonomous self-modification.*
 
 **J-E. Degraded floor (no embedding, weak tier)**
 Every journey above must complete **without** `search_actions`/corpus:
@@ -192,6 +196,53 @@ The upgrade changes **cost/hit-rate, never reachability**.
 Journey friction budget: J-A must fit in ≤1 discovery step on every
 scheme; J-B/C in ≤3. If a design choice adds a pull step to J-A, it is
 wrong regardless of its elegance.
+
+### 2.7 Two provenances of self-extension (governance boundary)
+
+Self-extension has two triggers that **must not be governed identically**:
+
+- **User-directed** — the operator explicitly asks for a part ("build a
+  skill that…", "add a hook that…"). Intent is human-authorized; the human
+  turn boundary IS the check; the standard permission gate on the install op
+  suffices.
+- **Auto-improvement** — the model decides *on its own* to author or promote
+  a part (the §3-L amortization loop: a successful improvisation becomes a
+  named asset with no human ask). Higher autonomy, **no turn-boundary check**.
+
+Why the split matters (the band — *agency bounded by construction*):
+
+1. Auto-improvement has no human authorizing intent → it needs a
+   construction-level bound, not merely the same gate a user request passes.
+2. It compounds the self-influence loop (§4): an auto-authored description
+   re-enters the model's own future context with no human in between.
+3. It can form self-modifying feedback loops — the same concern class as the
+   hook-event loop-valve / `emit_hook_event` autonomy boundary (0059). An
+   auto-improvement that installs a hook that triggers more auto-improvement
+   is the runaway case.
+
+Policy (enforced in §3-L, and this is the load-bearing part of the loop):
+
+- **Provenance is a first-class, audited attribute.** Every authored/promoted
+  part records `provenance ∈ {user_directed, auto_improvement}` in P6.
+  Non-negotiable: a runaway self-improvement loop is indistinguishable from
+  legitimate user work without it.
+- **Auto-improvement proposes; it does not activate.** Default: an
+  auto-improved part is authored **inert/proposed** (mirroring builtin-inert,
+  F3), requiring an explicit operator — or next-user-turn — ratification to
+  become active. User-directed parts activate under the standard gate.
+- **`judge_output` gate is MANDATORY for auto-improvement**, optional for
+  user-directed (the human already judged). The automated rubric is the
+  substitute for the missing human check — so auto-improvement without an
+  eval gate does not ship.
+- **The valve/bound is provenance-aware.** Auto-improvement volume is
+  itself bounded (rate/count) so a self-authoring loop force-closes, exactly
+  as hook-driven turns are valve-bounded in 0059.
+
+The SP routing model (F2) must teach the model *which mode it is in* and that
+auto-improvement is propose-only. This distinction is a **Phase-4 (L-layer)
+design gate**, but F2/F4 must not preclude it — e.g. the present-view install
+op (F4) and the catalog registration path must carry the provenance field
+from the start (cheap now, expensive to retrofit).
 
 ## 3. Proposed architecture
 
@@ -241,13 +292,23 @@ wrong regardless of its elegance.
 
 ### L — the closing loop (assetization, on top of the floor)
 
+- **L0. Provenance split (§2.7) is the governing invariant of this layer.**
+  Every promotion path carries `provenance ∈ {user_directed,
+  auto_improvement}`, recorded in P6. The two paths diverge on gate,
+  activation default, and eval requirement (below). Design this before L1/L2
+  mechanics — it is what keeps auto-improvement bounded-by-construction.
 - **L1. Promotion as idiom, not mechanism**: a successful ad-hoc composition
   (inline pipeline, inline blueprint) is promoted by *calling the existing
-  install ops* — no new op. SP teaches the idiom ("after a composition works,
-  consider installing it"). Open question: ergonomics of inline→install
-  (file-write friction).
-- **L2. Eval-gated promotion**: `judge_output` as the promotion gate —
-  a part earns catalog registration by passing a rubric.
+  install ops* — no new op. SP teaches the idiom. **User-directed**: activates
+  under the standard gate (human asked). **Auto-improvement**: authored
+  **inert/proposed**, needs operator/next-turn ratification to activate. Open
+  question: ergonomics of inline→install (file-write friction) — worse for
+  auto-improvement since the human isn't present to resolve it.
+- **L2. Eval-gated promotion**: `judge_output` as the promotion gate — a part
+  earns catalog registration by passing a rubric. **Mandatory for
+  auto-improvement** (the rubric replaces the absent human judgment);
+  optional for user-directed. The rubric threshold + `on_fail` policy are the
+  automated quality bar.
 - **L3. Catalog hygiene**: self-extension accumulates junk; unused parts
   decay discovery precision (attention dilution, not just tokens). P6 already
   records invocations → usage-informed pruning/archival:
@@ -259,7 +320,10 @@ wrong regardless of its elegance.
   model's own future context via the catalog (SP menus, tools=, signatures).
   Existing install threat-scans mitigate; the surface should be named in the
   security review of each F/L PR, and description length/content constraints
-  considered.
+  considered. **The dangerous quadrant is auto-improvement (§2.7)**: a
+  self-authored description with no human in the loop feeding the model's own
+  future prompt — this is why auto-improvement is propose-not-activate +
+  eval-gated + provenance-audited, not merely threat-scanned.
 - **Present teaches the operator, not the model** (design trap, hit once in
   drafting): `present` renders to the operator UI at zero token cost — the
   model never sees it. Any "orientation card" builtin is an *operator
