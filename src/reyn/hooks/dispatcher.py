@@ -30,10 +30,12 @@ import json
 import logging
 from typing import Any, Awaitable, Callable
 
+from reyn.hooks.event import HookEvent
 from reyn.hooks.matcher import matches as matcher_matches
 from reyn.hooks.registry import HookRegistry
 from reyn.hooks.render import ResolvedPush, render_pipeline_input, render_push
 from reyn.hooks.schema import HookDef
+from reyn.hooks.schema_registry import canonical_kind
 from reyn.hooks.shell_runner import run_shell_hook
 
 _log = logging.getLogger(__name__)
@@ -144,14 +146,30 @@ class HookDispatcher:
         evaluated against ``template_vars`` (``reyn.hooks.matcher.matches``) — a
         non-matching hook is skipped, same as a disabled hook. A hook with no
         matcher always matches (fire-always, unchanged from pre-H2).
+
+        Hook-Event Redesign Phase 1 (proposal 0059 §1): ``point`` +
+        ``template_vars`` are wrapped into a typed ``HookEvent`` right here —
+        the SAME dict object becomes ``HookEvent.payload`` (no copy, no value
+        change), so every existing call site's external shape (``dispatch(point,
+        template_vars)``) is untouched and behavior stays byte-identical.
+        ``dispatch()`` deliberately does NOT schema-validate the payload here
+        (that happens at the PRODUCER side, ``schema_registry.
+        build_hook_payload`` — see that module's docstring for why): a hook may
+        legitimately be dispatched with an arbitrary/partial dict (tests, and
+        any future non-builtin point), and this per-hook-isolation boundary is
+        about a HOOK's action failing, not about producer-schema drift.
         """
+        event = HookEvent(
+            kind=canonical_kind(point), payload=template_vars,
+            chain_id=template_vars.get("chain_id"),
+        )
         for hook in self._registry.hooks_for(point):
             if self._is_hook_disabled is not None and self._is_hook_disabled(hook):
                 continue  # #2285: hook disabled for THIS session (live applicability toggle)
-            if not matcher_matches(hook.matcher, template_vars):
+            if not matcher_matches(hook.matcher, event.payload):
                 continue  # #2608 H2: matcher didn't match this event's template_vars
             try:
-                await self._dispatch_one(hook, point, template_vars)
+                await self._dispatch_one(hook, point, event)
             except Exception as exc:  # noqa: BLE001 — per-hook isolation boundary
                 _log.warning(
                     "Hook at point %r raised — skipped (siblings proceed). "
@@ -159,11 +177,12 @@ class HookDispatcher:
                     point, hook, type(exc).__name__, exc,
                 )
 
-    async def _dispatch_one(self, hook: HookDef, point: str, template_vars: dict) -> None:
+    async def _dispatch_one(self, hook: HookDef, point: str, event: HookEvent) -> None:
         """Dispatch a single hook by scheme: template_push (C/E) / shell_exec (F)
         / shell_push (run + parse stdout → the same C/E path as template_push)
         / pipeline_launch (#2608 H3: render input_template, launch via the
         injected ``launch_pipeline`` callable)."""
+        template_vars = event.payload
         if hook.template_push is not None:
             resolved = render_push(hook.template_push, template_vars)
             await self._push_resolved(resolved, hook, point)

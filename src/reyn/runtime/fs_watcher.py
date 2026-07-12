@@ -89,6 +89,8 @@ import os
 import time
 from typing import TYPE_CHECKING, Any, Awaitable, Callable
 
+from reyn.hooks.schema_registry import build_hook_payload
+
 if TYPE_CHECKING:
     pass
 
@@ -287,7 +289,7 @@ class FsWatcher:
             try:
                 await self._hook_trigger(
                     "file_changed",
-                    {"point": "file_changed", "path": path, "event_type": event_type},
+                    build_hook_payload("file_changed", path=path, event_type=event_type),
                 )
             except Exception:  # noqa: BLE001 — one bad dispatch must not kill the drain task
                 logger.warning(

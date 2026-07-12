@@ -24,6 +24,7 @@ from reyn.hooks.schema import (
     PipelineLaunchBlock,
     PushBlock,
 )
+from reyn.hooks.schema_registry import bare_point, canonical_kind
 
 _log = logging.getLogger(__name__)
 
@@ -198,7 +199,14 @@ def _parse_entry(raw: object, entry_index: int) -> HookDef:
             f"hooks[{entry_index}].on must be a string, "
             f"got {type(on_raw).__name__!r}."
         )
-    on_key = on_raw.strip().lower()
+    # Hook-Event Redesign Phase 1 (proposal 0059 §2 review-pass): the bare
+    # short-form (``turn_end``) is the pre-existing spelling and stays the
+    # canonical INTERNAL key (HookDef.on / HookRegistry / HookDispatcher are
+    # unchanged); the namespaced kind (``builtin:lifecycle:turn_end``) is a
+    # newly-accepted ALIAS, normalized to the bare form right here so every
+    # existing hooks.yaml keeps working unmodified and a new full-form config
+    # resolves to the exact same HookDef.on value.
+    on_key = bare_point(canonical_kind(on_raw.strip().lower()))
     if on_key not in ALLOWED_HOOK_POINTS:
         sorted_points = ", ".join(sorted(ALLOWED_HOOK_POINTS))
         raise HookConfigError(

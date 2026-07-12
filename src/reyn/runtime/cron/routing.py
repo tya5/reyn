@@ -22,6 +22,8 @@ the same ingress coroutine as the job's own inbox delivery (see
 """
 from __future__ import annotations
 
+from reyn.hooks.schema_registry import build_hook_payload
+
 CRON_TRANSPORT = "cron"
 
 
@@ -63,5 +65,5 @@ def dispatch_cron_fired(session, job_name: str, to: str) -> None:
     """
     from reyn.hooks.external_fire import fire_and_forget
     fire_and_forget(
-        session, "cron_fired", {"point": "cron_fired", "job_name": job_name, "to": to},
+        session, "cron_fired", build_hook_payload("cron_fired", job_name=job_name, to=to),
     )

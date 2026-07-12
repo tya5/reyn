@@ -36,6 +36,7 @@ from reyn.core.events.snapshot_generations import SnapshotGenerationStore
 from reyn.core.events.state_log import StateLog
 from reyn.core.pipeline.registry import PipelineNotFoundError, PipelineRegistry
 from reyn.hooks.dispatcher import HOOK_INBOX_KIND
+from reyn.hooks.schema_registry import build_hook_payload
 from reyn.llm.model_resolver import ModelResolver
 from reyn.runtime.agent import Agent
 from reyn.runtime.budget.budget import (
@@ -4426,8 +4427,10 @@ class Session:
         # #1800 slice 5b: turn_start lifecycle hooks.
         await self._hook_dispatcher.dispatch(
             "turn_start",
-            {"point": "turn_start", "agent_name": self.agent_name,
-             "kind": kind, "chain_id": payload.get("chain_id")},
+            build_hook_payload(
+                "turn_start", agent_name=self.agent_name,
+                kind=kind, chain_id=payload.get("chain_id"),
+            ),
         )
         # ADR-0038 Stage 1c: busy until this turn settles (its WAL appends done).
         self._turn_idle.clear()
@@ -4613,7 +4616,7 @@ class Session:
         # #1800 slice 5b: session_start lifecycle hooks.
         await self._hook_dispatcher.dispatch(
             "session_start",
-            {"point": "session_start", "agent_name": self.agent_name},
+            build_hook_payload("session_start", agent_name=self.agent_name),
         )
         # #2608 H4: start the filesystem watcher (no-op if no fs_watch.paths
         # configured or 'watchdog' isn't installed — see FsWatcher.start).
@@ -4656,7 +4659,7 @@ class Session:
                 # (harmless); session_end is the C/F point in practice.
                 await self._hook_dispatcher.dispatch(
                     "session_end",
-                    {"point": "session_end", "agent_name": self.agent_name},
+                    build_hook_payload("session_end", agent_name=self.agent_name),
                 )
                 await self._put_outbox(OutboxMessage(kind="__end__", text=""))
 
@@ -6551,8 +6554,10 @@ class Session:
         # C (stage) / F (shell) also fire.
         await self._hook_dispatcher.dispatch(
             "turn_end",
-            {"point": "turn_end", "agent_name": self.agent_name,
-             "chain_id": chain_id, "user_text": user_text},
+            build_hook_payload(
+                "turn_end", agent_name=self.agent_name,
+                chain_id=chain_id, user_text=user_text,
+            ),
         )
         # #2073 S1: config hot-reload safe-point (Timing-B). A reload scheduled
         # during/before this turn applies HERE — at the turn boundary

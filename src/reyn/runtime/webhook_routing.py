@@ -24,6 +24,8 @@ stable ingress every webhook plugin routes through), right after
 """
 from __future__ import annotations
 
+from reyn.hooks.schema_registry import build_hook_payload
+
 _GENERIC_WEBHOOK_TRANSPORT = "webhook"
 
 
@@ -78,5 +80,5 @@ def dispatch_webhook_received(session, sender: str) -> None:
     transport, _external_id = parse_webhook_sender(sender)
     fire_and_forget(
         session, "webhook_received",
-        {"point": "webhook_received", "transport": transport, "sender": sender},
+        build_hook_payload("webhook_received", transport=transport, sender=sender),
     )
