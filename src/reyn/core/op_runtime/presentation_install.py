@@ -49,6 +49,7 @@ from reyn.schemas.models import PresentationInstallIROp
 
 from . import register
 from .context import OpContext
+from .context import provenance_from_ctx as _provenance_from_ctx
 from .context import sandbox_policy_from_ctx as _sandbox_policy_from_ctx
 from .skill_install import _read_yaml, _resolve_project_root, _write_yaml
 
@@ -138,8 +139,11 @@ async def handle(
     # auto-improvement turn cannot self-declare "user_directed" to bypass the
     # Phase-4 gate. The `builtin` value is stamped on a DIFFERENT seam (the
     # future builtin-tier registry-build loader, not this install path) — never
-    # written here.
-    entry["provenance"] = ctx.turn_origin
+    # written here. LOAD-BEARING fail-safe: provenance_from_ctx collapses an
+    # unset ctx.turn_origin (a bridge-fallback path that didn't thread it) to the
+    # stricter "auto_improvement" — a provenance=None install would be UNGATED
+    # (escape the Phase-4 gate), so this closes that gate-bypass by construction.
+    entry["provenance"] = _provenance_from_ctx(ctx)
     # #2761-style PR-2 mirror: capture pure-addition-vs-overwrite BEFORE the
     # write mutates entries, so step 6 routes a NEW name to the immediate
     # mid-turn apply and a same-name overwrite (clobber-update — presentation's

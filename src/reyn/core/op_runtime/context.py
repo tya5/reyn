@@ -335,3 +335,27 @@ def sandbox_policy_from_ctx(ctx: "OpContext") -> "SandboxPolicy | None":
     from reyn.security.sandbox.policy import SandboxPolicy
 
     return SandboxPolicy(**ctx.default_sandbox_policy)
+
+
+def provenance_from_ctx(ctx: "OpContext") -> str:
+    """The OS-set turn provenance to stamp on an install (proposal 0060 A7/A9).
+
+    **LOAD-BEARING fail-safe (closes a gate-bypass, not merely a default).**
+    Returns ``ctx.turn_origin`` when set (``"user_directed"`` / ``"auto_improvement"``,
+    classified OS-side in ``Session._stamp_execution_context`` — A7), but when
+    ``ctx.turn_origin`` is ``None``/unset it returns the STRICTER
+    ``"auto_improvement"`` — NEVER ``None``, NEVER ``"user_directed"``.
+
+    Why this is load-bearing, not cosmetic: the production router-tool path threads
+    ``turn_origin`` through ``make_router_op_context`` (the ``op_context_factory``
+    bound at ``tools/types.py`` build_router_caller_state), but the
+    ``build_legacy_op_context`` bridge's FALLBACK synthesis path (no bound
+    ``router_state.op_context_factory`` — phase / direct / future bridge callers)
+    constructs an ``OpContext`` with ``turn_origin`` left at its ``None`` default.
+    An install stamped ``provenance=None`` would be UNGATED — it escapes the
+    Phase-4 auto-improvement gate (whose foundation is this provenance value). This
+    helper collapses any such unset path to the stricter ``auto_improvement``, so a
+    provenance-unset install can never bypass the gate by construction (the same
+    fail-safe direction as A7's unmapped-kind → ``auto_improvement`` rule)."""
+    origin = getattr(ctx, "turn_origin", None)
+    return origin if origin is not None else "auto_improvement"

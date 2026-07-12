@@ -23,8 +23,29 @@ Addendum B — settled design record):
      strip the validate_blueprint call from the install path → a malformed
      blueprint installs → RED.
 
-Real PermissionResolver + StateLog + OpContext + a real Session throughout
-(no mocks) — mirrors test_skill_install_pr_c.py / test_pipeline_install.py.
+Wiring-seam witnesses (architect co-vet on #2903, the emit_hook_event #2887
+class — a production tool path bypassing the ctx-factory that threads
+turn_origin). TWO DISTINCT witnesses:
+
+  4. **End-to-end wiring witness**: a REAL autonomous (hook-driven) turn driven
+     through the REAL presentation_management__install tool-invocation path
+     (PRESENTATION_INSTALL.handler → build_legacy_op_context →
+     router_state.op_context_factory = the adapter's make_router_op_context,
+     which threads turn_origin) → the written entry's provenance ==
+     "auto_improvement". Proves the production tool path carries the OS-set
+     provenance END-TO-END, not just the factory in isolation.
+  5. **Fail-safe strip-witness (independent, LOAD-BEARING)**: an OpContext whose
+     turn_origin is None/unset (a bridge-fallback synthesis path) reaching the
+     handler stamps provenance="auto_improvement", never None. Falsify: strip
+     the handler's provenance_from_ctx None→auto_improvement default (stamp
+     ctx.turn_origin directly) → the entry lands provenance=None (ungated,
+     escapes the Phase-4 gate) → RED. Proves the fail-safe closes the
+     gate-bypass by construction, not merely a default that happens to exist.
+
+Real PermissionResolver + StateLog + OpContext + a real Session + the real
+RouterHostAdapter op-ctx factory throughout (no mocks) — mirrors
+test_skill_install_pr_c.py / test_pipeline_install.py /
+test_emit_hook_event_0059_phase5_part2.py's production-path test.
 """
 from __future__ import annotations
 
@@ -237,3 +258,102 @@ async def test_valid_blueprint_installs_and_registry_accepts_it(tmp_path):
     raw = yaml.safe_load(config_path.read_text(encoding="utf-8"))
     registry = build_presentation_registry(raw["presentations"], strict=True)
     assert registry.has("hello_card")
+
+
+# ── Test 4: end-to-end wiring witness (real hook turn → real tool path) ───────
+
+
+@pytest.mark.asyncio
+async def test_hook_turn_through_real_tool_path_stamps_auto_improvement(tmp_path):
+    """Tier 2: end-to-end wiring witness (#2903 architect co-vet, the #2887
+    class) — a REAL autonomous (hook-driven) turn driven through the REAL
+    presentation_management__install tool-invocation path stamps
+    provenance="auto_improvement" on the written entry.
+
+    Path exercised (production, no mocks): a real Session is stamped with a
+    ``hook`` self-continuation turn (autonomous, NOT a user turn) →
+    ``_current_turn_origin == "auto_improvement"``. A REAL RouterHostAdapter's
+    ``make_router_op_context`` (the exact ``op_context_factory`` production binds
+    at tools/types.py) is wired as ``router_state.op_context_factory``, reading
+    the session's turn_origin. The REAL ``PRESENTATION_INSTALL.handler`` verb
+    runs → ``build_legacy_op_context`` calls that factory → the OpContext
+    carries turn_origin → the handler writes the entry. Asserts the written
+    provenance is "auto_improvement".
+
+    FALSIFY: if ``make_router_op_context`` stopped threading turn_origin AND the
+    handler fail-safe were stripped, the written entry would be None → RED. This
+    is the witness the emit #2887 gap needed: the PRODUCTION tool path carries
+    the OS-set provenance end-to-end, not just the factory in isolation."""
+    from reyn.tools.presentation_management_verbs import PRESENTATION_INSTALL
+    from reyn.tools.types import RouterCallerState, ToolContext
+
+    s = Session(agent_name="alice", state_log=StateLog(tmp_path / "wal.jsonl"))
+    # a REAL autonomous turn: a hook self-continuation (NOT a user turn).
+    s._stamp_execution_context("hook", {"text": "autonomous continuation"})
+
+    adapter = make_adapter(
+        agent_name="alice",
+        turn_origin_fn=lambda: s._current_turn_origin,
+        workspace_base_dir=tmp_path,
+    )
+    # Precondition on the PUBLIC op-ctx output (not private state): the real
+    # production factory already classifies this hook turn as auto_improvement.
+    assert adapter.make_router_op_context().turn_origin == "auto_improvement"
+
+    router_state = RouterCallerState(
+        op_context_factory=adapter.make_router_op_context,
+    )
+    tool_ctx = ToolContext(
+        events=_Events(),
+        permission_resolver=None,
+        workspace=None,
+        caller_kind="router",
+        router_state=router_state,
+    )
+
+    result = await PRESENTATION_INSTALL.handler(
+        {"name": "auto_card", "blueprint": _VALID_BLUEPRINT}, tool_ctx,
+    )
+    assert result["status"] == "ok"
+    assert result["data"]["status"] == "installed"
+
+    config_path = tmp_path / ".reyn" / "config" / "presentations.yaml"
+    written = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    prov = written["presentations"]["entries"]["auto_card"]["provenance"]
+    assert prov == "auto_improvement"
+
+
+# ── Test 5: fail-safe strip-witness (LOAD-BEARING, independent) ──────────────
+
+
+@pytest.mark.asyncio
+async def test_unset_turn_origin_fails_safe_to_auto_improvement(tmp_path):
+    """Tier 2: LOAD-BEARING fail-safe strip-witness (#2903 architect co-vet) —
+    an OpContext whose ``turn_origin`` is None/unset (the ``build_legacy_op_context``
+    bridge-FALLBACK synthesis path — a phase/direct/future bridge caller that did
+    NOT thread turn_origin) reaching the handler stamps
+    provenance="auto_improvement", NEVER None, NEVER user_directed.
+
+    This closes a gate-bypass: a ``provenance=None`` install is UNGATED — it
+    escapes the Phase-4 auto-improvement gate whose foundation is this value.
+
+    FALSIFY: strip the handler's ``provenance_from_ctx`` None→auto_improvement
+    default (stamp ``ctx.turn_origin`` directly instead) → the written entry
+    lands ``provenance: null`` → the equality assertion below goes RED. Proves
+    the fail-safe is load-bearing (closes the bypass by construction), not a
+    cosmetic default. Independent of the end-to-end witness above: this
+    exercises the UNSET input directly, not the wired production path."""
+    ctx = _make_ctx(tmp_path, turn_origin=None)  # the bridge-fallback shape: unset
+    assert ctx.turn_origin is None  # precondition: the risky input really is unset
+
+    op = PresentationInstallIROp(
+        kind="presentation_install", name="bridged", blueprint=_VALID_BLUEPRINT,
+    )
+    result = await presentation_install_handle(op, ctx)
+    assert result["status"] == "installed"
+
+    config_path = tmp_path / ".reyn" / "config" / "presentations.yaml"
+    written = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    prov = written["presentations"]["entries"]["bridged"]["provenance"]
+    assert prov == "auto_improvement"  # RED if the None→auto default is stripped
+    assert prov is not None

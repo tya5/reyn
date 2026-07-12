@@ -72,6 +72,7 @@ def make_adapter(
     session_id: "str | None" = None,
     current_task_id_fn: "object | None" = None,  # #1953 §16: per-turn execution context
     turn_origin_fn: "object | None" = None,  # proposal 0060 Phase 1 (A7): per-turn provenance source
+    workspace_base_dir: "object | None" = None,  # router-op-ctx Workspace root (else cwd)
     agent_registry: object = None,  # #2103: real AgentRegistry for spawn/topology seams
     pipeline_registry: object = None,  # IS-5: real PipelineRegistry for run_pipeline lookup
     on_limit: object = None,  # #2175: OnLimitConfig for the spawn-limit checkpoint (None → no checkpoint = unattended reject)
@@ -160,4 +161,5 @@ def make_adapter(
         session_id=session_id,
         current_task_id_fn=current_task_id_fn,
         turn_origin_fn=turn_origin_fn,
+        workspace_base_dir=workspace_base_dir,
     )
