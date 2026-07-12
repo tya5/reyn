@@ -37,16 +37,18 @@ NAMES against ``schema_registry.BUILTIN_HOOK_SCHEMAS`` for a given kind,
 flagging a field the kind's schema does not carry (e.g. ``payload.srever`` on
 ``mcp_resource_updated``, whose real field is ``server``).
 
-This is deliberately an OPT-IN check, NOT wired into
-``reyn.hooks.loader.load_hooks``: pre-Phase-3 tests already exercise the real
-loader with a matcher field name that has nothing to do with the dispatch
-point's schema at all (structural round-trip fixtures —
-e.g. ``test_1800_hook_config_schema.py``'s ``matcher: {server: ...}`` on
-``task_end``/``session_start``, neither of which carries a ``server`` field).
-Making the loader hard-reject on schema mismatch would break byte-identical
-backward-compat for those pre-existing configs. Static validation is instead
-a capability a caller invokes explicitly against a known kind (a future
-``reyn hooks lint`` surface, or a targeted test) — additive, never automatic.
+This is ENFORCED AT LOAD, not opt-in (proposal §4 Q-reyn-4 architect ruling):
+``reyn.hooks.loader.load_hooks`` calls it for every configured matcher, so a
+schema-external matcher field is a fail-loud ``HookConfigError`` at config
+load instead of a silent "never fire" footgun (a ``srever`` typo matches
+nothing at dispatch, and the operator gets no signal it was a typo). This is
+additive correctness: a schema-VALID matcher still parses + evaluates
+byte-identically; only a schema-EXTERNAL (dead) matcher now surfaces at load.
+
+Open set preserved: a ``kind`` with NO builtin schema entry (a future /
+non-builtin point) is a silent no-op here (nothing to validate against) — the
+same "open set" posture as ``schema_registry.validate_payload``, so a
+schema-driven future point remains permissive.
 """
 from __future__ import annotations
 
@@ -108,8 +110,10 @@ def validate_against_schema(pattern: EventPattern, kind: str) -> None:
     nothing to validate against, the same "open set" posture as
     ``schema_registry.validate_payload``.
 
-    OPT-IN: a caller invokes this explicitly against a known kind; it is not
-    wired into ``reyn.hooks.loader.load_hooks`` (see module docstring)."""
+    ENFORCED AT LOAD: ``reyn.hooks.loader.load_hooks`` calls this for every
+    configured matcher (wrapping a ``HookSchemaError`` into a decision-enabling
+    ``HookConfigError``), so a schema-external matcher fails loud at config
+    load rather than silently never firing (see module docstring)."""
     if not pattern.payload:
         return
     schema = BUILTIN_HOOK_SCHEMAS.get(canonical_kind(kind))

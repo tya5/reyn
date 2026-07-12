@@ -33,7 +33,7 @@ from reyn.hooks.event import HookEvent
 from reyn.hooks.event_pattern import EventPattern, from_legacy_matcher, validate_against_schema
 from reyn.hooks.loader import load_hooks
 from reyn.hooks.matcher import matches as legacy_matches
-from reyn.hooks.registry import HookRegistry
+from reyn.hooks.schema import HookConfigError
 from reyn.hooks.schema_registry import HookSchemaError, canonical_kind
 
 # ---------------------------------------------------------------------------
@@ -203,6 +203,74 @@ def test_validate_against_schema_empty_payload_is_noop() -> None:
     """Tier 1: an EventPattern with no payload predicate has nothing to
     validate."""
     validate_against_schema(EventPattern(kind="mcp_resource_updated"), "mcp_resource_updated")
+
+
+# ===========================================================================
+# Tier 1 — Contract: static validation is ENFORCED AT LOAD (the reachability
+# proof — the typo-resistance is ACTIVE, not a dormant opt-in capability).
+# ===========================================================================
+
+
+def test_load_hooks_rejects_schema_external_matcher_field() -> None:
+    """Tier 1: reachability — a matcher naming a payload field the hook-point's
+    builtin schema does NOT carry (a ``srever`` typo on ``mcp_resource_updated``,
+    whose real field is ``server``) fails LOUD as a ``HookConfigError`` at
+    load, instead of silently never firing. This is what makes Phase-3's
+    typo-resistance an active guarantee rather than a dormant capability."""
+    raw = [
+        {
+            "on": "mcp_resource_updated",
+            "template_push": {"message": "x"},
+            "matcher": {"srever": "github"},  # typo: should be "server"
+        },
+    ]
+    with pytest.raises(HookConfigError, match="srever"):
+        load_hooks(raw)
+
+
+def test_load_hooks_accepts_schema_valid_matcher_field() -> None:
+    """Tier 1: a matcher naming a field the point's schema DOES carry loads
+    fine — enforcement is additive (only INVALID matchers fail-loud; every
+    valid matcher still parses byte-identically)."""
+    raw = [
+        {
+            "on": "mcp_resource_updated",
+            "template_push": {"message": "x"},
+            "matcher": {"server": "github", "uri": "file:///repo/**"},
+        },
+    ]
+    registry = load_hooks(raw)
+    (hook,) = registry.hooks_for("mcp_resource_updated")
+    assert hook.matcher == {"server": "github", "uri": "file:///repo/**"}
+
+
+def test_load_hooks_lifecycle_matcher_field_validated_against_its_schema() -> None:
+    """Tier 1: enforcement applies to lifecycle points too — a ``turn_end``
+    matcher on the schema-external ``server`` field (the pre-Phase-3 fixtures'
+    arbitrary placeholder) now fails loud, while a schema-valid ``agent_name``
+    matcher loads. Proves the pre-Phase-3 permissiveness was an accident, now
+    corrected."""
+    bad = [{"on": "turn_end", "template_push": {"message": "x"}, "matcher": {"server": "y"}}]
+    with pytest.raises(HookConfigError, match="server"):
+        load_hooks(bad)
+
+    good = [{"on": "turn_end", "template_push": {"message": "x"}, "matcher": {"agent_name": "y"}}]
+    registry = load_hooks(good)
+    (hook,) = registry.hooks_for("turn_end")
+    assert hook.matcher == {"agent_name": "y"}
+
+
+def test_load_hooks_open_set_point_matcher_stays_permissive() -> None:
+    """Tier 1: the open-set is preserved — a hook-point with NO builtin schema
+    entry (a future/custom point) is not schema-validated, so any matcher field
+    loads permissively. Verified via the loader-internal validation seam
+    directly against an unknown kind (no such point is registrable through the
+    public ``on:`` allowlist yet — that's the whole point of the open set)."""
+    # A future kind with no BUILTIN_HOOK_SCHEMAS entry → validation is a no-op,
+    # never raises, whatever the matcher field names.
+    validate_against_schema(
+        EventPattern(payload={"any_future_field": "v"}), "builtin:lifecycle:pre_tool_use",
+    )  # no raise — open set stays permissive
 
 
 # ===========================================================================
