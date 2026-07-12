@@ -549,3 +549,58 @@ builtin tier (F3) loads — never via the install-op path.
 3. **Present-install threat gate is `validate_blueprint`.** Strip
    `validate_blueprint` from the install path → a malformed / non-catalog
    blueprint installs → RED.
+
+## Addendum C — Layer C design (part×role routing frame; settled 2026-07-12)
+
+Layer C = F2's structural core: the **part×role routing model** placed in the
+SP so the model learns *which mechanism to reach for*. It is a separate,
+small, security-surface-free PR, dispatchable in parallel with F3 onward.
+
+**C1. Placement — `router_frame.py`, the scheme-independent OS-frame.** The
+routing model is scheme-independent prose (§2.3): it goes in the OS-frame, not
+a scheme-owned tool-use slot, so it holds across all four tool-use schemes
+(grounding: schemes own the tool-use SP, the OS owns the frame). It sits in
+the **cache-static prefix** (§1's ~60% cache coverage), under a **hard char
+budget** — the frame carries the *model* (the map + decision rules), never the
+*catalog* (which is pull-side, §2.5).
+
+**C2. Content.** (1) The part×role map (input / workflow / output ×
+part-type, §2.1). (2) A mechanism-selection decision tree: *need input →
+hook | mcp | retrieval; need workflow → skill | pipeline | mcp-step; need
+output → present | render | mcp-write*. (3) **Hooks made visible** — they are
+today entirely absent from the SP (§1.1); this is where the reactive/input
+axis first becomes wieldable. (4) An author-vs-reuse heuristic +
+authoring-quality one-liners (typed / permissioned / evaluate-before-promote).
+
+**C3. Load-bearing decision — the part×role map is DERIVED from the Layer B
+meta-registry, not a hand-written parallel table.** Each row derives from a
+part-type's `roles` frozenset in `PART_TYPE_REGISTRY`. This makes Layer C ride
+the SSoT: a new part-type (a marker dropped into `reyn.core.part_types`)
+auto-appears in the SP routing map, with zero drift — the same completeness
+discipline that made Layer B itself derived (Addendum A6, #2899). A
+hand-written SP table would silently drift from the registry exactly as a
+hand-listed meta-registry would have.
+
+**Co-vet pins for Layer C:**
+1. **Registry-derivation (no drift).** Add a marked part-type to the
+   meta-registry → it appears in the SP frame's part×role map (mirror of the
+   #2899 auto-appear witness). Strip the derivation to a hand-written table →
+   the new part-type does **not** appear → RED (the drift the derivation
+   prevents is now observable).
+2. **Scheme-independence.** The routing model appears under all four
+   tool-use schemes. Move it from the OS-frame into a scheme-owned slot →
+   it is missing under ≥1 scheme → RED.
+3. **Char-budget / cache-static — bounded per part-type.** The frame sits in
+   the static cache-prefix, not the dynamic tail; it carries the model, not the
+   catalog. Because the part×role map is *derived* (C3), it **grows with the
+   meta-registry** — so the budget is not just a fixed total but a **per-part-
+   type derived-row cap**: adding the Nth part-type must keep the frame within
+   its cache-static budget (a verbose per-type row would bloat the every-turn
+   SP as the SSoT grows). 5 part-types is within budget today; the pin is that
+   the per-type derived-row cost stays bounded (cost-discipline lens).
+
+**Scope:** small — SP prose in `router_frame.py` derived from the meta-registry;
+no security surface (unlike Layer A). Lower risk. Layer C completes F1's floor
+(catalog SSoT + provenance + routing model); F2's remaining pieces (discovery-
+mandate strengthening, the fuller author-vs-reuse guidance) and F3 (builtin
+tier + `stdlib` abolition) follow.
