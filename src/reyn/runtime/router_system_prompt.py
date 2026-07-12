@@ -24,6 +24,7 @@ from reyn.prompt.router_frame import (
     ambiguity_rule,
     cwd_reference_mapping_sentence,
     output_language_directive,
+    render_mechanism_routing_frame,
     role_stamp,
 )
 from reyn.runtime.router_tools import MAX_DESC_LEN_FOR_LISTING
@@ -185,6 +186,15 @@ def build_system_prompt(
     # Delivered via slot_post_environment from the scheme's slot-map.
     if "slot_post_environment" in _slots:
         parts.append(_slots["slot_post_environment"])
+
+    # ── 3.6. Mechanism routing (part x role) — 0060 Addendum C, Layer C ──────
+    # Cache-static, scheme-independent (C1): DERIVED from PART_TYPE_REGISTRY
+    # (C3), NOT a scheme-owned tool_use_sp slot — it holds across all four
+    # tool-use schemes because every scheme funnels through this one builder.
+    # Placed before "## Behaviour" so it stays in the ~60%-coverage static
+    # prefix alongside Identity/Role/Behaviour, not the dynamic tail.
+    parts.append(render_mechanism_routing_frame())
+    parts.append("")
 
     # ── 4 & 5. Behaviour (static core) ─────────────────────────────────────
     # FP-0023 Change 1: Static Behaviour rules moved here (before dynamic
