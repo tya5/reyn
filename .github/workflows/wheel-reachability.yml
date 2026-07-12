@@ -1,0 +1,43 @@
+name: wheel reachability
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  wheel-reachability:
+    name: F1 builtin production-reachability (wheel smoke)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      # scripts/wheel_reachability_smoke.py builds a REAL wheel and installs
+      # ONLY that wheel (no -e, no dev checkout) into a throwaway venv, then
+      # reads the builtin doc/skill/pipeline bodies through it. This is
+      # deliberately NOT path-filtered: an earlier draft scoped it to a
+      # curated list of packaging-relevant paths (pyproject.toml, setup.py,
+      # scripts/mirror_reference_docs.py, src/reyn/builtin/**), but a
+      # positive include-list is itself a false-allow surface — an
+      # incomplete list (e.g. missing docs/reference/**, the mirror SOURCE
+      # setup.py's build_py copies into the wheel) lets a packaging
+      # regression under an unlisted path merge with the gate silently
+      # never running. Measured cost is ~6s end-to-end locally (build wheel
+      # + create venv + install + probe; no dependencies are installed —
+      # the probed modules are stdlib-only) — trivial next to the severity
+      # of F1 (proposal 0060) silently breaking in a production wheel with
+      # zero CI signal, so this runs unconditionally on every PR instead of
+      # trying to enumerate "every packaging-affecting path".
+      - name: Install build tooling
+        run: pip install build
+
+      - name: Wheel reachability smoke
+        run: python scripts/wheel_reachability_smoke.py
