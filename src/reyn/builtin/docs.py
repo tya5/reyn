@@ -79,19 +79,32 @@ def read_builtin_doc(rel_path: str) -> str:
     return fallback.read_text(encoding="utf-8")
 
 
+# The ONLY subdirectories of ``reyn.builtin`` whose files are legitimate L2
+# body reads: ``reyn.builtin.registry``'s ``BUILTIN_SKILLS`` paths point at
+# ``skills/<name>/SKILL.md`` and ``BUILTIN_PIPELINES`` paths at
+# ``pipelines/<name>.yaml``. The ``reference/`` mirror is NOT here: it is read
+# via :func:`read_builtin_doc` directly (never through the ``read_file`` op),
+# so it needs no body-read bypass. Least-privilege (#2914 co-vet Ruling 1): a
+# path resolving INSIDE the package but OUTSIDE these body dirs (e.g. a
+# ``.py`` module) returns ``None`` and falls through to the normal read-zone
+# gate — the bypass cannot be repurposed as an arbitrary-builtin-source read.
+_BODY_READ_DIRS = frozenset({"skills", "pipelines"})
+
+
 def read_builtin_body_bytes(path_str: str) -> "bytes | None":
     """Wheel-safe read of a builtin skill/pipeline BODY file (#2913).
 
     Returns the file's raw bytes via :mod:`importlib.resources` when
-    *path_str* resolves to a location INSIDE the ``reyn.builtin`` package
-    directory (= it IS a builtin-provenance body — ``reyn.builtin.registry``
-    is the only place that stamps such absolute paths, and nothing else
-    lives under this package's ``skills/``/``pipelines/`` trees). Returns
-    ``None`` when *path_str* is NOT under ``reyn.builtin`` — the caller
+    *path_str* resolves to a file INSIDE one of the ``reyn.builtin`` package's
+    BODY directories (``skills/`` or ``pipelines/`` — see ``_BODY_READ_DIRS``):
+    it IS a builtin-provenance body (``reyn.builtin.registry`` is the only
+    place that stamps such absolute paths). Returns ``None`` otherwise — a
+    path NOT under ``reyn.builtin`` at all (an operator path), OR under the
+    package but outside the body dirs (a ``.py`` module, the ``reference/``
+    mirror, etc.). In every ``None`` case the caller
     (``reyn.core.op_runtime.file.handle``) falls through to the normal
-    ``_in_default_read_zone``-gated file read for every operator path,
-    unchanged (no security carve-out for anything but this package's own
-    shipped content).
+    ``_in_default_read_zone``-gated file read, unchanged — the permission
+    bypass is scoped to exactly the shipped body content, nothing else.
     """
     try:
         builtin_root = _resources.files("reyn.builtin")
@@ -112,6 +125,10 @@ def read_builtin_body_bytes(path_str: str) -> "bytes | None":
         rel = candidate.relative_to(builtin_dir)
     except ValueError:
         return None  # not under reyn.builtin — not a builtin body, let the normal gate handle it
+
+    # Least-privilege scoping: inside the package but outside a body dir → gated.
+    if not rel.parts or rel.parts[0] not in _BODY_READ_DIRS:
+        return None
 
     resource = builtin_root
     for part in rel.parts:

@@ -21,6 +21,13 @@ Co-vet pins:
      read zone is still denied by the unmodified ``_in_default_read_zone``
      gate — the builtin short-circuit does not widen the gate for anything
      else.
+  4. **Least-privilege scoping (#2914 co-vet Ruling 1).** A path that resolves
+     INSIDE the ``reyn.builtin`` package but OUTSIDE the body dirs
+     (``skills/``/``pipelines/``) — e.g. ``reyn/builtin/registry.py`` — returns
+     ``None`` from ``read_builtin_body_bytes`` (NOT bytes), so it goes through
+     the normal read gate, not the bypass. Falsify: widen the check back to
+     "any path under the package" and this test shows bytes returned = the
+     over-broad bypass.
 
 No mocks: real ``PermissionResolver`` + real ``OpContext`` + the real
 ``handle()`` op dispatch, exactly the harness ``test_op_runtime_file_permissions.py``
@@ -33,6 +40,8 @@ from pathlib import Path
 
 import pytest
 
+from reyn.builtin import registry as builtin_registry
+from reyn.builtin.docs import read_builtin_body_bytes
 from reyn.builtin.registry import BUILTIN_SKILLS
 from reyn.core.events.events import EventLog
 from reyn.core.op_runtime import file as file_mod
@@ -112,6 +121,32 @@ def test_falsify_stripped_routing_hits_out_of_root_permission_error(tmp_path, mo
 
     with pytest.raises(PermissionError, match="read from"):
         _run(handle(_read_op(_CHEAT_SHEET_PATH), ctx))
+
+
+def test_non_body_package_path_returns_none_not_bypassed(tmp_path, monkeypatch):
+    """Tier 2: least-privilege scoping — a path INSIDE the reyn.builtin package
+    but OUTSIDE the body dirs (skills/ + pipelines/), e.g. the package's own
+    registry.py module, returns None from read_builtin_body_bytes (so the read
+    would go through the NORMAL gate, not the bypass). Guards against the
+    over-broad "any path under the package" bypass the co-vet flagged."""
+    non_body_path = builtin_registry.__file__  # reyn/builtin/registry.py — a .py, not a body
+    assert Path(non_body_path).is_file(), "fixture: the package module must exist on disk"
+
+    # It IS inside the package dir (so the containment check alone would pass) ...
+    import importlib.resources as _res
+    pkg_dir = Path(str(_res.files("reyn.builtin"))).resolve()
+    assert str(Path(non_body_path).resolve()).startswith(str(pkg_dir)), (
+        "fixture: registry.py must live inside the reyn.builtin package dir"
+    )
+    assert Path(non_body_path).resolve().parent == pkg_dir, (
+        "fixture: registry.py must sit at the package root, outside skills/ or pipelines/"
+    )
+
+    # ... but it is NOT a body file → the helper returns None (falls through to the gate).
+    assert read_builtin_body_bytes(non_body_path) is None
+    # Sanity contrast: a genuine body path DOES return bytes (the bypass still works
+    # for what it's scoped to — this is not a vacuous None-for-everything result).
+    assert read_builtin_body_bytes(_CHEAT_SHEET_PATH) is not None
 
 
 def test_operator_file_outside_zone_still_denied(tmp_path, monkeypatch):
