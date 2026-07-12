@@ -24,27 +24,35 @@ Everything below is detailed further on; this section is a self-contained
 lookup for authoring a `hooks:` (and, if needed, `composers:`) block without
 reading the rest of the page.
 
-### `on:` values — every kind a hook or a Composer input can name
+### `on:` values — what a hook's `on:` accepts vs. what a Composer's `inputs[].kind` accepts
 
-| Bare form | Namespaced form (also accepted) | Fires |
-|---|---|---|
-| `session_start` | `builtin:lifecycle:session_start` | session opens |
-| `session_end` | `builtin:lifecycle:session_end` | session closes |
-| `turn_start` | `builtin:lifecycle:turn_start` | a turn begins |
-| `turn_end` | `builtin:lifecycle:turn_end` | a turn's terminal `stop_reason` |
-| `task_start` | `builtin:lifecycle:task_start` | a dynamic task is created |
-| `task_end` | `builtin:lifecycle:task_end` | a dynamic task completes or aborts |
-| `mcp_resource_updated` | `builtin:external:mcp_resource_updated` | a subscribed MCP resource pushes an update |
-| `file_changed` | `builtin:external:file_changed` | a watched path changes ([`fs_watch`](../../reference/config/reyn-yaml.md#fs_watch-block) required) |
-| `cron_fired` | `builtin:external:cron_fired` | a message-based `cron:` job delivers |
-| `webhook_received` | `builtin:external:webhook_received` | an inbound webhook resolves to this session |
-| — (open) | `composed:<name>` | a Composer (see below) publishes its correlated output |
-| — (open) | `llm:<session_id>:<event_name>` | the LLM itself emits one via `emit_hook_event` (always its own session — see below) |
+**These are two different, non-interchangeable vocabularies** — a value
+valid in one is not necessarily valid in the other:
 
-Both forms are interchangeable in a hook's `on:` field; the 10 builtin points
-above are the complete, closed set of OS-fired points — `composed:*` and
-`llm:*` are the two open namespaces, populated at runtime rather than
-hand-declared.
+| Bare form | Namespaced form (also accepted) | Fires | Valid as a hook's `on:`? | Valid as a Composer `inputs[].kind`? |
+|---|---|---|:---:|:---:|
+| `session_start` | `builtin:lifecycle:session_start` | session opens | ✅ | ✅ |
+| `session_end` | `builtin:lifecycle:session_end` | session closes | ✅ | ✅ |
+| `turn_start` | `builtin:lifecycle:turn_start` | a turn begins | ✅ | ✅ |
+| `turn_end` | `builtin:lifecycle:turn_end` | a turn's terminal `stop_reason` | ✅ | ✅ |
+| `task_start` | `builtin:lifecycle:task_start` | a dynamic task is created | ✅ | ✅ |
+| `task_end` | `builtin:lifecycle:task_end` | a dynamic task completes or aborts | ✅ | ✅ |
+| `mcp_resource_updated` | `builtin:external:mcp_resource_updated` | a subscribed MCP resource pushes an update | ✅ | ✅ |
+| `file_changed` | `builtin:external:file_changed` | a watched path changes ([`fs_watch`](../../reference/config/reyn-yaml.md#fs_watch-block) required) | ✅ | ✅ |
+| `cron_fired` | `builtin:external:cron_fired` | a message-based `cron:` job delivers | ✅ | ✅ |
+| `webhook_received` | `builtin:external:webhook_received` | an inbound webhook resolves to this session | ✅ | ✅ |
+| — (open) | `composed:<name>` | a Composer (see below) publishes its correlated output | ✅ | ✅ (chaining — another Composer's output) |
+| — (open) | `llm:<session_id>:<event_name>` | the LLM itself emits one via `emit_hook_event` (always its own session) | ❌ **rejected at load** (`HookConfigError`) | ✅ |
+
+**`llm:*` can never be a hook's `on:` value — only a Composer input.** A
+`hooks:` entry only accepts the 10 builtin bare/namespaced forms above or a
+`composed:<name>` prefix; anything else (including a well-formed
+`llm:<session_id>:<event_name>`) is a load-time `HookConfigError`. To react
+to an LLM-emitted event, correlate it through a `composers:` entry into a
+`composed:<name>` event, then put your `hooks:` entry's `on:` on THAT
+composed kind — see the [worked example](#llm-authored-hook-events-emit_hook_event)
+below. The bare/namespaced-form duality only applies within the 10 builtin
+points — it does not extend `on:`'s acceptance to `llm:*`.
 
 ### The 4 config schemes — every field
 
@@ -92,9 +100,10 @@ template vars before the hook's action runs.
 - For the 10 builtin points, a matcher field outside that point's payload
   (a typo, or a field the point never carries) is a **load-time
   `HookConfigError`** — rejected before the hook can ever run.
-- For a `composed:*` or `llm:*` `on:` target (no builtin schema entry — the
-  open set), a field the event doesn't carry never matches at runtime
-  (nothing to validate against at load time).
+- For a hook's `matcher` on a `composed:*` `on:` target, or a Composer
+  input's `match` on an `llm:*` `inputs[].kind` (neither has a builtin
+  schema entry — the open set), a field the event doesn't carry never
+  matches at runtime (nothing to validate against at load time).
 
 ### `composers:` block — every field
 
