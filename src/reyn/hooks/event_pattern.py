@@ -9,7 +9,19 @@ evaluated against a hook-event's payload, ``reyn.hooks.matcher``) into a typed
 - ``kind``:    exact match against ``HookEvent.kind`` (bare or namespaced
                form both accepted, normalized via
                ``schema_registry.canonical_kind`` before comparing).
-- ``source``:  exact match against ``HookEvent.source``.
+- ``source``:  exact match against ``HookEvent.source``. **On the
+               ``HookBus`` (Hook-Event Redesign Phase 4a/4b), ``source`` is
+               DEGENERATE — every event ``HookDispatcher.dispatch`` builds
+               carries ``source="builtin"``, always, because ``kind``
+               already encodes the source TYPE (``mcp_resource_updated`` vs
+               ``file_changed`` vs ...) and ``payload`` retains the source
+               INSTANCE (``payload.server`` / ``payload.path`` /
+               ``payload.job_name`` / ``payload.transport``). Correlate on
+               the payload INSTANCE field, never on ``source`` — a pattern
+               (or a Composer input, ``reyn.hooks.composer``) written as
+               ``source="mcp:github"`` can never match anything the Bus
+               carries and is a silent-never-fire footgun, the same class
+               Phase 3's schema validation closed for payload field typos.
 - ``payload``: the SAME ``field -> pattern`` dict semantics as the legacy
                matcher (``reyn.hooks.matcher.matches``) — exact string
                equality per field, except ``uri``/``path`` which glob

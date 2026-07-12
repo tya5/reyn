@@ -250,7 +250,7 @@ hooks:
     matcher: { server: "github", uri: "file:///repo/docs/**" }
     pipeline_launch: { name: reindex_docs, input_template: { uri: "{{ uri }}" } }
   # v0.2 新設(導入する場合):
-  - on: composed:deploy_approved            # Composer 出力を購読
+  - on: composed:deploy_approved            # Composer 出力を購読(※ 下記注記参照)
     shell_exec: "reyn deploy.sh"
 
 composers:                                   # net-new(§5)
@@ -262,6 +262,7 @@ composers:                                   # net-new(§5)
     policy: { capacity: 10, overflow: reject, ttl: 5m, pairing: fifo }
     emit: { kind: composed:deploy_approved }
 ```
+※ **注記(Phase 4b 時点)**: 上記 `on: composed:deploy_approved` は現時点では **まだ読み込み不可**(`composed:*` は `ALLOWED_HOOK_POINTS` 未登録ゆえ fail-loud-reject される)。これはバグではなく **Phase 5 で意図的に開く**遷移 — Phase 5 が `composed:*` を `ALLOWED_HOOK_POINTS` に追加し、既存の `max_hook_driven_turns` loop-valve(§9 item 3 / composed→wake の裁定済設計)がバックストップする。Composer 自体(合成・emit)は Phase 4b で実装済みだが、`on:` 側の購読解禁は Phase 5 待ち — 「`#5 structural-non-reentry` → `§224 valve-metered-allow`」の設計上の transition であって欠陥ではない。
 - **[reconcile] sync/async の区別は entry の `on:` kind で表現**(v0.1 の sync_hooks/async_hooks 分離ブロックは不要 — §3.2 で「同一 kind を両方に登録可」ゆえ、実行モデルは kind と登録先で決まり、config の 2 ブロック分割は冗長)。reyn の単一 `hooks:` list を保持。
 - **event-schemas.yaml は OUT-set 専用**(§4/§8、schema は static)。
 - reyn の既存 capability(4 scheme / wake / matcher glob / cross-session `session:` / loop-valve / sandbox+consent+allowlist / hooks_add op で template_push のみ追加可の autonomy 境界)を **全て保持**。
