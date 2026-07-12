@@ -53,6 +53,42 @@ def test_hooks_add_has_no_path_parameter() -> None:
     assert props == {"on", "message", "wake", "push_when", "name"}
 
 
+def test_hooks_add_on_enum_is_isolated_from_module_hook_points_list() -> None:
+    """Tier 2: HOOKS_ADD's rendered ``on`` enum is decoupled from the module-level
+    ``_HOOK_POINTS`` list — mutating that list must NOT leak into the rendered
+    schema (#2898 shared-mutable-state × test-order isolation).
+
+    ``render_for_router`` only shallow-copies ``parameters``, so a by-reference
+    embed of ``_HOOK_POINTS`` would alias the module list into every render;
+    one stray mutation would then pollute every later ``hooks_add`` render (the
+    exact flake class). The schema embeds a defensive copy, so this cannot
+    happen. Falsification: append to the module list, render, assert the enum
+    is unchanged (the append is undone in ``finally`` so this test leaves no
+    global-state residue of its own)."""
+    import reyn.tools.hooks as hooks_mod
+
+    def _rendered_on_enum() -> list[str]:
+        return hooks_mod.HOOKS_ADD.render_for_router()[
+            "function"]["parameters"]["properties"]["on"]["enum"]
+
+    expected = list(hooks_mod._HOOK_POINTS)
+    assert _rendered_on_enum() == expected, (
+        "precondition: the rendered enum should match the module hook points"
+    )
+
+    _POLLUTANT = "__2898_pollutant_hook_point__"
+    hooks_mod._HOOK_POINTS.append(_POLLUTANT)
+    try:
+        assert _POLLUTANT not in _rendered_on_enum(), (
+            "mutating the module-level _HOOK_POINTS list leaked into HOOKS_ADD's "
+            "rendered `on` enum — the schema must embed a defensive copy so a "
+            "shared-mutable mutation cannot pollute a later render (#2898)"
+        )
+        assert _rendered_on_enum() == expected
+    finally:
+        hooks_mod._HOOK_POINTS.remove(_POLLUTANT)
+
+
 @pytest.mark.asyncio
 async def test_hooks_add_writes_in_set_only_not_reyn_yaml(tmp_path: Path) -> None:
     """Tier 2: the op writes .reyn/hooks.yaml (IN-set) + leaves reyn.yaml (OUT-set)
