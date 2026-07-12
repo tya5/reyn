@@ -22,48 +22,53 @@ the same ingress coroutine as the job's own inbox delivery (see
 """
 from __future__ import annotations
 
-from reyn.hooks.schema_registry import build_hook_payload
+from reyn.hooks.ingress import CronIngressAdapter
 
 CRON_TRANSPORT = "cron"
+
+# Hook-Event Redesign Phase 2 (proposal 0059 §6.4): the Cron Adapter is
+# stateless (no bound queue/session — it resolves its target Session fresh
+# at fire time), so one module-level instance is shared by every call.
+_ADAPTER = CronIngressAdapter()
 
 
 def cron_session_id(job_name: str) -> str:
     """The logical session-id (routing-key) for a cron job: ``cron:<job_name>``."""
-    return f"{CRON_TRANSPORT}:{job_name}"
+    return _ADAPTER.session_id(job_name)
 
 
 def resolve_cron_session(registry, agent_name: str, job_name: str):
     """Resolve (get-or-spawn) the persistent ``cron:<job_name>`` Session of
     ``agent_name`` and boot its run-loop so the scheduled turn is processed.
 
-    Steps (pure registry + session ops):
-      1. ``resolve_session(agent, "cron", job_name)`` — get-or-spawn by routing-key
-         (persistent: the same job resumes the same Session across fires).
-      2. ``ensure_session_running`` — boot the run-loop WITHOUT a forwarder (cron is
-         unattended; output handling is the S4b-3b notify layer, not the REPL sink).
+    Hook-Event Redesign Phase 2 (proposal 0059 §6.4): delegates to
+    ``CronIngressAdapter.resolve_session`` — the out-of-process Session-resolve
+    step of the unified Ingress Adapter interface, closed inside the adapter
+    (Sync dispatch / a future Async Bus never see it). Byte-identical steps
+    (get-or-spawn by routing-key, then boot the run-loop with no forwarder —
+    cron is unattended).
 
     Idempotent. Returns the resolved Session."""
-    session = registry.resolve_session(agent_name, CRON_TRANSPORT, job_name)
-    registry.ensure_session_running(agent_name, cron_session_id(job_name))
-    return session
+    return _ADAPTER.resolve_session(registry, agent_name, job_name)
 
 
 def dispatch_cron_fired(session, job_name: str, to: str) -> None:
-    """#2608 H5: fire the ``cron_fired`` external-event hook on ``session``
-    (the job's own resolved Session — pass the object :func:`resolve_cron_session`
-    returned, so the hook fires on the SAME session the job's message was
-    delivered to).
+    """#2608 H5 / Hook-Event Phase 2 §6.4: fire the ``cron_fired`` external-event
+    hook on ``session`` (the job's own resolved Session — pass the object
+    :func:`resolve_cron_session` returned, so the hook fires on the SAME
+    session the job's message was delivered to).
 
-    Non-blocking (``reyn.hooks.external_fire.fire_and_forget``) — a slow hook
-    action must never stall the cron job's own inbox delivery. ``template_vars``
-    carry only operator-authored config metadata (``job_name``, the target
-    agent name) — a cron job never carries end-user-supplied secrets the way
-    an inbound webhook body can, so nothing is withheld here (contrast
+    Delegates to ``CronIngressAdapter``'s ``to_event`` (builds the typed
+    ``HookEvent`` via Phase 1's ``build_hook_payload``, unchanged field-set)
+    then ``deliver`` (``reyn.hooks.external_fire.fire_and_forget`` — a slow
+    hook action must never stall the cron job's own inbox delivery).
+    ``template_vars`` carry only operator-authored config metadata
+    (``job_name``, the target agent name) — a cron job never carries
+    end-user-supplied secrets the way an inbound webhook body can, so
+    nothing is withheld here (contrast
     ``reyn.runtime.webhook_routing.dispatch_webhook_received``). ``job_name``
     is the matchable field (exact match — not a glob field, see
     ``reyn.hooks.matcher``), e.g. ``matcher: {job_name: "backup"}``.
     """
-    from reyn.hooks.external_fire import fire_and_forget
-    fire_and_forget(
-        session, "cron_fired", build_hook_payload("cron_fired", job_name=job_name, to=to),
-    )
+    event = _ADAPTER.to_event(job_name, to)
+    _ADAPTER.deliver(event, session)
