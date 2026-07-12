@@ -1,0 +1,36 @@
+pipeline: research_and_report
+description: >-
+  Flagship through-chain exemplar (proposal 0060 F3) -- web_search -> agent
+  (summarize) -> judge_output (self-review) -> present (zero-token operator
+  output). Shows the input -> workflow -> output composition thesis end to
+  end. Ships builtin + inert (invoke-by-name only, never auto-launched).
+steps:
+  - tool:
+      name: web_search
+      args: {query: !expr ctx.query, max_results: 5}
+      output: results
+  - agent:
+      prompt: >-
+        Summarize these web search results into a concise, accurate answer
+        to the query "{ctx.query}". Search results: {ctx.results}
+      output: summary
+  - tool:
+      name: judge_output
+      args:
+        data_inline: !expr ctx.summary
+        rubric: "Score 0.0-1.0: is the summary accurate, concise, and does it directly answer the query? Reply as JSON {\"score\": <0-1 float>, \"reason\": <string>}."
+        threshold: 0.6
+      output: verdict
+  - tool:
+      name: present
+      args:
+        data_inline: !expr "{summary: ctx.summary, verdict: ctx.verdict}"
+        blueprint:
+          - component: markdown
+            text: {$bind: /summary}
+          - component: keyvalue
+            rows:
+              - {label: score, value: {$bind: /verdict/structured/score}}
+              - {label: passed, value: {$bind: /verdict/structured/passed}}
+              - {label: reason, value: {$bind: /verdict/structured/reason}}
+      output: shown
