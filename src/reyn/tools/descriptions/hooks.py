@@ -29,7 +29,9 @@ hooks_add = ToolDescription(
         "or a context-inject). The hook is written to your runtime hooks layer "
         "(.reyn/config/hooks.yaml) and applied at the next turn boundary — it joins your existing "
         "hooks additively. Use for self-directed continuation or recurring injected "
-        "context. Cannot touch startup config (reyn.yaml is restart-only)."
+        "context. Cannot touch startup config (reyn.yaml is restart-only). "
+        "For the full on: vocabulary, matcher, composers:, emit_hook_event, and every "
+        "scheme's fields, see the hooks concept doc at docs/concepts/runtime/hooks.md."
     ),
     ja=(
         "エージェントのライフサイクルポイント（turn_end の自己継続や"
@@ -38,6 +40,9 @@ hooks_add = ToolDescription(
         "次のターン境界で適用される（既存フックに追加される）。自己主導"
         "の継続や定期的なコンテキスト注入に使う。起動時設定"
         "（reyn.yaml、再起動時のみ反映）には触れられない。"
+        "on: の全語彙・matcher・composers:・emit_hook_event・各スキームの"
+        "全フィールドの完全な構文は docs/concepts/runtime/hooks.md（hooks コンセプト"
+        "ドキュメント）を参照。"
     ),
 )
 
