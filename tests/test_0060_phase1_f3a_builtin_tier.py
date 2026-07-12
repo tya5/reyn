@@ -222,13 +222,19 @@ def test_install_op_provenance_can_never_be_builtin(tmp_path: Path) -> None:
 
 
 def test_pyproject_package_data_repurposed_to_builtin_glob() -> None:
-    """Tier 2: the pyproject.toml package-data glob is repurposed from the
-    dead `stdlib/**/*` to `builtin/**/*` (Addendum A1/A2) — the packaging
-    slot the builtin tier (F3) physically ships through."""
+    """Tier 2: the packaging config ships `builtin/**/*` (Addendum A1/A2) —
+    the packaging slot the builtin tier (F3) physically ships through —
+    and no dead `stdlib/**/*` remnant remains.
+
+    0061 migrated the build backend setuptools -> Hatchling: the
+    equivalent of `[tool.setuptools.package-data]` is now
+    `[tool.hatch.build.targets.wheel].artifacts` (see `pyproject.toml` +
+    `tests/test_0061_repo_self_access_parity.py`, which further gates
+    the built wheel actually contains these files)."""
     data = tomllib.loads((_REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
-    package_data = data["tool"]["setuptools"]["package-data"]["reyn"]
-    assert "builtin/**/*" in package_data
-    assert not any("stdlib" in entry for entry in package_data)
+    artifacts = data["tool"]["hatch"]["build"]["targets"]["wheel"]["artifacts"]
+    assert "src/reyn/builtin/**/*" in artifacts
+    assert not any("stdlib" in entry for entry in artifacts)
 
 
 def test_no_docs_reference_stdlib_stub_pages() -> None:
