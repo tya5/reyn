@@ -206,6 +206,7 @@ def build_agent_registry_from_project(
             state_log=state_log,
             budget_tracker=budget_tracker,
             hooks_config=config.hooks,
+            composers_config=config.composers,
             fs_watch_config=config.fs_watch,
             factory_config=factory_config,
             eager_embedding_build=False,

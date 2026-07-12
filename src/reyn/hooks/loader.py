@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import logging
 
+from reyn.hooks.composer import COMPOSED_KIND_PREFIX
 from reyn.hooks.event_pattern import from_legacy_matcher
 from reyn.hooks.event_pattern import validate_against_schema as validate_event_pattern
 from reyn.hooks.registry import HookRegistry
@@ -209,11 +210,22 @@ def _parse_entry(raw: object, entry_index: int) -> HookDef:
     # existing hooks.yaml keeps working unmodified and a new full-form config
     # resolves to the exact same HookDef.on value.
     on_key = bare_point(canonical_kind(on_raw.strip().lower()))
-    if on_key not in ALLOWED_HOOK_POINTS:
+    # Hook-Event Redesign Phase 5 part 1 (proposal 0059 §9 item 3 / #2881,
+    # the "#5 structural-non-reentry -> §224 valve-metered-allow" transition
+    # ratified in #2880's §9 annotation): ``composed:<name>`` is an OPEN
+    # namespace (one entry per ``composers:`` config's ``emit.kind``, not a
+    # fixed enum), so it is accepted by PREFIX here rather than being added to
+    # ``ALLOWED_HOOK_POINTS`` (a closed frozenset of the 10 builtin points).
+    # A composed-kind hook is NOT looked up via the builtin Schema Registry
+    # (``BUILTIN_HOOK_SCHEMAS`` has no ``composed:*`` entry, so a ``matcher``
+    # on one stays permissive/open-set below, same as any other non-builtin
+    # point) — its consumer is ``reyn.hooks.composed_consumer.
+    # ComposedEventConsumer``, not ``HookDispatcher.dispatch()``'s Sync loop.
+    if on_key not in ALLOWED_HOOK_POINTS and not on_key.startswith(COMPOSED_KIND_PREFIX):
         sorted_points = ", ".join(sorted(ALLOWED_HOOK_POINTS))
         raise HookConfigError(
             f"hooks[{entry_index}].on={on_raw!r} is not a recognised hook-point. "
-            f"Allowed: {sorted_points}."
+            f"Allowed: {sorted_points}, or a {COMPOSED_KIND_PREFIX}<name> composed-event kind."
         )
 
     # ── scheme: exactly one of template_push / shell_exec / shell_push /

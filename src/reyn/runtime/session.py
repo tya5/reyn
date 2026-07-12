@@ -710,6 +710,12 @@ class Session:
         # mirroring sandbox_config's seam). None/absent → empty registry → every
         # HookDispatcher.dispatch() is a no-op (the no-hooks equivalence property).
         hooks_config: "object | None" = None,
+        # Hook-Event Redesign Phase 4b/5 (proposal 0059 §5/§9, #2880/#2881):
+        # the resolved ``composers:`` config block (the raw parsed-at-load-time
+        # list, mirroring ``hooks_config``'s seam). None/absent → empty list →
+        # ``load_composers`` returns ``[]`` → ``start_composers`` never starts
+        # a Composer (byte-identical to pre-Composer-wiring behavior).
+        composers_config: "object | None" = None,
         # #2608 H4: the resolved ``fs_watch:`` config block (``FsWatchConfig``,
         # mirroring ``hooks_config``'s seam). None/absent -> FsWatchConfig()
         # (paths=[]) -> the session-owned FsWatcher never starts (byte-identical
@@ -1394,6 +1400,17 @@ class Session:
         # layer too (active from session start, mirroring .reyn/mcp.yaml), and the
         # hooks reapply seam re-reads only the runtime layer + re-combines.
         self._startup_hooks_raw: list = hooks_config if isinstance(hooks_config, list) else []
+        # Hook-Event Redesign Phase 4b/5 (#2880/#2881): the composers: startup
+        # (OUT-set) layer, captured once here alongside the hooks startup layer
+        # it mirrors. ``_build_composer_defs`` combines this with the runtime/
+        # per-agent/per-session layers (same 4-layer additive shape as
+        # ``_build_hook_registry``); ``run()`` builds + starts the Composers
+        # once (composers are v1-startup-only — no hot-reload/reapply seam,
+        # unlike hooks: restarting a live Composer's PendingStore mid-session
+        # is a separate, not-yet-designed concern).
+        self._startup_composers_raw: list = (
+            composers_config if isinstance(composers_config, list) else []
+        )
         from reyn.config.loader import load_hot_reload_config as _load_in_set
         _boot_in_set = _load_in_set(
             getattr(self._registry, "_project_root", None) or Path.cwd()
@@ -1438,6 +1455,29 @@ class Session:
             # Phase 4a: broadcast every dispatched HookEvent to this session's
             # own bus, independently of the Sync hooks_for() loop above.
             bus=self._hook_bus,
+        )
+        # Hook-Event Redesign Phase 4b/5 (#2880/#2881): the Composer definitions
+        # (built from the same layered raw config `_build_composer_defs` reads)
+        # + the composed:*->Sync consumer bridge. Neither is STARTED here
+        # (starting means spawning background asyncio tasks, which belongs in
+        # ``run()``, this session's async entry point — construction here is
+        # synchronous); `run()` calls `self._composer_registry.start()` /
+        # `self._composed_consumer.start()` once. `stop()`ed in `run()`'s
+        # shutdown `finally` (mirrors the FsWatcher start/stop shape).
+        from reyn.hooks.composed_consumer import ComposedEventConsumer
+        from reyn.hooks.composer import Composer, ComposerRegistry
+        self._composer_defs = self._build_composer_defs(_boot_in_set)
+        self._composer_registry = ComposerRegistry(
+            composers=[
+                Composer(
+                    d, bus=self._hook_bus,
+                    emit_event=lambda et, **kw: self._chat_events.emit(et, **kw),
+                )
+                for d in self._composer_defs
+            ],
+        )
+        self._composed_consumer = ComposedEventConsumer(
+            bus=self._hook_bus, dispatcher=self._hook_dispatcher,
         )
         # #2073 S4: track the RUNTIME (.reyn/cron.yaml) cron job names so the cron
         # reapply seam can unschedule jobs removed from the runtime file WITHOUT
@@ -3788,6 +3828,87 @@ class Session:
         hooks = data.get("hooks") if isinstance(data, dict) else None
         return list(hooks) if isinstance(hooks, list) else []
 
+    def _build_composer_defs(self, in_set: "dict | None" = None) -> list:
+        """Build the LAYERED ``ComposerDef`` list (Hook-Event Redesign Phase 4b/5,
+        proposal 0059 §5/§9, #2880/#2881) — the SAME 4-layer additive COMBINE
+        shape as :meth:`_build_hook_registry` (startup -> runtime -> per-agent
+        -> per-session), applied to ``composers:`` instead of ``hooks:``.
+
+        Unlike hooks, composers are v1 **startup-only** — this is called ONCE
+        from ``__init__`` (seeded with the boot IN-set) and the result is
+        started once in ``run()``; there is no reapply/hot-reload seam yet (a
+        live Composer's ``PendingStore`` correlating in-flight state makes
+        restarting mid-session a materially different, not-yet-designed
+        concern from a hook-registry swap, which has no analogous in-flight
+        state to lose).
+
+        Per-layer resilience mirrors ``_build_hook_registry`` exactly: the
+        trusted startup (reyn.yaml) layer must parse+cycle-check cleanly or
+        this fails loud (an operator config error); each of the 3 untrusted
+        layers (runtime/per-agent/per-session) is try-added independently — a
+        malformed layer is warned + dropped, keeping its valid siblings."""
+        from reyn.hooks.composer import ComposerConfigError, load_composers
+        runtime = (in_set or {}).get("composers") or []
+        runtime_list = list(runtime) if isinstance(runtime, list) else []
+        per_agent_list = self._read_per_agent_composers()
+        per_session_list = self._read_per_session_composers()
+        combined = list(self._startup_composers_raw)
+        definitions = load_composers(combined)  # trusted startup must load — else fail loud
+        for label, layer in (
+            ("runtime", runtime_list),
+            ("per-agent", per_agent_list),
+            ("per-session", per_session_list),
+        ):
+            if not layer:
+                continue
+            try:
+                definitions = load_composers(combined + layer)  # validate the cumulative add
+                combined = combined + layer
+            except ComposerConfigError as exc:
+                logger.warning(
+                    "config hot-reload: malformed %s composers layer — skipped, keeping "
+                    "the valid composer layers: %s", label, exc,
+                )
+        return definitions
+
+    def _read_per_agent_composers(self) -> list:
+        """Read the per-agent COMPOSER layer (Hook-Event Redesign Phase 4b/5,
+        #2880/#2881) — the ``composers:`` key of the SAME
+        ``.reyn/agents/<name>/hooks.yaml`` file :meth:`_read_per_agent_hooks`
+        reads its ``hooks:`` key from (same IN-set grain, scoped per agent).
+        ``[]`` when the file or key is absent."""
+        import yaml
+        path = self._hot_reload_project_root() / ".reyn" / "agents" / self.agent_name / "hooks.yaml"
+        if not path.is_file():
+            return []
+        try:
+            raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        except Exception:  # noqa: BLE001 — malformed → treat as absent
+            return []
+        if not isinstance(raw, dict):
+            return []
+        from reyn.security.secrets.interpolation import expand_env
+        data = expand_env(raw)
+        composers = data.get("composers") if isinstance(data, dict) else None
+        return list(composers) if isinstance(composers, list) else []
+
+    def _read_per_session_composers(self) -> list:
+        """Read the per-SESSION composer layer (Hook-Event Redesign Phase 4b/5,
+        #2880/#2881) — the ``composers:`` key of the SAME per-session
+        ``hooks.yaml`` file :meth:`_read_per_session_hooks` reads its
+        ``hooks:`` key from (#2285's 4th, most-specific layer). ``[]`` when
+        the file or key is absent (or the file is malformed)."""
+        import yaml
+        path = Path(self._snapshot_path).parent / "hooks.yaml"
+        if not path.is_file():
+            return []
+        try:
+            data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        except Exception:  # noqa: BLE001 — malformed → treat as absent
+            return []
+        composers = data.get("composers") if isinstance(data, dict) else None
+        return list(composers) if isinstance(composers, list) else []
+
     async def _reapply_hooks(self, in_set: dict) -> bool:
         """Reapply the hook layers (#2073 S2b + per-agent add-on) — re-read the global
         .reyn/hooks.yaml (IN-set) AND the per-agent .reyn/agents/<name>/hooks.yaml,
@@ -4634,6 +4755,14 @@ class Session:
         # #2608 H4: start the filesystem watcher (no-op if no fs_watch.paths
         # configured or 'watchdog' isn't installed — see FsWatcher.start).
         await self._fs_watcher.start()
+        # Hook-Event Redesign Phase 5 part 1 (proposal 0059 §9 item 3 / #2881):
+        # start every configured Composer (no-op — an empty list, the default
+        # — spawns zero background tasks, byte-identical to pre-Composer-
+        # wiring) and the composed:*->Sync consumer bridge (subscribes to this
+        # session's own bus; a no-op happy path if no hook is registered
+        # ``on: composed:*``, mirroring the no-hooks HookDispatcher equivalence).
+        self._composer_registry.start()
+        self._composed_consumer.start()
 
         # #1830 / FP-0052: warn if the startup model is above the cost threshold.
         # Fires once per session per model class (de-duped in maybe_emit_model_cost_warn).
@@ -4663,6 +4792,19 @@ class Session:
                     await self._fs_watcher.aclose()
                 except Exception:  # noqa: BLE001 — teardown fault isolation, never blocks shutdown
                     logger.warning("FsWatcher.aclose() raised during session teardown", exc_info=True)
+                # Hook-Event Redesign Phase 5 part 1 (#2881): stop the
+                # composed-consumer bridge + every Composer's background task
+                # (both cancel-safe/idempotent even if never started — see
+                # ComposedEventConsumer.stop / ComposerRegistry.stop). Teardown
+                # fault isolation mirrors the FsWatcher.aclose() guard above.
+                try:
+                    await self._composed_consumer.stop()
+                    await self._composer_registry.stop()
+                except Exception:  # noqa: BLE001 — teardown fault isolation, never blocks shutdown
+                    logger.warning(
+                        "Composer/ComposedEventConsumer teardown raised during session "
+                        "teardown", exc_info=True,
+                    )
                 self._chat_events.emit("chat_stopped", agent_name=self.agent_name)
                 # #1800 slice 5a: session lifecycle audit event (P6). Emitted alongside
                 # chat_stopped; marks the end of the session's resource scope.
