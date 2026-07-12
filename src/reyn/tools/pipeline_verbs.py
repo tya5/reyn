@@ -144,17 +144,15 @@ from reyn.core.pipeline.executor import (
     ToolStep,
 )
 from reyn.core.pipeline.registry import PipelineNotFoundError
+from reyn.tools.descriptions import pipeline as _pipeline_descriptions
 from reyn.tools.types import ToolContext, ToolDefinition, ToolGates, ToolResult
 
 if TYPE_CHECKING:
     from reyn.core.pipeline.schema import SchemaRegistry
 
-_RUN_PIPELINE_DESCRIPTION = (
-    "Run a REGISTERED pipeline by name to completion and return its final "
-    "output. Blocks until the pipeline finishes (sync). 'input' seeds the "
-    "pipeline's initial named context (ctx.*) for its first step. Fails "
-    "clearly if 'name' is not a registered pipeline, or if any step fails."
-)
+# Relocated to reyn.tools.descriptions.pipeline (Phase 3 tool-description
+# package refactor — byte-identical, no LLM-facing text change).
+_RUN_PIPELINE_DESCRIPTION = _pipeline_descriptions.run_pipeline.text
 
 _RUN_PIPELINE_PARAMETERS: dict[str, Any] = {
     "type": "object",
@@ -401,13 +399,9 @@ RUN_PIPELINE = ToolDefinition(
 )
 
 
-_RUN_PIPELINE_ASYNC_DESCRIPTION = (
-    "Launch a REGISTERED pipeline by name in the background and return "
-    "immediately with {status: started, run_id}. The pipeline runs in a "
-    "dedicated crash-recoverable driver session; its final result arrives "
-    "later as a [pipeline] message on your conversation. 'input' seeds the "
-    "pipeline's initial named context (ctx.*) for its first step."
-)
+# Relocated to reyn.tools.descriptions.pipeline (Phase 3 tool-description
+# package refactor — byte-identical, no LLM-facing text change).
+_RUN_PIPELINE_ASYNC_DESCRIPTION = _pipeline_descriptions.run_pipeline_async.text
 
 
 async def _handle_run_pipeline_async(
@@ -527,23 +521,12 @@ _RUN_PIPELINE_INLINE_PARAMETERS: dict[str, Any] = {
     "required": ["definition"],
 }
 
-_RUN_PIPELINE_INLINE_DESCRIPTION = (
-    "Run an ad-hoc pipeline you DEFINE inline (no pre-registration) to "
-    "completion and return its final output. Blocks until it finishes (sync). "
-    "'definition' is a pipeline DSL string (Appendix B); 'input' seeds the "
-    "first step's ctx.*. The definition is statically validated (parse, schema "
-    "refs, tool names, no nested pipeline launch, agent steps run as you) "
-    "BEFORE anything is spawned — a bad definition fails clearly and runs "
-    "nothing."
-)
+# Relocated to reyn.tools.descriptions.pipeline (Phase 3 tool-description
+# package refactor — byte-identical, no LLM-facing text change).
+_RUN_PIPELINE_INLINE_DESCRIPTION = _pipeline_descriptions.run_pipeline_inline.text
 
 _RUN_PIPELINE_INLINE_ASYNC_DESCRIPTION = (
-    "Launch an ad-hoc pipeline you DEFINE inline in the background and return "
-    "immediately with {status: started, run_id}. It runs in a dedicated "
-    "crash-recoverable driver session; its final result arrives later as a "
-    "[pipeline] message on your conversation. 'definition' is a pipeline DSL "
-    "string (Appendix B), statically validated before spawn; 'input' seeds the "
-    "first step's ctx.*."
+    _pipeline_descriptions.run_pipeline_inline_async.text
 )
 
 

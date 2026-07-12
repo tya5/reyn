@@ -1,0 +1,123 @@
+"""Tool descriptions for the ``pipeline`` bucket (pipeline launch verbs).
+
+Phase 3 of the tool-description package refactor (byte-identical
+relocation — no LLM-facing text change): the four pipeline-launch verbs
+from ``tools/pipeline_verbs.py`` — ``run_pipeline`` / ``run_pipeline_async``
+(a REGISTERED pipeline by name) and ``run_pipeline_inline`` /
+``run_pipeline_inline_async`` (an agent-GENERATED ad-hoc DSL string,
+statically validated before spawn). Each ``.text`` value is copied verbatim
+from its origin constant; the origin module now aliases its
+``_RUN_PIPELINE*_DESCRIPTION`` constants to ``pipeline.NAME.text``.
+
+Note: all four carry ``ToolDefinition.category="io"`` — this module groups
+them by feature-area (pipeline launch), matching the ``mcp`` / ``io``
+precedent set in Phase 2 (module grouping is conceptual, not a literal
+mirror of the ``category`` field).
+"""
+from __future__ import annotations
+
+from reyn.tools.descriptions._types import ToolDescription
+
+run_pipeline = ToolDescription(
+    tool_name="run_pipeline",
+    surfaced="router + phase (gates.router=allow, gates.phase=allow)",
+    purpose=(
+        "Launch a REGISTERED pipeline by name and block for its final "
+        "output — the sync entry point for a pre-built multi-step "
+        "workflow."
+    ),
+    text=(
+        "Run a REGISTERED pipeline by name to completion and return its final "
+        "output. Blocks until the pipeline finishes (sync). 'input' seeds the "
+        "pipeline's initial named context (ctx.*) for its first step. Fails "
+        "clearly if 'name' is not a registered pipeline, or if any step fails."
+    ),
+    ja=(
+        "登録済みパイプラインを名前で実行し、完了まで待って最終出力を返"
+        "す（同期）。'input' はパイプライン最初のステップの初期名前付き"
+        "コンテキスト（ctx.*）を与える。'name' が未登録、またはいずれか"
+        "のステップが失敗した場合は明確に失敗する。"
+    ),
+)
+
+run_pipeline_async = ToolDescription(
+    tool_name="run_pipeline_async",
+    surfaced="router + phase (gates.router=allow, gates.phase=allow)",
+    purpose=(
+        "Launch a REGISTERED pipeline in the background and return "
+        "immediately, for a long-running workflow whose result arrives "
+        "later as a [pipeline] message."
+    ),
+    text=(
+        "Launch a REGISTERED pipeline by name in the background and return "
+        "immediately with {status: started, run_id}. The pipeline runs in a "
+        "dedicated crash-recoverable driver session; its final result arrives "
+        "later as a [pipeline] message on your conversation. 'input' seeds the "
+        "pipeline's initial named context (ctx.*) for its first step."
+    ),
+    ja=(
+        "登録済みパイプラインを名前でバックグラウンド起動し、即座に "
+        "{status: started, run_id} を返す。パイプラインは専用のクラッシ"
+        "ュ復旧可能なドライバーセッションで実行され、最終結果は後で "
+        "[pipeline] メッセージとして会話に届く。"
+    ),
+)
+
+run_pipeline_inline = ToolDescription(
+    tool_name="run_pipeline_inline",
+    surfaced="router + phase (gates.router=allow, gates.phase=allow)",
+    purpose=(
+        "Run an ad-hoc, agent-GENERATED DSL-string pipeline to completion, "
+        "statically validated (parse / schema refs / tool names / no "
+        "nested launch / identity==invoker) before anything spawns."
+    ),
+    text=(
+        "Run an ad-hoc pipeline you DEFINE inline (no pre-registration) to "
+        "completion and return its final output. Blocks until it finishes (sync). "
+        "'definition' is a pipeline DSL string (Appendix B); 'input' seeds the "
+        "first step's ctx.*. The definition is statically validated (parse, schema "
+        "refs, tool names, no nested pipeline launch, agent steps run as you) "
+        "BEFORE anything is spawned — a bad definition fails clearly and runs "
+        "nothing."
+    ),
+    ja=(
+        "事前登録なしでインラインに定義したアドホックなパイプラインを完"
+        "了まで実行し、最終出力を返す（同期）。'definition' はパイプラ"
+        "イン DSL 文字列。何かが起動される前に静的検証（パース、スキー"
+        "マ参照、ツール名、パイプラインのネスト起動禁止、agent ステップ"
+        "は呼び出し元として実行）が行われる — 不正な定義は明確に失敗し"
+        "何も実行しない。"
+    ),
+)
+
+run_pipeline_inline_async = ToolDescription(
+    tool_name="run_pipeline_inline_async",
+    surfaced="router + phase (gates.router=allow, gates.phase=allow)",
+    purpose=(
+        "Launch an ad-hoc, agent-GENERATED DSL-string pipeline in the "
+        "background, statically validated before spawn, result arriving "
+        "later as a [pipeline] message."
+    ),
+    text=(
+        "Launch an ad-hoc pipeline you DEFINE inline in the background and return "
+        "immediately with {status: started, run_id}. It runs in a dedicated "
+        "crash-recoverable driver session; its final result arrives later as a "
+        "[pipeline] message on your conversation. 'definition' is a pipeline DSL "
+        "string (Appendix B), statically validated before spawn; 'input' seeds the "
+        "first step's ctx.*."
+    ),
+    ja=(
+        "インラインに定義したアドホックなパイプラインをバックグラウンド"
+        "起動し、即座に {status: started, run_id} を返す。専用のクラッ"
+        "シュ復旧可能なドライバーセッションで実行され、最終結果は後で "
+        "[pipeline] メッセージとして届く。'definition' は起動前に静的検"
+        "証されるパイプライン DSL 文字列。"
+    ),
+)
+
+ALL: dict[str, ToolDescription] = {
+    "run_pipeline": run_pipeline,
+    "run_pipeline_async": run_pipeline_async,
+    "run_pipeline_inline": run_pipeline_inline,
+    "run_pipeline_inline_async": run_pipeline_inline_async,
+}

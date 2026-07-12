@@ -29,20 +29,12 @@ from __future__ import annotations
 from typing import Any, Mapping
 
 from reyn.core.offload.canonical import present_to_canonical
+from reyn.tools.descriptions import presentation as _presentation_descriptions
 from reyn.tools.types import ToolContext, ToolDefinition, ToolGates, ToolResult
 
-_PRESENT_DESCRIPTION = (
-    "Show bulk data to the user directly, WITHOUT re-typing it through your own output tokens. "
-    "Use this after a tool returns a large result (a file, a query result, a list) that the user "
-    "should see: pass a reference to it and the presentation layer renders it for them. "
-    "Simple path — just pass 'data_ref' (a zone-readable path or an offloaded result ref) and it is "
-    "shown with a sensible default view; you do not need to design anything. Optionally pass 'view' "
-    "(a registered presentation name) to use a named layout, or 'blueprint' (advanced: a declarative "
-    "component tree) for full control — at most one of the two. Pass 'data_inline' INSTEAD of "
-    "'data_ref' only for small data already in your context (exactly one of data_ref / data_inline). "
-    "Reading a 'data_ref' requires the same file-read permission as reading the file. Returns a "
-    "compact acknowledgement (what reached the user and whether the view bound), not the data itself."
-)
+# Relocated to reyn.tools.descriptions.presentation (Phase 3 tool-description
+# package refactor — byte-identical, no LLM-facing text change).
+_PRESENT_DESCRIPTION = _presentation_descriptions.present.text
 
 _PRESENT_PARAMETERS: dict[str, Any] = {
     "type": "object",

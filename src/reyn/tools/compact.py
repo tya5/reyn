@@ -14,16 +14,12 @@ from __future__ import annotations
 
 from typing import Any, Mapping
 
+from reyn.tools.descriptions import context as _context_descriptions
 from reyn.tools.types import ToolContext, ToolDefinition, ToolGates, ToolResult
 
-_COMPACT_DESCRIPTION = (
-    "Compact the conversation history now: summarise older turns to free up "
-    "context window. Use this when the 'Context window' status shows the free "
-    "window getting low and you still have work to do — compacting first frees "
-    "room so subsequent steps and large tool results fit. Returns the freed "
-    "tokens and the free window afterwards (exact tokens). The system also "
-    "compacts automatically as a backstop; this lets you do it proactively."
-)
+# Relocated to reyn.tools.descriptions.context (Phase 3 tool-description
+# package refactor — byte-identical, no LLM-facing text change).
+_COMPACT_DESCRIPTION = _context_descriptions.compact.text
 
 _COMPACT_PARAMETERS: dict[str, Any] = {
     "type": "object",

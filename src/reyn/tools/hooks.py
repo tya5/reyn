@@ -23,6 +23,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Mapping
 
+from reyn.tools.descriptions import hooks as _hooks_descriptions
 from reyn.tools.types import ToolContext, ToolDefinition, ToolGates, ToolResult
 
 _HOOK_POINTS = [
@@ -30,13 +31,9 @@ _HOOK_POINTS = [
     "task_start", "task_end",
 ]
 
-_HOOKS_ADD_DESCRIPTION = (
-    "Add a push hook at an agent-lifecycle point (e.g. a turn_end self-continuation, "
-    "or a context-inject). The hook is written to your runtime hooks layer "
-    "(.reyn/config/hooks.yaml) and applied at the next turn boundary — it joins your existing "
-    "hooks additively. Use for self-directed continuation or recurring injected "
-    "context. Cannot touch startup config (reyn.yaml is restart-only)."
-)
+# Relocated to reyn.tools.descriptions.hooks (Phase 3 tool-description
+# package refactor — byte-identical, no LLM-facing text change).
+_HOOKS_ADD_DESCRIPTION = _hooks_descriptions.hooks_add.text
 
 _HOOKS_ADD_PARAMETERS: dict[str, Any] = {
     "type": "object",

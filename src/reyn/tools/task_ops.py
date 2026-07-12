@@ -43,54 +43,33 @@ from reyn.schemas.models import (
     TaskRepointDependencyIROp,
     TaskUpdateStatusIROp,
 )
+from reyn.tools.descriptions import task as _task_descriptions
 from reyn.tools.types import ToolContext, ToolDefinition, ToolGates, ToolResult
 
 # (op_kind, IROp model, LLM-facing description). op_kind == the IROp's ``kind``
 # Literal; the exposed action name is the universal ``task__<verb>`` qualified
 # form (set in universal_dispatch._OPERATION_RULES → this ToolDefinition).
+#
+# Descriptions relocated to reyn.tools.descriptions.task (Phase 3
+# tool-description package refactor): each ``description`` string below now
+# references a named ``ToolDescription.text`` there instead of an inline
+# literal — the one data-tuple special case in the package (every other
+# tool file uses a standalone ``_X_DESCRIPTION`` module constant instead).
+# Byte-identical — no LLM-facing text change.
 _TASK_OPS: tuple[tuple[str, type, str], ...] = (
-    ("task.create", TaskCreateIROp,
-     "Create a task. While you are EXECUTING a task, a task you create is automatically "
-     "owned by it (a sub-task) and — if you omit `assignee` — assigned to you to execute. "
-     "For a TOP-LEVEL task: omitting `assignee` leaves it UNASSIGNED (it waits in the "
-     "pending-assignment queue until a session claims it via task.assign); to execute it "
-     "YOURSELF, set `assignee` to your own session; set it to another session to delegate. "
-     "`deps` are depends-on task ids (born blocked until they complete). Use to decompose a "
-     "complex request into trackable units."),
-    ("task.update_status", TaskUpdateStatusIROp,
-     "Declare a status transition on a task you are the ASSIGNEE of (the single "
-     "writer). Terminal tasks reject writes."),
-    ("task.get", TaskGetIROp, "Read one task record by id."),
-    ("task.list", TaskListIROp,
-     "List tasks, optionally narrowed by assignee / requester / status. Narrowing "
-     "by `requester` (a task id) lists the sub-tasks that task owns."),
-    ("task.add_dependency", TaskAddDependencyIROp,
-     "Add a depends-on edge (you must be the requester/topology owner). "
-     "Existence + cycle checked."),
-    ("task.remove_dependency", TaskRemoveDependencyIROp,
-     "Drop a depends-on edge (idempotent). Relaxing the graph may promote a "
-     "now-ready dependent."),
-    ("task.repoint_dependency", TaskRepointDependencyIROp,
-     "Atomically repoint a dependency edge from one task to a substitute (the "
-     "primary recovery move). The new edge is cycle-checked before any mutation."),
-    ("task.abort", TaskAbortIROp,
-     "Abort (delete) a task you requested + its sub-tree. Cooperative-terminal: "
-     "the assignee's in-flight work is rejected at its next status-write."),
-    ("task.heartbeat", TaskHeartbeatIROp,
-     "Liveness ping for a blocked task; triggers unblock-predicate evaluation. "
-     "Returns the current state."),
+    ("task.create", TaskCreateIROp, _task_descriptions.TASK_CREATE.text),
+    ("task.update_status", TaskUpdateStatusIROp, _task_descriptions.TASK_UPDATE_STATUS.text),
+    ("task.get", TaskGetIROp, _task_descriptions.TASK_GET.text),
+    ("task.list", TaskListIROp, _task_descriptions.TASK_LIST.text),
+    ("task.add_dependency", TaskAddDependencyIROp, _task_descriptions.TASK_ADD_DEPENDENCY.text),
+    ("task.remove_dependency", TaskRemoveDependencyIROp, _task_descriptions.TASK_REMOVE_DEPENDENCY.text),
+    ("task.repoint_dependency", TaskRepointDependencyIROp, _task_descriptions.TASK_REPOINT_DEPENDENCY.text),
+    ("task.abort", TaskAbortIROp, _task_descriptions.TASK_ABORT.text),
+    ("task.heartbeat", TaskHeartbeatIROp, _task_descriptions.TASK_HEARTBEAT.text),
     ("task.register_unblock_predicate", TaskRegisterUnblockPredicateIROp,
-     "Register a deterministic (code, no-LLM) unblock predicate evaluated at "
-     "heartbeat; true → unblock."),
-    ("task.comment", TaskCommentIROp,
-     "Append a comment to a task's thread (durable inter-agent / human-in-the-loop "
-     "protocol)."),
-    ("task.assign", TaskAssignIROp,
-     "Assign a session to a task. An UNASSIGNED task (in the pending-assignment queue) "
-     "may be CLAIMED by anyone — set `assignee` to the session that will execute it. An "
-     "already-assigned task may be reassigned ONLY by its current assignee (owner-initiated "
-     "hand-off; others must request it via conversation). The new assignee is woken to "
-     "execute it."),
+     _task_descriptions.TASK_REGISTER_UNBLOCK_PREDICATE.text),
+    ("task.comment", TaskCommentIROp, _task_descriptions.TASK_COMMENT.text),
+    ("task.assign", TaskAssignIROp, _task_descriptions.TASK_ASSIGN.text),
 )
 
 

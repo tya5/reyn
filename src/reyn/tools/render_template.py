@@ -28,19 +28,12 @@ from __future__ import annotations
 from typing import Any, Mapping
 
 from reyn.core.offload.canonical import render_template_to_canonical
+from reyn.tools.descriptions import presentation as _presentation_descriptions
 from reyn.tools.types import ToolContext, ToolDefinition, ToolGates, ToolResult
 
-_RENDER_TEMPLATE_DESCRIPTION = (
-    "Render a Jinja2 template against structured data into a plain string. A sandboxed producer: it "
-    "writes nothing and shows nothing — it returns the rendered text, which you then route wherever "
-    "you want (show it with 'present', write it with a file step, or pass it downstream in a "
-    "pipeline). Provide exactly one template source (inline 'template' text, or 'template_ref' — a "
-    "zone-readable template file path) and exactly one data source ('data_inline' — small data in "
-    "your context, or 'data_ref' — a zone-readable path). The data binds under 'data' in the template "
-    "(e.g. {{ data.results[0].title }}). 'undefined' controls unbound variables: 'strict' (default) "
-    "errors naming the missing name; 'lenient' renders them empty and reports them. Reading a "
-    "template_ref / data_ref requires the same permission as reading the file."
-)
+# Relocated to reyn.tools.descriptions.presentation (Phase 3 tool-description
+# package refactor — byte-identical, no LLM-facing text change).
+_RENDER_TEMPLATE_DESCRIPTION = _presentation_descriptions.render_template.text
 
 _RENDER_TEMPLATE_PARAMETERS: dict[str, Any] = {
     "type": "object",

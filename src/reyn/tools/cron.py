@@ -41,38 +41,18 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Mapping
 
+from reyn.tools.descriptions import cron as _cron_descriptions
 from reyn.tools.types import ToolContext, ToolDefinition, ToolGates, ToolResult
 
-# ── Description literals ──────────────────────────────────────────────
+# ── Description literals (relocated to reyn.tools.descriptions.cron;
+# Phase 3 tool-description package refactor — byte-identical, no
+# LLM-facing text change) ──────────────────────────────────────────────
 
-_CRON_REGISTER_DESCRIPTION = (
-    "Schedule a recurring message to a Reyn agent. The cron scheduler "
-    "delivers the message to the target agent's inbox at each cron "
-    "fire — the agent processes it as a normal attributed turn from "
-    "a scheduled trigger. Idempotent on `name` (= replaces existing). "
-    "Use for periodic checks, reminders, automated summaries."
-)
-
-_CRON_UNREGISTER_DESCRIPTION = (
-    "Remove a previously-registered cron job by name. The schedule "
-    "stops firing immediately. No-op if the job doesn't exist."
-)
-
-_CRON_LIST_DESCRIPTION = (
-    "List all currently-registered cron jobs (= both reyn.yaml legacy "
-    "and .reyn/config/cron.yaml dynamic entries, unioned). Returns job name, "
-    "target, message/action, schedule, enabled state, and next-run time."
-)
-
-_CRON_ENABLE_DESCRIPTION = (
-    "Enable a previously-disabled cron job. The scheduler resumes "
-    "firing it on its schedule. No-op if already enabled."
-)
-
-_CRON_DISABLE_DESCRIPTION = (
-    "Disable a cron job without removing it. The schedule stops firing "
-    "until re-enabled via `cron__enable`. Use to pause a job temporarily."
-)
+_CRON_REGISTER_DESCRIPTION = _cron_descriptions.cron_register.text
+_CRON_UNREGISTER_DESCRIPTION = _cron_descriptions.cron_unregister.text
+_CRON_LIST_DESCRIPTION = _cron_descriptions.cron_list.text
+_CRON_ENABLE_DESCRIPTION = _cron_descriptions.cron_enable.text
+_CRON_DISABLE_DESCRIPTION = _cron_descriptions.cron_disable.text
 
 
 # ── Parameter schemas ─────────────────────────────────────────────────
