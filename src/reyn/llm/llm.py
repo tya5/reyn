@@ -19,6 +19,8 @@ from reyn.llm.credentials import check_model_credentials
 from reyn.llm.json_parse import loads_lenient
 from reyn.llm.model_resolver import ModelSpec
 from reyn.llm.pricing import TokenUsage, estimate_cost
+from reyn.prompt.loop_control import G12_SIGNAL_ERROR_TEXT as _G12_SIGNAL_ERROR_TEXT
+from reyn.prompt.loop_control import G12_SIGNAL_TEXT as _G12_SIGNAL_TEXT
 
 if TYPE_CHECKING:
     from reyn.core.events.events import EventLog
@@ -301,17 +303,16 @@ def _dump_llm_response(request_id: str | None, payload: dict) -> None:
 # have further steps).  "resume" is the same token used by the chat empty-stop
 # recovery path (EMPTY_STOP_RETRY_DIRECTIVE) — a pure continuation nudge with
 # no state assertion or instruction, matching the "uniform resume" philosophy.
-_G12_SIGNAL_TEXT = "resume"
-
+#
 # #1439 Fix #2: the trailing-tool result was an ERROR. The success text above
 # asserts "task complete" unconditionally, so an errored exec carried "task
 # complete" → the agent narrated error-as-success (14096). The error cell drops
 # "complete" and signals the failure + a continuation nudge (decision-enabling).
 # Only the error cell changes; the success text change (above) is orthogonal.
-_G12_SIGNAL_ERROR_TEXT = (
-    "(tool error) — the tool call did NOT succeed; inspect the error and decide"
-    " the next step before continuing (do not report success)"
-)
+#
+# reyn.prompt.loop_control (SP prompt-package, Phase 3 §J) — both texts
+# imported above, re-bound to the original private names so this module is
+# otherwise unchanged.
 
 # Tool-result status values (JSON `status` field) that mean the call failed.
 # Sourced from the op_runtime envelopes (error / denied / not_found) + a generic

@@ -19,10 +19,21 @@ import re
 
 import pytest
 
+from reyn.prompt.dogfood import DOGFOOD_INTERPRETATION_SYSTEM_PROMPT, dogfood_judge_system_prompt
+from reyn.prompt.loop_control import (
+    EMPTY_STOP_RETRY_DIRECTIVE,
+    G12_SIGNAL_ERROR_TEXT,
+    tool_call_cap_notice,
+)
+from reyn.runtime.reasoning_continuity import render_reasoning_section
 from reyn.runtime.router_system_prompt import build_system_prompt
 from reyn.tools import get_default_registry
 from reyn.tools.schemes._universal_sp import build_universal_tool_use_slots
-from reyn.tools.schemes.codeact import _build_actions_map, _render_code_api
+from reyn.tools.schemes.codeact import (
+    _build_actions_map,
+    _format_codeact_observation,
+    _render_code_api,
+)
 from reyn.tools.schemes.retrieval import _search_sp
 from reyn.tools.universal_dispatch import _OPERATION_RULES
 
@@ -152,6 +163,61 @@ class TestToolSchemasAreCJKFree:
             if _CJK_RE.search(s)
         ]
         assert hits, "strip-falsify: injected CJK char was not detected — gate is not live"
+
+
+def _all_request_stream_nudges() -> list[tuple[str, str]]:
+    """Every §I-M mid-request-stream nudge string (SP Phase 3, loop-control +
+    dogfood + CodeAct observation labels) — these reach an LLM request as a
+    synthetic message / embedded tool-result text, but are NOT part of the
+    assembled system prompt, so ``_all_assembled_system_prompts`` above never
+    exercises them. Extends the CJK/liveness corpus so a future Japanese or
+    stale-name regression in one of these is caught the same way."""
+    out: list[tuple[str, str]] = [
+        ("loop_control.EMPTY_STOP_RETRY_DIRECTIVE", EMPTY_STOP_RETRY_DIRECTIVE),
+        ("loop_control.G12_SIGNAL_ERROR_TEXT", G12_SIGNAL_ERROR_TEXT),
+        ("loop_control.tool_call_cap_notice", tool_call_cap_notice(attempted=7, kept=3)["content"]),
+        ("reasoning_continuity.render_reasoning_section", render_reasoning_section(["a prior entry"])),
+        ("dogfood.DOGFOOD_INTERPRETATION_SYSTEM_PROMPT", DOGFOOD_INTERPRETATION_SYSTEM_PROMPT),
+        ("dogfood.dogfood_judge_system_prompt", dogfood_judge_system_prompt("- on-topic\n- polite")),
+        ("codeact._format_codeact_observation[result]", _format_codeact_observation(
+            {"ok": True, "result": {"x": 1}, "stdout": "", "stderr": ""}
+        )),
+        ("codeact._format_codeact_observation[stdout]", _format_codeact_observation(
+            {"ok": True, "result": None, "stdout": "printed text", "stderr": ""}
+        )),
+        ("codeact._format_codeact_observation[stderr]", _format_codeact_observation(
+            {"ok": True, "result": {"x": 1}, "stdout": "", "stderr": "warning text"}
+        )),
+    ]
+    return out
+
+
+class TestRequestStreamNudgesAreCJKFree:
+    """Tier 2b: SP Phase 3 — the mid-request-stream nudges (§I-M) are CJK-free.
+    These inject as synthetic messages / embedded tool-result text, not via
+    ``build_system_prompt``, so they need their own corpus (the assembled-
+    system-prompt corpus above never renders them)."""
+
+    def test_every_request_stream_nudge_is_cjk_free(self):
+        """Tier 2b: no §I-M nudge contains CJK."""
+        hits = [
+            (path, s) for path, s in _all_request_stream_nudges()
+            if _CJK_RE.search(s)
+        ]
+        assert hits == [], (
+            "CJK found in a request-stream nudge (must be English): "
+            f"{hits!r}"
+        )
+
+    def test_strip_falsify_request_stream_nudge_cjk_is_detected(self):
+        """Tier 2b: a nudge string containing one CJK character must be
+        flagged by the same scan (falsification) — proves the corpus/regex
+        combination is live, not vacuously passing."""
+        poisoned = "A normal nudge string with a stray 通 character."
+        assert _CJK_RE.search(poisoned), (
+            "strip-falsify: injected CJK char in a nudge string was not "
+            "detected — gate is not live"
+        )
 
 
 class TestAssembledSystemPromptsAreCJKFree:

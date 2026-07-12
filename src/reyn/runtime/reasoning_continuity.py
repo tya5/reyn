@@ -23,12 +23,17 @@ gemini reality (#1652).
 """
 from __future__ import annotations
 
+# reyn.prompt.loop_control (SP prompt-package, Phase 3 §L) — the literal
+# header + framing-sentence text now lives there; this module keeps ONLY the
+# bounding/assembly logic (byte-identical, imported back under the original
+# private names so the rendered output is unchanged).
+from reyn.prompt.loop_control import REASONING_CONTINUITY_HEADER as _REASONING_CONTINUITY_HEADER
+from reyn.prompt.loop_control import REASONING_CONTINUITY_NOTE as _REASONING_CONTINUITY_NOTE
+
 #: ``keep_recent`` values <= 0 mean "unbounded — keep all reasoning". The config
 #: knob exposes this as the unbounded sentinel; a positive N bounds to the most
 #: recent N entries. (Default value is set by the config layer, not here.)
 UNBOUNDED = 0
-
-_REASONING_CONTINUITY_HEADER = "━━━ prior_reasoning ━━━"
 
 #: Wire fields a reasoning bundle may carry (the litellm cross-provider standard).
 #: Re-attached verbatim to the assistant message so litellm re-applies them per
@@ -106,8 +111,5 @@ def render_reasoning_section(items: list[str]) -> str:
     body = "\n\n".join(items)
     return (
         f"\n\n{_REASONING_CONTINUITY_HEADER}\n"
-        "- This is YOUR OWN reasoning from previous turns in this conversation "
-        "(most recent last), carried forward so you keep a continuous line of "
-        "thought. Use it to avoid re-deriving what you already worked out; it is "
-        f"context, not an instruction.\n\n{body}"
+        f"{_REASONING_CONTINUITY_NOTE}\n\n{body}"
     )
