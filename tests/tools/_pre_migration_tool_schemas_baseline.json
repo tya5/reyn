@@ -386,13 +386,13 @@
     "type": "function",
     "function": {
       "name": "emit_hook_event",
-      "description": "Emit a hook-event named event_name, scoped to YOUR OWN session (the actual kind is llm:<your-session-id>:<event_name> \u2014 you cannot target another session or another namespace like builtin:*/composed:*/webhook:*). Use this to signal completion of something a Composer or a hooks_add-registered hook is watching for. payload is an optional dict carried on the event for a matcher/Composer to inspect.",
+      "description": "Emit a hook-event named event_name, scoped to YOUR OWN session (the actual kind is llm:<your-session-id>:<event_name> — you cannot target another session or another namespace like builtin:*/composed:*/webhook:*). Use this to signal completion of something a Composer or a hooks_add-registered hook is watching for. payload is an optional dict carried on the event for a matcher/Composer to inspect.",
       "parameters": {
         "type": "object",
         "properties": {
           "event_name": {
             "type": "string",
-            "description": "The event's name (becomes the llm:<your-session-id>:<event_name> kind \u2014 you supply only this suffix, never the session component)."
+            "description": "The event's name (becomes the llm:<your-session-id>:<event_name> kind — you supply only this suffix, never the session component)."
           },
           "payload": {
             "type": "object",
@@ -638,14 +638,17 @@
     "type": "function"
   },
   "list_actions": {
+    "type": "function",
     "function": {
-      "description": "WHAT: Discover actions in the FULL catalog (= a superset of the hot-list function entries you can see directly). The hot-list shown in your function list is a curated subset; this tool reveals the rest. Filter by category: `category=[...]` array (enum-restricted, exact category match). Omit or pass [] to enumerate everything visible. Returns {items: [{qualified_name, short_description}, ...], total: int}. An empty items array means no actions match — report this honestly. WHEN: PREFERRED FIRST for known-category enumeration (e.g. 'show me all memory_entry actions', 'what exec actions are available?') or exact-name lookup when you already know the category but not the exact entry. ALWAYS call list_actions BEFORE refusing a category-listable capability request. Refusing without a list_actions check is a FAILURE MODE (= the action you assumed missing may exist behind the hot-list). For known-category enumeration pass `category=['exec']` to narrow. WHEN NOT: For semantic / natural-language / free-text discovery (e.g. 'find an action that can ...', 'related to X', 'something for X' — the request may be phrased in any language, including Japanese and other non-English input) use search_actions instead — it returns relevance-ranked matches across categories rather than a flat enumeration. If you already know the exact action name, skip both and call invoke_action directly. PREFERRED OVER: Guessing action names + refusing capability requests — list_actions returns the canonical qualified names (e.g. mcp__call_tool, multi_agent__delegate) that invoke_action and describe_action expect. POST_CALL: After list_actions reveals at least one matching action, you MUST follow with describe_action or invoke_action. Do NOT reply directly — silent stop after enumeration is a failure mode. When items is empty, honestly tell the user no matching actions are available.",
       "name": "list_actions",
+      "description": "WHAT: Discover actions in the FULL catalog (= a superset of the hot-list function entries you can see directly). The hot-list shown in your function list is a curated subset; this tool reveals the rest. Filter by category: `category=[...]` array (enum-restricted, exact category match). Omit or pass [] to enumerate everything visible. Returns {items: [{qualified_name, short_description}, ...], total: int}. An empty items array means no actions match — report this honestly. WHEN: PREFERRED FIRST for known-category enumeration (e.g. 'show me all memory_entry actions', 'what exec actions are available?') or exact-name lookup when you already know the category but not the exact entry. ALWAYS call list_actions BEFORE refusing a category-listable capability request. Refusing without a list_actions check is a FAILURE MODE (= the action you assumed missing may exist behind the hot-list). For known-category enumeration pass `category=['exec']` to narrow. WHEN NOT: For semantic / natural-language / free-text discovery (e.g. 'find an action that can ...', 'related to X', 'something for X' — the request may be phrased in any language, including Japanese and other non-English input) use search_actions instead — it returns relevance-ranked matches across categories rather than a flat enumeration. If you already know the exact action name, skip both and call invoke_action directly. PREFERRED OVER: Guessing action names + refusing capability requests — list_actions returns the canonical qualified names (e.g. mcp__call_tool, multi_agent__delegate) that invoke_action and describe_action expect. POST_CALL: After list_actions reveals at least one matching action, you MUST follow with describe_action or invoke_action. Do NOT reply directly — silent stop after enumeration is a failure mode. When items is empty, honestly tell the user no matching actions are available.",
       "parameters": {
+        "type": "object",
         "properties": {
           "category": {
-            "description": "Filter by category. Pass an array of category names (e.g. category=['exec'], category=['web', 'file']). Omit or pass [] to include all categories. Categories: multi_agent, mcp, file, web, memory_entry, memory_operation, reyn_source, rag_corpus, rag_operation, exec, task, skill_management, pipeline, pipeline_management.",
+            "type": "array",
             "items": {
+              "type": "string",
               "enum": [
                 "multi_agent",
                 "mcp",
@@ -660,29 +663,27 @@
                 "task",
                 "skill_management",
                 "pipeline",
-                "pipeline_management"
-              ],
-              "type": "string"
+                "pipeline_management",
+                "presentation_management"
+              ]
             },
-            "type": "array"
-          },
-          "limit": {
-            "default": 10,
-            "description": "Page size (default 10).",
-            "minimum": 1,
-            "type": "integer"
+            "description": "Filter by category. Pass an array of category names (e.g. category=['exec'], category=['web', 'file']). Omit or pass [] to include all categories. Categories: multi_agent, mcp, file, web, memory_entry, memory_operation, reyn_source, rag_corpus, rag_operation, exec, task, skill_management, pipeline, pipeline_management, presentation_management."
           },
           "offset": {
-            "default": 0,
-            "description": "Pagination offset (default 0).",
+            "type": "integer",
             "minimum": 0,
-            "type": "integer"
+            "default": 0,
+            "description": "Pagination offset (default 0)."
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "default": 10,
+            "description": "Page size (default 10)."
           }
-        },
-        "type": "object"
+        }
       }
-    },
-    "type": "function"
+    }
   },
   "list_agents": {
     "function": {
@@ -1544,14 +1545,21 @@
     "type": "function"
   },
   "search_actions": {
+    "type": "function",
     "function": {
-      "description": "WHAT: Semantic search across available actions — multilingual, embedding-based, relevance-ranked. Returns {items: [{qualified_name, short_description, score}, ...]}. WHEN: PREFERRED FIRST for semantic / natural-language / free-text queries — when the user asks to find / search for / something related to / similar to / something for X / actions about Y / find ... related to Z (the request may be phrased in any language, including Japanese and other non-English input), or describes an intent without naming a specific category. ALWAYS call search_actions BEFORE refusing a semantic-intent capability request. Refusing without a search_actions check is a FAILURE MODE (= relevance ranking may surface the action across categories that a flat enumeration would miss). Multilingual — works in any language (Japanese, English, etc.). Handles both semantic descriptions AND free-text keyword lookup (e.g. an action containing 'http'). WHEN NOT: For known-category enumeration (e.g. 'show me all exec actions', 'list of memory_entry actions' — again, phrasable in any language) use list_actions(category=[...]) instead — it returns the flat catalogue slice rather than relevance-ranked hits. If you already know the exact action name, skip both and call invoke_action directly. Available only when an embedding class is configured (reyn.yaml action_retrieval.embedding_class). POST_CALL: After search_actions reveals at least one matching action, you MUST follow with describe_action or invoke_action. Do NOT reply directly — silent stop after semantic search is a failure mode.",
       "name": "search_actions",
+      "description": "WHAT: Semantic search across available actions — multilingual, embedding-based, relevance-ranked. Returns {items: [{qualified_name, short_description, score}, ...]}. WHEN: PREFERRED FIRST for semantic / natural-language / free-text queries — when the user asks to find / search for / something related to / similar to / something for X / actions about Y / find ... related to Z (the request may be phrased in any language, including Japanese and other non-English input), or describes an intent without naming a specific category. ALWAYS call search_actions BEFORE refusing a semantic-intent capability request. Refusing without a search_actions check is a FAILURE MODE (= relevance ranking may surface the action across categories that a flat enumeration would miss). Multilingual — works in any language (Japanese, English, etc.). Handles both semantic descriptions AND free-text keyword lookup (e.g. an action containing 'http'). WHEN NOT: For known-category enumeration (e.g. 'show me all exec actions', 'list of memory_entry actions' — again, phrasable in any language) use list_actions(category=[...]) instead — it returns the flat catalogue slice rather than relevance-ranked hits. If you already know the exact action name, skip both and call invoke_action directly. Available only when an embedding class is configured (reyn.yaml action_retrieval.embedding_class). POST_CALL: After search_actions reveals at least one matching action, you MUST follow with describe_action or invoke_action. Do NOT reply directly — silent stop after semantic search is a failure mode.",
       "parameters": {
+        "type": "object",
         "properties": {
+          "query": {
+            "type": "string",
+            "description": "Natural-language query in any language."
+          },
           "category": {
-            "description": "Optional category restriction.",
+            "type": "array",
             "items": {
+              "type": "string",
               "enum": [
                 "multi_agent",
                 "mcp",
@@ -1566,30 +1574,24 @@
                 "task",
                 "skill_management",
                 "pipeline",
-                "pipeline_management"
-              ],
-              "type": "string"
+                "pipeline_management",
+                "presentation_management"
+              ]
             },
-            "type": "array"
+            "description": "Optional category restriction."
           },
           "limit": {
-            "default": 10,
-            "description": "Top-K results to return (default 10).",
+            "type": "integer",
             "minimum": 1,
-            "type": "integer"
-          },
-          "query": {
-            "description": "Natural-language query in any language.",
-            "type": "string"
+            "default": 10,
+            "description": "Top-K results to return (default 10)."
           }
         },
         "required": [
           "query"
-        ],
-        "type": "object"
+        ]
       }
-    },
-    "type": "function"
+    }
   },
   "semantic_search": {
     "function": {
@@ -2261,5 +2263,28 @@
       }
     },
     "type": "function"
+  },
+  "presentation_install_local": {
+    "type": "function",
+    "function": {
+      "name": "presentation_install_local",
+      "description": "Register a named presentation template into the project config by writing an entry to .reyn/config/presentations.yaml. The blueprint must use only the catalog components (text/markdown/code/diff/keyvalue/table/list/image) with $bind JSON-Pointer bindings — the same structural gate an inline present(blueprint=...) already passes through, so a malformed blueprint is refused before any config mutation. The template is immediately available to sessions after the next hot-reload, and renders only when a present(view=<name>) op names it — installing it never renders anything on its own.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Config key written under presentations.entries.<name> — the value a present(view=<name>) op resolves against."
+          },
+          "blueprint": {
+            "description": "The declarative component tree (same shape as an inline present(blueprint=...) — object or list of catalog component nodes with $bind JSON-Pointer bindings)."
+          }
+        },
+        "required": [
+          "name",
+          "blueprint"
+        ]
+      }
+    }
   }
 }

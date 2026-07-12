@@ -593,6 +593,10 @@ _ROUTE_CONTRACT_SAMPLES: list[tuple[str, dict[str, Any]]] = [
     ("pipeline_management__install_local",  {"path": "/tmp/my-pipeline.yaml"}),
     # pipeline_management category — install_source requires source URL.
     ("pipeline_management__install_source", {"source": "https://github.com/user/pipeline-repo"}),
+    # presentation_management category (proposal 0060 Phase 1 Layer A / A8) —
+    # install requires name + blueprint (no source/git-fetch counterpart).
+    ("presentation_management__install",
+     {"name": "status_card", "blueprint": {"component": "text", "text": "hi"}}),
     # pipeline category (IS-1) — run_pipeline requires name; input is optional.
     ("pipeline__run", {"name": "my_pipeline", "input": {"topic": "x"}}),
     # pipeline category (IS-2) — async launch, same surface as the sync verb.

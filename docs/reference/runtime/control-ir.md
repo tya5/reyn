@@ -33,6 +33,7 @@ Control IR is the list of side-effect operations the LLM may emit. The OS dispat
 | `mcp_drop_server` | Remove an MCP server from project/local/user config (inverse of `mcp_install`) | `permissions.mcp_drop_server: true` in skill frontmatter |
 | `skill_install` | Register a skill (local dir or git/URL source) into the project skills config | `file.write: [.reyn/config/skills.yaml]` in skill frontmatter; `http.get: [{host: <source_host>}]` when `source` is set |
 | `pipeline_install` | Register a pipeline (local DSL file or git/URL source) into the project pipelines config | `file.write: [.reyn/config/pipelines.yaml]` in skill frontmatter; `http.get: [{host: <source_host>}]` when `source` is set |
+| `presentation_install` | Register a named presentation template (inline blueprint) into the project presentations config | `file.write: [.reyn/config/presentations.yaml]` |
 | `embed` | Raw embedding primitive: batch texts -> vectors (FP-0057 Phase 1; the user-facing primitive AND the shared logic later internal RAG ops call) | none (default-allow; embedding API cost) |
 | `index_query` | Semantic vector search over one indexed source | none |
 | `semantic_search` | Macro (FP-0057 Phase 2a; renamed from `recall`): per-source-model embed query → index_query per source → merge top-K (multi-model correct) | none (embedding API cost) |
@@ -719,6 +720,69 @@ Result fields: `status` (`"installed"` / `"blocked"` / `"error"`), `name`, `path
 
 Events emitted: `pipeline_install_threat_match`, `pipeline_install_threat_blocked` (threat scan),
 `pipeline_installed` (P6 on success).
+
+## `presentation_install`
+
+Registers a named presentation template (a declarative component tree) into the
+project's `presentations.entries` config (proposal 0060 Phase 1 Layer A, A8).
+One tool surface verb: `presentation_management__install`, handled by
+`op_runtime/presentation_install.py`. Mirrors `skill_install` /
+`pipeline_install`'s STRUCTURE (permission gate → config write →
+`record_config_generation` → emit event → hot-reload), but there is **no**
+source/git-fetch path (a blueprint is small declarative data carried inline,
+never a file-backed artifact) and **no** `scan_for_threats` call — a present
+blueprint is structurally non-executable by construction
+(`reyn.core.present.catalog`: 8 fixed components, every non-literal value is a
+`$bind` RFC-6901 JSON-Pointer, no template-ref/eval/exec surface, `image.src`
+renders as a label — no fetch/SSRF); `validate_blueprint` (the SAME gate an
+inline `present(blueprint=...)` op already passes through) fills the role
+`scan_for_threats` fills for skill/pipeline free-text `description`.
+
+Example:
+```json
+{
+  "kind": "presentation_install",
+  "name": "status_card",
+  "blueprint": {
+    "component": "keyvalue",
+    "rows": [{"label": "status", "value": {"$bind": "/status"}}]
+  }
+}
+```
+
+Fields:
+- `name` (required) — the `presentations.entries` config key; the value a
+  `present(view=<name>)` op resolves against.
+- `blueprint` (required) — the declarative component tree, identical shape to
+  an inline `present(blueprint=...)`'s `blueprint` field.
+
+Handler lifecycle:
+1. Structural threat gate: `validate_blueprint(op.blueprint)` — refuses
+   (`status="blocked"`) BEFORE any config mutation on a malformed / non-catalog
+   blueprint.
+2. Gate via `PermissionResolver.require_file_write` (= `.reyn/config/presentations.yaml`)
+3. Write `presentations.entries.<name>` to `.reyn/config/presentations.yaml`
+   with `{blueprint, enabled: true, provenance: <ctx.turn_origin>}` —
+   `provenance` is OS-stamped from `ctx.turn_origin` alone (A7/A9), never from
+   an op field
+4. Call `record_config_generation` (inherits the existing config crash-recovery;
+   no new recovery-gated obligation — no truncate-falsify test owed for this op)
+5. Emit `presentation_installed` event (P6 audit trail)
+6. Request hot-reload via `dispatch_install_reload(source="presentation_install")`
+   (the existing `"presentations"` seam — `Session._reapply_presentations`,
+   FP-0054 PR-C — rebuilds the registry; the SAME seam operator edits to
+   `presentations.yaml` already reload through)
+
+Ships inert-by-construction: a presentation is invoke-by-name — it renders
+only when a `present(view=<name>)` op names it, so a freshly-installed
+template is discoverable but dormant until referenced (no new state needed,
+mirrors builtin-inert for skills/pipelines).
+
+Result fields: `status` (`"installed"` / `"blocked"` / `"error"`), `name`,
+`config_path`.
+
+Events emitted: `presentation_install_blocked` (structural gate),
+`presentation_installed` (P6 on success).
 
 ## `embed`
 

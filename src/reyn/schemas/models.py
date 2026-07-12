@@ -429,6 +429,38 @@ class PipelineInstallIROp(BaseModel):
     source: str | None = None                   # git/GitHub URL (installs to .reyn/pipelines/<name>/)
 
 
+class PresentationInstallIROp(BaseModel):
+    """Register a named presentation template into the project presentations
+    config (proposal 0060 Phase 1 Layer A, A8). Mirrors ``SkillInstallIROp`` /
+    ``PipelineInstallIROp``'s STRUCTURE (permission gate → config write →
+    ``record_config_generation`` → emit event → hot-reload), but the threat is
+    LOWER than either — a present ``blueprint`` is structurally non-executable
+    by construction (``reyn.core.present.catalog``: 8 fixed components, every
+    non-literal value is a ``$bind`` RFC-6901 JSON-Pointer, no template-ref /
+    eval / exec surface, ``image.src`` renders as a label — no fetch/SSRF).
+    ``validate_blueprint`` (the SAME structural gate an inline ``present``
+    blueprint already passes through) already fills the role
+    ``scan_for_threats`` fills for skill/pipeline free-text ``description`` —
+    so this op has no free-text field and therefore no ``scan_for_threats``
+    call in its handler.
+
+    Unlike skill/pipeline, there is no source/git-fetch path — a blueprint is
+    small declarative data carried inline (mirrors
+    ``reyn.data.presentations.registry``'s inline-blueprint-in-entry model),
+    never a file-backed artifact.
+
+    ``name`` is the registry key a ``present(view=...)`` op resolves against
+    (mirrors the config-entries key). ``blueprint`` is the same declarative
+    component tree an inline ``present(blueprint=...)`` accepts — it is
+    validated through the identical :func:`validate_blueprint` gate before the
+    entry is written, so a malformed / non-catalog blueprint is refused BEFORE
+    any config mutation.
+    """
+    kind: Literal["presentation_install"]
+    name: str                                    # registry key (present(view=<name>) resolves against this)
+    blueprint: "dict[str, Any] | list[Any]"       # the declarative component tree (same shape as inline present)
+
+
 class EmitHookEventIROp(BaseModel):
     """Emit an LLM-authored hook-event onto this session's ``HookBus`` (Hook-Event
     Redesign Phase 5 part 2, proposal ``docs/deep-dives/proposals/
@@ -911,6 +943,10 @@ OP_KIND_MODEL_MAP: dict[str, type[BaseModel]] = {
     # pipeline install — register a pipeline DSL file into pipelines.entries
     # (mirrors skill_install writing skills.entries; parallel install mechanism).
     "pipeline_install": PipelineInstallIROp,
+    # proposal 0060 Phase 1 Layer A (A8): register a named presentation template
+    # into presentations.entries (mirrors skill_install/pipeline_install's
+    # structure; lower threat — validate_blueprint IS the structural gate).
+    "presentation_install": PresentationInstallIROp,
     # Hook-Event Redesign Phase 5 part 2 (proposal 0059 §8): LLM-authored
     # hook-event emission onto the caller's own HookBus. See EmitHookEventIROp's
     # docstring for the structural session-binding + kind-whitelist security
@@ -953,6 +989,7 @@ if TYPE_CHECKING:
             TaskCommentIROp,
             SkillInstallIROp,
             PipelineInstallIROp,
+            PresentationInstallIROp,
             EmitHookEventIROp,
         ],
         Field(discriminator="kind"),

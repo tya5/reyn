@@ -36,11 +36,15 @@ from reyn.tools.types import ToolDefinition, ToolGates
 
 # The admin/install family whose whole-dict result IS the reviewed, legitimate LLM view
 # (FP-0056 owner decision #1). STRUCTURED_PASSTHROUGH membership is EXACTLY this set — no more.
+# proposal 0060 Phase 1 Layer A (A8) added ``presentation_install`` — another
+# install-manifest producer (same admin class as skill_install/pipeline_install),
+# so the reviewed set is now the admin-7.
 _STRUCTURED_PASSTHROUGH_ADMIN_6 = frozenset({
     "mcp_install",
     "mcp_drop_server",
     "skill_install",
     "pipeline_install",
+    "presentation_install",
     "mcp_subscribe_resource",
     "mcp_unsubscribe_resource",
 })
@@ -140,7 +144,7 @@ def test_structured_passthrough_membership_is_exactly_the_admin_6() -> None:
         sid for sid in _all_source_ids() if canonical_declaration(sid) is STRUCTURED_PASSTHROUGH
     }
     assert live_passthrough == set(_STRUCTURED_PASSTHROUGH_ADMIN_6), (
-        f"STRUCTURED_PASSTHROUGH must be exactly the admin-6; got {sorted(live_passthrough)}"
+        f"STRUCTURED_PASSTHROUGH must be exactly the admin/install family; got {sorted(live_passthrough)}"
     )
 
 

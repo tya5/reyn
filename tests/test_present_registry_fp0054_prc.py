@@ -323,12 +323,19 @@ def test_referencing_a_template_name_never_registers_it(tmp_path: Path) -> None:
     assert registry.names() == ["authors"]
 
 
-def test_no_present_register_op_kind_exists() -> None:
-    """Tier 1: there is no op kind for the LLM to register a named template
-    (unlike skill_install / pipeline_install, presentations are operator-config
-    only — no install op). The only present-family op is `present` itself."""
+def test_present_family_op_kinds_are_exactly_present_and_install() -> None:
+    """Tier 1: the present-family op kinds are EXACTLY ``present`` (render) and
+    ``presentation_install`` (register a named template — proposal 0060 Phase 1
+    Layer A / A8). No other present op exists. Registration happens ONLY via the
+    dedicated, permission-gated install op — never as a side effect of a
+    ``present`` render (that read-only boundary is pinned by
+    ``test_referencing_a_template_name_never_registers_it`` above).
+
+    Prior to 0060 A8 presentations were operator-config only; A8 adds the
+    LLM-authorable install op (mirroring skill_install / pipeline_install,
+    gated by ``validate_blueprint`` — the structural threat gate)."""
     present_family = {k for k in ALL_OP_KINDS if "present" in k}
-    assert present_family == {"present"}
+    assert present_family == {"present", "presentation_install"}
 
 
 # ── Tier 2: hot-reload — a new template is visible at the next turn boundary ──

@@ -107,6 +107,7 @@ def get_default_registry() -> ToolRegistry:
         RUN_PIPELINE_INLINE_ASYNC,
     )
     from reyn.tools.present import PRESENT
+    from reyn.tools.presentation_management_verbs import PRESENTATION_INSTALL
     from reyn.tools.render_template import RENDER_TEMPLATE
     from reyn.tools.reyn_src import (
         REYN_SRC_GLOB,
@@ -264,6 +265,9 @@ def get_default_registry() -> ToolRegistry:
     # source fetch) — mirrors SKILL_INSTALL_LOCAL / SKILL_INSTALL_SOURCE.
     registry.register(PIPELINE_INSTALL_LOCAL)
     registry.register(PIPELINE_INSTALL_SOURCE)
+    # proposal 0060 Phase 1 Layer A (A8): present-view install verb (register a
+    # named presentation template) — mirrors SKILL_INSTALL_LOCAL / PIPELINE_INSTALL_LOCAL.
+    registry.register(PRESENTATION_INSTALL)
     # IS-1 (pipeline v0.9 R6): run_pipeline — sync launch of a REGISTERED
     # pipeline. Router+phase allow. IS-5: surfaced to the live LLM catalog
     # via the ``pipeline`` universal-catalog category enumerator (lists

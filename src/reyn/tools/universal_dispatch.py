@@ -348,6 +348,11 @@ _OPERATION_RULES: Final[dict[str, tuple[str, Callable[[str, Mapping[str, Any]], 
     "pipeline_management__install_local":  ("pipeline_install_local",  _passthrough_args),
     "pipeline_management__install_source": ("pipeline_install_source", _passthrough_args),
 
+    # presentation_management category (proposal 0060 Phase 1 Layer A / A8):
+    # register a named presentation template. Single verb (no source/git-fetch
+    # counterpart — a blueprint is inline declarative data, never file-backed).
+    "presentation_management__install": ("presentation_install_local", _passthrough_args),
+
     # pipeline category (IS-1: sync + REGISTERED-only run_pipeline;
     # IS-2: async launch in a crash-recoverable driver-session;
     # IS-4: ad-hoc INLINE launches — agent-GENERATED DSL + a static-analysis

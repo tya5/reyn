@@ -93,6 +93,12 @@ _NOT_EXTERNAL = {
     # registration; the scan result is internal OS state, not forwarded
     # external content. Same rationale as skill_install_source.
     "pipeline_install_source",
+    # proposal 0060 Phase 1 Layer A (A8): presentation_install_local writes
+    # .reyn/config/presentations.yaml — returns an install status dict
+    # (name / config_path / status), not fetched external content. No git/source
+    # fetch path at all (a blueprint is inline declarative data). Same
+    # classification rationale as skill_install_local / pipeline_install_local.
+    "presentation_install_local",
     "cron_register", "cron_unregister", "cron_enable", "cron_disable",
     # #2073 S3: hooks_add writes .reyn/hooks.yaml + schedules a reload — returns a
     # status dict (on / added / reload_scheduled / path), not external content.

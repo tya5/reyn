@@ -290,6 +290,22 @@ class OpContext:
     # ``_create`` read-side stays fixed. None = not executing a task-as-request.
     current_task_id: "str | None" = None
 
+    # proposal 0060 Phase 1 Layer A (A7): the OS-authoritative provenance
+    # classification of THIS turn, mirroring current_task_id's threading exactly
+    # (same _stamp_execution_context seam, same two ctx-build sites). Derived
+    # session-side from the turn ``kind`` (session.py `_stamp_execution_context`)
+    # — NEVER LLM-supplied. ``"user_directed"`` only for an explicit ``kind ==
+    # "user"`` turn; every other kind (hook / pipeline_result / wake-family /
+    # sub-agent agent_request|agent_response / any future unmapped kind)
+    # resolves to the strictER ``"auto_improvement"`` — the fail-safe default
+    # (0060 §2.7: silently falling to "user_directed" would let an unmapped
+    # turn bypass the Phase-4 auto-improvement gate). Install-op handlers
+    # (skill/pipeline/present, A9) stamp `entry["provenance"]` from this field
+    # alone; the op schemas carry no provenance field for the LLM to spoof
+    # (isomorphic to emit_hook_event's ②B ctx-side kind construction, 0059).
+    # None = a non-turn OpContext (direct/test construction, CLI/preprocessor).
+    turn_origin: "str | None" = None
+
     # FP-0057 #2856 Part A: the TUI model-download status sink for the `embed`
     # op's provider resolution. Carries ONLY the event_sink CALLABLE
     # (``(kind, text, meta) -> None``, precedent: sentence_transformers_provider's
