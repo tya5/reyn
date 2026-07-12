@@ -164,6 +164,91 @@ def test_publish_with_no_subscribers_is_a_noop():
     assert bus.subscriber_count == 0
 
 
+def _recorder():
+    """A real recording callable (no MagicMock/patch, per testing policy) —
+    used as a fake ``emit_event`` P6 sink."""
+    calls: "list[tuple]" = []
+
+    def record(*args, **kwargs):
+        calls.append((args, kwargs))
+
+    return record, calls
+
+
+def test_subscriber_queue_overflow_is_fail_visible():
+    """Tier 1: (#2886) overflowing a subscriber's bounded queue is no longer
+    silent — the drop increments that subscriber's ``snapshot_drop_counts()``
+    entry, and the FIRST drop fires a metadata-only ``bus_subscriber_dropped``
+    P6 audit-event through the ``emit_event`` sink (subscriber id + drop
+    count only — never the dropped event's kind/payload).
+
+    Strip-falsify: remove the ``self._audit_drop(state)`` call in
+    ``HookBus.publish`` (or the ``state.drop_count += 1`` line) and this test
+    goes RED — no ``bus_subscriber_dropped`` call / drop count stays 0.
+    """
+    emit_event, calls = _recorder()
+    bus = HookBus(subscriber_maxsize=1, emit_event=emit_event)
+    sub = bus.subscribe()
+
+    bus.publish(HookEvent(kind="builtin:lifecycle:turn_end", payload={"n": 0}))
+    # Queue now holds 1 (its maxsize) unread event; the NEXT publish overflows
+    # it and drops the oldest to make room.
+    bus.publish(HookEvent(kind="builtin:lifecycle:turn_end", payload={"n": 1}))
+
+    counts = bus.snapshot_drop_counts()
+    assert list(counts.values()) == [1]
+
+    dropped_calls = [c for c in calls if c[0] and c[0][0] == "bus_subscriber_dropped"]
+    (only_dropped_call,) = dropped_calls  # exactly one audit-event fired — unpack-must-flip
+    (_args, kwargs) = only_dropped_call
+    assert kwargs["drop_count"] == 1
+    assert "subscriber_id" in kwargs
+    # never the dropped event's content
+    assert "kind" not in kwargs and "payload" not in kwargs
+
+    sub.close()
+
+
+def test_subscriber_queue_overflow_audits_first_then_every_nth_not_every_drop():
+    """Tier 1: (#2886) under sustained overflow, the audit-event fires on the
+    first drop and then only every Nth drop — NOT once per drop (publish is a
+    sync/never-raises hot path; auditing every drop would flood the audit
+    log under a slow-subscriber storm). ``snapshot_drop_counts()`` still
+    counts every single drop regardless of audit cadence."""
+    from reyn.hooks.bus import _AUDIT_EVERY_N_DROPS
+
+    emit_event, calls = _recorder()
+    bus = HookBus(subscriber_maxsize=1, emit_event=emit_event)
+    bus.subscribe()
+
+    total_publishes = _AUDIT_EVERY_N_DROPS + 2  # 1 fills the queue, the rest all drop
+    for i in range(total_publishes):
+        bus.publish(HookEvent(kind="builtin:lifecycle:turn_end", payload={"n": i}))
+
+    expected_drops = total_publishes - 1
+    assert list(bus.snapshot_drop_counts().values()) == [expected_drops]
+
+    dropped_calls = [c for c in calls if c[0] and c[0][0] == "bus_subscriber_dropped"]
+    # first drop (drop_count == 1) + the Nth drop (drop_count == _AUDIT_EVERY_N_DROPS) —
+    # exactly two audit-events fired, unpack-must-flip if the cadence regresses.
+    (first_call, nth_call) = dropped_calls
+    assert first_call[1]["drop_count"] == 1
+    assert nth_call[1]["drop_count"] == _AUDIT_EVERY_N_DROPS
+
+
+def test_no_emit_event_sink_still_counts_drops_without_raising():
+    """Tier 1: (#2886) ``emit_event`` is optional (default None, matching every
+    other best-effort telemetry sink in this subsystem) — a drop with no sink
+    wired still increments ``snapshot_drop_counts()`` and never raises."""
+    bus = HookBus(subscriber_maxsize=1)
+    bus.subscribe()
+
+    bus.publish(HookEvent(kind="builtin:lifecycle:turn_end", payload={}))
+    bus.publish(HookEvent(kind="builtin:lifecycle:turn_end", payload={}))  # must not raise
+
+    assert list(bus.snapshot_drop_counts().values()) == [1]
+
+
 # ---------------------------------------------------------------------------
 # Tier 2: HookDispatcher + injected HookBus — Sync happy-path + independence
 # ---------------------------------------------------------------------------

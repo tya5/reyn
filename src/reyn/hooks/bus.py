@@ -52,10 +52,14 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from dataclasses import dataclass
+from typing import Any, Callable
 
 from reyn.hooks.event import HookEvent
 
 logger = logging.getLogger(__name__)
+
+EmitEvent = Callable[..., Any]
 
 # Default per-subscriber queue bound. A subscriber that falls this far behind
 # starts losing the OLDEST unread events it hasn't drained yet (drop-newest
@@ -65,6 +69,17 @@ logger = logging.getLogger(__name__)
 # Bus subscriber (unlike a single Sync drain task) is expected to poll at its
 # own pace.
 _DEFAULT_SUBSCRIBER_MAXSIZE = 128
+
+# Fail-visible drop cadence (#2886, Observability lens): a subscriber-queue
+# overflow drop must never be silent, but ``publish`` is a sync/never-raises
+# HOT PATH — auditing every single drop under sustained overflow would turn a
+# slow-subscriber problem into an audit-log-flooding problem. Emit on the
+# FIRST drop (so the correlation is reconstructable from ``reyn events`` the
+# moment it starts) and then only every Nth drop thereafter (so a sustained
+# overflow still leaves periodic breadcrumbs without one audit-event per
+# broadcast). Mirrors the Composer's ``composer_dropped`` metadata-only
+# discipline — never the event payload/content, only counters + an id.
+_AUDIT_EVERY_N_DROPS = 100
 
 
 class HookBusSubscription:
@@ -102,6 +117,18 @@ class HookBusSubscription:
         self.close()
 
 
+@dataclass
+class _SubscriberState:
+    """Internal per-subscriber bookkeeping — the queue itself plus a stable
+    ``subscriber_id`` (assigned at ``subscribe()`` time, never reused) and a
+    monotonic drop counter (#2886) used to decide the first-drop/every-Nth
+    audit cadence."""
+
+    queue: "asyncio.Queue[HookEvent]"
+    subscriber_id: int
+    drop_count: int = 0
+
+
 class HookBus:
     """Per-Session pub/sub broadcast bus for :class:`HookEvent` (proposal
     §3.2/§3.3). One instance per Session — construct alongside that Session's
@@ -109,23 +136,58 @@ class HookBus:
     never share an instance across sessions (§3.3 v1 = per-Session, no
     cross-session correlation)."""
 
-    def __init__(self, *, subscriber_maxsize: int = _DEFAULT_SUBSCRIBER_MAXSIZE) -> None:
+    def __init__(
+        self,
+        *,
+        subscriber_maxsize: int = _DEFAULT_SUBSCRIBER_MAXSIZE,
+        emit_event: "EmitEvent | None" = None,
+    ) -> None:
         self._subscriber_maxsize = subscriber_maxsize
-        self._subscribers: "list[asyncio.Queue[HookEvent]]" = []
+        self._subscribers: "list[_SubscriberState]" = []
+        self._next_subscriber_id = 0
+        # #2886: metadata-only P6 audit-event sink for subscriber-queue-drop
+        # visibility (mirrors HookDispatcher/Composer's own optional
+        # ``emit_event`` — a plain ``(kind, **metadata)`` callable, never
+        # required). ``None`` (the default) → drops are still counted
+        # (``snapshot_drop_counts``) but never audited, matching every other
+        # best-effort telemetry sink in this subsystem.
+        self._emit_event = emit_event
 
     def subscribe(self) -> HookBusSubscription:
         """Register a new subscriber. Returns a handle whose ``get()``
         awaits the next broadcast event; call ``close()`` (or use as an
         async context manager) to stop receiving."""
         queue: "asyncio.Queue[HookEvent]" = asyncio.Queue(maxsize=self._subscriber_maxsize)
-        self._subscribers.append(queue)
+        subscriber_id = self._next_subscriber_id
+        self._next_subscriber_id += 1
+        self._subscribers.append(_SubscriberState(queue=queue, subscriber_id=subscriber_id))
         return HookBusSubscription(bus=self, queue=queue)
 
     def _unsubscribe(self, queue: "asyncio.Queue[HookEvent]") -> None:
+        for i, state in enumerate(self._subscribers):
+            if state.queue is queue:
+                del self._subscribers[i]
+                return
+        # already removed / never registered — close() is idempotent
+
+    def _audit_drop(self, state: "_SubscriberState") -> None:
+        """Fire a metadata-only ``bus_subscriber_dropped`` P6 audit-event on
+        the FIRST drop for this subscriber and every Nth drop thereafter
+        (#2886). Never raises (best-effort telemetry, mirrors ``Composer.
+        _audit``) and never includes the dropped event's kind/payload —
+        subscriber id + cumulative drop count only."""
+        if self._emit_event is None:
+            return
+        if state.drop_count != 1 and state.drop_count % _AUDIT_EVERY_N_DROPS != 0:
+            return
         try:
-            self._subscribers.remove(queue)
-        except ValueError:
-            pass  # already removed / never registered — close() is idempotent
+            self._emit_event(
+                "bus_subscriber_dropped",
+                subscriber_id=state.subscriber_id,
+                drop_count=state.drop_count,
+            )
+        except Exception as exc:  # noqa: BLE001 — telemetry is best-effort
+            logger.debug("HookBus: emit_event(bus_subscriber_dropped) failed: %s", exc)
 
     def publish(self, event: HookEvent) -> None:
         """Broadcast ``event`` to every live subscriber. SYNCHRONOUS,
@@ -135,8 +197,16 @@ class HookBus:
         OLDEST unread entry to make room rather than blocking the publisher
         or dropping the newest broadcast (see module docstring). Zero
         subscribers → the loop body never runs (the no-subscriber
-        byte-identical happy path)."""
-        for queue in list(self._subscribers):
+        byte-identical happy path).
+
+        A drop is now fail-visible (#2886): it always increments that
+        subscriber's ``drop_count`` (``snapshot_drop_counts``), and — on the
+        first drop / every Nth drop thereafter, never every drop, to keep
+        this hot path cheap under sustained overflow — fires a metadata-only
+        ``bus_subscriber_dropped`` P6 audit-event via the optional
+        ``emit_event`` sink."""
+        for state in list(self._subscribers):
+            queue = state.queue
             try:
                 queue.put_nowait(event)
             except asyncio.QueueFull:
@@ -144,6 +214,8 @@ class HookBus:
                     queue.get_nowait()  # drop the oldest to make room
                 except asyncio.QueueEmpty:
                     pass
+                state.drop_count += 1
+                self._audit_drop(state)
                 try:
                     queue.put_nowait(event)
                 except asyncio.QueueFull:  # pragma: no cover — racing consumer, best-effort
@@ -157,6 +229,14 @@ class HookBus:
         """The number of currently-live subscriptions (public, non-private
         surface for tests/observability — not an internal-state pin)."""
         return len(self._subscribers)
+
+    def snapshot_drop_counts(self) -> "dict[int, int]":
+        """Public, snapshot-style read of every live subscriber's cumulative
+        drop count, keyed by ``subscriber_id`` (#2886 — Observability lens,
+        the fail-visible counter half of the fix; the audit-event is the
+        other half). A copy, not a live view — safe for a test/observer to
+        read without holding a reference into ``HookBus`` internals."""
+        return {state.subscriber_id: state.drop_count for state in self._subscribers}
 
 
 __all__ = ["HookBus", "HookBusSubscription"]

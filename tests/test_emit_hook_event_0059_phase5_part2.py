@@ -60,6 +60,7 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 
+import pydantic
 import pytest
 
 from reyn.config.chat import LoopConfig, OnLimitConfig, SafetyConfig
@@ -122,6 +123,41 @@ def test_is_emittable_llm_kind_whitelist_shape(kind, session_id, expected):
     """Tier 1: the OUT-set whitelist is an ALLOW-list (self llm:* only) —
     every other namespace, and any other session's llm:*, is False."""
     assert is_emittable_llm_kind(kind, session_id) is expected
+
+
+# ---------------------------------------------------------------------------
+# Tier 1: EmitHookEventIROp.event_name schema constraint (#2890 F6)
+# ---------------------------------------------------------------------------
+
+
+def test_event_name_accepts_ordinary_names():
+    """Tier 1: (#2890 F6) the normal shape (letters/digits/._-) is unaffected
+    by the new pattern/max_length constraint."""
+    op = EmitHookEventIROp(kind="emit_hook_event", event_name="deploy-ready.v2")
+    assert op.event_name == "deploy-ready.v2"
+
+
+@pytest.mark.parametrize(
+    "event_name",
+    [
+        "deploy\nready",  # newline
+        "deploy\x00ready",  # control char (NUL)
+        "deploy ready",  # space is outside the allowed charset
+        "deploy/ready",  # slash — no namespace-separator smuggling
+        "x" * 201,  # over max_length
+    ],
+)
+def test_event_name_rejects_control_chars_and_over_length(event_name):
+    """Tier 1: (#2890 F6) control characters / newlines / disallowed chars /
+    over-length values are rejected at schema-validation time (pydantic
+    ``ValidationError``) — they can no longer flow into the constructed
+    ``kind`` and from there into the P6 audit-event.
+
+    Strip-falsify: remove the ``pattern=``/``max_length=`` constraint from
+    ``EmitHookEventIROp.event_name`` in ``reyn/schemas/models.py`` and every
+    case in this parametrization constructs successfully (RED)."""
+    with pytest.raises(pydantic.ValidationError):
+        EmitHookEventIROp(kind="emit_hook_event", event_name=event_name)
 
 
 # ---------------------------------------------------------------------------

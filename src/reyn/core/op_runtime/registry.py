@@ -21,15 +21,18 @@ is KEPT — fine handlers still build ``FileIROp(kind="file")`` internally.
   2. ``ALL_OP_KINDS`` — frozenset of op kinds.  Used by the DSL
      linter to flag misspelled ``allowed_ops`` entries.
 
-Helper:
-  - ``is_op_allowed(op_kind, allowed_ops)`` — prefix-wildcard membership
-    check (= ADR-0026 Phase 4-2c).  ``COARSE_TO_FINE`` covers ``mcp``
-    and ``task`` coarse→fine mappings (prefix-wildcard).
-
 Consumers:
   - ``reyn.core.compiler.linter``     — ``ALL_OP_KINDS``
-  - ``reyn.core.kernel.control_ir_executor`` — ``is_op_allowed`` for the
-    ``allowed_ops`` filter
+
+Note (#2890 F9): a coarse→fine ``allowed_ops`` prefix-wildcard helper
+(``is_op_allowed``/``is_op_instance_allowed``/``COARSE_TO_FINE``) used to
+live in this module for ``reyn.core.kernel.control_ir_executor``'s
+``allowed_ops`` filter. That consumer was removed in #2438 (#2434 stage3b —
+kernel phase-engine bulk-delete, commit ``d3c8c7a1``); the helper was left
+behind with zero
+remaining call sites (verified: a full ``src/``/``tests/`` grep finds no
+caller other than the two functions calling each other) and was removed
+here as dead code rather than kept as an unreachable/untested surface.
 
 Note: ``_WRITE_OPS`` / ``_READ_OPS`` in ``op_runtime/file.py`` classify
 *file sub-operations* (op.op values within the "file" kind), not top-level
@@ -52,53 +55,6 @@ from reyn.schemas.models import ALL_OP_KINDS
 
 # ALL_OP_KINDS is imported from schemas/models.py above (single source, #1983);
 # it remains importable from this module for back-compat (intentional convenience).
-
-
-# ---------------------------------------------------------------------------
-# Coarse → fine prefix-wildcard mapping (ADR-0026 Phase 4)
-# ---------------------------------------------------------------------------
-# A caller may declare ``allowed_ops: [mcp]`` or ``allowed_ops: [task]`` —
-# coarse names that expand to a frozenset of fine-grained op kinds.
-# ``is_op_allowed`` consults this map so callers don't have to enumerate
-# every fine kind when a whole family is intended.
-# ---------------------------------------------------------------------------
-
-COARSE_TO_FINE: dict[str, frozenset[str]] = {
-    # #1240 Wave 2b: "file" entry removed — coarse kind dropped. Callers that
-    # still declare allowed_ops: [file] will fail linting (ALL_OP_KINDS no
-    # longer includes "file") and should migrate to fine kinds.
-    "mcp":       frozenset({"call_mcp_tool", "list_mcp_servers", "list_mcp_tools"}),
-    # #1953 slice 1: coarse "task" → all task.* fine kinds, so a caller can
-    # declare allowed_ops: [task] to permit the whole Task op family.
-    "task": frozenset({
-        "task.create", "task.update_status", "task.get", "task.list",
-        "task.add_dependency", "task.remove_dependency", "task.repoint_dependency",
-        "task.abort", "task.heartbeat",
-        "task.register_unblock_predicate", "task.comment", "task.assign",
-    }),
-}
-
-
-def is_op_allowed(op_kind: str, allowed_ops: set[str] | frozenset[str]) -> bool:
-    """Return True if ``op_kind`` is permitted by the ``allowed_ops`` set.
-
-    Membership rules (= ADR-0026 Phase 4):
-
-    1. **Direct match** — ``op_kind in allowed_ops`` (exact kind name).
-    2. **Prefix-wildcard** — when ``allowed_ops`` contains a coarse name
-       (e.g. ``"mcp"``) and ``op_kind`` is a fine-grained name covered
-       by that coarse (e.g. ``"call_mcp_tool"``), the op is allowed.
-
-    Rule 2 lets callers declare a whole op family (``allowed_ops: [mcp]``,
-    ``allowed_ops: [task]``) without enumerating every fine kind.
-    """
-    if op_kind in allowed_ops:
-        return True
-    for coarse in allowed_ops:
-        fine_set = COARSE_TO_FINE.get(coarse)
-        if fine_set is not None and op_kind in fine_set:
-            return True
-    return False
 
 
 # ---------------------------------------------------------------------------
@@ -146,15 +102,3 @@ def split_tool_name(tool_name: str) -> tuple[str, str | None]:
     if tool_name.startswith("file__"):
         return "file", tool_name[len("file__"):]
     return tool_name, None
-
-
-def is_op_instance_allowed(op: object, allowed_ops: set[str] | frozenset[str]) -> bool:
-    """Gate a Op instance against an ``allowed_ops`` set.
-
-    Delegates to ``is_op_allowed(op.kind, allowed_ops)`` for all op kinds.
-    The D7 file-verb-granular special-case (``file__read``-style) is retired
-    in #1240 Wave 2b now that the coarse ``file`` kind is dropped; all file ops
-    use fine kinds (``read_file`` / ``write_file`` / etc.) in allowed_ops.
-    """
-    kind = getattr(op, "kind", None) or ""
-    return is_op_allowed(kind, allowed_ops)

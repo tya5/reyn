@@ -1401,7 +1401,12 @@ class Session:
         # subscribe()`` (nothing does yet in Phase 4a — the Composer, Phase
         # 4b, is the first consumer) — until then this is a no-op alongside
         # every dispatch() call (see HookBus.publish's zero-subscriber path).
-        self._hook_bus = HookBus()
+        # #2886: the same deferred-lambda emit_event sink threaded into
+        # HookDispatcher/Composer below (self._chat_events is assigned later
+        # in __init__; the lambda only resolves it at first-drop time, never
+        # at construction) — so a subscriber-queue drop is fail-visible via a
+        # metadata-only bus_subscriber_dropped P6 audit-event.
+        self._hook_bus = HookBus(emit_event=lambda et, **d: self._chat_events.emit(et, **d))
         # #2073 S2b: hooks are LAYERED — the reyn.yaml startup layer (OUT-set,
         # captured once here, NEVER re-read on a reload) ∪ the .reyn/hooks.yaml
         # runtime layer (IN-set, hot-reloadable; the LLM-op writes it in S3).
