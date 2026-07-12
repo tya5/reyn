@@ -519,7 +519,7 @@
   },
   "hooks_add": {
     "function": {
-      "description": "Add a push hook at an agent-lifecycle point (e.g. a turn_end self-continuation, or a context-inject). The hook is written to your runtime hooks layer (.reyn/config/hooks.yaml) and applied at the next turn boundary — it joins your existing hooks additively. Use for self-directed continuation or recurring injected context. Cannot touch startup config (reyn.yaml is restart-only).",
+      "description": "Add a push hook at an agent-lifecycle point (e.g. a turn_end self-continuation, or a context-inject). The hook is written to your runtime hooks layer (.reyn/config/hooks.yaml) and applied at the next turn boundary — it joins your existing hooks additively. Use for self-directed continuation or recurring injected context. Cannot touch startup config (reyn.yaml is restart-only). For the full on: vocabulary, matcher, composers:, emit_hook_event, and every scheme's fields, see the hooks concept doc at docs/concepts/runtime/hooks.md.",
       "name": "hooks_add",
       "parameters": {
         "properties": {
