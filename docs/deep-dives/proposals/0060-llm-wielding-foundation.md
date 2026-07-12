@@ -769,3 +769,112 @@ D-layer work rides F3b (cheat-sheet = flagship content) plus a small
 mechanism slice (D5c error rails, D5d doc_ref field+gate, D5e SP gate,
 D5b build-step) — one PR or an F3b sibling; E2 later consumes D5b's shipped
 mirrors. F3a (builtin tier plumbing) is unchanged and already in flight.
+
+## Addendum D9 — criticality split; `present` as an SP-critical affordance (owner refinement 2026-07-12)
+
+**Owner observation**: the LLM tends to answer **without reading all available
+content each turn**. Two structural consequences that sharpen D3/D4's
+placement map.
+
+### D9.1 — The cheat-sheet is PULL, so it may be skipped → split by criticality
+
+A skill (the cheat-sheet, D1) is read just-in-time — the model may act
+*without* reading it. So placement gains a criticality axis:
+
+- **SP-resident (push, always seen)** = **critical-or-you-fail affordances** —
+  knowledge whose absence causes a *systematic default failure*.
+- **cheat-sheet (pull, may be skipped)** = the **fuller** how-to it looks up.
+
+**Criterion — an affordance is SP-critical iff missing it causes a bad
+default, not merely a suboptimal lookup.** The SP-critical set is the model's
+anti-default-failure countermeasures, and it is enumerable:
+- discovery-mandate (miss → doesn't discover, re-invents) — *landed, Layer C*
+- author-vs-reuse (miss → re-authors what exists) — *landed, Layer C*
+- **`present` (miss → dumps large content into the reply)** — *new, D9.2*
+- author-from-spec-not-guess (miss → hallucinates a mechanism) — the SP
+  pointer + reach-the-spec rails (D5c/D5d)
+
+The cheat-sheet (curated-5 #1) stays the fuller hub; its *critical fragments*
+promote to the SP. D4 refined: `SP = map + discipline + critical affordances
+(incl. present) + cheat-sheet pointer`; `cheat-sheet = fuller`.
+
+### D9.2 — `present` is an SP-critical affordance (dump-prevention)
+
+"Answers without reading all" → **content dumping** (pasting large output into
+the reply). reyn's `present` **is** the zero-token mechanism (the present
+layer, records 0054/0055): show results to the operator instead of spending
+them as reply tokens. **The model won't use `present` if it doesn't know it
+exists** → the affordance is SP-critical, not cheat-sheet-optional.
+
+- **Scope `present` to OUTPUT only — this is the load-bearing precision**
+  (owner correction). `present` sends content to the operator *zero-token; the
+  model does not read it back*. So it applies **only to results/reports for the
+  operator**, never to content the **model itself must consume** (skill bodies,
+  docs, target files) — those must be **read into context**. Presenting
+  input-content means the model never sees it (the inverse failure: "present
+  what you should have read, then never consume it"). The SP essential is one
+  distinction: **"Results for the operator → `present` (zero-token). Content
+  you use/follow (skills, docs, the thing you're processing) → read it, don't
+  `present` it."** This maps cleanly onto the part×role axes (Layer C):
+  `present` is the **output** role; consuming content is the **input** role.
+- **No separate "offload" vocabulary** (owner correction — earlier draft
+  over-abstracted): `present` *is* the mechanism, extending Layer C's
+  mechanism-selection `output → present`.
+- **No separate offload builtin**: the pattern is "process in a pipeline →
+  terminal `present`." The **flagship (web_search → agent → judge → present)
+  is exactly a pipeline-terminal `present` = the exemplar**; the status-card
+  present-view (curated-5 #4) exemplifies the simple case. Both already in the
+  set — nothing new to add.
+- **Full `present` spec** → cheat-sheet + reference via `doc_ref` (D5d).
+
+`present` is thus a *usage* affordance the SP must carry (beyond D2's 7
+*authoring* part-types); the reachability discipline (D5) applies to its full
+spec. The output/input scope also keeps docs-delivery (D5b) coherent: reyn's
+docs are **model-read input** → reached via `doc_ref`/cheat-sheet and read into
+context, *not* presented; only the flagship's *result* is operator output →
+presented. Different axes, no contradiction. The cheat-sheet's composition
+guidance carries the same distinction ("results → present; content to consume →
+read").
+
+### D9.3 — Falsifiability
+
+- The SP-critical set is enumerable → a test asserts each critical line is in
+  the built SP (strip the `present` line → the anti-dump essential is gone →
+  RED).
+- The J-LEARN journey (D7) gains a **dump-avoidance check**: a cold model
+  handed a large result uses `present` rather than dumping it — witnessing the
+  `present` affordance reached the SP-critical floor.
+
+### D9.4 — Dispatch impact
+
+F3b ships **cheat-sheet content (fuller hub) + the SP-essentials slice** (the
+critical fragments, incl. the one `present` line) together. The SP-essentials
+slice extends the merged Layer C frame (`router_frame.py`) and is small; the
+`present` line is the load-bearing new SP content. No new "offload"
+axis/vocabulary/builtin. D5e's existence gate still couples the cheat-sheet's
+SP pointer to the shipped skill.
+
+### D9.5 — curated-5 final (F3b content, settled 2026-07-12, owner-confirmed)
+
+The builtin set F3b ships. Selection criteria: **first-hour common-task
+coverage (reuse succeeds) + good exemplar (author-from-template is cheap) +
+embedding-independence (reliable day-1 — semantic_search degrades without a
+configured embedding, the #2895 defect class; semantic_search builtins are a
+later *enhancement* tier, not the cold-start core).**
+
+| # | builtin | role | notes |
+|---|---|---|---|
+| 1 | **reyn cheat-sheet skill** | the hub | reyn-specific usage + composition know-how (incl. output→present / input→read) + op essentials + `doc_ref` pointers; D5 mechanisms attach here |
+| 2 | **`web_search → agent(summarize) → judge_output → present` pipeline** | flagship | owner-ruled; embedding-independent; the composition thesis input→workflow→output end-to-end; day-1 runnable + copy-template. **agent→judge edge has a ctx-vs-workspace-artifact seam (D2/present class) — the F3b coder resolves the data-plumbing by build+run (D5a gate catches a non-working flagship); do NOT manufacture the wiring.** agent step = `AgentStep` (`agent:`, executor.py:174; DSL example pipeline-dsl.md:371). network-dependent (not fully-offline; a file-read-retrieve variant is an owner FYI). |
+| 3 | **`draft → judge_output → revise` skill** | workflow (Evaluation) | embedding-independent; teaches SKILL.md live-format + the eval idiom |
+| 4 | **status/results card present-view** | output | zero-token present blueprint + `$bind`; the simple `present` exemplar |
+| 5 | **`on: file_changed` hook exemplar** | input/reactivity | owner's (A) chain as the 2nd exemplar; reactive idiom; inert-ship |
+
+Flagship skeleton (coder builds/verifies the exact wiring):
+```
+- tool:  {name: web_search, args: {query: <ctx>}, output: results}
+- agent: {prompt: "Summarize these results into an answer: {ctx.results}", output: summary}
+- tool:  {name: judge_output, args: {target: <summary's artifact position — verify at build>, rubric: ..., threshold: 0.8}, output: verdict}
+- tool:  {name: present, args: {data_inline: {summary: <ctx.summary>, verdict: <ctx.verdict>}, blueprint: [...]}}
+```
+All 5 ship inert (F3a: skills `auto_invoke=False`; pipelines/views invoke-by-name) with `provenance="builtin"` (F3a loader seam).
