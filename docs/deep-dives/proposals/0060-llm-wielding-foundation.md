@@ -142,6 +142,57 @@ splits into three objects with different loci:
 | "how to author a part" | **builtin worked-examples** (registered ⇒ always discoverable) | reference-docs corpus via `semantic_search` |
 | amortization | authored part **registers into the catalog** | also lands in the semantic index |
 
+### 2.6 LLM journeys (動線) — the design validated against concrete paths
+
+The locus table (§2.5) is static; the design must also hold along the
+model's actual step-sequences. Each journey step names the information
+needed at that moment, the locus that serves it, and the drop-out risk
+(every pull step is a place a weaker model falls off — the #1657 lesson).
+These journeys ARE the evaluation scenarios of §5.
+
+**J-A. Reuse (the most frequent path — must be near-zero friction)**
+task → decompose by role (SP map) → "does an instance exist?" (instance
+discovery: flat `tools=` under enumerate-all = 0 extra calls; enumeration
+verb under other schemes = 1 call) → how to call it (`describe_action` /
+tool desc) → invoke. *Risk: instance not surfaced → model re-authors a
+duplicate → catalog junk (L3 pressure).*
+
+**J-B. Author-new (no instance exists)**
+task → SP map → instance discovery returns nothing relevant →
+author-vs-reuse heuristic (SP) says author → pick part-type (SP decision
+tree) → worked-example lookup (**builtin exemplar via catalog — floor**;
+reference corpus via semantic_search — enhancement) → management verb
+(install op) → verify it appears in the catalog → use it. *Risk: no
+exemplar → malformed part + trial-and-error token burn; this step is why
+F3 outranks E2.*
+
+**J-C. Compose (the thesis path)**
+reactive requirement → SP map decomposes input/workflow/output → through-
+chain builtin (F3) as the reference composition → author/reuse each part →
+wire (hook `on:` → pipeline → present) → test-fire → observe via audit
+events. *Risk: no through-chain exemplar = the composition idea itself
+never occurs to the model; this is the single highest-leverage builtin.*
+
+**J-D. Promote (amortization, cross-session)**
+inline composition succeeds → SP idiom nudge (L1) → optional judge_output
+gate (L2) → install via existing op → **next session**: J-A finds it as an
+instance. *Risk: friction at inline→install (file-write ergonomics, open
+question) silently kills the loop; nothing amortizes.*
+
+**J-E. Degraded floor (no embedding, weak tier)**
+Every journey above must complete **without** `search_actions`/corpus:
+J-A/B via flat tools= or enumeration verbs, J-B's exemplar via catalog-
+discoverable builtins. *This is the definition of "floor".*
+
+**J-F. Enhancement upgrade (embedding configured)**
+same journeys, with pull steps shortened: instance discovery → semantic
+`search_actions`; exemplar lookup → corpus retrieval at authoring time.
+The upgrade changes **cost/hit-rate, never reachability**.
+
+Journey friction budget: J-A must fit in ≤1 discovery step on every
+scheme; J-B/C in ≤3. If a design choice adds a pull step to J-A, it is
+wrong regardless of its elegance.
+
 ## 3. Proposed architecture
 
 ### F — the always-on floor (embedding-independent, holds across all 4 schemes)
@@ -230,12 +281,16 @@ splits into three objects with different loci:
 ## 5. Evaluation of the foundation itself
 
 The #1657 datum (30%→100% on flattening) proves wielding is measurable.
-Before F-work lands: capture a **baseline** with dogfood scenarios that test
-discovery ("does the model find an installed part it didn't create?"),
-selection ("does it pick pipeline over skill when orchestration is needed?"),
-composition ("can it chain input→workflow→output?"), and promotion ("does a
-working improvisation get installed?"). Score via `judge_output` rubrics.
-Re-measure after each phase. No "we shipped it, trust us".
+**The evaluation scenarios are the journeys of §2.6**: J-A discovery ("does
+the model find an installed part it didn't create?"), J-B selection+authoring
+("does it pick pipeline over skill when orchestration is needed, and author a
+well-formed one?"), J-C composition ("can it chain input→workflow→output?"),
+J-D promotion ("does a working improvisation get installed and rediscovered
+next session?"), J-E floor-degradation (all of the above with embedding off),
+J-F enhancement delta (hit-rate/cost improvement with embedding on). Score
+via `judge_output` rubrics + journey friction counts (discovery steps per
+journey). Capture the baseline BEFORE F-work lands; re-measure after each
+phase. No "we shipped it, trust us".
 
 ## 6. Phasing sketch (dependency order, not a schedule)
 
