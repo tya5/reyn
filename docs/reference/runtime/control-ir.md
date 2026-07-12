@@ -921,12 +921,16 @@ Default-**ALLOW** (own-write op — writes only to the source's OWN index + mani
 
 ## `judge_output`
 
-LLM-based output scorer for evaluation loops. Resolves a `target` dot-path to a value, calls an LLM with the caller-supplied `rubric`, and returns a score (0.0–1.0) plus a pass/fail flag.
+LLM-based output scorer for evaluation loops. Resolves a value to score —
+`data_inline` XOR `target` — calls an LLM with the caller-supplied `rubric`,
+and returns a score (0.0–1.0) plus a pass/fail flag. LLM-callable via
+`ToolDefinition judge_output` (proposal 0060 F3b) — reachable from chat and
+from a pipeline `tool: {name: judge_output}` step.
 
 ```json
 {
   "kind": "judge_output",
-  "target": "artifact.data.summary",
+  "data_inline": "A concise summary of the search results.",
   "rubric": "Score 0.0-1.0: is the summary concise, accurate, and complete?",
   "threshold": 0.8,
   "on_fail": "transition"
@@ -934,17 +938,18 @@ LLM-based output scorer for evaluation loops. Resolves a `target` dot-path to a 
 ```
 
 Fields:
-- `target` (str, required): Dot-path to the value being scored (e.g. `"artifact.data.summary"`). Resolved against the current workspace artifact.
-- `rubric` (str, required): LLM prompt body. Skill author writes the evaluation criteria. The OS never interprets this content (P7).
+- `target` (str | null, optional): Dot-path to the value being scored (e.g. `"artifact.data.summary"`), resolved against the legacy phase-graph `ctx.workspace.artifacts`. XOR `data_inline` — exactly one must be set.
+- `data_inline` (any, optional): The value to score, already in hand — e.g. a pipeline `agent`-step's `output:` (0060 F3b: added so `judge_output` is reachable from a pipeline, whose step output lives in the pipeline's own `ctx` store, never in `ctx.workspace.artifacts`). XOR `target`.
+- `rubric` (str, required): LLM prompt body. The author writes the evaluation criteria. The OS never interprets this content (P7).
 - `threshold` (float, optional, default `0.8`): Passing score in `[0.0, 1.0]`.
-- `on_fail` (`"transition" | "abort" | "continue"`, optional, default `"transition"`): recorded in the result for the caller to act on. The op handler itself does not branch on this value — it resolves `target`, scores it, and returns; interpreting `on_fail` (e.g. aborting a run) is the caller's responsibility.
-- `model` (str | null, optional): Model class override (e.g. `"strong"`). Defaults to the skill's current model.
+- `on_fail` (`"transition" | "abort" | "continue"`, optional, default `"transition"`): recorded in the result for the caller to act on. The op handler itself does not branch on this value — it resolves the value, scores it, and returns; interpreting `on_fail` (e.g. aborting a run) is the caller's responsibility.
+- `model` (str | null, optional): Model class override (e.g. `"strong"`). Defaults to the judge purpose class.
 
 Returns: `{"kind": "judge_output", "score": float, "passed": bool, "reason": str, "threshold": float, "on_fail": str}`
 
-Audit event: `tool_executed` with `op=judge_output, target, score, passed, threshold, reason` (P6).
+Audit event: `tool_executed` with `op=judge_output, target, score, passed, threshold, reason` (P6). `target` is `null` in the event data when `data_inline` was used.
 
-**P7 note**: Reyn is rubric-agnostic. The rubric content is part of the skill's authored prompt; the OS only routes it to the LLM without inspection.
+**P7 note**: Reyn is rubric-agnostic. The rubric content is part of the author's prompt; the OS only routes it to the LLM without inspection.
 
 ## `compact`
 

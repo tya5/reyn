@@ -186,14 +186,17 @@ def test_list_no_project_root_prints_message(tmp_path, monkeypatch, capsys):
     assert "no reyn.yaml" in out.lower()
 
 
-def test_list_no_pipelines_configured(tmp_path, monkeypatch, capsys):
-    """Tier 2: a project with reyn.yaml but no pipelines.entries reports zero
-    configured pipelines rather than an empty/confusing table."""
+def test_list_no_operator_pipelines_configured_still_shows_the_builtin(tmp_path, monkeypatch, capsys):
+    """Tier 2: a project with reyn.yaml but no operator pipelines.entries shows
+    the builtin flagship pipeline (proposal 0060 F3b: the builtin tier merges
+    as the lowest config tier, below every operator file, so it is always
+    present even with zero operator declarations) rather than an empty table."""
     monkeypatch.chdir(tmp_path)
     _write_reyn_yaml(tmp_path)
     run_list(_ns())
     out = capsys.readouterr().out
-    assert "no pipelines configured" in out.lower()
+    assert "flagship" in out.lower()
+    assert "loaded" in out.lower()
 
 
 # ---------------------------------------------------------------------------

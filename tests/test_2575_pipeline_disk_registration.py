@@ -340,7 +340,12 @@ def test_from_config_builds_populated_registry_from_project_root(tmp_path: Path)
 
     fc = SessionFactoryConfig.from_config(config, tmp_path)
 
-    assert set(fc.pipeline_registry.names()) == {"hello.hello"}
+    # proposal 0060 F3b: the builtin tier (merged as the LOWEST config tier,
+    # below every operator file) now ships one real pipeline
+    # (flagship.research_and_report) alongside whatever the project's own
+    # reyn.yaml declares — both are present, since the builtin tier is
+    # additive, not exclusive.
+    assert set(fc.pipeline_registry.names()) == {"hello.hello", "flagship.research_and_report"}
 
 
 def test_from_config_without_project_root_is_empty(tmp_path: Path, monkeypatch) -> None:

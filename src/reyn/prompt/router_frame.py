@@ -274,6 +274,48 @@ AUTHOR_VS_REUSE_HEURISTIC = (
     "reuse -- an ungated authored part is a liability, not a shortcut."
 )
 
+# ── present affordance (both directions) -- 0060 F3b ────────────────────────
+# WHY: the owner specifically flagged an observed failure mode -- the model
+# answers without reading all relevant content, or dumps content into its own
+# reply that should have gone to the operator via `present` instead. Both
+# directions must be explicit: OUTPUT (show results via present, zero token
+# cost) and INPUT (content you must read/act on goes into YOUR OWN context --
+# presenting it means you never see it). Kept to two lines (SP is per-turn
+# billed); the full present spec (8-component catalog, $bind grammar) lives
+# in the reyn cheat sheet skill below, not here.
+# 日本語訳: present の使い所を入出力の両方向で明示する（一方向だけだと
+# 「読むべき内容を present してしまい自分では見ない」失敗が起きる、というオーナー
+# 指摘への対処）。詳細はチートシートskillへ委譲し、ここは2行に収める。
+PRESENT_AFFORDANCE_ESSENTIAL = (
+    "present affordance -- both directions matter:\n"
+    "  - OUTPUT: use present to show RESULTS to the operator (zero token "
+    "cost) instead of dumping them into your reply.\n"
+    "  - INPUT: content YOU must read or act on (a skill's content, docs, a "
+    "file to process) -- read it into your own context; do NOT present it "
+    "(presenting it means you never see it)."
+)
+
+# ── reyn cheat sheet pointer (0060 Addendum D4/D5e) ─────────────────────────
+# WHY: the SP shrinks to a minimal bootstrap (the map + discipline above) plus
+# a NAMED pointer to the cheat-sheet skill, which carries the long-tail
+# composition know-how (Addendum D1: "concept/reference から漏れる隙間を埋め
+# るのが skill"). This name is a load-bearing contract (D5e): a dedicated CI
+# gate asserts the named builtin skill actually exists -- see
+# test_0060_f3b_builtin_content.py's D5e co-vet pin. Keep this constant's
+# skill-name literal in sync with reyn.builtin.registry.BUILTIN_SKILLS' key
+# (the gate fails loud on drift; it does not derive one from the other, since
+# router_frame.py must not import the builtin registry at prose-authoring
+# time -- the gate is what keeps them coherent).
+# 日本語訳: SP本体は最小限のブートストラップに留め、詳細な使い方はチートシート
+# skillへの名指しポインタに委譲する。この名前は D5e ゲートで存在を保証される
+# load-bearing な契約。
+REYN_CHEAT_SHEET_SKILL_NAME = "reyn_cheat_sheet"
+
+CHEAT_SHEET_POINTER = (
+    f"For reyn-specific usage details (composition idioms, op essentials, "
+    f"doc pointers), read the '{REYN_CHEAT_SHEET_SKILL_NAME}' skill."
+)
+
 # Cost-discipline (C1): a hard per-part-type-row character cap so the derived
 # map stays within the cache-static budget as the meta-registry grows -- the
 # frame carries the routing MODEL, never the pull-side catalog.
@@ -320,8 +362,9 @@ def render_part_role_map(registry: "dict[str, object] | None" = None) -> str:
 def render_mechanism_routing_frame(registry: "dict[str, object] | None" = None) -> str:
     """Full "## Mechanism routing" section: header + the derived part x role
     map + the mechanism-selection decision tree + the author-vs-reuse
-    heuristic. This is what ``build_system_prompt`` injects into the static
-    cache-prefix (0060 Addendum C, C1) -- scheme-independent, appears
+    heuristic + the present affordance (both directions) + the reyn cheat
+    sheet pointer. This is what ``build_system_prompt`` injects into the
+    static cache-prefix (0060 Addendum C, C1) -- scheme-independent, appears
     identically under every tool-use scheme."""
     return "\n\n".join(
         [
@@ -329,5 +372,7 @@ def render_mechanism_routing_frame(registry: "dict[str, object] | None" = None) 
             render_part_role_map(registry),
             MECHANISM_DECISION_TREE,
             AUTHOR_VS_REUSE_HEURISTIC,
+            PRESENT_AFFORDANCE_ESSENTIAL,
+            CHEAT_SHEET_POINTER,
         ]
     )

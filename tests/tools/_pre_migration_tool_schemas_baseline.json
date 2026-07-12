@@ -637,6 +637,49 @@
     },
     "type": "function"
   },
+  "judge_output": {
+    "type": "function",
+    "function": {
+      "name": "judge_output",
+      "description": "Score a value against a rubric using an LLM judge — returns a 0.0-1.0 score and a pass/fail flag against `threshold`. Give the value to score via `data_inline` (a value you already have, e.g. a prior step's output) — `target` is a legacy dot-path form for the phase-graph runtime only; supply exactly one. `rubric` is your own scoring criteria in plain language; the OS never interprets it. Use this to gate a self-authored or generated artifact before promoting/shipping it (0060 J-D amortization: auto-improvement promotion is judge-gated).",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "target": {
+            "type": "string",
+            "description": "Legacy dot-path into the phase-graph workspace artifact (e.g. \"artifact.data.summary\"). XOR data_inline."
+          },
+          "data_inline": {
+            "description": "The value to score, already in hand (e.g. a pipeline agent-step's output). XOR target."
+          },
+          "rubric": {
+            "type": "string",
+            "description": "Your scoring criteria in plain language. The OS never interprets this content."
+          },
+          "threshold": {
+            "type": "number",
+            "description": "Passing score in [0.0, 1.0]. Defaults to 0.8."
+          },
+          "on_fail": {
+            "type": "string",
+            "enum": [
+              "transition",
+              "abort",
+              "continue"
+            ],
+            "description": "Recorded in the result for the caller to act on; the op itself does not branch on it."
+          },
+          "model": {
+            "type": "string",
+            "description": "Optional model class override. Defaults to the judge purpose class."
+          }
+        },
+        "required": [
+          "rubric"
+        ]
+      }
+    }
+  },
   "list_actions": {
     "type": "function",
     "function": {

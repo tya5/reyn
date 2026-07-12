@@ -67,6 +67,7 @@ def get_default_registry() -> ToolRegistry:
     )
     from reyn.tools.hooks import HOOKS_ADD
     from reyn.tools.index_update import INDEX_UPDATE
+    from reyn.tools.judge_output import JUDGE_OUTPUT
     from reyn.tools.mcp import (
         CALL_MCP_TOOL,
         DESCRIBE_MCP_TOOL,
@@ -151,6 +152,7 @@ def get_default_registry() -> ToolRegistry:
     # remove/skip) — the internal-RAG counterpart to embed's user-facing surface.
     registry.register(INDEX_UPDATE)
     registry.register(COMPACT)
+    registry.register(JUDGE_OUTPUT)
     # #2692 (part of the #2688 sweep): present + render_template invocation surface.
     # One registration each opens BOTH chat (build_tools + gates.router="allow") and
     # pipeline (bare-name lookup) from the single unified registry — the op handlers

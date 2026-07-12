@@ -44,19 +44,61 @@ level: zero behavior change until content lands.
 """
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 # ---------------------------------------------------------------------------
-# The builtin content maps — EMPTY in F3a (mechanism only). F3b populates
-# these with the actual exemplar skills/pipelines/presentations (proposal §3
-# F3: one canonical exemplar per axis + one through-chain composition).
-# Shape mirrors the operator config entry shape exactly:
+# The builtin content maps. F3b (this phase) populates the SKILLS + PIPELINES
+# maps with the curated core-spine content (proposal 0060 Addendum D6: the
+# "reyn cheat sheet" skill is THE flagship builtin — the gap-filler between
+# "reyn has these parts" and "the LLM uses them" — plus the flagship
+# through-chain pipeline it documents). PRESENTATIONS ships empty in this
+# phase — the status-card present-view exemplar is proposed as a sibling PR
+# (see this PR's body for the split rationale). Shape mirrors the operator
+# config entry shape exactly:
 #   BUILTIN_SKILLS = {"<name>": {"description": "...", "path": "...", "enabled": True, "auto_invoke": True}}
 #   BUILTIN_PIPELINES = {"<key>": {"path": "...", "description": "...", "enabled": True}}
 #   BUILTIN_PRESENTATIONS = {"<name>": {"blueprint": {...}, "enabled": True}}
+#
+# ``path`` is computed ABSOLUTE, relative to THIS module's own file location
+# (not project-root-relative) — the builtin content ships inside the
+# installed package (the ``builtin/**/*`` package-data glob, F3a Addendum A1),
+# physically outside any given user's project_root, so a project-relative
+# path would not resolve. (Known follow-up, not solved here: reading a
+# builtin skill's SKILL.md body at L2 still passes through the standard
+# out-of-project-root file-read permission gate, same as reading any other
+# path outside project_root — this PR does not add a builtin-tier carve-out
+# to that gate; see the PR body's "known gaps" note.)
 # ---------------------------------------------------------------------------
-BUILTIN_SKILLS: "dict[str, dict[str, Any]]" = {}
-BUILTIN_PIPELINES: "dict[str, dict[str, Any]]" = {}
+_BUILTIN_DIR = Path(__file__).parent
+
+BUILTIN_SKILLS: "dict[str, dict[str, Any]]" = {
+    "reyn_cheat_sheet": {
+        "description": (
+            "Reyn-specific usage cheat sheet -- which mechanism to reach for "
+            "(skill/pipeline/mcp/hook/present), composition idioms, op "
+            "essentials, and pointers to the full specs. Read this before "
+            "authoring a new part or composing several."
+        ),
+        "path": str(_BUILTIN_DIR / "skills" / "reyn_cheat_sheet" / "SKILL.md"),
+        "enabled": True,
+        # auto_invoke is force-stamped False for every builtin skill by
+        # _stamp_builtin_entry (A3) regardless of what's declared here —
+        # kept explicit for readability, not because it changes anything.
+        "auto_invoke": False,
+    },
+}
+BUILTIN_PIPELINES: "dict[str, dict[str, Any]]" = {
+    "flagship": {
+        "description": (
+            "web_search -> agent (summarize) -> judge_output (self-review) "
+            "-> present (zero-token operator output) -- the through-chain "
+            "composition thesis exemplar (proposal 0060 F3)."
+        ),
+        "path": str(_BUILTIN_DIR / "pipelines" / "flagship_research_and_report.yaml"),
+        "enabled": True,
+    },
+}
 BUILTIN_PRESENTATIONS: "dict[str, dict[str, Any]]" = {}
 
 

@@ -93,28 +93,33 @@ def _make_ctx(tmp_path: Path, *, turn_origin: "str | None") -> OpContext:
     )
 
 # ---------------------------------------------------------------------------
-# F3a ships empty (mechanism only)
+# F3a's own mechanism-only invariant, updated for F3b (proposal 0060 Phase 2):
+# F3a shipped all three maps EMPTY (mechanism only); F3b populates
+# BUILTIN_SKILLS/BUILTIN_PIPELINES with the curated core-spine content (see
+# tests/test_0060_phase2_f3b_builtin_content.py for F3b's own co-vet pins).
+# BUILTIN_PRESENTATIONS remains empty in this phase (the status-card
+# present-view exemplar is proposed as a sibling PR) — this file keeps
+# asserting THAT invariant; it no longer asserts skills/pipelines are empty,
+# since that was F3a's phase-scoped state, not a permanent one.
 # ---------------------------------------------------------------------------
 
 
-def test_builtin_content_maps_ship_empty() -> None:
-    """Tier 2: F3a ships the mechanism only — no builtin content yet."""
-    assert BUILTIN_SKILLS == {}
-    assert BUILTIN_PIPELINES == {}
+def test_builtin_presentations_still_ships_empty_in_this_phase() -> None:
+    """Tier 2: BUILTIN_PRESENTATIONS remains empty in F3b (the present-view
+    exemplar ships in a sibling PR) — the mechanism-only invariant F3a
+    established still holds for this one map."""
     assert BUILTIN_PRESENTATIONS == {}
 
 
-def test_build_builtin_config_on_empty_registry_is_a_noop_merge() -> None:
-    """Tier 2: build_builtin_config() on the shipped (empty) registry returns
-    three empty entries dicts — merging it changes nothing observable."""
+def test_build_builtin_config_presentations_entries_still_empty() -> None:
+    """Tier 2: build_builtin_config()'s presentations entries are still an
+    empty no-op merge (skills/pipelines are now populated by F3b — see
+    test_0060_phase2_f3b_builtin_content.py for their own co-vet pins)."""
     cfg = build_builtin_config()
-    assert cfg == {
-        "skills": {"entries": {}},
-        "pipelines": {"entries": {}},
-        "presentations": {"entries": {}},
-    }
+    assert cfg["presentations"] == {"entries": {}}
     merged = _merge({"skills": {"entries": {"foo": {"path": "x"}}}}, cfg)
-    assert merged["skills"]["entries"] == {"foo": {"path": "x"}}
+    # A distinct, non-colliding operator entry survives the merge unchanged.
+    assert merged["skills"]["entries"]["foo"] == {"path": "x"}
 
 
 # ---------------------------------------------------------------------------

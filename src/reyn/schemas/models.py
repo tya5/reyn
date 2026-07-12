@@ -662,20 +662,50 @@ class IndexUpdateIROp(BaseModel):
 
 
 class JudgeOutputIROp(BaseModel):
-    """LLM-based output scorer for in-phase evaluation loops (FP-0007 Component D).
+    """LLM-based output scorer for in-phase evaluation loops (FP-0007 Component D)
+    and, since proposal 0060 F3b, pipeline `tool: {name: judge_output}` steps.
 
-    The OS resolves `target` to a value, calls an LLM with `rubric`, and
-    returns a score (0.0–1.0) plus a pass/fail flag against `threshold`.
+    The OS resolves a value to score — via `target` (a dot-path against the
+    legacy phase-graph `ctx.workspace.artifacts` — FP-0007's original source)
+    XOR `data_inline` (a value already in the caller's hands, e.g. a pipeline
+    `agent` step's `output:`, the same data-source idiom `PresentIROp`/
+    `RenderTemplateIROp` already use for `data_ref`/`data_inline`) — calls an
+    LLM with `rubric`, and returns a score (0.0-1.0) plus a pass/fail flag
+    against `threshold`.
 
-    P7 note: rubric content is owned by the phase/agent author; the OS is rubric-
-    agnostic and never interprets it. `on_fail` uses OS-level vocabulary only.
+    **Why `data_inline` (0060 F3b Addendum A4 gap)**: `target` only ever
+    resolved against `ctx.workspace.artifacts`, populated SOLELY by
+    `Workspace.store_artifact` — a method the pipeline executor never calls
+    (pipeline step output lives in the pipeline's own `ctx` store, a disjoint
+    namespace). `judge_output` was therefore unreachable from a pipeline
+    `tool:` step both by registration (no `ToolDefinition` existed —
+    `reyn.tools.judge_output` closes that) and by data-plumbing (nothing
+    populates `workspace.artifacts` for a pipeline run — `data_inline` closes
+    that). `target`'s original semantics are UNCHANGED and still the only
+    path for a legacy phase-graph caller; `data_inline` is purely additive.
+
+    P7 note: rubric content is owned by the phase/agent/pipeline author; the
+    OS is rubric-agnostic and never interprets it. `on_fail` uses OS-level
+    vocabulary only.
     """
     kind: Literal["judge_output"]
-    target: str              # JSONPath-like dot path, e.g. "artifact.data.summary"
-    rubric: str              # LLM prompt body; phase/agent author owns content (P7)
+    target: str | None = None        # XOR data_inline; dot path into ctx.workspace.artifacts (legacy phase-graph source)
+    data_inline: Any | None = None   # XOR target; a value already in the caller's hands (pipeline agent-step output, etc.)
+    rubric: str              # LLM prompt body; phase/agent/pipeline author owns content (P7)
     threshold: float = 0.8  # passing score in [0.0, 1.0]
     on_fail: Literal["transition", "abort", "continue"] = "transition"
     model: str | None = None  # model class override; None = inherit from ctx
+
+    @model_validator(mode="after")
+    def _check_target_xor_data_inline(self) -> "JudgeOutputIROp":
+        # data_inline may legitimately be a falsy value ({} / [] / 0 / "" /
+        # False) — check presence via `is None`, mirroring PresentIROp's
+        # data_ref/data_inline XOR validator.
+        if (self.target is None) == (self.data_inline is None):
+            raise ValueError(
+                "judge_output requires exactly one of target / data_inline"
+            )
+        return self
 
 
 

@@ -1,15 +1,18 @@
-"""judge_output op handler — LLM-based output scorer (FP-0007 Component D).
+"""judge_output op handler — LLM-based output scorer (FP-0007 Component D;
+`data_inline` source added 0060 F3b).
 
 The OS:
-  1. Resolves `target` (a dot-path like "artifact.data.summary") to a value
-     from the current artifact dict stored in ctx.workspace.
+  1. Resolves the value to score — `data_inline` directly (a pipeline
+     `agent`-step output or any other in-hand value) XOR `target` (a dot-path
+     like "artifact.data.summary" resolved from the legacy phase-graph
+     artifact stored in ctx.workspace.artifacts).
   2. Calls an LLM with the caller-supplied `rubric` and the resolved value.
   3. Parses the score and pass/fail from the JSON response.
   4. Emits a `tool_executed` event (P6 audit) with score, passed, threshold.
   5. Returns a result dict for the caller to act on.
 
-P3: OS does target resolution + LLM call + score parse only; rubric content
-    is never interpreted by the OS.
+P3: OS does target/data_inline resolution + LLM call + score parse only;
+    rubric content is never interpreted by the OS.
 P6: `tool_executed` event is emitted unconditionally.
 P7: rubric content and `on_fail` vocabulary are kept OS-agnostic (no domain concepts).
 """
@@ -72,34 +75,42 @@ async def handle(
             "on_fail": str,
         }
     """
-    # ── 1. Resolve target value from artifact ────────────────────────────────
-    # Build resolution context: {"artifact": <latest_stored_artifact>}.
-    # The workspace stores the working artifact via workspace.store_artifact; we
-    # read the most recent entry so "artifact.data.summary" resolves against it.
-    # When no artifact has been stored yet, resolution falls back to an empty
-    # dict, which will raise KeyError for any non-trivial target.
-    latest: dict[str, Any] = {}
-    if ctx.workspace.artifacts:
-        latest = ctx.workspace.artifacts[-1].get("artifact", {})
-    resolution_ctx: dict[str, Any] = {"artifact": latest}
+    # ── 1. Resolve the value to score ────────────────────────────────────────
+    # data_inline (0060 F3b) takes the value as-is — no workspace lookup, no
+    # dot-path traversal; this is what a pipeline `tool: judge_output` step
+    # uses (its data lives in the pipeline's own ctx store, not
+    # ctx.workspace.artifacts). Falls back to the original target/workspace
+    # path (JudgeOutputIROp's XOR validator guarantees exactly one is set).
+    if op.data_inline is not None:
+        value = op.data_inline
+    else:
+        # Build resolution context: {"artifact": <latest_stored_artifact>}.
+        # The workspace stores the working artifact via workspace.store_artifact; we
+        # read the most recent entry so "artifact.data.summary" resolves against it.
+        # When no artifact has been stored yet, resolution falls back to an empty
+        # dict, which will raise KeyError for any non-trivial target.
+        latest: dict[str, Any] = {}
+        if ctx.workspace.artifacts:
+            latest = ctx.workspace.artifacts[-1].get("artifact", {})
+        resolution_ctx: dict[str, Any] = {"artifact": latest}
 
-    try:
-        value = _resolve_target(resolution_ctx, op.target)
-    except KeyError as exc:
-        ctx.events.emit(
-            "tool_executed",
-            op="judge_output",
-            target=op.target,
-            score=None,
-            passed=False,
-            threshold=op.threshold,
-            reason=f"target resolution failed: {exc}",
-        )
-        return {
-            "kind": "judge_output",
-            "status": "error",
-            "error": f"target resolution failed: {exc}",
-        }
+        try:
+            value = _resolve_target(resolution_ctx, op.target)
+        except KeyError as exc:
+            ctx.events.emit(
+                "tool_executed",
+                op="judge_output",
+                target=op.target,
+                score=None,
+                passed=False,
+                threshold=op.threshold,
+                reason=f"target resolution failed: {exc}",
+            )
+            return {
+                "kind": "judge_output",
+                "status": "error",
+                "error": f"target resolution failed: {exc}",
+            }
 
     # ── 2. Resolve model string ───────────────────────────────────────────────
     # op.model is a class-typed field → closed-world gate (#1454 PR-B): a
