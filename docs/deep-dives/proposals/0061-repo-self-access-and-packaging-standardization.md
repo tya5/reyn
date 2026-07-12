@@ -27,7 +27,8 @@ now-misnamed `reyn_src` toolset to `reyn_repo`.
 1. **Reinvention (dormant).** `read_builtin_doc` (0060 #2911) was built to read
    bundled reference docs in a wheel. But the `reyn_src` toolset already exists
    for exactly "read reyn's own source + docs from inside," and its own
-   docstring (L22-27) *pre-announces the wheel fallback as a follow-up*.
+   docstring (`src/reyn/runtime/reyn_src.py` L22-27) *pre-announces the wheel
+   fallback as a follow-up*.
    `read_builtin_doc` has **zero production callers** (only test + smoke) — it
    is a parallel dormant mechanism for a job `reyn_src` was designed to own.
 
@@ -154,7 +155,8 @@ cmdclass, the byte-gate test (`tests/test_0060_d5b_docs_mirror.py`), the
 git-ignored `src/reyn/builtin/reference/` mirror.
 
 **Keep untouched:** `read_builtin_body_bytes` — it is **production-LIVE**
-(`file.py:214`, the `read` op reading builtin skill/pipeline bodies), already
+(`src/reyn/core/op_runtime/file.py:214`, the `read` op reading builtin
+skill/pipeline bodies), already
 wheel-correct (in-package `builtin/`, #2920-gated), and serves a *different*
 purpose than doc-reading. Pulling a working path into a dormant-path fix
 expands blast radius onto a working surface (`recall-original-purpose`).
@@ -187,7 +189,8 @@ alone** (`clean-break-completeness-full-repo-grep` +
 `verify-existence-against-registry-not-namegrep`). Grounded live surfaces:
 ToolDef names (`reyn_src.py`), tool descriptions (`descriptions/dev.py`),
 **cross-references inside other tools' descriptions**
-(`discovery.py:65,110` "prefer over `reyn_src_read`", `memory.py:351`), SP
+(`src/reyn/tools/descriptions/discovery.py:65,110` "prefer over
+`reyn_src_read`", `memory.py:351`), SP
 frame (`universal_slots.py`), category list (`universal_catalog.py`), dispatch
 map (`universal_dispatch.py`), and the **cold-start LIVE seed**
 (`action_usage_tracker.py:117` `reyn_source__list`). Full-repo grep minus the
