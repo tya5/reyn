@@ -878,3 +878,114 @@ Flagship skeleton (coder builds/verifies the exact wiring):
 - tool:  {name: present, args: {data_inline: {summary: <ctx.summary>, verdict: <ctx.verdict>}, blueprint: [...]}}
 ```
 All 5 ship inert (F3a: skills `auto_invoke=False`; pipelines/views invoke-by-name) with `provenance="builtin"` (F3a loader seam).
+
+## Addendum D10 — the wielding measurement plan (eval-framework record, settled 2026-07-12, owner-GO-gated for the LLM stage)
+
+**Status of the artifact.** This addendum is the canonical record of the
+measurement design and the owner GO-decision boundary. broker messages and
+architect memory are ephemeral; per the canonical-contract-in-issue discipline
+the settled plan and its staging gate live on the proposal face, and the
+morning owner report links here.
+
+### D10.1 — What is being measured, and what is NOT
+
+The question is **absolute**: *with F3b content landed in the real builtin
+tier, does the LLM actually wield the parts?* — reuse a builtin, run a
+composition, author a new part reaching its spec, and route output through
+`present`.
+
+This is **not an improvement delta.** F1 (the SP map + op-desc + docs-carrier
+substrate) landed *before* any baseline journey was captured, so there is no
+honest pre/post pair to difference. Any framing as "F-work raised wielding from
+X% to Y%" would be manufactured — the pre-baseline is gone. We report the
+**post-F1 absolute** and say so. (This obeys the pre-conclusion checklist:
+"100%/N-of-N" claims require direct inspection of each item, and a delta
+requires a real baseline we do not have.)
+
+### D10.2 — The four axes
+
+Each axis maps to a §2.6 wielding journey and names the single thing it
+witnesses. Axis (c) is the most important — it is the reachability thesis the
+whole foundation exists to serve.
+
+| axis | journey | witnesses | harness |
+|---|---|---|---|
+| **(a) reuse** | J-REUSE | cold-start LLM reads the cheat-sheet and **named-invokes** a builtin (skill or the flagship pipeline) rather than reinventing it | LLM, dev-ok |
+| **(b) compose-run** | J-COMPOSE | the flagship `web_search → agent → judge_output → present` runs **end-to-end** and returns a presented result (not a stack trace) | LLM, dev-ok |
+| **(c) author-in-production** | J-LEARN | the LLM authors a **new** part (a small pipeline/skill/op call) reaching the **reference spec it needs**, in a **production-shape deploy** (wheel install, docs NOT on disk) | LLM, **production-shape (mandatory)** |
+| **(d) present-not-dump** | J-PRESENT | given content-to-produce, the LLM routes **output** through `present`/a blueprint rather than dumping raw text into the reply (D9.2 anti-dump; scoped to *output*, not content-to-consume) | LLM, dev-ok |
+
+### D10.3 — The production-shape harness caveat (dev-mask avoidance)
+
+Axis (c) — and any reachability claim — **must run against a real wheel
+install**, not a dev checkout. In a dev tree `resolve_reyn_root()` finds
+`docs/` on disk and every doc is trivially reachable; that is the **J-E
+dev-mask** — a false pass that says "reachable" when production ships no docs.
+The reachability axes therefore require: real `python -m build` → clean venv
+install with the **source tree non-editable** → assert `reyn.__file__` resolves
+to `site-packages` (not the checkout). Only a read that succeeds *there* — via
+the packaged builtin/importlib.resources path, with the repo-walk genuinely
+failing near site-packages — witnesses production reachability. A green axis-(c)
+on a dev checkout is not evidence.
+
+### D10.4 — Staging: cheap foundation-smoke now, LLM matrix at owner GO
+
+The full 4-axis LLM journey matrix is a meaningful token spend and carries an
+owner-relevant methodology choice (eval budget). It runs **overnight,
+owner-asleep, under budget tightness**. So the work is staged:
+
+**Stage 1 — production-shape runtime-read smoke (no-LLM, cheap): COMPLETE
+(2026-07-12).** A standalone script built a real wheel, installed it
+source-non-editable, and drove the packaged reader against the installed
+location. Result — **PASS, no defect:**
+
+- `read_builtin_doc` → reference doc (77 335 chars) **PASS**.
+- `read_builtin_body_bytes` → cheat-sheet skill (8 080 B) + flagship pipeline
+  (1 450 B) **PASS**.
+- negative-scoping **PASS**: out-of-body `.py` → `None`, `reference/` path →
+  `None` (the #2914 least-privilege narrowing holds under a wheel).
+- `reyn.__file__` = site-packages; the `resolve_reyn_root` repo-walk *fails*
+  near the venv (no `pyproject`/`docs` neighbour) → **genuine production-shape,
+  not a dev-mask false pass.**
+
+This is the direct witness that on an **installed wheel the runtime read path
+reaches builtin bodies** — the layer above #2914's "the file ships in the zip".
+F1 production-reachability is empirically established.
+
+*Honest gap (recorded, not smoothed):* the smoke built on a pre-#2918 branch,
+so **`draft_judge_revise` was not directly wheel-run** in Stage 1. It is
+**mechanism-proven** — it registers in `BUILTIN_SKILLS` on synced main, its
+`SKILL.md` exists (2 660 B) in the same `skills/` dir as the wheel-proven
+cheat-sheet, and it travels the **identical** `read_builtin_body_bytes` path —
+but that is "sibling registration + presence verified + same mechanism", **not
+an N/N wheel-run**, and is framed as such. `status_card` is a
+`BUILTIN_PRESENTATIONS` code-dict blueprint, so it is outside the file-read
+reachability surface by construction.
+
+**Stage 2 — full 4-axis LLM eval: owner-GO-gated (morning).** The four axes +
+the production-shape harness + the §5 judge rubric + the friction count are the
+**ratified plan** presented in the morning report; the LLM token spend
+dispatches only after owner GO.
+
+### D10.5 — Scoring
+
+Each journey is scored two ways:
+
+1. **Rubric (`judge_output`, the §5 surface):** the produced artifact
+   (invocation, pipeline run, authored part, presented output) is scored by an
+   LLM judge against a per-axis rubric with a threshold and an `on_fail`
+   record. This dogfoods the very Evaluation lens the foundation ships.
+2. **Friction count:** the number of wrong turns before success — dead doc
+   links followed, non-existent ops guessed, re-prompts needed, raw dumps
+   emitted before a `present` route. Friction is the legibility signal the
+   rubric alone misses; a journey can end green but expensive.
+
+A journey passes only if the rubric clears threshold **and** friction is within
+the axis budget (recorded per run, not averaged away).
+
+### D10.6 — Scope note
+
+Axis coverage is the **four wielding faces above**, not a promotion loop. The
+J-D "auto-improvement promote" journey (an authored part graduating into a
+provenance-stamped builtin) is deferred — it is an L-layer future arc, out of
+this measurement's scope, and its absence is stated rather than papered over.
