@@ -103,6 +103,38 @@ def test_reset_for_rewind_clear_scope_covers_all_agentsnapshot_fields():
 
 
 @pytest.mark.asyncio
+async def test_reset_for_rewind_zeroes_hook_driven_turns_counter(tmp_path):
+    """Tier 2: #2884 — reset_for_rewind zeroes the loop-valve counter mirror.
+
+    Behavioral pin for the reset line (session.py reset_for_rewind → the
+    ``_hook_driven_turns = 0`` step). Populate a NONZERO counter pre-rewind,
+    call reset_for_rewind, assert the public counter is 0 post-reset. Stripping
+    the reset line makes this go RED — closing the green-on-strip vector the
+    field-coverage drift-guard alone leaves open.
+
+    Scope note: for THIS counter the reset is belt-and-suspenders (the sole
+    rewind call site, registry.py, runs ``restore_state`` on the immediately-
+    following unconditional line, overwriting the counter wholesale from the
+    reconstructed snapshot). This test pins the reset's own zero-residue
+    behaviour regardless, so a future change that silently drops it is caught.
+    """
+    log = StateLog(tmp_path / "wal")
+    session = _session(tmp_path, log)
+
+    # arrange: a nonzero loop-valve counter (the pre-rewind residue to clear).
+    session._hook_driven_turns = 5
+
+    await session.reset_for_rewind()
+
+    # assert via the public read-only accessor (no private-state assertion).
+    assert session.hook_driven_turns == 0, (
+        "reset_for_rewind must zero the hook-driven-turns loop-valve counter "
+        "(stale nonzero residue would hand the post-rewind session a wrong "
+        "max_hook_driven_turns valve budget)"
+    )
+
+
+@pytest.mark.asyncio
 async def test_reset_for_rewind_is_idempotent_on_clean_session(tmp_path):
     """Tier 2: reset_for_rewind on an already-empty session is a safe no-op."""
     log = StateLog(tmp_path / "wal")
