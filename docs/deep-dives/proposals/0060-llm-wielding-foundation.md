@@ -1,5 +1,5 @@
 ---
-status: proposal (idea-stage draft — owner review pending; NOT ratified)
+status: accepted (owner GO 2026-07-12) — phased execution per §6; §7 forks (a/b/c) remain open, they gate Phase 2-3 not Phase 1
 author: architect
 date: 2026-07-12
 ---
