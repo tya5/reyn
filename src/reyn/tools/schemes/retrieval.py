@@ -113,6 +113,35 @@ class RetrievalScheme:
         base = list(ops.base_tools(available, layer_ctx))
         refinement = layer_ctx.get("refinement")
         if not refinement:
+            if not layer_ctx.get("search_visible", False):
+                # #2895 fix (b): runtime auto-fallback. ``search_visible`` is the
+                # same D14 gate (index + provider + model class + is_ready) that
+                # decides whether search_actions is usable — when it's False the
+                # embedding is unavailable (never configured, extras missing, or
+                # index not ready yet). Presenting the search tool anyway would
+                # let ``ops.search_actions`` return ``[]`` on the very first call
+                # (index/provider is None — degrades silently), and this scheme's
+                # own terminal rule below (empty match ⇒ terminal) would then drop
+                # the search tool and strand the LLM on ``base`` only forever —
+                # the exact silent dead-session #2895 reports. Config load
+                # (``reyn.config.loader._validate_retrieval_scheme_embedding``)
+                # rejects the common never-configured case up front; this is the
+                # defense-in-depth leg for whatever slips past that (index build
+                # failure, extras missing at Session-build time — env facts
+                # config load can't see). Degrade like ``enumerate-all``: present
+                # the full flat catalog directly (no search indirection needed,
+                # so nothing is ever unreachable) and surface the SAME
+                # enable-hint the graceful schemes inject via ``list_actions`` —
+                # no duplicated hint text.
+                from reyn.tools.universal_catalog import _HIDDEN_STATE_HINT
+
+                catalog = await ops.catalog_entries()
+                slots = self._slots_for(available, layer_ctx, False)
+                slots["slot_post_catalog"] = _HIDDEN_STATE_HINT
+                return Presentation(
+                    llm_tools_payload=base + catalog,
+                    tool_use_sp=slots,
+                )
             # Initial presentation: the base + the search tool (no catalog flood).
             # #1627 Stage 3+4: sp_params removed; tool_use_sp carries the full SP.
             return Presentation(

@@ -346,6 +346,54 @@ def _reconcile_embedding_class(cfg: "ReynConfig") -> None:
     cfg.action_retrieval.embedding_class = None
 
 
+def _validate_retrieval_scheme_embedding(cfg: "ReynConfig") -> None:
+    """#2895 fix (a): fail loud at config load when ``tool_use.chat:
+    retrieval`` is selected with no working embedding configured.
+
+    ``RetrievalScheme`` (``reyn.tools.schemes.retrieval``) presents a
+    ``search_actions`` tool the LLM is meant to call before anything else.
+    Without an embedding, ``SchemeOps.search_actions`` always returns ``[]``
+    (index/provider unavailable — degrades silently by design), and
+    retrieval's own terminal rule (empty match minus already-seen ⇒
+    terminal) drops the search tool on the very first call — stranding the
+    LLM on ``base_tools`` only for the rest of the session, with no catalog
+    action ever reachable. The graceful schemes (``enumerate-all`` /
+    ``universal-category``) never hit this because their only catalog entry
+    point isn't gated behind search, so they degrade via
+    ``is_search_available`` (hide the tool + surface a hint) instead of
+    going silently dead.
+
+    Reuses the SAME primary gate ``is_search_available`` checks
+    (``action_retrieval.embedding_class`` truthy) and the SAME enable-hint
+    text those schemes surface via ``list_actions``
+    (``universal_catalog._HIDDEN_STATE_HINT``) — one consistent operator
+    message regardless of which layer catches the misconfiguration. Runs
+    AFTER ``_reconcile_embedding_class`` so a dangling ``embedding_class``
+    (typo, no entry in ``embedding.classes``) is already degraded to None
+    here too, not just the explicit-null case.
+
+    This is the config-time half of the #2895 fix; ``RetrievalScheme.
+    build_presentation`` carries the runtime-auto-fallback half (defense in
+    depth for the case this validation is bypassed, e.g. embedding extras
+    silently missing at Session-build time — an env fact this config-load
+    check cannot see).
+    """
+    if cfg.tool_use.chat != "retrieval":
+        return
+    if cfg.action_retrieval.embedding_class:
+        return
+    from reyn.tools.universal_catalog import _HIDDEN_STATE_HINT
+
+    raise ValueError(
+        "tool_use.chat: retrieval requires a working embedding "
+        "(action_retrieval.embedding_class is unset/disabled) — without one, "
+        "the search_actions tool always returns no results, and retrieval's "
+        "terminal-on-empty-match rule drops it on the very first search, "
+        "stranding the LLM on base tools only with no catalog action ever "
+        "reachable. " + _HIDDEN_STATE_HINT
+    )
+
+
 def load_config(cwd: Path | None = None) -> ReynConfig:
     """Load and merge config from all sources. CLI flags are applied by the caller."""
     cwd = (cwd or Path.cwd()).resolve()
@@ -578,6 +626,7 @@ def load_config(cwd: Path | None = None) -> ReynConfig:
         presentations=_as_config_dict(merged.get("presentations"), "presentations"),
     )
     _reconcile_embedding_class(_cfg)
+    _validate_retrieval_scheme_embedding(_cfg)
     return _cfg
 
 

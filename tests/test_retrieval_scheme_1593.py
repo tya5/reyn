@@ -63,13 +63,47 @@ def _tool(name):
 
 @pytest.mark.asyncio
 async def test_initial_presentation_shows_search_tool(tmp_path) -> None:
-    """Tier 2: with no refinement, retrieval presents base + the search tool (NOT
-    the whole catalog) — the narrowing-before-call posture."""
+    """Tier 2: with no refinement AND a working embedding (search_visible=True),
+    retrieval presents base + the search tool (NOT the whole catalog) — the
+    narrowing-before-call posture."""
     ops = _FakeOps()
-    pres = await RetrievalScheme().build_presentation({}, {}, ops)
+    pres = await RetrievalScheme().build_presentation({}, {"search_visible": True}, ops)
     names = [t["function"]["name"] for t in pres.llm_tools_payload]
     assert _SEARCH_TOOL_NAME in names and "respond" in names
     assert ops.calls == []                                # no search yet (no refinement)
+
+
+@pytest.mark.asyncio
+async def test_initial_presentation_falls_back_to_catalog_when_search_unavailable(tmp_path) -> None:
+    """Tier 2: #2895 fix (b), falsify-pin. When the embedding is unavailable
+    (``search_visible`` False/absent — the SAME D14 gate ``router_loop.py``
+    computes from index/provider/model_class/is_ready), retrieval must NOT
+    present the search tool. Presenting it would let ``ops.search_actions``
+    return ``[]`` on the very first call (the #2895 mechanism), and this
+    scheme's own terminal-on-empty-match rule would then drop the search tool
+    and strand the LLM on base_tools only — a silent dead session with the
+    full catalog never reachable.
+
+    Instead it must degrade like ``enumerate-all``: present the full flat
+    catalog (every action stays reachable) and surface the enable-hint
+    (reused from ``universal_catalog._HIDDEN_STATE_HINT`` — the SAME hint the
+    graceful schemes inject) via ``tool_use_sp['slot_post_catalog']``.
+
+    Falsify by hand: revert the ``if not layer_ctx.get("search_visible",
+    False)`` branch in ``RetrievalScheme.build_presentation`` (retrieval.py)
+    → this test goes RED (search tool appears, catalog + hint disappear).
+    """
+    from reyn.tools.universal_catalog import _HIDDEN_STATE_HINT
+
+    ops = _FakeOps(catalog=[_tool("file__write"), _tool("file__read")])
+    # search_visible absent (defaults False) — mirrors "no embedding configured".
+    pres = await RetrievalScheme().build_presentation({}, {}, ops)
+    names = {t["function"]["name"] for t in pres.llm_tools_payload}
+    assert _SEARCH_TOOL_NAME not in names                 # search NEVER offered — would be a dead end
+    assert {"file__write", "file__read"} <= names          # catalog stays fully reachable instead
+    assert "respond" in names                              # base tools still present
+    assert ops.calls == []                                 # no dead search ever attempted
+    assert pres.tool_use_sp.get("slot_post_catalog") == _HIDDEN_STATE_HINT  # enable-hint surfaced
 
 
 @pytest.mark.asyncio
@@ -124,7 +158,7 @@ async def test_initial_presentation_supplies_search_sp_fragment(tmp_path) -> Non
     (formerly sp_fragment; folded into the slot-map in Stage 3). The LLM must see
     search_actions guidance even when the OS's named-gate block is off."""
     ops = _FakeOps()
-    pres = await RetrievalScheme().build_presentation({}, {}, ops)
+    pres = await RetrievalScheme().build_presentation({}, {"search_visible": True}, ops)
     # #1627 Stage 4: sp_params removed from build_presentation.
     assert pres.sp_params == {}                                      # no longer populated
     assert isinstance(pres.tool_use_sp, dict)                      # scheme owns SP via slot-map
