@@ -385,6 +385,28 @@ class SnapshotJournal:
         self._snapshot.next_turn_context.append(entry)
         self.save_nowait()
 
+    # ── loop-valve counter (#2884) ──────────────────────────────────────────
+
+    async def record_hook_driven_turns(self, *, count: int) -> None:
+        """Append ``hook_driven_turns_set`` to WAL + update the snapshot (#2884).
+
+        Mirrors ``record_intervention_answer_buffered``: Session's in-memory
+        ``_hook_driven_turns`` (the loop-valve counter bounding hook
+        self-continuation) is the runtime cache; ``AgentSnapshot.hook_driven_turns``
+        is its on-disk durable form. Records the FULL current value (not a
+        delta) at both the reset-to-0 (kind="user") and each increment
+        (kind="hook") edges, so replay (``AgentSnapshot._apply_one``) can
+        reconstruct the exact value between snapshots by replaying the same
+        WAL kind — no dependency on ``inbox_consume`` carrying the item kind.
+        """
+        if self._state_log is None:
+            return
+        self._wal_append_nowait(
+            "hook_driven_turns_set", target=self._agent_name, count=count,
+        )
+        self._snapshot.hook_driven_turns = count
+        self.save_nowait()
+
     async def record_next_turn_context_cleared(self) -> None:
         """Append ``next_turn_context_cleared`` to WAL + clear the buffer (#1800-4b).
 

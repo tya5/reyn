@@ -70,6 +70,15 @@ class AgentSnapshot:
     # Each entry is ``{"kind": str, "payload": dict}`` (no msg_id — already
     # consumed from the inbox before staging here).
     next_turn_context: list[dict] = field(default_factory=list)
+    # #2884: the hook-driven-turns loop-valve counter (Session._hook_driven_turns),
+    # snapshot-backed for crash-durability. A pure-WAL-derived count is NOT
+    # truncation-safe — the consumed `inbox_put{kind:"hook"}` events it would
+    # need are pruned by `truncate_below` (only REWIND_KIND is force-kept,
+    # retention.py) — exactly the #2259 config-loss class. The snapshot floor
+    # sits at/above the truncation floor, so this field survives truncation
+    # by construction. Kept current between snapshots by `apply_events`
+    # replaying `hook_driven_turns_set` WAL entries (see `_apply_one`).
+    hook_driven_turns: int = 0
 
     # ── persistence ─────────────────────────────────────────────────────
 
@@ -127,6 +136,7 @@ class AgentSnapshot:
             next_turn_context=list(
                 data.get("next_turn_context", []) or []
             ),
+            hook_driven_turns=_coerce_int(data.get("hook_driven_turns", 0)),
         )
 
     def to_payload(self) -> dict:
@@ -143,6 +153,7 @@ class AgentSnapshot:
             "outstanding_interventions": self.outstanding_interventions,
             "buffered_intervention_answers": self.buffered_intervention_answers,
             "next_turn_context": self.next_turn_context,
+            "hook_driven_turns": self.hook_driven_turns,
         }
 
     def serialize(self) -> str:
@@ -260,5 +271,11 @@ class AgentSnapshot:
                 self.next_turn_context.append(entry)
         elif kind == "next_turn_context_cleared":
             self.next_turn_context.clear()
+        # ── #2884: loop-valve counter (between-snapshot replay maintenance) ──
+        elif kind == "hook_driven_turns_set":
+            try:
+                self.hook_driven_turns = int(event.get("count", 0))
+            except (TypeError, ValueError):
+                self.hook_driven_turns = 0
         # step_started/completed/failed mutate per-task snapshot only — no agent-level state change here.
         # Unknown kinds: no-op (forward compatibility for future kinds)
