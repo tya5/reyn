@@ -8,7 +8,7 @@ directly and pass the result as ``tool_use_sp``.
 Coverage:
   - No tool_use_sp (None): SP excludes the section (bare OS frame)
   - universal_wrappers_enabled=False via slot-map: SP excludes the section
-  - universal_wrappers_enabled=True via slot-map: SP includes section + all 13 cats
+  - universal_wrappers_enabled=True via slot-map: SP includes section + all categories (== CATEGORIES)
   - Section placement relative to other sections
   - Section content notes qualified-name format + dispatch path
 
@@ -70,7 +70,7 @@ def test_default_matches_explicit_false() -> None:
     assert "## Action categories" not in explicit
 
 
-# ── 2. Flag on adds the section with all 13 categories ───────────────────
+# ── 2. Flag on adds the section with all categories (== CATEGORIES) ──────
 
 
 def test_flag_on_adds_action_categories_section() -> None:

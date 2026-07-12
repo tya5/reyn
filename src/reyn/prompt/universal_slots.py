@@ -245,6 +245,13 @@ ACTION_CATEGORIES_LINES = [
         "pipeline from a git/GitHub URL (shallow-clones to "
         ".reyn/pipelines/<name>/)."
     ),
+    (
+        "- **presentation_management** — manage named presentation templates: "
+        "`presentation_management__install` to register a named presentation "
+        "blueprint (a declarative component tree) into "
+        ".reyn/config/presentations.yaml, so a later `present(view=<name>)` "
+        "op can render it (proposal 0060 Phase 1 Layer A)."
+    ),
 ]
 
 HOT_LIST_ALIASES_HINT = (
