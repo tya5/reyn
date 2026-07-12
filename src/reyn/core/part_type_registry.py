@@ -52,6 +52,14 @@ PART_ROLES: tuple[str, ...] = ("input", "workflow", "output")
 MARKER_ATTR: str = "PART_TYPE_SPEC"
 
 
+# proposal 0060 Addendum D, D5d: the sentinel a ``PartTypeSpec`` declares when
+# it is genuinely doc-less (no distinct reference doc exists beyond this
+# module's own docstring) — an explicit opt-out, never a forgotten field. The
+# registry-walk completeness gate (tests/test_0060_d5d_doc_ref_registry_gate.py)
+# accepts a real ``docs/...`` path OR exactly this sentinel; nothing else.
+DOC_REF_NONE: str = "none"
+
+
 @dataclass(frozen=True)
 class PartTypeSpec:
     """One part-type's declaration — the value a ``PART_TYPE_SPEC`` marker holds.
@@ -65,6 +73,12 @@ class PartTypeSpec:
         :func:`resolve_registry_ref`; a ref that does not resolve fails the
         build (never dead documentation).
     ``description`` — one-line human-facing summary of what this part-type is.
+    ``doc_ref`` — proposal 0060 D5d: a ``docs/...``-relative pointer at this
+        part-type's reference/concept doc, OR the explicit :data:`DOC_REF_NONE`
+        sentinel for a genuinely doc-less part-type. REQUIRED (no default) —
+        every ``PART_TYPE_SPEC`` marker must declare one explicitly, so a new
+        part-type cannot silently omit it (the "Control-IR ops (class)
+        BROKEN" gap the D2 reachability audit found).
     """
 
     name: str
@@ -72,6 +86,7 @@ class PartTypeSpec:
     category: str
     registry_ref: str
     description: str
+    doc_ref: str
 
     def __post_init__(self) -> None:
         unknown = set(self.roles) - set(PART_ROLES)
@@ -79,6 +94,11 @@ class PartTypeSpec:
             raise ValueError(
                 f"part-type {self.name!r} declares unknown role(s) {sorted(unknown)}; "
                 f"expected a subset of {PART_ROLES}"
+            )
+        if not self.doc_ref:
+            raise ValueError(
+                f"part-type {self.name!r}: doc_ref must be a non-empty docs/... "
+                f"path or the explicit {DOC_REF_NONE!r} sentinel"
             )
 
 

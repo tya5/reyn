@@ -12,4 +12,5 @@ PART_TYPE_SPEC = PartTypeSpec(
     category="hook",
     registry_ref="reyn.hooks.loader:load_hooks",
     description="A reactive hook-event registration (trigger + action glue).",
+    doc_ref="docs/concepts/runtime/hooks.md",
 )

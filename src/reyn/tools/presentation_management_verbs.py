@@ -132,6 +132,9 @@ PRESENTATION_INSTALL = ToolDefinition(
     handler=_handle_presentation_install,
     category="io",
     purity="side_effect",
+    # proposal 0060 D5d: mirrors the "presentation" PartTypeSpec's doc_ref
+    # (reyn.core.part_types.presentation) — same part-type, install-verb axis.
+    doc_ref="docs/concepts/runtime/present.md",
 )
 
 __all__ = ["PRESENTATION_INSTALL"]

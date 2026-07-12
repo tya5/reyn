@@ -56,6 +56,7 @@ PART_TYPE_SPEC = PartTypeSpec(
     category={category!r},
     registry_ref="reyn.data.skills.registry:build_skill_registry",
     description="a test-injected part-type (0060 Addendum C witness)",
+    doc_ref="none",
 )
 """
 

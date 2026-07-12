@@ -182,6 +182,10 @@ async def _handle_skill_install_source(
 
 from reyn.core.offload.canonical import skill_install_verb_to_canonical  # noqa: E402
 
+# proposal 0060 D5d: mirrors the "skill" PartTypeSpec's doc_ref
+# (reyn.core.part_types.skill) — same part-type, install-verb axis.
+_SKILL_DOC_REF = "docs/concepts/tools-integrations/skills.md"
+
 SKILL_INSTALL_LOCAL = ToolDefinition(
     canonical=skill_install_verb_to_canonical,
     name="skill_install_local",
@@ -191,6 +195,7 @@ SKILL_INSTALL_LOCAL = ToolDefinition(
     handler=_handle_skill_install_local,
     category="io",
     purity="side_effect",
+    doc_ref=_SKILL_DOC_REF,
 )
 
 SKILL_INSTALL_SOURCE = ToolDefinition(
@@ -202,6 +207,7 @@ SKILL_INSTALL_SOURCE = ToolDefinition(
     handler=_handle_skill_install_source,
     category="io",
     purity="side_effect",
+    doc_ref=_SKILL_DOC_REF,
 )
 
 __all__ = ["SKILL_INSTALL_LOCAL", "SKILL_INSTALL_SOURCE"]

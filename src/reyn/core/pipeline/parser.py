@@ -129,7 +129,19 @@ class PipelineParseError(ValueError):
     expression, or (most commonly) a construct that is valid Appendix-B
     grammar but not yet supported by `PipelineExecutor` (`refine`,
     pipeline-level `input`/`defaults`, or a per-step field the executor does
-    not consume)."""
+    not consume).
+
+    Proposal 0060 D5c error-rail: every message is annotated with a pointer to
+    the pipeline DSL reference doc (the grammar this parser accepts) —
+    wired once here, not at each of this module's many raise sites.
+    """
+
+    _DOC_REF = "docs/reference/runtime/pipeline-dsl.md"
+
+    def __init__(self, message: str) -> None:
+        from reyn.core.doc_ref_rail import with_doc_pointer
+
+        super().__init__(with_doc_pointer(message, self._DOC_REF))
 
 
 # ---------------------------------------------------------------------------

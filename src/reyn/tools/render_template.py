@@ -35,6 +35,11 @@ from reyn.tools.types import ToolContext, ToolDefinition, ToolGates, ToolResult
 # package refactor — byte-identical, no LLM-facing text change).
 _RENDER_TEMPLATE_DESCRIPTION = _presentation_descriptions.render_template.text
 
+# proposal 0060 D5d: the single doc_ref for render_template — the Control-IR
+# reference doc (D2 audit: render_template is self-teaching in-op, but D5d
+# still carries a structured pointer for the general op→doc convention).
+_RENDER_TEMPLATE_DOC_REF = "docs/reference/runtime/control-ir.md"
+
 _RENDER_TEMPLATE_PARAMETERS: dict[str, Any] = {
     "type": "object",
     "properties": {
@@ -95,7 +100,14 @@ async def _handle_render_template(args: Mapping[str, Any], ctx: ToolContext) -> 
             undefined=undefined if undefined is not None else "strict",
         )
     except ValidationError as exc:
-        return {"kind": "render_template", "status": "error", "ok": False, "error": str(exc)}
+        from reyn.core.doc_ref_rail import with_doc_pointer
+
+        return {
+            "kind": "render_template",
+            "status": "error",
+            "ok": False,
+            "error": with_doc_pointer(str(exc), _RENDER_TEMPLATE_DOC_REF),
+        }
 
     if (
         ctx.router_state is not None
@@ -130,4 +142,5 @@ RENDER_TEMPLATE = ToolDefinition(
     handler=_handle_render_template,
     category="presentation",
     purity="read_only",
+    doc_ref=_RENDER_TEMPLATE_DOC_REF,
 )

@@ -12,6 +12,11 @@ htmlcov/
 .mypy_cache/
 .reyn/
 /reyn/
+
+# proposal 0060 D5b: build-time byte-mirror of docs/reference/ into the
+# builtin tier (scripts/mirror_reference_docs.py, wired via setup.py). No
+# committed duplicate — docs/reference/ stays the sole source of truth.
+/src/reyn/builtin/reference/
 .env
 .env.*
 !.env.example

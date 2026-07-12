@@ -212,6 +212,10 @@ async def _handle_pipeline_install_source(
 
 from reyn.core.offload.canonical import pipeline_install_verb_to_canonical  # noqa: E402
 
+# proposal 0060 D5d: mirrors the "pipeline" PartTypeSpec's doc_ref
+# (reyn.core.part_types.pipeline) — same part-type, install-verb axis.
+_PIPELINE_DOC_REF = "docs/reference/runtime/pipeline-dsl.md"
+
 PIPELINE_INSTALL_LOCAL = ToolDefinition(
     canonical=pipeline_install_verb_to_canonical,
     name="pipeline_install_local",
@@ -221,6 +225,7 @@ PIPELINE_INSTALL_LOCAL = ToolDefinition(
     handler=_handle_pipeline_install_local,
     category="io",
     purity="side_effect",
+    doc_ref=_PIPELINE_DOC_REF,
 )
 
 PIPELINE_INSTALL_SOURCE = ToolDefinition(
@@ -232,6 +237,7 @@ PIPELINE_INSTALL_SOURCE = ToolDefinition(
     handler=_handle_pipeline_install_source,
     category="io",
     purity="side_effect",
+    doc_ref=_PIPELINE_DOC_REF,
 )
 
 __all__ = ["PIPELINE_INSTALL_LOCAL", "PIPELINE_INSTALL_SOURCE"]

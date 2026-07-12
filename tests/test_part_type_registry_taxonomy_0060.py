@@ -56,6 +56,7 @@ PART_TYPE_SPEC = PartTypeSpec(
     category={category!r},
     registry_ref={registry_ref!r},
     description="a test-injected part-type",
+    doc_ref="none",
 )
 """
 

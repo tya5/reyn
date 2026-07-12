@@ -14,4 +14,5 @@ PART_TYPE_SPEC = PartTypeSpec(
     category="mcp",
     registry_ref="reyn.runtime.services.router_host_adapter:RouterHostAdapter.get_mcp_servers",
     description="An installed external MCP server (tools/resources/prompts).",
+    doc_ref="docs/concepts/tools-integrations/mcp.md",
 )

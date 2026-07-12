@@ -12,4 +12,5 @@ PART_TYPE_SPEC = PartTypeSpec(
     category="skill_management",
     registry_ref="reyn.data.skills.registry:build_skill_registry",
     description="A named SKILL.md instruction set, read by the model at L2.",
+    doc_ref="docs/concepts/tools-integrations/skills.md",
 )
