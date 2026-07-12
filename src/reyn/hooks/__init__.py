@@ -25,20 +25,31 @@ Exposes:
                      against a context dict (H3).
     run_shell_hook — execute a shell HookDef command (slice C).
     matcher_matches — evaluate a ``HookDef.matcher`` against ``template_vars`` (H2).
+
+Hook-Event Redesign Phase 1 (proposal 0059) additionally exposes:
+    HookEvent      — the typed hook-event wrapper (``reyn.hooks.event``).
+    build_hook_payload — construct + schema-validate a builtin hook-event
+                     payload (``reyn.hooks.schema_registry``); the single
+                     producer every builtin dispatch call site funnels
+                     through.
 """
+from reyn.hooks.event import HookEvent
 from reyn.hooks.loader import load_hooks
 from reyn.hooks.matcher import matches as matcher_matches
 from reyn.hooks.registry import HookRegistry
 from reyn.hooks.render import ResolvedPush, render_pipeline_input, render_push
 from reyn.hooks.schema import HookConfigError, HookDef, PipelineLaunchBlock, PushBlock
+from reyn.hooks.schema_registry import build_hook_payload
 from reyn.hooks.shell_runner import run_shell_hook
 
 __all__ = [
     "HookDef",
+    "HookEvent",
     "PushBlock",
     "PipelineLaunchBlock",
     "HookRegistry",
     "HookConfigError",
+    "build_hook_payload",
     "load_hooks",
     "ResolvedPush",
     "render_push",

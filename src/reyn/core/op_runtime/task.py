@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import uuid
 
+from reyn.hooks.schema_registry import build_hook_payload
 from reyn.task import (
     InMemoryTaskBackend,
     Task,
@@ -330,8 +331,10 @@ async def _create(op, ctx: OpContext) -> dict:
     if hook_dispatcher is not None:
         await hook_dispatcher.dispatch(
             "task_start",
-            {"point": "task_start", "task_id": created.task_id,
-             "name": created.name, "assignee": created.assignee},
+            build_hook_payload(
+                "task_start", task_id=created.task_id,
+                name=created.name, assignee=created.assignee,
+            ),
         )
     return _ok("task.create", task=created.to_dict())
 
@@ -390,7 +393,7 @@ async def _update_status(op, ctx: OpContext) -> dict:
         if hook_dispatcher is not None:
             await hook_dispatcher.dispatch(
                 "task_end",
-                {"point": "task_end", "task_id": task.task_id, "status": "done"},
+                build_hook_payload("task_end", task_id=task.task_id, status="done"),
             )
         # #2187 §3.5 (5c): a DONE *decomposition child* (requester_kind=TASK) reconciles
         # its PARENT (the child_settled waker — the parent's awaited/total counts may have
@@ -686,7 +689,7 @@ async def _abort(op, ctx: OpContext) -> dict:
         for t in aborted:
             await hook_dispatcher.dispatch(
                 "task_end",
-                {"point": "task_end", "task_id": t.task_id, "status": "aborted"},
+                build_hook_payload("task_end", task_id=t.task_id, status="aborted"),
             )
     return _ok("task.abort", task=root.to_dict())
 

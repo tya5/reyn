@@ -61,6 +61,8 @@ from typing import Any, Callable
 from fastmcp.client.messages import MessageHandler
 from fastmcp.client.tasks import TaskNotificationHandler
 
+from reyn.hooks.schema_registry import build_hook_payload
+
 logger = logging.getLogger(__name__)
 
 # Matches EventLog.emit(type: str, **data) -> Event; a plain callable sink lets callers
@@ -218,13 +220,13 @@ class ReynMCPMessageHandler(TaskNotificationHandler):
             try:
                 self._on_external_event(
                     "mcp_resource_updated",
-                    {
-                        "point": "mcp_resource_updated",
-                        "server": self._server_name,
-                        "uri": uri,
-                        "agent_name": self._agent_name,
-                        "resync": resync,
-                    },
+                    build_hook_payload(
+                        "mcp_resource_updated",
+                        server=self._server_name,
+                        uri=uri,
+                        agent_name=self._agent_name,
+                        resync=resync,
+                    ),
                 )
             except Exception:  # noqa: BLE001 — a trigger fault must not break the receive loop
                 logger.warning(

@@ -71,33 +71,26 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Union
 
+from reyn.hooks.schema_registry import BARE_TO_KIND
+
 # ---------------------------------------------------------------------------
 # Allowed hook-points (starter set — #1800 CONVERGED DESIGN)
 # ---------------------------------------------------------------------------
 
-ALLOWED_HOOK_POINTS: frozenset[str] = frozenset({
-    "turn_start",
-    "turn_end",
-    "session_start",
-    "session_end",
-    "task_start",
-    "task_end",
-    # #2608 H1: external-event point — fired by a pushed MCP resources/updated
-    # notification for a subscribed resource, NOT by the lifecycle run-loop.
-    "mcp_resource_updated",
-    # #2608 H4: external-event point — fired by the session-owned FsWatcher
-    # (reyn.runtime.fs_watcher) on a create/modify/delete under an
-    # operator-declared ``fs_watch.paths`` entry. Matchable field: ``path``
-    # (glob via fnmatch — see hooks/matcher.py's _GLOB_FIELDS).
-    "file_changed",
-    # #2608 H5 (final external-event source): a message-based cron job fires.
-    # Matchable field: ``job_name`` (exact). See reyn.runtime.cron.routing.
-    "cron_fired",
-    # #2608 H5 (final external-event source): an inbound webhook resolves to a
-    # session. Matchable fields: ``transport`` / ``sender`` (both exact). See
-    # reyn.runtime.webhook_routing.
-    "webhook_received",
-})
+# Hook-Event Redesign Phase 1 (proposal 0059 §2/§4): DERIVED from
+# ``reyn.hooks.schema_registry.BARE_TO_KIND`` (the Schema Registry's builtin
+# kind table) rather than hand-maintained here — a future builtin point (the
+# proposal's "future point" list: pre/post_tool_use, pipeline_start/end) is
+# added there (schema + one dispatch call site) and automatically becomes a
+# recognised ``on:`` value here, with zero edits to this module. The 10
+# points today are unchanged: turn_start/turn_end, session_start/
+# session_end, task_start/task_end (lifecycle), mcp_resource_updated
+# (#2608 H1), file_changed (#2608 H4), cron_fired/webhook_received (#2608 H5).
+# The registry's namespaced kind (e.g. ``builtin:lifecycle:turn_end``) is
+# ALSO accepted in ``on:`` — a permanent alias of the bare form below,
+# normalized by ``reyn.hooks.loader`` — but this frozenset (the internal
+# bare-form key HookDef/HookRegistry/HookDispatcher use) is unchanged.
+ALLOWED_HOOK_POINTS: frozenset[str] = frozenset(BARE_TO_KIND)
 
 
 # ---------------------------------------------------------------------------
