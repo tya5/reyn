@@ -93,30 +93,32 @@ def _make_ctx(tmp_path: Path, *, turn_origin: "str | None") -> OpContext:
     )
 
 # ---------------------------------------------------------------------------
-# F3a's own mechanism-only invariant, updated for F3b (proposal 0060 Phase 2):
-# F3a shipped all three maps EMPTY (mechanism only); F3b populates
-# BUILTIN_SKILLS/BUILTIN_PIPELINES with the curated core-spine content (see
-# tests/test_0060_phase2_f3b_builtin_content.py for F3b's own co-vet pins).
-# BUILTIN_PRESENTATIONS remains empty in this phase (the status-card
-# present-view exemplar is proposed as a sibling PR) — this file keeps
-# asserting THAT invariant; it no longer asserts skills/pipelines are empty,
-# since that was F3a's phase-scoped state, not a permanent one.
+# F3a's own mechanism-only invariant, updated for F3b (proposal 0060 Phase 2,
+# two PRs: #2912 = core spine skill+pipeline; this sibling PR = the remaining
+# curated-5 exemplars, draft_judge_revise skill + status_card presentation):
+# F3a shipped all three maps EMPTY (mechanism only); F3b populates all three
+# — this file no longer asserts any of the three maps stay empty, since that
+# was F3a's phase-scoped state, not a permanent one. See
+# tests/test_0060_phase2_f3b_builtin_content.py (core spine) and
+# tests/test_0060_f3b_sibling_builtins.py (this PR's 2 exemplars) for the
+# content-level co-vet pins.
 # ---------------------------------------------------------------------------
 
 
-def test_builtin_presentations_still_ships_empty_in_this_phase() -> None:
-    """Tier 2: BUILTIN_PRESENTATIONS remains empty in F3b (the present-view
-    exemplar ships in a sibling PR) — the mechanism-only invariant F3a
-    established still holds for this one map."""
-    assert BUILTIN_PRESENTATIONS == {}
+def test_builtin_presentations_now_populated_by_f3b() -> None:
+    """Tier 2: BUILTIN_PRESENTATIONS is populated by this F3b sibling PR (the
+    status_card exemplar) — the mechanism-only EMPTY invariant was F3a's
+    phase-scoped state, not permanent."""
+    assert BUILTIN_PRESENTATIONS != {}
+    assert "status_card" in BUILTIN_PRESENTATIONS
 
 
-def test_build_builtin_config_presentations_entries_still_empty() -> None:
-    """Tier 2: build_builtin_config()'s presentations entries are still an
-    empty no-op merge (skills/pipelines are now populated by F3b — see
-    test_0060_phase2_f3b_builtin_content.py for their own co-vet pins)."""
+def test_build_builtin_config_presentations_entries_populated() -> None:
+    """Tier 2: build_builtin_config()'s presentations entries are non-empty
+    now that F3b has shipped the status_card exemplar — an operator entry
+    still merges through unaffected (non-colliding names coexist)."""
     cfg = build_builtin_config()
-    assert cfg["presentations"] == {"entries": {}}
+    assert cfg["presentations"]["entries"]
     merged = _merge({"skills": {"entries": {"foo": {"path": "x"}}}}, cfg)
     # A distinct, non-colliding operator entry survives the merge unchanged.
     assert merged["skills"]["entries"]["foo"] == {"path": "x"}
