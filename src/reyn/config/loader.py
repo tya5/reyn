@@ -411,6 +411,17 @@ def load_config(cwd: Path | None = None) -> ReynConfig:
                     "models": {}, "permissions": {},
                     "mcp": {}}
 
+    # proposal 0060 Phase 1 F3a: the builtin tier — code-shipped
+    # skills/pipelines/presentations (Addendum A1/A3), merged FIRST so every
+    # operator config file below wins on same-name collision (mirrors
+    # ``reyn.hooks.schema_registry.BUILTIN_HOOK_SCHEMAS``'s "code ships the
+    # floor, config overrides it" shape). ``build_builtin_config`` stamps
+    # ``provenance="builtin"`` at THIS loader path (A9) — never via an
+    # install op — and ships EMPTY in F3a (mechanism only; F3b populates the
+    # exemplar content), so this merge is presently a no-op.
+    from reyn.builtin.registry import build_builtin_config
+    merged = _merge(merged, build_builtin_config())
+
     # User global
     user_global = _load_yaml(Path.home() / ".reyn" / "config.yaml")
     merged = _merge(merged, user_global)
