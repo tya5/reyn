@@ -140,11 +140,17 @@ the point, and the primary self-explanation surface — source + docs + README �
 is preserved), but it **drops** two present dev use-cases: reading
 `pyproject.toml` for config questions and `tests/` for usage examples. Owner
 sign-off required (`ratified-design-tiebreaker`: an out-of-scope that removes
-an existing owner use-case must be explicit, not silent). **Cheap option:** add
-`pyproject.toml` (and optionally `CLAUDE.md`) to the declared set — it
-force-includes as a tiny file and keeps config-question self-explanation. The
-declared set is the single knob; widening it is one line in the SSoT +
-force-include. **Owner decision pending** (§7).
+an existing owner use-case must be explicit, not silent).
+
+**Owner sign-off (2026-07-13): option (A) — core set only.** The declared set
+is exactly `{README.md, CHANGELOG.md, docs/, src/reyn/}` (matches the original
+intent: "README + all of docs"). `pyproject.toml` / `CLAUDE.md` / `tests/` /
+`scripts/` / `dogfood/` / `pipelines/` / `website/` are **accepted as excluded**
+from `reyn_repo` in both modes — the primary self-explanation surface
+(source + docs + README) is preserved. The declared set remains a single knob:
+if a config-question use-case surfaces later, adding `pyproject.toml` is one
+line in the SSoT + force-include (parity mechanism unchanged), but it is **not**
+included now.
 
 ### 3.4 dev == wheel parity (the anti-confusion invariant + gate)
 
