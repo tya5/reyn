@@ -604,3 +604,168 @@ no security surface (unlike Layer A). Lower risk. Layer C completes F1's floor
 (catalog SSoT + provenance + routing model); F2's remaining pieces (discovery-
 mandate strengthening, the fuller author-vs-reuse guidance) and F3 (builtin
 tier + `stdlib` abolition) follow.
+
+## Addendum D — Information-placement design: the learning 動線 (settled 2026-07-12, owner-driven)
+
+**This addendum is the design the wave was founded to produce** (owner: "これを
+設計して欲しいというのが土台作り wave の発端 — 動線を考慮して、どの情報を
+どこに配置するか"). It decides, for every kind of information the LLM needs to
+wield reyn, **whether it lives in the SP, in a skill, or in docs** — and makes
+the placement drift-proof and production-reachable. It reframes and completes
+F2/F3b. Self-sufficient: a fresh session can execute from this record.
+
+### D0. Problem: reyn-specific knowledge has no guided path
+
+reyn's parts are not in any base model's training. **If the detailed spec of a
+part is not reachable from an LLM-facing surface, the model will not use the
+part** — it falls back to base-model defaults, or hallucinates the format. The
+動線 (learning line) = the guided path from "I need to use/author part X" to
+"the spec that makes me use it correctly." A locus table on paper (§2.5) is
+not a design until reachability is *audited* — that audit (D2) is what
+grounded this addendum, and it is the normative check for any future
+part-type.
+
+### D1. The three-layer doc model, and skill as the gap-filler
+
+| layer | documents | nature |
+|---|---|---|
+| `concept` | why / mental model | finite, formal, shipped |
+| `reference` | mechanism spec (how to call/author each part) | finite, formal, shipped |
+| **skill** | **task procedures + composition know-how** ("when to use which part, how to wire them together for a task") | **infinite long-tail, LLM-authorable, pulled just-in-time** |
+
+concept/reference fully describe the *mechanisms*; the infinite space of "how
+do I achieve task X with these parts" is the gap **skills exist to fill**
+(owner: "concept/reference から漏れる隙間を埋めるのが skill"). Corollaries:
+- **Composition guidance belongs in the skill layer, NOT the SP** — it is
+  long-tail judgment knowledge; pushing it into the SP bloats every turn and
+  still can't cover the tail.
+- The SP shrinks to a minimal bootstrap: the map (Layer C), the discipline
+  (discovery-mandate, author-vs-reuse invariant), and **a named pointer to the
+  cheat-sheet skill** (D4).
+- **The flagship builtin is a "reyn cheat-sheet" skill** — a quick-reference
+  for reyn-specific usage: when to use which part, composition idioms, op
+  essentials, and pointers to full specs. This is the single artifact that
+  turns "reyn has features" into "the LLM uses reyn's features."
+
+### D2. Reachability audit (grounded 2026-07-12 — the 動線 check)
+
+For each part, can the LLM reach the detailed spec from an LLM-facing surface?
+
+| part | spec doc | tool-desc teaches/points? | doc pointer? | verdict |
+|---|---|---|---|---|
+| skill | concepts/tools-integrations/skills.md | install params only; no SKILL.md format | none | **PARTIAL** (use-existing OK via L2 read; author-new has no format path) |
+| pipeline | reference/runtime/pipeline-dsl.md | says "Appendix B" — never names the doc; zero grammar | none | **BROKEN** |
+| mcp | concepts/.../mcp.md | params + `describe_mcp_tool` live round-trip | none | **PARTIAL** |
+| present | concepts/runtime/present.md + control-ir.md | install-op enumerates components/`$bind`; the everyday inline `present` does NOT | none | **PARTIAL** |
+| render_template | control-ir.md § | fully self-teaching in-op | none | **REACHABLE** (self-sufficient) |
+| hook | concepts/runtime/hooks.md | **explicit named pointer in the op description** ("see … docs/concepts/runtime/hooks.md") | yes (descriptions/hooks.py:34,44) | **REACHABLE** — the exemplar pattern |
+| Control-IR ops (class) | reference/runtime/control-ir.md | no op names it; no op→doc convention exists | only a human-`/help` `see_also` | **BROKEN as a class** |
+
+**Hard production fact**: `docs/` is not packaged in the wheel, and
+`resolve_reyn_root()` raises in a wheel install — so in a **production deploy
+every docs path is unreachable regardless of pointers**. 2/7 reachable, and
+even those only in dev checkouts. Also: the audit checked 4 channels
+(tool-desc / SP / doc-pointer / packaging) — it missed a 5th, **error
+messages**, adopted as a rail in D5c.
+
+### D3. Governing rules
+
+1. **Production-reachability constrains placement.** The always-reachable
+   floor = SP + tool-descriptions + **packaged skills** (all wheel-shipped).
+   Docs are the source-of-truth but may never be the *sole* home of
+   information required to use a part correctly in production.
+2. **Single-home content, multi-home pointers.** Redundant *pointers* (SP,
+   op-desc, error message) are cheap and good; redundant *content* is the
+   drift source. Every piece of content has exactly one authoritative home;
+   every other surface points or mirrors mechanically (D5).
+3. **Tool-description budget**: under `enumerate-all` every description rides
+   `tools=` each turn → op-desc carries the **minimum not to mislead** (param
+   shapes) **+ a pointer**; grammar bodies live pull-side.
+
+### D4. The placement map (the design)
+
+```
+SP         = map (registry-derived, Layer C) + discipline + the cheat-sheet
+             skill named explicitly (existence CI-gated, D5e)
+op-desc    = minimal params + doc_ref (structured pointer field, D5d)
+error msg  = on parse/validation failure: pointer to cheat-sheet / doc_ref
+             (failure-driven rail, D5c)
+skill L2   = the cheat-sheet body: composition know-how + per-part usage
+             essentials; hard token budget (~1-2k); examples CI-executable (D5a)
+skill L3   = build-time byte-mirror of the reference docs (production-
+             reachable full specs; E2's shipped corpus source) (D5b)
+docs       = source-of-truth (the single upstream for L3 mirrors, derived SP
+             rows, and cheat-sheet content; CI enforces the sync)
+```
+
+### D5. Drift-proofing mechanisms (what makes this real, not paper)
+
+The cheat-sheet duplicates knowledge that lives in docs/parsers — the same
+hand-list-drift failure mode this arc fought at the registry level (#2899,
+Layer C). Placement without these gates is a regression:
+
+- **D5a — Executable cheat-sheet.** Every example in the cheat-sheet is
+  CI-validated against the real implementation: yaml pipeline blocks must
+  pass `parse_pipeline_dsl`; blueprints must pass `validate_blueprint`;
+  op-call examples must validate against `OP_KIND_MODEL_MAP` schemas. A
+  wrong example cannot ship. Derived sections (op lists, part-type rows) are
+  generated from registries; prose stays authored — the Layer-C C2/C3 split
+  applied to content.
+- **D5b — Builtin tier as the docs carrier (resolves fork §7b).** The
+  cheat-sheet skill's **L3 assets = build-time byte-mirrors of the
+  `reference/` docs**, shipped via the already-packaged builtin tier
+  (`builtin/**` glob, F3a) and CI-checked byte-identical against `docs/`.
+  One mechanism gives: production file-read reachability, a shipped corpus
+  for E2's semantic index, and working doc-pointers in production. Docs stay
+  the source-of-truth; distribution rides the builtin tier.
+- **D5c — Error-message rails.** Parse/validation errors returned to the
+  model (`PipelineParseError`, blueprint/schema rejections) carry the
+  pointer ("see the reyn cheat-sheet skill / <doc_ref>"). The failure moment
+  is the highest-value teaching moment, and the re-prompt loop already
+  exists.
+- **D5d — `doc_ref` as a first-class field** on ToolDefinition/PartTypeSpec,
+  surfaced in `describe_action`, with a registry-walk completeness gate
+  (every op whose spec exceeds its description carries one). This fixes
+  "Control-IR BROKEN as a class" structurally instead of hand-editing N
+  descriptions; `hooks_add`'s hand-written pointer becomes the general rule.
+- **D5e — SP-pointer ↔ builtin existence gate.** Builtins stay inert
+  (`auto_invoke=False`, F3a) — a skill's menu line is advertising, not
+  execution, but relaxing a landed safety default is not needed: the SP
+  names the cheat-sheet directly. That name is then a load-bearing contract
+  → a CI test asserts the named builtin exists (a dangling SP pointer is the
+  silent-never-fire class again).
+
+### D6. Decisions and residual forks
+
+- **§7b: RESOLVED by D5b (recommendation)** — package `reference/` as
+  builtin-carried L3 mirrors, not as a wheel-docs tree nor a hand-distilled
+  bundle. Needs lead/owner confirm on the build-step mechanics.
+- **Inert-vs-hub: ruled** — keep inert-ship; SP-named pointer + D5e gate.
+- **F3b reshape**: flagship = the cheat-sheet skill; per-task builtins
+  (retrieve-then-synthesize / draft→judge→match→revise / status-card /
+  one hook exemplar) secondary. Cold-start/first-hour utility is **one**
+  curation criterion (retention gate), not the sole one (owner correction
+  recorded): steady-state value (e.g. reactive hooks) and exemplar quality
+  count equally. Legacy cookbook SKILL.md (removed phase-graph shape) must
+  be fixed/annotated so authors can't copy the wrong template.
+- **PARTIAL quick-fixes** riding F3b: inline `present`'s description gains
+  the component/`$bind` enumeration (or doc_ref); skill-install's gains the
+  SKILL.md live-format essentials (or doc_ref).
+
+### D7. Evaluation
+
+- **J-LEARN journey** (added to §2.6/§5): in a production-shaped deploy (no
+  docs dir), a cold model must author a *valid* pipeline/blueprint on first
+  attempt by following the 動線 (SP → cheat-sheet → L3/doc_ref). Metric:
+  first-try validity rate; falsify: **strip the cheat-sheet → authoring
+  quality collapses** (witnesses the placement is load-bearing).
+- Gate falsifies: a bad example in the cheat-sheet → D5a RED; L3 mirror
+  drift → D5b byte-gate RED; missing doc_ref on a spec-bearing op → D5d
+  walk RED; renaming the cheat-sheet → D5e RED.
+
+### D8. Sequencing
+
+D-layer work rides F3b (cheat-sheet = flagship content) plus a small
+mechanism slice (D5c error rails, D5d doc_ref field+gate, D5e SP gate,
+D5b build-step) — one PR or an F3b sibling; E2 later consumes D5b's shipped
+mirrors. F3a (builtin tier plumbing) is unchanged and already in flight.
