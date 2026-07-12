@@ -41,6 +41,7 @@ from dataclasses import asdict
 from typing import Any, Mapping
 
 from reyn.tools.descriptions import discovery
+from reyn.tools.descriptions import mcp as _mcp_descriptions
 from reyn.tools.mcp import _MCP_TOOL_ARGS_KEY  # #1646: single-source the inner-args key
 from reyn.tools.types import ToolContext, ToolDefinition, ToolGates, ToolResult
 
@@ -114,14 +115,10 @@ async def _handle_mcp_search_registry(
 # ── mcp__install_registry ─────────────────────────────────────────────────────
 
 
-_MCP_INSTALL_REGISTRY_DESCRIPTION = (
-    "Install an MCP server from the official MCP registry by its "
-    "registry name (server_id from mcp__search_registry candidates[].name). "
-    "When the server requires secret environment variables that the "
-    "operator has not yet set, the call returns status='needs_secrets' "
-    "with a guide explaining the `reyn secret set <KEY>` command; relay "
-    "that to the user and retry after they confirm secrets are set."
-)
+# Reviewable in src/reyn/tools/descriptions/mcp.py (Phase 2 of the
+# tool-description package refactor) — this alias keeps the call site
+# unchanged (byte-identical relocation, no LLM-facing text change).
+_MCP_INSTALL_REGISTRY_DESCRIPTION = _mcp_descriptions.mcp_install_registry.text
 
 _MCP_INSTALL_REGISTRY_PARAMETERS: dict[str, Any] = {
     "type": "object",
@@ -213,13 +210,10 @@ async def _handle_mcp_install_registry(
 # ── mcp__install_package ──────────────────────────────────────────────────────
 
 
-_MCP_INSTALL_PACKAGE_DESCRIPTION = (
-    "Install an MCP server from a third-party package channel "
-    "(npm / pypi / docker) or a GitHub repo URL. Use when the server "
-    "isn't in the official registry (= mcp__search_registry returned "
-    "no match). Secret detection works the same as install_registry "
-    "for npm/pypi/docker; github URLs cannot pre-declare secrets."
-)
+# Reviewable in src/reyn/tools/descriptions/mcp.py (Phase 2 of the
+# tool-description package refactor) — this alias keeps the call site
+# unchanged (byte-identical relocation, no LLM-facing text change).
+_MCP_INSTALL_PACKAGE_DESCRIPTION = _mcp_descriptions.mcp_install_package.text
 
 _MCP_INSTALL_PACKAGE_PARAMETERS: dict[str, Any] = {
     "type": "object",
@@ -342,12 +336,10 @@ async def _handle_mcp_install_package(
 # ── mcp__install_local ────────────────────────────────────────────────────────
 
 
-_MCP_INSTALL_LOCAL_DESCRIPTION = (
-    "Install a local MCP server by registering a {command, args} pair "
-    "directly. Use for LLM-authored scripts or local development "
-    "servers. Bypasses package registries — cannot auto-detect required "
-    "secrets, so pass env_overrides inline when the server needs env-vars."
-)
+# Reviewable in src/reyn/tools/descriptions/mcp.py (Phase 2 of the
+# tool-description package refactor) — this alias keeps the call site
+# unchanged (byte-identical relocation, no LLM-facing text change).
+_MCP_INSTALL_LOCAL_DESCRIPTION = _mcp_descriptions.mcp_install_local.text
 
 _MCP_INSTALL_LOCAL_PARAMETERS: dict[str, Any] = {
     "type": "object",
@@ -533,16 +525,10 @@ async def _handle_mcp_install_local(
 # ── mcp__call_tool ────────────────────────────────────────────────────────────
 
 
-_MCP_CALL_TOOL_DESCRIPTION = (
-    "Call a tool on an installed MCP server — GENERIC FALLBACK. "
-    "PREFER the per-tool 'mcp__<server>__<tool>' actions (e.g. "
-    "'mcp__time__get_current_time') when one is listed: they take the target "
-    "tool's own parameters directly (authoritative input_schema via "
-    "describe_action), with no generic envelope. Use this generic verb only as "
-    "a fallback when no per-tool action is available. Pass the tool identifier "
-    "in <server>__<tool> form (e.g. 'time__get_current_time') as returned by "
-    "mcp__list_tools, plus the tool's own args dict."
-)
+# Reviewable in src/reyn/tools/descriptions/mcp.py (Phase 2 of the
+# tool-description package refactor) — this alias keeps the call site
+# unchanged (byte-identical relocation, no LLM-facing text change).
+_MCP_CALL_TOOL_DESCRIPTION = _mcp_descriptions.mcp_call_tool.text
 
 _MCP_CALL_TOOL_PARAMETERS: dict[str, Any] = {
     "type": "object",

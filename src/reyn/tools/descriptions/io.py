@@ -1,0 +1,226 @@
+"""Tool descriptions for the ``io`` category.
+
+Phase 2 of the tool-description package refactor (byte-identical
+relocation — no LLM-facing text change): every ``io``-category
+ToolDefinition's description string lives here as a reviewable
+``ToolDescription`` record. Each ``.text`` value is copied verbatim from
+its origin tool module; the origin module now aliases its
+``_X_DESCRIPTION`` module constant to ``io.NAME.text`` so every call
+site is unchanged.
+
+Covers: file.py's 6 verbs (read_file / write_file / delete_file /
+edit_file / list_directory / grep_files / glob_files), drop_source, and
+index_update. ``index_update``'s ``ToolDefinition.category`` field is
+``"discovery"`` in code (it shares the FP-0057 index lifecycle with
+``drop_source``) — it is grouped here by feature (index/file-adjacent
+I/O), matching the Phase 2 dispatch brief, not by its literal
+``category=`` value.
+"""
+from __future__ import annotations
+
+from reyn.tools.descriptions._types import ToolDescription
+
+read_file = ToolDescription(
+    tool_name="read_file",
+    surfaced="router + phase (gates.router=allow, gates.phase=allow)",
+    purpose=(
+        "Read a file's contents under the agent's read scope, with "
+        "guidance toward conventional project-root file locations."
+    ),
+    text=(
+        "Read a file's contents under the agent's read scope. "
+        "Common conventions: README is at project root as "
+        "`README.md`. CLAUDE.md, CHANGELOG.md, and "
+        "configuration files (e.g. `reyn.yaml`, "
+        "`pyproject.toml`) are at project root. Try these "
+        "conventional paths directly instead of asking the "
+        "user where the file lives."
+    ),
+    ja=(
+        "エージェントの読み取りスコープ内のファイル内容を読む。README は "
+        "プロジェクトルートの README.md、CLAUDE.md / CHANGELOG.md / 設定"
+        "ファイル（reyn.yaml、pyproject.toml 等）もプロジェクトルートにある"
+        "という慣習を踏まえ、ユーザーに場所を尋ねる前にこれらの慣習パスを"
+        "直接試す。"
+    ),
+)
+
+write_file = ToolDescription(
+    tool_name="write_file",
+    surfaced="router + phase (gates.router=allow, gates.phase=allow)",
+    purpose=(
+        "Create or overwrite a whole file under the agent's write scope; "
+        "steers the LLM toward edit_file for partial changes."
+    ),
+    text=(
+        "Write content to a file under the agent's write scope. "
+        "Creates or overwrites the WHOLE file. For a partial or surgical "
+        "change to an existing file, prefer the `file__edit` action instead of "
+        "rewriting the whole file."
+    ),
+    ja=(
+        "エージェントの書き込みスコープ内のファイルにコンテンツを書き込む。"
+        "ファイル全体を新規作成または上書きする。既存ファイルへの部分的な"
+        "変更には、ファイル全体を書き直すのではなく file__edit を使うことを"
+        "推奨する。"
+    ),
+)
+
+delete_file = ToolDescription(
+    tool_name="delete_file",
+    surfaced="router + phase (gates.router=allow, gates.phase=allow)",
+    purpose="Delete a file under the agent's write scope.",
+    text="Delete a file under the agent's write scope.",
+    ja="エージェントの書き込みスコープ内のファイルを削除する。",
+)
+
+edit_file = ToolDescription(
+    tool_name="edit_file",
+    surfaced="router + phase (gates.router=allow, gates.phase=allow)",
+    purpose=(
+        "Replace a unique string in an existing file for a partial/surgical "
+        "edit, avoiding a whole-file read+write round-trip."
+    ),
+    text=(
+        "Replace a unique string in a file under the agent's write scope. "
+        "`old_string` MUST appear exactly once in the file; if it appears "
+        "multiple times, the call fails with a count — re-call with a longer "
+        "context-including snippet, or pass `replace_all=true` to replace "
+        "every occurrence. Use this for partial edits instead of read+write "
+        "for the whole file."
+    ),
+    ja=(
+        "エージェントの書き込みスコープ内のファイルで、一意な文字列を置換"
+        "する。old_string はファイル内にちょうど1回だけ出現する必要があり、"
+        "複数回出現する場合はエラーになる（より長い文脈を含めて再指定する"
+        "か、replace_all=true を渡す）。ファイル全体の読み書きではなく部分"
+        "編集に使う。"
+    ),
+)
+
+grep_files = ToolDescription(
+    tool_name="grep_files",
+    surfaced="router + phase (gates.router=allow, gates.phase=allow)",
+    purpose=(
+        "Search for a regex pattern across files under the agent's read "
+        "scope, distinct from list_directory's name-only enumeration."
+    ),
+    text=(
+        "Search for a regex pattern across files under the agent's read scope. "
+        "Use this when you need to find text or code patterns in files — "
+        "do NOT use list_directory for grep/glob intent. "
+        "Returns matching lines with file paths and line numbers."
+    ),
+    ja=(
+        "エージェントの読み取りスコープ内のファイルに対して正規表現パター"
+        "ンで検索する。テキストやコードパターンを探す際に使う（list_"
+        "directory はグレップ/グロブ用途には使わない）。マッチした行を"
+        "ファイルパスと行番号付きで返す。"
+    ),
+)
+
+glob_files = ToolDescription(
+    tool_name="glob_files",
+    surfaced="router + phase (gates.router=allow, gates.phase=allow)",
+    purpose=(
+        "Enumerate files by name/glob pattern under the agent's read scope, "
+        "distinct from list_directory's flat single-level listing."
+    ),
+    text=(
+        "Find files matching a glob pattern (e.g. '**/*.py') under the agent's "
+        "read scope. Use `**` to recurse into subdirectories. Use this when you "
+        "need to enumerate files by name pattern — do NOT use list_directory "
+        "for glob intent. Returns a list of matching file paths."
+    ),
+    ja=(
+        "エージェントの読み取りスコープ内で glob パターン（例: '**/*.py'）"
+        "に一致するファイルを探す。`**` でサブディレクトリを再帰する。"
+        "ファイル名パターンでの列挙に使う（list_directory はグロブ用途には"
+        "使わない）。一致したファイルパスのリストを返す。"
+    ),
+)
+
+list_directory = ToolDescription(
+    tool_name="list_directory",
+    surfaced="router + phase (gates.router=allow, gates.phase=allow)",
+    purpose=(
+        "List a single directory's immediate contents (names + types) "
+        "under the agent's read scope — the flat, non-recursive counterpart "
+        "to grep_files / glob_files."
+    ),
+    text=(
+        "List contents of a directory under the agent's read scope. "
+        "Returns names + types (file/dir)."
+    ),
+    ja=(
+        "エージェントの読み取りスコープ内のディレクトリの内容を一覧表示"
+        "する。名前と種別（file/dir）を返す。"
+    ),
+)
+
+drop_source = ToolDescription(
+    tool_name="drop_source",
+    surfaced="router + phase (gates.router=allow, gates.phase=allow)",
+    purpose=(
+        "Remove an indexed source entirely (SQLite backend + manifest "
+        "entry) — the destructive counterpart to index_update, e.g. when "
+        "retiring a trial source or rebuilding from scratch."
+    ),
+    text=(
+        "Remove an indexed source entirely (= delete its SQLite + manifest entry). "
+        "Use when retiring trial sources or replacing with a different strategy. "
+        "Permission-gated; user is prompted to confirm."
+    ),
+    ja=(
+        "インデックス済みソースを完全に削除する（SQLite バックエンド＋"
+        "マニフェストエントリを削除）。試験的なソースの廃止や別の戦略への"
+        "切り替え時に使う。パーミッションゲート付きで、ユーザーに確認を"
+        "求める。"
+    ),
+)
+
+index_update = ToolDescription(
+    tool_name="index_update",
+    surfaced=(
+        "router + phase (gates.router=allow, gates.phase=allow) — own-write, "
+        "default-ALLOW op (FP-0057 Phase 2a)"
+    ),
+    purpose=(
+        "Incrementally reconcile chunks into an indexed source's in-core "
+        "IndexBackend (add/update/remove/skip by content_hash), the "
+        "constructive counterpart to drop_source — NO full-rebuild mode."
+    ),
+    text=(
+        "Incrementally ingest chunks into an indexed source, reconciling "
+        "against its current content: NEW content_hash values are embedded and "
+        "added; a source_path whose chunks changed (new hash under a path "
+        "already indexed) is updated (old chunks for that path replaced); a "
+        "source_path this call re-supplies chunks for but whose old chunk "
+        "hashes are absent from this call are removed; unchanged content_hash "
+        "values are skipped (no re-embed). NO full-rebuild mode — to rebuild a "
+        "source from scratch, call `drop_source` then `index_update` on the "
+        "fresh (empty) source. The caller supplies pre-chunked text (chunking "
+        "is the caller's responsibility, not this tool's)."
+    ),
+    ja=(
+        "インデックス済みソースに対してチャンクを差分投入し、現在の内容と"
+        "照合する（reconcile）: 新しい content_hash は埋め込んで追加、既存"
+        "パスのハッシュが変わっていれば更新、今回再提示されなかった旧"
+        "ハッシュは削除、変化のない content_hash は再埋め込みせずスキップ"
+        "する。フルリビルドモードはない（ゼロから作り直すには drop_source "
+        "してから空のソースに index_update する）。チャンク分割は呼び出し"
+        "側の責任。"
+    ),
+)
+
+ALL: dict[str, ToolDescription] = {
+    "read_file": read_file,
+    "write_file": write_file,
+    "delete_file": delete_file,
+    "edit_file": edit_file,
+    "grep_files": grep_files,
+    "glob_files": glob_files,
+    "list_directory": list_directory,
+    "drop_source": drop_source,
+    "index_update": index_update,
+}

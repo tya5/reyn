@@ -15,15 +15,13 @@ from __future__ import annotations
 from typing import Any, Mapping
 
 from reyn.llm.model_resolver import resolve_purpose_class  # #1673
+from reyn.tools.descriptions import execution as _execution_descriptions
 from reyn.tools.types import ToolContext, ToolDefinition, ToolGates, ToolResult
 
-_SANDBOXED_EXEC_DESCRIPTION = (
-    "Execute a command in a sandboxed environment (FP-0017). The sandbox "
-    "policy (network access + filesystem scope) is the OPERATOR's, resolved "
-    "by the OS — it is not chosen here. "
-    "argv: command and arguments (argv[0] is the executable). "
-    "timeout_seconds: wall-clock time limit in seconds (default 60)."
-)
+# Reviewable in src/reyn/tools/descriptions/execution.py (Phase 2 of the
+# tool-description package refactor) — this alias keeps the call site
+# unchanged (byte-identical relocation, no LLM-facing text change).
+_SANDBOXED_EXEC_DESCRIPTION = _execution_descriptions.sandboxed_exec.text
 
 
 # #1339 / sandbox-model completion: the tool exposes ONLY argv (+ timeout). The

@@ -18,14 +18,13 @@ from __future__ import annotations
 
 from typing import Any, Mapping
 
+from reyn.tools.descriptions import delegation as _delegation_descriptions
 from reyn.tools.types import ToolContext, ToolDefinition, ToolGates, ToolResult
 
-_AGENT_SPAWN_DESCRIPTION = (
-    "Create a new agent under your authority (org-design): give it a name + role. The "
-    "new agent's capabilities are automatically capped at a SUBSET of your own (it can "
-    "never do anything you can't). Use to design a team/org of agents; to narrow a "
-    "member's capabilities further or wire who-can-message-whom, use topology_create."
-)
+# Reviewable in src/reyn/tools/descriptions/delegation.py (Phase 2 of the
+# tool-description package refactor) — this alias keeps the call site
+# unchanged (byte-identical relocation, no LLM-facing text change).
+_AGENT_SPAWN_DESCRIPTION = _delegation_descriptions.agent_spawn.text
 
 _AGENT_SPAWN_PARAMETERS: dict[str, Any] = {
     "type": "object",

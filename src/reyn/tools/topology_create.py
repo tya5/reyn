@@ -21,16 +21,13 @@ from __future__ import annotations
 
 from typing import Any, Mapping
 
+from reyn.tools.descriptions import delegation as _delegation_descriptions
 from reyn.tools.types import ToolContext, ToolDefinition, ToolGates, ToolResult
 
-_TOPOLOGY_CREATE_DESCRIPTION = (
-    "Wire agents you spawned into a topology (org-design): group them by kind "
-    "(network = all-to-all, team = star around a leader, pipeline = ordered chain) to "
-    "control who-can-message-whom, and optionally bind each member to a "
-    "capability_profile to narrow it further. You may only include agents in your own "
-    "spawn subtree (yourself or agents you created via agent_spawn) — a member's "
-    "capabilities stay capped at a SUBSET of yours."
-)
+# Reviewable in src/reyn/tools/descriptions/delegation.py (Phase 2 of the
+# tool-description package refactor) — this alias keeps the call site
+# unchanged (byte-identical relocation, no LLM-facing text change).
+_TOPOLOGY_CREATE_DESCRIPTION = _delegation_descriptions.topology_create.text
 
 _TOPOLOGY_CREATE_PARAMETERS: dict[str, Any] = {
     "type": "object",

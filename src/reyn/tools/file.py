@@ -20,6 +20,7 @@ from __future__ import annotations
 
 from typing import Any, Mapping
 
+from reyn.tools.descriptions import io as _io_descriptions
 from reyn.tools.op_context_bridge import (
     build_legacy_op_context as _build_legacy_op_context,
 )
@@ -27,55 +28,24 @@ from reyn.tools.types import ToolContext, ToolDefinition, ToolGates, ToolResult
 
 # Descriptions must be byte-identical to the ToolSpec.description literals in
 # router_tools.py lines ~546-614 (C1-C4 block). Copied verbatim.
+#
+# Reviewable in src/reyn/tools/descriptions/io.py (Phase 2 of the
+# tool-description package refactor) — these aliases keep the call sites
+# unchanged (byte-identical relocation, no LLM-facing text change).
 
-_LIST_DIRECTORY_DESCRIPTION = (
-    "List contents of a directory under the agent's read scope. "
-    "Returns names + types (file/dir)."
-)
+_LIST_DIRECTORY_DESCRIPTION = _io_descriptions.list_directory.text
 
-_READ_FILE_DESCRIPTION = (
-    "Read a file's contents under the agent's read scope. "
-    "Common conventions: README is at project root as "
-    "`README.md`. CLAUDE.md, CHANGELOG.md, and "
-    "configuration files (e.g. `reyn.yaml`, "
-    "`pyproject.toml`) are at project root. Try these "
-    "conventional paths directly instead of asking the "
-    "user where the file lives."
-)
+_READ_FILE_DESCRIPTION = _io_descriptions.read_file.text
 
-_WRITE_FILE_DESCRIPTION = (
-    "Write content to a file under the agent's write scope. "
-    "Creates or overwrites the WHOLE file. For a partial or surgical "
-    "change to an existing file, prefer the `file__edit` action instead of "
-    "rewriting the whole file."
-)
+_WRITE_FILE_DESCRIPTION = _io_descriptions.write_file.text
 
-_DELETE_FILE_DESCRIPTION = (
-    "Delete a file under the agent's write scope."
-)
+_DELETE_FILE_DESCRIPTION = _io_descriptions.delete_file.text
 
-_EDIT_FILE_DESCRIPTION = (
-    "Replace a unique string in a file under the agent's write scope. "
-    "`old_string` MUST appear exactly once in the file; if it appears "
-    "multiple times, the call fails with a count — re-call with a longer "
-    "context-including snippet, or pass `replace_all=true` to replace "
-    "every occurrence. Use this for partial edits instead of read+write "
-    "for the whole file."
-)
+_EDIT_FILE_DESCRIPTION = _io_descriptions.edit_file.text
 
-_GREP_FILES_DESCRIPTION = (
-    "Search for a regex pattern across files under the agent's read scope. "
-    "Use this when you need to find text or code patterns in files — "
-    "do NOT use list_directory for grep/glob intent. "
-    "Returns matching lines with file paths and line numbers."
-)
+_GREP_FILES_DESCRIPTION = _io_descriptions.grep_files.text
 
-_GLOB_FILES_DESCRIPTION = (
-    "Find files matching a glob pattern (e.g. '**/*.py') under the agent's "
-    "read scope. Use `**` to recurse into subdirectories. Use this when you "
-    "need to enumerate files by name pattern — do NOT use list_directory "
-    "for glob intent. Returns a list of matching file paths."
-)
+_GLOB_FILES_DESCRIPTION = _io_descriptions.glob_files.text
 
 # Parameters JSON schemas must be byte-identical to the ToolSpec.parameters
 # literals in router_tools.py lines ~546-614 (C1-C4 block). Copied verbatim.

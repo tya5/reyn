@@ -30,16 +30,13 @@ from __future__ import annotations
 import json
 from typing import Any, Mapping
 
+from reyn.tools.descriptions import execution as _execution_descriptions
 from reyn.tools.types import ToolContext, ToolDefinition, ToolGates
 
-_SHELL_DESCRIPTION = (
-    "Run a shell command (via sandboxed_exec) whose STDIN receives the "
-    "previous pipeline step's pipe-data JSON-encoded, and whose STDOUT "
-    "becomes this step's output. command: the shell command line "
-    "(argv[0]='/bin/sh', argv[1]='-c'). timeout: wall-clock time limit in "
-    "seconds (default 60). The sandbox policy (network access + filesystem "
-    "scope) is the OPERATOR's, resolved by the OS — it is not chosen here."
-)
+# Reviewable in src/reyn/tools/descriptions/execution.py (Phase 2 of the
+# tool-description package refactor) — this alias keeps the call site
+# unchanged (byte-identical relocation, no LLM-facing text change).
+_SHELL_DESCRIPTION = _execution_descriptions.shell.text
 
 _SHELL_PARAMETERS: dict[str, Any] = {
     "type": "object",

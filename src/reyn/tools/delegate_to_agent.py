@@ -31,6 +31,7 @@ from __future__ import annotations
 import copy
 from typing import TYPE_CHECKING, Any, Mapping
 
+from reyn.tools.descriptions import delegation as _delegation_descriptions
 from reyn.tools.types import ToolContext, ToolDefinition, ToolGates, ToolResult
 
 if TYPE_CHECKING:
@@ -38,8 +39,10 @@ if TYPE_CHECKING:
 
 
 # Description must be byte-identical to router_tools.py line 403 ToolSpec.
-# Copied verbatim from the ToolSpec literal at commit-time.
-_DELEGATE_TO_AGENT_DESCRIPTION = "Forward the request to a peer agent."
+# Reviewable in src/reyn/tools/descriptions/delegation.py (Phase 2 of the
+# tool-description package refactor) — this alias keeps the call site
+# unchanged (byte-identical relocation, no LLM-facing text change).
+_DELEGATE_TO_AGENT_DESCRIPTION = _delegation_descriptions.delegate_to_agent.text
 
 # Parameters JSON schema must be byte-identical to router_tools.py ToolSpec
 # for delegate_to_agent. The "to" property omits the dynamic enum (which is

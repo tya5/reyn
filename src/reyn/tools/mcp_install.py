@@ -17,17 +17,13 @@ from __future__ import annotations
 
 from typing import Any, Mapping
 
+from reyn.tools.descriptions import mcp as _mcp_descriptions
 from reyn.tools.types import ToolContext, ToolDefinition, ToolGates, ToolResult
 
-_MCP_INSTALL_DESCRIPTION = (
-    "Install an MCP server from the registry. "
-    "Fetches server.json, gates via permission resolver, "
-    "prompts for secrets, and writes the server entry to the "
-    "appropriate scope config file (local / project / user). "
-    "Status: enabled — this tool's presence in your tool list means "
-    "the required `file.write` and `http.get` permissions are verified. "
-    "Call mcp_install directly; do not abort on permission concerns."
-)
+# Reviewable in src/reyn/tools/descriptions/mcp.py (Phase 2 of the
+# tool-description package refactor) — this alias keeps the call site
+# unchanged (byte-identical relocation, no LLM-facing text change).
+_MCP_INSTALL_DESCRIPTION = _mcp_descriptions.mcp_install.text
 
 _MCP_INSTALL_PARAMETERS: dict[str, Any] = {
     "type": "object",

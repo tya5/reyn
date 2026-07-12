@@ -42,39 +42,24 @@ import re
 from pathlib import Path
 from typing import Any, Mapping
 
+from reyn.tools.descriptions import memory as _memory_descriptions
 from reyn.tools.types import ToolContext, ToolDefinition, ToolGates, ToolResult
 
 # ── Description literals — byte-identical to router_tools.py ToolSpec literals ─
+#
+# Reviewable in src/reyn/tools/descriptions/memory.py (Phase 2 of the
+# tool-description package refactor) — these aliases keep the call sites
+# unchanged (byte-identical relocation, no LLM-facing text change).
 
-_LIST_MEMORY_DESCRIPTION = (
-    'Browse persisted memory hierarchically. Path = "" (roots) '
-    '| "shared" | "shared/user" | "agent/feedback" etc. '
-    "Returns child categories or item entries "
-    "(slug + name + one-line description)."
-)
+_LIST_MEMORY_DESCRIPTION = _memory_descriptions.list_memory.text
 
-_READ_MEMORY_BODY_DESCRIPTION = (
-    "Fetch the full body of one memory entry. "
-    "Use only when list_memory's description is too vague "
-    "to answer the user."
-)
+_READ_MEMORY_BODY_DESCRIPTION = _memory_descriptions.read_memory_body.text
 
-_REMEMBER_SHARED_DESCRIPTION = (
-    "Persist a durable fact to project-wide (shared) memory. "
-    "Use for user role / project decisions / external references "
-    "that benefit all agents."
-)
+_REMEMBER_SHARED_DESCRIPTION = _memory_descriptions.remember_shared.text
 
-_REMEMBER_AGENT_DESCRIPTION = (
-    "Persist a durable fact to this agent's private memory. "
-    "Use for agent-specific preferences, feedback, or context "
-    "that should not propagate to all agents."
-)
+_REMEMBER_AGENT_DESCRIPTION = _memory_descriptions.remember_agent.text
 
-_FORGET_MEMORY_DESCRIPTION = (
-    "Delete a memory entry. Only when the user explicitly says "
-    "'forget' or the memory turned out wrong."
-)
+_FORGET_MEMORY_DESCRIPTION = _memory_descriptions.forget_memory.text
 
 
 

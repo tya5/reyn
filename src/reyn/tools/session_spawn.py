@@ -20,14 +20,13 @@ from __future__ import annotations
 
 from typing import Any, Mapping
 
+from reyn.tools.descriptions import delegation as _delegation_descriptions
 from reyn.tools.types import ToolContext, ToolDefinition, ToolGates, ToolResult
 
-_SESSION_SPAWN_DESCRIPTION = (
-    "Spawn a fresh-context session under your agent to run a task in isolation. "
-    "Choose mode='ephemeral' (auto-vanishes after the task) or 'persistent'. "
-    "Optionally narrow the sub-session's capabilities (restrict-only). The session "
-    "runs the task; its result stays in that session."
-)
+# Reviewable in src/reyn/tools/descriptions/delegation.py (Phase 2 of the
+# tool-description package refactor) — this alias keeps the call site
+# unchanged (byte-identical relocation, no LLM-facing text change).
+_SESSION_SPAWN_DESCRIPTION = _delegation_descriptions.session_spawn.text
 
 _SESSION_SPAWN_PARAMETERS: dict[str, Any] = {
     "type": "object",
