@@ -853,3 +853,28 @@ slice extends the merged Layer C frame (`router_frame.py`) and is small; the
 `present` line is the load-bearing new SP content. No new "offload"
 axis/vocabulary/builtin. D5e's existence gate still couples the cheat-sheet's
 SP pointer to the shipped skill.
+
+### D9.5 — curated-5 final (F3b content, settled 2026-07-12, owner-confirmed)
+
+The builtin set F3b ships. Selection criteria: **first-hour common-task
+coverage (reuse succeeds) + good exemplar (author-from-template is cheap) +
+embedding-independence (reliable day-1 — semantic_search degrades without a
+configured embedding, the #2895 defect class; semantic_search builtins are a
+later *enhancement* tier, not the cold-start core).**
+
+| # | builtin | role | notes |
+|---|---|---|---|
+| 1 | **reyn cheat-sheet skill** | the hub | reyn-specific usage + composition know-how (incl. output→present / input→read) + op essentials + `doc_ref` pointers; D5 mechanisms attach here |
+| 2 | **`web_search → agent(summarize) → judge_output → present` pipeline** | flagship | owner-ruled; embedding-independent; the composition thesis input→workflow→output end-to-end; day-1 runnable + copy-template. **agent→judge edge has a ctx-vs-workspace-artifact seam (D2/present class) — the F3b coder resolves the data-plumbing by build+run (D5a gate catches a non-working flagship); do NOT manufacture the wiring.** agent step = `AgentStep` (`agent:`, executor.py:174; DSL example pipeline-dsl.md:371). network-dependent (not fully-offline; a file-read-retrieve variant is an owner FYI). |
+| 3 | **`draft → judge_output → revise` skill** | workflow (Evaluation) | embedding-independent; teaches SKILL.md live-format + the eval idiom |
+| 4 | **status/results card present-view** | output | zero-token present blueprint + `$bind`; the simple `present` exemplar |
+| 5 | **`on: file_changed` hook exemplar** | input/reactivity | owner's (A) chain as the 2nd exemplar; reactive idiom; inert-ship |
+
+Flagship skeleton (coder builds/verifies the exact wiring):
+```
+- tool:  {name: web_search, args: {query: <ctx>}, output: results}
+- agent: {prompt: "Summarize these results into an answer: {ctx.results}", output: summary}
+- tool:  {name: judge_output, args: {target: <summary's artifact position — verify at build>, rubric: ..., threshold: 0.8}, output: verdict}
+- tool:  {name: present, args: {data_inline: {summary: <ctx.summary>, verdict: <ctx.verdict>}, blueprint: [...]}}
+```
+All 5 ship inert (F3a: skills `auto_invoke=False`; pipelines/views invoke-by-name) with `provenance="builtin"` (F3a loader seam).
