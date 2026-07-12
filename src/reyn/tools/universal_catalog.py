@@ -40,6 +40,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, Collection, Final, Mapping
 
+from reyn.tools.descriptions import catalog as _catalog_descriptions
 from reyn.tools.descriptions import discovery
 from reyn.tools.types import ToolContext, ToolDefinition, ToolGates, ToolResult
 
@@ -364,46 +365,9 @@ _DESCRIBE_ACTION_PARAMETERS: dict[str, Any] = {
 }
 
 
-_INVOKE_ACTION_DESCRIPTION = (
-    "WHAT: Execute an action by qualified name (<category>__<entry>). "
-    "Executes the action's default semantic operation. "
-    "WHEN: Call this whenever you intend to run any action — MCP tool, "
-    "file operation, web search, memory write, semantic search, etc. All catalog actions "
-    "are invoked through this single entry point. "
-    "WHEN NOT: For chitchat or self-questions, reply without tools. "
-    "PREFERRED OVER: Legacy per-kind tools (call_mcp_tool, etc.) — "
-    "invoke_action covers all 13 action categories uniformly. "
-    "On unknown action_name, returns an error with similar-name suggestions. "
-    ""
-    "SPAWN-ACK HANDLING: when an action result is {status:'spawned', ...}, the "
-    "router exits the current turn before this tool description applies; the OS "
-    "emits the user-visible acknowledgment directly. You will not be asked to "
-    "compose a reply for the spawn-ack turn. "
-    ""
-    "TASK_SPAWNED: an agent-role message starting with [task_spawned] is "
-    "OS-emitted when an async task is launched (kind=agent, paired "
-    "with chain_id). The structured header "
-    "lets you correlate the spawn with the later [task_completed] message "
-    "carrying the same identifier. The trailing human-readable line is "
-    "what the user sees; the header is your correlation record. "
-    ""
-    "TASK_COMPLETED: a user-role message starting with [task_completed] is "
-    "OS-injected when a previously-spawned async task finishes (kind=agent) "
-    "or a spawned session completes (kind=spawned_session). The message "
-    "carries the task's status + result "
-    "fields. status='finished' means normal completion; other values "
-    "('loop_limit_exceeded', 'phase_budget_exceeded', 'budget_exceeded', "
-    "'error', or any non-'finished' value with result.error present) "
-    "indicate the task did not complete normally. "
-    ""
-    "AGENT DELEGATION: For peer agent delegation, use "
-    "action_name='multi_agent__delegate' with args {to: '<agent_name>', "
-    "request: ...}; get its canonical args via "
-    "describe_action(action_name='multi_agent__delegate'). "
-    "Use when task is outside available actions but matches a peer agent's role, "
-    "or when user explicitly addresses a named agent. "
-    "Acknowledge delegation in 1 sentence."
-)
+# Relocated to reyn.tools.descriptions.catalog (Phase 3 tool-description
+# package refactor — byte-identical, no LLM-facing text change).
+_INVOKE_ACTION_DESCRIPTION = _catalog_descriptions.invoke_action.text
 
 
 _INVOKE_ACTION_PARAMETERS: dict[str, Any] = {

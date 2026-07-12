@@ -15,17 +15,12 @@ from __future__ import annotations
 
 from typing import Any, Mapping
 
+from reyn.tools.descriptions import interactive as _interactive_descriptions
 from reyn.tools.types import ToolContext, ToolDefinition, ToolGates, ToolResult
 
-_ASK_USER_DESCRIPTION = (
-    "Pause the current phase and ask the user a clarifying question. "
-    "The OS suspends execution, presents the question (and optional "
-    "suggestions) to the user, waits for a free-text answer, and "
-    "resumes the phase with the answer available as a control IR result. "
-    "question: the question to display to the user. "
-    "suggestions: optional list of suggested responses. "
-    "required: if true (default), an empty answer is rejected."
-)
+# Relocated to reyn.tools.descriptions.interactive (Phase 3 tool-description
+# package refactor — byte-identical, no LLM-facing text change).
+_ASK_USER_DESCRIPTION = _interactive_descriptions.ask_user.text
 
 _ASK_USER_PARAMETERS: dict[str, Any] = {
     "type": "object",

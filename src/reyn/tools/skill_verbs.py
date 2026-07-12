@@ -25,19 +25,14 @@ from __future__ import annotations
 
 from typing import Any, Mapping
 
+from reyn.tools.descriptions import skill as _skill_descriptions
 from reyn.tools.types import ToolContext, ToolDefinition, ToolGates, ToolResult
 
 # ── skill_management__install_local ──────────────────────────────────────────
 
-_SKILL_INSTALL_LOCAL_DESCRIPTION = (
-    "Register a local skill directory into the project config "
-    "by reading its SKILL.md frontmatter and writing an entry to "
-    ".reyn/config/skills.yaml. The skill is immediately available "
-    "to sessions after the next hot-reload. Pass the path to the "
-    "directory containing SKILL.md (or the SKILL.md file directly). "
-    "Use 'name' to override the config key when the directory name "
-    "differs from the desired skill identifier."
-)
+# Relocated to reyn.tools.descriptions.skill (Phase 3 tool-description
+# package refactor — byte-identical, no LLM-facing text change).
+_SKILL_INSTALL_LOCAL_DESCRIPTION = _skill_descriptions.skill_install_local.text
 
 _SKILL_INSTALL_LOCAL_PARAMETERS: dict[str, Any] = {
     "type": "object",
@@ -114,17 +109,9 @@ async def _handle_skill_install_local(
 
 # ── skill_management__install_source ─────────────────────────────────────────
 
-_SKILL_INSTALL_SOURCE_DESCRIPTION = (
-    "Fetch a skill from a git/GitHub URL and install it into the project. "
-    "The repo is shallow-cloned to .reyn/skills/<name>/, the SKILL.md is "
-    "threat-scanned, and an entry is written to .reyn/config/skills.yaml. "
-    "The skill is immediately available to sessions after the next hot-reload. "
-    "Requires http.get permission for the source host in the skill's frontmatter. "
-    "Source format: 'https://github.com/user/repo' (repo root must contain SKILL.md) "
-    "or 'https://github.com/user/repo//path/to/skill' (subdir with SKILL.md). "
-    "Use 'name' to override the config key when the default (from SKILL.md frontmatter "
-    "or repo/subdir basename) differs from the desired skill identifier."
-)
+# Relocated to reyn.tools.descriptions.skill (Phase 3 tool-description
+# package refactor — byte-identical, no LLM-facing text change).
+_SKILL_INSTALL_SOURCE_DESCRIPTION = _skill_descriptions.skill_install_source.text
 
 _SKILL_INSTALL_SOURCE_PARAMETERS: dict[str, Any] = {
     "type": "object",

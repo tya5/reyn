@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from typing import Any, Mapping
 
+from reyn.tools.descriptions import dev as _dev_descriptions
 from reyn.tools.types import ToolContext, ToolDefinition, ToolGates, ToolResult
 
 
@@ -37,17 +38,9 @@ def _as_reyn_src(result: dict) -> dict:
 # generic LLM hallucination — confirmed by grep across dogfood journal
 # findings hitting this exact wrong path repeatedly). Kept in sync with
 # ``docs/concepts`` actually existing at the repo root.
-_REYN_SRC_LIST_DESCRIPTION = (
-    "List entries under a path inside Reyn's own repository "
-    "(= the project that built this agent). Pass \"\" for "
-    "the repo root. Returns names + types (file/dir). Use "
-    "this to discover Reyn's source/doc layout before "
-    "reading specific files. Examples: list \"\" for the "
-    "top-level layout, \"docs/concepts\" for concept docs "
-    "(English; Japanese translations are the same path with a "
-    "\".ja.md\" filename suffix, not a separate directory), or "
-    "any subdirectory path for its contents."
-)
+# Relocated to reyn.tools.descriptions.dev (Phase 3 tool-description
+# package refactor — byte-identical, no LLM-facing text change).
+_REYN_SRC_LIST_DESCRIPTION = _dev_descriptions.reyn_src_list.text
 
 # Parameters JSON schema must be byte-identical to the current
 # router_tools.py ToolSpec.parameters for reyn_src_list.
@@ -71,17 +64,9 @@ _REYN_SRC_LIST_PARAMETERS: dict[str, Any] = {
 #  - C1: file-read vs semantic-search distinction must be explicit
 #  - C2: README curated navigation entry point retained as fallback
 #  - web_search avoidance retained (= original HN first-touch motivation)
-_REYN_SRC_READ_DESCRIPTION = (
-    "Read a text file from Reyn's own repository by an exact "
-    "repo-root-relative path. Use for: (a) reading a specific file the "
-    "user named (e.g. README.md), or (b) navigating "
-    "Reyn's source / docs when NO indexed source covers the topic. "
-    "If an indexed source description mentions concepts / design / "
-    "docs / Reyn, use `semantic_search` instead — guessing a file path is "
-    "unreliable; semantic search over indexed chunks is not. Fallback "
-    "entry point: reyn_src_read(\"README.md\") for the overview + "
-    "curated map of deep-dive paths."
-)
+# Relocated to reyn.tools.descriptions.dev (Phase 3 tool-description
+# package refactor — byte-identical, no LLM-facing text change).
+_REYN_SRC_READ_DESCRIPTION = _dev_descriptions.reyn_src_read.text
 
 # Parameters JSON schema for reyn_src_read. Mirrors ``read_file`` /
 # ``read_memory_body`` shape (= line-based ``offset`` / ``limit``) so the
@@ -172,14 +157,9 @@ async def _handle_read(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
     ))
 
 
-_REYN_SRC_GLOB_DESCRIPTION = (
-    "Find files in Reyn's own repository by glob pattern (e.g. "
-    "'docs/**/*.md', 'src/**/router*.py'). Returns up to 200 "
-    "repo-root-relative paths, alphabetically sorted. Use this when "
-    "you need to enumerate files matching a structural pattern; for "
-    "content search use reyn_src_grep, for a single named file use "
-    "reyn_src_read."
-)
+# Relocated to reyn.tools.descriptions.dev (Phase 3 tool-description
+# package refactor — byte-identical, no LLM-facing text change).
+_REYN_SRC_GLOB_DESCRIPTION = _dev_descriptions.reyn_src_glob.text
 
 _REYN_SRC_GLOB_PARAMETERS: dict[str, Any] = {
     "type": "object",
@@ -192,14 +172,9 @@ _REYN_SRC_GLOB_PARAMETERS: dict[str, Any] = {
     "required": ["pattern"],
 }
 
-_REYN_SRC_GREP_DESCRIPTION = (
-    "Search file contents in Reyn's own repository by regex. Returns "
-    "up to 50 matches as {path, line, snippet}. `path` scopes the "
-    "search (default = whole repo); `glob` further narrows by filename "
-    "(e.g. '**/*.py'). Use this for 'where in the Reyn source is X "
-    "handled' style questions; for structural enumeration use "
-    "reyn_src_glob, for reading one known file use reyn_src_read."
-)
+# Relocated to reyn.tools.descriptions.dev (Phase 3 tool-description
+# package refactor — byte-identical, no LLM-facing text change).
+_REYN_SRC_GREP_DESCRIPTION = _dev_descriptions.reyn_src_grep.text
 
 _REYN_SRC_GREP_PARAMETERS: dict[str, Any] = {
     "type": "object",

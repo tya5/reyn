@@ -24,17 +24,14 @@ from __future__ import annotations
 
 from typing import Any, Mapping
 
+from reyn.tools.descriptions import catalog as _catalog_descriptions
 from reyn.tools.types import ToolContext, ToolDefinition, ToolGates, ToolResult
 
 # ── list_agents ───────────────────────────────────────────────────────────────
 
-# Byte-identical to router_tools.py ToolSpec description for list_agents
-# (lines 297–301). Copied verbatim.
-_LIST_AGENTS_DESCRIPTION = (
-    "Browse peer agents reachable via topology. "
-    "Pass empty path for clusters; "
-    "pass a cluster name for agents in it."
-)
+# Relocated to reyn.tools.descriptions.catalog (Phase 3 tool-description
+# package refactor — byte-identical, no LLM-facing text change).
+_LIST_AGENTS_DESCRIPTION = _catalog_descriptions.list_agents.text
 
 # Byte-identical to router_tools.py ToolSpec parameters for list_agents
 # (lines 302–308). Copied verbatim.
@@ -88,12 +85,9 @@ LIST_AGENTS = ToolDefinition(
 
 # ── describe_agent ────────────────────────────────────────────────────────────
 
-# Byte-identical to router_tools.py ToolSpec description for describe_agent
-# (lines 313–316). Copied verbatim.
-_DESCRIBE_AGENT_DESCRIPTION = (
-    "Fetch full role / capabilities profile for one agent. "
-    "Call before delegate_to_agent if uncertain."
-)
+# Relocated to reyn.tools.descriptions.catalog (Phase 3 tool-description
+# package refactor — byte-identical, no LLM-facing text change).
+_DESCRIBE_AGENT_DESCRIPTION = _catalog_descriptions.describe_agent.text
 
 # Byte-identical to router_tools.py ToolSpec parameters for describe_agent
 # (lines 317–323). Copied verbatim.

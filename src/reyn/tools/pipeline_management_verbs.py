@@ -28,21 +28,16 @@ from __future__ import annotations
 
 from typing import Any, Mapping
 
+from reyn.tools.descriptions import pipeline_management as _pipeline_management_descriptions
 from reyn.tools.types import ToolContext, ToolDefinition, ToolGates, ToolResult
 
 # ── pipeline_management__install_local ───────────────────────────────────────
 
+# Relocated to reyn.tools.descriptions.pipeline_management (Phase 3
+# tool-description package refactor — byte-identical, no LLM-facing text
+# change).
 _PIPELINE_INSTALL_LOCAL_DESCRIPTION = (
-    "Register a local pipeline DSL file into the project config "
-    "by writing an entry to .reyn/config/pipelines.yaml. The pipeline is "
-    "immediately available to sessions (as pipeline__<key>.<name> and "
-    "run_pipeline) after the next hot-reload. Pass the direct path to the "
-    "pipeline's *.yaml DSL file (which may hold multiple '---'-separated "
-    "'pipeline:' documents). "
-    "Use 'name' to set the NAMESPACE KEY for the file; every pipeline in it "
-    "registers as '<name>.<declared-pipeline-name>'. 'name' need not match any "
-    "declared name and must not contain '.' (the reserved separator); it "
-    "defaults to the DSL file stem when omitted."
+    _pipeline_management_descriptions.pipeline_install_local.text
 )
 
 _PIPELINE_INSTALL_LOCAL_PARAMETERS: dict[str, Any] = {
@@ -121,20 +116,11 @@ async def _handle_pipeline_install_local(
 
 # ── pipeline_management__install_source ──────────────────────────────────────
 
+# Relocated to reyn.tools.descriptions.pipeline_management (Phase 3
+# tool-description package refactor — byte-identical, no LLM-facing text
+# change).
 _PIPELINE_INSTALL_SOURCE_DESCRIPTION = (
-    "Fetch a pipeline from a git/GitHub URL and install it into the project. "
-    "The repo is shallow-cloned to .reyn/pipelines/<name>/, the DSL is parsed "
-    "+ threat-scanned, and an entry is written to .reyn/config/pipelines.yaml. "
-    "The pipeline is immediately available to sessions after the next "
-    "hot-reload. Requires http.get permission for the source host. "
-    "Source format: 'https://github.com/user/repo' (repo root must contain "
-    "exactly one *.yaml DSL file, or 'path' selects it) or "
-    "'https://github.com/user/repo//path/to/pipelines' (subdir form). "
-    "Use 'path' to select the DSL file inside the clone when the repo/subdir "
-    "contains more than one *.yaml file. "
-    "Use 'name' to set the NAMESPACE KEY; every pipeline in the file registers "
-    "as '<name>.<declared-pipeline-name>'. 'name' need not match any declared "
-    "name and must not contain '.'; it defaults to the source basename."
+    _pipeline_management_descriptions.pipeline_install_source.text
 )
 
 _PIPELINE_INSTALL_SOURCE_PARAMETERS: dict[str, Any] = {
