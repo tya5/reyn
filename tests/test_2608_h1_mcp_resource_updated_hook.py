@@ -165,6 +165,59 @@ async def test_no_configured_hook_leaves_hook_side_a_pure_noop(tmp_path):
 
 
 # ---------------------------------------------------------------------------
+# Tier 2: #2875 F1 — MCP production path actually reaches McpIngressAdapter.to_event
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_real_mcp_push_routes_through_mcp_ingress_adapter_to_event(tmp_path, monkeypatch):
+    """Tier 2: #2875 F1 — the production MCP ingress path
+    (``ReynMCPMessageHandler.emit_resource_updated`` ->
+    ``MCPConnectionService._mcp_to_hook_event``) actually reaches
+    ``reyn.hooks.ingress.McpIngressAdapter.to_event``. Phase 2 (#2872) added
+    ``to_event``, but the MCP call site kept building the payload inline via
+    ``build_hook_payload`` directly (bypassing the adapter), so ``to_event`` was
+    production-dead for MCP — the §6 Ingress-Adapter unify was 3/4 wired, not
+    4/4. Record-then-delegate around the REAL ``McpIngressAdapter.to_event``
+    (the same idiom ``test_hook_event_schema_registry_sync_0059.py`` uses for
+    ``HookDispatcher.dispatch`` — every side effect still runs for real, only
+    the observation is added) and drive the SAME real subprocess push as the
+    core H1 proof above.
+
+    Strip-falsify: if the rewire were undone (``message_handler.py`` reverted
+    to building the payload itself, bypassing ``to_event``), ``calls`` stays
+    empty, ``_wait_for`` times out, and the ``(call,) = calls`` unpack below
+    raises — RED."""
+    from reyn.hooks.ingress import McpIngressAdapter
+
+    calls: list[tuple[str | None, str, bool]] = []
+    original = McpIngressAdapter.to_event
+
+    def _recording_to_event(self, uri, *, server, agent_name, resync):
+        calls.append((uri, server, resync))
+        return original(self, uri, server=server, agent_name=agent_name, resync=resync)
+
+    monkeypatch.setattr(McpIngressAdapter, "to_event", _recording_to_event)
+
+    hooks_config = [
+        {"on": "mcp_resource_updated", "template_push": {"message": "{{ uri }}"}},
+    ]
+    session = _make_session(tmp_path, hooks_config=hooks_config)
+    try:
+        client = await session._mcp_connection_service.get("srv", _stdio_cfg(_SUBSCRIBABLE_SERVER))
+        await client.subscribe_resource(_URI)
+
+        result = await client.call_tool("bump_and_notify", {})
+        assert result["isError"] is False
+
+        await _wait_for(lambda: bool(calls))
+        (call,) = calls  # exactly one push -> exactly one to_event call
+        assert call == (_URI, "srv", False)
+    finally:
+        await session._mcp_connection_service.aclose()
+
+
+# ---------------------------------------------------------------------------
 # Tier 2: bounded sync->async bridge — overflow drops, never blocks
 # ---------------------------------------------------------------------------
 

@@ -47,11 +47,13 @@ import pytest
 from reyn.core.events.state_log import StateLog
 from reyn.core.op_runtime import task as taskmod
 from reyn.hooks import dispatcher as dispatcher_mod
+from reyn.hooks.ingress import McpIngressAdapter
 from reyn.hooks.loader import load_hooks
 from reyn.hooks.registry import HookRegistry
 from reyn.hooks.schema_registry import (
     BUILTIN_HOOK_SCHEMAS,
     HookSchemaError,
+    bare_point,
     build_hook_payload,
     canonical_kind,
 )
@@ -172,12 +174,20 @@ async def test_all_ten_builtin_points_dispatch_schema_matching_payloads(
     await _wait_for(lambda: sum(1 for p, _ in captured if p in ("cron_fired", "webhook_received")) >= 2)
 
     # ── mcp_resource_updated (in-process MCP bridge) ── ``on_external_event`` is
-    # called SYNCHRONOUSLY by ``emit_resource_updated`` (mirroring the real
-    # ``MCPConnectionService.enqueue_external_event`` bridge, itself sync/
-    # non-blocking — the actual ``await`` happens on its own drain task); this
-    # bridge schedules the real (capturing) dispatch the same way.
-    def _mcp_bridge(point: str, template_vars: dict) -> None:
-        asyncio.create_task(disp.dispatch(point, template_vars))
+    # called SYNCHRONOUSLY by ``emit_resource_updated`` with the RAW signal
+    # (``uri``, ``resync``) — #2875 F1: the payload build now happens via the REAL
+    # ``McpIngressAdapter.to_event`` (proposal 0059 §6), mirroring the production
+    # ``MCPConnectionService._mcp_to_hook_event`` wiring exactly, so this also
+    # proves ``to_event`` is production-reached, not dead. The resulting
+    # ``HookEvent`` is handed to the real (capturing) dispatch the same
+    # sync-enqueue-then-async-drain shape the production bridge uses.
+    mcp_adapter = McpIngressAdapter(hook_trigger=None)  # to_event is pure — no I/O, no Session
+
+    def _mcp_bridge(uri: "str | None", resync: bool) -> None:
+        event = mcp_adapter.to_event(
+            uri, server="github", agent_name="sync-gate-agent", resync=resync,
+        )
+        asyncio.create_task(disp.dispatch(bare_point(event.kind), event.payload))
 
     handler = ReynMCPMessageHandler(
         lambda *a, **k: None, "github", on_external_event=_mcp_bridge, agent_name="sync-gate-agent",

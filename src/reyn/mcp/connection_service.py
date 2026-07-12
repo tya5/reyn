@@ -152,6 +152,7 @@ update is not.
 from __future__ import annotations
 
 import asyncio
+import functools
 import logging
 from typing import TYPE_CHECKING, Any, Awaitable, Callable
 
@@ -324,11 +325,17 @@ class MCPConnectionService:
                 handler = ReynMCPMessageHandler(
                     self._emit_sink, server,
                     tools_cache_invalidate=self._tools_cache_invalidate,
-                    # #2608 H1: wired only when a hook_trigger was injected (this
-                    # service's enqueue_external_event is itself a no-op without one) —
-                    # so a session with no hook_trigger stays byte-identical to pre-H1.
+                    # #2608 H1 / Hook-Event Redesign #2875 F1: wired only when a
+                    # hook_trigger was injected (this service's ingress path is itself
+                    # a no-op without one) — so a session with no hook_trigger stays
+                    # byte-identical to pre-H1. Bound to THIS server name via
+                    # functools.partial — :meth:`_mcp_to_hook_event` is per-service
+                    # (one ``McpIngressAdapter``, shared across every held server),
+                    # but the raw signal the handler sees (``uri``, ``resync``) does
+                    # not itself carry which server produced it.
                     on_external_event=(
-                        self.enqueue_external_event if self._hook_trigger is not None else None
+                        functools.partial(self._mcp_to_hook_event, server)
+                        if self._hook_trigger is not None else None
                     ),
                     agent_name=self._agent_name,
                 )
@@ -450,21 +457,40 @@ class MCPConnectionService:
             return None
         return self._elicitation_bus
 
-    # ── #2608 H1 / Hook-Event Phase 2 §6.1: MCP Ingress Adapter delegate ───────────
+    # ── #2608 H1 / Hook-Event Phase 2 §6.1 / #2875 F1: MCP Ingress Adapter delegate ──
+
+    def _mcp_to_hook_event(self, server: str, uri: "str | None", resync: bool) -> None:
+        """The production ``ReynMCPMessageHandler.on_external_event`` callback for a
+        given ``server`` (bound via ``functools.partial`` in :meth:`_ensure_open`).
+        SYNCHRONOUS, non-blocking, never raises — called from the MCP receive-loop
+        task (see module docstring's H1 section for the full bridge design).
+
+        Hook-Event Redesign #2875 F1 (proposal 0059 §6 completion): converts the RAW
+        signal (``uri``, ``resync`` — ``server``/``agent_name`` close over this
+        service/handler) into a :class:`~reyn.hooks.event.HookEvent` via
+        ``self._mcp_ingress_adapter.to_event`` — the ONE place ``build_hook_payload``
+        now runs for MCP. Before #2875, ``ReynMCPMessageHandler.emit_resource_updated``
+        called ``build_hook_payload`` directly and handed the finished payload to
+        ``enqueue_external_event`` (below), so ``McpIngressAdapter.to_event`` — added
+        in Phase 2 (#2872) — was never actually reached for MCP in production, despite
+        ``FsIngressAdapter.to_event`` being reached for ``file_changed``: the §6 unify
+        was 3/4 wired, not 4/4. Delivery (the bounded queue+drain-task bridge) is
+        unchanged — same ``self._mcp_ingress_adapter.deliver`` this class always used."""
+        event = self._mcp_ingress_adapter.to_event(
+            uri, server=server, agent_name=self._agent_name, resync=resync,
+        )
+        self._mcp_ingress_adapter.deliver(event)
 
     def enqueue_external_event(self, point: str, template_vars: dict) -> None:
-        """SYNCHRONOUS, non-blocking entry point called from the MCP receive-loop task
-        (``ReynMCPMessageHandler.on_resource_updated``). Never awaits, never raises,
-        never blocks — see module docstring's H1 section for the full bridge design.
-
-        Hook-Event Redesign Phase 2 (proposal 0059 §6.1): delegates the bounded
-        queue+drain-task delivery mechanism to ``self._mcp_ingress_adapter``
-        (``reyn.hooks.ingress.McpIngressAdapter``) — the SAME bridge shape
-        ``FsIngressAdapter`` uses, no longer duplicated per-source. ``point`` +
-        ``template_vars`` (already schema-built by ``ReynMCPMessageHandler`` via
-        ``build_hook_payload``) are wrapped into a :class:`~reyn.hooks.event.HookEvent`
-        here — byte-identical values, now typed at the ingress boundary instead of
-        only inside ``HookDispatcher.dispatch``.
+        """Low-level entry point onto ``self._mcp_ingress_adapter``'s bounded
+        queue+drain-task delivery mechanism — takes an ALREADY-BUILT
+        ``(point, template_vars)`` pair and wraps it into a
+        :class:`~reyn.hooks.event.HookEvent` for delivery. Kept as a public
+        entry point for exercising the bridge's queue/overflow/drain behaviour
+        directly (see ``tests/test_2608_h1_mcp_resource_updated_hook.py``); the
+        production MCP call path itself goes through :meth:`_mcp_to_hook_event`
+        (which builds the event via ``McpIngressAdapter.to_event``, #2875 F1) —
+        this method is NOT what ``ReynMCPMessageHandler`` calls any more.
 
         No-op when ``hook_trigger`` is None (no hook wired for this session) —
         the adapter itself no-ops in that case."""
