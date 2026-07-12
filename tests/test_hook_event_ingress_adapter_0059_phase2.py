@@ -170,7 +170,8 @@ async def test_in_process_adapter_deliver_reaches_bound_hook_trigger():
     event = mcp_adapter.to_event("file:///x", server="s", agent_name="a", resync=True)
     mcp_adapter.deliver(event)
     await _wait_for(lambda: len(captured) >= 1)
-    point, payload = captured[0]
+    (call,) = captured  # exactly one — clean failure message if delivery ever drops/duplicates
+    point, payload = call
     assert point == "mcp_resource_updated"
     assert payload == event.payload
     await mcp_adapter.aclose()
@@ -180,7 +181,8 @@ async def test_in_process_adapter_deliver_reaches_bound_hook_trigger():
     event2 = fs_adapter.to_event("/repo/x.py", "created")
     fs_adapter.deliver(event2)
     await _wait_for(lambda: len(captured) >= 1)
-    point2, payload2 = captured[0]
+    (call2,) = captured  # exactly one — clean failure message if delivery ever drops/duplicates
+    point2, payload2 = call2
     assert point2 == "file_changed"
     assert payload2 == event2.payload
     await fs_adapter.aclose()

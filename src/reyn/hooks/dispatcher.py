@@ -31,7 +31,8 @@ import logging
 from typing import Any, Awaitable, Callable
 
 from reyn.hooks.event import HookEvent
-from reyn.hooks.matcher import matches as matcher_matches
+from reyn.hooks.event_pattern import from_legacy_matcher
+from reyn.hooks.event_pattern import matches as event_pattern_matches
 from reyn.hooks.registry import HookRegistry
 from reyn.hooks.render import ResolvedPush, render_pipeline_input, render_push
 from reyn.hooks.schema import HookDef
@@ -147,6 +148,15 @@ class HookDispatcher:
         non-matching hook is skipped, same as a disabled hook. A hook with no
         matcher always matches (fire-always, unchanged from pre-H2).
 
+        Hook-Event Redesign Phase 3 (proposal 0059 §10 Q-reyn-4): the matcher
+        check below evaluates through the generalized ``EventPattern`` grammar
+        (``reyn.hooks.event_pattern``) rather than calling
+        ``reyn.hooks.matcher.matches`` directly — ``hook.matcher`` is wrapped
+        into a payload-only ``EventPattern`` (``from_legacy_matcher``), whose
+        ``kind``/``source`` predicates are unset, so evaluation is
+        byte-identical to the pre-Phase-3 direct call (the payload predicate
+        itself still delegates to ``reyn.hooks.matcher.matches`` — UNCHANGED).
+
         Hook-Event Redesign Phase 1 (proposal 0059 §1): ``point`` +
         ``template_vars`` are wrapped into a typed ``HookEvent`` right here —
         the SAME dict object becomes ``HookEvent.payload`` (no copy, no value
@@ -166,7 +176,7 @@ class HookDispatcher:
         for hook in self._registry.hooks_for(point):
             if self._is_hook_disabled is not None and self._is_hook_disabled(hook):
                 continue  # #2285: hook disabled for THIS session (live applicability toggle)
-            if not matcher_matches(hook.matcher, event.payload):
+            if not event_pattern_matches(from_legacy_matcher(hook.matcher), event):
                 continue  # #2608 H2: matcher didn't match this event's template_vars
             try:
                 await self._dispatch_one(hook, point, event)
