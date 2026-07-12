@@ -5,6 +5,23 @@ LLM gains the ability to publish onto a live ``HookBus``, and the autonomy
 boundary here is enforced in TWO SEPARATE dimensions by
 ``reyn.core.op_runtime.emit_hook_event.handle`` (see its module docstring):
 
+Issue #2887 (architect post-#2885-review F2, audit band): the production
+LLM path is the router TOOL (``reyn.tools.emit_hook_event._handle_emit_hook_event``),
+which calls ``op_runtime.emit_hook_event.handle`` DIRECTLY — not through
+``execute_op`` (whose except-``PermissionError`` branch is what emits the
+``permission_denied`` P6 audit-event in the tests above). Verified (primary
+data, not inferred): a denied emit on the router-tool path raises
+``EmitHookEventDenied`` uncaught out of the tool handler, propagates through
+``reyn.tools.dispatch.invoke_tool`` (a thin pass-through, no try/except), and
+is caught by ``reyn.core.dispatch.dispatcher.dispatch_tool``'s generic
+``except PermissionError`` (``dispatcher.py:128-141``) — the SAME shared
+chokepoint every router tool call funnels through. That branch emits a
+``tool_failed`` P6 audit-event with ``error_kind="permission_denied"`` (a
+different event NAME/shape than ``execute_op``'s ``permission_denied`` event,
+but not a missing one) — VERDICT: WHITE, already audited, no code change.
+``test_denied_emit_via_production_router_tool_path_is_audited`` below pins
+this on the REAL router-tool dispatch path so it can't silently regress.
+
 Coverage plan
 -------------
 Tier 1 (contract): ``reyn.hooks.schema_registry.is_emittable_llm_kind`` — the
@@ -46,6 +63,7 @@ from pathlib import Path
 import pytest
 
 from reyn.config.chat import LoopConfig, OnLimitConfig, SafetyConfig
+from reyn.core.dispatch import DispatchContext, dispatch_tool
 from reyn.core.events.events import EventLog
 from reyn.core.events.state_log import StateLog
 from reyn.core.op_runtime import execute_op
@@ -56,6 +74,8 @@ from reyn.hooks.schema_registry import is_emittable_llm_kind
 from reyn.runtime.session import Session
 from reyn.schemas.models import EmitHookEventIROp
 from reyn.security.permissions.permissions import PermissionDecl
+from reyn.tools.emit_hook_event import EMIT_HOOK_EVENT
+from reyn.tools.types import RouterCallerState, ToolContext
 
 _POLL_TIMEOUT = 3.0
 _POLL_INTERVAL = 0.01
@@ -382,3 +402,99 @@ async def test_emit_origin_self_stimulating_chain_force_closes_at_cap(tmp_path):
 
     assert ran == ["go"] + ["tick!"] * cap
     assert "hook_driven_turns" in _checkpoint_kinds(events)
+
+
+# ---------------------------------------------------------------------------
+# Issue #2887: production router-tool dispatch path audits denials
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_denied_emit_via_production_router_tool_path_is_audited():
+    """Tier 2: a denied ``emit_hook_event`` on the REAL PRODUCTION router-tool
+    dispatch path — ``reyn.core.dispatch.dispatcher.dispatch_tool`` invoking
+    the REAL ``EMIT_HOOK_EVENT.handler`` (``reyn.tools.emit_hook_event``),
+    NOT ``execute_op`` — still produces a P6 audit-event recording the
+    denial (``tool_failed`` / ``error_kind="permission_denied"``), verified
+    via ``EventLog``'s real subscriber mechanism (no private-state read).
+
+    This is the #2887 architect-flagged gap: ``_handle_emit_hook_event``
+    (``reyn/tools/emit_hook_event.py``) calls ``op_runtime.emit_hook_event.
+    handle`` DIRECTLY, bypassing ``execute_op``'s own except-``PermissionError``
+    -> ``permission_denied`` audit branch. Verified here that the SHARED
+    ``dispatch_tool`` chokepoint every router tool call passes through
+    (``reyn/core/dispatch/dispatcher.py``) independently catches the same
+    ``EmitHookEventDenied`` (a ``PermissionError`` subclass) and audits it —
+    so the production path is NOT a blind spot, just a differently-named
+    audit event than the op_runtime path.
+
+    Denial driven here: no bound session identity (``OpContext.session_id
+    is None``), the router-exposed-args-reachable fail-closed precondition
+    (``op_runtime/emit_hook_event.py`` lines 68-77) — the router tool schema
+    exposes only ``event_name``/``payload`` (no ``target_kind``), so a
+    live-session-absent OpContext is the realistic router-tool-reachable
+    denial shape.
+
+    FALSIFICATION (performed by hand, not committed as a second test):
+    commenting out the ``except PermissionError`` branch in
+    ``reyn/core/dispatch/dispatcher.py``'s ``dispatch_tool`` (letting
+    ``EmitHookEventDenied`` propagate as a bare exception instead) flips
+    this test RED — no ``tool_failed``/``permission_denied`` event is
+    recorded (the generic ``except Exception`` branch instead records
+    ``error_kind="exception"``, not ``"permission_denied"``). Restoring the
+    branch reproduces the RED->GREEN flip verified here.
+    """
+    events = EventLog(run_id="r1")
+    collected: list[dict] = []
+    events.add_subscriber(lambda e: collected.append({"type": e.type, **e.data}))
+
+    bus = HookBus()
+    sub = bus.subscribe()
+    # No session_id bound — the OpContext a live router session would build
+    # via router_state.op_context_factory() when no chat session identity is
+    # available. This is a REAL OpContext, not a mock.
+    op_ctx = OpContext(
+        workspace=None, events=events, permission_decl=PermissionDecl(),
+        session_id=None, hook_bus=bus,
+    )
+    router_state = RouterCallerState(op_context_factory=lambda: op_ctx)
+    tool_ctx = ToolContext(
+        events=events,
+        permission_resolver=None,
+        workspace=None,
+        caller_kind="router",
+        router_state=router_state,
+    )
+
+    async def invoker(args: dict):
+        return await EMIT_HOOK_EVENT.handler(args, tool_ctx)
+
+    catalog = {
+        "emit_hook_event": {
+            "function": {
+                "name": "emit_hook_event",
+                "parameters": EMIT_HOOK_EVENT.parameters,
+            }
+        }
+    }
+    dispatch_ctx = DispatchContext(
+        caller_kind="router", caller_id="test-agent", chain_id="c1",
+        tool_catalog=catalog, events=events,
+    )
+
+    result = await dispatch_tool(
+        name="emit_hook_event",
+        args={"event_name": "ping"},
+        ctx=dispatch_ctx,
+        invoker=invoker,
+    )
+
+    assert result["status"] == "error"
+    assert result["error"]["kind"] == "permission_denied"
+    with pytest.raises(asyncio.QueueEmpty):
+        sub.get_nowait()  # the denied emit never reached the bus
+
+    failed_events = [e for e in collected if e["type"] == "tool_failed"]
+    (only_failed,) = failed_events  # exactly one tool_failed — unpack asserts the count
+    assert only_failed["error_kind"] == "permission_denied"
+    assert only_failed["tool"] == "emit_hook_event"
