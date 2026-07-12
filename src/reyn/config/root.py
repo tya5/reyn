@@ -297,7 +297,6 @@ class ReynConfig:
     # reyn.data.skills.registry.build_skill_registry at session /
     # router construction. Shape:
     #   skills:
-    #     scan_dirs: ["skills"]          # relative to project root; default ["skills"]
     #     entries:
     #       <name>:
     #         path: "skills/foo/SKILL.md"

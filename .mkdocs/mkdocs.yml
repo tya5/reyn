@@ -149,8 +149,6 @@ nav:
               - reference/config/state-dir.md
               - reference/config/multi-agent.md
               - reference/builtin-models.md
-      - Stdlib:
-          - reference/stdlib/index.md
       - Testing:
           - reference/testing/replay.md
           - reference/test-tier-audit.md

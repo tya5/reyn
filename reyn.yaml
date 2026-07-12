@@ -21,8 +21,8 @@ models:
 # Set to "" or a non-existent path to disable.
 # project_context_path: REYN.md
 
-# Pre-approve safe-mode Python preprocessor steps. The stdlib skill_router
-# uses one (`slice_chat_history`) to slice the chat history; safe mode is
+# Pre-approve safe-mode Python preprocessor steps. The chat router uses one
+# (`slice_chat_history`) to slice the chat history; safe mode is
 # sandboxed (no file I/O, no untrusted imports) so auto-allow is safe.
 # Unsafe-mode steps still require --allow-unsafe-python.
 #

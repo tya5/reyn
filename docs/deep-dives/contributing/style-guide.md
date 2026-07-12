@@ -44,7 +44,7 @@ If a tutorial wants to explain *why* something works, link to a concept page ins
 
 - Use **relative links** within `docs/` (e.g. `../reference/dsl/skill-md.md`).
 - Link forward and backward: a tutorial points to relevant reference; a reference page links to the concept that explains it.
-- Don't link to source files except from `reference/stdlib/`.
+- Don't link to source files.
 
 ## Code examples
 

@@ -77,13 +77,14 @@ def test_outside_project_glob_without_permission_raises(tmp_path):
 def test_outside_project_glob_with_permission_succeeds(tmp_path):
     """Tier 2: absolute path glob outside project root succeeds when PermissionResolver permits it.
 
-    Simulates the stdlib skill scenario: the skill directory lives outside the
+    Simulates a skill installed outside the project root (e.g. a globally
+    installed skill directory): the skill directory lives outside the
     project root but a file.read permission (recursive) has been session-approved,
     so glob_files() should proceed without raising.
     """
-    # Create a simulated stdlib skill directory outside the project root
-    stdlib_root = tmp_path.parent / "stdlib_skills"
-    skill_dir = stdlib_root / "direct_llm"
+    # Create a simulated externally-installed skill directory outside the project root
+    external_root = tmp_path.parent / "external_skills"
+    skill_dir = external_root / "direct_llm"
     phases_dir = skill_dir / "phases"
     phases_dir.mkdir(parents=True, exist_ok=True)
     (skill_dir / "skill.md").write_text("# skill")
@@ -92,7 +93,7 @@ def test_outside_project_glob_with_permission_succeeds(tmp_path):
 
     actor = "skill_improver"
     perm = _resolver(tmp_path)
-    # Session-approve the stdlib skill directory recursively
+    # Session-approve the external skill directory recursively
     perm.session_approve_path(str(skill_dir), actor, "file.read", recursive=True)
 
     ws = _make_workspace(project_root=tmp_path, permission_resolver=perm, actor=actor)
