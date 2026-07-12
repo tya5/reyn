@@ -493,10 +493,19 @@ class EmitHookEventIROp(BaseModel):
     absent). ``composed:*`` in particular must never be LLM-forgeable — a
     forged ``composed:*`` event would fire a composed-only hook without the
     correlation logic a real Composer enforces before publishing
-    (anti-spoofing, proposal §1/§2)."""
+    (anti-spoofing, proposal §1/§2).
+
+    ``event_name`` is schema-constrained (#2890 F6): a ``pattern`` restricts
+    it to ``[A-Za-z0-9_.-]+`` and a ``max_length`` caps it, so control
+    characters / newlines / unbounded length can never flow into the
+    constructed ``kind`` (and from there into the P6 audit-event / anything
+    that renders ``kind`` for display) even though the kind is already
+    structurally confined to this session's own ``llm:{session_id}:`` prefix
+    (no namespace escape possible either way — this is defense-in-depth on
+    top of that confinement, not a new security boundary)."""
 
     kind: Literal["emit_hook_event"]
-    event_name: str = ""
+    event_name: str = Field(default="", pattern=r"^[A-Za-z0-9_.-]*$", max_length=200)
     target_kind: str | None = None
     payload: dict = Field(default_factory=dict)
 

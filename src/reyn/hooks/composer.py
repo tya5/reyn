@@ -147,6 +147,20 @@ class QueuePolicy(str, Enum):
 _DEFAULT_TTL_SECONDS = 300.0  # 5m, matching the proposal §9 example
 _DEFAULT_CAPACITY = 10  # matching the proposal §9 example
 _MAX_SWEEP_INTERVAL = 1.0
+# #2890 F7: ``policy.capacity`` bounds the NUMBER of distinct pending keys and
+# ``policy.ttl`` bounds their AGE, but neither bounds the LENGTH of a single
+# key's buffered ``events`` list during that TTL window — an external-event
+# storm hammering one correlation key (e.g. one ``window``/``all`` key) can
+# grow that list unboundedly until the TTL/window closes, a memory-pressure
+# vector. ``max_events_per_key`` is a THIRD, orthogonal bound (config-
+# overridable via ``policy.max_events_per_key``, same customizability as
+# capacity/overflow/ttl — never a bare hardcoded cap): once a key's events
+# list would exceed it, the OLDEST buffered event for that key is dropped
+# (drop-oldest, consistent with capacity's own default overflow policy) and
+# a ``composer_dropped`` (reason=``per_key_event_cap``) fires — fail-visible,
+# same discipline as every other Composer drop path (module docstring
+# invariant #3: no silent drop path exists).
+_DEFAULT_MAX_EVENTS_PER_KEY = 1000
 
 
 def _parse_duration(raw: "str | int | float") -> float:
@@ -183,11 +197,18 @@ class ComposerInput:
 
 @dataclass(frozen=True)
 class ComposerPolicy:
-    """Overflow/lifetime policy for a Composer's pending state."""
+    """Overflow/lifetime policy for a Composer's pending state.
+
+    ``max_events_per_key`` (#2890 F7) is a third, orthogonal bound alongside
+    ``capacity`` (number of distinct pending keys) and ``ttl_seconds`` (age
+    of a pending key) — it caps the LENGTH of a single key's buffered events
+    list, so one key hammered by an external-event storm cannot grow
+    unboundedly for the whole TTL window."""
 
     capacity: int = _DEFAULT_CAPACITY
     overflow: QueuePolicy = QueuePolicy.DROP_OLDEST
     ttl_seconds: float = _DEFAULT_TTL_SECONDS
+    max_events_per_key: int = _DEFAULT_MAX_EVENTS_PER_KEY
 
 
 @dataclass(frozen=True)
@@ -333,6 +354,19 @@ class Composer:
         self._audit("composer_dropped", correlation_key=key, reason=reason)
         return False
 
+    def _append_event_bounded(self, record: PendingRecord, event: HookEvent, key: str) -> None:
+        """Append ``event`` to ``record.events``, then enforce ``policy.
+        max_events_per_key`` (#2890 F7) — drop-oldest within the key's own
+        list (never blocking, never raising) with a fail-visible
+        ``composer_dropped`` (reason=``per_key_event_cap``) on every
+        overflow, same discipline as every other Composer drop path
+        (module docstring invariant #3)."""
+        record.events.append(event)
+        cap = self._def.policy.max_events_per_key
+        while len(record.events) > cap:
+            record.events.pop(0)
+            self._audit("composer_dropped", correlation_key=key, reason="per_key_event_cap")
+
     def _emit_composed(self, key: str, events: "list[HookEvent]") -> None:
         payload = {"inputs": [e.payload for e in events], "correlation_key": key}
         composed = HookEvent(kind=self._def.emit_kind, payload=payload, source="builtin")
@@ -347,7 +381,7 @@ class Composer:
             if not self._admit_new_key(key):
                 return
             record = PendingRecord()
-        record.events.append(event)
+        self._append_event_bounded(record, event, key)
         record.matched_inputs.update(indices)
         record.last_at = time.time()
         if len(record.matched_inputs) >= len(self._def.inputs):
@@ -365,7 +399,7 @@ class Composer:
             if not self._admit_new_key(key):
                 return
             record = PendingRecord()
-        record.events.append(event)
+        self._append_event_bounded(record, event, key)
         record.seq_pos += 1
         record.last_at = time.time()
         if record.seq_pos >= len(self._def.inputs):
@@ -380,7 +414,7 @@ class Composer:
             if not self._admit_new_key(key):
                 return
             record = PendingRecord()
-        record.events.append(event)
+        self._append_event_bounded(record, event, key)
         record.last_at = time.time()
         self._store.put(self._def.name, key, record)  # window closes on sweep, not here
 
@@ -400,7 +434,7 @@ class Composer:
             if not self._admit_new_key(key):
                 return
             record = PendingRecord()
-        record.events.append(event)
+        self._append_event_bounded(record, event, key)
         record.last_at = time.time()
         threshold = self._def.threshold or 1
         if len(record.events) >= threshold:
@@ -565,7 +599,15 @@ def _parse_policy(raw: object, composer_name: str) -> ComposerPolicy:
     ttl_seconds = _parse_duration(ttl_raw)
     if ttl_seconds <= 0:
         raise ComposerConfigError(f"composers[{composer_name}].policy.ttl must be positive.")
-    return ComposerPolicy(capacity=capacity, overflow=overflow, ttl_seconds=ttl_seconds)
+    max_events_per_key = raw.get("max_events_per_key", _DEFAULT_MAX_EVENTS_PER_KEY)
+    if not isinstance(max_events_per_key, int) or max_events_per_key < 1:
+        raise ComposerConfigError(
+            f"composers[{composer_name}].policy.max_events_per_key must be a positive int."
+        )
+    return ComposerPolicy(
+        capacity=capacity, overflow=overflow, ttl_seconds=ttl_seconds,
+        max_events_per_key=max_events_per_key,
+    )
 
 
 def _parse_one(raw: object, index: int) -> ComposerDef:
@@ -607,9 +649,19 @@ def _parse_one(raw: object, index: int) -> ComposerDef:
         raise ComposerConfigError(f"composers[{name}].op=count requires `count` (the threshold).")
     if op is ComposerOp.SEQ and len(inputs) < 2:
         raise ComposerConfigError(f"composers[{name}].op=seq requires at least 2 inputs.")
+    policy = _parse_policy(raw.get("policy"), name)
+    if op is ComposerOp.COUNT and threshold is not None and threshold > policy.max_events_per_key:
+        # #2890 F7: max_events_per_key drop-oldest-caps the SAME events list
+        # `count` reads len() off of — a threshold above the cap could never
+        # be reached (fail-loud at load time rather than a silent runtime
+        # never-fires footgun).
+        raise ComposerConfigError(
+            f"composers[{name}].count={threshold} exceeds policy.max_events_per_key="
+            f"{policy.max_events_per_key} — count could never reach its threshold."
+        )
     return ComposerDef(
         name=name, op=op, inputs=inputs, emit_kind=emit_kind,
-        policy=_parse_policy(raw.get("policy"), name),
+        policy=policy,
         correlate_by=correlate_by, threshold=threshold,
     )
 

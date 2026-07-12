@@ -376,6 +376,64 @@ def test_ttl_evict_is_fail_visible():
     assert store.get("c", "__default__") is None  # actually evicted, not just logged
 
 
+def test_per_key_event_storm_is_bounded_and_fail_visible():
+    """Tier 2: (#2890 F7) a single correlation key hammered by an external-
+    event storm (a WINDOW composer buffering every matching event until its
+    ttl closes) does NOT grow that key's events list unboundedly —
+    ``policy.max_events_per_key`` caps it (drop-oldest), and every overflow
+    fires a fail-visible ``composer_dropped`` (reason=``per_key_event_cap``,
+    metadata only — never the dropped event's payload).
+
+    Strip-falsify: remove the ``while len(record.events) > cap: ...`` loop in
+    ``Composer._append_event_bounded`` (``reyn/hooks/composer.py``) and the
+    stored record's events list grows to ``storm_size`` instead of staying
+    capped, and zero ``composer_dropped`` calls fire — this test goes RED.
+    """
+    bus = HookBus()
+    emit, calls = _recorder()
+    cap = 5
+    d = ComposerDef(
+        name="c", op=ComposerOp.WINDOW,
+        inputs=(_input("builtin:external:file_changed"),),
+        emit_kind="composed:c",
+        policy=ComposerPolicy(capacity=1, ttl_seconds=300, max_events_per_key=cap),
+    )
+    store = InMemoryPendingStore()
+    composer = Composer(d, bus=bus, emit_event=emit, pending_store=store)
+
+    storm_size = 12
+    for i in range(storm_size):
+        composer.handle_event(
+            HookEvent(kind="builtin:external:file_changed", payload={"n": i})
+        )
+
+    record = store.get("c", "__default__")
+    assert len(record.events) == cap  # bounded, not storm_size
+    # the SURVIVING events are the newest (drop-oldest within the key)
+    assert [e.payload["n"] for e in record.events] == list(range(storm_size - cap, storm_size))
+
+    dropped = [c for c in calls if c[0][0] == "composer_dropped"]
+    assert len(dropped) == storm_size - cap
+    assert all(kw["reason"] == "per_key_event_cap" for (_a, kw) in dropped)
+    assert all("payload" not in kw and "n" not in kw for (_a, kw) in dropped)
+
+
+def test_count_threshold_above_max_events_per_key_is_rejected_at_load_time():
+    """Tier 2: (#2890 F7) ``count`` reads ``len(record.events)`` off the SAME
+    list ``max_events_per_key`` caps — a threshold above the cap could never
+    fire. Caught fail-loud at config-load time (``ComposerConfigError``),
+    not a silent runtime never-fires footgun."""
+    with pytest.raises(ComposerConfigError, match="max_events_per_key"):
+        load_composers([{
+            "name": "c",
+            "op": "count",
+            "inputs": [{"kind": "builtin:external:file_changed"}],
+            "emit": {"kind": "composed:c"},
+            "count": 20,
+            "policy": {"max_events_per_key": 5},
+        }])
+
+
 # ---------------------------------------------------------------------------
 # Tier 2: Sync non-re-entry (§5 invariant #5)
 # ---------------------------------------------------------------------------

@@ -106,7 +106,7 @@ ADR-0026 は、1 つの `ToolDefinition` に 2 つの render メソッド(うち
 - **Phase 4 step 1 (commit `ebe5786`)** — `_DISPATCH_KIND` sidecar dict 撤去、 `get_dispatch_kind()` が registry の `ToolDefinition.dispatch_kind` を直接参照。
 - **Phase 4 step 2** — coarse-name `FILE_OP` / `MCP_OP` / `RUN_SKILL_OP` ToolDefinitions を `gates(phase="allow")` で registry 登録。 phase Control IR `kind` 値は registry entry に 1:1 マッピング。 `ControlIRExecutor.execute()` が `invoke_tool(get_default_registry(), op.kind, ...)` 経由 dispatch、 catalog building (`_build_phase_tool_catalog`) は registry から schema を読む。
 - **Phase 4 step 3** — `OP_KIND_MODEL_MAP` は coarse-kind reference (= linter `ALL_OP_KINDS`、 `OP_PURITY` coverage) として残存; dispatch time には参照されない。 `op_runtime/<kind>.py` handlers は registry handlers が委譲する shared implementation として残存。
-- **`is_op_allowed` helper** — legacy coarse-name `allowed_ops` declarations が将来 fine-grained `op.kind` にマッチするための prefix-wildcard membership。 forward-looking: phase Control IR は今日も coarse kinds を emit。
+- **`is_op_allowed` helper**（削除済み、#2890 F9）— この prefix-wildcard `allowed_ops` membership helper の唯一の consumer だった `control_ir_executor` は #2461 で削除済み; helper 自体（`is_op_instance_allowed` / `COARSE_TO_FINE` table 含む）は呼び出し元ゼロの dead code だったため `op_runtime/registry.py` から削除。
 
 **tool 追加コスト** (steady state): `src/reyn/tools/<name>.py` 1 file + `__init__.py` の register 呼出 1 行 = router-or-phase tool で **2 touch points**。 新規 phase-side coarse op kind は加えて `OP_KIND_MODEL_MAP` entry (linter / purity coverage) + `schemas/models.py` の Pydantic `IROp` model = **3 touch points** が phase-eligible 新 kind の予算。 これが今後の tool-scope 拡大が amortise する base line。
 

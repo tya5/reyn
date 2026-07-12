@@ -1154,7 +1154,13 @@ Fields:
   `llm:<session_id>:<event_name>` — the session component comes SOLELY from
   `OpContext.session_id` at handler-execution time, never from an LLM-supplied
   value (there is no session field on this schema for the well-behaved
-  tool-call path to set).
+  tool-call path to set). Schema-constrained (#2890 F6):
+  `pattern=^[A-Za-z0-9_.-]*$` + `max_length=200` — control characters,
+  newlines, and unbounded length are rejected at Pydantic validation time
+  (before the handler's own non-empty check ever runs), so they can never
+  flow into the constructed `kind` or the `hook_event_emitted` audit-event.
+  Defense-in-depth: the kind is already structurally confined to this
+  session's own `llm:{session_id}:` prefix regardless.
 - `target_kind` (str | None, default `None`) — a defense-in-depth escape
   hatch on the Pydantic model, **deliberately NOT exposed in the router
   tool's JSON schema** (unreachable from a normal LLM tool call). Exists so
