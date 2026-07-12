@@ -16,6 +16,8 @@ from __future__ import annotations
 
 import logging
 
+from reyn.hooks.event_pattern import from_legacy_matcher
+from reyn.hooks.event_pattern import validate_against_schema as validate_event_pattern
 from reyn.hooks.registry import HookRegistry
 from reyn.hooks.schema import (
     ALLOWED_HOOK_POINTS,
@@ -24,7 +26,7 @@ from reyn.hooks.schema import (
     PipelineLaunchBlock,
     PushBlock,
 )
-from reyn.hooks.schema_registry import bare_point, canonical_kind
+from reyn.hooks.schema_registry import HookSchemaError, bare_point, canonical_kind
 
 _log = logging.getLogger(__name__)
 
@@ -259,6 +261,22 @@ def _parse_entry(raw: object, entry_index: int) -> HookDef:
 
     # ── matcher (optional, #2608 H2 — a field->pattern filter dict) ────────
     matcher: "dict[str, str] | None" = _parse_matcher(raw.get("matcher", None), entry_index)
+
+    # Hook-Event Redesign Phase 3 (proposal 0059 §10 Q-reyn-4): a matcher that
+    # names a payload field the hook-point's builtin schema does NOT carry is
+    # a silent "never fire" footgun (a ``srever`` typo matches nothing, and the
+    # operator gets no signal). ∴ fail-loud at load — validate the matcher (as
+    # a payload-only ``EventPattern``) against the point's ``BUILTIN_HOOK_SCHEMAS``
+    # entry. A point with NO builtin schema (a future/custom point — the
+    # schema-driven OPEN SET) stays permissive: ``validate_against_schema`` is a
+    # no-op there (proposal §4 open-set posture, preserved). This is additive
+    # correctness — a schema-VALID matcher still parses/evaluates byte-identically;
+    # only a schema-EXTERNAL (dead) matcher now surfaces as a HookConfigError.
+    if matcher is not None:
+        try:
+            validate_event_pattern(from_legacy_matcher(matcher), on_key)
+        except HookSchemaError as exc:
+            raise HookConfigError(f"hooks[{entry_index}].matcher: {exc}") from exc
 
     # ── name (optional, #1800 slice 6) — the [hook:name] attribution label; ──
     # absent / blank → None (the dispatcher defaults it to the hook-point).

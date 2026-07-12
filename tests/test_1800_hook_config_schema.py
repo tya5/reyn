@@ -66,8 +66,12 @@ def test_hookdef_push_shape() -> None:
         push_when="{{ ctx.condition }}",
         session="session-abc",
     )
+    # matcher uses a schema-VALID field for turn_end (agent_name) — Phase-3
+    # load-time validation flags a schema-external field, so fixtures use a
+    # field the point's builtin schema actually carries (this HookDef is built
+    # directly, not via load_hooks, but keep it schema-valid for consistency).
     hd = HookDef(
-        on="turn_end", template_push=push, shell_exec=None, matcher={"server": "my-matcher"}
+        on="turn_end", template_push=push, shell_exec=None, matcher={"agent_name": "my-agent"}
     )
 
     assert hd.on == "turn_end"
@@ -76,7 +80,7 @@ def test_hookdef_push_shape() -> None:
     assert hd.template_push.wake == "{{ ctx.needs_wake }}"
     assert hd.template_push.push_when == "{{ ctx.condition }}"
     assert hd.template_push.session == "session-abc"
-    assert hd.matcher == {"server": "my-matcher"}
+    assert hd.matcher == {"agent_name": "my-agent"}
     assert hd.shell_exec is None
 
 
@@ -140,7 +144,9 @@ def test_load_hooks_push_all_fields_accepted() -> None:
                 "push_when": "{{ ctx.should_push }}",
                 "session": "{{ ctx.target_session }}",
             },
-            "matcher": {"server": "my-task-filter"},
+            # schema-valid field for task_end (task_id) — Phase-3 load-time
+            # validation would reject a schema-external field.
+            "matcher": {"task_id": "my-task-filter"},
         }
     ]
     registry = load_hooks(raw)
@@ -151,7 +157,7 @@ def test_load_hooks_push_all_fields_accepted() -> None:
     assert hd.template_push.wake == "{{ ctx.wake_needed }}"
     assert hd.template_push.push_when == "{{ ctx.should_push }}"
     assert hd.template_push.session == "{{ ctx.target_session }}"
-    assert hd.matcher == {"server": "my-task-filter"}
+    assert hd.matcher == {"task_id": "my-task-filter"}
 
 
 def test_load_hooks_shell_valid() -> None:
@@ -333,12 +339,12 @@ hooks:
       push_when: "{{ ctx.should_notify }}"
       session: "{{ ctx.target_session }}"
     matcher:
-      server: task-done-filter
+      task_id: task-done-filter
 
   - on: session_start
     shell_exec: "scripts/on-session-start.sh"
     matcher:
-      server: session-filter
+      agent_name: session-filter
 """.lstrip()
 
     reyn_yaml = tmp_path / "reyn.yaml"
@@ -359,8 +365,8 @@ hooks:
     assert h1.template_push.push_when == "{{ ctx.should_notify }}"
     # non-default session template (default is None)
     assert h1.template_push.session == "{{ ctx.target_session }}"
-    # non-default matcher (default is None)
-    assert h1.matcher == {"server": "task-done-filter"}
+    # non-default matcher (default is None) — schema-valid field for task_end
+    assert h1.matcher == {"task_id": "task-done-filter"}
 
     # ── Hook 2: shell hook at session_start ───────────────────────────────
     session_start_hooks = registry.hooks_for("session_start")
@@ -368,7 +374,7 @@ hooks:
     assert h2.on == "session_start"
     assert h2.shell_exec == "scripts/on-session-start.sh"
     assert h2.template_push is None
-    assert h2.matcher == {"server": "session-filter"}
+    assert h2.matcher == {"agent_name": "session-filter"}
 
     # ── Hooks at other points are empty (no stray registrations) ─────────
     assert registry.hooks_for("turn_end") == []
