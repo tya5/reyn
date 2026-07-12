@@ -16,6 +16,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Hook-Event Redesign (proposal 0059), Phases 1-3**: typed `HookEvent` + a builtin Schema Registry declaring each of the 10 builtin hook points' payload field set (Phase 1, `c319285`); a unified Ingress Adapter consolidating hook-firing entry points (Phase 2, `f4db86c`); an `EventPattern` match grammar generalizing `matcher` field-name matching, schema-validated at config-load time for builtin points (Phase 3, `3ff41bc`).
+
 - **B22 RAG affordance-bias schema-layer fix — 0/3 → 3/3 first-attempt 100% recovery**
   (= 2026-05-10, commit `9fdecd1`). 5 parallel sonnet context-analysis agents
   (= info-gathering only; no edits) traced the batch 21 attractor to its true
@@ -159,6 +161,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Hooks — operator-visible breaking change**: a `hooks.yaml` matcher on a builtin hook point (`turn_start`/`turn_end`/`session_start`/`session_end`/`task_start`/`task_end`/`mcp_resource_updated`/`file_changed`/`cron_fired`/`webhook_received`) naming a field outside that point's payload now fails config-load with `HookConfigError`, instead of loading and silently never firing. A `hooks.yaml` that previously loaded with a schema-external matcher field (a typo, or a field the point never carries) now fails to start until the matcher is corrected (Phase 3, `3ff41bc`, proposal 0059).
 - Guide nav restructured: `agent-engineering/` moved from `guide/` to `concepts/agent-engineering/` (conceptual essays belong under Concepts, not Guide); `for-skill-authors/` nav split into 6 task-type clusters (Foundation / Composition & multi-agent / Phase mechanics / Operations / UX & polish / Working with stdlib tools) — file paths unchanged, nav grouping only (= `2c56577`)
 - Getting Started reordered: chat-mode tutorial promoted from position 05 to 02 (value-first onboarding — users see Reyn work before authoring); build → run → eval dependency chain preserved in positions 03-05; stale "Phase 2" cross-references corrected to live links (= `4684a90`)
 - Tutorial 02 refocused on the auto-created `default` agent only: `reyn chat researcher` command removed (researcher agent doesn't exist by default); multi-agent section (`reyn agent new`, `/attach`, delegation, topology) cut and forwarded to `build-an-agent-team` how-to; example query "what skills are available?" replaced with "what is this project about?" (verified live against A2A endpoint) (= `80d649b`, `563ace6`)

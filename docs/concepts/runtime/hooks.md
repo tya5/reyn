@@ -147,10 +147,17 @@ hooks:
   `path`, which match via a shell-style glob (`fnmatch`) — so
   `file:///repo/**` matches any URI under that prefix, and `/repo/src/**`
   matches any watched path under that directory.
-- A field named in the matcher that the firing event doesn't carry (e.g. a
-  lifecycle point's vars have no `server`/`uri`) **never matches** — a
-  matcher can only narrow an event source, never invent a signal that was
-  never fired.
+- For the 10 **builtin** hook points (6 lifecycle + `mcp_resource_updated` /
+  `file_changed` / `cron_fired` / `webhook_received`), a matcher field must be
+  one the point's builtin schema actually carries — a typo'd or nonexistent
+  field name (e.g. a lifecycle point's matcher naming `server`/`uri`, or
+  `payload.srever`) is a **load-time `HookConfigError`**, rejected before the
+  hook can ever run (a schema-external matcher would otherwise never fire —
+  fail-loud replaces that silent footgun).
+- For a **future or custom point with no builtin schema entry** (the
+  schema-driven open set), a field the firing event doesn't carry still
+  **never matches at runtime** — the pre-schema behavior, since there is
+  nothing to validate against at load time.
 - **Absent or empty matcher → the hook always fires** — the default, and the
   behavior every pre-`matcher` hook keeps unchanged.
 

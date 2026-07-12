@@ -97,7 +97,8 @@ hooks:
 ```
 
 - matcher に列挙されたすべてのフィールドがマッチする必要があります: `uri` と `path` を除き**厳密な文字列一致**、`uri`/`path` はシェル風の glob（`fnmatch`）でマッチします — そのため `file:///repo/**` はそのプレフィックス以下のあらゆる URI に、`/repo/src/**` はその配下のあらゆる監視パスにマッチします。
-- matcher に列挙されたフィールドが発火イベントに含まれない場合（例: ライフサイクルポイントのテンプレート変数には `server`/`uri` が無い）、**決してマッチしません** — matcher はイベントソースを絞り込むことしかできず、一度も発火していないシグナルを作り出すことはできません。
+- 10 個の**builtin** フックポイント（6 lifecycle + `mcp_resource_updated`/`file_changed`/`cron_fired`/`webhook_received`）では、matcher のフィールドはそのポイントの builtin schema が実際に持つものでなければなりません — typo や存在しないフィールド名（例: ライフサイクルポイントの matcher に `server`/`uri` を指定、または `payload.srever`）は**load 時の `HookConfigError`** となり、フックが一度も実行されないまま拒否されます（schema-external な matcher は本来「決して発火しない」サイレントな罠になるところを、fail-loud で置き換えています）。
+- builtin schema を持たない**将来/custom ポイント**（schema 駆動の open set）では、発火イベントに含まれないフィールドは引き続き**実行時に決してマッチしません** — load 時に検証対象となる schema が無いため、旧来の挙動のままです。
 - **matcher が無い、または空 → フックは常に発火します** — デフォルトであり、`matcher` 以前のすべてのフックの挙動を変えません。
 
 このルールはフックポイントではなくフィールド*名*にキーされています（`uri`/`path` は glob、それ以外は厳密一致）— そのため、将来の外部イベントソースが `uri` や `path` 形式のフィールドを発するようになれば、無料で glob マッチングが得られます。
