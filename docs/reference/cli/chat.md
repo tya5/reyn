@@ -7,7 +7,7 @@ applies_to: [reyn chat]
 
 # `reyn chat`
 
-Start an interactive REPL session attached to an agent. Each user turn is dispatched through the `skill_router` stdlib skill, which classifies the intent and either replies directly, runs a project / stdlib skill, or delegates to another agent.
+Start an interactive REPL session attached to an agent. Each user turn is dispatched through the chat router, which classifies the intent and either replies directly, runs a skill, or delegates to another agent.
 
 Memory recall and write happen automatically inside the router phase — see [concepts/memory](../../concepts/data-retrieval/memory.md).
 

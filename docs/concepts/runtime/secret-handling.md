@@ -237,7 +237,7 @@ Accepted values:
 
 | Value | Meaning |
 |-------|---------|
-| `[]` | No credentials needed (default for stdlib workflows) |
+| `[]` | No credentials needed (the default when a skill declares none) |
 | `["github_token", "openai_key"]` | Explicit allowlist |
 | `["*"]` | Full delegation — backward-compat default when field is omitted |
 

@@ -6,7 +6,7 @@ audience: [human]
 
 # 02 — Chat mode
 
-`reyn chat` is the lowest-friction way to see Reyn in action — talk to it, watch it route your request to a stdlib workflow, and read the answer back. No authoring required.
+`reyn chat` is the lowest-friction way to see Reyn in action — talk to it, watch it route your request to a skill, and read the answer back. No authoring required.
 
 This tutorial uses only the auto-created `default` agent. Multi-agent setup is a later topic; pointers at the end.
 
@@ -28,9 +28,9 @@ You'll get a `>` prompt.
 
 What happens:
 
-1. `skill_router` (a stdlib workflow) classifies the intent.
-2. It picks the best-matching workflow — for a "summarize README" request, that's typically `read_local_files` followed by `direct_llm`, or `read_local_files` alone if the model already summarises inline.
-3. The workflow runs and the answer prints below the prompt.
+1. The chat router classifies the intent.
+2. It picks the best-matching skill — for a "summarize README" request, that's typically `read_local_files` followed by `direct_llm`, or `read_local_files` alone if the model already summarises inline.
+3. The skill runs and the answer prints below the prompt.
 4. The session stays open. Type the next turn.
 
 Try a few:
@@ -41,7 +41,7 @@ Try a few:
 > say hi in three languages
 ```
 
-(To see the catalogue of workflows the router picks from, exit and run `reyn skills` from the shell — chat conversations don't enumerate them.)
+(To see the catalogue of skills the router picks from, exit and run `reyn skills` from the shell — chat conversations don't enumerate them.)
 
 Each turn is logged under `.reyn/agents/default/`.
 
@@ -65,11 +65,11 @@ Stopping `reyn web` (Ctrl+C) doesn't affect the TUI session, and vice versa. See
 
 Lines starting with `/` are intercepted as control commands, not routed to the LLM:
 
-- `/list` — show currently running workflow spawns and any pending user prompts.
-- `/cancel <id>` — cancel a running workflow spawn (id from `/list`).
-- `/answer <id> <text>` — answer a pending `ask_user` or permission prompt.
+- `/list` — show any pending user prompts (`ask_user` / permission asks).
+- `/answer <id> <text>` — answer a pending prompt from `/list`.
+- `/tasks` — list any dynamic tasks a skill has spawned (`/tasks kill <id>` to cancel one).
 
-These three are the only ones you need for default-mode use. More slash commands (`/agents`, `/attach`, `/plan`, …) become useful once you have multiple agents or long-running plans — see [reference/cli/chat](../../reference/cli/chat.md) when you get there.
+These three are the only ones you need for default-mode use. More slash commands (`/agents`, `/attach`, `/rewind`, …) become useful once you have multiple agents or want to time-travel a conversation — see [reference/cli/chat](../../reference/cli/chat.md) when you get there.
 
 ## Memory is automatic
 
@@ -89,14 +89,14 @@ See [concepts/memory](../../concepts/data-retrieval/memory.md) for the full mode
 
 ## What's actually happening
 
-The OS doesn't know about "chat". It just runs a workflow — `skill_router` — that happens to pick another workflow (or, in multi-agent setups, a peer agent) to delegate to. The router workflow is a normal stdlib workflow, not special tooling. This is the same composition pattern any of your workflows would use (P7 (principles doc removed)).
+The OS doesn't know about "chat". It just runs the chat router, which picks a skill (or, in multi-agent setups, a peer agent) to delegate to. This is the same composition pattern any of your own skills would use (P7 (principles doc removed)).
 
 ## What you learned
 
 - `reyn chat` attaches a REPL to the auto-created `default` agent.
-- Each turn goes through `skill_router`, which picks a stdlib workflow and runs it.
+- Each turn goes through the chat router, which picks a skill and runs it.
 - Memory is two-layered (shared + agent) and read/written automatically.
-- `/list`, `/cancel`, `/answer` are the slash commands you need at this stage.
+- `/list`, `/answer`, `/tasks` are the slash commands you need at this stage.
 
 ## Where to go next
 
