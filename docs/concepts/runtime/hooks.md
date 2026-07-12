@@ -474,7 +474,9 @@ The following capabilities are designed but not yet implemented:
   does not yet read `composers:` from `reyn.yaml`/`.reyn/config/hooks.yaml`
   and start it automatically; that wiring, plus a `WalBackedPendingStore`
   (recovery-feature-gated) and consuming `composed:*` as a Sync `on:`
-  target, are follow-ups.
+  target, are follow-ups tracked in
+  [#2881](https://github.com/tya5/reyn/issues/2881) (producer-wire +
+  consumer-open + loop-valve + e2e reachability assert).
 
 ## See also
 
