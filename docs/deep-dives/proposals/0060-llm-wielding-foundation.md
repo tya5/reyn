@@ -770,68 +770,72 @@ mechanism slice (D5c error rails, D5d doc_ref field+gate, D5e SP gate,
 D5b build-step) — one PR or an F3b sibling; E2 later consumes D5b's shipped
 mirrors. F3a (builtin tier plumbing) is unchanged and already in flight.
 
-## Addendum D9 — criticality split + offload as an SP-critical affordance (owner refinement 2026-07-12)
+## Addendum D9 — criticality split; `present` as an SP-critical affordance (owner refinement 2026-07-12)
 
 **Owner observation**: the LLM tends to answer **without reading all available
-content every turn**. Two structural consequences that sharpen D3/D4's
-placement map:
+content each turn**. Two structural consequences that sharpen D3/D4's
+placement map.
 
 ### D9.1 — The cheat-sheet is PULL, so it may be skipped → split by criticality
 
 A skill (the cheat-sheet, D1) is read just-in-time — the model may act
-*without* reading it. Therefore the placement rule gains a criticality axis:
+*without* reading it. So placement gains a criticality axis:
 
 - **SP-resident (push, always seen)** = **critical-or-you-fail affordances** —
-  knowledge whose absence causes a *systematic default failure* the model
-  otherwise falls into.
-- **cheat-sheet (pull, may be skipped)** = the **fuller** how-to it looks up
-  when it chooses to.
+  knowledge whose absence causes a *systematic default failure*.
+- **cheat-sheet (pull, may be skipped)** = the **fuller** how-to it looks up.
 
 **Criterion — an affordance is SP-critical iff missing it causes a bad
-default, not merely suboptimal lookup.** The SP-critical set is the model's
+default, not merely a suboptimal lookup.** The SP-critical set is the model's
 anti-default-failure countermeasures, and it is enumerable:
 - discovery-mandate (miss → doesn't discover, re-invents) — *landed, Layer C*
 - author-vs-reuse (miss → re-authors what exists) — *landed, Layer C*
-- **offload/present (miss → dumps large content)** — *new, D9.2*
+- **`present` (miss → dumps large content into the reply)** — *new, D9.2*
 - author-from-spec-not-guess (miss → hallucinates a mechanism) — the SP
-  pointer + "reach the spec before authoring" (D5c/D5d rails)
+  pointer + reach-the-spec rails (D5c/D5d)
 
-The cheat-sheet (curated-5 #1) remains the fuller hub; its *critical fragments*
-are promoted to the SP. D4 refined: `SP = map + discipline + critical
-affordances (incl. offload) + cheat-sheet pointer`; `cheat-sheet = fuller`.
+The cheat-sheet (curated-5 #1) stays the fuller hub; its *critical fragments*
+promote to the SP. D4 refined: `SP = map + discipline + critical affordances
+(incl. present) + cheat-sheet pointer`; `cheat-sheet = fuller`.
 
-### D9.2 — offload/present is an SP-critical affordance (dump-prevention)
+### D9.2 — `present` is an SP-critical affordance (dump-prevention)
 
-The direct consequence of "answers without reading all" is **content
-dumping** — pasting large outputs into the reply. The countermeasure is
-reyn's zero-token **offload/present** mechanism (the present layer, records
-0054/0055): render/offload large content instead of dumping it into tokens.
-**The model will not offload if it does not know offload exists** — so the
-affordance is SP-critical, not cheat-sheet-optional.
+"Answers without reading all" → **content dumping** (pasting large output into
+the reply). reyn's `present` **is** the zero-token mechanism (the present
+layer, records 0054/0055): show results to the operator instead of spending
+them as reply tokens. **The model won't use `present` if it doesn't know it
+exists** → the affordance is SP-critical, not cheat-sheet-optional.
 
-- **SP essential (new)**: a line teaching "do not dump large output — offload
-  / present it," extending Layer C's mechanism-selection decision tree
-  (`output → present | render | mcp-write`) with the **offload** affordance and
-  the anti-dump discipline. Minimal, always-seen.
-- **Full offload/present spec** → cheat-sheet + reference via `doc_ref` (D5d).
-- **offload is the 8th teaching axis**: the D2 audit covered 7 *authoring*
-  part-types; offload/present is a *usage* affordance (how to emit output
-  cheaply), and it must be in the SP-critical set, doc_ref'd for depth. The
-  reachability discipline (D5) applies to it too.
+- **No separate "offload" vocabulary** (owner correction — earlier draft
+  over-abstracted): `present` *is* the mechanism. The SP essential is one
+  line — "show results with `present` (zero-token, to the operator) instead of
+  reading everything and dumping it" — extending Layer C's mechanism-selection
+  `output → present`.
+- **No separate offload builtin**: the pattern is "process in a pipeline →
+  terminal `present`." The **flagship (web_search → agent → judge → present)
+  is exactly a pipeline-terminal `present` = the exemplar**; the status-card
+  present-view (curated-5 #4) exemplifies the simple case. Both already in the
+  set — nothing new to add.
+- **Full `present` spec** → cheat-sheet + reference via `doc_ref` (D5d).
+
+`present` is thus a *usage* affordance the SP must carry (beyond D2's 7
+*authoring* part-types); the reachability discipline (D5) applies to its full
+spec.
 
 ### D9.3 — Falsifiability
 
-- The SP-critical set is enumerable (the known default-failures) → a test can
-  assert each critical affordance line is present in the built SP (strip the
-  offload line → the anti-dump SP essential is gone → RED).
-- offload-in-SP is load-bearing for the dump-failure it prevents; the J-LEARN
-  journey (D7) gains a dump-avoidance check: a cold model handed a large result
-  offloads rather than dumps (witnesses offload reached the SP-critical floor).
+- The SP-critical set is enumerable → a test asserts each critical line is in
+  the built SP (strip the `present` line → the anti-dump essential is gone →
+  RED).
+- The J-LEARN journey (D7) gains a **dump-avoidance check**: a cold model
+  handed a large result uses `present` rather than dumping it — witnessing the
+  `present` affordance reached the SP-critical floor.
 
 ### D9.4 — Dispatch impact
 
-F3b now dispatches **cheat-sheet content (fuller hub) + SP essentials (the
-critical fragments, incl. the offload affordance line)** together — the
-SP-essentials slice extends the merged Layer C frame (`router_frame.py`) and is
-small; the offload line is the load-bearing new SP content. D5e's existence
-gate still couples the cheat-sheet's SP pointer to the shipped skill.
+F3b ships **cheat-sheet content (fuller hub) + the SP-essentials slice** (the
+critical fragments, incl. the one `present` line) together. The SP-essentials
+slice extends the merged Layer C frame (`router_frame.py`) and is small; the
+`present` line is the load-bearing new SP content. No new "offload"
+axis/vocabulary/builtin. D5e's existence gate still couples the cheat-sheet's
+SP pointer to the shipped skill.
