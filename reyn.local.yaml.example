@@ -117,19 +117,6 @@
 
 
 # -----------------------------------------------------------------------------
-# tool_calls_op_loop_skills: TRANSITIONAL. Skill names opted into the native-tools
-# op-loop phase mechanism — the phase act-loop drives the shared RouterLoop.run_loop
-# (the converged op-loop, #1092): ops are emitted as native tool_calls, run through
-# the shared executor, and threaded as native tool-role message-history. Default
-# empty = every skill uses json-mode (unchanged). Removed once the op-loop becomes
-# the default. (#1092 PR-C-3 merged the former separate routerloop_convergence_skills
-# gate into this one — the converged path is now the op-loop's implementation.)
-# -----------------------------------------------------------------------------
-# tool_calls_op_loop_skills:
-#   - my_skill
-
-
-# -----------------------------------------------------------------------------
 # permissions: pre-approved permission grants — same structure as phase
 # frontmatter ``permissions:`` block, but value is always ``allow``. Lets the
 # operator pre-approve specific tools so the router doesn't gate them at
@@ -142,7 +129,7 @@
 #   file.delete       — pre-approve file-delete ops
 #   file.write        — pre-approve all file-write ops (flat kind grant, non-glob)
 #   python.safe       — pre-approve the python preprocessor's safe mode
-#                       (stdlib skill_router uses this — already set in reyn.yaml)
+#                       (the chat router uses this — already set in reyn.yaml)
 #   mcp.<server>      — pre-approve a specific MCP server's tool surface
 # -----------------------------------------------------------------------------
 # permissions:
@@ -466,22 +453,6 @@
 
 
 # -----------------------------------------------------------------------------
-# skill_resume: policy for handling steps that have a
-# ``step_started`` WAL event but no matching ``step_completed`` / ``step_failed``
-# (= the op may have committed externally and only the operator can decide).
-#
-# Policies: ``retry`` (default; safe for read-only / idempotent ops),
-# ``skip`` (synthesize empty completion), ``discard_skill`` (abort + drop the
-# checkpoint), ``prompt`` (legacy/no-op under auto-resume, treated as retry).
-# -----------------------------------------------------------------------------
-# skill_resume:
-#   default: retry
-#   per_skill:
-#     fragile_external_writer: discard_skill
-#     idempotent_indexer:      retry
-
-
-# -----------------------------------------------------------------------------
 # time_travel: cost knobs for the time-travel (rewind/resume) feature (#1582).
 #
 # workspace_capture (default true): when true, every checkpoint boundary (turn /
@@ -517,21 +488,11 @@
 
 
 # -----------------------------------------------------------------------------
-# plan_resume_raw: how the resume coordinator treats
-# interrupted plan-mode runs on restart. Parsed lazily by the coordinator,
-# so the shape lives in ``reyn.plan`` rather than here. Set to a dict only
-# when the plan coordinator's docs explicitly direct it.
-# -----------------------------------------------------------------------------
-# plan_resume_raw: {}
-
-
-# -----------------------------------------------------------------------------
-# voice (chat TUI Whisper input, optional ``reyn[voice]`` extras): lazy-loaded
-# only when Ctrl+R is pressed. Default ``language: "ja"`` reflects Reyn's
-# Japanese-enterprise focus; set to empty string or null to auto-detect.
-#
-# Apple Silicon note: ``cpu_threads: 4`` avoids the OpenMP / Python-threading
-# deadlock observed at high core counts.
+# voice: ⚠️ CURRENTLY UNAVAILABLE. This block still parses (no error if set),
+# but has no consumer — it was built for the Ctrl+R Whisper binding in the
+# old Textual TUI, which was deleted and replaced by the inline CUI (which has
+# no voice-input binding). Kept here for schema completeness only; setting
+# these fields today has no effect. See docs/concepts/tools-integrations/voice.md.
 # -----------------------------------------------------------------------------
 # voice:
 #   enabled: true
@@ -715,27 +676,6 @@
 
 
 # -----------------------------------------------------------------------------
-# plan: plan-mode execution tuning.
-#
-#   step_max_iterations: RouterLoop iterations per plan step before the OS
-#                        records a step failure. Default 5.
-#   retry_limit:         automatic retries per step on transient errors.
-#                        Default 3. 0 = disable. Permission/budget exceptions
-#                        are always excluded from retry.
-#   step_compaction:     prior-step ``step_results`` compaction policy
-#                        (sibling to ``chat.compaction``).
-# -----------------------------------------------------------------------------
-# plan:
-#   step_max_iterations: 5
-#   retry_limit: 3
-#   step_compaction:
-#     recent_step_results_raw: 3
-#     summarize_older_threshold_tokens: null   # null = derive from main_pool
-#     step_results_ratio: 0.50
-#     use_chars4_estimate: false
-
-
-# -----------------------------------------------------------------------------
 # eval: trace export adapters. Empty list (default) =
 # no export. Supported types:
 #   - file        : local JSONL dumps under ``path``
@@ -774,24 +714,35 @@
 
 
 # -----------------------------------------------------------------------------
-# hooks: agent-lifecycle hooks (#1800/#2069) — a thin operator layer over the
-# inbox + the P6 lifecycle. A list of entries; each fires at a lifecycle point
-# (``on``) and carries EXACTLY ONE of three mutually-exclusive schemes:
-#   template_push — inject an attributed ``[hook:<name>]`` message from a config
-#                   Jinja2 template.
-#   shell_exec    — run an external command as a pure side-effect (output IGNORED).
-#   shell_push    — run a command whose STDOUT is a JSON push-directive → pushed
-#                   via the same path as template_push (stdout is the SOURCE).
+# hooks: agent-lifecycle hooks (#1800/#2069, Hook-Event Redesign proposal 0059)
+# — a thin operator layer over the inbox + the P6 lifecycle. A list of
+# entries; each fires at a hook-point (``on``) and carries EXACTLY ONE of
+# FOUR mutually-exclusive schemes:
+#   template_push  — inject an attributed ``[hook:<name>]`` message from a config
+#                    Jinja2 template.
+#   shell_exec     — run an external command as a pure side-effect (output IGNORED,
+#                    command line is STATIC — never Jinja2-templated, a deliberate
+#                    command-injection guard; event data arrives on stdin as JSON).
+#   shell_push     — run a command whose STDOUT is a JSON push-directive → pushed
+#                    via the same path as template_push (stdout is the SOURCE).
+#   pipeline_launch — launch a registered pipeline (async/detached), input
+#                    Jinja2-rendered from the event's template vars.
 #
-#   on:            turn_start | turn_end | session_start | session_end |
-#                  skill_start | skill_end | task_start | task_end
+#   on:            the 10 builtin points — turn_start | turn_end | session_start |
+#                  session_end | task_start | task_end | mcp_resource_updated |
+#                  file_changed | cron_fired | webhook_received — plus the two
+#                  open namespaces ``composed:<name>`` (a Composer's output,
+#                  below) and, as a Composer INPUT only (never a hook's own
+#                  ``on:``), ``llm:<session_id>:<event_name>`` (LLM-emitted via
+#                  the emit_hook_event op). Full syntax reference + matcher
+#                  grammar + composers: block: docs/concepts/runtime/hooks.md.
 #   template_push: message:   Jinja2 template → the message text
 #                  wake:      true  → start a new turn (self-continuation)  [default]
 #                             false → ride along with the next turn (passive context)
 #                  push_when: Jinja2 → bool; false skips the push (conditional)
-#                  session:   parsed + carried forward-compat; cross-session routing
-#                             is NOT yet wired (no-op today, tracked follow-up)
-#   shell_exec:    a command string
+#                  session:   parsed + carried; naming a DIFFERENT session routes
+#                              this push to that session's inbox (cross-session push)
+#   shell_exec:    a static command string (no templating — see above)
 #   shell_push:    a command string; its stdout must be a single JSON object
 #                  {"push_when": bool, "wake": bool, "message": str, "session"?: str}
 #                  (first three required). Pure JSON on stdout; logs → stderr.

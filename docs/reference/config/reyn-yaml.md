@@ -35,7 +35,7 @@ models:
 | `action_retrieval` | map | Universal catalog visibility + retrieval settings. See below. |
 | `embedding` | map | RAG embedding model classes and batch settings. See below. |
 | `chat` | map | Chat-session compaction settings. See below. |
-| `voice` | map | Voice input (Whisper) settings for the chat TUI. See below. |
+| `voice` | map | ⚠️ Currently unavailable (no consumer). See below. |
 | `events` | map | Audit-log rotation policy for chat-session event files. See below. |
 | `observability` | map | Opt-in OpenTelemetry (OTLP) export of P6 audit-events. Off by default. See below. |
 | `tool_use` | map | Chat-layer tool-use scheme selector (`chat`). See below. |
@@ -1567,7 +1567,9 @@ Setting both `max_bytes` and `max_age_seconds` to `0` disables rotation entirely
 
 ## `voice` block
 
-Voice-input (Whisper) settings for the chat TUI (Ctrl+R to record). Optional — requires `pip install 'reyn[voice]'` (`sounddevice` + `faster-whisper`). The block is lazy-loaded; a missing `[voice]` extra silently disables the record key.
+**⚠️ Currently unavailable.** The block still parses (no error if set), but has no consumer — it was built for the Ctrl+R Whisper binding in the old Textual TUI, which was deleted and replaced by the inline CUI (no voice-input binding). Kept for schema completeness only. See [concepts: voice](../../concepts/tools-integrations/voice.md).
+
+Voice-input (Whisper) settings, when a consumer exists. Optional — requires `pip install 'reyn[voice]'` (`sounddevice` + `faster-whisper`). The block is lazy-loaded; a missing `[voice]` extra silently disables the record key.
 
 ```yaml
 voice:

@@ -33,7 +33,7 @@ models:
 | `action_retrieval` | マップ | ユニバーサルカタログの可視化 + 検索設定。以下参照。 |
 | `embedding` | マップ | RAG 埋め込みモデルクラスとバッチ設定。以下参照。 |
 | `chat` | マップ | チャットセッションの Head/Body/Tail 圧縮設定。以下参照。 |
-| `voice` | マップ | チャット TUI の音声入力（Whisper）設定。以下参照。 |
+| `voice` | マップ | ⚠️ 現在利用不可(consumerなし)。以下参照。 |
 | `events` | マップ | チャットセッションイベントファイルの監査ログローテーションポリシー。以下参照。 |
 | `observability` | マップ | P6 監査イベントの OpenTelemetry (OTLP) エクスポート（オプトイン）。デフォルトは無効。以下参照。 |
 | `mcp` | マップ | MCP サーバー定義と `search_threshold`。以下参照。 |
@@ -959,7 +959,9 @@ events:
 
 ## `voice` ブロック
 
-チャット TUI の音声入力（Whisper）設定（Ctrl+R で録音）。オプション機能 — `pip install 'reyn[voice]'`（`sounddevice` + `faster-whisper`）が必要です。ブロックは遅延ロードされるため、`[voice]` extra がない場合は録音キーが自動的に無効化されます。
+**⚠️ 現在利用不可。** このブロックは今もparseされます(設定してもエラーにはなりません)が、consumerがありません — 旧 Textual TUI の Ctrl+R Whisper バインディング用に構築されたものですが、そのTUIは削除され inline CUI に置き換わりました(音声入力バインディングなし)。スキーマの完全性のためだけに残しています。[コンセプト: voice](../../concepts/tools-integrations/voice.md) を参照。
+
+音声入力(Whisper)設定(consumerが存在する場合)。オプション機能 — `pip install 'reyn[voice]'`(`sounddevice` + `faster-whisper`)が必要です。ブロックは遅延ロードされるため、`[voice]` extra がない場合は録音キーが自動的に無効化されます。
 
 ```yaml
 voice:
