@@ -806,11 +806,20 @@ layer, records 0054/0055): show results to the operator instead of spending
 them as reply tokens. **The model won't use `present` if it doesn't know it
 exists** → the affordance is SP-critical, not cheat-sheet-optional.
 
+- **Scope `present` to OUTPUT only — this is the load-bearing precision**
+  (owner correction). `present` sends content to the operator *zero-token; the
+  model does not read it back*. So it applies **only to results/reports for the
+  operator**, never to content the **model itself must consume** (skill bodies,
+  docs, target files) — those must be **read into context**. Presenting
+  input-content means the model never sees it (the inverse failure: "present
+  what you should have read, then never consume it"). The SP essential is one
+  distinction: **"Results for the operator → `present` (zero-token). Content
+  you use/follow (skills, docs, the thing you're processing) → read it, don't
+  `present` it."** This maps cleanly onto the part×role axes (Layer C):
+  `present` is the **output** role; consuming content is the **input** role.
 - **No separate "offload" vocabulary** (owner correction — earlier draft
-  over-abstracted): `present` *is* the mechanism. The SP essential is one
-  line — "show results with `present` (zero-token, to the operator) instead of
-  reading everything and dumping it" — extending Layer C's mechanism-selection
-  `output → present`.
+  over-abstracted): `present` *is* the mechanism, extending Layer C's
+  mechanism-selection `output → present`.
 - **No separate offload builtin**: the pattern is "process in a pipeline →
   terminal `present`." The **flagship (web_search → agent → judge → present)
   is exactly a pipeline-terminal `present` = the exemplar**; the status-card
@@ -820,7 +829,12 @@ exists** → the affordance is SP-critical, not cheat-sheet-optional.
 
 `present` is thus a *usage* affordance the SP must carry (beyond D2's 7
 *authoring* part-types); the reachability discipline (D5) applies to its full
-spec.
+spec. The output/input scope also keeps docs-delivery (D5b) coherent: reyn's
+docs are **model-read input** → reached via `doc_ref`/cheat-sheet and read into
+context, *not* presented; only the flagship's *result* is operator output →
+presented. Different axes, no contradiction. The cheat-sheet's composition
+guidance carries the same distinction ("results → present; content to consume →
+read").
 
 ### D9.3 — Falsifiability
 
