@@ -2476,6 +2476,17 @@ class Session:
         """
         return self._buffered_intervention_answers
 
+    @property
+    def hook_driven_turns(self) -> int:
+        """Read-only accessor for the hook-driven-turns loop-valve counter (#2884).
+
+        Snapshot-backed (``AgentSnapshot.hook_driven_turns`` — see
+        ``restore_state`` / ``SnapshotJournal.record_hook_driven_turns``) so
+        tests and observability can read the crash-durable value without
+        reaching into the private ``_hook_driven_turns`` field.
+        """
+        return self._hook_driven_turns
+
     def _is_turn_cancel_requested(self) -> bool:
         """Forwarding → RouterLoopDriver.is_cancel_requested (PR-3)."""
         return self._loop_driver.is_cancel_requested()
@@ -2997,6 +3008,9 @@ class Session:
                                              + self._restore_intervention_tasks
             buffered_intervention_answers  → self._buffered_intervention_answers
             next_turn_context              → self._next_turn_context
+            hook_driven_turns              → self._hook_driven_turns (#2884; restore_state's
+                                               plain assignment is unconditional, so no
+                                               separate clear step is needed here)
 
         The _inflight_wal_tasks task handles are already settled by
         await_quiescent; this drops the (now-done) handles so the rewound
@@ -3022,6 +3036,10 @@ class Session:
         self._buffered_intervention_answers.clear()
         # next_turn_context (#1800-4b)
         self._next_turn_context.clear()
+        # hook_driven_turns (#2884): reset the loop-valve counter mirror. restore_state
+        # re-assigns it wholesale from the reconstructed snapshot, but clearing here keeps
+        # the zero-residue guarantee robust independent of that assignment.
+        self._hook_driven_turns = 0
         self._inflight_wal_tasks.clear()
 
     @property
@@ -4384,6 +4402,10 @@ class Session:
         Callable from async context only — restoration schedules asyncio
         tasks."""
         self._journal.install(snapshot)
+        # #2884: restore the loop-valve counter from its snapshot-backed durable
+        # form — otherwise a crash+restart silently resets it to 0, handing a
+        # near-cap hook self-continuation chain a free fresh budget window.
+        self._hook_driven_turns = snapshot.hook_driven_turns
         for msg in snapshot.inbox:
             self.inbox.put_nowait((msg["kind"], msg["payload"]))
         self._chains.restore(on_fire=self._on_chain_timeout_fire)
@@ -4516,8 +4538,12 @@ class Session:
         # trigger. Monotonic counter + finite cap + reset-on-user-turn ⇒ finite.
         if kind == "user":
             self._hook_driven_turns = 0
+            # #2884: snapshot-back the counter so a crash+restart does not hand a
+            # near-cap self-wake loop a free fresh budget window (see restore_state).
+            await self._journal.record_hook_driven_turns(count=0)
         elif kind == "hook":
             self._hook_driven_turns += 1
+            await self._journal.record_hook_driven_turns(count=self._hook_driven_turns)
             _base_cap = self._safety.loop.max_hook_driven_turns
             if _base_cap > 0:
                 _cap = _base_cap + int(self._safety_extensions.get("hook_driven_turns", 0.0))

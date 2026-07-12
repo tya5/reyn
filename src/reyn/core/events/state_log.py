@@ -111,6 +111,12 @@ WAL_EVENT_KINDS = (
     "task_rebound",
     # (#2248 PR-A added `config_changed` here; #2259 PR-1 removed it — config recovery is now
     # a truncation-surviving GENERATION, not a truncatable WAL event. See config_generations.py.)
+    # NEW (#2884) — the hook-driven-turns loop-valve counter's FULL current value (not a
+    # delta), recorded at every reset (kind="user") and increment (kind="hook") edge. This
+    # kind is a truncatable, between-snapshot replay-maintenance record ONLY — the
+    # reconstruction SOURCE-of-truth is the snapshot field (AgentSnapshot.hook_driven_turns),
+    # since consumed WAL entries are pruned by truncate_below (the #2259 config-loss class).
+    "hook_driven_turns_set",
 )
 
 
