@@ -149,7 +149,7 @@ schemas:
   builtin:lifecycle:turn_end:      { agent_name: string, chain_id: string, user_text: string }
   builtin:lifecycle:task_start:    { task_id: string, name: string, assignee: string }
   builtin:lifecycle:task_end:      { task_id: string, status: string }   # "done" | "aborted"
-  builtin:external:mcp_resource_updated: { server: string, uri: string, resync: bool }
+  builtin:external:mcp_resource_updated: { server: string, uri: string, agent_name: string, resync: bool }  # [correction 2026-07-12] agent_name は Phase 1 discovery(live grep, message_handler.py:220-226)が捕捉。初稿 schema の漏れを修正 — impl の code-shipped schema が authority
   builtin:external:file_changed:         { path: string, event_type: string }  # created|modified|deleted
   builtin:external:cron_fired:           { job_name: string, to: string }
   builtin:external:webhook_received:     { transport: string, sender: string }  # 生 body は決して含めない
