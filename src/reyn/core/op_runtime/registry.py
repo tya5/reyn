@@ -27,8 +27,9 @@ Consumers:
 Note (#2890 F9): a coarse→fine ``allowed_ops`` prefix-wildcard helper
 (``is_op_allowed``/``is_op_instance_allowed``/``COARSE_TO_FINE``) used to
 live in this module for ``reyn.core.kernel.control_ir_executor``'s
-``allowed_ops`` filter. That consumer was removed in #2461 ("PR-2 — remove
-dead ContextFrame + phase-LLM path"); the helper was left behind with zero
+``allowed_ops`` filter. That consumer was removed in #2438 (#2434 stage3b —
+kernel phase-engine bulk-delete, commit ``d3c8c7a1``); the helper was left
+behind with zero
 remaining call sites (verified: a full ``src/``/``tests/`` grep finds no
 caller other than the two functions calling each other) and was removed
 here as dead code rather than kept as an unreachable/untested surface.

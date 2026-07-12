@@ -190,9 +190,10 @@ goal.
   as the shared implementation that registry handlers delegate to.
 - **`is_op_allowed` helper** (removed, #2890 F9) — this prefix-wildcard
   `allowed_ops` membership helper's only consumer, `control_ir_executor`,
-  was removed in #2461; the helper itself (plus `is_op_instance_allowed`
-  and the `COARSE_TO_FINE` table) was dead code with zero remaining call
-  sites and was removed from `op_runtime/registry.py`.
+  was removed in #2438 (#2434 stage3b kernel phase-engine bulk-delete); the
+  helper itself (plus `is_op_instance_allowed` and the `COARSE_TO_FINE`
+  table) was dead code with zero remaining call sites and was removed from
+  `op_runtime/registry.py`.
 
 **#1240 (the 2-axis tool-model pivot) superseded the coarse phase-side
 dispatch.** The phase catalog and Control IR now use the fine-grained
