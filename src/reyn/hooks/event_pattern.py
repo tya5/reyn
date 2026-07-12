@@ -113,14 +113,30 @@ def matches(pattern: "EventPattern | None", event: HookEvent) -> bool:
     return _payload_matches(pattern.payload, event.payload)
 
 
-def validate_against_schema(pattern: EventPattern, kind: str) -> None:
+def validate_against_schema(
+    pattern: EventPattern,
+    kind: str,
+    composed_schemas: "dict[str, frozenset[str]] | None" = None,
+) -> None:
     """Raise ``HookSchemaError`` iff ``pattern.payload`` names a field that
-    ``kind``'s builtin schema (``schema_registry.BUILTIN_HOOK_SCHEMAS``) does
-    not carry — typo-resistance (e.g. ``payload.srever`` vs the real
-    ``server`` field). A ``kind`` with no builtin schema entry (a future /
-    non-builtin point — the schema-driven open set) is a silent no-op —
-    nothing to validate against, the same "open set" posture as
+    ``kind``'s schema does not carry — typo-resistance (e.g. ``payload.srever``
+    vs the real ``server`` field). A ``kind`` with no schema entry (a future /
+    non-builtin, non-composed point — the schema-driven open set) is a silent
+    no-op — nothing to validate against, the same "open set" posture as
     ``schema_registry.validate_payload``.
+
+    ``kind``'s schema resolves from TWO sources: ``composed_schemas`` (a
+    ``{emit_kind: frozenset(field_names)}`` map for every currently-configured
+    ``composed:*`` kind — #2889, closes the Phase-3 open-set gap ``composed:*``
+    was left in: every composed event, across all 7 Composer ops, is emitted
+    by the single ``_emit_composed`` producer with the FIXED payload shape
+    ``{"inputs": [...], "correlation_key": <key>}``, so this schema is knowable
+    and identical for every composer) checked FIRST, falling back to the
+    builtin ``schema_registry.BUILTIN_HOOK_SCHEMAS`` (the two namespaces never
+    collide — ``composed:*`` vs the 10 shipped builtin points). ``None``
+    (the default — no composer configuration known to the caller) skips the
+    composed lookup entirely, preserving the pre-#2889 open-set posture for
+    every caller that doesn't thread it.
 
     ENFORCED AT LOAD: ``reyn.hooks.loader.load_hooks`` calls this for every
     configured matcher (wrapping a ``HookSchemaError`` into a decision-enabling
@@ -128,7 +144,9 @@ def validate_against_schema(pattern: EventPattern, kind: str) -> None:
     load rather than silently never firing (see module docstring)."""
     if not pattern.payload:
         return
-    schema = BUILTIN_HOOK_SCHEMAS.get(canonical_kind(kind))
+    schema = composed_schemas.get(kind) if composed_schemas else None
+    if schema is None:
+        schema = BUILTIN_HOOK_SCHEMAS.get(canonical_kind(kind))
     if schema is None:
         return
     unknown = sorted(set(pattern.payload) - schema)
