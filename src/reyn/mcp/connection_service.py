@@ -155,6 +155,7 @@ import asyncio
 import logging
 from typing import TYPE_CHECKING, Any, Awaitable, Callable
 
+from reyn.hooks.ingress import McpIngressAdapter
 from reyn.mcp.client import MCPClient, MCPTransportError
 from reyn.mcp.elicitation import DEFAULT_ELICITATION_TIMEOUT_SECONDS, build_elicitation_handler
 from reyn.mcp.message_handler import EmitSink, ReynMCPMessageHandler, ToolsCacheInvalidate
@@ -231,8 +232,17 @@ class MCPConnectionService:
         self._elicitation_bus = elicitation_bus
         self._elicitation_gate = elicitation_gate
         self._agent_name = agent_name
-        self._hook_event_queue: "asyncio.Queue[tuple[str, dict]] | None" = None
-        self._hook_drain_task: "asyncio.Task | None" = None
+        # Hook-Event Redesign Phase 2 (proposal 0059 §6.1): the bounded
+        # queue+drain-task in-process bridge now lives in the shared
+        # ``McpIngressAdapter`` (``reyn.hooks.ingress``) — :meth:`enqueue_external_event`
+        # below delegates to it instead of owning the queue/drain machinery
+        # itself. Byte-identical behaviour (same maxsize, same drop+log on
+        # overflow, same lazy drain-task creation); the mechanism is just
+        # consolidated with ``FsWatcher``'s identical shape instead of
+        # duplicated.
+        self._mcp_ingress_adapter = McpIngressAdapter(
+            hook_trigger=hook_trigger, maxsize=_HOOK_EVENT_QUEUE_MAXSIZE,
+        )
         self._clients: dict[str, MCPClient] = {}
         # #2597 slice ②b: runtime-only, in-memory, NO WAL (Q4 — see module docstring).
         # server name -> set of URIs currently subscribed on that server's held
@@ -440,52 +450,29 @@ class MCPConnectionService:
             return None
         return self._elicitation_bus
 
-    # ── #2608 H1: bounded sync->async external-event->hook bridge ──────────────────
+    # ── #2608 H1 / Hook-Event Phase 2 §6.1: MCP Ingress Adapter delegate ───────────
 
     def enqueue_external_event(self, point: str, template_vars: dict) -> None:
         """SYNCHRONOUS, non-blocking entry point called from the MCP receive-loop task
         (``ReynMCPMessageHandler.on_resource_updated``). Never awaits, never raises,
         never blocks — see module docstring's H1 section for the full bridge design.
 
-        No-op when ``hook_trigger`` is None (no hook wired for this session)."""
-        if self._hook_trigger is None:
-            return
-        self._ensure_hook_drain_task()
-        assert self._hook_event_queue is not None
-        try:
-            self._hook_event_queue.put_nowait((point, template_vars))
-        except asyncio.QueueFull:
-            # Bounded by construction (#2608 H1): a burst of resource updates faster
-            # than hooks can be dispatched DROPS the newest event rather than growing
-            # the queue unboundedly or blocking the receive loop.
-            logger.warning(
-                "MCPConnectionService: external-event hook queue full (maxsize=%d) — "
-                "dropping %r event (server=%r)",
-                _HOOK_EVENT_QUEUE_MAXSIZE, point, template_vars.get("server"),
-            )
+        Hook-Event Redesign Phase 2 (proposal 0059 §6.1): delegates the bounded
+        queue+drain-task delivery mechanism to ``self._mcp_ingress_adapter``
+        (``reyn.hooks.ingress.McpIngressAdapter``) — the SAME bridge shape
+        ``FsIngressAdapter`` uses, no longer duplicated per-source. ``point`` +
+        ``template_vars`` (already schema-built by ``ReynMCPMessageHandler`` via
+        ``build_hook_payload``) are wrapped into a :class:`~reyn.hooks.event.HookEvent`
+        here — byte-identical values, now typed at the ingress boundary instead of
+        only inside ``HookDispatcher.dispatch``.
 
-    def _ensure_hook_drain_task(self) -> None:
-        if self._hook_event_queue is None:
-            self._hook_event_queue = asyncio.Queue(maxsize=_HOOK_EVENT_QUEUE_MAXSIZE)
-        if self._hook_drain_task is None or self._hook_drain_task.done():
-            self._hook_drain_task = asyncio.create_task(self._drain_hook_events())
-
-    async def _drain_hook_events(self) -> None:
-        """Runs on the session's event loop (this service's owning loop — the same
-        loop the held ``fastmcp.Client`` was opened on, see module docstring), so it
-        can safely ``await hook_trigger(...)``. Per-event ``try/except``: a raising
-        (or hanging-then-raising) hook dispatch must not kill the drain task — the
-        NEXT queued event still gets a chance."""
-        assert self._hook_event_queue is not None
-        assert self._hook_trigger is not None
-        while True:
-            point, template_vars = await self._hook_event_queue.get()
-            try:
-                await self._hook_trigger(point, template_vars)
-            except Exception:  # noqa: BLE001 — one bad dispatch must not kill the drain task
-                logger.warning(
-                    "MCPConnectionService: hook_trigger failed for %r", point, exc_info=True,
-                )
+        No-op when ``hook_trigger`` is None (no hook wired for this session) —
+        the adapter itself no-ops in that case."""
+        from reyn.hooks.event import HookEvent
+        from reyn.hooks.schema_registry import canonical_kind
+        self._mcp_ingress_adapter.deliver(
+            HookEvent(kind=canonical_kind(point), payload=template_vars),
+        )
 
     def _track_subscription(self, server: str, uri: str) -> None:
         self._subscriptions.setdefault(server, set()).add(uri)
@@ -496,18 +483,13 @@ class MCPConnectionService:
     async def aclose(self) -> None:
         """Close every held connection. Idempotent — safe to call repeatedly (e.g. a
         session teardown seam that may run more than once)."""
-        # #2608 H1: cancel the hook-event drain task FIRST (finally-guaranteed, not
-        # except-Exception — CancelledError is a BaseException) so a client-teardown
-        # fault below can never leave the drain task orphaned across session teardown.
-        try:
-            if self._hook_drain_task is not None and not self._hook_drain_task.done():
-                self._hook_drain_task.cancel()
-                try:
-                    await self._hook_drain_task
-                except asyncio.CancelledError:
-                    pass
-        finally:
-            self._hook_drain_task = None
+        # #2608 H1 / Phase 2 §6.1: cancel the hook-event drain task FIRST
+        # (finally-guaranteed, not except-Exception — CancelledError is a
+        # BaseException) so a client-teardown fault below can never leave the
+        # drain task orphaned across session teardown. Delegated to the
+        # McpIngressAdapter (byte-identical: same cancel-then-await-swallow
+        # shape, now shared with FsIngressAdapter's aclose).
+        await self._mcp_ingress_adapter.aclose()
 
         clients = list(self._clients.items())
         self._clients.clear()

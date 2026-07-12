@@ -89,7 +89,7 @@ import os
 import time
 from typing import TYPE_CHECKING, Any, Awaitable, Callable
 
-from reyn.hooks.schema_registry import build_hook_payload
+from reyn.hooks.ingress import FsIngressAdapter
 
 if TYPE_CHECKING:
     pass
@@ -150,8 +150,14 @@ class FsWatcher:
         self._debounce_seconds = debounce_seconds
         self._observer: Any = None
         self._loop: "asyncio.AbstractEventLoop | None" = None
-        self._queue: "asyncio.Queue[tuple[str, str]] | None" = None
-        self._drain_task: "asyncio.Task | None" = None
+        # Hook-Event Redesign Phase 2 (proposal 0059 §6.3): the bounded
+        # queue+drain-task in-process bridge now lives in the shared
+        # ``FsIngressAdapter`` (``reyn.hooks.ingress``) — the SAME bridge
+        # shape ``McpIngressAdapter`` uses, no longer duplicated per-source.
+        # Byte-identical behaviour (same maxsize, same drop+log on overflow).
+        self._fs_ingress_adapter = FsIngressAdapter(
+            hook_trigger=hook_trigger, maxsize=_QUEUE_MAXSIZE,
+        )
         self._started = False
         # #2623: resolved-symlink-path -> operator-configured-path rewrites,
         # built in :meth:`start` — see module docstring "Path normalization".
@@ -189,8 +195,6 @@ class FsWatcher:
         FileSystemEventHandler, Observer = imported
 
         self._loop = asyncio.get_running_loop()
-        self._queue = asyncio.Queue(maxsize=_QUEUE_MAXSIZE)
-        self._drain_task = asyncio.create_task(self._drain_events())
 
         # #2623: schedule each watch on the RESOLVED (symlink-free) path and
         # build a resolved->configured rewrite table, so the reported event
@@ -263,54 +267,25 @@ class FsWatcher:
 
     def _enqueue(self, event_type: str, path: str) -> None:
         """Runs ON THE LOOP THREAD (scheduled via call_soon_threadsafe) — safe
-        to touch ``self._queue`` here."""
-        if self._queue is None:
-            return
-        try:
-            self._queue.put_nowait((event_type, path))
-        except asyncio.QueueFull:
-            # Bounded by construction (mirrors H1): a burst faster than hooks
-            # can be dispatched drops the newest event rather than growing the
-            # queue unboundedly.
-            logger.warning(
-                "FsWatcher: file_changed hook queue full (maxsize=%d) — "
-                "dropping %r event (path=%r)",
-                _QUEUE_MAXSIZE, event_type, path,
-            )
+        to touch the ``FsIngressAdapter``'s queue here.
 
-    async def _drain_events(self) -> None:
-        """Runs on the session's event loop; the only place that ``await``s
-        ``hook_trigger``. Per-event ``try/except`` mirrors H1's drain task —
-        one bad dispatch must not kill the drain loop."""
-        assert self._queue is not None
-        assert self._hook_trigger is not None
-        while True:
-            event_type, path = await self._queue.get()
-            try:
-                await self._hook_trigger(
-                    "file_changed",
-                    build_hook_payload("file_changed", path=path, event_type=event_type),
-                )
-            except Exception:  # noqa: BLE001 — one bad dispatch must not kill the drain task
-                logger.warning(
-                    "FsWatcher: hook_trigger failed for path=%r event_type=%r",
-                    path, event_type, exc_info=True,
-                )
+        Hook-Event Redesign Phase 2 (proposal 0059 §6.3): converts the raw
+        ``(event_type, path)`` signal into a typed ``file_changed``
+        :class:`~reyn.hooks.event.HookEvent` via ``self._fs_ingress_adapter.
+        to_event`` (pure — same ``build_hook_payload`` call as pre-Phase-2,
+        just factored into the adapter), then hands it to the SAME bounded
+        queue+drain-task bridge ``McpIngressAdapter`` uses (``deliver``) — the
+        bound/drop-newest-and-log/drain behaviour is byte-identical, no
+        longer duplicated per-source."""
+        event = self._fs_ingress_adapter.to_event(path, event_type)
+        self._fs_ingress_adapter.deliver(event)
 
     async def aclose(self) -> None:
         """Stop the observer thread + cancel the drain task. Idempotent — safe
         to call repeatedly (e.g. a session teardown seam that may run more
         than once) and safe to call even if :meth:`start` was never called or
         no-op'd (empty paths / no watchdog)."""
-        try:
-            if self._drain_task is not None and not self._drain_task.done():
-                self._drain_task.cancel()
-                try:
-                    await self._drain_task
-                except asyncio.CancelledError:
-                    pass
-        finally:
-            self._drain_task = None
+        await self._fs_ingress_adapter.aclose()
 
         observer = self._observer
         self._observer = None
@@ -327,7 +302,6 @@ class FsWatcher:
             await loop.run_in_executor(None, _stop_and_join)
         self._started = False
         self._loop = None
-        self._queue = None
 
 
 def _build_handler(file_system_event_handler_cls: Any, watcher: FsWatcher) -> Any:
