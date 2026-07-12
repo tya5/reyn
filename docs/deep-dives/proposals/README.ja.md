@@ -93,7 +93,7 @@ SMALL / MEDIUM / LARGE（根拠付き）。
 | [0025](0025-planner-narration-and-sp-fixes.ja.md) | Planner — Router narration（スキルと同形、FP-0012 対称）+ plan step SP 修正 | proposed | SMALL |
 | [0026](0026-op-permission-cross-layer-coherence.ja.md) | Op/Permission クロスレイヤー整合性 — `reyn skill validate` + allowed_ops からの permission 要求自動導出 | proposed | SMALL |
 
-> **FP-0027 以降は GitHub Issues で管理。** [#28](https://github.com/tya5/reyn/issues/28)〜[#31](https://github.com/tya5/reyn/issues/31) 以降を参照。
+> **FP-0027〜0030 は GitHub Issues で直接管理**されていました(下記参照)。**FP-0044 以降はファイルベースの番号付き proposal に戻っています** — #44 以降の proposal は全てこのディレクトリ内のファイルであり、issue スタブではありません。上記の注記は 0027〜0030 の歴史的記録としてのみ残しています。
 
 | # | Issue | タイトル | Status | コスト |
 |---|---|---|---|---|
@@ -101,3 +101,18 @@ SMALL / MEDIUM / LARGE（根拠付き）。
 | 0028 | [#29](https://github.com/tya5/reyn/issues/29) | プラン進捗 UX | proposed | SMALL |
 | 0029 | [#30](https://github.com/tya5/reyn/issues/30) | プランステップのイテレーション予算 | proposed | SMALL |
 | 0030 | [#31](https://github.com/tya5/reyn/issues/31) | プランステップ結果品質 | proposed | SMALL |
+
+| # | タイトル | Status | コスト |
+|---|---|---|---|
+| [0044](0044-chat-package-decomposition.md) | `reyn.chat` 分解 — runtime namespace + cluster 分割 + god-file 分解 | proposed | MEDIUM |
+| [0050](0050-content-threat-scan.md) | Content-layer threat scan(prompt-injection / pre-exec command) | S1 merged(#1844); S2 lead 再レビュー待ち | MEDIUM |
+| [0051](0051-tool-result-viewer-registry-llm-template.md) | Tool-result viewer registry + LLM 生成 viewer テンプレート | superseded — 前提(Textual TUI 右パネル)が実装前に削除済み | SMALL |
+| [0052](0052-high-cost-model-preconfirm.md) | High-cost model 事前確認 | draft | SMALL |
+| [0053](0053-tool-result-schema-redesign.md) | Tool-result スキーマ再設計 | done(IMPLEMENTED 2026-07-08; 全 PR merged) | MEDIUM |
+| [0054](0054-present-layer.md) | Present layer — LLM トークン往復無しの user-facing 表示 | done(IMPLEMENTED 2026-07-08, v1 display-only) | LARGE |
+| [0055](0055-render-template-op-and-present-defaults.md) | `render_template` op + present defaults | done(IMPLEMENTED 2026-07-09) | SMALL |
+| [0056](0056-canonical-coverage-enforcement.md) | Canonical-mapping coverage enforcement | done(IMPLEMENTED 2026-07-09) | SMALL |
+| [0057](0057-rag-retrieval-redesign.md) | RAG / Retrieval 再設計 | owner-validated; 実装着手は GO 待ち | LARGE |
+| [0058](0058-web-surface-modularity.md) | Web surface modularity + Chainlit retire | owner-ratified; 複数 phase landed(#2837 auth-layer、#2850 chainlit retire) | LARGE |
+| [0059](0059-hook-event-redesign.md) | Hook-Event Redesign(Event Bus / reactivity substrate) | owner-ratified; Phase 1-5 landed(#2871–#2885) | LARGE |
+| [0060](0060-llm-wielding-foundation.md) | LLM-Wielding Foundation — agent が構築したものを実際に使うための基盤 | accepted(owner GO); Addendum A/B landed、C review 中 | LARGE |

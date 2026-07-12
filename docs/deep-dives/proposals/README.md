@@ -93,7 +93,11 @@ Links to related ADRs, PRs, and docs.
 | [0025](0025-planner-narration-and-sp-fixes.md) | Planner — router narration (align with skill/FP-0012) + plan step SP fixes | proposed | SMALL |
 | [0026](0026-op-permission-cross-layer-coherence.md) | Op/Permission cross-layer coherence — `reyn skill validate` + auto-derived permission requirements from allowed_ops | proposed | SMALL |
 
-> **FP-0027 onwards are managed in GitHub Issues.** See issues [#28](https://github.com/tya5/reyn/issues/28)–[#31](https://github.com/tya5/reyn/issues/31) and beyond.
+> **FP-0027–0030 were tracked directly in GitHub Issues** (see below) rather
+> than as files here. **FP-0044 onwards returned to file-based numbered
+> proposals** — every proposal since #44 is a file in this directory again,
+> not an issue stub; the note above is retained for the 0027–0030 historical
+> record only.
 
 | # | Issue | Title | Status | Cost |
 |---|---|---|---|---|
@@ -101,3 +105,18 @@ Links to related ADRs, PRs, and docs.
 | 0028 | [#29](https://github.com/tya5/reyn/issues/29) | Plan progress UX | proposed | SMALL |
 | 0029 | [#30](https://github.com/tya5/reyn/issues/30) | Plan step iteration budget | proposed | SMALL |
 | 0030 | [#31](https://github.com/tya5/reyn/issues/31) | Plan step result quality | proposed | SMALL |
+
+| # | Title | Status | Cost |
+|---|---|---|---|
+| [0044](0044-chat-package-decomposition.md) | `reyn.chat` decomposition — runtime namespace + cluster split + god-file seams | proposed | MEDIUM |
+| [0050](0050-content-threat-scan.md) | Content-layer threat scan (prompt-injection / pre-exec command) | S1 merged (#1844); awaiting S2 lead re-review | MEDIUM |
+| [0051](0051-tool-result-viewer-registry-llm-template.md) | Tool-result viewer registry + LLM-generated viewer templates | superseded — premise (Textual TUI right panel) deleted before implementation | SMALL |
+| [0052](0052-high-cost-model-preconfirm.md) | High-cost model pre-confirmation | draft | SMALL |
+| [0053](0053-tool-result-schema-redesign.md) | Tool-result schema redesign | done (IMPLEMENTED 2026-07-08; all PRs merged) | MEDIUM |
+| [0054](0054-present-layer.md) | Present layer — user-facing presentation without an LLM token round-trip | done (IMPLEMENTED 2026-07-08, v1 display-only) | LARGE |
+| [0055](0055-render-template-op-and-present-defaults.md) | `render_template` op + present defaults | done (IMPLEMENTED 2026-07-09) | SMALL |
+| [0056](0056-canonical-coverage-enforcement.md) | Canonical-mapping coverage enforcement | done (IMPLEMENTED 2026-07-09) | SMALL |
+| [0057](0057-rag-retrieval-redesign.md) | RAG / Retrieval redesign | owner-validated; implementation dispatch awaits GO | LARGE |
+| [0058](0058-web-surface-modularity.md) | Web surface modularity + Chainlit retire | owner-ratified; multiple phases landed (#2837 auth-layer, #2850 chainlit retire) | LARGE |
+| [0059](0059-hook-event-redesign.md) | Hook-Event Redesign (Event Bus / reactivity substrate) | owner-ratified; Phases 1-5 landed (#2871–#2885) | LARGE |
+| [0060](0060-llm-wielding-foundation.md) | LLM-Wielding Foundation — making the agent actually use what it can build | accepted (owner GO); Addenda A/B landed, C in review | LARGE |
