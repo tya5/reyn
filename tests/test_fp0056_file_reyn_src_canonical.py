@@ -79,13 +79,16 @@ async def test_incident_end_to_end_real_reyn_src_read_handler_tags_kind_and_maps
     """Tier 1: INTEGRATION — the REAL ``reyn_src_read`` handler reads a real repo file, its result is
     tagged ``kind:"reyn_src"`` at the tool seam, and ``to_canonical`` yields the file body as ``text``
     (not a structured blob). Proves the tag→mapper wiring end-to-end, not just the mapper in isolation."""
+    # "README.md" (not "pyproject.toml" — 0061 §3.3 narrowed the reyn_src
+    # reachable set to {README.md, CHANGELOG.md, docs, src}; pyproject.toml
+    # is deliberately excluded in both dev and wheel mode now).
     ctx = ToolContext(events=None, permission_resolver=None, workspace=None, caller_kind="router")
-    result = await _handle_read({"path": "pyproject.toml"}, ctx)
+    result = await _handle_read({"path": "README.md"}, ctx)
     assert result["kind"] == "reyn_src", "the tool seam tags the kind so the mapper (not fallback) runs"
 
     canonical = to_canonical(result, source="reyn_src_read")
     assert canonical["text"] == result["content"], "the file body is the text payload"
-    assert 'name = "reyn"' in canonical["text"], "the real file content is present as readable text"
+    assert "Reyn" in canonical["text"], "the real file content is present as readable text"
     assert not any(a.get("kind") == "structured" for a in canonical["attachments"])
 
 

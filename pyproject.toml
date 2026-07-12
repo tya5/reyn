@@ -1,6 +1,6 @@
 [build-system]
-requires = ["setuptools>=68", "wheel"]
-build-backend = "setuptools.build_meta"
+requires = ["hatchling"]
+build-backend = "hatchling.build"
 
 [project]
 name = "reyn"
@@ -190,12 +190,35 @@ pythonpath = ["src"]
 # `.*` dotdir exclusion, so `.claude` (and `.reyn`) must be listed back.
 norecursedirs = ["dogfood/fixtures", ".reyn", ".claude", "reyn-worktrees"]
 
-[tool.setuptools.packages.find]
-where = ["src"]
-include = ["reyn*"]
+# Hatchling build config (0061 §3.1 — replaces the former
+# [tool.setuptools.packages.find] / [tool.setuptools.package-data] / setup.py
+# build_py cmdclass trio). `packages` maps 1:1 to the old `packages.find`
+# clause; the three `artifacts` entries preserve — byte-for-byte — the old
+# `package-data` glob (py.typed, builtin/**/*, environment/*.Dockerfile).
+# `artifacts` (not `include`) is used deliberately: it forces inclusion
+# regardless of Hatchling's default VCS-tracked-file selection, so these three
+# entries can never silently drop out if a future file under one of these
+# globs is untracked/gitignored (the top omission risk called out in 0061
+# §3.1 — dropping any of the 3 = a silently-broken wheel).
+[tool.hatch.build.targets.wheel]
+packages = ["src/reyn"]
+artifacts = [
+    "src/reyn/py.typed",
+    "src/reyn/builtin/**/*",
+    "src/reyn/environment/*.Dockerfile",
+]
 
-[tool.setuptools.package-data]
-"reyn" = ["py.typed", "builtin/**/*", "environment/*.Dockerfile"]
+# 0061 §3.2/§3.3 — the reachable-set SSoT: docs-delivery force-include below
+# mirrors `reyn.runtime.reyn_src.FORCE_INCLUDE_ENTRIES` (the single Python
+# declaration; TOML can't import Python, so the two are kept in sync by
+# construction of the parity gate in tests/test_0061_repo_self_access_parity.py,
+# which fails if the two drift). `docs/` stays at the repo root (mkdocs
+# `docs_dir: ../docs` unaffected) — this only maps it into the wheel's
+# installed tree.
+[tool.hatch.build.targets.wheel.force-include]
+"README.md" = "reyn/_bundled/README.md"
+"CHANGELOG.md" = "reyn/_bundled/CHANGELOG.md"
+"docs" = "reyn/_bundled/docs"
 
 [tool.ruff]
 target-version = "py311"

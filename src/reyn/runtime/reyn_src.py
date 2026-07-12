@@ -1,9 +1,10 @@
 """``reyn_src_*`` resolver — read Reyn's own repository from inside.
 
-Backs the ``reyn_src_list`` / ``reyn_src_read`` chat router tools. The
-resolver scopes paths to the running Reyn install's repo root, so the
-agent can answer "how does Reyn / how does Reyn's X work?" by reading
-the source / docs that the user could equivalently view on GitHub.
+Backs the ``reyn_src_list`` / ``reyn_src_read`` / ``reyn_src_glob`` /
+``reyn_src_grep`` chat router tools. The resolver scopes paths to the
+running Reyn install's repo root, so the agent can answer "how does
+Reyn / how does Reyn's X work?" by reading the source / docs that the
+user could equivalently view on GitHub.
 
 Why a dedicated resolver instead of the generic ``file_read``:
 
@@ -14,17 +15,44 @@ Why a dedicated resolver instead of the generic ``file_read``:
   * **Naming clarity.** A generic ``doc/*`` op would collide with the
     user's own project documentation expectations; ``reyn_src_*`` is
     namespaced unambiguously to Reyn-the-project.
-  * **Stable resolution.** Walks up from the running ``reyn`` package
-    until ``pyproject.toml`` is found, anchoring to the repo
-    deterministically without depending on the user's current working
-    directory.
+  * **Stable resolution.** Anchored deterministically without depending
+    on the user's current working directory (see the dual-mode
+    resolution below).
 
-MVP scope: development install (= ``pip install -e .`` from a clone or
-the source itself). Wheel install (= post-PyPI) doesn't bundle README /
-docs / cookbook outside ``src/reyn/`` by default; resolving from the
-package install dir would only see the Python source. That extension is
-tracked separately as a packaging-side change (``MANIFEST.in`` /
-``package-data``) — not part of this MVP.
+**Dual-mode resolution (proposal 0061 §3.2 — dev == wheel parity).**
+``resolve_reyn_root()`` resolves in TWO modes:
+
+  1. **Wheel mode** — detected by the presence of a ``_bundled/``
+     directory adjacent to ``reyn.__file__`` (this is the PRIMARY
+     signal, not "dev walk-up failed": a failure-fallback could
+     mis-resolve a weird checkout to an unrelated ``name = "reyn"``
+     tree, a confused-deputy risk). ``README.md`` / ``CHANGELOG.md`` /
+     ``docs/`` are shipped into the wheel under ``<pkg>/_bundled/`` via
+     Hatchling ``force-include`` (``pyproject.toml``
+     ``[tool.hatch.build.targets.wheel.force-include]``); the package's
+     own Python source already lives directly under ``<pkg>/``. Root =
+     the installed package directory.
+  2. **Dev mode** (unchanged from the original MVP) — walks up from
+     ``reyn.__file__`` for a co-located ``pyproject.toml`` whose content
+     references Reyn. Root = the repo root.
+
+**Single logical namespace, two physical layouts (0061 §3.2/§3.3).** Both
+modes present the SAME repo-relative logical paths — ``README.md``,
+``CHANGELOG.md``, ``docs/<x>``, and (the pinned canonical prefix,
+0061 §7) ``src/reyn/<x>`` for source. ``_translate_logical_to_physical``
+maps a logical path to its on-disk location under the resolved root; it
+is a no-op in dev mode (the dev checkout root already has this exact
+shape) and only does work in wheel mode. The **reachable set** is a
+single SSoT (``REACHABLE_TOP_LEVEL_ENTRIES`` below) declaring exactly
+``{README.md, CHANGELOG.md, docs, src}`` — owner-approved core-only
+scope (0061 §3.3 option (A)). Any path outside this set is refused in
+BOTH modes: a non-declared dev-only path (``pyproject.toml``, ``tests/``,
+``scripts/``, ...) is no longer reachable, matching "equivalent to
+absent in the wheel" — the dev==wheel parity invariant this proposal
+exists to establish. The wheel-side half of the same SSoT drives
+``pyproject.toml``'s ``force-include`` map (kept in literal sync; see
+``tests/test_0061_repo_self_access_parity.py``, which fails if the two
+drift).
 
 P7-clean: this module is OS infrastructure; it carries no
 domain-specific strings.
@@ -39,27 +67,80 @@ from pathlib import Path
 # from blowing up the LLM context. ~256 KB ≈ 50 K tokens worst case.
 _MAX_READ_BYTES = 256 * 1024
 
+# 0061 §3.3 — the single reachable-set SSoT. Every top-level logical
+# entry reyn_src_* will resolve into, in EITHER mode. Owner sign-off
+# (2026-07-13, proposal 0061 §3.3 option (A) — core set only):
+# `pyproject.toml` / `CLAUDE.md` / `tests/` / `scripts/` / `dogfood/` /
+# `pipelines/` / `website/` are ACCEPTED AS EXCLUDED from reyn_src in
+# BOTH modes going forward — the primary self-explanation surface
+# (source + docs + README) is preserved; this is a deliberate narrowing
+# of dev's prior "whole repo" reach (not a bug).
+REACHABLE_TOP_LEVEL_ENTRIES: tuple[str, ...] = ("README.md", "CHANGELOG.md", "docs", "src")
+
+# The subset of the reachable set that is force-included into the wheel
+# via `pyproject.toml`'s `[tool.hatch.build.targets.wheel.force-include]`
+# (`src` isn't listed there because Hatchling's `packages = ["src/reyn"]`
+# already ships the package tree by its own, separate mechanism — see
+# `tests/test_0061_repo_self_access_parity.py`, which cross-checks BOTH
+# halves of this SSoT against `pyproject.toml` so they cannot drift).
+FORCE_INCLUDE_ENTRIES: tuple[str, ...] = ("README.md", "CHANGELOG.md", "docs")
+
+# The pinned canonical logical prefix for source (0061 §7 / sequencing
+# step 2 — fixed BEFORE the parity gate, since its "same logical path"
+# assert depends on it): `src/reyn/`. Matches the existing dev checkout
+# layout 1:1; in wheel mode this prefix is stripped because the
+# installed package directory already IS what "src/reyn/" names in dev.
+SOURCE_LOGICAL_PREFIX = "src/reyn"
+
+# The on-disk directory name Hatchling's `force-include` maps
+# README/CHANGELOG/docs into inside the installed package (see
+# `pyproject.toml`). Wheel-mode detection keys off this directory's
+# presence, adjacent to `reyn.__file__` — the PRIMARY signal (0061 §3.2),
+# not "walk-up failed".
+_BUNDLED_DIR_NAME = "_bundled"
+
+
+def _is_wheel_root(root: Path) -> bool:
+    """True when ``root`` is a wheel install's package directory.
+
+    Detected by the presence of ``_bundled/`` adjacent to
+    ``reyn.__file__`` (0061 §3.2) — never by "dev walk-up failed" (a
+    failure-fallback could mis-resolve a weird checkout to an unrelated
+    ``name = "reyn"``-ish tree, a confused-deputy risk).
+    """
+    return (root / _BUNDLED_DIR_NAME).is_dir()
+
 
 @lru_cache(maxsize=1)
 def resolve_reyn_root() -> Path:
-    """Return the repository root of the running Reyn install.
+    """Return the repository (or, in a wheel install, package) root.
 
-    Walks up from ``reyn.__file__`` (= ``src/reyn/__init__.py`` in dev
-    install, ``site-packages/reyn/__init__.py`` in wheel install) until
+    **Wheel mode** (0061 §3.2): if ``<pkg>/_bundled/`` exists adjacent to
+    ``reyn.__file__``, the running install is a wheel that force-included
+    README/CHANGELOG/docs — return the installed package directory
+    itself. This is checked FIRST and is the primary signal (not a
+    walk-up-failure fallback).
+
+    **Dev mode** (original MVP, unchanged): walks up from
+    ``reyn.__file__`` (= ``src/reyn/__init__.py`` in a dev install) until
     a ``pyproject.toml`` is found AND its content references Reyn (= a
-    line containing ``name = "reyn"`` or similar). The ``name`` check
-    is what distinguishes a dev install (= our repo, has Reyn-named
-    pyproject) from a wheel install in someone else's checkout (= their
-    pyproject, no name match).
+    line containing ``name = "reyn"`` or similar). The ``name`` check is
+    what distinguishes a dev install (= our repo, has a Reyn-named
+    pyproject) from an unrelated checkout.
 
-    Raises ``RuntimeError`` when no Reyn repo root can be resolved
-    (= wheel install with no co-located source). Cached because the
-    answer is process-stable.
+    Raises ``RuntimeError`` when neither mode resolves (= a wheel
+    install with no ``_bundled/`` — e.g. a pre-0061 wheel — and no
+    co-located dev repo). Cached because the answer is process-stable.
     """
     import reyn
     pkg_init = Path(reyn.__file__).resolve()
+    pkg_dir = pkg_init.parent
+
+    if _is_wheel_root(pkg_dir):
+        return pkg_dir
+
     # Walk up. Stop at the filesystem root.
-    for ancestor in [pkg_init.parent, *pkg_init.parents]:
+    for ancestor in [pkg_dir, *pkg_dir.parents]:
         candidate = ancestor / "pyproject.toml"
         if not candidate.is_file():
             continue
@@ -73,29 +154,83 @@ def resolve_reyn_root() -> Path:
             return ancestor.resolve()
     raise RuntimeError(
         "reyn_src_*: no Reyn repository root found above "
-        f"{pkg_init}. This op needs a development install "
+        f"{pkg_init}, and no wheel `_bundled/` directory found "
+        "adjacent to it either. This op needs a development install "
         "(= `pip install -e \".[dev]\"` from a clone of "
-        "github.com/tya5/reyn). Wheel-install support is tracked as a "
-        "packaging follow-up."
+        "github.com/tya5/reyn) or a 0061-or-later wheel install "
+        "(= `pip install reyn`)."
     )
+
+
+def _reachable_top_level_segment(cleaned: str) -> str:
+    """First path segment of a cleaned logical path, or ``""`` for the root."""
+    if not cleaned or cleaned == ".":
+        return ""
+    return cleaned.split("/", 1)[0]
+
+
+def _translate_logical_to_physical(cleaned: str) -> str:
+    """Map a logical repo-relative path to its on-disk path under ``root``.
+
+    No-op in every case that matters for dev mode — the dev checkout
+    root already HAS this exact shape (``README.md`` / ``docs/`` / the
+    ``SOURCE_LOGICAL_PREFIX`` all live at the paths their logical name
+    implies). Only wheel mode needs real translation: README/CHANGELOG/
+    docs live under ``_bundled/`` (Hatchling ``force-include``); source
+    lives directly under the package root with ``SOURCE_LOGICAL_PREFIX``
+    stripped (the installed package directory already IS what
+    ``src/reyn/`` names in dev). Callers only invoke this after
+    confirming ``_is_wheel_root(root)`` — see ``safe_resolve_inside``.
+    """
+    if cleaned in ("", "."):
+        return ""
+    if cleaned in ("README.md", "CHANGELOG.md"):
+        return f"{_BUNDLED_DIR_NAME}/{cleaned}"
+    if cleaned == "docs" or cleaned.startswith("docs/"):
+        return f"{_BUNDLED_DIR_NAME}/{cleaned}"
+    if cleaned == SOURCE_LOGICAL_PREFIX or cleaned == "src":
+        return ""
+    prefix = SOURCE_LOGICAL_PREFIX + "/"
+    if cleaned.startswith(prefix):
+        return cleaned[len(prefix):]
+    # Not a declared logical path. The reachable-set gate in
+    # `safe_resolve_inside` already refuses non-declared top segments
+    # before this function runs, so this branch is unreachable in
+    # practice — a defensive identity fallback, not a silent bypass.
+    return cleaned
 
 
 def safe_resolve_inside(root: Path, rel_path: str) -> Path:
     """Resolve ``rel_path`` against ``root`` and refuse if it escapes.
 
     Returns the absolute resolved path on success. Raises ``ValueError``
-    when the input contains a path-traversal escape (= ``..``) that
-    lands outside ``root``, when the input is an absolute path, or when
-    the resolved target doesn't exist.
+    when: the top-level segment isn't in the declared reachable set
+    (0061 §3.3 — the dev/wheel parity gate; a non-declared path like
+    ``tests/foo`` is refused in BOTH modes, "equivalent to absent in the
+    wheel"); the input contains a path-traversal escape (= ``..``) that
+    lands outside ``root``; or the resolved target doesn't exist.
 
     ``rel_path`` of ``""`` resolves to ``root`` itself (= "list the
     repo top-level"). Leading slashes are stripped so a forgetful LLM
     that calls ``reyn_src_read("/README.md")`` still works.
+
+    In wheel mode (0061 §3.2), ``cleaned`` (the LOGICAL path) is
+    translated to its physical on-disk location under ``root`` via
+    ``_translate_logical_to_physical`` before the escape/existence
+    checks — dev mode is untouched (translation is a no-op there, since
+    the dev checkout root already has the logical shape).
     """
     cleaned = (rel_path or "").lstrip("/")
-    candidate = (root / cleaned).resolve()
+    top = _reachable_top_level_segment(cleaned)
+    if top and top not in REACHABLE_TOP_LEVEL_ENTRIES:
+        raise ValueError(
+            f"reyn_src: path {rel_path!r} is outside the reachable set "
+            f"{REACHABLE_TOP_LEVEL_ENTRIES} (proposal 0061 §3.3); refusing."
+        )
+    physical_rel = _translate_logical_to_physical(cleaned) if _is_wheel_root(root) else cleaned
+    candidate = (root / physical_rel).resolve()
     try:
-        candidate.relative_to(root)
+        candidate.relative_to(root.resolve())
     except ValueError:
         raise ValueError(
             f"reyn_src: path {rel_path!r} resolves outside the Reyn "
@@ -118,29 +253,44 @@ def list_entries(root: Path, target: Path, path_arg: str) -> dict:
                 "Use reyn_src_read to read a file."
             ),
         }
+    if target.resolve() == root.resolve():
+        # Top-level listing: present the declared reachable set (0061
+        # §3.3) canonically in BOTH modes. A raw `target.iterdir()` here
+        # would show dev's whole-repo top level (pyproject.toml, tests/,
+        # scripts/, ...) in dev mode, or the wheel's on-disk layout
+        # (_bundled/, individual package modules) in wheel mode — neither
+        # matches the single logical namespace this op presents.
+        entries = []
+        for name in REACHABLE_TOP_LEVEL_ENTRIES:
+            try:
+                resolved = safe_resolve_inside(root, name)
+            except ValueError:
+                continue
+            entries.append({"name": name, "type": "dir" if resolved.is_dir() else "file"})
+        return {"path": "", "entries": entries}
     entries = []
     for child in sorted(target.iterdir(), key=lambda p: (not p.is_dir(), p.name)):
         # Skip hidden entries that aren't relevant (= .git, .reyn,
-        # __pycache__, .pytest_cache). The user can list them explicitly
-        # by descending into the parent path; this default keeps the
-        # top-level listing readable.
+        # __pycache__, .pytest_cache) plus, in wheel mode, `_bundled`
+        # itself when it shows up as a sibling of package modules (e.g.
+        # listing the bare "src" logical path) — it is reached
+        # explicitly via the README/CHANGELOG/docs logical paths, never
+        # as an incidental listing entry.
         if child.name in {
             ".git", ".reyn", ".github", ".claude", ".pytest_cache",
             ".ruff_cache", ".mypy_cache", "__pycache__", "venv", ".venv",
-            "site", "build", "dist", "node_modules",
+            "site", "build", "dist", "node_modules", _BUNDLED_DIR_NAME,
         }:
             continue
         entries.append({
             "name": child.name,
             "type": "dir" if child.is_dir() else "file",
         })
-    # Show path relative to root (= what the user passed) so the LLM
-    # can compose follow-up calls without re-deriving paths.
-    try:
-        rel = str(target.relative_to(root))
-    except ValueError:
-        rel = path_arg
-    return {"path": rel if rel != "." else "", "entries": entries}
+    # Echo the caller's own (logical) path argument back — mirrors
+    # read_text's convention — so the result is stable across dev/wheel
+    # even though the physical `target` may differ (0061 §3.2).
+    display_path = "" if path_arg in ("", ".") else path_arg
+    return {"path": display_path, "entries": entries}
 
 
 def read_text(
@@ -360,4 +510,7 @@ __all__ = [
     "read_text",
     "glob_entries",
     "grep_entries",
+    "REACHABLE_TOP_LEVEL_ENTRIES",
+    "FORCE_INCLUDE_ENTRIES",
+    "SOURCE_LOGICAL_PREFIX",
 ]

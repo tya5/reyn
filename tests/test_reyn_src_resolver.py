@@ -110,13 +110,36 @@ def test_safe_resolve_inside_empty_path_is_root():
 
 
 def test_safe_resolve_inside_missing_path_errors():
-    """Tier 2: requesting a non-existent path returns ValueError, not
-    a silent empty result. The chat tool surfaces this as a structured
-    error so the LLM can correct.
+    """Tier 2: requesting a non-existent path INSIDE the reachable set
+    (0061 §3.3) returns ValueError, not a silent empty result. The chat
+    tool surfaces this as a structured error so the LLM can correct.
+
+    Uses ``docs/no-such-file.xyz`` (not a bare top-level name) so this
+    test exercises "missing file" specifically, distinct from
+    ``test_safe_resolve_inside_rejects_non_declared_top_level`` below
+    (a bare non-declared top-level segment like ``no-such-file.xyz`` is
+    refused for a DIFFERENT reason — not in the declared set at all).
     """
     root = resolve_reyn_root()
     with pytest.raises(ValueError, match="does not exist"):
-        safe_resolve_inside(root, "no-such-file.xyz")
+        safe_resolve_inside(root, "docs/no-such-file.xyz")
+
+
+def test_safe_resolve_inside_rejects_non_declared_top_level():
+    """Tier 2: (0061 §3.3) a path whose top-level segment is outside the
+    declared reachable set ``{README.md, CHANGELOG.md, docs, src}`` is
+    refused — even when the underlying file genuinely exists on disk in
+    a dev checkout (``pyproject.toml`` here). This is the dev-narrowing
+    half of the dev==wheel parity invariant: a wheel install physically
+    doesn't ship ``pyproject.toml``/``tests/``/``scripts/``/etc, so dev
+    must refuse them too for the two modes to expose the same namespace.
+    """
+    root = resolve_reyn_root()
+    assert (root / "pyproject.toml").is_file(), "fixture assumes pyproject.toml exists in dev"
+    with pytest.raises(ValueError, match="reachable set"):
+        safe_resolve_inside(root, "pyproject.toml")
+    with pytest.raises(ValueError, match="reachable set"):
+        safe_resolve_inside(root, "tests/test_reyn_src_resolver.py")
 
 
 # ── list_entries ─────────────────────────────────────────────────────────────
