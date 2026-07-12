@@ -27,6 +27,7 @@ real custom registry by substituting the registry-lookup target.
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
 from typing import Any, Mapping
 
 import pytest
@@ -268,9 +269,9 @@ def _op_ctx_for(provider: Any, monkeypatch: pytest.MonkeyPatch) -> OpContext:
     return OpContext(workspace=ws, events=events, permission_decl=PermissionDecl())
 
 
-def _ready_index_with(items, ctx: OpContext):
+def _ready_index_with(items, ctx: OpContext, workspace_root: Path):
     from reyn.tools.action_index import ActionEmbeddingIndex
-    idx = ActionEmbeddingIndex()
+    idx = ActionEmbeddingIndex(workspace_root=workspace_root)
     _run(idx.build(items, ctx, "standard"))
     return idx
 
@@ -311,7 +312,7 @@ def test_search_actions_no_index_returns_empty() -> None:
 
 
 def test_search_actions_returns_ranked_items(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
 ) -> None:
     """Tier 2: handler returns ranked items with score from the index."""
     items = [
@@ -321,7 +322,15 @@ def test_search_actions_returns_ranked_items(
     ]
     provider = _StubProvider()
     op_ctx = _op_ctx_for(provider, monkeypatch)
-    idx = _ready_index_with(items, op_ctx)
+    # #2861-class root fix: pin this index's on-disk cache to a per-test
+    # tmp dir. ``ActionEmbeddingIndex()`` with no ``workspace_root``
+    # defaults to ``Path.cwd()`` (shared across the whole pytest process) —
+    # under `pytest -n auto` a sibling xdist worker mid-build on the SAME
+    # shared cross-process build lock causes THIS build to observe
+    # got_lock=False and skip indexing, so search_actions degrades to an
+    # empty result (see test_search_actions_filters_by_category's
+    # docstring / this file's flake history for the confirmed repro).
+    idx = _ready_index_with(items, op_ctx, tmp_path)
     rs = RouterCallerState(
         action_embedding_index=idx,
         embedding_provider=provider,
@@ -343,9 +352,26 @@ def test_search_actions_returns_ranked_items(
 
 
 def test_search_actions_filters_by_category(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
 ) -> None:
-    """Tier 2: category filter restricts to qualified_names in those categories."""
+    """Tier 2: category filter restricts to qualified_names in those categories.
+
+    #2861-class root fix (CI flake, confirmed via a foreign-live-PID
+    lock-holder repro): ``ActionEmbeddingIndex()`` with no
+    ``workspace_root`` defaults to ``Path.cwd() / .reyn/cache/index/actions/``
+    (``action_index.py``'s ``__init__``) — CWD-relative and shared by the
+    whole pytest process, same class as #2861's CWD-relative ``tasks.db``.
+    Under `pytest -n auto`, a sibling xdist worker concurrently mid-``build()``
+    on that SAME shared path holds the cross-process advisory build lock
+    (``reyn.data.index.build_lock``); this test's own ``build()`` then
+    observes ``got_lock=False``, returns without indexing, and
+    ``is_ready()``/``query()`` degrade to False/``[]`` — surfacing as
+    ``search_actions`` returning an empty item set (the reported
+    ``assert set() == {...}`` flake). Passing an explicit per-test
+    ``tmp_path`` as ``workspace_root`` (this index's own designed override
+    point) isolates the on-disk cache per test, closing the race
+    structurally rather than retrying/timing-out.
+    """
     items = [
         {"qualified_name": "memory_entry__alpha", "short_description": "Alpha"},
         {"qualified_name": "file__read", "short_description": "Read"},
@@ -354,7 +380,7 @@ def test_search_actions_filters_by_category(
     ]
     provider = _StubProvider()
     op_ctx = _op_ctx_for(provider, monkeypatch)
-    idx = _ready_index_with(items, op_ctx)
+    idx = _ready_index_with(items, op_ctx, tmp_path)
     rs = RouterCallerState(
         action_embedding_index=idx,
         embedding_provider=provider,

@@ -22,6 +22,7 @@ implementing the EmbeddingProvider Protocol's ``embed`` method.
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -34,6 +35,32 @@ from reyn.tools.action_index import (
     ActionEmbeddingIndex,
     compute_catalog_hash,
 )
+
+
+@pytest.fixture(autouse=True)
+def _isolate_cwd(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """chdir to a per-test tmp dir (root-fix, same class as #2861).
+
+    Most tests in this file construct ``ActionEmbeddingIndex()`` with no
+    ``workspace_root`` override, so the index's on-disk cache defaults to
+    ``Path.cwd() / .reyn/cache/index/actions/`` (``action_index.py``'s
+    ``__init__``) — CWD-relative, not per-test. Without isolation every
+    such test in this file (and ``tests/test_universal_handlers.py``'s
+    ``test_search_actions_*`` tests) shares ONE physical
+    ``index.db``/``catalog_meta.json`` at the real repo root. Under
+    ``pytest -n auto`` this is a genuinely concurrent OS-process race: a
+    sibling xdist worker mid-``build()`` holds the shared cross-process
+    advisory build lock (``reyn.data.index.build_lock``), so this
+    process's own ``build()`` observes ``got_lock=False``, returns
+    without indexing, and ``is_ready()``/``query()`` degrade to
+    False/``[]`` — surfacing as ``search_actions`` returning an empty
+    result set (confirmed via a foreign-live-PID lock-holder repro).
+    ``monkeypatch.chdir`` isolates every test's default ``Path.cwd()``
+    to its own ``tmp_path``, mirroring the sibling lifespan tests that
+    already isolate cwd for the analogous CWD-relative ``tasks.db``
+    (#2861).
+    """
+    monkeypatch.chdir(tmp_path)
 
 
 def _ctx_for(provider: Any, monkeypatch: pytest.MonkeyPatch) -> OpContext:
