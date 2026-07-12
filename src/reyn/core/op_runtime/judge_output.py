@@ -18,6 +18,7 @@ from __future__ import annotations
 import json
 from typing import Any, Literal
 
+from reyn.prompt.judge import judge_system_prompt
 from reyn.schemas.models import JudgeOutputIROp
 
 from . import register
@@ -124,13 +125,7 @@ async def handle(
         resolved_model = model_class
 
     # ── 3. Build LLM messages ────────────────────────────────────────────────
-    system_text = (
-        "You are a strict evaluator. Score the following output against the rubric.\n"
-        'Output ONLY a JSON object: {"score": 0.0-1.0, "reason": "..."}.\n'
-        "score must be a float between 0.0 and 1.0 inclusive.\n"
-        "reason must be a short explanation of the score.\n\n"
-        f"Rubric:\n{op.rubric}"
-    )
+    system_text = judge_system_prompt(op.rubric)
     user_text = (
         "Output to evaluate:\n"
         + json.dumps(value, ensure_ascii=False, indent=2)
