@@ -456,6 +456,28 @@ class AgentRegistry:
                 total += sess.total_usage
         return total
 
+    def agent_cost_breakdown(self, name: str) -> "object":
+        """Agent-scope cache-aware ``CostBreakdown`` — the durable process-shared
+        BudgetTracker's per-agent accumulation (all sessions of ``name``, this
+        process only; see ``BudgetTracker._agent_cost_breakdown`` for why it is
+        NOT ledger-durable unlike ``agent_cost_usd``). Cost-panel Agent column
+        source. Empty ``CostBreakdown`` when no tracker is wired."""
+        from reyn.llm.pricing import CostBreakdown
+        tracker = self._shared_budget_tracker()
+        return tracker.agent_cost_breakdown(name) if tracker is not None else CostBreakdown()
+
+    def project_cost_breakdown(self) -> "object":
+        """Project-scope cache-aware ``CostBreakdown`` — summed across every
+        currently-loaded agent's ``agent_cost_breakdown`` (mirrors the existing
+        ad hoc ``sum(agent_cost_usd(name) for name in loaded_names())`` Project
+        total the inline status bar already computes). Cost-panel Project
+        column source."""
+        from reyn.llm.pricing import CostBreakdown
+        total = CostBreakdown()
+        for name in self.loaded_names():
+            total += self.agent_cost_breakdown(name)
+        return total
+
     def resolve_session(
         self,
         agent_name: str,

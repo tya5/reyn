@@ -225,16 +225,106 @@ def _cache_hit_line(label: str, cached: int, prompt: int, *, note: str = "") -> 
     return f"{label:<9}{pct}% hit ({cached:,} / {prompt:,} prompt tokens{tail})"
 
 
+# Cost-panel breakdown (#cost-panel-breakdown): the >200k tiered-pricing guard
+# tolerance. estimate_cost_breakdown() does not replicate litellm's >200k
+# tiered rates (see its docstring), so the 4 components' sum can legitimately
+# diverge from the litellm-accurate Total at very high token volumes. A pure
+# floating-point rounding residual from summing many small per-call floats is
+# NOT the same thing as tiered pricing kicking in — the relative tolerance
+# below absorbs float noise while still catching a real tiered-rate mismatch
+# (which is typically a multi-percent divergence, not a rounding-error one).
+_COST_BREAKDOWN_EPSILON_ABS = 1e-6
+_COST_BREAKDOWN_EPSILON_REL = 1e-4
+
+
+def _cost_breakdown_approximate(component_sum: float, authoritative_total: float) -> bool:
+    """True when Input+Output (derived from CostBreakdown, per-model-rate
+    accumulated) diverges from the litellm-accurate authoritative Total beyond
+    float-noise tolerance — the signal that >200k tiered pricing kicked in for
+    at least one call in this scope's history (see module-level epsilon note)."""
+    tol = max(_COST_BREAKDOWN_EPSILON_ABS, abs(authoritative_total) * _COST_BREAKDOWN_EPSILON_REL)
+    return abs(component_sum - authoritative_total) > tol
+
+
+def _cost_scope_values(breakdown, authoritative_total: float) -> "tuple[float, float, float, float, bool]":
+    """One scope column's (input_cost, output_cost, saved, saved_pct, approximate).
+
+    ``input_cost`` = the cache-aware cost actually paid for input (prompt +
+    cache-read + cache-creation components). ``saved_pct`` = Saved /
+    (Input + Saved) — the no-cache-baseline denominator (what input would have
+    cost WITHOUT caching), NOT Saved / Total (falsified explicitly: pinning
+    the wrong denominator would silently under/over-state the savings %).
+    Divide-by-zero guarded (0% when Input+Saved == 0, i.e. no priced input
+    tokens recorded yet)."""
+    input_cost = breakdown.prompt_cost + breakdown.cache_read_cost + breakdown.cache_creation_cost
+    output_cost = breakdown.completion_cost
+    saved = breakdown.cache_savings
+    no_cache_baseline = input_cost + saved
+    saved_pct = (saved / no_cache_baseline) if no_cache_baseline > 0 else 0.0
+    approximate = _cost_breakdown_approximate(input_cost + output_cost, authoritative_total)
+    return input_cost, output_cost, saved, saved_pct, approximate
+
+
+def _cost_breakdown_table(snap) -> list[str]:
+    """The 5-row (Total/Input/Output/Saved/Saved%) x 3-column
+    (Session/Agent/Project) cost-panel breakdown table.
+
+    Total is always the litellm-accurate authoritative figure (``cost_usd`` /
+    ``cost_agent`` / ``cost_total`` — already computed via ``estimate_cost``,
+    unaffected by the >200k breakdown limitation). Input/Output/Saved/Saved%
+    are derived from the accumulated ``CostBreakdown`` per scope; when their
+    sum doesn't reconcile with the authoritative Total (>200k tiered pricing —
+    see ``_cost_breakdown_approximate``), the scope's Input/Output cells get a
+    "~" marker rather than showing numbers that visibly don't add up.
+    """
+    from reyn.llm.pricing import CostBreakdown
+
+    scopes = [
+        ("Ses", snap.get("cost_breakdown_session", CostBreakdown()), snap["cost_usd"]),
+        ("Agt", snap.get("cost_breakdown_agent", CostBreakdown()), snap.get("cost_agent", snap["cost_usd"])),
+        ("Prj", snap.get("cost_breakdown_project", CostBreakdown()), snap.get("cost_total", snap["cost_usd"])),
+    ]
+    col_w = 9
+    header = "COST" + "".join(f"{name:>{col_w}}" for name, _, _ in scopes)
+
+    per_scope = [
+        (name, total, *_cost_scope_values(breakdown, total))
+        for name, breakdown, total in scopes
+    ]
+    any_approx = any(approx for *_rest, approx in per_scope)
+
+    total_row = "Total" + "".join(f"{'$' + format(total, '.4f'):>{col_w}}" for _, total, *_ in per_scope)
+
+    def _marked(value: float, approx: bool) -> str:
+        s = f"${value:.4f}"
+        return ("~" + s)[:col_w] if approx else s
+
+    input_row = "Input" + "".join(
+        f"{_marked(inp, approx):>{col_w}}" for _, _, inp, _out, _sav, _pct, approx in per_scope
+    )
+    output_row = "Output" + "".join(
+        f"{_marked(out, approx):>{col_w}}" for _, _, _inp, out, _sav, _pct, approx in per_scope
+    )
+    saved_row = "Saved" + "".join(
+        f"{_marked(sav, approx):>{col_w}}" for _, _, _inp, _out, sav, _pct, approx in per_scope
+    )
+    pct_row = "Saved%" + "".join(
+        f"{round(100 * pct)}%".rjust(col_w) for _, _, _inp, _out, _sav, pct, _approx in per_scope
+    )
+
+    rows = [header, total_row, input_row, output_row, saved_row, pct_row]
+    if any_approx:
+        rows.append("~ approx at high volume (>200k tiered pricing)")
+    return rows
+
+
 def _cost_expansion(snap, dispatch):
     def lines():
         p, c, t = snap["usage"]
-        session = snap["cost_usd"]
         agent_t = snap.get("agent_tokens", t)
         cached = snap.get("session_cached_tokens", 0)
         return [
-            f"total    ${snap.get('cost_total', session):.4f}",
-            f"agent    ${snap.get('cost_agent', session):.4f}",
-            f"session  ${session:.4f}",
+            *_cost_breakdown_table(snap),
             f"tokens   prompt {p} · completion {c} · total {agent_t}",
             _cache_hit_line("cache", cached, p, note="cumulative"),
         ]
@@ -807,6 +897,14 @@ def _snapshot(registry, task_cache=None, config=None):
         "cost_total": cost_total,
         "cost_agent": cost_agent,
         "agent_tokens": agent_tokens,
+        # Cost-panel breakdown (#cost-panel-breakdown): per-scope CostBreakdown
+        # (Input/Output/Saved/Saved% rows) mirroring the 3 $ totals above.
+        "cost_breakdown_session": s.total_cost_breakdown,
+        "cost_breakdown_agent": (
+            registry.agent_cost_breakdown(registry.attached_name)
+            if registry.attached_name else s.total_cost_breakdown
+        ),
+        "cost_breakdown_project": registry.project_cost_breakdown(),
         "ctx_used": ctx_used,
         "ctx_window": ctx_window,
         "ctx_source": ctx_source,

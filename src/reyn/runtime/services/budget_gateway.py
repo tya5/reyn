@@ -10,7 +10,7 @@ Session: total_usage, total_cost_usd, router cap counter, last reason.
 from __future__ import annotations
 
 from reyn.core.events.events import EventLog
-from reyn.llm.pricing import TokenUsage
+from reyn.llm.pricing import CostBreakdown, TokenUsage
 
 
 class BudgetGateway:
@@ -46,6 +46,12 @@ class BudgetGateway:
         self._total_usage: TokenUsage = TokenUsage()
         self._last_call_usage: TokenUsage = TokenUsage()
         self._total_cost_usd: float = 0.0
+        # Cost-panel breakdown (Session scope, #cost-panel-breakdown):
+        # cache-aware CostBreakdown accumulated turn-by-turn in
+        # ``add_router_usage`` alongside ``_total_cost_usd``. Session-scoped
+        # (this Session/process only) by construction — mirrors the existing
+        # non-durable semantics of ``_total_usage``/``_total_cost_usd`` above.
+        self._total_cost_breakdown: CostBreakdown = CostBreakdown()
         self._router_cap: int = default_router_cap
         self._router_invocations_this_turn: int = 0
         self._router_last_reason: str = ""
@@ -70,6 +76,12 @@ class BudgetGateway:
         return self._total_cost_usd
 
     @property
+    def total_cost_breakdown(self) -> CostBreakdown:
+        """Cumulative cache-aware ``CostBreakdown`` for this session (Session
+        scope for the cost panel's Input/Output/Saved/Saved% rows)."""
+        return self._total_cost_breakdown
+
+    @property
     def last_call_usage(self) -> TokenUsage:
         """TokenUsage of the single MOST RECENT LLM call only — distinct from
         BOTH the cumulative session total AND a turn-summed figure. A chat
@@ -83,12 +95,21 @@ class BudgetGateway:
     def accumulate(self, result) -> None:
         """Accumulate a single LLM call result's tokens + cost into per-session
         totals. Mirrors Session._accumulate. ``result.token_usage`` is already
-        a single call's usage (not turn-summed), so it doubles as last_call_usage."""
+        a single call's usage (not turn-summed), so it doubles as last_call_usage.
+
+        ``result.cost_breakdown`` (a ``CostBreakdown``) is OPTIONAL — this call
+        site has no ``model`` in scope to derive one itself, unlike
+        ``add_router_usage`` (the actual production accumulation path), so a
+        caller that already computed one can pass it through; absent, the
+        session's ``total_cost_breakdown`` simply does not grow from this call."""
         if result.token_usage is not None:
             self._total_usage += result.token_usage
             self._last_call_usage = result.token_usage
         if result.cost_usd is not None:
             self._total_cost_usd += result.cost_usd
+        cost_breakdown = getattr(result, "cost_breakdown", None)
+        if cost_breakdown is not None:
+            self._total_cost_breakdown += cost_breakdown
 
     def add_router_usage(
         self, *, usage: TokenUsage, last_call_usage: "TokenUsage | None" = None,
@@ -113,7 +134,7 @@ class BudgetGateway:
         self._last_call_usage = last_call_usage if last_call_usage is not None else usage
         # F4 Bug 1: strip proxy prefix so estimate_cost lookup succeeds.
         from reyn.llm.llm import proxy_kwargs
-        from reyn.llm.pricing import estimate_cost
+        from reyn.llm.pricing import estimate_cost, estimate_cost_breakdown
         resolved = resolver.resolve(router_model_name).model
         pricing_model = (
             resolved.split("/", 1)[1]
@@ -123,6 +144,13 @@ class BudgetGateway:
         cost_usd, _ = estimate_cost(pricing_model, usage)
         if cost_usd is not None:
             self._total_cost_usd += cost_usd
+        # Cost-panel breakdown (Session scope): accumulate the same call's
+        # cache-aware component breakdown. None for an unpriced/unknown model
+        # (mirrors estimate_cost's None-sentinel) — skip rather than treat
+        # unknown as free.
+        breakdown = estimate_cost_breakdown(pricing_model, usage)
+        if breakdown is not None:
+            self._total_cost_breakdown += breakdown
 
     # ── router cap ────────────────────────────────────────────────────────────
 
