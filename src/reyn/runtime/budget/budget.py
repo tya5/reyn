@@ -28,7 +28,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Optional
 
-from reyn.llm.pricing import TokenUsage, estimate_cost
+from reyn.llm.pricing import CostBreakdown, TokenUsage, estimate_cost, estimate_cost_breakdown
 
 # ── exceptions ──────────────────────────────────────────────────────────────
 
@@ -305,6 +305,19 @@ class BudgetTracker:
         self._config = config
         self._agent_tokens: dict[str, int] = defaultdict(int)
         self._agent_cost_usd: dict[str, float] = defaultdict(float)
+        # Cost-panel breakdown (#cost-panel-breakdown): per-agent CostBreakdown
+        # (prompt/cache-read/cache-creation/completion + savings), accumulated
+        # per call in ``record_llm`` alongside ``_agent_cost_usd``. NOT ledger-
+        # persisted — in-memory only, resets on restart (unlike
+        # ``_agent_cost_usd`` above, which the ledger hydrates). This is a
+        # deliberate scope choice, not an oversight: persisting it durably
+        # would mean extending ``BudgetLedger``'s on-disk schema with the 4
+        # cache-breakdown fields and would trigger the CLAUDE.md recovery-
+        # feature PR gate (truncate-falsify test). The authoritative, durable,
+        # restart-surviving TOTAL is ``_agent_cost_usd`` (unchanged); this
+        # breakdown is a same-process-only refinement the cost panel reads to
+        # show Input/Output/Saved on top of that already-durable Total.
+        self._agent_cost_breakdown: dict[str, CostBreakdown] = defaultdict(CostBreakdown)
         # #1190 stage (iii): per-purpose cost attribution
         # (main/compaction/judge/dogfood) for the /budget breakdown payoff.
         self._purpose_tokens: dict[str, int] = defaultdict(int)
@@ -486,6 +499,14 @@ class BudgetTracker:
             new_cost = self._agent_cost_usd[agent] + cost_usd
             self._agent_cost_usd[agent] = new_cost
 
+            # Cost-panel breakdown accumulation (session/agent/project scope
+            # rows). ``estimate_cost_breakdown`` returns None for an unpriced/
+            # unknown model (mirrors ``estimate_cost``'s None-sentinel) — skip
+            # accumulation rather than treat unknown as free.
+            breakdown = estimate_cost_breakdown(model, usage)
+            if breakdown is not None:
+                self._agent_cost_breakdown[agent] += breakdown
+
             cap = self._config.per_agent_tokens
             if cap.is_active and cap.warn_threshold is not None:
                 if new_tokens >= cap.warn_threshold:
@@ -535,6 +556,7 @@ class BudgetTracker:
         }
         self._agent_tokens.clear()
         self._agent_cost_usd.clear()
+        self._agent_cost_breakdown.clear()
         self._call_window.clear()
         self._warned.clear()
         return before
@@ -744,6 +766,13 @@ class BudgetTracker:
         """All-time cumulative TOTAL tokens for ``agent`` (durable, ledger-hydrated). Total only —
         the prompt/completion breakdown is not persisted per ledger record (only ``total_tokens``)."""
         return self._agent_tokens.get(agent, 0)
+
+    def agent_cost_breakdown(self, agent: str) -> CostBreakdown:
+        """Cache-aware ``CostBreakdown`` accumulated for ``agent`` (cost-panel Input/Output/Saved
+        rows). Same-process only (see ``__init__``'s note) — NOT ledger-hydrated, unlike
+        ``agent_cost_usd``/``agent_tokens`` above; resets on restart. Returns an empty (all-zero)
+        ``CostBreakdown`` for an agent with no recorded calls this process."""
+        return self._agent_cost_breakdown.get(agent, CostBreakdown())
 
     def _agent_context(self, agent: str | None) -> dict:
         if agent is None:

@@ -2249,6 +2249,12 @@ class Session:
     def total_cost_usd(self) -> float:
         return self._budget.total_cost_usd
 
+    @property
+    def total_cost_breakdown(self):
+        """Cache-aware ``CostBreakdown`` for this session (Session-scope row
+        source for the cost panel's Input/Output/Saved/Saved% breakdown)."""
+        return self._budget.total_cost_breakdown
+
     # ── FP-0043 Stage 2: identity-field delegations to the Agent value object ──
     # Read-only by construction (identity is immutable for the session lifetime;
     # no field is reassigned post-__init__, verified). Every former direct
