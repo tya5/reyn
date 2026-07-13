@@ -24,6 +24,7 @@ from reyn.interfaces.inline.app import (
     _agent_expansion,
     _build_task_tree,
     _cost_expansion,
+    _cost_scope_state,
     _cron_category_expansion,
     _extract_skills,
     _hook_category_expansion,
@@ -888,9 +889,27 @@ def test_cost_expansion_restart_state_does_not_false_fire_tiered_marker() -> Non
 
     Without the state guard (i.e. if divergence alone drove the marker), this
     scenario's 0-vs-nonzero gap would fire the tiered footnote — this test
-    fails against that pre-fix behavior.
+    fails against that pre-fix behavior. Verified load-bearing: neutralizing
+    the ``unavail`` branch (``if False``) makes BOTH the direct-state assertion
+    AND the rendering assertions below go RED (the state becomes ``approx`` and
+    the "~"/tiered footnote false-fires).
     """
     from reyn.llm.pricing import CostBreakdown
+
+    # Direct-state contract: empty breakdown + non-zero authoritative Total
+    # classifies as "unavail" (NOT "approx"). This is the load-bearing branch
+    # under strip — asserting the returned state directly (not just the
+    # rendered rows) makes the guard impossible to satisfy without the branch.
+    empty_state = _cost_scope_state(CostBreakdown(), authoritative_total=5.0)
+    assert empty_state[-1] == "unavail", (
+        f"empty breakdown + Total>0 must be 'unavail', got {empty_state[-1]!r}"
+    )
+    # a scope WITH divergent-but-present components is the DISTINCT 'approx'
+    # case — pins the two causes apart so 'unavail' can't absorb tiering.
+    present_diverging = _cost_scope_state(
+        CostBreakdown(prompt_cost=1.0, completion_cost=1.0), authoritative_total=3.0,
+    )
+    assert present_diverging[-1] == "approx"
 
     # Agent scope: durable Total rebuilt from ledger, breakdown reset to empty.
     empty = CostBreakdown()
