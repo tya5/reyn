@@ -237,17 +237,8 @@ _COST_BREAKDOWN_EPSILON_ABS = 1e-6
 _COST_BREAKDOWN_EPSILON_REL = 1e-4
 
 
-def _cost_breakdown_approximate(component_sum: float, authoritative_total: float) -> bool:
-    """True when Input+Output (derived from CostBreakdown, per-model-rate
-    accumulated) diverges from the litellm-accurate authoritative Total beyond
-    float-noise tolerance — the signal that >200k tiered pricing kicked in for
-    at least one call in this scope's history (see module-level epsilon note)."""
-    tol = max(_COST_BREAKDOWN_EPSILON_ABS, abs(authoritative_total) * _COST_BREAKDOWN_EPSILON_REL)
-    return abs(component_sum - authoritative_total) > tol
-
-
-def _cost_scope_values(breakdown, authoritative_total: float) -> "tuple[float, float, float, float, bool]":
-    """One scope column's (input_cost, output_cost, saved, saved_pct, approximate).
+def _cost_scope_state(breakdown, authoritative_total: float) -> "tuple[float, float, float, float, str]":
+    """One scope column's (input_cost, output_cost, saved, saved_pct, state).
 
     ``input_cost`` = the cache-aware cost actually paid for input (prompt +
     cache-read + cache-creation components). ``saved_pct`` = Saved /
@@ -255,14 +246,43 @@ def _cost_scope_values(breakdown, authoritative_total: float) -> "tuple[float, f
     cost WITHOUT caching), NOT Saved / Total (falsified explicitly: pinning
     the wrong denominator would silently under/over-state the savings %).
     Divide-by-zero guarded (0% when Input+Saved == 0, i.e. no priced input
-    tokens recorded yet)."""
+    tokens recorded yet).
+
+    ``state`` is one of three cases — the panel renders each distinctly so it
+    never MISATTRIBUTES a cause:
+      - ``"ok"``      — the 4 components reconcile with the authoritative Total
+                        (within float-noise tolerance): show exact numbers.
+      - ``"approx"``  — components are present (sum > 0) but diverge from Total
+                        beyond tolerance = genuine >200k TIERED pricing, which
+                        ``estimate_cost_breakdown`` does not replicate: mark
+                        the component rows "~" + a tiered-pricing footnote.
+      - ``"unavail"`` — components are ~0 while Total > 0 = the breakdown is
+                        UNAVAILABLE, not diverging (the durable per-agent Total
+                        survives a restart via the ledger, but the in-memory
+                        CostBreakdown resets to 0 — it is NOT ledger-persisted;
+                        it can also be 0 before the first accumulation). This
+                        is NOT tiered pricing, so it must NOT fire the "~"/
+                        tiered footnote (the false-fire the architect caught);
+                        the Total stays authoritative and the component cells
+                        blank to "—" with a distinct "unavailable" note.
+    """
     input_cost = breakdown.prompt_cost + breakdown.cache_read_cost + breakdown.cache_creation_cost
     output_cost = breakdown.completion_cost
     saved = breakdown.cache_savings
     no_cache_baseline = input_cost + saved
     saved_pct = (saved / no_cache_baseline) if no_cache_baseline > 0 else 0.0
-    approximate = _cost_breakdown_approximate(input_cost + output_cost, authoritative_total)
-    return input_cost, output_cost, saved, saved_pct, approximate
+
+    component_sum = input_cost + output_cost
+    tol = max(_COST_BREAKDOWN_EPSILON_ABS, abs(authoritative_total) * _COST_BREAKDOWN_EPSILON_REL)
+    if component_sum <= _COST_BREAKDOWN_EPSILON_ABS and authoritative_total > tol:
+        # Breakdown absent while a real Total exists → unavailable, not tiered.
+        state = "unavail"
+    elif abs(component_sum - authoritative_total) > tol:
+        # Components present but don't reconcile → genuine >200k tiered pricing.
+        state = "approx"
+    else:
+        state = "ok"
+    return input_cost, output_cost, saved, saved_pct, state
 
 
 def _cost_breakdown_table(snap) -> list[str]:
@@ -272,10 +292,12 @@ def _cost_breakdown_table(snap) -> list[str]:
     Total is always the litellm-accurate authoritative figure (``cost_usd`` /
     ``cost_agent`` / ``cost_total`` — already computed via ``estimate_cost``,
     unaffected by the >200k breakdown limitation). Input/Output/Saved/Saved%
-    are derived from the accumulated ``CostBreakdown`` per scope; when their
-    sum doesn't reconcile with the authoritative Total (>200k tiered pricing —
-    see ``_cost_breakdown_approximate``), the scope's Input/Output cells get a
-    "~" marker rather than showing numbers that visibly don't add up.
+    are derived from the accumulated ``CostBreakdown`` per scope. Per-scope
+    ``state`` (see ``_cost_scope_state``) decides how the component cells
+    render: exact ("ok"), "~"-marked with a tiered-pricing footnote ("approx"
+    = genuine >200k tiering), or "—" with an "unavailable" note ("unavail" =
+    breakdown reset post-restart / not-yet-accumulated — NEVER misattributed
+    to tiered pricing).
     """
     from reyn.llm.pricing import CostBreakdown
 
@@ -288,33 +310,39 @@ def _cost_breakdown_table(snap) -> list[str]:
     header = "COST" + "".join(f"{name:>{col_w}}" for name, _, _ in scopes)
 
     per_scope = [
-        (name, total, *_cost_scope_values(breakdown, total))
+        (name, total, *_cost_scope_state(breakdown, total))
         for name, breakdown, total in scopes
     ]
-    any_approx = any(approx for *_rest, approx in per_scope)
+    any_approx = any(state == "approx" for *_rest, state in per_scope)
+    any_unavail = any(state == "unavail" for *_rest, state in per_scope)
 
     total_row = "Total" + "".join(f"{'$' + format(total, '.4f'):>{col_w}}" for _, total, *_ in per_scope)
 
-    def _marked(value: float, approx: bool) -> str:
+    def _cell(value: float, state: str) -> str:
+        if state == "unavail":
+            return "—"
         s = f"${value:.4f}"
-        return ("~" + s)[:col_w] if approx else s
+        return ("~" + s)[:col_w] if state == "approx" else s
 
     input_row = "Input" + "".join(
-        f"{_marked(inp, approx):>{col_w}}" for _, _, inp, _out, _sav, _pct, approx in per_scope
+        f"{_cell(inp, state):>{col_w}}" for _, _, inp, _out, _sav, _pct, state in per_scope
     )
     output_row = "Output" + "".join(
-        f"{_marked(out, approx):>{col_w}}" for _, _, _inp, out, _sav, _pct, approx in per_scope
+        f"{_cell(out, state):>{col_w}}" for _, _, _inp, out, _sav, _pct, state in per_scope
     )
     saved_row = "Saved" + "".join(
-        f"{_marked(sav, approx):>{col_w}}" for _, _, _inp, _out, sav, _pct, approx in per_scope
+        f"{_cell(sav, state):>{col_w}}" for _, _, _inp, _out, sav, _pct, state in per_scope
     )
     pct_row = "Saved%" + "".join(
-        f"{round(100 * pct)}%".rjust(col_w) for _, _, _inp, _out, _sav, pct, _approx in per_scope
+        ("—".rjust(col_w) if state == "unavail" else f"{round(100 * pct)}%".rjust(col_w))
+        for _, _, _inp, _out, _sav, pct, state in per_scope
     )
 
     rows = [header, total_row, input_row, output_row, saved_row, pct_row]
     if any_approx:
         rows.append("~ approx at high volume (>200k tiered pricing)")
+    if any_unavail:
+        rows.append("— breakdown unavailable this session (Total is exact)")
     return rows
 
 

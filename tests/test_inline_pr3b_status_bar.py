@@ -776,7 +776,10 @@ def test_cost_expansion_input_output_saved_rows_render_expected_values() -> None
         cached_tokens=800,
     )
     session_total = breakdown.prompt_cost + breakdown.cache_read_cost + breakdown.cache_creation_cost + breakdown.completion_cost
-    snap = _snap(cost_usd=session_total, cost_breakdown_session=breakdown)
+    snap = _snap(
+        cost_usd=session_total, cost_agent=0.0, cost_total=0.0,
+        cost_breakdown_session=breakdown,
+    )
     lines = _cost_expansion(snap, lambda _: None).lines()
     input_row = next(ln for ln in lines if ln.startswith("Input"))
     output_row = next(ln for ln in lines if ln.startswith("Output"))
@@ -811,7 +814,10 @@ def test_cost_expansion_saved_pct_denominator_is_input_plus_saved_not_total() ->
     wrong_pct = round(100 * breakdown.cache_savings / total)
     assert correct_pct != wrong_pct, "scenario must make the two denominators diverge"
 
-    snap = _snap(cost_usd=total, cost_breakdown_session=breakdown)
+    snap = _snap(
+        cost_usd=total, cost_agent=0.0, cost_total=0.0,
+        cost_breakdown_session=breakdown,
+    )
     lines = _cost_expansion(snap, lambda _: None).lines()
     pct_row = next(ln for ln in lines if ln.startswith("Saved%"))
     assert f"{correct_pct}%" in pct_row
@@ -833,14 +839,19 @@ def test_cost_expansion_shows_approximate_marker_when_breakdown_diverges_from_to
         cached_tokens=100,
     )
     # authoritative Total materially disagrees with breakdown.total_cost (2.0)
-    # — simulates >200k tiered pricing having kicked in for this scope.
+    # — simulates >200k tiered pricing having kicked in for this scope. Agent /
+    # Project scopes zeroed so only the Session column drives this assertion.
     diverging_total = 3.0
-    snap = _snap(cost_usd=diverging_total, cost_breakdown_session=breakdown)
+    snap = _snap(
+        cost_usd=diverging_total, cost_agent=0.0, cost_total=0.0,
+        cost_breakdown_session=breakdown,
+    )
     lines = _cost_expansion(snap, lambda _: None).lines()
-    joined = "\n".join(lines)
     input_row = next(ln for ln in lines if ln.startswith("Input"))
     assert "~" in input_row
     assert any("approx" in ln for ln in lines)
+    # a genuine divergence is NOT reported as "unavailable" (distinct causes).
+    assert not any("unavailable" in ln for ln in lines)
     # Total row itself stays exact — it's the authoritative figure, never
     # marked approximate.
     total_row = next(ln for ln in lines if ln.startswith("Total"))
@@ -863,6 +874,48 @@ def test_cost_expansion_no_approximate_marker_when_breakdown_reconciles() -> Non
     lines = _cost_expansion(snap, lambda _: None).lines()
     assert not any("~" in ln for ln in lines)
     assert not any("approx" in ln for ln in lines)
+
+
+def test_cost_expansion_restart_state_does_not_false_fire_tiered_marker() -> None:
+    """Tier 2: FALSIFY the >200k-marker false-fire after restart. The durable
+    per-agent Total survives restart (ledger-hydrated), but the in-memory
+    CostBreakdown resets to 0 (NOT ledger-persisted). A scope with an empty
+    breakdown (component-sum 0) but a non-zero authoritative Total is
+    "breakdown UNAVAILABLE", NOT ">200k tiered pricing" — the panel must NOT
+    show the "~"/tiered footnote (the misattribution the architect caught), and
+    must instead show the Total exact + a distinct "unavailable" note with the
+    component cells blanked to "—".
+
+    Without the state guard (i.e. if divergence alone drove the marker), this
+    scenario's 0-vs-nonzero gap would fire the tiered footnote — this test
+    fails against that pre-fix behavior.
+    """
+    from reyn.llm.pricing import CostBreakdown
+
+    # Agent scope: durable Total rebuilt from ledger, breakdown reset to empty.
+    empty = CostBreakdown()
+    snap = _snap(
+        cost_usd=0.0,            # session (this process) genuinely 0 → ok/empty
+        cost_agent=5.0,          # durable per-agent Total survived restart
+        cost_total=5.0,          # project = that one agent
+        cost_breakdown_session=empty,
+        cost_breakdown_agent=empty,
+        cost_breakdown_project=empty,
+    )
+    lines = _cost_expansion(snap, lambda _: None).lines()
+    joined = "\n".join(lines)
+
+    # The false-fire is suppressed: no tiered-pricing marker/footnote.
+    assert not any("~" in ln for ln in lines)
+    assert "approx" not in joined
+    assert "tiered" not in joined
+    # Instead, the distinct "unavailable" note appears, and the Total stays exact.
+    assert "unavailable" in joined
+    total_row = next(ln for ln in lines if ln.startswith("Total"))
+    assert "$5.0000" in total_row
+    # component cells blanked to the em-dash placeholder, not fake $0.0000.
+    input_row = next(ln for ln in lines if ln.startswith("Input"))
+    assert "—" in input_row
 
 
 # ---------------------------------------------------------------------------
