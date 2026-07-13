@@ -1,10 +1,16 @@
-"""Tier 2: FP-0043 Phase 4 — default ``embedding_class`` flip to ``local-mini``
-+ Session graceful-degrade probe when the ``local-embed`` extras
-aren't installed.
+"""Tier 2: FP-0043 Phase 4 default-flip history + Session graceful-degrade
+probe when the ``local-embed`` extras aren't installed.
+
+NOTE: the semantic-search-opt-in fix (2026) flipped ``embedding_class``'s
+default back to ``None`` (off) — see ``test_default_embedding_class_is_local_mini``
+below, which now pins the CURRENT (opt-in-off) default rather than the
+Phase 4 local-mini default. The probe mechanism (items 2-6) is unchanged:
+it still matters whenever an operator explicitly opts into an ST-backed
+class (``local-mini`` / ``local-e5``) without the extras installed.
 
 What lands here:
-  1. ``ActionRetrievalConfig`` default is ``"local-mini"`` (= flipped
-     from None in this PR).
+  1. ``ActionRetrievalConfig`` default is ``None`` (= opt-in-off; see
+     module note above for the local-mini → None history).
   2. ``is_available()`` is a cheap importlib.util.find_spec probe and
      reflects the live env (= True iff sentence_transformers is
      importable).
@@ -46,13 +52,18 @@ from reyn.runtime.session import _embedding_class_needs_missing_extras
 
 
 def test_default_embedding_class_is_local_mini() -> None:
-    """Tier 2: out-of-the-box ``ActionRetrievalConfig`` selects local-mini.
+    """Tier 2: out-of-the-box ``ActionRetrievalConfig`` has NO embedding class.
 
-    Phase 4 design: zero-config fresh users with ``reyn[local-embed]``
-    installed get semantic search active without touching reyn.yaml.
+    FP-0043 Phase 4 defaulted this to "local-mini" (zero-config fresh
+    users with ``reyn[local-embed]`` installed got semantic search active
+    without touching reyn.yaml). The semantic-search-opt-in fix (2026)
+    reverted that: a truthy default made reyn attempt a Hugging Face
+    model download at startup even for offline installs, which is not
+    "opt-in". search_actions is now off until the operator explicitly
+    sets ``action_retrieval.embedding_class`` in reyn.yaml.
     """
     cfg = ActionRetrievalConfig()
-    assert cfg.embedding_class == "local-mini"
+    assert cfg.embedding_class is None
 
 
 # ── 2. is_available() probe ────────────────────────────────────────────────

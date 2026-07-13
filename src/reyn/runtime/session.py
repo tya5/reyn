@@ -179,8 +179,11 @@ def _embedding_class_needs_missing_extras(
     """Whether the configured embedding class needs sentence-transformers
     extras that haven't been installed (FP-0043 Phase 4 graceful-degrade).
 
-    The Phase 4 default flip makes ``action_retrieval.embedding_class``
-    default to ``"local-mini"``. For fresh installs that don't have
+    FP-0043 Phase 4 defaulted ``action_retrieval.embedding_class`` to
+    ``"local-mini"``; the semantic-search-opt-in fix (2026) reverted the
+    default to ``None`` (off), but this probe still matters whenever an
+    operator explicitly opts INTO an ST-backed class (``local-mini`` /
+    ``local-e5``). For installs that opted in without having run
     ``pip install 'reyn[local-embed]'`` yet, we don't want to instantiate
     an ActionEmbeddingIndex whose first embed() call will ImportError —
     we want ``search_actions`` to stay hidden and let list_actions

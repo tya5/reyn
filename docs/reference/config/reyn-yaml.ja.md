@@ -355,7 +355,7 @@ sandbox:
 ```yaml
 action_retrieval:
   universal_wrappers_enabled: true    # デフォルト; false でオプトアウト
-  embedding_class: local-mini         # デフォルト; null で search_actions 無効
+  # embedding_class: local-mini       # デフォルトは null (無効); opt-in するにはコメント解除
   hot_list_n: 0                       # 0 = 無効（デフォルト）; opt-in は例えば 10
   mode: default                       # default | minimal | performance
 ```
@@ -365,9 +365,28 @@ action_retrieval:
 | フィールド | 型 | デフォルト | 説明 |
 |-----|------|---------|-------------|
 | `universal_wrappers_enabled` | bool | `true` | `tool_use` scheme が `universal-category` に解決される layer について、`true`(デフォルト)の時、その layer の `tools=` は 4 universal wrappers (`list_actions` / `search_actions` / `describe_action` / `invoke_action`) + hot list direct aliases のみ。 legacy per-kind tool (`invoke_skill` / `call_mcp_tool` 等) はその layer で LLM に surface されず、 wrapper の backing handler として残存。 `search_actions` は `embedding_class` で別途ゲート。 `false` 設定でその layer の wrapper surface 自体を無効化 (= legacy のみが addressing path)。 scheme が `enumerate-all`(`chat` layer 自身のデフォルト)である layer には影響しない — その scheme はこのフラグを一切参照しない。 |
-| `embedding_class` | string \| null | `"local-mini"` | action-retrieval の semantic 検索に使用する [`embedding.classes`](../../concepts/data-retrieval/rag.md) のエントリ名。 デフォルト `local-mini` (= `sentence-transformers/all-MiniLM-L6-v2`)。 `null` または空の場合、 wrapper が有効でも `search_actions` は `tools=` から除外される。 設定すると cold-start session で eager embedding build を発動し初回ターンの hallucination を回避。 **Graceful degrade**: 選んだクラスが `sentence-transformers/` モデルを指すのに `local-embed` extras 未インストールの場合、 reyn は黙って `null` 扱いとし `list_actions` がインストールコマンドを LLM に surface する。 `standard` (= OpenAI) や `null` (= opt out) で上書き可能。 |
+| `embedding_class` | string \| null | `null` | action-retrieval の semantic 検索に使用する [`embedding.classes`](../../concepts/data-retrieval/rag.md) のエントリ名。 **デフォルト `null` (無効) — semantic `search_actions` は opt-in。** `null` または空の場合、 wrapper が有効でも `search_actions` は `tools=` から除外され、 embedding index の build も一切試行されない (= silent、失敗も警告も発生しない)。 opt-in するには明示的に `local-mini` (= `sentence-transformers/all-MiniLM-L6-v2`; ローカル、`reyn[local-embed]` extras と初回の Hugging Face モデルダウンロードが必要) または `standard` (= OpenAI backed、ローカルダウンロード不要、`OPENAI_API_KEY` が必要) を設定する。 設定すると cold-start session で eager embedding build を発動し初回ターンの hallucination を回避。 **Graceful degrade**: 選んだクラスが `sentence-transformers/` モデルを指すのに `local-embed` extras 未インストールの場合、 reyn は黙って `null` 扱いとし `list_actions` がインストールコマンドを LLM に surface する。 |
 | `hot_list_n` | int | `0` | top-N `freq+recency` direct alias のホットリスト投影サイズ。 デフォルト `0` (= 無効) — `list_actions` が正規の discovery path。 opt-in は `10` 以上を設定; seed・usage tracker・alias-builder は完全維持。 |
 | `mode` | string | `"default"` | 運用モードラベル: `"minimal"` (キャッシュ安定性最大、 ホットリストなし) / `"default"` (バランス) / `"performance"` (大規模ホットリスト)。 自由文字列で、 呼び出し側がセマンティクスを上乗せ。 |
+
+### クイックスタート — semantic `search_actions` を opt-in
+
+`search_actions` はデフォルトで無効 (`embedding_class: null`) — semantic search はプロジェクト全体で opt-in の方針です。有効にするには:
+
+```yaml
+# reyn.yaml — ローカルモデル (`pip install 'reyn[local-embed]'` が必要;
+# 初回利用時に Hugging Face から ~22 MB ダウンロード)
+action_retrieval:
+  embedding_class: local-mini
+```
+
+```yaml
+# reyn.yaml — API backed、ローカルダウンロード不要 (`OPENAI_API_KEY` が必要)
+action_retrieval:
+  embedding_class: standard
+```
+
+詳細な手順（オフライン/エアギャップ環境のガイダンスを含む）は [ガイド: semantic search を有効にする](../../guide/for-users/enable-semantic-search.ja.md) を参照。
 
 ### クイックスタート — オプトアウト
 

@@ -410,16 +410,29 @@ action_retrieval:
   universal_wrappers_enabled: false
 ```
 
-## `embedding_class` default + graceful degrade (FP-0043 Phase 4)
+## `embedding_class` default + graceful degrade
 
-Since **FP-0043 Phase 4**,
-`ActionRetrievalConfig.embedding_class` defaults to `"local-mini"`
-(= `sentence-transformers/all-MiniLM-L6-v2`). This makes
+**FP-0043 Phase 4** defaulted `ActionRetrievalConfig.embedding_class` to
+`"local-mini"` (= `sentence-transformers/all-MiniLM-L6-v2`), making
 `search_actions` automatically available for any fresh installation
-that runs `pip install 'reyn[local-embed]'` — no `reyn.yaml` edits
-required.
+that ran `pip install 'reyn[local-embed]'` — no `reyn.yaml` edits
+required. The **semantic-search-opt-in fix** reverted this: a truthy
+default made reyn attempt a Hugging Face model download at chat
+startup even on zero-config / offline installs, surfacing as a
+startup warning when the download failed — contradicting the
+project's standing principle that semantic search is opt-in.
 
-When the `local-embed` extras are NOT installed, `Session.__init__`
+`ActionRetrievalConfig.embedding_class` now defaults to `None` (off).
+With no class configured, no embedding index build is attempted at
+all — `search_actions` is simply absent from `tools=` per the §D14
+gate below, silently (there is nothing to fail or warn about).
+Operators opt in explicitly via `action_retrieval.embedding_class:
+local-mini` (local model, needs the `reyn[local-embed]` extras) or
+`standard` (API-backed, no local download) in `reyn.yaml` — see
+[Guide: enable semantic search](../../guide/for-users/enable-semantic-search.md).
+
+When an operator opts into an ST-backed class but the `local-embed`
+extras are NOT installed, `Session.__init__`
 detects the missing import via a cheap `importlib.util.find_spec`
 probe and silently treats the configured class as if it were `None`:
 no `ActionEmbeddingIndex` is built, `search_actions` stays hidden by
@@ -455,7 +468,8 @@ deferred:
   `list_actions` response carries a structured **hidden-state hint**
   pointing operators at `pip install 'reyn[local-embed]'` /
   `reyn embeddings status` so the install path is self-discoverable
-  mid-chat. The local backend is the default; the OpenAI-backed
+  mid-chat. Off by default (opt-in only, per the semantic-search-opt-in
+  fix); once opted in, the local backend and the OpenAI-backed
   classes (`light` / `standard` / `strong`) are equally usable. See
   [Guide: enable semantic search](../../guide/for-users/enable-semantic-search.md)
   and the [`reyn embeddings`](../../reference/cli/embeddings.md) CLI for

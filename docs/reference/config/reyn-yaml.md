@@ -781,7 +781,7 @@ Universal catalog visibility + retrieval settings.  Scheme *selection* is genera
 ```yaml
 action_retrieval:
   universal_wrappers_enabled: true    # default; set false to opt out
-  embedding_class: local-mini         # default; null disables search_actions
+  # embedding_class: local-mini       # default is null (off); uncomment to opt in
   hot_list_n: 0                       # 0 = off (default); set e.g. 10 to opt in
   mode: default                       # default | minimal | performance
 ```
@@ -791,10 +791,29 @@ action_retrieval:
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `universal_wrappers_enabled` | bool | `true` | For a layer whose `tool_use` scheme resolves to `universal-category`, `true` (default) exposes only the 4 universal wrappers (`list_actions`, `search_actions`, `describe_action`, `invoke_action`) plus hot-list direct aliases in that layer's `tools=`.  Legacy per-kind tools (`invoke_skill`, `call_mcp_tool`, etc.) are no longer surfaced to the LLM on that layer but remain available as wrapper backing handlers.  `search_actions` is gated separately by `embedding_class`.  Set `false` to disable the wrapper surface entirely for that layer (= legacy tools become the only addressing path again).  Does not affect a layer whose scheme is `enumerate-all` (the `chat` layer's own default) — that scheme never consults this flag. |
-| `embedding_class` | string \| null | `"local-mini"` | Name of an entry in [`embedding.classes`](../../concepts/data-retrieval/rag.md) to use for action-retrieval semantic search.  Default `local-mini` (= `sentence-transformers/all-MiniLM-L6-v2`).  When `null` or empty, `search_actions` is excluded from `tools=` even when wrappers are enabled.  Setting this also enables eager embedding build on cold-start sessions to avoid first-turn hallucinations.  **Graceful degrade**: if the chosen class points at a `sentence-transformers/` model but the `local-embed` extras aren't installed, reyn silently treats this as `null` and `list_actions` surfaces the install command to the LLM. Set explicitly to `standard` (= OpenAI) or `null` (= opt out) to override. |
+| `embedding_class` | string \| null | `null` | Name of an entry in [`embedding.classes`](../../concepts/data-retrieval/rag.md) to use for action-retrieval semantic search. **Default `null` (off) — semantic `search_actions` is opt-in.** When `null` or empty, `search_actions` is excluded from `tools=` even when wrappers are enabled, and no embedding index build is attempted (silent — nothing to fail or warn about). To opt in, set it explicitly to `local-mini` (= `sentence-transformers/all-MiniLM-L6-v2`; local, needs the `reyn[local-embed]` extras and a one-time Hugging Face model download) or `standard` (= OpenAI-backed, needs `OPENAI_API_KEY`, no local download). Setting this also enables eager embedding build on cold-start sessions to avoid first-turn hallucinations. **Graceful degrade**: if the chosen class points at a `sentence-transformers/` model but the `local-embed` extras aren't installed, reyn silently treats this as `null` and `list_actions` surfaces the install command to the LLM. |
 | `hot_list_n` | int | `0` | Hot-list projection size for top-N `freq+recency` direct aliases. `0` (default) disables hot-list entirely — `list_actions` is the canonical discovery path. Set to `10` or higher to opt in; the seed, usage tracker, and alias-builder remain fully operative. |
 | `mode` | string | `"default"` | Operational mode label: `"minimal"` (max cache stability, no hot list) / `"default"` (balanced) / `"performance"` (large hot list).  Free-form string; callers layer semantics on top. |
 | `hot_list_seed` | list \| string | `"default"` | Seed for the hot-list projection. `"default"` uses the built-in freq+recency seeding; a list of qualified action names (e.g. `["mcp__call_tool"]`) pins those as the initial hot list before usage stats accumulate. |
+
+### Quick-start — opt in to semantic `search_actions`
+
+`search_actions` is off by default (`embedding_class: null`) — semantic search is opt-in project-wide. To turn it on:
+
+```yaml
+# reyn.yaml — local model (needs `pip install 'reyn[local-embed]'`; downloads
+# ~22 MB from Hugging Face on first use)
+action_retrieval:
+  embedding_class: local-mini
+```
+
+```yaml
+# reyn.yaml — API-backed, no local download (needs OPENAI_API_KEY)
+action_retrieval:
+  embedding_class: standard
+```
+
+See [Guide: enable semantic search](../../guide/for-users/enable-semantic-search.md) for the full walkthrough, including offline/air-gapped guidance.
 
 ### Quick-start — opt out
 
