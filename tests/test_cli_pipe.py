@@ -707,13 +707,199 @@ class _FakeMCPClient:
     def is_initialized(self) -> bool:
         return True
 
+    # Class-level transport-reach counter (reset per test): lets a test assert
+    # whether the real MCP transport was EVER reached — the load-bearing signal
+    # for the focus-3 privilege-escalation gate (a narrowed agent step must not
+    # reach the transport of an MCP server its capabilities exclude, even when
+    # `reyn pipe run` has auto-granted that server in config).
+    call_tool_count = 0
+
     async def call_tool(
         self, name: str, args: dict, *, progress_callback=None, timeout_seconds=None,
     ) -> dict:
+        type(self).call_tool_count += 1
         return {
             "content": [{"type": "text", "text": f"{name}:{args.get('msg', '')}"}],
             "isError": False,
         }
+
+
+def _fake_acompletion_one_tool_then_stop(tool_name: str, tool_args: dict):
+    """Stateful real-async fake for litellm.acompletion (the documented replay
+    seam): the FIRST call returns a single ``tool_name`` tool_call (forcing the
+    router to attempt that dispatch REGARDLESS of catalog visibility — so a
+    denial can only come from the DISPATCH-time permission gate, not merely
+    from the tool being hidden); every subsequent call returns a plain-text
+    stop. Lets a narrowed agent step be scripted to TRY an excluded MCP call."""
+    state = {"n": 0}
+
+    async def _acompletion(*_args, **_kwargs):
+        state["n"] += 1
+        if state["n"] == 1:
+            return litellm.ModelResponse(
+                choices=[{
+                    "index": 0,
+                    "message": {
+                        "role": "assistant",
+                        "content": None,
+                        "tool_calls": [{
+                            "id": "call_1",
+                            "type": "function",
+                            "function": {
+                                "name": tool_name,
+                                "arguments": json.dumps(tool_args),
+                            },
+                        }],
+                    },
+                    "finish_reason": "tool_calls",
+                }],
+                usage={"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
+                model="openai/gpt-4o-mini",
+            )
+        return litellm.ModelResponse(
+            choices=[{
+                "index": 0,
+                "message": {"role": "assistant", "content": "done"},
+                "finish_reason": "stop",
+            }],
+            usage={"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
+            model="openai/gpt-4o-mini",
+        )
+
+    return _acompletion
+
+
+def _write_agent_mcp_reyn_yaml(tmp_path, *, capabilities_line: str) -> None:
+    """reyn.yaml with `echo` MCP server CONFIGURED (so `reyn pipe run`'s option-A
+    auto-grant enables `permissions.mcp.echo`), NO explicit `permissions` block,
+    and a single-`agent`-step pipeline whose `capabilities` are supplied by the
+    caller (present → narrowed; absent line → un-narrowed control)."""
+    (tmp_path / "uses_agent_mcp.yaml").write_text(
+        "pipeline: uses_agent_mcp\n"
+        "steps:\n"
+        "  - agent:\n"
+        "      prompt: 'call the echo server'\n"
+        "      identity: default\n"
+        f"{capabilities_line}"
+        "      output: reply\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "reyn.yaml").write_text(
+        yaml.dump(
+            {
+                "model": "standard",
+                "models": {"standard": "openai/gpt-4o-mini"},
+                "mcp": {"servers": {"echo": {"type": "stdio", "command": "x"}}},
+                "pipelines": {"entries": {"uses_agent_mcp": {"path": "uses_agent_mcp.yaml"}}},
+            },
+            allow_unicode=True, default_flow_style=False,
+        ),
+        encoding="utf-8",
+    )
+
+
+def test_agent_step_capabilities_narrowing_blocks_autogranted_mcp_server(
+    tmp_path, monkeypatch, capsys,
+):
+    """Tier 2: focus-3 privilege-escalation merge-gate. A pipeline `agent` step
+    whose `capabilities` EXCLUDE the MCP tool, run via `reyn pipe run` with the
+    `echo` server present-and-auto-granted in config, must NOT be able to invoke
+    that server — the per-step capability NARROWING wins over the pipe-run MCP
+    auto-grant (the ∩-gate holds; never-elevate).
+
+    Mechanism (pinned, not assumed): the sub-agent's LLM is SCRIPTED to emit a
+    `call_mcp_tool` call anyway (bypassing any catalog-visibility hiding), so the
+    only thing that can stop it is a DISPATCH-time gate. The agent-step narrowing
+    (`_build_agent_step_narrowing`) sets `tool_allow` only — it does NOT set the
+    `allowed_mcp`/`mcp_deny` axis that `require_mcp` reads — yet the call is still
+    denied, because the router's single contextual TOOL-axis gate
+    (`RouterLoop._excluded_result` -> `tool_contextually_denied`) rejects
+    `call_mcp_tool` (not in `tool_allow=[read_file]`) BEFORE the MCP op / its
+    `require_mcp` gate is ever reached. So the auto-grant (which only pre-seeds
+    the config-approval layer of the LOWER `require_mcp` MCP-axis) is structurally
+    dominated by the narrowing on the TOOL axis (never-elevate = `all()`).
+
+    Evidence: the real MCP transport (`_FakeMCPClient.call_tool`) is NEVER
+    reached (`call_tool_count == 0`). The paired control below proves the same
+    scripted call DOES reach the transport when `call_mcp_tool` is in
+    `capabilities` — isolating the narrowing as the cause of the denial."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test-focus3-dummy")
+    _FakeMCPClient.call_tool_count = 0
+    import reyn.mcp.connection_service as connection_service_mod
+    import reyn.mcp.pool as pool_mod
+    monkeypatch.setattr(pool_mod, "MCPClient", _FakeMCPClient)
+    monkeypatch.setattr(connection_service_mod, "MCPClient", _FakeMCPClient)
+    monkeypatch.setattr(
+        litellm, "acompletion",
+        _fake_acompletion_one_tool_then_stop(
+            "call_mcp_tool",
+            {"server": "echo", "mcp_tool_name": "ping", "tool_args": {"msg": "hi"}},
+        ),
+    )
+
+    # capabilities EXCLUDE call_mcp_tool (only read_file allowed) → the echo
+    # server is unreachable for this sub-agent despite the pipe-run auto-grant.
+    _write_agent_mcp_reyn_yaml(
+        tmp_path, capabilities_line="      capabilities: {tools: [read_file]}\n",
+    )
+
+    args = _ns(
+        name="uses_agent_mcp.uses_agent_mcp", input="{}",
+        project=str(tmp_path), async_=False,
+    )
+    run_run(args)
+
+    assert _FakeMCPClient.call_tool_count == 0, (
+        "PRIVILEGE ESCALATION: a narrowed agent step (capabilities exclude "
+        "call_mcp_tool) reached the auto-granted MCP server's transport — the "
+        "narrowing did NOT win over the pipe-run auto-grant."
+    )
+
+
+def test_agent_step_without_narrowing_reaches_autogranted_mcp_server_control(
+    tmp_path, monkeypatch, capsys,
+):
+    """Tier 2: paired CONTROL for the focus-3 gate above — the SAME scripted
+    `call_mcp_tool` under an agent step whose `capabilities` INCLUDE
+    `call_mcp_tool` DOES reach the auto-granted `echo` server's transport
+    (`call_tool_count >= 1`). This isolates the denial in the sibling test to
+    the capability NARROWING (not an unrelated dispatch failure) and confirms
+    the pipe-run auto-grant genuinely enables a configured server for an agent
+    step when the step's own capabilities permit the MCP verb."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test-focus3-dummy")
+    _FakeMCPClient.call_tool_count = 0
+    import reyn.mcp.connection_service as connection_service_mod
+    import reyn.mcp.pool as pool_mod
+    monkeypatch.setattr(pool_mod, "MCPClient", _FakeMCPClient)
+    monkeypatch.setattr(connection_service_mod, "MCPClient", _FakeMCPClient)
+    monkeypatch.setattr(
+        litellm, "acompletion",
+        _fake_acompletion_one_tool_then_stop(
+            "call_mcp_tool",
+            {"server": "echo", "mcp_tool_name": "ping", "tool_args": {"msg": "hi"}},
+        ),
+    )
+
+    # capabilities INCLUDE call_mcp_tool → the TOOL-axis gate permits it, and the
+    # auto-grant lets require_mcp(echo) pass → the transport IS reached.
+    _write_agent_mcp_reyn_yaml(
+        tmp_path,
+        capabilities_line="      capabilities: {tools: [call_mcp_tool]}\n",
+    )
+
+    args = _ns(
+        name="uses_agent_mcp.uses_agent_mcp", input="{}",
+        project=str(tmp_path), async_=False,
+    )
+    run_run(args)
+
+    assert _FakeMCPClient.call_tool_count >= 1, (
+        "control failed: an agent step whose capabilities INCLUDE call_mcp_tool "
+        "did NOT reach the auto-granted echo server — the test can no longer "
+        "attribute the sibling denial to narrowing."
+    )
 
 
 def test_run_tool_step_dispatches_mcp_action_for_real(tmp_path, monkeypatch, capsys):
@@ -765,6 +951,104 @@ def test_run_tool_step_dispatches_mcp_action_for_real(tmp_path, monkeypatch, cap
     result = json.loads(out)
     # #2425 PR-2: an MCP result's canonical "text" is the joined content.
     assert result["named_stores"]["r"]["text"] == "ping:hi reyn"
+
+
+def test_run_tool_step_mcp_auto_grants_configured_server_no_explicit_permission(
+    tmp_path, monkeypatch, capsys,
+):
+    """Tier 2: option (A) — a 'tool:' step calling a CONFIGURED MCP server
+    (present in reyn.yaml's mcp.servers) now dispatches for real through
+    'reyn pipe run' with NO explicit `permissions.mcp` declaration at all —
+    the owner-reported stuck-on-access-denied case. Mirrors
+    test_run_tool_step_dispatches_mcp_action_for_real exactly, MINUS the
+    `permissions: {mcp: {echo: allow}}` block that test needed pre-fix —
+    the auto-grant (_grant_configured_mcp_servers) now supplies it.
+
+    FALSIFY: the sibling test below (unconfigured server) proves the gate
+    itself still denies when the server is NOT configured — so this success
+    is attributable to the configured-server auto-grant, not a broken gate."""
+    monkeypatch.chdir(tmp_path)
+    import reyn.mcp.connection_service as connection_service_mod
+    import reyn.mcp.pool as pool_mod
+    monkeypatch.setattr(pool_mod, "MCPClient", _FakeMCPClient)
+    monkeypatch.setattr(connection_service_mod, "MCPClient", _FakeMCPClient)
+
+    dsl_path = tmp_path / "uses_mcp.yaml"
+    dsl_path.write_text(
+        "pipeline: uses_mcp\n"
+        "steps:\n"
+        "  - tool: {name: mcp__echo__ping, args: {msg: !expr ctx.msg}, output: r}\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "reyn.yaml").write_text(
+        yaml.dump(
+            {
+                "model": "standard",
+                "models": {"standard": "openai/gpt-4o-mini"},
+                "mcp": {"servers": {"echo": {"type": "stdio", "command": "x"}}},
+                # No `permissions:` block at all — the auto-grant is the
+                # ONLY thing that can make this succeed.
+                "pipelines": {"entries": {"uses_mcp": {"path": "uses_mcp.yaml"}}},
+            },
+            allow_unicode=True, default_flow_style=False,
+        ),
+        encoding="utf-8",
+    )
+
+    args = _ns(
+        name="uses_mcp.uses_mcp", input=json.dumps({"msg": "hi reyn"}),
+        project=str(tmp_path), async_=False,
+    )
+    run_run(args)
+
+    out = capsys.readouterr().out
+    result = json.loads(out)
+    assert result["named_stores"]["r"]["text"] == "ping:hi reyn"
+
+
+def test_run_tool_step_mcp_unconfigured_server_still_denied_with_actionable_error(
+    tmp_path, monkeypatch, capsys,
+):
+    """Tier 2: falsify pin for the auto-grant above — a server that is NOT
+    in the merged MCP config still gets no grant and is denied, with an
+    actionable error naming the server (was a bare 'access denied')."""
+    monkeypatch.chdir(tmp_path)
+    import reyn.mcp.connection_service as connection_service_mod
+    import reyn.mcp.pool as pool_mod
+    monkeypatch.setattr(pool_mod, "MCPClient", _FakeMCPClient)
+    monkeypatch.setattr(connection_service_mod, "MCPClient", _FakeMCPClient)
+
+    dsl_path = tmp_path / "uses_mcp.yaml"
+    dsl_path.write_text(
+        "pipeline: uses_mcp\n"
+        "steps:\n"
+        "  - tool: {name: mcp__ghost__ping, args: {msg: !expr ctx.msg}, output: r}\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "reyn.yaml").write_text(
+        yaml.dump(
+            {
+                "model": "standard",
+                "models": {"standard": "openai/gpt-4o-mini"},
+                # 'ghost' is NOT configured anywhere — no mcp.servers entry.
+                "pipelines": {"entries": {"uses_mcp": {"path": "uses_mcp.yaml"}}},
+            },
+            allow_unicode=True, default_flow_style=False,
+        ),
+        encoding="utf-8",
+    )
+
+    args = _ns(
+        name="uses_mcp.uses_mcp", input=json.dumps({"msg": "hi reyn"}),
+        project=str(tmp_path), async_=False,
+    )
+    run_run(args)
+
+    out = capsys.readouterr().out
+    result = json.loads(out)
+    text = result["named_stores"]["r"]["text"]
+    assert "ghost" in text
+    assert "denied" in text.lower() or "not declared" in text.lower()
 
 
 @pytest.mark.asyncio

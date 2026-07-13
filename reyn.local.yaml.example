@@ -131,13 +131,25 @@
 #   python.safe       — pre-approve the python preprocessor's safe mode
 #                       (the chat router uses this — already set in reyn.yaml)
 #   mcp.<server>      — pre-approve a specific MCP server's tool surface
+#                       (e.g. `mcp.<server-name>: allow` — see the nested
+#                       `mcp: {<server-name>: allow}` form below; also
+#                       settable per-server via .reyn/approvals.yaml's
+#                       `mcp.<server-name>: true`, written by the chat
+#                       session's own interactive approval prompt — see
+#                       docs/reference/config/permissions.md).
+#                       `reyn pipe run` auto-grants any MCP server it finds
+#                       already CONFIGURED (.reyn/config/mcp.yaml / this
+#                       file's own `mcp.servers`) — this block is only
+#                       needed for a server NOT yet configured, or to
+#                       override that default (e.g. an explicit per-server
+#                       `deny` here is never auto-overridden).
 # -----------------------------------------------------------------------------
 # permissions:
 #   shell: allow
 #   file.delete: allow
 #   python.safe: allow
 #   mcp:
-#     github: allow
+#     github: allow   # grant this MCP server's tools
 #
 # Headless / benchmark pre-approval: benchmark Agents are constructed with
 # ``intervention_bus=None`` (= ``reyn eval benchmark ...``), so any permission

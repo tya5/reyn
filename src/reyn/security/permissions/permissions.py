@@ -1254,7 +1254,24 @@ class PermissionResolver:
             bus,
             user_prompt=f"Allow access to MCP server {server!r}?",
         ):
-            raise PermissionError(f"MCP server {server!r} access denied")
+            # Decision-enabling deny (was a bare "access denied"): name the
+            # server and the two concrete ways to grant it — either
+            # declaring/installing the server so it's CONFIGURED (which
+            # `reyn pipe run` auto-grants — see pipe.py's
+            # `_grant_configured_mcp_servers`), or a one-off explicit
+            # config grant. Both routes covered so this fires the same for
+            # an unconfigured server AND a configured-but-explicitly-denied
+            # one.
+            raise PermissionError(
+                f"MCP server {server!r} access denied. To grant it: "
+                f"(1) configure the server — add it to "
+                f".reyn/config/mcp.yaml, or run `reyn mcp install {server}` "
+                f"(a `reyn pipe run` invocation auto-grants any server it "
+                f"finds configured there), or "
+                f"(2) grant it explicitly — add `permissions:\\n  mcp:\\n"
+                f"    {server}: allow` to reyn.yaml. See "
+                f"docs/reference/config/permissions.md."
+            )
 
     async def require_tool(
         self, decl: PermissionDecl, tool: str, bus: RequestBus,
