@@ -98,6 +98,13 @@ def estimate_tokens(text: str, model: str, *, use_chars4: bool = False) -> int:
     if cache_key in _token_cache:
         return _token_cache[cache_key]
     try:
+        # perf/log-routing chokepoint: per-turn token sizing runs BEFORE the
+        # first completion, so this can be the FIRST litellm import in the
+        # process — funnel it through ensure_litellm_ready() so litellm's
+        # import-time console log routing (#2929) wraps it too (idempotent;
+        # cheap on 2nd+ call).
+        from reyn.llm.litellm_bootstrap import ensure_litellm_ready
+        ensure_litellm_ready()
         import litellm
         m = model or "gpt-3.5-turbo"
         count = litellm.token_counter(model=m, text=text or "")

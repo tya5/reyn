@@ -156,6 +156,13 @@ class RegistryClient:
 
     async def __aenter__(self) -> "RegistryClient":
         import httpx
+
+        # perf/log-routing chokepoint: this client can be the FIRST litellm
+        # import in the process — funnel it through ensure_litellm_ready() so
+        # litellm's import-time console log routing (#2929) wraps it too
+        # (idempotent; cheap on 2nd+ call).
+        from reyn.llm.litellm_bootstrap import ensure_litellm_ready
+        ensure_litellm_ready()
         from litellm.llms.custom_httpx.http_handler import get_ssl_verify
 
         # Resolve the verify value: explicit arg takes priority; None falls

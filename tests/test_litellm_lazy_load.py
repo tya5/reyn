@@ -226,6 +226,50 @@ def test_first_use_routes_litellm_import_time_warning_to_file(tmp_path) -> None:
     assert "Failed to fetch remote model cost map" not in result.stderr
 
 
+def test_sibling_first_import_routes_import_time_warning_to_file(tmp_path) -> None:
+    """Tier 2: chokepoint-completeness — when a NON-recorded_acompletion litellm
+    call site is the FIRST to import litellm, the import-time cost-map-fetch
+    warning still lands in reyn.log, NOT stderr.
+
+    Exercises a genuine *sibling* first-import path: ``compaction.engine.
+    estimate_tokens`` (per-turn token sizing runs before the first completion,
+    so it can be the process's first ``import litellm``) — one of the four
+    sibling sites now wired to ``ensure_litellm_ready``. It never calls
+    ``recorded_acompletion``, so it proves the routing does not depend on the
+    LLM-call funnel.
+
+    FALSIFY: without the ``ensure_litellm_ready()`` call newly added at the
+    sibling site, this path's bare ``import litellm`` attaches litellm's own
+    stderr StreamHandler and the import-time warning leaks to the console —
+    the assertion `not in result.stderr` would fail. (Confirmed by removing
+    the wire and re-running: the warning appears on stderr.)
+    """
+    project_root = tmp_path
+    script = f"""
+        import os, sys
+        os.environ["LITELLM_LOCAL_MODEL_COST_MAP"] = "False"
+        os.environ["LITELLM_MODEL_COST_MAP_URL"] = "http://127.0.0.1:1/unreachable.json"
+
+        from pathlib import Path
+        from reyn.interfaces.cli.commands.chat import _setup_interactive_logging
+        from reyn.services.compaction.engine import estimate_tokens
+
+        _setup_interactive_logging(Path({str(project_root)!r}))
+        assert "litellm" not in sys.modules, "litellm imported before the sibling call"
+        # SIBLING-FIRST: the very first litellm import in this process happens
+        # inside estimate_tokens (via its ensure_litellm_ready wire), NOT via
+        # recorded_acompletion / ensure_litellm_ready called directly.
+        estimate_tokens("some text to size", "gpt-3.5-turbo")
+        assert "litellm" in sys.modules, "sibling call did not import litellm"
+        """
+    result = _run(script)
+    assert result.returncode == 0, result.stderr
+    log_file = project_root / ".reyn" / "logs" / "reyn.log"
+    log_text = log_file.read_text()
+    assert "Failed to fetch remote model cost map" in log_text
+    assert "Failed to fetch remote model cost map" not in result.stderr
+
+
 def test_measured_startup_latency_delta_from_deferring_litellm() -> None:
     """Tier 2: measures the actual latency delta the perf fix targets — the
     startup-path work (importing `reyn.interfaces.cli.commands.chat` +
