@@ -41,3 +41,39 @@ class AgentStepError(Exception):
     step's retry/error path), not a construction-time / programming error.
     """
 
+
+class StructuredOutputError(AgentStepError):
+    """Base for 0062 structured-output failures — a ``schema``-bearing
+    ``run_agent_step`` invocation whose provider-constrained (``response_format``)
+    answer turn (``RouterLoop``) could not produce a valid result. Subclasses
+    distinguish the THREE distinct failure modes the proposal requires never
+    be conflated (§2.1): unsupported model (pre-check, no call wasted),
+    provider-rejected schema (fail fast, no re-prompt), and generation-side
+    non-conformance (bounded re-prompt, then this). A subtype of
+    ``AgentStepError`` so the existing pipeline-executor / caller handling
+    (``except AgentStepError``) already covers it uniformly — no separate
+    catch site needed."""
+
+
+class StructuredOutputUnsupportedModelError(StructuredOutputError):
+    """Failure mode (a): the resolved model does not support provider-side
+    structured output (``litellm.supports_response_schema`` returned False).
+    Raised BEFORE the turn's first LLM call (the pre-check runs ahead of the
+    whole turn, tool calls included) so no completion is ever wasted on a
+    model that cannot honor ``response_format`` at all."""
+
+
+class StructuredOutputSchemaRejectedError(StructuredOutputError):
+    """Failure mode (b): the provider's own json_schema-subset validation
+    rejected the SCHEMA itself (a 400 on the constrained-generation call,
+    reached only after the mode-(a) pre-check already passed). Re-prompting
+    cannot fix an incompatible schema, so this is raised on the FIRST such
+    failure — never entered into the mode-(c) re-prompt loop."""
+
+
+class StructuredOutputNonConformingError(StructuredOutputError):
+    """Failure mode (c): the model returned syntactically-valid-schema but
+    semantically non-conforming JSON (or non-JSON text) after the bounded
+    re-prompt budget (feed-the-validation-error-back, N small attempts) was
+    exhausted."""
+

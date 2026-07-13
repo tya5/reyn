@@ -192,6 +192,7 @@ AgentBody     ::= "{" "prompt:" TPL
                       ["identity:" NAME]
                       ["capabilities:" "{" "tools:" "[" NAME* "]" "}"]
                       ["schema:" NAME]
+                      ["model:" NAME]
                       ["output:" NAME] "}"
 
 CallBody      ::= "{" "pipeline:" NAME            (* static literal, never EXPR *)
@@ -645,6 +646,29 @@ non-conformance fails the step. Schemas declared in the same DSL document set
 [inline pipeline](#ad-hoc-inline-launch) too, since its schemas travel with
 the same definition string.
 
+**`agent` step structured output (0062).** An `agent` step's `schema: NAME`
+does more than validate — it *constrains generation*: the ephemeral session's
+answer turn is issued with a provider-side `response_format` built from the
+named schema, so the model is asked for schema-shaped JSON directly rather
+than free-forming text the OS then hopes parses. The parsed value is still
+validated afterwards (belt-and-suspenders) and bound to `output`. This needs
+a model that supports structured output; an unsupported model, a
+provider-rejected schema, or exhausted-re-prompt non-conformance each fail
+the step with a distinct, diagnosable error rather than silently falling
+back to free-form text.
+
+An `agent` step also accepts `model: NAME`, an optional model-class override
+for that step's ephemeral session (e.g. `model: strong` for a step that needs
+a more capable model than the pipeline's default):
+
+```yaml
+- kind: agent
+  prompt: "Review {ctx.doc}."
+  model: strong
+  schema: Review
+  output: review
+```
+
 ## Invocation
 
 Four tools launch a pipeline. All four converge on the same execution: a
@@ -764,7 +788,7 @@ Step          ::= "transform:" "{" "value:" EXPR ["output:" NAME] "}"
                  | "shell:"    "{" "command:" ArgValue ["schema:" NAME] ["output:" NAME] ["timeout:" INT] "}"
                  | "agent:"    "{" "prompt:" TPL ["identity:" NAME]
                                     ["capabilities:" "{" "tools:" "[" NAME* "]" "}"]
-                                    ["schema:" NAME] ["output:" NAME] "}"
+                                    ["schema:" NAME] ["model:" NAME] ["output:" NAME] "}"
                  | "call:"     "{" "pipeline:" NAME ["pass:" "{" (NAME ":" EXPR)* "}"] ["output:" NAME] "}"
                  | "match:"    "{" "on:" EXPR "cases:" "{" (LABEL ":" MatchTarget)+ "}"
                                     ["default:" MatchTarget] ["output:" NAME] "}"

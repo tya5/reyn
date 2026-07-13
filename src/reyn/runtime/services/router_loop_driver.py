@@ -88,6 +88,15 @@ class RouterLoopDriver:
         # deep-cancel propagation into running subprocess ops (#1470).
         self._turn_cancel_requested: bool = False
         self._turn_cancel_event: asyncio.Event = asyncio.Event()
+        # 0062: per-session structured-output override, set post-construction by
+        # ``configure_structured_output`` (mirrors the existing ``_loop_observer``
+        # Tier-2 test-seam pattern — a public post-construction configure call, NOT
+        # a constructor kwarg thread-through every Session caller would need to
+        # touch). None for every Session except an ephemeral agent-step spawn
+        # whose ``AgentStep.schema`` is set — byte-identical otherwise.
+        self._response_format: "dict | None" = None
+        self._schema_validate_fn: "Any | None" = None
+        self._max_schema_reprompt_attempts: int = 2
         # #1470: wire cancel_event onto router_host so make_router_op_context
         # can thread it into OpContext → sandboxed_exec backend.
         _set_fn = getattr(router_host, "_set_cancel_event", None)
@@ -115,6 +124,28 @@ class RouterLoopDriver:
         """Set the cooperative cancel flag and cancel_event. Called by cancel_inflight()."""
         self._turn_cancel_requested = True
         self._turn_cancel_event.set()
+
+    # ── Structured output (0062) ─────────────────────────────────────────────
+
+    def configure_structured_output(
+        self, *,
+        response_format: "dict | None",
+        schema_validate_fn: "Any | None" = None,
+        max_reprompt_attempts: int = 2,
+    ) -> None:
+        """Configure the NEXT ``run_turn`` call's answer turn to be a
+        schema-constrained ``response_format`` call (0062 §2.1) instead of
+        emitting the tool-turn's own free-form text. Called by
+        ``session_api.run_agent_step`` right after spawning a
+        ``schema``-bearing agent-step's ephemeral session, before its one
+        ``MessageBus.request`` turn — mirrors the existing ``_loop_observer``
+        Tier-2 seam's "configure the constructed session before its turn"
+        shape, but is production wiring (not test-only): every OTHER Session
+        never calls this, so ``RouterLoop(response_format=None, ...)`` (this
+        driver's default) keeps every other turn byte-identical."""
+        self._response_format = response_format
+        self._schema_validate_fn = schema_validate_fn
+        self._max_schema_reprompt_attempts = max(0, int(max_reprompt_attempts))
 
     # ── Model resolution ──────────────────────────────────────────────────────
 
@@ -394,6 +425,11 @@ class RouterLoopDriver:
             # FP-0005: wire safety.on_limit so max_iterations exhaustion routes
             # through handle_limit_exceeded instead of flat-aborting.
             on_limit=getattr(self._safety, "on_limit", None),
+            # 0062: None for every Session except a schema-bearing agent-step spawn
+            # (configure_structured_output called before this run_turn).
+            response_format=self._response_format,
+            schema_validate_fn=self._schema_validate_fn,
+            max_schema_reprompt_attempts=self._max_schema_reprompt_attempts,
         )
         if self._loop_observer:
             self._loop_observer(loop)

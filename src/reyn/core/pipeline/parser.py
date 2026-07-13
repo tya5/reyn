@@ -318,7 +318,7 @@ def _reject_unknown_keys(
 _TRANSFORM_KEYS = frozenset({"value", "output"})
 _TOOL_KEYS = frozenset({"name", "args", "schema", "output"})
 _SHELL_KEYS = frozenset({"command", "schema", "output", "timeout"})
-_AGENT_KEYS = frozenset({"prompt", "identity", "capabilities", "schema", "output"})
+_AGENT_KEYS = frozenset({"prompt", "identity", "capabilities", "schema", "model", "output"})
 _CALL_KEYS = frozenset({"pipeline", "pass", "output"})
 _MATCH_KEYS = frozenset({"on", "cases", "default", "output"})
 _MATCH_CASE_KEYS = frozenset({"pipeline", "pass"})
@@ -404,9 +404,12 @@ def _parse_agent_step(body: "dict[str, Any]") -> AgentStep:
     schema = body.get("schema")
     if schema is not None and not isinstance(schema, str):
         _fail(f"agent step 'schema': expected a schema-name string, got {type(schema).__name__}")
+    model = body.get("model")
+    if model is not None and not isinstance(model, str):
+        _fail(f"agent step 'model': expected a model-class literal string, got {type(model).__name__}")
     return AgentStep(
         prompt=prompt, identity=identity, capabilities=capabilities, schema=schema,
-        output=body.get("output"),
+        model=model, output=body.get("output"),
     )
 
 

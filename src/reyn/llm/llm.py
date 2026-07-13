@@ -1790,6 +1790,7 @@ async def call_llm_tools(
     trace_caller: str | None = None,
     event_log: "EventLog | None" = None,
     emit_cost_events: bool = False,  # #1683: forwarded to recorded_acompletion (chat opts in)
+    response_format: "dict | None" = None,  # 0062: RouterLoop's separate no-tools structured-answer turn ONLY — every op-loop tool-decision call leaves this None (ADR-0035 D2 separate-decide preserved: never combined with a non-empty `tools`)
 ) -> LLMToolCallResult:
     """Tool-use variant of call_llm. Returns raw assistant message.
 
@@ -1801,6 +1802,13 @@ async def call_llm_tools(
       before the LLM call (raises BudgetExceeded if refused) and record_llm
       is called after a successful call. budget=None skips all tracking.
     budget_agent: agent name passed to budget.check_pre_llm / record_llm.
+
+    ``response_format`` (0062): passed straight to ``recorded_acompletion``
+    with NO ``fallback_without_response_format`` (unlike the judge_output /
+    compaction json-mode call sites) — a schema-bearing structured-output
+    call must never silently degrade to free-form text; a provider rejection
+    surfaces as-is for the caller (``RouterLoop._run_structured_answer_turn``)
+    to classify.
     """
     # Normalize model to ModelSpec — accept both str (backward compat) and ModelSpec.
     spec: ModelSpec = model if isinstance(model, ModelSpec) else ModelSpec(model=model, kwargs={})
@@ -1950,6 +1958,7 @@ async def call_llm_tools(
             recorder=None, extra_kwargs=_kw,
             emit_cost_events=emit_cost_events,  # #1683: chat opts in
             routing=_routing,  # #309 per-class api_base/provider (else global wins)
+            response_format=response_format,  # 0062: None for every op-loop tool call
         )
 
     # #2210 HIGH layer: when the per-call HTTP timeout + the Router/Reyn retries are ALL

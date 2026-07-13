@@ -196,6 +196,7 @@ async def run_agent_step(
     capabilities: "list[str] | None" = None,
     schema: "str | None" = None,
     schema_registry: "SchemaRegistry | None" = None,
+    model: "str | None" = None,
     chain_id: "str | None" = None,
     timeout: "float | None" = None,
     invoker_session: "Any | None" = None,
@@ -209,12 +210,29 @@ async def run_agent_step(
     turn via ``MessageBus.request``, and return its collected reply.
 
     With ``schema`` unset, returns the joined ``kind="agent"`` reply text
-    verbatim. With ``schema`` set (a name registered in ``schema_registry``),
-    the text is JSON-parsed and validated against it; the parsed + validated
-    value is returned. A ``schema`` without a ``schema_registry``, non-JSON
-    text, or a schema-non-conforming value each raise ``AgentStepError`` — a
-    normal step failure for the executor's retry/error path, not a
-    construction-time error.
+    verbatim. With ``schema`` set (a name registered in ``schema_registry``):
+    0062 upgrades this from post-hoc-validate-only to ALSO constraining
+    generation — the ephemeral session's answer turn is configured
+    (``RouterLoopDriver.configure_structured_output``, before the turn is
+    driven) to pass a ``response_format`` built from the named schema
+    (``core.pipeline.schema.to_json_schema``), so the model's reply is
+    provider-constrained JSON rather than free-formed text. The reply text is
+    still JSON-parsed + validated here afterwards (belt-and-suspenders — the
+    provider constraint is not blindly trusted). A ``schema`` without a
+    ``schema_registry``, non-JSON text, or a schema-non-conforming value each
+    raise ``AgentStepError`` — a normal step failure for the executor's
+    retry/error path, not a construction-time error. An unsupported model /
+    a provider-rejected schema / an exhausted re-prompt budget raise one of
+    ``StructuredOutputUnsupportedModelError`` / ``StructuredOutputSchemaRejectedError``
+    / ``StructuredOutputNonConformingError`` (all ``AgentStepError`` subtypes —
+    see ``runtime.errors``), propagated from the turn itself.
+
+    ``model`` (0062 layer 2, ``AgentStep.model``): an optional model-CLASS
+    override for the ephemeral session's answer turn, applied the same way
+    the ``/model`` slash command overrides a session's model
+    (``session._model_override``) — resolved via the session's own
+    ``ModelResolver`` at call time, exactly like every other model-class
+    field in the codebase (no bespoke resolution path).
 
     ``chain_id`` defaults to a fresh uuid4 hex (mirrors ``MessageBus``'s own
     ``_new_request_id``). ``timeout`` defaults to
@@ -235,9 +253,19 @@ async def run_agent_step(
     pipe`` run with no live session, or a direct executor call) routes
     ``AuditOnlyNoSurface`` here directly.
     """
-    from reyn.core.pipeline.schema import validate
+    from reyn.core.pipeline.schema import to_json_schema, validate
     from reyn.runtime.message_bus import MessageBus
     from reyn.runtime.spawn_routing import AuditOnlyNoSurface, BridgeToParent
+
+    # Moved ahead of the spawn (was previously checked only after the turn ran):
+    # a ``schema`` without a ``schema_registry`` is a caller-contract error that
+    # can never succeed — failing before spawning the ephemeral session avoids
+    # wasting a spawn (+ its S5 budget charge) on a call that cannot complete.
+    if schema is not None and schema_registry is None:
+        raise AgentStepError(
+            f"run_agent_step(schema={schema!r}) requires schema_registry "
+            "(no registry to validate against)."
+        )
 
     narrowing = _build_agent_step_narrowing(capabilities)
     # #2769 (refines #2706/#2710 P3-item3): an agent-step's user-reaching capabilities route to the
@@ -268,6 +296,37 @@ async def run_agent_step(
             "register the spawned session under its own name/sid."
         )
 
+    # 0062 layer 1/2: configure THIS turn's answer to be schema-constrained
+    # (response_format) and/or override the model class, BEFORE driving the
+    # turn — mirrors the ``_loop_observer`` Tier-2 seam's "configure the
+    # constructed session before its turn" shape, but is production wiring:
+    # every other Session (chat, pipeline driver, ...) never calls
+    # ``configure_structured_output`` / sets ``_model_override`` from here, so
+    # this is a no-op (byte-identical) for every non-schema, non-model-override
+    # agent step.
+    if schema is not None:
+        json_schema = to_json_schema(schema, schema_registry)
+        response_format = {
+            "type": "json_schema",
+            "json_schema": {"name": schema, "schema": json_schema},
+        }
+
+        def _validate_fn(parsed_value: Any) -> "list[str]":
+            result = validate(parsed_value, schema, schema_registry)
+            return [
+                f"{e.path or '<root>'}: {e.message}" for e in result.errors
+            ]
+
+        session._loop_driver.configure_structured_output(  # noqa: SLF001 — production seam (RouterLoopDriver.configure_structured_output)
+            response_format=response_format,
+            schema_validate_fn=_validate_fn,
+        )
+    if model is not None:
+        # Same override point the ``/model`` slash command uses
+        # (``interfaces/slash/model.py``) — a model-CLASS string, resolved by
+        # the session's own ``ModelResolver`` at call time, not a bespoke path.
+        session._model_override = model  # noqa: SLF001
+
     bus = MessageBus()
     replies = await bus.request(
         session,
@@ -289,11 +348,7 @@ async def run_agent_step(
     if schema is None:
         return text
 
-    if schema_registry is None:
-        raise AgentStepError(
-            f"run_agent_step(schema={schema!r}) requires schema_registry "
-            "(no registry to validate against)."
-        )
+    # (schema_registry is None already rejected above, before the spawn.)
     try:
         parsed = json.loads(text)
     except json.JSONDecodeError as exc:

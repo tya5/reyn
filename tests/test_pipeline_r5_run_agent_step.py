@@ -76,9 +76,22 @@ def _registry(tmp_path: Path, scripted: "_ScriptedAgentReply | None") -> AgentRe
     ``holder`` deferred-registry-ref trick so the factory can pass
     ``registry=`` for ephemeral auto-vanish). When ``scripted`` is given, every
     constructed session's real ``RouterLoopDriver`` gets the scripted LLM
-    wired in via ``_loop_observer`` before the driver's first turn."""
+    wired in via ``_loop_observer`` before the driver's first turn.
+
+    0062: the resolver maps the default ``"standard"`` class to a REAL
+    litellm-known model name (``gemini/gemini-2.5-flash-lite``, litellm's
+    static ``supports_response_schema`` table recognizes it — no network
+    call) instead of leaving it unresolved (the pre-0062 default, where
+    ``resolve("standard")`` passed through the bare class name itself). A
+    schema-bearing ``run_agent_step`` now runs RouterLoop's model-support
+    PRE-CHECK (§2.1 mode-a) before the (still fully scripted, via
+    ``_llm_caller``) turn — an unresolved class name would fail that
+    pre-check even though the actual completion never touches litellm."""
+    from reyn.llm.model_resolver import ModelResolver
+
     state_log = StateLog(tmp_path / ".reyn" / "wal.jsonl")
     holder: dict = {}
+    resolver = ModelResolver({"standard": "gemini/gemini-2.5-flash-lite"})
 
     def _factory(profile, *, presentation_consumer=None, intervention_bridge=None) -> Session:
         s = Session(
@@ -86,6 +99,7 @@ def _registry(tmp_path: Path, scripted: "_ScriptedAgentReply | None") -> AgentRe
             registry=holder.get("reg"), non_interactive=True,
             presentation_consumer=presentation_consumer,
             intervention_bridge=intervention_bridge,
+            resolver=resolver,
         )
         if scripted is not None:
             s._loop_driver._loop_observer = (

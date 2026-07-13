@@ -52,7 +52,7 @@ from reyn.runtime.chat_message import (  # #312 C1: extracted VO + helpers
     _now_iso,
 )
 from reyn.runtime.error_format import classify_router_error
-from reyn.runtime.errors import RouterCapExceeded
+from reyn.runtime.errors import RouterCapExceeded, StructuredOutputError
 from reyn.runtime.limits.limit_handler import (
     LimitDecision,
     handle_limit_exceeded,
@@ -4650,46 +4650,58 @@ class Session:
         self._turn_idle.clear()
         self._turn_owner_task = asyncio.current_task()
         try:
-            if kind == "user":
-                await self._handle_user_message(
-                    payload.get("text", ""),
-                    chain_id=payload.get("chain_id") or _new_chain_id(),
+            try:
+                if kind == "user":
+                    await self._handle_user_message(
+                        payload.get("text", ""),
+                        chain_id=payload.get("chain_id") or _new_chain_id(),
+                    )
+                elif kind == "agent_request":
+                    await self._handle_agent_request(payload)
+                elif kind == "agent_response":
+                    await self._handle_agent_response(payload)
+                elif kind == "pipeline_result":
+                    # IS-2: an async pipeline driver-session posted its terminal
+                    # result here (the agent_response mirror — but chainless: the
+                    # launch returned immediately, so this is a fresh turn, routed
+                    # exactly like a task wake).
+                    await self._handle_pipeline_result(payload)
+                elif kind in ("task_ready", "task_dependency_aborted"):
+                    # #1953 slice 7: the TaskWaker delivered a dep-graph disposition
+                    # (a dependent became ready, or a parent must decide recovery). Both
+                    # surface as an OS-originated message so the LLM acts via ordinary
+                    # task ops (P7 — no decision vocabulary).
+                    await self._handle_task_wake(payload)
+                elif kind == "hook":  # HOOK_INBOX_KIND (#1800 slice 5b)
+                    # E (wake=true) lifecycle-hook push delivered as a turn trigger:
+                    # a system-role [hook:name] message + one router turn (self-
+                    # continuation). The attribution + wake binding ride in the
+                    # payload (race-free; the slice-7 valve can count hook-driven
+                    # turns, and the audit trail attributes the turn to the hook).
+                    await self._handle_hook_message(payload)
+            finally:
+                self._turn_owner_task = None
+                self._turn_idle.set()
+                # Symmetric turn-end lifecycle event. turn_completed fires only on
+                # the router path; turn_settled fires for EVERY turn kind (including
+                # slash / intervention short-circuits that return before the router),
+                # giving UI working-indicators driven by turn_started a reliable
+                # clear signal regardless of how the turn ended.
+                self._chat_events.emit(
+                    "turn_settled", kind=kind, chain_id=payload.get("chain_id"),
                 )
-            elif kind == "agent_request":
-                await self._handle_agent_request(payload)
-            elif kind == "agent_response":
-                await self._handle_agent_response(payload)
-            elif kind == "pipeline_result":
-                # IS-2: an async pipeline driver-session posted its terminal
-                # result here (the agent_response mirror — but chainless: the
-                # launch returned immediately, so this is a fresh turn, routed
-                # exactly like a task wake).
-                await self._handle_pipeline_result(payload)
-            elif kind in ("task_ready", "task_dependency_aborted"):
-                # #1953 slice 7: the TaskWaker delivered a dep-graph disposition
-                # (a dependent became ready, or a parent must decide recovery). Both
-                # surface as an OS-originated message + one router turn so the LLM
-                # acts via ordinary task ops (P7 — no decision vocabulary).
-                await self._handle_task_wake(payload)
-            elif kind == "hook":  # HOOK_INBOX_KIND (#1800 slice 5b)
-                # E (wake=true) lifecycle-hook push delivered as a turn trigger:
-                # a system-role [hook:name] message + one router turn (self-
-                # continuation). The attribution + wake binding ride in the
-                # payload (race-free; the slice-7 valve can count hook-driven
-                # turns, and the audit trail attributes the turn to the hook).
-                await self._handle_hook_message(payload)
         finally:
-            self._turn_owner_task = None
-            self._turn_idle.set()
-            # Symmetric turn-end lifecycle event. turn_completed fires only on
-            # the router path; turn_settled fires for EVERY turn kind (including
-            # slash / intervention short-circuits that return before the router),
-            # giving UI working-indicators driven by turn_started a reliable
-            # clear signal regardless of how the turn ended.
-            self._chat_events.emit(
-                "turn_settled", kind=kind, chain_id=payload.get("chain_id"),
-            )
-        self._maybe_schedule_ephemeral_vanish()
+            # 0062: an outer finally so an ephemeral agent-step session still gets
+            # scheduled to vanish even when the turn body raises past the inner
+            # finally (e.g. a StructuredOutputError re-raised by
+            # ``_handle_user_message`` — see session.py's ``except
+            # StructuredOutputError: raise``). Previously ``_maybe_schedule_
+            # ephemeral_vanish()`` sat AFTER this whole try block and was skipped
+            # on any propagating exception, leaking the ephemeral session; this
+            # feature is the first production path that raises a typed exception
+            # out of a NORMAL (non-cap) turn, so the pre-existing gap is closed
+            # here rather than shipped as a new leak.
+            self._maybe_schedule_ephemeral_vanish()
         return True
 
     def _maybe_schedule_ephemeral_vanish(self) -> None:
@@ -5050,6 +5062,16 @@ class Session:
 
         try:
             await self._run_router_loop(text, chain_id)
+        except StructuredOutputError:
+            # 0062: a schema-bearing agent-step turn's typed structured-output
+            # failure (unsupported model / provider-rejected schema / exhausted
+            # re-prompt budget) must reach the programmatic driver
+            # (``run_agent_step`` via ``MessageBus.request``) as the ORIGINAL
+            # typed exception — re-raise instead of falling through to the
+            # generic handler below, which would collapse it into an opaque
+            # classified "error" outbox string and lose the failure-mode
+            # distinction the caller needs (§2.1's 3 distinct modes).
+            raise
         except RouterCapExceeded as exc:
             await self._emit_router_cap_exhausted_user(exc, chain_id=chain_id, user_text=text)
             return
