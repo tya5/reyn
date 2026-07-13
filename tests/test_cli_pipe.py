@@ -767,6 +767,104 @@ def test_run_tool_step_dispatches_mcp_action_for_real(tmp_path, monkeypatch, cap
     assert result["named_stores"]["r"]["text"] == "ping:hi reyn"
 
 
+def test_run_tool_step_mcp_auto_grants_configured_server_no_explicit_permission(
+    tmp_path, monkeypatch, capsys,
+):
+    """Tier 2: option (A) — a 'tool:' step calling a CONFIGURED MCP server
+    (present in reyn.yaml's mcp.servers) now dispatches for real through
+    'reyn pipe run' with NO explicit `permissions.mcp` declaration at all —
+    the owner-reported stuck-on-access-denied case. Mirrors
+    test_run_tool_step_dispatches_mcp_action_for_real exactly, MINUS the
+    `permissions: {mcp: {echo: allow}}` block that test needed pre-fix —
+    the auto-grant (_grant_configured_mcp_servers) now supplies it.
+
+    FALSIFY: the sibling test below (unconfigured server) proves the gate
+    itself still denies when the server is NOT configured — so this success
+    is attributable to the configured-server auto-grant, not a broken gate."""
+    monkeypatch.chdir(tmp_path)
+    import reyn.mcp.connection_service as connection_service_mod
+    import reyn.mcp.pool as pool_mod
+    monkeypatch.setattr(pool_mod, "MCPClient", _FakeMCPClient)
+    monkeypatch.setattr(connection_service_mod, "MCPClient", _FakeMCPClient)
+
+    dsl_path = tmp_path / "uses_mcp.yaml"
+    dsl_path.write_text(
+        "pipeline: uses_mcp\n"
+        "steps:\n"
+        "  - tool: {name: mcp__echo__ping, args: {msg: !expr ctx.msg}, output: r}\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "reyn.yaml").write_text(
+        yaml.dump(
+            {
+                "model": "standard",
+                "models": {"standard": "openai/gpt-4o-mini"},
+                "mcp": {"servers": {"echo": {"type": "stdio", "command": "x"}}},
+                # No `permissions:` block at all — the auto-grant is the
+                # ONLY thing that can make this succeed.
+                "pipelines": {"entries": {"uses_mcp": {"path": "uses_mcp.yaml"}}},
+            },
+            allow_unicode=True, default_flow_style=False,
+        ),
+        encoding="utf-8",
+    )
+
+    args = _ns(
+        name="uses_mcp.uses_mcp", input=json.dumps({"msg": "hi reyn"}),
+        project=str(tmp_path), async_=False,
+    )
+    run_run(args)
+
+    out = capsys.readouterr().out
+    result = json.loads(out)
+    assert result["named_stores"]["r"]["text"] == "ping:hi reyn"
+
+
+def test_run_tool_step_mcp_unconfigured_server_still_denied_with_actionable_error(
+    tmp_path, monkeypatch, capsys,
+):
+    """Tier 2: falsify pin for the auto-grant above — a server that is NOT
+    in the merged MCP config still gets no grant and is denied, with an
+    actionable error naming the server (was a bare 'access denied')."""
+    monkeypatch.chdir(tmp_path)
+    import reyn.mcp.connection_service as connection_service_mod
+    import reyn.mcp.pool as pool_mod
+    monkeypatch.setattr(pool_mod, "MCPClient", _FakeMCPClient)
+    monkeypatch.setattr(connection_service_mod, "MCPClient", _FakeMCPClient)
+
+    dsl_path = tmp_path / "uses_mcp.yaml"
+    dsl_path.write_text(
+        "pipeline: uses_mcp\n"
+        "steps:\n"
+        "  - tool: {name: mcp__ghost__ping, args: {msg: !expr ctx.msg}, output: r}\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "reyn.yaml").write_text(
+        yaml.dump(
+            {
+                "model": "standard",
+                "models": {"standard": "openai/gpt-4o-mini"},
+                # 'ghost' is NOT configured anywhere — no mcp.servers entry.
+                "pipelines": {"entries": {"uses_mcp": {"path": "uses_mcp.yaml"}}},
+            },
+            allow_unicode=True, default_flow_style=False,
+        ),
+        encoding="utf-8",
+    )
+
+    args = _ns(
+        name="uses_mcp.uses_mcp", input=json.dumps({"msg": "hi reyn"}),
+        project=str(tmp_path), async_=False,
+    )
+    run_run(args)
+
+    out = capsys.readouterr().out
+    result = json.loads(out)
+    text = result["named_stores"]["r"]["text"]
+    assert "ghost" in text
+    assert "denied" in text.lower() or "not declared" in text.lower()
+
+
 @pytest.mark.asyncio
 async def test_router_state_resource_categories_populated_from_real_session(
     tmp_path, monkeypatch,

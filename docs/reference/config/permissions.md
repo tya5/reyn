@@ -143,9 +143,31 @@ permissions:
 
 Use `allow` only when the project is trusted. `ask` (the default) prompts; `deny` rejects.
 
+## Granting an MCP server permission
+
+MCP's per-server gate (`permissions.mcp`) has two independent grant surfaces — pick the one that matches when you're deciding:
+
+1. **`reyn.yaml` / `reyn.local.yaml` — declare up front, before any prompt fires.**
+
+   ```yaml
+   permissions:
+     mcp:
+       github: allow   # grant this MCP server's tools project-wide
+   ```
+
+   A flat blanket form also works (`permissions.mcp: allow` grants every server), but the per-server dict form above is the one to reach for when you trust one server and not others. This is a config file, edited by the operator — it takes effect the next time reyn loads config, no running session needed.
+
+2. **`.reyn/approvals.yaml` — the saved-approvals store the interactive prompt writes.**
+
+   When a chat session hits an undeclared MCP server, it prompts (`y` / `j` / `r` / `N` — see "Approval flow" above); choosing a persistent option (`j`/`r`) writes `mcp.<server>: true` under that skill's key in `.reyn/approvals.yaml`. You can also hand-edit this file directly, but it's normally the session's own record of "you already answered this," not something you author from scratch.
+
+Both surfaces feed the same runtime check (`require_mcp` — see "Runtime gate: `permissions.mcp`" in [the MCP concept doc](../../concepts/tools-integrations/mcp.md)); `reyn.yaml` is the declarative up-front grant, `.reyn/approvals.yaml` is the session's own memory of interactive answers.
+
+**`reyn pipe run`'s default:** running a pipeline via `reyn pipe run` (a one-shot, non-interactive CLI command — see below) auto-grants `permissions.mcp` for every MCP server already present in the merged MCP config (`.reyn/config/mcp.yaml` plus `reyn.yaml`/`reyn.local.yaml`'s `mcp.servers`). The gate itself is unchanged — an MCP server that is NOT configured there still denies, and an explicit `deny` you've set for a specific server (or a blanket `mcp: deny`) is never auto-overridden. This only changes the pipe-run *default* for servers you've already configured; it does not touch `reyn chat`'s own interactive prompt.
+
 ## Non-interactive runs (CI)
 
-`reyn run-once` runs non-interactively — there is no prompt. Approvals must be pre-arranged either in `reyn.yaml` or `.reyn/approvals.yaml` (e.g. by running the agent once interactively first).
+`reyn run-once` runs non-interactively — there is no prompt. Approvals must be pre-arranged either in `reyn.yaml` or `.reyn/approvals.yaml` (e.g. by running the agent once interactively first). `reyn pipe run` is the same non-interactive model, EXCEPT for MCP servers — see "Granting an MCP server permission" above for the pipe-run-specific auto-grant of already-configured servers.
 
 ## Inspecting and revoking
 

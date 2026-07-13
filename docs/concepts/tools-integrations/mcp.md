@@ -294,9 +294,11 @@ See [Concepts: permission model](../runtime/permission-model.md) → "Collapse a
 MCP tool calls cross two checks before they leave the process:
 
 1. **Phase declaration.** A phase MUST list each server it intends to use under `permissions.mcp` in its frontmatter. The runtime calls `require_mcp(decl, server, ...)`; if `server not in decl.mcp`, the call fails with a clear error pointing at the missing declaration.
-2. **Approval.** Like every other capability, the first invocation per workflow prompts (`y` / `j` / `r` / `N`). Persistent approvals land in `.reyn/approvals.yaml` keyed by `<skill>/mcp.<server>`. Pre-approve project-wide with `permissions.mcp: allow` in `reyn.yaml` if you trust the project broadly.
+2. **Approval.** Like every other capability, the first invocation per workflow prompts (`y` / `j` / `r` / `N`). Persistent approvals land in `.reyn/approvals.yaml` keyed by `<skill>/mcp.<server>`. Pre-approve project-wide with `permissions.mcp: allow` in `reyn.yaml` if you trust the project broadly, or grant one server at a time with `permissions.mcp: {<server>: allow}` — see [the permissions reference](../../reference/config/permissions.md) → "Granting an MCP server permission" for the full per-server-vs-approvals-file breakdown. A denied call's error names the server and points at both grant routes directly.
 
 This matches reyn's general permission model — see [../runtime/permission-model.md](../runtime/permission-model.md). One skill's MCP approval doesn't leak to another skill, and a sub-skill invoked via `run_skill` has to ask for its own permissions.
+
+**`reyn pipe run`** (a one-shot, non-interactive CLI command with no one to answer the approval prompt above) auto-grants `permissions.mcp` for every server already present in the merged MCP config — an operator who configured a server AND explicitly ran the pipeline is trusted for that invocation. An unconfigured server still denies; the gate itself, and `reyn chat`'s own interactive prompt, are unchanged. Full detail: [permissions.md](../../reference/config/permissions.md) → "Granting an MCP server permission".
 
 Three audit events are emitted per call:
 

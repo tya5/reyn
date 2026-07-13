@@ -1099,7 +1099,7 @@ See [Concepts: permission model](../../concepts/runtime/permission-model.md) →
 
 > Legacy `permissions.mcp_install` keys in older `reyn.yaml` files are accepted with a `DeprecationWarning` and translate to the equivalent `file.write` / `http.get` gates during the migration window.
 
-The full permission grammar is documented in `reference/config/permissions.md`.
+The full permission grammar is documented in `reference/config/permissions.md`. Note this section is about *installing* an MCP server — granting an already-installed server's tools to be *called* (`permissions.mcp.<server>: allow`, including `reyn pipe run`'s auto-grant of configured servers) is a separate axis, covered in `reference/config/permissions.md` → "Granting an MCP server permission".
 
 ## `${VAR}` interpolation {#var-interpolation}
 

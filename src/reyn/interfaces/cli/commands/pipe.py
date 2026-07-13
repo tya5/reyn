@@ -59,6 +59,22 @@ the ``default`` identity's own Session's ``RouterHostAdapter`` (every real
 ``Session`` builds one unconditionally in ``__init__``, live chat loop or
 not) — the exact same machinery the async pipeline driver-session's tool-step
 dispatch already uses (``runtime/services/pipeline_executor_driver.py``).
+
+MCP default (option (A) — was: a ``tool:`` step against ANY MCP server denied
+in a non-interactive ``reyn pipe run``, stranding an operator whose pipeline
+has a legitimate, already-configured MCP step): ``_build_run_tool_context``
+auto-grants the ``mcp`` permission axis for every server present in the
+merged MCP config (``.reyn/config/mcp.yaml`` + ``reyn.yaml``/``reyn.local.
+yaml`` ``mcp.servers``) — see :func:`_grant_configured_mcp_servers`. This is
+a DEFAULT change, not a gate removal: the operator both configured the
+server (an explicit, auditable act) AND explicitly ran ``reyn pipe run`` (a
+second explicit act), so a CONFIGURED server is treated as trusted for THIS
+command; an UNCONFIGURED server, or one the operator explicitly denies via
+``permissions.mcp``, still goes through the unchanged ``require_mcp`` gate
+and is denied (with an actionable error naming the server — see
+``security/permissions/permissions.py``'s ``require_mcp``). Scoped to ``reyn
+pipe run`` ONLY — ``reyn chat``'s own interactive JIT-approval posture is
+untouched.
 """
 from __future__ import annotations
 
@@ -485,8 +501,47 @@ def run_install(args: argparse.Namespace) -> None:
 # ---------------------------------------------------------------------------
 
 
+def _grant_configured_mcp_servers(perm_config: dict, configured_servers: "list[str]") -> dict:
+    """Auto-grant the ``mcp`` permission axis for every MCP server present in
+    the merged MCP config (option (A), owner-decided): the operator
+    explicitly configured these servers (``.reyn/config/mcp.yaml`` /
+    ``reyn.yaml`` ``mcp.servers``) AND explicitly ran ``reyn pipe run`` — so
+    they are treated as trusted-by-configuration for THIS command only. This
+    is a DEFAULT change, not a gate removal: ``require_mcp``'s ∩-gate (declared
+    authority + config/approvals-file/interactive approval) still runs on
+    every call; this function only pre-seeds the config-approval layer
+    (``PermissionResolver._is_config_approved``) that layer reads.
+
+    An operator's own explicit disposition always wins over the auto-grant:
+      - a top-level flat ``mcp: allow`` / ``mcp: deny`` string (blanket grant
+        or blanket deny) is left completely untouched — a blanket ``deny``
+        means NO server auto-grants, configured or not.
+      - a per-server entry already present in a ``mcp: {<server>: ...}`` dict
+        (most notably an explicit ``deny``) is preserved via ``setdefault`` —
+        never overwritten by the auto-grant.
+    Only a configured server with NO existing disposition gets the implicit
+    ``allow``; an UNCONFIGURED server gets none and still denies (falls
+    through to ``require_mcp``'s existing actionable-error path).
+    """
+    mcp_val = perm_config.get("mcp")
+    if isinstance(mcp_val, str):
+        # Blanket allow/deny already decided by the operator for the WHOLE
+        # axis — an auto-grant here could not add anything (already-allow)
+        # or would violate an explicit blanket deny. Leave untouched.
+        return perm_config
+    mcp_dict = dict(mcp_val) if isinstance(mcp_val, dict) else {}
+    for server in configured_servers:
+        mcp_dict.setdefault(server, "allow")
+    if not mcp_dict:
+        return perm_config
+    merged = dict(perm_config)
+    merged["mcp"] = mcp_dict
+    return merged
+
+
 def _build_run_tool_context(
     project_root: Path, router_state: "Any | None", *, grant_file_write: bool = False,
+    config: "Any | None" = None,
 ):
     """Build a real, standalone ``ToolContext`` for ``reyn pipe run``'s
     ``tool:`` step dispatch — routed through the SAME seam a live agent
@@ -497,8 +552,18 @@ def _build_run_tool_context(
     Field-by-field:
       - ``events``: a real ``EventLog`` (mirrors ``reyn pipe install``).
       - ``permission_resolver``: **fail-closed by default** — ``perm_config``
-        is exactly ``reyn.yaml``'s own ``permissions:`` section, byte-
-        identical to ``reyn chat``'s own no-flag posture. ``grant_file_write``
+        is ``run_run``'s already-``_grant_configured_mcp_servers``-merged
+        ``config.permissions`` (see ``run_run``: it applies the same MCP
+        auto-grant to ``config.permissions`` BEFORE this function is called,
+        so both this ToolContext's resolver AND the ``default`` identity's
+        own Session resolver — built from the same mutated ``config`` by
+        ``build_agent_registry_from_project`` — see the SAME grant. This
+        function's own resolver gates non-MCP ``tool:`` dispatch, e.g.
+        ``write_file``; MCP ``tool:`` dispatch (``mcp__<server>__<tool>``)
+        instead routes through ``ctx.router_state.host.mcp_call_tool`` ->
+        ``Session._mcp_call_tool``, which gates via the SESSION's own
+        resolver, not this one — carrying the mutated config through both
+        construction paths keeps them consistent). ``grant_file_write``
         (``--grant-file-write``, off by default) mirrors ``reyn chat
         --grant-file-write`` exactly (``file.read``/``file.write`` only).
         ``http.get`` is NEVER blanket-granted — ``reyn chat`` doesn't either
@@ -507,7 +572,10 @@ def _build_run_tool_context(
         denied, same as a non-interactive ``reyn chat``). A pipeline
         installed from an untrusted source (``reyn pipe install --source``)
         must not silently gain broad file/network access merely by being
-        RUN — the operator opts in per invocation.
+        RUN — the operator opts in per invocation for file access (MCP is
+        different: only servers the operator ALREADY configured auto-grant,
+        so an untrusted pipeline gains no new MCP surface merely by
+        declaring a ``tool:`` step against a server nobody configured).
       - ``workspace``: a real ``reyn.data.workspace.Workspace`` anchored on
         ``project_root`` (host backend) — a real tool handler (``read_file``,
         ``write_file``, …) calls real methods on it (``read_file_bytes`` etc.),
@@ -540,8 +608,25 @@ def _build_run_tool_context(
 
     perm_config: dict = {}
     try:
-        from reyn.config import load_config
-        perm_config = dict(getattr(load_config(), "permissions", {}) or {})
+        # `run_run` already loads config once and applies
+        # `_grant_configured_mcp_servers` to `config.permissions` (see its
+        # docstring for why that must happen before both this function AND
+        # `build_agent_registry_from_project` are called) — reuse that same
+        # object when the caller supplies it, so this ToolContext's resolver
+        # and the Session's own resolver see byte-identical config. Fall
+        # back to a fresh load (re-applying the same grant) only for a
+        # caller that doesn't thread ``config`` through (keeps this a valid
+        # standalone helper, matching its pre-existing signature).
+        if config is None:
+            from reyn.config import load_config
+            config = load_config()
+            configured_servers = sorted(
+                (getattr(config, "mcp", {}) or {}).get("servers", {}) or {}
+            )
+            config.permissions = _grant_configured_mcp_servers(
+                dict(getattr(config, "permissions", {}) or {}), configured_servers,
+            )
+        perm_config = dict(getattr(config, "permissions", {}) or {})
     except Exception:
         perm_config = {}
     if grant_file_write:
@@ -664,6 +749,22 @@ def run_run(args: argparse.Namespace) -> None:
 
     from reyn.config import load_config
     config = load_config()
+    # Option (A) — auto-grant every MCP server present in the merged MCP
+    # config (config.mcp.servers) for THIS `reyn pipe run` invocation. Must
+    # happen HERE, before `build_agent_registry_from_project` reads
+    # `config.permissions` to build the `default` identity's own Session
+    # PermissionResolver — MCP tool dispatch (`tool: mcp__<server>__<tool>`)
+    # routes through `ctx.router_state.host.mcp_call_tool` ->
+    # `Session._mcp_call_tool`, which gates via THAT Session's OWN
+    # PermissionResolver (built in registry_bootstrap.py from
+    # `config.permissions`), NOT `_build_run_tool_context`'s separate
+    # ToolContext-level resolver (which only gates non-MCP tool dispatch,
+    # e.g. `write_file`). See `_grant_configured_mcp_servers`'s docstring for
+    # the exact allow/deny-preserving merge semantics.
+    configured_mcp_servers = sorted((config.mcp or {}).get("servers", {}) or {})
+    config.permissions = _grant_configured_mcp_servers(
+        dict(config.permissions or {}), configured_mcp_servers,
+    )
     pipeline_registry = build_pipeline_registry(config.pipelines, project_root, strict=False)
 
     try:
@@ -767,7 +868,7 @@ def run_run(args: argparse.Namespace) -> None:
                 return _router_state_cache["state"]
 
             tool_ctx = _build_run_tool_context(
-                project_root, None, grant_file_write=grant_file_write,
+                project_root, None, grant_file_write=grant_file_write, config=config,
             )
             base_dispatch = _make_tool_dispatch(tool_ctx)
 
