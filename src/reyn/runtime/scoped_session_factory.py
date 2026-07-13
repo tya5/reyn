@@ -54,7 +54,7 @@ def build_scoped_chat_session(
     workspace_base_dir: "Path | None",  # #187 chat OpContext FS root (container repo) / None=host cwd
     workspace_state_dir: "Path | None",  # #187 host-side OS state dir
     exclude_tools: "frozenset[str] | set[str] | None",  # #1400 tool names hidden + execution-blocked
-    excluded_categories: "frozenset[str] | set[str] | None",  # #1667 catalog categories hidden at source (reyn_source for external-repo eval)
+    excluded_categories: "frozenset[str] | set[str] | None",  # #1667 catalog categories hidden at source (reyn_repo for external-repo eval)
     contextual_permission: "object | None",  # #1827 S3 per-session capability_profile narrowing (ContextualPermission); from registry.resolved_profile_for; None = no narrowing
     agent_id: str | None,  # FP-0016 agent-id-scoped memory
     router_max_iterations: int,  # #187 per-message tool-call budget

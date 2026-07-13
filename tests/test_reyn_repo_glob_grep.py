@@ -1,11 +1,11 @@
-"""Tier 2: reyn_source__glob / reyn_source__grep — FP-0038 S2 + S3.
+"""Tier 2: reyn_repo__glob / reyn_repo__grep — FP-0038 S2 + S3.
 
-Pins the §D20-completing surface for the `reyn_source` category. The two
+Pins the §D20-completing surface for the `reyn_repo` category. The two
 new ops mirror `file__glob` / `file__grep` in shape but resolve paths
 against Reyn's own repo root (via `resolve_reyn_root()`), not the
 operator's workspace.
 
-Tests use real `reyn.runtime.reyn_src` helpers + real repo contents — no
+Tests use real `reyn.runtime.reyn_repo` helpers + real repo contents — no
 mocks. Assertions target the public result shape (= `{pattern, matches,
 count, ...}`); private state is not asserted.
 """
@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from reyn.runtime.reyn_src import glob_entries, grep_entries, resolve_reyn_root
+from reyn.runtime.reyn_repo import glob_entries, grep_entries, resolve_reyn_root
 from reyn.tools.universal_dispatch import (
     _OPERATION_RULES,
     known_qualified_name_for_category,
@@ -25,30 +25,30 @@ ROOT: Path = resolve_reyn_root()
 # ── 1. Dispatch registration — §D20 surface complete ──────────────────────
 
 
-def test_reyn_source_category_has_four_ops() -> None:
-    """Tier 2: `reyn_source__{list,read,glob,grep}` are all registered.
+def test_reyn_repo_category_has_four_ops() -> None:
+    """Tier 2: `reyn_repo__{list,read,glob,grep}` are all registered.
 
     Catches the regression where §D20 surface drifts back to 2 ops.
     """
-    qns = known_qualified_name_for_category("reyn_source")
+    qns = known_qualified_name_for_category("reyn_repo")
     assert set(qns) == {
-        "reyn_source__list",
-        "reyn_source__read",
-        "reyn_source__glob",
-        "reyn_source__grep",
+        "reyn_repo__list",
+        "reyn_repo__read",
+        "reyn_repo__glob",
+        "reyn_repo__grep",
     }
 
 
-def test_reyn_source_glob_routes_to_reyn_src_glob() -> None:
-    """Tier 2: dispatch routes `reyn_source__glob` to `reyn_src_glob`."""
-    target, _ = _OPERATION_RULES["reyn_source__glob"]
-    assert target == "reyn_src_glob"
+def test_reyn_repo_glob_routes_to_reyn_repo_glob() -> None:
+    """Tier 2: dispatch routes `reyn_repo__glob` to `reyn_repo_glob`."""
+    target, _ = _OPERATION_RULES["reyn_repo__glob"]
+    assert target == "reyn_repo_glob"
 
 
-def test_reyn_source_grep_routes_to_reyn_src_grep() -> None:
-    """Tier 2: dispatch routes `reyn_source__grep` to `reyn_src_grep`."""
-    target, _ = _OPERATION_RULES["reyn_source__grep"]
-    assert target == "reyn_src_grep"
+def test_reyn_repo_grep_routes_to_reyn_repo_grep() -> None:
+    """Tier 2: dispatch routes `reyn_repo__grep` to `reyn_repo_grep`."""
+    target, _ = _OPERATION_RULES["reyn_repo__grep"]
+    assert target == "reyn_repo_grep"
 
 
 # ── 2. glob_entries — pattern match against real repo ─────────────────────
@@ -193,7 +193,7 @@ def test_glob_skip_set_matches_list_entries_set() -> None:
     If they diverge, the LLM sees different visibility through different
     ops — confusing and error-prone. This pins the parity.
     """
-    from reyn.runtime.reyn_src import _SKIP_DIR_NAMES
+    from reyn.runtime.reyn_repo import _SKIP_DIR_NAMES
     # Sample dirs that must be skipped by both (= sanity)
     assert ".git" in _SKIP_DIR_NAMES
     assert "__pycache__" in _SKIP_DIR_NAMES

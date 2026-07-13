@@ -452,7 +452,7 @@ async def test_tool_names_populated_per_run(monkeypatch):
     declaration — they touch the user's project files, which sit
     behind the permission boundary.
 
-    Reyn-source tools (reyn_src_list, reyn_src_read) are unconditional
+    Reyn-source tools (reyn_repo_list, reyn_repo_read) are unconditional
     by design — they read Reyn's own public OSS repository, not the
     user's files, so no permission gate applies.
     """
@@ -470,8 +470,8 @@ async def test_tool_names_populated_per_run(monkeypatch):
     assert "write_file" not in names_no_file
     assert "delete_file" not in names_no_file
     # Reyn-source tools always present.
-    assert "reyn_src_list" in names_no_file
-    assert "reyn_src_read" in names_no_file
+    assert "reyn_repo_list" in names_no_file
+    assert "reyn_repo_read" in names_no_file
     # Other always-on baseline.
     assert "list_agents" in names_no_file
 

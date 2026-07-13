@@ -86,7 +86,7 @@ def test_read_file_router_render_exact_parameters():
     """Tier 2: READ_FILE parameters schema pins the LLM-visible shape — ``path``
     is required, optional ``offset`` / ``limit`` expose the line-slice
     capability that already exists in ``op_runtime/file.py``. This shape is
-    the read-side symmetry contract shared with ``reyn_src_read`` and
+    the read-side symmetry contract shared with ``reyn_repo_read`` and
     ``read_memory_body``; widening it should be a deliberate cross-surface
     decision, not a drift."""
     rendered = READ_FILE.render_for_router()

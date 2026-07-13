@@ -109,7 +109,7 @@ class RouterCallerState:
     # scheme's flat list) + ``list_actions`` + dispatch — orthogonal to
     # ``exclude_tools`` (which filters top-level ``tools=`` by name and cannot
     # reach the universal catalog source). The task-agent / external-repo eval path
-    # sets e.g. ``{"reyn_source"}``; the general/interactive agent leaves it empty.
+    # sets e.g. ``{"reyn_repo"}``; the general/interactive agent leaves it empty.
     excluded_categories: frozenset[str] = frozenset()
 
     # Memory access (= for memory tools when invoked router-side;
@@ -149,7 +149,7 @@ class RouterCallerState:
     list_memory_fn: Callable[[str], list[Mapping[str, Any]]] | None = None
     # ``Callable[..., Awaitable[Any]]`` to allow optional ``offset`` /
     # ``limit`` kwargs (= line-slice symmetry with ``read_file`` /
-    # ``reyn_src_read``). Concrete signature is
+    # ``reyn_repo_read``). Concrete signature is
     # ``(layer: str, slug: str, *, offset: int | None = None,
     # limit: int | None = None) -> Awaitable[dict]``.
     read_memory_body_fn: Callable[..., Awaitable[Any]] | None = None
@@ -406,7 +406,7 @@ class ToolDefinition:
     # (kw_only, and the coverage gate rejects the UNDECLARED default): either a mapper
     # (``result -> CanonicalToolResult``) or the explicit ``CANONICAL_TODO`` opt-in (the whole
     # dict IS the right LLM view — admin/install tools). Born WITH the tool, like its schema — so a
-    # router tool can never reach the chokepoint without a declared shape (the file/reyn_src incident
+    # router tool can never reach the chokepoint without a declared shape (the file/reyn_repo incident
     # class). ``ToolRegistry.register`` records it into the canonical registry keyed by tool name;
     # ``to_canonical(result, source=<tool name>)`` resolves it by invoked identity, not result sniffing.
     # A not-yet-mapped tool declares ``CANONICAL_TODO`` (provisional whole-dict fallback, greppable

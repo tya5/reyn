@@ -150,7 +150,7 @@ def register(sub) -> None:
     )
     # #1667: hide whole catalog CATEGORIES at the universal-catalog source
     # (orthogonal to --exclude-tools, which is top-level tool names). The
-    # external-repo eval path (SWE-bench on /testbed) passes 'reyn_source' so
+    # external-repo eval path (SWE-bench on /testbed) passes 'reyn_repo' so
     # Reyn's own self-help surface doesn't compete with file__* for the weak
     # model. Empty (the interactive default) keeps every category.
     p.add_argument(
@@ -158,7 +158,7 @@ def register(sub) -> None:
         metavar="NAMES",
         help=(
             "Comma-separated catalog category names to hide from the agent's "
-            "catalog at the source (e.g. 'reyn_source' for an external-repo task "
+            "catalog at the source (e.g. 'reyn_repo' for an external-repo task "
             "where Reyn's own source is irrelevant). Distinct from --exclude-tools "
             "(top-level tool names); this drops the whole category from "
             "list_actions + every scheme's action list + dispatch."

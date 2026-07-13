@@ -77,7 +77,7 @@ CATEGORIES: Final[tuple[str, ...]] = (
     "web",
     "memory_entry",
     "memory_operation",
-    "reyn_source",
+    "reyn_repo",
     "rag_corpus",
     "rag_operation",
     "exec",
@@ -448,7 +448,7 @@ def _missing_action_name_error() -> dict[str, Any]:
 def _enumerate_static_category(category: str) -> list[dict[str, str]]:
     """Enumerate qualified names for a STATIC operation category.
 
-    Static categories (file / web / memory_operation / reyn_source /
+    Static categories (file / web / memory_operation / reyn_repo /
     rag_operation) have known qualified names declared in
     universal_dispatch._OPERATION_RULES. Their short_description comes
     from the target ToolDefinition in the registry.
@@ -535,7 +535,7 @@ def _enumerate_category(category: str, ctx: ToolContext) -> list[dict[str, str]]
 
     Dispatch by category kind:
       - Static operation categories (file / web / memory_operation /
-        reyn_source / rag_operation / mcp.operation) →
+        reyn_repo / rag_operation / mcp.operation) →
         _enumerate_static_category (= populated via universal_dispatch's
         ``_OPERATION_RULES`` table)
       - Resource categories → consult ctx.router_state (
@@ -553,7 +553,7 @@ def _enumerate_category(category: str, ctx: ToolContext) -> list[dict[str, str]]
 
     # #1667: explicit per-session category exclusion. The task-agent / external-repo
     # eval path (e.g. SWE-bench on /testbed) sets ``excluded_categories`` so a
-    # category irrelevant to the task — Reyn's own ``reyn_source`` self-help surface
+    # category irrelevant to the task — Reyn's own ``reyn_repo`` self-help surface
     # — does not compete with ``file__*`` for the weak model's selection. Applied at
     # the catalog SOURCE so the category vanishes UNIFORMLY from ``catalog_entries``
     # (every scheme's flat list: codeact code-API / enumerate-all / retrieval) +
@@ -566,7 +566,7 @@ def _enumerate_category(category: str, ctx: ToolContext) -> list[dict[str, str]]
         return []
 
     if category in (
-        "file", "web", "memory_operation", "reyn_source", "rag_operation",
+        "file", "web", "memory_operation", "reyn_repo", "rag_operation",
         "multi_agent",
         # #1953 dynamic-wire: the 12 task.* ops have static qualified names in
         # _OPERATION_RULES (task__create/…) → enumerate them here too. Without

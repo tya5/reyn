@@ -13,7 +13,7 @@ This file pins:
   1. **SSoT derivation, no drift (§3.3).** ``pyproject.toml``'s
      ``[tool.hatch.build.targets.wheel.force-include]`` table is generated
      from — and asserted here to still match — the single Python
-     declaration in ``reyn.runtime.reyn_src`` (``FORCE_INCLUDE_ENTRIES`` /
+     declaration in ``reyn.runtime.reyn_repo`` (``FORCE_INCLUDE_ENTRIES`` /
      ``REACHABLE_TOP_LEVEL_ENTRIES``). A hand-edit to either side that
      drifts from the other fails this test loudly instead of silently
      diverging (``preflight-gate-must-derive-path-from-ssot``).
@@ -31,7 +31,7 @@ This file pins:
      the translation function itself, independent of the real-wheel
      smoke script.
 
-No mocks of collaborators — real ``reyn.runtime.reyn_src`` functions, real
+No mocks of collaborators — real ``reyn.runtime.reyn_repo`` functions, real
 repo/`pyproject.toml` content, and (for the wheel-mode translation test) a
 real ``tmp_path`` on-disk layout standing in for an installed package dir.
 """
@@ -42,7 +42,7 @@ from pathlib import Path
 
 import pytest
 
-from reyn.runtime.reyn_src import (
+from reyn.runtime.reyn_repo import (
     FORCE_INCLUDE_ENTRIES,
     REACHABLE_TOP_LEVEL_ENTRIES,
     SOURCE_LOGICAL_PREFIX,
@@ -138,7 +138,7 @@ def test_declared_paths_remain_reachable_in_dev() -> None:
     """Tier 2: sanity counterpart to the flip-witness above — the declared
     set itself is NOT accidentally over-narrowed."""
     root = resolve_reyn_root()
-    for declared in ("README.md", "CHANGELOG.md", "docs", "src/reyn/runtime/reyn_src.py"):
+    for declared in ("README.md", "CHANGELOG.md", "docs", "src/reyn/runtime/reyn_repo.py"):
         target = safe_resolve_inside(root, declared)
         assert target.exists()
 
@@ -180,8 +180,8 @@ def test_translate_logical_to_physical_wheel_strips_source_prefix() -> None:
     """Tier 2: in wheel mode, `src/reyn/<x>` maps to `<x>` (the pinned
     canonical prefix, 0061 §7, stripped because the installed package
     directory already IS what `src/reyn/` names in dev)."""
-    assert _translate_logical_to_physical(f"{SOURCE_LOGICAL_PREFIX}/runtime/reyn_src.py") == (
-        "runtime/reyn_src.py"
+    assert _translate_logical_to_physical(f"{SOURCE_LOGICAL_PREFIX}/runtime/reyn_repo.py") == (
+        "runtime/reyn_repo.py"
     )
     assert _translate_logical_to_physical(SOURCE_LOGICAL_PREFIX) == ""
 

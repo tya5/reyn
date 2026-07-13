@@ -158,10 +158,10 @@ class _FakeRouterHost:
     async def put_outbox(self, *, kind: str, text: str, meta: dict) -> None:
         self.outbox.append({"kind": kind, "text": text, "meta": meta})
 
-    async def reyn_src_list(self, *, path: str) -> dict:
+    async def reyn_repo_list(self, *, path: str) -> dict:
         return {"path": path, "entries": []}
 
-    async def reyn_src_read(self, *, path: str) -> dict:
+    async def reyn_repo_read(self, *, path: str) -> dict:
         return {"path": path, "content": ""}
 
     async def web_search(self, *, query: str, max_results: int) -> dict:

@@ -79,7 +79,7 @@ ADR-0026 は、1 つの `ToolDefinition` に 2 つの render メソッド(うち
 
 **M2 POC（着地済み — commit `367b41c`）:** `web_search` が統合 registry に移行された最初のケーパビリティである。`build_tools()` は `render_for_router()` 経由で registry から `web_search` を導出し、従来の `ToolSpec` リテラルとバイト同一の出力を生成する（LLMReplay フィクスチャは変更なし）。すべての M2 検証ゲートが通過: byte-identity GREEN、drift test GREEN、フルスイート 1500 passed / 2 xfailed、mkdocs strict エラーなし。
 
-**M3 Wave 1（着地済み — commit `ba4c5fe`）:** 7 ケーパビリティを移行 — `web_fetch`、`shell`、`lint`、`ask_user`、`delegate_to_agent`、`plan`、`reyn_src_list`、`reyn_src_read`。`ToolDefinition` に `dispatch_kind` フィールドを追加。Tier 2 invariant +99。
+**M3 Wave 1（着地済み — commit `ba4c5fe`）:** 7 ケーパビリティを移行 — `web_fetch`、`shell`、`lint`、`ask_user`、`delegate_to_agent`、`plan`、`reyn_repo_list`、`reyn_repo_read`。`ToolDefinition` に `dispatch_kind` フィールドを追加。Tier 2 invariant +99。
 
 **M3 Wave 2（着地済み — commit `66435d1`）:** 17 ケーパビリティを移行 — file ops × 4 / MCP ops × 3 / memory ops × 5 / catalog ops × 4 / `invoke_skill`。§4 で識別した Type C convention-drift の 3 つのギャップをすべて `gates(router=allow, phase=allow)` で宣言的にクローズ（memory write phase-side、catalog browse phase-side、MCP discover phase-side）。Tier 2 invariant +127。全移行を通じて LLMReplay fixtures を保持。`reyn web` A2A エンドポイントのサニティチェックにより実 LLM リグレッションなしを確認。
 
@@ -93,7 +93,7 @@ ADR-0026 は、1 つの `ToolDefinition` に 2 つの render メソッド(うち
 
 **M4 Phase 4 step 1（着地済み）:** `_DISPATCH_KIND` sidecar dict / `_TOOL_SPECS_STATIC_ASYNC` を `router_tools.py` から削除。`get_dispatch_kind(name)` は registry の `ToolDefinition.dispatch_kind` を直接参照。registry が schema render と dispatch posture 分類の両方の canonical source になった。
 
-**M4 Phase 3.5（着地済み — 5 commits `0093667` / `2b1fe8d` / `3378051` / `a58c685` / `7482b33`）:** router-side cluster activations 完了。 残り 18 tools (file ×4 / mcp ×3 / memory ×5 / web ×2 / reyn_src ×2 / `invoke_skill`) も全て `invoke_tool(get_default_registry(), ...)` 経由 dispatch するようになった。 migration audit で識別した per-tool 設計課題は 3 つの bridge pattern を `RouterCallerState` に追加して解決:
+**M4 Phase 3.5（着地済み — 5 commits `0093667` / `2b1fe8d` / `3378051` / `a58c685` / `7482b33`）:** router-side cluster activations 完了。 残り 18 tools (file ×4 / mcp ×3 / memory ×5 / web ×2 / reyn_repo ×2 / `invoke_skill`) も全て `invoke_tool(get_default_registry(), ...)` 経由 dispatch するようになった。 migration audit で識別した per-tool 設計課題は 3 つの bridge pattern を `RouterCallerState` に追加して解決:
 
 1. **`op_context_factory: Callable | None`** — RouterLoop が `host.make_router_op_context` を bind し、 file / mcp / web handlers が operator-declared PermissionDecl + Workspace を受信。 legacy router branch と同等。
 2. **`host: Any`** — MCP handlers が session-level MCPClient cache を保持するための duck-typed RouterHostAdapter 参照。

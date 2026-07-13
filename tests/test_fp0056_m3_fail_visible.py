@@ -2,7 +2,7 @@
 
 M3 (the third canonical silent-loss mode, after M1 error-seam #2752 and M2
 ``canonical_degraded`` #2748): a mapper that sub-dispatches on an inner discriminator
-(``file``'s ``op``, ``reyn_src``'s body key) used to fall through, on a missing/unknown
+(``file``'s ``op``, ``reyn_repo``'s body key) used to fall through, on a missing/unknown
 discriminator, to a status-only catch-all that emitted ``f"{op}: {status}"`` = the literal
 ``"None: ok"`` garbage (#2695). Non-empty, so M2's empty-check misses it; not an error, so
 M1's shared seam misses it — the user/LLM got meaningless text instead of the real result.
@@ -37,7 +37,7 @@ from reyn.core.offload.canonical import (
     CanonicalToolResult,
     canonical_fallback_reason,
     file_to_canonical,
-    reyn_src_to_canonical,
+    reyn_repo_to_canonical,
     to_canonical,
 )
 from reyn.core.pipeline.executor import Pipeline, PipelineExecutor, ToolStep
@@ -101,31 +101,31 @@ def test_valid_file_op_still_dispatches_no_fallback() -> None:
 
 
 # --------------------------------------------------------------------------------------------------
-# The other inner-dispatch mapper — reyn_src (body-key discriminator).
+# The other inner-dispatch mapper — reyn_repo (body-key discriminator).
 # --------------------------------------------------------------------------------------------------
 
-def test_reyn_src_no_body_key_is_fail_visible() -> None:
-    """Tier 1: a ``reyn_src`` result with none of content/entries/matches is fail-visible (whole-dict
+def test_reyn_repo_no_body_key_is_fail_visible() -> None:
+    """Tier 1: a ``reyn_repo`` result with none of content/entries/matches is fail-visible (whole-dict
     fallback + ``discriminator_miss``), not a SILENT (unaudited) inline whole-dict return."""
     result = {"status": "ok", "unexpected_shape": True}
-    canonical = to_canonical(result, source="reyn_src_read")
+    canonical = to_canonical(result, source="reyn_repo_read")
     assert _structured_data(canonical) == result
-    assert canonical_fallback_reason("reyn_src_read", canonical=canonical) == "discriminator_miss"
+    assert canonical_fallback_reason("reyn_repo_read", canonical=canonical) == "discriminator_miss"
 
 
-def test_reyn_src_no_body_key_raises_directly() -> None:
-    """Tier 1: the ``reyn_src`` mapper raises ``CanonicalDiscriminatorMiss`` on an unknown shape."""
+def test_reyn_repo_no_body_key_raises_directly() -> None:
+    """Tier 1: the ``reyn_repo`` mapper raises ``CanonicalDiscriminatorMiss`` on an unknown shape."""
     with pytest.raises(CanonicalDiscriminatorMiss):
-        reyn_src_to_canonical({"status": "ok"})
+        reyn_repo_to_canonical({"status": "ok"})
 
 
-def test_valid_reyn_src_shape_still_dispatches() -> None:
-    """Tier 1: NON-REGRESSION — a ``reyn_src`` read (``content``) still renders its body as text."""
+def test_valid_reyn_repo_shape_still_dispatches() -> None:
+    """Tier 1: NON-REGRESSION — a ``reyn_repo`` read (``content``) still renders its body as text."""
     canonical = to_canonical(
-        {"path": "docs/x.md", "content": "hello body"}, source="reyn_src_read"
+        {"path": "docs/x.md", "content": "hello body"}, source="reyn_repo_read"
     )
     assert canonical["text"] == "hello body"
-    assert canonical_fallback_reason("reyn_src_read", canonical=canonical) is None
+    assert canonical_fallback_reason("reyn_repo_read", canonical=canonical) is None
 
 
 # --------------------------------------------------------------------------------------------------
@@ -140,7 +140,7 @@ def test_valid_reyn_src_shape_still_dispatches() -> None:
 # - ``shell_to_canonical`` (#2681 Bucket A): ``shell``'s stdout can be ANY JSON shape (including one
 #   whose only key happens to be ``status`` — a health-check-style command's own output), and the
 #   mapper's whole job is to render that value faithfully — never select/drop a sub-field the way
-#   ``file``/``reyn_src`` dispatch on ``op``/body-key. Nothing is ever dropped, so M3 cannot recur.
+#   ``file``/``reyn_repo`` dispatch on ``op``/body-key. Nothing is ever dropped, so M3 cannot recur.
 _NO_INNER_DISCRIMINATOR_MAPPERS = frozenset({"shell_to_canonical"})
 
 

@@ -1,6 +1,6 @@
-"""Tier 2: ``reyn_src_*`` resolver pins safety + listing semantics.
+"""Tier 2: ``reyn_repo_*`` resolver pins safety + listing semantics.
 
-The resolver backs the chat router's ``reyn_src_list`` / ``reyn_src_read``
+The resolver backs the chat router's ``reyn_repo_list`` / ``reyn_repo_read``
 tools (= "agent navigation of Reyn's own repo"). Tests pin:
 
 - repo-root resolution finds the actual Reyn repo (= dev install).
@@ -20,7 +20,7 @@ from pathlib import Path
 
 import pytest
 
-from reyn.runtime.reyn_src import (
+from reyn.runtime.reyn_repo import (
     list_entries,
     read_text,
     resolve_reyn_root,
@@ -42,7 +42,7 @@ def test_resolve_reyn_root_finds_repo_in_dev_install():
     root = resolve_reyn_root()
     assert (root / "pyproject.toml").is_file()
     assert (root / "src" / "reyn").is_dir()
-    # README at the resolved root (= what `reyn_src_read("README.md")`
+    # README at the resolved root (= what `reyn_repo_read("README.md")`
     # would surface to the agent).
     assert (root / "README.md").is_file()
 
@@ -139,7 +139,7 @@ def test_safe_resolve_inside_rejects_non_declared_top_level():
     with pytest.raises(ValueError, match="reachable set"):
         safe_resolve_inside(root, "pyproject.toml")
     with pytest.raises(ValueError, match="reachable set"):
-        safe_resolve_inside(root, "tests/test_reyn_src_resolver.py")
+        safe_resolve_inside(root, "tests/test_reyn_repo_resolver.py")
 
 
 # ── list_entries ─────────────────────────────────────────────────────────────
@@ -187,7 +187,7 @@ def test_list_entries_on_file_returns_error():
     target = safe_resolve_inside(root, "README.md")
     result = list_entries(root, target, "README.md")
     assert "error" in result
-    assert "reyn_src_read" in result["error"]
+    assert "reyn_repo_read" in result["error"]
 
 
 # ── read_text ───────────────────────────────────────────────────────────────
@@ -206,12 +206,12 @@ def test_read_text_returns_readme_content():
 
 
 def test_read_text_on_directory_returns_error():
-    """Tier 2: read-on-directory is an error pointing at reyn_src_list."""
+    """Tier 2: read-on-directory is an error pointing at reyn_repo_list."""
     root = resolve_reyn_root()
     target = safe_resolve_inside(root, "src")
     result = read_text(target, "src")
     assert "error" in result
-    assert "reyn_src_list" in result["error"]
+    assert "reyn_repo_list" in result["error"]
 
 
 def test_read_text_oversize_file_rejected(tmp_path: Path):

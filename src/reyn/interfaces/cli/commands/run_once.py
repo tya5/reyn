@@ -62,7 +62,7 @@ def register(sub) -> None:
         metavar="NAMES",
         help=(
             "Comma-separated catalog category names to hide at the catalog source "
-            "(e.g. 'reyn_source' for an external-repo task where Reyn's own source "
+            "(e.g. 'reyn_repo' for an external-repo task where Reyn's own source "
             "is irrelevant). Same as `reyn chat --exclude-categories`. #1667."
         ),
     )

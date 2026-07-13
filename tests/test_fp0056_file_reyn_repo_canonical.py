@@ -1,8 +1,8 @@
-"""Tier 1: FP-0056 PR-H — canonical mappers for the file family, reyn_src dev-reads, compact, judge_output.
+"""Tier 1: FP-0056 PR-H — canonical mappers for the file family, reyn_repo dev-reads, compact, judge_output.
 
-The dogfood incident (2026-07-09): a doc read via ``reyn_source__read`` was offloaded as a whole-dict
+The dogfood incident (2026-07-09): a doc read via ``reyn_repo__read`` was offloaded as a whole-dict
 ``structured`` attachment (a 600-char JSON-dict preview) instead of the readable text body, because
-``_MAPPERS`` had no mapper for ``kind:"file"`` (unmapped) or the kind-less ``reyn_src_*`` results — both
+``_MAPPERS`` had no mapper for ``kind:"file"`` (unmapped) or the kind-less ``reyn_repo_*`` results — both
 took the whole-dict fallback. These tests pin the fix: the readable body is the ``text`` stream, never a
 whole-dict structured blob. The incident regression test is RED against pre-hotfix code (with the mappers
 removed, ``to_canonical`` falls back to a whole-dict structured attachment and ``text`` is empty).
@@ -16,7 +16,7 @@ import pytest
 
 from reyn.core.offload.canonical import to_canonical
 from reyn.core.offload.seam import build_offload_body
-from reyn.tools.reyn_src import _handle_read
+from reyn.tools.reyn_repo import _handle_read
 from reyn.tools.types import ToolContext
 
 
@@ -59,12 +59,12 @@ def test_incident_file_read_offloads_clean_text_not_whole_dict_blob():
         "no structured ref/preview — the 600-char JSON-dict preview the agent saw is gone"
 
 
-def test_incident_reyn_src_read_offloads_clean_text_not_whole_dict_blob():
-    """Tier 1: INCIDENT (the exact dogfood path) — a large doc read via ``reyn_src_read`` (tagged
-    ``kind:"reyn_src"`` at the tool seam) normalizes to a clean ``text`` body, no whole-dict blob.
+def test_incident_reyn_repo_read_offloads_clean_text_not_whole_dict_blob():
+    """Tier 1: INCIDENT (the exact dogfood path) — a large doc read via ``reyn_repo_read`` (tagged
+    ``kind:"reyn_repo"`` at the tool seam) normalizes to a clean ``text`` body, no whole-dict blob.
     RED pre-hotfix: the kind-less result took the fallback and offloaded the whole dict."""
-    result = {"kind": "reyn_src", "path": "docs/reference/runtime/present.ja.md", "content": _BIG_DOC}
-    canonical = to_canonical(result, source="reyn_src_read")
+    result = {"kind": "reyn_repo", "path": "docs/reference/runtime/present.ja.md", "content": _BIG_DOC}
+    canonical = to_canonical(result, source="reyn_repo_read")
     assert canonical["text"] == _BIG_DOC
     assert not any(a.get("kind") == "structured" for a in canonical["attachments"])
 
@@ -75,18 +75,18 @@ def test_incident_reyn_src_read_offloads_clean_text_not_whole_dict_blob():
 
 
 @pytest.mark.asyncio
-async def test_incident_end_to_end_real_reyn_src_read_handler_tags_kind_and_maps_clean():
-    """Tier 1: INTEGRATION — the REAL ``reyn_src_read`` handler reads a real repo file, its result is
-    tagged ``kind:"reyn_src"`` at the tool seam, and ``to_canonical`` yields the file body as ``text``
+async def test_incident_end_to_end_real_reyn_repo_read_handler_tags_kind_and_maps_clean():
+    """Tier 1: INTEGRATION — the REAL ``reyn_repo_read`` handler reads a real repo file, its result is
+    tagged ``kind:"reyn_repo"`` at the tool seam, and ``to_canonical`` yields the file body as ``text``
     (not a structured blob). Proves the tag→mapper wiring end-to-end, not just the mapper in isolation."""
-    # "README.md" (not "pyproject.toml" — 0061 §3.3 narrowed the reyn_src
+    # "README.md" (not "pyproject.toml" — 0061 §3.3 narrowed the reyn_repo
     # reachable set to {README.md, CHANGELOG.md, docs, src}; pyproject.toml
     # is deliberately excluded in both dev and wheel mode now).
     ctx = ToolContext(events=None, permission_resolver=None, workspace=None, caller_kind="router")
     result = await _handle_read({"path": "README.md"}, ctx)
-    assert result["kind"] == "reyn_src", "the tool seam tags the kind so the mapper (not fallback) runs"
+    assert result["kind"] == "reyn_repo", "the tool seam tags the kind so the mapper (not fallback) runs"
 
-    canonical = to_canonical(result, source="reyn_src_read")
+    canonical = to_canonical(result, source="reyn_repo_read")
     assert canonical["text"] == result["content"], "the file body is the text payload"
     assert "Reyn" in canonical["text"], "the real file content is present as readable text"
     assert not any(a.get("kind") == "structured" for a in canonical["attachments"])
@@ -152,43 +152,43 @@ def test_file_write_is_short_status_text():
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# reyn_src mapper — per-shape contract
+# reyn_repo mapper — per-shape contract
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-def test_reyn_src_read_content_is_text_path_is_meta():
-    """Tier 1: reyn_src read → ``content`` is the ``text`` body; ``path`` is signal meta."""
-    c = to_canonical({"kind": "reyn_src", "path": "README.md", "content": "# Reyn"}, source="reyn_src_read")
+def test_reyn_repo_read_content_is_text_path_is_meta():
+    """Tier 1: reyn_repo read → ``content`` is the ``text`` body; ``path`` is signal meta."""
+    c = to_canonical({"kind": "reyn_repo", "path": "README.md", "content": "# Reyn"}, source="reyn_repo_read")
     assert c["text"] == "# Reyn"
     assert c["meta"].get("path") == "README.md"
 
 
-def test_reyn_src_error_surfaces_iserror():
-    """Tier 1: a reyn_src error (e.g. path outside repo) surfaces the message as ``text`` + isError."""
-    c = to_canonical({"kind": "reyn_src", "error": "reyn_src: path '..' resolves outside repo"}, source="reyn_src_read")
+def test_reyn_repo_error_surfaces_iserror():
+    """Tier 1: a reyn_repo error (e.g. path outside repo) surfaces the message as ``text`` + isError."""
+    c = to_canonical({"kind": "reyn_repo", "error": "reyn_repo: path '..' resolves outside repo"}, source="reyn_repo_read")
     assert c["meta"].get("isError") is True
     assert "outside" in c["text"]
 
 
-def test_reyn_src_list_entries_render_as_text_lines():
-    """Tier 1: reyn_src list → ``type: name`` lines as ``text`` (a browsable listing, not a dict)."""
-    c = to_canonical({"kind": "reyn_src", "path": "docs", "entries": [
-        {"name": "concepts", "type": "dir"}, {"name": "README.md", "type": "file"}]}, source="reyn_src_list")
+def test_reyn_repo_list_entries_render_as_text_lines():
+    """Tier 1: reyn_repo list → ``type: name`` lines as ``text`` (a browsable listing, not a dict)."""
+    c = to_canonical({"kind": "reyn_repo", "path": "docs", "entries": [
+        {"name": "concepts", "type": "dir"}, {"name": "README.md", "type": "file"}]}, source="reyn_repo_list")
     assert "dir: concepts" in c["text"] and "file: README.md" in c["text"]
 
 
-def test_reyn_src_grep_matches_render_as_text_lines():
-    """Tier 1: reyn_src grep → ``path:line: snippet`` lines as ``text``."""
-    c = to_canonical({"kind": "reyn_src", "pattern": "def", "count": 1, "truncated": False,
-                      "matches": [{"path": "x.py", "line": 5, "snippet": "def foo():"}]}, source="reyn_src_grep")
+def test_reyn_repo_grep_matches_render_as_text_lines():
+    """Tier 1: reyn_repo grep → ``path:line: snippet`` lines as ``text``."""
+    c = to_canonical({"kind": "reyn_repo", "pattern": "def", "count": 1, "truncated": False,
+                      "matches": [{"path": "x.py", "line": 5, "snippet": "def foo():"}]}, source="reyn_repo_grep")
     assert "x.py:5: def foo():" in c["text"]
     assert not any(a.get("kind") == "structured" for a in c["attachments"])
 
 
-def test_reyn_src_glob_matches_render_as_path_lines():
-    """Tier 1: reyn_src glob → the matched path strings as newline-joined ``text``."""
-    c = to_canonical({"kind": "reyn_src", "pattern": "**/*.md", "count": 2,
-                      "matches": ["docs/a.md", "docs/b.md"]}, source="reyn_src_glob")
+def test_reyn_repo_glob_matches_render_as_path_lines():
+    """Tier 1: reyn_repo glob → the matched path strings as newline-joined ``text``."""
+    c = to_canonical({"kind": "reyn_repo", "pattern": "**/*.md", "count": 2,
+                      "matches": ["docs/a.md", "docs/b.md"]}, source="reyn_repo_glob")
     assert c["text"] == "docs/a.md\ndocs/b.md"
 
 

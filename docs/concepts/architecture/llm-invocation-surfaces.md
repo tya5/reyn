@@ -95,7 +95,7 @@ xfailed, mkdocs strict empty.
 
 **M3 Wave 1 (landed — commit `ba4c5fe`):** 7 capabilities migrated:
 `web_fetch`, `shell`, `lint`, `ask_user`, `delegate_to_agent`, `plan`,
-`reyn_src_list`, `reyn_src_read`. `ToolDefinition` gains a `dispatch_kind`
+`reyn_repo_list`, `reyn_repo_read`. `ToolDefinition` gains a `dispatch_kind`
 field. +99 Tier 2 invariants.
 
 **M3 Wave 2 (landed — commit `66435d1`):** 17 capabilities migrated —
@@ -147,7 +147,7 @@ rendering AND dispatch posture classification.
 **M4 Phase 3.5 (landed — 5 commits `0093667` / `2b1fe8d` / `3378051` /
 `a58c685` / `7482b33`):** router-side cluster activations complete.
 All 18 remaining tools (file ×4 / mcp ×3 / memory ×5 / web ×2 /
-reyn_src ×2 / `invoke_skill`) now dispatch through
+reyn_repo ×2 / `invoke_skill`) now dispatch through
 `invoke_tool(get_default_registry(), ...)`.  Per-tool design issues
 identified in the migration audit were addressed with three bridge
 patterns on `RouterCallerState`:

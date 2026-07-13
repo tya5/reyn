@@ -348,7 +348,7 @@ def _slice_body_lines(
     """Apply line-based offset/limit slicing to memory body text.
 
     Mirrors ``op_runtime/file.py`` read-op slicing semantics so the
-    three "read one entry" surfaces (= ``read_file`` / ``reyn_src_read``
+    three "read one entry" surfaces (= ``read_file`` / ``reyn_repo_read``
     / ``read_memory_body``) behave identically when given the same
     offset/limit values.
     """

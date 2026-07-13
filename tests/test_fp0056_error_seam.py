@@ -2,7 +2,7 @@
 
 The tool-result canonical mapper hand-wrote error handling per-mapper, so a mapper with NO error branch
 (recall/task_ops ``{ok:False, error_message}`` — #2698; ``file`` ``denied``/``not_found``; ``memory_body``/
-``reyn_src`` ``{error}``; ``web_fetch`` errors) rendered an error to EMPTY text — the M1 silent-loss
+``reyn_repo`` ``{error}``; ``web_fetch`` errors) rendered an error to EMPTY text — the M1 silent-loss
 class. Piece #1 eliminates the class STRUCTURALLY: :func:`to_canonical` applies a union error predicate
 (:func:`is_error_result`) BEFORE per-mapper dispatch and routes any known error shape to a single
 :func:`error_to_canonical`; the per-mapper error branches are removed (mappers become success-only).
@@ -60,7 +60,7 @@ def test_is_error_result_true_for_every_fixed_error_shape() -> None:
         {"status": "not_found", "error": "file not found: x.md"},      # file / render_template
         {"error_kind": "missing_required_arg", "error_message": "..."},  # recall's kind+message
         {"error_kind": "x"},                                           # bare error_kind
-        {"error": "reyn_src: path resolves outside repo"},             # memory_body / reyn_src bare error
+        {"error": "reyn_repo: path resolves outside repo"},             # memory_body / reyn_repo bare error
     ):
         assert is_error_result(shape) is True, shape
 
@@ -84,7 +84,7 @@ def test_is_error_result_false_for_success_and_data_meaning_payloads() -> None:
         {"status": "ok", "content": "hi"},                             # ordinary success
         {"chunks": [{"id": 1}]},                                       # recall success
         {"results": [{"url": "u"}]},                                   # web_search success
-        {"content": "hello world"},                                    # reyn_src / file read success
+        {"content": "hello world"},                                    # reyn_repo / file read success
     ):
         assert is_error_result(shape) is False, shape
     assert is_error_result("not a dict") is False
@@ -155,7 +155,7 @@ def test_recall_missing_arg_error_renders_non_empty_via_seam() -> None:
 def test_removed_branch_mappers_still_route_errors_through_the_seam() -> None:
     """Tier 1: each mapper whose per-mapper error branch was removed (success-only now) still surfaces
     its error as NON-EMPTY ``text`` + ``meta.isError`` via the shared seam — spot-checking ``file``
-    (denied + not_found), ``reyn_src``, ``memory_body``, ``compact``, ``judge_output``, ``present``,
+    (denied + not_found), ``reyn_repo``, ``memory_body``, ``compact``, ``judge_output``, ``present``,
     ``render_template``, and a ``task`` op (CANONICAL_TODO, also in seam scope)."""
     cases = [
         # (result, source, a substring expected in the rendered text)
@@ -163,8 +163,8 @@ def test_removed_branch_mappers_still_route_errors_through_the_seam() -> None:
           "error": "file not found: missing.md", "content": ""}, "file", "file not found"),
         ({"kind": "file", "op": "write", "path": "/etc/x", "status": "denied",
           "error": "write denied: outside workspace"}, "file", "denied"),
-        ({"kind": "reyn_src", "error": "reyn_src: path '..' resolves outside repo"},
-         "reyn_src_read", "outside"),
+        ({"kind": "reyn_repo", "error": "reyn_repo: path '..' resolves outside repo"},
+         "reyn_repo_read", "outside"),
         ({"error": "memory entry not clean", "layer": "user", "slug": "x"},
          "read_memory_body", "not clean"),
         ({"kind": "compact", "status": "error", "error_kind": "compaction_unavailable",

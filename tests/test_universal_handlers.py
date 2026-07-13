@@ -3,7 +3,7 @@
 Tests for the real handlers in
 ``src/reyn/tools/universal_catalog.py`` covering:
   1. list_actions returns static-category items (file / web /
-     memory_operation / reyn_source / rag_operation) without
+     memory_operation / reyn_repo / rag_operation) without
      consulting router_state.
   2. list_actions enumerates dynamic categories (skill /
      agent.peer / mcp.{server,tool} / memory_entry) when
@@ -158,7 +158,7 @@ def test_list_actions_no_category_filter_includes_all() -> None:
     Without RouterCallerState, only static categories contribute.
     """
     result = _run(LIST_ACTIONS.handler({}, _make_ctx()))
-    # 4 (file) + 2 (web) + 3 (memory_operation) + 2 (reyn_source) + 2 (rag.op)
+    # 4 (file) + 2 (web) + 3 (memory_operation) + 2 (reyn_repo) + 2 (rag.op)
     # = 13 known static items
     assert result["total"] >= 13
 

@@ -30,7 +30,7 @@ from reyn.tools import get_default_registry
 _EXPECTED_DISPATCH: "frozenset[str]" = frozenset({
     "list_agents", "describe_agent", "delegate_to_agent",
     "session_spawn", "agent_spawn", "topology_create",
-    "reyn_src_list", "reyn_src_read",
+    "reyn_repo_list", "reyn_repo_read",
     "web_search", "web_fetch",
     "read_file", "write_file", "delete_file", "list_directory",
     "edit_file", "glob_files", "grep_files",

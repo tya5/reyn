@@ -1,6 +1,6 @@
 """Tier 1: canonicalization dispatches on INVOKED IDENTITY (``source=``), not ``result["kind"]``.
 
-The 2026-07-09 dogfood incident root: ``reyn_src_read`` returns a kind-LESS ``{path, content}`` dict,
+The 2026-07-09 dogfood incident root: ``reyn_repo_read`` returns a kind-LESS ``{path, content}`` dict,
 so the old ``result["kind"]`` dispatch fell through to the whole-dict structured fallback and hid the
 document body. FP-0056 PR-F1 resolves the mapper from what the chokepoint invoked — so a kind-less
 result canonicalizes correctly, and a MISLEADING kind on the result is irrelevant.
@@ -16,12 +16,12 @@ from reyn.core.offload.canonical import (
 )
 
 
-def test_kindless_reyn_src_result_canonicalizes_via_source() -> None:
-    """Tier 1: a reyn_src-shaped result with NO ``kind`` field surfaces its ``content`` as ``text``
+def test_kindless_reyn_repo_result_canonicalizes_via_source() -> None:
+    """Tier 1: a reyn_repo-shaped result with NO ``kind`` field surfaces its ``content`` as ``text``
     when dispatched by ``source`` — the incident class, fixed."""
     result = {"path": "docs/x.md", "content": "# Title\n\nbody text"}
     assert "kind" not in result
-    canonical = to_canonical(result, source="reyn_src_read")
+    canonical = to_canonical(result, source="reyn_repo_read")
     assert canonical["text"] == "# Title\n\nbody text"
     assert not any(a.get("kind") == "structured" for a in canonical["attachments"])
 

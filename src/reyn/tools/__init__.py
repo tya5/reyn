@@ -110,11 +110,11 @@ def get_default_registry() -> ToolRegistry:
     from reyn.tools.present import PRESENT
     from reyn.tools.presentation_management_verbs import PRESENTATION_INSTALL
     from reyn.tools.render_template import RENDER_TEMPLATE
-    from reyn.tools.reyn_src import (
-        REYN_SRC_GLOB,
-        REYN_SRC_GREP,
-        REYN_SRC_LIST,
-        REYN_SRC_READ,
+    from reyn.tools.reyn_repo import (
+        REYN_REPO_GLOB,
+        REYN_REPO_GREP,
+        REYN_REPO_LIST,
+        REYN_REPO_READ,
     )
     from reyn.tools.sandboxed_exec import SANDBOXED_EXEC
     from reyn.tools.semantic_search import SEMANTIC_SEARCH
@@ -219,8 +219,8 @@ def get_default_registry() -> ToolRegistry:
     registry.register(SESSION_SPAWN)
     registry.register(AGENT_SPAWN)
     registry.register(TOPOLOGY_CREATE)
-    registry.register(REYN_SRC_LIST)
-    registry.register(REYN_SRC_READ)
+    registry.register(REYN_REPO_LIST)
+    registry.register(REYN_REPO_READ)
     # FP-0041 #489 PR-B2: cron action category (= LLM-callable cron
     # job management). CRON_LIST is both-surface (read_only); the
     # 4 mutating ops are router-only.
@@ -238,8 +238,8 @@ def get_default_registry() -> ToolRegistry:
     registry.register(EMIT_HOOK_EVENT)
     # FP-0038 (#171) S2 + S3: glob / grep for Reyn's own repo, mirroring
     # the file__glob / file__grep surfaces but scoped to the OS source tree.
-    registry.register(REYN_SRC_GLOB)
-    registry.register(REYN_SRC_GREP)
+    registry.register(REYN_REPO_GLOB)
+    registry.register(REYN_REPO_GREP)
     # ── Phase-only coarse-name ops (gates.router=deny, gates.phase=allow) ─
     # #1240 Wave 2b: MCP_OP coarse ToolDefinition dropped.
     # Phase advertises "call_mcp_tool" via available_ops(); the (A)-alias in

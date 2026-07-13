@@ -24,7 +24,7 @@ jobs:
       # 0061 §3.1) and installs ONLY that wheel (no -e, no dev checkout) into
       # a throwaway venv, then: (1) checks wheel config completeness
       # (py.typed / builtin/** / environment/*.Dockerfile / _bundled/ tree),
-      # (2) reads README/docs/source through reyn_src's dual-mode resolver
+      # (2) reads README/docs/source through reyn_repo's dual-mode resolver
       # and asserts byte-identity with the dev checkout, (3) asserts a
       # non-declared path is refused, (4) re-checks the still-LIVE
       # read_builtin_body_bytes path (#2913, untouched by 0061). This is

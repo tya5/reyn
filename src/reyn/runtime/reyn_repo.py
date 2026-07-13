@@ -1,7 +1,7 @@
-"""``reyn_src_*`` resolver — read Reyn's own repository from inside.
+"""``reyn_repo_*`` resolver — read Reyn's own repository from inside.
 
-Backs the ``reyn_src_list`` / ``reyn_src_read`` / ``reyn_src_glob`` /
-``reyn_src_grep`` chat router tools. The resolver scopes paths to the
+Backs the ``reyn_repo_list`` / ``reyn_repo_read`` / ``reyn_repo_glob`` /
+``reyn_repo_grep`` chat router tools. The resolver scopes paths to the
 running Reyn install's repo root, so the agent can answer "how does
 Reyn / how does Reyn's X work?" by reading the source / docs that the
 user could equivalently view on GitHub.
@@ -13,7 +13,7 @@ Why a dedicated resolver instead of the generic ``file_read``:
     so nothing in the tree is sensitive). Operators don't configure
     this — it's an OS-internal capability.
   * **Naming clarity.** A generic ``doc/*`` op would collide with the
-    user's own project documentation expectations; ``reyn_src_*`` is
+    user's own project documentation expectations; ``reyn_repo_*`` is
     namespaced unambiguously to Reyn-the-project.
   * **Stable resolution.** Anchored deterministically without depending
     on the user's current working directory (see the dual-mode
@@ -62,16 +62,16 @@ from __future__ import annotations
 from functools import lru_cache
 from pathlib import Path
 
-# Maximum file size returned by reyn_src_read. Reyn's docs/source files
+# Maximum file size returned by reyn_repo_read. Reyn's docs/source files
 # are well under this; the cap keeps a malicious / accidental binary
 # from blowing up the LLM context. ~256 KB ≈ 50 K tokens worst case.
 _MAX_READ_BYTES = 256 * 1024
 
 # 0061 §3.3 — the single reachable-set SSoT. Every top-level logical
-# entry reyn_src_* will resolve into, in EITHER mode. Owner sign-off
+# entry reyn_repo_* will resolve into, in EITHER mode. Owner sign-off
 # (2026-07-13, proposal 0061 §3.3 option (A) — core set only):
 # `pyproject.toml` / `CLAUDE.md` / `tests/` / `scripts/` / `dogfood/` /
-# `pipelines/` / `website/` are ACCEPTED AS EXCLUDED from reyn_src in
+# `pipelines/` / `website/` are ACCEPTED AS EXCLUDED from reyn_repo in
 # BOTH modes going forward — the primary self-explanation surface
 # (source + docs + README) is preserved; this is a deliberate narrowing
 # of dev's prior "whole repo" reach (not a bug).
@@ -153,7 +153,7 @@ def resolve_reyn_root() -> Path:
         if 'name = "reyn"' in content or 'name="reyn"' in content:
             return ancestor.resolve()
     raise RuntimeError(
-        "reyn_src_*: no Reyn repository root found above "
+        "reyn_repo_*: no Reyn repository root found above "
         f"{pkg_init}, and no wheel `_bundled/` directory found "
         "adjacent to it either. This op needs a development install "
         "(= `pip install -e \".[dev]\"` from a clone of "
@@ -212,7 +212,7 @@ def safe_resolve_inside(root: Path, rel_path: str) -> Path:
 
     ``rel_path`` of ``""`` resolves to ``root`` itself (= "list the
     repo top-level"). Leading slashes are stripped so a forgetful LLM
-    that calls ``reyn_src_read("/README.md")`` still works.
+    that calls ``reyn_repo_read("/README.md")`` still works.
 
     In wheel mode (0061 §3.2), ``cleaned`` (the LOGICAL path) is
     translated to its physical on-disk location under ``root`` via
@@ -224,7 +224,7 @@ def safe_resolve_inside(root: Path, rel_path: str) -> Path:
     top = _reachable_top_level_segment(cleaned)
     if top and top not in REACHABLE_TOP_LEVEL_ENTRIES:
         raise ValueError(
-            f"reyn_src: path {rel_path!r} is outside the reachable set "
+            f"reyn_repo: path {rel_path!r} is outside the reachable set "
             f"{REACHABLE_TOP_LEVEL_ENTRIES} (proposal 0061 §3.3); refusing."
         )
     physical_rel = _translate_logical_to_physical(cleaned) if _is_wheel_root(root) else cleaned
@@ -233,24 +233,24 @@ def safe_resolve_inside(root: Path, rel_path: str) -> Path:
         candidate.relative_to(root.resolve())
     except ValueError:
         raise ValueError(
-            f"reyn_src: path {rel_path!r} resolves outside the Reyn "
+            f"reyn_repo: path {rel_path!r} resolves outside the Reyn "
             "repository root; refusing."
         ) from None
     if not candidate.exists():
         raise ValueError(
-            f"reyn_src: path {rel_path!r} does not exist in the Reyn "
+            f"reyn_repo: path {rel_path!r} does not exist in the Reyn "
             "repository."
         )
     return candidate
 
 
 def list_entries(root: Path, target: Path, path_arg: str) -> dict:
-    """Build the ``reyn_src_list`` result dict for ``target``."""
+    """Build the ``reyn_repo_list`` result dict for ``target``."""
     if not target.is_dir():
         return {
             "error": (
-                f"reyn_src_list: {path_arg!r} is not a directory. "
-                "Use reyn_src_read to read a file."
+                f"reyn_repo_list: {path_arg!r} is not a directory. "
+                "Use reyn_repo_read to read a file."
             ),
         }
     if target.resolve() == root.resolve():
@@ -300,7 +300,7 @@ def read_text(
     offset: int | None = None,
     limit: int | None = None,
 ) -> dict:
-    """Build the ``reyn_src_read`` result dict for ``target``.
+    """Build the ``reyn_repo_read`` result dict for ``target``.
 
     When ``offset`` or ``limit`` is provided, the file is line-streamed
     so the 256-KB byte cap is bypassed: only the requested slice is
@@ -311,19 +311,19 @@ def read_text(
     if target.is_dir():
         return {
             "error": (
-                f"reyn_src_read: {path_arg!r} is a directory. Use "
-                "reyn_src_list to list its entries."
+                f"reyn_repo_read: {path_arg!r} is a directory. Use "
+                "reyn_repo_list to list its entries."
             ),
         }
     try:
         size = target.stat().st_size
     except OSError as exc:
-        return {"error": f"reyn_src_read: stat failed: {exc}"}
+        return {"error": f"reyn_repo_read: stat failed: {exc}"}
     sliced = offset is not None or limit is not None
     if not sliced and size > _MAX_READ_BYTES:
         return {
             "error": (
-                f"reyn_src_read: {path_arg!r} is {size} bytes, "
+                f"reyn_repo_read: {path_arg!r} is {size} bytes, "
                 f"larger than the {_MAX_READ_BYTES}-byte cap. Read a "
                 "smaller file, pass `offset` / `limit` to slice it, "
                 "or list its directory first."
@@ -347,12 +347,12 @@ def read_text(
     except UnicodeDecodeError:
         return {
             "error": (
-                f"reyn_src_read: {path_arg!r} is not UTF-8 text. "
+                f"reyn_repo_read: {path_arg!r} is not UTF-8 text. "
                 "Only text files are supported."
             ),
         }
     except OSError as exc:
-        return {"error": f"reyn_src_read: read failed: {exc}"}
+        return {"error": f"reyn_repo_read: read failed: {exc}"}
     return {"path": path_arg, "content": content}
 
 
@@ -375,7 +375,7 @@ def _iter_files_under(root: Path):
     Walks ``root`` recursively with ``Path.rglob`` then filters out any
     file whose ancestry includes a name in ``_SKIP_DIR_NAMES``. Matches
     `list_entries`'s skip discipline so glob / grep results don't include
-    things a `reyn_source__list` browse wouldn't.
+    things a `reyn_repo__list` browse wouldn't.
     """
     for p in root.rglob("*"):
         if not p.is_file():
@@ -391,7 +391,7 @@ def _iter_files_under(root: Path):
 
 
 def glob_entries(root: Path, pattern: str) -> dict:
-    """Build the ``reyn_src_glob`` result dict.
+    """Build the ``reyn_repo_glob`` result dict.
 
     Returns ``{pattern, matches: [str, ...], count: int}`` where each
     match is a repo-root-relative path. Capped at ``_MAX_GLOB_MATCHES``
@@ -399,7 +399,7 @@ def glob_entries(root: Path, pattern: str) -> dict:
     """
     cleaned = (pattern or "").strip()
     if not cleaned:
-        return {"error": "reyn_src_glob: pattern must be non-empty."}
+        return {"error": "reyn_repo_glob: pattern must be non-empty."}
     matches: list[str] = []
     try:
         for p in root.glob(cleaned):
@@ -415,7 +415,7 @@ def glob_entries(root: Path, pattern: str) -> dict:
             if len(matches) >= _MAX_GLOB_MATCHES:
                 break
     except (ValueError, OSError) as exc:
-        return {"error": f"reyn_src_glob: pattern {pattern!r} failed: {exc}"}
+        return {"error": f"reyn_repo_glob: pattern {pattern!r} failed: {exc}"}
     matches.sort()
     return {"pattern": pattern, "matches": matches, "count": len(matches)}
 
@@ -428,7 +428,7 @@ def grep_entries(
     case_sensitive: bool = False,
     max_results: int = _MAX_GREP_RESULTS,
 ) -> dict:
-    """Build the ``reyn_src_grep`` result dict.
+    """Build the ``reyn_repo_grep`` result dict.
 
     Returns ``{pattern, matches: [{path, line, snippet}, ...], count: int,
     truncated: bool}``. ``path`` scopes the search to a sub-tree (default
@@ -438,14 +438,14 @@ def grep_entries(
     import re
 
     if not pattern:
-        return {"error": "reyn_src_grep: pattern must be non-empty."}
+        return {"error": "reyn_repo_grep: pattern must be non-empty."}
     try:
         compiled = re.compile(
             pattern,
             flags=0 if case_sensitive else re.IGNORECASE,
         )
     except re.error as exc:
-        return {"error": f"reyn_src_grep: invalid regex {pattern!r}: {exc}"}
+        return {"error": f"reyn_repo_grep: invalid regex {pattern!r}: {exc}"}
 
     try:
         scope_root = safe_resolve_inside(root, path)
@@ -463,7 +463,7 @@ def grep_entries(
                 and not any(part in _SKIP_DIR_NAMES for part in p.relative_to(root).parts)
             ]
         except (ValueError, OSError) as exc:
-            return {"error": f"reyn_src_grep: glob {glob!r} failed: {exc}"}
+            return {"error": f"reyn_repo_grep: glob {glob!r} failed: {exc}"}
     else:
         candidates = list(_iter_files_under(scope_root))
 

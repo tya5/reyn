@@ -161,9 +161,9 @@ def test_resolve_invoke_action_rag_corpus_without_top_k() -> None:
         ("memory_operation__remember_shared", "remember_shared"),
         ("memory_operation__remember_agent",  "remember_agent"),
         ("memory_operation__forget",          "forget_memory"),
-        # reyn_source
-        ("reyn_source__read", "reyn_src_read"),
-        ("reyn_source__list", "reyn_src_list"),
+        # reyn_repo
+        ("reyn_repo__read", "reyn_repo_read"),
+        ("reyn_repo__list", "reyn_repo_list"),
         # rag_operation (FP-0057 Phase 2a: rag_operation__recall renamed rag_operation__semantic_search)
         ("rag_operation__semantic_search", "semantic_search"),
         ("rag_operation__drop_source",     "drop_source"),
@@ -346,7 +346,7 @@ def test_known_static_names_is_sorted_and_deduped() -> None:
 def test_known_static_names_covers_all_operation_categories() -> None:
     """Tier 2: statically-routed operation categories cover §D11 baseline.
 
-    file / web / memory_operation / reyn_source / rag_operation /
+    file / web / memory_operation / reyn_repo / rag_operation /
     mcp.operation (PR-4) / exec (FP-0034 Phase 2) are all fully routed.
     """
     names = set(KNOWN_STATIC_QUALIFIED_NAMES)
@@ -360,8 +360,8 @@ def test_known_static_names_covers_all_operation_categories() -> None:
         "memory_operation__remember_agent",
         "memory_operation__forget",
     } <= names
-    # reyn_source (2 ops — read/list; glob/grep are future)
-    assert {"reyn_source__read", "reyn_source__list"} <= names
+    # reyn_repo (2 ops — read/list; glob/grep are future)
+    assert {"reyn_repo__read", "reyn_repo__list"} <= names
     # rag_operation (2 ops)
     assert {"rag_operation__semantic_search", "rag_operation__drop_source"} <= names
 
@@ -564,10 +564,10 @@ _ROUTE_CONTRACT_SAMPLES: list[tuple[str, dict[str, Any]]] = [
     ("memory_operation__remember_agent",
      {"slug": "s", "name": "n", "description": "d", "type": "user", "body": "b"}),
     ("memory_operation__forget", {"layer": "shared", "slug": "s"}),
-    ("reyn_source__read", {"path": "a"}),
-    ("reyn_source__list", {"path": "."}),
-    ("reyn_source__glob", {"pattern": "*.py"}),
-    ("reyn_source__grep", {"pattern": "x"}),
+    ("reyn_repo__read", {"path": "a"}),
+    ("reyn_repo__list", {"path": "."}),
+    ("reyn_repo__glob", {"pattern": "*.py"}),
+    ("reyn_repo__grep", {"pattern": "x"}),
     ("rag_operation__semantic_search", {"query": "q", "sources": ["s"]}),
     ("rag_operation__drop_source", {"source": "s"}),
     ("exec__sandboxed_exec",       {"argv": ["echo", "hi"]}),

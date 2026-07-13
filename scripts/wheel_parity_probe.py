@@ -8,7 +8,7 @@ committed ``.py`` file — NOT a generated / string-templated sub-script and NOT
 handed to ``python -c``. **No file content is ever embedded in this source:**
 both sides of every byte-identity comparison are read at RUNTIME —
 
-  * the WHEEL side through the venv-installed ``reyn.runtime.reyn_src`` resolver,
+  * the WHEEL side through the venv-installed ``reyn.runtime.reyn_repo`` resolver,
   * the DEV side by reading the dev-checkout file directly, from the path passed
     in via the ``REYN_DEV_REPO_ROOT`` env var.
 
@@ -32,22 +32,22 @@ from pathlib import Path
 
 _DEV_ROOT = Path(os.environ["REYN_DEV_REPO_ROOT"]).resolve()
 
-# Logical paths compared byte-for-byte between the wheel-mode reyn_src read and
+# Logical paths compared byte-for-byte between the wheel-mode reyn_repo read and
 # a direct read of the dev checkout. Each is a declared reachable-set path
 # (README at root, a docs/ file, a src/reyn/ source file).
 _BYTE_IDENTITY_LOGICAL_PATHS = [
     ("README.md", _DEV_ROOT / "README.md"),
     ("docs/index.md", _DEV_ROOT / "docs" / "index.md"),
-    ("src/reyn/runtime/reyn_src.py", _DEV_ROOT / "src" / "reyn" / "runtime" / "reyn_src.py"),
+    ("src/reyn/runtime/reyn_repo.py", _DEV_ROOT / "src" / "reyn" / "runtime" / "reyn_repo.py"),
 ]
 
 _CHECK_NAMES = [
     "dev-mask guard (reyn.__file__ under venv, not source tree)",
     "resolve_reyn_root: wheel mode detected (_bundled/ present)",
-    "reyn_src read: README.md byte-identical to dev checkout",
-    "reyn_src read: docs/index.md byte-identical to dev checkout",
-    "reyn_src read: src/reyn/runtime/reyn_src.py byte-identical to dev checkout",
-    "reyn_src read: non-declared path (pyproject.toml) refused",
+    "reyn_repo read: README.md byte-identical to dev checkout",
+    "reyn_repo read: docs/index.md byte-identical to dev checkout",
+    "reyn_repo read: src/reyn/runtime/reyn_repo.py byte-identical to dev checkout",
+    "reyn_repo read: non-declared path (pyproject.toml) refused",
     "read_builtin_body_bytes: reyn_cheat_sheet SKILL.md reachable",
     "read_builtin_body_bytes: flagship pipeline yaml reachable",
     "read_builtin_body_bytes: non-body .py path returns None (least-privilege)",
@@ -83,7 +83,7 @@ def _dev_mask_guard() -> None:
 
 check(_CHECK_NAMES[0], _dev_mask_guard)
 
-from reyn.runtime.reyn_src import (  # noqa: E402
+from reyn.runtime.reyn_repo import (  # noqa: E402
     read_text,
     resolve_reyn_root,
     safe_resolve_inside,
@@ -115,7 +115,7 @@ def _make_byte_identity_check(logical_path: str, dev_path: Path):
         got = _read_logical_via_wheel(logical_path)
         expected = dev_path.read_bytes()  # dev side read at RUNTIME (no templating)
         assert got == expected, (
-            f"{logical_path} via wheel-mode reyn_src ({len(got)} bytes) does not "
+            f"{logical_path} via wheel-mode reyn_repo ({len(got)} bytes) does not "
             f"match the dev checkout {dev_path} ({len(expected)} bytes)"
         )
 

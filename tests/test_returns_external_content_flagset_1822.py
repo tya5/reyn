@@ -150,7 +150,7 @@ _NOT_EXTERNAL = {
     # name at dispatch() (the dispatch-tag), not by this wrapper.
     "invoke_action",
     # — reyn's own framework source (trusted) —
-    "reyn_src_list", "reyn_src_read", "reyn_src_glob", "reyn_src_grep",
+    "reyn_repo_list", "reyn_repo_read", "reyn_repo_glob", "reyn_repo_grep",
     # — task subsystem (#1953 dynamic-wire) — return the OS task RECORD (id /
     # status / deps / the task's own fields) from the CAS-gated task backend:
     # structured OS state, not external content. Cross-session content (a

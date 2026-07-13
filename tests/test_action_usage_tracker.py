@@ -409,7 +409,7 @@ def test_default_seed_items_are_qualified_names() -> None:
 
 def test_default_seed_static_entries_have_routing_rules() -> None:
     """Tier 2: every DEFAULT_HOT_LIST_SEED entry under a static operation
-    category (= file, web, memory_operation, reyn_source, rag_operation,
+    category (= file, web, memory_operation, reyn_repo, rag_operation,
     mcp.operation, exec) has a corresponding routing rule. Without this
     pin a missing rule would surface UnknownActionError to the LLM as
     soon as the seeded alias is invoked.
@@ -420,7 +420,7 @@ def test_default_seed_static_entries_have_routing_rules() -> None:
         "file__",
         "web__",
         "memory_operation__",
-        "reyn_source__",
+        "reyn_repo__",
         "rag_operation__",
         "mcp.operation__",
         "exec__",

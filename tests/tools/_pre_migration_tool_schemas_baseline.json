@@ -699,7 +699,7 @@
                 "web",
                 "memory_entry",
                 "memory_operation",
-                "reyn_source",
+                "reyn_repo",
                 "rag_corpus",
                 "rag_operation",
                 "exec",
@@ -710,7 +710,7 @@
                 "presentation_management"
               ]
             },
-            "description": "Filter by category. Pass an array of category names (e.g. category=['exec'], category=['web', 'file']). Omit or pass [] to include all categories. Categories: multi_agent, mcp, file, web, memory_entry, memory_operation, reyn_source, rag_corpus, rag_operation, exec, task, skill_management, pipeline, pipeline_management, presentation_management."
+            "description": "Filter by category. Pass an array of category names (e.g. category=['exec'], category=['web', 'file']). Omit or pass [] to include all categories. Categories: multi_agent, mcp, file, web, memory_entry, memory_operation, reyn_repo, rag_corpus, rag_operation, exec, task, skill_management, pipeline, pipeline_management, presentation_management."
           },
           "offset": {
             "type": "integer",
@@ -1371,10 +1371,10 @@
     },
     "type": "function"
   },
-  "reyn_src_glob": {
+  "reyn_repo_glob": {
     "function": {
-      "description": "Find files in Reyn's own repository by glob pattern (e.g. 'docs/**/*.md', 'src/**/router*.py'). Returns up to 200 repo-root-relative paths, alphabetically sorted. Use this when you need to enumerate files matching a structural pattern; for content search use reyn_src_grep, for a single named file use reyn_src_read.",
-      "name": "reyn_src_glob",
+      "description": "Find files in Reyn's own repository by glob pattern (e.g. 'docs/**/*.md', 'src/**/router*.py'). Returns up to 200 repo-root-relative paths, alphabetically sorted. Use this when you need to enumerate files matching a structural pattern; for content search use reyn_repo_grep, for a single named file use reyn_repo_read.",
+      "name": "reyn_repo_glob",
       "parameters": {
         "properties": {
           "pattern": {
@@ -1390,10 +1390,10 @@
     },
     "type": "function"
   },
-  "reyn_src_grep": {
+  "reyn_repo_grep": {
     "function": {
-      "description": "Search file contents in Reyn's own repository by regex. Returns up to 50 matches as {path, line, snippet}. `path` scopes the search (default = whole repo); `glob` further narrows by filename (e.g. '**/*.py'). Use this for 'where in the Reyn source is X handled' style questions; for structural enumeration use reyn_src_glob, for reading one known file use reyn_src_read.",
-      "name": "reyn_src_grep",
+      "description": "Search file contents in Reyn's own repository by regex. Returns up to 50 matches as {path, line, snippet}. `path` scopes the search (default = whole repo); `glob` further narrows by filename (e.g. '**/*.py'). Use this for 'where in the Reyn source is X handled' style questions; for structural enumeration use reyn_repo_glob, for reading one known file use reyn_repo_read.",
+      "name": "reyn_repo_grep",
       "parameters": {
         "properties": {
           "case_sensitive": {
@@ -1425,10 +1425,10 @@
     },
     "type": "function"
   },
-  "reyn_src_list": {
+  "reyn_repo_list": {
     "function": {
       "description": "List entries under a path inside Reyn's own repository (= the project that built this agent). Pass \"\" for the repo root. Returns names + types (file/dir). Use this to discover Reyn's source/doc layout before reading specific files. Examples: list \"\" for the top-level layout, \"docs/concepts\" for concept docs (English; Japanese translations are the same path with a \".ja.md\" filename suffix, not a separate directory), or any subdirectory path for its contents.",
-      "name": "reyn_src_list",
+      "name": "reyn_repo_list",
       "parameters": {
         "properties": {
           "path": {
@@ -1443,10 +1443,10 @@
     },
     "type": "function"
   },
-  "reyn_src_read": {
+  "reyn_repo_read": {
     "function": {
-      "description": "Read a text file from Reyn's own repository by an exact repo-root-relative path. Use for: (a) reading a specific file the user named (e.g. README.md), or (b) navigating Reyn's source / docs when NO indexed source covers the topic. If an indexed source description mentions concepts / design / docs / Reyn, use `semantic_search` instead — guessing a file path is unreliable; semantic search over indexed chunks is not. Fallback entry point: reyn_src_read(\"README.md\") for the overview + curated map of deep-dive paths.",
-      "name": "reyn_src_read",
+      "description": "Read a text file from Reyn's own repository by an exact repo-root-relative path. Use for: (a) reading a specific file the user named (e.g. README.md), or (b) navigating Reyn's source / docs when NO indexed source covers the topic. If an indexed source description mentions concepts / design / docs / Reyn, use `semantic_search` instead — guessing a file path is unreliable; semantic search over indexed chunks is not. Fallback entry point: reyn_repo_read(\"README.md\") for the overview + curated map of deep-dive paths.",
+      "name": "reyn_repo_read",
       "parameters": {
         "properties": {
           "limit": {
@@ -1610,7 +1610,7 @@
                 "web",
                 "memory_entry",
                 "memory_operation",
-                "reyn_source",
+                "reyn_repo",
                 "rag_corpus",
                 "rag_operation",
                 "exec",
@@ -1638,7 +1638,7 @@
   },
   "semantic_search": {
     "function": {
-      "description": "Search indexed sources by natural-language query. Returns top-K relevant chunks with text + metadata. Use this when the user's question is about a topic an indexed source covers — including 'what is X?', 'explain X', 'how does X work?' style questions. Pick sources from the 'Indexed sources' section in the system prompt; each source's description tells you what topics it covers. Prefer this over `reyn_src_read` / file_read when an indexed source description matches the question's topic — semantic search across indexed chunks is more reliable than guessing a file path.",
+      "description": "Search indexed sources by natural-language query. Returns top-K relevant chunks with text + metadata. Use this when the user's question is about a topic an indexed source covers — including 'what is X?', 'explain X', 'how does X work?' style questions. Pick sources from the 'Indexed sources' section in the system prompt; each source's description tells you what topics it covers. Prefer this over `reyn_repo_read` / file_read when an indexed source description matches the question's topic — semantic search across indexed chunks is more reliable than guessing a file path.",
       "name": "semantic_search",
       "parameters": {
         "properties": {

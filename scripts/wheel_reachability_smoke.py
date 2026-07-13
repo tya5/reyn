@@ -6,7 +6,7 @@ production-reachability" smoke — this script previously only exercised
 ``read_builtin_doc`` / ``read_builtin_body_bytes``; 0061 §3.5 retired
 ``read_builtin_doc`` and the build-time docs mirror it depended on, in favor
 of the Hatchling ``force-include`` mechanism (``pyproject.toml``
-``[tool.hatch.build.targets.wheel.force-include]``) + ``reyn.runtime.reyn_src``'s
+``[tool.hatch.build.targets.wheel.force-include]``) + ``reyn.runtime.reyn_repo``'s
 dual-mode ``resolve_reyn_root()``). This script builds a REAL wheel, installs
 ONLY that wheel (no ``-e``, no source tree on ``sys.path``) into a throwaway
 venv, and probes it for:
@@ -16,7 +16,7 @@ venv, and probes it for:
    ``environment/*.Dockerfile`` files, and the ``_bundled/`` tree
    (README/CHANGELOG/docs, 0061 force-include) — the omission risk 0061 §3.1
    calls out explicitly (drop any of these => a silently-broken wheel).
-2. **POSITIVE reachability + byte-identity (0061 §3.4)** — ``reyn_src``'s
+2. **POSITIVE reachability + byte-identity (0061 §3.4)** — ``reyn_repo``'s
    ``resolve_reyn_root`` + ``safe_resolve_inside`` + ``read_text`` read
    README.md, a ``docs/`` file, and a ``src/reyn/`` source file THROUGH the
    installed wheel, and their content is byte-identical to the same logical

@@ -192,14 +192,14 @@ fixtures:
     axis: [precision]
 
 
-  # ── reyn_source (1 entry) ─────────────────────────────────────────────────
+  # ── reyn_repo (1 entry) ─────────────────────────────────────────────────
 
-  - id: reyn_source_grep
+  - id: reyn_repo_grep
     source: synthesized
     prompt: "reyn のソースで 'class Skill' を検索して。"
-    expected_action: reyn_source__grep
+    expected_action: reyn_repo__grep
     expected_reach_path:
-      - 'reyn_source__grep({pattern: "class Skill"})'
+      - 'reyn_repo__grep({pattern: "class Skill"})'
     axis: [precision]
 
   # ── discovery (call_rate-focused, 1 entry) ────────────────────────────────
