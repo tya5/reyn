@@ -60,8 +60,17 @@ def _registry(
     """Real AgentRegistry + real Session factory (mirrors
     ``test_pipeline_r5_run_agent_step.py``'s ``holder`` deferred-registry-ref trick).
     ``scripted`` (when given) wires the fixed LLM reply into every spawned session's
-    real ``RouterLoopDriver`` via ``_loop_observer``, before the driver's first turn."""
+    real ``RouterLoopDriver`` via ``_loop_observer``, before the driver's first turn.
+
+    0062: resolves the default ``"standard"`` class to a real litellm-known
+    model (see ``test_pipeline_r5_run_agent_step.py``'s ``_registry`` for the
+    same fix + rationale — a schema-bearing agent step now runs RouterLoop's
+    model-support pre-check even though the turn's actual completion stays
+    fully scripted via ``_llm_caller``)."""
+    from reyn.llm.model_resolver import ModelResolver
+
     holder: dict = {}
+    resolver = ModelResolver({"standard": "gemini/gemini-2.5-flash-lite"})
 
     def _factory(profile, *, presentation_consumer=None, intervention_bridge=None) -> Session:
         s = Session(
@@ -69,6 +78,7 @@ def _registry(
             intervention_bridge=intervention_bridge,
             agent_name=profile.name, state_log=state_log,
             registry=holder.get("reg"), non_interactive=True,
+            resolver=resolver,
         )
         if scripted is not None:
             s._loop_driver._loop_observer = (

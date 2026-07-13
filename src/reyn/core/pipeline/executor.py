@@ -181,12 +181,20 @@ class AgentStep:
     (``run_agent_step``'s own contract; this step introduces no additional narrowing).
     ``schema``, if set, names a ``SchemaRegistry``-registered schema the parsed JSON
     reply must conform to — non-conformance fails the step exactly like a ``tool``
-    step's ``verify: schema``."""
+    step's ``verify: schema``. (0062: ``schema`` also now CONSTRAINS generation —
+    the ephemeral session's answer turn is provider-``response_format``-constrained
+    to it, not just post-hoc validated; see ``session_api.run_agent_step``.)
+
+    ``model`` (0062 layer 2, new): an optional model-CLASS override (e.g.
+    ``"strong"``) for the ephemeral session, threaded to ``run_agent_step``'s
+    ``model`` param — resolved the same way the ``/model`` slash command
+    resolves a session override, via the run's ``ModelResolver``."""
 
     prompt: str
     identity: "str | None" = None
     capabilities: "list[str] | None" = None
     schema: "str | None" = None
+    model: "str | None" = None
     output: "str | None" = None
 
 
@@ -860,6 +868,7 @@ async def _run_agent_step(inv: "_StepInvocation") -> "tuple[Any, bool, dict[str,
             capabilities=step.capabilities,
             schema=step.schema,
             schema_registry=deps.schema_registry,
+            model=step.model,
             # #2769: forward the invoking pipeline's live session so this agent-step's
             # ask_user / permission / present reach the ORIGINATOR (via BridgeToParent +
             # the #2735 transitive bridge) when attached; None → AuditOnly fail-closed.

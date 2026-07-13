@@ -386,6 +386,66 @@ def _fields_of(ft: dict[str, Any], registry: SchemaRegistry) -> dict[str, dict[s
     return None
 
 
+def to_json_schema(schema: dict[str, Any] | str, registry: SchemaRegistry) -> dict[str, Any]:
+    """Convert a reyn pipeline ``Schema`` (this module's own field-type
+    vocabulary — ``bool``/``string``/``number``/``enum``/``list``/``object``/
+    ``ref``, see the module docstring) into a standard JSON Schema object
+    dict, suitable for an LLM provider's ``response_format={"type":
+    "json_schema", "json_schema": {"schema": ...}}`` (0062 §2.1).
+
+    Passed VERBATIM by the caller — this function does no strict-mode
+    augmentation (no injected ``"strict": true`` / ``"additionalProperties":
+    false`` / optional-field coercion; 0062 §2.3 pin). A provider that
+    rejects the resulting schema surfaces that as the caller's own
+    failure-mode-(b) typed error — augmentation, if ever added, is a
+    deliberate v2 follow-up, not a silent default here.
+
+    ``ref`` fields are expanded INLINE (not ``$ref``/``$defs`` — providers'
+    json_schema subsets vary in ``$ref`` support, and inlining sidesteps that
+    entirely). This always terminates: ``SchemaRegistry.register`` already
+    rejects a recursive schema (self- or mutually-referential ``ref``) at
+    registration time, so no ``ref`` chain reachable from a registered schema
+    can cycle.
+    """
+    if isinstance(schema, str):
+        schema = registry.get(schema)
+    return _fields_to_json_schema(schema["fields"], registry)
+
+
+def _fields_to_json_schema(
+    fields: dict[str, dict[str, Any]], registry: SchemaRegistry
+) -> dict[str, Any]:
+    properties: dict[str, Any] = {}
+    required: list[str] = []
+    for fname, ft in fields.items():
+        properties[fname] = _field_type_to_json_schema(ft, registry)
+        if ft.get("required"):
+            required.append(fname)
+    out: dict[str, Any] = {"type": "object", "properties": properties}
+    if required:
+        out["required"] = required
+    return out
+
+
+def _field_type_to_json_schema(ft: dict[str, Any], registry: SchemaRegistry) -> dict[str, Any]:
+    t = ft.get("type")
+    if t == "bool":
+        return {"type": "boolean"}
+    if t == "string":
+        return {"type": "string"}
+    if t == "number":
+        return {"type": "number"}
+    if t == "enum":
+        return {"enum": list(ft["values"])}
+    if t == "list":
+        return {"type": "array", "items": _field_type_to_json_schema(ft["of"], registry)}
+    if t == "object":
+        return _fields_to_json_schema(ft["fields"], registry)
+    if t == "ref":
+        return _fields_to_json_schema(registry.get(ft["schema"])["fields"], registry)
+    raise SchemaError(f"to_json_schema: unknown field type {t!r}")
+
+
 def resolve_path(
     schema: dict[str, Any] | str, path: str, registry: SchemaRegistry
 ) -> dict[str, Any] | None:

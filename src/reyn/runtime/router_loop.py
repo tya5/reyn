@@ -1313,6 +1313,9 @@ class RouterLoop:
         on_limit: "Any | None" = None,  # OnLimitConfig | None — FP-0005 max_iterations checkpoint
         llm_caller: "Any | None" = None,  # Tier 2 test seam: real-fake injection
         scheme_name: "str | None" = None,  # #1593 PR-2: chat-layer tool-use scheme (None → universal default; the construction site resolves config.tool_use.chat)
+        response_format: "dict | None" = None,  # 0062: schema-constrained answer turn; None = byte-identical (no other caller sets this)
+        schema_validate_fn: "Any | None" = None,  # 0062: Callable[[Any], list[str]] — parsed-value -> validation-error strings ([] = conforming)
+        max_schema_reprompt_attempts: int = 2,  # 0062 §2.1 failure-mode-(c): bounded re-prompt budget (extra attempts beyond the first)
     ):
         self.host = host
         self.chain_id = chain_id
@@ -1410,6 +1413,15 @@ class RouterLoop:
         # patch``. Production callers leave this as ``None``.
         self._llm_caller = llm_caller
         self._on_limit = on_limit  # FP-0005 max_iterations checkpoint config
+        # 0062: when set, the loop's terminal PlainText resolution routes through
+        # a SEPARATE no-tools response_format-constrained call (ADR-0035 D2
+        # separate-decide, reapplied to this loop — see ``_run_structured_answer_turn``)
+        # instead of emitting the tool-turn's own free-form content. None (every
+        # caller except a schema-bearing ``run_agent_step``) is byte-identical to
+        # today's behaviour.
+        self._response_format = response_format
+        self._schema_validate_fn = schema_validate_fn
+        self._max_schema_reprompt_attempts = max(0, int(max_schema_reprompt_attempts))
         self._catalog: dict[str, dict] = {}  # populated per run() — the ADVERTISED mirror
         # #1618 root-1: the DISPATCHABLE membership map (None ⇒ = self._catalog,
         # byte-identical for schemes whose advertised = dispatchable). Set per run()
@@ -1794,6 +1806,43 @@ class RouterLoop:
         terminals below remain host-polymorphic from that design.)
         """
         host = self.host
+        # 0062 §2.1 failure-mode-(a): the model-support pre-check runs BEFORE this
+        # turn's very first LLM call (tool-decision calls included) — a schema
+        # the resolved model cannot honor at all is rejected here so NO completion
+        # is ever wasted on it, whether this turn is a no-capability agent's sole
+        # call or a tool-using agent's multi-round turn.
+        if self._response_format is not None:
+            from reyn.llm.litellm_bootstrap import ensure_litellm_ready
+            from reyn.llm.llm import proxy_kwargs, routing_for_spec
+            from reyn.runtime.errors import StructuredOutputUnsupportedModelError
+            _spec_fn = getattr(host, "resolve_model_spec", None)
+            if _spec_fn is not None:
+                _precheck_spec = _spec_fn(self.router_model)
+            else:
+                from reyn.llm.model_resolver import ModelSpec
+                _precheck_spec = ModelSpec(model=host.resolve_model(self.router_model), kwargs={})
+            # Strip the proxy provider-prefix EXACTLY like ``recorded_acompletion``
+            # does (llm.py) before checking — an operator-configured
+            # ``"openai/gemini-2.5-flash-lite"`` proxy alias must be checked as
+            # the underlying gemini model, not misclassified as an (unsupported)
+            # literal OpenAI model name.
+            _routing = routing_for_spec(_precheck_spec)
+            _extra = _routing if _routing is not None else proxy_kwargs()
+            _precheck_model = (
+                _precheck_spec.model.split("/", 1)[1]
+                if _extra.get("api_base") and "/" in _precheck_spec.model
+                else _precheck_spec.model
+            )
+            ensure_litellm_ready()
+            import litellm
+            if not litellm.supports_response_schema(_precheck_model):
+                raise StructuredOutputUnsupportedModelError(
+                    f"model {_precheck_model!r} does not support structured output "
+                    "(litellm.supports_response_schema returned False) — schema-"
+                    "constrained generation (response_format) requires provider "
+                    "support. Choose a different model class for this agent step, "
+                    "or drop its `schema`."
+                )
         # #1092 PR-B: keep the DISPATCH catalog (``self._catalog``, consumed by
         # ``_execute_tool`` → ``dispatch_tool``'s ``name in ctx.tool_catalog`` gate)
         # in lockstep with the ADVERTISED ``tools=``. For the chat ``run()`` path
@@ -2391,6 +2440,23 @@ class RouterLoop:
                     decision="inline_reply",
                     tool_calls_attempted=_tool_calls_attempted,
                 )
+            # 0062 §2.1/§2.2: this resolution point IS the "answer turn" — for a
+            # no-capability agent it is the sole call above; for a tool-using agent
+            # it is reached only once the model stops requesting tools. When a
+            # ``response_format`` is configured, do NOT emit the tool-turn's own
+            # free-form ``result.content`` — issue the SEPARATE no-tools
+            # constrained call instead (ADR-0035 D2 separate-decide: the tool
+            # round(s) above stayed tools-only/unconstrained the whole time).
+            if self._response_format is not None:
+                _structured_text = await self._run_structured_answer_turn(
+                    messages, resolved_spec,
+                )
+                await self.host.put_outbox(
+                    kind="agent",
+                    text=_structured_text,
+                    meta={"chain_id": self.chain_id, "reasoning": result.reasoning},
+                )
+                return self._total_usage
             await self.host.put_outbox(
                 kind="agent",
                 text=result.content or "",
@@ -2572,6 +2638,101 @@ class RouterLoop:
             {"role": "system", "content": wrap_up_system_prompt(reason=reason)},
             *non_system,
         ]
+
+    async def _run_structured_answer_turn(
+        self, messages: list[dict], resolved_spec: Any,
+    ) -> str:
+        """0062 §2.1: the separate no-tools ``response_format``-constrained
+        answer turn (ADR-0035 D2 separate-decide, reapplied here — the
+        preceding tool-decision round(s) stayed tools-only/unconstrained the
+        whole time; this is the ONE additional call that produces the actual
+        structured reply). Returns the raw JSON text — the caller
+        (``run_agent_step``) still ``json.loads`` + ``core.pipeline.schema.
+        validate``s it as belt-and-suspenders (0062 impl-focus 3: reyn-side
+        re-validate is kept even though the provider already constrained
+        generation).
+
+        Failure-mode separation (0062 §2.1, never conflated):
+          - mode (a) model-unsupported: already excluded by ``run_loop``'s
+            pre-check before this method is ever reached.
+          - mode (b) provider rejects the SCHEMA itself: since (a) already
+            passed, any exception on the FIRST attempt here can only be the
+            provider's json_schema-subset validation rejecting the schema —
+            raised immediately as :class:`StructuredOutputSchemaRejectedError`,
+            never entered into the re-prompt loop below (re-prompting cannot
+            fix an incompatible schema).
+          - mode (c) generation-side non-conformance: a syntactically-fine
+            call whose JSON fails ``json.loads`` or the caller-supplied
+            ``schema_validate_fn`` — bounded re-prompt (feed the error back,
+            ``self._max_schema_reprompt_attempts`` extra attempts), then
+            :class:`StructuredOutputNonConformingError` on exhaustion.
+        """
+        from reyn.runtime.errors import (
+            StructuredOutputNonConformingError,
+            StructuredOutputSchemaRejectedError,
+        )
+
+        attempt_messages = list(messages)
+        last_errors: list[str] = []
+        total_attempts = 1 + self._max_schema_reprompt_attempts
+        for attempt in range(total_attempts):
+            call_messages = attempt_messages
+            if last_errors:
+                call_messages = [
+                    *attempt_messages,
+                    {
+                        "role": "user",
+                        "content": (
+                            "Your previous reply did not conform to the required "
+                            "schema:\n- " + "\n- ".join(last_errors) +
+                            "\n\nReply again with ONLY the corrected JSON, "
+                            "conforming exactly to the schema."
+                        ),
+                    },
+                ]
+            try:
+                # Tier 2 testability (matches the tool-turn call above): honour
+                # ``self._llm_caller`` when a test injected one — the constrained
+                # answer-turn call must go through the SAME real-fake seam, not
+                # bypass it to the real ``call_llm_tools``/litellm.
+                _llm = self._llm_caller or call_llm_tools
+                result = await _llm(
+                    model=resolved_spec, messages=call_messages, tools=[],
+                    budget=self.budget, budget_agent=self.host.agent_name,
+                    trace_caller="router_structured_output",
+                    emit_cost_events=True,
+                    response_format=self._response_format,
+                )
+            except Exception as exc:
+                if attempt == 0:
+                    raise StructuredOutputSchemaRejectedError(
+                        "the model/provider rejected the response_format "
+                        f"schema (fail-fast, no re-prompt): {exc}"
+                    ) from exc
+                raise
+            if result.usage:
+                self._total_usage += result.usage
+                self._last_call_usage = result.usage
+            text = result.content or ""
+            try:
+                parsed = json.loads(text)
+            except json.JSONDecodeError as exc:
+                last_errors = [f"output is not valid JSON: {exc}"]
+                attempt_messages = call_messages
+                continue
+            errors = (
+                self._schema_validate_fn(parsed)
+                if self._schema_validate_fn is not None else []
+            )
+            if not errors:
+                return text
+            last_errors = list(errors)
+            attempt_messages = call_messages
+        raise StructuredOutputNonConformingError(
+            "structured-output generation did not converge to a schema-"
+            f"conforming value after {total_attempts} attempt(s); last "
+            f"validation errors: {last_errors}"
+        )
 
     async def _force_close_call(
         self,

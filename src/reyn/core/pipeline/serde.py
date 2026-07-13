@@ -107,6 +107,7 @@ def _encode_agent(step: "AgentStep") -> "dict[str, Any]":
         "identity": step.identity,
         "capabilities": list(step.capabilities) if step.capabilities is not None else None,
         "schema": step.schema,
+        "model": step.model,  # 0062: model-class override, mirrors `schema`'s encoding
         "output": step.output,
     }
 
@@ -131,6 +132,7 @@ def _decode_agent(data: "dict[str, Any]") -> "AgentStep":
         identity=data.get("identity"),
         capabilities=list(caps) if caps is not None else None,
         schema=data.get("schema"),
+        model=data.get("model"),  # 0062
         output=data.get("output"),
     )
 
