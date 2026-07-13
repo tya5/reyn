@@ -1,5 +1,5 @@
 ---
-status: accepted (owner GO 2026-07-12) — phased execution per §6; §7 forks (a/b/c) remain open, they gate Phase 2-3 not Phase 1
+status: closed (2026-07-13) — floor (F1-F4) + show (F3) delivered; §7 forks (a/b/c) all resolved; enhancement (E2 indexing/docs-convention) + loop (L1-L3) layers de-scoped by owner; §D5b superseded by 0061. Exhaustive disposition: `0061-repo-self-access-and-packaging-standardization.md` §4 (canonical).
 author: architect
 date: 2026-07-12
 ---
@@ -381,23 +381,33 @@ phase. No "we shipped it, trust us".
 1. **Phase 0**: E3 defect fix (#2895); E2 packaging verify (**done —
    docs NOT packaged, Addendum A/§7b**); baseline scenarios (§5); **`stdlib`
    abolition** (cheap dead-code removal, Addendum A2 — clears the packaging
-   glob for the builtin tier).
+   glob for the builtin tier). **✅ delivered.**
 2. **Phase 1 (floor)**: F1 catalog completion + taxonomy gate (on the part-type
    meta-registry SSoT, Addendum A6) → F2 SP routing model → F4 present install
-   op (carrying OS-authoritative provenance, Addendum A5).
-3. **Phase 2 (show)**: F3 builtin exemplars + through-chain.
+   op (carrying OS-authoritative provenance, Addendum A5). **✅ delivered.**
+3. **Phase 2 (show)**: F3 builtin exemplars + through-chain. **✅ delivered**
+   (curated-5, 4/5 — #5 hook exemplar = Fork-1 defer, inline in cheat-sheet).
 4. **Phase 3 (enhancement)**: E2 corpus (post-verify), docs-convention
-   ratification.
-5. **Phase 4 (loop)**: L1 idiom + L2 judge gate + L3 hygiene.
+   ratification. **Split disposition (2026-07-13, per 0061 §4):** the
+   *packaging half* ("are docs in the wheel?") → **resolved by 0061**
+   (Hatchling `force-include` ships README/CHANGELOG/all of `docs/`); the
+   *indexing half* (`semantic_search` over reference docs) + docs-convention
+   ratification → **de-scoped** (owner (i)).
+5. **Phase 4 (loop)**: L1 idiom + L2 judge gate + L3 hygiene. **De-scoped**
+   (owner (i), 2026-07-13) — L0 provenance-split invariant already landed
+   (Layer A) and is unaffected; `judge_output` itself remains landed and
+   pipeline-invocable, only the promotion-gate idiom (L2) is de-scoped.
 
 Each phase re-runs the §5 measurement; a phase that doesn't move a wielding
 metric is re-examined before the next lands.
 
-## 7. Open forks (owner decisions)
+## 7. Open forks (owner decisions) — all RESOLVED (2026-07-13, per 0061 §4)
 
 - **(a)** retrieval default-promotion: keep opt-in (floor-first, this
   proposal's stance) vs promote the retrieval scheme to default once E-layer
   matures — revisit after Phase 3 with §5 data.
+  → **RESOLVED: keep opt-in** (owner reaffirmed 2026-07-13; `semantic_search`
+  stays opt-in, the floor is deterministic `reyn_repo`/(`reyn_src`) reads).
 - **(b)** E2 corpus shape — **docs are confirmed NOT packaged in the wheel**
   (grounded: package-data ships only `py.typed` / `environment/*.Dockerfile` /
   the empty `stdlib/**` glob; `docs/` sits outside `src/reyn`). So the fork is
@@ -405,9 +415,14 @@ metric is re-examined before the next lands.
   wheel vs a distilled bundled guide. Corollary: wheel-only installs have no
   `docs/` — dev-only doc-grep features degrade; make dev-deploy-vs-installed
   explicit (Addendum A).
+  → **RESOLVED by 0061** — force-include bundle (README + CHANGELOG + all of
+  `docs/`), not a distilled guide; see §D5b superseded-note below.
 - **(c)** builtin exemplar curation: which concrete exemplars ship (proposal:
   minimum viable = the through-chain + one per axis; resist builtin sprawl —
   every builtin must earn its place as a teacher).
+  → **RESOLVED: curated-5 landed** (4/5 — cheat-sheet + flagship pipeline +
+  draft_judge_revise + status_card; #5 hook exemplar = Fork-1 defer, inline in
+  the cheat-sheet, owner-overridable).
 
 ## Addendum A — grounded feasibility (2026-07-12, post-ratification)
 
@@ -711,8 +726,19 @@ Layer C). Placement without these gates is a regression:
   wrong example cannot ship. Derived sections (op lists, part-type rows) are
   generated from registries; prose stays authored — the Layer-C C2/C3 split
   applied to content.
-- **D5b — Builtin tier as the docs carrier (resolves fork §7b).** The
-  cheat-sheet skill's **L3 assets = build-time byte-mirrors of the
+- **D5b — Builtin tier as the docs carrier (resolves fork §7b).**
+  **Superseded by 0061 (2026-07-13).** The build-time byte-mirror mechanism
+  described below is replaced by 0061's Hatchling `force-include`
+  (README/CHANGELOG/all of `docs/` mapped declaratively into the wheel at
+  build time — no cmdclass, no copytree script, no git-ignored mirror tree,
+  no byte-gate test). The **F1 production-reachability invariant this
+  mechanism protected is preserved and upgraded**, not removed: from
+  "`reference/` subset reachable" to "README + CHANGELOG + all of `docs/` +
+  source reachable, with a dev==wheel parity gate (positive byte-identity +
+  negative flip-witness)." The design below is kept as the historical record
+  of the mechanism actually built and later retired; see
+  `0061-repo-self-access-and-packaging-standardization.md` §2-§4 for the
+  replacement and the disposition. The cheat-sheet skill's **L3 assets = build-time byte-mirrors of the
   `reference/` docs**, shipped via the already-packaged builtin tier
   (`builtin/**` glob, F3a) and CI-checked byte-identical against `docs/`.
   One mechanism gives: production file-read reachability, a shipped corpus
@@ -880,6 +906,15 @@ Flagship skeleton (coder builds/verifies the exact wiring):
 All 5 ship inert (F3a: skills `auto_invoke=False`; pipelines/views invoke-by-name) with `provenance="builtin"` (F3a loader seam).
 
 ## Addendum D10 — the wielding measurement plan (eval-framework record, settled 2026-07-12, owner-GO-gated for the LLM stage)
+
+**Owner declined (2026-07-13).** Stage 2 (the full 4-axis LLM eval, D10.4)
+was **not pursued** — the owner judged the absolute post-F1 measurement
+unnecessary and declined the GO. This is recorded as a deliberate
+not-pursued decision, not an oversight; the plan text below stays as the
+record of the design and of Stage 1 (the no-LLM production-shape smoke,
+which did run and PASS). See
+`0061-repo-self-access-and-packaging-standardization.md` §4 for the
+disposition in context.
 
 **Status of the artifact.** This addendum is the canonical record of the
 measurement design and the owner GO-decision boundary. broker messages and
