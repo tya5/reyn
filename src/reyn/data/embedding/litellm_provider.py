@@ -294,6 +294,12 @@ class LiteLLMEmbeddingProvider:
                 wait = self._retry_backoff ** attempt
                 await asyncio.sleep(wait)
             try:
+                # perf/log-routing chokepoint: an embedding/RAG-first path can
+                # be the FIRST litellm import in the process — funnel it through
+                # ensure_litellm_ready() so litellm's import-time console log
+                # routing (#2929) wraps it too (idempotent; cheap on 2nd+ call).
+                from reyn.llm.litellm_bootstrap import ensure_litellm_ready
+                ensure_litellm_ready()
                 import litellm
                 response = await litellm.aembedding(
                     model=effective_model,

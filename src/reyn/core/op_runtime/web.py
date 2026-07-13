@@ -197,6 +197,12 @@ def _resolve_ssl_verify(ctx: OpContext) -> bool | str:
       4. Both unset (None) → falls through to litellm.get_ssl_verify()
          (= SSL_VERIFY env → litellm.ssl_verify → SSL_CERT_FILE → True).
     """
+    # perf/log-routing chokepoint: a web op (e.g. the flagship web_search→agent
+    # pipeline) can be the FIRST litellm import in the process — funnel it
+    # through ensure_litellm_ready() so litellm's import-time console log
+    # routing (#2929) wraps this import too (idempotent; cheap on 2nd+ call).
+    from reyn.llm.litellm_bootstrap import ensure_litellm_ready
+    ensure_litellm_ready()
     from litellm.llms.custom_httpx.http_handler import get_ssl_verify
 
     cfg = ctx.web_config.fetch if ctx.web_config is not None else None

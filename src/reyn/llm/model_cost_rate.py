@@ -28,6 +28,12 @@ def get_input_cost_per_1m_usd(model: str) -> float | None:
     an unknown cost as "no warning needed" rather than crashing the session.
     """
     try:
+        # perf: route through the single litellm-first-touch chokepoint so the
+        # #2929 console-log routing is active regardless of whether this
+        # session-start check or a later LLM call is the first real litellm
+        # touch in the process (see litellm_bootstrap module docstring).
+        from reyn.llm.litellm_bootstrap import ensure_litellm_ready
+        ensure_litellm_ready()
         import litellm
         entry = litellm.model_cost.get(model, {})
         per_token = entry.get("input_cost_per_token")

@@ -43,6 +43,11 @@ def _lookup_max_input(model: str) -> "int | None":
     (e.g. provider-prefix-strip, #1162).
     """
     try:
+        # perf: route through the single litellm-first-touch chokepoint (see
+        # litellm_bootstrap module docstring) so #2929's console-log routing
+        # is active regardless of which call site touches litellm first.
+        from reyn.llm.litellm_bootstrap import ensure_litellm_ready
+        ensure_litellm_ready()
         import litellm
         info = litellm.get_model_info(model)
         max_input = info.get("max_input_tokens")

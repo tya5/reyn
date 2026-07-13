@@ -17,6 +17,7 @@ import httpx
 logger = logging.getLogger(__name__)
 from reyn.llm.credentials import check_model_credentials
 from reyn.llm.json_parse import loads_lenient
+from reyn.llm.litellm_bootstrap import ensure_litellm_ready
 from reyn.llm.model_resolver import ModelSpec
 from reyn.llm.pricing import TokenUsage, estimate_cost
 from reyn.prompt.loop_control import G12_SIGNAL_ERROR_TEXT as _G12_SIGNAL_ERROR_TEXT
@@ -1556,6 +1557,11 @@ async def recorded_acompletion(
     Replay-safe: the call still bottoms out at ``litellm.acompletion``, which
     ``LLMReplay`` monkeypatches.
     """
+    # perf: litellm's own import is ~1.5s and is kept off the chat startup
+    # path (input box renders before any LLM use). ``ensure_litellm_ready``
+    # is the single chokepoint that applies the #2929 console-log routing +
+    # ``suppress_debug_info`` the first time ANY call site touches litellm.
+    ensure_litellm_ready()
     import litellm
 
     # #1652/②: canonical litellm mechanism for reasoning continuity across tool
