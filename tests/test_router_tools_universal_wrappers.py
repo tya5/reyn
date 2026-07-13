@@ -283,7 +283,7 @@ def test_wrappers_on_strips_all_legacy_tools() -> None:
         "list_memory", "read_memory_body",
         "read_file", "write_file", "delete_file", "list_directory",
         "web_search", "web_fetch",
-        "reyn_src_list", "reyn_src_read",
+        "reyn_repo_list", "reyn_repo_read",
     ):
         assert legacy not in names, (
             f"Legacy tool {legacy!r} must be stripped when universal_wrappers_enabled=True"

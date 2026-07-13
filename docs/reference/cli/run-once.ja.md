@@ -33,7 +33,7 @@ prompt は stdin から全体を（行単位でなく）読みます。
 | `--max-iterations N` | 自律ループの 1 メッセージあたり tool-call 予算。デフォルト `80` — 対話 chat より高く、agent が explore → edit → verify を完了まで反復できる。 |
 | `--grant-file-write` | resolver 層で `file.read` + `file.write` を付与し、非対話 agent が prompt なしで working tree を編集できる（sandbox の write-paths で bound）。`reyn chat --grant-file-write` と同じ。 |
 | `--exclude-tools NAMES` | agent の LLM-visible カタログから隠すツール名（カンマ区切り、例 `web__search,web__fetch`）。`reyn chat --exclude-tools` と同じ。 |
-| `--exclude-categories NAMES` | カタログソースで隠すカテゴリ名（カンマ区切り、例: task に Reyn 自身のソースが無関係なら `reyn_source`）。`reyn chat --exclude-categories` と同じ。 |
+| `--exclude-categories NAMES` | カタログソースで隠すカテゴリ名（カンマ区切り、例: task に Reyn 自身のソースが無関係なら `reyn_repo`）。`reyn chat --exclude-categories` と同じ。 |
 
 environment-backend フラグと [共通フラグ](common-flags.md) は `reyn chat`
 と共有です。
@@ -64,7 +64,7 @@ cat task.md | reyn run-once coder --grant-file-write
 外部リポジトリ task で web ツールと Reyn-source カテゴリを隠す:
 
 ```bash
-cat task.md | reyn run-once --exclude-tools web__search,web__fetch --exclude-categories reyn_source
+cat task.md | reyn run-once --exclude-tools web__search,web__fetch --exclude-categories reyn_repo
 ```
 
 ## 関連

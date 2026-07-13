@@ -822,8 +822,8 @@ async def _exec_list_actions(args: dict) -> dict:
     return {"items": page, "total": total}
 
 
-_REYN_SOURCE_READ_DESCRIBE = (
-    # Production _REYN_SRC_READ_DESCRIPTION (reyn_src.py) verbatim.
+_REYN_REPO_READ_DESCRIBE = (
+    # Production _REYN_REPO_READ_DESCRIPTION (reyn_repo.py) verbatim.
     # No MUST language at the describe boundary — weak LLMs empty-stop
     # on MUST overload here; the SP-level Capabilities routing arrows
     # carry the chain instead.
@@ -831,7 +831,7 @@ _REYN_SOURCE_READ_DESCRIBE = (
     "repo-root-relative path. Use for: (a) reading a specific file the "
     "user named (e.g. README.md, src/reyn/runtime/...), or (b) navigating "
     "Reyn's source / docs when NO indexed source covers the topic. "
-    "Fallback entry point: reyn_src_read(\"README.md\") for the overview + "
+    "Fallback entry point: reyn_repo_read(\"README.md\") for the overview + "
     "curated map of deep-dive paths."
 )
 
@@ -850,7 +850,7 @@ async def _exec_describe_action(args: dict) -> dict:
     # Strengthen description for reyn.source__read with explicit next-step
     # directive; other actions get the stub description.
     if action_name == "reyn.source__read":
-        description = _REYN_SOURCE_READ_DESCRIBE
+        description = _REYN_REPO_READ_DESCRIBE
     else:
         description = (
             f"Action {action_name} dispatches to op {op_name}. "

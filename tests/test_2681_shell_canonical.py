@@ -4,7 +4,7 @@ The scout enumeration for FP-0056's CANONICAL_TODO burn-down (#2681) flagged tha
 missed ``shell`` (``reyn.tools.shell._handle``) as a TEXT-content producer: it returns bare subprocess
 STDOUT (``json.loads(stdout)`` when it parses, else the raw text), which under the provisional
 ``CANONICAL_TODO`` whole-dict fallback the LLM saw as an opaque ``structured`` blob instead of clean
-text — the same file-class latent bug the ``file``/``reyn_src`` 2026-07-09 dogfood incident produced.
+text — the same file-class latent bug the ``file``/``reyn_repo`` 2026-07-09 dogfood incident produced.
 
 ``shell_to_canonical`` mirrors ``sandboxed_exec_to_canonical``'s "stdout IS the text" treatment.
 ``shell``'s own ``_handle`` (locked #2593 design) surfaces ONLY stdout — ``stderr``/``returncode``

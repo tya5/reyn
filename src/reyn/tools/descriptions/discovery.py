@@ -62,7 +62,7 @@ semantic_search = ToolDescription(
         "'what is X?', 'explain X', 'how does X work?' style questions. "
         "Pick sources from the 'Indexed sources' section in the system "
         "prompt; each source's description tells you what topics it covers. "
-        "Prefer this over `reyn_src_read` / file_read when an indexed source "
+        "Prefer this over `reyn_repo_read` / file_read when an indexed source "
         "description matches the question's topic — semantic search across "
         "indexed chunks is more reliable than guessing a file path."
     ),
@@ -107,7 +107,7 @@ semantic_search_hide_legacy = ToolDescription(
         "level), not personal memory. "
         "Pick sources from the 'Indexed sources' section in the system prompt; "
         "each source's description tells you what topics it covers. "
-        "Prefer this over reyn_src_read / file_read when an indexed source "
+        "Prefer this over reyn_repo_read / file_read when an indexed source "
         "description matches the question's topic — semantic search across "
         "indexed chunks is more reliable than guessing a file path."
     ),

@@ -34,10 +34,10 @@ EXPECTED_TOOL_NAMES = [
     "web_fetch",
     # #1449: read_tool_result (the former E3) retired — its same-host read
     # folded into file__read; web_fetch's preview points there now.
-    # reyn_src_* are always exposed (F1, F2) — they read Reyn's own
+    # reyn_repo_* are always exposed (F1, F2) — they read Reyn's own
     # public OSS repo, not the user's files, so no permission gate.
-    "reyn_src_list",
-    "reyn_src_read",
+    "reyn_repo_list",
+    "reyn_repo_read",
     # semantic_search (renamed from recall, FP-0057 Phase 2a) + drop_source
     # (H1/H2, ADR-0033 Phase 1) — always exposed when the ToolRegistry
     # contains them (B17-S6-1 / B17-S8-2 fix).
@@ -102,7 +102,7 @@ def test_build_tools_returns_expected_baseline_tools():
     + web_fetch (E2, FP-0022: always on, handler-level approval)
     + read_tool_result (E3, B49 Step 2 v6 fix: lazy-expand half of the
     preview-driven design, surfaced for router-side use)
-    + reyn_src_list + reyn_src_read (F1/F2, always on)
+    + reyn_repo_list + reyn_repo_read (F1/F2, always on)
     + plan (G1, always on) + recall + drop_source (H1/H2, always on). compact
     (#272/#1128) is visibility-gated (off by default), so the unconfigured
     baseline is exactly EXPECTED_TOOL_NAMES. All file-class tools and MCP
@@ -230,7 +230,7 @@ def test_file_tools_omitted_when_no_permissions():
     dispatch layer would permit it — surfacing the tool implies the
     operator opted in.
 
-    For "explain Reyn itself" use cases, the always-on `reyn_src_*`
+    For "explain Reyn itself" use cases, the always-on `reyn_repo_*`
     tools cover the gap (= reading Reyn's own OSS repo, not user
     files).
     """
@@ -239,9 +239,9 @@ def test_file_tools_omitted_when_no_permissions():
     assert names.isdisjoint(FILE_TOOL_NAMES), (
         f"Expected no file tools, but found: {names & FILE_TOOL_NAMES}"
     )
-    # reyn_src_* DO show up (= unconditional, by design).
-    assert "reyn_src_list" in names
-    assert "reyn_src_read" in names
+    # reyn_repo_* DO show up (= unconditional, by design).
+    assert "reyn_repo_list" in names
+    assert "reyn_repo_read" in names
 
 
 def test_file_read_only_tools_present():
@@ -300,7 +300,7 @@ def test_total_tool_count_with_full_permissions():
     Full file + MCP permissions → 11 baseline + 4 file C1-C4
     + 2 web E1+E2 (web_search + web_fetch always on since FP-0022; #1449
     retired read_tool_result E3) + 4 MCP D1-D4
-    + 2 reyn_src F1-F2 + 1 plan G1
+    + 2 reyn_repo F1-F2 + 1 plan G1
     + 2 RAG H1-H2 (recall + drop_source)
     + 2 presentation (present + render_template, #2692) = 28 tools total.
     FP-0032: D4 describe_mcp_tool added alongside D1-D3.

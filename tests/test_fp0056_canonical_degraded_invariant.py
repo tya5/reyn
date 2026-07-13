@@ -43,7 +43,7 @@ from reyn.core.offload.canonical import (
     chunks_to_canonical,
     declare_canonical,
     file_to_canonical,
-    reyn_src_to_canonical,
+    reyn_repo_to_canonical,
     sandboxed_exec_to_canonical,
     web_search_to_canonical,
 )
@@ -120,7 +120,7 @@ def test_degraded_reason_none_for_legit_empty_now_explicit_mappers() -> None:
     - ``file`` read of an empty file → ``(empty file)``.
     - ``file`` grep / glob with 0 matches → ``(no matches)``.
     - ``sandboxed_exec`` with no stdout/stderr → ``(no output)``.
-    - ``reyn_src`` read of an empty file → ``(empty file)``."""
+    - ``reyn_repo`` read of an empty file → ``(empty file)``."""
     # file read, empty file (no media blocks) → explicit marker, non-empty text.
     read_empty = {"kind": "file", "op": "read", "status": "ok", "path": "empty.txt", "content": ""}
     c = file_to_canonical(read_empty)
@@ -145,9 +145,9 @@ def test_degraded_reason_none_for_legit_empty_now_explicit_mappers() -> None:
     assert ce["text"] == "(no output)"
     assert canonical_degraded_reason(exec0, ce) is None
 
-    # reyn_src read, empty file → "(empty file)".
+    # reyn_repo read, empty file → "(empty file)".
     rs_empty = {"content": "", "path": "docs/empty.md"}
-    cr = reyn_src_to_canonical(rs_empty)
+    cr = reyn_repo_to_canonical(rs_empty)
     assert cr["text"] == "(empty file)"
     assert canonical_degraded_reason(rs_empty, cr) is None
 

@@ -114,7 +114,7 @@ DEFAULT_HOT_LIST_SEED: tuple[str, ...] = (
     "file__glob",
     "file__write",
     # file__edit deferred — FP-0034 §D20.
-    "reyn_source__list",
+    "reyn_repo__list",
     "web__search",
     "web__fetch",
     "memory_operation__remember_shared",

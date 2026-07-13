@@ -66,7 +66,7 @@ adds an entry to the `CATEGORIES` tuple and one routing rule.
 | `web` | Web search + fetch | search or fetch |
 | `memory_entry` | Persistent memory records | read the entry's body |
 | `memory_operation` | Memory CRUD ops | `remember_shared` / `remember_agent` / `forget` |
-| `reyn_source` | Reyn source / docs (read-only) | read or list |
+| `reyn_repo` | Reyn source / docs (read-only) | read or list |
 | `rag_corpus` | Indexed corpora (resource) | semantic_search against this single source |
 | `rag_operation` | RAG management ops | multi-source semantic_search / drop source |
 | `exec` | Sandboxed argv execution | run argv under the sandbox backend |
@@ -95,7 +95,7 @@ visible.
 ```
 
 The separator is **double underscore** (`__`). Categories may contain
-dots (`agent.peer`, `rag_corpus`, `reyn_source`, …); entry names may
+dots (`agent.peer`, `rag_corpus`, `reyn_repo`, …); entry names may
 contain anything except the `__` sequence at the boundary. The split
 rule is "first `__` after the category name" so `agent.peer__alice`
 correctly parses as (`agent.peer`, `alice`).
@@ -114,7 +114,7 @@ Examples:
 
 OpenAI's native function-call API restricts tool names to
 `^[a-zA-Z0-9_-]{1,64}$` (= no `.`). Reyn's qualified names with
-dotted categories (`agent.peer`, `rag_corpus`, `reyn_source`, etc.)
+dotted categories (`agent.peer`, `rag_corpus`, `reyn_repo`, etc.)
 therefore **work via a LiteLLM proxy** but may be rejected by direct
 OpenAI native callers.
 
@@ -211,7 +211,7 @@ the routing:
 
 - **`_OPERATION_RULES`** — qualified name → `(target_tool_name,
   arg_transformer)` for static operation categories (file / web /
-  memory_operation / reyn_source / rag_operation / mcp).
+  memory_operation / reyn_repo / rag_operation / mcp).
 - **`_RESOURCE_RULES`** — category → `(target_tool_name,
   arg_transformer)` for resource categories whose entries come from
   `RouterCallerState` (workflows / agents / memory entries / rag corpora).

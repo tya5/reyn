@@ -88,7 +88,7 @@ def _names_used_in_source(src: str) -> set[str]:
     return names
 
 
-def _reyn_src_root() -> Path:
+def _reyn_repo_root() -> Path:
     """Return the path to ``src/reyn/`` (the production code tree)."""
     return Path(inspect.getfile(reyn)).resolve().parent
 
@@ -118,7 +118,7 @@ def test_no_os_caller_uses_legacy_intervention_bus_name() -> None:
     waiver — "全 OS caller が新 ``RequestBus`` import を grep + Tier
     2 で verify".
     """
-    reyn_root = _reyn_src_root()
+    reyn_root = _reyn_repo_root()
     project_root = reyn_root.parent.parent  # .../src → project root
     leaks: list[str] = []
 

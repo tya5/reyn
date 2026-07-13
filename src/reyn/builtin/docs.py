@@ -8,7 +8,7 @@ the git-ignored ``src/reyn/builtin/reference/``). Proposal 0061 supersedes
 that mechanism entirely: the Hatchling build backend's
 ``force-include`` (``pyproject.toml``
 ``[tool.hatch.build.targets.wheel.force-include]``) ships README/CHANGELOG/
-all of ``docs/`` into every wheel directly, and ``reyn.runtime.reyn_src``'s
+all of ``docs/`` into every wheel directly, and ``reyn.runtime.reyn_repo``'s
 dual-mode ``resolve_reyn_root()`` reaches them in both dev and wheel installs
 — ``read_builtin_doc`` had zero production callers (only test/smoke) and is
 retired along with the mirror it depended on. See

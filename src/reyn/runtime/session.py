@@ -770,7 +770,7 @@ class Session:
         retry_config: "object | None" = None,  # #1835: reyn.yaml llm.retry.* timing config
         agent_id: str | None = None,
         exclude_tools: "frozenset[str] | set[str] | None" = None,  # #187: tool names hidden from the LLM catalog (e.g. web for faithful eval)
-        excluded_categories: "frozenset[str] | set[str] | None" = None,  # #1667: catalog categories hidden at source (e.g. reyn_source for external-repo eval)
+        excluded_categories: "frozenset[str] | set[str] | None" = None,  # #1667: catalog categories hidden at source (e.g. reyn_repo for external-repo eval)
         contextual_permission: "object | None" = None,  # #1827 S3: per-session capability_profile narrowing (ContextualPermission); from registry.resolved_profile_for; None = byte-identical
         task_backend: "object | None" = None,  # #1953 slice 3a: session-scoped Task backend instance (injected by the session factory); None → op-runtime in-memory fallback
         task_waker: "object | None" = None,  # #1953 slice 7: the OS TaskWaker driver (injected by the session factory); None → op-runtime no-op stub
@@ -922,8 +922,8 @@ class Session:
         # untrusted external content is live in context. None until first needed.
         self._untrusted_contextual_cache = None
         # #1667: catalog categories hidden at the universal-catalog source (e.g.
-        # reyn_source on the external-repo eval path so it doesn't compete with
-        # file__* for the weak model); interactive default empty = reyn_source kept.
+        # reyn_repo on the external-repo eval path so it doesn't compete with
+        # file__* for the weak model); interactive default empty = reyn_repo kept.
         self._excluded_categories = frozenset(excluded_categories or ())
         # #2285: session-scoped LLM tool-VISIBILITY override — the capabilities the user toggled OFF
         # via the status-bar, per kind. Applied as one more restrict-only ∩ conjunct ON TOP of the
@@ -2706,7 +2706,7 @@ class Session:
         it can only be MORE restrictive than the ``sid=None`` value it replaces (the
         per-session config is an extra ∩ conjunct, never a re-grant). ``excluded_categories``
         is UNIONED (never overwritten) so it composes with any construction-time view
-        narrowing (e.g. the #1667 eval ``reyn_source`` exclusions, which are not
+        narrowing (e.g. the #1667 eval ``reyn_repo`` exclusions, which are not
         capability-profile-derived).
         """
         self._contextual_permission = contextual_permission

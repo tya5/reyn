@@ -424,7 +424,7 @@ def build_tools(
     # align the two layers (= unconditional tool exposure) was reverted
     # because it dragged the chat router into the user-file protection
     # surface. Reyn's own source / docs are accessed via the dedicated
-    # `reyn_src_*` tools (see section F below), which carry no
+    # `reyn_repo_*` tools (see section F below), which carry no
     # permission-protected content and so don't need this gate.
     _file_read = (file_permissions or {}).get("read") or []
     _file_write = (file_permissions or {}).get("write") or []
@@ -525,7 +525,7 @@ def build_tools(
 
     # ── F. Reyn-source tools (always present, no permission) ────────────────
     #
-    # `reyn_src_list` / `reyn_src_read` give the agent read access to
+    # `reyn_repo_list` / `reyn_repo_read` give the agent read access to
     # **Reyn's own** repository (= the project where pyproject.toml
     # declares Reyn). They serve a single use case: when the user asks
     # how Reyn works or wants a deep-dive into its implementation, the
@@ -543,26 +543,26 @@ def build_tools(
     # pair so the LLM's tool-use pattern is consistent across both
     # Reyn-source and user-file access.
 
-    # ── F1: reyn_src_list ────────────────────────────────────────────────────
-    _reyn_src_list_def = _registry.lookup("reyn_src_list")
-    if _reyn_src_list_def is not None and _reyn_src_list_def.gates.router == "allow":
-        _reyn_src_list_rendered = _reyn_src_list_def.render_for_router()
+    # ── F1: reyn_repo_list ────────────────────────────────────────────────────
+    _reyn_repo_list_def = _registry.lookup("reyn_repo_list")
+    if _reyn_repo_list_def is not None and _reyn_repo_list_def.gates.router == "allow":
+        _reyn_repo_list_rendered = _reyn_repo_list_def.render_for_router()
         specs.append(ToolSpec(
-            name=_reyn_src_list_rendered["function"]["name"],
-            description=_reyn_src_list_rendered["function"]["description"],
-            parameters=_reyn_src_list_rendered["function"]["parameters"],
-            dispatch_kind=_reyn_src_list_def.dispatch_kind,
+            name=_reyn_repo_list_rendered["function"]["name"],
+            description=_reyn_repo_list_rendered["function"]["description"],
+            parameters=_reyn_repo_list_rendered["function"]["parameters"],
+            dispatch_kind=_reyn_repo_list_def.dispatch_kind,
         ))
 
-    # ── F2: reyn_src_read ────────────────────────────────────────────────────
-    _reyn_src_read_def = _registry.lookup("reyn_src_read")
-    if _reyn_src_read_def is not None and _reyn_src_read_def.gates.router == "allow":
-        _reyn_src_read_rendered = _reyn_src_read_def.render_for_router()
+    # ── F2: reyn_repo_read ────────────────────────────────────────────────────
+    _reyn_repo_read_def = _registry.lookup("reyn_repo_read")
+    if _reyn_repo_read_def is not None and _reyn_repo_read_def.gates.router == "allow":
+        _reyn_repo_read_rendered = _reyn_repo_read_def.render_for_router()
         specs.append(ToolSpec(
-            name=_reyn_src_read_rendered["function"]["name"],
-            description=_reyn_src_read_rendered["function"]["description"],
-            parameters=_reyn_src_read_rendered["function"]["parameters"],
-            dispatch_kind=_reyn_src_read_def.dispatch_kind,
+            name=_reyn_repo_read_rendered["function"]["name"],
+            description=_reyn_repo_read_rendered["function"]["description"],
+            parameters=_reyn_repo_read_rendered["function"]["parameters"],
+            dispatch_kind=_reyn_repo_read_def.dispatch_kind,
         ))
 
     # ── H. RAG tools (always present when registered) ────────────────────────
@@ -574,7 +574,7 @@ def build_tools(
     # gates.router="allow"); no operator config is required to expose
     # them — they appear unconditionally when the registry contains them.
     #
-    # ADR-0033 Phase 1: wired here after the reyn_src cluster (F) and before
+    # ADR-0033 Phase 1: wired here after the reyn_repo cluster (F) and before
     # MCP (D) so the LLM sees them as first-class tools rather than
     # capability-gated extras.
     #
@@ -915,7 +915,7 @@ def build_tools(
             "semantic_search", "drop_source",
             "read_file", "write_file", "delete_file", "list_directory",
             "web_search", "web_fetch",
-            "reyn_src_list", "reyn_src_read",
+            "reyn_repo_list", "reyn_repo_read",
         })
         specs = [s for s in specs if s.name not in _LEGACY_TOOL_NAMES]
 

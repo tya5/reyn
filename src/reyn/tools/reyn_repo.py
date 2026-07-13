@@ -1,10 +1,10 @@
-"""reyn_src_list / reyn_src_read ToolDefinitions — Wave 1 of M3 (ADR-0026).
+"""reyn_repo_list / reyn_repo_read ToolDefinitions — Wave 1 of M3 (ADR-0026).
 
 Both capabilities are router-only dev-mode tools (gates.router="allow",
 gates.phase="deny"). Phase doesn't need this; dev-debug is an
 operator-side concern, not an agent-author concern.
 
-The existing resolver in src/reyn/runtime/reyn_src.py is preserved and
+The existing resolver in src/reyn/runtime/reyn_repo.py is preserved and
 called directly from each handler (no OpContext shim needed — these
 tools are pure filesystem reads with no workspace or events coupling).
 """
@@ -16,14 +16,14 @@ from reyn.tools.descriptions import dev as _dev_descriptions
 from reyn.tools.types import ToolContext, ToolDefinition, ToolGates, ToolResult
 
 
-def _as_reyn_src(result: dict) -> dict:
-    """Tag a ``reyn.runtime.reyn_src`` helper result with ``kind:"reyn_src"`` so the offload seam
-    (``core/offload/canonical.py``) routes it through the dedicated ``reyn_src`` mapper — the file body
+def _as_reyn_repo(result: dict) -> dict:
+    """Tag a ``reyn.runtime.reyn_repo`` helper result with ``kind:"reyn_repo"`` so the offload seam
+    (``core/offload/canonical.py``) routes it through the dedicated ``reyn_repo`` mapper — the file body
     / listing / match lines become the LLM-readable ``text`` — instead of the whole-dict ``structured``
     fallback that confused the agent in the FP-0056 dogfood incident (a doc read surfaced as a 600-char
     JSON-dict preview). The runtime helpers stay pure (no ``kind``); tagging lives at this tool seam,
     which is the only consumer of their results."""
-    result["kind"] = "reyn_src"
+    result["kind"] = "reyn_repo"
     return result
 
 # router_tools.py derives its rendered description from this ToolDefinition
@@ -40,11 +40,11 @@ def _as_reyn_src(result: dict) -> dict:
 # ``docs/concepts`` actually existing at the repo root.
 # Relocated to reyn.tools.descriptions.dev (Phase 3 tool-description
 # package refactor — byte-identical, no LLM-facing text change).
-_REYN_SRC_LIST_DESCRIPTION = _dev_descriptions.reyn_src_list.text
+_REYN_REPO_LIST_DESCRIPTION = _dev_descriptions.reyn_repo_list.text
 
 # Parameters JSON schema must be byte-identical to the current
-# router_tools.py ToolSpec.parameters for reyn_src_list.
-_REYN_SRC_LIST_PARAMETERS: dict[str, Any] = {
+# router_tools.py ToolSpec.parameters for reyn_repo_list.
+_REYN_REPO_LIST_PARAMETERS: dict[str, Any] = {
     "type": "object",
     "properties": {
         "path": {"type": "string"},
@@ -66,24 +66,24 @@ _REYN_SRC_LIST_PARAMETERS: dict[str, Any] = {
 #  - web_search avoidance retained (= original HN first-touch motivation)
 # Relocated to reyn.tools.descriptions.dev (Phase 3 tool-description
 # package refactor — byte-identical, no LLM-facing text change).
-_REYN_SRC_READ_DESCRIPTION = _dev_descriptions.reyn_src_read.text
+_REYN_REPO_READ_DESCRIPTION = _dev_descriptions.reyn_repo_read.text
 
-# Parameters JSON schema for reyn_src_read. Mirrors ``read_file`` /
+# Parameters JSON schema for reyn_repo_read. Mirrors ``read_file`` /
 # ``read_memory_body`` shape (= line-based ``offset`` / ``limit``) so the
 # three "read one entry" surfaces are parameter-symmetric. When the
 # slice args are provided, the 256-KB byte cap is bypassed — only the
 # requested slice is materialised so a large file can be partially read.
-_REYN_SRC_READ_PARAMETERS: dict[str, Any] = {
+_REYN_REPO_READ_PARAMETERS: dict[str, Any] = {
     "type": "object",
     "properties": {
         "path": {"type": "string"},
         "offset": {
             "type": "integer",
-            "description": _dev_descriptions.PARAMS["reyn_src_read"]["offset"].text,
+            "description": _dev_descriptions.PARAMS["reyn_repo_read"]["offset"].text,
         },
         "limit": {
             "type": "integer",
-            "description": _dev_descriptions.PARAMS["reyn_src_read"]["limit"].text,
+            "description": _dev_descriptions.PARAMS["reyn_repo_read"]["limit"].text,
         },
     },
     "required": ["path"],
@@ -91,14 +91,14 @@ _REYN_SRC_READ_PARAMETERS: dict[str, Any] = {
 
 
 async def _handle_list(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
-    """Handler for reyn_src_list.
+    """Handler for reyn_repo_list.
 
-    Delegates to reyn.runtime.reyn_src helpers which are the canonical
+    Delegates to reyn.runtime.reyn_repo helpers which are the canonical
     implementation. No OpContext shim needed — these helpers are pure
     filesystem reads that don't access workspace or events.
     """
     # Lazy import to avoid circular dependency at registry-init time.
-    from reyn.runtime.reyn_src import (
+    from reyn.runtime.reyn_repo import (
         list_entries,
         resolve_reyn_root,
         safe_resolve_inside,
@@ -108,23 +108,23 @@ async def _handle_list(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
     try:
         root = resolve_reyn_root()
     except RuntimeError as exc:
-        return _as_reyn_src({"error": str(exc)})
+        return _as_reyn_repo({"error": str(exc)})
     try:
         target = safe_resolve_inside(root, path)
     except ValueError as exc:
-        return _as_reyn_src({"error": str(exc)})
-    return _as_reyn_src(list_entries(root, target, path))
+        return _as_reyn_repo({"error": str(exc)})
+    return _as_reyn_repo(list_entries(root, target, path))
 
 
 async def _handle_read(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
-    """Handler for reyn_src_read.
+    """Handler for reyn_repo_read.
 
-    Delegates to reyn.runtime.reyn_src helpers which are the canonical
+    Delegates to reyn.runtime.reyn_repo helpers which are the canonical
     implementation. No OpContext shim needed — these helpers are pure
     filesystem reads that don't access workspace or events.
     """
     # Lazy import to avoid circular dependency at registry-init time.
-    from reyn.runtime.reyn_src import (
+    from reyn.runtime.reyn_repo import (
         read_text,
         resolve_reyn_root,
         safe_resolve_inside,
@@ -134,14 +134,14 @@ async def _handle_read(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
     try:
         root = resolve_reyn_root()
     except RuntimeError as exc:
-        return _as_reyn_src({"error": str(exc)})
+        return _as_reyn_repo({"error": str(exc)})
     try:
         target = safe_resolve_inside(root, path)
     except ValueError as exc:
-        return _as_reyn_src({"error": str(exc)})
+        return _as_reyn_repo({"error": str(exc)})
     offset_raw = args.get("offset")
     limit_raw = args.get("limit")
-    return _as_reyn_src(read_text(
+    return _as_reyn_repo(read_text(
         target,
         path,
         offset=int(offset_raw) if offset_raw is not None else None,
@@ -151,14 +151,14 @@ async def _handle_read(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
 
 # Relocated to reyn.tools.descriptions.dev (Phase 3 tool-description
 # package refactor — byte-identical, no LLM-facing text change).
-_REYN_SRC_GLOB_DESCRIPTION = _dev_descriptions.reyn_src_glob.text
+_REYN_REPO_GLOB_DESCRIPTION = _dev_descriptions.reyn_repo_glob.text
 
-_REYN_SRC_GLOB_PARAMETERS: dict[str, Any] = {
+_REYN_REPO_GLOB_PARAMETERS: dict[str, Any] = {
     "type": "object",
     "properties": {
         "pattern": {
             "type": "string",
-            "description": _dev_descriptions.PARAMS["reyn_src_glob"]["pattern"].text,
+            "description": _dev_descriptions.PARAMS["reyn_repo_glob"]["pattern"].text,
         },
     },
     "required": ["pattern"],
@@ -166,30 +166,30 @@ _REYN_SRC_GLOB_PARAMETERS: dict[str, Any] = {
 
 # Relocated to reyn.tools.descriptions.dev (Phase 3 tool-description
 # package refactor — byte-identical, no LLM-facing text change).
-_REYN_SRC_GREP_DESCRIPTION = _dev_descriptions.reyn_src_grep.text
+_REYN_REPO_GREP_DESCRIPTION = _dev_descriptions.reyn_repo_grep.text
 
-_REYN_SRC_GREP_PARAMETERS: dict[str, Any] = {
+_REYN_REPO_GREP_PARAMETERS: dict[str, Any] = {
     "type": "object",
     "properties": {
         "pattern": {
             "type": "string",
-            "description": _dev_descriptions.PARAMS["reyn_src_grep"]["pattern"].text,
+            "description": _dev_descriptions.PARAMS["reyn_repo_grep"]["pattern"].text,
         },
         "path": {
             "type": "string",
-            "description": _dev_descriptions.PARAMS["reyn_src_grep"]["path"].text,
+            "description": _dev_descriptions.PARAMS["reyn_repo_grep"]["path"].text,
         },
         "glob": {
             "type": "string",
-            "description": _dev_descriptions.PARAMS["reyn_src_grep"]["glob"].text,
+            "description": _dev_descriptions.PARAMS["reyn_repo_grep"]["glob"].text,
         },
         "case_sensitive": {
             "type": "boolean",
-            "description": _dev_descriptions.PARAMS["reyn_src_grep"]["case_sensitive"].text,
+            "description": _dev_descriptions.PARAMS["reyn_repo_grep"]["case_sensitive"].text,
         },
         "max_results": {
             "type": "integer",
-            "description": _dev_descriptions.PARAMS["reyn_src_grep"]["max_results"].text,
+            "description": _dev_descriptions.PARAMS["reyn_repo_grep"]["max_results"].text,
         },
     },
     "required": ["pattern"],
@@ -197,27 +197,27 @@ _REYN_SRC_GREP_PARAMETERS: dict[str, Any] = {
 
 
 async def _handle_glob(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
-    """Handler for reyn_src_glob."""
-    from reyn.runtime.reyn_src import glob_entries, resolve_reyn_root
+    """Handler for reyn_repo_glob."""
+    from reyn.runtime.reyn_repo import glob_entries, resolve_reyn_root
 
     pattern = args.get("pattern", "")
     try:
         root = resolve_reyn_root()
     except RuntimeError as exc:
-        return _as_reyn_src({"error": str(exc)})
-    return _as_reyn_src(glob_entries(root, pattern))
+        return _as_reyn_repo({"error": str(exc)})
+    return _as_reyn_repo(glob_entries(root, pattern))
 
 
 async def _handle_grep(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
-    """Handler for reyn_src_grep."""
-    from reyn.runtime.reyn_src import grep_entries, resolve_reyn_root
+    """Handler for reyn_repo_grep."""
+    from reyn.runtime.reyn_repo import grep_entries, resolve_reyn_root
 
     pattern = args.get("pattern", "")
     try:
         root = resolve_reyn_root()
     except RuntimeError as exc:
-        return _as_reyn_src({"error": str(exc)})
-    return _as_reyn_src(grep_entries(
+        return _as_reyn_repo({"error": str(exc)})
+    return _as_reyn_repo(grep_entries(
         root,
         pattern=pattern,
         path=args.get("path", ""),
@@ -227,48 +227,48 @@ async def _handle_grep(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
     ))
 
 
-from reyn.core.offload.canonical import reyn_src_to_canonical  # noqa: E402
+from reyn.core.offload.canonical import reyn_repo_to_canonical  # noqa: E402
 
-REYN_SRC_LIST = ToolDefinition(
-    canonical=reyn_src_to_canonical,
-    name="reyn_src_list",
+REYN_REPO_LIST = ToolDefinition(
+    canonical=reyn_repo_to_canonical,
+    name="reyn_repo_list",
     router_dispatched=True,
-    description=_REYN_SRC_LIST_DESCRIPTION,
-    parameters=_REYN_SRC_LIST_PARAMETERS,
+    description=_REYN_REPO_LIST_DESCRIPTION,
+    parameters=_REYN_REPO_LIST_PARAMETERS,
     gates=ToolGates(router="allow", phase="deny"),
     handler=_handle_list,
     purity="read_only",
     category="dev",
 )
 
-REYN_SRC_READ = ToolDefinition(
-    canonical=reyn_src_to_canonical,
-    name="reyn_src_read",
+REYN_REPO_READ = ToolDefinition(
+    canonical=reyn_repo_to_canonical,
+    name="reyn_repo_read",
     router_dispatched=True,
-    description=_REYN_SRC_READ_DESCRIPTION,
-    parameters=_REYN_SRC_READ_PARAMETERS,
+    description=_REYN_REPO_READ_DESCRIPTION,
+    parameters=_REYN_REPO_READ_PARAMETERS,
     gates=ToolGates(router="allow", phase="deny"),
     handler=_handle_read,
     purity="read_only",
     category="dev",
 )
 
-REYN_SRC_GLOB = ToolDefinition(
-    canonical=reyn_src_to_canonical,
-    name="reyn_src_glob",
-    description=_REYN_SRC_GLOB_DESCRIPTION,
-    parameters=_REYN_SRC_GLOB_PARAMETERS,
+REYN_REPO_GLOB = ToolDefinition(
+    canonical=reyn_repo_to_canonical,
+    name="reyn_repo_glob",
+    description=_REYN_REPO_GLOB_DESCRIPTION,
+    parameters=_REYN_REPO_GLOB_PARAMETERS,
     gates=ToolGates(router="allow", phase="deny"),
     handler=_handle_glob,
     purity="read_only",
     category="dev",
 )
 
-REYN_SRC_GREP = ToolDefinition(
-    canonical=reyn_src_to_canonical,
-    name="reyn_src_grep",
-    description=_REYN_SRC_GREP_DESCRIPTION,
-    parameters=_REYN_SRC_GREP_PARAMETERS,
+REYN_REPO_GREP = ToolDefinition(
+    canonical=reyn_repo_to_canonical,
+    name="reyn_repo_grep",
+    description=_REYN_REPO_GREP_DESCRIPTION,
+    parameters=_REYN_REPO_GREP_PARAMETERS,
     gates=ToolGates(router="allow", phase="deny"),
     handler=_handle_grep,
     purity="read_only",

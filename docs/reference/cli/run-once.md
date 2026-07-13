@@ -34,7 +34,7 @@ The prompt is read from stdin in full (not line by line).
 | `--max-iterations N` | Per-message tool-call budget for the autonomous loop. Default `80` — higher than interactive chat so the agent can iterate explore → edit → verify to completion. |
 | `--grant-file-write` | Grant `file.read` + `file.write` at the resolver layer so the non-interactive agent edits its working tree without a prompt (bounded by the sandbox write-paths). Same as `reyn chat --grant-file-write`. |
 | `--exclude-tools NAMES` | Comma-separated tool names to hide from the agent's LLM-visible catalog (e.g. `web__search,web__fetch`). Same as `reyn chat --exclude-tools`. |
-| `--exclude-categories NAMES` | Comma-separated catalog category names to hide at the catalog source (e.g. `reyn_source` when the agent's own source is irrelevant to the task). Same as `reyn chat --exclude-categories`. |
+| `--exclude-categories NAMES` | Comma-separated catalog category names to hide at the catalog source (e.g. `reyn_repo` when the agent's own source is irrelevant to the task). Same as `reyn chat --exclude-categories`. |
 
 Environment-backend flags and the [common flags](common-flags.md) are shared with
 `reyn chat`.
@@ -66,7 +66,7 @@ cat task.md | reyn run-once coder --grant-file-write
 Hide web tools and the Reyn-source category for an external-repo task:
 
 ```bash
-cat task.md | reyn run-once --exclude-tools web__search,web__fetch --exclude-categories reyn_source
+cat task.md | reyn run-once --exclude-tools web__search,web__fetch --exclude-categories reyn_repo
 ```
 
 ## See also

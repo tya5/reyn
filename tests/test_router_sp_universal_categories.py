@@ -95,7 +95,7 @@ def test_flag_on_lists_all_categories() -> None:
         "mcp",
         "file", "web",
         "memory_entry", "memory_operation",
-        "reyn_source",
+        "reyn_repo",
         "rag_corpus", "rag_operation",
         "exec",
     ):

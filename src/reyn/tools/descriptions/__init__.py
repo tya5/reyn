@@ -13,7 +13,7 @@ completes tool-LEVEL relocation with the remaining feature-area buckets:
 ``cron``, ``hooks``, ``presentation``, ``catalog`` (peer-agent browse +
 ``invoke_action``), ``interactive``, ``context``, ``pipeline`` (launch
 verbs), ``pipeline_management`` (install verbs), ``skill`` (install
-verbs), ``dev`` (``reyn_src_*``), and ``task`` (the 12 ``task.*``
+verbs), ``dev`` (``reyn_repo_*``), and ``task`` (the 12 ``task.*``
 control-IR ops — the one module lifted out of a data-tuple rather than
 ``_X_DESCRIPTION`` constants; see ``descriptions.task``'s docstring).
 Each origin tool module keeps a

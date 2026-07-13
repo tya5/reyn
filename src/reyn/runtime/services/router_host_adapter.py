@@ -969,7 +969,7 @@ class RouterHostAdapter:
         ctx = self.make_router_op_context()
         return await handle_web_fetch(op, ctx)
 
-    async def reyn_src_list(self, *, path: str) -> dict:
+    async def reyn_repo_list(self, *, path: str) -> dict:
         """List entries under ``<reyn_root>/path``.
 
         See :func:`_resolve_reyn_root` for root resolution and
@@ -977,7 +977,7 @@ class RouterHostAdapter:
         Returns ``{path, entries: [{name, type}]}`` on success or
         ``{error}`` on failure.
         """
-        from reyn.runtime.reyn_src import (
+        from reyn.runtime.reyn_repo import (
             list_entries,
             resolve_reyn_root,
             safe_resolve_inside,
@@ -992,9 +992,9 @@ class RouterHostAdapter:
             return {"error": str(exc)}
         return list_entries(root, target, path)
 
-    async def reyn_src_read(self, *, path: str) -> dict:
+    async def reyn_repo_read(self, *, path: str) -> dict:
         """Read text at ``<reyn_root>/path``."""
-        from reyn.runtime.reyn_src import (
+        from reyn.runtime.reyn_repo import (
             read_text,
             resolve_reyn_root,
             safe_resolve_inside,

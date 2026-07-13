@@ -546,7 +546,7 @@ class RouterLoopCore(Protocol):
     era; the phase host — ``PhaseRouterLoopHost`` — was deleted in #2438, so chat
     is the only production implementor today.)
 
-    The chat-extras (agents/mcp/memory/web/file/reyn_src/embedding/
+    The chat-extras (agents/mcp/memory/web/file/reyn_repo/embedding/
     discovery/spawn/send_to_agent) live on ``RouterLoopHost`` below; they are
     reached only via the chat-discovery setup, the chat system-prompt build, or
     chat-dispatch handlers.
@@ -679,7 +679,7 @@ class RouterLoopHost(RouterLoopCore, Protocol):
         """RouterLoopHost: invoke the OS-native web/fetch op."""
         ...
 
-    async def reyn_src_list(self, *, path: str) -> dict:
+    async def reyn_repo_list(self, *, path: str) -> dict:
         """RouterLoopHost: list entries under ``<reyn_root>/path``.
 
         ``reyn_root`` resolves to the directory containing
@@ -688,7 +688,7 @@ class RouterLoopHost(RouterLoopCore, Protocol):
         repo root, returns an error result so the LLM can fall back."""
         ...
 
-    async def reyn_src_read(self, *, path: str) -> dict:
+    async def reyn_repo_read(self, *, path: str) -> dict:
         """RouterLoopHost: read the file at ``<reyn_root>/path`` as text."""
         ...
 
@@ -841,7 +841,7 @@ def _filter_ghost_names_by_registry(
       at hot-list build time). Required parameter — caller must supply
       the enumerated set (possibly empty when no entries exist).
     - Operation categories (``file__*``, ``web__*``, ``memory_operation__*``,
-      ``reyn_source__*``, ``rag_operation__*``, ``mcp.operation__*``,
+      ``reyn_repo__*``, ``rag_operation__*``, ``mcp.operation__*``,
       ``exec__*``) → must be in ``KNOWN_STATIC_QUALIFIED_NAMES`` (static
       op registry).
     - ``rag_corpus__*`` is currently routed through the static check; it
@@ -985,7 +985,7 @@ def _build_hot_list_aliases(
     for name in names:
         # D2-min: for operation-category aliases (= passthrough rules in
         # ``_OPERATION_RULES``: web__*, file__*, memory_operation__*,
-        # reyn_source__*, rag_operation__*, mcp.operation__*, exec__*),
+        # reyn_repo__*, rag_operation__*, mcp.operation__*, exec__*),
         # surface the target ToolDefinition's real description + JSON
         # schema directly. Without this the alias arrives at the LLM as
         # `description: "Direct alias for X. Use invoke_action for schema
@@ -2800,7 +2800,7 @@ class RouterLoop:
         )
         # FP-0056 PR-F1: tag the INVOKED IDENTITY at the common router-dispatch funnel so the
         # feedback() chokepoint canonicalizes by what was called, not result["kind"] (data a producer
-        # may not set — the reyn_src incident class). ``setdefault``: a wrapper handler (invoke_action)
+        # may not set — the reyn_repo incident class). ``setdefault``: a wrapper handler (invoke_action)
         # already tagged the DEEPER resolved target inside ``data`` — that wins (extract_canonical_
         # source takes the deepest); a direct call has only this outer tag = the named tool.
         if isinstance(result, dict):

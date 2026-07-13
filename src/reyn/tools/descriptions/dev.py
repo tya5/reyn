@@ -1,19 +1,19 @@
 """Tool descriptions for the ``dev`` category.
 
 Phase 3 of the tool-description package refactor (byte-identical
-relocation — no LLM-facing text change): the four ``reyn_src_*``
+relocation — no LLM-facing text change): the four ``reyn_repo_*``
 router-only dev-mode tools (ADR-0026 M3 Wave 1) that browse Reyn's own
-repository — ``reyn_src_list`` / ``reyn_src_read`` / ``reyn_src_glob`` /
-``reyn_src_grep``. Each ``.text`` value is copied verbatim from
-``tools/reyn_src.py``; the origin module now aliases its
-``_REYN_SRC_*_DESCRIPTION`` constants to ``dev.NAME.text``.
+repository — ``reyn_repo_list`` / ``reyn_repo_read`` / ``reyn_repo_glob`` /
+``reyn_repo_grep``. Each ``.text`` value is copied verbatim from
+``tools/reyn_repo.py``; the origin module now aliases its
+``_REYN_REPO_*_DESCRIPTION`` constants to ``dev.NAME.text``.
 """
 from __future__ import annotations
 
 from reyn.tools.descriptions._types import ParamDescription, ToolDescription
 
-reyn_src_list = ToolDescription(
-    tool_name="reyn_src_list",
+reyn_repo_list = ToolDescription(
+    tool_name="reyn_repo_list",
     surfaced="router-only (gates.router=allow, gates.phase=deny)",
     purpose=(
         "Discover Reyn's own source/doc layout (repo root or a "
@@ -38,8 +38,8 @@ reyn_src_list = ToolDescription(
     ),
 )
 
-reyn_src_read = ToolDescription(
-    tool_name="reyn_src_read",
+reyn_repo_read = ToolDescription(
+    tool_name="reyn_repo_read",
     surfaced="router-only (gates.router=allow, gates.phase=deny)",
     purpose=(
         "Read one named file from Reyn's own repository by exact path, "
@@ -54,7 +54,7 @@ reyn_src_read = ToolDescription(
         "If an indexed source description mentions concepts / design / "
         "docs / Reyn, use `semantic_search` instead — guessing a file path is "
         "unreliable; semantic search over indexed chunks is not. Fallback "
-        "entry point: reyn_src_read(\"README.md\") for the overview + "
+        "entry point: reyn_repo_read(\"README.md\") for the overview + "
         "curated map of deep-dive paths."
     ),
     ja=(
@@ -65,38 +65,38 @@ reyn_src_read = ToolDescription(
     ),
 )
 
-reyn_src_glob = ToolDescription(
-    tool_name="reyn_src_glob",
+reyn_repo_glob = ToolDescription(
+    tool_name="reyn_repo_glob",
     surfaced="router-only (gates.router=allow, gates.phase=deny)",
     purpose=(
         "Enumerate files in Reyn's own repository by structural glob "
-        "pattern, distinct from content search (reyn_src_grep) and "
-        "single-file read (reyn_src_read)."
+        "pattern, distinct from content search (reyn_repo_grep) and "
+        "single-file read (reyn_repo_read)."
     ),
     text=(
         "Find files in Reyn's own repository by glob pattern (e.g. "
         "'docs/**/*.md', 'src/**/router*.py'). Returns up to 200 "
         "repo-root-relative paths, alphabetically sorted. Use this when "
         "you need to enumerate files matching a structural pattern; for "
-        "content search use reyn_src_grep, for a single named file use "
-        "reyn_src_read."
+        "content search use reyn_repo_grep, for a single named file use "
+        "reyn_repo_read."
     ),
     ja=(
         "Reyn 自身のリポジトリ内のファイルを glob パターン（例: "
         "'docs/**/*.md'）で検索する。最大200件のリポジトリルート相対パ"
         "スをアルファベット順に返す。構造的パターンでファイルを列挙し"
-        "たい場合に使う。内容検索には reyn_src_grep、単一ファイルの読"
-        "み込みには reyn_src_read を使う。"
+        "たい場合に使う。内容検索には reyn_repo_grep、単一ファイルの読"
+        "み込みには reyn_repo_read を使う。"
     ),
 )
 
-reyn_src_grep = ToolDescription(
-    tool_name="reyn_src_grep",
+reyn_repo_grep = ToolDescription(
+    tool_name="reyn_repo_grep",
     surfaced="router-only (gates.router=allow, gates.phase=deny)",
     purpose=(
         "Search Reyn's own repository contents by regex, for 'where is X "
         "handled in the source' style questions, distinct from structural "
-        "enumeration (reyn_src_glob) and single-file read (reyn_src_read)."
+        "enumeration (reyn_repo_glob) and single-file read (reyn_repo_read)."
     ),
     text=(
         "Search file contents in Reyn's own repository by regex. Returns "
@@ -104,32 +104,32 @@ reyn_src_grep = ToolDescription(
         "search (default = whole repo); `glob` further narrows by filename "
         "(e.g. '**/*.py'). Use this for 'where in the Reyn source is X "
         "handled' style questions; for structural enumeration use "
-        "reyn_src_glob, for reading one known file use reyn_src_read."
+        "reyn_repo_glob, for reading one known file use reyn_repo_read."
     ),
     ja=(
         "Reyn 自身のリポジトリ内のファイル内容を正規表現で検索する。最"
         "大50件の一致を {path, line, snippet} として返す。'X はソース"
         "のどこで処理されているか' 式の質問に使う。構造的な列挙には "
-        "reyn_src_glob、既知の1ファイルの読み込みには reyn_src_read を"
+        "reyn_repo_glob、既知の1ファイルの読み込みには reyn_repo_read を"
         "使う。"
     ),
 )
 
 ALL: dict[str, ToolDescription] = {
-    "reyn_src_list": reyn_src_list,
-    "reyn_src_read": reyn_src_read,
-    "reyn_src_glob": reyn_src_glob,
-    "reyn_src_grep": reyn_src_grep,
+    "reyn_repo_list": reyn_repo_list,
+    "reyn_repo_read": reyn_repo_read,
+    "reyn_repo_glob": reyn_repo_glob,
+    "reyn_repo_grep": reyn_repo_grep,
 }
 
 
 # ── Phase 4: per-parameter descriptions (byte-identical relocation) ──────────
 #
-# reyn_src_list has no param-level description (path is bare-typed) — no
+# reyn_repo_list has no param-level description (path is bare-typed) — no
 # entry needed.
 
 PARAMS: dict[str, dict[str, ParamDescription]] = {
-    "reyn_src_read": {
+    "reyn_repo_read": {
         "offset": ParamDescription(
             text=(
                 "Line number to start reading from (0-indexed). "
@@ -151,13 +151,13 @@ PARAMS: dict[str, dict[str, ParamDescription]] = {
             ja="`offset` から読む行数。省略時はファイル末尾まで読む。",
         ),
     },
-    "reyn_src_glob": {
+    "reyn_repo_glob": {
         "pattern": ParamDescription(
             text="Glob pattern (e.g. '**/*.py', 'docs/**/*.md').",
             ja="glob パターン（例 '**/*.py', 'docs/**/*.md'）。",
         ),
     },
-    "reyn_src_grep": {
+    "reyn_repo_grep": {
         "pattern": ParamDescription(
             text="Regex pattern (Python `re` syntax).",
             ja="正規表現パターン（Python `re` 構文）。",

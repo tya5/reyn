@@ -227,7 +227,7 @@ def _passthrough_args(
 # Each rule is a tuple ``(target_tool_name, arg_transformer)``.
 #
 # Categories with multiple discrete entry-name choices (file, web,
-# memory_operation, reyn_source, rag_operation) list each pair
+# memory_operation, reyn_repo, rag_operation) list each pair
 # explicitly. Resource categories (mcp, memory_entry, rag_corpus)
 # use the entry_name as the resource id and so have a single rule
 # per category.
@@ -276,12 +276,12 @@ _OPERATION_RULES: Final[dict[str, tuple[str, Callable[[str, Mapping[str, Any]], 
     "memory_operation__remember_agent":  ("remember_agent",  _passthrough_args),
     "memory_operation__forget":          ("forget_memory",   _passthrough_args),
 
-    # reyn_source category — §D20 surface: read / list / glob / grep.
+    # reyn_repo category — §D20 surface: read / list / glob / grep.
     # FP-0038 closed the glob / grep gap (= S2 + S3).
-    "reyn_source__read": ("reyn_src_read", _passthrough_args),
-    "reyn_source__list": ("reyn_src_list", _passthrough_args),
-    "reyn_source__glob": ("reyn_src_glob", _passthrough_args),
-    "reyn_source__grep": ("reyn_src_grep", _passthrough_args),
+    "reyn_repo__read": ("reyn_repo_read", _passthrough_args),
+    "reyn_repo__list": ("reyn_repo_list", _passthrough_args),
+    "reyn_repo__glob": ("reyn_repo_glob", _passthrough_args),
+    "reyn_repo__grep": ("reyn_repo_grep", _passthrough_args),
 
     # rag_operation category (FP-0057 Phase 2a: rag_operation__recall renamed
     # rag_operation__semantic_search — clean-break alongside the recall ->
@@ -530,7 +530,7 @@ def known_qualified_name_for_category(category: str) -> tuple[str, ...]:
     rag_corpus) return an empty tuple because their entries are dynamic
     (= populated by caller state in PR-3).
 
-    Operation categories (file / web / memory_operation / reyn_source /
+    Operation categories (file / web / memory_operation / reyn_repo /
     rag_operation / mcp / exec) return the qualified names this module
     has routing rules for. ``mcp__drop_server`` is a static verb
     (= PR-4 landed). ``exec``

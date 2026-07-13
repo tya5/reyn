@@ -21,16 +21,16 @@ interpret:
                     LLM does next. ``isError`` is retained as the sole error-path driver.
 
 FP-0056 PR-F1 — coverage enforcement by construction (this module's endgame). The pre-F1 design had
-two structural defects the 2026-07-09 dogfood incident exposed (a ``reyn_source__read`` doc read
+two structural defects the 2026-07-09 dogfood incident exposed (a ``reyn_repo__read`` doc read
 offloaded as a whole-dict ``structured`` blob instead of the readable body):
 
 1. **Free-floating ``_MAPPERS`` dict, hand-synced with the op/tool registries.** Nothing forced
-   "registered a producer" to imply "declared its LLM-visible shape", so ``file`` / ``reyn_src`` /
+   "registered a producer" to imply "declared its LLM-visible shape", so ``file`` / ``reyn_repo`` /
    admin ops silently took the fallback. **Fix:** the canonical declaration is now *born at the
    registration seam* — an op kind declares it through ``op_runtime.register(kind, handler,
    canonical=…)``; a router ``ToolDefinition`` declares it through its required ``canonical`` field.
    ``_MAPPERS`` is gone; declarations live in :data:`_DECLARATIONS`, populated from both seams.
-2. **Dispatch sniffed ``result["kind"]`` — data a producer may not even set (``reyn_src`` had none).**
+2. **Dispatch sniffed ``result["kind"]`` — data a producer may not even set (``reyn_repo`` had none).**
    **Fix:** :func:`to_canonical` dispatches on the *invoked identity* (``source=`` — the tool/op the
    chokepoint called), NOT the result dict. ``result["kind"]`` stops being load-bearing for
    canonicalization; it stays ordinary result data. This fixes the kind-less-handler class outright.
@@ -89,7 +89,7 @@ class _StructuredPassthrough:
 # STRUCTURED_PASSTHROUGH — the explicit, greppable, reviewable opt-in a producer declares when its
 # whole result dict legitimately IS the right LLM view (no single text body to surface). Behaves
 # identically to the lossless whole-dict fallback, but is a *declared* choice, not a silent one — the
-# framework's whole point (the file/reyn_src incident was a silent fallback, not a reviewed decision).
+# framework's whole point (the file/reyn_repo incident was a silent fallback, not a reviewed decision).
 STRUCTURED_PASSTHROUGH = _StructuredPassthrough()
 
 
@@ -130,7 +130,7 @@ UNDECLARED = _Undeclared()
 
 class CanonicalDiscriminatorMiss(Exception):
     """Raised by an inner-dispatch mapper when its inner discriminator (the sub-field it switches on —
-    ``file``'s ``op``, ``reyn_src``'s ``content``/``entries``/``matches`` body key) is MISSING or an
+    ``file``'s ``op``, ``reyn_repo``'s ``content``/``entries``/``matches`` body key) is MISSING or an
     UNKNOWN value, so the mapper cannot render a success view (FP-0056 v2 piece #3, mode M3).
 
     The mapper raises this instead of falling through to a status-only catch-all that interpolates the
@@ -203,7 +203,7 @@ def _is_error(result: dict) -> bool:
 # FP-0056 v2 piece #1 — the shared error seam (the M1-class linchpin).
 #
 # The dedicated error-MESSAGE fields, in extractor priority order. This IS the true union of the
-# per-mapper error branches removed in piece #1 (``file``/``reyn_src``/``render_template``/``compact``/
+# per-mapper error branches removed in piece #1 (``file``/``reyn_repo``/``render_template``/``compact``/
 # ``present``/``judge_output``/``memory_body``/``web_search`` — and the recall/task_ops ``{ok:False,
 # error_message}`` that had NO branch, the #2698 gap). Every one of those producers surfaces its error
 # through one of these fields, so keying the predicate on them (not on the ambiguous ``status``/``ok``
@@ -665,11 +665,11 @@ def _render_file_status(op: "str | None", result: dict) -> str:
     raise CanonicalDiscriminatorMiss(f"_render_file_status: unhandled op {op!r}")
 
 
-def reyn_src_to_canonical(result: dict) -> CanonicalToolResult:
-    """``reyn_src_*`` handler result (read/list/glob/grep) → canonical. These handlers return a
+def reyn_repo_to_canonical(result: dict) -> CanonicalToolResult:
+    """``reyn_repo_*`` handler result (read/list/glob/grep) → canonical. These handlers return a
     kind-less ``{path, content}`` / ``{entries}`` / ``{matches}`` dict — the dogfood incident root: a
-    doc read via ``reyn_source__read`` was offloaded as a whole-dict ``structured`` blob instead of the
-    readable body. Under PR-F1 the ``reyn_src_*`` ToolDefinitions *declare* this mapper (identity
+    doc read via ``reyn_repo__read`` was offloaded as a whole-dict ``structured`` blob instead of the
+    readable body. Under PR-F1 the ``reyn_repo_*`` ToolDefinitions *declare* this mapper (identity
     dispatch), so the result no longer needs a ``kind`` field to route here.
 
     - ``read`` (``content``) → the file body as ``text`` (``path`` is signal meta).
@@ -706,11 +706,11 @@ def reyn_src_to_canonical(result: dict) -> CanonicalToolResult:
         return CanonicalToolResult(
             text=text or "(no matches)", attachments=[], source_ref=None, meta={},
         )
-    # A reyn_src shape with none of the known bodies (content/entries/matches) — discriminator-miss.
+    # A reyn_repo shape with none of the known bodies (content/entries/matches) — discriminator-miss.
     # Fail-visible (M3): raise so ``to_canonical`` takes the lossless whole-dict fallback AND fires
     # ``canonical_fallback_used``, instead of an inline whole-dict return that was recoverable but
     # SILENT (unaudited).
-    raise CanonicalDiscriminatorMiss("reyn_src_to_canonical: no content/entries/matches body key")
+    raise CanonicalDiscriminatorMiss("reyn_repo_to_canonical: no content/entries/matches body key")
 
 
 def render_template_to_canonical(result: dict) -> CanonicalToolResult:
@@ -1238,7 +1238,7 @@ def ask_user_to_canonical(result: dict) -> CanonicalToolResult:
 # error-message field (``error`` / ``error_message`` / ``error_kind``) or ``isError``, so the shared
 # error seam (piece #1, ``is_error_result`` in :func:`to_canonical`) intercepts it BEFORE any of these
 # mappers runs — no per-mapper error branch needed here (mirrors ``file_to_canonical`` /
-# ``reyn_src_to_canonical`` / the rest of this module's success-only mappers).
+# ``reyn_repo_to_canonical`` / the rest of this module's success-only mappers).
 
 
 def _bounded_join(records: Any, key: str, *, limit: int = 10) -> str:
@@ -1531,7 +1531,7 @@ def _fallback_structured(result: dict, *, discriminator_miss: bool = False) -> C
 def to_canonical(result: dict, *, source: "str | None" = None) -> CanonicalToolResult:
     """Normalize an op/tool result dict to :class:`CanonicalToolResult`, dispatching on the **invoked
     identity** ``source`` (the op kind / tool name the chokepoint called — FP-0056 PR-F1), NOT on
-    ``result["kind"]`` (which a producer may not set — the ``reyn_src`` incident class).
+    ``result["kind"]`` (which a producer may not set — the ``reyn_repo`` incident class).
 
     - ``source`` declared with a mapper → the mapper shapes the result.
     - ``source`` declared ``STRUCTURED_PASSTHROUGH`` (reviewed) or ``CANONICAL_TODO`` (provisional,

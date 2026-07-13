@@ -64,10 +64,10 @@ ABOUT_REYN_ITSELF_SUFFIX = (
 #      actually invoke — invoke_action(...) under wrappers, the flat qualified
 #      call otherwise (#1977).
 REYN_SELF_CALL_WRAPPERS_ON = (
-    " `invoke_action(action_name=\"reyn_source__read\","
+    " `invoke_action(action_name=\"reyn_repo__read\","
     " args={\"path\": \"README.md\"})`"
 )
-REYN_SELF_CALL_WRAPPERS_OFF = " `reyn_source__read(path=\"README.md\")`"
+REYN_SELF_CALL_WRAPPERS_OFF = " `reyn_repo__read(path=\"README.md\")`"
 
 ABOUT_EXTERNAL_LINE = (
     "- About external / current information: `web__search` or"
@@ -81,7 +81,7 @@ TASK_PERFORM_HEADER = "**A task to perform** — pick by target shape:"
 SINGLE_TARGET_PREFIX = (
     "- Single-target action (= one file, one URL, one"
     " item): if the action is obvious (`file__read` for \"read this"
-    " file\", `reyn_source__read` for \"open Reyn doc X\", `web__fetch`"
+    " file\", `reyn_repo__read` for \"open Reyn doc X\", `web__fetch`"
     " for a specific URL), invoke directly. "
 )
 
@@ -214,7 +214,7 @@ ACTION_CATEGORIES_LINES = [
     "- **web** — web search and content fetch.",
     "- **memory_entry** — persistent memory records; invoke to read body.",
     "- **memory_operation** — memory CRUD (remember_shared / remember_agent / forget).",
-    "- **reyn_source** — Reyn source/docs (read-only).",
+    "- **reyn_repo** — Reyn source/docs (read-only).",
     "- **rag_corpus** — indexed corpora; invoke with `query` for single-source semantic search.",
     "- **rag_operation** — RAG management (multi-source semantic_search, drop_source).",
     "- **exec** — sandboxed argv execution (only when sandbox backend is enabled).",

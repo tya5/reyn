@@ -1,9 +1,9 @@
 """Tier 2: read-side ``offset`` / ``limit`` symmetry across the three
-"read one entry" surfaces — ``read_file``, ``reyn_src_read``,
+"read one entry" surfaces — ``read_file``, ``reyn_repo_read``,
 ``read_memory_body``.
 
 Before this contract: only ``read_file``'s underlying ``FileIROp`` slice
-support existed, hidden from the router schema; ``reyn_src_read`` had a
+support existed, hidden from the router schema; ``reyn_repo_read`` had a
 hard 256-KB error path with no slice escape; ``read_memory_body`` had no
 slice at all. That meant the LLM either got the full content (potentially
 blowing up its context window) or nothing.
@@ -15,7 +15,7 @@ These tests pin the new symmetric behaviour:
 - Slicing is line-based and operates on the content the LLM would
   otherwise see (= after frontmatter strip for memory entries).
 - ``offset`` past EOF returns an empty body (= not an error).
-- ``reyn_src_read``: when slice args are present the 256-KB byte cap is
+- ``reyn_repo_read``: when slice args are present the 256-KB byte cap is
   bypassed (= a giant file is partially readable).
 - Argument-omitted shape is unchanged (= existing callers still get the
   full body).
@@ -30,12 +30,12 @@ from pathlib import Path
 
 import pytest
 
-from reyn.runtime.reyn_src import read_text, resolve_reyn_root, safe_resolve_inside
+from reyn.runtime.reyn_repo import read_text, resolve_reyn_root, safe_resolve_inside
 
-# ── reyn_src_read slice semantics ────────────────────────────────────────────
+# ── reyn_repo_read slice semantics ────────────────────────────────────────────
 
 
-def test_reyn_src_read_full_body_when_no_slice_args(tmp_path: Path) -> None:
+def test_reyn_repo_read_full_body_when_no_slice_args(tmp_path: Path) -> None:
     """Tier 2: omitting ``offset`` / ``limit`` reads the whole file —
     backwards-compatible with prior callers."""
     f = tmp_path / "small.txt"
@@ -44,7 +44,7 @@ def test_reyn_src_read_full_body_when_no_slice_args(tmp_path: Path) -> None:
     assert result["content"] == "alpha\nbeta\ngamma\n"
 
 
-def test_reyn_src_read_offset_only_skips_leading_lines(tmp_path: Path) -> None:
+def test_reyn_repo_read_offset_only_skips_leading_lines(tmp_path: Path) -> None:
     """Tier 2: ``offset=N`` starts at line N (0-indexed); ``limit`` omitted
     means "read to end-of-file"."""
     f = tmp_path / "five.txt"
@@ -53,7 +53,7 @@ def test_reyn_src_read_offset_only_skips_leading_lines(tmp_path: Path) -> None:
     assert result["content"] == "L2\nL3\nL4\n"
 
 
-def test_reyn_src_read_limit_only_takes_first_n(tmp_path: Path) -> None:
+def test_reyn_repo_read_limit_only_takes_first_n(tmp_path: Path) -> None:
     """Tier 2: ``limit=N`` without ``offset`` takes the first N lines."""
     f = tmp_path / "five.txt"
     f.write_text("L0\nL1\nL2\nL3\nL4\n", encoding="utf-8")
@@ -61,7 +61,7 @@ def test_reyn_src_read_limit_only_takes_first_n(tmp_path: Path) -> None:
     assert result["content"] == "L0\nL1\n"
 
 
-def test_reyn_src_read_offset_and_limit_window(tmp_path: Path) -> None:
+def test_reyn_repo_read_offset_and_limit_window(tmp_path: Path) -> None:
     """Tier 2: combining ``offset`` + ``limit`` materialises the
     ``[offset, offset+limit)`` line window."""
     f = tmp_path / "five.txt"
@@ -70,7 +70,7 @@ def test_reyn_src_read_offset_and_limit_window(tmp_path: Path) -> None:
     assert result["content"] == "L1\nL2\n"
 
 
-def test_reyn_src_read_offset_past_eof_is_empty(tmp_path: Path) -> None:
+def test_reyn_repo_read_offset_past_eof_is_empty(tmp_path: Path) -> None:
     """Tier 2: ``offset`` greater than the line count returns empty
     content — never an error. The LLM can detect "out of range" without
     a structured failure path."""
@@ -81,7 +81,7 @@ def test_reyn_src_read_offset_past_eof_is_empty(tmp_path: Path) -> None:
     assert result["content"] == ""
 
 
-def test_reyn_src_read_slice_bypasses_byte_cap(tmp_path: Path) -> None:
+def test_reyn_repo_read_slice_bypasses_byte_cap(tmp_path: Path) -> None:
     """Tier 2: when slice args are present, the 256-KB hard cap is bypassed.
 
     Without slice args a >256-KB file errors with "larger than the cap";
@@ -104,7 +104,7 @@ def test_reyn_src_read_slice_bypasses_byte_cap(tmp_path: Path) -> None:
     assert sliced["content"] == "line 10\nline 11\nline 12\n"
 
 
-def test_reyn_src_read_slice_on_actual_repo_file() -> None:
+def test_reyn_repo_read_slice_on_actual_repo_file() -> None:
     """Tier 2: end-to-end slice against a real file in the Reyn repo
     (= README.md). Confirms ``resolve_reyn_root`` + ``safe_resolve_inside``
     + sliced ``read_text`` compose correctly for the LLM-visible path."""
@@ -175,7 +175,7 @@ def test_memory_slice_body_lines_window() -> None:
 
 def test_memory_slice_body_lines_past_eof_is_empty() -> None:
     """Tier 2: offset past the body's last line returns empty string,
-    matching the reyn_src_read past-EOF semantic."""
+    matching the reyn_repo_read past-EOF semantic."""
     from reyn.tools.memory import _slice_body_lines
 
     body = "line0\nline1\n"
@@ -187,23 +187,23 @@ def test_memory_slice_body_lines_past_eof_is_empty() -> None:
 
 def test_all_four_read_schemas_share_offset_limit_shape() -> None:
     """Tier 2: the "read one entry" LLM-callable surfaces — ``read_file``,
-    ``reyn_src_read``, ``read_memory_body`` — expose the same ``offset`` /
+    ``reyn_repo_read``, ``read_memory_body`` — expose the same ``offset`` /
     ``limit`` line-slice arguments in their LLM-visible parameter schemas, with
     identical types (integer) and optional status (not in ``required``).
 
     This is the symmetry contract — adding a slice arg to one surface and
     not the others would silently regress to the pre-PR asymmetry. The
-    surfaces were established by PR #409 (= read_file / reyn_src_read /
+    surfaces were established by PR #409 (= read_file / reyn_repo_read /
     read_memory_body). (#1449: read_tool_result, the #385-Q7 fourth surface,
     was retired — its same-host read folded into read_file.)
     """
     from reyn.tools.file import _READ_FILE_PARAMETERS
     from reyn.tools.memory import _READ_MEMORY_BODY_PARAMETERS
-    from reyn.tools.reyn_src import _REYN_SRC_READ_PARAMETERS
+    from reyn.tools.reyn_repo import _REYN_REPO_READ_PARAMETERS
 
     for label, schema in [
         ("read_file", _READ_FILE_PARAMETERS),
-        ("reyn_src_read", _REYN_SRC_READ_PARAMETERS),
+        ("reyn_repo_read", _REYN_REPO_READ_PARAMETERS),
         ("read_memory_body", _READ_MEMORY_BODY_PARAMETERS),
     ]:
         props = schema["properties"]
