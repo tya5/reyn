@@ -148,8 +148,14 @@ def test_pipe_run_async_flag_parses_but_is_rejected_at_runtime(capsys):
 
 
 def test_list_shows_loaded_and_failed_entries(tmp_path, monkeypatch, capsys):
-    """Tier 2: a working entry shows 'loaded'; a broken one (missing file)
-    shows 'FAILED' — #2641's per-entry isolation surfaced visibly by the CLI."""
+    """Tier 2: a working entry shows 'loaded' under its RUNNABLE (compound)
+    name — #2722 always namespaces, so 'good_one' (declared name 'good_one')
+    registers as 'good_one.good_one', and that is what NAME shows now (list/run
+    consistency fix — see test_list_shows_runnable_compound_name_when_declared_name_differs
+    for the case that actually exposes the pre-fix bug). A broken entry
+    (missing file) shows 'FAILED' keyed by its bare entry-key (nothing
+    runnable was registered) — #2641's per-entry isolation surfaced visibly
+    by the CLI, unaffected by this fix."""
     monkeypatch.chdir(tmp_path)
 
     working_dsl = (
@@ -173,8 +179,46 @@ def test_list_shows_loaded_and_failed_entries(tmp_path, monkeypatch, capsys):
 
     out = capsys.readouterr().out
     lines = {ln.split()[0]: ln for ln in out.splitlines() if ln and not ln.startswith("─")}
-    assert "loaded" in lines["good_one"]
+    # FALSIFY: pre-fix, NAME showed the bare entry-key 'good_one' here — a
+    # name `reyn pipe run good_one` (bare) would previously 404 on, since the
+    # registry only ever held 'good_one.good_one'. Asserting the COMPOUND key
+    # is present (and the bare key is NOT a row) pins the fix.
+    assert "loaded" in lines["good_one.good_one"]
+    assert "good_one" not in lines
     assert "FAILED" in lines["missing_one"]
+
+
+def test_list_shows_runnable_compound_name_when_declared_name_differs(
+    tmp_path, monkeypatch, capsys,
+):
+    """Tier 2: the exact owner-reported trap — an entry-key that differs from
+    the DSL's declared 'pipeline:' name. Pre-fix, 'reyn pipe list' printed the
+    bare entry-key ('my_key') in NAME, but 'reyn pipe run' only accepted the
+    registered compound name ('my_key.actual_name'), so copy-pasting the NAME
+    column into 'run' 404'd. This test pins that 'list' now shows the exact
+    runnable name.
+
+    FALSIFY: assert the compound name IS a row and the bare entry-key is NOT
+    — a regression back to showing the bare key would make the first
+    assertion KeyError and the second assertion fail."""
+    monkeypatch.chdir(tmp_path)
+
+    dsl = (
+        "pipeline: actual_name\n"
+        "description: declared name differs from entry key\n"
+        "steps:\n"
+        "  - transform: {value: \"ctx.x\", output: y}\n"
+    )
+    (tmp_path / "pipelines").mkdir()
+    (tmp_path / "pipelines" / "p.yaml").write_text(dsl, encoding="utf-8")
+    _write_reyn_yaml(tmp_path, {"my_key": {"path": "pipelines/p.yaml"}})
+
+    run_list(_ns())
+
+    out = capsys.readouterr().out
+    lines = {ln.split()[0]: ln for ln in out.splitlines() if ln and not ln.startswith("─")}
+    assert "loaded" in lines["my_key.actual_name"]
+    assert "my_key" not in lines
 
 
 def test_list_no_project_root_prints_message(tmp_path, monkeypatch, capsys):
@@ -303,6 +347,117 @@ def test_run_transform_pipeline_end_to_end(tmp_path, monkeypatch, capsys):
     result = json.loads(out)
     assert result["pipe_data"] == "hello world"
     assert result["named_stores"]["greeting"] == "hello world"
+
+
+def test_run_bare_entry_key_resolves_when_unambiguous(tmp_path, monkeypatch, capsys):
+    """Tier 2: list/run consistency fix, direction 2 — 'reyn pipe run
+    <bare-entry-key>' now resolves + runs when the key unambiguously matches
+    exactly one registered pipeline (here 'my_key' -> 'my_key.actual_name'),
+    printing a 'note: resolved ...' to stderr for transparency. This is the
+    owner-confirmed-working full-name form's shorter counterpart; before this
+    fix ONLY the full 'my_key.actual_name' form worked and the bare key 404'd.
+
+    FALSIFY: assert the pipeline's real output landed (not just no-exit-1) —
+    a broken resolution that silently no-ops would not produce this JSON."""
+    monkeypatch.chdir(tmp_path)
+
+    dsl_path = tmp_path / "p.yaml"
+    dsl_path.write_text(
+        "pipeline: actual_name\n"
+        "steps:\n"
+        "  - transform: {value: \"'hi ' + ctx.name\", output: greeting}\n",
+        encoding="utf-8",
+    )
+    _write_reyn_yaml(tmp_path, {"my_key": {"path": "p.yaml"}})
+
+    args = _ns(
+        name="my_key", input=json.dumps({"name": "reyn"}),
+        project=str(tmp_path), async_=False,
+    )
+    run_run(args)
+
+    captured = capsys.readouterr()
+    result = json.loads(captured.out)
+    assert result["named_stores"]["greeting"] == "hi reyn"
+    assert "resolved 'my_key' -> 'my_key.actual_name'" in captured.err
+
+
+def test_run_bare_entry_key_ambiguous_errors_with_candidates(tmp_path, monkeypatch, capsys):
+    """Tier 2: a bare entry-key that maps to MORE than one registered
+    pipeline is refused with an actionable ambiguity error listing every
+    candidate, rather than silently guessing one. A single config entry
+    registers exactly one pipeline (#2722's ``{key}.{declared-name}``), so
+    this drives the real ambiguity source directly: patch
+    ``build_pipeline_registry`` (imported locally inside ``run_run``, so
+    patching the module attribute it resolves from at call time is enough)
+    to additionally register a second pipeline under the same 'multi.'
+    namespace, mirroring a multi-pipeline DSL file/directory entry.
+
+    FALSIFY: assert BOTH candidate full names appear in the error and the
+    process exits non-zero — a silent pick-first-one regression would exit 0
+    with only one name ever surfaced."""
+    monkeypatch.chdir(tmp_path)
+
+    dsl_path = tmp_path / "p.yaml"
+    dsl_path.write_text(
+        "pipeline: one\nsteps:\n  - transform: {value: \"1\", output: o}\n",
+        encoding="utf-8",
+    )
+    _write_reyn_yaml(tmp_path, {"multi": {"path": "p.yaml"}})
+
+    import reyn.data.pipelines.registry as pipelines_registry_mod
+    real_build = pipelines_registry_mod.build_pipeline_registry
+
+    def _fake_build_pipeline_registry(pipelines_cfg, project_root, strict=False):
+        from reyn.core.pipeline.executor import Pipeline, TransformStep
+
+        reg = real_build(pipelines_cfg, project_root, strict=strict)
+        reg.register(
+            "multi.two",
+            Pipeline(steps=[TransformStep(value="2", output="o")], name="multi.two"),
+        )
+        return reg
+
+    monkeypatch.setattr(
+        pipelines_registry_mod, "build_pipeline_registry", _fake_build_pipeline_registry,
+    )
+
+    args = _ns(name="multi", input="{}", project=str(tmp_path), async_=False)
+    with pytest.raises(SystemExit) as exc_info:
+        run_run(args)
+    assert exc_info.value.code == 1
+    err = capsys.readouterr().err
+    assert "ambiguous" in err.lower()
+    assert "multi.one" in err
+    assert "multi.two" in err
+
+
+def test_run_full_qualified_name_still_works_no_regression(tmp_path, monkeypatch, capsys):
+    """Tier 2: the fast-path (fully-qualified '{key}.{declared-name}') that
+    already worked before this fix keeps working unchanged — the fallback
+    resolution only engages on PipelineNotFoundError, so a correct
+    fully-qualified name never touches the new resolution branch at all."""
+    monkeypatch.chdir(tmp_path)
+
+    dsl_path = tmp_path / "p.yaml"
+    dsl_path.write_text(
+        "pipeline: actual_name\n"
+        "steps:\n"
+        "  - transform: {value: \"'hi ' + ctx.name\", output: greeting}\n",
+        encoding="utf-8",
+    )
+    _write_reyn_yaml(tmp_path, {"my_key": {"path": "p.yaml"}})
+
+    args = _ns(
+        name="my_key.actual_name", input=json.dumps({"name": "reyn"}),
+        project=str(tmp_path), async_=False,
+    )
+    run_run(args)
+
+    captured = capsys.readouterr()
+    result = json.loads(captured.out)
+    assert result["named_stores"]["greeting"] == "hi reyn"
+    assert "resolved" not in captured.err  # no fallback note — fast path taken
 
 
 def test_run_unregistered_pipeline_is_clean_error(tmp_path, monkeypatch, capsys):

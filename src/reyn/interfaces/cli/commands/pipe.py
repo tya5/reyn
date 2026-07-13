@@ -205,8 +205,13 @@ def register(sub) -> None:
         "name",
         metavar="NAME",
         help=(
-            "Registered pipeline's fully-qualified name "
-            "'<entry-key>.<declared-pipeline-name>' (see `reyn pipe list`)."
+            "Registered pipeline's name, as shown by `reyn pipe list` "
+            "(the fully-qualified '<entry-key>.<declared-pipeline-name>' "
+            "form). A bare '<entry-key>' is also accepted and resolved "
+            "automatically when it unambiguously matches exactly one "
+            "registered pipeline under that key's namespace; if the key "
+            "registers more than one pipeline, the fully-qualified name "
+            "is required."
         ),
     )
     run_p.add_argument(
@@ -274,6 +279,17 @@ def run_list(args: argparse.Namespace) -> None:
     per-entry-isolation posture) shows FAILED here, so ``reyn pipe list`` is a
     first-class way to SEE load failures without digging through
     dogfood_trace/logs.
+
+    NAME column (list/run consistency fix): a loaded entry shows the
+    ACTUAL registered name(s) — the RUNNABLE ``{key}.{declared-name}``
+    form ``reyn pipe run`` accepts via ``PipelineRegistry.get`` — never
+    the bare entry-key. An entry that registers more than one pipeline
+    (a DSL file with siblings, or an entry path that is a directory)
+    gets one row per runnable name, so every NAME printed here is
+    directly copy-pasteable into ``reyn pipe run``. A FAILED/disabled
+    entry registered nothing runnable, so it still shows the bare
+    entry-key (the diagnostic identity, not a runnable name) alongside
+    its status — unchanged from #2722.
     """
     from reyn.config import load_config
     from reyn.data.pipelines.registry import build_pipeline_registry
@@ -310,13 +326,19 @@ def run_list(args: argparse.Namespace) -> None:
         description = str(raw.get("description") or "")
         enabled = bool(raw.get("enabled", True))
         if not enabled:
-            status = "disabled"
-        elif any(n == key or n.startswith(f"{key}.") for n in loaded_names):
-            # #2722: a healthy entry registers under the `{key}.` namespace.
-            status = "loaded"
-        else:
-            status = "FAILED"
-        rows.append((key, path, description, "yes" if enabled else "no", status))
+            rows.append((key, path, description, "no", "disabled"))
+            continue
+        # #2722: a healthy entry registers under the `{key}.` namespace —
+        # possibly more than one name (a multi-pipeline DSL file / dir entry).
+        runnable_names = sorted(
+            n for n in loaded_names if n == key or n.startswith(f"{key}.")
+        )
+        if not runnable_names:
+            rows.append((key, path, description, "yes", "FAILED"))
+            continue
+        for runnable_name in runnable_names:
+            # every NAME shown here is exactly what `reyn pipe run` accepts.
+            rows.append((runnable_name, path, description, "yes", "loaded"))
 
     _W_NAME = max((len(r[0]) for r in rows), default=4)
     _W_NAME = max(_W_NAME, 4)
@@ -648,12 +670,36 @@ def run_run(args: argparse.Namespace) -> None:
         pipeline = pipeline_registry.get(name)
         schema_registry = pipeline_registry.get_schema_registry(name)
     except PipelineNotFoundError:
-        print(
-            f"error: pipeline '{name}' is not registered. "
-            "Run 'reyn pipe list' to see available pipelines.",
-            file=sys.stderr,
+        # list/run consistency fallback: `name` may be a bare entry-key
+        # (what `reyn pipe list` used to show before this fix, and what an
+        # operator may reasonably still type) rather than the fully-
+        # qualified `{key}.{declared-name}` registered form. Resolve it
+        # against the registry's own namespace, not by re-deriving the
+        # `pipelines.entries` cascade a second time.
+        candidates = sorted(
+            n for n in pipeline_registry.names()
+            if n == name or n.startswith(f"{name}.")
         )
-        sys.exit(1)
+        if len(candidates) == 1:
+            resolved = candidates[0]
+            print(f"note: resolved '{name}' -> '{resolved}'", file=sys.stderr)
+            name = resolved
+            pipeline = pipeline_registry.get(name)
+            schema_registry = pipeline_registry.get_schema_registry(name)
+        elif len(candidates) > 1:
+            print(
+                f"error: '{name}' is ambiguous — matches: "
+                f"{', '.join(candidates)}. Run one explicitly.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        else:
+            print(
+                f"error: pipeline '{name}' is not registered. "
+                "Run 'reyn pipe list' to see available pipelines.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
 
     # #2708 P3.2b: there is no conditional credential pre-check on this
     # per-surface startup path. The missing-cred check lives on the single LLM

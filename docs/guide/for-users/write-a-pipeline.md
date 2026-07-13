@@ -216,11 +216,11 @@ Config written to: .reyn/config/pipelines.yaml
 ...
 
 $ reyn pipe list
-NAME   PATH                      DESCRIPTION                  ENABLED  LOAD STATUS
-────────────────────────────────────────────────────────────────────────────────
-greet  pipelines/greet.yaml      Greet a name and shout it    yes      loaded
+NAME         PATH                      DESCRIPTION                  ENABLED  LOAD STATUS
+──────────────────────────────────────────────────────────────────────────────────────
+greet.greet  pipelines/greet.yaml      Greet a name and shout it    yes      loaded
 
-$ reyn pipe run greet --input '{"name": "Reyn"}'
+$ reyn pipe run greet.greet --input '{"name": "Reyn"}'
 {
   "pipe_data": {"text": "Hello, Reyn! (shouted)"},
   "named_stores": {
@@ -237,10 +237,20 @@ pipeline's identity up front — a mismatch against the DSL's own declared
 `pipeline:` name is refused with a clear error rather than silently diverging
 the two.
 
+`reyn pipe list`'s **NAME** column always shows the exact runnable name(s) —
+what `reyn pipe run` accepts — for a `loaded` entry, so anything printed there
+can be pasted straight into `reyn pipe run` without translation. `reyn pipe
+run` also accepts the bare entry-key (`greet` instead of `greet.greet`) when
+it unambiguously matches exactly one registered pipeline, printing a `note:
+resolved '<key>' -> '<full-name>'` to stderr so the resolution is transparent;
+if the key registers more than one pipeline, `run` reports the ambiguity and
+lists the candidates rather than guessing.
+
 `reyn pipe list`'s **LOAD STATUS** column is the direct way to see a broken
 entry without digging through logs: an entry that is `enabled: true` but
 failed to parse (bad DSL, missing file, a duplicate declared name) shows
-`FAILED` right there, instead of just silently not appearing anywhere.
+`FAILED` right there (keyed by its entry-key, since nothing runnable was
+registered), instead of just silently not appearing anywhere.
 
 `reyn pipe run` executes the pipeline **standalone, in the CLI process
 itself** — every step kind runs, including `tool:` and `agent:`. A `tool:`

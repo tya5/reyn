@@ -143,11 +143,11 @@ Config written to: .reyn/config/pipelines.yaml
 ...
 
 $ reyn pipe list
-NAME   PATH                      DESCRIPTION                  ENABLED  LOAD STATUS
-────────────────────────────────────────────────────────────────────────────────
-greet  pipelines/greet.yaml      Greet a name and shout it    yes      loaded
+NAME         PATH                      DESCRIPTION                  ENABLED  LOAD STATUS
+──────────────────────────────────────────────────────────────────────────────────────
+greet.greet  pipelines/greet.yaml      Greet a name and shout it    yes      loaded
 
-$ reyn pipe run greet --input '{"name": "Reyn"}'
+$ reyn pipe run greet.greet --input '{"name": "Reyn"}'
 {
   "pipe_data": "Hello, Reyn! (shouted)",
   "named_stores": {
@@ -160,6 +160,8 @@ $ reyn pipe run greet --input '{"name": "Reyn"}'
 
 `reyn pipe install` は `--source <git/GitHub URL>` (`reyn mcp install` と同じ `//subdir` 記法) と、インストールする pipeline の identity を事前に明示する `--name` も受け付けます — DSL 自身が宣言する `pipeline:` 名と食い違う場合は、両者を静かに乖離させるのではなく、明確なエラーで拒否されます。
 
-`reyn pipe list` の **LOAD STATUS** 列は、ログを掘らずに壊れたエントリを直接見る手段です: `enabled: true` なのにパースに失敗したエントリ(DSL の不備、ファイル欠如、宣言名の重複)は、どこにも現れず静かに消えるのではなく、その場で `FAILED` と表示されます。
+`reyn pipe list` の **NAME** 列は、`loaded` エントリについては常に実行可能な名前(=`reyn pipe run` がそのまま受け付ける名前)そのものを表示します — ここに表示されたものはそのまま `reyn pipe run` に渡せます。`reyn pipe run` は、bare な entry-key(`greet.greet` の代わりに `greet`)がちょうど 1 つの登録済み pipeline に一意に一致する場合はそれも受け付け、`note: resolved '<key>' -> '<full-name>'` を stderr に出力して解決内容を明示します。key が複数の pipeline を登録している場合は一意に決まらないため、`run` は候補を列挙してエラーにします。
+
+`reyn pipe list` の **LOAD STATUS** 列は、ログを掘らずに壊れたエントリを直接見る手段です: `enabled: true` なのにパースに失敗したエントリ(DSL の不備、ファイル欠如、宣言名の重複)は(何も実行可能な形で登録されなかったため entry-key のまま)、どこにも現れず静かに消えるのではなく、その場で `FAILED` と表示されます。
 
 `reyn pipe run` は pipeline を **CLI プロセス自身の中で単独実行**します — `tool:` / `agent:` を含む、すべてのステップ種別が実行できます。`tool:` ステップは、ライブセッションの `tool` ステップと同じ実際のツール実行経路を通して(スタンドアロンな)ディスパッチされます。`agent:` ステップは `default` エージェントの下で本物の短命("ephemeral")セッションを spawn し、チャットセッションの `agent:` ステップと同様に最後まで実行します。`reyn pipe run` の背後にはライブなチャット REPL も `--docker`/`--sandbox-backend` によるコンテナオプションもありません(ホストのファイルシステム/実行のみ)— それらが必要な pipeline は `reyn chat`/`reyn run` から実行してください。また `reyn pipe run` の呼び出しにはクラッシュリカバリもありません: これは one-shot のフォアグラウンドコマンドなので、途中で kill/中断された実行は、他の CLI ツールと同様、単に失敗したコマンドであり、再開可能な driver-session ではありません。
