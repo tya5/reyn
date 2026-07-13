@@ -270,22 +270,26 @@ class ActionRetrievalConfig:
             empty, ``search_actions`` is excluded from tools= even if
             ``universal_wrappers_enabled`` is True (§D14 gating).
 
-            **Default since FP-0043 Phase 4**: ``"local-mini"`` (=
-            ``sentence-transformers/all-MiniLM-L6-v2``). When the
-            ``local-embed`` extras are not installed (= ``import
-            sentence_transformers`` fails), Session silently
-            degrades to None — ``search_actions`` stays hidden and
-            ``list_actions`` injects a hidden-state hint pointing
-            operators at ``pip install 'reyn[local-embed]'``. So the
-            new default is "active when the import succeeds, no-op
-            otherwise", giving zero-config fresh users semantic
-            search the moment they install the extras.
+            **Default since the semantic-search-opt-in fix (2026)**:
+            ``None`` (= off). ``search_actions`` is a semantic-search
+            feature and the project's standing principle is that
+            semantic search is opt-in, never on by default — a
+            default of ``"local-mini"`` (FP-0043 Phase 4 through
+            2026) made reyn attempt a Hugging Face model download at
+            startup even for zero-config / offline installs, which
+            surfaced as a startup warning when the download failed.
+            Defaulting to ``None`` makes the off-path silent: no
+            index build is attempted, so there is nothing to fail or
+            warn about; ``search_actions`` is simply absent from
+            tools= (§D14 gating).
 
-            Operators who want OpenAI-backed embeddings instead can
-            set ``action_retrieval.embedding_class: standard`` (= or
-            ``light`` / ``strong``) explicitly in reyn.yaml. Setting
-            it to ``null`` or empty disables ``search_actions``
-            entirely.
+            Operators who want semantic ``search_actions`` set
+            ``action_retrieval.embedding_class`` explicitly in
+            reyn.yaml: ``local-mini`` for the local
+            ``sentence-transformers/all-MiniLM-L6-v2`` model (needs
+            the ``reyn[local-embed]`` extras and a one-time HF
+            download), or ``standard`` (= or ``light`` / ``strong``)
+            for an API-backed class that needs no local download.
 
         hot_list_n:
             Hot list size for top-N freq+recency projection (§D2).
@@ -305,7 +309,7 @@ class ActionRetrievalConfig:
     """
 
     universal_wrappers_enabled: bool = True
-    embedding_class: str | None = "local-mini"
+    embedding_class: str | None = None
     hot_list_n: int = 0
     mode: str = "default"
     # FP-0034 §D16: seed qualified names for initial hot list (before freq

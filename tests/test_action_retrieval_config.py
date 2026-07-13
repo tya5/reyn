@@ -18,6 +18,7 @@ No mocks; uses real load_config with a yaml file written to tmp_path.
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 import pytest
@@ -28,6 +29,7 @@ from reyn.config import (
     _build_action_retrieval_config,
     load_config,
 )
+from reyn.tools.universal_catalog import is_search_available
 
 # ── 1. Default values ─────────────────────────────────────────────────────
 
@@ -37,14 +39,17 @@ def test_default_action_retrieval_config_is_on() -> None:
 
     PR-3b-iv flipped universal_wrappers_enabled from False to True.
     FP-0034 Phase 6 removed hide_legacy_tools (wrapper-only is the sole path).
-    FP-0043 Phase 4 flipped embedding_class default from None to "local-mini"
-    so semantic action search is on the moment ``reyn[local-embed]`` extras
-    are installed — graceful-degrade kicks in at Session construction
-    when the extras are absent.
+    FP-0043 Phase 4 flipped embedding_class default from None to "local-mini";
+    the semantic-search-opt-in fix (2026) flipped it back to None — a
+    default of "local-mini" attempted a Hugging Face model download at
+    startup even for zero-config / offline installs, contradicting the
+    project's semantic_search-is-opt-in principle. search_actions is now
+    off (silently — no build is attempted) until an operator explicitly
+    sets ``action_retrieval.embedding_class`` in reyn.yaml.
     """
     cfg = ActionRetrievalConfig()
     assert cfg.universal_wrappers_enabled is True
-    assert cfg.embedding_class == "local-mini"
+    assert cfg.embedding_class is None
     assert cfg.hot_list_n == 0  # N=0 default: viability verdict; opt-in via reyn.yaml
     assert cfg.mode == "default"
 
@@ -234,7 +239,7 @@ def test_load_config_without_action_retrieval_uses_defaults(tmp_path: Path) -> N
 
     cfg = load_config(cwd=tmp_path)
     assert cfg.action_retrieval.universal_wrappers_enabled is True
-    assert cfg.action_retrieval.embedding_class == "local-mini"  # FP-0043 Phase 4
+    assert cfg.action_retrieval.embedding_class is None  # off by default; opt-in only
     assert cfg.action_retrieval.hot_list_n == 0  # N=0 default
     assert cfg.action_retrieval.mode == "default"
 
@@ -268,6 +273,52 @@ def test_hot_list_n_default_is_zero() -> None:
     in reyn.yaml). The seed/tracker/alias-builder remain operative as opt-in.
     """
     assert ActionRetrievalConfig().hot_list_n == 0
+
+
+# ── 6. Semantic-search-opt-in fix: the null default is SILENT ─────────────
+
+
+def test_fresh_config_null_embedding_class_gates_search_actions_silently(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Tier 2: a fresh (no ``action_retrieval:`` block) ``load_config`` call
+    resolves ``embedding_class`` to None AND emits NO "disabled" /
+    "Semantic search_actions" warning anywhere in the load path.
+
+    This is the crux of the semantic-search-opt-in fix: the old default
+    ("local-mini") made reyn attempt an index build at chat startup that
+    failed offline, surfacing a "Semantic search_actions disabled … index
+    build failed …" warning even for operators who never asked for
+    semantic search. The fix makes the off-path load-bearing-silent: with
+    no class configured there is nothing to build and nothing to fail, so
+    ``_reconcile_embedding_class`` (the only warning source at config-load
+    time — see ``config/loader.py``) must take its early-return branch
+    (``if not ec or ec in cfg.embedding.classes: return``) without logging.
+
+    FALSIFY: if the default reverts to a truthy value (e.g. "local-mini")
+    without ``embedding.classes`` containing that class in this test's
+    fixture, ``_reconcile_embedding_class`` follows its non-early-return
+    branch and DOES log a "Semantic search_actions disabled: …" warning —
+    this test would then fail on the ``caplog`` assertion, proving the
+    silent-null-path guarantee is actually exercised (not vacuously true).
+    """
+    (tmp_path / "reyn.yaml").write_text("model: standard\n", encoding="utf-8")
+
+    with caplog.at_level(logging.WARNING):
+        cfg = load_config(cwd=tmp_path)
+
+    assert cfg.action_retrieval.embedding_class is None
+    assert is_search_available(
+        action_retrieval_embedding_class=cfg.action_retrieval.embedding_class,
+    ) is False
+    disabled_records = [
+        r for r in caplog.records
+        if "search_actions" in r.getMessage() and "disabled" in r.getMessage().lower()
+    ]
+    assert disabled_records == [], (
+        "expected no 'disabled' warning on the null-embedding_class path, got: "
+        f"{[r.getMessage() for r in disabled_records]}"
+    )
 
 
 def test_load_config_hot_list_n_explicit_opt_in(tmp_path: Path) -> None:

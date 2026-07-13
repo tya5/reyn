@@ -48,7 +48,8 @@ from reyn.config.config_schema import (
 _VALID_NONDEFAULT_OVERRIDES: dict[str, object] = {
     # #1454: embedding_class is closed-world — a class not in embedding.classes
     # degrades to None at load (graceful). "standard" is a real builtin class
-    # (!= the "local-mini" default), so it survives the membership check.
+    # (!= the None default, opt-in-off since the semantic-search-opt-in fix),
+    # so it survives the membership check.
     "action_retrieval.embedding_class": "standard",
 }
 

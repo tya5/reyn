@@ -809,10 +809,10 @@
 #       ``search_actions`` is gated separately via ``embedding_class``.
 #   embedding_class:
 #       Name of an entry under ``embedding.classes`` used for semantic
-#       ``search_actions``. Default ``"local-mini"`` — activates when
-#       ``pip install 'reyn[local-embed]'`` succeeds; silently no-ops otherwise
-#       (= ``list_actions`` surfaces a hint). Set ``null`` to disable
-#       ``search_actions`` entirely.
+#       ``search_actions``. Default ``null`` (off) — semantic search is
+#       opt-in. Set to ``local-mini`` (needs ``pip install
+#       'reyn[local-embed]'``) or ``standard`` (API-backed, no local
+#       download) to opt in explicitly.
 #   hot_list_n:
 #       Top-N freq+recency projection size. Default 20 — must be ≥
 #       ``DEFAULT_HOT_LIST_SEED`` length (= 17) so the seed isn't truncated.
@@ -824,7 +824,7 @@
 # -----------------------------------------------------------------------------
 # action_retrieval:
 #   universal_wrappers_enabled: true
-#   embedding_class: local-mini       # null disables search_actions
+#   embedding_class: local-mini       # default is null (off); uncomment to opt in
 #   hot_list_n: 20
 #   mode: default
 #   hot_list_seed: default            # "default" | [] | [qualified-name, ...]

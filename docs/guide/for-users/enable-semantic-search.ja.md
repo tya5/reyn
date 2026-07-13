@@ -2,7 +2,7 @@
 
 `reyn chat` には、LLM が実行可能なことを発見するための 2 つの手段が同梱されています: 高速な **`list_actions`** ブラウザ（= カテゴリ接頭辞による列挙、常時利用可能）と、**`search_actions`** セマンティック検索（= 全アクションの埋め込みインデックスに対する自然言語クエリ）です。本ガイドではセマンティックな経路を有効にする手順を説明します。
 
-> **TL;DR**: `pip install 'reyn[local-embed]'` を一度実行すれば、`search_actions` は認証情報なしで使えるようになります。OpenAI の埋め込み API（わずかに高品質）を使いたい場合は、`reyn secret set OPENAI_API_KEY` のあと `reyn.yaml` で `action_retrieval.embedding_class: standard` を設定してください。
+> **TL;DR**: `search_actions` は **デフォルトで無効**（semantic search はプロジェクト全体で opt-in の方針）。`pip install 'reyn[local-embed]'` を実行し、さらに `reyn.yaml` で `action_retrieval.embedding_class: local-mini` を設定すれば、認証情報なしで使えるようになります。OpenAI の埋め込み API（わずかに高品質、ローカルダウンロード不要）を使いたい場合は、`reyn secret set OPENAI_API_KEY` のあと `reyn.yaml` で `action_retrieval.embedding_class: standard` を設定してください。
 
 ## どんなときに欲しくなるか
 
@@ -11,7 +11,7 @@
 - **無い場合**: LLM はあなたの意図がどのカテゴリ（`file` / `mcp` / `memory_entry` / …）に属するかを推測し、`list_actions(category=[...])` を実行して列挙する必要があります。_「PDF をテキストに変換するアクションを探して」_ のような自然言語の依頼では、すぐに一致が見つからないと LLM が試したうえで断ることもあります。
 - **有る場合**: LLM は `search_actions(query="PDF to text")` を実行し、全カテゴリ横断で関連度順に並んだ top-K のリストを得ます。その後そのまま `describe_action` や `invoke_action` を実行できます。
 
-`action_retrieval.embedding_class` のデフォルトは `local-mini` なので、必要な手順は `local-embed` extras のインストールだけです。extras が無い場合、Session はこれを暗黙に「クラス未設定」として扱い、`search_actions` は LLM のツールリストから **除外** され（[可視性ゲート](../../concepts/tools-integrations/universal-catalog.md#what-stays-out-of-phase-1) を参照）、`list_actions` が本ガイドを指す hidden-state ヒントを提示します。
+`action_retrieval.embedding_class` のデフォルトは `null`（無効）です — semantic search は opt-in なので、明示的な `reyn.yaml` 設定と（ローカル経路の場合）`local-embed` extras の両方が必要です。クラス未設定の場合、`search_actions` は LLM のツールリストから **除外** され（[可視性ゲート](../../concepts/tools-integrations/universal-catalog.md#what-stays-out-of-phase-1) を参照）— これは何も試行されないため起動時警告なしで silent に行われます。ST 系クラスを設定したのに extras が無い場合も Session は同様に「クラス未設定」として graceful に扱い、`list_actions` が本ガイドを指す hidden-state ヒントを提示します。
 
 ## 経路 A — ローカルの sentence-transformers（初めての方に推奨）
 
@@ -19,7 +19,14 @@
 pip install 'reyn[local-embed]'
 ```
 
-これだけです。`local-embed` extras は `sentence-transformers` + `torch` をインストールします。デフォルトの `action_retrieval.embedding_class` はすでに `local-mini`（= `all-MiniLM-L6-v2`、22 MB、384 次元、英語）なので、import が成功した時点で配線が有効になります。`reyn.yaml` の編集は不要です。
+続けて `reyn.yaml` で明示的に opt-in します（デフォルトは `null` / 無効）:
+
+```yaml
+action_retrieval:
+  embedding_class: local-mini
+```
+
+`local-embed` extras は `sentence-transformers` + `torch` をインストールします。`local-mini`（= `all-MiniLM-L6-v2`、22 MB、384 次元、英語）は同梱モデルの中で最小です。extras と `reyn.yaml` 設定の両方が揃うと、次のセッションで配線が有効になります。
 
 `reyn chat` が初めて `search_actions` に到達したとき、モデルがダウンロードされ（一般的な接続で約 5〜10 秒）、埋め込みインデックスが構築されます。TUI の Memory タブはダウンロード中に `⟳ loading…` 行を、完了時に `✓ loaded · all-MiniLM-L6-v2 · 384d` 行を表示します。以降のセッションはローカルキャッシュから 1 秒未満でウォームスタートします。
 

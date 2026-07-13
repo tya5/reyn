@@ -69,9 +69,30 @@ def test_none_class_is_noop():
 
 
 def test_default_classes_keep_local_mini_resolvable():
-    """Tier 2: #1454 — the zero-config default (builtin classes intact, which
-    include local-mini) is NOT degraded: local-mini resolves normally."""
-    cfg = ReynConfig()  # full defaults: builtin embedding.classes incl local-mini
+    """Tier 2: #1454 — an operator who opts IN to local-mini (builtin classes
+    intact, which include local-mini) is NOT degraded: local-mini resolves
+    normally.
+
+    Since the semantic-search-opt-in fix (2026), ``ReynConfig()`` defaults
+    ``embedding_class`` to None (off) rather than "local-mini" — so this
+    test explicitly opts in via ``ActionRetrievalConfig(embedding_class=...)``
+    rather than relying on the zero-config default, to isolate the
+    reconciliation behavior (builtin classes registry membership) from the
+    separate opt-in-off default-value concern.
+    """
+    cfg = ReynConfig(action_retrieval=ActionRetrievalConfig(embedding_class="local-mini"))
     assert cfg.action_retrieval.embedding_class == "local-mini"
     _reconcile_embedding_class(cfg)
     assert cfg.action_retrieval.embedding_class == "local-mini"
+
+
+def test_zero_config_default_is_off_and_reconciliation_is_noop():
+    """Tier 2: the semantic-search-opt-in fix (2026) — a true zero-config
+    ``ReynConfig()`` has embedding_class=None, and reconciliation leaves it
+    untouched (None is always a no-dangling-alias no-op; see
+    ``test_none_class_is_noop``). This pins the NEW default distinctly from
+    the reconciliation-behavior test above."""
+    cfg = ReynConfig()
+    assert cfg.action_retrieval.embedding_class is None
+    _reconcile_embedding_class(cfg)
+    assert cfg.action_retrieval.embedding_class is None
