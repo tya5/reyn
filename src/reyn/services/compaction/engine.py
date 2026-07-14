@@ -845,8 +845,18 @@ class CompactionEngine:
         Raises on LLM error; callers wrap in try/except and emit
         ``compaction_failed`` if needed.
         """
-        # Clear the per-run token cache for fresh estimates each compaction.
-        _token_cache.clear()
+        # No `_token_cache.clear()` here (removed): the cache key is
+        # `(model, hash(text))` and `use_chars4_estimate` is a fixed per-session
+        # config (never toggled mid-session), so a cached count is valid for the
+        # lifetime of the process — text is immutable and the tokenizer/fallback
+        # choice never changes underneath an existing entry. Clearing it forced
+        # a COLD, synchronous, full-history re-tokenization on every turn right
+        # after a compaction (build_history() re-estimates the whole raw history
+        # every turn to check the elide trigger) — on a long conversation this
+        # froze the event loop for real, user-visible seconds, repeating every
+        # time compaction fired again as the chat kept growing. Leaving the
+        # cache warm makes token estimation naturally incremental: only text
+        # that has never been tokenized before is a miss.
 
         user_content = json.dumps({
             "previous_summary": input_chunk.previous_summary,
