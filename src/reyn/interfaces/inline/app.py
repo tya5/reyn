@@ -1229,6 +1229,17 @@ async def run_inline_input(read_model, renderer, config=None, transport=None) ->
     def _do_submit(event) -> None:
         text = buf.text
         buf.reset(append_to_history=True)
+        # Force the "input is empty" repaint to land BEFORE the async submit
+        # path's own scrollback echo does. Without this, the user's own line
+        # coming back through session.outbox → broadcast → run_in_terminal
+        # (called moments later, once the background _submit task's outbox put
+        # is drained) suspends the live app for its own erase/print/redraw
+        # cycle — prompt_toolkit's `in_terminal()` (application/run_in_terminal.py)
+        # ERASES the live region first, then redraws at the very end, so
+        # buf.reset()'s own clear only becomes visually true at THAT redraw,
+        # not at this line. An explicit invalidate here paints the empty input
+        # immediately, ahead of that race.
+        event.app.invalidate()
         stripped = text.strip()
         if not stripped:
             return
