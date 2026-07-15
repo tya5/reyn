@@ -3,13 +3,9 @@
 These are NOT surfaced to an end-user agent — they are the SP of two
 LLM-as-judge calls the dogfood harness itself makes (an internal dev tool,
 ``reyn dogfood publish`` / a reply-verifier), scoped in per the owner's "全て
-(all of them)" instruction since they DO reach a real LLM request. Was
-sibling to ``judge.py`` (§G, the production ``judge_output`` op's scorer SP,
-since removed as a clean-break — the OS-level rubric-scorer op is gone;
-scoring is now done via a pipeline ``agent`` step + ``schema`` instead). This
-module's own two internal-harness SPs are independent of that removal — they
-have their own (similar but not identical) wording, evolve on a dev-tool
-cadence, and were never part of the production op surface.
+(all of them)" instruction since they DO reach a real LLM request. They are
+dev-tool-only: they evolve on a dev-tool cadence and are not part of any
+production op surface.
 
 Feeds:
 - ``reyn.dev.dogfood.interpretation.generate_interpretation`` — summarises one
@@ -50,7 +46,7 @@ DOGFOOD_INTERPRETATION_SYSTEM_PROMPT = (
 # WHERE: reyn.dev.dogfood.verifiers.reply._default_judge_fn — the system
 #        message, immediately followed by DOGFOOD_JUDGE_RUBRIC_LABEL_PREFIX +
 #        the caller-supplied rubric text (dynamic content, not static OS
-#        text — mirrors judge.py's §G split).
+#        text — the static header/label split this module owns).
 # WHY: a strict JSON-only scorer contract ({"score": 0.0-1.0, "reason": ...})
 #      so the dogfood harness can parse + threshold the result deterministically.
 # 日本語訳: reply-verifier のデフォルト LLM 判定バックエンドが常に使う
