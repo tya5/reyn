@@ -870,6 +870,25 @@ class InlineChatRenderer(ChatRenderer):
         if msg.kind == "intervention":
             from reyn.interfaces.inline.app import _WAITING_ON_FOR_USER
             self._set_waiting_on(_WAITING_ON_FOR_USER)
+            # A CLOSED-SET intervention (meta["choices"] non-empty, #2770) is
+            # ALSO live-rendered as a selectable region above the input
+            # (inline/app.py's _sync_region + build_intervention_element) — the
+            # SAME prompt+choices this scrollback print would show. Printing it
+            # here too is a permanent, redundant duplicate: once written to
+            # terminal scrollback it cannot be un-printed or collapsed after the
+            # answer resolves (unlike the live region, which correctly clears),
+            # so it sits there looking perpetually "needs-you" even once
+            # answered — the reported "残り続ける" (message never goes away) UX
+            # complaint. Skip the scrollback print for closed-set only; the
+            # resolved answer still lands as a compact `kind="user"` echo
+            # (`deliver_answer_to`, ADR-0039 broadcast — see
+            # inline/app.py's `_deliver_intervention_choice`), which IS the
+            # correct permanent record. Free-text interventions (no `choices`)
+            # have no live region alternative — this scrollback print is their
+            # ONLY visible prompt, so they are unaffected (print unchanged).
+            if msg.meta.get("choices"):
+                self._clear_transient()  # still drop any dangling "· thinking…" line
+                return
         self._clear_transient()
         if wants_separator(msg.kind, self._seen_message):
             self._console.print()  # blank line between message blocks
