@@ -3217,10 +3217,17 @@ class Session:
         always visible (backward-compatible, no migration)."""
         if self._state_log is None:
             return self.history
-        from reyn.core.events.snapshot_generations import is_active_seq
+        from reyn.core.events.snapshot_generations import build_active_predicate
+
+        # #2941: hoisted OUT of the per-message loop below. The abandoned-interval
+        # predicate depends only on the state_log's rewind records, never on a
+        # per-message seq — so it is computed ONCE per call (one WAL scan) and
+        # reused for every message, instead of re-scanning the whole WAL per
+        # message (was O(N messages x M WAL entries) per turn; now O(N + M)).
+        is_active = build_active_predicate(self._state_log)
 
         def _active(seq: "int | None") -> bool:
-            return seq is None or is_active_seq(self._state_log, seq)
+            return seq is None or is_active(seq)
 
         # #2360 (tool-cycle-aware): a GLOBAL cut lands at a WAL seq that may be a turn boundary for
         # the rewound session but fall MID-tool-cycle for another session's conversation (the
