@@ -32,7 +32,11 @@ jobs:
         #   web  — fastapi + uvicorn + websockets, used by tests/web/
         #   fs-watch — `watchdog` (#2608 H4), used by tests/test_fs_watcher.py
         #   observability — opentelemetry SDK, used by tests/observability/
-        run: pip install -e ".[dev,mcp,web,fs-watch,observability]"
+        #   builtin-rag — sqlite-vec + apsw + chonkie (FP-0063 P2), used by
+        #     tests/test_fp0063_p2_builtin_mcp_rag.py. Load-bearing: that file
+        #     `pytest.importorskip`s all three, so WITHOUT this extra the whole
+        #     module silently SKIPS and CI goes green having verified nothing.
+        run: pip install -e ".[dev,mcp,web,fs-watch,observability,builtin-rag]"
 
       - name: Run tests
         # --timeout=120: a per-test wall-clock cap (pytest-timeout). Without it a

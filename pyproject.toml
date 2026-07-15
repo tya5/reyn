@@ -103,6 +103,30 @@ web = [
 # empty extra so existing `pip install -e ".[mcp]"` invocations (CI, user docs,
 # `reyn[mcp]`) keep resolving instead of erroring on an unknown extra.
 mcp = []
+# FP-0063 P2 builtin turnkey user RAG -- the two thin builtin MCP servers in
+# `reyn.builtin.mcp_servers` (vector-store over sqlite-vec, chunker over
+# chonkie). `fastmcp` itself is already core (see above); these three are the
+# ONLY new deps this arc adds, kept extras-only so a base `pip install reyn`
+# is unaffected. Neither server is wired into the merged config by default —
+# they ship INERT (see `reyn.builtin.mcp_servers` module docstring) — so
+# installing this extra alone activates nothing.
+#   - sqlite-vec (dual MIT/Apache-2.0): pure-C SQLite extension, no bundled
+#     embedding model -> no HuggingFace-fetch hazard (FP-0057 line 55).
+#   - apsw (zlib-like "any-OSI"): sqlite-vec loads via
+#     `sqlite3.Connection.load_extension`, which the STDLIB `sqlite3` module
+#     is not guaranteed to support (e.g. this repo's own pyenv-built
+#     CPython 3.12.7 .venv has no `enable_load_extension`). apsw statically
+#     bundles its own SQLite with extension loading always enabled, so
+#     loading is portable regardless of how the host interpreter's `sqlite3`
+#     was compiled.
+#   - chonkie (MIT): recursive/semantic/etc. chunking, ~15 MiB vs LangChain's
+#     ~80 MiB; no bundled model in the default character-tokenizer path used
+#     here -> no network fetch at import or call time.
+builtin-rag = [
+    "sqlite-vec>=0.1.9",
+    "apsw>=3.51",
+    "chonkie>=1.7",
+]
 # #2608 H4: filesystem watcher external-event source (`fs_watch:` config block ->
 # `file_changed` hook). Extras-only — a build with no fs_watch config configured
 # never imports this, and a build WITH config but no extra installed degrades to

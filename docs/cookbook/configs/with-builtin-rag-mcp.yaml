@@ -1,0 +1,50 @@
+# FP-0063 P2 -- builtin turnkey user RAG, the MCP layer.
+#
+# This entire ``mcp.servers`` block ships COMMENTED OUT / INERT. Do not
+# assume uncommenting it is safe by default: an MCP server entry, once it
+# appears under ``mcp.servers.<name>`` in ANY merged config tier, is
+# auto-granted the moment you run ``reyn pipe run`` (#2932's
+# trusted-by-configuration auto-grant -- it keys purely on the server's
+# NAME being present in the merged config, not on any "enabled" flag,
+# because no such flag exists on an MCP server entry today). That premise
+# ("the operator explicitly configured this server") only holds if YOU are
+# the one who copies this block into your own reyn.yaml and uncomments it
+# -- reyn itself never wires this in (see reyn.builtin.mcp_servers module
+# docstring). Read the two servers before enabling them: the vector-store
+# server writes to whatever sqlite file `db_path` names; the chunker server
+# reads no filesystem paths itself but the ingest pipeline that will call
+# it (a later phase, P3) reads document files from the folder you point it
+# at.
+#
+# Install the extra runtime deps first (NOT part of reyn's base install):
+#   pip install "reyn[builtin-rag]"
+#
+# Then copy this block into your reyn.yaml (or reyn.local.yaml) and
+# uncomment it:
+#
+# permissions:
+#   mcp.reyn_vector_store: allow
+#   mcp.reyn_chunker: allow
+#
+# mcp:
+#   servers:
+#     reyn_vector_store:
+#       type: stdio
+#       command: python
+#       args: ["-m", "reyn.builtin.mcp_servers.vector_store_server"]
+#       # Tools: upsert(db_path, items) / query(db_path, vector, top_k,
+#       # filters) / list_metadata(db_path, filters, limit) /
+#       # delete(db_path, ids). Every call takes db_path explicitly --
+#       # there is no server-side default; you always name the sqlite file.
+#
+#     reyn_chunker:
+#       type: stdio
+#       command: python
+#       args: ["-m", "reyn.builtin.mcp_servers.chunker_server"]
+#       # Tool: chunk(text, size=400, overlap_ratio=0.125,
+#       # min_characters_per_chunk=24). size/overlap are real parameters,
+#       # not baked-in constants -- tune them per document type.
+#
+# A third-party parser server (e.g. `uvx markitdown-mcp`, Microsoft,
+# converts txt/md/pdf/xlsx/pptx/docx -> Markdown) belongs alongside these
+# two once the ingest pipeline (P3) lands; out of scope for this file.
