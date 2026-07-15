@@ -110,12 +110,17 @@ def test_growing_history_matches_from_scratch_computation() -> None:
     Exact equality isn't the right bound: subword (BPE) tokenization merges
     characters across fragment boundaries differently when a message is
     tokenized alone vs embedded in the full combined text — a few-token
-    drift per message that's inherent to any incremental/streaming token
-    estimate (not linear or unbounded; it's the SAME small per-fragment
-    noise regardless of total history size) and is harmless for a rough
-    context-budget indicator. A real bug (double-counted or dropped
-    message) would blow far past this tolerance, which is what this test
-    exists to catch."""
+    drift PER FRAGMENT that's inherent to any incremental/streaming token
+    estimate. That per-fragment drift is constant, but this test compares
+    against the CUMULATIVE sum over all messages added so far, so the
+    worst-case bound genuinely grows with message count (this tolerance is
+    intentionally linear, not a mistake) — it is NOT unbounded in practice
+    because a real session's history_fn periodically SHRINKS (compaction
+    covers the middle into a summary), which forces a full recompute and
+    re-syncs the cache from scratch; real drift is bounded by the
+    inter-compaction message count, not the whole session's lifetime. A real
+    bug (double-counted or dropped message) would blow far past even this
+    linear tolerance, which is what this test exists to catch."""
     history: list = []
     advisor = _make_advisor(lambda: history)
 
@@ -126,6 +131,51 @@ def test_growing_history_matches_from_scratch_computation() -> None:
         expected = _from_scratch_tokens(history, "openai/gpt-4o")
         tolerance = 2 * (i + 1)
         assert abs(used - expected) <= tolerance, f"diverged at step {i}: {used} vs {expected}"
+
+
+def test_same_length_but_different_content_recomputes_rather_than_stale(monkeypatch) -> None:
+    """Tier 2: falsifying — lead-coder co-vet finding on #2951. history_fn is
+    NOT a real append-only array; it's typically Session._active_branch_
+    history, a DERIVED view recomputed on every call (the same function
+    #2938 hoisted). A rewind can change WHICH messages are active such that
+    len(history) returns to a previously-cached value while the content at
+    that length is genuinely different (e.g. a message got swapped for a
+    longer one after a rewind + new branch). A length-only cache would
+    silently keep serving the stale total forever (never re-syncing until a
+    LATER length decrease) — this proves the boundary-identity check (the
+    hash of the last cached message) catches a same-length content swap."""
+    counts: dict[str, int] = {}
+
+    from reyn.services.compaction import engine as engine_mod
+
+    real = engine_mod.estimate_tokens
+
+    def _counting_estimate_tokens(text, model, *, use_chars4=False):
+        counts[text] = counts.get(text, 0) + 1
+        return real(text, model, use_chars4=use_chars4)
+
+    monkeypatch.setattr(engine_mod, "estimate_tokens", _counting_estimate_tokens)
+
+    history = [{"role": "user", "content": "original short message"}]
+    advisor = _make_advisor(lambda: history)
+
+    first = advisor.context_window_status()["free_window"]
+
+    # Same length (1), but the message at index 0 is now a DIFFERENT,
+    # much longer one — simulates a rewind that swapped the active branch's
+    # content without changing the active-message count.
+    history = [{"role": "user", "content": "a completely different and much longer replacement message " * 20}]
+    advisor._history_fn = lambda: history
+    second_status = advisor.context_window_status()
+    second = second_status["free_window"]
+
+    assert second != first, (
+        "a same-length content swap must NOT return the stale cached "
+        "free_window from the old (shorter) content"
+    )
+    used = second_status["effective_trigger"] - second
+    expected = _from_scratch_tokens(history, "openai/gpt-4o")
+    assert used == expected
 
 
 def test_shrinking_history_recomputes_rather_than_returning_stale_cache() -> None:

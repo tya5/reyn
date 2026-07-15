@@ -59,8 +59,17 @@ class ContextBudgetAdvisor:
         # (model, use_chars4); a length decrease (compaction/rewind truncated
         # history) or a model/config change invalidates it (full recompute),
         # a length increase only dumps+estimates the NEW tail slice.
+        # "boundary" is a hash of the last cached message's json dump — the
+        # cache is an append-only-PREFIX assumption, but history_fn is
+        # typically a derived, recomputed view (e.g. Session._active_branch_
+        # history — the same function #2938 hoisted), not a real array: a
+        # rewind can change WHICH messages are active such that len returns
+        # to a previously-cached value while the actual content at that
+        # boundary differs. Checking length alone would then silently return
+        # a stale cached total (never re-synced until a later length
+        # decrease). The boundary hash makes this checked, not assumed.
         self._history_token_cache: dict[str, Any] = {
-            "len": 0, "tokens": 0, "model": None, "use_chars4": None,
+            "len": 0, "tokens": 0, "model": None, "use_chars4": None, "boundary": None,
         }
 
     @property
@@ -88,9 +97,12 @@ class ContextBudgetAdvisor:
 
         Incremental: only the slice of history NEWER than the last call is
         json.dumps'd + estimated; a cache hit (no new messages since last
-        call) is O(1). A shrink (compaction/rewind truncated history) or a
-        model/use_chars4 change invalidates the cache and falls back to one
-        full recompute.
+        call) is O(1). A shrink, a model/use_chars4 change, OR the cached
+        PREFIX's content actually differing (checked via a boundary hash,
+        not assumed from length alone — history_fn is often a recomputed
+        derived view, e.g. a rewind-aware active-branch filter, where the
+        same length can recur with different content) invalidates the cache
+        for one full recompute.
         """
         import json as _json
 
@@ -101,10 +113,27 @@ class ContextBudgetAdvisor:
         try:
             history = self._history_fn()
             n = len(history)
-            if cache["len"] > n or cache["model"] != self._model or cache["use_chars4"] != use_chars4:
+            cached_len = cache["len"]
+            # The boundary is the json dump of the LAST message that was in
+            # the cached prefix (index cached_len - 1). If it no longer
+            # matches the message currently at that index, the prefix isn't
+            # append-only-stable and the cache cannot be trusted, even at an
+            # unchanged or grown length.
+            boundary = (
+                _json.dumps(history[cached_len - 1], ensure_ascii=False)
+                if 0 < cached_len <= n
+                else None
+            )
+            prefix_unchanged = cached_len == 0 or (cached_len <= n and boundary == cache["boundary"])
+            if (
+                cached_len > n
+                or cache["model"] != self._model
+                or cache["use_chars4"] != use_chars4
+                or not prefix_unchanged
+            ):
                 combined = _json.dumps(history, ensure_ascii=False)
                 tokens = estimate_tokens(combined, self._model, use_chars4=use_chars4)
-            elif cache["len"] == n:
+            elif cached_len == n:
                 return int(cache["tokens"])
             else:
                 # Dump each new message individually and join with the same
@@ -113,10 +142,13 @@ class ContextBudgetAdvisor:
                 # otherwise add a spurious pair of bracket tokens on every
                 # single call, drifting the cumulative estimate upward as the
                 # history grows across many dropdown-open/pre-frame checks.
-                delta = history[cache["len"]:]
+                delta = history[cached_len:]
                 combined = ",".join(_json.dumps(m, ensure_ascii=False) for m in delta)
                 tokens = int(cache["tokens"]) + estimate_tokens(combined, self._model, use_chars4=use_chars4)
-            cache.update(len=n, tokens=tokens, model=self._model, use_chars4=use_chars4)
+            new_boundary = _json.dumps(history[-1], ensure_ascii=False) if n > 0 else None
+            cache.update(
+                len=n, tokens=tokens, model=self._model, use_chars4=use_chars4, boundary=new_boundary,
+            )
             return tokens
         except Exception:  # noqa: BLE001 — estimation best-effort
             return 0
