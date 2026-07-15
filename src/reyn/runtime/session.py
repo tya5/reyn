@@ -6208,6 +6208,8 @@ class Session:
             hot_reloader=self._hot_reloader,  # #2761 PR-2: per-session reloader (both router op-ctx builders complete-by-construction)
             render_template_bounds=self._render_template_bounds,  # #2679: operator bounds (both router op-ctx builders complete-by-construction)
             embedding_event_sink=self._embedding_event_sink,  # FP-0057 #2856 Part A: TUI model-download status sink for the embed op
+            budget_tracker=self._budget_tracker,  # FP-0063 PC: agent/project-scope embedding cost for the embed op (also LLM cost recording, e.g. judge_output)
+            budget_gateway=self._budget,  # FP-0063 PC: session-scope embedding cost for the embed op
         )
 
     async def _file_op(self, op_dict: dict) -> dict:

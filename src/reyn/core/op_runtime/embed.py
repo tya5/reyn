@@ -84,14 +84,28 @@ async def handle(op: EmbedIROp, ctx: OpContext) -> dict:
          holding its own provider instance, so a tool-use caller (e.g.
          `ActionEmbeddingIndex`) routes through this op (inheriting the
          redaction seam above) while keeping its download-status rows.
+      3. FP-0063 PC: price this call (`estimate_embedding_cost`, its OWN
+         model's rate — X6 mixed-model correctness) and record it into the
+         INDEPENDENT embedding-cost aggregate at every scope reachable from
+         `ctx` — agent/project scope via `ctx.budget_tracker`
+         (`BudgetTracker.record_embedding`), session scope via
+         `ctx.budget_gateway` (`BudgetGateway.record_embedding`). Neither
+         touches the chat `CostBreakdown` (owner: "embedding は独立追跡の想定").
 
     Returns: `{"kind": "embed", "vectors": list[list[float]], "model": str,
-    "total_tokens": int}`. Errors propagate to the shared `execute_op`
-    try/except (status="error" + `control_ir_failed` event) — this handler
-    does not swallow provider failures.
+    "total_tokens": int, "cost_usd": float | None, "priced": bool}`.
+    `cost_usd` is `None` (with `priced=False`) when litellm cannot price
+    `model` — an unpriced/unknown model must degrade VISIBLY, never silently
+    read as $0.00 (#1829 sentinel, extended to embedding mode). Errors
+    propagate to the shared `execute_op` try/except (status="error" +
+    `control_ir_failed` event) — this handler does not swallow provider
+    failures.
     """
     if not op.texts:
-        return {"kind": "embed", "vectors": [], "model": op.embedding_model, "total_tokens": 0}
+        return {
+            "kind": "embed", "vectors": [], "model": op.embedding_model,
+            "total_tokens": 0, "cost_usd": 0.0, "priced": True,
+        }
 
     # ── PRE-embed egress seam (co-vet #3) — unconditional, unbypassable ────
     scanned_texts = [redact_secrets(t) for t in op.texts]
@@ -106,11 +120,27 @@ async def handle(op: EmbedIROp, ctx: OpContext) -> dict:
     provider = _resolve_provider(event_sink=ctx.embedding_event_sink)
     result = await provider.embed(scanned_texts, op.embedding_model)
 
+    model_used = result.get("model", op.embedding_model)
+    total_tokens = result.get("total_tokens", 0)
+
+    # ── FP-0063 PC: independent embedding-cost tracking (X2b/X4/X2c) ───────
+    from reyn.llm.pricing import estimate_embedding_cost
+    cost_usd, _pricing_snapshot = estimate_embedding_cost(model_used, total_tokens)
+
+    tracker = getattr(ctx, "budget_tracker", None)
+    if tracker is not None:
+        tracker.record_embedding(model=model_used, agent=ctx.agent_id, tokens=total_tokens)
+    gateway = getattr(ctx, "budget_gateway", None)
+    if gateway is not None:
+        gateway.record_embedding(model=model_used, tokens=total_tokens)
+
     return {
         "kind": "embed",
         "vectors": result.get("vectors", []),
-        "model": result.get("model", op.embedding_model),
-        "total_tokens": result.get("total_tokens", 0),
+        "model": model_used,
+        "total_tokens": total_tokens,
+        "cost_usd": cost_usd,
+        "priced": cost_usd is not None,
     }
 
 

@@ -79,6 +79,8 @@ def build_router_op_context(
     hot_reloader: Any = None,  # #2761 PR-2: this session's HotReloader → immediate mid-turn install apply
     render_template_bounds: Any = None,  # #2679: operator RenderTemplateBounds → the render_template op cap. None → the op's in-handler defaults.
     embedding_event_sink: Any = None,  # FP-0057 #2856 Part A: TUI model-download status sink for the `embed` op's provider resolution (ActionEmbeddingIndex build/query path). None → no TUI-observable download status.
+    budget_tracker: Any = None,  # FP-0063 PC: process-shared BudgetTracker → agent/project-scope embedding cost + LLM cost recording. Session wires its own; RouterHostAdapter has none today (pre-existing gap, same class as its unset agent_id above — not folded here).
+    budget_gateway: Any = None,  # FP-0063 PC: the calling Session's per-session BudgetGateway → session-scope embedding cost (`embed` op). Session wires its own `self._budget`; RouterHostAdapter has none today (same asymmetry as budget_tracker above).
 ) -> Any:
     """Build the chat-router OpContext (the single source for both hosts).
 
@@ -169,4 +171,6 @@ def build_router_op_context(
         hot_reloader=hot_reloader,  # #2761 PR-2: per-session reloader for immediate mid-turn install apply
         render_template_bounds=render_template_bounds,  # #2679: operator render_template output cap
         embedding_event_sink=embedding_event_sink,  # FP-0057 #2856 Part A: TUI model-download status sink for the embed op
+        budget_tracker=budget_tracker,  # FP-0063 PC: agent/project-scope embedding cost (+ LLM cost recording)
+        budget_gateway=budget_gateway,  # FP-0063 PC: session-scope embedding cost
     )

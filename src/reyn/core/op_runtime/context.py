@@ -119,6 +119,18 @@ class OpContext:
     # (control_ir_executor / router_host_adapter); None = unrecorded.
     budget_tracker: object | None = None
 
+    # FP-0063 PC: the calling Session's per-session BudgetGateway, for the
+    # `embed` op to record its INDEPENDENT session-scope embedding-cost
+    # aggregate (``BudgetGateway.record_embedding`` / ``.embedding_cost``) —
+    # the third of the session/agent/project scope trio (agent scope reads
+    # ``budget_tracker`` above; project scope sums agent scope in the
+    # Registry). Threaded by ``build_router_op_context`` for the Session host
+    # (``Session._make_router_op_context``). None = session-scope embedding
+    # cost is not recorded for this op call (e.g. RouterHostAdapter's
+    # registry-dispatch path, direct/test construction) — agent/project scope
+    # via ``budget_tracker`` is unaffected.
+    budget_gateway: object | None = None
+
     # PR20: caller provenance threaded from the parent Agent so sub-run
     # invocations land under the same `events/<caller>/...` tree.
     # Format: "direct" or "agents/<name>" (validated in Agent).
