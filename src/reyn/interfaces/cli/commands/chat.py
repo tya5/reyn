@@ -15,7 +15,6 @@ from reyn.interfaces.cli.env_backend import (
     build_environment_backend,
     register_env_backend_args,
 )
-from reyn.llm.llm import run_async
 
 from ..common_args import add_common_args
 from ..invocation_context import InvocationContext
@@ -344,6 +343,7 @@ def run(args: argparse.Namespace) -> None:
 
     from reyn.config import _find_project_root, load_project_context
     from reyn.interfaces.repl.repl import run_repl
+    from reyn.llm.llm import run_async
     from reyn.runtime.factory_config import SessionFactoryConfig
     from reyn.runtime.presentation_consumer import OutboxPresentationConsumer
     from reyn.runtime.profile import AgentProfile
