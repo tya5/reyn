@@ -196,26 +196,21 @@ class CostWarnConfig:
 @dataclass
 class OffloadConfig:
     """`offload:` — opt-in switch for the tool-result size gates
-    (tool-result-schema-redesign §5; owner-confirmed opt-out -> opt-in flip).
+    (tool-result-schema-redesign §5).
 
-    **Purpose:** the offload mechanism (text token cap + structured inline cap +
-    media follow-up budget) is suspected of degrading LLM autonomy via
-    over-truncation, so it is OFF by default and only runs once explicitly
-    enabled. With ``enabled: true``, format stays identical (frontmatter + text,
-    unchanged) and the only variable is whether size gates truncate.
+    **Default OFF.** Offloading a large tool result to a file ref only helps if
+    the model reads the ref back, and mid-tier models often don't — they act on
+    the truncated preview, degrading the result. So by default every tool result
+    is delivered to the model in full and the format (frontmatter + text) is the
+    same either way. Opt in with ``enabled: true`` when you want the cost
+    reduction of capping/offloading large tool results (e.g. when a single tool
+    result is very large, opting in also prevents an oversized turn).
 
     ``enabled: true`` turns on all three gates: the text token cap
     (``cap_tool_result_content``), the structured inline gate
     (``STRUCTURED_INLINE_MAX_CHARS`` in ``build_offload_body``), and the media
     follow-up budget bound (``media_followup_budget`` — included so enabling
     the flag isn't confounded by media starvation from an un-gated budget).
-
-    **Known risk (accepted) of the default:** with offload off (the default),
-    a single tool result can exceed the model's compaction-batch budget,
-    recreating the #1128 compaction dead-end (a turn too large to ever
-    compact). A ``offload_disabled`` warning event is emitted at session start
-    whenever offload is off — including the default — so traces stay
-    self-explaining.
     """
     enabled: bool = False
 

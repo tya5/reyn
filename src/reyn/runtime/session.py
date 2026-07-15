@@ -4884,13 +4884,6 @@ class Session:
         from reyn.runtime.model_cost_warn import maybe_emit_model_cost_warn
         maybe_emit_model_cost_warn(self, self.model, action="session_start")
 
-        # tool-result-schema-redesign §5: offload.enabled=false disables all three
-        # tool-result size gates — a single tool result can then exceed the model's
-        # compaction-batch budget, recreating the #1128 dead-end (a turn too large to
-        # ever compact). Emit so traces are self-explaining when that happens.
-        if not self._offload_config.enabled:
-            self._chat_events.emit("offload_disabled", agent_name=self.agent_name)
-
         try:
             while await self.run_one_iteration():
                 pass

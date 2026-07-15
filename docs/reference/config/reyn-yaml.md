@@ -1248,18 +1248,18 @@ cost_warn:
 
 ## `offload` block
 
-Opt-in switch for **all three** tool-result size gates (tool-result-schema-redesign §5): the text token cap, the structured-data inline cap, and the media follow-up budget bound. **Off by default** — every tool result is emitted to the LLM in full, never truncated, never offloaded to a file ref — since the size gates are suspected of degrading LLM autonomy via over-truncation. Set `enabled: true` to opt in. The LLM-visible format (frontmatter + text) is unchanged either way; only whether size gates truncate varies.
+Opt-in switch for **all three** tool-result size gates (tool-result-schema-redesign §5): the text token cap, the structured-data inline cap, and the media follow-up budget bound. **Off by default** — every tool result is delivered to the LLM in full, never truncated, never offloaded to a file ref. Offloading a large result to a file ref only helps if the model reads the ref back, and mid-tier models often act on the truncated preview instead, degrading the result — so full delivery is the better default. The LLM-visible format (frontmatter + text) is unchanged either way; only whether size gates truncate varies.
+
+Set `enabled: true` to opt in when you want the cost reduction of capping/offloading large tool results. When a single tool result is very large, opting in also keeps it from producing an oversized turn.
 
 ```yaml
 offload:
-  enabled: false   # true = opt in: truncate + offload oversized tool results
+  enabled: true   # opt in: truncate + offload oversized tool results (default: false)
 ```
 
 | Field | Type | Default | Description |
 |---|---|---|---|
 | `enabled` | bool | `false` | Master switch. `true` opts in to the text token cap, the structured inline cap, and the media follow-up budget bound. |
-
-**Known risk of the default.** With offload off (the default), a single tool result can exceed the model's compaction-batch budget, recreating the pre-#1128 compaction dead-end (a turn too large to ever compact). A `offload_disabled` warning event is emitted at session start whenever offload is off — including the default — so traces stay self-explaining.
 
 ## `render_template` block
 
