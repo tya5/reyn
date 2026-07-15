@@ -40,7 +40,7 @@ def test_policy_defaults():
     assert p.network is False
     assert p.read_paths == []
     assert p.write_paths == []
-    assert p.allow_subprocess is False
+    assert p.allow_subprocess is True  # #2953: default flipped false→true
     assert p.env_passthrough == []
     assert p.timeout_seconds == 60
 

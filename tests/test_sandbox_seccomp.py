@@ -81,11 +81,12 @@ def test_syscall_allowlist_network_when_enabled() -> None:
     assert "accept" in result
 
 
-def test_syscall_allowlist_no_subprocess_by_default() -> None:
-    """Tier 2: subprocess syscalls absent when policy.allow_subprocess is False (default)."""
+def test_syscall_allowlist_no_subprocess_when_disabled() -> None:
+    """Tier 2: subprocess syscalls absent when policy.allow_subprocess=False (#2953: no
+    longer the SandboxPolicy() default, so this pins the explicit-off case)."""
     from reyn.security.sandbox.backends.seccomp import _build_syscall_allowlist
 
-    result = _build_syscall_allowlist(SandboxPolicy())
+    result = _build_syscall_allowlist(SandboxPolicy(allow_subprocess=False))
     assert "execve" not in result
     assert "fork" not in result
 

@@ -26,7 +26,15 @@ Fields:
         deny-after-allow rule (Seatbelt / SBPL); NOT enforceable on
         allowlist-only backends (Landlock), which rely on the network gate.
         Defaults to OS-level credential locations; ``~`` is expanded.
-    allow_subprocess: whether the process may spawn children
+    allow_subprocess: whether the process may spawn children. Defaults to
+        True (#2953) — operator-tunable, not LLM-tunable (the
+        ``exec__sandboxed_exec`` tool surface never exposes this field; see
+        ``tools/sandboxed_exec.py``). The other axes are the actual security
+        boundary: ``network`` gates exfiltration, ``write_paths`` gates
+        persistence, ``read_deny_paths`` gates credential reads — none of
+        those change with this default. Set ``allow_subprocess: false`` in
+        ``reyn.yaml``'s ``sandbox.policy`` to deny forking for a restrictive
+        deployment.
     env_passthrough: env-var names that pass through to the sandboxed process
     timeout_seconds: wall-clock cap (enforced by the backend)
     max_output_bytes: per-stream cap (bytes) on captured stdout/stderr — output
@@ -68,7 +76,7 @@ class SandboxPolicy:
     read_deny_paths: list[str] = field(
         default_factory=lambda: list(DEFAULT_SENSITIVE_READ_DENY)
     )
-    allow_subprocess: bool = False
+    allow_subprocess: bool = True
     env_passthrough: list[str] = field(default_factory=list)
     timeout_seconds: int = 60
     max_output_bytes: int = MAX_SUBPROCESS_OUTPUT_BYTES
