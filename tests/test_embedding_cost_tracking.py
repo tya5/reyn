@@ -30,12 +30,12 @@ real `Session`, real litellm pricing lookups; no private-state assertions
 """
 from __future__ import annotations
 
+from reyn.core.events.events import EventLog
 from reyn.llm.pricing import EmbeddingCost, TokenUsage, estimate_embedding_cost
 from reyn.runtime.budget.budget import BudgetTracker, CostConfig
 from reyn.runtime.profile import AgentProfile
 from reyn.runtime.registry import AgentRegistry
 from reyn.runtime.services.budget_gateway import BudgetGateway
-from reyn.core.events.events import EventLog
 
 _MODEL_A = "text-embedding-3-small"
 _MODEL_B = "text-embedding-3-large"
@@ -66,7 +66,7 @@ def test_record_embedding_accumulates_per_agent() -> None:
 
 
 def test_record_embedding_mixed_models_sums_each_at_its_own_rate() -> None:
-    """Tier 2 (X6): two calls to DIFFERENT models accumulate to the sum of
+    """Tier 2: X6 — two calls to DIFFERENT models accumulate to the sum of
     each priced independently — FALSIFIED against pooling the tokens and
     pricing once at a single model's rate."""
     tracker = BudgetTracker(CostConfig())

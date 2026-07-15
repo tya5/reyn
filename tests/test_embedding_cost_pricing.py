@@ -94,7 +94,7 @@ def test_embedding_cost_additive_across_calls() -> None:
 
 
 def test_mixed_model_correctness_prices_each_call_at_its_own_rate() -> None:
-    """Tier 2 (X6 headline test): two embedding calls at DIFFERENT models with
+    """Tier 2: X6 headline test — two embedding calls at DIFFERENT models with
     DIFFERENT rates must aggregate to the SAME total as pricing each
     independently at its own rate and summing the dollars.
 
