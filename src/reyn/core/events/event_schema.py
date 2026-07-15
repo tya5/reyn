@@ -59,11 +59,6 @@ EVENT_AUDIT_REQUIREMENTS: dict[str, frozenset[str]] = {
     # agent_name: the session's agent identity (same field as chat_started).
     "session_started": frozenset({"agent_name"}),
     "session_completed": frozenset({"agent_name"}),
-    # offload_disabled: emitted in Session.run() when offload.enabled=false
-    #   (tool-result-schema-redesign §5 debug lever) — a single tool result
-    #   can then exceed the compaction-batch budget (#1128 dead-end risk),
-    #   so traces are self-explaining about why.
-    "offload_disabled": frozenset({"agent_name"}),
     # turn_started: emitted in Session.run_one_iteration() after the trigger
     #   is consumed from the inbox and before dispatch to _handle_*.
     # kind: the inbox message kind that triggered this turn (e.g. "user",

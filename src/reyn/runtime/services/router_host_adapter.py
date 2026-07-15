@@ -290,10 +290,11 @@ class RouterHostAdapter:
         # left for the media follow-up after the (capped) tool text, so
         # router_loop bounds media materialisation. ``None`` = unbounded (pre-#272).
         media_followup_budget: Any = None,
-        # tool-result-schema-redesign §5: static per-session flag (not a callable —
-        # config doesn't change mid-session) gating build_offload_body's structured
-        # inline-size gate. Default True = normal offload behaviour.
-        offload_enabled: bool = True,
+        # tool-result-schema-redesign §5 / opt-in flip: static per-session flag
+        # (not a callable — config doesn't change mid-session) gating
+        # build_offload_body's structured inline-size gate. Default False = offload
+        # off unless the operator opts in via ``offload.enabled: true``.
+        offload_enabled: bool = False,
         # #272/#1128 compact op: awaitable () -> {freed_tokens, free_window_after}
         # wired by Session to its force_compact_now wrapper, so the LLM-
         # emittable `compact` control_ir op can voluntarily compact history.
@@ -602,9 +603,10 @@ class RouterHostAdapter:
 
     @property
     def offload_enabled(self) -> bool:
-        """tool-result-schema-redesign §5: whether the structured-offload size
-        gate is active. ``True`` (default) = normal behaviour; ``False`` =
-        ``offload.enabled: false`` debug lever, structured data always inline.
+        """tool-result-schema-redesign §5 / opt-in flip: whether the
+        structured-offload size gate is active. ``False`` (default) = offload
+        off, structured data always inline; ``True`` = ``offload.enabled: true``
+        opted in, normal offload behaviour.
         """
         return self._offload_enabled
 

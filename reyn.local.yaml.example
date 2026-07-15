@@ -437,17 +437,18 @@
 
 
 # -----------------------------------------------------------------------------
-# offload: debug/experiment lever disabling ALL tool-result size gates
-# (tool-result-schema-redesign §5). enabled=false turns off the text token
-# cap, the structured inline cap, and the media follow-up budget bound —
-# every tool result is emitted in full, unbounded. Debug/experiment lever
-# (isolates whether offload itself degrades LLM autonomy), NOT a recommended
-# steady-state setting: a single tool result can then exceed the model's
-# compaction-batch budget (recreates the #1128 compaction dead-end). Format
-# (frontmatter + text) is unchanged either way.
+# offload: opt-in switch for ALL tool-result size gates (tool-result-schema-
+# redesign §5). OFF by default — offloading a large tool result to a file ref
+# only helps if the model reads the ref back, and mid-tier models often act on
+# the truncated preview instead, degrading the result. So by default every
+# tool result is delivered in full and the format (frontmatter + text) is the
+# same either way. Opt in with enabled=true for the cost reduction of
+# capping/offloading large tool results (the text token cap, the structured
+# inline cap, and the media follow-up budget bound); when a single tool result
+# is very large, opting in also prevents an oversized turn.
 # -----------------------------------------------------------------------------
 # offload:
-#   enabled: true
+#   enabled: true  # opt in to the size gates (default: false)
 
 
 # -----------------------------------------------------------------------------
