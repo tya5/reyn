@@ -48,6 +48,7 @@ import asyncio
 import hashlib
 import json
 import logging
+from collections import OrderedDict
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Awaitable, Callable
 
@@ -71,9 +72,55 @@ logger = logging.getLogger(__name__)
 
 _token_counter_fallback_warned: bool = False
 
-# Per-compaction-run cache: (model, text_hash) -> int
-# Cleared between compaction runs in CompactionEngine.compact().
-_token_cache: dict[tuple[str, str], int] = {}
+# Process-lifetime cache: (model, text_hash) -> int. Keyed by a hash, not the
+# raw text, so an entry stays tiny regardless of the source message's length
+# (a long tool-output turn costs the same few bytes as a short one).
+#
+# Bounded LRU (#2937 revision): a cached count for a given (model, text) is
+# valid for the process's entire lifetime — text is immutable and the
+# tokenizer/fallback choice (`use_chars4_estimate`) is a fixed per-session
+# config, never toggled mid-session, so there is no STALENESS reason to ever
+# evict an entry. The bound below exists ONLY to cap memory, not for
+# correctness: `CompactionEngine.compact()` used to `_token_cache.clear()`
+# unconditionally at its start, which (a) was doing double duty as this
+# module's ONLY size bound (no other prune/maxsize existed anywhere in the
+# codebase) and (b) forced a fully-synchronous, on-the-event-loop re-estimate
+# of the WHOLE conversation history on every turn immediately following a
+# compaction (`build_history()` re-checks "total tokens <= trigger" every
+# turn) — measured at ~470x slower cold vs warm on a real ~3000-message
+# history, freezing the inline CUI for real seconds on a long chat. Losing
+# the clear() naively (unbounded dict) would trade that freeze for a slow
+# memory leak proportional to total-distinct-turns-ever, worsening in the
+# exact same "long session" scenario. `OrderedDict` LRU eviction (recency,
+# not insertion order — a `move_to_end` on every hit) keeps recently-touched
+# turns warm (the perf fix) while bounding total memory (the leak fix).
+_TOKEN_CACHE_MAXSIZE = 8192
+_token_cache: "OrderedDict[tuple[str, str], int]" = OrderedDict()
+
+
+def _token_cache_get(cache_key: "tuple[str, str]") -> "int | None":
+    """LRU read: a hit bumps recency (moves to MRU end); a miss returns None."""
+    if cache_key not in _token_cache:
+        return None
+    _token_cache.move_to_end(cache_key)
+    return _token_cache[cache_key]
+
+
+def _token_cache_put(cache_key: "tuple[str, str]", value: int) -> None:
+    """LRU write: insert/overwrite as MRU, then evict the LRU entry if the
+    bound is exceeded. A plain dict has no eviction primitive cheaper than
+    O(n) — OrderedDict.popitem(last=False) is O(1)."""
+    _token_cache[cache_key] = value
+    _token_cache.move_to_end(cache_key)
+    if len(_token_cache) > _TOKEN_CACHE_MAXSIZE:
+        _token_cache.popitem(last=False)
+
+
+def token_cache_size() -> int:
+    """Public read of the token-estimate cache's current entry count — the
+    sanctioned surface for tests/diagnostics (mirrors testing.md's
+    snapshot()-style-read guidance; the OrderedDict itself stays private)."""
+    return len(_token_cache)
 
 # Fixed token cost used for image parts when litellm cannot count them.
 _IMAGE_FIXED_TOKEN_COST = 1024
@@ -89,14 +136,16 @@ def estimate_tokens(text: str, model: str, *, use_chars4: bool = False) -> int:
     Axis 10: uses litellm.token_counter by default; falls back to chars//4
     on error and emits ``token_counter_fallback`` once per process.
 
-    Results are cached per (model, text-hash) within a compaction run.
+    Results are cached per (model, text-hash) for the process's lifetime,
+    bounded by an LRU eviction policy (see ``_token_cache`` docstring above).
     """
     global _token_counter_fallback_warned
     if use_chars4:
         return max(1, len(text or "") // 4)
     cache_key = (model, _text_hash(text or ""))
-    if cache_key in _token_cache:
-        return _token_cache[cache_key]
+    cached = _token_cache_get(cache_key)
+    if cached is not None:
+        return cached
     try:
         # perf/log-routing chokepoint: per-turn token sizing runs BEFORE the
         # first completion, so this can be the FIRST litellm import in the
@@ -109,7 +158,7 @@ def estimate_tokens(text: str, model: str, *, use_chars4: bool = False) -> int:
         m = model or "gpt-3.5-turbo"
         count = litellm.token_counter(model=m, text=text or "")
         if count and count > 0:
-            _token_cache[cache_key] = count
+            _token_cache_put(cache_key, count)
             return count
     except Exception:
         pass
@@ -122,7 +171,7 @@ def estimate_tokens(text: str, model: str, *, use_chars4: bool = False) -> int:
             model,
         )
     result = max(1, len(text or "") // 4)
-    _token_cache[cache_key] = result
+    _token_cache_put(cache_key, result)
     return result
 
 
@@ -845,8 +894,19 @@ class CompactionEngine:
         Raises on LLM error; callers wrap in try/except and emit
         ``compaction_failed`` if needed.
         """
-        # Clear the per-run token cache for fresh estimates each compaction.
-        _token_cache.clear()
+        # No `_token_cache.clear()` here (removed, #2937): text is immutable and
+        # the tokenizer/fallback choice is a fixed per-session config, so a
+        # cached (model, text) count is valid for the process's entire
+        # lifetime — clearing it had no staleness justification. It forced a
+        # COLD, synchronous, full-history re-tokenization on every turn right
+        # after a compaction (build_history() re-estimates the whole raw
+        # history every turn to check the elide trigger) — on a long
+        # conversation this froze the event loop for real, user-visible
+        # seconds, repeating every time compaction fired again as the chat
+        # kept growing. The cache is now LRU-bounded (`_token_cache_put`)
+        # instead of periodically nuked, so it stays warm (the perf fix)
+        # without growing unboundedly (the memory-leak risk a naive removal
+        # of the clear would have traded it for).
 
         user_content = json.dumps({
             "previous_summary": input_chunk.previous_summary,
