@@ -244,7 +244,9 @@ class ReynConfig:
     safety: SafetyConfig = field(default_factory=SafetyConfig)
     # #1830 / FP-0052: high-cost model pre-selection awareness.
     cost_warn: CostWarnConfig = field(default_factory=CostWarnConfig)
-    # tool-result-schema-redesign §5: debug lever disabling all tool-result size gates.
+    # tool-result-schema-redesign §5 / opt-in flip (owner): the tool-result size
+    # gates (text token cap + structured inline cap + media follow-up budget) are
+    # OFF by default; set ``offload.enabled: true`` to opt in.
     offload: OffloadConfig = field(default_factory=OffloadConfig)
     # FP-0055 / #2679: operator-tunable output bounds for the render_template op
     # (max_output_chars / wall_clock_seconds). Default → the safe in-handler bounds.

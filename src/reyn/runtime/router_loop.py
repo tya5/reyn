@@ -3227,7 +3227,9 @@ class RouterLoop:
                     else:
                         frontmatter, text, built_media = build_offload_body(
                             canonical, save_fn=_save_fn,
-                            enabled=getattr(host, "offload_enabled", True),
+                            # opt-in flip: a host with no ``offload_enabled`` attribute
+                            # (legacy/test double) falls closed — offload stays off.
+                            enabled=getattr(host, "offload_enabled", False),
                         )
                         # FP-0056 PR-F2: a VISIBLE fallback (a #2681 CANONICAL_TODO producer, a
                         # genuinely-unregistered source, or a STRUCTURED_PASSTHROUGH whose whole-dict

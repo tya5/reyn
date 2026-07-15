@@ -1248,18 +1248,18 @@ cost_warn:
 
 ## `offload` block
 
-Debug/experiment lever disabling **all three** tool-result size gates (tool-result-schema-redesign §5): the text token cap, the structured-data inline cap, and the media follow-up budget bound. With `enabled: false`, every tool result is emitted to the LLM in full — never truncated, never offloaded to a file ref. The LLM-visible format (frontmatter + text) is unchanged either way; only whether size gates truncate varies, isolating that as the sole experimental variable.
+Opt-in switch for **all three** tool-result size gates (tool-result-schema-redesign §5): the text token cap, the structured-data inline cap, and the media follow-up budget bound. **Off by default** — every tool result is emitted to the LLM in full, never truncated, never offloaded to a file ref — since the size gates are suspected of degrading LLM autonomy via over-truncation. Set `enabled: true` to opt in. The LLM-visible format (frontmatter + text) is unchanged either way; only whether size gates truncate varies.
 
 ```yaml
 offload:
-  enabled: true   # false = never truncate, always emit tool results in full
+  enabled: false   # true = opt in: truncate + offload oversized tool results
 ```
 
 | Field | Type | Default | Description |
 |---|---|---|---|
-| `enabled` | bool | `true` | Master switch. `false` disables the text token cap, the structured inline cap, and the media follow-up budget bound. |
+| `enabled` | bool | `false` | Master switch. `true` opts in to the text token cap, the structured inline cap, and the media follow-up budget bound. |
 
-**Not a recommended steady-state setting.** With offload disabled, a single tool result can exceed the model's compaction-batch budget, recreating the pre-#1128 compaction dead-end (a turn too large to ever compact). A `offload_disabled` warning event is emitted at session start when this is set, so traces stay self-explaining.
+**Known risk of the default.** With offload off (the default), a single tool result can exceed the model's compaction-batch budget, recreating the pre-#1128 compaction dead-end (a turn too large to ever compact). A `offload_disabled` warning event is emitted at session start whenever offload is off — including the default — so traces stay self-explaining.
 
 ## `render_template` block
 

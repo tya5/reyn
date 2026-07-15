@@ -195,33 +195,33 @@ class CostWarnConfig:
 
 @dataclass
 class OffloadConfig:
-    """`offload:` — debug/experiment lever disabling the tool-result size gates
-    (tool-result-schema-redesign §5).
+    """`offload:` — opt-in switch for the tool-result size gates
+    (tool-result-schema-redesign §5; owner-confirmed opt-out -> opt-in flip).
 
     **Purpose:** the offload mechanism (text token cap + structured inline cap +
     media follow-up budget) is suspected of degrading LLM autonomy via
-    over-truncation. This opt-out isolates that experimentally: with
-    ``enabled: false``, format stays identical (frontmatter + text, unchanged)
-    and the only variable is whether size gates truncate. Debug/experiment
-    lever, not a recommended steady-state setting.
+    over-truncation, so it is OFF by default and only runs once explicitly
+    enabled. With ``enabled: true``, format stays identical (frontmatter + text,
+    unchanged) and the only variable is whether size gates truncate.
 
-    ``enabled: false`` disables all three gates: the text token cap
+    ``enabled: true`` turns on all three gates: the text token cap
     (``cap_tool_result_content``), the structured inline gate
     (``STRUCTURED_INLINE_MAX_CHARS`` in ``build_offload_body``), and the media
-    follow-up budget bound (``media_followup_budget`` — included so the
-    experiment isn't confounded by media starvation).
+    follow-up budget bound (``media_followup_budget`` — included so enabling
+    the flag isn't confounded by media starvation from an un-gated budget).
 
-    **Known risk (accepted):** with offload disabled, a single tool result can
-    exceed the model's compaction-batch budget, recreating the #1128
-    compaction dead-end (a turn too large to ever compact). A
-    ``offload_disabled`` warning event is emitted at session start so traces
-    stay self-explaining.
+    **Known risk (accepted) of the default:** with offload off (the default),
+    a single tool result can exceed the model's compaction-batch budget,
+    recreating the #1128 compaction dead-end (a turn too large to ever
+    compact). A ``offload_disabled`` warning event is emitted at session start
+    whenever offload is off — including the default — so traces stay
+    self-explaining.
     """
-    enabled: bool = True
+    enabled: bool = False
 
 
 def _build_offload_config(raw: object) -> "OffloadConfig":
-    """Parse the ``offload:`` section. Missing/malformed -> defaults (enabled=True)."""
+    """Parse the ``offload:`` section. Missing/malformed -> defaults (enabled=False, opt-in)."""
     if not isinstance(raw, dict):
         return OffloadConfig()
     defaults = OffloadConfig()

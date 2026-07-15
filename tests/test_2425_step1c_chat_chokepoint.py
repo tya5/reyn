@@ -25,7 +25,13 @@ _BIG = "\n".join(f"line {i}: " + "z" * 60 for i in range(400))  # well over the 
 
 
 class _CapHost:
-    """RouterLoopHost surface with the cap + the media_store the canonical path stores through."""
+    """RouterLoopHost surface with the cap + the media_store the canonical path stores through.
+
+    ``offload_enabled = True`` — this test exercises the offload mechanism itself
+    (structured/text offloading, no whole-dict blob collapse), independent of the
+    config default (opt-in flip: ``offload.enabled`` defaults False in reyn.yaml)."""
+
+    offload_enabled = True
 
     def __init__(self, store: "MediaStore | None") -> None:
         self.media_store = store
