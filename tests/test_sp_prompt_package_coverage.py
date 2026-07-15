@@ -1,5 +1,5 @@
 """Tier 2b: every ``reyn.prompt.*`` (Phase 1: router_frame/universal_slots/
-codeact/retrieval; Phase 2: compaction/turn_budget/judge; Phase 3:
+codeact/retrieval; Phase 2: compaction/turn_budget; Phase 3:
 loop_control/dogfood + codeact's §M observation labels) string constant is
 exercised — appears in at least one fixture's ASSEMBLED (rendered) output —
 across a representative gate matrix.
@@ -14,7 +14,7 @@ inspection.
 
 The corpus is built from ASSEMBLED text (``build_system_prompt`` /
 ``_render_code_api`` / ``_search_sp`` / ``wrap_up_system_prompt`` /
-``judge_system_prompt`` return values, plus the raw compaction-family
+``dogfood_judge_system_prompt`` return values, plus the raw compaction-family
 constants — those are sent to the LLM verbatim with no further
 assembly/gating, so the constant itself IS the assembled text), not from
 calling the ``reyn.prompt.*`` functions directly in a way that bypasses their
@@ -33,14 +33,12 @@ import pytest
 import reyn.prompt.codeact as _codeact_mod
 import reyn.prompt.compaction as _compaction_mod
 import reyn.prompt.dogfood as _dogfood_mod
-import reyn.prompt.judge as _judge_mod
 import reyn.prompt.loop_control as _loop_control_mod
 import reyn.prompt.retrieval as _retrieval_mod
 import reyn.prompt.router_frame as _router_frame_mod
 import reyn.prompt.turn_budget as _turn_budget_mod
 import reyn.prompt.universal_slots as _universal_slots_mod
 from reyn.prompt.dogfood import dogfood_judge_system_prompt
-from reyn.prompt.judge import judge_system_prompt
 from reyn.prompt.loop_control import tool_call_cap_notice
 from reyn.runtime.reasoning_continuity import render_reasoning_section
 from reyn.runtime.router_system_prompt import build_system_prompt
@@ -55,7 +53,7 @@ from reyn.tools.schemes.retrieval import _search_sp
 
 _PROMPT_MODULES = [
     _router_frame_mod, _universal_slots_mod, _codeact_mod, _retrieval_mod,
-    _compaction_mod, _turn_budget_mod, _judge_mod, _loop_control_mod, _dogfood_mod,
+    _compaction_mod, _turn_budget_mod, _loop_control_mod, _dogfood_mod,
 ]
 
 _BOOL_NAMES = [
@@ -183,9 +181,6 @@ def _assembled_output_corpus() -> str:
     chunks.append(wrap_up_system_prompt())
     chunks.append(wrap_up_system_prompt(reason="router reached iteration limit (5)"))
 
-    # §G judge_output scorer SP: exercises the header+"Rubric:"+rubric seam.
-    chunks.append(judge_system_prompt("Score 0-1: is the summary non-empty?"))
-
     # §I-L loop-control nudges (Phase 3): rendered at their own mid-request-
     # stream injection points, not via build_system_prompt.
     chunks.append(_loop_control_mod.EMPTY_STOP_RETRY_DIRECTIVE)
@@ -202,7 +197,8 @@ def _assembled_output_corpus() -> str:
     ))
 
     # §H dev/dogfood judge SPs (Phase 3): sent verbatim / via the header+
-    # "Rubric:"+rubric seam, mirroring §G's judge_output shape.
+    # "Rubric:"+rubric seam (an independent dev-harness-owned scorer prompt,
+    # not fed by any production op).
     chunks.append(_dogfood_mod.DOGFOOD_INTERPRETATION_SYSTEM_PROMPT)
     chunks.append(dogfood_judge_system_prompt("- reply is on-topic\n- reply is polite"))
 

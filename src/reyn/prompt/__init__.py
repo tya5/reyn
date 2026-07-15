@@ -4,14 +4,16 @@
 **Phase 1** relocated the **agent-facing** SP sources — the ones a live
 end-user agent actually runs on every turn (§A-D: router_frame, universal_slots,
 codeact, retrieval). **Phase 2** added the **internal-service** SPs —
-compaction, turn-budget wrap-up, and judge_output's scorer template (§E-G).
-**Phase 3 (this state of the package, FINAL)** adds the remaining two
-categories: the loop-control / weak-model nudges that inject mid-REQUEST-
-STREAM rather than into the assembled system prompt (§I-L:
-``loop_control.py``, plus §M's CodeAct observation labels folded into
-``codeact.py``), and the dev/dogfood internal eval harness's judge SPs (§H:
-``dogfood.py``). **All 13 SP sources identified in the original inventory are
-now relocated — the ``reyn.prompt`` package relocation arc is COMPLETE.**
+compaction and turn-budget wrap-up (§E-F). **Phase 3 (this state of the
+package, FINAL)** adds the remaining two categories: the loop-control /
+weak-model nudges that inject mid-REQUEST-STREAM rather than into the
+assembled system prompt (§I-L: ``loop_control.py``, plus §M's CodeAct
+observation labels folded into ``codeact.py``), and the dev/dogfood internal
+eval harness's judge SPs (§H: ``dogfood.py``). **§G (``judge.py``, the
+now-removed ``judge_output`` op's scorer SP) was retired along with the op
+(clean-break removal — scoring an output against a rubric is done via an
+``agent`` step + ``schema`` instead; see
+`docs/concepts/agent-engineering/evaluation.md`).**
 
 Byte-identical relocation: every string below is an EXACT copy of what its
 source builder previously inlined — no LLM-facing wording changed. The
@@ -31,7 +33,6 @@ Reviewer's map — every SP source in the codebase, one row per module:
 | ``retrieval.py``      | ``reyn.tools.schemes.retrieval._search_sp``                               | retrieval's search-guidance SP — 2 variants (non-terminal "search first" / terminal "call a presented match"), gated on RePresent convergence. |
 | ``compaction.py``     | ``reyn.services.compaction.engine`` (main + resummarize + phase-results)  | the 3 compaction-family summariser SPs — rolling-summary compaction, the overshoot re-summarize pass (#271 T2), and the phase act-loop control_ir_results summariser (PR-N5). |
 | ``turn_budget.py``    | ``reyn.services.turn_budget.engine.wrap_up_system_prompt``                | the axis-independent force-close wrap-up SP (#1092 §8); the ``reason`` variant is the same text with a cause line prepended, not a separate string. |
-| ``judge.py``          | ``reyn.core.op_runtime.judge_output``                                    | the judge_output scorer's static evaluator-instructions + "Rubric:" label header; the caller-supplied rubric body itself stays dynamic content interpolated at call time, not relocated. |
 | ``loop_control.py``   | ``reyn.runtime.router_loop.RouterLoop`` / ``reyn.llm.llm._apply_g12_signal`` / ``reyn.runtime.reasoning_continuity`` | §I-L (Phase 3): the empty-stop retry directive ("resume"), the G12 post-tool continuation/error signals (success cell = same "resume" token by design), the tool-call-cap re-grounding notice, and the reasoning-continuity section header + framing sentence. ALL inject mid-request-stream (synthetic messages / embedded tool-result text), not via the system-prompt assembler — verified byte-identical at each own injection point, not the system-prompt golden diff. |
 | ``dogfood.py``        | ``reyn.dev.dogfood.interpretation.generate_interpretation`` / ``reyn.dev.dogfood.verifiers.reply._default_judge_fn`` | §H (Phase 3): the internal dogfood eval harness's two LLM-judge SPs (per-scenario 3-line interpretation; reply-verifier rubric scorer). Dev-tool-only, not surfaced to an end-user agent, but IS LLM-facing (reaches a real LLM request) — in scope per owner's "全て (all of them)" instruction. |
 
@@ -70,7 +71,6 @@ from reyn.prompt.dogfood import (
     DOGFOOD_JUDGE_RUBRIC_LABEL_PREFIX,
     dogfood_judge_system_prompt,
 )
-from reyn.prompt.judge import JUDGE_EVALUATOR_HEADER, RUBRIC_LABEL_PREFIX, judge_system_prompt
 from reyn.prompt.loop_control import (
     EMPTY_STOP_RETRY_DIRECTIVE,
     G12_SIGNAL_ERROR_TEXT,
@@ -120,9 +120,6 @@ __all__ = [
     "DOGFOOD_JUDGE_EVALUATOR_HEADER",
     "DOGFOOD_JUDGE_RUBRIC_LABEL_PREFIX",
     "dogfood_judge_system_prompt",
-    "JUDGE_EVALUATOR_HEADER",
-    "RUBRIC_LABEL_PREFIX",
-    "judge_system_prompt",
     "EMPTY_STOP_RETRY_DIRECTIVE",
     "G12_SIGNAL_TEXT",
     "G12_SIGNAL_ERROR_TEXT",

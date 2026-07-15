@@ -9,7 +9,7 @@ readable activity block per scenario inside the Discussion thread.
 
 LLM transport
 -------------
-Reuses the same LiteLLM path as ``judge_output``: ``proxy_kwargs()`` reads
+Uses the standard LiteLLM path: ``proxy_kwargs()`` reads
 ``LITELLM_API_BASE`` so local proxies (= ``localhost:4000`` w/ flash-lite)
 work out of the box. ``OPENAI_API_KEY`` is forwarded by litellm.
 

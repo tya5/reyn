@@ -325,9 +325,9 @@ async def test_embed_forwards_none_when_ctx_embedding_event_sink_stripped(
 # ---------------------------------------------------------------------------
 #
 # `embed`'s result envelope already carried `total_tokens`/`model`; this PR
-# adds `cost_usd`/`priced` (X2c) and records the call into whichever of
-# `ctx.budget_tracker` (agent/project scope) / `ctx.budget_gateway` (session
-# scope) are wired -- an INDEPENDENT aggregate, never the chat `CostBreakdown`.
+# adds `cost_usd`/`priced` (X2c) and records the call via `ctx.budget_gateway`
+# (session scope, fanning out to agent/project scope internally) when wired
+# -- an INDEPENDENT aggregate, never the chat `CostBreakdown`.
 
 # A real litellm embedding-mode model (verified present, mode="embedding") so
 # these tests exercise the actual litellm.model_cost lookup, not a fake rate.

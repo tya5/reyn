@@ -270,8 +270,9 @@ AUTHOR_VS_REUSE_HEURISTIC = (
     "Reuse before authoring: check the existing catalog (list_actions) for a "
     "part that already covers the need before writing a new one. Author only "
     "when nothing existing fits. Any authored part must be typed, "
-    "permissioned, and evaluated (judge_output) before it is promoted for "
-    "reuse -- an ungated authored part is a liability, not a shortcut."
+    "permissioned, and self-reviewed (an agent step + schema-validated output) "
+    "before it is promoted for reuse -- an ungated authored part is a "
+    "liability, not a shortcut."
 )
 
 # ── present affordance (both directions) -- 0060 F3b ────────────────────────

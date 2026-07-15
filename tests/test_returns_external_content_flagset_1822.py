@@ -139,13 +139,6 @@ _NOT_EXTERNAL = {
     "render_template",
     # — control / orchestration —
     "compact",
-    # judge_output (proposal 0060 F3b): the OS's own judge LLM's verdict
-    # (score/passed/reason) against a caller-supplied rubric + value — the
-    # verdict is OS-computed judgment, not relayed external content. The
-    # scored value itself (via data_inline/target) is content the caller
-    # ALREADY had in hand (its own prior work-product), same "derived from
-    # input, not a relay" rationale as embed/index_update above.
-    "judge_output",
     # invoke_action: generic dispatcher — trust resolved by the EFFECTIVE inner
     # name at dispatch() (the dispatch-tag), not by this wrapper.
     "invoke_action",

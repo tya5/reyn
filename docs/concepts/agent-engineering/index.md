@@ -59,7 +59,7 @@ Permission-gated and sandbox-scoped: no capability reaches the world without pas
 
 ### 6. [Evaluation](evaluation.md)
 
-Scoring output against a rubric in-run (`judge_output`: LLM scorer + threshold + `on_fail` policy). This is the constitution's other declared honest thin area.
+Scoring output against a rubric in-run (a pipeline `agent` step + `schema`: the OS constrains generation and validates the parsed result; the threshold comparison is a plain `transform` step). This is the constitution's other declared honest thin area.
 
 ### 7. [Observability](observability.md)
 

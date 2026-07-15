@@ -204,7 +204,7 @@ def _is_error(result: dict) -> bool:
 #
 # The dedicated error-MESSAGE fields, in extractor priority order. This IS the true union of the
 # per-mapper error branches removed in piece #1 (``file``/``reyn_repo``/``render_template``/``compact``/
-# ``present``/``judge_output``/``memory_body``/``web_search`` — and the recall/task_ops ``{ok:False,
+# ``present``/``memory_body``/``web_search`` — and the recall/task_ops ``{ok:False,
 # error_message}`` that had NO branch, the #2698 gap). Every one of those producers surfaces its error
 # through one of these fields, so keying the predicate on them (not on the ambiguous ``status``/``ok``
 # values) makes removing the branches regression-free by construction.
@@ -795,43 +795,6 @@ def present_to_canonical(result: dict) -> CanonicalToolResult:
     if note:
         text = f"{text}\n{note}"
     return CanonicalToolResult(text=text, attachments=[], source_ref=None, meta={})
-
-
-def judge_output_to_canonical(result: dict) -> CanonicalToolResult:
-    """``judge_output`` op result → canonical. The scorer's ``reason`` (its LLM-readable explanation) is
-    the ``text``; ``score`` / ``passed`` / ``threshold`` / ``on_fail`` are signal meta (they drive the
-    caller's next move — a failed judgment triggers ``on_fail``). An error surfaces the message as
-    ``text`` with ``meta.isError``. Shape: ``{kind:"judge_output", score, passed, reason, threshold,
-    on_fail}`` (ok) or ``{status:"error", error}`` (error).
-
-    **The same fields ALSO ride a ``structured`` attachment (0060 F3b)** —
-    not just ``meta``. ``canonical_to_ctx_fields`` (the seam a pipeline
-    ``tool:`` step's ``ctx.<output>`` is built from) only ever surfaces
-    ``text``/``attachments`` — ``meta`` is chat-facing only and is DROPPED
-    for pipeline ctx exposure. Without this attachment, a pipeline step
-    downstream of ``judge_output`` (e.g. a ``present`` step binding
-    ``$bind: /score``) could never reach the score/passed/threshold —
-    discovered building the 0060 F3b flagship pipeline (`web_search ->
-    agent -> judge_output -> present`), where the judge's score needed to
-    reach the operator-facing card. Purely additive: chat-side rendering is
-    unchanged (``text`` is still the short reason string every existing
-    caller reads); this only adds a second, structured view of the same
-    already-computed fields, mirroring the established
-    text+structured-attachment idiom every other meta-bearing mapper here
-    already uses (``web_search_to_canonical``, ``mcp_to_canonical``, etc.).
-
-    SUCCESS shape only — FP-0056 v2 piece #1 routes the ``{status:"error", error}`` shape through the
-    shared ``error_to_canonical`` seam before this mapper runs."""
-    meta: dict[str, Any] = {}
-    for key in ("score", "passed", "threshold", "on_fail"):
-        value = result.get(key)
-        if value is not None:
-            meta[key] = value
-    text = _explicit_empty(str(result.get("reason", "") or ""), "(no reason given)")
-    structured = {**meta, "reason": result.get("reason", "")}
-    return CanonicalToolResult(
-        text=text, attachments=[{"kind": "structured", "data": structured}], source_ref=None, meta=meta,
-    )
 
 
 def memory_body_to_canonical(result: dict) -> CanonicalToolResult:

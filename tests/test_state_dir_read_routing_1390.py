@@ -1,6 +1,6 @@
 """Tier 2: #1390 L3 — state_dir reads route host-side, not through the repo backend.
 
-state_dir storage is host-side (``store_artifact`` writes directly host-side,
+state_dir storage is host-side (writes under state_dir go directly host-side,
 bypassing the repo backend). The READ side must mirror that split: a read whose
 resolved path is under ``state_dir`` (e.g. an OS-offloaded artifact the agent is
 told to ``file.read``) stays host-side, while repo reads go to the repo backend.

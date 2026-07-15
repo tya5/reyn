@@ -11,9 +11,7 @@ while the OS + permission layer stay host-side. This file pins:
   (c) with the default HostBackend the FS ops round-trip identically (= the
       identity / behavior-preservation property, beyond the broad existing
       file-op suites);
-  (d) grep is a backend primitive (Workspace.grep delegates the scan);
-  (e) the permission gate + state_dir artifact storage stay host-side (NOT
-      routed through the repo-FS backend).
+  (d) grep is a backend primitive (Workspace.grep delegates the scan).
 
 No mocks: collaborators are real instances or a hand-written recording Fake
 (per testing policy). Assertions use public surfaces only.
@@ -148,16 +146,3 @@ def test_grep_primitive_via_backend(tmp_path: Path) -> None:
 
     count_res = ws.grep(".", re.compile("a"), output_mode="count")
     assert count_res.count >= 1
-
-
-def test_state_dir_artifacts_not_routed_through_repo_backend(tmp_path: Path) -> None:
-    """Tier 2: (e) artifact storage is host-side (state_dir) — NOT routed through
-    the repo-FS backend (Stage 0 decouple intent: artifacts survive on host even
-    when the repo FS lives in a container)."""
-    backend = _RecordingBackend()
-    ws = Workspace(events=EventLog(), base_dir=tmp_path, environment_backend=backend)
-
-    handle = ws.store_artifact("p", {"type": "demo", "data": {"v": 1}}, actor="s")
-    # store_artifact wrote the file without going through the repo-FS backend.
-    assert "write_bytes" not in backend.calls
-    assert ws.resolve_artifact_handle(handle).is_file()

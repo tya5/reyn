@@ -31,7 +31,9 @@ async def _default_judge_fn(rubric: list[str], reply_text: str) -> dict:
     Returns: {"passed": bool, "score": float, "reason": str}
 
     Isolated here so tests can inject a stub without touching litellm.
-    The judge contract mirrors judge_output.py: score 0.0–1.0, threshold 0.7.
+    Contract: score 0.0-1.0, threshold 0.7. This is an independent
+    dev-harness scorer (a direct litellm call) — not the (removed)
+    ``judge_output`` op.
     """
     import json
 

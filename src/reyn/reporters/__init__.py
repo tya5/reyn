@@ -43,14 +43,6 @@ class ConsoleLogger:
             f" — {error[:120]}"
         )
 
-    def on_artifact_created(self, data: dict) -> None:
-        phase = data.get("phase", "?")
-        artifact_type = data.get("artifact_type", "?")
-        path = data.get("path", "")
-        keys = data.get("keys", [])
-        keys_str = f"  keys={keys}" if keys else ""
-        print(f"[artifact:{artifact_type}] phase={phase}{keys_str}  saved → {path}")
-
     # ── LLM ───────────────────────────────────────────────────────────────────
 
     # ── Shell ─────────────────────────────────────────────────────────────────

@@ -10,34 +10,41 @@ agent の出力が実際に良いかどうかを採点すること — スキー
 
 ## Reyn の実装方法
 
-### `judge_output`
+### `agent` step + `schema`
 
-typed な Control IR op です: 現在の workspace artifact 内の `target` dot-path を解決し、呼び出し元が指定した `rubric` で LLM を呼び出し、スコア(`0.0`–`1.0`)と `threshold`(デフォルト `0.8`)に対する `passed` フラグを返します。
+専用のスコアラー op はありません。出力を rubric に対して採点するのは、通常の pipeline 合成です: `schema:` に小さなスキーマ(例: `{score: number, reason: string}`)を指定した pipeline `agent` step の後に、パースされたスコアを閾値と比較する素の `transform` step を続けます。
 
-```json
-{
-  "kind": "judge_output",
-  "target": "artifact.data.summary",
-  "rubric": "Score 0.0-1.0: is the summary concise, accurate, and complete?",
-  "threshold": 0.8,
-  "on_fail": "transition"
-}
+```yaml
+pipeline: self_review
+steps:
+  - agent:
+      prompt: "Self-review {ctx.draft} against your own checklist: ... Give a score in [0.0, 1.0] and a short reason."
+      schema: Verdict
+      output: verdict
+  - transform: {value: "ctx.verdict.score >= 0.6", output: passed}
+---
+schema: Verdict
+fields:
+  score: {type: number}
+  reason: {type: string}
 ```
 
-OS は `rubric` の内容を一切解釈しません — これは skill 作者自身の評価基準であり、検査なしで LLM にルーティングされます。`on_fail`(`"transition"` / `"abort"` / `"continue"`)は呼び出し元が対応するために結果に記録されます — op ハンドラー自体はこの値で分岐しません。`on_fail` を実際の制御フロー決定に解釈するのは、OS ではなく呼び出し側の agent 自身の責任です。
+ここでの OS の実質的な貢献は `schema:` です: **agent の生成を制約し**(スキーマから組み立てた `response_format` により、自由形式のテキストではなくスキーマに準拠した JSON で答えさせる)、**パース結果を検証します**(念のための二重チェック — provider の制約を鵜呑みにはしません)。閾値比較は素の `if`(`transform` step)であり、専用の op ではありません。コストは他のあらゆる `agent` step と同じ経路で追跡されます — 別のコスト経路を配線する必要はありません。
 
-`judge_output` の呼び出しごとに P6 audit-event(`op=judge_output`、`target`、`score`、`passed`、`threshold`、`reason` を伴う `tool_executed`)が発行されます — スコアリングされた決定も他の op と同様に監査可能です。
+OS はチェックリストの内容を一切解釈しません — それは呼び出し側の agent 自身が書いた評価基準であり、自分が書いた prompt の一部です。**これは自己レビューであり、客観性ではありません**: 下書きを作った agent(あるいは同じモデルファミリー)がチェックリストも書き、それに対して採点します — 自分のチェックリストが挙げ、下書きが見落とした要件を拾う点では有用ですが、独立した審判ではありません。そう見せかけないでください。
+
+(以前の `judge_output` Control IR op は、この機能の専用版を提供していました — `rubric` 文字列、`threshold` フィールド、そして op 自体が一度も分岐に使わなかった `on_fail` フィールドを伴う LLM 呼び出しです。これはクリーンブレイクとして削除されました: OS の実質的な貢献は閾値比較と audit event だけであり、つまりこれは — 何を書き、何をチェックし、どの閾値が重要かを決める — agent の仕事が OS-op の衣装をまとっていただけでした。`schema` は既に同じ仕事 — 制約付き生成 + 検証 — を、スコアリング専用ではなくどの `agent` step に対しても、正しくこなしていました。)
 
 ### `reyn run-once`
 
-ライブの承認プロンプトなしで agent を実行する非対話型の CLI エントリーポイントです(`reyn eval` は phase-graph 時代のコマンドで、その engine と共に削除されました — `reyn run-once` が現行の生きている対応物です)。実行開始前に permission がすでに事前承認されている必要があります — 例えば `--grant-file-write` は対話的プロンプトではなく起動時に特定のケイパビリティを付与します。これが `judge_output` でゲートされたランを CI で使えるものにしています: スコアリングループと permission モデルは直交しているため、非対話ランの trust 決定は起動ごとに再検討されるのではなく、事前に一度だけ行われます。
+ライブの承認プロンプトなしで agent を実行する非対話型の CLI エントリーポイントです(`reyn eval` は phase-graph 時代のコマンドで、その engine と共に削除されました — `reyn run-once` が現行の生きている対応物です)。実行開始前に permission がすでに事前承認されている必要があります — 例えば `--grant-file-write` は対話的プロンプトではなく起動時に特定のケイパビリティを付与します。これが自己レビューでゲートされた pipeline を CI で使えるものにしています: スコアリングループと permission モデルは直交しているため、非対話ランの trust 決定は起動ごとに再検討されるのではなく、事前に一度だけ行われます。
 
 ## まだ薄い部分
 
-これは憲章が明示する 2 つの honest thin area の 1 つです(`CLAUDE.md` の Constitution 節と [`docs/concepts/architecture/charter.md`](../architecture/charter.md) の Evaluation 行を参照)。`judge_output` が評価サーフェスのすべてです — rubric ライブラリも、複数 judge によるコンセンサス/投票も、組み込みの eval-suite ランナーも、run のバッチをまたぐ集計スコアリングもありません。それらを望む skill 作者は、`judge_output` の呼び出しと通常の制御フローを組み合わせて自分で構成します。OS が提供するのはスコアリングのプリミティブであり、その上に構築された評価フレームワークではありません。
+これは憲章が明示する 2 つの honest thin area の 1 つです(`CLAUDE.md` の Constitution 節と [`docs/concepts/architecture/charter.md`](../architecture/charter.md) の Evaluation 行を参照)。`agent` step + `schema` が評価サーフェスのすべてです — rubric ライブラリも、複数 judge によるコンセンサス/投票も、組み込みの eval-suite ランナーも、run のバッチをまたぐ集計スコアリングもありません。それらを望む作者は、`agent`+`schema` の自己レビュー step と通常の制御フローを組み合わせて自分で構成します。OS が提供するのは typed な生成のプリミティブであり、その上に構築された評価フレームワークではありません。
 
 ## 関連情報
 
-- [リファレンス: control-ir.md § `judge_output`](../../reference/runtime/control-ir.md)
-- [リファレンス: events](../../reference/runtime/events.md) — `judge_output` の結果が記録される audit-event 分類
+- [リファレンス: pipeline-dsl.md § `AgentStep` / `schema`](../../reference/runtime/pipeline-dsl.md)
+- [リファレンス: events](../../reference/runtime/events.md) — `agent` step のコスト/完了イベントが記録される audit-event 分類
 - [reliability-engineering.md](reliability-engineering.md) — 判断ではなく検証が基準となる場合に何が起こるか

@@ -114,11 +114,6 @@ class OpContext:
     # (same contract as ask_user without an intervention_bus).
     compact_now: "Callable[[], Awaitable[dict]] | None" = None
 
-    # #1190 stage (ii): BudgetTracker for cost recording from ops that make LLM
-    # calls (judge_output → purpose="judge"). Threaded by the OpContext builders
-    # (control_ir_executor / router_host_adapter); None = unrecorded.
-    budget_tracker: object | None = None
-
     # FP-0063 PC: the calling Session's per-session BudgetGateway — the `embed`
     # op's SINGLE embedding-cost recording entry point
     # (``BudgetGateway.record_embedding``). It fans out to all three scopes:
@@ -126,12 +121,15 @@ class OpContext:
     # process-shared BudgetTracker it holds, read via
     # ``Registry.agent_embedding_cost`` / ``.project_embedding_cost``).
     #
-    # Deliberately NOT ``budget_tracker`` above: the tracker keys per-agent
+    # Deliberately NOT a raw BudgetTracker field: the tracker keys per-agent
     # counters by agent NAME, which an op handler cannot supply — ``agent_id``
     # is the FP-0016 HOST identity (``reyn/<hostname>``), a different value, so
     # recording from here would file spend under a key no per-scope reader
     # looks up. The gateway is the only object holding both the tracker and the
-    # agent name, so the fan-out lives there.
+    # agent name, so the fan-out lives there. (A prior ``budget_tracker`` field
+    # existed for ``judge_output``'s cost recording — removed with that op:
+    # it had 0 writers across all OpContext constructions, so its "Threaded by
+    # the OpContext builders" comment was false the whole time.)
     #
     # Threaded by ``build_router_op_context`` (both router op-ctx builders).
     # The load-bearing one for `embed` is RouterHostAdapter's — that is the

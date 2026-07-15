@@ -6,11 +6,10 @@ description: Reyn-specific usage cheat sheet -- which mechanism to reach for (sk
 # Reyn cheat sheet
 
 This is the gap-filler between "reyn has these parts" and "you use them
-correctly". concept/reference docs fully describe each mechanism in
-isolation; this skill is the composition know-how and the op essentials that
-fall in the cracks between them (proposal 0060 Addendum D1). Read this on
-demand when deciding which mechanism to use, or before authoring a new
-skill/pipeline/hook/present-view.
+correctly". concept/reference docs describe each mechanism in isolation;
+this skill is the composition know-how in the cracks between them (0060
+Addendum D1). Read on demand when deciding which mechanism to use, or before
+authoring a new skill/pipeline/hook/present-view.
 
 ## Decision tree (which mechanism)
 
@@ -19,17 +18,18 @@ skill/pipeline/hook/present-view.
 - Need **output** (show a result, or write externally) -> `present` | `render_template` | an `mcp` write.
 
 Reuse before authoring: check the existing catalog (`list_actions`) for a
-part that already covers the need. Author only when nothing fits, and gate
-anything you author or promote with `judge_output` before it becomes a
-reused asset (an ungated authored part is a liability, not a shortcut).
+part that already covers the need. Author only when nothing fits, and
+self-review anything you author or promote (an `agent` step + `schema`, see
+below) before it becomes a reused asset -- an ungated authored part is a
+liability, not a shortcut.
 
 ## `present` -- show results without spending tokens
 
 `present(data_ref=..., blueprint=...)` (or `data_inline=...` for a value
 already in hand) renders directly to the operator's UI at **zero token
 cost to you** -- you never see the render, only a short ack. Use it for
-RESULTS you want the operator to see (a status card, a table, a diff) instead
-of dumping the content into your own reply.
+RESULTS you want the operator to see (a status card, a table, a diff)
+instead of dumping content into your own reply.
 
 **The critical caveat, both directions matter:**
 
@@ -41,41 +41,40 @@ of dumping the content into your own reply.
   renders to the operator's screen, not yours; presenting content you need to
   reason about means you never actually see it.
 
-Blueprint catalog (8 components, all display-only, non-executable by
-construction): `text` / `markdown` / `code` / `diff` / `keyvalue` / `table` /
-`list` / `image`. A value inside a component binds via
-`{"$bind": "<json-pointer>"}` (RFC 6901) against the presented data; anything
-else is a literal label. Full spec + `$bind` grammar:
-`docs/reference/runtime/control-ir.md` (`present` section).
+Blueprint catalog (8 components, display-only, non-executable): `text` /
+`markdown` / `code` / `diff` / `keyvalue` / `table` / `list` / `image`. A
+value inside a component binds via `{"$bind": "<json-pointer>"}` (RFC 6901)
+against the presented data; anything else is a literal label. Full spec +
+`$bind` grammar: `docs/reference/runtime/control-ir.md` (`present` section).
 
-## `judge_output` -- gate before you promote
+## Self-review -- gate before you promote (`agent` step + `schema`)
 
-`judge_output(data_inline=<value>, rubric="...", threshold=0.8)` scores a
-value 0.0-1.0 against your own rubric and returns `{score, passed, reason}`.
-Use `data_inline` for a value you already have (a prior pipeline step's
-output, a draft you just produced) -- `target` is a legacy dot-path form for
-the old phase-graph runtime only; supply exactly one. This is the mandatory
-gate for auto-improvement promotion (0060 J-D): an authored/promoted part
-earns catalog registration by passing a rubric, not by your own say-so. Full
-spec: `docs/reference/runtime/control-ir.md` (`judge_output` section).
+Score a value against your own checklist with a pipeline `agent` step whose
+`schema:` names a small schema you declare (e.g. `{score: number, reason:
+string}`) -- it **constrains generation and validates the parsed result**
+(typed, validated scoring, not a bespoke op). Compare the parsed score
+against your own threshold with a plain `transform` step. This is
+**self-review, not objectivity**: you write the draft, you write the
+checklist, and the same model family scores it -- useful, not independent.
+Mandatory gate for auto-improvement promotion (0060 J-D). Full spec:
+`docs/reference/runtime/pipeline-dsl.md`; worked loop: `draft_judge_revise`.
 
 ## Pipelines -- orchestration DSL essentials
 
 A `pipeline:` document is a list of `steps:`; each step is single-key
 (`transform` / `tool` / `shell` / `agent` / `call` / `match` / `fold` /
 `for_each` / `parallel`). `output: NAME` on a step makes it readable as
-`ctx.NAME` from every later step; the immediately preceding step's own result
-is also readable as bare `pipe`. A `tool`/`shell` argument is a literal
-unless tagged `!expr EXPR` (an R1 expression against `ctx`/`pipe`); an
-`agent` step's `prompt` instead interpolates `{ctx.dotted.path}` / `{pipe}`
-as a template string. Full grammar + the R1 expression language:
-`docs/reference/runtime/pipeline-dsl.md`.
+`ctx.NAME` from every later step; the preceding step's own result is also
+readable as bare `pipe`. A `tool`/`shell` argument is a literal unless
+tagged `!expr EXPR` (an R1 expression against `ctx`/`pipe`); an `agent`
+step's `prompt` interpolates `{ctx.dotted.path}` / `{pipe}` as a template
+string. Full grammar: `docs/reference/runtime/pipeline-dsl.md`.
 
 **A `tool` step's `ctx.<output>` is always the flat `{text, structured}`
-shape** (uniform across every tool, mirroring what the chat side sees) --
-never the tool's raw meta fields. `judge_output`'s `score`/`passed` reach a
-downstream step via `ctx.<name>.structured.score` /
-`ctx.<name>.structured.passed`, not `ctx.<name>.score` directly.
+shape** (uniform across every tool) -- never the tool's raw meta fields. An
+`agent` step's `ctx.<output>` differs: no `schema:` -> plain-text reply;
+`schema:` set -> the schema-validated PARSED value directly (e.g.
+`ctx.verdict.score`, no `text`/`structured` wrapper).
 
 **Worked example -- the flagship through-chain** (input -> workflow ->
 output in one pipeline; this exact text is CI-verified to parse AND run):
@@ -84,9 +83,9 @@ output in one pipeline; this exact text is CI-verified to parse AND run):
 pipeline: research_and_report
 description: >-
   Flagship through-chain exemplar (proposal 0060 F3) -- web_search -> agent
-  (summarize) -> judge_output (self-review) -> present (zero-token operator
-  output). Shows the input -> workflow -> output composition thesis end to
-  end. Ships builtin + inert (invoke-by-name only, never auto-launched).
+  (summarize) -> agent (self-review, schema-validated) -> present (zero-token
+  operator output). Shows the input -> workflow -> output composition thesis
+  end to end. Ships builtin + inert (invoke-by-name only, never auto-launched).
 steps:
   - tool:
       name: web_search
@@ -97,44 +96,50 @@ steps:
         Summarize these web search results into a concise, accurate answer
         to the query "{ctx.query}". Search results: {ctx.results}
       output: summary
-  - tool:
-      name: judge_output
-      args:
-        data_inline: !expr ctx.summary
-        rubric: "Score 0.0-1.0: is the summary accurate, concise, and does it directly answer the query? Reply as JSON {\"score\": <0-1 float>, \"reason\": <string>}."
-        threshold: 0.6
+  - agent:
+      prompt: >-
+        Self-review this summary against your own checklist: is it accurate,
+        is it concise, and does it directly answer the query "{ctx.query}"?
+        Summary: {ctx.summary}. Give a score in [0.0, 1.0] and a short reason.
+      schema: Verdict
       output: verdict
+  - transform: {value: "ctx.verdict.score >= 0.6", output: passed}
   - tool:
       name: present
       args:
-        data_inline: !expr "{summary: ctx.summary, verdict: ctx.verdict}"
+        data_inline: !expr "{summary: ctx.summary, verdict: ctx.verdict, passed: ctx.passed}"
         blueprint:
           - component: markdown
             text: {$bind: /summary}
           - component: keyvalue
             rows:
-              - {label: score, value: {$bind: /verdict/structured/score}}
-              - {label: passed, value: {$bind: /verdict/structured/passed}}
-              - {label: reason, value: {$bind: /verdict/structured/reason}}
+              - {label: score, value: {$bind: /verdict/score}}
+              - {label: passed, value: {$bind: /passed}}
+              - {label: reason, value: {$bind: /verdict/reason}}
       output: shown
+---
+schema: Verdict
+fields:
+  score: {type: number}
+  reason: {type: string}
 ```
 
-This same definition ships as the builtin pipeline `flagship.research_and_report`
-(inert -- invoke it by name with `run_pipeline(name="flagship.research_and_report",
-input={"query": "..."})` rather than copy-pasting it inline).
+This ships as the builtin pipeline `flagship.research_and_report` (inert --
+invoke by name: `run_pipeline(name="flagship.research_and_report",
+input={"query": "..."})`, not copy-pasted inline).
 
 ## Hooks -- reactive input, made visible
 
 A hook fires an action at a lifecycle point (`session_start` / `turn_end` /
 ...) or an external-event point (`file_changed` / `mcp_resource_updated` /
-`cron_fired` / `webhook_received`). Four action schemes:
-`template_push` (inject context or self-continue), `shell_exec` (sandboxed
-side effect), `shell_push` (a command whose stdout decides the push), and
-`pipeline_launch` (launch a registered pipeline, async). Hooks are
-operator-config only (`hooks:` in `reyn.yaml`) -- you cannot author a
-`hooks:` entry yourself; `emit_hook_event` is the one op that lets you put an
-event onto your OWN session's bus for an operator-configured Composer/hook to
-react to. Full spec: `docs/concepts/runtime/hooks.md`.
+`cron_fired` / `webhook_received`). Four action schemes: `template_push`
+(inject context or self-continue), `shell_exec` (sandboxed side effect),
+`shell_push` (stdout decides the push), `pipeline_launch` (launch a
+registered pipeline, async). Hooks are operator-config only (`hooks:` in
+`reyn.yaml`) -- you cannot author one yourself; `emit_hook_event` is the one
+op that lets you put an event onto your OWN session's bus for an
+operator-configured Composer/hook to react to. Full spec:
+`docs/concepts/runtime/hooks.md`.
 
 **Worked example -- a `file_changed` hook launching a pipeline** (this exact
 text is CI-verified to load without a `HookConfigError`):
@@ -152,16 +157,16 @@ hooks:
 
 A `SKILL.md` is YAML frontmatter (`name`, `description`) + a free-form
 Markdown body -- not a schema the OS parses (the pre-1.0 phase-graph
-`entry:`/`graph:`/`final_output:` shape is REMOVED; do not copy an old
-fixture using those keys). The registry never reads the body -- only
-`path`/`description` populate the L1 menu; you read the body yourself at L2
-via the ordinary read op when its description looks relevant. Install via
-`skill_management__install_local` / `skill_management__install_source`. Full
-spec: `docs/concepts/tools-integrations/skills.md`.
+`entry:`/`graph:`/`final_output:` shape is REMOVED). The registry never
+reads the body -- only `path`/`description` populate the L1 menu; you read
+the body yourself at L2 via the ordinary read op when its description looks
+relevant. Install via `skill_management__install_local` /
+`skill_management__install_source`. Full spec:
+`docs/concepts/tools-integrations/skills.md`.
 
 ## MCP -- external capability
 
 An MCP server is an external tool/resource/prompt provider, registered via
-`mcp.servers` config. `describe_mcp_tool` gives you a live round-trip spec
-for any tool a connected server exposes. Full spec:
+`mcp.servers` config. `describe_mcp_tool` gives a live round-trip spec for
+any tool a connected server exposes. Full spec:
 `docs/concepts/tools-integrations/mcp.md`.

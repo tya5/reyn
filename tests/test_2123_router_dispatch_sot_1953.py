@@ -55,11 +55,6 @@ _EXPECTED_DISPATCH: "frozenset[str]" = frozenset({
     # #2692 (part of the #2688 sweep): present + render_template gained a ToolDefinition
     # (router_dispatched=True) so chat + pipeline can reach the existing op handlers.
     "present", "render_template",
-    # proposal 0060 F3b: judge_output gained a ToolDefinition (router_dispatched=True),
-    # mirroring the #2692 present precedent — it had no invocation surface before
-    # (unreachable from a pipeline `tool:` step, the flagship-pipeline build's own
-    # blocking finding), only the legacy phase-graph op path.
-    "judge_output",
     "list_actions", "search_actions", "describe_action", "invoke_action",
 })
 

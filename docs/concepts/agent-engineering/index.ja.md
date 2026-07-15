@@ -59,7 +59,7 @@ permission-gated かつ sandbox-scoped: どのケイパビリティも gatekeepe
 
 ### 6. [Evaluation](evaluation.md)
 
-run 内で rubric に対して出力をスコアリングする(`judge_output`: LLM スコアラー + threshold + `on_fail` ポリシー)。これは憲章が明示するもう 1 つの honest thin area です。
+run 内で rubric に対して出力をスコアリングする(pipeline `agent` step + `schema`: OS が生成を制約しパース結果を検証する。閾値比較は素の `transform` step)。これは憲章が明示するもう 1 つの honest thin area です。
 
 ### 7. [Observability](observability.md)
 

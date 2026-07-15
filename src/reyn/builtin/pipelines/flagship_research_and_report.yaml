@@ -1,9 +1,9 @@
 pipeline: research_and_report
 description: >-
   Flagship through-chain exemplar (proposal 0060 F3) -- web_search -> agent
-  (summarize) -> judge_output (self-review) -> present (zero-token operator
-  output). Shows the input -> workflow -> output composition thesis end to
-  end. Ships builtin + inert (invoke-by-name only, never auto-launched).
+  (summarize) -> agent (self-review, schema-validated) -> present (zero-token
+  operator output). Shows the input -> workflow -> output composition thesis
+  end to end. Ships builtin + inert (invoke-by-name only, never auto-launched).
 steps:
   - tool:
       name: web_search
@@ -14,23 +14,29 @@ steps:
         Summarize these web search results into a concise, accurate answer
         to the query "{ctx.query}". Search results: {ctx.results}
       output: summary
-  - tool:
-      name: judge_output
-      args:
-        data_inline: !expr ctx.summary
-        rubric: "Score 0.0-1.0: is the summary accurate, concise, and does it directly answer the query? Reply as JSON {\"score\": <0-1 float>, \"reason\": <string>}."
-        threshold: 0.6
+  - agent:
+      prompt: >-
+        Self-review this summary against your own checklist: is it accurate,
+        is it concise, and does it directly answer the query "{ctx.query}"?
+        Summary: {ctx.summary}. Give a score in [0.0, 1.0] and a short reason.
+      schema: Verdict
       output: verdict
+  - transform: {value: "ctx.verdict.score >= 0.6", output: passed}
   - tool:
       name: present
       args:
-        data_inline: !expr "{summary: ctx.summary, verdict: ctx.verdict}"
+        data_inline: !expr "{summary: ctx.summary, verdict: ctx.verdict, passed: ctx.passed}"
         blueprint:
           - component: markdown
             text: {$bind: /summary}
           - component: keyvalue
             rows:
-              - {label: score, value: {$bind: /verdict/structured/score}}
-              - {label: passed, value: {$bind: /verdict/structured/passed}}
-              - {label: reason, value: {$bind: /verdict/structured/reason}}
+              - {label: score, value: {$bind: /verdict/score}}
+              - {label: passed, value: {$bind: /passed}}
+              - {label: reason, value: {$bind: /verdict/reason}}
       output: shown
+---
+schema: Verdict
+fields:
+  score: {type: number}
+  reason: {type: string}

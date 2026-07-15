@@ -393,27 +393,27 @@ def test_unknown_shape_degrades_without_raising() -> None:
     assert isinstance(out, str) and out  # some non-empty summary, no crash
 
 
-def test_judge_output_passed_shows_score() -> None:
-    """Tier 2: judge_output pass result shows 'Passed (score)' not raw dict.
-
-    judge_output returns {kind, score, passed, reason, threshold, on_fail} with no
-    status key; without this branch the raw dict repr leaked into the ⎿ row.
+def test_passed_score_shape_shows_score() -> None:
+    """Tier 2: a {passed: bool, score: float} result shape shows 'Passed (score)'
+    not raw dict -- a generic shape-based branch (not tied to any specific tool
+    name), so it renders any scorer-shaped result (e.g. the passed/score fields
+    a pipeline self-review `agent` + `schema` step's output can carry) without
+    the raw dict repr leaking into the ⎿ row.
     """
     out = summarize_tool_result(
-        "judge_output",
-        {"kind": "judge_output", "score": 0.85, "passed": True,
-         "reason": "looks good", "threshold": 0.7, "on_fail": "retry"},
+        "self_review",
+        {"score": 0.85, "passed": True, "reason": "looks good"},
     )
     assert out == "Passed (0.85)"
     assert "{" not in out
 
 
-def test_judge_output_failed_shows_score() -> None:
-    """Tier 2: judge_output fail result shows 'Failed (score)' not raw dict."""
+def test_passed_score_shape_failed_shows_score() -> None:
+    """Tier 2: a {passed: False, score: float} result shape shows 'Failed (score)'
+    not raw dict."""
     out = summarize_tool_result(
-        "judge_output",
-        {"kind": "judge_output", "score": 0.23, "passed": False,
-         "reason": "incomplete", "threshold": 0.7, "on_fail": "retry"},
+        "self_review",
+        {"score": 0.23, "passed": False, "reason": "incomplete"},
     )
     assert out == "Failed (0.23)"
     assert "{" not in out

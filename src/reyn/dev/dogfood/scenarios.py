@@ -57,7 +57,9 @@ class ExpectedReply:
 
     kind:
       - "judge": ``rubric`` is a list of natural-language criteria. The
-        verifier (F3) invokes ``judge_output`` op against the rubric.
+        verifier (F3) scores the reply against the rubric via its own
+        direct LLM call (``verifiers.reply._default_judge_fn`` — an
+        independent dev-harness scorer, not the (removed) ``judge_output`` op).
       - "substring": ``value`` is a string that must appear in the reply.
       - "exact": ``value`` is an exact match string (trimmed).
       - "regex": ``value`` is a regex pattern (re.search semantics).

@@ -95,11 +95,11 @@ BUILTIN_SKILLS: "dict[str, dict[str, Any]]" = {
     },
     "draft_judge_revise": {
         "description": (
-            "Draft an artifact, score it with judge_output against a rubric, "
-            "and revise on failure -- the standard Evaluation-gated workflow "
-            "for any 'produce then check quality' task (a summary, a doc "
-            "section, an email). Read this before handing off a "
-            "self-authored artifact you have not gated."
+            "Draft an artifact, self-review it against your own checklist "
+            "via a schema-validated agent step, and revise on failure -- the "
+            "standard Evaluation-gated workflow for any 'produce then check "
+            "quality' task (a summary, a doc section, an email). Read this "
+            "before handing off a self-authored artifact you have not gated."
         ),
         "path": str(_BUILTIN_DIR / "skills" / "draft_judge_revise" / "SKILL.md"),
         "enabled": True,
@@ -109,9 +109,9 @@ BUILTIN_SKILLS: "dict[str, dict[str, Any]]" = {
 BUILTIN_PIPELINES: "dict[str, dict[str, Any]]" = {
     "flagship": {
         "description": (
-            "web_search -> agent (summarize) -> judge_output (self-review) "
-            "-> present (zero-token operator output) -- the through-chain "
-            "composition thesis exemplar (proposal 0060 F3)."
+            "web_search -> agent (summarize) -> agent (self-review, "
+            "schema-validated) -> present (zero-token operator output) -- "
+            "the through-chain composition thesis exemplar (proposal 0060 F3)."
         ),
         "path": str(_BUILTIN_DIR / "pipelines" / "flagship_research_and_report.yaml"),
         "enabled": True,

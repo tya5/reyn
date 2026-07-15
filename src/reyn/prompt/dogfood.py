@@ -3,18 +3,20 @@
 These are NOT surfaced to an end-user agent — they are the SP of two
 LLM-as-judge calls the dogfood harness itself makes (an internal dev tool,
 ``reyn dogfood publish`` / a reply-verifier), scoped in per the owner's "全て
-(all of them)" instruction since they DO reach a real LLM request. Sibling of
-``judge.py`` (§G, the production ``judge_output`` op's scorer SP) — kept as a
-separate module because these two internal-harness SPs have their own
-(similar but not identical) wording, evolve on a dev-tool cadence, and are
-NOT part of the production op surface.
+(all of them)" instruction since they DO reach a real LLM request. Was
+sibling to ``judge.py`` (§G, the production ``judge_output`` op's scorer SP,
+since removed as a clean-break — the OS-level rubric-scorer op is gone;
+scoring is now done via a pipeline ``agent`` step + ``schema`` instead). This
+module's own two internal-harness SPs are independent of that removal — they
+have their own (similar but not identical) wording, evolve on a dev-tool
+cadence, and were never part of the production op surface.
 
 Feeds:
 - ``reyn.dev.dogfood.interpretation.generate_interpretation`` — summarises one
   scenario run as a 3-line human-reviewer report.
 - ``reyn.dev.dogfood.verifiers.reply._default_judge_fn`` — scores a produced
-  reply against a rubric (mirrors ``judge_output``'s header+"Rubric:"+rubric
-  seam, #G's shape, but with dogfood-specific wording).
+  reply against a rubric (a direct litellm call with its own header+
+  "Rubric:"+rubric seam, dogfood-specific wording).
 """
 from __future__ import annotations
 
