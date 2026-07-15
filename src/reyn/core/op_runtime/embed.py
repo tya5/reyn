@@ -85,11 +85,13 @@ async def handle(op: EmbedIROp, ctx: OpContext) -> dict:
          `ActionEmbeddingIndex`) routes through this op (inheriting the
          redaction seam above) while keeping its download-status rows.
       3. FP-0063 PC: price this call (`estimate_embedding_cost`, its OWN
-         model's rate — X6 mixed-model correctness) and record it into the
-         INDEPENDENT embedding-cost aggregate at every scope reachable from
-         `ctx` — agent/project scope via `ctx.budget_tracker`
-         (`BudgetTracker.record_embedding`), session scope via
-         `ctx.budget_gateway` (`BudgetGateway.record_embedding`). Neither
+         model's rate — X6 mixed-model correctness) for the returned metadata,
+         and record it into the INDEPENDENT embedding-cost aggregate via
+         `ctx.budget_gateway.record_embedding` — the single recording entry
+         point, which fans out to session scope (itself) and agent/project
+         scope (the process-shared tracker it holds, keyed by the session's
+         agent NAME — the key the per-scope readers use; `ctx.agent_id` is the
+         FP-0016 host identity and would be the wrong key). None of this
          touches the chat `CostBreakdown` (owner: "embedding は独立追跡の想定").
 
     Returns: `{"kind": "embed", "vectors": list[list[float]], "model": str,
@@ -127,9 +129,6 @@ async def handle(op: EmbedIROp, ctx: OpContext) -> dict:
     from reyn.llm.pricing import estimate_embedding_cost
     cost_usd, _pricing_snapshot = estimate_embedding_cost(model_used, total_tokens)
 
-    tracker = getattr(ctx, "budget_tracker", None)
-    if tracker is not None:
-        tracker.record_embedding(model=model_used, agent=ctx.agent_id, tokens=total_tokens)
     gateway = getattr(ctx, "budget_gateway", None)
     if gateway is not None:
         gateway.record_embedding(model=model_used, tokens=total_tokens)

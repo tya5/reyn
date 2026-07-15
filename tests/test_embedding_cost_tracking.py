@@ -233,7 +233,8 @@ def test_registry_agent_embedding_cost_empty_when_no_tracker(tmp_path) -> None:
 
 def test_budget_gateway_records_session_scope_embedding_cost() -> None:
     """Tier 2: `BudgetGateway.record_embedding` accumulates the session-scope
-    aggregate, independent of `total_cost_breakdown`."""
+    aggregate, independent of `total_cost_breakdown`. Tracker-less (unlimited
+    mode) is a supported configuration — session scope still records."""
     gateway = BudgetGateway(budget_tracker=None, events=EventLog(), agent_name="iris")
 
     gateway.record_embedding(model=_MODEL_A, tokens=10_000)
@@ -249,3 +250,25 @@ def test_budget_gateway_records_session_scope_embedding_cost() -> None:
     # Untouched by embedding activity.
     assert gateway.total_cost_usd == 0.0
     assert gateway.total_cost_breakdown.total_cost == 0.0
+
+
+def test_budget_gateway_fans_out_to_tracker_keyed_by_agent_name() -> None:
+    """Tier 2: the gateway is the single recording entry point — it also
+    forwards to the process-shared tracker under its AGENT NAME, so the
+    agent/project-scope readers (`Registry.agent_embedding_cost`, which looks
+    up by name) actually see the spend. Pins the key: the gateway's agent
+    name, not any host-identity value."""
+    tracker = BudgetTracker(CostConfig())
+    gateway = BudgetGateway(
+        budget_tracker=tracker, events=EventLog(), agent_name="jade",
+    )
+
+    gateway.record_embedding(model=_MODEL_A, tokens=10_000)
+
+    agent_agg = tracker.agent_embedding_cost("jade")
+    assert agent_agg.calls == 1
+    assert agent_agg.tokens == 10_000
+    assert _epsilon_close(agent_agg.cost_usd, gateway.embedding_cost.cost_usd)
+
+    # The chat aggregate on the shared tracker stays untouched.
+    assert tracker.agent_cost_usd("jade") == 0.0

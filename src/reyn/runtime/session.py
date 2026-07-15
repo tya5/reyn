@@ -1790,6 +1790,13 @@ class Session:
             threat_scan=self._safety.threat_scan,
             contextual_permission=self._contextual_permission,  # #1827 S3 → control-IR OpContext
             hot_reloader=self._hot_reloader,  # #2073 S3 → per-session reload route (tool ctx)
+            # FP-0063 PC: the router-dispatched `embed` TOOL builds its OpContext from
+            # THIS host (RouterCallerState.op_context_factory = host.make_router_op_context),
+            # so this is the live interactive path's embedding-cost wiring. The gateway is
+            # the single recording entry point (session scope on itself; agent/project via
+            # the shared tracker it holds). Session's own _make_router_op_context serves
+            # file/MCP ops, which no embed op reaches.
+            budget_gateway=self._budget,
             state_log=self._state_log,  # #2259 PR-1 → config generation emit from config ops
             # #1953 dynamic-wire: thread the REAL session id + Task backend so
             # router-dispatched task.* ops hit the assignee/requester CAS gate.
@@ -2254,6 +2261,19 @@ class Session:
         """Cache-aware ``CostBreakdown`` for this session (Session-scope row
         source for the cost panel's Input/Output/Saved/Saved% breakdown)."""
         return self._budget.total_cost_breakdown
+
+    @property
+    def embedding_cost(self):
+        """FP-0063 PC: this session's INDEPENDENT ``EmbeddingCost`` aggregate —
+        the Session-scope reader of the session/agent/project trio (agent and
+        project scope are read via ``Registry.agent_embedding_cost`` /
+        ``.project_embedding_cost``).
+
+        Deliberately separate from ``total_cost_breakdown`` above, which stays
+        chat-only: an embedding call is input-only and structurally
+        uncacheable, so folding it in would dilute that breakdown's
+        ``cache_hit_rate`` / ``cache_savings``."""
+        return self._budget.embedding_cost
 
     # ── FP-0043 Stage 2: identity-field delegations to the Agent value object ──
     # Read-only by construction (identity is immutable for the session lifetime;
@@ -6208,8 +6228,7 @@ class Session:
             hot_reloader=self._hot_reloader,  # #2761 PR-2: per-session reloader (both router op-ctx builders complete-by-construction)
             render_template_bounds=self._render_template_bounds,  # #2679: operator bounds (both router op-ctx builders complete-by-construction)
             embedding_event_sink=self._embedding_event_sink,  # FP-0057 #2856 Part A: TUI model-download status sink for the embed op
-            budget_tracker=self._budget_tracker,  # FP-0063 PC: agent/project-scope embedding cost for the embed op (also LLM cost recording, e.g. judge_output)
-            budget_gateway=self._budget,  # FP-0063 PC: session-scope embedding cost for the embed op
+            budget_gateway=self._budget,  # FP-0063 PC: embedding-cost recording entry point (enumerate ALL op-ctx builders; the load-bearing one for `embed` is RouterHostAdapter's)
         )
 
     async def _file_op(self, op_dict: dict) -> dict:
