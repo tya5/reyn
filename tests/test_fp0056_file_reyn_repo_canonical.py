@@ -1,4 +1,4 @@
-"""Tier 1: FP-0056 PR-H — canonical mappers for the file family, reyn_repo dev-reads, compact, judge_output.
+"""Tier 1: FP-0056 PR-H — canonical mappers for the file family, reyn_repo dev-reads, compact.
 
 The dogfood incident (2026-07-09): a doc read via ``reyn_repo__read`` was offloaded as a whole-dict
 ``structured`` attachment (a 600-char JSON-dict preview) instead of the readable text body, because
@@ -193,7 +193,7 @@ def test_reyn_repo_glob_matches_render_as_path_lines():
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# compact / judge_output mappers
+# compact mapper
 # ─────────────────────────────────────────────────────────────────────────────
 
 
@@ -213,19 +213,3 @@ def test_compact_error_surfaces_iserror():
     assert "no compaction context" in c["text"]
 
 
-def test_judge_output_reason_is_text_score_is_signal_meta():
-    """Tier 1: judge_output → ``reason`` is the ``text``; score/passed/threshold/on_fail are signal
-    meta (they drive the caller's next move — a failed judgment triggers on_fail)."""
-    c = to_canonical({"kind": "judge_output", "score": 0.4, "passed": False, "reason": "too terse",
-                      "threshold": 0.7, "on_fail": "retry"}, source="judge_output")
-    assert c["text"] == "too terse"
-    assert c["meta"].get("passed") is False and c["meta"].get("score") == 0.4
-    assert c["meta"].get("threshold") == 0.7 and c["meta"].get("on_fail") == "retry"
-
-
-def test_judge_output_error_surfaces_iserror():
-    """Tier 1: judge_output error (target resolution failed) → the message as ``text`` + isError."""
-    c = to_canonical({"kind": "judge_output", "status": "error",
-                      "error": "target resolution failed: 'summary'"}, source="judge_output")
-    assert c["meta"].get("isError") is True
-    assert "target resolution failed" in c["text"]

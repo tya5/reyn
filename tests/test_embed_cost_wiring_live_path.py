@@ -7,15 +7,18 @@ records) but not the WIRING (that a real Session hands the op a wired ctx).
 Both production call-sites could be deleted and every hand-built-ctx test would
 stay green — which is exactly how the gap this PR fixes came to exist in the
 first place: `ctx.budget_tracker` was a real field, with a real consumer
-(`judge_output`), that no router-dispatch host ever populated.
+(`judge_output`, since removed — a clean-break op deletion), that no
+router-dispatch host ever populated. `budget_tracker` itself was deleted from
+`OpContext` once that consumer went away (0 readers / 0 writers verified by
+grep); `embed`'s recording path below uses `ctx.budget_gateway` only.
 
 So these tests drive the REAL chain the `embed` TOOL resolves at runtime:
 
-    Session.__init__ -> RouterHostAdapter(budget_tracker=, budget_gateway=)
+    Session.__init__ -> RouterHostAdapter(budget_gateway=)
       -> build_resource_caller_state(host)
       -> RouterCallerState.op_context_factory = host.make_router_op_context
       -> tools/embed.py `_handle_embed` calls that factory
-      -> execute_op(EmbedIROp, ctx) -> ctx.budget_tracker/.budget_gateway
+      -> execute_op(EmbedIROp, ctx) -> ctx.budget_gateway
 
 Verified RED by stripping the production call-site (reported in the PR body):
 removing `budget_gateway=self._budget` from Session's `RouterHostAdapter(...)`

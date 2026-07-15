@@ -39,7 +39,6 @@ Control IR is the list of side-effect operations the LLM may emit. The OS dispat
 | `semantic_search` | Macro (FP-0057 Phase 2a; renamed from `recall`): per-source-model embed query → index_query per source → merge top-K (multi-model correct) | none (embedding API cost) |
 | `index_drop` | Remove an indexed source entirely (destructive) | `permissions.index_drop: ask` in skill frontmatter |
 | `index_update` | Incremental/delta-reconcile ingestion into a source's index (add/update/remove/skip; FP-0057 Phase 2a) | none (default-allow; own-write; embedding API cost) |
-| `judge_output` | LLM scorer: rubric + threshold + `on_fail` policy | none (LLM cost) |
 | `compact` | Voluntarily compact the conversation history (advisory) | none (LLM cost; the mandatory `retry_loop` backstop is independent) |
 | `task.create` | Create a Task (`deps` for ordering; `link_type` `awaited`/`background` sets whether a sub-task gates the parent's completion — §2187; sub-task ownership is OS-derived from execution context — §16) | requester-gated (caller becomes requester) |
 | `task.update_status` | Declare a status transition | assignee-gated (single-writer CAS on `assignee == caller session_id`) |
@@ -803,7 +802,7 @@ Fields:
 
 Returns: `{"kind": "embed", "vectors": list[list[float]], "model": str, "total_tokens": int, "cost_usd": float | None, "priced": bool}`.
 
-`cost_usd` / `priced` (FP-0063 PC): the call's cost, priced via `estimate_embedding_cost` (extends the same `litellm.model_cost` lookup `pricing.py` already used for chat completions to embedding-mode entries — not a new rate table). `priced=False` + `cost_usd=None` when litellm cannot price `model` — an unpriced/unknown model degrades VISIBLY (never a silent `$0.00`, mirroring the pre-existing `estimate_cost` unknown-model sentinel, #1829). This spend is recorded into an INDEPENDENT embedding-cost aggregate (`EmbeddingCost` in `llm/pricing.py`) at session scope (`ctx.budget_gateway`, when wired) and agent/project scope (`ctx.budget_tracker`, when wired) — deliberately **not** folded into the chat `CostBreakdown` (embedding is input-only / structurally uncacheable; doing so would dilute `cache_hit_rate` / `cache_savings`, which are chat-call-only figures). See `Registry.agent_embedding_cost` / `.project_embedding_cost` and `BudgetGateway.embedding_cost` for the per-scope readers.
+`cost_usd` / `priced` (FP-0063 PC): the call's cost, priced via `estimate_embedding_cost` (extends the same `litellm.model_cost` lookup `pricing.py` already used for chat completions to embedding-mode entries — not a new rate table). `priced=False` + `cost_usd=None` when litellm cannot price `model` — an unpriced/unknown model degrades VISIBLY (never a silent `$0.00`, mirroring the pre-existing `estimate_cost` unknown-model sentinel, #1829). This spend is recorded into an INDEPENDENT embedding-cost aggregate (`EmbeddingCost` in `llm/pricing.py`) via `ctx.budget_gateway` (when wired) — the SINGLE recording entry point (`BudgetGateway.record_embedding`), which fans out to all scopes itself: session (the gateway's own aggregate) and agent/project (the process-shared `BudgetTracker` it holds). The fan-out lives in the gateway because it is the only object holding BOTH the tracker and the session's agent NAME, which is the key the per-agent counters use — an op handler has only `ctx.agent_id` (the FP-0016 host identity, a different value), so recording from there would file spend under a key no reader looks up. Deliberately **not** folded into the chat `CostBreakdown` (embedding is input-only / structurally uncacheable; doing so would dilute `cache_hit_rate` / `cache_savings`, which are chat-call-only figures). See `Registry.agent_embedding_cost` / `.project_embedding_cost` and `BudgetGateway.embedding_cost` for the per-scope readers.
 
 Reuses the existing `EmbeddingProvider` (`RoutingEmbeddingProvider` via `get_provider` — the sole embedder, local sentence-transformers + API classes handled inside the provider); this op is a thin typed envelope, not a re-implementation. Batching (`embedding.batch_size`, default 100) happens inside the provider — the op contract itself is list-in/list-out, batch-granular.
 
@@ -920,38 +919,6 @@ Returns: `{"kind": "index_update", "source": str, "added": int, "updated": int, 
 Events: `index_update_cost_warning` (`source`, `chunk_count`, `estimated_tokens`, `threshold`) when the to-embed batch exceeds the configured threshold; `index_updated` (`source`, `added`, `updated`, `removed`, `skipped`) on completion.
 
 Default-**ALLOW** (own-write op — writes only to the source's OWN index + manifest, not a destructive cross-cutting op like `index_drop`); individually name-gateable via `contextual_gate`.
-
-## `judge_output`
-
-LLM-based output scorer for evaluation loops. Resolves a value to score —
-`data_inline` XOR `target` — calls an LLM with the caller-supplied `rubric`,
-and returns a score (0.0–1.0) plus a pass/fail flag. LLM-callable via
-`ToolDefinition judge_output` (proposal 0060 F3b) — reachable from chat and
-from a pipeline `tool: {name: judge_output}` step.
-
-```json
-{
-  "kind": "judge_output",
-  "data_inline": "A concise summary of the search results.",
-  "rubric": "Score 0.0-1.0: is the summary concise, accurate, and complete?",
-  "threshold": 0.8,
-  "on_fail": "transition"
-}
-```
-
-Fields:
-- `target` (str | null, optional): Dot-path to the value being scored (e.g. `"artifact.data.summary"`), resolved against the legacy phase-graph `ctx.workspace.artifacts`. XOR `data_inline` — exactly one must be set.
-- `data_inline` (any, optional): The value to score, already in hand — e.g. a pipeline `agent`-step's `output:` (0060 F3b: added so `judge_output` is reachable from a pipeline, whose step output lives in the pipeline's own `ctx` store, never in `ctx.workspace.artifacts`). XOR `target`.
-- `rubric` (str, required): LLM prompt body. The author writes the evaluation criteria. The OS never interprets this content (P7).
-- `threshold` (float, optional, default `0.8`): Passing score in `[0.0, 1.0]`.
-- `on_fail` (`"transition" | "abort" | "continue"`, optional, default `"transition"`): recorded in the result for the caller to act on. The op handler itself does not branch on this value — it resolves the value, scores it, and returns; interpreting `on_fail` (e.g. aborting a run) is the caller's responsibility.
-- `model` (str | null, optional): Model class override (e.g. `"strong"`). Defaults to the judge purpose class.
-
-Returns: `{"kind": "judge_output", "score": float, "passed": bool, "reason": str, "threshold": float, "on_fail": str}`
-
-Audit event: `tool_executed` with `op=judge_output, target, score, passed, threshold, reason` (P6). `target` is `null` in the event data when `data_inline` was used.
-
-**P7 note**: Reyn is rubric-agnostic. The rubric content is part of the author's prompt; the OS only routes it to the LLM without inspection.
 
 ## `compact`
 

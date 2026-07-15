@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import re
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -18,7 +17,7 @@ class Workspace:
     Workspace where the agent operates.
 
     base_dir  : CWD — where relative file paths resolve (read + write).
-    state_dir : .reyn/ — where artifacts, event logs, and invoke sub-dirs live.
+    state_dir : .reyn/ — where event logs and invoke sub-dirs live.
 
     Read  policy : any path under base_dir (CWD), plus paths the PermissionResolver
                    has approved for this agent (declared via `permissions.file.read`).
@@ -44,19 +43,20 @@ class Workspace:
         # the absolute paths this class resolves.
         self._backend: "EnvironmentBackend" = environment_backend or HostBackend()
         # #1390 L3: a host backend for state_dir reads. state_dir storage is
-        # host-side (store_artifact writes directly host-side, bypassing the repo
-        # backend), so reads of state_dir paths must mirror that split — they stay
-        # host-side, not routed through the repo/container backend (under the
-        # docker backend a host state_dir path does not exist in-container). A
-        # fresh HostBackend reads reyn's own process FS = where store_artifact
-        # wrote. When self._backend is already a HostBackend (non-docker), this is
-        # the same environment, so routing is behaviour-preserving there.
+        # host-side (writes under state_dir go directly host-side, bypassing the
+        # repo backend), so reads of state_dir paths must mirror that split —
+        # they stay host-side, not routed through the repo/container backend
+        # (under the docker backend a host state_dir path does not exist
+        # in-container). A fresh HostBackend reads reyn's own process FS = where
+        # state_dir content was written. When self._backend is already a
+        # HostBackend (non-docker), this is the same environment, so routing is
+        # behaviour-preserving there.
         self._state_backend: "EnvironmentBackend" = HostBackend()
         self.base_dir = base_dir.resolve() if base_dir is not None else Path.cwd()
         # FP-0008 #1115 Stage 0: state_dir is host-side and decoupled from
         # base_dir. Default = base_dir/.reyn (backward-compat). A caller that
         # routes the repo FS through a backend (e.g. a container base_dir)
-        # passes an explicit host-side state_dir, so artifacts + events survive
+        # passes an explicit host-side state_dir, so state survives
         # independently of the repo working tree (container-death recoverable).
         self.state_dir = (
             state_dir.resolve()
@@ -64,9 +64,7 @@ class Workspace:
             else (self.base_dir / ".reyn").resolve()
         )
         self._events = events
-        self.artifacts: list[dict] = []
         self.state_dir.mkdir(parents=True, exist_ok=True)
-        (self.state_dir / "artifacts").mkdir(exist_ok=True)
         self._perm = permission_resolver
         self._actor = actor
 
@@ -76,21 +74,6 @@ class Workspace:
         injected instance, or the default HostBackend. Read-only — for wiring
         verification (e.g. confirming chat/plan/phase share one agent backend)."""
         return self._backend
-
-    def resolve_artifact_handle(self, handle: str) -> Path:
-        """Resolve a state_dir-relative artifact handle to an absolute path.
-
-        FP-0008 #1115 Stage 0: artifact handles returned by ``store_artifact``
-        are relative to ``state_dir`` (host-side), not ``base_dir``. The OS uses
-        this to serve artifact reads (read-by-ref) without exposing a base_dir
-        FS path. Raises :class:`PermissionError` if the handle escapes state_dir.
-        """
-        resolved = (self.state_dir / handle).resolve()
-        if not resolved.is_relative_to(self.state_dir):
-            raise PermissionError(
-                f"artifact handle {handle!r} escapes state_dir {self.state_dir}"
-            )
-        return resolved
 
     def _resolve_read(self, path_str: str) -> Path:
         p = Path(path_str).expanduser()
@@ -336,47 +319,3 @@ class Workspace:
             context_after=context_after,
         )
 
-    def store_artifact(
-        self,
-        phase: str,
-        artifact: dict,
-        *,
-        actor: str = "_unknown",
-        visit: int = 1,
-    ) -> str:
-        """
-        Persist artifact to state_dir/artifacts/{actor}/{phase}/v{visit}_{type}.json.
-        Returns the state_dir-relative path.
-        """
-        artifact_type = artifact.get("type", "unknown")
-
-        def _safe(s: str) -> str:
-            return s.replace("/", "_").replace(" ", "_")
-
-        rel = (
-            f"artifacts/{_safe(actor)}/{_safe(phase)}"
-            f"/v{visit:02d}_{_safe(artifact_type)}.json"
-        )
-        abs_path = self.state_dir / rel
-        abs_path.parent.mkdir(parents=True, exist_ok=True)
-        abs_path.write_text(
-            json.dumps(artifact, ensure_ascii=False, indent=2), encoding="utf-8"
-        )
-
-        # FP-0008 #1115 Stage 0: store the state_dir-relative handle (NOT a
-        # base_dir-relative FS path). state_dir is host-side and may be
-        # decoupled from base_dir, so `relative_to(base_dir)` would be invalid.
-        # The OS resolves this handle against state_dir when serving reads
-        # (see resolve_artifact_handle); consumers no longer file.read it.
-        handle = rel  # already state_dir-relative: "artifacts/.../v01_*.json"
-        self.artifacts.append({"phase": phase, "artifact": artifact, "path": handle})
-        inner = artifact.get("data", artifact)
-        keys = list(inner.keys()) if isinstance(inner, dict) else []
-        self._events.emit(
-            "artifact_created",
-            phase=phase,
-            artifact_type=artifact_type,
-            keys=keys,
-            path=handle,
-        )
-        return handle

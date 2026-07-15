@@ -3,9 +3,10 @@
 Feeds ``reyn.services.compaction.engine.CompactionEngine`` (main compaction
 call + the overshoot re-summarize pass) and its ``compact_control_ir_results``
 phase-act-results helper. All three prompts here are static string constants —
-no runtime value is interpolated into any of them — so, unlike ``judge.py``
-(§G, which interpolates a caller-supplied rubric), the whole prompt text moves
-verbatim; the engine module imports these constants back and uses them as-is.
+no runtime value is interpolated into any of them — so the whole prompt text
+lives here verbatim; the engine module imports these constants back and uses
+them as-is. (Contrast ``dogfood.py``, whose scorer SP interpolates a
+caller-supplied rubric and so keeps only the static header/label here.)
 """
 from __future__ import annotations
 

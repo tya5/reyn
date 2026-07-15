@@ -3,18 +3,16 @@
 These are NOT surfaced to an end-user agent — they are the SP of two
 LLM-as-judge calls the dogfood harness itself makes (an internal dev tool,
 ``reyn dogfood publish`` / a reply-verifier), scoped in per the owner's "全て
-(all of them)" instruction since they DO reach a real LLM request. Sibling of
-``judge.py`` (§G, the production ``judge_output`` op's scorer SP) — kept as a
-separate module because these two internal-harness SPs have their own
-(similar but not identical) wording, evolve on a dev-tool cadence, and are
-NOT part of the production op surface.
+(all of them)" instruction since they DO reach a real LLM request. They are
+dev-tool-only: they evolve on a dev-tool cadence and are not part of any
+production op surface.
 
 Feeds:
 - ``reyn.dev.dogfood.interpretation.generate_interpretation`` — summarises one
   scenario run as a 3-line human-reviewer report.
 - ``reyn.dev.dogfood.verifiers.reply._default_judge_fn`` — scores a produced
-  reply against a rubric (mirrors ``judge_output``'s header+"Rubric:"+rubric
-  seam, #G's shape, but with dogfood-specific wording).
+  reply against a rubric (a direct litellm call with its own header+
+  "Rubric:"+rubric seam, dogfood-specific wording).
 """
 from __future__ import annotations
 
@@ -48,7 +46,7 @@ DOGFOOD_INTERPRETATION_SYSTEM_PROMPT = (
 # WHERE: reyn.dev.dogfood.verifiers.reply._default_judge_fn — the system
 #        message, immediately followed by DOGFOOD_JUDGE_RUBRIC_LABEL_PREFIX +
 #        the caller-supplied rubric text (dynamic content, not static OS
-#        text — mirrors judge.py's §G split).
+#        text — the static header/label split this module owns).
 # WHY: a strict JSON-only scorer contract ({"score": 0.0-1.0, "reason": ...})
 #      so the dogfood harness can parse + threshold the result deterministically.
 # 日本語訳: reply-verifier のデフォルト LLM 判定バックエンドが常に使う

@@ -14,24 +14,25 @@ Co-vet-style pins:
      `reyn_cheat_sheet` (mirrors `test_2913_builtin_body_wheel_reachable.py`'s
      wheel-layout scenario for this second skill).
   3. **The skill's embedded worked example is D5a-executable**: the fenced
-     ```json``` `judge_output` argument set parses AND validates against the
-     REAL `JudgeOutputIROp` schema. Falsify: corrupt it (drop `rubric`) ->
-     schema validation fails, proving the positive test exercises real
-     validation.
+     ```yaml``` self-review pipeline definition parses via the REAL pipeline
+     parser (`parse_pipeline_dsl`) and passes the REAL `run_pipeline_inline`
+     static-analysis gate (`_static_analysis_gate`) -- schema ref resolves,
+     no nested launch, agent-step identity unset. Falsify: drop the `Verdict`
+     schema doc's `fields:` -> parse fails; reference an undefined schema ->
+     the gate rejects it, proving the positive test exercises real validation.
   4. **The status_card blueprint passes `validate_blueprint`** (the real
      structural gate) and registers through the real
      `build_presentation_registry` config-entry path. Falsify: corrupt the
      blueprint (unknown component) -> `PresentBlueprintError`.
 
 No mocks: real `BUILTIN_SKILLS`/`BUILTIN_PRESENTATIONS` maps, the real
-`JudgeOutputIROp` pydantic model, the real `validate_blueprint` +
+pipeline parser + static-analysis gate, the real `validate_blueprint` +
 `build_presentation_registry`, the real `read_file` op + `OpContext`
 (mirrors `test_2913_builtin_body_wheel_reachable.py`'s harness).
 """
 from __future__ import annotations
 
 import asyncio
-import json
 import re
 from pathlib import Path
 
@@ -47,11 +48,14 @@ from reyn.builtin.registry import (
 from reyn.core.events.events import EventLog
 from reyn.core.op_runtime.context import OpContext
 from reyn.core.op_runtime.file import handle
+from reyn.core.pipeline.parser import PipelineParseError, parse_pipeline_dsl
+from reyn.core.pipeline.schema import SchemaRegistry
 from reyn.core.present.catalog import PresentBlueprintError, validate_blueprint
 from reyn.data.presentations.registry import build_presentation_registry
 from reyn.data.workspace.workspace import Workspace
-from reyn.schemas.models import FileIROp, JudgeOutputIROp
+from reyn.schemas.models import FileIROp
 from reyn.security.permissions.permissions import PermissionDecl, PermissionResolver
+from reyn.tools.pipeline_verbs import _static_analysis_gate
 
 _SKILL_PATH = Path(BUILTIN_SKILLS["draft_judge_revise"]["path"])
 
@@ -156,45 +160,50 @@ def test_body_read_dir_bypass_reaches_the_second_skill_too() -> None:
 
 
 # ---------------------------------------------------------------------------
-# D5a: the embedded judge_output worked example is executable
+# D5a: the embedded self-review worked example is executable
 # ---------------------------------------------------------------------------
 
 
-def test_skill_embedded_judge_output_example_validates_against_real_schema() -> None:
-    """Tier 2: the fenced ```json``` judge_output argument block embedded in
-    the skill parses as JSON AND validates against the REAL JudgeOutputIROp
-    pydantic model (D5a: every cheat-sheet-style example is CI-verified
-    against the real implementation, not just prose)."""
-    json_text = _extract_fenced_block(_skill_body(), "json")
-    args = json.loads(json_text)
-    op = JudgeOutputIROp(kind="judge_output", **args)
-    assert op.data_inline == args["data_inline"]
-    assert op.rubric == args["rubric"]
-    assert op.threshold == pytest.approx(0.8)
-    assert op.on_fail == "continue"
+def test_skill_embedded_self_review_example_parses_and_passes_static_gate() -> None:
+    """Tier 2: the fenced ```yaml``` self-review pipeline definition embedded
+    in the skill parses via the REAL pipeline parser AND passes the REAL
+    run_pipeline_inline static-analysis gate (D5a: every cheat-sheet-style
+    example is CI-verified against the real implementation, not just prose)."""
+    yaml_text = _extract_fenced_block(_skill_body(), "yaml")
+    registry = SchemaRegistry()
+    pipeline = parse_pipeline_dsl(yaml_text, registry)
+    assert registry.has("Verdict")
+    assert set(registry.get("Verdict")["fields"].keys()) == {"score", "reason"}
+    [step] = pipeline.steps
+    assert step.schema == "Verdict"
+    error = _static_analysis_gate(pipeline, registry, invoker_agent="chat")
+    assert error is None, error
 
 
-def test_skill_embedded_example_corrupted_fails_schema_validation() -> None:
-    """Tier 2: FALSIFY anchor for D5a -- dropping the required `rubric` field
-    from the embedded example fails JudgeOutputIROp validation, proving the
-    positive test above is exercising real schema validation, not a vacuous
-    pass-through."""
-    json_text = _extract_fenced_block(_skill_body(), "json")
-    args = json.loads(json_text)
-    del args["rubric"]
-    with pytest.raises(Exception):  # pydantic ValidationError
-        JudgeOutputIROp(kind="judge_output", **args)
+def test_skill_embedded_example_corrupted_schema_fails_to_parse() -> None:
+    """Tier 2: FALSIFY anchor for D5a -- dropping the `Verdict` schema doc's
+    `fields:` fails pipeline parsing, proving the positive test above is
+    exercising real schema-shape validation, not a vacuous pass-through."""
+    yaml_text = _extract_fenced_block(_skill_body(), "yaml")
+    corrupted = yaml_text.replace(
+        "fields:\n  score: {type: number}\n  reason: {type: string}\n", ""
+    )
+    assert corrupted != yaml_text, "fixture invariant: the replace must actually strip fields:"
+    with pytest.raises(PipelineParseError):
+        parse_pipeline_dsl(corrupted, SchemaRegistry())
 
 
-def test_skill_embedded_example_both_target_and_data_inline_would_fail() -> None:
-    """Tier 2: FALSIFY anchor -- supplying BOTH target and data_inline (the
-    XOR the real model enforces) is rejected, confirming the embedded
-    example's single-source shape is load-bearing, not incidental."""
-    json_text = _extract_fenced_block(_skill_body(), "json")
-    args = json.loads(json_text)
-    args["target"] = "some.dotted.path"
-    with pytest.raises(Exception):  # pydantic ValidationError (XOR violated)
-        JudgeOutputIROp(kind="judge_output", **args)
+def test_skill_embedded_example_undefined_schema_ref_rejected_by_gate() -> None:
+    """Tier 2: FALSIFY anchor -- an agent step referencing a schema name that
+    is NOT declared anywhere in the definition is rejected by the real
+    static-analysis gate, confirming the embedded example's schema ref is
+    load-bearing, not incidental."""
+    yaml_text = _extract_fenced_block(_skill_body(), "yaml")
+    corrupted = yaml_text.replace("schema: Verdict", "schema: TotallyUndefined", 1)
+    registry = SchemaRegistry()
+    pipeline = parse_pipeline_dsl(corrupted, registry)
+    error = _static_analysis_gate(pipeline, registry, invoker_agent="chat")
+    assert error is not None and "schema ref" in error
 
 
 # ---------------------------------------------------------------------------

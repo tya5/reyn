@@ -60,7 +60,6 @@ _OP_KIND_ALIASES: "dict[str, frozenset[str]]" = {
     "mcp_drop_server": frozenset({"mcp__drop_server"}),
     "mcp": frozenset(),
     # control-IR-only ops with no distinct chat-tool qualified name → kind only.
-    "judge_output": frozenset(),
     "compact": frozenset(),
     "ask_user": frozenset(),
     # FP-0054 PR-A: present is Tier 0 (no output gate) but still gates on its own

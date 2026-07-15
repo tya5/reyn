@@ -1828,7 +1828,7 @@ async def call_llm_tools(
     budget_agent: agent name passed to budget.check_pre_llm / record_llm.
 
     ``response_format`` (0062): passed straight to ``recorded_acompletion``
-    with NO ``fallback_without_response_format`` (unlike the judge_output /
+    with NO ``fallback_without_response_format`` (unlike the dogfood-judge /
     compaction json-mode call sites) — a schema-bearing structured-output
     call must never silently degrade to free-form text; a provider rejection
     surfaces as-is for the caller (``RouterLoop._run_structured_answer_turn``)

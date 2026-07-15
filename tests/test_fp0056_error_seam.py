@@ -155,7 +155,7 @@ def test_recall_missing_arg_error_renders_non_empty_via_seam() -> None:
 def test_removed_branch_mappers_still_route_errors_through_the_seam() -> None:
     """Tier 1: each mapper whose per-mapper error branch was removed (success-only now) still surfaces
     its error as NON-EMPTY ``text`` + ``meta.isError`` via the shared seam — spot-checking ``file``
-    (denied + not_found), ``reyn_repo``, ``memory_body``, ``compact``, ``judge_output``, ``present``,
+    (denied + not_found), ``reyn_repo``, ``memory_body``, ``compact``, ``present``,
     ``render_template``, and a ``task`` op (CANONICAL_TODO, also in seam scope)."""
     cases = [
         # (result, source, a substring expected in the rendered text)
@@ -169,8 +169,6 @@ def test_removed_branch_mappers_still_route_errors_through_the_seam() -> None:
          "read_memory_body", "not clean"),
         ({"kind": "compact", "status": "error", "error_kind": "compaction_unavailable",
           "error": "no compaction context is wired here"}, "compact", "no compaction context"),
-        ({"kind": "judge_output", "status": "error", "error": "target resolution failed: 'summary'"},
-         "judge_output", "target resolution failed"),
         ({"kind": "present", "status": "not_found", "ok": False, "error": "data_ref not found: r1"},
          "present", "data_ref not found"),
         ({"kind": "render_template", "status": "error", "ok": False,

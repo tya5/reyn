@@ -53,7 +53,6 @@ mindmap
       index_drop
       index_update
       compact
-      judge_output
     🔧 Tool-Use Schemes
       Pluggable chat-layer
       enumerate-all default
@@ -322,7 +321,6 @@ The op kinds below mirror `OP_KIND_MODEL_MAP` in `schemas/models.py`.
 | `index_drop` | Destructive source removal — requires approval |
 | `index_update` | Incremental/delta-reconcile ingestion into a source's index (FP-0057 Phase 2a): add/update/remove/skip against `content_hash`, source-model-bound, cost-warn surfacing; no full-rebuild mode | [Control IR § index_update](reference/runtime/control-ir.md#index_update) |
 | `compact` | Summarise / compact conversation history within budget |
-| `judge_output` | LLM scorer with rubric + threshold + `on_fail` policy; `target` (legacy phase-graph dot-path) XOR `data_inline` (a value already in hand, e.g. a pipeline `agent`-step output — proposal 0060 F3b). `ToolDefinition`-reachable from chat and a pipeline `tool:` step |
 
 > `index_write` remains removed. FP-0057 Phase 2b: `semantic_search`'s query embed and `index_update`'s ingestion embed BOTH now dispatch through the shared `embed` op (`execute_op(EmbedIROp(...))`, not provider-direct) — the PRE-embed redaction-egress seam applies to both paths symmetrically. The CodeAct-only ingestion entry `reyn.api.safe.embed_index.embed_and_index` is **retired clean-break** (deleted, no shim) — safe-mode python steps now call `reyn.api.safe.index_update()`, a thin dispatch onto the `index_update` op. See [Control IR](reference/runtime/control-ir.md).
 
@@ -542,7 +540,7 @@ logic. Design: [content-threat scan proposal](deep-dives/proposals/0050-content-
 | Session visibility toggle | `set_capability_visible("skill", name, visible)` — restrict-only, cannot re-grant beyond the registered set | [Concepts: Skills](concepts/tools-integrations/skills.md) |
 | `skill_management__install_local` | Register a local skill directory into `.reyn/config/skills.yaml`; threat-scanned, permission-gated, config-generation recorded for crash-recovery | [Concepts: Skills](concepts/tools-integrations/skills.md) |
 | `skill_management__install_source` | Fetch + shallow-clone a skill from a git/GitHub URL into `.reyn/skills/<name>/`; same threat-scan/gate/recovery pipeline, plus path-traversal-hardened name sanitization and containment checks | [Concepts: Skills](concepts/tools-integrations/skills.md) |
-| Builtin tier (`reyn.builtin`, proposal 0060) | A code-shipped, package-data-packaged config tier merged BELOW every operator config file (`build_builtin_config`, F3a) — populated with the `reyn_cheat_sheet` skill (F3b): the reyn-specific usage guide (mechanism decision tree, `present`/`judge_output` essentials, a worked flagship-pipeline example, a hook-example) named by the SP's mechanism-routing frame and existence-gated (D5e). Ships `provenance="builtin"`, `auto_invoke=False` (discoverable, never auto-firing) | [Reference: Control IR](reference/runtime/control-ir.md) |
+| Builtin tier (`reyn.builtin`, proposal 0060) | A code-shipped, package-data-packaged config tier merged BELOW every operator config file (`build_builtin_config`, F3a) — populated with the `reyn_cheat_sheet` skill (F3b): the reyn-specific usage guide (mechanism decision tree, `present`/self-review-via-`agent`+`schema` essentials, a worked flagship-pipeline example, a hook-example) named by the SP's mechanism-routing frame and existence-gated (D5e). Ships `provenance="builtin"`, `auto_invoke=False` (discoverable, never auto-firing) | [Reference: Control IR](reference/runtime/control-ir.md) |
 
 > **Differentiation vs general agents:** skills are instructions the model chooses to read, not programs the OS executes — the same layered-disclosure shape (menu → on-demand load) as MCP tool discovery, applied to task-specific technique instead of external APIs.
 
@@ -567,7 +565,7 @@ logic. Design: [content-threat scan proposal](deep-dives/proposals/0050-content-
 | Crash recovery | Per-run work-order (`invocation.json`) persisted before step 0; step-boundary generation snapshots give exactly-once, truncation-surviving resume (including mid-`call`/`fold`/`for_each` state) | [Concepts: Pipelines](concepts/runtime/pipelines.md) |
 | S5 spawn bounds | `safety.spawn.max_pipeline_fan_out_depth` (`for_each` nesting depth, default 5) and `safety.spawn.max_pipeline_spawns` (ephemeral sessions per run, default 100) — both `0` = unlimited (operator opt-out) | [Reference: Pipeline DSL](reference/runtime/pipeline-dsl.md) |
 | Security floor | Launching a pipeline (any of the 4 launch tools) sits on the same `HIGH`-severity spawn-adjacent floor as `delegate_to_agent`; the 2 install tools sit on the same floor as `skill_management__install_*` — an `_untrusted`- or `_delegate`-narrowed context cannot launch or register one | [Concepts: Pipeline registration § Security](concepts/runtime/pipeline-registration.md) |
-| Flagship builtin pipeline (`flagship.research_and_report`, proposal 0060 F3b) | The through-chain composition-thesis exemplar: `web_search` (input) → `agent` summarize (workflow) → `judge_output` self-review (workflow) → `present` (output), ships builtin + inert (invoke-by-name only). `judge_output` gained a `data_inline` source + a `ToolDefinition` (this same PR) so a pipeline `tool:` step can reach it — it was previously reachable only from the legacy phase-graph runtime | [Reference: Control IR § judge_output](reference/runtime/control-ir.md#judge_output) |
+| Flagship builtin pipeline (`flagship.research_and_report`, proposal 0060 F3b) | The through-chain composition-thesis exemplar: `web_search` (input) → `agent` summarize (workflow) → `agent` self-review, schema-validated (workflow) → `present` (output), ships builtin + inert (invoke-by-name only). Self-review composes from the `agent` + `schema` primitives, with the threshold comparison done by a plain `transform` step | [Reference: Pipeline DSL § AgentStep](reference/runtime/pipeline-dsl.md) |
 
 > **Differentiation vs general agents:** a pipeline is a deterministic, Turing-incomplete control-plane DSL, not another agent loop — the composition primitives are structurally closed (no nested launch, no arbitrary recursion), so safety and crash-recovery come from the DSL's shape rather than runtime policy layered on top of an unbounded execution graph.
 

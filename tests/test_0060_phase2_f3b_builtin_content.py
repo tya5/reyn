@@ -12,10 +12,13 @@ Co-vet-style pins:
      ``HookConfigError``. Falsify: corrupt either extracted example -> RED.
   2. **Flagship runs.** The shipped builtin pipeline
      (``flagship.research_and_report``) parses AND runs end-to-end
-     (web_search -> agent -> judge_output -> present), the agent -> judge
-     data-plumbing resolved via ``judge_output``'s new ``data_inline``
-     source (Addendum A4 gap, closed in this PR — see
-     ``src/reyn/schemas/models.py``'s ``JudgeOutputIROp`` docstring).
+     (web_search -> agent -> agent self-review, schema-validated -> present),
+     the summarize -> self-review data-plumbing resolved via a plain
+     ``ctx.summary`` reference (an ``agent`` step's output is directly
+     readable by a later step — no special-case op needed; ``judge_output``,
+     the op this flagship originally exercised, was removed as a clean-break
+     — self-review now composes from `agent` + `schema` primitives that
+     already existed for other purposes).
   3. **D5e — SP-gate.** The SP names the cheat-sheet skill by name
      (``router_frame.REYN_CHEAT_SHEET_SKILL_NAME``); a dedicated gate
      asserts that name resolves to a REAL builtin skill entry whose file
@@ -92,7 +95,7 @@ def test_cheat_sheet_pipeline_example_parses_with_the_real_parser() -> None:
     pipeline = parse_pipeline_dsl(yaml_text, SchemaRegistry())
     assert pipeline.name == "research_and_report"
     assert [type(s).__name__ for s in pipeline.steps] == [
-        "ToolStep", "AgentStep", "ToolStep", "ToolStep",
+        "ToolStep", "AgentStep", "AgentStep", "TransformStep", "ToolStep",
     ]
 
 
@@ -144,49 +147,52 @@ def test_cheat_sheet_hook_example_corrupted_raises_hookconfigerror() -> None:
 # ---------------------------------------------------------------------------
 
 
-class _FakeJudgeLLM:
-    """Real-callable stub replacing litellm.acompletion for judge_output's
-    internal LLM call (the one collaborator the testing policy allows to be
-    faked)."""
-
-    def __init__(self, score: float, reason: str) -> None:
-        import json as _json
-
-        self._content = _json.dumps({"score": score, "reason": reason})
-        self.call_count = 0
-
-    async def __call__(self, **kwargs: Any) -> object:
-        self.call_count += 1
-        msg = type("_Msg", (), {"content": self._content, "tool_calls": None})()
-        choice = type("_Choice", (), {"message": msg, "finish_reason": "stop"})()
-        usage = type("_Usage", (), {"prompt_tokens": 5, "completion_tokens": 5})()
-        return type("_Resp", (), {"choices": [choice], "usage": usage})()
-
-
 class _ScriptedAgentReply:
-    """Real-callable stub for the pipeline's `agent` step LLM call — mirrors
-    tests/test_pipeline_is3_dsl_parser.py's precedent."""
+    """Real-callable stub for the pipeline's `agent` step LLM calls — mirrors
+    tests/test_pipeline_is3_dsl_parser.py's precedent. Cycles through
+    `contents` in call order (this flagship has TWO `agent` steps run
+    sequentially — summarize, then self-review — both routed through the
+    same scripted stub since each ephemeral session's `_loop_driver` is
+    wired to it by the shared `_agent_registry` factory below).
 
-    def __init__(self, content: str) -> None:
-        self.content = content
+    A `schema:`-bearing agent step (0062 ADR-0035 D2 separate-decide) makes
+    TWO LLM calls, not one: an unconstrained tools-decision round (its
+    content is discarded once ``tool_calls`` comes back empty — only
+    non-empty-ness matters, to avoid the empty-stop-retry path) followed by
+    a SEPARATE ``response_format``-constrained call whose content is the
+    actual schema-validated answer. So `contents` here has 3 entries:
+    summarize's answer, self-review's (discarded) tools-round filler, then
+    self-review's real JSON verdict."""
+
+    def __init__(self, contents: "list[str]") -> None:
+        self.contents = contents
         self.calls = 0
 
     async def __call__(self, **kwargs: Any):
         from reyn.llm.llm import LLMToolCallResult
         from reyn.llm.pricing import TokenUsage
 
+        content = self.contents[self.calls]
         self.calls += 1
         return LLMToolCallResult(
-            content=self.content, tool_calls=[], finish_reason="stop",
+            content=content, tool_calls=[], finish_reason="stop",
             usage=TokenUsage(),
         )
 
 
 def _agent_registry(tmp_path: Path, state_log, scripted: "_ScriptedAgentReply"):
+    """Mirrors tests/test_pipeline_r5_run_agent_step.py's ``_registry``: the
+    self-review agent step declares ``schema:``, which runs RouterLoop's
+    model-support pre-check before the (fully scripted) turn -- the resolver
+    must map the default "standard" class to a litellm-known model whose
+    static ``supports_response_schema`` table entry is True, or that
+    pre-check fails before the scripted stub is ever reached."""
+    from reyn.llm.model_resolver import ModelResolver
     from reyn.runtime.registry import AgentRegistry
     from reyn.runtime.session import Session
 
     holder: dict = {}
+    resolver = ModelResolver({"standard": "gemini/gemini-2.5-flash-lite"})
 
     def _factory(profile, *, presentation_consumer=None, intervention_bridge=None) -> Session:
         s = Session(
@@ -194,6 +200,7 @@ def _agent_registry(tmp_path: Path, state_log, scripted: "_ScriptedAgentReply"):
             intervention_bridge=intervention_bridge,
             agent_name=profile.name, state_log=state_log,
             registry=holder.get("reg"), non_interactive=True,
+            resolver=resolver,
         )
         s._loop_driver._loop_observer = (
             lambda loop: setattr(loop, "_llm_caller", scripted)
@@ -212,13 +219,11 @@ async def test_flagship_pipeline_parses_and_runs_end_to_end(
 ) -> None:
     """Tier 2c: the shipped builtin flagship pipeline parses AND runs
     end-to-end through the REAL PipelineExecutor + the REAL tool-registry
-    dispatch (web_search / judge_output / present all resolve via
-    get_default_registry() — proving judge_output's new pipeline
-    reachability, not just its op-handler logic in isolation). Only the LLM
-    (litellm.acompletion + the agent-step's scripted reply) and the
-    web-search network boundary (DuckDuckGoBackend.search) are faked."""
-    import litellm
-
+    dispatch (web_search / present resolve via get_default_registry(); both
+    `agent` steps — summarize and self-review — run through the REAL
+    run_agent_step/schema-validation path). Only the LLM (the agent-step's
+    scripted replies) and the web-search network boundary
+    (DuckDuckGoBackend.search) are faked."""
     from reyn.core.events.events import EventLog
     from reyn.core.events.state_log import StateLog
     from reyn.core.pipeline.executor import PipelineExecutor
@@ -228,16 +233,14 @@ async def test_flagship_pipeline_parses_and_runs_end_to_end(
     from reyn.tools.search_backends.duckduckgo import DuckDuckGoBackend
     from reyn.tools.types import ToolContext
 
-    fake_judge = _FakeJudgeLLM(score=0.9, reason="accurate and concise")
-    monkeypatch.setattr(litellm, "acompletion", fake_judge)
-
     def _fake_search(self, query: str, max_results: int):
         return [SearchResult(title="Result A", url="http://a", snippet="snippet a")]
 
     monkeypatch.setattr(DuckDuckGoBackend, "search", _fake_search)
 
     text = _FLAGSHIP_PIPELINE_PATH.read_text(encoding="utf-8")
-    pipeline = parse_pipeline_dsl(text, SchemaRegistry())
+    schema_registry = SchemaRegistry()
+    pipeline = parse_pipeline_dsl(text, schema_registry)
 
     events = EventLog()
     workspace = Workspace(events=events)
@@ -247,7 +250,13 @@ async def test_flagship_pipeline_parses_and_runs_end_to_end(
     tool_dispatch = _make_tool_dispatch(tool_ctx)
 
     state_log = StateLog(tmp_path / ".reyn" / "wal.jsonl")
-    scripted = _ScriptedAgentReply("Result A is a snippet about the query.")
+    import json as _json
+
+    scripted = _ScriptedAgentReply([
+        "Result A is a snippet about the query.",
+        "(tools-decision round filler -- discarded, only non-empty-ness matters)",
+        _json.dumps({"score": 0.9, "reason": "accurate and concise"}),
+    ])
     registry = _agent_registry(tmp_path, state_log, scripted)
     executor = PipelineExecutor()
 
@@ -257,26 +266,29 @@ async def test_flagship_pipeline_parses_and_runs_end_to_end(
         state_log=state_log, run_id="flagship-test",
         registry=registry,
         default_identity="worker",
+        schema_registry=schema_registry,
     )
 
-    assert scripted.calls == 1, "the agent (summarize) step must have run exactly once"
-    assert fake_judge.call_count == 1, "judge_output must have called the judge LLM exactly once"
+    assert scripted.calls == 3, (
+        "summarize (1 call) + self-review (tools-decision round + the "
+        "separate schema-constrained call = 2 calls) = 3 total"
+    )
 
-    # The agent step's plain-text output reaches ctx.summary directly.
+    # The summarize agent step's plain-text output reaches ctx.summary directly.
     assert result.named_stores["summary"] == "Result A is a snippet about the query."
 
-    # judge_output's data_inline path resolved the agent step's output (the
-    # A4 gap this PR closes) -- both the text (reason) and the structured
-    # score/passed/threshold attachment (added to judge_output_to_canonical
-    # so a downstream pipeline step can reach them via ctx).
+    # The self-review agent step's schema-validated output is the PARSED value
+    # directly (no text/structured wrapper -- that shape is tool-step-only).
     verdict = result.named_stores["verdict"]
-    assert verdict["text"] == "accurate and concise"
-    assert verdict["structured"]["score"] == pytest.approx(0.9)
-    assert verdict["structured"]["passed"] is True
+    assert verdict == {"score": pytest.approx(0.9), "reason": "accurate and concise"}
+
+    # The OS (a plain transform step), not a bespoke op, does the threshold
+    # comparison -- exactly the "if" the charter amendment describes.
+    assert result.named_stores["passed"] is True
 
     # present ran (fire-and-continue ack) and all 4 blueprint bindings
     # resolved (summary + score/passed/reason) -- proving the full
-    # agent -> judge -> present data plumbing, not just isolated steps.
+    # agent -> self-review -> present data plumbing, not just isolated steps.
     shown_text = result.named_stores["shown"]["text"]
     assert "bindings_resolved=4" in shown_text
     assert "all_bindings_missed" not in shown_text
@@ -401,5 +413,5 @@ def test_all_five_curated_axes_documented_or_shipped() -> None:
     hook worked example) -- the sibling PR ships the remaining standalone
     builtins (status-card present-view, draft->judge->revise skill)."""
     body = _cheat_sheet_body()
-    for marker in ("## `present`", "## `judge_output`", "## Pipelines", "## Hooks", "## Skills", "## MCP"):
+    for marker in ("## `present`", "## Self-review", "## Pipelines", "## Hooks", "## Skills", "## MCP"):
         assert marker in body

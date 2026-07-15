@@ -26,10 +26,11 @@ below is retained as design history):
 | Outcome scale | Binary pass/fail | 4-band (verified / inconclusive / refuted / blocked) |
 | Use case | Per-workflow regression | System-wide e2e regression |
 
-The framework reuses the `judge_output` op backend and the baseline
-comparison pattern from that era, but the CLI surface and YAML schema are
-distinct. It is also orthogonal to one-shot batch preludes — those are
-Markdown prose, not machine-readable, not reusable across batches.
+The framework reuses the baseline comparison pattern from that era (its
+`judge` reply-verifier is its own independent direct-litellm scorer), but
+the CLI surface and YAML schema are distinct. It is also orthogonal to
+one-shot batch preludes — those are Markdown prose, not machine-readable,
+not reusable across batches.
 
 LLM stochasticity, replay cost, feature drift, and coverage gaps are the four
 driving constraints:
@@ -113,7 +114,7 @@ one `refuted` verdict refutes the whole scenario.
 
 | kind | assertion |
 |---|---|
-| `judge` | `rubric` is a list of natural-language criteria; `judge_output` op scores each |
+| `judge` | `rubric` is a list of natural-language criteria; the harness's own independent LLM-judge call scores each |
 | `substring` | `value` string must appear anywhere in the reply |
 | `exact` | `value` string matches the reply (trimmed) |
 | `regex` | `value` pattern matches via `re.search` |

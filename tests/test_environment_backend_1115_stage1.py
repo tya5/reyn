@@ -12,8 +12,11 @@ while the OS + permission layer stay host-side. This file pins:
       identity / behavior-preservation property, beyond the broad existing
       file-op suites);
   (d) grep is a backend primitive (Workspace.grep delegates the scan);
-  (e) the permission gate + state_dir artifact storage stay host-side (NOT
-      routed through the repo-FS backend).
+  (e) state_dir WRITES stay host-side — never routed through the repo-FS
+      backend. This is the premise the #1390 L3 read-routing split rests on
+      (``workspace.py``: "writes under state_dir go directly host-side,
+      bypassing the repo backend, so reads of state_dir paths must mirror
+      that split"), so it must have a witness other than that comment.
 
 No mocks: collaborators are real instances or a hand-written recording Fake
 (per testing policy). Assertions use public surfaces only.
@@ -150,14 +153,32 @@ def test_grep_primitive_via_backend(tmp_path: Path) -> None:
     assert count_res.count >= 1
 
 
-def test_state_dir_artifacts_not_routed_through_repo_backend(tmp_path: Path) -> None:
-    """Tier 2: (e) artifact storage is host-side (state_dir) — NOT routed through
-    the repo-FS backend (Stage 0 decouple intent: artifacts survive on host even
-    when the repo FS lives in a container)."""
-    backend = _RecordingBackend()
-    ws = Workspace(events=EventLog(), base_dir=tmp_path, environment_backend=backend)
+def test_state_dir_writes_not_routed_through_repo_backend(tmp_path: Path) -> None:
+    """Tier 2: (e) a state_dir write stays host-side — the repo-FS backend
+    serves NONE of it, yet the directory lands on the host.
 
-    handle = ws.store_artifact("p", {"type": "demo", "data": {"v": 1}}, actor="s")
-    # store_artifact wrote the file without going through the repo-FS backend.
-    assert "write_bytes" not in backend.calls
-    assert ws.resolve_artifact_handle(handle).is_file()
+    #1390 L3's read-routing split (a state_dir read is served host-side, not
+    through the repo backend) is only correct BECAUSE the write side is
+    host-side too — under a container backend, a state_dir path routed through
+    the repo backend would be written in-container, where the host-side reader
+    would never find it. `Workspace.__init__`'s `state_dir.mkdir(...)` is the
+    surviving state_dir write, so it is what this pins.
+
+    Subject note: this replaces `test_state_dir_artifacts_not_routed_through_
+    repo_backend`, whose subject (`store_artifact`) was removed as an orphan.
+    The artifact was only ever the *vehicle*; the host-side-write invariant it
+    rode on is broader and still live, so the witness is kept, re-pointed at
+    the write that remains rather than deleted with the vehicle.
+    """
+    backend = _RecordingBackend()
+    state = tmp_path / "host_state"
+
+    Workspace(
+        events=EventLog(), base_dir=tmp_path, state_dir=state,
+        environment_backend=backend,
+    )
+
+    assert backend.calls == [], (
+        f"a state_dir write was routed through the repo-FS backend: {backend.calls!r}"
+    )
+    assert state.is_dir(), "state_dir was not created host-side"
