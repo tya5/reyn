@@ -46,6 +46,7 @@ from reyn.core.events.snapshot_generations import (
     SnapshotGenerationStore,
     active_rewind_target,
     branch_ids_for,
+    build_active_predicate,
     is_active_seq,
     lineage_predecessor,
     list_branches,
@@ -1033,7 +1034,7 @@ class AgentRegistry:
         # not rewound) — only Reyn's own subscription is replayed.
         self._task_subscriptions.replay(
             self._state_log.iter_from(0),
-            is_active=lambda s: is_active_seq(self._state_log, s),
+            is_active=build_active_predicate(self._state_log),
         )
         # #2187 Stage 4: the recovery RE-READ seam — the binding is restored above; now
         # re-read the CURRENT backend task-state (the external master, not rewound).
@@ -1184,6 +1185,10 @@ class AgentRegistry:
         if not state_root.is_dir():
             return []
         rewoken: "list[str]" = []
+        # Hoisted once for the whole scan (not per run_dir) — same call-shape fix
+        # as restore_all's task-subscription replay: the seq-independent derivation
+        # otherwise re-scans the WAL once per pipeline run dir (#2941 sibling).
+        is_active = build_active_predicate(self._state_log)
         for run_dir in sorted(state_root.iterdir()):
             if not run_dir.is_dir() or has_result(run_dir):
                 continue
@@ -1194,8 +1199,8 @@ class AgentRegistry:
                     "— skipping (nothing to resume from)", run_dir,
                 )
                 continue
-            if work_order.spawn_seq is not None and not is_active_seq(
-                self._state_log, work_order.spawn_seq,
+            if work_order.spawn_seq is not None and not is_active(
+                work_order.spawn_seq,
             ):
                 # Provably rewound-away (abandoned WAL branch) — do not resurrect.
                 continue
@@ -1407,12 +1412,16 @@ class AgentRegistry:
 
         # Union of generation boundary seqs across every known agent. Default =
         # active branch only (1f); include_abandoned = all branches (Phase-2 tree).
+        # Hoisted once for the whole (names x seqs) scan — the same fix-class as
+        # restore_all/#2941: the seq-independent derivation must not re-scan the
+        # WAL per candidate seq.
+        is_active = build_active_predicate(self._state_log)
         seqs: set[int] = set()
         for name in self.list_names():
             for s in self._store_for(name).seqs():
                 if oldest_seq is not None and s < oldest_seq:
                     continue  # #2236: truncated out of WAL — not reachable
-                if include_abandoned or is_active_seq(self._state_log, s):
+                if include_abandoned or is_active(s):
                     seqs.add(s)
         if not seqs:
             return []
@@ -1739,12 +1748,20 @@ class AgentRegistry:
         recovery. Both production callers guarantee a rewind record exists (see
         comment at the ``drop_cut`` assignment above). Inert when no ``agent_archived``
         events exist (the #1954 file-only tombstone is left untouched)."""
+        # Hoisted once for the whole archived.items() scan (fix-class sibling of
+        # #2941/restore_all — the seq-independent derivation must not re-scan the
+        # WAL once per archived agent).
+        is_active = (
+            build_active_predicate(self._state_log)
+            if self._state_log is not None
+            else None
+        )
         for name, aseq in archived.items():
             target = self._dir / name
             if not target.is_dir():
                 continue
             marker = target / ARCHIVED_MARKER
-            if self._state_log is not None and is_active_seq(self._state_log, aseq):
+            if is_active is not None and is_active(aseq):
                 marker.write_text(str(aseq), encoding="utf-8")
             elif marker.is_file():
                 marker.unlink()
@@ -1786,10 +1803,18 @@ class AgentRegistry:
         #2405: ``is_active_seq`` replaces the former ``e[0] ≤ cut`` filter — same
         symmetric gap as vanish/archive: post-rewind active mutations (seq > R) were
         excluded, reverting topology state to as-of-N on crash recovery."""
+        # Hoisted once for the whole (names x lifecycle-events) scan — same
+        # fix-class sibling as above: one WAL scan for every topology name's
+        # events, not one scan per event.
+        is_active = (
+            build_active_predicate(self._state_log)
+            if self._state_log is not None
+            else None
+        )
         for name, evs in self._topology_lifecycle().items():
-            if self._state_log is not None:
+            if is_active is not None:
                 latest = max(
-                    (e for e in evs if is_active_seq(self._state_log, e[0])),
+                    (e for e in evs if is_active(e[0])),
                     key=lambda e: e[0], default=None,
                 )
             else:
@@ -1923,10 +1948,18 @@ class AgentRegistry:
         import yaml  # noqa: PLC0415 — local, matching the file convention
 
         store = self._config_generation_store()
+        # Hoisted once for the whole store.paths() scan — same fix-class sibling as
+        # above: `latest_active` takes the predicate directly so this loop doesn't
+        # re-derive (and re-scan the whole WAL for) `is_active_seq` once per rel_path.
+        is_active = (
+            build_active_predicate(self._state_log)
+            if self._state_log is not None
+            else None
+        )
         for rel_path in store.paths():
             latest = (
-                store.latest_active(rel_path, self._state_log)
-                if self._state_log is not None
+                store.latest_active(rel_path, is_active)
+                if is_active is not None
                 else store.latest_at_or_below(rel_path, cut)
             )
             abs_path = (self._project_root / ".reyn" / rel_path).resolve()
@@ -2145,15 +2178,23 @@ class AgentRegistry:
         # (rewind_to appends it at line 1091 before line 1095; recover_rewind_if_needed
         # gates on active_rewind_target is not None at line 2011 before line 2014).
         drop_cut = workspace_at_or_below
+        # Hoisted once for the whole materialise pass — the same fix-class as
+        # restore_all/#2941: the below loops call the seq-independent predicate once
+        # per (created-agent, agent, session) triple; without hoisting, each call
+        # re-scans the entire WAL (`is_active_seq` → `_rewind_records` →
+        # `iter_from(1)`), turning this cold-start/rewind path quadratic in WAL size.
+        is_active = (
+            build_active_predicate(self._state_log)
+            if self._state_log is not None
+            else None
+        )
         # #2103 S2 re-materialise: an agent on the ACTIVE branch, NOT purged, currently
         # ABSENT (dropped at a prior cut) → re-create from its agent_created record
         # so a forward-checkout-past-drop brings it back (the inverse of the drop).
         for _rname, (_rcseq, _rpayload, _rparent, _rpseq) in ag_created.items():
             if _rname in ag_purged:
                 continue  # fork A: purged = permanent, never re-materialised
-            _is_active = (
-                self._state_log is None or is_active_seq(self._state_log, _rcseq)
-            )
+            _is_active = is_active is None or is_active(_rcseq)
             if _is_active and not (self._dir / _rname).is_dir():
                 self._rematerialise_agent(_rname, _rpayload)
         for name in self.list_names():
@@ -2164,8 +2205,8 @@ class AgentRegistry:
             agent_seq = created_at.get(("agent", name, ""))
             _on_abandoned = (
                 agent_seq is not None
-                and self._state_log is not None
-                and not is_active_seq(self._state_log, agent_seq)
+                and is_active is not None
+                and not is_active(agent_seq)
             )
             if name in ag_purged or _on_abandoned:
                 self._drop_agent(name)
@@ -2181,13 +2222,13 @@ class AgentRegistry:
                 van_seq = sess_vanished.get((name, sid))
                 spawned_after_cut = (
                     sess_seq is not None
-                    and self._state_log is not None
-                    and not is_active_seq(self._state_log, sess_seq)
+                    and is_active is not None
+                    and not is_active(sess_seq)
                 )
                 vanished_by_cut = (
                     van_seq is not None
-                    and self._state_log is not None
-                    and is_active_seq(self._state_log, van_seq)
+                    and is_active is not None
+                    and is_active(van_seq)
                 )
                 if spawned_after_cut or vanished_by_cut:
                     # #2125/#2180: detach now (quiesce in-flight writes; the global Task

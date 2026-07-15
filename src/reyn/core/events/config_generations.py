@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
+from typing import Callable
 
 import yaml
 
@@ -104,18 +105,29 @@ class ConfigGenerationStore:
         )
         return seq, content if isinstance(content, dict) else {}
 
-    def latest_active(self, rel_path: str, state_log: object) -> "tuple[int, dict] | None":
+    def latest_active(
+        self, rel_path: str, is_active: "Callable[[int], bool]",
+    ) -> "tuple[int, dict] | None":
         """The (seq, content) of the highest generation for `rel_path` on the ACTIVE WAL
-        branch (``is_active_seq``), or None when no active generation exists.
+        branch, or None when no active generation exists.
+
+        ``is_active`` is the caller-supplied membership predicate (``is_active_seq``'s
+        derivation is seq-independent — see ``build_active_predicate``). A caller
+        reconciling MANY rel_paths in one pass (e.g.
+        ``AgentRegistry._reconcile_config_as_of_cut``) MUST hoist ONE
+        ``build_active_predicate(state_log)`` and reuse it here per rel_path — passing
+        ``is_active_seq`` re-bound per call would re-scan the whole WAL once per
+        rel_path (the #2941 sibling quadratic-cold-start shape this signature exists to
+        prevent). A single-path caller may pass
+        ``lambda s: is_active_seq(state_log, s)`` directly.
 
         #2405: ``latest_at_or_below(cut=N)`` has the symmetric gap — post-rewind active
         generations (seq > R > N) are excluded, reverting config to as-of-N on crash
-        recovery. ``is_active_seq`` covers all three regions correctly:
-        • Pre-target (seq ≤ N): ``is_active_seq=True`` → applied.
-        • Abandoned branch (N < seq < R): ``is_active_seq=False`` → skipped.
-        • Post-rewind active (seq > R): ``is_active_seq=True`` → applied."""
-        from reyn.core.events.snapshot_generations import is_active_seq  # noqa: PLC0415
-        seqs = [s for s in self._entries().get(rel_path, ()) if is_active_seq(state_log, s)]
+        recovery. The active-branch predicate covers all three regions correctly:
+        • Pre-target (seq ≤ N): active=True → applied.
+        • Abandoned branch (N < seq < R): active=False → skipped.
+        • Post-rewind active (seq > R): active=True → applied."""
+        seqs = [s for s in self._entries().get(rel_path, ()) if is_active(s)]
         if not seqs:
             return None
         seq = seqs[-1]
