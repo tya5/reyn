@@ -114,17 +114,20 @@ def test_growing_history_matches_from_scratch_computation() -> None:
     whole thing jointly. An earlier revision of this docstring claimed this
     drift is structurally one-directional (incremental >= from-scratch,
     "only ever safe, never under") — DISPROVEN by direct measurement: a
-    growing-repeated-phrase history (this test's own fixture) makes the
-    JOINT (from-scratch) tokenization MORE efficient than the incremental
-    sum, i.e. the incremental estimate UNDER-shoots by an amount that grows
-    with message count (verified independently of comma/bracket
-    reconstruction — adding the exact missing separator punctuation to the
-    delta text does not close the gap, so it is a genuine cross-boundary
-    BPE effect, not a punctuation-accounting bug). Realistic multi-turn
-    chat content (varied per-message text, not a single repeated phrase)
-    measured EXACTLY zero drift in the same harness — the failure mode
-    needs unusually repetitive content to manifest — but "always safe" is
-    not something this scheme can guarantee, so the tolerance here is an
+    growing-repeated-phrase history (this test's own fixture) makes
+    tokenizing the pieces SEPARATELY (incremental) MORE token-efficient
+    (fewer tokens) than tokenizing the whole thing JOINTLY (from-scratch),
+    i.e. the incremental estimate UNDER-shoots the from-scratch one by an
+    amount that grows with message count — the reverse of "splitting can
+    only lose cross-boundary merges, so sum(pieces) >= whole." Verified
+    independently of comma/bracket reconstruction — adding the exact
+    missing separator punctuation to the delta text does not close the
+    gap, so this is a genuine cross-boundary BPE tokenization effect, not a
+    punctuation-accounting bug. Realistic multi-turn chat content (varied
+    per-message text, not a single repeated phrase) measured EXACTLY zero
+    drift in the same harness — the failure mode needs unusually
+    repetitive content to manifest — but "always safe" is not something
+    this scheme can guarantee, so the tolerance here is an
     empirically-bounded allowance in EITHER direction, not a one-sided
     safety margin. A real bug (double-counted or dropped message) would
     blow far past this bound, which is what this test exists to catch."""
