@@ -21,6 +21,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Callable
 
 from reyn.core.events.agent_snapshot import AgentSnapshot
 from reyn.core.events.state_log import StateLog
@@ -175,6 +176,26 @@ def _make_is_active(abandoned: list[tuple[int, int]]):
 def is_active_seq(state_log: StateLog, seq: int) -> bool:
     """True if ``seq`` is on the current active branch (not in any abandoned segment)."""
     return _make_is_active(_abandoned_intervals(_rewind_records(state_log)))(seq)
+
+
+def build_active_predicate(state_log: StateLog) -> Callable[[int], bool]:
+    """Build a reusable ``is_active(seq)`` predicate — ONE WAL scan for MANY seqs.
+
+    #2941 (owner-reported ``reyn chat`` freeze, growing with session length):
+    ``_abandoned_intervals(_rewind_records(state_log))`` depends only on the
+    state_log's rewind records, NOT on ``seq`` — so calling ``is_active_seq``
+    once per history message (``Session._active_branch_history``, the
+    LLM-facing hot path run every turn) re-scans the *entire* WAL
+    (``iter_from(1)``, json-decoding every line) once per message: O(N
+    messages x M WAL entries) per turn. This factors the seq-independent scan
+    out of that loop: call once per turn, then reuse the returned predicate
+    for every message's seq — O(N + M) per turn instead of O(N x M). Same
+    derivation as ``is_active_seq``; semantics are identical (this is a
+    call-shape optimization, not a behavior change) — ``is_active_seq`` itself
+    is UNCHANGED and still used by other (non-hot-loop) callers, including
+    crash-recovery paths, so their contract is untouched.
+    """
+    return _make_is_active(_abandoned_intervals(_rewind_records(state_log)))
 
 
 def active_rewind_target(state_log: StateLog) -> int | None:
