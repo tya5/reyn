@@ -24,20 +24,18 @@ Two entry points:
     (``state_log.submit_durable_nowait``) path, mirroring the durable/non-durable
     split ``StateLog.append``/``append_nowait`` already draws for WAL entries.
   - ``latest_pipeline_state`` — the reader seam ``resume`` calls: the latest
-    generation for a run ON THE ACTIVE WAL BRANCH (``is_active_seq``), mirroring
-    ``ConfigGenerationStore.latest_active``'s SEMANTICS (active-branch membership,
-    latest-wins, no forward-replay) but NOT its signature: that store multiplexes
-    MANY rel_paths, so it takes a caller-hoisted ``is_active`` predicate to keep a
-    multi-path reconcile from re-scanning the WAL per path. This store is scoped to
-    ONE run (a handful of generation files, one run per caller), so there is no
-    per-path loop to hoist out of and it takes the ``state_log`` directly.
+    generation for a run ON THE ACTIVE WAL BRANCH, mirroring
+    ``ConfigGenerationStore.latest_active``'s semantics exactly (active-branch
+    membership, latest-wins, no forward-replay), down to the predicate-taking
+    signature: ``PipelineStateStore.latest_active`` takes a caller-hoisted
+    ``is_active`` so no reader can re-scan the WAL once per generation seq.
 """
 from __future__ import annotations
 
 import json
 import re
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Callable
 
 from reyn.core.events.config_recovery import reyn_root
 
@@ -95,21 +93,25 @@ class PipelineStateStore:
         content = json.loads(self._path_for(seq).read_text(encoding="utf-8"))
         return seq, content
 
-    def latest_active(self, state_log: object) -> "tuple[int, dict] | None":
-        """The (seq, content) of the highest generation on the ACTIVE WAL branch
-        (``is_active_seq``), or None if no active generation exists.
+    def latest_active(
+        self, is_active: "Callable[[int], bool]",
+    ) -> "tuple[int, dict] | None":
+        """The (seq, content) of the highest generation on the ACTIVE WAL branch, or
+        None if no active generation exists. Mirrors
+        ``ConfigGenerationStore.latest_active`` exactly — same active-branch
+        membership / latest-wins / no-forward-replay semantics, and the same
+        predicate-taking signature.
 
-        Mirrors ``ConfigGenerationStore.latest_active``'s SEMANTICS (active-branch
-        membership, latest-wins, no forward-replay) but deliberately NOT its
-        signature: that store takes a caller-hoisted ``is_active`` predicate because
-        it multiplexes MANY rel_paths, so calling ``is_active_seq`` internally made a
-        multi-path reconcile re-scan the whole WAL once per path (quadratic BY
-        CONSTRUCTION — no caller-side hoist could fix it). This store is scoped to ONE
-        run: ``_seqs()`` is that run's own handful of generation files and the sole
-        caller (``latest_pipeline_state``) resolves a single run, so there is no
-        per-path loop to hoist out of and taking the ``state_log`` stays correct."""
-        from reyn.core.events.snapshot_generations import is_active_seq  # noqa: PLC0415
-        seqs = [s for s in self._seqs() if is_active_seq(state_log, s)]  # type: ignore[arg-type]
+        ``is_active`` is the caller-supplied membership predicate (its derivation is
+        seq-independent — see ``build_active_predicate``). Taking a ``state_log`` here
+        would force an internal ``is_active_seq`` call per generation seq, re-scanning
+        the whole WAL each time: O(generations x WAL) per read, and quadratic BY
+        CONSTRUCTION for any caller that ever loops over runs — a shape no caller-side
+        hoist could fix. That is exactly how the config store's defect arose (it was
+        census-safe until ``AgentRegistry._reconcile_config_as_of_cut`` grew a rel_path
+        loop), so this store takes the predicate too rather than relying on today's
+        one-run-per-caller census holding forever."""
+        seqs = [s for s in self._seqs() if is_active(s)]
         if not seqs:
             return None
         seq = seqs[-1]
@@ -165,11 +167,19 @@ async def record_pipeline_state(
 def latest_pipeline_state(run_id: str, state_log: "StateLog") -> "dict[str, Any] | None":
     """The latest pipeline control-plane-state generation for `run_id` on the
     active WAL branch, or None if no generation was ever recorded (a fresh
-    run — `resume` should treat this as run-from-scratch)."""
+    run — `resume` should treat this as run-from-scratch).
+
+    Builds the active-branch predicate ONCE and hands it to the store — the hoist
+    ``PipelineStateStore.latest_active``'s signature obliges. A caller resolving MANY
+    runs should hoist ``build_active_predicate`` above its loop and drive the store
+    directly rather than calling this per run."""
+    from reyn.core.events.snapshot_generations import (  # noqa: PLC0415
+        build_active_predicate,
+    )
     store = _store(state_log, run_id)
     if store is None:
         return None
-    latest = store.latest_active(state_log)
+    latest = store.latest_active(build_active_predicate(state_log))
     if latest is None:
         return None
     _seq, content = latest
