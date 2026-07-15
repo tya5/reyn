@@ -15,6 +15,25 @@ from __future__ import annotations
 
 from typing import Callable
 
+# NOTE (#2943 review): an earlier revision of this file lowercased the
+# leading [X] hotkey bracket for inline display, on the theory that the
+# picker widget never reads a typed hotkey (true — zero `.hotkey` references
+# under interfaces/inline/, selection here is cursor+Enter only) so the
+# case was pure decoration. That was WRONG: the input bar BELOW this same
+# picker, while an intervention is pending, ALSO accepts a typed answer
+# (app.py's plain-text submit path -> session.py's ask_user input handling
+# -> match_choice(), user_intervention.py — explicitly case-sensitive). A
+# user reads the picker's label and can type the letter into that bar as an
+# alternative to arrow+Enter; the two are the same surface from the user's
+# perspective. The case difference is not visual noise — it IS the hotkey:
+# "[y]es"/"[n]o" are one-shot (lowercase), "[A]lways"/"[N]ever" are
+# persistent (uppercase). Normalizing case would make "[a]lways" advertise a
+# letter that doesn't match anything (real hotkey is "A"), and worse, a user
+# meaning to permanently decline via "[n]ever" who types "n" would silently
+# get the one-shot "[n]o" instead — a false sense of having set a permanent
+# deny. Labels are therefore rendered EXACTLY as `intervention_choices.py`
+# defines them; no casing transform of any kind happens in this module.
+
 
 class InterventionElement:
     """A RegionElement for one closed-set intervention.
