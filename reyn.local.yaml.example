@@ -722,22 +722,32 @@
 #                   ignore (silent fallback)
 #   policy:         operator-level SandboxPolicy overrides (see
 #                   docs/reference/config/reyn-yaml.md "sandbox.policy
-#                   sub-keys" for the full field list). Absent (the default)
-#                   means no agent-level restriction beyond each field's own
-#                   dataclass default (network off, allow_subprocess on,
-#                   write_paths empty, etc).
+#                   sub-keys" for the full field list). NOTE: this mapping is
+#                   applied WHOLESALE, not merged field-by-field — any field
+#                   you omit falls back to its SandboxPolicy default rather
+#                   than to a "restrictive" value. Declare every axis you care
+#                   about explicitly.
 # -----------------------------------------------------------------------------
 # sandbox:
 #   backend: auto
 #   on_unsupported: warn
 #   policy:
-#     # allow_subprocess defaults to true (#2953) — an agent whose workload
-#     # never needs to fork (e.g. a pure data-processing pipeline with no
-#     # git/pytest/build-tool steps) can deny it outright to close off
-#     # fork-based sandbox-escape and resource-exhaustion vectors (spawning
-#     # unbounded children, forking to dodge the parent's own rlimits). The
-#     # other axes (network / write_paths / read_deny_paths) are unaffected
-#     # by this setting and keep enforcing independently.
+#     # Deny forking for a workload that never legitimately needs it (e.g. a
+#     # pure data-processing pipeline with no git / pytest / build-tool steps,
+#     # and no /bin/sh pipeline — a shell pipeline forks per stage).
+#     #
+#     # Denying buys two concrete guarantees, both of which are LOST once
+#     # forking is allowed:
+#     #   1. timeout_seconds stays a real bound. The timeout path kills the
+#     #      direct child; with no fork, "kill the child" == "kill everything".
+#     #      A workload that CAN fork may leave orphaned descendants running
+#     #      past timeout_seconds.
+#     #   2. On Linux, the seccomp default-deny (KILL) syscall filter is
+#     #      installed ONLY when allow_subprocess is false (backends/landlock.py,
+#     #      landlock_exec.py). Allowing fork skips that entire layer, which is
+#     #      also what excludes ptrace / process_vm_readv / keyctl.
+#     #
+#     # (rlimits are NOT a reason either way — they are inherited across fork.)
 #     allow_subprocess: false
 
 
