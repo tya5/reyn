@@ -18,8 +18,6 @@ import os
 import sys
 from pathlib import Path
 
-from reyn.llm.llm import run_async
-
 from ..common_args import add_common_args
 from ..invocation_context import InvocationContext
 
@@ -323,6 +321,7 @@ def register(sub) -> None:
 def run_serve(args: argparse.Namespace) -> None:
     from reyn.config import _find_project_root, load_project_context
     from reyn.core.events.state_log import StateLog
+    from reyn.llm.llm import run_async
     from reyn.mcp.server import serve_stdio
     from reyn.runtime.budget.budget import BudgetTracker
     from reyn.runtime.factory_config import SessionFactoryConfig

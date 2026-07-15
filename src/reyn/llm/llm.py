@@ -12,8 +12,6 @@ from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
 from typing import TYPE_CHECKING, Coroutine, NamedTuple, TypeVar, Union
 
-import httpx
-
 logger = logging.getLogger(__name__)
 from reyn.llm.credentials import check_model_credentials
 from reyn.llm.json_parse import loads_lenient
@@ -597,6 +595,29 @@ class LLMToolCallResult:
 # Resolved lazily so importing this module does not trigger `import litellm`.
 _RETRYABLE_LITELLM_EXCEPTIONS: tuple | None = None
 
+# Resolved lazily so importing this module does not trigger `import httpx` (its
+# CLI pretty-printing subtree — rich.progress / rich.syntax / pygments — costs
+# ~90ms and reyn never invokes it; cold-start sweep companion to #2930's
+# litellm chokepoint, see litellm_bootstrap.py's module docstring).
+_HTTPX_READ_TIMEOUT_EXC: "type[BaseException] | None" = None
+_HTTPX_CONNECT_ERROR_EXC: "type[BaseException] | None" = None
+
+
+def _get_httpx_exc_types() -> "tuple[type[BaseException], type[BaseException]]":
+    """Return ``(httpx.ConnectError, httpx.ReadTimeout)``, loading httpx lazily.
+
+    Cached in _HTTPX_CONNECT_ERROR_EXC / _HTTPX_READ_TIMEOUT_EXC after first call.
+    Kept as two distinct classes (not a pre-built isinstance tuple) so callers
+    can select only the subset they mean — e.g. ``_is_llm_timeout_exc`` cares
+    about ReadTimeout only, not ConnectError.
+    """
+    global _HTTPX_READ_TIMEOUT_EXC, _HTTPX_CONNECT_ERROR_EXC
+    if _HTTPX_READ_TIMEOUT_EXC is None:
+        import httpx  # noqa: PLC0415
+        _HTTPX_READ_TIMEOUT_EXC = httpx.ReadTimeout
+        _HTTPX_CONNECT_ERROR_EXC = httpx.ConnectError
+    return _HTTPX_CONNECT_ERROR_EXC, _HTTPX_READ_TIMEOUT_EXC
+
 def _env_num(name: str, default: "int | float", lo: "int | float", hi: "int | float",
              cast):
     """Operator tuning knob from the environment, clamped to ``[lo, hi]``; falls back
@@ -773,9 +794,12 @@ def _is_llm_timeout_exc(exc: BaseException) -> bool:
     """#2210: True for a per-call HTTP TIMEOUT (a hung/slow provider) — ``litellm`` Timeout or
     an ``httpx`` read timeout, the timeout subset of ``_is_retryable_exc``. Used to route ONLY
     a persistent timeout through the on_limit policy (other infra errors surface as-is).
-    ``litellm`` is lazy-imported (this module avoids a module-level ``import litellm``)."""
+    ``litellm`` is lazy-imported (this module avoids a module-level ``import litellm``),
+    and ``httpx`` likewise (avoids a module-level ``import httpx`` — see
+    ``_get_httpx_exc_types``)."""
     import litellm  # noqa: PLC0415
-    return isinstance(exc, (litellm.exceptions.Timeout, httpx.ReadTimeout))
+    _, read_timeout_exc = _get_httpx_exc_types()
+    return isinstance(exc, (litellm.exceptions.Timeout, read_timeout_exc))
 
 
 def _resolve_llm_call_bounds(
@@ -879,7 +903,7 @@ def _is_retryable_exc(exc: BaseException) -> bool:
         return True
     if isinstance(exc, _get_retryable_litellm_exceptions()):
         return True
-    if isinstance(exc, (httpx.ConnectError, httpx.ReadTimeout)):
+    if isinstance(exc, _get_httpx_exc_types()):
         return True
     return False
 
