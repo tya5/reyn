@@ -52,6 +52,26 @@ class ContextBudgetAdvisor:
         self._history_fn = history_fn
         from reyn.config.chat import OffloadConfig
         self._offload_config = offload_config if offload_config is not None else OffloadConfig()
+        # #2940: incremental token-estimate cache. Re-dumping the full router-view
+        # history on every call (dropdown open, pre-frame overflow check) is
+        # O(history size) each time and grows unbounded over a long session.
+        # Cache is (history length, cumulative estimated tokens) keyed by
+        # (model, use_chars4); a length decrease (compaction/rewind truncated
+        # history) or a model/config change invalidates it (full recompute),
+        # a length increase only dumps+estimates the NEW tail slice.
+        # "boundary" is the json dump of the last cached message (not a hash
+        # of it — one message's dump is cheap enough to hold verbatim) — the
+        # cache is an append-only-PREFIX assumption, but history_fn is
+        # typically a derived, recomputed view (e.g. Session._active_branch_
+        # history — the same function #2938 hoisted), not a real array: a
+        # rewind can change WHICH messages are active such that len returns
+        # to a previously-cached value while the actual content at that
+        # boundary differs. Checking length alone would then silently return
+        # a stale cached total (never re-synced until a later length
+        # decrease). The boundary hash makes this checked, not assumed.
+        self._history_token_cache: dict[str, Any] = {
+            "len": 0, "tokens": 0, "model": None, "use_chars4": None, "boundary": None,
+        }
 
     @property
     def _model(self) -> str:
@@ -73,22 +93,74 @@ class ContextBudgetAdvisor:
         from reyn.llm.model_budget import get_max_input_tokens
         return get_max_input_tokens(self._model, events=self._events)
 
-    def _free_window_now(self) -> tuple[int, int]:
-        """Return (effective_trigger, estimated_history_tokens).
+    def _incremental_history_tokens(self) -> int:
+        """Estimated token count of the full router-view history (#2940).
 
-        Used by context_window_status and maybe_force_compact.
+        Incremental: only the slice of history NEWER than the last call is
+        json.dumps'd + estimated; a cache hit (no new messages since last
+        call) is O(1). A shrink, a model/use_chars4 change, OR the cached
+        PREFIX's content actually differing (checked via a boundary — the
+        json dump of the last cached message, not assumed from length alone
+        — history_fn is often a recomputed derived view, e.g. a rewind-aware
+        active-branch filter, where the same length can recur with
+        different content) invalidates the cache for one full recompute.
         """
         import json as _json
 
         from reyn.services.compaction.engine import estimate_tokens
 
-        effective_trigger = self._get_effective_trigger()
         use_chars4 = getattr(self._compaction, "use_chars4_estimate", False)
+        cache = self._history_token_cache
         try:
-            combined = _json.dumps(self._history_fn(), ensure_ascii=False)
-            estimated = estimate_tokens(combined, self._model, use_chars4=use_chars4)
+            history = self._history_fn()
+            n = len(history)
+            cached_len = cache["len"]
+            # The boundary is the json dump of the LAST message that was in
+            # the cached prefix (index cached_len - 1). If it no longer
+            # matches the message currently at that index, the prefix isn't
+            # append-only-stable and the cache cannot be trusted, even at an
+            # unchanged or grown length.
+            boundary = (
+                _json.dumps(history[cached_len - 1], ensure_ascii=False)
+                if 0 < cached_len <= n
+                else None
+            )
+            prefix_unchanged = cached_len == 0 or (cached_len <= n and boundary == cache["boundary"])
+            if (
+                cached_len > n
+                or cache["model"] != self._model
+                or cache["use_chars4"] != use_chars4
+                or not prefix_unchanged
+            ):
+                combined = _json.dumps(history, ensure_ascii=False)
+                tokens = estimate_tokens(combined, self._model, use_chars4=use_chars4)
+            elif cached_len == n:
+                return int(cache["tokens"])
+            else:
+                # Dump each new message individually and join with the same
+                # comma separator json.dumps(list) would use BETWEEN elements
+                # (not wrapped in its own "[...]") — an array-slice dump would
+                # otherwise add a spurious pair of bracket tokens on every
+                # single call, drifting the cumulative estimate upward as the
+                # history grows across many dropdown-open/pre-frame checks.
+                delta = history[cached_len:]
+                combined = ",".join(_json.dumps(m, ensure_ascii=False) for m in delta)
+                tokens = int(cache["tokens"]) + estimate_tokens(combined, self._model, use_chars4=use_chars4)
+            new_boundary = _json.dumps(history[-1], ensure_ascii=False) if n > 0 else None
+            cache.update(
+                len=n, tokens=tokens, model=self._model, use_chars4=use_chars4, boundary=new_boundary,
+            )
+            return tokens
         except Exception:  # noqa: BLE001 — estimation best-effort
-            estimated = 0
+            return 0
+
+    def _free_window_now(self) -> tuple[int, int]:
+        """Return (effective_trigger, estimated_history_tokens).
+
+        Used by context_window_status and maybe_force_compact.
+        """
+        effective_trigger = self._get_effective_trigger()
+        estimated = self._incremental_history_tokens()
         return effective_trigger, estimated
 
     # ── Public API ────────────────────────────────────────────────────────────
@@ -189,11 +261,8 @@ class ContextBudgetAdvisor:
         Recomputes budgets, checks new_msg_budget (axis 11), and runs
         force_compact_now() if the current history exceeds effective_trigger.
         """
-        import json as _json
-
         from reyn.services.compaction.engine import (
             NewMsgExceedsBudgetError,
-            estimate_tokens,
             estimate_tokens_for_turn,
         )
 
@@ -232,14 +301,9 @@ class ContextBudgetAdvisor:
                     new_msg_budget=new_msg_budget,
                 )
 
-        # Quick estimate of the current history slice.
-        try:
-            history_msgs = self._history_fn()
-            combined = _json.dumps(history_msgs, ensure_ascii=False)
-            use_chars4 = getattr(self._compaction, "use_chars4_estimate", False)
-            estimated = estimate_tokens(combined, self._model, use_chars4=use_chars4)
-        except Exception:
-            return
+        # Quick estimate of the current history slice (#2940: incremental, not a
+        # full re-dump every call — shares the cache with context_window_status).
+        estimated = self._incremental_history_tokens()
 
         if estimated > effective_trigger:
             self._events.emit(
