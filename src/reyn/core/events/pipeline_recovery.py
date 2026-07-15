@@ -25,7 +25,12 @@ Two entry points:
     split ``StateLog.append``/``append_nowait`` already draws for WAL entries.
   - ``latest_pipeline_state`` — the reader seam ``resume`` calls: the latest
     generation for a run ON THE ACTIVE WAL BRANCH (``is_active_seq``), mirroring
-    ``ConfigGenerationStore.latest_active``'s semantics exactly.
+    ``ConfigGenerationStore.latest_active``'s SEMANTICS (active-branch membership,
+    latest-wins, no forward-replay) but NOT its signature: that store multiplexes
+    MANY rel_paths, so it takes a caller-hoisted ``is_active`` predicate to keep a
+    multi-path reconcile from re-scanning the WAL per path. This store is scoped to
+    ONE run (a handful of generation files, one run per caller), so there is no
+    per-path loop to hoist out of and it takes the ``state_log`` directly.
 """
 from __future__ import annotations
 
@@ -92,8 +97,17 @@ class PipelineStateStore:
 
     def latest_active(self, state_log: object) -> "tuple[int, dict] | None":
         """The (seq, content) of the highest generation on the ACTIVE WAL branch
-        (``is_active_seq``), or None if no active generation exists. Mirrors
-        ``ConfigGenerationStore.latest_active``."""
+        (``is_active_seq``), or None if no active generation exists.
+
+        Mirrors ``ConfigGenerationStore.latest_active``'s SEMANTICS (active-branch
+        membership, latest-wins, no forward-replay) but deliberately NOT its
+        signature: that store takes a caller-hoisted ``is_active`` predicate because
+        it multiplexes MANY rel_paths, so calling ``is_active_seq`` internally made a
+        multi-path reconcile re-scan the whole WAL once per path (quadratic BY
+        CONSTRUCTION — no caller-side hoist could fix it). This store is scoped to ONE
+        run: ``_seqs()`` is that run's own handful of generation files and the sole
+        caller (``latest_pipeline_state``) resolves a single run, so there is no
+        per-path loop to hoist out of and taking the ``state_log`` stays correct."""
         from reyn.core.events.snapshot_generations import is_active_seq  # noqa: PLC0415
         seqs = [s for s in self._seqs() if is_active_seq(state_log, s)]  # type: ignore[arg-type]
         if not seqs:
