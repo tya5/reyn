@@ -27,12 +27,10 @@ below is retained as design history):
 | Use case | Per-workflow regression | System-wide e2e regression |
 
 The framework reuses the baseline comparison pattern from that era (its
-`judge` reply-verifier is its own independent direct-litellm scorer, not
-the production `judge_output` op — that op was removed as a clean-break;
-see [evaluation.md](../agent-engineering/evaluation.md)), but the CLI
-surface and YAML schema are distinct. It is also orthogonal to one-shot
-batch preludes — those are Markdown prose, not machine-readable, not
-reusable across batches.
+`judge` reply-verifier is its own independent direct-litellm scorer), but
+the CLI surface and YAML schema are distinct. It is also orthogonal to
+one-shot batch preludes — those are Markdown prose, not machine-readable,
+not reusable across batches.
 
 LLM stochasticity, replay cost, feature drift, and coverage gaps are the four
 driving constraints:

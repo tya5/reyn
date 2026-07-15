@@ -33,8 +33,6 @@ The `schema:` is the OS's actual contribution here: it **constrains the agent's 
 
 The OS never interprets the checklist content — it is the calling agent's own evaluation criteria, part of the prompt it writes. **This is self-review, not objectivity**: the same agent (or model family) that produced the draft also writes the checklist and scores against it — useful for catching requirements the checklist names and the draft missed, but not an independent judge. Do not present it as one.
 
-(A prior `judge_output` Control IR op offered a bespoke version of this — an LLM call with a `rubric` string, a `threshold` field, and an `on_fail` field the op itself never branched on. It was removed as a clean-break: the OS's actual contribution to it was a threshold comparison and an audit event, i.e. it was agent work — deciding what to draft, what to check for, and what threshold matters — wearing an OS-op costume. `schema` already did the same job — constrained generation + validation — properly, for any `agent` step, not just a scoring one.)
-
 ### `reyn run-once`
 
 The non-interactive CLI entry point for running an agent without a live approval prompt (`reyn eval` was a phase-graph-era command; it was deleted alongside that engine — `reyn run-once` is its current, live counterpart). Permissions must already be pre-approved before the run starts — e.g. `--grant-file-write` grants a specific capability at invocation time rather than via an interactive prompt. This is what makes a self-review-gated pipeline usable in CI: the scoring loop and the permission model are orthogonal, so a non-interactive run's trust decisions are made once, up front, not re-litigated per invocation.
