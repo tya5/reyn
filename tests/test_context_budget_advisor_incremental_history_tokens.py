@@ -107,20 +107,27 @@ def test_growing_history_matches_from_scratch_computation() -> None:
     """Tier 2: falsifying — the incremental (cache + tail-slice) path must
     track a full from-scratch json.dumps+estimate over the final history at
     every growth step, within a tolerance proportional to message count.
-    Exact equality isn't the right bound: subword (BPE) tokenization merges
-    characters across fragment boundaries differently when a message is
-    tokenized alone vs embedded in the full combined text — a few-token
-    drift PER FRAGMENT that's inherent to any incremental/streaming token
-    estimate. That per-fragment drift is constant, but this test compares
-    against the CUMULATIVE sum over all messages added so far, so the
-    worst-case bound genuinely grows with message count (this tolerance is
-    intentionally linear, not a mistake) — it is NOT unbounded in practice
-    because a real session's history_fn periodically SHRINKS (compaction
-    covers the middle into a summary), which forces a full recompute and
-    re-syncs the cache from scratch; real drift is bounded by the
-    inter-compaction message count, not the whole session's lifetime. A real
-    bug (double-counted or dropped message) would blow far past even this
-    linear tolerance, which is what this test exists to catch."""
+
+    Exact equality isn't the bound: tokenizing a new message's JSON dump
+    SEPARATELY from the rest of the history can shift subword (BPE) merge
+    decisions right at the fragment boundary relative to tokenizing the
+    whole thing jointly. An earlier revision of this docstring claimed this
+    drift is structurally one-directional (incremental >= from-scratch,
+    "only ever safe, never under") — DISPROVEN by direct measurement: a
+    growing-repeated-phrase history (this test's own fixture) makes the
+    JOINT (from-scratch) tokenization MORE efficient than the incremental
+    sum, i.e. the incremental estimate UNDER-shoots by an amount that grows
+    with message count (verified independently of comma/bracket
+    reconstruction — adding the exact missing separator punctuation to the
+    delta text does not close the gap, so it is a genuine cross-boundary
+    BPE effect, not a punctuation-accounting bug). Realistic multi-turn
+    chat content (varied per-message text, not a single repeated phrase)
+    measured EXACTLY zero drift in the same harness — the failure mode
+    needs unusually repetitive content to manifest — but "always safe" is
+    not something this scheme can guarantee, so the tolerance here is an
+    empirically-bounded allowance in EITHER direction, not a one-sided
+    safety margin. A real bug (double-counted or dropped message) would
+    blow far past this bound, which is what this test exists to catch."""
     history: list = []
     advisor = _make_advisor(lambda: history)
 
