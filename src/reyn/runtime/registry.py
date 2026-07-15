@@ -479,6 +479,30 @@ class AgentRegistry:
             total += self.agent_cost_breakdown(name)
         return total
 
+    def agent_embedding_cost(self, name: str) -> "object":
+        """FP-0063 PC: agent-scope INDEPENDENT ``EmbeddingCost`` aggregate —
+        the durable process-shared BudgetTracker's per-agent embedding
+        accumulation (all sessions of ``name``, this process only; same
+        non-durability posture as ``agent_cost_breakdown`` — see
+        ``BudgetTracker._agent_embedding_cost``). Deliberately NOT part of
+        ``agent_cost_breakdown`` / the chat ``CostBreakdown`` — see
+        ``EmbeddingCost``'s docstring for why. Empty ``EmbeddingCost`` when no
+        tracker is wired."""
+        from reyn.llm.pricing import EmbeddingCost
+        tracker = self._shared_budget_tracker()
+        return tracker.agent_embedding_cost(name) if tracker is not None else EmbeddingCost()
+
+    def project_embedding_cost(self) -> "object":
+        """FP-0063 PC: project-scope INDEPENDENT ``EmbeddingCost`` aggregate —
+        summed across every currently-loaded agent's ``agent_embedding_cost``
+        (mirrors ``project_cost_breakdown`` above, applied to the separate
+        embedding aggregate rather than the chat one)."""
+        from reyn.llm.pricing import EmbeddingCost
+        total = EmbeddingCost()
+        for name in self.loaded_names():
+            total += self.agent_embedding_cost(name)
+        return total
+
     def resolve_session(
         self,
         agent_name: str,

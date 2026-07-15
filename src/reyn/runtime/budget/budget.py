@@ -28,7 +28,14 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Optional
 
-from reyn.llm.pricing import CostBreakdown, TokenUsage, estimate_cost, estimate_cost_breakdown
+from reyn.llm.pricing import (
+    CostBreakdown,
+    EmbeddingCost,
+    TokenUsage,
+    estimate_cost,
+    estimate_cost_breakdown,
+    estimate_embedding_cost,
+)
 
 # ── exceptions ──────────────────────────────────────────────────────────────
 
@@ -318,6 +325,17 @@ class BudgetTracker:
         # breakdown is a same-process-only refinement the cost panel reads to
         # show Input/Output/Saved on top of that already-durable Total.
         self._agent_cost_breakdown: dict[str, CostBreakdown] = defaultdict(CostBreakdown)
+        # FP-0063 PC: embedding spend is tracked as its OWN independent
+        # aggregate (owner: "embedding は独立追跡の想定"), NOT folded into
+        # ``_agent_cost_breakdown`` above — see ``EmbeddingCost``'s docstring
+        # for why (embedding is input-only/uncacheable; mapping it onto
+        # ``CostBreakdown.prompt_cost`` would dilute cache_hit_rate /
+        # cache_savings). Same non-durability posture as
+        # ``_agent_cost_breakdown``: in-memory only, resets on restart — a
+        # deliberate scope choice (persisting it would need a BudgetLedger
+        # schema extension + the CLAUDE.md recovery-feature truncate-falsify
+        # gate), not an oversight.
+        self._agent_embedding_cost: dict[str, EmbeddingCost] = defaultdict(EmbeddingCost)
         # #1190 stage (iii): per-purpose cost attribution
         # (main/compaction/judge/dogfood) for the /budget breakdown payoff.
         self._purpose_tokens: dict[str, int] = defaultdict(int)
@@ -540,6 +558,47 @@ class BudgetTracker:
             context=self._agent_context(agent) if agent else {},
         )
 
+    # ── FP-0063 PC: embedding cost (independent of record_llm above) ─────
+
+    def record_embedding(
+        self,
+        *,
+        model: str,
+        agent: str | None,
+        tokens: int,
+    ) -> None:
+        """Record one embedding call's spend into the INDEPENDENT per-agent
+        ``EmbeddingCost`` aggregate (FP-0063 X2b) — never touches
+        ``_agent_cost_usd`` / ``_agent_cost_breakdown`` (the chat aggregates)
+        and is not itself gated by the LLM per-agent hard-cap checks above
+        (embedding is not a chat call; ``check_pre_llm`` is unaffected).
+
+        Mixed-model correctness (X6): prices THIS call at model's own rate via
+        ``estimate_embedding_cost`` before folding into the aggregate — never
+        pools tokens across models and prices them afterwards at one rate.
+
+        An unpriced/unknown model (``estimate_embedding_cost`` -> ``(None,
+        None)``) still counts toward ``tokens``/``calls`` but contributes 0 to
+        ``cost_usd``, with ``unpriced_calls`` incremented so the gap stays
+        visible rather than silently reading as a real $0.00 call.
+        """
+        if agent is None:
+            return
+        cost_usd, _ = estimate_embedding_cost(model, tokens)
+        self._agent_embedding_cost[agent] += EmbeddingCost(
+            cost_usd=cost_usd or 0.0,
+            tokens=tokens,
+            calls=1,
+            unpriced_calls=0 if cost_usd is not None else 1,
+        )
+
+    def agent_embedding_cost(self, agent: str) -> EmbeddingCost:
+        """Independent embedding-spend aggregate for ``agent`` (all sessions,
+        this process only — same non-durability posture as
+        ``agent_cost_breakdown``). Returns an empty (all-zero) ``EmbeddingCost``
+        for an agent with no recorded embedding calls this process."""
+        return self._agent_embedding_cost.get(agent, EmbeddingCost())
+
     # ── reset / introspect ──────────────────────────────────────────────
 
     def reset_all(self) -> dict:
@@ -557,6 +616,7 @@ class BudgetTracker:
         self._agent_tokens.clear()
         self._agent_cost_usd.clear()
         self._agent_cost_breakdown.clear()
+        self._agent_embedding_cost.clear()
         self._call_window.clear()
         self._warned.clear()
         return before

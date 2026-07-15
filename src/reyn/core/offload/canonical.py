@@ -501,11 +501,15 @@ def chunks_to_canonical(result: dict) -> CanonicalToolResult:
 def embed_to_canonical(result: dict) -> CanonicalToolResult:
     """embed op result → canonical (FP-0057 Phase 1). ``vectors`` are large float arrays with no
     natural text body — carried as a ``structured`` attachment (mirrors ``chunks_to_canonical`` for
-    the RAG op family). ``model`` / ``total_tokens`` are small high-signal meta the LLM reads inline;
-    the raw ``kind`` transport echo is dropped."""
+    the RAG op family). ``model`` / ``total_tokens`` / ``cost_usd`` / ``priced`` (FP-0063 PC: the
+    independent embedding-cost figures, added alongside the pre-existing usage fields — NOT folded
+    into the chat ``CostBreakdown``) are small high-signal meta the LLM (and a future ingest
+    pipeline's ``fold`` step, X2a/X2c) reads inline; the raw ``kind`` transport echo is dropped."""
     vectors = result.get("vectors")
     attachments = [{"kind": "structured", "data": vectors}] if vectors is not None else []
-    meta = {k: result[k] for k in ("model", "total_tokens") if k in result}
+    meta = {
+        k: result[k] for k in ("model", "total_tokens", "cost_usd", "priced") if k in result
+    }
     return CanonicalToolResult(text="", attachments=attachments, source_ref=None, meta=meta)
 
 

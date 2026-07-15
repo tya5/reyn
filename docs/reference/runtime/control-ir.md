@@ -801,7 +801,9 @@ Fields:
 - `texts` (list[str], required) — texts to embed. Returned vectors preserve this order.
 - `embedding_model` (str, default `"standard"`) — model class (light/standard/strong) or a literal provider model id, forwarded to `EmbeddingProvider.embed`.
 
-Returns: `{"kind": "embed", "vectors": list[list[float]], "model": str, "total_tokens": int}`.
+Returns: `{"kind": "embed", "vectors": list[list[float]], "model": str, "total_tokens": int, "cost_usd": float | None, "priced": bool}`.
+
+`cost_usd` / `priced` (FP-0063 PC): the call's cost, priced via `estimate_embedding_cost` (extends the same `litellm.model_cost` lookup `pricing.py` already used for chat completions to embedding-mode entries — not a new rate table). `priced=False` + `cost_usd=None` when litellm cannot price `model` — an unpriced/unknown model degrades VISIBLY (never a silent `$0.00`, mirroring the pre-existing `estimate_cost` unknown-model sentinel, #1829). This spend is recorded into an INDEPENDENT embedding-cost aggregate (`EmbeddingCost` in `llm/pricing.py`) at session scope (`ctx.budget_gateway`, when wired) and agent/project scope (`ctx.budget_tracker`, when wired) — deliberately **not** folded into the chat `CostBreakdown` (embedding is input-only / structurally uncacheable; doing so would dilute `cache_hit_rate` / `cache_savings`, which are chat-call-only figures). See `Registry.agent_embedding_cost` / `.project_embedding_cost` and `BudgetGateway.embedding_cost` for the per-scope readers.
 
 Reuses the existing `EmbeddingProvider` (`RoutingEmbeddingProvider` via `get_provider` — the sole embedder, local sentence-transformers + API classes handled inside the provider); this op is a thin typed envelope, not a re-implementation. Batching (`embedding.batch_size`, default 100) happens inside the provider — the op contract itself is list-in/list-out, batch-granular.
 

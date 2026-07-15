@@ -338,3 +338,115 @@ def estimate_cost_breakdown(
         )
     except Exception:
         return None
+
+
+# ── FP-0063 PC: embedding cost (INDEPENDENT of the chat CostBreakdown above) ──
+
+
+def estimate_embedding_cost(
+    model: str,
+    total_tokens: int,
+) -> tuple[float | None, dict | None]:
+    """Estimate one embedding call's cost in USD, extending the SAME
+    ``litellm.model_cost`` lookup ``estimate_cost``/``estimate_cost_breakdown``
+    use above to embedding-mode entries (~124 observed in the vendored litellm
+    at proposal time, e.g. ``amazon.titan-embed-text-v2:0``) — not a new /
+    parallel rate table (FP-0063 X4).
+
+    An embedding call is INPUT-ONLY: there is no completion, no cache read/
+    write, so this prices ``total_tokens`` directly at the model's
+    ``input_cost_per_token`` rate rather than going through
+    ``litellm.cost_per_token``'s completion/cache-aware usage-object plumbing
+    (which ``estimate_cost`` needs and this does not). Embedding-mode entries
+    carry ``output_cost_per_token: 0.0`` (never ``None``, verified empirically
+    against the installed litellm's ``model_cost`` table), so only
+    ``input_cost_per_token`` is required to price a call.
+
+    Returns ``(cost_usd, pricing_snapshot)``. Mirrors ``estimate_cost``'s
+    unknown-model sentinel: an unpriced/unknown model returns ``(None, None)``
+    — unknown != free (#1829) — so a model litellm cannot price degrades
+    VISIBLY (the caller can detect "not priced" and surface it) rather than
+    silently reading as ``$0.00``, which would recreate the exact invisibility
+    bug this feature exists to close.
+    """
+    if total_tokens <= 0:
+        return 0.0, None
+
+    try:
+        import litellm
+
+        entry = litellm.model_cost.get(model)
+        if not entry or entry.get("input_cost_per_token") is None:
+            return None, None
+
+        input_rate = float(entry["input_cost_per_token"])
+        cost_usd = total_tokens * input_rate
+
+        try:
+            from importlib.metadata import version as _pkg_version
+            litellm_version = _pkg_version("litellm")
+        except Exception:
+            litellm_version = "unknown"
+
+        snapshot = {
+            "model": model,
+            "input_per_1m_usd": round(input_rate * 1_000_000, 6),
+            "source": "litellm",
+            "litellm_version": litellm_version,
+        }
+        return cost_usd, snapshot
+    except Exception:
+        return None, None
+
+
+@dataclass
+class EmbeddingCost:
+    """Independent embedding-spend aggregate (FP-0063 PC) — deliberately NOT
+    a ``CostBreakdown`` field / component. Owner decision (2026-07-15,
+    proposal 0063 "Embedding cost is tracked INDEPENDENTLY"): an embedding
+    call is input-only and structurally uncacheable, so folding it into
+    ``CostBreakdown.prompt_cost`` would dilute ``cache_hit_rate`` /
+    ``cache_savings`` with tokens that could never have been cached — those
+    are chat-call figures and must stay chat-only. This is the embedding
+    aggregate's own, separate, additive total.
+
+    Mixed-model correctness (X6): each call is priced at ITS OWN model's rate
+    (``estimate_embedding_cost`` is called once per call, with that call's
+    model) BEFORE being folded in here via ``__add__``/``__iadd__`` — dollars
+    aggregate additively across models; tokens are never pooled across models
+    and priced afterwards at a single rate.
+
+    ``unpriced_calls`` is the visibility mechanism for an unknown model
+    (``estimate_embedding_cost`` returning ``None``): such a call still counts
+    toward ``tokens``/``calls`` but contributes 0 to ``cost_usd`` while
+    incrementing this counter — so "some spend is not reflected in cost_usd"
+    stays observable instead of silently reading as a real $0.00 call.
+    """
+
+    cost_usd: float = 0.0
+    tokens: int = 0
+    calls: int = 0
+    unpriced_calls: int = 0
+
+    def __add__(self, other: "EmbeddingCost") -> "EmbeddingCost":
+        return EmbeddingCost(
+            cost_usd=self.cost_usd + other.cost_usd,
+            tokens=self.tokens + other.tokens,
+            calls=self.calls + other.calls,
+            unpriced_calls=self.unpriced_calls + other.unpriced_calls,
+        )
+
+    def __iadd__(self, other: "EmbeddingCost") -> "EmbeddingCost":
+        self.cost_usd += other.cost_usd
+        self.tokens += other.tokens
+        self.calls += other.calls
+        self.unpriced_calls += other.unpriced_calls
+        return self
+
+    def to_dict(self) -> dict:
+        return {
+            "cost_usd": self.cost_usd,
+            "tokens": self.tokens,
+            "calls": self.calls,
+            "unpriced_calls": self.unpriced_calls,
+        }

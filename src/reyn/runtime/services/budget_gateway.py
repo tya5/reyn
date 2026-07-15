@@ -10,7 +10,7 @@ Session: total_usage, total_cost_usd, router cap counter, last reason.
 from __future__ import annotations
 
 from reyn.core.events.events import EventLog
-from reyn.llm.pricing import CostBreakdown, TokenUsage
+from reyn.llm.pricing import CostBreakdown, EmbeddingCost, TokenUsage, estimate_embedding_cost
 
 
 class BudgetGateway:
@@ -52,6 +52,12 @@ class BudgetGateway:
         # (this Session/process only) by construction — mirrors the existing
         # non-durable semantics of ``_total_usage``/``_total_cost_usd`` above.
         self._total_cost_breakdown: CostBreakdown = CostBreakdown()
+        # FP-0063 PC (Session scope): embedding spend is its OWN independent
+        # aggregate, deliberately NOT folded into ``_total_cost_breakdown``
+        # above (see ``EmbeddingCost``'s docstring — embedding is input-only /
+        # uncacheable; mapping it onto CostBreakdown.prompt_cost would dilute
+        # cache_hit_rate / cache_savings, which are chat-call-only figures).
+        self._embedding_cost: EmbeddingCost = EmbeddingCost()
         self._router_cap: int = default_router_cap
         self._router_invocations_this_turn: int = 0
         self._router_last_reason: str = ""
@@ -62,6 +68,53 @@ class BudgetGateway:
     def tracker(self):
         """The underlying process-shared BudgetTracker (or None)."""
         return self._tracker
+
+    # ── FP-0063 PC: embedding cost (Session scope, independent aggregate) ─────
+
+    @property
+    def embedding_cost(self) -> EmbeddingCost:
+        """Cumulative INDEPENDENT embedding-spend aggregate for this session
+        (all embed calls this session recorded via ``record_embedding``) —
+        deliberately separate from ``total_cost_breakdown`` (the chat
+        aggregate). See ``EmbeddingCost``'s docstring for why."""
+        return self._embedding_cost
+
+    def record_embedding(self, *, model: str, tokens: int) -> None:
+        """Accumulate one embedding call's spend into this session's
+        INDEPENDENT ``EmbeddingCost`` aggregate, AND forward it to the
+        process-shared tracker for agent/project scope — the single recording
+        entry point for the `embed` op (``ctx.budget_gateway``).
+
+        This gateway is the only object that holds BOTH the tracker and the
+        session's AGENT NAME, which is why the fan-out lives here rather than
+        in the op handler. The tracker keys per-agent counters by agent NAME
+        (matching ``record_llm`` / ``Registry.agent_embedding_cost``); the op
+        handler has only ``ctx.agent_id`` — the FP-0016 HOST identity
+        (``reyn/<hostname>``), a DIFFERENT value — so recording from there
+        would file the spend under a key no per-scope reader ever looks up.
+
+        Prices THIS call at its own model's rate (X6 mixed-model correctness)
+        — never pools tokens across models and prices them afterwards at a
+        single rate. An unpriced/unknown model contributes 0 to cost_usd but
+        still counts toward tokens/calls, with ``unpriced_calls`` incremented
+        (visible, not a silent $0.00).
+        """
+        if tokens <= 0:
+            return
+        cost_usd, _ = estimate_embedding_cost(model, tokens)
+        self._embedding_cost += EmbeddingCost(
+            cost_usd=cost_usd or 0.0,
+            tokens=tokens,
+            calls=1,
+            unpriced_calls=0 if cost_usd is not None else 1,
+        )
+        # Agent/project scope. The tracker re-prices the call itself (same
+        # per-call, own-model-rate path), so the two aggregates stay consistent
+        # without this method having to pass a pre-computed figure through.
+        if self._tracker is not None:
+            self._tracker.record_embedding(
+                model=model, agent=self._agent_name, tokens=tokens,
+            )
 
     # ── per-session usage totals ──────────────────────────────────────────────
 

@@ -318,3 +318,180 @@ async def test_embed_forwards_none_when_ctx_embedding_event_sink_stripped(
         "with no sink on ctx, get_provider() must receive event_sink=None "
         "(no TUI status forwarded) — the RED case for the test above"
     )
+
+
+# ---------------------------------------------------------------------------
+# Tier 2: FP-0063 PC -- embedding cost in the op's output metadata + recording
+# ---------------------------------------------------------------------------
+#
+# `embed`'s result envelope already carried `total_tokens`/`model`; this PR
+# adds `cost_usd`/`priced` (X2c) and records the call into whichever of
+# `ctx.budget_tracker` (agent/project scope) / `ctx.budget_gateway` (session
+# scope) are wired -- an INDEPENDENT aggregate, never the chat `CostBreakdown`.
+
+# A real litellm embedding-mode model (verified present, mode="embedding") so
+# these tests exercise the actual litellm.model_cost lookup, not a fake rate.
+_REAL_EMBEDDING_MODEL = "text-embedding-3-small"
+
+
+@pytest.mark.asyncio
+async def test_embed_output_carries_cost_usd_and_priced_for_a_real_model(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Tier 2: the op's output metadata carries `cost_usd` (a positive dollar
+    figure) and `priced=True` for a model litellm can price -- `total_tokens`/
+    `model` alone (the pre-existing shape) no longer suffice."""
+    class _RealModelProvider(FakeEmbeddingProvider):
+        async def embed(self, texts, model):
+            return EmbedBatchResult(
+                vectors=[[1.0, 0.0, 0.0] for _ in texts],
+                model=_REAL_EMBEDDING_MODEL,
+                total_tokens=1000,
+            )
+
+    fake = _RealModelProvider()
+    import reyn.core.op_runtime.embed as _embed_mod
+    monkeypatch.setattr(_embed_mod, "get_provider", lambda *a, **kw: fake)
+
+    ctx = _make_ctx(tmp_path)
+    op = EmbedIROp(kind="embed", texts=["a", "b"], embedding_model="standard")
+    result = await execute_op(op, ctx)
+
+    assert result.get("status") != "error", result
+    assert result["priced"] is True
+    assert result["cost_usd"] is not None
+    assert result["cost_usd"] > 0.0
+
+
+@pytest.mark.asyncio
+async def test_embed_output_unpriced_model_reports_none_cost_visibly(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Tier 2: falsify the silent-$0.00 failure mode -- a model litellm cannot
+    price yields `cost_usd=None` / `priced=False`, NOT `cost_usd=0.0` (which
+    would be indistinguishable from a real free call)."""
+    fake = FakeEmbeddingProvider()  # returns model="fake/standard" -- unpriced
+    import reyn.core.op_runtime.embed as _embed_mod
+    monkeypatch.setattr(_embed_mod, "get_provider", lambda *a, **kw: fake)
+
+    ctx = _make_ctx(tmp_path)
+    op = EmbedIROp(kind="embed", texts=["a", "bb"], embedding_model="standard")
+    result = await execute_op(op, ctx)
+
+    assert result.get("status") != "error", result
+    assert result["priced"] is False
+    assert result["cost_usd"] is None
+
+
+@pytest.mark.asyncio
+async def test_embed_empty_texts_reports_zero_priced_cost(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Tier 2: the empty-texts no-op path (no provider call at all) reports a
+    real, priced $0.00 -- distinct from the unpriced-model None case above."""
+    fake = FakeEmbeddingProvider()
+    import reyn.core.op_runtime.embed as _embed_mod
+    monkeypatch.setattr(_embed_mod, "get_provider", lambda *a, **kw: fake)
+
+    ctx = _make_ctx(tmp_path)
+    op = EmbedIROp(kind="embed", texts=[], embedding_model="standard")
+    result = await execute_op(op, ctx)
+
+    assert result.get("status") != "error", result
+    assert result["cost_usd"] == 0.0
+    assert result["priced"] is True
+
+
+@pytest.mark.asyncio
+async def test_embed_records_all_three_scopes_via_the_gateway(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Tier 2: `ctx.budget_gateway` is the op's SINGLE recording entry point,
+    fanning out to session scope (the gateway) AND agent scope (the shared
+    tracker it holds, keyed by the gateway's agent NAME -- the key
+    `Registry.agent_embedding_cost` looks up).
+
+    The agent-NAME key matters: the op handler only has `ctx.agent_id`, the
+    FP-0016 host identity (`reyn/<hostname>`), so recording from the handler
+    would file spend under a key no per-scope reader ever reads."""
+    from reyn.runtime.budget.budget import BudgetTracker, CostConfig
+    from reyn.runtime.services.budget_gateway import BudgetGateway
+
+    class _RealModelProvider(FakeEmbeddingProvider):
+        async def embed(self, texts, model):
+            return EmbedBatchResult(
+                vectors=[[1.0, 0.0, 0.0] for _ in texts],
+                model=_REAL_EMBEDDING_MODEL,
+                total_tokens=2000,
+            )
+
+    fake = _RealModelProvider()
+    import reyn.core.op_runtime.embed as _embed_mod
+    monkeypatch.setattr(_embed_mod, "get_provider", lambda *a, **kw: fake)
+
+    tracker = BudgetTracker(CostConfig())
+    events = EventLog()
+    ws = Workspace(events=events)
+    gateway = BudgetGateway(
+        budget_tracker=tracker, events=events, agent_name="agent-name",
+    )
+    ctx = OpContext(
+        workspace=ws,
+        events=events,
+        permission_decl=PermissionDecl(),
+        budget_gateway=gateway,
+        # The host identity, deliberately DIFFERENT from the agent name -- the
+        # recorded key must follow the agent name, not this.
+        agent_id="reyn/some-host.local",
+    )
+    op = EmbedIROp(kind="embed", texts=["a", "b"], embedding_model="standard")
+    result = await execute_op(op, ctx)
+
+    assert result.get("status") != "error", result
+
+    # Session scope.
+    assert gateway.embedding_cost.calls == 1
+    assert gateway.embedding_cost.tokens == 2000
+    assert gateway.embedding_cost.cost_usd == result["cost_usd"]
+
+    # Agent scope -- keyed by agent NAME.
+    agg = tracker.agent_embedding_cost("agent-name")
+    assert agg.calls == 1
+    assert agg.tokens == 2000
+    assert agg.cost_usd == result["cost_usd"]
+
+    # NOT keyed by the host identity (the wrong-key failure mode).
+    assert tracker.agent_embedding_cost("reyn/some-host.local").calls == 0
+
+    # The chat aggregates are untouched by this embed call.
+    assert tracker.agent_cost_usd("agent-name") == 0.0
+    assert gateway.total_cost_usd == 0.0
+
+
+@pytest.mark.asyncio
+async def test_embed_without_a_gateway_still_prices_but_records_nothing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Tier 2: with no gateway wired (direct/test construction), the op still
+    returns the priced metadata but records into no aggregate -- the opt-in
+    contract, and no crash on the None path."""
+    class _RealModelProvider(FakeEmbeddingProvider):
+        async def embed(self, texts, model):
+            return EmbedBatchResult(
+                vectors=[[1.0, 0.0, 0.0] for _ in texts],
+                model=_REAL_EMBEDDING_MODEL,
+                total_tokens=500,
+            )
+
+    fake = _RealModelProvider()
+    import reyn.core.op_runtime.embed as _embed_mod
+    monkeypatch.setattr(_embed_mod, "get_provider", lambda *a, **kw: fake)
+
+    ctx = _make_ctx(tmp_path)
+    assert ctx.budget_gateway is None
+    op = EmbedIROp(kind="embed", texts=["a"], embedding_model="standard")
+    result = await execute_op(op, ctx)
+
+    assert result.get("status") != "error", result
+    assert result["priced"] is True
+    assert result["cost_usd"] > 0.0

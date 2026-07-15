@@ -191,6 +191,16 @@ class RouterHostAdapter:
         # every router OpContext (``ctx.embedding_event_sink``) so the `embed`
         # op forwards it into the fresh per-call provider it resolves.
         embedding_event_sink: Any = None,
+        # FP-0063 PC: this session's BudgetGateway, threaded onto every router
+        # OpContext so the `embed` op can record its INDEPENDENT embedding-cost
+        # aggregate (session scope on the gateway itself; agent/project scope
+        # via the process-shared tracker the gateway holds). THIS is the
+        # op-context builder the router-dispatched `embed` TOOL resolves
+        # (RouterCallerState.op_context_factory = host.make_router_op_context,
+        # tools/types.py) — i.e. the live interactive path. Without it the
+        # user-facing embed is billed but recorded nowhere ($0.00), the exact
+        # bug FP-0063 closes.
+        budget_gateway: Any = None,
         # FP-0034 Phase 2: sandbox backend name for exec D14 visibility
         # gate. Passed from ``session._sandbox_config.backend`` so the
         # universal catalog ``_enumerate_category("exec")`` can decide
@@ -423,6 +433,8 @@ class RouterHostAdapter:
         self._embedding_model_class = embedding_model_class
         # FP-0057 #2856 Part A
         self._embedding_event_sink = embedding_event_sink
+        # FP-0063 PC: embedding-cost recording entry point for the `embed` op.
+        self._budget_gateway = budget_gateway
         # #2548 PR-A: enabled skill registry snapshot for the ## Skills block.
         self._available_skills = available_skills
         # FP-0034 Phase 2
@@ -2110,6 +2122,10 @@ class RouterHostAdapter:
             # status sink so the `embed` op preserves it (ActionEmbeddingIndex
             # build/query now routes through the op instead of provider-direct).
             embedding_event_sink=self._embedding_event_sink,
+            # FP-0063 PC: the live router-dispatched `embed` tool resolves THIS
+            # factory, so this is the load-bearing wiring for embedding-cost
+            # recording (all three scopes fan out from the gateway).
+            budget_gateway=self._budget_gateway,
         )
 
     def _set_cancel_event(self, event: asyncio.Event) -> None:

@@ -119,6 +119,27 @@ class OpContext:
     # (control_ir_executor / router_host_adapter); None = unrecorded.
     budget_tracker: object | None = None
 
+    # FP-0063 PC: the calling Session's per-session BudgetGateway — the `embed`
+    # op's SINGLE embedding-cost recording entry point
+    # (``BudgetGateway.record_embedding``). It fans out to all three scopes:
+    # session (itself, read via ``.embedding_cost``) and agent/project (the
+    # process-shared BudgetTracker it holds, read via
+    # ``Registry.agent_embedding_cost`` / ``.project_embedding_cost``).
+    #
+    # Deliberately NOT ``budget_tracker`` above: the tracker keys per-agent
+    # counters by agent NAME, which an op handler cannot supply — ``agent_id``
+    # is the FP-0016 HOST identity (``reyn/<hostname>``), a different value, so
+    # recording from here would file spend under a key no per-scope reader
+    # looks up. The gateway is the only object holding both the tracker and the
+    # agent name, so the fan-out lives there.
+    #
+    # Threaded by ``build_router_op_context`` (both router op-ctx builders).
+    # The load-bearing one for `embed` is RouterHostAdapter's — that is the
+    # factory the router-dispatched embed TOOL resolves. None (direct/test
+    # construction) = the call is priced into the returned metadata but not
+    # recorded into any aggregate.
+    budget_gateway: object | None = None
+
     # PR20: caller provenance threaded from the parent Agent so sub-run
     # invocations land under the same `events/<caller>/...` tree.
     # Format: "direct" or "agents/<name>" (validated in Agent).
