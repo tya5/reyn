@@ -59,7 +59,8 @@ class ContextBudgetAdvisor:
         # (model, use_chars4); a length decrease (compaction/rewind truncated
         # history) or a model/config change invalidates it (full recompute),
         # a length increase only dumps+estimates the NEW tail slice.
-        # "boundary" is a hash of the last cached message's json dump — the
+        # "boundary" is the json dump of the last cached message (not a hash
+        # of it — one message's dump is cheap enough to hold verbatim) — the
         # cache is an append-only-PREFIX assumption, but history_fn is
         # typically a derived, recomputed view (e.g. Session._active_branch_
         # history — the same function #2938 hoisted), not a real array: a
@@ -98,11 +99,11 @@ class ContextBudgetAdvisor:
         Incremental: only the slice of history NEWER than the last call is
         json.dumps'd + estimated; a cache hit (no new messages since last
         call) is O(1). A shrink, a model/use_chars4 change, OR the cached
-        PREFIX's content actually differing (checked via a boundary hash,
-        not assumed from length alone — history_fn is often a recomputed
-        derived view, e.g. a rewind-aware active-branch filter, where the
-        same length can recur with different content) invalidates the cache
-        for one full recompute.
+        PREFIX's content actually differing (checked via a boundary — the
+        json dump of the last cached message, not assumed from length alone
+        — history_fn is often a recomputed derived view, e.g. a rewind-aware
+        active-branch filter, where the same length can recur with
+        different content) invalidates the cache for one full recompute.
         """
         import json as _json
 
