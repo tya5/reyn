@@ -13,27 +13,26 @@ into prompt_toolkit so the mapping is unit-testable.
 """
 from __future__ import annotations
 
-import re
 from typing import Callable
 
-# Every choice label built by intervention_choices.py starts with a single
-# bracketed hotkey letter — "[y]es" / "[A]lways" / "[n]o" / "[N]ever" / etc.
-# The case there is REAL elsewhere: match_choice() (user_intervention.py) is
-# explicitly case-sensitive, for the free-text/stdin surfaces (reyn run,
-# cron, the plain --cui renderer) where a user actually types the letter.
-# The inline picker never reads a typed hotkey at all — grepped: zero
-# references to `.hotkey` anywhere under interfaces/inline/, selection here
-# is cursor navigation + Enter only — so the bracket letter is pure
-# decoration on THIS surface, and the upper/lower mix (one-shot vs
-# persistent choices use different case) reads as visually inconsistent
-# rather than meaningful. Normalize to lowercase for inline display only;
-# the underlying label string (and every other renderer that uses it
-# unmodified) is untouched.
-_LEADING_HOTKEY_BRACKET = re.compile(r"^\[([A-Za-z])\]")
-
-
-def _display_label(label: str) -> str:
-    return _LEADING_HOTKEY_BRACKET.sub(lambda m: f"[{m.group(1).lower()}]", label, count=1)
+# NOTE (#2943 review): an earlier revision of this file lowercased the
+# leading [X] hotkey bracket for inline display, on the theory that the
+# picker widget never reads a typed hotkey (true — zero `.hotkey` references
+# under interfaces/inline/, selection here is cursor+Enter only) so the
+# case was pure decoration. That was WRONG: the input bar BELOW this same
+# picker, while an intervention is pending, ALSO accepts a typed answer
+# (app.py's plain-text submit path -> session.py's ask_user input handling
+# -> match_choice(), user_intervention.py — explicitly case-sensitive). A
+# user reads the picker's label and can type the letter into that bar as an
+# alternative to arrow+Enter; the two are the same surface from the user's
+# perspective. The case difference is not visual noise — it IS the hotkey:
+# "[y]es"/"[n]o" are one-shot (lowercase), "[A]lways"/"[N]ever" are
+# persistent (uppercase). Normalizing case would make "[a]lways" advertise a
+# letter that doesn't match anything (real hotkey is "A"), and worse, a user
+# meaning to permanently decline via "[n]ever" who types "n" would silently
+# get the one-shot "[n]o" instead — a false sense of having set a permanent
+# deny. Labels are therefore rendered EXACTLY as `intervention_choices.py`
+# defines them; no casing transform of any kind happens in this module.
 
 
 class InterventionElement:
@@ -62,9 +61,7 @@ class InterventionElement:
 
         neut = get_neutralizer("terminal")
         self._iv_id = iv_id
-        self._choices = [
-            (cid, _display_label(neut.neutralize(label)[0])) for cid, label in choices
-        ]
+        self._choices = [(cid, neut.neutralize(label)[0]) for cid, label in choices]
         self._on_choose = on_choose
 
     @property

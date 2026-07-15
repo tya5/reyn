@@ -1,12 +1,11 @@
-"""Tier 2: inline-CUI intervention picker — inline-row layout + label casing
-(owner UX round 2, following #2942's scrollback dedup).
+"""Tier 2: inline-CUI intervention picker — inline-row layout (owner UX round 2,
+following #2942's scrollback dedup).
 
-Two pure decisions, both extracted to module-level functions so the
-prompt_toolkit-closure glue in run_inline_input's above_region_frags /
-above_region_height stays thin (per the project's own testing discipline for
-this module: live Application redraw timing is verified via tmux, not unit
-tests — but the ALGORITHMIC decisions feeding it are ordinary pure functions
-and belong under Tier 2):
+``is_intervention_region_key`` / ``iv_choices_fit_one_row`` are extracted to
+module-level pure functions so the layout DECISION feeding
+run_inline_input's above_region_frags / above_region_height closures is
+unit-testable, consistent with this module's own discipline (live
+Application redraw timing stays tmux-verified, not unit-tested):
 
 - ``is_intervention_region_key`` — is the above-region currently hosting a
   closed-set intervention ("iv:<id>") vs a command-UI picker ("cmd:...", e.g.
@@ -16,14 +15,21 @@ and belong under Tier 2):
   row, or does file_access_choices' recursive-path option (real paths run
   100+ chars) force the vertical fallback?
 
-Plus ``_display_label`` (intervention_region.py) — the bracket-letter casing
-normalization for the inline picker only, verified not to touch the
-choice_id match key or leak into other renderers' labels.
+NOTE — a prior revision of this file also pinned a bracket-letter casing
+normalization (lowercasing "[A]lways"/"[N]ever" for inline display). A lead
+review caught that as WRONG, not cosmetic: the input bar below this same
+picker also accepts a typed answer via the case-sensitive `match_choice()`
+(user_intervention.py), so "[A]lways" vs "[a]lways" is the real hotkey, not
+visual noise — normalizing it would make a user typing "n" meaning to
+permanently decline via "[N]ever" silently get the one-shot "[n]o" instead
+(a false sense of a permanent deny). That transform was reverted; see
+`test_intervention_element_preserves_label_casing_verbatim` below, which
+exists specifically to catch a reintroduction of this bug.
 """
 from __future__ import annotations
 
 from reyn.interfaces.inline.app import is_intervention_region_key, iv_choices_fit_one_row
-from reyn.interfaces.inline.intervention_region import InterventionElement, _display_label
+from reyn.interfaces.inline.intervention_region import InterventionElement
 
 # ── is_intervention_region_key ────────────────────────────────────────────
 
@@ -57,7 +63,7 @@ def test_empty_string_key_is_not_an_intervention():
 
 def test_generic_yn_choices_fit_one_row():
     """Tier 2: the common case — yes/always/no/never, all short — fits."""
-    labels = ["[y]es", "[a]lways", "[n]o", "[n]ever"]
+    labels = ["[y]es", "[A]lways", "[n]o", "[N]ever"]
     assert iv_choices_fit_one_row(labels) is True
 
 
@@ -97,42 +103,22 @@ def test_width_boundary_is_inclusive():
     assert iv_choices_fit_one_row(labels_over, max_width=70) is False
 
 
-# ── _display_label (bracket-letter casing) ─────────────────────────────────
+# ── label casing must be preserved verbatim (regression guard) ─────────────
 
 
-def test_uppercase_hotkey_bracket_is_lowercased_for_display():
-    """Tier 2: "[A]lways" / "[N]ever" display as "[a]lways" / "[n]ever" in the
-    inline picker — the case only matters for surfaces that read a typed
-    hotkey (match_choice, case-sensitive), which the inline picker never does."""
-    assert _display_label("[A]lways") == "[a]lways"
-    assert _display_label("[N]ever") == "[n]ever"
-
-
-def test_already_lowercase_bracket_is_unchanged():
-    """Tier 2: idempotent on labels that are already lowercase — no-op, not
-    a crash or a mangled result."""
-    assert _display_label("[y]es") == "[y]es"
-    assert _display_label("[j]ust this path always") == "[j]ust this path always"
-
-
-def test_only_the_leading_bracket_is_touched():
-    """Tier 2: a label whose body happens to contain another bracket-like
-    substring is not mangled — only the LEADING hotkey bracket is normalized."""
-    label = "[R]ecursive under '/Users/x/[test]' always"
-    assert _display_label(label) == "[r]ecursive under '/Users/x/[test]' always"
-
-
-def test_intervention_element_lines_show_normalized_casing():
-    """Tier 2: end-to-end through the real InterventionElement — lines() (the
-    picker's display rows) show normalized casing; on_select's choice_id
-    (the authoritative match key) is completely unaffected since it never
-    passed through the label at all."""
-    captured = []
+def test_intervention_element_preserves_label_casing_verbatim():
+    """Tier 2: security-relevant regression guard. InterventionElement.lines()
+    must show EXACTLY the label intervention_choices.py defines — including
+    the bracket-letter case, which IS the real hotkey `match_choice()`
+    (case-sensitive) matches against when the same answer is typed into the
+    input bar instead of picked via cursor+Enter. Any transform that changes
+    "[A]lways"/"[N]ever" to lowercase would make the displayed letter stop
+    matching the real hotkey (and could make "n" silently resolve to the
+    one-shot "[n]o" for a user meaning the persistent "[N]ever") — a category
+    of bug this test exists specifically to catch a reintroduction of."""
     el = InterventionElement(
         "iv-1",
         [("yes", "[y]es"), ("always", "[A]lways"), ("no", "[n]o"), ("never", "[N]ever")],
-        lambda cid, label: captured.append(cid),
+        lambda cid, label: None,
     )
-    assert el.lines() == ["[y]es", "[a]lways", "[n]o", "[n]ever"]
-    el.on_select(1)
-    assert captured == ["always"]  # the real, unaltered choice id
+    assert el.lines() == ["[y]es", "[A]lways", "[n]o", "[N]ever"]
