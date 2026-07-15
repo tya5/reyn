@@ -93,6 +93,15 @@ _SLASH_COMPLETER = _SlashCompleter()
 # than the terminal height minus the fixed chrome (rules + input + status).
 _ABOVE_REGION_MAX_HEIGHT = 12
 
+# A closed-set intervention packs its choices onto one row when their combined
+# width (labels + inter-item spacing) fits under this — comfortably inside any
+# terminal width the app already assumes elsewhere (the 80-col rule chrome).
+# Past this, above_region_frags falls back to a vertical stack instead of
+# wrapping or truncating a label (file_access_choices' recursive option can
+# run 100+ chars once a real path is interpolated — never safe to truncate a
+# security-relevant path).
+_IV_INLINE_MAX_WIDTH = 70
+
 # Same cap, for the below-input status-bar dropdown (menu_region). The "…"
 # overflow chip's panel can list one row per tool-visibility toggle (dozens of
 # entries in a real session) — without this cap dropdown_height() requests an
@@ -676,6 +685,29 @@ _WAITING_ON_BY_EVENT: "dict[str, Callable[[dict], WaitingOn]]" = {
 }
 
 
+def is_intervention_region_key(key: "str | None") -> bool:
+    """True when a region_holder key names a closed-set intervention
+    ("iv:<id>", stamped by _sync_region) rather than a command-UI picker
+    (e.g. "cmd:..." for /rewind) or nothing (None). Pure — the region-key
+    naming convention lives here so it's one importable fact, not duplicated
+    string-prefix logic at each call site."""
+    return bool(key) and key.startswith("iv:")
+
+
+def iv_choices_fit_one_row(labels: list[str], max_width: int = _IV_INLINE_MAX_WIDTH) -> bool:
+    """A closed-set intervention's choices render on ONE inline row when their
+    combined width (labels + a 2-char gap between each) fits under
+    *max_width*. Longer or variable-length label sets (file_access_choices'
+    recursive option interpolates a real filesystem path — measured, 100+
+    chars is routine) fall back to a vertical stack instead of wrapping or
+    truncating a security-relevant path. Pure — no prompt_toolkit, no region
+    state; the closures in run_inline_input pass in what they already have."""
+    if not labels:
+        return False
+    width = sum(len(label) for label in labels) + 2 * (len(labels) - 1)
+    return width <= max_width
+
+
 def working_line(
     thinking: bool,
     think_start: float,
@@ -1194,7 +1226,43 @@ async def run_inline_input(read_model, renderer, config=None, transport=None) ->
         lines = above_region.lines()
         visible = lines[scroll : scroll + _ABOVE_REGION_MAX_HEIGHT]
         cursor_local = above_region.cursor - scroll
-        out: list = []
+
+        if is_intervention_region_key(region_holder["key"]):
+            # Equal weight at rest for EVERY choice, regardless of what it
+            # does — accent+bold marks only the cursor's current position,
+            # wherever that is. A prior draft gave "grant" choices standing
+            # accent color and left "decline" dim; a lead review caught that
+            # a PERMANENT weight difference reads as "this one is safer to
+            # skim past" — exactly backwards for a permission prompt. There
+            # is deliberately no separate "deny" hue either: this surface
+            # never adds a color the rest of the app doesn't already use.
+            cursor_style = f"fg:{_CC_ACCENT} bold"
+            rest_style = f"fg:{_CC_DIM}"
+            if iv_choices_fit_one_row(visible):
+                out: list = [(rest_style, "   ")]
+                for i, ln in enumerate(visible):
+                    if i:
+                        out.append((rest_style, "  "))
+                    style = cursor_style if (draw_cursor and i == cursor_local) else rest_style
+                    out.append((style, ln))
+                return out
+            # Long/variable-length labels (e.g. file_access_choices'
+            # recursive-path option) — same weight language, stacked
+            # vertically instead of packed onto one row.
+            out = []
+            for i, ln in enumerate(visible):
+                if i:
+                    out.append(("", "\n"))
+                style = cursor_style if (draw_cursor and i == cursor_local) else rest_style
+                out.append((style, f"   {ln}"))
+            items_below = len(lines) - scroll - _ABOVE_REGION_MAX_HEIGHT
+            if items_below > 0:
+                out.append(("", "\n"))
+                out.append((rest_style, f"   ↓ {items_below} more"))
+            return out
+
+        # Non-intervention region content (e.g. the /rewind picker) — unchanged.
+        out = []
         for i, ln in enumerate(visible):
             if i:
                 out.append(("", "\n"))
@@ -1212,6 +1280,10 @@ async def run_inline_input(read_model, renderer, config=None, transport=None) ->
         lines = above_region.lines()
         n = len(lines)
         scroll = above_region.scroll
+        if is_intervention_region_key(region_holder["key"]):
+            visible = lines[scroll : scroll + _ABOVE_REGION_MAX_HEIGHT]
+            if iv_choices_fit_one_row(visible):
+                return Dimension.exact(1)
         visible = min(n, _ABOVE_REGION_MAX_HEIGHT)
         hint = 1 if n > scroll + _ABOVE_REGION_MAX_HEIGHT else 0
         return Dimension.exact(visible + hint)

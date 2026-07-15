@@ -13,7 +13,27 @@ into prompt_toolkit so the mapping is unit-testable.
 """
 from __future__ import annotations
 
+import re
 from typing import Callable
+
+# Every choice label built by intervention_choices.py starts with a single
+# bracketed hotkey letter — "[y]es" / "[A]lways" / "[n]o" / "[N]ever" / etc.
+# The case there is REAL elsewhere: match_choice() (user_intervention.py) is
+# explicitly case-sensitive, for the free-text/stdin surfaces (reyn run,
+# cron, the plain --cui renderer) where a user actually types the letter.
+# The inline picker never reads a typed hotkey at all — grepped: zero
+# references to `.hotkey` anywhere under interfaces/inline/, selection here
+# is cursor navigation + Enter only — so the bracket letter is pure
+# decoration on THIS surface, and the upper/lower mix (one-shot vs
+# persistent choices use different case) reads as visually inconsistent
+# rather than meaningful. Normalize to lowercase for inline display only;
+# the underlying label string (and every other renderer that uses it
+# unmodified) is untouched.
+_LEADING_HOTKEY_BRACKET = re.compile(r"^\[([A-Za-z])\]")
+
+
+def _display_label(label: str) -> str:
+    return _LEADING_HOTKEY_BRACKET.sub(lambda m: f"[{m.group(1).lower()}]", label, count=1)
 
 
 class InterventionElement:
@@ -42,7 +62,9 @@ class InterventionElement:
 
         neut = get_neutralizer("terminal")
         self._iv_id = iv_id
-        self._choices = [(cid, neut.neutralize(label)[0]) for cid, label in choices]
+        self._choices = [
+            (cid, _display_label(neut.neutralize(label)[0])) for cid, label in choices
+        ]
         self._on_choose = on_choose
 
     @property
