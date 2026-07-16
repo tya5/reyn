@@ -1471,10 +1471,13 @@ def topology_create_to_canonical(result: dict) -> CanonicalToolResult:
 
 # A private, NON-rendered marker key stamped on the whole-dict fallback canonical when it was taken
 # because an inner-dispatch mapper raised :class:`CanonicalDiscriminatorMiss` (FP-0056 v2 piece #3, M3).
-# It is a signal channel for :func:`canonical_fallback_reason` only — the renderer (``build_offload_body``
-# reads ``attachments``/``meta``) and the ctx reducer (``canonical_to_ctx_fields`` reads ``text``/
-# ``attachments``) never read it, so it never reaches the LLM body (unlike ``meta``, which renders as
-# frontmatter YAML).
+# It is an INTERNAL flag for :func:`canonical_fallback_reason` only — deliberately NOT part of
+# ``meta`` (the producer-authored signal channel that DOES reach both consumers). Its containment
+# rests on being a TOP-LEVEL key on the canonical dict rather than on which keys the consumers read:
+# the renderer (``build_offload_body`` reads ``attachments``/``meta``) and the ctx reducer
+# (``canonical_to_ctx_fields`` reads ``text``/``attachments``/``meta`` — #2966 added ``meta``) both
+# select named keys, and neither names this one. So it reaches neither the LLM body nor a pipeline's
+# ``ctx.<name>`` — a mapper cannot leak it by populating ``meta``, because it never lives there.
 _DISCRIMINATOR_MISS_MARKER = "_discriminator_miss"
 
 

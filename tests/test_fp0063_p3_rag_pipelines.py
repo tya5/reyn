@@ -41,6 +41,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 import tempfile
 from pathlib import Path
@@ -404,6 +405,44 @@ def test_ingest_preflight_blocks_on_unreachable_vectorstore_with_named_remedy(
     assert isinstance(blocked, str)
     assert "not_configured_server" in blocked
     assert "pip install" in blocked, "the remedy must name a concrete fix, not just the cause"
+
+
+def test_ingest_preflight_blocks_when_python3_cannot_import_reyn(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture,
+) -> None:
+    """Tier 2b: X1 -- when the ambient `python3` cannot import reyn (the real
+    `pipx install reyn` / non-activated-venv / different-PATH class), step 0
+    blocks with a decision-enabling message instead of letting the run die
+    later on an opaque "path 'ctx.files_raw.structured' is absent".
+
+    Driven by pointing PATH at a python3 shim that has no reyn -- which is
+    exactly what sandboxed_exec forwards (it passes os.environ's PATH
+    straight through), so this reproduces the real failure rather than
+    simulating it at a seam."""
+    monkeypatch.chdir(tmp_path)
+    project_root = _write_project(tmp_path)
+    docs_dir = project_root / "docs"
+    docs_dir.mkdir()
+    (docs_dir / "a.txt").write_text("content", encoding="utf-8")
+
+    # A python3 that exists and runs but has no reyn -- the pipx/venv case.
+    shim_dir = tmp_path / "bin"
+    shim_dir.mkdir()
+    shim = shim_dir / "python3"
+    shim.write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
+    shim.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{shim_dir}:{os.environ.get('PATH', '')}")
+
+    result = _run_ingest(project_root, capsys)
+    blocked = result["named_stores"]["result"]
+    assert isinstance(blocked, str), (
+        "a python3 that cannot import reyn must BLOCK at pre-flight, not "
+        f"proceed -- got {type(blocked).__name__}: {blocked!r:.200}"
+    )
+    assert "rag_ingest_helpers" in blocked
+    # cause + concrete remedies, per the #2932 require_mcp precedent
+    assert "activate" in blocked
+    assert "print(reyn.__file__)" in blocked
 
 
 def test_ingest_preflight_falsify_proceeds_with_the_real_server_name(

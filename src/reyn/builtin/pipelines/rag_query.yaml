@@ -1,4 +1,4 @@
-# Builtin turnkey RAG -- query pipeline (FP-0063 P3).
+# Builtin RAG -- query pipeline (FP-0063 P3).
 # docs/deep-dives/proposals/0063-builtin-turnkey-user-rag.md
 #
 # Embeds the query text (reyn's own `embed` tool -- C1) and returns the
@@ -30,8 +30,10 @@ fields:
 ---
 pipeline: query
 description: >-
-  FP-0063 P3 builtin turnkey RAG query: embed the query text and return
-  the top-k nearest chunks from a user-named sqlite vector store.
+  FP-0063 P3 builtin RAG query: embed the query text and return the top-k
+  nearest chunks from a user-named sqlite vector store. (Unlike
+  rag_ingest, this pipeline shells out to nothing, so it carries no
+  python3-on-PATH requirement.)
 steps:
   - transform: {value: "get(ctx, 'top_k', 5)", output: top_k}
   - transform: {value: "get(ctx, 'embedding_model', 'standard')", output: embedding_model}

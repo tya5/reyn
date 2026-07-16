@@ -1,4 +1,4 @@
-# FP-0063 -- builtin turnkey user RAG, the MCP layer (P2) + the two
+# FP-0063 -- builtin user RAG, the MCP layer (P2) + the two
 # builtin pipelines that call it (P3: reyn.builtin.pipelines.rag_ingest /
 # rag_query, registered as rag_ingest.ingest / rag_query.query).
 #
@@ -66,6 +66,15 @@
 #       # reachability BEFORE any embedding spend and fails with this same
 #       # guidance, naming the exact server, rather than a bare transport
 #       # exception.
+#
+# ⚠️ rag_ingest ALSO requires that `python3` on your PATH be reyn's own
+# interpreter -- it shells out to `python3 -m reyn.builtin.rag_ingest_helpers`
+# and sandboxed_exec forwards the ambient PATH. A `pipx install reyn` or a
+# non-activated venv will NOT work. Check with:
+#   python3 -c 'import reyn; print(reyn.__file__)'
+# It must print the same install you run reyn from. rag_ingest's step-0
+# pre-flight reports this rather than failing opaquely, but it is a real
+# limitation (tracked on the FP-0063 umbrella), not a formality.
 #
 # Once the three servers above are configured + granted, run the builtin
 # pipelines directly (no separate skill needed -- invoke-by-name):

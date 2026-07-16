@@ -1,4 +1,4 @@
-# Builtin turnkey RAG -- ingest pipeline (FP-0063 P3).
+# Builtin RAG -- ingest pipeline (FP-0063 P3).
 # docs/deep-dives/proposals/0063-builtin-turnkey-user-rag.md
 #
 # Reads a file or a folder, converts each document to Markdown (the
@@ -12,6 +12,17 @@
 # `*_server` inputs (or the MCP config entries they name) at a different
 # backend. Every tunable is a `ctx.*` INPUT with a sane default, never a
 # constant baked into a step (R4).
+#
+# ⚠️ ENVIRONMENT REQUIREMENT -- this is NOT yet turnkey. This pipeline
+# shells out to `python3` (for hashing / string length / zip-by-index, the
+# three things the R1 expression language cannot express), and
+# `sandboxed_exec` forwards the ambient PATH, so `python3` MUST be the same
+# interpreter reyn itself runs under. A `pipx install reyn`, a
+# non-activated venv, or any PATH whose `python3` differs will FAIL. The
+# DSL cannot reach `sys.executable` today; closing this needs a core/DSL
+# decision, tracked on the FP-0063 umbrella. Step 0 pre-flights it so the
+# failure is named rather than opaque -- but it is a real limitation, not
+# a formality.
 #
 # Inputs (all optional except `input_path`/`output_db`):
 #   input_path          -- (required) a document file OR a folder of them.
@@ -49,11 +60,12 @@ fields:
 ---
 pipeline: ingest
 description: >-
-  FP-0063 P3 builtin turnkey RAG ingest: chunk -> embed -> store a file or
-  folder into a user-named sqlite vector store, incrementally by
-  content_hash (add/update/remove). Pre-flights the 3 required MCP servers
-  before any embedding spend (X1); reports spend AFTER the dedup skip
-  (X2a/X5).
+  FP-0063 P3 builtin RAG ingest: chunk -> embed -> store a file or folder
+  into a user-named sqlite vector store, incrementally by content_hash
+  (add/update/remove). Pre-flights its 3 MCP servers AND its python3
+  helper before any embedding spend (X1); reports spend AFTER the dedup
+  skip (X2a/X5). REQUIRES that `python3` on PATH be reyn's own
+  interpreter -- see the file header.
 steps:
   # ---- inputs-with-defaults (R4: never a constant baked into a step) ----
   - transform: {value: "get(ctx, 'chunk_size', 400)", output: chunk_size}
@@ -75,8 +87,24 @@ steps:
       value: >-
         {markitdown: "MarkItDown MCP server '" + ctx.markitdown_server + "' is unreachable. (1) it may not be enabled yet -- builtin MCP configs ship INERT by design; add/uncomment mcp.servers." + ctx.markitdown_server + " in reyn.yaml (or reyn.local.yaml) and set permissions.mcp." + ctx.markitdown_server + ": allow -- see docs/cookbook/configs/with-builtin-rag-mcp.yaml. (2) if it is already enabled, uvx likely failed to fetch markitdown-mcp from PyPI on first run (e.g. a firewalled network) -- pre-install it instead of relying on the first-run fetch: pip install markitdown-mcp.",
          chunker: "Chunker MCP server '" + ctx.chunker_server + "' is unreachable. (1) enable it: add/uncomment mcp.servers." + ctx.chunker_server + " in reyn.yaml and set permissions.mcp." + ctx.chunker_server + ": allow -- see docs/cookbook/configs/with-builtin-rag-mcp.yaml. (2) if already enabled, install its dependency: pip install \"reyn[builtin-rag]\" (chonkie).",
-         vectorstore: "Vector-store MCP server '" + ctx.vectorstore_server + "' is unreachable. (1) enable it: add/uncomment mcp.servers." + ctx.vectorstore_server + " in reyn.yaml and set permissions.mcp." + ctx.vectorstore_server + ": allow -- see docs/cookbook/configs/with-builtin-rag-mcp.yaml. (2) if already enabled, install its dependencies: pip install \"reyn[builtin-rag]\" (apsw + sqlite-vec)."}
+         vectorstore: "Vector-store MCP server '" + ctx.vectorstore_server + "' is unreachable. (1) enable it: add/uncomment mcp.servers." + ctx.vectorstore_server + " in reyn.yaml and set permissions.mcp." + ctx.vectorstore_server + ": allow -- see docs/cookbook/configs/with-builtin-rag-mcp.yaml. (2) if already enabled, install its dependencies: pip install \"reyn[builtin-rag]\" (apsw + sqlite-vec).",
+         helpers: "`python3 -m reyn.builtin.rag_ingest_helpers` failed -- the `python3` on PATH cannot import reyn. This pipeline shells out to `python3` for the three things the R1 expression language cannot do (hash, string length, zip-by-index), and it must be the SAME interpreter reyn itself runs under: sandboxed_exec passes the ambient PATH through, and the DSL cannot reach sys.executable today (a known FP-0063 limitation -- reyn is NOT turnkey in this respect; see the umbrella issue). (1) run reyn from an environment whose `python3` IS reyn's interpreter -- typically `source .venv/bin/activate` for the venv you installed reyn into; note a `pipx install reyn` or a non-activated venv will NOT satisfy this. (2) check what you actually have: `python3 -c 'import reyn; print(reyn.__file__)'` -- it must print the SAME install that is running this pipeline (if it prints a different reyn, that is the bug, and this pre-flight cannot detect it for you)."}
       output: remedies
+
+  # The helper-interpreter probe -- part of X1 (a reachability check, so it
+  # rides the same pre-flight list as the MCP servers below). A FAILING
+  # `shell` step does NOT raise: `shell` returns stdout ONLY (returncode and
+  # stderr are dropped above the canonical seam by #2593's locked design, so
+  # `meta` is always empty for a shell step -- there is no `meta.returncode`
+  # to read here). Empty stdout means no `structured` key, which is what this
+  # detects. Without it, a `python3` that cannot import reyn surfaces later as
+  # an opaque "path 'ctx.files_raw.structured' is absent".
+  - shell:
+      command: "python3 -m reyn.builtin.rag_ingest_helpers probe"
+      output: helper_probe
+  - transform:
+      value: "get(ctx.helper_probe, 'structured', null) != null"
+      output: helpers_ok
   - parallel:
       on_error: continue
       branches:
@@ -115,7 +143,8 @@ steps:
       value: >-
         [{name: "markitdown (" + ctx.markitdown_server + ")", ok: ctx.reachable.markitdown, remedy: ctx.remedies.markitdown},
          {name: "chunker (" + ctx.chunker_server + ")", ok: ctx.reachable.chunker, remedy: ctx.remedies.chunker},
-         {name: "vectorstore (" + ctx.vectorstore_server + ")", ok: ctx.reachable.vectorstore, remedy: ctx.remedies.vectorstore}]
+         {name: "vectorstore (" + ctx.vectorstore_server + ")", ok: ctx.reachable.vectorstore, remedy: ctx.remedies.vectorstore},
+         {name: "helpers (python3 -m reyn.builtin.rag_ingest_helpers)", ok: ctx.helpers_ok, remedy: ctx.remedies.helpers}]
       output: preflight_checks
   - transform:
       value: "count(filter(ctx.preflight_checks, c -> not c.ok)) == 0"
@@ -151,13 +180,14 @@ pipeline: _blocked
 description: >-
   Sibling of ingest -- returns the X1 pre-flight failure as the run's own
   (successful) output: a typed, decision-enabling message naming every
-  unreachable server + its concrete remedy, instead of letting a bare MCP
-  transport exception (e.g. "ImportError: No module named 'apsw'") reach
-  the operator.
+  unreachable prerequisite (the 3 MCP servers + the python3 helper) and its
+  concrete remedy, instead of letting a bare transport exception (e.g.
+  "ImportError: No module named 'apsw'") or an opaque downstream
+  "path 'ctx.files_raw.structured' is absent" reach the operator.
 steps:
   - transform:
       value: >-
-        "rag ingest blocked -- one or more required MCP servers are unreachable:\n\n" + ctx.message
+        "rag ingest blocked -- one or more prerequisites are unreachable:\n\n" + ctx.message
       output: blocked_reason
 ---
 pipeline: _ingest_one_file
@@ -195,9 +225,10 @@ description: >-
   discover files -> per-file convert+chunk+hash (fan-out) -> flatten ->
   diff against the vector store's existing metadata by content_hash (C5:
   add/update/remove) -> embed only the new/changed chunks, stamping
-  embedding_model from THIS pipeline's own input (C4 -- see ingest's
-  description for why not envelope.model) -> upsert + remove -> report a
-  summary including the X2a/X5 estimated-spend figures.
+  embedding_model from the RESOLVED model on embed's own envelope meta
+  (C4 -- see _ingest_embed_and_upsert) -> upsert + remove -> report a
+  summary carrying the X2a METERED spend for the batch plus X5's
+  dedup-saved estimate.
 steps:
   - transform: {value: "{input_path: ctx.input_path}"}
   - shell:
