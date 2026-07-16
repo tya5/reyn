@@ -22,7 +22,7 @@ parser/executor, the MCP client/gateway/permission gate, the two real
 builtin MCP servers, sqlite-vec/apsw/chonkie -- is real.
 
 Coverage:
-  1. Parse: both pipeline files parse cleanly (four + three ``pipeline:``
+  1. Parse: both pipeline files parse cleanly (eight + three ``pipeline:``
      docs respectively) via ``parse_pipeline_docs``.
   2. C5 add/update/remove convergence + X5 dedup visibility: ingest a
      2-file folder, re-ingest unchanged (0 upserts, dedup skip reported),
@@ -249,14 +249,15 @@ def _run_ingest(project_root: Path, capsys: pytest.CaptureFixture, **input_overr
 
 
 def test_rag_ingest_pipeline_parses() -> None:
-    """Tier 2b: rag_ingest.yaml parses -- 6 pipeline: docs (ingest, _blocked,
-    _ingest_one_file, _ingest_body, _ingest_embed_and_upsert,
-    _ingest_noop_upsert)."""
+    """Tier 2b: rag_ingest.yaml parses -- 8 pipeline: docs (ingest, _blocked,
+    _ingest_one_file, _ingest_chunk_file, _ingest_skipped_file, _ingest_body,
+    _ingest_embed_and_upsert, _ingest_noop_upsert)."""
     docs = parse_pipeline_docs(_INGEST_PATH.read_text(encoding="utf-8"), SchemaRegistry())
     names = {p.name for p in docs}
     assert names == {
-        "ingest", "_blocked", "_ingest_one_file", "_ingest_body",
-        "_ingest_embed_and_upsert", "_ingest_noop_upsert",
+        "ingest", "_blocked", "_ingest_one_file", "_ingest_chunk_file",
+        "_ingest_skipped_file", "_ingest_body", "_ingest_embed_and_upsert",
+        "_ingest_noop_upsert",
     }
 
 
@@ -317,6 +318,149 @@ def test_ingest_add_then_dedup_then_update_then_remove(
     assert summary_4["files_scanned"] == 1
     assert summary_4["chunks_removed"] >= 1
     assert summary_4["chunks_upserted"] == 0
+
+
+def test_only_real_document_content_reaches_the_store(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture,
+) -> None:
+    """Tier 2c: a file that yields no usable document is NOT indexed, and IS reported (#3010).
+
+    The invariant: what lands in the operator's vector store is document content -- never a
+    converter's error message, never reyn's own prose about the absence of content -- and a file that
+    contributed nothing is NAMED, because "the operator cannot tell what happened" is the failure
+    this pipeline shipped with. Asserted against the REAL sqlite store, not only the summary: a clean
+    ``chunks_upserted`` over a poisoned index IS the bug.
+
+    Two of the three ways a file yields nothing are exercised here:
+
+    - the conversion FAILS (``meta.isError``) -- the MCP layer raises nothing, so ``for_each``'s
+      ``on_error: continue`` never fires; the error MESSAGE was chunked+embedded as content;
+    - the conversion SUCCEEDS but yields no text -- caught here by the ZERO-CHUNK gate. Note which
+      gate fires and why: this stub runs on a ``structuredContent``-era MCP SDK, so an empty
+      conversion arrives as ``{"content": "", "structuredContent": {"result": ""}}`` -- a structured
+      attachment, and an attachment-carrying result never takes the explicit-empty path. So
+      ``meta.empty`` is ABSENT here, and before the zero-chunk gate this file vanished unreported
+      (measured: ``files_scanned: 3, files_skipped: 1``, notext.pdf in neither index nor report).
+
+    The third way -- ``meta.empty``, the marker path that motivated #3010 -- is NOT witnessed by this
+    test and cannot be, for the SDK reason above. It is pinned SDK-independently against the non-MCP
+    producers in ``tests/test_3010_empty_success_fact_data_path.py``.
+
+    Stub fidelity (the stub stands in for markitdown-mcp -- see module docstring): both branches ride
+    the stub's own natural behavior over real fixture bytes, mirroring what the real library was
+    MEASURED to do at this boundary (``MarkItDown().convert_uri(...).markdown`` on the #3010
+    fixtures): a no-text-layer PDF returns ``''`` (here: an empty file the stub reads as ``''``) and
+    an unparseable PDF RAISES, surfaced as ``isError`` (here: undecodable bytes raise
+    UnicodeDecodeError). No sentinel or special-case branch is added to the stub.
+    """
+    monkeypatch.chdir(tmp_path)
+    project_root = _write_project(tmp_path)
+    docs_dir = project_root / "docs"
+    docs_dir.mkdir()
+    # A real document -- the falsify direction: the gates must skip the unusable files WITHOUT
+    # skipping this one (a fix that indexed nothing would satisfy every "no garbage" assertion).
+    (docs_dir / "good.txt").write_text("Penguins huddle together for warmth.", encoding="utf-8")
+    # Converts fine, holds no text (the scanned-PDF class) -> "" -> "(no content)".
+    (docs_dir / "notext.pdf").write_bytes(b"")
+    # Cannot be parsed at all -> the converter raises -> isError.
+    (docs_dir / "corrupt.pdf").write_bytes(b"\xff\xfe\x00\x01broken")
+
+    summary = _run_ingest(project_root, capsys)["named_stores"]["result"]
+
+    from reyn.builtin.mcp_servers.vector_store_server import SqliteVecStore
+
+    with SqliteVecStore(str(project_root / "rag.sqlite")) as store:
+        rows = store.list_metadata()
+
+    indexed = {Path(r["metadata"]["source_path"]).name for r in rows}
+    assert indexed == {"good.txt"}, (
+        "only real document content may be indexed -- a file that yielded no document must "
+        f"contribute no chunks, got {sorted(indexed)}"
+    )
+    assert summary["files_scanned"] == 3
+    assert summary["files_skipped"] == 2, (
+        "a discovered-but-unusable file must be REPORTED; a clean chunks_upserted over a poisoned "
+        "index is exactly the failure this guards"
+    )
+    # The report NAMES each file, so the operator can tell which documents their corpus lacks.
+    skipped = {Path(s["source_path"]).name: s["reason"] for s in summary["skipped_files"]}
+    assert set(skipped) == {"notext.pdf", "corrupt.pdf"}
+    assert all(reason for reason in skipped.values()), "each skip must carry a reason"
+
+
+def test_a_none_conversion_is_reported_as_a_failure_not_indexed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture,
+) -> None:
+    """Tier 2c: a conversion whose whole output is "None" is treated as a failed conversion (#3010).
+
+    markitdown MANUFACTURES the string "None" from a file it cannot decode and reports SUCCESS
+    (``PlainTextConverter`` runs ``str(from_bytes(...).best())`` with no None check, and
+    ``str(None) == "None"``), which suppresses markitdown's own FileConversionException path. reyn
+    cannot see that from the outside, so the pipeline defends locally -- and reports through the
+    SAME named-with-a-reason path as any other failed conversion, rather than inventing a third.
+
+    The boundary is what makes this a filter and not a blunt instrument, so both directions are
+    pinned: EXACT equality drops the manufactured value, while a real document that merely MENTIONS
+    None is indexed untouched.
+    """
+    monkeypatch.chdir(tmp_path)
+    project_root = _write_project(tmp_path)
+    docs_dir = project_root / "docs"
+    docs_dir.mkdir()
+    # The bug's signature: the converter's entire output is "None".
+    (docs_dir / "undecodable.txt").write_text("None", encoding="utf-8")
+    # A real document that merely mentions None -- must survive (the falsify direction: an
+    # `"None" in text` filter would silently drop this legitimate content).
+    (docs_dir / "real.txt").write_text(
+        "The function returns None when the cache is cold.", encoding="utf-8",
+    )
+
+    summary = _run_ingest(project_root, capsys)["named_stores"]["result"]
+
+    from reyn.builtin.mcp_servers.vector_store_server import SqliteVecStore
+
+    with SqliteVecStore(str(project_root / "rag.sqlite")) as store:
+        indexed = {Path(r["metadata"]["source_path"]).name for r in store.list_metadata()}
+
+    assert indexed == {"real.txt"}, (
+        "a document mentioning None is CONTENT and must be indexed; only the exact-match "
+        f"manufactured value is dropped -- got {sorted(indexed)}"
+    )
+    skipped = {Path(s["source_path"]).name: s["reason"] for s in summary["skipped_files"]}
+    assert set(skipped) == {"undecodable.txt"}
+    assert "None" in skipped["undecodable.txt"], "the reason must name what was seen"
+    assert "filter_none_conversions" in skipped["undecodable.txt"], (
+        "the reason must name the opt-out, since a document whose real content IS 'None' is "
+        "indistinguishable here -- the operator needs the lever named at the point of loss"
+    )
+
+
+def test_the_none_filter_is_opt_out(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture,
+) -> None:
+    """Tier 2c: an operator can turn the None filter off, and then "None" is indexed as content.
+
+    The false positive is structural (a .txt whose real content is "None" reaches the pipeline
+    identically to the markitdown bug's output), so the escape hatch has to actually work -- a
+    default that cannot be overridden would make the corpus lossy with no recourse.
+    """
+    monkeypatch.chdir(tmp_path)
+    project_root = _write_project(tmp_path)
+    docs_dir = project_root / "docs"
+    docs_dir.mkdir()
+    (docs_dir / "literally_none.txt").write_text("None", encoding="utf-8")
+
+    summary = _run_ingest(project_root, capsys, filter_none_conversions=False)["named_stores"]["result"]
+
+    from reyn.builtin.mcp_servers.vector_store_server import SqliteVecStore
+
+    with SqliteVecStore(str(project_root / "rag.sqlite")) as store:
+        indexed = {Path(r["metadata"]["source_path"]).name for r in store.list_metadata()}
+
+    assert indexed == {"literally_none.txt"}, (
+        "with the filter off, 'None' is ordinary content and must be indexed"
+    )
+    assert summary["files_skipped"] == 0
 
 
 def test_upserted_chunk_embedding_model_is_the_resolved_model_not_the_alias(

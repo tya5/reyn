@@ -62,6 +62,17 @@
 #                          provider actually RESOLVED, read back from
 #                          `embed`'s own envelope meta -- so the column can
 #                          never disagree with the vectors beside it.
+#   filter_none_conversions -- treat a conversion whose ENTIRE output is the
+#                          literal string "None" as a failed conversion
+#                          (default true). markitdown manufactures that
+#                          string from an undecodable file and reports
+#                          SUCCESS -- see the long note at the gate in
+#                          _ingest_one_file for the measured chain and the
+#                          upstream line responsible. Exact equality only, so
+#                          a document merely mentioning None is unaffected;
+#                          set false if a document's real content IS "None"
+#                          (a .txt of exactly that is content, not a bug, and
+#                          this pipeline cannot tell the two apart).
 #   markitdown_server / chunker_server / vectorstore_server -- the MCP
 #                          server names as configured under `mcp.servers`
 #                          (defaults: reyn_markitdown / reyn_chunker /
@@ -72,7 +83,11 @@
 # added/updated/removed/unchanged, the resolved `embedding_model`, and the
 # X2a METERED spend for this batch: `tokens_embedded` / `cost_usd` /
 # `priced`, read from `embed`'s own envelope meta -- plus X5's
-# `estimated_tokens_saved_by_dedup`, the one necessarily-estimated figure)
+# `estimated_tokens_saved_by_dedup`, the one necessarily-estimated figure,
+# and #3010's `files_skipped` / `skipped_files` naming every discovered file
+# that produced NO indexed content -- whether its conversion failed, it
+# reported an empty body, or it simply chunked to zero -- each with the
+# reason, so a file can never leave the corpus silently)
 # or `_blocked`'s X1 pre-flight failure message (cause + concrete remedy
 # per unreachable server -- mirrors #2932's `require_mcp` decision-enabling
 # error, never a bare transport exception).
@@ -101,6 +116,9 @@ steps:
                                      '[xX][lL][sS][xX]', '[pP][pP][tT][xX]', '[dD][oO][cC][xX]'])
       output: file_extensions
   - transform: {value: "get(ctx, 'max_files', 10000)", output: max_files}
+  - transform:
+      value: "get(ctx, 'filter_none_conversions', true)"
+      output: filter_none_conversions
 
   # ---- X1: pre-flight -- a REAL probe call per server (not just "is it
   # configured"), schema-gated to status=="ok" so an MCP-layer error
@@ -192,6 +210,7 @@ steps:
             vectorstore_server: ctx.vectorstore_server
             file_extensions: ctx.file_extensions
             max_files: ctx.max_files
+            filter_none_conversions: ctx.filter_none_conversions
       default:
         pipeline: _blocked
         pass: {message: ctx.preflight_message}
@@ -212,12 +231,16 @@ steps:
 ---
 pipeline: _ingest_one_file
 description: >-
-  Convert one file to Markdown (markitdown) and chunk it (chunker). Called
-  once per file by ingest's for_each fan-out. Returns this file's candidate
-  chunk items: [{source_path, text, content_hash, chunk_index, size_tokens,
-  est_tokens}, ...] -- the chunker returns content_hash/chunk_index/
-  est_tokens itself (#2972), so the only work left here is tagging each
-  chunk with the file it came from.
+  Convert one file to Markdown (markitdown) and, when the conversion
+  actually produced a document, chunk it (chunker). Called once per file by
+  ingest's for_each fan-out. Returns this file's OUTCOME:
+  {source_path, items, skipped_reason} -- `items` is the candidate chunk
+  list ([{source_path, text, content_hash, chunk_index, size_tokens,
+  est_tokens}, ...]; the chunker returns content_hash/chunk_index/est_tokens
+  itself (#2972), so the only work left is tagging each chunk with the file
+  it came from), and `skipped_reason` is "" for an ingested file or the
+  operator-facing reason string for a skipped one (the single skipped/not
+  representation -- all three ways to yield nothing report through it).
 steps:
   - tool:
       name: call_mcp_tool
@@ -226,12 +249,128 @@ steps:
         mcp_tool_name: convert_to_markdown
         tool_args: !expr "{uri: 'file://' + ctx.source_path}"
       output: converted
+
+  # ---- #3010: the two facts the converter already told us, READ ----
+  #
+  # Cause 1 -- `meta.isError`. A failed conversion (e.g. a corrupt/zero-byte
+  # PDF -> PDFSyntaxError) comes back as an MCP result with `isError: true`,
+  # whose `text` IS the error message ("Error executing tool
+  # convert_to_markdown: ..."). The MCP layer RAISES NOTHING for it, so
+  # ingest's `for_each on_error: continue` never fires -- the step
+  # "succeeds" and, before this gate, the error MESSAGE ITSELF was handed to
+  # the chunker, embedded (real token spend) and upserted into the store as
+  # though it were the document's content.
+  #
+  # Cause 2 -- `meta.empty`. A file that converts PERFECTLY but holds no
+  # text (the scanned PDF with no text layer -- the most common real-corpus
+  # case) is NOT an error: markitdown faithfully returns "". reyn renders
+  # that legit-empty success as the marker "(no content)" for the chat LLM,
+  # and before #3010 the marker was the ONLY form the fact had -- so this
+  # pipeline chunked and embedded the literal string "(no content)".
+  # `meta.empty` is that same fact as DATA. We read the FACT, never the
+  # marker text: string-matching "(no content)" would bind this pipeline to
+  # today's chat wording and break silently the day it changes.
+  #
+  # Both are reported, never silently dropped -- silence over a poisoned
+  # index is precisely the bug (`chunks_upserted: 12`, all garbage).
+  - transform:
+      value: "get(ctx.converted, 'meta.isError', false)"
+      output: conversion_failed
+  - transform:
+      value: "get(ctx.converted, 'meta.empty', false)"
+      output: conversion_empty
+
+  # ---- the "None" filter: working around a markitdown BUG ----
+  #
+  # This is a literal string comparison against a converter's output, which
+  # is normally indefensible. It is here because markitdown MANUFACTURES the
+  # string "None" out of an unreadable file, and says it succeeded:
+  #
+  #   markitdown/converters/_plain_text_converter.py -- PlainTextConverter.convert()
+  #       else:
+  #           text_content = str(from_bytes(file_stream.read()).best())   # <- no None check
+  #
+  # `charset_normalizer.from_bytes(...).best()` returns None for bytes whose
+  # encoding it cannot determine, and `str(None)` == "None". Measured chain
+  # (converters instrumented) on a 16-byte non-PDF:
+  #
+  #   corrupt.pdf (\x00\x01\x02 not a pdf \xff\xfe)
+  #     PdfConverter       -> raised PDFSyntaxError "No /Root object!"   (correct)
+  #     PlainTextConverter -> SUCCESS  markdown='None'                   (the bug)
+  #     final result: 'None'
+  #
+  # The fixture contains no "None" (16 bytes, hexdump-verified) -- markitdown
+  # GENERATES it. And markitdown's own design is right (_markitdown.py:624):
+  # `if len(failed_attempts) > 0: raise FileConversionException(...)` -- had
+  # PlainTextConverter not "succeeded", the file would have raised and our
+  # meta.isError gate above would have caught it. One missing None check
+  # disables markitdown's own official error channel, which is why a defense
+  # this crude is the only thing left at this layer.
+  #
+  # EXACT equality, never `"None" in text`: a legitimate document that merely
+  # MENTIONS None must not be dropped. Even so, a .txt whose entire content
+  # is "None" is CONTENT, not a bug (markitdown detects the charset and takes
+  # the `.decode(charset)` branch, correctly returning "None") -- and this
+  # pipeline cannot see which branch ran. That false positive is structural,
+  # not an oversight, which is why the filter is opt-out
+  # (`filter_none_conversions: false`) rather than clever. No extension
+  # sniffing: "only distrust .pdf" would be a guess about which converters
+  # can hit this path, and the census of markitdown's converters is not ours
+  # to keep -- the operator's own opt-out is the honest lever.
+  #
+  # It converts to an ERROR rather than a silent skip: the file did not
+  # convert, so it reports through the same named-with-a-reason path as a
+  # raised conversion failure. One reporting path, not three.
+  - transform:
+      value: "ctx.filter_none_conversions and ctx.converted.text == 'None'"
+      output: conversion_is_none
+
+  # The reason strings, built like X1's `preflight_message`: a filtered list
+  # + join, since R1 has no conditional expression.
+  - transform:
+      value: >-
+        join(map(filter([{fired: ctx.conversion_failed, why: "conversion failed: " + ctx.converted.text},
+                         {fired: ctx.conversion_is_none, why: "conversion returned the literal string \"None\" -- a markitdown bug (PlainTextConverter has no None check on charset detection failure), meaning the file could not be decoded at all. If this document's real content IS \"None\", set filter_none_conversions: false."},
+                         {fired: ctx.conversion_empty, why: "no text content extracted (e.g. a scanned PDF with no text layer, or an empty document)"}],
+                        r -> r.fired), r -> r.why), "; ")
+      output: skip_reason
+  - transform:
+      value: "ctx.conversion_failed or ctx.conversion_is_none or ctx.conversion_empty"
+      output: unusable
+  - match:
+      on: ctx.unusable
+      cases:
+        "True":
+          pipeline: _ingest_skipped_file
+          pass:
+            source_path: ctx.source_path
+            reason: ctx.skip_reason
+      default:
+        pipeline: _ingest_chunk_file
+        pass:
+          source_path: ctx.source_path
+          converted_text: ctx.converted.text
+          chunk_size: ctx.chunk_size
+          chunk_overlap_ratio: ctx.chunk_overlap_ratio
+          chunker_server: ctx.chunker_server
+      output: outcome
+---
+pipeline: _ingest_chunk_file
+description: >-
+  Sibling of _ingest_skipped_file -- the "the conversion produced a
+  document" branch: chunk it and tag each chunk with its source file.
+  Reached only when the convert step flagged neither `meta.isError` nor
+  `meta.empty`, so the chunker/embedder are never handed an error message
+  or an explicit-empty marker as if either were content. Carries the
+  zero-chunk gate: converting cleanly to no chunks is still "nothing was
+  indexed", and is reported as such.
+steps:
   - tool:
       name: call_mcp_tool
       args:
         server: !expr ctx.chunker_server
         mcp_tool_name: chunk
-        tool_args: !expr "{text: ctx.converted.text, size: ctx.chunk_size, overlap_ratio: ctx.chunk_overlap_ratio}"
+        tool_args: !expr "{text: ctx.converted_text, size: ctx.chunk_size, overlap_ratio: ctx.chunk_overlap_ratio}"
       output: chunked
   # Tag each chunk with its source file. content_hash / chunk_index /
   # est_tokens already ride the chunker's own output (#2972) -- R1 could
@@ -246,6 +385,47 @@ steps:
                                                  size_tokens: c.token_count,
                                                  est_tokens: c.est_tokens})
       output: items
+
+  # ---- #3010, the SILENT-ZERO gate: a file that yielded no chunks ----
+  # The `meta.empty` gate above catches an empty conversion only when the
+  # converter says so. It cannot when the converter's MCP server returns
+  # structured output alongside its empty text (a `structuredContent`-era
+  # MCP SDK sends {"content": "", "structuredContent": {"result": ""}}):
+  # reyn carries that as a structured attachment, and an attachment-carrying
+  # result never takes the explicit-empty path, so `meta.empty` is absent
+  # and `text` is a bare "". Nothing is garbage here -- and nothing is
+  # REPORTED either: the file chunks to zero, contributes no items, and
+  # vanishes from the run entirely. `files_scanned` counts it; nothing says
+  # it produced nothing. That is the same "the operator cannot tell what
+  # happened" failure as the garbage, arrived at from the opposite side.
+  #
+  # So the last word is the STRUCTURAL outcome, not any signal: zero chunks
+  # means nothing was indexed, whatever the converter did or did not say.
+  # This gate needs no marker, no meta and no SDK assumption -- which is
+  # also why it stays even though `meta.empty` usually fires first.
+  - transform:
+      value: >-
+        join(map(filter([{fired: count(ctx.items) == 0,
+                          why: "no chunks produced (the document converted, but yielded no text to index)"}],
+                        r -> r.fired), r -> r.why), "; ")
+      output: zero_chunk_reason
+  - transform:
+      value: >-
+        {source_path: ctx.source_path, items: ctx.items,
+         skipped_reason: ctx.zero_chunk_reason}
+      output: outcome
+---
+pipeline: _ingest_skipped_file
+description: >-
+  Sibling of _ingest_chunk_file -- the "this file yielded no usable
+  document" branch. Contributes ZERO chunk items (nothing to chunk, embed or
+  index) and carries the reason so the run's summary can NAME the file the
+  operator's corpus is missing, instead of the silent-garbage alternative.
+steps:
+  - transform:
+      value: >-
+        {source_path: ctx.source_path, items: [], skipped_reason: ctx.reason}
+      output: outcome
 ---
 pipeline: _ingest_body
 description: >-
@@ -314,17 +494,33 @@ steps:
             chunk_overlap_ratio: ctx.chunk_overlap_ratio
             markitdown_server: ctx.markitdown_server
             chunker_server: ctx.chunker_server
+            filter_none_conversions: ctx.filter_none_conversions
       collect: {transform: {value: "pipe"}}
-      output: per_file_items
+      output: per_file_outcomes
 
-  # Flatten the list-of-lists (one list per file) into one flat list of
-  # chunk items -- `fold` + list concatenation (R1's `+` also concatenates
-  # lists; there is no flatten/flatMap combinator).
+  # Flatten the per-file outcomes' item lists into one flat list of chunk
+  # items -- `fold` + list concatenation (R1's `+` also concatenates lists;
+  # there is no flatten/flatMap combinator). A skipped file (#3010 cause 1)
+  # carries `items: []`, so it contributes nothing here BY CONSTRUCTION --
+  # no chunk, no embedding spend, no store entry.
   - fold:
-      over: ctx.per_file_items
+      over: ctx.per_file_outcomes
       init: "[]"
-      do: {transform: {value: "acc + item"}}
+      do: {transform: {value: "acc + item.items"}}
       output: all_items
+
+  # #3010 -- the skipped files, NAMED. `files_scanned` alone cannot tell an
+  # operator that a file was discovered but yielded nothing: that is exactly
+  # the "clean number over a poisoned index" reporting this bug was made of.
+  # Each entry is {source_path, reason} so the summary says WHICH file is
+  # absent from the corpus and WHY. A file is skipped iff it carries a
+  # reason -- one representation, so the three ways to yield nothing
+  # (isError / meta.empty / zero chunks) all report through one path.
+  - transform:
+      value: >-
+        map(filter(ctx.per_file_outcomes, o -> o.skipped_reason != ""),
+            o -> {source_path: o.source_path, reason: o.skipped_reason})
+      output: skipped_files
 
   # C5: fetch the existing corpus SCOPED TO THIS input_path (via
   # `parent_context` -- repurposed here as the ingest-root tag stamped on
@@ -408,6 +604,8 @@ steps:
   - transform:
       value: >-
         {files_scanned: count(ctx.files),
+         files_skipped: count(ctx.skipped_files),
+         skipped_files: ctx.skipped_files,
          chunks_upserted: ctx.upsert_outcome.upserted,
          chunks_removed: ctx.delete_result.structured.deleted,
          chunks_unchanged_skipped: ctx.unchanged_count,

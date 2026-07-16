@@ -18,7 +18,11 @@ interpret:
 - ``meta``        — small structured signal the LLM reads inline as YAML frontmatter (``returncode``,
                     ``truncated``, …). High-signal-only: transport identifiers (``kind``, duplicate
                     ``status``, ``server``, ``tool`` echo) are dropped — they never change what the
-                    LLM does next. ``isError`` is retained as the sole error-path driver.
+                    LLM does next. ``isError`` is retained as the sole error-path driver (and is the
+                    one key ``seam.py`` keeps OUT of the frontmatter — the error path renders it).
+                    ``empty`` (#3010) is the "this success legitimately produced no body" fact. ``meta``
+                    is also the channel through which a DATA-path consumer (a pipeline step, via
+                    ``canonical_to_ctx_fields``) reads a fact whose only other form is display prose.
 
 FP-0056 PR-F1 — coverage enforcement by construction (this module's endgame). The pre-F1 design had
 two structural defects the 2026-07-09 dogfood incident exposed (a ``reyn_repo__read`` doc read
@@ -290,18 +294,47 @@ def error_to_canonical(result: dict) -> CanonicalToolResult:
     )
 
 
-def _explicit_empty(text: str, marker: str) -> str:
-    """Render a legit-empty SUCCESS body (an empty file read, a no-output command, an empty
-    template render, …) as an EXPLICIT marker instead of a blank string.
+def _explicit_empty(text: str, marker: str, meta: "dict[str, Any]") -> str:
+    """Record the FACT that a legit-empty SUCCESS body produced nothing (``meta["empty"] = True``)
+    and return that fact's CHAT RENDERING — an explicit marker ("(empty file)" / "(no output)" / …)
+    instead of a blank string.
 
-    Two reasons (FP-0056 v2 piece #2): (1) a blank ``text`` with no attachments on a non-error
-    result would spuriously fire the runtime ``canonical_degraded`` invariant, which exists to catch
-    a *success-mapper losing content it had* (M2) — a genuinely-empty success is not that loss;
-    (2) an explicit "(empty file)" / "(no output)" is better LLM UX than a blank tool result the
-    model has to guess about. Only mappers whose success path can legitimately produce no output
-    wrap their body here; a mapper that regresses to empty when it should always produce something
-    (or an unknown future mapper) still fires the invariant."""
-    return text if text.strip() else marker
+    Two reasons the marker exists (FP-0056 v2 piece #2): (1) a blank ``text`` with no attachments on
+    a non-error result would spuriously fire the runtime ``canonical_degraded`` invariant, which
+    exists to catch a *success-mapper losing content it had* (M2) — a genuinely-empty success is not
+    that loss; (2) an explicit "(empty file)" / "(no output)" is better LLM UX than a blank tool
+    result the model has to guess about. Only mappers whose success path can legitimately produce no
+    output wrap their body here; a mapper that regresses to empty when it should always produce
+    something (or an unknown future mapper) still fires the invariant.
+
+    #3010 — why ``meta`` is a REQUIRED parameter rather than the marker being the whole story. An
+    empty success is a TRUE and legitimate state, not an error: a scanned PDF with no text layer
+    converts perfectly, and "there is no text here" is the converter's honest report. The marker is
+    the right thing to SHOW a chat LLM. But a canonical result is also consumed as DATA
+    (``canonical_to_ctx_fields`` → a pipeline step's ``ctx.<name>``), and on that path the marker is
+    prose that OVERWRITES the very fact it describes: the builtin RAG ingest pipeline received the
+    literal string ``"(no content)"`` where the converter had faithfully returned ``""``, then
+    chunked it, EMBEDDED it (real token spend) and upserted it into the operator's vector store as
+    though it were the document's text — reporting a clean ``chunks_upserted: 1`` over a poisoned
+    index. The producer's signal was intact; this function destroyed it.
+
+    Hence the split this signature enforces: the FACT ("this body was legitimately empty") lives in
+    ``meta`` as structured data a data-path consumer READS; the marker is one RENDERING of that fact,
+    for the chat path. ``meta`` is required — not optional, not a return value a caller may drop — so
+    a mapper cannot render the display without also recording the fact (the same by-construction
+    discipline PR-F1 applied to the declarations themselves). A data-path consumer therefore never
+    has to string-match ``"(no content)"``: that string is today's phrasing of the display, not the
+    fact, and a consumer bound to it would break silently the day the wording changes.
+
+    ``empty`` is a SIBLING of ``isError``, never a substitute for it: an empty success is not an
+    error, and flagging it as one would be a lie (the converter succeeded). Unlike ``isError`` it DOES
+    render into the chat frontmatter — it is an ordinary signal, and stating outright that a success
+    produced no body is the same "better UX than a blank result" reasoning the marker rests on. It
+    ADDS a frontmatter line and never rewrites ``text``, which stays the marker byte-for-byte."""
+    if text.strip():
+        return text
+    meta["empty"] = True
+    return marker
 
 
 def mcp_to_canonical(result: dict) -> CanonicalToolResult:
@@ -318,13 +351,13 @@ def mcp_to_canonical(result: dict) -> CanonicalToolResult:
         attachments.append({"kind": "structured", "data": structured})
     for block in result.get("media_blocks") or []:
         attachments.append({"kind": "media", "block": block})
-    meta = {"isError": True} if _is_error(result) else {}
+    meta: dict[str, Any] = {"isError": True} if _is_error(result) else {}
     text = result.get("content", "") or ""
     # A successful MCP call with no content AND no attachments renders an explicit empty (else the
     # canonical_degraded invariant fires on a legit no-output tool). An error keeps its (possibly
     # terse) message untouched; an attachment-carrying result already has visible content.
     if not attachments and not _is_error(result):
-        text = _explicit_empty(text, "(no content)")
+        text = _explicit_empty(text, "(no content)", meta)
     return CanonicalToolResult(
         text=text,
         attachments=attachments,
@@ -349,10 +382,10 @@ def mcp_read_resource_to_canonical(result: dict) -> CanonicalToolResult:
             text_parts.append(str(item["text"]))
         elif "blob" in item:
             attachments.append({"kind": "structured", "data": item})
-    meta = {"isError": True} if _is_error(result) else {}
+    meta: dict[str, Any] = {"isError": True} if _is_error(result) else {}
     text = "\n".join(text_parts)
     if not attachments and not _is_error(result):
-        text = _explicit_empty(text, "(no content)")
+        text = _explicit_empty(text, "(no content)", meta)
     return CanonicalToolResult(
         text=text,
         attachments=attachments,
@@ -377,10 +410,10 @@ def mcp_get_prompt_to_canonical(result: dict) -> CanonicalToolResult:
             text_parts.append(str(content["text"]))
         elif content is not None:
             attachments.append({"kind": "structured", "data": content})
-    meta = {"isError": True} if _is_error(result) else {}
+    meta: dict[str, Any] = {"isError": True} if _is_error(result) else {}
     text = "\n".join(text_parts)
     if not attachments and not _is_error(result):
-        text = _explicit_empty(text, "(no content)")
+        text = _explicit_empty(text, "(no content)", meta)
     return CanonicalToolResult(
         text=text,
         attachments=attachments,
@@ -397,10 +430,10 @@ def web_fetch_to_canonical(result: dict) -> CanonicalToolResult:
     ``"text/html"``) is carried on the RENDERER-only ``content_type`` sidecar (#2663), never into
     ``meta``/the frontmatter, so present's stage-3 default viewer can pick a markdown/code default
     for the offloaded body without the LLM-visible frontmatter growing a transport field."""
+    meta: dict[str, Any] = {}
     content = result.get("content")
     text = content if content else str(result.get("preview") or "")
-    text = _explicit_empty(text, "(no content)")
-    meta: dict[str, Any] = {}
+    text = _explicit_empty(text, "(no content)", meta)
     if result.get("truncated"):
         meta["truncated"] = True
         next_start = result.get("next_start")
@@ -461,8 +494,8 @@ def sandboxed_exec_to_canonical(result: dict) -> CanonicalToolResult:
         text = stdout
     # A command that produced no stdout/stderr (e.g. mkdir/touch/mv) renders an explicit empty so the
     # canonical_degraded invariant does not fire on a legit no-output exec (returncode carries signal).
-    text = _explicit_empty(text, "(no output)")
     meta: dict[str, Any] = {}
+    text = _explicit_empty(text, "(no output)", meta)
     returncode = result.get("returncode")
     if returncode:  # nonzero (or truthy) only — a 0 exit is not actionable signal
         meta["returncode"] = returncode
@@ -491,7 +524,8 @@ def shell_to_canonical(result: dict) -> CanonicalToolResult:
     a JSON-emitting command), else the raw text. ``stderr``/``returncode`` never reach this seam (they
     are dropped one layer up, by that same locked design) — the one respect this mapper CANNOT mirror
     ``sandboxed_exec_to_canonical`` (whose ``returncode`` signal meta this would carry, were it visible
-    here); ``meta`` is therefore always empty for ``shell``.
+    here); ``meta`` therefore carries no signal of its OWN for ``shell`` — only the shared ``empty``
+    fact a no-output command records through :func:`_explicit_empty` (#3010).
 
     The shape THIS mapper actually receives (post ``unwrap_dispatch_envelope``) is one of:
 
@@ -509,8 +543,9 @@ def shell_to_canonical(result: dict) -> CanonicalToolResult:
     else:
         value = result
     text = value if isinstance(value, str) else json.dumps(value, default=str)
-    text = _explicit_empty(text, "(no output)")
-    return CanonicalToolResult(text=text, attachments=[], source_ref=None, meta={})
+    meta: dict[str, Any] = {}
+    text = _explicit_empty(text, "(no output)", meta)
+    return CanonicalToolResult(text=text, attachments=[], source_ref=None, meta=meta)
 
 
 def chunks_to_canonical(result: dict) -> CanonicalToolResult:
@@ -544,13 +579,20 @@ def run_pipeline_to_canonical(result: dict) -> CanonicalToolResult:
     ruling)."""
     output = result.get("output")
     if isinstance(output, str):
+        meta: dict[str, Any] = {}
+        text = _explicit_empty(output, "(no output)", meta)
         return CanonicalToolResult(
-            text=_explicit_empty(output, "(no output)"), attachments=[], source_ref=None, meta={},
+            text=text, attachments=[], source_ref=None, meta=meta,
         )
     if output is None:
         # A pipeline that completed with no final output: explicit empty text (no structured to carry
-        # it), so a legit no-output run does not fire the canonical_degraded invariant.
-        return CanonicalToolResult(text="(no output)", attachments=[], source_ref=None, meta={})
+        # it), so a legit no-output run does not fire the canonical_degraded invariant. Routed through
+        # ``_explicit_empty`` rather than hardcoding the marker so this branch records the SAME
+        # ``meta.empty`` fact as its sibling above (#3010) — a caller reading a pipeline's result as
+        # DATA must not have to tell these two no-output paths apart by their prose.
+        none_meta: dict[str, Any] = {}
+        text = _explicit_empty("", "(no output)", none_meta)
+        return CanonicalToolResult(text=text, attachments=[], source_ref=None, meta=none_meta)
     return CanonicalToolResult(
         text="", attachments=[{"kind": "structured", "data": output}], source_ref=None, meta={},
     )
@@ -617,7 +659,7 @@ def file_to_canonical(result: dict) -> CanonicalToolResult:
         # An empty file read (no media blocks carrying an image body) renders an explicit empty so the
         # canonical_degraded invariant does not fire on a legit read of a genuinely empty file.
         if not attachments:
-            text = _explicit_empty(text, "(empty file)")
+            text = _explicit_empty(text, "(empty file)", meta)
         return CanonicalToolResult(
             text=text, attachments=attachments, source_ref=None, meta=meta,
         )
@@ -741,8 +783,8 @@ def reyn_repo_to_canonical(result: dict) -> CanonicalToolResult:
     fallback + fires ``canonical_fallback_used`` — the SAME recoverable output as the old inline
     whole-dict return, now AUDITED (fail-visible) rather than silently unmapped."""
     if "content" in result:
-        meta = {"path": result["path"]} if result.get("path") is not None else {}
-        text = _explicit_empty(result.get("content", "") or "", "(empty file)")
+        meta: dict[str, Any] = {"path": result["path"]} if result.get("path") is not None else {}
+        text = _explicit_empty(result.get("content", "") or "", "(empty file)", meta)
         return CanonicalToolResult(
             text=text, attachments=[], source_ref=None, meta=meta,
         )
@@ -789,7 +831,7 @@ def render_template_to_canonical(result: dict) -> CanonicalToolResult:
     undefined_vars = result.get("undefined_vars")
     if undefined_vars:
         meta["undefined_vars"] = undefined_vars
-    text = _explicit_empty(result.get("rendered", "") or "", "(empty render)")
+    text = _explicit_empty(result.get("rendered", "") or "", "(empty render)", meta)
     return CanonicalToolResult(
         text=text, attachments=[], source_ref=None, meta=meta,
     )
@@ -866,7 +908,7 @@ def memory_body_to_canonical(result: dict) -> CanonicalToolResult:
         value = result.get(key)
         if value is not None:
             meta[key] = value
-    text = _explicit_empty(result.get("content", "") or "", "(empty)")
+    text = _explicit_empty(result.get("content", "") or "", "(empty)", meta)
     return CanonicalToolResult(
         text=text, attachments=[], source_ref=None, meta=meta,
     )
@@ -922,7 +964,7 @@ def make_status_text_mapper(
                 meta[key] = value
         if result.get("status") == "cancelled":
             return CanonicalToolResult(text="Cancelled.", attachments=[], source_ref=None, meta=meta)
-        text = _explicit_empty(render(result), empty_marker)
+        text = _explicit_empty(render(result), empty_marker, meta)
         return CanonicalToolResult(text=text, attachments=[], source_ref=None, meta=meta)
 
     return _mapper
@@ -1239,9 +1281,10 @@ def ask_user_to_canonical(result: dict) -> CanonicalToolResult:
         reason = str(result.get("reason", "") or "")
         text = f"(no answer — refused: {reason})" if reason else "(no answer — refused)"
         return CanonicalToolResult(text=text, attachments=[], source_ref=None, meta={})
-    text = _explicit_empty(str(result.get("answer", "") or ""), "(no answer)")
+    meta: dict[str, Any] = {}
+    text = _explicit_empty(str(result.get("answer", "") or ""), "(no answer)", meta)
     return CanonicalToolResult(
-        text=text, attachments=[], source_ref=None, meta={},
+        text=text, attachments=[], source_ref=None, meta=meta,
     )
 
 
@@ -1764,8 +1807,17 @@ def canonical_to_ctx_fields(canonical: CanonicalToolResult) -> "dict[str, Any]":
     ``meta`` is the producer's SIGNAL channel — the small, high-signal fields a mapper deliberately
     kept out of the body because they change what the caller does next: ``embed``'s ``model``/
     ``total_tokens``/``cost_usd``/``priced``, ``sandboxed_exec``'s nonzero ``returncode``, an MCP
-    result's ``isError``. The chat side has always seen these (``seam.py`` reads ``meta``); the
-    pipeline side did not, so a ``tool:`` step could read a producer's body but never its signal.
+    result's ``isError``, and (#3010) ``empty`` — "this success legitimately produced no content".
+    The chat side has always seen these (``seam.py`` reads ``meta``); the pipeline side did not, so a
+    ``tool:`` step could read a producer's body but never its signal.
+
+    ``empty`` is why this reducer, not just the chat renderer, is load-bearing. ``text`` is written
+    FOR the chat path: a legitimately-empty body arrives here as the prose marker ``"(no content)"``,
+    which is a *rendering* of a fact, not the fact. A pipeline that reads only ``text`` cannot tell
+    "the document said '(no content)'" from "the document was empty" — the FP-0063 ingest pipeline
+    could not, and embedded the marker into the operator's vector store (#3010). ``meta.empty``
+    gives the data path the fact itself, so no consumer ever has to string-match display prose (which
+    would break silently the day the wording changes).
 
     FP-0063 P3 (#2966) is why this is no longer acceptable: the ingest pipeline must stamp each
     chunk's ``embedding_model`` from the model that ACTUALLY produced the vectors (FP-0057 C4 —
