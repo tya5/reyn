@@ -1,7 +1,8 @@
-"""Tier 2: seccomp-BPF filter builder invariants (FP-0017 Component B)."""
+"""Tier 2: seccomp-BPF filter invariants + production wiring (FP-0017 Component B)."""
 from __future__ import annotations
 
 import logging
+import os
 import sys
 
 import pytest
@@ -81,34 +82,105 @@ def test_syscall_allowlist_network_when_enabled() -> None:
     assert "accept" in result
 
 
-def test_syscall_allowlist_no_subprocess_by_default() -> None:
-    """Tier 2: subprocess syscalls absent when policy.allow_subprocess is False (default)."""
+def test_syscall_allowlist_no_process_creation_by_default() -> None:
+    """Tier 2: process-CREATION syscalls absent when allow_subprocess is False (default)."""
     from reyn.security.sandbox.backends.seccomp import _build_syscall_allowlist
 
     result = _build_syscall_allowlist(SandboxPolicy())
-    assert "execve" not in result
-    assert "fork" not in result
+    for name in ("fork", "vfork", "clone", "clone3"):
+        assert name not in result, (
+            f"Process-creation syscall {name!r} must be denied when "
+            "allow_subprocess is False"
+        )
 
 
-def test_syscall_allowlist_subprocess_when_enabled() -> None:
-    """Tier 2: subprocess syscalls present when policy.allow_subprocess is True."""
+def test_syscall_allowlist_process_creation_when_enabled() -> None:
+    """Tier 2: process-creation syscalls present when policy.allow_subprocess is True."""
     from reyn.security.sandbox.backends.seccomp import _build_syscall_allowlist
 
     result = _build_syscall_allowlist(SandboxPolicy(allow_subprocess=True))
-    assert "execve" in result
     assert "fork" in result
     assert "clone" in result
 
 
-def test_syscall_allowlist_excludes_destructive_syscalls() -> None:
-    """Tier 2: destructive filesystem syscalls never in the allowlist (Landlock's job)."""
+def test_syscall_allowlist_always_permits_exec_of_the_sandboxed_target() -> None:
+    """Tier 2: execve/execveat are allowed even when allow_subprocess is False.
+
+    Both callsites load the filter in a pre-exec position and the filter survives
+    execve, so refusing execve would stop the sandboxed target before it starts —
+    the sandbox would deny itself its own reason to exist (#2962). execve replaces
+    the calling process and spawns nothing, so allowing it grants no subprocess
+    capability; process creation is gated separately (see the tests above).
+    """
+    from reyn.security.sandbox.backends.seccomp import _build_syscall_allowlist
+
+    restrictive = _build_syscall_allowlist(SandboxPolicy(allow_subprocess=False))
+    for name in ("execve", "execveat"):
+        assert name in restrictive, (
+            f"{name!r} must be allowed even under the most restrictive policy, "
+            "or the sandboxed target is stopped before it can start"
+        )
+
+
+def test_syscall_allowlist_delegates_landlock_governed_writes() -> None:
+    """Tier 2: filesystem syscalls Landlock GOVERNS reach it instead of being refused.
+
+    Inverts the pre-#2962 expectation, which asserted these were absent "because
+    Landlock governs writes". That reasoning does not hold under a default-deny
+    filter: a syscall absent from the allowlist is not delegated to Landlock, it
+    is refused before Landlock can adjudicate. Measured under the live filter,
+    os.mkdir / os.remove / os.rename / shutil.rmtree were all killed.
+
+    Scoped deliberately to rights in LandlockBackend's HANDLED set (MAKE_DIR /
+    REMOVE_* / REFER / WRITE_FILE …). Only for those does "allowing it grants no
+    path access" hold, because only those does Landlock actually adjudicate; see
+    the companion exclusion test below.
+    """
     from reyn.security.sandbox.backends.seccomp import _build_syscall_allowlist
 
     result = _build_syscall_allowlist(SandboxPolicy())
-    for name in ("unlink", "unlinkat", "rmdir", "rename", "mkdir"):
-        assert name not in result, (
-            f"Destructive syscall {name!r} must not be in seccomp allowlist"
+    for name in ("unlinkat", "mkdirat", "renameat", "symlinkat", "getcwd"):
+        assert name in result, (
+            f"{name!r} is governed by Landlock's handled set, so it must reach "
+            "Landlock for adjudication; absent from a default-deny allowlist it "
+            "is refused here instead"
         )
+
+
+def test_syscall_allowlist_excludes_syscalls_landlock_cannot_govern() -> None:
+    """Tier 2: syscalls no layer would stop are never allowed on a delegation rationale.
+
+    The counterweight to the test above, and the reason it is scoped rather than
+    a blanket "filesystem syscalls are allowed". "Landlock will adjudicate it"
+    justifies allowing a syscall ONLY if the right is in LandlockBackend's
+    handled set:
+
+    - chmod/chown: Landlock has no such right at all (the kernel documents
+      chmod(2)/chown(2) under its current limitations), so nothing downstream
+      would stop them.
+    - path-based truncate: FSAccess.TRUNCATE exists (ABI 3+) but is not in the
+      handled set, and granting it there would be ABI-gated — leaving the hole
+      open on ABI 1-2 kernels. Excluding it is uniformly correct.
+
+    Concretely, allowing these would let a policy with write_paths=[workspace]
+    run os.chmod("~/.ssh", 0o777) or os.truncate("~/.ssh/id_ed25519", 0): passed
+    by seccomp, invisible to Landlock, permitted by DAC. ftruncate is fine and
+    stays — it needs an already-open fd, which Landlock adjudicates via
+    WRITE_FILE.
+    """
+    from reyn.security.sandbox.backends.seccomp import _build_syscall_allowlist
+
+    permissive = _build_syscall_allowlist(
+        SandboxPolicy(network=True, allow_subprocess=True)
+    )
+    for name in ("chmod", "fchmod", "fchmodat", "chown", "fchown", "truncate"):
+        assert name not in permissive, (
+            f"{name!r} must not be allowed: Landlock cannot adjudicate it, so "
+            "no layer would deny it outside write_paths"
+        )
+    assert "ftruncate" in permissive, (
+        "ftruncate acts on an open fd that Landlock already adjudicated"
+    )
 
 
 def test_syscall_allowlist_excludes_escape_hatches() -> None:
@@ -125,23 +197,81 @@ def test_syscall_allowlist_excludes_escape_hatches() -> None:
 
 
 # ---------------------------------------------------------------------------
-# install_seccomp_filter() tests
+# load_seccomp_filter() tests — the MECHANISM (see the wiring section below for
+# the tests that prove production actually calls it).
 # ---------------------------------------------------------------------------
 
 
-def test_install_returns_callable() -> None:
-    """Tier 2: install_seccomp_filter() returns a callable."""
-    from reyn.security.sandbox.backends.seccomp import install_seccomp_filter
+def test_load_has_no_deferred_form(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Tier 2: load_seccomp_filter() loads on call and hands back nothing to invoke.
 
-    result = install_seccomp_filter(SandboxPolicy())
-    assert callable(result)
+    The API contract that makes #2962 unconstructable. The old entry point
+    returned an installer, so "call it and discard the result" was a silent
+    no-op that read like working code at the callsite — which is exactly what
+    both production callsites did for the layer's entire existence. A caller
+    cannot drop a load that has no return value; the only remaining misuse is
+    not calling it at all, which is visible to a reader and is what the wiring
+    tests below pin.
+
+    The Darwin guard is load-bearing, not incidental: this asserts an API shape
+    and must never load a real filter. On Linux with pyseccomp installed —
+    exactly the `pip install reyn[sandbox-linux]` setup the module docstring
+    invites x86_64 contributors to run — an unguarded call here would install an
+    irrevocable default-deny filter into the pytest process itself, and every
+    later test in the session would see EPERM from clone/socket/chown. macOS CI
+    cannot surface that (no pyseccomp), which is the same structural blindness
+    #2962 is about.
+    """
+    import reyn.security.sandbox.backends.seccomp as seccomp_mod
+
+    _reset_cache()
+    monkeypatch.setattr("platform.system", lambda: "Darwin")
+    assert seccomp_mod.load_seccomp_filter(SandboxPolicy()) is None
+    assert not hasattr(seccomp_mod, "build_seccomp_installer"), (
+        "The builder must not come back: it is the shape that made the discard "
+        "bug expressible"
+    )
+    assert not hasattr(seccomp_mod, "install_seccomp_filter")
 
 
-def test_install_callable_noops_when_unavailable(
+def test_refused_fork_is_classifiable_as_a_sandbox_denial() -> None:
+    """Tier 2: the filter's refusal surfaces as an errno denial.py (#2820) can classify.
+
+    The filter refuses with EPERM rather than killing, which is what keeps the
+    #2820 launcher-fork mitigation alive on Linux. denial.py detects that class
+    by matching "fork: operation not permitted" on stderr, and its docstring
+    explicitly claims to cover "Linux seccomp". A killing filter emits no errno
+    and no output, so the launcher prints nothing, classify_denial returns None,
+    and the mitigation silently stops working the moment the filter goes live —
+    the exact shape of #2962 (a layer that is present but does nothing).
+
+    Pins the two ends together: the errno the filter refuses with is the errno
+    the launcher reports, and that report is classifiable.
+    """
+    import errno
+
+    from reyn.security.sandbox.denial import DENIAL_FORK, classify_denial
+
+    # What a PATH shim prints when its fork() is refused with the filter's errno.
+    launcher_stderr = f"pyenv: fork: {os.strerror(errno.EPERM)}".encode()
+
+    assert classify_denial(1, launcher_stderr) == DENIAL_FORK, (
+        "A fork refused with EPERM must classify as the #2820 denial class; if "
+        "the filter kills instead, stderr is empty and this mitigation dies"
+    )
+    # The killing-filter counterfactual: no errno, no output, nothing to classify.
+    assert classify_denial(-31, b"") is None
+
+
+def test_load_noops_when_unavailable(
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """Tier 2: calling the filter installer is safe and warns when seccomp is unavailable."""
+    """Tier 2: loading the filter is safe and warns when seccomp is unavailable.
+
+    Also establishes the observation channel the wiring tests rely on: this WARN
+    is emitted if and only if load_seccomp_filter() is actually called.
+    """
     import reyn.security.sandbox.backends.seccomp as seccomp_mod
 
     _reset_cache()
@@ -149,11 +279,102 @@ def test_install_callable_noops_when_unavailable(
     # monkeypatching platform.system to non-Linux, which is the macOS reality).
     monkeypatch.setattr("platform.system", lambda: "Darwin")
 
-    fn = seccomp_mod.install_seccomp_filter(SandboxPolicy())
-
     with caplog.at_level(logging.WARNING, logger="reyn.security.sandbox.backends.seccomp"):
-        fn()  # Must not raise.
+        seccomp_mod.load_seccomp_filter(SandboxPolicy())  # Must not raise.
 
     assert any("seccomp" in record.message.lower() for record in caplog.records), (
         "Expected a WARNING log mentioning seccomp when filter installation is skipped"
+    )
+
+
+# ---------------------------------------------------------------------------
+# WIRING tests (#2962) — do the production callsites INVOKE the installer?
+#
+# The pre-#2962 mechanism tests called the returned callable themselves, which is
+# precisely why they stayed green while the layer was dead in production. These
+# tests instead drive the real production child-side entry points and observe an
+# effect that only occurs when the filter is actually loaded.
+#
+# Observation channel: on this (non-Linux) host load_seccomp_filter() logs the
+# "seccomp-BPF unavailable … skipping syscall filter" WARN when called (pinned by
+# test_load_noops_when_unavailable). So WARN present ⇔ the callsite called it.
+# Deleting the load_seccomp_filter(policy) line from either callsite turns the
+# corresponding test RED. Verified by strip: each fails with its call removed and
+# passes with it restored.
+# ---------------------------------------------------------------------------
+
+
+def test_landlock_child_preexec_invokes_the_seccomp_installer(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Tier 2: LandlockBackend's preexec_fn actually loads the seccomp filter.
+
+    Drives the real ``_child_preexec`` — the function Popen's ``preexec_fn``
+    calls — with no Landlock ruleset (None) so the seccomp step is reachable off
+    Linux. Guards the #2962 regression at the landlock.py:196 callsite. This
+    callsite has its own syscall requirements (CPython's post-preexec_fn
+    close_range), so it is verified separately from the shim below.
+    """
+    import reyn.security.sandbox.backends.landlock as landlock_mod
+
+    _reset_cache()
+    monkeypatch.setattr("platform.system", lambda: "Darwin")
+
+    with caplog.at_level(logging.WARNING, logger="reyn.security.sandbox.backends.seccomp"):
+        landlock_mod._child_preexec(None, SandboxPolicy(allow_subprocess=False))
+
+    assert any("seccomp" in record.message.lower() for record in caplog.records), (
+        "LandlockBackend's preexec_fn never loaded the seccomp filter — the "
+        "layer is dead in production (#2962)"
+    )
+
+
+def test_landlock_child_preexec_skips_seccomp_when_subprocess_allowed(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Tier 2: LandlockBackend's preexec_fn installs no seccomp filter when subprocess is allowed.
+
+    The negative half of the wiring pin: without it, a callsite that invoked the
+    installer unconditionally would also pass the positive test above. Documents
+    today's gate — allow_subprocess=True removes the seccomp layer entirely
+    (#2962 flags this as the open design question; not changed here).
+    """
+    import reyn.security.sandbox.backends.landlock as landlock_mod
+
+    _reset_cache()
+    monkeypatch.setattr("platform.system", lambda: "Darwin")
+
+    with caplog.at_level(logging.WARNING, logger="reyn.security.sandbox.backends.seccomp"):
+        landlock_mod._child_preexec(None, SandboxPolicy(allow_subprocess=True))
+
+    assert not caplog.records, (
+        "Expected no seccomp activity when allow_subprocess=True; "
+        f"got: {[r.message for r in caplog.records]}"
+    )
+
+
+def test_landlock_exec_shim_invokes_the_seccomp_installer(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Tier 2: the landlock_exec shim actually loads the seccomp filter.
+
+    Drives the real ``_apply_seccomp`` that ``_apply_landlock`` calls before
+    ``os.execvp``. Guards the #2962 regression at the landlock_exec.py:135
+    callsite — a plain-execvp shape whose syscall needs differ from the
+    LandlockBackend preexec_fn above, hence the separate verification.
+    """
+    import reyn.security.sandbox.landlock_exec as shim
+
+    _reset_cache()
+    monkeypatch.setattr("platform.system", lambda: "Darwin")
+
+    with caplog.at_level(logging.WARNING, logger="reyn.security.sandbox.backends.seccomp"):
+        shim._apply_seccomp(SandboxPolicy(allow_subprocess=False))
+
+    assert any("seccomp" in record.message.lower() for record in caplog.records), (
+        "The landlock_exec shim never loaded the seccomp filter — the layer is "
+        "dead in production (#2962)"
     )
