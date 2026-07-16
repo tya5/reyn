@@ -795,13 +795,22 @@ class AgentRegistry:
             self._record_agent_identity_generation(name)
         return profile
 
-    def remove(self, name: str, *, purge: bool = False) -> "list[tuple[str, Topology | None]]":
+    def remove(
+        self, name: str, *, purge: bool = False,
+    ) -> "tuple[list[tuple[str, Topology | None]], list[str]]":
         """Delete an agent. Default (#1954 Option A) = ARCHIVE (soft-delete): the
         runtime PITR generations are kept in place so rewind-to-before-delete
         works within the retention window, plus a tombstone recording the archival
         WAL seq (the slice-2 WAL-window GC hinge). ``purge=True`` is the guarded
         escape hatch — a real hard-delete (rmtree) that destroys the rewind
-        history (time-travel-to-before-purge is intentionally unsupported)."""
+        history (time-travel-to-before-purge is intentionally unsupported).
+
+        Returns ``(topology_changes, vanished_sids)`` — #2103 MUST-1's topology
+        cascade, plus (#2159) the agent's non-main spawned session ids subsumed
+        by a purge's rmtree, so the async caller (this method is sync — no WAL
+        access here) can emit ``session_vanished`` for each through the logged
+        seam. Archive cascades neither list — topology membership and sessions
+        are both preserved on disk."""
         if name == DEFAULT_AGENT_NAME:
             raise ValueError("cannot remove the default agent")
         if self._attached is not None and self._attached[0] == name:
@@ -812,6 +821,14 @@ class AgentRegistry:
         # Cancel any cached tasks / drop in-memory sessions (both paths).
         # FP-0043 Stage 3: removing an agent drops ALL its sessions (every sid).
         sids = list(self._sessions.get(name, {}).keys())
+        # #2159: enumerate the agent's spawned sessions BEFORE the in-memory map is
+        # popped below — ``_discover_session_ids`` unions the in-memory keys with
+        # on-disk discovery, and a session that was only ever spawned in-memory
+        # (never yet flushed to ``state/sessions/<sid>/``) would otherwise be missed
+        # once ``self._sessions.pop(name, None)`` clears its only record of existing.
+        vanished_sids = [
+            sid for sid in self._discover_session_ids(name) if sid != _DEFAULT_SID
+        ]
         for task_dict in (self._tasks, self._forward_tasks):
             for sid in sids:
                 task = task_dict.pop((name, sid), None)
@@ -820,6 +837,12 @@ class AgentRegistry:
         self._sessions.pop(name, None)
         self._identities.pop(name, None)
         if purge:
+            # #2159: the purge rmtree below subsumes every nested spawned session
+            # (they live under agents/<name>/state/sessions/<sid>/) with no
+            # per-session destroy record — "main" (_DEFAULT_SID) is the agent's own
+            # primary session, not a spawned one — the agent_purged record already
+            # covers it. Return the pre-pop enumeration (above) so the async caller
+            # can emit the session_vanished destroy-side mirror for each.
             # Explicit hard-delete — agents/<name>/ is reyn-managed. Destroys the
             # runtime PITR generations (rewind-to-before-purge is intentionally
             # unsupported); the real escape hatch for a genuine delete.
@@ -832,7 +855,7 @@ class AgentRegistry:
             # so drop it from every topology (a team losing its leader / an
             # emptied topology is removed entirely). #2103 MUST-1: return the
             # cascade's topology changes so the async caller emits them logged.
-            return self._cascade_agent_removal(name)
+            return self._cascade_agent_removal(name), vanished_sids
         else:
             # #1954 Option A: archive-default. Keep generations in place (rewind
             # works) + tombstone with the archival WAL seq. Hidden from active
@@ -845,7 +868,7 @@ class AgentRegistry:
             # window (slice 2).
             seq = self._state_log.last_durable_seq if self._state_log is not None else 0
             (target / ARCHIVED_MARKER).write_text(str(seq), encoding="utf-8")
-        return []  # archive does not cascade — topology membership preserved (#1954)
+        return [], []  # archive does not cascade — topology + sessions preserved (#1954)
 
     async def archive_agent(self, name: str, *, purge: bool = False) -> None:
         """#2103 S2b: the action-layer DELETE seam — archive (or purge) the agent
@@ -872,12 +895,21 @@ class AgentRegistry:
             aclose_event_store = getattr(session, "aclose_event_store", None)
             if callable(aclose_event_store):
                 await aclose_event_store()
-        cascade_changes = self.remove(name, purge=purge)
+        cascade_changes, vanished_sids = self.remove(name, purge=purge)
         if self._state_log is not None:
             await self._state_log.append(
                 "agent_purged" if purge else "agent_archived",
                 entity_kind="agent", name=name,
             )
+            # #2159: a purge's rmtree subsumes the agent's spawned sessions — emit
+            # the destroy-side session_vanished mirror for each (the same genuine-
+            # destroy record remove_session's record=True path appends, #2154) so
+            # the WAL keeps create↔destroy symmetry instead of the sessions just
+            # vanishing from the WAL's perspective with no destroy record.
+            for sid in vanished_sids:
+                await self._state_log.append(
+                    "session_vanished", entity_kind="session", name=name, sid=sid,
+                )
             # #2103 MUST-1: emit the purge cascade's topology changes through the
             # logged seam so rewind reconstructs the topology config-set consistently.
             for tname, topo in cascade_changes:
@@ -2483,9 +2515,25 @@ class AgentRegistry:
                 seq = self._archived_seq(name)
                 if seq is None or seq >= floor:
                     continue
+                # #2159: same cascade-emit gap as the explicit remove(purge=True)
+                # path — this rmtree ALSO subsumes the agent's nested spawned
+                # sessions with no per-session destroy record. Enumerate from disk
+                # before the rmtree (main excluded — it's the agent's own primary
+                # session, covered by no vanish record of its own here either way).
+                vanished_sids = [
+                    sid for sid in self._discover_session_ids(name)
+                    if sid != _DEFAULT_SID
+                ]
                 # #2187 S1: the Task backend is GLOBAL (not under this agent dir) — the
                 # #2180 per-agent close-before-rmtree is gone.
                 shutil.rmtree(self._dir / name, ignore_errors=True)
+                # #2159: emit the destroy-side session_vanished mirror for each
+                # subsumed session through the logged seam (async GC path already
+                # awaits emits below for the topology cascade — same shape).
+                for sid in vanished_sids:
+                    await self._state_log.append(
+                        "session_vanished", entity_kind="session", name=name, sid=sid,
+                    )
                 # Now a permanent hard-delete → drop the (previously preserved)
                 # topology membership so no dangling reference is left behind.
                 # #2103 MUST-1: emit the cascade's topology changes through the
