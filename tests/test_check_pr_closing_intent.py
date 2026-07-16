@@ -118,8 +118,65 @@ def test_clean_pr_multiple_issues_no_contradictions():
     assert findings == []
 
 
+def test_discussing_marker_exempts_check1_for_named_issue():
+    """Tier 1: a `closing-check: discussing #N` marker exempts check 1 for N.
+
+    The mention-only declaration form: the body quotes a closing keyword to
+    explain it (as this script's own PR must) rather than declaring intent,
+    so the declared-but-unresolved contradiction does not apply to N.
+    """
+    body = (
+        "<!-- closing-check: discussing #2620 -->\n"
+        "We quote `Closes #2620` as a worked example."
+    )
+    findings = m.check_contradictions(body, closing_refs=[])
+    assert findings == []
+
+
+def test_discussing_marker_does_not_exempt_a_genuine_declaration():
+    """Tier 1: the marker is per-issue — it must not become a body-wide bypass.
+
+    A body that both declares (`Closes #3007`) and discusses (#2620) keeps
+    check 1 live on the genuine declaration. A body-wide marker would
+    silently drop check-1 protection from the real `Closes`, turning the
+    escape hatch into the very defect this gate exists to catch.
+    """
+    body = (
+        "Closes #3007\n"
+        "<!-- closing-check: discussing #2620 -->\n"
+        "We quote `Closes #2620` as a worked example."
+    )
+    # #3007 declared but NOT resolved by the parser → check 1 must still fire.
+    findings = m.check_contradictions(body, closing_refs=[])
+    assert _checks(findings) == [(1, 3007)]
+
+
+def test_discussing_marker_cannot_silence_an_actual_closure():
+    """Tier 1: the marker never reaches the parser's output.
+
+    "discussing #N" while `closingIssuesReferences` contains N is itself a
+    contradiction (author says mention-only, GitHub says it closes) → check
+    2. An exemption that suppressed this would reintroduce the #3003 defect.
+    """
+    body = "<!-- closing-check: discussing #2827 -->\nWe discuss `Closes #2827`."
+    findings = m.check_contradictions(body, closing_refs=[2827])
+    assert _checks(findings) == [(2, 2827)]
+
+
+def test_find_discussing_declarations_reads_multiple_issue_numbers():
+    """Tier 1: one marker can name several issue numbers."""
+    body = "<!-- closing-check: discussing #2620 #2972 #2827 -->"
+    assert m.find_discussing_declarations(body) == {2620, 2972, 2827}
+
+
 def test_find_closing_declarations_strips_backticks():
-    """Tier 1: the closing-declaration finder itself sees through backticks."""
+    """Tier 1: the closing-declaration finder itself sees through backticks.
+
+    GitHub does NOT honor a fenced keyword (verified: #2990's fenced
+    `Closes #2620` left `closingIssuesReferences` empty and #2620 open), so
+    this matcher is deliberately stricter than GitHub's in the direction
+    that surfaces the contradiction.
+    """
     assert m.find_closing_declarations("`Fixes #9`") == {9}
 
 
