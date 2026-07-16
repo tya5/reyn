@@ -25,7 +25,6 @@ TRACKED_CONFIGS = [
     Path("dogfood/fixtures/fizzbuzz_5bugs_interleaved/reyn.yaml"),
     Path("dogfood/fixtures/fizzbuzz_bug_planted/reyn.yaml"),
     Path("dogfood/fixtures/fizzbuzz_tdd/reyn.yaml"),
-    Path("dogfood/fixtures/skill_importer_chain/reyn.yaml"),
 ]
 
 _HARDCODED_GEMINI = re.compile(r"[a-z]+/gemini-")
