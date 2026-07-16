@@ -18,7 +18,7 @@ from reyn.tools.descriptions._types import ParamDescription, ToolDescription
 
 hooks_add = ToolDescription(
     tool_name="hooks_add",
-    surfaced="router + phase (gates.router=allow, gates.phase=allow)",
+    surfaced="router only (gates.router=allow, gates.phase=deny)",
     purpose=(
         "Let the agent expand its own hooks (self-directed continuation or "
         "recurring injected context), bounded by the write-gate + "
