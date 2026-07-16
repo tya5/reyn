@@ -37,14 +37,14 @@ Read/glob/grep anywhere under the project root. Write/edit/delete only under `.r
 | `.reyn/approvals.yaml` | The persistent approval store — only the runtime authorization flow writes here | Permanent. It *is* the approval gate; there is no later use-gate, so a direct write would silently activate a never-approved grant on the next startup (#1199). |
 | `.reyn/index/sources.yaml` | Index source registry | Transitional — carved out until the index write-gate is effective end-to-end (#1320: the postprocessor scope must carry a sandbox-policy source; the S3.4 part1 op-layer gate alone does not fire in the real index flow). |
 
-**Protect-at-use (principle).** A config-write carve-out is *redundant* when the capability it configures is gated downstream at use time. `.reyn/mcp.yaml` and `.reyn/cron.yaml` were therefore **removed** from the carve-out:
+**Protect-at-use (principle).** A config-write carve-out is *redundant* when the capability it configures is gated downstream at use time. `.reyn/config/mcp.yaml` and `.reyn/config/cron.yaml` were therefore **removed** from the carve-out:
 
-- `.reyn/mcp.yaml` — writing it (installing a server) grants nothing on its own. *Using* a server still passes a per-server check at call time (`require_mcp`), so download + execute of the server package is gated regardless of who wrote the config.
-- `.reyn/cron.yaml` — registering a job goes through the standard `require_file_write` gate against the canonical config path; fired jobs run only under a user-launched in-process scheduler, and each fired op is itself permission-gated.
+- `.reyn/config/mcp.yaml` — writing it (installing a server) grants nothing on its own. *Using* a server still passes a per-server check at call time (`require_mcp`), so download + execute of the server package is gated regardless of who wrote the config.
+- `.reyn/config/cron.yaml` — registering a job goes through the standard `require_file_write` gate against the canonical config path; fired jobs run only under a user-launched in-process scheduler, and each fired op is itself permission-gated.
 
 An actor that legitimately needs to write a *still-protected* path must declare it explicitly (e.g. `permissions.file.write: [{path: ".reyn/index/sources.yaml"}]` in `reyn.yaml`) and obtain the corresponding approval. The intended route remains the appropriate gated op handler — not direct file writes.
 
-**Residual risk.** With mcp/cron at protect-at-use, a safe-mode step *can* now write `.reyn/mcp.yaml` / `.reyn/cron.yaml` directly via the broad `.reyn/` zone. This is intentional and bounded: the write changes only inert configuration. The authority it appears to grant (an MCP server, a cron job) is not realized until the gated use path (`require_mcp` / scheduler + op gates) is crossed, which a config write cannot bypass. The approval store keeps its carve-out precisely because it has no such downstream gate.
+**Residual risk.** With mcp/cron at protect-at-use, a safe-mode step *can* now write `.reyn/config/mcp.yaml` / `.reyn/config/cron.yaml` directly via the broad `.reyn/` zone. This is intentional and bounded: the write changes only inert configuration. The authority it appears to grant (an MCP server, a cron job) is not realized until the gated use path (`require_mcp` / scheduler + op gates) is crossed, which a config write cannot bypass. The approval store keeps its carve-out precisely because it has no such downstream gate.
 
 ### Layer 2: declared capability
 
@@ -112,7 +112,7 @@ The reason is composition safety: one actor's approved capability must not trans
 
 ## `mcp_install` permission {#mcp_install-permission}
 
-> Compat-shim form during the [Collapse arc](#collapse-arc-571). The canonical decomposition is `file.write: [.reyn/mcp.yaml]` + `http.get: [{host: registry.modelcontextprotocol.io}]` + `secret.write: [<env_key>]`; the bool form below is preserved through Phase 4.
+> Compat-shim form during the [Collapse arc](#collapse-arc-571). The canonical decomposition is `file.write: [.reyn/config/mcp.yaml]` + `http.get: [{host: registry.modelcontextprotocol.io}]` + `secret.write: [<env_key>]`; the bool form below is preserved through Phase 4.
 
 `mcp_install` gates **adding a new MCP server to the configuration** — it is distinct from `permissions.mcp` (which gates runtime tool calls from an already-configured server).
 
@@ -255,7 +255,7 @@ is configured — there is no regression for environments that already use env v
 
 The permission system is part of the OS runtime, not a separate layer above it. Every side-effect performed by reyn — whether from workflow code, op handler, or any other OS-internal path — goes through the same permission resolver against the calling workflow's `PermissionDecl`. There is no inside/outside split: the OS uses the permission system as its core abstraction for all I/O.
 
-Concretely, `op_runtime/mcp_install.py` writing `.reyn/mcp.yaml` routes through `reyn.api.safe.file.write` — the same gate a workflow-level safe-mode python step would use. The PermissionDecl in scope is the workflow's; the OS honors it uniformly regardless of where the call originates. The older "OS gates its callers, not itself" framing is dissolved by this: a single uniform mechanism, no cyclic concern.
+Concretely, `op_runtime/mcp_install.py` writing `.reyn/config/mcp.yaml` routes through `reyn.api.safe.file.write` — the same gate a workflow-level safe-mode python step would use. The PermissionDecl in scope is the workflow's; the OS honors it uniformly regardless of where the call originates. The older "OS gates its callers, not itself" framing is dissolved by this: a single uniform mechanism, no cyclic concern.
 
 ## Declaration axis taxonomy
 
@@ -283,9 +283,9 @@ Every other former bool axis (`mcp_install`, `mcp_drop_server`, `cron_register`,
 
 | Former bool axis | Equivalent list-axis decomposition |
 |---|---|
-| `mcp_install: true` | `file.write: [.reyn/mcp.yaml]` + `http.get: [{host: registry.modelcontextprotocol.io}]` + `secret.write: [<env_key>]` |
-| `mcp_drop_server: true` | `file.write: [.reyn/mcp.yaml]` |
-| `cron_register: true` | `file.write: [.reyn/cron.yaml]` |
+| `mcp_install: true` | `file.write: [.reyn/config/mcp.yaml]` + `http.get: [{host: registry.modelcontextprotocol.io}]` + `secret.write: [<env_key>]` |
+| `mcp_drop_server: true` | `file.write: [.reyn/config/mcp.yaml]` |
+| `cron_register: true` | `file.write: [.reyn/config/cron.yaml]` |
 | `index_drop: true` | `file.write: [.reyn/index/sources.yaml]` + delete on `.reyn/index/<source>/index.db` |
 
 The criterion is: **if a capability reduces to a finite I/O scope (file path / host / secret key), use a list axis; otherwise use bool**. Currently the only irreducible primitive is shell.
@@ -294,8 +294,8 @@ The criterion is: **if a capability reduces to a finite I/O scope (file path / h
 
 Bool axes carried a per-instance approval surface (= `mcp_install:<server_id>` keyed per server). After collapse:
 
-- **MCP per-server granularity is preserved** at *call time* via the existing `permissions.mcp: [<server>]` axis. Installing a server (= writing `.reyn/mcp.yaml`) becomes a one-step grant; using a specific server still requires the call-time per-server check, so download + execute of the server's package still passes a per-server gate.
-- **Cron per-job granularity is reduced** to "may write `.reyn/cron.yaml` at all", but cron-fired workflows still go through their own runtime permission gates when they execute. The granularity reduction does not bypass downstream protections.
+- **MCP per-server granularity is preserved** at *call time* via the existing `permissions.mcp: [<server>]` axis. Installing a server (= writing `.reyn/config/mcp.yaml`) becomes a one-step grant; using a specific server still requires the call-time per-server check, so download + execute of the server's package still passes a per-server gate.
+- **Cron per-job granularity is reduced** to "may write `.reyn/config/cron.yaml` at all", but cron-fired workflows still go through their own runtime permission gates when they execute. The granularity reduction does not bypass downstream protections.
 - **Index per-source granularity is reduced** — there is no equivalent post-write gate. Drop is destructive and the per-source distinction was operator-UX, not security; the reduction is accepted.
 
 ### `allowed_mcp` is an ACL filter, not a capability

@@ -545,7 +545,7 @@ Fields:
 Handler lifecycle:
 1. Fetches `server.json` via `RegistryClient`
 2. Checks runtime command availability (`npx` / `uvx` / `docker` / `dnx`)
-3. Gates via `PermissionResolver.require_file_write` (= `.reyn/mcp.yaml`) + `require_http_get` (= registry host); the legacy `require_mcp_install` bool-axis gate has been removed
+3. Gates via `PermissionResolver.require_file_write` (= `.reyn/config/mcp.yaml`) + `require_http_get` (= registry host); the legacy `require_mcp_install` bool-axis gate has been removed
 4. Prompts for `isSecret=true` env vars via `intervention_bus`; each `save_secret` routes through `PermissionResolver.require_secret_write` (= Phase 6 wildcard `"*"` covers the runtime-determined key set)
 5. Writes `mcp.servers.<name>` to the target scope config file
 6. Emits `mcp_server_installed` event (P6) — key names only, no values

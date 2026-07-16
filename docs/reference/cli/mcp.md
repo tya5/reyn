@@ -36,10 +36,10 @@ reyn mcp refresh [--project PATH]
 
 Use cases:
 - After `reyn mcp install` adds a new server, force a re-probe so active chat sessions see it on the next turn.
-- After editing `.reyn/mcp.yaml` by hand, push the change into the active cache.
+- After editing `.reyn/config/mcp.yaml` by hand, push the change into the active cache.
 - As a periodic operator command to refresh tool availability without restarting chat sessions.
 
-**Passive auto-refresh**: active chat sessions also watch `reyn.yaml` mtime + `.reyn/mcp.yaml` mtime on each turn boundary; an edit to either is picked up without the explicit `reyn mcp refresh` invocation. The explicit CLI subcommand remains useful for the use cases above (= operator-driven re-probe / scripted refresh).
+**Passive auto-refresh**: active chat sessions also watch `reyn.yaml` mtime + `.reyn/config/mcp.yaml` mtime on each turn boundary; an edit to either is picked up without the explicit `reyn mcp refresh` invocation. The explicit CLI subcommand remains useful for the use cases above (= operator-driven re-probe / scripted refresh).
 
 ## Overview
 
@@ -59,7 +59,7 @@ The chat router exposes the same install surface as four `mcp` verbs split along
 | `reyn mcp search <QUERY>` | `mcp__search_registry({text})` | Identical registry-API call |
 | `reyn mcp install <SERVER_ID>` | `mcp__install_registry({server_id})` | Identical registry-driven install |
 | `reyn mcp install --source npm:<pkg>[@v]` / `pypi:<pkg>[==v]` / `docker:<img>[:tag]` / GitHub URL | `mcp__install_package({kind, identifier, version?})` | LLM passes structured fields; the handler composes the source specifier |
-| _(no CLI; hand-edit `.reyn/mcp.yaml`)_ | `mcp__install_local({name, command, args})` | New chat-only surface: register a local executable (e.g. an LLM-authored MCP script) directly as a stdio server |
+| _(no CLI; hand-edit `.reyn/config/mcp.yaml`)_ | `mcp__install_local({name, command, args})` | New chat-only surface: register a local executable (e.g. an LLM-authored MCP script) directly as a stdio server |
 | `reyn mcp list` | `mcp__list_servers()` | |
 | `reyn mcp remove <NAME>` | `mcp__drop_server({server})` | |
 
@@ -67,7 +67,7 @@ The CLI and chat paths converge at `op_runtime/mcp_install.py`, so permission ga
 
 **Persistence asymmetry.** The two paths differ in one respect: whether the new server config is written when the server can't be reached.
 
-- **Chat-driven install, mid-turn, with a live per-session reloader** — probe-then-commit: the server is probed (spawn/connect + `list_tools`) *before* anything is written. A failed or cancelled probe leaves `.reyn/mcp.yaml` unchanged (no half-install) — this fits the immediate use case, since the LLM wanted to use the server this same turn.
+- **Chat-driven install, mid-turn, with a live per-session reloader** — probe-then-commit: the server is probed (spawn/connect + `list_tools`) *before* anything is written. A failed or cancelled probe leaves `.reyn/config/mcp.yaml` unchanged (no half-install) — this fits the immediate use case, since the LLM wanted to use the server this same turn.
 - **`reyn mcp install` (CLI) or any install with no live reloader attached** — writes the config without probing first. The server may currently be unreachable; this fits the deferred use case of configuring a server to come up later.
 
 Both paths converge again after the write (or non-write): permission gates, secret detection, and audit events are unaffected by which path ran.
