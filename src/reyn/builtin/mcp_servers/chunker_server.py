@@ -31,9 +31,23 @@ a fraction of chunk_size, suffix-merged into each chunk's ``.text`` so
 consecutive chunks physically share a tail/head span) -- ``RecursiveChunker``
 itself has no overlap parameter; this is chonkie's own documented two-step
 shape (chunk, then refine), not a workaround.
+
+**Each chunk carries its own ``content_hash`` / ``chunk_index`` /
+``est_tokens`` (#2972).** These were previously computed by the ingest
+pipeline shelling out to a bundled python helper, because the pipeline
+DSL's R1 expression language has no hash / string-length / enumerate
+primitive. That shell-out bound reyn to
+whatever ``python3`` the ambient ``PATH`` resolved to (broken under
+``pipx install reyn``, a non-activated venv, or any PATH whose ``python3``
+is not reyn's own interpreter) -- i.e. reyn was assuming ownership of a
+python runtime it does not own. The party that already holds the chunk text
+is the right one to describe it, so the three derived fields are simply part
+of what ``chunk`` RETURNS. No new tool, no new server, and the ingest
+pipeline needs no python of its own.
 """
 from __future__ import annotations
 
+import hashlib
 from typing import Any
 
 
@@ -47,11 +61,31 @@ def chunk_text(
     ``overlap_ratio`` (fraction of ``size``) of suffix overlap between
     consecutive chunks.
 
-    Returns an ordered list of
-    ``{"text", "token_count", "start_index", "end_index"}`` -- ``start_index``/
-    ``end_index`` are offsets into the ORIGINAL text (pre-overlap-merge),
-    letting a caller reconstruct provenance even though ``text`` itself
-    may include a merged-in overlap span.
+    Returns an ordered list of ``{"text", "token_count", "start_index",
+    "end_index", "content_hash", "chunk_index", "est_tokens"}``.
+
+    ``start_index``/``end_index`` are offsets into the ORIGINAL text
+    (pre-overlap-merge), letting a caller reconstruct provenance even though
+    ``text`` itself may include a merged-in overlap span.
+
+    The three derived fields (#2972 -- see module docstring for why they live
+    here rather than in a python shell-out):
+
+    - ``content_hash`` -- sha256 of the chunk's TEXT. The ingest pipeline's
+      C5 change-detection key: an unchanged chunk re-hashes identically and
+      is skipped rather than re-embedded.
+    - ``chunk_index`` -- this chunk's 0-based position in the returned order.
+      Combined with the caller's own source path it forms the stable
+      add/update/remove diff identity (R1 cannot enumerate a list).
+    - ``est_tokens`` -- the chars/4 estimate of this chunk's embedding cost
+      (the SAME fallback heuristic ``EmbeddingProvider.estimate_tokens``
+      uses, e.g. ``reyn.data.embedding.litellm_provider``). It funds ONLY the
+      pipeline's "tokens saved by dedup" figure, which is necessarily a
+      counterfactual: the sole way to learn a SKIPPED chunk's true token
+      count is to send it to the embedder -- i.e. to spend exactly what the
+      skip exists to avoid. Deliberately NOT ``token_count``: that is
+      chonkie's own tokenizer count (character-based by default here), which
+      measures a different thing than the embedder would bill.
     """
     from chonkie import OverlapRefinery, RecursiveChunker  # noqa: PLC0415
 
@@ -68,8 +102,11 @@ def chunk_text(
             "token_count": c.token_count,
             "start_index": c.start_index,
             "end_index": c.end_index,
+            "content_hash": hashlib.sha256(c.text.encode("utf-8")).hexdigest(),
+            "chunk_index": index,
+            "est_tokens": max(1, len(c.text) // 4),
         }
-        for c in chunks
+        for index, c in enumerate(chunks)
     ]
 
 
@@ -91,7 +128,10 @@ def build_server() -> Any:
         (default 0.125 = 12.5%, within the 10-15% default band) of
         suffix overlap between consecutive chunks. Both are tunable per
         call -- there is no hardcoded chunk size. Returns
-        [{"text", "token_count", "start_index", "end_index"}, ...]."""
+        [{"text", "token_count", "start_index", "end_index",
+        "content_hash", "chunk_index", "est_tokens"}, ...] -- content_hash
+        is the chunk text's sha256 (change-detection key), chunk_index its
+        0-based position, est_tokens the chars/4 embedding-cost estimate."""
         return chunk_text(
             text,
             size=size,

@@ -35,17 +35,17 @@
 #   servers:
 #     reyn_vector_store:
 #       type: stdio
-#       command: python
-#       args: ["-m", "reyn.builtin.mcp_servers.vector_store_server"]
-#       # Tools: upsert(db_path, items) / query(db_path, vector, top_k,
-#       # filters) / list_metadata(db_path, filters, limit) /
-#       # delete(db_path, ids). Every call takes db_path explicitly --
-#       # there is no server-side default; you always name the sqlite file.
+#       command: reyn-rag-vector-store
+#       # Tools: upsert(db_path, items, vectors, embedding_model,
+#       # parent_context) -- items/vectors are parallel arrays, paired by
+#       # index server-side / query(db_path, vector, top_k, filters) /
+#       # list_metadata(db_path, filters, limit) / delete(db_path, ids).
+#       # Every call takes db_path explicitly -- there is no server-side
+#       # default; you always name the sqlite file.
 #
 #     reyn_chunker:
 #       type: stdio
-#       command: python
-#       args: ["-m", "reyn.builtin.mcp_servers.chunker_server"]
+#       command: reyn-rag-chunker
 #       # Tool: chunk(text, size=400, overlap_ratio=0.125,
 #       # min_characters_per_chunk=24). size/overlap are real parameters,
 #       # not baked-in constants -- tune them per document type.
@@ -67,14 +67,32 @@
 #       # guidance, naming the exact server, rather than a bare transport
 #       # exception.
 #
-# ⚠️ rag_ingest ALSO requires that `python3` on your PATH be reyn's own
-# interpreter -- it shells out to `python3 -m reyn.builtin.rag_ingest_helpers`
-# and sandboxed_exec forwards the ambient PATH. A `pipx install reyn` or a
-# non-activated venv will NOT work. Check with:
-#   python3 -c 'import reyn; print(reyn.__file__)'
-# It must print the same install you run reyn from. rag_ingest's step-0
-# pre-flight reports this rather than failing opaquely, but it is a real
-# limitation (tracked on the FP-0063 umbrella), not a formality.
+# Why `command: reyn-rag-chunker` and not `python -m ...`?
+#
+# Both work, and the choice is YOURS -- reyn starts whatever `command` you
+# write, as-is, in any language, and never rewrites it. Preparing the
+# runtime an MCP server needs is your responsibility, not reyn's.
+#
+# The console scripts are RECOMMENDED because they remove one way to get
+# it wrong. pip stamps a console script's shebang with the absolute path of
+# the interpreter it was installed into, so `reyn-rag-chunker` always runs
+# under the python that actually has reyn. A bare `python`/`python3` is
+# resolved from your PATH at launch time instead, which is a different
+# interpreter under `pipx install reyn`, a non-activated venv, or a shell
+# whose PATH puts another python first -- there the server fails to start
+# with `No module named reyn`.
+#
+# If you prefer the module form, point it at a python that has reyn --
+# either activate the venv you installed reyn into, or give the absolute
+# path:
+#   command: /path/to/venv/bin/python
+#   args: ["-m", "reyn.builtin.mcp_servers.chunker_server"]
+# Check any candidate with:
+#   <that python> -c 'import reyn; print(reyn.__file__)'
+#
+# Either way, rag_ingest's step-0 pre-flight (X1) probes each server for
+# real BEFORE any embedding spend and names the one that failed with a
+# concrete remedy, rather than failing opaquely.
 #
 # Once the three servers above are configured + granted, run the builtin
 # pipelines directly (no separate skill needed -- invoke-by-name):

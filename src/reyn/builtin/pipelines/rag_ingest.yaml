@@ -13,20 +13,42 @@
 # backend. Every tunable is a `ctx.*` INPUT with a sane default, never a
 # constant baked into a step (R4).
 #
-# ⚠️ ENVIRONMENT REQUIREMENT -- this is NOT yet turnkey. This pipeline
-# shells out to `python3` (for hashing / string length / zip-by-index, the
-# three things the R1 expression language cannot express), and
-# `sandboxed_exec` forwards the ambient PATH, so `python3` MUST be the same
-# interpreter reyn itself runs under. A `pipx install reyn`, a
-# non-activated venv, or any PATH whose `python3` differs will FAIL. The
-# DSL cannot reach `sys.executable` today; closing this needs a core/DSL
-# decision, tracked on the FP-0063 umbrella. Step 0 pre-flights it so the
-# failure is named rather than opaque -- but it is a real limitation, not
-# a formality.
+# This pipeline runs NO python of its own. It calls MCP tools and reyn's
+# own ops -- nothing else. reyn does not own the operator's python runtime
+# and must not assume one, so the four things the R1 expression language
+# cannot express each live with the party that already holds the relevant
+# data: `glob_files` (reyn's own op) walks the folder, the chunker returns
+# each chunk's own content_hash/chunk_index/est_tokens, and the vector
+# store pairs items with vectors by index inside `upsert`.
+#
+# Preparing the MCP servers' runtime is the OPERATOR's responsibility --
+# reyn ships their code in the wheel and launches whatever `command` the
+# config names, in any language. See
+# docs/cookbook/configs/with-builtin-rag-mcp.yaml for the recommended
+# console-script form (it works under pipx; `python -m ...` depends on the
+# ambient interpreter and can fail).
 #
 # Inputs (all optional except `input_path`/`output_db`):
-#   input_path          -- (required) a document file OR a folder of them.
+#   input_path          -- (required) an ABSOLUTE path to a document file
+#                          OR a folder of them. Absolute because the file
+#                          discovery below globs it directly: an absolute
+#                          pattern yields absolute source paths (which is
+#                          what `file://` conversion and the stored
+#                          source_path column both need).
 #   output_db           -- (required) the sqlite file to write into.
+#   file_extensions     -- extensions to ingest when input_path is a folder
+#                          (default: the proposal-0063 target formats
+#                          txt/md/pdf/xlsx/pptx/docx). Written as glob
+#                          character classes so the match is
+#                          case-insensitive (`[pP][dD][fF]` also finds
+#                          `.PDF`) on case-sensitive filesystems too.
+#   max_files           -- cap on files discovered per extension (default
+#                          10000). Passed EXPLICITLY to every glob_files
+#                          call: that op's own default is 50, and a folder
+#                          with more files than the cap is truncated
+#                          SILENTLY (no error) -- #2994. Left implicit,
+#                          document 51+ of a real corpus would vanish from
+#                          the index with nothing in the summary to say so.
 #   chunk_size          -- chunker token size (default 400 -- the 2026
 #                          256-512-token persistent-RAG band, NOT FP-0057's
 #                          800-1024 (that number is for throwaway ephemeral
@@ -62,10 +84,9 @@ pipeline: ingest
 description: >-
   FP-0063 P3 builtin RAG ingest: chunk -> embed -> store a file or folder
   into a user-named sqlite vector store, incrementally by content_hash
-  (add/update/remove). Pre-flights its 3 MCP servers AND its python3
-  helper before any embedding spend (X1); reports spend AFTER the dedup
-  skip (X2a/X5). REQUIRES that `python3` on PATH be reyn's own
-  interpreter -- see the file header.
+  (add/update/remove). Pre-flights its 3 MCP servers before any embedding
+  spend (X1); reports spend AFTER the dedup skip (X2a/X5). Runs no python
+  of its own -- MCP tools and reyn ops only (#2972).
 steps:
   # ---- inputs-with-defaults (R4: never a constant baked into a step) ----
   - transform: {value: "get(ctx, 'chunk_size', 400)", output: chunk_size}
@@ -74,6 +95,12 @@ steps:
   - transform: {value: "get(ctx, 'markitdown_server', 'reyn_markitdown')", output: markitdown_server}
   - transform: {value: "get(ctx, 'chunker_server', 'reyn_chunker')", output: chunker_server}
   - transform: {value: "get(ctx, 'vectorstore_server', 'reyn_vector_store')", output: vectorstore_server}
+  - transform:
+      value: >-
+        get(ctx, 'file_extensions', ['[tT][xX][tT]', '[mM][dD]', '[pP][dD][fF]',
+                                     '[xX][lL][sS][xX]', '[pP][pP][tT][xX]', '[dD][oO][cC][xX]'])
+      output: file_extensions
+  - transform: {value: "get(ctx, 'max_files', 10000)", output: max_files}
 
   # ---- X1: pre-flight -- a REAL probe call per server (not just "is it
   # configured"), schema-gated to status=="ok" so an MCP-layer error
@@ -86,25 +113,18 @@ steps:
   - transform:
       value: >-
         {markitdown: "MarkItDown MCP server '" + ctx.markitdown_server + "' is unreachable. (1) it may not be enabled yet -- builtin MCP configs ship INERT by design; add/uncomment mcp.servers." + ctx.markitdown_server + " in reyn.yaml (or reyn.local.yaml) and set permissions.mcp." + ctx.markitdown_server + ": allow -- see docs/cookbook/configs/with-builtin-rag-mcp.yaml. (2) if it is already enabled, uvx likely failed to fetch markitdown-mcp from PyPI on first run (e.g. a firewalled network) -- pre-install it instead of relying on the first-run fetch: pip install markitdown-mcp.",
-         chunker: "Chunker MCP server '" + ctx.chunker_server + "' is unreachable. (1) enable it: add/uncomment mcp.servers." + ctx.chunker_server + " in reyn.yaml and set permissions.mcp." + ctx.chunker_server + ": allow -- see docs/cookbook/configs/with-builtin-rag-mcp.yaml. (2) if already enabled, install its dependency: pip install \"reyn[builtin-rag]\" (chonkie).",
-         vectorstore: "Vector-store MCP server '" + ctx.vectorstore_server + "' is unreachable. (1) enable it: add/uncomment mcp.servers." + ctx.vectorstore_server + " in reyn.yaml and set permissions.mcp." + ctx.vectorstore_server + ": allow -- see docs/cookbook/configs/with-builtin-rag-mcp.yaml. (2) if already enabled, install its dependencies: pip install \"reyn[builtin-rag]\" (apsw + sqlite-vec).",
-         helpers: "`python3 -m reyn.builtin.rag_ingest_helpers` failed -- the `python3` on PATH cannot import reyn. This pipeline shells out to `python3` for the three things the R1 expression language cannot do (hash, string length, zip-by-index), and it must be the SAME interpreter reyn itself runs under: sandboxed_exec passes the ambient PATH through, and the DSL cannot reach sys.executable today (a known FP-0063 limitation -- reyn is NOT turnkey in this respect; see the umbrella issue). (1) run reyn from an environment whose `python3` IS reyn's interpreter -- typically `source .venv/bin/activate` for the venv you installed reyn into; note a `pipx install reyn` or a non-activated venv will NOT satisfy this. (2) check what you actually have: `python3 -c 'import reyn; print(reyn.__file__)'` -- it must print the SAME install that is running this pipeline (if it prints a different reyn, that is the bug, and this pre-flight cannot detect it for you)."}
+         chunker: "Chunker MCP server '" + ctx.chunker_server + "' is unreachable. (1) enable it: add/uncomment mcp.servers." + ctx.chunker_server + " in reyn.yaml and set permissions.mcp." + ctx.chunker_server + ": allow -- see docs/cookbook/configs/with-builtin-rag-mcp.yaml -- and check its `command` actually starts on YOUR machine: reyn launches whatever the config names and does not prepare the runtime for you. The `reyn-rag-chunker` console script is the recommended form (its shebang points at reyn's own interpreter, so it works under pipx, unlike `python -m ...` which depends on the ambient python). (2) if already enabled, install its dependency: pip install \"reyn[builtin-rag]\" (chonkie).",
+         vectorstore: "Vector-store MCP server '" + ctx.vectorstore_server + "' is unreachable. (1) enable it: add/uncomment mcp.servers." + ctx.vectorstore_server + " in reyn.yaml and set permissions.mcp." + ctx.vectorstore_server + ": allow -- see docs/cookbook/configs/with-builtin-rag-mcp.yaml -- and check its `command` actually starts on YOUR machine: reyn launches whatever the config names and does not prepare the runtime for you. The `reyn-rag-vector-store` console script is the recommended form (its shebang points at reyn's own interpreter, so it works under pipx, unlike `python -m ...` which depends on the ambient python). (2) if already enabled, install its dependencies: pip install \"reyn[builtin-rag]\" (apsw + sqlite-vec)."}
       output: remedies
 
-  # The helper-interpreter probe -- part of X1 (a reachability check, so it
-  # rides the same pre-flight list as the MCP servers below). A FAILING
-  # `shell` step does NOT raise: `shell` returns stdout ONLY (returncode and
-  # stderr are dropped above the canonical seam by #2593's locked design, so
-  # `meta` is always empty for a shell step -- there is no `meta.returncode`
-  # to read here). Empty stdout means no `structured` key, which is what this
-  # detects. Without it, a `python3` that cannot import reyn surfaces later as
-  # an opaque "path 'ctx.files_raw.structured' is absent".
-  - shell:
-      command: "python3 -m reyn.builtin.rag_ingest_helpers probe"
-      output: helper_probe
-  - transform:
-      value: "get(ctx.helper_probe, 'structured', null) != null"
-      output: helpers_ok
+  # X1 pre-flight is now PURELY MCP reachability (#2972). It used to also
+  # probe "can the ambient python3 import reyn?" -- a question that only
+  # existed because this pipeline shelled out to python, i.e. it was reyn
+  # checking an assumption reyn had no business making. With the shell-outs
+  # gone, the only prerequisite left is the one the operator actually owns:
+  # are the MCP servers they configured reachable? That is the #2932
+  # `require_mcp` shape -- a real probe call per server, answered with cause
+  # + concrete remedies the operator can act on.
   - parallel:
       on_error: continue
       branches:
@@ -143,8 +163,7 @@ steps:
       value: >-
         [{name: "markitdown (" + ctx.markitdown_server + ")", ok: ctx.reachable.markitdown, remedy: ctx.remedies.markitdown},
          {name: "chunker (" + ctx.chunker_server + ")", ok: ctx.reachable.chunker, remedy: ctx.remedies.chunker},
-         {name: "vectorstore (" + ctx.vectorstore_server + ")", ok: ctx.reachable.vectorstore, remedy: ctx.remedies.vectorstore},
-         {name: "helpers (python3 -m reyn.builtin.rag_ingest_helpers)", ok: ctx.helpers_ok, remedy: ctx.remedies.helpers}]
+         {name: "vectorstore (" + ctx.vectorstore_server + ")", ok: ctx.reachable.vectorstore, remedy: ctx.remedies.vectorstore}]
       output: preflight_checks
   - transform:
       value: "count(filter(ctx.preflight_checks, c -> not c.ok)) == 0"
@@ -171,6 +190,8 @@ steps:
             markitdown_server: ctx.markitdown_server
             chunker_server: ctx.chunker_server
             vectorstore_server: ctx.vectorstore_server
+            file_extensions: ctx.file_extensions
+            max_files: ctx.max_files
       default:
         pipeline: _blocked
         pass: {message: ctx.preflight_message}
@@ -180,10 +201,9 @@ pipeline: _blocked
 description: >-
   Sibling of ingest -- returns the X1 pre-flight failure as the run's own
   (successful) output: a typed, decision-enabling message naming every
-  unreachable prerequisite (the 3 MCP servers + the python3 helper) and its
-  concrete remedy, instead of letting a bare transport exception (e.g.
-  "ImportError: No module named 'apsw'") or an opaque downstream
-  "path 'ctx.files_raw.structured' is absent" reach the operator.
+  unreachable MCP server and its concrete remedy, instead of letting a bare
+  transport exception (e.g. "ImportError: No module named 'apsw'") reach the
+  operator.
 steps:
   - transform:
       value: >-
@@ -192,11 +212,12 @@ steps:
 ---
 pipeline: _ingest_one_file
 description: >-
-  Convert one file to Markdown (markitdown), chunk it (chunker), and hash
-  each chunk (reyn.builtin.rag_ingest_helpers.hash_chunks -- R1 has no
-  string-length/hash primitive). Called once per file by ingest's for_each
-  fan-out. Returns this file's candidate chunk items: [{id, text,
-  content_hash, chunk_index, size_tokens, est_tokens, source_path}, ...].
+  Convert one file to Markdown (markitdown) and chunk it (chunker). Called
+  once per file by ingest's for_each fan-out. Returns this file's candidate
+  chunk items: [{source_path, text, content_hash, chunk_index, size_tokens,
+  est_tokens}, ...] -- the chunker returns content_hash/chunk_index/
+  est_tokens itself (#2972), so the only work left here is tagging each
+  chunk with the file it came from.
 steps:
   - tool:
       name: call_mcp_tool
@@ -212,12 +233,19 @@ steps:
         mcp_tool_name: chunk
         tool_args: !expr "{text: ctx.converted.text, size: ctx.chunk_size, overlap_ratio: ctx.chunk_overlap_ratio}"
       output: chunked
+  # Tag each chunk with its source file. content_hash / chunk_index /
+  # est_tokens already ride the chunker's own output (#2972) -- R1 could
+  # compute none of them (no hash, no enumerate, no string length), which is
+  # what used to force this step to shell out to python.
   - transform:
-      value: "{source_path: ctx.source_path, chunks: ctx.chunked.structured.result}"
-  - shell:
-      command: "python3 -m reyn.builtin.rag_ingest_helpers hash_chunks"
-      output: enriched
-  - transform: {value: "ctx.enriched.structured", output: items}
+      value: >-
+        map(ctx.chunked.structured.result, c -> {source_path: ctx.source_path,
+                                                 text: c.text,
+                                                 content_hash: c.content_hash,
+                                                 chunk_index: c.chunk_index,
+                                                 size_tokens: c.token_count,
+                                                 est_tokens: c.est_tokens})
+      output: items
 ---
 pipeline: _ingest_body
 description: >-
@@ -230,11 +258,46 @@ description: >-
   summary carrying the X2a METERED spend for the batch plus X5's
   dedup-saved estimate.
 steps:
-  - transform: {value: "{input_path: ctx.input_path}"}
-  - shell:
-      command: "python3 -m reyn.builtin.rag_ingest_helpers list_files"
-      output: files_raw
-  - transform: {value: "ctx.files_raw.structured", output: files}
+  # ---- file discovery (#2972: reyn's own `glob_files` op, no shell-out) ----
+  # One recursive glob pattern per target extension, PLUS input_path itself
+  # as a literal pattern -- that one match is what makes "input_path names a
+  # single FILE" work: `glob_files` returns files only, so a literal file
+  # path matches itself while a literal directory path matches nothing, and
+  # the extension patterns do the reverse. Union covers both cases with no
+  # is-it-a-file test (R1 cannot stat anything).
+  #
+  # The extensions live in the PATTERN rather than in an R1 `filter`
+  # because R1 has no string-suffix/lower primitive -- there is no
+  # expression that says "ends with .pdf". The glob character classes
+  # (`[pP][dD][fF]`) get case-insensitivity from the globber instead.
+  - transform:
+      value: "map(ctx.file_extensions, e -> ctx.input_path + '/**/*.' + e) + [ctx.input_path]"
+      output: file_patterns
+  - for_each:
+      over: ctx.file_patterns
+      max_parallel: 4
+      on_error: abort
+      do:
+        tool:
+          name: glob_files
+          args:
+            pattern: !expr item
+            # EXPLICIT, load-bearing: glob_files defaults to 50 and truncates
+            # SILENTLY past it (#2994). Omit this and file 51+ of a real
+            # corpus is dropped with no error anywhere -- the summary would
+            # report a files_scanned that is simply wrong.
+            max_results: !expr ctx.max_files
+      collect: {transform: {value: "pipe"}}
+      output: globbed
+  # Flatten one list per pattern into one flat file list. `structured` is
+  # glob's real list of paths (#2994); before that it was newline-joined
+  # text, which R1 (no `split`) could not consume at all -- the reason this
+  # step had to be a python shell-out.
+  - fold:
+      over: ctx.globbed
+      init: "[]"
+      do: {transform: {value: "acc + item.structured"}}
+      output: files
 
   # Per-file fan-out (concurrent, isolated -- pipeline-dsl.md's for_each):
   # one bad file does not abort the whole ingest (on_error: continue).
@@ -277,16 +340,25 @@ steps:
       output: existing_raw
   - transform: {value: "ctx.existing_raw.structured.result", output: existing}
 
-  # C5 diff: new/changed = no existing entry with the SAME id AND the SAME
-  # content_hash. remove = an existing id no longer present among the
-  # current items (the file was deleted, or re-chunked away).
+  # C5 diff: new/changed = no existing entry with the SAME identity
+  # (source_path + chunk_index) AND the SAME content_hash. remove = an
+  # existing entry whose identity is no longer present among the current
+  # items (the file was deleted, or re-chunked away).
+  #
+  # Identity is compared field-wise rather than by a composed id string:
+  # the store owns its own key format (#2972) and hands opaque `id` values
+  # back through list_metadata, which is what `delete` below consumes. R1
+  # could not build such a key anyway (no number -> string coercion).
   - transform:
       value: >-
-        filter(ctx.all_items, i -> find(ctx.existing, e -> e.id == i.id and e.metadata.content_hash == i.content_hash) == null)
+        filter(ctx.all_items, i -> find(ctx.existing, e -> e.metadata.source_path == i.source_path
+                                                       and e.metadata.chunk_index == i.chunk_index
+                                                       and e.metadata.content_hash == i.content_hash) == null)
       output: to_upsert
   - transform:
       value: >-
-        map(filter(ctx.existing, e -> find(ctx.all_items, i -> i.id == e.id) == null), e -> e.id)
+        map(filter(ctx.existing, e -> find(ctx.all_items, i -> i.source_path == e.metadata.source_path
+                                                           and i.chunk_index == e.metadata.chunk_index) == null), e -> e.id)
       output: to_remove_ids
 
   # X5: dedup visibility -- how many chunks were SKIPPED (unchanged), and
@@ -348,10 +420,11 @@ steps:
 ---
 pipeline: _ingest_embed_and_upsert
 description: >-
-  Embed the to_upsert chunks, pair each with its vector by position (R1 has
-  no index-zip), stamp embedding_model + parent_context (C4), and upsert
-  into the vector store. Called only when to_upsert is non-empty (see
-  ingest's match gate above -- embed rejects an empty texts array).
+  Embed the to_upsert chunks and hand them to the vector store's upsert,
+  which pairs each item with its vector by position and stamps
+  embedding_model + parent_context (C4). Called only when to_upsert is
+  non-empty (see ingest's match gate above -- embed rejects an empty texts
+  array).
 steps:
   - tool:
       name: embed
@@ -368,19 +441,30 @@ steps:
   # to prevent. `envelope.model` is what the provider actually resolved, so
   # C4 holds BY CONSTRUCTION here.
   - transform: {value: "ctx.embedded.meta.model", output: resolved_model}
+
+  # `items` and `vectors` ride as PARALLEL ARRAYS -- upsert pairs them by
+  # index server-side (#2972). R1 has no index-zip, which is what used to
+  # force a python shell-out between these two steps.
+  # `text` is projected away: the store has no column for it, and shipping
+  # every chunk's body over stdio a second time (it already went to the
+  # chunker and the embedder) is pure waste.
   - transform:
       value: >-
-        {items: ctx.to_upsert, vectors: ctx.embedded.structured,
-         embedding_model: ctx.resolved_model, parent_context: ctx.input_path}
-  - shell:
-      command: "python3 -m reyn.builtin.rag_ingest_helpers zip_vectors"
-      output: to_upsert_zipped
+        map(ctx.to_upsert, i -> {source_path: i.source_path,
+                                 content_hash: i.content_hash,
+                                 chunk_index: i.chunk_index,
+                                 size_tokens: i.size_tokens})
+      output: upsert_items
   - tool:
       name: call_mcp_tool
       args:
         server: !expr ctx.vectorstore_server
         mcp_tool_name: upsert
-        tool_args: !expr "{db_path: ctx.output_db, items: ctx.to_upsert_zipped.structured}"
+        tool_args: !expr >-
+          {db_path: ctx.output_db, items: ctx.upsert_items,
+           vectors: ctx.embedded.structured,
+           embedding_model: ctx.resolved_model,
+           parent_context: ctx.input_path}
       output: upsert_result
 
   # X2a -- the MEASURED spend for this batch (embed's own metered usage),

@@ -171,6 +171,18 @@ all-samples = ["slack-bolt>=1.18", "line-bot-sdk>=3.0"]
 
 [project.scripts]
 reyn = "reyn._cli:main"
+# Builtin RAG MCP servers (#2972). reyn OFFERS these launch commands; it does
+# not impose them -- an operator's `mcp.servers.<name>.command` is started
+# as-is, in whatever language, and reyn never rewrites it. They exist because
+# pip stamps a console script's shebang with the ABSOLUTE path of the
+# interpreter it was installed into, so `command: reyn-rag-chunker` resolves
+# reyn's own python no matter what the ambient PATH's `python3` is -- which
+# is what makes the builtin RAG arc work under `pipx install reyn`, a
+# non-activated venv, or any environment where they differ. `command: python
+# -m reyn.builtin.mcp_servers.chunker_server` remains equally valid and is
+# the operator's call; it just carries that ambient-interpreter dependency.
+reyn-rag-chunker = "reyn.builtin.mcp_servers.chunker_server:main"
+reyn-rag-vector-store = "reyn.builtin.mcp_servers.vector_store_server:main"
 
 # FP-0041 #489 plugin framework: sample webhook plugins bundled with reyn.
 # External plugins register the same way via their own pyproject.toml.

@@ -635,9 +635,11 @@ def file_to_canonical(result: dict) -> CanonicalToolResult:
         # `canonical_to_ctx_fields` could never derive a `structured` field for it (that field is
         # ONLY derived from a `structured` attachment — see that function's docstring) so a
         # pipeline `for_each` could never fan out over a glob_files/list_directory result without
-        # first round-tripping through a `python3`-shell helper (rag_ingest.yaml's `list_files`
-        # workaround, itself pinned to the ambient `python3` being reyn's own interpreter — a real
-        # fragility the file's own header calls out). This mirrors `web_search_to_canonical`'s
+        # first round-tripping through a `python3`-shell helper — a workaround that was itself
+        # pinned to the ambient `python3` being reyn's own interpreter. #2972 consumed this
+        # `structured` shape to delete that helper: the builtin RAG ingest pipeline now discovers
+        # its files with `glob_files` directly and runs no python of its own. This mirrors
+        # `web_search_to_canonical`'s
         # identical list-of-records -> `structured` shape (built inline here, not via the #2681
         # Bucket B `_records_to_canonical` helper below, because `file` ops carry their own
         # `_file_signal_meta` signal meta rather than Bucket B's `meta={}`): `matches` now rides

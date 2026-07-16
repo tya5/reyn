@@ -22,14 +22,20 @@ Coverage:
      asserted to exclude "vector"/"embedding" -- and a broken variant that
      forgets the restriction is shown RED to prove the assertion is live
      (not vacuously true).
-  5. Upsert replaces rather than duplicates (same id, new vector -> row
-     count unchanged, new vector wins the query).
+  5. Upsert replaces rather than duplicates (same identity, new vector ->
+     row count unchanged, new vector wins the query).
   6. Delete removes (gate 5) and is a no-op for unknown ids.
   7. Top-k + a plain-SQL metadata filter narrows results (gate 3).
   8. Chunker: ``size``/``overlap_ratio`` are real parameters with real
      effect on the output (R4) -- smaller size -> more chunks; higher
      overlap -> larger merged chunk token counts. Defaults hit the
      256-512-token 2026 band.
+  9. #2972 -- the four behaviors that moved INTO these servers when the
+     ingest pipeline stopped shelling out to python: ``upsert``'s parallel
+     items/vectors arrays (incl. the length-mismatch rejection), its
+     per-call ``embedding_model``/``parent_context`` stamping, its derived
+     (source_path, chunk_index) key, and the chunker's per-chunk
+     ``content_hash``/``chunk_index``/``est_tokens``.
 """
 from __future__ import annotations
 
@@ -58,20 +64,34 @@ from reyn.builtin.mcp_servers.vector_store_server import (  # noqa: E402
     VectorDimensionMismatchError,
 )
 
+# The model/parent_context every upsert below stamps -- passed per CALL now
+# (they are per-batch facts, not per-item ones), so they live here rather than
+# in the item dict.
+_MODEL = "text-embedding-3-small"
+_PARENT = "Introduction"
 
-def _sample_metadata(**overrides) -> dict:
+
+def _sample_item(**overrides) -> dict:
+    """One upsert item. NOTE the absent keys: `id` is DERIVED by the store from
+    (source_path, chunk_index) and `embedding_model`/`parent_context` are
+    stamped per call -- a caller cannot spell any of the three (#2972)."""
     base = {
         "source_path": "docs/intro.md",
         "source_type": "doc",
         "content_hash": "hash-a",
-        "embedding_model": "text-embedding-3-small",
         "chunk_index": 0,
         "size_tokens": 42,
-        "parent_context": "Introduction",
         "extra": {"lang": "en"},
     }
     base.update(overrides)
     return base
+
+
+def _id_of(item: dict) -> str:
+    """The store's derived key for `item`, spelled by its documented formula
+    rather than hardcoded, so these tests assert the ROUND TRIP (what goes in
+    comes back out under a stable key) rather than re-pinning the format."""
+    return f"{item['source_path']}::{item['chunk_index']}"
 
 
 def test_precomputed_vector_round_trip(tmp_path: Path) -> None:
@@ -81,15 +101,13 @@ def test_precomputed_vector_round_trip(tmp_path: Path) -> None:
     embedding_model/chunk_index/size_tokens/parent_context/extra)."""
     db_path = str(tmp_path / "rag.sqlite")
     with SqliteVecStore(db_path) as store:
-        store.upsert([
-            {"id": "c1", "vector": [1.0, 0.0, 0.0], "metadata": _sample_metadata()},
-            {"id": "c2", "vector": [0.0, 1.0, 0.0], "metadata": _sample_metadata(
-                source_path="docs/other.md", content_hash="hash-b",
-            )},
-        ])
+        item_a = _sample_item()
+        item_b = _sample_item(source_path="docs/other.md", content_hash="hash-b")
+        store.upsert([item_a, item_b], [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]], _MODEL,
+                     parent_context=_PARENT)
         results = store.query([1.0, 0.0, 0.0], top_k=2)
 
-    assert results[0]["id"] == "c1"
+    assert results[0]["id"] == _id_of(item_a)
     assert results[0]["distance"] == pytest.approx(0.0, abs=1e-6)
     meta = results[0]["metadata"]
     assert meta["source_path"] == "docs/intro.md"
@@ -109,7 +127,7 @@ def test_db_lands_at_user_specified_path_incl_missing_parents(tmp_path: Path) ->
     db_path = tmp_path / "nested" / "sub" / "my_project.sqlite"
     assert not db_path.parent.exists()
     with SqliteVecStore(str(db_path)) as store:
-        store.upsert([{"id": "c1", "vector": [1.0], "metadata": _sample_metadata()}])
+        store.upsert([_sample_item()], [[1.0]], _MODEL, parent_context=_PARENT)
     assert db_path.is_file()
     # Real sqlite file: openable independently via stdlib sqlite3 (a distinct
     # connection than the one the store held), proving it's a genuine
@@ -127,12 +145,12 @@ def test_list_metadata_excludes_vectors(tmp_path: Path) -> None:
     """Tier 2b: Gate 5: metadata-filtered listing returns metadata WITHOUT vectors."""
     db_path = str(tmp_path / "rag.sqlite")
     with SqliteVecStore(db_path) as store:
-        store.upsert([{"id": "c1", "vector": [1.0, 2.0, 3.0], "metadata": _sample_metadata()}])
+        item = _sample_item()
+        store.upsert([item], [[1.0, 2.0, 3.0]], _MODEL, parent_context=_PARENT)
         listed = store.list_metadata()
 
-    assert [e["id"] for e in listed] == ["c1"]
+    assert [e["id"] for e in listed] == [_id_of(item)]
     entry = listed[0]
-    assert entry["id"] == "c1"
     assert "vector" not in entry
     assert "vector" not in entry["metadata"]
     assert "embedding" not in entry["metadata"]
@@ -150,7 +168,8 @@ def test_strip_falsify_list_metadata_would_leak_vectors_if_joined(tmp_path: Path
     to the metadata columns and a naive listing WOULD surface it)."""
     db_path = str(tmp_path / "rag.sqlite")
     with SqliteVecStore(db_path) as store:
-        store.upsert([{"id": "c1", "vector": [1.0, 2.0, 3.0], "metadata": _sample_metadata()}])
+        item = _sample_item()
+        store.upsert([item], [[1.0, 2.0, 3.0]], _MODEL, parent_context=_PARENT)
         good = store.list_metadata()
         assert "vector" not in good[0]["metadata"]  # GREEN: real implementation
 
@@ -169,7 +188,7 @@ def test_strip_falsify_list_metadata_would_leak_vectors_if_joined(tmp_path: Path
     row = probe.execute(
         "SELECT v.embedding FROM reyn_rag_vectors v "
         "JOIN reyn_rag_chunks c ON c.rowid = v.rowid WHERE c.rag_id = ?",
-        ("c1",),
+        (_id_of(item),),
     ).fetchone()
     probe.close()
     assert row is not None and row[0] is not None, (
@@ -185,14 +204,17 @@ def test_upsert_replaces_not_duplicates(tmp_path: Path) -> None:
     created and the NEW vector wins subsequent queries."""
     db_path = str(tmp_path / "rag.sqlite")
     with SqliteVecStore(db_path) as store:
-        store.upsert([{"id": "c1", "vector": [1.0, 0.0], "metadata": _sample_metadata(content_hash="v1")}])
-        store.upsert([{"id": "c1", "vector": [0.0, 1.0], "metadata": _sample_metadata(content_hash="v2")}])
+        v1 = _sample_item(content_hash="v1")
+        v2 = _sample_item(content_hash="v2")
+        assert _id_of(v1) == _id_of(v2), "same identity, changed content -- the replace case"
+        store.upsert([v1], [[1.0, 0.0]], _MODEL, parent_context=_PARENT)
+        store.upsert([v2], [[0.0, 1.0]], _MODEL, parent_context=_PARENT)
         listed = store.list_metadata()
         results = store.query([0.0, 1.0], top_k=5)
 
-    assert [e["id"] for e in listed] == ["c1"]
+    assert [e["id"] for e in listed] == [_id_of(v2)]
     assert listed[0]["metadata"]["content_hash"] == "v2"
-    assert [r["id"] for r in results] == ["c1"]
+    assert [r["id"] for r in results] == [_id_of(v2)]
     assert results[0]["distance"] == pytest.approx(0.0, abs=1e-6)
 
 
@@ -201,15 +223,14 @@ def test_delete_removes_and_is_noop_for_unknown_id(tmp_path: Path) -> None:
     (no error, ``deleted`` count reflects only real removals)."""
     db_path = str(tmp_path / "rag.sqlite")
     with SqliteVecStore(db_path) as store:
-        store.upsert([
-            {"id": "c1", "vector": [1.0], "metadata": _sample_metadata()},
-            {"id": "c2", "vector": [2.0], "metadata": _sample_metadata()},
-        ])
-        deleted = store.delete(["c1", "does-not-exist"])
+        keep = _sample_item(chunk_index=1)
+        drop = _sample_item(chunk_index=0)
+        store.upsert([drop, keep], [[1.0], [2.0]], _MODEL, parent_context=_PARENT)
+        deleted = store.delete([_id_of(drop), "does-not-exist"])
         remaining = store.list_metadata()
 
     assert deleted == 1
-    assert [entry["id"] for entry in remaining] == ["c2"]
+    assert [entry["id"] for entry in remaining] == [_id_of(keep)]
 
 
 def test_topk_with_metadata_filter(tmp_path: Path) -> None:
@@ -218,15 +239,15 @@ def test_topk_with_metadata_filter(tmp_path: Path) -> None:
     non-matching row."""
     db_path = str(tmp_path / "rag.sqlite")
     with SqliteVecStore(db_path) as store:
-        store.upsert([
-            {"id": "near-wrong-source", "vector": [1.0, 0.0], "metadata": _sample_metadata(source_path="wrong.md")},
-            {"id": "far-right-source", "vector": [0.0, 1.0], "metadata": _sample_metadata(source_path="right.md")},
-        ])
+        near_wrong = _sample_item(source_path="wrong.md")
+        far_right = _sample_item(source_path="right.md")
+        store.upsert([near_wrong, far_right], [[1.0, 0.0], [0.0, 1.0]], _MODEL,
+                     parent_context=_PARENT)
         unfiltered = store.query([1.0, 0.0], top_k=1)
         filtered = store.query([1.0, 0.0], top_k=1, filters={"source_path": "right.md"})
 
-    assert unfiltered[0]["id"] == "near-wrong-source"
-    assert filtered[0]["id"] == "far-right-source"
+    assert unfiltered[0]["id"] == _id_of(near_wrong)
+    assert filtered[0]["id"] == _id_of(far_right)
 
 
 def test_dimension_mismatch_raises(tmp_path: Path) -> None:
@@ -235,9 +256,85 @@ def test_dimension_mismatch_raises(tmp_path: Path) -> None:
     corrupting the vec0 table."""
     db_path = str(tmp_path / "rag.sqlite")
     with SqliteVecStore(db_path) as store:
-        store.upsert([{"id": "c1", "vector": [1.0, 2.0, 3.0], "metadata": _sample_metadata()}])
+        store.upsert([_sample_item()], [[1.0, 2.0, 3.0]], _MODEL, parent_context=_PARENT)
         with pytest.raises(VectorDimensionMismatchError):
-            store.upsert([{"id": "c2", "vector": [1.0, 2.0], "metadata": _sample_metadata()}])
+            store.upsert([_sample_item(chunk_index=1)], [[1.0, 2.0]], _MODEL,
+                         parent_context=_PARENT)
+
+
+def test_upsert_rejects_mismatched_items_and_vectors(tmp_path: Path) -> None:
+    """Tier 2b: #2972 -- items/vectors are parallel arrays, so a length
+    mismatch is rejected rather than silently pairing the wrong vector with
+    the wrong chunk (or dropping the tail).
+
+    This guard used to live in the pipeline's python shell-out; it has to
+    survive the move into `upsert`, because the failure it prevents is
+    silent and corrupting: every chunk would keep its own metadata while
+    carrying someone else's embedding, and no query would ever look wrong
+    enough to notice."""
+    db_path = str(tmp_path / "rag.sqlite")
+    with SqliteVecStore(db_path) as store:
+        with pytest.raises(ValueError):
+            store.upsert(
+                [_sample_item(chunk_index=0), _sample_item(chunk_index=1)],
+                [[1.0, 0.0]],  # one vector for two items
+                _MODEL,
+                parent_context=_PARENT,
+            )
+        assert store.list_metadata() == [], "a rejected upsert must store nothing"
+
+
+def test_upsert_stamps_the_model_and_parent_context_it_is_given(tmp_path: Path) -> None:
+    """Tier 2b: #2972/C4 -- embedding_model and parent_context are stamped
+    from the CALL's arguments onto every row.
+
+    They are per-batch facts (one embed call produced these vectors under one
+    model), which is why they are call arguments rather than per-item fields
+    the caller could vary or forget. Uses values distinct from the item's own
+    fields so the stamp is attributable to the argument."""
+    db_path = str(tmp_path / "rag.sqlite")
+    with SqliteVecStore(db_path) as store:
+        store.upsert(
+            [_sample_item(chunk_index=0), _sample_item(chunk_index=1)],
+            [[1.0, 0.0], [0.0, 1.0]],
+            "resolved/model-xyz",
+            parent_context="/ingest/root",
+        )
+        listed = store.list_metadata()
+
+    assert {e["id"] for e in listed} == {
+        _id_of(_sample_item(chunk_index=0)), _id_of(_sample_item(chunk_index=1)),
+    }
+    assert {e["metadata"]["embedding_model"] for e in listed} == {"resolved/model-xyz"}
+    assert {e["metadata"]["parent_context"] for e in listed} == {"/ingest/root"}
+
+
+def test_chunker_returns_hash_index_and_estimate_per_chunk() -> None:
+    """Tier 2b: #2972 -- each chunk carries its own content_hash /
+    chunk_index / est_tokens, so the ingest pipeline needs no python of its
+    own to derive them (R1 has no hash / enumerate / string-length).
+
+    Asserts the three behaviourally, not merely present: the hash tracks the
+    TEXT (identical text -> identical hash, changed text -> changed hash --
+    which is what makes it usable as a change-detection key), the index is
+    the 0-based position, and est_tokens is the chars/4 embedding-cost
+    estimate rather than an echo of chonkie's own token_count."""
+    text = "".join(f"Sentence number {i} continues the document. " for i in range(200))
+    chunks = chunk_text(text, size=64, overlap_ratio=0.0)
+
+    # Positions ascend 0,1,2,... -- and reading chunks[1] keeps this
+    # non-vacuous (a single-chunk result would raise rather than pass).
+    assert chunks[1]["chunk_index"] == 1
+    assert [c["chunk_index"] for c in chunks] == list(range(len(chunks)))
+
+    # Same text -> same hash (dedup would skip); different text -> different.
+    again = chunk_text(text, size=64, overlap_ratio=0.0)
+    assert [c["content_hash"] for c in again] == [c["content_hash"] for c in chunks]
+    changed = chunk_text(text.replace("Sentence number 0", "REWRITTEN"), size=64, overlap_ratio=0.0)
+    assert changed[0]["content_hash"] != chunks[0]["content_hash"]
+
+    for c in chunks:
+        assert c["est_tokens"] == max(1, len(c["text"]) // 4)
 
 
 def test_chunker_size_and_overlap_are_real_parameters() -> None:

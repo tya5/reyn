@@ -36,6 +36,11 @@ Coverage:
      asserting the SAME run with a valid name proceeds past pre-flight.
   5. rag_query: after ingest, querying returns the ingested chunk as its
      top-1 nearest result.
+  6. #2972: the ingest runs no python of its own -- it completes under a
+     hostile ambient ``python3`` (the pipx / non-activated-venv class) and
+     spawns no subprocess at all, and it passes ``max_results`` explicitly
+     so a folder larger than ``glob_files``' silent 50-file default cap is
+     still ingested whole.
 """
 from __future__ import annotations
 
@@ -101,6 +106,35 @@ def _ns(**kwargs: Any) -> argparse.Namespace:
     return argparse.Namespace(**kwargs)
 
 
+def _server_env() -> dict[str, str]:
+    """Env for the builtin MCP server subprocesses, pinning them to the SAME
+    reyn tree this test process imported.
+
+    Without this the servers resolve ``reyn`` from whatever the ambient
+    editable install points at. In CI that happens to be the checkout under
+    test, so it passes; in a multi-worktree dev box it can be a DIFFERENT
+    worktree, and the tests then silently exercise code that is not the code
+    being changed (observed while writing #2972: the chunker subprocess ran
+    another worktree's copy, so its new fields were "missing" and every
+    ingest assertion failed for a reason that had nothing to do with the
+    diff). Pinning it makes the module docstring's "REAL builtin MCP servers"
+    claim true about THIS tree in both environments.
+
+    ``env`` REPLACES the subprocess environment rather than extending it (the
+    MCP SDK otherwise passes a 6-key whitelist that excludes PYTHONPATH), so
+    the handful of vars the interpreter and uvx actually need are carried
+    over explicitly.
+    """
+    import reyn
+
+    src_root = str(Path(reyn.__file__).resolve().parent.parent)
+    passthrough = {
+        k: v for k, v in os.environ.items()
+        if k in ("PATH", "HOME", "LOGNAME", "SHELL", "TERM", "USER", "TMPDIR")
+    }
+    return {**passthrough, "PYTHONPATH": src_root}
+
+
 class FakeEmbeddingProvider:
     """Deterministic real EmbeddingProvider (mirrors
     ``tests/test_op_embed.py``'s own fixture) -- a fixed-length vector per
@@ -164,16 +198,19 @@ def _write_project(tmp_path: Path, *, vectorstore_server: str = "reyn_vector_sto
                             "type": "stdio",
                             "command": sys.executable,
                             "args": [str(stub_path)],
+                            "env": _server_env(),
                         },
                         "reyn_chunker": {
                             "type": "stdio",
                             "command": sys.executable,
                             "args": ["-m", "reyn.builtin.mcp_servers.chunker_server"],
+                            "env": _server_env(),
                         },
                         vectorstore_server: {
                             "type": "stdio",
                             "command": sys.executable,
                             "args": ["-m", "reyn.builtin.mcp_servers.vector_store_server"],
+                            "env": _server_env(),
                         },
                     },
                 },
@@ -407,25 +444,32 @@ def test_ingest_preflight_blocks_on_unreachable_vectorstore_with_named_remedy(
     assert "pip install" in blocked, "the remedy must name a concrete fix, not just the cause"
 
 
-def test_ingest_preflight_blocks_when_python3_cannot_import_reyn(
+def test_ingest_is_unaffected_by_a_hostile_ambient_python3(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture,
 ) -> None:
-    """Tier 2b: X1 -- when the ambient `python3` cannot import reyn (the real
-    `pipx install reyn` / non-activated-venv / different-PATH class), step 0
-    blocks with a decision-enabling message instead of letting the run die
-    later on an opaque "path 'ctx.files_raw.structured' is absent".
+    """Tier 2b: #2972 -- the ingest completes normally even when the ambient
+    `python3` is broken, because the pipeline runs no python of its own.
 
-    Driven by pointing PATH at a python3 shim that has no reyn -- which is
-    exactly what sandboxed_exec forwards (it passes os.environ's PATH
-    straight through), so this reproduces the real failure rather than
-    simulating it at a seam."""
+    reyn does not own the operator's python runtime. This drives the exact
+    environment that used to break the arc (a `python3` first on PATH that
+    exits non-zero -- the `pipx install reyn` / non-activated-venv /
+    different-PATH class, reproduced through the real PATH that
+    `sandboxed_exec` forwards, not simulated at a seam) and asserts the
+    ingest is INDIFFERENT to it: chunks are embedded and stored.
+
+    The inverse of the test it replaces: that one pinned reyn's pre-flight
+    correctly REPORTING a python3 it should never have depended on. The bug
+    was the dependency, so the fix deletes the question -- and this asserts
+    the deletion behaviourally rather than by grepping the pipeline for the
+    absence of a `shell:` step (see the sibling structural test for that)."""
     monkeypatch.chdir(tmp_path)
     project_root = _write_project(tmp_path)
     docs_dir = project_root / "docs"
     docs_dir.mkdir()
-    (docs_dir / "a.txt").write_text("content", encoding="utf-8")
+    (docs_dir / "a.txt").write_text("Alpha document about apples.", encoding="utf-8")
 
-    # A python3 that exists and runs but has no reyn -- the pipx/venv case.
+    # A python3 that exists and runs but fails -- stands in for "not reyn's
+    # interpreter". Under the old shell-out this alone sank the whole run.
     shim_dir = tmp_path / "bin"
     shim_dir.mkdir()
     shim = shim_dir / "python3"
@@ -434,15 +478,74 @@ def test_ingest_preflight_blocks_when_python3_cannot_import_reyn(
     monkeypatch.setenv("PATH", f"{shim_dir}:{os.environ.get('PATH', '')}")
 
     result = _run_ingest(project_root, capsys)
-    blocked = result["named_stores"]["result"]
-    assert isinstance(blocked, str), (
-        "a python3 that cannot import reyn must BLOCK at pre-flight, not "
-        f"proceed -- got {type(blocked).__name__}: {blocked!r:.200}"
+    summary = result["named_stores"]["result"]
+    assert isinstance(summary, dict), (
+        "a broken ambient python3 must not affect an ingest that runs no "
+        f"python -- got a blocked/str result instead: {summary!r:.300}"
     )
-    assert "rag_ingest_helpers" in blocked
-    # cause + concrete remedies, per the #2932 require_mcp precedent
-    assert "activate" in blocked
-    assert "print(reyn.__file__)" in blocked
+    assert summary["files_scanned"] == 1
+    assert summary["chunks_upserted"] >= 1, (
+        "the ingest must actually store chunks with a hostile python3 on PATH"
+    )
+
+
+def test_ingest_pipeline_shells_out_to_nothing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture,
+) -> None:
+    """Tier 2b: #2972 -- the ingest pipeline reaches the shell zero times.
+
+    The behavioural sibling above proves a BROKEN python3 does not break the
+    run; this proves the stronger property that no subprocess is spawned at
+    all, by making any subprocess fatal at the chokepoint every `shell` step
+    funnels through (`op_runtime.sandboxed_exec.handle`). A surviving
+    shell-out would fail the run (or, for a step whose failure is swallowed,
+    drop chunks), so this cannot pass while one remains -- unlike a grep for
+    `shell:`, which a differently-spelled subprocess would slip past."""
+    import reyn.core.op_runtime.sandboxed_exec as sandboxed_exec_mod
+
+    async def _explode(*a: Any, **k: Any):
+        raise AssertionError(
+            "the rag_ingest pipeline spawned a subprocess -- #2972 requires it "
+            "to run no python/shell of its own (MCP tools + reyn ops only)"
+        )
+
+    monkeypatch.setattr(sandboxed_exec_mod, "handle", _explode)
+    monkeypatch.chdir(tmp_path)
+    project_root = _write_project(tmp_path)
+    docs_dir = project_root / "docs"
+    docs_dir.mkdir()
+    (docs_dir / "a.txt").write_text("Alpha document about apples.", encoding="utf-8")
+
+    summary = _run_ingest(project_root, capsys)["named_stores"]["result"]
+    assert isinstance(summary, dict) and summary["chunks_upserted"] >= 1
+
+
+def test_ingest_scans_every_file_past_the_glob_default_cap(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture,
+) -> None:
+    """Tier 2b: #2972/#2994 -- a folder with more files than `glob_files`'
+    own 50 default is ingested WHOLE, because the pipeline passes
+    `max_results` explicitly.
+
+    `glob_files` truncates at 50 SILENTLY (no error, no warning -- #2994
+    pins that default deliberately), so a pipeline that omits `max_results`
+    loses document 51+ of a real corpus with nothing anywhere to say so.
+    Strip `max_results` from rag_ingest.yaml's glob step and this goes RED
+    (60 -> 50): that is the whole point of asserting it end-to-end on a
+    corpus straddling the cap rather than pinning the YAML text."""
+    monkeypatch.chdir(tmp_path)
+    project_root = _write_project(tmp_path)
+    docs_dir = project_root / "docs"
+    docs_dir.mkdir()
+    for i in range(60):
+        (docs_dir / f"doc{i:03d}.txt").write_text(f"Document number {i}.", encoding="utf-8")
+
+    summary = _run_ingest(project_root, capsys)["named_stores"]["result"]
+    assert summary["files_scanned"] == 60, (
+        "every file must be discovered -- glob_files defaults to 50 and "
+        "truncates silently, so the pipeline must pass max_results itself"
+    )
+    assert summary["chunks_upserted"] >= 60
 
 
 def test_ingest_preflight_falsify_proceeds_with_the_real_server_name(
