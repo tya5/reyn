@@ -291,6 +291,27 @@ def _parse_entry(
     shell_exec: str | None = _shell_cmd("shell_exec") if "shell_exec" in raw else None
     shell_push: str | None = _shell_cmd("shell_push") if "shell_push" in raw else None
 
+    # ── subprocess (optional, #2827 — the operator's per-hook fork knob) ──────
+    # Eager-rejection model (#2976's 'write_paths'/'auth' on a non-stdio MCP
+    # server): a security field that only SOME schemes honour must be rejected on
+    # the others, never silently ignored — a silently-ignored security field reads
+    # as an applied restriction that was never applied. Key PRESENCE (not the
+    # value) expresses the operator's will, so `subprocess: false` on a
+    # template_push hook is rejected too: it would restrict nothing.
+    subprocess_raw = raw.get("subprocess", None)
+    if "subprocess" in raw:
+        if shell_exec is None and shell_push is None:
+            raise HookConfigError(
+                f"hooks[{entry_index}].subprocess is only supported on a "
+                f"shell_exec / shell_push hook (it scopes the sandboxed shell "
+                f"command); this hook declares {present[0]!r}."
+            )
+        if not isinstance(subprocess_raw, bool):
+            raise HookConfigError(
+                f"hooks[{entry_index}].subprocess must be a boolean, got "
+                f"{type(subprocess_raw).__name__!r}."
+            )
+
     # ── pipeline_launch block (#2608 H3) ──────────────────────────────────────
     pipeline_launch: PipelineLaunchBlock | None = None
     if "pipeline_launch" in raw:
@@ -338,6 +359,9 @@ def _parse_entry(
         shell_push=shell_push,
         pipeline_launch=pipeline_launch,
         matcher=matcher,
+        # #2827: None when omitted (keep the floor) vs an explicit bool (the
+        # operator's expressed will) — the distinction the knob hinges on.
+        subprocess=subprocess_raw if "subprocess" in raw else None,
     )
 
 

@@ -637,6 +637,9 @@ hooks:
   - on: cron_fired                # external-event point — a message-based cron job fires
     matcher: {job_name: "backup"}
     shell_exec: "echo backup ran >> /tmp/reyn-hooks.log"
+  - on: turn_end                  # a command that FORKS needs the knob (shell schemes only)
+    shell_exec: "npm run lint"    # npx/npm, or a pyenv/asdf/mise-shimmed bare command
+    subprocess: true              # omit → the false floor → an opaque `fork: Operation not permitted`
   - on: webhook_received          # external-event point — an inbound webhook resolves to a session
     matcher: {transport: "slack"}
     template_push:
@@ -652,6 +655,7 @@ hooks:
 | `template_push` | map | _none_ | Inbox-push hook from a Jinja2 template (one of the four schemes). `message` (Jinja2 → text), `wake` (bool/Jinja2, default `true`: `true` starts a new turn = self-continuation; `false` rides along with the next turn as passive context), `push_when` (Jinja2 → bool, default `true`; `false` skips), `session` (parsed + carried; naming a different session routes the push to that session's inbox — **cross-session push**; omitted or the current session → the local path). |
 | `shell_exec` | string | _none_ | A shell command run as a pure side-effect (one of the four schemes). Sandbox-gated + consent-allowlisted; stdout/stderr are logs, never parsed. |
 | `shell_push` | string | _none_ | A shell command whose **stdout is a single JSON object** `{"push_when": bool, "wake": bool, "message": str, "session"?: str}` (first three required), pushed via the same path as `template_push`. stdout must be pure JSON (logs → stderr). Sandbox-gated + consent-allowlisted. Any failure (non-zero exit, invalid JSON, missing/wrong-typed field) skips the push (fail-safe). |
+| `subprocess` | bool | `false` (the floor) | **`shell_exec` / `shell_push` only** — may this hook's command spawn child processes? Declaring it on another scheme is a `HookConfigError` (a silently-ignored security field would read as an applied restriction that was never applied), as is a non-bool value. Omitting the key keeps the `false` floor; only an explicit `true`/`false` is your expressed will. Set `true` when the command forks: a bare command that resolves to a version-manager shim (`pyenv`/`asdf`/`mise`) or a spawn-based launcher (`npx`/`uvx`) forks **internally**, so it is denied under the default even though the command itself never forks — the symptom is an opaque `fork: Operation not permitted` (now logged with `denial_class=fork_denied` naming it an environment/config problem). Using an absolute path to the real binary is the alternative. Unlike a stdio [MCP server's `subprocess:`](#mcp-servers) (default `true` — such a server *forks to exist*), a hook's fork need depends on your own command, so there is no safe blanket default: the judgment is per hook. Note the agent's own `hooks_add` tool can only create `template_push` hooks, so `shell_exec`/`shell_push` — and this knob — remain operator-owned. |
 | `pipeline_launch` | map | _none_ | Launch a registered pipeline (one of the four schemes). `name` (required — the pipeline's registered name; unregistered → warns and skips the launch, the hook point still completes), `input_template` (optional — a `dict`'s string leaves are each Jinja2-rendered against the event's template vars; a plain string is rendered once and its output parsed as a JSON object; omitted → `input=None`). Async/detached: the result arrives later on this session's own inbox as a `pipeline_result` message. |
 
 ## `composers` block

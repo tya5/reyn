@@ -294,6 +294,7 @@ async def run_shell_hook(
     sandbox_backend: "SandboxBackend | None" = None,
     sandbox_config: "SandboxConfig | None" = None,
     sandbox_policy: "SandboxPolicy | None" = None,
+    allow_subprocess: bool | None = None,
     allowlist_path: Path | None = None,
     capture_stdout: bool = False,
     consent_bus: "RequestBus | None" = None,
@@ -336,6 +337,13 @@ async def run_shell_hook(
     sandbox_policy:
         The :class:`~reyn.security.sandbox.policy.SandboxPolicy` to enforce.
         When ``None``, a default policy (no network + no subprocess) is built.
+        A full override — when supplied, *allow_subprocess* is not consulted
+        (the caller already expressed the whole policy).
+    allow_subprocess:
+        #2827 — the operator's per-hook ``subprocess:`` knob (``HookDef``),
+        applied to the DEFAULT policy built here. ``None`` = omitted = keep the
+        floor (``False``); an explicit bool is the operator's expressed will.
+        Only consulted when *sandbox_policy* is None.
     allowlist_path:
         Override the allowlist file path (used by tests to point at a tmp
         file).  Defaults to ``~/.reyn/shell-hooks-allowlist.json`` (or the
@@ -414,12 +422,19 @@ async def run_shell_hook(
     backend = sandbox_backend if sandbox_backend is not None else get_default_backend(sandbox_config)
 
     # Build a safe default policy when none is supplied.
+    # #2827: allow_subprocess is the operator's per-hook ``subprocess:`` knob.
+    # None (omitted) keeps the False floor — today's behaviour, byte-identical
+    # for every hook that predates the knob; only an explicit operator bool
+    # moves it. (read_deny_paths is NOT set here on purpose: SandboxPolicy's
+    # own default_factory already supplies DEFAULT_SENSITIVE_READ_DENY, so the
+    # sensitive-file deny-list applies to hook shells too — verified, not
+    # assumed.)
     policy: SandboxPolicy = (
         sandbox_policy
         if sandbox_policy is not None
         else _SandboxPolicy(
             network=False,
-            allow_subprocess=False,
+            allow_subprocess=bool(allow_subprocess) if allow_subprocess is not None else False,
             timeout_seconds=timeout_seconds,
         )
     )
@@ -438,6 +453,16 @@ async def run_shell_hook(
         # #2095 P3: the command actually ran (consent passed) — surface it as a
         # P6 event so an auto-run (allowlisted) shell hook isn't a silent
         # side-effect. Best-effort: a sink error must not break the run.
+        # #2827: classify a sandbox fork-denial the SAME way the op path does
+        # (op_runtime/sandboxed_exec.py, #2820 part B). Without this the hook
+        # path's only signal was an opaque `fork: Operation not permitted`
+        # warning, so an operator could not tell an environment/PATH problem
+        # from a genuine command failure — and therefore could not know the
+        # ``subprocess:`` knob above is what fixes it. Pure function of
+        # (returncode, stderr); no I/O.
+        from reyn.security.sandbox.denial import DENIAL_FORK, classify_denial  # noqa: PLC0415
+        denial_class = classify_denial(result.returncode, result.stderr)
+
         if emit_event is not None:
             try:
                 emit_event(
@@ -445,6 +470,7 @@ async def run_shell_hook(
                     command=command,
                     mode=("shell_push" if capture_stdout else "shell_exec"),
                     returncode=result.returncode,
+                    denial_class=denial_class,
                 )
             except Exception as exc:  # noqa: BLE001 — telemetry is best-effort
                 _log.debug("shell-hook: emit_event failed for %r: %s", command, exc)
@@ -467,12 +493,30 @@ async def run_shell_hook(
 
         if result.returncode not in (0,):
             stderr_snippet = result.stderr[:200].decode("utf-8", errors="replace").strip()
-            _log.warning(
-                "shell-hook %r exited %d (stderr: %s).",
-                command,
-                result.returncode,
-                stderr_snippet or "<empty>",
-            )
+            if denial_class == DENIAL_FORK:
+                # #2827/#2820-B: name the class and point at the fix. The raw
+                # stderr ("fork: Operation not permitted") reads as a broken
+                # command; it is actually the sandbox denying a launcher's fork,
+                # which the operator's per-hook ``subprocess: true`` resolves.
+                _log.warning(
+                    "shell-hook %r exited %d: the sandbox denied fork() "
+                    "(denial_class=%s) — an environment/config problem, not a "
+                    "command failure. A bare command resolving to a version-manager "
+                    "shim (pyenv/asdf/mise) or a spawn-based launcher (npx/uvx) forks "
+                    "internally. Set `subprocess: true` on this hook to permit it, or "
+                    "use an absolute path to the real binary. (stderr: %s)",
+                    command,
+                    result.returncode,
+                    denial_class,
+                    stderr_snippet or "<empty>",
+                )
+            else:
+                _log.warning(
+                    "shell-hook %r exited %d (stderr: %s).",
+                    command,
+                    result.returncode,
+                    stderr_snippet or "<empty>",
+                )
             return None  # fail-safe: a failed command yields no push-directive
 
         # Success. capture_stdout (shell_push) → return decoded stdout for the
