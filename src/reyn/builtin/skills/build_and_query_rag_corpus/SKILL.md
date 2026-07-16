@@ -48,11 +48,16 @@ a crash. When you get one:
 
 **1. Ingest** -- `input_path` **must be absolute**; the pipeline globs it
 directly, and a relative pattern yields the wrong `source_path` column.
+`output_db`, in contrast, is written by the `reyn_vector_store` MCP server
+itself and resolves like any other write: **relative to the sandbox's
+default write grant, which is the directory you ran `reyn` from.** A
+**cwd-relative `output_db` needs no config at all** -- keep it there unless
+the operator wants the store somewhere else (see below).
 
 ```
 run_pipeline(name="rag_ingest.ingest", input={
   "input_path": "/abs/path/to/docs",        # a folder OR a single file
-  "output_db": "/abs/path/to/docs.sqlite",
+  "output_db": "./rag/docs.sqlite",         # zero-config: written under cwd
 })
 ```
 
@@ -67,10 +72,19 @@ with `priced: false` means the model could not be priced -- report it as
 ```
 run_pipeline(name="rag_query.query", input={
   "query_text": "how does X work?",
-  "db": "/abs/path/to/docs.sqlite",
+  "db": "./rag/docs.sqlite",
   "top_k": 5,                                # default 5
 })
 ```
+
+**Want the store somewhere outside cwd instead** (an absolute path, or a
+path outside the project)? That is supported, but it is a **declared
+deviation, not the default**: the operator must add a `write_paths` entry
+naming that location to the `reyn_vector_store` server's config (see
+`docs/cookbook/configs/with-builtin-rag-mcp.yaml`). Without it, the sandbox
+denies the write and the ingest fails with a raw sqlite error -- **do not
+pass an absolute `output_db`/`db` unless the operator has already declared
+`write_paths` for it.**
 
 Returns `[{id, distance, metadata}, ...]`, **nearest first**. `metadata`
 carries `source_path` / `chunk_index` / `content_hash` / `embedding_model`.
@@ -118,7 +132,7 @@ drop-in swap needs no edit at all -- just pass the new name:
 
 ```
 run_pipeline(name="rag_ingest.ingest", input={
-  "input_path": "/abs/docs", "output_db": "/abs/docs.sqlite",
+  "input_path": "/abs/docs", "output_db": "./docs.sqlite",
   "vectorstore_server": "my_qdrant",
 })
 ```

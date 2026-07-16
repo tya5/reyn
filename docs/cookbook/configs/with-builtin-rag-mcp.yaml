@@ -96,17 +96,40 @@
 #
 # Once the three servers above are configured + granted, invoke the builtin
 # pipelines by name. `input_path` must be ABSOLUTE (the pipeline globs it
-# directly); it may be a folder or a single file:
+# directly); it may be a folder or a single file. `output_db`/`db`, in
+# contrast, is a plain sandboxed write: the default write grant for a
+# stdio MCP server is its own `cwd` (the directory you ran `reyn` from),
+# so a CWD-RELATIVE path needs no extra config at all -- this is the
+# zero-config default, not a shortcut:
 #
 #   run_pipeline(name="rag_ingest.ingest", input={
-#     "input_path": "/abs/path/to/docs", "output_db": "/abs/path/to/docs.sqlite"})
+#     "input_path": "/abs/path/to/docs", "output_db": "./rag/docs.sqlite"})
 #   run_pipeline(name="rag_query.query", input={
-#     "query_text": "how does X work?", "db": "/abs/path/to/docs.sqlite"})
+#     "query_text": "how does X work?", "db": "./rag/docs.sqlite"})
 #
 # Or, outside a chat session:
 #
 #   reyn pipe run rag_ingest.ingest \
-#     --input '{"input_path": "/abs/path/to/docs", "output_db": "/abs/path/to/docs.sqlite"}'
+#     --input '{"input_path": "/abs/path/to/docs", "output_db": "./rag/docs.sqlite"}'
+#
+# Want the store somewhere OUTSIDE cwd instead (an absolute path, or a
+# path in another project)? That is supported, but it is a DECLARED
+# DEVIATION from the default above, not a drop-in substitute for it: add
+# a `write_paths` entry naming that location to the `reyn_vector_store`
+# server's own config --
+#
+#   mcp:
+#     servers:
+#       reyn_vector_store:
+#         type: stdio
+#         command: reyn-rag-vector-store
+#         write_paths: ["~/reyn-rag"]
+#
+# -- then `output_db`/`db` may point anywhere under it, absolute or not.
+# Without a matching `write_paths` entry, the sandbox DENIES the write and
+# the ingest fails with a raw sqlite error, not a reyn-authored one -- do
+# not hand an absolute `output_db` to `rag_ingest` unless this is already
+# in place.
 #
 # The `build_and_query_rag_corpus` builtin SKILL (FP-0063 P4) carries the
 # "when/how" these two one-line descriptions cannot: which of reyn's two
