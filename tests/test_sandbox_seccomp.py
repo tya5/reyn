@@ -202,7 +202,7 @@ def test_syscall_allowlist_excludes_escape_hatches() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_load_has_no_deferred_form() -> None:
+def test_load_has_no_deferred_form(monkeypatch: pytest.MonkeyPatch) -> None:
     """Tier 2: load_seccomp_filter() loads on call and hands back nothing to invoke.
 
     The API contract that makes #2962 unconstructable. The old entry point
@@ -212,10 +212,20 @@ def test_load_has_no_deferred_form() -> None:
     cannot drop a load that has no return value; the only remaining misuse is
     not calling it at all, which is visible to a reader and is what the wiring
     tests below pin.
+
+    The Darwin guard is load-bearing, not incidental: this asserts an API shape
+    and must never load a real filter. On Linux with pyseccomp installed —
+    exactly the `pip install reyn[sandbox-linux]` setup the module docstring
+    invites x86_64 contributors to run — an unguarded call here would install an
+    irrevocable default-deny filter into the pytest process itself, and every
+    later test in the session would see EPERM from clone/socket/chown. macOS CI
+    cannot surface that (no pyseccomp), which is the same structural blindness
+    #2962 is about.
     """
     import reyn.security.sandbox.backends.seccomp as seccomp_mod
 
     _reset_cache()
+    monkeypatch.setattr("platform.system", lambda: "Darwin")
     assert seccomp_mod.load_seccomp_filter(SandboxPolicy()) is None
     assert not hasattr(seccomp_mod, "build_seccomp_installer"), (
         "The builder must not come back: it is the shape that made the discard "
