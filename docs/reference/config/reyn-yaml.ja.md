@@ -346,7 +346,7 @@ sandbox:
 | キー | 型 | デフォルト | 説明 |
 |-----|------|---------|-------------|
 | `network` | bool | `false` | サンドボックスプロセスからの外向きネットワークを許可。主要な外部流出ゲート。 |
-| `write_paths` | list[文字列] | `[]` | プロセスが書き込み可能なパス（厳密なガード）。書き込みは読み取りを含む。 |
+| `write_paths` | list[文字列] | `[]` | プロセスが書き込み可能なパス（厳密なガード）。書き込みは読み取りを含む — ∴ スコープは狭く保つこと: ここに挙げたパスは `read_deny_paths` が deny していても*読み取り*が再開される。`~` は展開される。 |
 | `read_deny_paths` | list[文字列] | `~/.ssh`・`~/.aws`・`~/.gnupg`・`~/.config/gcloud`・`~/.kube`・`~/.docker/config.json`・`~/.netrc` | 広読み込みサーフェスから拒否する機密パス（多層防御）— `sandbox.policy` 明示ブロックでこのキーを省略した場合、空リストではなくこの7つの OS レベル credential パス（`SandboxPolicy.read_deny_paths` の dataclass デフォルト）がデフォルトになります。deny-after-allow をサポートするバックエンド（Seatbelt）のみ適用。許可リストのみのバックエンド（Landlock）では非対応。**`write_paths` のエントリをこれらと重ねない・包含させないこと** — 上記警告の通り Seatbelt 上で無言で無効化されます。 |
 | `read_paths` | list[文字列] | `[]` | **レガシー。** かつての厳密な読み込み許可リスト。現在のスコーピングモデルでは読み込みはデフォルトで広許可のため、このフィールドは意図した読み込み対象のドキュメントとしてのみ機能します。 |
 | `allow_subprocess` | bool | `false` | 子プロセスの spawn を許可するか。適用（enforced）— off の時 `process-fork` を deny。 |
@@ -761,6 +761,7 @@ mcp:
 | `env` | map[string,string] | stdio（任意） | 起動プロセスへの追加環境変数。値は `${VAR}` 展開に対応。 |
 | `network` | bool | stdio（任意） | サンドボックス化されたサーバーがネットワークを使用できるか。`sandboxed_exec` と同じ single-source デフォルトに従う。ネットワークに到達すべきでないサーバーを隔離するには `false`。オペレーター所有 — モデルは設定不可。 |
 | `subprocess` | bool | stdio（任意） | サンドボックス化されたサーバーが子プロセスを spawn（fork）できるか。デフォルト `true` — ほとんどの stdio サーバーは fork ベースの launcher（`npx` → node、`uvx` → tool）で起動し、起動に fork を要する。真に fork 不要なサーバーを hardening するには `false`。オペレーター所有 — モデルは設定不可。 |
+| `write_paths` | list[string] | stdio（任意） | **サンドボックス化されたサーバーが書き込めるパス**。作業ディレクトリ（常に許可）に追加される。`~` は展開される。オペレーター所有 — モデルは設定不可。launcher はワークスペース外のユーザーごとのキャッシュに bootstrap するため、reyn は認識できる launcher に**デフォルト**のスコープを与える（`npx`/`npm` → `~/.npm`、`uvx`/`uv` → `~/.cache/uv` + `~/.local/share/uv`）。サーバーの runtime がそれ以外の場合、またはキャッシュを移動している場合（`XDG_CACHE_HOME`、`npm_config_cache` など）に設定する — デフォルトは標準の場所を前提としており、移動先を知り得ない。`write_paths` を宣言すると組み込みのデフォルトを**置き換える**ため、拡大だけでなく縮小もできる。サーバーが `Operation not permitted` / `EPERM` で起動に失敗した場合、エラーが拒否されたパスを示すので、そのパスをここで許可する。**スコープは狭く保つこと**: 書き込み許可はそのパスの*読み取り*も再開するため、`~` を許可すると sensitive-read deny-list（`~/.ssh`、`~/.aws` 等）が無効化される。ホームディレクトリではなく、具体的なキャッシュディレクトリを許可すること。 |
 | `url` | string | http, sse | エンドポイント URL。 |
 | `headers` | map[string,string] | http, sse（任意） | 静的リクエストヘッダー。値は `${VAR}` 展開に対応。 |
 | `call_timeout_seconds` | float | すべて（任意） | MCP SDK の `read_timeout_seconds` に渡される per-call リクエストタイムアウト。 未設定の場合は SDK デフォルトが適用される（= Reyn 側で override しない、 transport-specific の SDK timeout が支配）。 特定 server が遅いと分かっている場合、 あるいは速い + fail-fast したい場合に設定する。 `timeout` (= `type: http` の HTTP transport connect timeout) とは独立。 |

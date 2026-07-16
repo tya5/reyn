@@ -29,7 +29,7 @@ import subprocess
 
 from .._subprocess_io import communicate_capped, kill_process_tree
 from ..backend import SandboxResult, WrappedCommand
-from ..policy import SandboxPolicy
+from ..policy import SandboxPolicy, expand_policy_path
 from .seccomp import load_seccomp_filter
 
 _logger = logging.getLogger(__name__)
@@ -253,7 +253,11 @@ class LandlockBackend:
             ruleset = landlock.Ruleset(restrict_rules=handled)  # type: ignore[attr-defined]
             ruleset.allow("/", rules=read_rules)
             for path in policy.write_paths:
-                ruleset.allow(path, rules=write_rules)
+                # expand_policy_path: same ``~`` contract as Seatbelt (#2976) —
+                # a literal ``~`` path would be granted to a directory that does
+                # not exist, silently leaving the intended write denied. No
+                # resolve(): Landlock hands the path to the kernel as-is.
+                ruleset.allow(str(expand_policy_path(path)), rules=write_rules)
 
             # Network: the py-landlock package exposes no net-port rule API at this
             # ABI, so Landlock CANNOT restrict outbound network here. When the

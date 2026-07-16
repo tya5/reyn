@@ -31,7 +31,7 @@ from pathlib import Path
 
 from reyn.security.sandbox._subprocess_io import communicate_capped, kill_process_tree
 from reyn.security.sandbox.backend import SandboxResult, WrappedCommand
-from reyn.security.sandbox.policy import SandboxPolicy
+from reyn.security.sandbox.policy import SandboxPolicy, expand_policy_path
 
 _logger = logging.getLogger(__name__)
 
@@ -108,7 +108,7 @@ def _build_sbpl_profile(policy: SandboxPolicy) -> str:
         lines.append("")
         lines.append("; — sensitive read deny-list (defense-in-depth) —")
         for raw in policy.read_deny_paths:
-            resolved = str(Path(raw).expanduser().resolve(strict=False))
+            resolved = str(expand_policy_path(raw).resolve(strict=False))
             lines.append(f"(deny file-read* (subpath {_sbpl_quote(resolved)}))")
 
     # User-declared write paths. write implies read: the file-read* re-allow is
@@ -118,7 +118,10 @@ def _build_sbpl_profile(policy: SandboxPolicy) -> str:
         lines.append("")
         lines.append("; — policy write_paths —")
         for raw in policy.write_paths:
-            resolved = str(Path(raw).resolve(strict=False))
+            # expand_policy_path: ``~`` MUST expand here exactly as it does for
+            # read_deny_paths above — without it the grant lands on the literal
+            # ``<cwd>/~/...`` and the write stays denied (#2976).
+            resolved = str(expand_policy_path(raw).resolve(strict=False))
             lines.append(f"(allow file-read* (subpath {_sbpl_quote(resolved)}))")
             lines.append(f"(allow file-write* (subpath {_sbpl_quote(resolved)}))")
 

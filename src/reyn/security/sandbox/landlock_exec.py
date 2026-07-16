@@ -37,7 +37,7 @@ import os
 import sys
 
 from .backends.seccomp import load_seccomp_filter
-from .policy import SandboxPolicy
+from .policy import SandboxPolicy, expand_policy_path
 
 _MODULE = "reyn.security.sandbox.landlock_exec"
 
@@ -140,7 +140,14 @@ def _apply_landlock(policy: SandboxPolicy) -> None:
     # exfil guard) — same residual-risk asymmetry as the backend.
     ruleset.add_path_beneath_rule("/", read_only=True)  # type: ignore[attr-defined]
     for path in policy.write_paths:
-        ruleset.add_path_beneath_rule(path, read_only=False)  # type: ignore[attr-defined]
+        # expand_policy_path: the THIRD write_paths grant emitter, and the one
+        # the MCP stdio path actually goes through on Linux (#2976). Same ``~``
+        # contract as both backends — without it the grant lands on a literal
+        # ``<cwd>/~/...`` and the intended write stays denied. No resolve():
+        # Landlock hands the path to the kernel as-is.
+        ruleset.add_path_beneath_rule(  # type: ignore[attr-defined]
+            str(expand_policy_path(path)), read_only=False,
+        )
     if not policy.network and hasattr(ruleset, "add_net_port_rule"):
         ruleset.add_net_port_rule(deny_all_outbound=True)  # type: ignore[attr-defined]
     ruleset.restrict_self()  # type: ignore[attr-defined]
