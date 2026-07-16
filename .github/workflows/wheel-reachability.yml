@@ -27,7 +27,12 @@ jobs:
       # (2) reads README/docs/source through reyn_repo's dual-mode resolver
       # and asserts byte-identity with the dev checkout, (3) asserts a
       # non-declared path is refused, (4) re-checks the still-LIVE
-      # read_builtin_body_bytes path (#2913, untouched by 0061). This is
+      # read_builtin_body_bytes path (#2913, untouched by 0061), (5) reproduces
+      # #2972 (builtin RAG ingest shells out to ambient `python3`, which
+      # breaks under `pipx install reyn`) by resolving a bare `python3` from
+      # a PATH shaped like that exact environment -- XFAIL until #2972 is
+      # fixed, XPASS (unexpected success) fails the gate so the probe gets
+      # promoted to a strict assertion in the same PR that fixes it. This is
       # deliberately NOT path-filtered: a positive include-list is itself a
       # false-allow surface — an incomplete list lets a packaging regression
       # under an unlisted path merge with the gate silently never running.
