@@ -70,12 +70,22 @@ async def _gate_and_read_ref(ref: str, ctx: "OpContext") -> tuple[bytes, str]:
     return raw_bytes, ingested
 
 
-async def resolve_present_source(data_ref: str, ctx: "OpContext") -> tuple[Any, str]:
+async def resolve_present_source(
+    data_ref: str, ctx: "OpContext",
+) -> "tuple[Any, str, str | None]":
     """Resolve ``data_ref`` to its full value under ``file.read`` authority.
 
-    Returns ``(value, ingested)`` where ``value`` is the re-hydrated structured
-    object (when the ref's bytes parse as JSON) or the decoded text, and
-    ``ingested`` ∈ ``{none, partial, full}`` (OS-computed).
+    Returns ``(value, ingested, content_type)`` where ``value`` is the re-hydrated
+    structured object (when the ref's bytes parse as JSON) or the decoded text,
+    ``ingested`` ∈ ``{none, partial, full}`` (OS-computed), and ``content_type``
+    (#2663) is the ref's declared MIME type recovered from its stored file
+    extension (:func:`~reyn.data.workspace.media_store.mime_type_for_ext`) — the
+    SAME channel a canonical mapper's ``content_type`` sidecar was carried through
+    to at offload-store time (``tool_result_cap.cap_tool_result_content`` /
+    ``MediaStore.save_tool_result``'s ``mime_type``). ``None`` when the extension
+    is absent/unrecognized (the ref predates #2663, or the producer declared no
+    content type) — present's stage-3 default viewer then degrades to
+    diff-sniff → shape exactly as before, unchanged.
 
     Raises ``PermissionError`` when the read is not authorized (identical gate to
     ``file.read``); ``PresentSourceNotFound`` when the path is missing.
@@ -91,7 +101,10 @@ async def resolve_present_source(data_ref: str, ctx: "OpContext") -> tuple[Any, 
     else:
         value = rehydrate_ref_text(text)
 
-    return value, ingested
+    from reyn.data.workspace.media_store import mime_type_for_ext
+
+    content_type = mime_type_for_ext(data_ref)
+    return value, ingested, content_type
 
 
 async def resolve_ref_text(ref: str, ctx: "OpContext") -> tuple[str, str]:

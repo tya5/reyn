@@ -161,7 +161,7 @@ async def handle(op: PresentIROp, ctx: OpContext) -> dict:
     #    → status="denied"; the read-authority-equivalence invariant).
     if op.data_ref is not None:
         try:
-            data, ingested = await resolve_present_source(op.data_ref, ctx)
+            data, ingested, content_type = await resolve_present_source(op.data_ref, ctx)
         except PresentSourceNotFound as exc:
             return {
                 "kind": "present", "status": "not_found",
@@ -170,8 +170,11 @@ async def handle(op: PresentIROp, ctx: OpContext) -> dict:
         data_ref_field: str = op.data_ref
     else:
         # Inline data is in the LLM's context by construction → ingested "full".
+        # No content-type source exists for inline data (a present op has no
+        # content-type field) — stage 3 degrades to diff-sniff → shape, unchanged.
         data = op.data_inline
         ingested = "full"
+        content_type = None
         data_ref_field = _INLINE_MARKER
 
     mode = _mode(op)
@@ -186,6 +189,7 @@ async def handle(op: PresentIROp, ctx: OpContext) -> dict:
     try:
         requested, rendered, fallback_stage = _resolve_presentation(
             op, data, mode=mode, surface=surface, registry=ctx.presentation_registry,
+            content_type=content_type,
         )
     except PresentBlueprintError as exc:
         return {"kind": "present", "status": "error", "ok": False, "error": str(exc)}
@@ -241,6 +245,7 @@ async def handle(op: PresentIROp, ctx: OpContext) -> dict:
 
 def _resolve_presentation(
     op: PresentIROp, data: Any, *, mode: str, surface: str, registry: Any,
+    content_type: "str | None" = None,
 ) -> "tuple[ResolvedPresentation | None, ResolvedPresentation, str | None]":
     """Run the FP-0054 §3 4-stage view-source fallback chain (FP-0055 PR-1:
     ``mode="default"`` skips straight to stage 3).
@@ -266,6 +271,12 @@ def _resolve_presentation(
     a fallback trigger) — the caller surfaces ``status="error"``. A registered
     view is already validated at registry-build time, so it never re-validates
     here.
+
+    ``content_type`` (#2663) — the ``data_ref``'s declared MIME type (recovered from
+    the stored ref's extension by :func:`resolve_present_source`; ``None`` for
+    inline data or an untyped/legacy ref) — passed to stage 3's
+    ``default_viewer_blueprint`` so a known markdown/code ref defaults to a rich
+    ``markdown``/``code`` component instead of diff-sniff → shape.
     """
     # ``op.data_ref`` (None for inline data) is threaded through to
     # ``resolve_bindings`` so a `cap_rows`-capped table/list node's visible
@@ -291,7 +302,8 @@ def _resolve_presentation(
 
     # Stage 3 — content-type default viewer (synthesized from the data's shape).
     stage3 = resolve_bindings(
-        validate_blueprint(default_viewer_blueprint(data)), data, surface=surface, ref=ref,
+        validate_blueprint(default_viewer_blueprint(data, content_type=content_type)),
+        data, surface=surface, ref=ref,
     )
     if not stage3.all_bindings_missed:
         # In default mode, stage 3 IS the requested rendering — not a fallback.

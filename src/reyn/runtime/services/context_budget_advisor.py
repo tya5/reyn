@@ -173,13 +173,18 @@ class ContextBudgetAdvisor:
         from reyn.runtime.services.tool_result_cap import compute_cap_tokens
         return compute_cap_tokens(self._get_effective_trigger())
 
-    def cap_tool_result(self, content_str: str) -> str:
+    def cap_tool_result(self, content_str: str, *, content_type: "str | None" = None) -> str:
         """Cap an oversized chat tool result (#1128 size axis).
 
         No-op when no media_store is configured, or when ``offload.enabled: false``
         (tool-result-schema-redesign §5 debug lever — never truncate). ``content_str``
         is the canonical ``text`` body (#2425 案B) — already the clean payload, so the
         stored body is it as-is and the inline is a bounded plain-text preview.
+
+        ``content_type`` (#2663) — the canonical's renderer-only sidecar (a mapper's declared MIME
+        type, e.g. ``"text/html"``); forwarded to the store's ``mime_type`` so the offloaded ref's
+        on-disk extension carries it (never into any LLM-visible field — this only ever reaches the
+        store, never the frontmatter this method's caller builds separately).
         """
         if not self._offload_config.enabled:
             return content_str
@@ -196,6 +201,7 @@ class ContextBudgetAdvisor:
             save_fn=store.save_tool_result,
             use_chars4=use_chars4,
             events=self._events,
+            content_type=content_type,
         )
 
     def media_followup_budget(self, tool_content: str) -> "int | None":

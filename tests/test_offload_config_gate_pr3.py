@@ -114,7 +114,7 @@ def test_offload_disabled_default_keeps_oversized_structured_inline():
         raise AssertionError("save_fn must not be called when offload is disabled")
 
     canonical = {"text": "", "attachments": [{"kind": "structured", "data": big}], "meta": {}}
-    frontmatter, _text, _media = build_offload_body(canonical, save_fn=_save_fn, enabled=False)
+    frontmatter, _text, _media, _ct = build_offload_body(canonical, save_fn=_save_fn, enabled=False)
     assert frontmatter["structured"] == big
     assert "structured_ref" not in frontmatter
 
@@ -133,7 +133,7 @@ def test_offload_enabled_opted_in_offloads_oversized_structured():
         return {"path": "/tmp/fake-structured-ref.json"}
 
     canonical = {"text": "", "attachments": [{"kind": "structured", "data": big}], "meta": {}}
-    frontmatter, _text, _media = build_offload_body(canonical, save_fn=_save_fn, enabled=True)
+    frontmatter, _text, _media, _ct = build_offload_body(canonical, save_fn=_save_fn, enabled=True)
     assert frontmatter["structured"] == "offloaded"
     assert frontmatter["structured_ref"] == "/tmp/fake-structured-ref.json"
     assert saved["tool"] == "structured"
