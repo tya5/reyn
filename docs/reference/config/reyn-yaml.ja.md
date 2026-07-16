@@ -320,11 +320,18 @@ sandbox:
   policy:                # オプション — agent-level（オペレータ）サンドボックスポリシー
     network: true
     read_paths: ["/"]
-    write_paths: ["/"]
+    write_paths: ["{{workspace}}", "/tmp"]
     allow_subprocess: true
     env_passthrough: ["PATH", "HOME"]
     timeout_seconds: 600
 ```
+
+> ⚠️ **`write_paths` に `~`、`$HOME`、`/` を入れないこと。** Seatbelt バックエンドでは各
+> `write_paths` エントリが `read_deny_paths` の deny ルールの**後に** allow-read ルールを
+> emit し、SBPL は last-match-wins のため、`read_deny_paths` のエントリと重なる（またはそれを
+> 包含する）`write_paths` エントリは**そのdenyを無言で無効化**し、credential パスの多層防御
+> （`~/.ssh`・`~/.aws`・`~/.gnupg` 等 — 下記 `read_deny_paths` 参照）を警告なしに崩します。
+> `write_paths` はプロセスが実際に永続化する必要がある最小限のディレクトリに絞ってください。
 
 | キー | 型 | デフォルト | 説明 |
 |-----|------|---------|-------------|
@@ -340,7 +347,7 @@ sandbox:
 |-----|------|---------|-------------|
 | `network` | bool | `false` | サンドボックスプロセスからの外向きネットワークを許可。主要な外部流出ゲート。 |
 | `write_paths` | list[文字列] | `[]` | プロセスが書き込み可能なパス（厳密なガード）。書き込みは読み取りを含む。 |
-| `read_deny_paths` | list[文字列] | `[]` | 広読み込みサーフェスから拒否する機密パス（多層防御）。deny-after-allow をサポートするバックエンド（Seatbelt）のみ適用。許可リストのみのバックエンド（Landlock）では非対応。 |
+| `read_deny_paths` | list[文字列] | `~/.ssh`・`~/.aws`・`~/.gnupg`・`~/.config/gcloud`・`~/.kube`・`~/.docker/config.json`・`~/.netrc` | 広読み込みサーフェスから拒否する機密パス（多層防御）— `sandbox.policy` 明示ブロックでこのキーを省略した場合、空リストではなくこの7つの OS レベル credential パス（`SandboxPolicy.read_deny_paths` の dataclass デフォルト）がデフォルトになります。deny-after-allow をサポートするバックエンド（Seatbelt）のみ適用。許可リストのみのバックエンド（Landlock）では非対応。**`write_paths` のエントリをこれらと重ねない・包含させないこと** — 上記警告の通り Seatbelt 上で無言で無効化されます。 |
 | `read_paths` | list[文字列] | `[]` | **レガシー。** かつての厳密な読み込み許可リスト。現在のスコーピングモデルでは読み込みはデフォルトで広許可のため、このフィールドは意図した読み込み対象のドキュメントとしてのみ機能します。 |
 | `allow_subprocess` | bool | `false` | 子プロセスの spawn を許可するか。適用（enforced）— off の時 `process-fork` を deny。 |
 | `env_passthrough` | list[文字列] | `[]` | サンドボックスプロセスへ通過させる環境変数名。`PATH` は常に通過します。 |
