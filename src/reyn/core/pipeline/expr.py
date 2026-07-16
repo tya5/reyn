@@ -511,6 +511,32 @@ def evaluate_expr(src: str, context: Mapping[str, Any]) -> Any:
     return evaluate(parse(src), context)
 
 
+def _missing_structured_hint(part: str, current: Mapping[str, Any]) -> str:
+    """A decision-enabling addendum for the single most common absent-path shape a pipeline
+    author hits: reading ``.structured`` off a ``ctx.<step_name>`` reduced-fields dict
+    (:func:`reyn.core.offload.canonical.canonical_to_ctx_fields`'s ``{"text", "structured"?,
+    "meta"?}`` shape) whose producer emitted no ``structured`` attachment.
+
+    Without this, the failure is an opaque ``path '...structured' is absent: no field
+    '...structured' in context`` with no hint that (a) the field is ABSENT-WHEN-EMPTY BY
+    DESIGN (not a bug in the pipeline), and (b) the fix lives in the PRODUCER's canonical
+    mapper, not in the pipeline expression. #2955/#2972: this is exactly the shape a
+    ``for_each: over: ctx.<name>.structured`` over a text-only producer (e.g. glob_files
+    before its canonical mapper was fixed to emit a ``structured`` attachment) used to hit
+    with zero guidance toward the actual cause."""
+    if part != "structured" or "text" not in current:
+        return ""
+    return (
+        " -- this producer's canonical result carries no `structured` attachment (text-only "
+        "or a legit-empty result), and `structured` is ABSENT-WHEN-EMPTY by design (see "
+        "canonical_to_ctx_fields), not a pipeline bug. If this producer SHOULD support "
+        "list-style iteration (e.g. `for_each`), its canonical mapper "
+        "(reyn.core.offload.canonical) needs to emit a `structured` attachment for the data "
+        "(see `web_search_to_canonical` / `file_to_canonical`'s `glob` branch for the "
+        "pattern); if it genuinely has no list data, read `.text` instead"
+    )
+
+
 def _resolve_path(parts: Sequence[str], context: Mapping[str, Any]) -> Any:
     current: Any = context
     consumed: list[str] = []
@@ -521,6 +547,7 @@ def _resolve_path(parts: Sequence[str], context: Mapping[str, Any]) -> Any:
                 raise ExprEvalError(
                     f"path {'.'.join(parts)!r} is absent: no field "
                     f"{'.'.join(consumed)!r} in context"
+                    f"{_missing_structured_hint(part, current)}"
                 )
             current = current[part]
         else:

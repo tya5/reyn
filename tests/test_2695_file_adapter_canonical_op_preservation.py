@@ -51,7 +51,15 @@ def _invoke(tmp_path: Path, name: str, args: dict) -> dict:
 
 
 def test_glob_result_renders_matches_not_none_ok(tmp_path, monkeypatch):
-    """Tier 2b: glob_files' canonical text lists the matched paths, not "None: ok"."""
+    """Tier 2b: glob_files' canonical output carries the matched paths, not "None: ok".
+
+    #2955/#2972: the match LIST now rides in the ``structured`` attachment (a
+    genuinely-structured record-list result, same shape as ``web_search`` —
+    needed so a pipeline ``for_each`` can fan out over it without a shell
+    round-trip), with ``text`` reduced to a short count summary. Assert the
+    paths are NOT lost (still present, just relocated) and the #2695
+    silent-loss symptom ("None: ok") stays fixed.
+    """
     monkeypatch.chdir(tmp_path)
     (tmp_path / "alpha.txt").write_text("a\n")
     (tmp_path / "beta.txt").write_text("b\n")
@@ -60,10 +68,16 @@ def test_glob_result_renders_matches_not_none_ok(tmp_path, monkeypatch):
     # The dispatch field the canonical mapper needs must survive normalization.
     assert result.get("op") == "glob"
 
-    text = file_to_canonical(result)["text"]
-    assert "alpha.txt" in text and "beta.txt" in text
+    canonical = file_to_canonical(result)
+    text = canonical["text"]
     assert text != "None: ok"  # the #2695 silent-loss symptom
     assert "None" not in text
+    assert text == "2 files"
+
+    structured_matches = [
+        att["data"] for att in canonical["attachments"] if att.get("kind") == "structured"
+    ][0]
+    assert set(structured_matches) == {"alpha.txt", "beta.txt"}
 
 
 def test_glob_empty_renders_no_matches_not_none_ok(tmp_path, monkeypatch):
@@ -73,13 +87,18 @@ def test_glob_empty_renders_no_matches_not_none_ok(tmp_path, monkeypatch):
 
     result = _invoke(tmp_path, "glob_files", {"pattern": "*.txt"})
     assert result.get("op") == "glob"
-    text = file_to_canonical(result)["text"]
+    canonical = file_to_canonical(result)
+    text = canonical["text"]
     assert text != "None: ok"
     assert "no matches" in text.lower()
+    # Empty structured data is still an EXPLICIT attachment (not omitted) — the
+    # canonical_degraded invariant's "structured attachment present" branch
+    # covers this, mirroring web_search_to_canonical's data:[] convention.
+    assert canonical["attachments"] == [{"kind": "structured", "data": []}]
 
 
 def test_list_directory_renders_entries_not_none_ok(tmp_path, monkeypatch):
-    """Tier 2b: list_directory's canonical text lists the entries, not "None: ok"."""
+    """Tier 2b: list_directory's canonical output carries the entries, not "None: ok"."""
     monkeypatch.chdir(tmp_path)
     (tmp_path / "one.txt").write_text("1\n")
     (tmp_path / "two.txt").write_text("2\n")
@@ -87,10 +106,16 @@ def test_list_directory_renders_entries_not_none_ok(tmp_path, monkeypatch):
     result = _invoke(tmp_path, "list_directory", {"path": "."})
     assert result.get("op") == "glob"  # list_directory delegates to the glob op
 
-    text = file_to_canonical(result)["text"]
-    assert "one.txt" in text and "two.txt" in text
+    canonical = file_to_canonical(result)
+    text = canonical["text"]
     assert text != "None: ok"
     assert "None" not in text
+    assert text == "2 files"
+
+    structured_matches = [
+        att["data"] for att in canonical["attachments"] if att.get("kind") == "structured"
+    ][0]
+    assert set(structured_matches) == {"one.txt", "two.txt"}
 
 
 def test_every_file_adapter_ok_result_carries_op(tmp_path, monkeypatch):

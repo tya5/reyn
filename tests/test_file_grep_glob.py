@@ -209,6 +209,57 @@ def test_glob_files_no_match_returns_empty(tmp_path, monkeypatch):
     assert result.get("count", 0) == 0
 
 
+def test_glob_files_default_caps_at_50_when_more_files_exist(tmp_path, monkeypatch):
+    """Tier 2: glob_files with no max_results caps matches at the 50 default.
+
+    Bound: writes 60 files (deliberately ABOVE the 50 cap, not at it — a
+    boundary test placed at exactly 50 would not flip if the cap silently
+    disappeared). Regression guard for the pre-fix default behaviour: even
+    after exposing max_results, callers who omit it keep the existing
+    50-match cap (no surprise unbounded-cost change for chat callers).
+    """
+    for i in range(60):
+        (tmp_path / f"file_{i:03d}.txt").write_text("x\n", encoding="utf-8")
+
+    ctx = _make_ctx(tmp_path, monkeypatch)
+    result = _run(GLOB_FILES.handler({"pattern": "*.txt"}, ctx))
+
+    assert result.get("status") == "ok"
+    assert len(result.get("matches", [])) == 50, (
+        f"Expected default cap of 50, got {len(result.get('matches', []))}"
+    )
+
+
+def test_glob_files_max_results_override_returns_all_60(tmp_path, monkeypatch):
+    """Tier 2: glob_files max_results forwards through _handle_glob to
+    FileIROp.max_results, letting a caller raise the cap above 60 files.
+
+    This is the strip-falsify companion to the test above: before the fix,
+    `_GLOB_FILES_PARAMETERS` did not expose `max_results` and `_handle_glob`
+    never read it from `args`, so passing max_results=1000 through the real
+    GLOB_FILES.handler tool-dispatch path (not a hand-built FileIROp) still
+    silently returned only 50 of 60 files with status="ok" and no error —
+    the exact silent-truncation shape a pipeline step hit in production.
+    Removing the `max_results=args.get("max_results", 50)` forward in
+    `_handle_glob` reproduces that: this test goes from 60 to 50 (RED),
+    confirming it actually exercises the fix.
+    """
+    for i in range(60):
+        (tmp_path / f"file_{i:03d}.txt").write_text("x\n", encoding="utf-8")
+
+    ctx = _make_ctx(tmp_path, monkeypatch)
+    result = _run(
+        GLOB_FILES.handler({"pattern": "*.txt", "max_results": 1000}, ctx)
+    )
+
+    assert result.get("status") == "ok"
+    assert len(result.get("matches", [])) == 60, (
+        f"Expected all 60 files with max_results=1000, got "
+        f"{len(result.get('matches', []))}"
+    )
+    assert result.get("count") == 60
+
+
 def test_glob_files_with_path_prefix(tmp_path, monkeypatch):
     """Tier 2: glob_files respects path arg as subdirectory root."""
     subdir = tmp_path / "src"

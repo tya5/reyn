@@ -15,7 +15,7 @@ from __future__ import annotations
 import pytest
 
 from reyn.core.offload.canonical import to_canonical
-from reyn.core.offload.seam import build_offload_body
+from reyn.core.offload.seam import build_offload_body, render_tool_result
 from reyn.tools.reyn_repo import _handle_read
 from reyn.tools.types import ToolContext
 
@@ -136,11 +136,60 @@ def test_file_grep_content_mode_renders_match_lines_as_text():
     assert not any(a.get("kind") == "structured" for a in c["attachments"])
 
 
-def test_file_glob_matches_render_as_path_lines():
-    """Tier 1: glob → the matched paths as newline-joined ``text``."""
+def test_file_glob_matches_render_as_structured_with_count_summary():
+    """Tier 1: glob -> a short count summary as ``text`` + the matched paths as a ``structured``
+    attachment (#2955/#2972 -- a genuinely-structured record-list result, same shape as
+    ``web_search``, changed FROM the prior newline-joined-into-``text`` shape so a pipeline
+    ``for_each`` can fan out over ``ctx.<name>.structured`` without a shell round-trip)."""
     c = to_canonical({"kind": "file", "op": "glob", "pattern": "*.py", "status": "ok",
                       "matches": ["a.py", "b.py"], "count": 2}, source="file")
-    assert c["text"] == "a.py\nb.py"
+    assert c["text"] == "2 files"
+    assert c["attachments"] == [{"kind": "structured", "data": ["a.py", "b.py"]}]
+
+
+def test_file_glob_large_match_list_offloads_smaller_than_old_text_shape():
+    """Tier 1: real LLM-visible char count for a large glob result — the ``structured`` shape
+    (#2955/#2972) is NOT a token-cost regression versus the prior newline-joined-``text`` shape;
+    it is a large reduction once the match count crosses the seam's inline-size gate, because a
+    ``structured`` attachment offloads to its own ref when large while ``text`` never does (it IS
+    the body). Measures ``render_tool_result(*build_offload_body(...))`` -- the actual assembled
+    ``role: tool`` content string an LLM reads -- end-to-end through the real seam, not a
+    hand-computed estimate. This is the concrete evidence for the #2955 PR body's token-cost claim.
+    """
+    def _rendered_char_count(canonical: dict) -> int:
+        _fake_save.stored = []
+        frontmatter, text, _media = build_offload_body(canonical, save_fn=_fake_save)
+        return len(render_tool_result(frontmatter, text))
+
+    def _old_shape(n: int) -> int:
+        paths = [f"src/pkg/module_{i:04d}.py" for i in range(n)]
+        return _rendered_char_count(
+            {"text": "\n".join(paths), "attachments": [], "source_ref": None, "meta": {}}
+        )
+
+    def _new_shape(n: int) -> int:
+        paths = [f"src/pkg/module_{i:04d}.py" for i in range(n)]
+        canonical = to_canonical(
+            {"kind": "file", "op": "glob", "status": "ok", "matches": paths}, source="file",
+        )
+        return _rendered_char_count(canonical)
+
+    # Small (60 files, below the structured-inline gate): both shapes stay inline; the new shape
+    # costs a modest amount MORE here (frontmatter YAML overhead), never a large regression.
+    old_60, new_60 = _old_shape(60), _new_shape(60)
+    assert new_60 < old_60 * 1.5, (
+        f"small-N should not regress by more than ~50%: old={old_60} new={new_60}"
+    )
+
+    # Large (1000 files, above the structured-inline gate): the OLD text-only shape hot-paths the
+    # full path list every time (text IS the body, never offloaded); the NEW structured shape
+    # offloads to a ref once it crosses the size gate. This is the actual production shape a
+    # folder-wide RAG ingest glob would hit -- the OLD shape is the real token bomb, not this PR.
+    old_1000, new_1000 = _old_shape(1000), _new_shape(1000)
+    assert new_1000 < old_1000 * 0.2, (
+        f"large-N structured offload must cut LLM-visible chars by >80%: "
+        f"old={old_1000} new={new_1000}"
+    )
 
 
 def test_file_write_is_short_status_text():

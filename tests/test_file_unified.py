@@ -17,8 +17,12 @@ No private state assertions.
 """
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 
+from reyn.core.events.events import EventLog
+from reyn.data.workspace.workspace import Workspace
 from reyn.tools.file import (
     _DELETE_FILE_DESCRIPTION,
     _DELETE_FILE_PARAMETERS,
@@ -34,6 +38,7 @@ from reyn.tools.file import (
     WRITE_FILE,
 )
 from reyn.tools.registry import ToolRegistry
+from reyn.tools.types import ToolContext
 
 # ── 1. LIST_DIRECTORY render_for_router byte-identity ───────────────────────
 
@@ -50,17 +55,31 @@ def test_list_directory_router_render_exact_description():
 
 
 def test_list_directory_router_render_exact_parameters():
-    """Tier 2: LIST_DIRECTORY parameters schema is byte-identical to the legacy
-    ToolSpec parameters in router_tools.py C1 block."""
+    """Tier 2: LIST_DIRECTORY parameters schema matches the current
+    ``_LIST_DIRECTORY_PARAMETERS`` shape (path + max_results).
+
+    Deliberately widened from the legacy C1-block literal (path only): the
+    handler was silently hard-capping every listing at FileIROp's 50-entry
+    default with no way for a caller to raise it and no error/warning —
+    a silent-truncation hole for directories with more than 50 entries
+    (mirrors the same hole glob_files had, fixed in the same change).
+    ``max_results`` is now exposed so callers can opt out of the cap.
+    """
     rendered = LIST_DIRECTORY.render_for_router()
-    legacy_parameters = {
+    current_parameters = {
         "type": "object",
         "properties": {
             "path": {"type": "string"},
+            "max_results": {
+                "type": "integer",
+                "description": rendered["function"]["parameters"]["properties"][
+                    "max_results"
+                ]["description"],
+            },
         },
         "required": ["path"],
     }
-    assert rendered["function"]["parameters"] == legacy_parameters
+    assert rendered["function"]["parameters"] == current_parameters
 
 
 # ── 2. READ_FILE render_for_router byte-identity ─────────────────────────────
@@ -317,3 +336,62 @@ def test_list_directory_constants_match_definition():
     constants match the LIST_DIRECTORY ToolDefinition fields."""
     assert LIST_DIRECTORY.description == _LIST_DIRECTORY_DESCRIPTION
     assert dict(LIST_DIRECTORY.parameters) == _LIST_DIRECTORY_PARAMETERS
+
+
+# ── 8. LIST_DIRECTORY max_results real-dispatch bound tests ─────────────────
+#
+# Strip-falsify note: removing the `max_results=args.get("max_results", 50)`
+# forward in `_handle_list` (tools/file.py) reproduces the exact silent-
+# truncation bug list_directory shared with glob_files — this was verified
+# manually (RED observed: 60 -> 50 with no error) before restoring the fix;
+# not committed as a permanently-broken state per the "no throwaway" rule.
+
+
+def _list_dir_ctx(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    events = EventLog()
+    ws = Workspace(events=events)
+    ws.base_dir = tmp_path
+    return ToolContext(
+        caller_kind="router", events=EventLog(), permission_resolver=None, workspace=ws,
+    )
+
+
+def test_list_directory_default_caps_at_50_when_more_entries_exist(tmp_path, monkeypatch):
+    """Tier 2: list_directory with no max_results caps entries at the 50 default.
+
+    Bound: 60 entries (deliberately ABOVE the 50 cap, not at it — a boundary
+    test placed at exactly 50 would not flip if the cap silently disappeared).
+    """
+    for i in range(60):
+        (tmp_path / f"entry_{i:03d}.txt").write_text("x\n", encoding="utf-8")
+
+    ctx = _list_dir_ctx(tmp_path, monkeypatch)
+    result = asyncio.run(LIST_DIRECTORY.handler({"path": "."}, ctx))
+
+    assert result.get("status") == "ok"
+    assert len(result.get("entries", [])) == 50, (
+        f"Expected default cap of 50, got {len(result.get('entries', []))}"
+    )
+
+
+def test_list_directory_max_results_override_returns_all_60(tmp_path, monkeypatch):
+    """Tier 2: list_directory max_results forwards through _handle_list to FileIROp.max_results
+    (the synthesised internal glob op), letting a caller raise the cap above 60 entries.
+
+    This is the strip-falsify companion to the test above, driven through the real
+    LIST_DIRECTORY.handler tool-dispatch path (not a hand-built FileIROp).
+    """
+    for i in range(60):
+        (tmp_path / f"entry_{i:03d}.txt").write_text("x\n", encoding="utf-8")
+
+    ctx = _list_dir_ctx(tmp_path, monkeypatch)
+    result = asyncio.run(
+        LIST_DIRECTORY.handler({"path": ".", "max_results": 1000}, ctx)
+    )
+
+    assert result.get("status") == "ok"
+    assert len(result.get("entries", [])) == 60, (
+        f"Expected all 60 entries with max_results=1000, got "
+        f"{len(result.get('entries', []))}"
+    )
