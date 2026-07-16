@@ -30,8 +30,9 @@ Co-vet-style pins:
      fails.
   5. **All builtins INERT + builtin-provenance.** Each shipped builtin
      (skill + pipeline) loads with ``provenance="builtin"``; the skill is
-     ``auto_invoke=False`` (discoverable, not auto-firing); the pipeline is
-     invoke-by-name (inherently inert, A3).
+     ``visibility="on_demand"`` (#2971: out of the system-prompt menu,
+     reachable via ``skill_list``); the pipeline is invoke-by-name
+     (inherently inert, A3).
 
 No mocks of collaborators: litellm.acompletion is a real-callable stub
 (the LLM is the one collaborator the testing policy allows to be faked);
@@ -374,19 +375,19 @@ def test_present_sp_essential_appears_in_routing_frame() -> None:
 
 def test_cheat_sheet_skill_ships_builtin_provenance_and_inert() -> None:
     """Tier 2: the shipped cheat-sheet skill loads with
-    provenance="builtin", auto_invoke=False (discoverable, not auto-firing),
-    enabled=True (discoverable)."""
+    provenance="builtin", visibility="on_demand" (#2971: out of the menu,
+    reachable via skill_list), enabled=True."""
     cfg = build_builtin_config()
     entry = cfg["skills"]["entries"]["reyn_cheat_sheet"]
     assert entry["provenance"] == "builtin"
-    assert entry["auto_invoke"] is False
+    assert entry["visibility"] == "on_demand"
     assert entry.get("enabled", True) is True
 
 
 def test_flagship_pipeline_ships_builtin_provenance() -> None:
     """Tier 2: the shipped flagship pipeline loads with
     provenance="builtin" -- invoke-by-name is inherently inert (A3), no
-    auto_invoke-shaped field exists on a pipeline entry to force."""
+    visibility-shaped field exists on a pipeline entry to force."""
     cfg = build_builtin_config()
     entry = cfg["pipelines"]["entries"]["flagship"]
     assert entry["provenance"] == "builtin"

@@ -163,7 +163,7 @@ Bundled MCP servers ride the per-server permission gate (`permissions.mcp.<serve
 
 **#2932 grants configured MCP servers automatically on `reyn pipe run`.** Its justification is *trusted-by-configuration*: the operator **explicitly** configured that server **and** explicitly ran the pipe. **If a builtin-shipped mcp config counts as "configured", that premise silently evaporates** — shipping the builtin would mean that the first `reyn pipe run` auto-grants markitdown's arbitrary-path read, with no operator decision anywhere in the chain.
 
-**Requirement: the builtin mcp config ships INERT** — as a sample / commented-out entry that the operator must explicitly enable. This preserves #2932's premise (explicit configuration = the operator's decision) instead of letting a builtin quietly satisfy it. Note the precedent: builtin **skills** already ship inert (`force_auto_invoke_false`, "A3 inert-ship" in `builtin/registry.py`) — the same posture, for the same reason.
+**Requirement: the builtin mcp config ships INERT** — as a sample / commented-out entry that the operator must explicitly enable. This preserves #2932's premise (explicit configuration = the operator's decision) instead of letting a builtin quietly satisfy it. Note the precedent: builtin **skills** already ship inert (`force_visibility_on_demand`, "A3 inert-ship" in `builtin/registry.py`; the stamp was `force_auto_invoke_false` until #2971 renamed the axis) — the same posture, for the same reason.
 
 ### R4 — Chunk defaults are a quality lever, and 0057's number is for a different case
 

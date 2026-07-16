@@ -589,6 +589,9 @@ _ROUTE_CONTRACT_SAMPLES: list[tuple[str, dict[str, Any]]] = [
     ("skill_management__install_local",  {"path": "/tmp/my-skill"}),
     # skill_management category (#2548 PR-D) — install_source requires source URL.
     ("skill_management__install_source", {"source": "https://github.com/user/skill-repo"}),
+    # skill_management category (#2971) — list takes no args (the result is
+    # already scoped to the session's visible set).
+    ("skill_management__list",           {}),
     # pipeline_management category — install_local requires path.
     ("pipeline_management__install_local",  {"path": "/tmp/my-pipeline.yaml"}),
     # pipeline_management category — install_source requires source URL.

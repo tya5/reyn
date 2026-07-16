@@ -25,15 +25,34 @@ provenance values are written at two disjoint code paths that share no
 runtime call graph.
 
 **Inert-by-construction shipping (A3).** A builtin skill entry has its
-``auto_invoke`` forced to ``False`` HERE — unconditionally, regardless of
-what ``BUILTIN_SKILLS`` declares — so a builtin skill can never auto-invoke
-by default; it is discoverable (``enabled`` stays whatever the entry
-declares, default ``True``) but requires an explicit invocation. Pipelines
-and presentations need no equivalent force: both are invoke-by-name
+``visibility`` forced to ``"on_demand"`` HERE — unconditionally, regardless
+of what ``BUILTIN_SKILLS`` declares — so a builtin skill never occupies
+system-prompt budget by default, while staying reachable: the model finds it
+by calling ``skill_list``, then reads its ``SKILL.md`` body with the ordinary
+``file`` read op (which resolves builtin paths via
+``reyn.builtin.docs.read_builtin_body_bytes``, #2913/#2914). ``enabled``
+stays whatever the entry declares (default ``True``).
+
+This force previously stamped ``auto_invoke=False``, and this docstring
+claimed the result was "discoverable ... but requires an explicit
+invocation". **Both halves were false, and #2971 is the correction.** The
+L1 menu was the only surface that named a skill, and ``auto_invoke=False``
+removed the entry from exactly that surface — so a builtin skill was not
+discoverable by anyone, and no path existed by which anything could
+explicitly invoke it. A3 was reasoning about a distinction the system did
+not implement: nothing has ever auto-invoked a skill, so "auto-invoke vs
+explicit invocation" named no real difference, and the intended middle state
+("exists, but do not advertise it") was simply not expressible. The
+``visibility`` enum makes it expressible, and ``skill_list`` supplies the
+discovery surface that makes "inert" mean quiet rather than unreachable.
+
+Pipelines and presentations need no equivalent force: both are invoke-by-name
 (``PipelineRegistry`` / ``PresentationRegistry`` never self-trigger), so
 registering one is already inert until something names it (Addendum A3) —
-forcing an ``auto_invoke``-shaped field on them would invent state that does
-not exist in their schemas.
+forcing a ``visibility``-shaped field on them would invent state that does
+not exist in their schemas. Note what this asymmetry originally cost: a
+pipeline's inertness came with ``run_pipeline`` as a by-name surface, and A3
+copied the "ship inert" posture to skills without copying that surface.
 
 F3a shipped ``BUILTIN_SKILLS`` / ``BUILTIN_PIPELINES`` / ``BUILTIN_PRESENTATIONS``
 EMPTY (mechanism only) — ``build_builtin_config()`` on that empty registry
@@ -52,6 +71,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from reyn.data.skills.registry import VISIBILITY_ON_DEMAND
+
 # ---------------------------------------------------------------------------
 # The builtin content maps. F3b populates the SKILLS + PIPELINES maps with
 # the curated core-spine content (proposal 0060 Addendum D6: the "reyn cheat
@@ -62,7 +83,7 @@ from typing import Any
 # (Evaluation idiom) and the `status_card` present-view (the status/results
 # card, invoke-by-name, zero-token exemplar). Shape mirrors the operator
 # config entry shape exactly:
-#   BUILTIN_SKILLS = {"<name>": {"description": "...", "path": "...", "enabled": True, "auto_invoke": True}}
+#   BUILTIN_SKILLS = {"<name>": {"description": "...", "path": "...", "enabled": True, "visibility": "on_demand"}}
 #   BUILTIN_PIPELINES = {"<key>": {"path": "...", "description": "...", "enabled": True}}
 #   BUILTIN_PRESENTATIONS = {"<name>": {"blueprint": {...}, "enabled": True}}
 #
@@ -70,11 +91,13 @@ from typing import Any
 # (not project-root-relative) — the builtin content ships inside the
 # installed package (the ``builtin/**/*`` package-data glob, F3a Addendum A1),
 # physically outside any given user's project_root, so a project-relative
-# path would not resolve. (Known follow-up, not solved here: reading a
-# builtin skill's SKILL.md body at L2 still passes through the standard
-# out-of-project-root file-read permission gate, same as reading any other
-# path outside project_root — this PR does not add a builtin-tier carve-out
-# to that gate; see the PR body's "known gaps" note.)
+# path would not resolve. (F3b left reading such a path at L2 subject to the
+# standard out-of-project-root file-read permission gate — which hard-fails
+# non-interactively, there being no operator to approve it. #2913/#2914 closed
+# that: `reyn.builtin.docs.read_builtin_body_bytes` short-circuits the gate for
+# builtin-provenance body reads only, scoped least-privilege to the `skills` /
+# `pipelines` top-level dirs. #2971 depends on this — it is what lets a model
+# act on a `skill_list` result with an ordinary `file` read.)
 # ---------------------------------------------------------------------------
 _BUILTIN_DIR = Path(__file__).parent
 
@@ -88,10 +111,10 @@ BUILTIN_SKILLS: "dict[str, dict[str, Any]]" = {
         ),
         "path": str(_BUILTIN_DIR / "skills" / "reyn_cheat_sheet" / "SKILL.md"),
         "enabled": True,
-        # auto_invoke is force-stamped False for every builtin skill by
+        # visibility is force-stamped "on_demand" for every builtin skill by
         # _stamp_builtin_entry (A3) regardless of what's declared here —
         # kept explicit for readability, not because it changes anything.
-        "auto_invoke": False,
+        "visibility": VISIBILITY_ON_DEMAND,
     },
     "draft_judge_revise": {
         "description": (
@@ -103,7 +126,7 @@ BUILTIN_SKILLS: "dict[str, dict[str, Any]]" = {
         ),
         "path": str(_BUILTIN_DIR / "skills" / "draft_judge_revise" / "SKILL.md"),
         "enabled": True,
-        "auto_invoke": False,
+        "visibility": VISIBILITY_ON_DEMAND,
     },
 }
 BUILTIN_PIPELINES: "dict[str, dict[str, Any]]" = {
@@ -177,25 +200,25 @@ BUILTIN_PRESENTATIONS: "dict[str, dict[str, Any]]" = {
 }
 
 
-def _stamp_builtin_entry(entry: "dict[str, Any]", *, force_auto_invoke_false: bool) -> "dict[str, Any]":
+def _stamp_builtin_entry(entry: "dict[str, Any]", *, force_visibility_on_demand: bool) -> "dict[str, Any]":
     """Return *entry* with ``provenance="builtin"`` stamped (A9 seam).
 
-    ``force_auto_invoke_false`` is set for skills only (A3 inert-ship — see
-    module docstring); pipelines/presentations have no ``auto_invoke`` field
-    to force (their inertness is structural, not flag-based).
+    ``force_visibility_on_demand`` is set for skills only (A3 inert-ship — see
+    module docstring); pipelines/presentations have no ``visibility`` field to
+    force (their inertness is structural, not flag-based).
     """
     stamped = {**entry, "provenance": "builtin"}
-    if force_auto_invoke_false:
-        stamped["auto_invoke"] = False
+    if force_visibility_on_demand:
+        stamped["visibility"] = VISIBILITY_ON_DEMAND
     return stamped
 
 
 def _stamp_builtin_entries(
-    raw_entries: "dict[str, dict[str, Any]]", *, force_auto_invoke_false: bool = False,
+    raw_entries: "dict[str, dict[str, Any]]", *, force_visibility_on_demand: bool = False,
 ) -> "dict[str, dict[str, Any]]":
     """Stamp ``provenance="builtin"`` onto every entry in *raw_entries*."""
     return {
-        name: _stamp_builtin_entry(entry, force_auto_invoke_false=force_auto_invoke_false)
+        name: _stamp_builtin_entry(entry, force_visibility_on_demand=force_visibility_on_demand)
         for name, entry in raw_entries.items()
     }
 
@@ -209,13 +232,13 @@ def build_builtin_config() -> "dict[str, Any]":
     hand back for any other config source, so ``load_config`` merges it
     through the existing ``_merge`` union-per-name branches with no special
     casing. Every entry carries ``provenance="builtin"`` (A9); skill entries
-    additionally have ``auto_invoke`` forced ``False`` (A3).
+    additionally have ``visibility`` forced to ``"on_demand"`` (A3).
 
     F3a ships ``BUILTIN_SKILLS``/``BUILTIN_PIPELINES``/``BUILTIN_PRESENTATIONS``
     empty, so this returns three empty ``entries`` dicts — a no-op merge.
     """
     return {
-        "skills": {"entries": _stamp_builtin_entries(BUILTIN_SKILLS, force_auto_invoke_false=True)},
+        "skills": {"entries": _stamp_builtin_entries(BUILTIN_SKILLS, force_visibility_on_demand=True)},
         "pipelines": {"entries": _stamp_builtin_entries(BUILTIN_PIPELINES)},
         "presentations": {"entries": _stamp_builtin_entries(BUILTIN_PRESENTATIONS)},
     }

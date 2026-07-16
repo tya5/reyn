@@ -632,7 +632,7 @@ Handler lifecycle (source path inserts steps 0a–0d before step 1):
    blocking-severity match (source path: removes clone on block)
 5. Gate via `PermissionResolver.require_file_write` (= `.reyn/config/skills.yaml`)
 6. Write `skills.entries.<name>` to `.reyn/config/skills.yaml` with
-   `{path, description, enabled: true, auto_invoke: true}` (+ `source: <url>` when set)
+   `{path, description, enabled: true, visibility: menu}` (+ `source: <url>` when set)
 7. Call `record_config_generation` (recovery-core: truncation-surviving snapshot, #2259 / CLAUDE.md gate)
 8. Emit `skill_installed` event (P6 audit trail)
 9. Request hot-reload via `get_active_hot_reloader().request_reload(source="skill_install")`

@@ -2286,5 +2286,16 @@
         ]
       }
     }
+  },
+  "skill_list": {
+    "type": "function",
+    "function": {
+      "name": "skill_list",
+      "description": "List the skills registered in this session that you are allowed to see, with each skill's name, one-line description, and file path. Some skills are already listed in the Skills section of your system prompt; this tool additionally returns on-demand skills, which are registered and usable but deliberately not advertised there. Call it when a task looks like it might have a matching skill and the menu does not show one. To use a skill from the result, read its 'path' with the file read tool and follow the instructions in the file — there is no separate run tool. Reading a skill's file is what invokes it.",
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      }
+    }
   }
 }

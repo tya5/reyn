@@ -38,6 +38,7 @@ import reyn.prompt.retrieval as _retrieval_mod
 import reyn.prompt.router_frame as _router_frame_mod
 import reyn.prompt.turn_budget as _turn_budget_mod
 import reyn.prompt.universal_slots as _universal_slots_mod
+from reyn.data.skills.registry import SkillEntry
 from reyn.prompt.dogfood import dogfood_judge_system_prompt
 from reyn.prompt.loop_control import tool_call_cap_notice
 from reyn.runtime.reasoning_continuity import render_reasoning_section
@@ -64,15 +65,6 @@ _BOOL_NAMES = [
     "non_interactive",
     "non_claude",
 ]
-
-
-class _Skill:
-    def __init__(self, name, description, path, enabled=True, auto_invoke=True):
-        self.name = name
-        self.description = description
-        self.path = path
-        self.enabled = enabled
-        self.auto_invoke = auto_invoke
 
 
 def _module_string_constants(mod: types.ModuleType) -> dict[str, str]:
@@ -123,7 +115,7 @@ def _assembled_output_corpus() -> str:
         )
         chunks.append(prompt)
 
-    skills = [_Skill("deploy", "Deploys the app", "skills/deploy/SKILL.md")]
+    skills = [SkillEntry("deploy", "Deploys the app", "skills/deploy/SKILL.md")]
     slots_with_skills = build_universal_tool_use_slots(
         universal_wrappers_enabled=True, search_actions_enabled=True,
         discovery_mandate=True, has_hot_list_aliases=True,

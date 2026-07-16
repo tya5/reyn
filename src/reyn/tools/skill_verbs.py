@@ -1,7 +1,8 @@
-"""Skill verb-object handlers — local install (#2548 PR-C) + source/git install (#2548 PR-D).
+"""Skill verb-object handlers — local install (#2548 PR-C) + source/git install
+(#2548 PR-D) + discovery (#2971).
 
 Router-callable skill management verbs under the ``skill_management`` category.
-Exposes two install verbs:
+Exposes two install verbs and one discovery verb:
 
   - ``skill_management__install_local`` — register a local skill directory
     (one containing a ``SKILL.md`` file) into the project
@@ -12,6 +13,26 @@ Exposes two install verbs:
     install it into ``.reyn/skills/<name>/``, and register the installed copy.
     Requires a ``require_http_get`` gate for the source host + the
     ``require_file_write`` gate for skills.yaml.
+
+  - ``skill_management__list`` — return every registered skill whose
+    ``visibility`` is not ``hidden`` (name / description / path). Read-only,
+    no permission gate: it reveals only the operator's own declarations, and
+    strictly less than the L1 Skills menu already puts in the system prompt.
+
+**Why there is a list verb but no run verb (#2971).** Until #2971 the
+``skill_management`` category was install-only, and the L1 Skills menu was the
+only surface that named a skill — so a skill the menu excluded could not be
+reached by the model, the operator, or anything else. Registering it did
+nothing. The fix needs exactly one new hop, DISCOVERY, because the invocation
+path already exists and is complete: the menu has always shipped each skill's
+``path``, and "invoking" a skill means reading that file with the ordinary
+``file`` read op and following its instructions — a skill body is model
+instructions, not code to execute. For builtin skills, whose paths sit outside
+the project root, ``reyn.builtin.docs.read_builtin_body_bytes`` (#2913/#2914)
+already short-circuits the out-of-project read gate for exactly the
+``skills`` / ``pipelines`` body dirs. A ``run_skill`` verb would therefore be a
+second execution surface duplicating that chain, with its own permission story
+to get wrong. Discovery was the only missing link, so it is the only one added.
 
 NOTE: ``skill__`` is the RESOURCE category prefix used for per-skill dynamic
 dispatch (e.g. ``skill__code_review``). Management operations use
@@ -178,9 +199,63 @@ async def _handle_skill_install_source(
     return {"status": "ok", "data": result}
 
 
+# ── skill_list (#2971) ───────────────────────────────────────────────────────
+
+_SKILL_LIST_DESCRIPTION = _skill_descriptions.skill_list.text
+
+# No parameters: the result is already scoped to this session's registered set
+# minus what the operator hid, so there is nothing for the caller to filter by.
+# A `visibility` filter argument would be actively wrong — it would invite the
+# model to ask for `hidden` skills, which this tool must never return.
+_SKILL_LIST_PARAMETERS: dict[str, Any] = {
+    "type": "object",
+    "properties": {},
+}
+
+
+async def _handle_skill_list(
+    args: Mapping[str, Any], ctx: ToolContext,
+) -> ToolResult:
+    """Return the model-visible skills: every registered entry whose
+    ``visibility`` is not ``hidden``.
+
+    Reads the SAME snapshot the L1 Skills menu renders from
+    (``ctx.router_state.available_skills``, bound from
+    ``RouterHostAdapter.get_available_skills()``), so three filters already
+    apply before this handler sees an entry: ``enabled: false`` entries were
+    dropped at registry build, and the per-session capability toggle (#2285)
+    was applied by ``Session._reapply_skill_visibility``. This handler adds the
+    one filter that is its own: ``hidden`` never leaves here.
+
+    The complement is deliberate — ``menu`` skills are returned too, even
+    though the model already has them in its system prompt. This tool answers
+    "what skills exist for me", and a model that called it to check for a
+    match should not have to cross-reference the menu to get a whole answer.
+    """
+    from reyn.data.skills.registry import VISIBILITY_DEFAULT, VISIBILITY_HIDDEN
+
+    router_state = getattr(ctx, "router_state", None)
+    entries = getattr(router_state, "available_skills", None) or []
+
+    skills = [
+        {
+            "name": getattr(e, "name", ""),
+            "description": getattr(e, "description", ""),
+            "path": getattr(e, "path", ""),
+        }
+        for e in entries
+        if getattr(e, "enabled", True)
+        and getattr(e, "visibility", VISIBILITY_DEFAULT) != VISIBILITY_HIDDEN
+    ]
+    return {"skills": skills}
+
+
 # ── ToolDefinitions ───────────────────────────────────────────────────────────
 
-from reyn.core.offload.canonical import skill_install_verb_to_canonical  # noqa: E402
+from reyn.core.offload.canonical import (  # noqa: E402
+    skill_install_verb_to_canonical,
+    skill_list_to_canonical,
+)
 
 # proposal 0060 D5d: mirrors the "skill" PartTypeSpec's doc_ref
 # (reyn.core.part_types.skill) — same part-type, install-verb axis.
@@ -210,4 +285,22 @@ SKILL_INSTALL_SOURCE = ToolDefinition(
     doc_ref=_SKILL_DOC_REF,
 )
 
-__all__ = ["SKILL_INSTALL_LOCAL", "SKILL_INSTALL_SOURCE"]
+SKILL_LIST = ToolDefinition(
+    canonical=skill_list_to_canonical,
+    name="skill_list",
+    description=_SKILL_LIST_DESCRIPTION,
+    parameters=_SKILL_LIST_PARAMETERS,
+    gates=ToolGates(router="allow", phase="allow"),
+    handler=_handle_skill_list,
+    category="discovery",
+    purity="read_only",
+    # A skill's description is operator/third-party-authored text that a
+    # `skill_install_source` fetch can pull from a git repo — the same trust
+    # boundary `list_mcp_tools` declares for server-authored descriptions.
+    # It is threat-scanned at install, but this tool re-surfaces it later,
+    # after a scan-rule update might have changed the verdict.
+    returns_external_content=True,
+    doc_ref=_SKILL_DOC_REF,
+)
+
+__all__ = ["SKILL_INSTALL_LOCAL", "SKILL_INSTALL_SOURCE", "SKILL_LIST"]

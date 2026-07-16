@@ -27,7 +27,7 @@ decision anywhere in the chain (proposal R3 / architect co-vet F-D). Both
 servers ship as pure INERT sample content instead: a commented config block
 an operator must copy into their own ``reyn.yaml`` and explicitly enable --
 see ``docs/cookbook/configs/with-builtin-rag-mcp.yaml``. This mirrors the
-precedent set for builtin skills (``force_auto_invoke_false``, "A3
+precedent set for builtin skills (``force_visibility_on_demand``, "A3
 inert-ship" in ``reyn.builtin.registry``), adapted to MCP's structurally
 different inertness mechanism: an ``mcp.servers`` entry has no ``enabled``
 flag anywhere in the codebase today (#2932's auto-grant keys purely on

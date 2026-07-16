@@ -9,6 +9,30 @@ file-read op) when a skill is relevant; the registry never reads it.
 ``path`` in each entry may be project-root-relative or absolute; it
 points at the skill's ``SKILL.md`` / directory. The registry stores it
 as-is for L1 system-prompt display.
+
+**The visibility axis (#2971).** ``visibility`` names WHICH discovery
+surface a skill reaches, on a single ordered axis — not a pair of
+booleans. It replaces the removed ``auto_invoke`` flag, which was a
+misnomer: no mechanism has ever auto-invoked a skill, so ``auto_invoke``
+only ever meant "render into the L1 menu", and its ``False`` value
+collapsed "do not advertise" into "unreachable by anyone" because the
+menu was the ONLY surface naming a skill. The three states are exactly
+the three an operator can mean:
+
+  - ``menu``     — rendered into the L1 system-prompt Skills menu
+                   (``prompt.universal_slots.build_skills_slot``).
+  - ``on_demand`` — NOT in the menu, but returned by the ``skill_list``
+                   tool: the model learns it exists only when it asks.
+                   Zero standing token cost. The state that did not exist
+                   before #2971, and the one builtin skills ship in.
+  - ``hidden``   — on no model-facing surface at all. The effective
+                   behavior ``auto_invoke: false`` delivered.
+
+**``enabled`` dominates ``visibility``.** ``enabled: false`` drops the
+entry from the registry entirely (see :func:`build_skill_registry`), so
+``visibility`` is only meaningful while ``enabled`` is true. The two
+fields therefore describe 4 reachable states, not 2x3=6: one "not
+registered" state, plus the three visibility states above.
 """
 from __future__ import annotations
 
@@ -18,6 +42,19 @@ from typing import Any
 # Maximum characters to keep from a skill description (one-line cap).
 _DESC_MAX = 200
 
+# The visibility axis (#2971), ordered widest-reach → narrowest. This tuple is
+# the single source of truth: the loader's validation error renders it, and
+# ``docs/concepts/tools-integrations/skills.md`` mirrors it.
+VISIBILITY_MENU = "menu"
+VISIBILITY_ON_DEMAND = "on_demand"
+VISIBILITY_HIDDEN = "hidden"
+VISIBILITIES: "tuple[str, ...]" = (VISIBILITY_MENU, VISIBILITY_ON_DEMAND, VISIBILITY_HIDDEN)
+
+# Default when an entry omits ``visibility``: the widest reach, matching the
+# removed ``auto_invoke``'s ``True`` default (an entry that says nothing is
+# advertised, as before).
+VISIBILITY_DEFAULT = VISIBILITY_MENU
+
 
 @dataclass
 class SkillEntry:
@@ -26,13 +63,16 @@ class SkillEntry:
     ``path`` is as declared in ``skills.entries.<name>.path`` — may be
     project-root-relative or absolute. The registry stores it as-is; the
     model reads the file at L2 when the skill is relevant.
-    ``enabled`` and ``auto_invoke`` mirror the config keys; both default True.
+    ``enabled`` mirrors the config key (default True). ``visibility`` is the
+    #2971 three-state discovery axis (``menu`` / ``on_demand`` / ``hidden``,
+    default ``menu``) — see the module docstring for why it is one enum and
+    not two booleans, and for why ``enabled`` dominates it.
     """
     name: str
     description: str
     path: str
     enabled: bool = True
-    auto_invoke: bool = True
+    visibility: str = VISIBILITY_DEFAULT
 
 
 def _truncate_description(desc: str) -> str:
@@ -54,13 +94,22 @@ def _entry_from_config(name: str, raw: Any) -> SkillEntry | None:
     path = str(raw.get("path") or "").strip()
     description = _truncate_description(str(raw.get("description") or ""))
     enabled = bool(raw.get("enabled", True))
-    auto_invoke = bool(raw.get("auto_invoke", True))
+    # Lenient here, as everywhere in this builder: an unknown/absent
+    # ``visibility`` falls back to the default rather than raising, because
+    # this function is also reached from the best-effort hot-reload re-read.
+    # The AUTHORITATIVE rejection of a bad value (and of the removed
+    # ``auto_invoke`` key) is ``config.loader._validate_skill_visibility``,
+    # which runs at load and raises — see that function's docstring.
+    raw_visibility = raw.get("visibility", VISIBILITY_DEFAULT)
+    visibility = (
+        str(raw_visibility) if str(raw_visibility) in VISIBILITIES else VISIBILITY_DEFAULT
+    )
     return SkillEntry(
         name=name,
         description=description,
         path=path,
         enabled=enabled,
-        auto_invoke=auto_invoke,
+        visibility=visibility,
     )
 
 

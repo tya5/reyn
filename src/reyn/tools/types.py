@@ -205,8 +205,10 @@ class RouterCallerState:
 
     # #2548 PR-A: skill registry snapshot — enabled skills available at
     # router construction time. Filtered to enabled=True by the
-    # builder (build_skill_registry); only auto_invoke=True
-    # entries are rendered into the L1 system-prompt ## Skills block.
+    # builder (build_skill_registry); #2971: only visibility="menu"
+    # entries are rendered into the L1 system-prompt ## Skills block,
+    # while the skill_list tool reads this same snapshot and returns
+    # every entry whose visibility is not "hidden".
     # None = not populated (test sites / contexts without a project
     # root). Construction-time only — per-turn hot-reload is a later PR.
     available_skills: "list[SkillEntry] | None" = None

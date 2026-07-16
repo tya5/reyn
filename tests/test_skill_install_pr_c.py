@@ -110,7 +110,7 @@ async def test_skill_install_e2e_writes_config_and_registry_picks_up(tmp_path):
     raw = yaml.safe_load(config_path.read_text(encoding="utf-8"))
     entry = raw["skills"]["entries"]["my-skill"]
     assert entry["enabled"] is True
-    assert entry["auto_invoke"] is True
+    assert entry["visibility"] == "menu"  # #2971: replaces auto_invoke: true
     assert "my-skill" in entry["path"]
     assert entry["description"] == "Does something useful"
 

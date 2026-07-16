@@ -22,17 +22,55 @@ skills:
       path: skills/pdf-editing/SKILL.md
       description: "PDF フォームのフィールドを入力・結合・抽出する"
       enabled: true
-      auto_invoke: true
+      visibility: menu
 ```
 
 | フィールド | 型 | デフォルト | 意味 |
 |-----------|-----|----------|------|
 | `path` | string | 必須 | `SKILL.md`(またはそれを含むディレクトリ)へのパス。project-root 相対または絶対。 |
 | `description` | string | `""` | L1 メニューに表示される一行サマリー。最初の行のみ、200 文字上限で切り詰め。 |
-| `enabled` | bool | `true` | `false` にするとエントリはレジストリから完全に除外されます(単に非表示ではありません)。 |
-| `auto_invoke` | bool | `true` | `false` にすると skill は登録されたままですが L1 システムプロンプトメニューから除外されます — 他の何かがそれを表面化しない限り、モデルはその存在を知らされません。 |
+| `enabled` | bool | `true` | `false` にするとエントリはレジストリから完全に除外されます(単に非表示ではありません)。`visibility` より優先されます。 |
+| `visibility` | enum | `menu` | skill がどの発見面に載るか: `menu` \| `on_demand` \| `hidden`。下記参照。 |
 
-レジストリ自体は `SKILL.md` を読みません — config エントリの `path` と `description` だけが L1 メニューに反映されます。ファイル自体は L2 で、必要になった時点で通常の file-read op によってモデルが読みます。
+### `visibility` — どの面が skill を名指すか
+
+| 値 | L1 メニューに載る? | `skill_list` が返す? | 使いどころ |
+|----|-------------------|---------------------|-----------|
+| `menu` | はい | はい | 広く関連する skill で、常駐トークンコストに見合う場合。 |
+| `on_demand` | いいえ | はい | 存在はし、合致すれば使ってほしいが、システムプロンプトを占有させたくない場合。モデルが訊くまでコストはゼロ。builtin skill はこの状態で出荷されます。 |
+| `hidden` | いいえ | いいえ | モデルに決して使わせない場合 — どのモデル向け面にも現れません。 |
+
+`enabled` と `visibility` は独立ではありません — **`enabled: false` が優先します。**
+無効なエントリはレジストリから落とされるため、その `visibility` は参照されません。
+∴ 2 つのフィールドが表すのは 6 状態ではなく **4 状態**です(「未登録」+ 上記 3 つ)。
+
+> **#2971 で削除: `auto_invoke`。** これは misnomer でした — skill を自動起動する
+> 機構は存在せず、このフラグはメニューに描画するかどうかだけを決めていました。
+> そして当時メニューは skill を名指す*唯一の*面だったため、`auto_invoke: false` は
+> skill を「広告しない」のではなく**到達不能**にしていました。`visibility` は軸を
+> 正直に名指し、欠けていた状態(`on_demand`)を追加します。`auto_invoke` が残った
+> config は load 時にエラーとなり、正確な置換先を提示します:
+> **`auto_invoke: true` → `visibility: menu`**、
+> **`auto_invoke: false` → `visibility: hidden`**(`hidden` は、旧説明が約束していた
+> 狭い意味ではなく、`false` が*実際に与えていた*挙動を保存します)。
+
+レジストリ自体は `SKILL.md` を読みません — config エントリの `path` と `description` だけが L1 メニューと `skill_list` の結果に反映されます。ファイル自体は L2 で、必要になった時点で通常の file-read op によってモデルが読みます。
+
+## skill の発見と使用
+
+`run_skill` ツールは意図的に存在しません。skill の本文は*モデルへの指示書*で
+あってコードではないため、**ファイルを読むこと自体が invocation** です:
+
+1. **発見** — `menu` の skill は L1 の `## Skills` に既に載っています。それ以外は
+   `skill_management__list`(`skill_list` ツール)が、`visibility` が `hidden` でない
+   全 skill の `name` / `description` / `path` を返します。
+2. **読む** — モデルはその `path` を通常の file-read op で読み、現在のタスクに対して
+   その指示に従います。
+
+builtin skill はインストール済みパッケージ内(= どの project root の外)に出荷され
+ますが、file-read op はそれらのパスをパッケージの `skills/` / `pipelines/` に
+スコープした最小権限の短絡経路で解決します。∴ 承認する operator が居ない
+非対話実行でも問題なく読めます。
 
 ## Config カスケード
 
