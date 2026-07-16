@@ -31,9 +31,8 @@ fields:
 pipeline: query
 description: >-
   FP-0063 P3 builtin RAG query: embed the query text and return the top-k
-  nearest chunks from a user-named sqlite vector store. (Unlike
-  rag_ingest, this pipeline shells out to nothing, so it carries no
-  python3-on-PATH requirement.)
+  nearest chunks from a user-named sqlite vector store. Runs no python of
+  its own -- MCP tools and reyn ops only (#2972), as does rag_ingest.
 steps:
   - transform: {value: "get(ctx, 'top_k', 5)", output: top_k}
   - transform: {value: "get(ctx, 'embedding_model', 'standard')", output: embedding_model}

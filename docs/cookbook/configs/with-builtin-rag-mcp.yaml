@@ -94,17 +94,35 @@
 # real BEFORE any embedding spend and names the one that failed with a
 # concrete remedy, rather than failing opaquely.
 #
-# Once the three servers above are configured + granted, run the builtin
-# pipelines directly (no separate skill needed -- invoke-by-name):
+# Once the three servers above are configured + granted, invoke the builtin
+# pipelines by name. `input_path` must be ABSOLUTE (the pipeline globs it
+# directly); it may be a folder or a single file:
 #
 #   run_pipeline(name="rag_ingest.ingest", input={
-#     "input_path": "docs/", "output_db": ".reyn/rag/docs.sqlite"})
+#     "input_path": "/abs/path/to/docs", "output_db": "/abs/path/to/docs.sqlite"})
 #   run_pipeline(name="rag_query.query", input={
-#     "query_text": "how does X work?", "db": ".reyn/rag/docs.sqlite"})
+#     "query_text": "how does X work?", "db": "/abs/path/to/docs.sqlite"})
+#
+# Or, outside a chat session:
+#
+#   reyn pipe run rag_ingest.ingest \
+#     --input '{"input_path": "/abs/path/to/docs", "output_db": "/abs/path/to/docs.sqlite"}'
+#
+# The `build_and_query_rag_corpus` builtin SKILL (FP-0063 P4) carries the
+# "when/how" these two one-line descriptions cannot: which of reyn's two
+# RAGs to reach for, the ingest->query order, and the C4 rule that one
+# sqlite file holds ONE embedding model (pass the same `embedding_model` to
+# both pipelines -- a mismatch either raises VectorDimensionMismatchError
+# or, at the same dimension, returns quietly meaningless neighbours). Like
+# every builtin skill it ships `visibility: on_demand` -- the model finds it
+# via `skill_list` and reads its body, no config needed. Operator-facing
+# walkthrough: docs/guide/for-users/build-a-rag-corpus.md.
 #
 # Want a different vector-DB / chunker / parser? Copy
 # src/reyn/builtin/pipelines/rag_ingest.yaml (+ rag_query.yaml) into your
 # own project and re-point the `*_server` inputs (or the MCP config entries
 # they name) at your replacement -- FP-0057 C2: reyn builds no adapter for
 # a user's RAG store, so "copy the builtin and re-point the MCP server" IS
-# the extension mechanism, not a workaround.
+# the extension mechanism, not a workaround. Every server name is already an
+# input with a default, so a drop-in replacement exposing the same tool
+# shapes needs no file edit -- just pass `vectorstore_server: "my_qdrant"`.

@@ -48,6 +48,7 @@ No configuration required for any of these. Reyn has the skills for them out of 
 - **[Work with local files](work-with-files.md)** — reference files and directories in your requests.
 
 - **[Enable semantic search](enable-semantic-search.md)** — index your own docs so Reyn can search them by meaning.
+- **[Build a RAG corpus](build-a-rag-corpus.md)** — turn a folder of PDFs / Office docs into a sqlite vector store you own, then query it.
 - **[Log in to an OAuth provider](oauth-login.md)** — authorize GitHub / Google / etc. via the browser device flow.
 - **[Inspect and manage memory](manage-memory.md)** — review, edit, back up, or restore what Reyn remembers.
 

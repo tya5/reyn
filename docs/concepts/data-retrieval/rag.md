@@ -12,7 +12,9 @@ reyn ships a RAG **framework foundation** — five primitive ops (`embed` / `ind
 
 **Phase 1 scope (= 1.0 release).** The framework foundation, the SQLite default backend (≤100K chunks, sub-second query), and the LiteLLM embedding passthrough ship in 1.0. Vector store plugin variety (Qdrant / FAISS / Weaviate / Pinecone), advanced retrieval (rerank / HyDE / contextual retrieval), RAG eval frameworks, and IDE integration are post-1.0 (= phase 2) territory — see [../architecture/care-boundary.md](../architecture/care-boundary.md). If you need that ecosystem today, LangChain / LlamaIndex are the better fit.
 
-**TL;DR:** Search is automatic — the LLM calls the built-in `semantic_search` tool whenever it needs information from an indexed source. Creating a source requires a short safe-mode Python step that reads your files and calls `index_update()` (there is no bundled one-command indexing skill).
+**TL;DR:** Search is automatic — the LLM calls the built-in `semantic_search` tool whenever it needs information from an indexed source. Creating a source requires a short safe-mode Python step that reads your files and calls `index_update()` (there is no bundled one-command indexer for an **in-core source**).
+
+> **This page is about the in-core RAG.** Reyn also ships a **builtin user RAG** (proposal 0063): two bundled pipelines that ingest a folder of documents (pdf / xlsx / pptx / docx / txt / md) into **an external sqlite vector store you name**, via MCP servers, and query it — no Python step to write. It is a *different* store with a *different* setup, and it does **not** create a source `semantic_search` can see. Use this page's `IndexBackend` path when you want reyn's own index; see [Build a RAG corpus](../../guide/for-users/build-a-rag-corpus.md) when you want a portable store of your own documents. The two share only the `embed` primitive and the `embedding:` class config below.
 
 ## Quick start
 
@@ -228,6 +230,7 @@ The same `semantic_search` op works on Reyn's own P6 execution event log once it
 
 ## See also
 
+- [Guide: Build a RAG corpus](../../guide/for-users/build-a-rag-corpus.md) — the *other* RAG: the builtin user-RAG pipelines over an external sqlite store (proposal 0063)
 - [Reference: `reyn source`](../../reference/cli/source.md) — manage indexed sources from the CLI
 - [ADR-0033](../../deep-dives/decisions/0033-rag-extensible-os.md) — design rationale and full technical spec (internal)
 - [Concepts: workspace](../runtime/workspace.md) — how `.reyn/` state is structured

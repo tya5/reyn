@@ -128,6 +128,31 @@ BUILTIN_SKILLS: "dict[str, dict[str, Any]]" = {
         "enabled": True,
         "visibility": VISIBILITY_ON_DEMAND,
     },
+    # FP-0063 P4 -- the "when/how" for the two builtin RAG pipelines below
+    # (proposal 0063 §Architecture: "builtin skill: when/how to run the two
+    # pipelines"). The pipelines are already LLM-discoverable on their own
+    # (list_actions enumerates a `pipeline__<name>` per registered entry,
+    # carrying that entry's own `description`), so this skill is NOT a
+    # discovery surface -- it exists for exactly what a one-line description
+    # cannot carry: which of reyn's TWO RAGs to reach
+    # for, the ingest->query order, that the operator -- not the model --
+    # owns the INERT MCP servers' enablement, and the C4 one-db-one-
+    # embedding-model rule whose violation degrades a corpus SILENTLY
+    # (same dimension, different model -> meaningless neighbours, no error).
+    "build_and_query_rag_corpus": {
+        "description": (
+            "Make a folder of the operator's own documents "
+            "(txt/md/pdf/xlsx/pptx/docx) searchable by meaning: ingest them "
+            "into a user-named sqlite vector store, then query it for the "
+            "top-k relevant chunks. Read this before running the builtin "
+            "`rag_ingest` / `rag_query` pipelines, or when asked to search "
+            "documents that are NOT already in reyn's own semantic_search "
+            "index."
+        ),
+        "path": str(_BUILTIN_DIR / "skills" / "build_and_query_rag_corpus" / "SKILL.md"),
+        "enabled": True,
+        "visibility": VISIBILITY_ON_DEMAND,
+    },
 }
 BUILTIN_PIPELINES: "dict[str, dict[str, Any]]" = {
     "flagship": {
@@ -147,13 +172,15 @@ BUILTIN_PIPELINES: "dict[str, dict[str, Any]]" = {
     # every step's MCP calls additionally fail cleanly with a decision-
     # enabling message (X1) until the operator explicitly configures +
     # grants the three servers (docs/cookbook/configs/with-builtin-rag-mcp.yaml).
+    # The "when/how to run these two" knowledge lives in the
+    # `build_and_query_rag_corpus` skill above (P4).
     "rag_ingest": {
         "description": (
             "RAG ingest: chunk -> embed -> store a file or folder into a "
             "user-named sqlite vector store, incrementally by content_hash "
-            "(add/update/remove). Requires `python3` on PATH to be reyn's "
-            "own interpreter (it shells out; step 0 pre-flights this) -- "
-            "proposal 0063 P3."
+            "(add/update/remove). Runs no python of its own -- MCP tools and "
+            "reyn ops only; step 0 pre-flights the MCP servers it needs "
+            "(#2972) -- proposal 0063 P3."
         ),
         "path": str(_BUILTIN_DIR / "pipelines" / "rag_ingest.yaml"),
         "enabled": True,

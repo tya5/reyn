@@ -89,6 +89,7 @@ nav:
           - Files & integrations:
               - guide/for-users/work-with-files.md
               - guide/for-users/enable-semantic-search.md
+              - guide/for-users/build-a-rag-corpus.md
               - guide/for-users/popular-mcp-servers.md
               - guide/for-users/oauth-login.md
               - guide/for-users/manage-memory.md
