@@ -348,7 +348,7 @@ sandbox:
 
 | キー | 型 | デフォルト | 説明 |
 |-----|------|---------|-------------|
-| `network` | bool | `false` | サンドボックスプロセスからの外向きネットワークを許可。主要な外部流出ゲート。 |
+| `network` | bool | `DEFAULT_SANDBOX_NETWORK`（現在 `true`） | サンドボックスプロセスからの外向きネットワークを許可。主要な外部流出ゲート。`sandbox.policy` 明示ブロックでこのキーを省略した場合、single-source の床 `DEFAULT_SANDBOX_NETWORK`（現在 `true`）を継承する — `SandboxPolicy` の dataclass デフォルトの `false` **ではない**。部分的な policy はこの床にマージされる（#2964）ため、`network` を省略するとネットワークは ON のまま。隔離するには `network: false` を明示すること。 |
 | `write_paths` | list[文字列] | `[]` | プロセスが書き込み可能なパス（厳密なガード）。書き込みは読み取りを含む。`write_paths` の許可と重なる `read_deny_paths` エントリは常に優先される（deny-always-wins、#2978）— ∴ 広い `write_paths` でも denied な credential パスは開かない。`~` は展開される。 |
 | `read_deny_paths` | list[文字列] | `~/.ssh`・`~/.aws`・`~/.gnupg`・`~/.config/gcloud`・`~/.kube`・`~/.docker/config.json`・`~/.netrc` | 広読み込みサーフェスから拒否する機密パス（多層防御）— `sandbox.policy` 明示ブロックでこのキーを省略した場合、空リストではなくこの7つの OS レベル credential パス（`SandboxPolicy.read_deny_paths` の dataclass デフォルト）がデフォルトになります。deny-after-allow をサポートするバックエンド（Seatbelt）のみ適用。許可リストのみのバックエンド（Landlock、read-deny プリミティブが無い）では非対応。`write_paths` のエントリがこれらと重なる・包含する場合でも deny を無効化しない — Seatbelt 上では deny が常に勝ち（#2978）、`sandbox_policy_narrowed` audit-event が縮小を記録します。 |
 | `read_paths` | list[文字列] | `[]` | **レガシー。** かつての厳密な読み込み許可リスト。現在のスコーピングモデルでは読み込みはデフォルトで広許可のため、このフィールドは意図した読み込み対象のドキュメントとしてのみ機能します。 |
