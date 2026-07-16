@@ -36,6 +36,7 @@ import json
 import os
 import sys
 
+from .backends.seccomp import build_seccomp_installer
 from .policy import SandboxPolicy
 
 _MODULE = "reyn.security.sandbox.landlock_exec"
@@ -93,6 +94,27 @@ def _parse_args(argv: list[str]) -> tuple[SandboxPolicy, str, list[str]]:
     return _policy_from_json(ns.policy), rest[0], rest[1:]
 
 
+def _apply_seccomp(policy: SandboxPolicy) -> None:
+    """Load the seccomp-BPF filter into the CURRENT process under ``policy``.
+
+    Irrevocable, and survives the ``os.execvp`` that :func:`main` issues next —
+    which is why ``execve``/``execveat`` are baseline-allowed (denying them would
+    kill the shim before it could exec the target at all, #2962).
+
+    No-op when ``policy.allow_subprocess`` is True: the syscall-reduction layer
+    exists to deny process creation, so an explicitly subprocess-permitting
+    policy has nothing for it to add here. (Whether that gate belongs on the
+    whole filter or only on the allowlist contents is #2962's open question.)
+    """
+    if policy.allow_subprocess:
+        return
+    # ⚠ build_seccomp_installer only BUILDS — the filter is not live until the
+    # returned installer is invoked. Discarding this return value is exactly the
+    # bug that kept the seccomp layer dead in production (#2962).
+    installer = build_seccomp_installer(policy)
+    installer()
+
+
 def _apply_landlock(policy: SandboxPolicy) -> None:
     """Restrict the CURRENT process under ``policy`` via Landlock.
 
@@ -127,13 +149,7 @@ def _apply_landlock(policy: SandboxPolicy) -> None:
         ruleset.add_net_port_rule(deny_all_outbound=True)  # type: ignore[attr-defined]
     ruleset.restrict_self()  # type: ignore[attr-defined]
 
-    if not policy.allow_subprocess:
-        try:
-            from .backends.seccomp import install_seccomp_filter  # noqa: PLC0415
-        except ImportError:
-            install_seccomp_filter = None  # type: ignore[assignment]
-        if install_seccomp_filter is not None:
-            install_seccomp_filter(policy)
+    _apply_seccomp(policy)
 
 
 def main(argv: list[str] | None = None) -> int:

@@ -9,8 +9,23 @@ The `pyseccomp` PyPI package wraps libseccomp. This module is import-guarded:
 if `pyseccomp` is unavailable, `is_available()` returns False and callers
 (LandlockBackend) lazily fall through.
 
-Contributor-friendly track: the maintainer dev environment is macOS-only.
-Linux contributors are invited to validate the syscall filter list.
+Validation status (#2962). Until #2962 this filter had NEVER loaded in
+production: both callsites called the builder and discarded the installer it
+returns, so `f.load()` never ran and the allowlist below was never exercised.
+With the wiring fixed, the allowlist is live and a name missing from it KILLS
+the sandboxed process — so this list is a correctness surface, not just a
+hardening surface.
+
+- aarch64 Linux (Ubuntu 24.04, kernel 6.8, glibc 2.39): live-validated —
+  the filter loads and ordinary workloads (echo / ls / cat / python file
+  read+write) run under it.
+- x86_64 Linux: NOT validated. The maintainer dev environment is macOS/arm64
+  and x86_64 is reachable there only under Rosetta emulation, where
+  `seccomp_load()` fails with ECANCELED — an artifact of installing an
+  x86_64 filter against an aarch64 kernel, which says nothing about real
+  x86_64 hardware. Every allowlist name does resolve on x86_64 (libseccomp
+  accepts each `add_rule`), but runtime sufficiency there is unproven.
+  Contributors on x86_64 Linux are invited to confirm.
 """
 from __future__ import annotations
 
@@ -26,8 +41,13 @@ _logger = logging.getLogger(__name__)
 _AVAILABLE: bool | None = None
 
 # Baseline syscalls always permitted — minimum for a Linux process to function.
-# TODO(fp-0017-b): Linux validation needed — list derived from Docker/Firejail
-# defaults but may need real-process tuning for libc startup / dynamic loader.
+#
+# Linux-validated (#2962). This list was never exercised before #2962 because the
+# filter never loaded in production; the first live run killed /bin/echo. The
+# entries below marked "live-validated" were discovered empirically by loading the
+# real filter and running real commands under strace until they stopped dying —
+# NOT by reading Docker/Firejail defaults. See the #2962 PR body for the method,
+# the environment, and the residual gaps.
 _BASELINE: list[str] = [
     # Process lifecycle
     "exit", "exit_group", "rt_sigreturn",
@@ -53,6 +73,59 @@ _BASELINE: list[str] = [
     "openat", "open", "access", "faccessat", "faccessat2", "readlink", "readlinkat",
     # Process exit
     "wait4", "waitid",
+    # glibc process startup (live-validated, #2962). Every dynamically-linked
+    # binary calls these before reaching main(); without them the filter killed
+    # /bin/echo. `rseq` (restartable sequences) is registered unconditionally by
+    # glibc >= 2.35; `prlimit64` backs getrlimit during startup.
+    "rseq", "prlimit64",
+    # Ordinary file/dir I/O on already-opened fds (live-validated, #2962).
+    # `getdents64` = directory listing (ls), `statfs` = filesystem stat,
+    # `fadvise64` = readahead hint (cat), `ioctl` = isatty()/termios probing that
+    # virtually every libc program performs on its stdio fds. None of these
+    # create processes or open new paths — path access stays governed by Landlock.
+    "getdents64", "statfs", "fadvise64", "ioctl",
+    # Ordinary file management (live-validated, #2962).
+    #
+    # These were deliberately EXCLUDED on the theory that "write access is
+    # governed by Landlock path rules, not seccomp". That reasoning does not
+    # survive contact with `defaction=KILL`: absent from a default-deny allowlist
+    # does not mean "delegated to Landlock", it means the process is KILLED with
+    # SIGSYS before Landlock can adjudicate anything. Measured under the live
+    # filter: os.mkdir / os.remove / os.rename / shutil.rmtree were all killed.
+    # Allowing the syscall here does NOT grant path access — Landlock still
+    # denies it (EPERM) outside policy.write_paths. Allowing it is what lets
+    # Landlock be the layer that decides, which was the documented intent.
+    #
+    # Measured on aarch64: getcwd, mkdirat, unlinkat, renameat, fchmodat,
+    # truncate, symlinkat. The legacy non-*at aliases are included alongside for
+    # x86_64 (where glibc may route to them); libseccomp tolerates names absent
+    # on the running arch, which is why the pre-existing list can carry both
+    # `open` and `openat`.
+    "getcwd",
+    "mkdir", "mkdirat", "rmdir",
+    "unlink", "unlinkat",
+    "rename", "renameat", "renameat2",
+    "chmod", "fchmod", "fchmodat",
+    "symlink", "symlinkat", "link", "linkat",
+    "truncate", "ftruncate",
+    # CPython's own post-preexec_fn child code (live-validated, #2962).
+    # LandlockBackend loads the filter from a preexec_fn, so the syscalls
+    # _posixsubprocess.fork_exec makes AFTER preexec_fn returns are filtered too:
+    # CPython >= 3.9 closes inherited fds with close_range(). Without it the
+    # child died between preexec_fn and execve — a shape the landlock_exec shim
+    # (plain os.execvp) does NOT exercise, which is why both callsites were
+    # validated separately.
+    "close_range",
+    # Replacing THIS process's image. Baseline — not gated on allow_subprocess.
+    # Both callsites load the filter in a pre-exec position (LandlockBackend from
+    # a preexec_fn, immediately before Popen's execve; landlock_exec from
+    # _apply_landlock, immediately before os.execvp). The filter survives execve,
+    # so denying execve here would KILL the sandboxed target before it ever
+    # starts — i.e. it would deny the sandbox its own reason to exist (#2962).
+    # This is NOT a subprocess capability: execve replaces the calling process
+    # and spawns nothing. Spawning requires fork/vfork/clone/clone3, which stay
+    # gated on allow_subprocess below.
+    "execve", "execveat",
 ]
 
 # Syscalls added when policy.network is True.
@@ -62,9 +135,16 @@ _NETWORK_SYSCALLS: list[str] = [
     "getsockname", "getpeername", "setsockopt", "getsockopt", "shutdown",
 ]
 
-# Syscalls added when policy.allow_subprocess is True.
+# Syscalls added when policy.allow_subprocess is True. These are the syscalls
+# that CREATE a new process; execve/execveat are baseline (see _BASELINE) because
+# they only replace the current image.
+#
+# Consequence worth knowing: glibc's fork()/posix_spawn() and pthread_create()
+# all route through clone(), so with allow_subprocess=False a target that spawns
+# THREADS is killed too, not just one that spawns processes. That is inherent to
+# gating clone and is unchanged by #2962 — flagged, not silently decided.
 _SUBPROCESS_SYSCALLS: list[str] = [
-    "fork", "vfork", "clone", "clone3", "execve", "execveat",
+    "fork", "vfork", "clone", "clone3",
 ]
 
 
@@ -94,8 +174,15 @@ def is_available() -> bool:
     return _AVAILABLE
 
 
-def install_seccomp_filter(policy: SandboxPolicy) -> Callable[[], None]:
-    """Return a callable that installs a seccomp-BPF filter when invoked.
+def build_seccomp_installer(policy: SandboxPolicy) -> Callable[[], None]:
+    """Build (do NOT load) a seccomp-BPF filter installer for *policy*.
+
+    ⚠ This function has NO side effect. Nothing is filtered until the RETURNED
+    callable is invoked — `build_seccomp_installer(policy)` on its own is dead
+    code. The previous name (`install_seccomp_filter`) read as if calling it
+    installed the filter; both production callsites therefore discarded the
+    return value and the filter never loaded in production (#2962). The name
+    now describes what the function does: it BUILDS an installer.
 
     The returned callable is intended to be used as (or composed into) a
     `preexec_fn` argument for `subprocess.Popen`. It runs in the child
@@ -124,10 +211,9 @@ def install_seccomp_filter(policy: SandboxPolicy) -> Callable[[], None]:
 
         import pyseccomp  # noqa: PLC0415 — guarded by is_available()
 
-        # Default-deny posture: any syscall not in the allowlist kills the process.
-        # TODO(fp-0017-b): Linux validation needed — pyseccomp API is reasonably
-        # stable but the filter list may need tweaks for real Linux processes
-        # (libc startup, dynamic loader, Python runtime internals).
+        # Default-deny posture: any syscall not in the allowlist kills the process
+        # with SIGSYS. Live-validated on aarch64; see the module docstring for the
+        # x86_64 gap.
         f = pyseccomp.SyscallFilter(defaction=pyseccomp.KILL)
 
         for syscall_name in _build_syscall_allowlist(policy):
@@ -145,10 +231,16 @@ def _build_syscall_allowlist(policy: SandboxPolicy) -> list[str]:
     Always includes the baseline minimum for a Linux process. Conditionally
     adds network and subprocess syscalls based on policy flags.
 
-    Destructive filesystem syscalls (unlink, mkdir, rename, …) are intentionally
-    absent — write access is governed by Landlock path rules, not seccomp.
+    Filesystem-mutating syscalls (unlink, mkdir, rename, …) ARE included: write
+    access is governed by Landlock path rules, not seccomp, and under
+    `defaction=KILL` a syscall must be allowed HERE to reach Landlock and be
+    adjudicated at all. Allowing them grants no path access; omitting them merely
+    killed the process instead of delegating the decision (#2962).
+
     Escape-hatch syscalls (ptrace, process_vm_readv, keyctl, modify_ldt,
-    request_key, add_key) are never included regardless of policy.
+    request_key, add_key) are never included regardless of policy — for those,
+    KILL is the intended outcome. Process CREATION (fork/clone/…) is gated on
+    policy.allow_subprocess; see `_SUBPROCESS_SYSCALLS`.
 
     Args:
         policy: The sandbox policy to derive the allowlist from.

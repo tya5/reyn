@@ -30,11 +30,49 @@ import subprocess
 from .._subprocess_io import communicate_capped, kill_process_tree
 from ..backend import SandboxResult, WrappedCommand
 from ..policy import SandboxPolicy
+from .seccomp import build_seccomp_installer
 
 _logger = logging.getLogger(__name__)
 
 # One-shot warning latch for missing net restriction.
 _NET_WARN_ISSUED = False
+
+
+def _child_preexec(ruleset: object | None, policy: SandboxPolicy) -> None:
+    """Apply Landlock + seccomp restrictions in the child process (preexec_fn).
+
+    Called after fork(), before exec(). The ruleset is built in the parent (its
+    ruleset fd survives the fork); ``apply()`` issues ``landlock_restrict_self``
+    on the calling (child) thread and is irrevocable for the rest of that
+    process's lifetime. The seccomp filter is loaded after it and is likewise
+    irrevocable, and survives the execve that follows.
+
+    Module-level (rather than a closure inside ``run``) so the seccomp wiring
+    below is reachable by a test without a Linux host: ``ruleset=None`` means
+    "no Landlock ruleset to apply" and skips straight to the seccomp step.
+    Production always passes a real ruleset.
+    """
+    if ruleset is not None:
+        try:
+            ruleset.apply()  # type: ignore[attr-defined]
+        except Exception as exc:  # noqa: BLE001
+            # If apply() fails (e.g., kernel too old despite probe), log and
+            # continue — the process will run without Landlock enforcement
+            # rather than silently failing to start.
+            import sys  # noqa: PLC0415
+
+            print(  # noqa: T201
+                f"LandlockBackend: ruleset.apply() failed: {exc}",
+                file=sys.stderr,
+            )
+
+    if not policy.allow_subprocess:
+        # ⚠ build_seccomp_installer only BUILDS — the filter is not live until
+        # the returned installer is invoked. Discarding this return value is
+        # exactly the bug that kept the seccomp layer dead in production
+        # (#2962); the two lines must stay two lines.
+        installer = build_seccomp_installer(policy)
+        installer()
 
 
 def _warn_net_once(abi: int) -> None:
@@ -166,36 +204,6 @@ class LandlockBackend:
         if "PATH" not in env and "PATH" in os.environ:
             env["PATH"] = os.environ["PATH"]
 
-        # Lazy-import seccomp integration from sibling module (FP-0017 Component B).
-        try:
-            from .seccomp import install_seccomp_filter  # noqa: PLC0415
-        except ImportError:
-            install_seccomp_filter = None  # type: ignore[assignment]
-
-        def _build_preexec(ruleset: object) -> None:
-            """Apply Landlock restrictions in the child process (preexec_fn).
-
-            Called after fork(), before exec(). The ruleset is built in the parent
-            (its ruleset fd survives the fork); ``apply()`` issues
-            ``landlock_restrict_self`` on the calling (child) thread and is
-            irrevocable for the rest of that process's lifetime.
-            """
-            try:
-                ruleset.apply()  # type: ignore[union-attr]
-            except Exception as exc:  # noqa: BLE001
-                # If apply() fails (e.g., kernel too old despite probe), log and
-                # continue — the process will run without Landlock enforcement
-                # rather than silently failing to start.
-                import sys  # noqa: PLC0415
-
-                print(  # noqa: T201
-                    f"LandlockBackend: ruleset.apply() failed: {exc}",
-                    file=sys.stderr,
-                )
-
-            if install_seccomp_filter is not None and not policy.allow_subprocess:
-                install_seccomp_filter(policy)
-
         # Build the ruleset (real py-landlock porcelain API).
         try:
             FS = landlock.FSAccess  # type: ignore[attr-defined]
@@ -277,7 +285,7 @@ class LandlockBackend:
                         env=env,
                         cwd=cwd,
                         start_new_session=True,
-                        preexec_fn=lambda: _build_preexec(ruleset),
+                        preexec_fn=lambda: _child_preexec(ruleset, policy),
                     )
                     try:
                         stdout_b, stderr_b, truncated = communicate_capped(
@@ -334,7 +342,7 @@ class LandlockBackend:
                     env=env,
                     cwd=cwd,
                     start_new_session=True,
-                    preexec_fn=lambda: _build_preexec(ruleset),
+                    preexec_fn=lambda: _child_preexec(ruleset, policy),
                 ),
             )
         except OSError as exc:
