@@ -80,6 +80,10 @@ def build_offload_body(
             structured_items.append(att.get("data"))
 
     # Signal meta goes to the frontmatter as-is (``isError`` is handled by the error path, never here).
+    # ``empty`` (#3010) deliberately DOES render: it is an ordinary signal, the same class as
+    # ``returncode``/``truncated``, and telling the LLM outright that a success produced no body is
+    # the same "better UX than a blank result" reasoning the explicit marker itself rests on. It
+    # ADDS a frontmatter line; it never rewrites ``text``, which stays the marker byte-for-byte.
     frontmatter: dict[str, Any] = {
         k: v for k, v in (canonical.get("meta") or {}).items() if k != "isError"
     }
