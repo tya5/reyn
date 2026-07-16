@@ -1,0 +1,55 @@
+name: sandbox seccomp x86_64 live validation
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  seccomp-x86_64-live:
+    name: seccomp-BPF live probe (x86_64, sandbox-linux extra, #2982/#2983)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      # `sandbox-linux` is deliberately OMITTED from test.yml's extras — it pulls
+      # in pyseccomp, which #2975 (`load_seccomp_filter`) makes a REAL, irrevocable
+      # default-deny filter for the calling process. test.yml's pytest session
+      # never installs this extra, so no job anywhere ran with pyseccomp actually
+      # present until this one. That gap is exactly why #2975's own live
+      # validation (24/24, aarch64) could never have run in CI at all before now.
+      - name: Install sandbox-linux extra
+        run: pip install -e ".[sandbox-linux]"
+
+      # scripts/sandbox_seccomp_x86_64_live_smoke.py is intentionally NOT a
+      # pytest file: loading a real seccomp filter is irrevocable for the rest
+      # of the process, so pytest's shared-session model is the wrong shape for
+      # it (#2975's own test-guard fix, 8f4405815, exists because ONE unguarded
+      # pytest-collected test loaded a real filter into the pytest process
+      # itself). This script forks a fresh subprocess per probe instead.
+      #
+      # Deliberately NOT path-filtered, same reasoning as wheel-reachability.yml
+      # (FP-0061): an incomplete include-list is itself a false-allow surface —
+      # letting a seccomp allowlist regression under an unlisted path merge with
+      # this gate silently never running would be worse than a few extra
+      # seconds of CI on every PR.
+      #
+      # #2975 was validated live ONLY on aarch64 (Ubuntu 24.04, colima) — an
+      # architecture that has no `stat`/`lstat` syscalls at all, so it could not
+      # possibly surface a missing `stat`/`lstat` allowlist entry. This job
+      # repeats that live validation on x86_64 (this runner), which DOES have
+      # those syscalls, closing that one specific blind spot. It does NOT
+      # validate: the #2980 landlock-package-API mismatch (reported, not fixed,
+      # by this script), the Landlock ABI 1-2 truncate gap (this runner's kernel
+      # ABI is whatever GitHub ships, not chosen for ABI coverage), or real
+      # end-to-end op-path enforcement. See #2982 / #2983.
+      - name: Live seccomp-BPF validation (x86_64)
+        run: python scripts/sandbox_seccomp_x86_64_live_smoke.py
