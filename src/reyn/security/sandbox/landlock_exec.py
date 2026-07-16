@@ -36,7 +36,7 @@ import json
 import os
 import sys
 
-from .backends.seccomp import build_seccomp_installer
+from .backends.seccomp import load_seccomp_filter
 from .policy import SandboxPolicy
 
 _MODULE = "reyn.security.sandbox.landlock_exec"
@@ -108,11 +108,7 @@ def _apply_seccomp(policy: SandboxPolicy) -> None:
     """
     if policy.allow_subprocess:
         return
-    # ⚠ build_seccomp_installer only BUILDS — the filter is not live until the
-    # returned installer is invoked. Discarding this return value is exactly the
-    # bug that kept the seccomp layer dead in production (#2962).
-    installer = build_seccomp_installer(policy)
-    installer()
+    load_seccomp_filter(policy)
 
 
 def _apply_landlock(policy: SandboxPolicy) -> None:

@@ -1,4 +1,4 @@
-"""seccomp-BPF syscall filter builder — stacks on top of Landlock (FP-0017).
+"""seccomp-BPF syscall filter — stacks on top of Landlock (FP-0017).
 
 LandlockBackend handles filesystem and network rules at the kernel-object
 level; seccomp-BPF complements it by reducing the syscall surface available
@@ -10,11 +10,12 @@ if `pyseccomp` is unavailable, `is_available()` returns False and callers
 (LandlockBackend) lazily fall through.
 
 Validation status (#2962). Until #2962 this filter had NEVER loaded in
-production: both callsites called the builder and discarded the installer it
-returns, so `f.load()` never ran and the allowlist below was never exercised.
-With the wiring fixed, the allowlist is live and a name missing from it KILLS
-the sandboxed process — so this list is a correctness surface, not just a
-hardening surface.
+production: the entry point returned an installer callable and both callsites
+discarded it, so `f.load()` never ran and the allowlist below was never
+exercised. The entry point is now a plain side-effecting `load_seccomp_filter`
+with no return value, so a caller cannot silently drop the load. With the wiring
+fixed, the allowlist is live and a name missing from it KILLS the sandboxed
+process — so this list is a correctness surface, not just a hardening surface.
 
 - aarch64 Linux (Ubuntu 24.04, kernel 6.8, glibc 2.39): live-validated —
   the filter loads and ordinary workloads (echo / ls / cat / python file
@@ -31,7 +32,6 @@ from __future__ import annotations
 
 import logging
 import platform
-from typing import Callable
 
 from ..policy import SandboxPolicy
 
@@ -174,55 +174,57 @@ def is_available() -> bool:
     return _AVAILABLE
 
 
-def build_seccomp_installer(policy: SandboxPolicy) -> Callable[[], None]:
-    """Build (do NOT load) a seccomp-BPF filter installer for *policy*.
+def load_seccomp_filter(policy: SandboxPolicy) -> None:
+    """Load a default-deny seccomp-BPF filter into the CURRENT process.
 
-    ⚠ This function has NO side effect. Nothing is filtered until the RETURNED
-    callable is invoked — `build_seccomp_installer(policy)` on its own is dead
-    code. The previous name (`install_seccomp_filter`) read as if calling it
-    installed the filter; both production callsites therefore discarded the
-    return value and the filter never loaded in production (#2962). The name
-    now describes what the function does: it BUILDS an installer.
+    Call this from the child side of a fork: from (or composed into) a
+    `preexec_fn` for `subprocess.Popen`, or immediately before an exec in a
+    re-exec shim. It applies to the calling thread at once, is irrevocable, and
+    survives the `execve` that follows — which is why `execve` itself must be in
+    the allowlist (`_BASELINE`).
 
-    The returned callable is intended to be used as (or composed into) a
-    `preexec_fn` argument for `subprocess.Popen`. It runs in the child
-    process after fork() but before exec(), where it loads a default-deny
-    syscall filter via libseccomp.
+    There is deliberately NO deferred form and NO return value. This function
+    used to be `install_seccomp_filter`, which *returned* an installer that the
+    caller had to invoke; both production callsites called it and dropped the
+    result, so the filter never loaded and the layer was dead for its entire
+    existence (#2962). A builder makes "call it and discard" a silent no-op that
+    reads, at the callsite, exactly like working code. With a plain side-effecting
+    call that defect is not constructable: the only way to misuse this is to not
+    call it at all, which a reader can see. Prefer the structure that cannot
+    express the bug over a name that merely describes it accurately.
 
-    If seccomp is unavailable (non-Linux or pyseccomp not installed), the
-    returned callable is a no-op that emits a WARN log — Landlock alone
-    still applies, so isolation is not entirely absent.
+    If seccomp is unavailable (non-Linux or pyseccomp not installed) this is a
+    no-op that emits a WARN — Landlock alone still applies, so isolation is not
+    entirely absent.
+
+    ⚠ Every syscall NOT in the allowlist kills the process with SIGSYS. The
+    allowlist is a correctness surface, not just a hardening surface; see the
+    module docstring for what is live-validated and what is not.
 
     Args:
         policy: The declarative sandbox policy governing which capabilities
             are permitted. `policy.network` and `policy.allow_subprocess`
             control which optional syscall groups are added to the allowlist.
-
-    Returns:
-        A zero-argument callable suitable for use in a preexec_fn chain.
     """
-    def _install() -> None:
-        if not is_available():
-            _logger.warning(
-                "seccomp-BPF unavailable (non-Linux or pyseccomp missing); "
-                "skipping syscall filter — Landlock rules still apply"
-            )
-            return
+    if not is_available():
+        _logger.warning(
+            "seccomp-BPF unavailable (non-Linux or pyseccomp missing); "
+            "skipping syscall filter — Landlock rules still apply"
+        )
+        return
 
-        import pyseccomp  # noqa: PLC0415 — guarded by is_available()
+    import pyseccomp  # noqa: PLC0415 — guarded by is_available()
 
-        # Default-deny posture: any syscall not in the allowlist kills the process
-        # with SIGSYS. Live-validated on aarch64; see the module docstring for the
-        # x86_64 gap.
-        f = pyseccomp.SyscallFilter(defaction=pyseccomp.KILL)
+    # Default-deny posture: any syscall not in the allowlist kills the process
+    # with SIGSYS. Live-validated on aarch64; see the module docstring for the
+    # x86_64 gap.
+    f = pyseccomp.SyscallFilter(defaction=pyseccomp.KILL)
 
-        for syscall_name in _build_syscall_allowlist(policy):
-            f.add_rule(pyseccomp.ALLOW, syscall_name)
+    for syscall_name in _build_syscall_allowlist(policy):
+        f.add_rule(pyseccomp.ALLOW, syscall_name)
 
-        # Irrevocable — issues prctl(PR_SET_SECCOMP) in the child process.
-        f.load()
-
-    return _install
+    # Irrevocable — issues prctl(PR_SET_SECCOMP) in the child process.
+    f.load()
 
 
 def _build_syscall_allowlist(policy: SandboxPolicy) -> list[str]:

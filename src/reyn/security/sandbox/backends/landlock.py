@@ -30,7 +30,7 @@ import subprocess
 from .._subprocess_io import communicate_capped, kill_process_tree
 from ..backend import SandboxResult, WrappedCommand
 from ..policy import SandboxPolicy
-from .seccomp import build_seccomp_installer
+from .seccomp import load_seccomp_filter
 
 _logger = logging.getLogger(__name__)
 
@@ -67,12 +67,11 @@ def _child_preexec(ruleset: object | None, policy: SandboxPolicy) -> None:
             )
 
     if not policy.allow_subprocess:
-        # ⚠ build_seccomp_installer only BUILDS — the filter is not live until
-        # the returned installer is invoked. Discarding this return value is
-        # exactly the bug that kept the seccomp layer dead in production
-        # (#2962); the two lines must stay two lines.
-        installer = build_seccomp_installer(policy)
-        installer()
+        # Loads immediately in this (child) process and survives the execve that
+        # Popen issues next. Note this runs BEFORE CPython's own post-preexec_fn
+        # code, whose syscalls are filtered too — hence `close_range` in the
+        # baseline, which the landlock_exec shim's plain-execvp shape never needs.
+        load_seccomp_filter(policy)
 
 
 def _warn_net_once(abi: int) -> None:

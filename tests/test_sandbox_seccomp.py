@@ -1,4 +1,4 @@
-"""Tier 2: seccomp-BPF filter builder invariants (FP-0017 Component B)."""
+"""Tier 2: seccomp-BPF filter invariants + production wiring (FP-0017 Component B)."""
 from __future__ import annotations
 
 import logging
@@ -157,44 +157,42 @@ def test_syscall_allowlist_excludes_escape_hatches() -> None:
 
 
 # ---------------------------------------------------------------------------
-# build_seccomp_installer() tests — the MECHANISM (see the wiring section below
-# for the tests that prove production actually invokes it).
+# load_seccomp_filter() tests — the MECHANISM (see the wiring section below for
+# the tests that prove production actually calls it).
 # ---------------------------------------------------------------------------
 
 
-def test_build_returns_callable() -> None:
-    """Tier 2: build_seccomp_installer() returns a callable."""
-    from reyn.security.sandbox.backends.seccomp import build_seccomp_installer
+def test_load_has_no_deferred_form() -> None:
+    """Tier 2: load_seccomp_filter() loads on call and hands back nothing to invoke.
 
-    result = build_seccomp_installer(SandboxPolicy())
-    assert callable(result)
-
-
-def test_build_alone_has_no_side_effect(caplog: pytest.LogCaptureFixture) -> None:
-    """Tier 2: build_seccomp_installer() does nothing until the installer is invoked.
-
-    This is the property that made #2962 invisible: a callsite that builds and
-    discards is indistinguishable from one that never called at all. It is also
-    what gives the wiring tests below their teeth — the "filter skipped" WARN is
-    emitted ONLY on invocation, so its presence is evidence of invocation.
+    The API contract that makes #2962 unconstructable. The old entry point
+    returned an installer, so "call it and discard the result" was a silent
+    no-op that read like working code at the callsite — which is exactly what
+    both production callsites did for the layer's entire existence. A caller
+    cannot drop a load that has no return value; the only remaining misuse is
+    not calling it at all, which is visible to a reader and is what the wiring
+    tests below pin.
     """
     import reyn.security.sandbox.backends.seccomp as seccomp_mod
 
     _reset_cache()
-    with caplog.at_level(logging.WARNING, logger="reyn.security.sandbox.backends.seccomp"):
-        seccomp_mod.build_seccomp_installer(SandboxPolicy())  # built, never invoked
-
-    assert not caplog.records, (
-        "build_seccomp_installer() must be side-effect-free until invoked; "
-        f"got log records: {[r.message for r in caplog.records]}"
+    assert seccomp_mod.load_seccomp_filter(SandboxPolicy()) is None
+    assert not hasattr(seccomp_mod, "build_seccomp_installer"), (
+        "The builder must not come back: it is the shape that made the discard "
+        "bug expressible"
     )
+    assert not hasattr(seccomp_mod, "install_seccomp_filter")
 
 
-def test_installer_noops_when_unavailable(
+def test_load_noops_when_unavailable(
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """Tier 2: invoking the installer is safe and warns when seccomp is unavailable."""
+    """Tier 2: loading the filter is safe and warns when seccomp is unavailable.
+
+    Also establishes the observation channel the wiring tests rely on: this WARN
+    is emitted if and only if load_seccomp_filter() is actually called.
+    """
     import reyn.security.sandbox.backends.seccomp as seccomp_mod
 
     _reset_cache()
@@ -202,10 +200,8 @@ def test_installer_noops_when_unavailable(
     # monkeypatching platform.system to non-Linux, which is the macOS reality).
     monkeypatch.setattr("platform.system", lambda: "Darwin")
 
-    fn = seccomp_mod.build_seccomp_installer(SandboxPolicy())
-
     with caplog.at_level(logging.WARNING, logger="reyn.security.sandbox.backends.seccomp"):
-        fn()  # Must not raise.
+        seccomp_mod.load_seccomp_filter(SandboxPolicy())  # Must not raise.
 
     assert any("seccomp" in record.message.lower() for record in caplog.records), (
         "Expected a WARNING log mentioning seccomp when filter installation is skipped"
@@ -215,17 +211,17 @@ def test_installer_noops_when_unavailable(
 # ---------------------------------------------------------------------------
 # WIRING tests (#2962) — do the production callsites INVOKE the installer?
 #
-# The mechanism tests above all call the returned callable themselves, which is
+# The pre-#2962 mechanism tests called the returned callable themselves, which is
 # precisely why they stayed green while the layer was dead in production. These
 # tests instead drive the real production child-side entry points and observe an
-# effect that only occurs on invocation.
+# effect that only occurs when the filter is actually loaded.
 #
-# Observation channel: on this (non-Linux) host the installer logs the
-# "seccomp-BPF unavailable … skipping syscall filter" WARN when invoked, and
-# logs NOTHING when merely built (pinned by test_build_alone_has_no_side_effect).
-# So WARN present ⇔ the callsite invoked the installer. Restoring the #2962 bug
-# (dropping the `installer()` line) turns each of these RED. Verified by strip:
-# both fail with the invoke removed, both pass with it restored.
+# Observation channel: on this (non-Linux) host load_seccomp_filter() logs the
+# "seccomp-BPF unavailable … skipping syscall filter" WARN when called (pinned by
+# test_load_noops_when_unavailable). So WARN present ⇔ the callsite called it.
+# Deleting the load_seccomp_filter(policy) line from either callsite turns the
+# corresponding test RED. Verified by strip: each fails with its call removed and
+# passes with it restored.
 # ---------------------------------------------------------------------------
 
 
@@ -233,11 +229,13 @@ def test_landlock_child_preexec_invokes_the_seccomp_installer(
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """Tier 2: LandlockBackend's preexec_fn loads the seccomp filter, not just builds it.
+    """Tier 2: LandlockBackend's preexec_fn actually loads the seccomp filter.
 
     Drives the real ``_child_preexec`` — the function Popen's ``preexec_fn``
     calls — with no Landlock ruleset (None) so the seccomp step is reachable off
-    Linux. Guards the #2962 regression at the landlock.py:196 callsite.
+    Linux. Guards the #2962 regression at the landlock.py:196 callsite. This
+    callsite has its own syscall requirements (CPython's post-preexec_fn
+    close_range), so it is verified separately from the shim below.
     """
     import reyn.security.sandbox.backends.landlock as landlock_mod
 
@@ -248,8 +246,8 @@ def test_landlock_child_preexec_invokes_the_seccomp_installer(
         landlock_mod._child_preexec(None, SandboxPolicy(allow_subprocess=False))
 
     assert any("seccomp" in record.message.lower() for record in caplog.records), (
-        "LandlockBackend's preexec_fn built the seccomp installer but never invoked "
-        "it — the filter is dead in production (#2962)"
+        "LandlockBackend's preexec_fn never loaded the seccomp filter — the "
+        "layer is dead in production (#2962)"
     )
 
 
@@ -282,11 +280,12 @@ def test_landlock_exec_shim_invokes_the_seccomp_installer(
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """Tier 2: the landlock_exec shim loads the seccomp filter, not just builds it.
+    """Tier 2: the landlock_exec shim actually loads the seccomp filter.
 
     Drives the real ``_apply_seccomp`` that ``_apply_landlock`` calls before
     ``os.execvp``. Guards the #2962 regression at the landlock_exec.py:135
-    callsite.
+    callsite — a plain-execvp shape whose syscall needs differ from the
+    LandlockBackend preexec_fn above, hence the separate verification.
     """
     import reyn.security.sandbox.landlock_exec as shim
 
@@ -297,6 +296,6 @@ def test_landlock_exec_shim_invokes_the_seccomp_installer(
         shim._apply_seccomp(SandboxPolicy(allow_subprocess=False))
 
     assert any("seccomp" in record.message.lower() for record in caplog.records), (
-        "The landlock_exec shim built the seccomp installer but never invoked it "
-        "— the filter is dead in production (#2962)"
+        "The landlock_exec shim never loaded the seccomp filter — the layer is "
+        "dead in production (#2962)"
     )
