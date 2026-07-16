@@ -65,12 +65,24 @@ from typing import Any, Callable, TypedDict
 
 
 class CanonicalToolResult(TypedDict, total=False):
-    """The single shape all tool results are normalized to before offload (see module docstring)."""
+    """The single shape all tool results are normalized to before offload (see module docstring).
+
+    ``content_type`` (#2663) — the RENDERER sidecar, not an LLM-next-action signal: a mapper's
+    optional declaration of ``text``'s MIME type (e.g. ``"text/html"``, ``"text/markdown"``) when the
+    producer genuinely knows it (an HTTP ``Content-Type`` header, a file extension). It is carried
+    ONLY as far as the offload store's ``mime_type`` (which already drives the on-disk file
+    extension for images — #385 — this reuses that exact existing channel for text, nothing new
+    invented) so present's stage-3 default viewer can later derive it back from the ref's extension
+    (``reyn.data.workspace.media_store.mime_type_for_ext``). It never reaches ``meta``/the frontmatter
+    (``seam.py``'s ``build_offload_body`` does not read it into ``frontmatter``) and never reaches
+    ``canonical_to_ctx_fields`` — it is dropped there exactly like ``text``/``source_ref`` themselves,
+    a producer-to-renderer channel only, never a pipeline-ctx or LLM-visible field."""
 
     text: str
     attachments: list[dict]
     source_ref: "dict | None"
     meta: dict
+    content_type: "str | None"
 
 
 # A canonical mapper: an invoked producer's raw result dict → the canonical shape.
@@ -380,8 +392,11 @@ def mcp_get_prompt_to_canonical(result: dict) -> CanonicalToolResult:
 def web_fetch_to_canonical(result: dict) -> CanonicalToolResult:
     """web_fetch result → canonical. The fetched page text (``content``, or the op's own ``preview``
     when it pre-offloaded to a ``path_ref``) → ``text``. Signal meta: ``truncated`` + ``next_start``
-    (the LLM's pagination handle) when the fetch was cut. Transport (url/status/content_type/extractor)
-    is dropped."""
+    (the LLM's pagination handle) when the fetch was cut. Transport (url/status/extractor) is dropped
+    from ``meta`` — but ``content_type`` (the HTTP response's declared MIME type, e.g.
+    ``"text/html"``) is carried on the RENDERER-only ``content_type`` sidecar (#2663), never into
+    ``meta``/the frontmatter, so present's stage-3 default viewer can pick a markdown/code default
+    for the offloaded body without the LLM-visible frontmatter growing a transport field."""
     content = result.get("content")
     text = content if content else str(result.get("preview") or "")
     text = _explicit_empty(text, "(no content)")
@@ -391,7 +406,16 @@ def web_fetch_to_canonical(result: dict) -> CanonicalToolResult:
         next_start = result.get("next_start")
         if next_start is not None:
             meta["next_start"] = next_start
-    return CanonicalToolResult(text=text, attachments=[], source_ref=None, meta=meta)
+    # Only declare content_type for the RAW fetched body (``extractor: "none"``) — an
+    # HTML page run through the trafilatura/stdlib extractor becomes plain readable
+    # text, no longer HTML, so echoing the original ``text/html`` header here would be
+    # a stale/misleading declaration for that (different) body.
+    content_type = (
+        result.get("content_type") or None if result.get("extractor") == "none" else None
+    )
+    return CanonicalToolResult(
+        text=text, attachments=[], source_ref=None, meta=meta, content_type=content_type,
+    )
 
 
 def web_search_to_canonical(result: dict) -> CanonicalToolResult:

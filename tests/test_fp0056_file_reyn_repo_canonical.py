@@ -53,7 +53,7 @@ def test_incident_file_read_offloads_clean_text_not_whole_dict_blob():
         "no whole-dict structured attachment — the incident's blob is gone"
 
     _fake_save.stored = []
-    frontmatter, text, _media = build_offload_body(canonical, save_fn=_fake_save)
+    frontmatter, text, _media, _ct = build_offload_body(canonical, save_fn=_fake_save)
     assert text == _BIG_DOC, "the readable body is the text stream the LLM reads"
     assert "structured" not in frontmatter and "structured_ref" not in frontmatter, \
         "no structured ref/preview — the 600-char JSON-dict preview the agent saw is gone"
@@ -69,7 +69,7 @@ def test_incident_reyn_repo_read_offloads_clean_text_not_whole_dict_blob():
     assert not any(a.get("kind") == "structured" for a in canonical["attachments"])
 
     _fake_save.stored = []
-    frontmatter, text, _media = build_offload_body(canonical, save_fn=_fake_save)
+    frontmatter, text, _media, _ct = build_offload_body(canonical, save_fn=_fake_save)
     assert text == _BIG_DOC
     assert "structured" not in frontmatter and "structured_ref" not in frontmatter
 
@@ -158,7 +158,7 @@ def test_file_glob_large_match_list_offloads_smaller_than_old_text_shape():
     """
     def _rendered_char_count(canonical: dict) -> int:
         _fake_save.stored = []
-        frontmatter, text, _media = build_offload_body(canonical, save_fn=_fake_save)
+        frontmatter, text, _media, _ct = build_offload_body(canonical, save_fn=_fake_save)
         return len(render_tool_result(frontmatter, text))
 
     def _old_shape(n: int) -> int:

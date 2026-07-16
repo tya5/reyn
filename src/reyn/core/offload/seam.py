@@ -49,13 +49,18 @@ def build_offload_body(
     *,
     save_fn: "Callable[..., dict] | None" = None,
     enabled: bool = True,
-) -> tuple[dict, str, list[dict]]:
-    """Return ``(frontmatter, text, media_blocks)`` for a canonical tool result.
+) -> tuple[dict, str, list[dict], "str | None"]:
+    """Return ``(frontmatter, text, media_blocks, content_type)`` for a canonical tool result.
 
     ``frontmatter`` = the signal meta + the structured data (inline when small, or ``structured_ref`` +
     ``structured_preview`` when large and a ``save_fn`` is available). Empty ``{}`` when there is
     nothing but plain text. ``text`` = the (uncapped) body the caller then caps + assembles via
     :func:`render_tool_result`. ``media_blocks`` = the raw media blocks for the vision follow-up.
+    ``content_type`` (#2663) = the canonical's RENDERER-only sidecar (``canonical.get("content_type")``)
+    — deliberately NEVER folded into ``frontmatter`` (that would leak a transport/renderer signal into
+    the LLM-visible ``role: tool`` body); the caller threads it to the ``text`` offload store's
+    ``mime_type`` instead, so present's stage-3 default viewer can later recover it from the stored
+    ref's file extension (the store already does exactly this for images — #385).
 
     ``save_fn`` may be ``None`` (no media store): the format still applies — an oversized structured
     attachment is kept INLINE (it cannot be offloaded without a store) rather than dropped.
@@ -94,7 +99,7 @@ def build_offload_body(
         else:
             frontmatter["structured"] = combined
 
-    return frontmatter, canonical.get("text", "") or "", media_blocks
+    return frontmatter, canonical.get("text", "") or "", media_blocks, canonical.get("content_type")
 
 
 def render_tool_result(frontmatter: dict, text: str) -> str:

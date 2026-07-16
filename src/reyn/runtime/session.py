@@ -6731,12 +6731,14 @@ class Session:
 
     # --- RouterLoop orchestration ---
 
-    def _cap_tool_result(self, content_str: str) -> str:
+    def _cap_tool_result(self, content_str: str, *, content_type: "str | None" = None) -> str:
         """Forwarding → ContextBudgetAdvisor.cap_tool_result (PR-1).
 
         #2425 案B: the router chokepoint caps the canonical ``text`` body (already the clean payload),
-        so the capper takes a single string — no clean-payload kwargs."""
-        return self._budget_advisor.cap_tool_result(content_str)
+        so the capper takes a single string — no clean-payload kwargs. ``content_type`` (#2663) is the
+        canonical's renderer-only sidecar, forwarded so an offloaded ref's on-disk extension carries it
+        for present's stage-3 default viewer — never read into any LLM-visible field here."""
+        return self._budget_advisor.cap_tool_result(content_str, content_type=content_type)
 
     def _media_followup_budget(self, tool_content: str) -> "int | None":
         """Forwarding → ContextBudgetAdvisor.media_followup_budget (PR-1)."""

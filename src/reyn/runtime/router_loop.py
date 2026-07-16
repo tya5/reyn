@@ -3225,7 +3225,7 @@ class RouterLoop:
                         text = _cap(text_full) if _cap is not None else text_full
                         content_str = f"Error: {text}"
                     else:
-                        frontmatter, text, built_media = build_offload_body(
+                        frontmatter, text, built_media, content_type = build_offload_body(
                             canonical, save_fn=_save_fn,
                             # opt-in flip: a host with no ``offload_enabled`` attribute
                             # (legacy/test double) falls closed — offload stays off.
@@ -3279,7 +3279,11 @@ class RouterLoop:
                         # injection cannot hide past the size cap.
                         scan_target = render_tool_result(frontmatter, text)
                         if _cap is not None:
-                            text = _cap(text)
+                            # #2663: thread the canonical's renderer-only content_type through to the
+                            # text offload store as its mime_type — NEVER into frontmatter (built
+                            # above, already sealed) — so a later present(data_ref=<this ref>) can
+                            # recover it from the stored ref's file extension.
+                            text = _cap(text, content_type=content_type)
                         content_str = render_tool_result(frontmatter, text)
             if post_text:
                 content_str = f"{content_str}\n\n---\n{post_text}"

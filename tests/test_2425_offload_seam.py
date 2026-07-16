@@ -33,7 +33,7 @@ def test_large_structured_is_offloaded_to_own_ref_not_competing_with_text():
         "content": "the body text",
         "structured": {"rows": ["x" * 3000]},  # large → its own ref
     }, source="mcp")
-    frontmatter, text, media = build_offload_body(canonical, save_fn=_fake_save)
+    frontmatter, text, media, _ct = build_offload_body(canonical, save_fn=_fake_save)
 
     assert text == "the body text", "text is the body payload the caller caps"
     assert frontmatter.get("structured") == "offloaded", "the large structured is offloaded"
@@ -48,7 +48,7 @@ def test_small_structured_stays_inline():
     _fake_save.stored = []
     canonical = to_canonical({"kind": "mcp", "status": "ok", "server": "s", "tool": "t",
                               "content": "hi", "structured": {"n": 1}}, source="mcp")
-    frontmatter, _text, _media = build_offload_body(canonical, save_fn=_fake_save)
+    frontmatter, _text, _media, _ct = build_offload_body(canonical, save_fn=_fake_save)
     assert frontmatter.get("structured") == {"n": 1}, "small structured stays inline"
     assert _fake_save.stored == [], "no offload for a small structured"
 
@@ -58,7 +58,7 @@ def test_structured_stays_inline_without_a_store():
     offloaded, so it is kept INLINE (never dropped); the frontmatter format still applies."""
     canonical = to_canonical({"kind": "mcp", "status": "ok", "server": "s", "tool": "t",
                               "content": "hi", "structured": {"rows": ["x" * 3000]}}, source="mcp")
-    frontmatter, _text, _media = build_offload_body(canonical, save_fn=None)
+    frontmatter, _text, _media, _ct = build_offload_body(canonical, save_fn=None)
     assert frontmatter.get("structured") == {"rows": ["x" * 3000]}, "kept inline with no store"
 
 
@@ -68,14 +68,14 @@ def test_media_blocks_returned_for_followup_not_in_body():
     _fake_save.stored = []
     canonical = to_canonical({"kind": "mcp", "status": "ok", "server": "s", "tool": "t",
                               "content": "hi", "media_blocks": [{"type": "image", "data": "b64"}]}, source="mcp")
-    frontmatter, _text, media = build_offload_body(canonical, save_fn=_fake_save)
+    frontmatter, _text, media, _ct = build_offload_body(canonical, save_fn=_fake_save)
     assert media == [{"type": "image", "data": "b64"}], "media returned for the vision follow-up"
     assert "structured" not in frontmatter, "media is not left in the tool-message body"
 
 
 def test_render_plain_text_when_no_frontmatter():
     """Tier 1: no structured/signal-meta → the LLM-visible content is the plain text (no wrapper)."""
-    frontmatter, text, _media = build_offload_body(
+    frontmatter, text, _media, _ct = build_offload_body(
         to_canonical({"kind": "mcp", "status": "ok", "content": "just text", "media_blocks": []}, source="mcp"),
         save_fn=_fake_save,
     )
@@ -85,7 +85,7 @@ def test_render_plain_text_when_no_frontmatter():
 def test_render_frontmatter_then_text_is_parseable_yaml():
     """Tier 1: structured/signal-meta present → a ``---``-delimited YAML frontmatter block precedes the
     text body, and the block parses back to the structured data (no exact-whitespace pin)."""
-    frontmatter, text, _media = build_offload_body(
+    frontmatter, text, _media, _ct = build_offload_body(
         to_canonical({"kind": "sandboxed_exec", "status": "error", "returncode": 3,
                       "stdout": "the output", "stderr": ""}, source="sandboxed_exec"),
         save_fn=_fake_save,

@@ -116,9 +116,18 @@ hot-reloads at the turn boundary. Full field table + merge order:
 Resolution degrades until something renders (never a hard error):
 
 1. **Registered `view`** → 2. **inline `blueprint`** → 3. **default viewer**
-(synthesized from data shape: `list[dict]` → `table`, `dict` → `keyvalue`, scalar →
-`text`, diff-sniff → `diff`) → 4. **generic** (structured → YAML into `text`, plain text
-as-is — always renders).
+(a recognition ladder: **declared content-type** → diff-sniff → data shape — a
+markdown/code type → `markdown`/`code`; else `list[dict]` → `table`, `dict` →
+`keyvalue`, scalar → `text`, diff-sniff → `diff`) → 4. **generic** (structured →
+YAML into `text`, plain text as-is — always renders).
+
+The declared-content-type step is populated for a `data_ref` source whose canonical
+tool-result producer declared a `content_type`/`mimeType` — carried from the offload
+producer to here as a **renderer-only sidecar** (never the LLM-visible tool-result
+frontmatter): the producer's declared type drives the offload store's `mime_type`
+(the on-disk ref extension), and `present` recovers it back from that extension when
+resolving the ref. Inline data (`data_inline`) has no content-type source and always
+degrades straight to diff-sniff → shape, unchanged.
 
 The fallback fires on an all-miss view or an unknown view name. The ack reports the
 **requested** view's stats plus a `note` naming the stage that actually rendered.

@@ -20,13 +20,17 @@ fresh here.
   **declared content-type → diff-sniff (FP-0051 heuristic) → data shape**.
 
   1. *Declared content-type* — an explicit ``text``/``markdown`` type → a
-     ``markdown`` component; a ``code`` type → a ``code`` component. This stage is
-     populated **only** from inline data / an explicit op arg: a `present` op has no
-     content-type field today, and — verified — an offloaded ``data_ref`` carries no
-     content-type in its frontmatter (the tool-result canonical mappers drop
-     ``content_type`` as transport). So for a ``data_ref`` source ``content_type`` is
-     ``None`` and we fall straight to diff-sniff → shape (an endorsed correct
-     degrade), never reading a content-type that is not there.
+     ``markdown`` component; a ``code`` type → a ``code`` component. A `present`
+     op still has no content-type field itself (inline data always passes
+     ``content_type=None``), but (#2663) a ``data_ref`` source now CAN carry one:
+     a canonical mapper's optional ``content_type`` sidecar (never the LLM-visible
+     frontmatter — see ``offload/canonical.py``'s ``CanonicalToolResult`` docstring)
+     is threaded to the offload store's ``mime_type`` at write time, and
+     ``resolve_present_source`` recovers it back from the stored ref's file
+     extension at read time (``media_store.mime_type_for_ext``). A mapper that
+     declares no ``content_type`` (the common case — most mappers still don't) or a
+     ref that predates #2663 yields ``None`` here, unchanged: falls straight to
+     diff-sniff → shape (still an endorsed correct degrade).
   2. *Diff-sniff* — a string that looks like a unified diff defaults to the ``diff``
      viewer (diff is common and should highlight).
   3. *Shape* — a list of objects → a ``table`` over the union of the first rows'
@@ -70,8 +74,9 @@ _SNIFF_BYTES = 4096
 _DIFF_HUNK_RE = re.compile(r"^@@ .* @@", re.MULTILINE)
 
 # Content-type prefixes that map to the markdown / code default components. Matched
-# case-insensitively against a *declared* content-type only (inline data / explicit
-# op arg) — never derived from an offloaded ``data_ref`` (no content-type there).
+# case-insensitively against a *declared* content-type — inline data has none (always
+# ``None``); a ``data_ref`` source may have one recovered from its stored ref's
+# extension (#2663) when the producing canonical mapper declared it.
 _MARKDOWN_TYPES = ("text/markdown", "text/x-markdown")
 _CODE_TYPE_HINTS = ("application/json", "text/x-", "application/x-", "text/css", "text/html")
 

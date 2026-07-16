@@ -116,7 +116,7 @@ async def _resolve_data(op: Any, ctx: OpContext) -> Any:
     ``file.read`` authority (the same seam ``present`` uses), or ``data_inline``
     verbatim (already in the LLM's context)."""
     if op.data_ref is not None:
-        value, _ingested = await resolve_present_source(op.data_ref, ctx)
+        value, _ingested, _content_type = await resolve_present_source(op.data_ref, ctx)
         return value
     return op.data_inline
 

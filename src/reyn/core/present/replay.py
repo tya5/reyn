@@ -104,9 +104,15 @@ def _best_effort_resolved(
     back to. The original inline blueprint is not in the event, so this is the faithful
     best-effort view of the data's shape. ``ref`` (the event's ``data_ref``) threads
     through so a `cap_rows`-capped table/list still carries its §5 visible truncation
-    tail on replay (issue #2669)."""
+    tail on replay (issue #2669), and (#2663) so stage 3 recovers the SAME declared
+    content-type from the ref's extension the live op would (``None`` for
+    ``<inline-data>`` / an untyped ref — unchanged diff-sniff → shape degrade)."""
+    from reyn.data.workspace.media_store import mime_type_for_ext
+
+    content_type = mime_type_for_ext(ref) if ref else None
     stage3 = resolve_bindings(
-        validate_blueprint(default_viewer_blueprint(value)), value, surface=surface, ref=ref,
+        validate_blueprint(default_viewer_blueprint(value, content_type=content_type)),
+        value, surface=surface, ref=ref,
     )
     if not stage3.all_bindings_missed:
         return stage3

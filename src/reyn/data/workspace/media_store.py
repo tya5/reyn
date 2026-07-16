@@ -66,8 +66,11 @@ from reyn.services.offload.store import offload_value, read_offloaded
 
 # Conservative mapping from MIME type to file extension; unknown types
 # fall back to ``""`` so the storage layer still writes a file (= user
-# can rename / inspect with their preferred tool). Extension is purely
-# for explorability — it isn't used by the lookup path.
+# can rename / inspect with their preferred tool). Extension was purely
+# for explorability originally — #2663 additionally reuses it as the
+# read-side recovery channel (:func:`mime_type_for_ext`) so present's
+# stage-3 default viewer can recover a ``data_ref``'s declared content type
+# from the stored ref's extension, without any new sidecar field.
 _MIME_TO_EXT: dict[str, str] = {
     "image/png": ".png",
     "image/jpeg": ".jpg",
@@ -81,6 +84,10 @@ _MIME_TO_EXT: dict[str, str] = {
     "application/xml": ".xml",
 }
 
+# The reverse of ``_MIME_TO_EXT`` (built once, module load) — ``.txt``/``.json``
+# collide with no other extension so the mapping is unambiguous either direction.
+_EXT_TO_MIME: dict[str, str] = {ext: mime for mime, ext in _MIME_TO_EXT.items()}
+
 
 def _ext_for_mime(mime: str) -> str:
     """Return the file extension (with leading dot) for ``mime``.
@@ -90,6 +97,17 @@ def _ext_for_mime(mime: str) -> str:
     """
     base = mime.split(";", 1)[0].strip().lower() if mime else ""
     return _MIME_TO_EXT.get(base, "")
+
+
+def mime_type_for_ext(path: str) -> "str | None":
+    """Return the declared MIME type for a stored ref's file extension, or ``None``
+    when the extension is unknown/absent (#2663 — the read-side counterpart of
+    :func:`_ext_for_mime`, the write-side lookup ``save_tool_result``'s ``mime_type``
+    already drives). This is the ONLY channel present's stage-3 default viewer uses to
+    recover a ``data_ref``'s content type — no separate sidecar metadata file is written;
+    the extension IS the sidecar, already persisted by the existing store write path."""
+    suffix = Path(path).suffix.lower()
+    return _EXT_TO_MIME.get(suffix)
 
 
 def _safe_token(value: str) -> str:

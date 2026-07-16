@@ -70,6 +70,7 @@ def cap_tool_result_content(
     save_fn: Callable[..., dict],
     use_chars4: bool = False,
     events: Any = None,
+    content_type: "str | None" = None,
 ) -> str:
     """Return *content_str* unchanged if within the cap, else its offloaded plain-text preview.
 
@@ -91,6 +92,11 @@ def cap_tool_result_content(
                       ``effective_trigger`` budget the cap is derived from.
         events:       Optional EventLog; a ``tool_result_offloaded`` audit event
                       is emitted on offload (P6).
+        content_type: (#2663) The canonical producer's declared MIME type (renderer-only sidecar,
+                      e.g. ``"text/html"``), forwarded to ``save_fn``'s ``mime_type`` so the stored
+                      ref's on-disk extension carries it (``None`` → the store's own
+                      ``"text/plain"`` default, unchanged behaviour). Never read into ``content_str``
+                      or any LLM-visible output of this function.
 
     Returns:
         The original string when ``estimate_tokens(content_str) <= cap_tokens``;
@@ -103,7 +109,10 @@ def cap_tool_result_content(
     if estimate_tokens(content_str, model, use_chars4=use_chars4) <= cap_tokens:
         return content_str
 
-    block = save_fn(content_str)
+    if content_type:
+        block = save_fn(content_str, mime_type=content_type)
+    else:
+        block = save_fn(content_str)
     preview_source = content_str
     ref = block.get("path", "")
     content_hash = block.get("content_hash", "")

@@ -581,18 +581,18 @@ class RouterHostAdapter:
 
     # --- RouterLoopHost identity attributes ---
 
-    def cap_tool_result(self, content_str: str) -> str:
+    def cap_tool_result(self, content_str: str, *, content_type: "str | None" = None) -> str:
         """#1128 size axis: cap an oversized tool-result string at the
         router_loop chokepoint. Delegates to the session-supplied callable
         (which offloads the full body via the #385 store + returns a bounded
         plain-text preview); identity when no capper was wired.
 
         #2425 案B: caps the canonical ``text`` body (already the clean payload) — a single string,
-        no clean-payload kwargs.
-        """
+        no clean-payload kwargs. ``content_type`` (#2663) is the canonical's renderer-only sidecar,
+        forwarded to the session capper unchanged (identity path ignores it — nothing to store)."""
         if self._cap_tool_result is None:
             return content_str
-        return self._cap_tool_result(content_str)
+        return self._cap_tool_result(content_str, content_type=content_type)
 
     def media_followup_budget(self, tool_content: str) -> int | None:
         """#272 media axis: tokens left for a tool turn's media follow-up after
