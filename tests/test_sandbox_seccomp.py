@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import sys
 
 import pytest
@@ -106,7 +107,7 @@ def test_syscall_allowlist_always_permits_exec_of_the_sandboxed_target() -> None
     """Tier 2: execve/execveat are allowed even when allow_subprocess is False.
 
     Both callsites load the filter in a pre-exec position and the filter survives
-    execve, so denying execve would KILL the sandboxed target before it starts —
+    execve, so refusing execve would stop the sandboxed target before it starts —
     the sandbox would deny itself its own reason to exist (#2962). execve replaces
     the calling process and spawns nothing, so allowing it grants no subprocess
     capability; process creation is gated separately (see the tests above).
@@ -117,30 +118,69 @@ def test_syscall_allowlist_always_permits_exec_of_the_sandboxed_target() -> None
     for name in ("execve", "execveat"):
         assert name in restrictive, (
             f"{name!r} must be allowed even under the most restrictive policy, "
-            "or the sandboxed target is killed before it can start"
+            "or the sandboxed target is stopped before it can start"
         )
 
 
-def test_syscall_allowlist_delegates_filesystem_writes_to_landlock() -> None:
-    """Tier 2: filesystem-mutating syscalls reach Landlock rather than being KILLed.
+def test_syscall_allowlist_delegates_landlock_governed_writes() -> None:
+    """Tier 2: filesystem syscalls Landlock GOVERNS reach it instead of being refused.
 
     Inverts the pre-#2962 expectation, which asserted these were absent "because
-    Landlock governs writes". That reasoning does not hold under defaction=KILL:
-    a syscall absent from a default-deny allowlist is not delegated to Landlock,
-    it kills the process with SIGSYS before Landlock can adjudicate. Measured
-    under the live filter, os.mkdir / os.remove / os.rename / shutil.rmtree were
-    all killed. Allowing them here grants no path access — Landlock still denies
-    writes outside policy.write_paths — it is what makes Landlock the deciding
-    layer, as the module always claimed.
+    Landlock governs writes". That reasoning does not hold under a default-deny
+    filter: a syscall absent from the allowlist is not delegated to Landlock, it
+    is refused before Landlock can adjudicate. Measured under the live filter,
+    os.mkdir / os.remove / os.rename / shutil.rmtree were all killed.
+
+    Scoped deliberately to rights in LandlockBackend's HANDLED set (MAKE_DIR /
+    REMOVE_* / REFER / WRITE_FILE …). Only for those does "allowing it grants no
+    path access" hold, because only those does Landlock actually adjudicate; see
+    the companion exclusion test below.
     """
     from reyn.security.sandbox.backends.seccomp import _build_syscall_allowlist
 
     result = _build_syscall_allowlist(SandboxPolicy())
-    for name in ("unlinkat", "mkdirat", "renameat", "getcwd"):
+    for name in ("unlinkat", "mkdirat", "renameat", "symlinkat", "getcwd"):
         assert name in result, (
-            f"{name!r} must reach Landlock for adjudication; absent from a "
-            "default-deny KILL allowlist it terminates the process instead"
+            f"{name!r} is governed by Landlock's handled set, so it must reach "
+            "Landlock for adjudication; absent from a default-deny allowlist it "
+            "is refused here instead"
         )
+
+
+def test_syscall_allowlist_excludes_syscalls_landlock_cannot_govern() -> None:
+    """Tier 2: syscalls no layer would stop are never allowed on a delegation rationale.
+
+    The counterweight to the test above, and the reason it is scoped rather than
+    a blanket "filesystem syscalls are allowed". "Landlock will adjudicate it"
+    justifies allowing a syscall ONLY if the right is in LandlockBackend's
+    handled set:
+
+    - chmod/chown: Landlock has no such right at all (the kernel documents
+      chmod(2)/chown(2) under its current limitations), so nothing downstream
+      would stop them.
+    - path-based truncate: FSAccess.TRUNCATE exists (ABI 3+) but is not in the
+      handled set, and granting it there would be ABI-gated — leaving the hole
+      open on ABI 1-2 kernels. Excluding it is uniformly correct.
+
+    Concretely, allowing these would let a policy with write_paths=[workspace]
+    run os.chmod("~/.ssh", 0o777) or os.truncate("~/.ssh/id_ed25519", 0): passed
+    by seccomp, invisible to Landlock, permitted by DAC. ftruncate is fine and
+    stays — it needs an already-open fd, which Landlock adjudicates via
+    WRITE_FILE.
+    """
+    from reyn.security.sandbox.backends.seccomp import _build_syscall_allowlist
+
+    permissive = _build_syscall_allowlist(
+        SandboxPolicy(network=True, allow_subprocess=True)
+    )
+    for name in ("chmod", "fchmod", "fchmodat", "chown", "fchown", "truncate"):
+        assert name not in permissive, (
+            f"{name!r} must not be allowed: Landlock cannot adjudicate it, so "
+            "no layer would deny it outside write_paths"
+        )
+    assert "ftruncate" in permissive, (
+        "ftruncate acts on an open fd that Landlock already adjudicated"
+    )
 
 
 def test_syscall_allowlist_excludes_escape_hatches() -> None:
@@ -182,6 +222,35 @@ def test_load_has_no_deferred_form() -> None:
         "bug expressible"
     )
     assert not hasattr(seccomp_mod, "install_seccomp_filter")
+
+
+def test_refused_fork_is_classifiable_as_a_sandbox_denial() -> None:
+    """Tier 2: the filter's refusal surfaces as an errno denial.py (#2820) can classify.
+
+    The filter refuses with EPERM rather than killing, which is what keeps the
+    #2820 launcher-fork mitigation alive on Linux. denial.py detects that class
+    by matching "fork: operation not permitted" on stderr, and its docstring
+    explicitly claims to cover "Linux seccomp". A killing filter emits no errno
+    and no output, so the launcher prints nothing, classify_denial returns None,
+    and the mitigation silently stops working the moment the filter goes live —
+    the exact shape of #2962 (a layer that is present but does nothing).
+
+    Pins the two ends together: the errno the filter refuses with is the errno
+    the launcher reports, and that report is classifiable.
+    """
+    import errno
+
+    from reyn.security.sandbox.denial import DENIAL_FORK, classify_denial
+
+    # What a PATH shim prints when its fork() is refused with the filter's errno.
+    launcher_stderr = f"pyenv: fork: {os.strerror(errno.EPERM)}".encode()
+
+    assert classify_denial(1, launcher_stderr) == DENIAL_FORK, (
+        "A fork refused with EPERM must classify as the #2820 denial class; if "
+        "the filter kills instead, stderr is empty and this mitigation dies"
+    )
+    # The killing-filter counterfactual: no errno, no output, nothing to classify.
+    assert classify_denial(-31, b"") is None
 
 
 def test_load_noops_when_unavailable(
