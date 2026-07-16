@@ -10,9 +10,11 @@ These tests pin the three properties the fix rests on:
 * a ``~`` in any policy path is expanded by the backend (without this the grant
   lands on a literal ``<cwd>/~/...`` and the write stays denied — the failure
   mode that makes a wrong fix look right);
-* widening the write scope must NOT re-open the sensitive-read deny-list. A
-  write grant is also a read re-allow emitted after the deny rules, so a grant
-  that overlapped ``$HOME`` would silently nullify the credential deny-list.
+* widening the write scope must NOT re-open the sensitive-read deny-list. As of
+  #2978 the deny rules are emitted AFTER the write grants (deny always wins), so
+  even an overlapping grant no longer re-opens a credential path; the shipped
+  defaults are nonetheless kept mechanically disjoint so no MCP server ever
+  trips that narrowing (belt-and-suspenders).
 """
 from __future__ import annotations
 
@@ -191,10 +193,11 @@ def test_tilde_write_grant_actually_permits_the_write(tmp_path):
 def test_shipped_runtime_defaults_are_disjoint_from_the_read_deny_list():
     """Tier 2b: no default write grant overlaps a sensitive-read deny path.
 
-    A write grant is also a read re-allow emitted AFTER the deny rules
-    (last-match-wins), so an overlapping grant silently nullifies the credential
-    deny-list rather than merely widening writes. Any future entry that overlaps
-    (`~`, `~/.config`, ...) must fail here.
+    Since #2978 the deny rules are emitted AFTER the write grants, so an overlap
+    would be denied (deny wins) rather than nullifying the deny-list — but the
+    shipped defaults are kept disjoint as belt-and-suspenders so no MCP server
+    even triggers a `sandbox_policy_narrowed` narrowing. Any future entry that
+    overlaps (`~`, `~/.config`, ...) must fail here.
     """
     denied = [expand_policy_path(d).resolve() for d in DEFAULT_SENSITIVE_READ_DENY]
     granted = {p for paths in _RUNTIME_DEFAULT_WRITE_PATHS.values() for p in paths}

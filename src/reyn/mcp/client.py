@@ -1162,14 +1162,15 @@ class MCPClient:
         ``write_paths`` narrows the EXTRA grants without silently dropping the
         workspace the caller computed.
 
-        Scoping note (why the defaults are safe): these grants are per-runtime
-        cache/state directories, and a write grant is also a READ re-allow that
-        the Seatbelt backend emits AFTER ``read_deny_paths`` (SBPL is
-        last-match-wins). Granting ``$HOME`` would therefore not merely be
-        "loose" — it would silently NULLIFY the entire sensitive-read deny-list
-        (``~/.ssh`` etc. become both readable and writable). The shipped
-        defaults are mechanically disjoint from every path in
-        ``DEFAULT_SENSITIVE_READ_DENY``, which is pinned by a falsification test.
+        Scoping note (why the defaults stay tight): these grants are per-runtime
+        cache/state directories, and a write grant is also a READ re-allow. As
+        of #2978 the Seatbelt backend emits ``read_deny_paths`` AFTER the write
+        grants (SBPL is last-match-wins), so a broad write grant no longer
+        nullifies the sensitive-read deny-list — the deny wins for both read and
+        write and a ``sandbox_policy_narrowed`` audit-event is recorded. The
+        shipped defaults are nonetheless kept mechanically disjoint from every
+        path in ``DEFAULT_SENSITIVE_READ_DENY`` (pinned by a falsification test)
+        so an MCP server never trips that narrowing in the first place.
         """
         from reyn.security.sandbox import SandboxPolicy
         from reyn.security.sandbox.policy import DEFAULT_SANDBOX_NETWORK

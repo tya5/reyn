@@ -35,10 +35,36 @@ def test_resolve_returns_default_when_config_none():
     assert "~/.ssh" in pol["read_deny_paths"]
 
 
-def test_resolve_returns_operator_config_verbatim():
-    """Tier 2: an operator-declared policy is returned as-is (operator owns it)."""
-    cfg = {"network": False, "write_paths": ["/only/here"]}
-    assert resolve_sandbox_policy(cfg, write_paths=["/ignored"]) == cfg
+def test_resolve_merges_operator_config_onto_floor():
+    """Tier 2: #2964 —an operator's PARTIAL policy is MERGED onto the default
+    floor, not substituted wholesale. Only the fields the operator wrote override;
+    omitted fields keep the floor (so writing one field never silently drops the
+    caller's write_paths or the sensitive deny-list)."""
+    # operator wrote allow_subprocess only — write_paths (caller) and read_deny
+    # (floor) must survive (the #2964 silent-drop bug).
+    merged = resolve_sandbox_policy({"allow_subprocess": False}, write_paths=["/ws"])
+    assert merged["allow_subprocess"] is False        # operator field applied
+    assert merged["write_paths"] == ["/ws"]           # caller value SURVIVES (was dropped)
+    assert "~/.ssh" in merged["read_deny_paths"]      # floor deny-list SURVIVES
+    assert merged["network"] is DEFAULT_SANDBOX_NETWORK
+
+
+def test_resolve_operator_written_field_overrides_floor():
+    """Tier 2: #2964 —a field the operator DID write wins over the floor."""
+    merged = resolve_sandbox_policy({"network": False}, write_paths=["/ws"])
+    assert merged["network"] is False                 # operator override wins
+    assert merged["write_paths"] == ["/ws"]           # unwritten field keeps floor
+
+
+def test_resolve_explicit_empty_write_paths_is_respected_not_defaulted():
+    """Tier 2: #2964 —an operator's EXPLICIT `write_paths: []` is honored (the
+    operator deliberately granted nothing), distinct from OMITTING write_paths
+    (which keeps the caller's value). dict-key presence expresses the
+    explicit-empty-vs-omitted distinction the merge hinges on."""
+    explicit_empty = resolve_sandbox_policy({"write_paths": []}, write_paths=["/ws"])
+    omitted = resolve_sandbox_policy({"network": False}, write_paths=["/ws"])
+    assert explicit_empty["write_paths"] == []        # deliberate empty grant respected
+    assert omitted["write_paths"] == ["/ws"]          # omission keeps the floor
 
 
 # ── (A) tool exposes argv-only ────────────────────────────────────────────────

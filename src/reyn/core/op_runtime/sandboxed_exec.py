@@ -15,6 +15,7 @@ from typing import Literal
 from reyn.schemas.models import SandboxedExecIROp
 from reyn.security.sandbox import SandboxPolicy, get_default_backend
 from reyn.security.sandbox.denial import classify_denial
+from reyn.security.sandbox.policy import deny_narrowed_write_grants
 from reyn.security.sandbox.resolve import resolve_real_executable
 
 from . import register
@@ -106,6 +107,23 @@ async def handle(
         network=policy.network,
         allow_subprocess=policy.allow_subprocess,
     )
+
+    # #2978: deny-always-wins — when a read_deny_paths entry overlaps a
+    # write_paths grant, the backend now lets the deny win (a credential path
+    # engulfed by a broad write grant stays denied for BOTH read and write). Emit
+    # an audit-event so the narrowing is observable, not silent. This is the
+    # LLM-reachable path (op-authored / operator-resolved write_paths reach here
+    # via ctx.default_sandbox_policy); the enforcement itself lives at the
+    # Seatbelt emit chokepoint, so every policy-construction path is covered.
+    narrowed = deny_narrowed_write_grants(policy)
+    if narrowed:
+        ctx.events.emit(
+            "sandbox_policy_narrowed",
+            backend=backend.name,
+            narrowed=[
+                {"write_path": w, "deny_path": d} for w, d in narrowed
+            ],
+        )
 
     result = await backend.run(
         effective_argv, policy, cwd=cwd, cancel_event=ctx.cancel_event, stdin=op.stdin,
