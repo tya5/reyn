@@ -23,7 +23,7 @@ from reyn.runtime.registry import AgentRegistry
 from reyn.runtime.session import Session
 
 
-def _make_registry(tmp_path: Path) -> AgentRegistry:
+def _make_registry(tmp_path: Path) -> tuple[AgentRegistry, StateLog]:
     state_log = StateLog(tmp_path / "wal.jsonl")
     holder: dict = {}
 
@@ -47,12 +47,21 @@ def _make_registry(tmp_path: Path) -> AgentRegistry:
 
     reg = AgentRegistry(project_root=tmp_path, session_factory=_factory, state_log=state_log)
     holder["reg"] = reg
-    return reg
+    # Hand back the CONCRETE StateLog alongside the registry: ``reg.state_log`` is
+    # typed ``StateLog | None`` (a real Optional — a registry can be built without a
+    # WAL for non-chat/test use), so reading the WAL through the property would make
+    # every assertion here depend on an Optional the tests never actually exercise.
+    # Returning the instance we constructed keeps the WAL reads honestly non-None.
+    return reg, state_log
 
 
 def _vanished_sids(log: StateLog, name: str) -> list[str]:
+    """The sids of every session_vanished recorded for ``name`` — a PUBLIC WAL read
+    (``iter_from``), the same read the #2154 test uses. ``str(...)`` because
+    ``entry.get`` is ``Any | None``: the emit contract is a str sid, so a non-str
+    would be a genuine defect, not something to silently pass through as None."""
     return [
-        e.get("sid") for e in log.iter_from(0)
+        str(e.get("sid")) for e in log.iter_from(0)
         if e.get("kind") == "session_vanished" and e.get("name") == name
     ]
 
@@ -62,7 +71,7 @@ async def test_purge_emits_session_vanished_for_every_spawned_session(tmp_path):
     """Tier 2: purging an agent with MULTIPLE spawned sessions emits session_vanished
     for EACH one (the bound test — a single-session case can't distinguish "one event
     per agent" from "one event per session"; this witnesses the per-sid boundary)."""
-    reg = _make_registry(tmp_path)
+    reg, log = _make_registry(tmp_path)
     AgentProfile.new("victim", role="").save(tmp_path / ".reyn" / "agents" / "victim")
     reg.get_or_load("victim")
 
@@ -75,13 +84,13 @@ async def test_purge_emits_session_vanished_for_every_spawned_session(tmp_path):
     sid_c = await reg.spawn_session_recorded(
         "victim", mode="persistent", presentation_consumer=None, intervention_bridge=None,
     )
-    await reg.state_log.flush()
-    assert _vanished_sids(reg.state_log, "victim") == []  # none yet — spawn only
+    await log.flush()
+    assert _vanished_sids(log, "victim") == []  # none yet — spawn only
 
     await reg.archive_agent("victim", purge=True)
-    await reg.state_log.flush()
+    await log.flush()
 
-    vanished = _vanished_sids(reg.state_log, "victim")
+    vanished = _vanished_sids(log, "victim")
     assert set(vanished) == {sid_a, sid_b, sid_c}  # ALL three, not just one
     assert not (tmp_path / ".reyn" / "agents" / "victim").exists()  # real hard-delete happened
 
@@ -91,32 +100,32 @@ async def test_purge_of_agent_with_no_spawned_sessions_emits_none(tmp_path):
     """Tier 2: an agent purge with no spawned sessions (only its "main" primary
     session) emits zero session_vanished — "main" is the agent's own session
     (covered by agent_purged), not a spawned one."""
-    reg = _make_registry(tmp_path)
+    reg, log = _make_registry(tmp_path)
     AgentProfile.new("solo", role="").save(tmp_path / ".reyn" / "agents" / "solo")
     reg.get_or_load("solo")
 
     await reg.archive_agent("solo", purge=True)
-    await reg.state_log.flush()
+    await log.flush()
 
-    assert _vanished_sids(reg.state_log, "solo") == []
+    assert _vanished_sids(log, "solo") == []
 
 
 @pytest.mark.asyncio
 async def test_archive_delete_does_not_emit_session_vanished(tmp_path):
     """Tier 2: the DEFAULT archive (soft-delete, not purge) preserves sessions on
     disk — no rmtree happens, so no session_vanished should fire."""
-    reg = _make_registry(tmp_path)
+    reg, log = _make_registry(tmp_path)
     AgentProfile.new("victim", role="").save(tmp_path / ".reyn" / "agents" / "victim")
     reg.get_or_load("victim")
     await reg.spawn_session_recorded(
         "victim", mode="persistent", presentation_consumer=None, intervention_bridge=None,
     )
-    await reg.state_log.flush()
+    await log.flush()
 
     await reg.archive_agent("victim", purge=False)
-    await reg.state_log.flush()
+    await log.flush()
 
-    assert _vanished_sids(reg.state_log, "victim") == []
+    assert _vanished_sids(log, "victim") == []
     # archive is a soft-delete — no rmtree, so nothing was actually subsumed.
     assert (tmp_path / ".reyn" / "agents" / "victim").is_dir()
 
@@ -127,7 +136,7 @@ async def test_wal_window_auto_purge_emits_session_vanished_for_every_session(tm
     (``_purge_archived_below``) hard-deletes an archived agent once the retention
     floor passes its archival seq. Same cascade-emit gap, same bound-test shape
     (multiple sessions)."""
-    reg = _make_registry(tmp_path)
+    reg, log = _make_registry(tmp_path)
     AgentProfile.new("victim", role="").save(tmp_path / ".reyn" / "agents" / "victim")
     reg.get_or_load("victim")
     sid_a = await reg.spawn_session_recorded(
@@ -140,16 +149,16 @@ async def test_wal_window_auto_purge_emits_session_vanished_for_every_session(tm
     await reg.archive_agent("victim", purge=False)   # archive (default) — no cascade yet
     archival_seq = reg._archived_seq("victim")        # the tombstone's WAL-window GC hinge
     assert archival_seq is not None
-    assert _vanished_sids(reg.state_log, "victim") == []
+    assert _vanished_sids(log, "victim") == []
 
     # Floor at the archival seq -> still within the window -> not purged yet.
     await reg._purge_archived_below(archival_seq)
     assert (tmp_path / ".reyn" / "agents" / "victim").is_dir()
-    assert _vanished_sids(reg.state_log, "victim") == []
+    assert _vanished_sids(log, "victim") == []
 
     # Floor past the archival seq -> soft-delete left the window -> hard-purged.
     await reg._purge_archived_below(archival_seq + 1)
-    await reg.state_log.flush()
+    await log.flush()
 
     assert not (tmp_path / ".reyn" / "agents" / "victim").exists()
-    assert set(_vanished_sids(reg.state_log, "victim")) == {sid_a, sid_b}
+    assert set(_vanished_sids(log, "victim")) == {sid_a, sid_b}
