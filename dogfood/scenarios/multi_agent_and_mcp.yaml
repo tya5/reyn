@@ -21,13 +21,24 @@ scenarios:
   # ── 1. MCP registry search ─────────────────────────────────────────────────
   # B54 R-5a redesign (2026-05-25): rubric refocused from content quality
   # ("suggests alternatives" = weak-tier content elaboration) to structural
-  # behavior (= did mcp_search skill get spawned + addressed the query).
+  # behavior (= did the registry search run + address the query).
   # 0V across 5+ batches with old rubric was measuring LLM elaboration
-  # ability, not Reyn stdlib behavior.
+  # ability, not Reyn behavior.
+  #
+  # #2965 re-point: the `mcp_search` STDLIB SKILL was deleted by #2434/#2438,
+  # so `skill_run_spawned` has had no producer since 2026-07-03 and this
+  # scenario could not pass. The scenario's INTENT survives intact, because
+  # the capability did not move with the skill: the registry search is now
+  # the `mcp__search_registry` tool verb (tools/mcp_verbs.py), dispatched
+  # op-runtime-direct with no skill spawn. So only the dead assertion is
+  # dropped — `routing_decided` (the router resolved a catalog action) plus
+  # `tool_executed` (the verb actually ran) are the structural signals on
+  # the live path, and they keep this scenario testing what it always meant
+  # to test rather than being deleted along with the skill.
   - id: mcp_search_registry
     covers:
-      - stdlib-skills/mcp-search
       - cli/reyn-mcp
+      - mcp/mcp-search
       - mcp/mcp-install
     input: "MCP レジストリで github 関連のサーバーを探して。"
     expected:
@@ -39,7 +50,7 @@ scenarios:
       events:
         must_emit:
           - { type: routing_decided, count: ">=1" }
-          - { type: skill_run_spawned, count: ">=1" }
+          - { type: tool_executed, count: ">=1" }
       outcome_prediction:
         verified: 0.6
         inconclusive: 0.25

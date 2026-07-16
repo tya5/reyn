@@ -47,28 +47,12 @@ KNOWN_PENDING_VIOLATIONS: frozenset[tuple[str, str, str, str]] = frozenset({
     # (same class); these two were still there.
     ("control_ir_ops.yaml", "lint_a_skill", "event", "lint_completed"),
     ("control_ir_ops.yaml", "ask_user_round_trip", "event", "skill_run_spawned"),
-    ("multi_agent_and_mcp.yaml", "mcp_search_registry", "event", "skill_run_spawned"),
     # permissions_enforcement.yaml: "write_file" was never a real event
     # kind (writes emit tool_executed with op="write_file", a payload
     # field, not a type) — a must_not_emit on it is a vacuous no-op, not
     # a #2434/#2438 casualty, but still a dead reference this gate catches.
     ("permissions_enforcement.yaml", "realignment_approvals_yaml_write_denied", "event", "write_file"),
     ("permissions_enforcement.yaml", "file_write_outside_cwd_denied", "event", "write_file"),
-    # fp_0011_narration.yaml / fp_0011_0012_retest.yaml: frozen point-in-
-    # time spike/retest records for already-landed FP-0011/FP-0012,
-    # driven by scripts/dogfood_g4_spike.py against a since-merged spike
-    # branch — not part of the FP-0036 live-rerun corpus, but they still
-    # sit in dogfood/scenarios/ referencing the same deleted skills.
-    ("fp_0011_narration.yaml", "narr-1-mcp-search", "skill", "mcp_search"),
-    ("fp_0011_narration.yaml", "narr-2-eval-numeric", "skill", "eval"),
-    ("fp_0011_narration.yaml", "narr-3-skill-builder", "skill", "skill_builder"),
-    ("fp_0011_narration.yaml", "narr-4-skill-improver", "skill", "skill_improver"),
-    ("fp_0011_0012_retest.yaml", "s-fp11-1-builder-invalid-spec", "skill", "skill_builder"),
-    ("fp_0011_0012_retest.yaml", "s-fp11-2-eval-missing-target", "skill", "eval"),
-    ("fp_0011_0012_retest.yaml", "s-fp11-3-mcp-search-empty", "skill", "mcp_search"),
-    ("fp_0011_0012_retest.yaml", "s-fp12-spawn-1-builder-success-ack", "skill", "skill_builder"),
-    ("fp_0011_0012_retest.yaml", "s-fp12-completion-1-mcp-search-narrate", "skill", "mcp_search"),
-    ("fp_0011_0012_retest.yaml", "s-fp12-completion-2-error-narrate", "skill", "skill_builder"),
 })
 
 
