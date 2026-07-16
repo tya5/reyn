@@ -32,7 +32,8 @@ Three lenses name a *discipline* whose *universal mechanism* is a band member: *
 
 ## Hard rules
 
-- **`docs/reference/runtime/control-ir.md` must stay synced with `OP_KIND_MODEL_MAP`** in `src/reyn/schemas/models.py` (#1983: relocated there from `op_runtime/registry.py` so the `Op` union derives from the same map). New op kinds get a section in the reference in the same PR.
+- **A doc describing a mechanism is stale the moment that mechanism's code changes — fix the doc in the SAME PR, not a follow-up.** This is broader than adding a new enum-like variant: a doc goes stale just as easily by describing a *field*, a *call path*, or a *"when wired" claim* that the PR removes or falsifies. (#2949→#2958: `control-ir.md:805` kept asserting a recording path through a field that #2958 deleted — survived because the reviewing pass grepped the doc for the one keyword it expected, not the surrounding prose describing what the PR touched.) When a PR changes something a doc describes, re-read the whole section the change touches, not just the line whose keyword you already had in mind.
+- **`docs/reference/runtime/control-ir.md` must stay synced with `OP_KIND_MODEL_MAP`** in `src/reyn/schemas/models.py` (#1983: relocated there from `op_runtime/registry.py` so the `Op` union derives from the same map) — the sharpest, CI-checked instance of the rule above, not the whole of it. New op kinds get a section in the reference in the same PR.
 - **Recovery-feature PR gate**: any PR adding recovery / reconstruction functionality (WAL-event-derived state, PITR, rewind/restore paths) MUST include a truncate-falsify test verifying the reconstruction source survives WAL truncation below its source events (set X → truncate past X's events → reconstruct → assert X survives). WAL-event-derived recovery state that isn't snapshot-backed is a silent data-loss vector. Same PR, not a follow-up. (Motivated by #2259/#2260.)
 
 ## Testing policy (READ BEFORE WRITING TESTS)
@@ -134,6 +135,13 @@ Three rules then keep multi-session work coherent:
    **Reviewer recovery angle:** an unexpected issue auto-close triggered by a
    sub-PR merge is almost always a closing-keyword false positive. Reopen the
    issue and verify the arc is not half-done before assuming completion.
+5. **No blanket en/ja mirror obligation.** JA docs are a curated, intentionally
+   partial subset (614 EN files vs 125 JA, repo-wide) — a PR is not required to
+   touch a `.ja.md` file just because an EN sibling exists or just changed. Do
+   fix a `.ja.md` file's own claims if the PR falsifies something it currently
+   asserts (same reasoning as any other doc-drift fix, not a mirror rule); do
+   not invent a "keep en/ja pairs in sync" obligation when scoping a PR. Known
+   ja-parity gaps are tracked in #2967 as backlog, not a per-PR gate.
 
 ## Pre-conclusion observation checklist (READ BEFORE WRITING ANY FINDING / 結論)
 
