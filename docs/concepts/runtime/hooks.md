@@ -509,7 +509,17 @@ Control IR `shell_exec` ops: Seatbelt (macOS), Landlock/seccomp (Linux), Noop
 (unsupported platforms), or a container backend. Safe defaults apply:
 
 - `network: false` — outbound network blocked
-- No subprocess spawning
+- No subprocess spawning — the **floor**, not a fixed rule: an operator may
+  permit fork per hook with [`subprocess: true`](../../reference/config/reyn-yaml.md#hooks-block).
+  Omitting the key keeps this floor. The knob is deliberately per-hook and
+  defaults off (unlike a stdio MCP server's `subprocess:`, which defaults on
+  because such a server forks to exist): a hook's fork need is a property of
+  the operator's own command. A command that forks internally — a bare command
+  resolving to a `pyenv`/`asdf`/`mise` shim, or an `npx`/`uvx` launcher — is
+  denied under the floor and logged with `denial_class=fork_denied`, naming it
+  an environment/config problem rather than a command failure.
+- The sensitive-file read deny-list (`~/.ssh`, `~/.aws`, …) applies to shell
+  hooks as it does to any other sandboxed run
 - Consent fail-closed: if the sandbox backend cannot be confirmed, the shell
   hook is refused rather than run unsandboxed
 

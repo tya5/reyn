@@ -235,6 +235,26 @@ class HookDef:
         ``reyn.hooks.dispatcher.HookDispatcher.dispatch`` for where it's
         applied (before the hook's action runs). Absent/empty -> always fires
         (unchanged for every hook that predates H2).
+    subprocess:
+        OPERATOR-declared per-hook sandbox knob (#2827): may this hook's shell
+        command spawn children? Only meaningful for ``shell_exec`` /
+        ``shell_push`` (the loader rejects it on the other schemes rather than
+        silently ignoring a security field — the #2976 eager-rejection model).
+
+        ``None`` = omitted = keep the floor (``False``, today's behaviour); an
+        explicit ``true``/``false`` is the operator's expressed will. This is
+        the #2964 principle applied per-hook: *the default is a floor the
+        operator ADDS to; only an explicit write is the operator's will* —
+        hence ``bool | None``, not a bare ``bool`` that cannot tell "omitted"
+        from "deliberately false".
+
+        Deliberately NOT defaulted to ``True`` (contrast ``subprocess: true``'s
+        default on an MCP stdio server, #2820 part C): a stdio MCP server
+        *forks to exist* (``npx``/``uvx`` → the tool), so ``False`` there
+        hardened nothing and only hid the knob behind an opaque failure. A hook
+        shell's fork need instead depends on the operator's own command — a
+        ``git``/``npm``/pipeline hook forks; a pure-python one may not — so the
+        judgment is the operator's per hook, not a blanket flip (#2827).
     """
 
     on: str
@@ -244,3 +264,4 @@ class HookDef:
     shell_push: str | None = field(default=None)
     pipeline_launch: PipelineLaunchBlock | None = field(default=None)
     matcher: "dict[str, str] | None" = field(default=None)
+    subprocess: bool | None = field(default=None)

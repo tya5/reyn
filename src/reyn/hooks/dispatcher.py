@@ -264,6 +264,9 @@ class HookDispatcher:
                 template_vars,
                 sandbox_backend=self._sandbox_backend,
                 sandbox_config=self._sandbox_config,
+                # #2827: the operator's per-hook fork knob. None = omitted =
+                # the runner keeps its False floor (today's behaviour).
+                allow_subprocess=hook.subprocess,
                 consent_bus=self._consent_bus_now(),
                 hook_name=hook.name,
                 emit_event=self._emit_event,
@@ -282,6 +285,10 @@ class HookDispatcher:
                 sandbox_backend=self._sandbox_backend,
                 sandbox_config=self._sandbox_config,
                 capture_stdout=True,
+                # #2827: same knob on the shell_push sibling — the fork need is
+                # a property of the operator's command, not of which scheme
+                # consumes its stdout.
+                allow_subprocess=hook.subprocess,
                 consent_bus=self._consent_bus_now(),
                 hook_name=hook.name,
                 emit_event=self._emit_event,
