@@ -302,3 +302,106 @@ async def test_model_field_selects_resolved_model_class(tmp_path: Path) -> None:
     # turn — the tool-decision call's own plain text IS the reply).
     (only_call,) = scripted.calls
     assert only_call["model"].model == "gemini/gemini-2.5-pro"
+
+
+# ── #2963: `number` range constraints (minimum/maximum) ─────────────────────
+#
+# The judge_output-removal co-vet found that the schema DSL had no way to
+# express "0.0 to 1.0" for a `number` field — a model answering `85` (a
+# 0-100 scale) against a `>= 0.6` threshold passed unchallenged, because the
+# old op's `[0.0, 1.0]` docstring comment enforced nothing and the schema
+# DSL's `number` type had no bound to fall back on. These tests exercise the
+# fix through the SAME real pipeline entry point as the tests above
+# (`run_agent_step` + real `AgentRegistry`/`Session`/`RouterLoop`, no
+# hand-built schema/validate call) so the bound is proven wired into BOTH
+# generation constraint (response_format) and post-hoc validation, not just
+# one of the two.
+
+_SCORE_SCHEMA = {
+    "fields": {
+        "score": {"type": "number", "minimum": 0.0, "maximum": 1.0, "required": True},
+    },
+}
+
+
+@pytest.mark.asyncio
+async def test_range_constraint_reaches_provider_response_format(tmp_path: Path) -> None:
+    """Tier 2c: a `number` field's `minimum`/`maximum` propagate into the
+    REAL `response_format` sent on the answer turn (not just a hand-built
+    `to_json_schema()` call in isolation) — the "generation constraint"
+    half of #2963's fix."""
+    scripted = _SequencedAgentReply([
+        "(discarded tool-decision content)",
+        '{"score": 0.9}',
+    ])
+    reg = _registry(tmp_path, scripted)
+    schema_registry = SchemaRegistry()
+    schema_registry.register("score", _SCORE_SCHEMA)
+
+    result = await run_agent_step(
+        reg, identity="worker", prompt="score this",
+        schema="score", schema_registry=schema_registry,
+    )
+
+    assert result == {"score": 0.9}
+    _decide_call, answer_call = scripted.calls
+    score_prop = answer_call["response_format"]["json_schema"]["schema"]["properties"]["score"]
+    assert score_prop["minimum"] == 0.0
+    assert score_prop["maximum"] == 1.0
+
+
+@pytest.mark.asyncio
+async def test_out_of_range_reply_is_reprompted_not_silently_accepted(tmp_path: Path) -> None:
+    """Tier 2c: this IS the #2963 bug scenario — a model answering `85` on a
+    0-100 scale against a `[0.0, 1.0]`-bound field. Before the fix, `85` was
+    valid `number` JSON and would have been accepted outright (silently
+    passing any `>= 0.6`-style threshold downstream); with the range bound
+    wired into post-hoc `validate()`, it is treated as a non-conforming
+    structured-output attempt and re-prompted — exactly like the existing
+    wrong-type re-prompt test above, but for a right-TYPE, wrong-RANGE
+    value. Recovers within budget once the second attempt is in-bounds."""
+    scripted = _SequencedAgentReply([
+        "(discarded tool-decision content)",
+        '{"score": 85}',
+        '{"score": 0.85}',
+    ])
+    reg = _registry(tmp_path, scripted)
+    schema_registry = SchemaRegistry()
+    schema_registry.register("score", _SCORE_SCHEMA)
+
+    result = await run_agent_step(
+        reg, identity="worker", prompt="score this",
+        schema="score", schema_registry=schema_registry,
+    )
+
+    assert result == {"score": 0.85}
+    # Tuple-unpack (not a size check): raises ValueError itself unless
+    # EXACTLY 3 calls were made (1 tool-decision + 1 out-of-range attempt +
+    # 1 in-bounds re-prompt) — proves `85` was NOT accepted on the first
+    # attempt.
+    _decide_call, _out_of_range_attempt, _in_bounds_attempt = scripted.calls
+
+
+@pytest.mark.asyncio
+async def test_out_of_range_reply_exhausts_budget_then_typed_error(tmp_path: Path) -> None:
+    """Tier 2c: a model that NEVER answers in-bounds (always `85`) exhausts
+    the same bounded re-prompt budget as any other non-conforming reply and
+    raises `StructuredOutputNonConformingError` — the out-of-range value is
+    never coerced, clamped, or let through as a last resort."""
+    scripted = _SequencedAgentReply([
+        "(discarded tool-decision content)",
+        '{"score": 85}',
+        '{"score": 85}',
+        '{"score": 85}',
+    ])
+    reg = _registry(tmp_path, scripted)
+    schema_registry = SchemaRegistry()
+    schema_registry.register("score", _SCORE_SCHEMA)
+
+    with pytest.raises(StructuredOutputNonConformingError):
+        await run_agent_step(
+            reg, identity="worker", prompt="score this",
+            schema="score", schema_registry=schema_registry,
+        )
+
+    _decide_call, _a1, _a2, _a3 = scripted.calls

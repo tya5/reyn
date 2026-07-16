@@ -227,7 +227,8 @@ ListSource    ::= "over:" EXPR | "items:" "[" LITERAL* "]"   (* mutually exclusi
 OnError       ::= "continue" | "abort" | "retry(" INT ")"
 
 FieldMap      ::= "{" (NAME ":" FieldType)+ "}"
-FieldType     ::= "{" "type:" ("bool" | "string" | "number") "}"
+FieldType     ::= "{" "type:" ("bool" | "string") "}"
+                 | "{" "type:" "number" ["minimum:" LITERAL] ["maximum:" LITERAL] "}"
                  | "{" "type:" "enum" "values:" "[" LITERAL+ "]" "}"
                  | "{" "type:" "list" "of:" FieldType "}"     (* 'of' non-list; no lists-of-lists *)
                  | "{" "type:" "object" "fields:" FieldMap "}"
@@ -666,6 +667,31 @@ fields:
   tags: {type: list, of: {type: string}}
 ```
 
+A `number` field may additionally carry `minimum:` and/or `maximum:`
+(inclusive bounds; #2963):
+
+```yaml
+schema: Score
+fields:
+  score: {type: number, minimum: 0.0, maximum: 1.0}
+```
+
+Before this, `{type: number}` was the only way to describe a numeric field —
+a rubric prompt saying "score from 0.0 to 1.0" had nothing enforcing it in
+the schema itself, so a model answering `85` on a 0-100 scale against a
+`score >= 0.6` threshold check passed unchallenged (the range lived only as
+a prompt request, not a validated constraint). `minimum`/`maximum` are
+checked at schema-registration time (`minimum` must not exceed `maximum`;
+both, if given, must themselves be numbers) and enforced at
+value-validation time — a value outside the (inclusive) bounds is an
+`out_of_range` error, alongside `missing_required` / `type_mismatch` /
+`enum_invalid` / `unresolved_ref` / `unknown_type`. Scoped to `number` only:
+`bool`/`string` have no natural notion of a range, and a `string` length cap
+or `list`/array element-count cap is a separate, not-yet-demonstrated need.
+As the "0062" note just below describes, an `agent` step's `schema:`
+converts to the provider's `response_format` — so `minimum`/`maximum` reach
+generation-time constraint too, not just post-hoc validation.
+
 A `tool`/`shell`/`agent` step's `schema: NAME` key names a registered schema
 its result (or, for `agent`, its parsed JSON reply) must conform to —
 non-conformance fails the step. Schemas declared in the same DSL document set
@@ -832,7 +858,8 @@ ArgValue      ::= LITERAL | "!expr" EXPR
 ListSource    ::= "over:" EXPR | "items:" "[" LITERAL* "]"
 OnError       ::= "continue" | "abort" | "retry(" INT ")"
 FieldMap      ::= "{" (NAME ":" FieldType)+ "}"
-FieldType     ::= "{type: bool}" | "{type: string}" | "{type: number}"
+FieldType     ::= "{type: bool}" | "{type: string}"
+                 | "{type: number[, minimum: LITERAL][, maximum: LITERAL]}"
                  | "{type: enum, values: [" LITERAL+ "]}"
                  | "{type: list, of:" FieldType "}"
                  | "{type: object, fields:" FieldMap "}"
