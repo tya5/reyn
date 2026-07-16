@@ -16,6 +16,7 @@ from reyn.core.pipeline.schema import (
     SchemaError,
     SchemaRegistry,
     resolve_path,
+    to_json_schema,
     validate,
 )
 
@@ -94,6 +95,8 @@ def test_get_unknown_schema_raises_keyerror(registry: SchemaRegistry) -> None:
         {"fields": {"x": {"type": "object", "fields": {}}}},  # empty nested object fields
         {"fields": {"x": {"type": "ref"}}},  # ref missing 'schema'
         {"fields": {"x": {"type": "list", "of": {"type": "list", "of": {"type": "string"}}}}},  # list of list
+        {"fields": {"x": {"type": "number", "minimum": 1.0, "maximum": 0.0}}},  # inverted range (#2963)
+        {"fields": {"x": {"type": "number", "minimum": "zero"}}},  # non-numeric bound (#2963)
     ],
 )
 def test_register_rejects_malformed_schema(bad_schema: dict) -> None:
@@ -175,6 +178,99 @@ def test_validate_bool_not_accepted_as_number() -> None:
     result = validate({"n": True}, "s", reg)
     assert not result.conforming
     assert any(e.kind == "type_mismatch" and e.path == "n" for e in result.errors)
+
+
+# ---------------------------------------------------------------------------
+# #2963: `number` range constraints (minimum/maximum)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def score_registry() -> SchemaRegistry:
+    reg = SchemaRegistry()
+    reg.register("score", {"fields": {"score": {"type": "number", "minimum": 0.0, "maximum": 1.0}}})
+    return reg
+
+
+def test_register_rejects_inverted_range() -> None:
+    """Tier 1: `minimum > maximum` can never be satisfied by any value —
+    rejected at registration, not silently accepted and unsatisfiable later."""
+    reg = SchemaRegistry()
+    with pytest.raises(SchemaError, match="minimum"):
+        reg.register("bad", {"fields": {"x": {"type": "number", "minimum": 1.0, "maximum": 0.0}}})
+
+
+def test_register_rejects_non_numeric_bound() -> None:
+    """Tier 1: `minimum`/`maximum` must themselves be numbers — a string or
+    bool bound is a malformed schema, caught at registration."""
+    reg = SchemaRegistry()
+    with pytest.raises(SchemaError):
+        reg.register("bad", {"fields": {"x": {"type": "number", "minimum": "zero"}}})
+
+
+def test_validate_value_within_bounds_conforms(score_registry: SchemaRegistry) -> None:
+    """Tier 1: a value strictly inside [minimum, maximum] conforms."""
+    result = validate({"score": 0.5}, "score", score_registry)
+    assert result.conforming
+
+
+@pytest.mark.parametrize("boundary_value", [0.0, 1.0])
+def test_validate_boundary_values_are_inclusive_and_conform(
+    score_registry: SchemaRegistry, boundary_value: float
+) -> None:
+    """Tier 1: bounds are INCLUSIVE — exactly `minimum` and exactly `maximum`
+    both conform (a test that only ever checks 0.0/1.0 would not flip on an
+    exclusive-vs-inclusive bug the way a just-outside value does, but this
+    pins the inclusive contract explicitly rather than leaving it implicit)."""
+    result = validate({"score": boundary_value}, "score", score_registry)
+    assert result.conforming
+
+
+def test_validate_just_below_minimum_is_out_of_range(score_registry: SchemaRegistry) -> None:
+    """Tier 1: a value just OUTSIDE the lower bound (not merely "0.0 vs some
+    huge number") is out_of_range — this is the bound that actually flips."""
+    result = validate({"score": -0.1}, "score", score_registry)
+    assert not result.conforming
+    assert any(e.kind == "out_of_range" and e.path == "score" for e in result.errors)
+
+
+def test_validate_just_above_maximum_is_out_of_range(score_registry: SchemaRegistry) -> None:
+    """Tier 1: a value just OUTSIDE the upper bound is out_of_range."""
+    result = validate({"score": 1.1}, "score", score_registry)
+    assert not result.conforming
+    assert any(e.kind == "out_of_range" and e.path == "score" for e in result.errors)
+
+
+def test_validate_0_to_100_scale_value_against_0_to_1_bound_is_rejected(
+    score_registry: SchemaRegistry,
+) -> None:
+    """Tier 1: the EXACT #2963 bug scenario — a model answering `85` (a
+    0-100 scale) against a schema declaring `[0.0, 1.0]`. Before this fix,
+    `85` was a conforming `number` with nothing to catch the scale mismatch;
+    it now fails as out_of_range."""
+    result = validate({"score": 85}, "score", score_registry)
+    assert not result.conforming
+    assert any(e.kind == "out_of_range" and e.path == "score" for e in result.errors)
+
+
+def test_to_json_schema_propagates_number_bounds(score_registry: SchemaRegistry) -> None:
+    """Tier 1: `to_json_schema()` — the function whose output feeds a live
+    `agent` step's provider `response_format` (session_api.run_agent_step) —
+    carries `minimum`/`maximum` through into the JSON Schema `number`
+    property, so generation itself is constrained, not just post-hoc
+    validation."""
+    js = to_json_schema("score", score_registry)
+    assert js["properties"]["score"] == {"type": "number", "minimum": 0.0, "maximum": 1.0}
+
+
+def test_to_json_schema_number_without_bounds_is_unchanged() -> None:
+    """Tier 1: a `number` field with no `minimum`/`maximum` set produces the
+    same bare `{"type": "number"}` as before #2963 — existing schemas that
+    never declared a bound see byte-identical output (compat)."""
+    reg = SchemaRegistry()
+    reg.register("plain", {"fields": {"n": {"type": "number"}}})
+    js = to_json_schema("plain", reg)
+    assert js["properties"]["n"] == {"type": "number"}
 
 
 def test_validate_enum_not_in_values(registry: SchemaRegistry) -> None:

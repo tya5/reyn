@@ -23,8 +23,9 @@ separate thin wrapper, not here):
   - `validate(value, schema, registry) -> ValidationResult` — recursively
     checks a value against a schema (or schema name), producing a list of
     typed `ValidationError`s (`missing_required` / `type_mismatch` /
-    `enum_invalid` / `unresolved_ref` / `unknown_type`) rather than raising,
-    so callers can report every violation instead of just the first.
+    `enum_invalid` / `unresolved_ref` / `unknown_type` / `out_of_range`)
+    rather than raising, so callers can report every violation instead of
+    just the first.
   - `resolve_path(schema, "dotted.path", registry) -> FieldType | None` —
     walks a dotted path through a (possibly nested) schema, transparently
     unwrapping `object` fields, `ref` fields (via the registry), and `list`
@@ -38,6 +39,21 @@ separate thin wrapper, not here):
 ElemType (the type allowed inside `list.of`) intentionally excludes `list`
 itself — no lists-of-lists — matching the grammar in R2 / appendix B; this
 is enforced at registration time, not just documented.
+
+`number` range constraints (#2963): a `number` FieldType may additionally
+carry `minimum:` and/or `maximum:` (inclusive bounds). Before this, the DSL
+could only ever say `{type: number}` — a schema author's "score in [0.0,
+1.0]" lived in a prompt comment or a docstring, not in the schema, so a
+model answering `85` (a 0-100 scale) against a `>= 0.6` threshold check
+passed unchallenged. `minimum`/`maximum` are validated (at registration,
+`minimum <= maximum` if both are given; at value-validation, a value
+outside the bounds is an `out_of_range` error) and propagated into
+`to_json_schema`'s output, so a `response_format`-constrained `agent` step
+has the bound enforced at BOTH generation time (provider-side JSON Schema
+constraint) and post-hoc validation time — not just one or the other.
+Scoped to `number` only: `bool`/`string` have no natural "range", and a
+`string` length cap / `list`/`array` element-count cap are a separate,
+not-yet-demonstrated need (not added here — see #2963 PR discussion).
 """
 
 from __future__ import annotations
@@ -74,7 +90,7 @@ class ValidationError:
     `path` is the dotted/indexed path to the offending value (e.g.
     `"feedbacks[1].comment"`, `""` for the root). `kind` is one of
     `missing_required` / `type_mismatch` / `enum_invalid` / `unresolved_ref`
-    / `unknown_type` — stable tokens callers may branch on.
+    / `unknown_type` / `out_of_range` — stable tokens callers may branch on.
     """
 
     path: str
@@ -166,6 +182,8 @@ def _check_field_type_shape(ft: Any, path: str, *, allow_list: bool) -> None:
         raise SchemaError(f"{path}: field type must be a dict, got {type(ft).__name__}")
     t = ft.get("type")
     if t in SCALAR_TYPES:
+        if t == "number":
+            _check_number_bounds_shape(ft, path)
         return
     if t == "enum":
         values = ft.get("values")
@@ -192,6 +210,22 @@ def _check_field_type_shape(ft: Any, path: str, *, allow_list: bool) -> None:
             raise SchemaError(f"{path}: ref type requires 'schema'")
         return
     raise SchemaError(f"{path}: unknown field type {t!r} (expected one of {sorted(_KNOWN_TYPES)})")
+
+
+def _check_number_bounds_shape(ft: dict[str, Any], path: str) -> None:
+    """Validate a `number` FieldType's optional `minimum`/`maximum` bounds
+    (#2963). Each, if present, must be an `int`/`float` (not `bool` — same
+    exclusion `_validate_field` applies to the value itself); if both are
+    present, `minimum` must not exceed `maximum` — an inverted range can
+    never be satisfied by any value, so it is rejected at registration
+    time rather than silently discarding every value later."""
+    minimum = ft.get("minimum")
+    maximum = ft.get("maximum")
+    for key, bound in (("minimum", minimum), ("maximum", maximum)):
+        if bound is not None and (isinstance(bound, bool) or not isinstance(bound, (int, float))):
+            raise SchemaError(f"{path}: '{key}' must be a number, got {type(bound).__name__}")
+    if minimum is not None and maximum is not None and minimum > maximum:
+        raise SchemaError(f"{path}: 'minimum' ({minimum!r}) must not exceed 'maximum' ({maximum!r})")
 
 
 def _check_schema_shape(name: str, schema: Any) -> None:
@@ -312,6 +346,28 @@ def _validate_object_fields(
         _validate_field(fvalue, ft, fpath, registry, errors)
 
 
+def _validate_number_bounds(
+    value: Any, ft: dict[str, Any], path: str, errors: list[ValidationError]
+) -> None:
+    """Enforce a `number` FieldType's `minimum`/`maximum` (#2963), both
+    inclusive. Runs only after the caller has already confirmed `value` is a
+    non-bool `int`/`float` — this is the closing half of the "0.6 threshold
+    against a model answering 85 on a 0-100 scale" gap: `to_json_schema`
+    asks the provider to constrain generation to the same bound, but a
+    provider that ignores/can't honor it (or a non-`agent` `tool`/`shell`
+    step) still gets caught here, post-hoc."""
+    minimum = ft.get("minimum")
+    maximum = ft.get("maximum")
+    if minimum is not None and value < minimum:
+        errors.append(
+            ValidationError(path, f"{value!r} is below minimum {minimum!r}", "out_of_range")
+        )
+    if maximum is not None and value > maximum:
+        errors.append(
+            ValidationError(path, f"{value!r} is above maximum {maximum!r}", "out_of_range")
+        )
+
+
 def _validate_field(
     value: Any,
     ft: dict[str, Any],
@@ -328,6 +384,9 @@ def _validate_field(
         }[t]
         if not ok:
             errors.append(ValidationError(path, f"expected {t}, got {type(value).__name__}", "type_mismatch"))
+            return
+        if t == "number":
+            _validate_number_bounds(value, ft, path, errors)
         return
     if t == "enum":
         if value not in ft["values"]:
@@ -434,7 +493,12 @@ def _field_type_to_json_schema(ft: dict[str, Any], registry: SchemaRegistry) -> 
     if t == "string":
         return {"type": "string"}
     if t == "number":
-        return {"type": "number"}
+        out: dict[str, Any] = {"type": "number"}
+        if ft.get("minimum") is not None:
+            out["minimum"] = ft["minimum"]
+        if ft.get("maximum") is not None:
+            out["maximum"] = ft["maximum"]
+        return out
     if t == "enum":
         return {"enum": list(ft["values"])}
     if t == "list":
