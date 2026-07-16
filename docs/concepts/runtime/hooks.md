@@ -689,6 +689,38 @@ non-reentry → valve-metered allow" transition (proposal
 pinned by a flip-witness Tier-2 test that drives a chain whose natural turn
 count is unbounded and asserts the force-close fires at the cap.
 
+## Agent self-directed hooks (`hooks_add`)
+
+Everything above is authored by the operator in `reyn.yaml` (the OUT-set,
+restart-only) or emitted by the OS/Composer. `hooks_add` is the tool that lets
+the agent add a hook to **its own runtime layer** at any point during a
+session — self-directed continuation (`wake: true`) or recurring injected
+context (`wake: false`), without a restart.
+
+```json
+{"kind": "hooks_add", "on": "turn_end", "message": "Check the deploy status.", "wake": true}
+```
+
+- `on` (required) — one of the lifecycle points above: `turn_start`,
+  `turn_end`, `session_start`, `session_end`, `task_start`, `task_end`.
+- `message` (required) — the push message (Jinja2 template allowed).
+- `wake` (optional, default `true`) — `true` starts a new turn
+  (self-continuation, bounded by `safety.loop.max_hook_driven_turns`); `false`
+  rides along as context with the next turn.
+- `push_when` (optional) — a Jinja2 → bool guard; the push is skipped when it
+  renders false.
+- `name` (optional) — a label surfaced as a `[hook:name]` attribution prefix
+  in history.
+
+**Write target and gating**: the hook is written to `.reyn/config/hooks.yaml`
+— the runtime IN-set layer, hardcoded, never derived from LLM input, so this
+can structurally never touch `reyn.yaml` (the OUT-set). It joins the existing
+hooks additively and takes effect at the next turn boundary. The tool itself
+is write-gated (`permissions.tool`) and can be denied per-agent via a
+capability profile's `tool_deny`. Full hot-reload mechanics — the three-layer
+COMBINE, validate-before-apply, boot resilience — are covered in
+[Concepts: Config hot-reload](config-hot-reload.md).
+
 ## LLM-authored hook-events (`emit_hook_event`)
 
 Everything above is fired by the OS (a lifecycle point, an external-event

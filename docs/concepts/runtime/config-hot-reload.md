@@ -15,10 +15,10 @@ process restart.
 
 | Set | Files | Mutable at… |
 |-----|-------|-------------|
-| **IN-set** (runtime-mutable) | `.reyn/mcp.yaml`, `.reyn/cron.yaml`, `.reyn/hooks.yaml` | Hot-reload at turn boundary |
+| **IN-set** (runtime-mutable) | `.reyn/config/mcp.yaml`, `.reyn/config/cron.yaml`, `.reyn/config/hooks.yaml` | Hot-reload at turn boundary |
 | **OUT-set** (restart-only) | `reyn.yaml` (security / permissions / sandbox / budget / loop valve) | Process restart only |
 
-The boundary is structural: `load_hot_reload_config` opens only the `.reyn/*.yaml`
+The boundary is structural: `load_hot_reload_config` opens only the `.reyn/config/*.yaml`
 IN-set files. A hot-reload — and any LLM-op that triggers one — can never touch
 the OUT-set, because the loader never opens those files.
 
@@ -61,11 +61,11 @@ run on every reload:
 
 | Seam | What it does |
 |------|--------------|
-| `cron` | Adds / replaces present jobs (idempotent by name). **Removal-diff**: jobs tracked in `_runtime_cron_names` that are absent from the re-read `.reyn/cron.yaml` are unscheduled. Startup (`reyn.yaml`) cron jobs are never removable. |
+| `cron` | Adds / replaces present jobs (idempotent by name). **Removal-diff**: jobs tracked in `_runtime_cron_names` that are absent from the re-read `.reyn/config/cron.yaml` are unscheduled. Startup (`reyn.yaml`) cron jobs are never removable. |
 | `mcp` | Re-probes MCP servers via the existing turn-boundary refresh chain. Reports whether the in-memory tool cache changed. |
 | `per_agent_capability` | Re-reads `.reyn/agents/<name>/profile.yaml` and updates `allowed_mcp` on the three holders the Session owns (session / skill_runner / router_host). |
 | `new_agent` | Confirming no-op: agent discovery is filesystem-live (the `AgentRegistry` walks `.reyn/agents/` per call), so a newly added agent is already visible without a reload step. Kept as an explicit seam for accounting. |
-| `hooks` | Re-reads global `.reyn/hooks.yaml` + per-agent `.reyn/agents/<name>/hooks.yaml`, re-combines with the fixed startup layer, and swaps the hook dispatcher's registry. |
+| `hooks` | Re-reads global `.reyn/config/hooks.yaml` + per-agent `.reyn/agents/<name>/hooks.yaml`, re-combines with the fixed startup layer, and swaps the hook dispatcher's registry. |
 
 ## Hooks three-layer COMBINE
 
@@ -74,7 +74,7 @@ The hook registry is built additively from three layers, in order:
 | Layer | File | Set | On reload |
 |-------|------|-----|-----------|
 | **startup** | `reyn.yaml` | OUT-set | Captured once at boot; never re-read |
-| **runtime** | `.reyn/hooks.yaml` | IN-set | Re-read on every reload |
+| **runtime** | `.reyn/config/hooks.yaml` | IN-set | Re-read on every reload |
 | **per-agent** | `.reyn/agents/<name>/hooks.yaml` | IN-set | Re-read on every reload |
 
 The COMBINE is additive: `startup ∪ runtime ∪ per-agent`. A removed hook is
@@ -106,7 +106,7 @@ the reload is scheduled and will apply at the next turn boundary.
 
 ### Agent self-reload: `hooks_add`
 
-The `hooks_add` LLM-op writes a push hook to `.reyn/hooks.yaml` and schedules a
+The `hooks_add` LLM-op writes a push hook to `.reyn/config/hooks.yaml` and schedules a
 reload. The hook takes effect at the next turn boundary via the `hooks` reapply
 seam.
 
@@ -128,7 +128,7 @@ The tool is write-gated: the calling workflow must declare `hooks_add` in
 Hot-reload is safe-by-construction through five layers:
 
 1. **Write-gate by construction.** `load_hot_reload_config` never opens `reyn.yaml`.
-   `hooks_add` hardcodes the write target to `.reyn/hooks.yaml` — the path is never
+   `hooks_add` hardcodes the write target to `.reyn/config/hooks.yaml` — the path is never
    derived from LLM input. An LLM-triggered reload structurally cannot touch the
    OUT-set.
 2. **Validate-before-apply.** A malformed IN-set rejects the whole reload atomically —
