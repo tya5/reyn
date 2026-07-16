@@ -23,16 +23,12 @@
 #   chunk_overlap_ratio -- chunker overlap fraction (default 0.125 = 12.5%,
 #                          within the 10-15% 2026 default band).
 #   embedding_model     -- passed to reyn's `embed` tool (default
-#                          "standard"). Stamped onto every chunk's
-#                          `embedding_model` column (C4) -- pass a CONCRETE
-#                          model id (not a class alias like the default) if
-#                          the alias could ever re-resolve to a different
-#                          model later, since that is the one thing this
-#                          arc CANNOT read back from `embed`'s own envelope
-#                          today (`envelope.model` is not reachable from
-#                          pipeline `ctx` -- see the PR body's architecture-
-#                          gap note; a small, separate core PR could close
-#                          this).
+#                          "standard"). This may be a model-CLASS alias;
+#                          what gets STAMPED onto each chunk's
+#                          `embedding_model` column (C4) is the model the
+#                          provider actually RESOLVED, read back from
+#                          `embed`'s own envelope meta -- so the column can
+#                          never disagree with the vectors beside it.
 #   markitdown_server / chunker_server / vectorstore_server -- the MCP
 #                          server names as configured under `mcp.servers`
 #                          (defaults: reyn_markitdown / reyn_chunker /
@@ -40,9 +36,12 @@
 #                          docs/cookbook/configs/with-builtin-rag-mcp.yaml).
 #
 # Output: `ctx.result` -- either `_ingest_body`'s summary (files/chunks
-# added/updated/removed/unchanged + the X2a/X5 estimated-spend figures) or
-# `_blocked`'s X1 pre-flight failure message (cause + concrete remedy per
-# unreachable server -- mirrors #2932's `require_mcp` decision-enabling
+# added/updated/removed/unchanged, the resolved `embedding_model`, and the
+# X2a METERED spend for this batch: `tokens_embedded` / `cost_usd` /
+# `priced`, read from `embed`'s own envelope meta -- plus X5's
+# `estimated_tokens_saved_by_dedup`, the one necessarily-estimated figure)
+# or `_blocked`'s X1 pre-flight failure message (cause + concrete remedy
+# per unreachable server -- mirrors #2932's `require_mcp` decision-enabling
 # error, never a bare transport exception).
 schema: PreflightCheck
 fields:
@@ -260,7 +259,12 @@ steps:
       output: to_remove_ids
 
   # X5: dedup visibility -- how many chunks were SKIPPED (unchanged), and
-  # the estimated tokens that would have been spent re-embedding them.
+  # the tokens that would have been spent re-embedding them. The SKIPPED
+  # side is inherently an ESTIMATE (chars/4, the same fallback embed's own
+  # provider uses): the only way to know a skipped chunk's true token count
+  # is to send it to the embedder, which is exactly the spend the skip
+  # exists to avoid. The EMBEDDED side, by contrast, is measured exactly --
+  # see the summary step below.
   - transform: {value: "count(ctx.all_items) - count(ctx.to_upsert)", output: unchanged_count}
   - transform: {value: "sum(map(ctx.all_items, i -> i.est_tokens))", output: est_tokens_if_no_dedup}
   - transform: {value: "sum(map(ctx.to_upsert, i -> i.est_tokens))", output: est_tokens_embedded}
@@ -293,15 +297,22 @@ steps:
         tool_args: !expr "{db_path: ctx.output_db, ids: ctx.to_remove_ids}"
       output: delete_result
 
+  # X2a -- the spend report. `tokens_embedded` / `cost_usd` are embed's OWN
+  # METERED figures (envelope meta), not an estimate; `embedding_model` is
+  # the model that actually produced the vectors (C4). Only
+  # `estimated_tokens_saved_by_dedup` is an estimate, and necessarily so
+  # (see the X5 step above) -- its name says which of the two it is.
   - transform:
       value: >-
         {files_scanned: count(ctx.files),
          chunks_upserted: ctx.upsert_outcome.upserted,
          chunks_removed: ctx.delete_result.structured.deleted,
          chunks_unchanged_skipped: ctx.unchanged_count,
-         estimated_tokens_embedded: ctx.est_tokens_embedded,
-         estimated_tokens_saved_by_dedup: ctx.est_tokens_if_no_dedup - ctx.est_tokens_embedded,
-         note: "token figures are a chars/4 ESTIMATE (the same fallback embed's own provider uses), not the metered actual -- embed's per-call cost_usd/total_tokens are not reachable from pipeline ctx today (see the PR body's architecture-gap note)."}
+         embedding_model: ctx.upsert_outcome.model,
+         tokens_embedded: ctx.upsert_outcome.tokens,
+         cost_usd: ctx.upsert_outcome.cost_usd,
+         priced: ctx.upsert_outcome.priced,
+         estimated_tokens_saved_by_dedup: ctx.est_tokens_if_no_dedup - ctx.est_tokens_embedded}
       output: summary
 ---
 pipeline: _ingest_embed_and_upsert
@@ -317,10 +328,19 @@ steps:
         texts: !expr "map(ctx.to_upsert, i -> i.text)"
         embedding_model: !expr ctx.embedding_model
       output: embedded
+
+  # C4 -- stamp the RESOLVED model (`embed`'s own envelope meta), NOT this
+  # pipeline's `embedding_model` INPUT. The input is typically a model-CLASS
+  # alias ("standard"); writing that into the per-chunk embedding_model
+  # column would record a model that never produced these vectors -- the
+  # exact "the column becomes a lie" failure FP-0057's C1 hard gate exists
+  # to prevent. `envelope.model` is what the provider actually resolved, so
+  # C4 holds BY CONSTRUCTION here.
+  - transform: {value: "ctx.embedded.meta.model", output: resolved_model}
   - transform:
       value: >-
         {items: ctx.to_upsert, vectors: ctx.embedded.structured,
-         embedding_model: ctx.embedding_model, parent_context: ctx.input_path}
+         embedding_model: ctx.resolved_model, parent_context: ctx.input_path}
   - shell:
       command: "python3 -m reyn.builtin.rag_ingest_helpers zip_vectors"
       output: to_upsert_zipped
@@ -331,12 +351,28 @@ steps:
         mcp_tool_name: upsert
         tool_args: !expr "{db_path: ctx.output_db, items: ctx.to_upsert_zipped.structured}"
       output: upsert_result
-  - transform: {value: "ctx.upsert_result.structured", output: outcome}
+
+  # X2a -- the MEASURED spend for this batch (embed's own metered usage),
+  # not an estimate. `cost_usd` is null when litellm cannot price the model
+  # (an unpriced model degrades VISIBLY, never silently as $0.00 -- the
+  # #1829 sentinel), so it is carried through as-is alongside `priced`.
+  - transform:
+      value: >-
+        {upserted: ctx.upsert_result.structured.upserted,
+         tokens: ctx.embedded.meta.total_tokens,
+         cost_usd: get(ctx.embedded, "meta.cost_usd", null),
+         priced: get(ctx.embedded, "meta.priced", false),
+         model: ctx.resolved_model}
+      output: outcome
 ---
 pipeline: _ingest_noop_upsert
 description: >-
   Sibling of _ingest_embed_and_upsert -- the "nothing new to embed" branch
-  (X5: a fully-deduped re-ingest), returning the same {"upserted": 0} shape
-  without calling embed at all.
+  (X5: a fully-deduped re-ingest), returning the same outcome shape without
+  calling embed at all. Spend is a REAL zero here (nothing was embedded),
+  hence priced: true -- distinct from the unpriced-model null cost_usd the
+  sibling can carry.
 steps:
-  - transform: {value: "{upserted: 0}", output: outcome}
+  - transform:
+      value: "{upserted: 0, tokens: 0, cost_usd: 0.0, priced: true, model: null}"
+      output: outcome

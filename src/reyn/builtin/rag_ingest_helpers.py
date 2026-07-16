@@ -36,20 +36,23 @@ Subcommands:
   ``content_hash`` is the chunk TEXT's sha256 (C5's change-detection key);
   ``est_tokens`` is the chars/4 estimate (the SAME fallback heuristic
   ``EmbeddingProvider.estimate_tokens`` uses, e.g.
-  ``src/reyn/data/embedding/litellm_provider.py``) -- used for the X2a/X5
-  spend ESTIMATE the pipeline reports, since the real per-call
-  ``total_tokens``/``cost_usd`` on ``embed``'s own envelope is not reachable
-  from pipeline ``ctx`` today (``canonical_to_ctx_fields`` only exposes
-  ``text``/``structured``, never ``meta`` -- see this arc's PR body).
+  ``src/reyn/data/embedding/litellm_provider.py``). ``est_tokens`` funds
+  ONLY the pipeline's X5 "tokens saved by dedup" figure, which is
+  necessarily a counterfactual: the sole way to learn a SKIPPED chunk's
+  true token count is to send it to the embedder, i.e. to spend exactly
+  what the skip exists to avoid. Tokens actually EMBEDDED are never
+  estimated -- the pipeline reads ``embed``'s own metered
+  ``total_tokens``/``cost_usd`` off its envelope meta instead.
 - ``zip_vectors`` -- stdin ``{"items": [...], "vectors": [[float, ...],
   ...], "embedding_model": str}`` (same order, from a ``to_upsert`` list and
   ``embed``'s own vectors) -> stdout a JSON list of
   ``[{"id", "vector", "metadata": {...}}, ...]`` in the EXACT shape
   ``reyn.builtin.mcp_servers.vector_store_server``'s ``upsert`` tool expects
   -- pairing each item with its vector BY POSITION (R1 has no index-based
-  zip) and stamping ``metadata.embedding_model`` from ``embedding_model``
-  (the pipeline's OWN configured input -- see the module docstring note
-  above on why not ``envelope.model``).
+  zip) and stamping ``metadata.embedding_model`` from ``embedding_model``.
+  The caller passes the RESOLVED model (``embed``'s ``envelope.model``),
+  never a model-class alias: the column must name the model that actually
+  produced the vectors beside it (FP-0057 C4).
 """
 from __future__ import annotations
 

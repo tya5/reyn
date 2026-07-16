@@ -104,7 +104,22 @@ class FakeEmbeddingProvider:
     """Deterministic real EmbeddingProvider (mirrors
     ``tests/test_op_embed.py``'s own fixture) -- a fixed-length vector per
     text so distinct chunk texts get distinct (but reproducible) vectors,
-    with no real embedding API call."""
+    with no real embedding API call.
+
+    **``embed`` RESOLVES the requested model to ``fake/<model>``** rather
+    than echoing it back -- exactly as ``tests/test_op_embed.py``'s fixture
+    does, and as the real ``RoutingEmbeddingProvider`` does when handed a
+    model-CLASS alias (``"standard"`` -> a concrete provider model id). This
+    is load-bearing for the C4 test: were the resolved name identical to the
+    requested one, "stamped from the pipeline's INPUT" and "stamped from
+    ``envelope.model``" would be indistinguishable and the assertion would
+    pass vacuously against either implementation.
+
+    ``total_tokens`` is deliberately NOT the chars/4 value the pipeline's
+    own ``est_tokens`` heuristic would compute -- it is ``len(text)``, ~4x
+    larger. That gap is what lets the X2a test prove the reported figure
+    came from the metered envelope rather than the estimate.
+    """
 
     def __init__(self) -> None:
         self._batch_size = 100
@@ -112,7 +127,9 @@ class FakeEmbeddingProvider:
     async def embed(self, texts: list[str], model: str):
         from reyn.data.embedding.provider import EmbedBatchResult
         vectors = [[float(len(t) % 97), float(sum(map(ord, t)) % 89), 1.0] for t in texts]
-        return EmbedBatchResult(vectors=vectors, model=model, total_tokens=sum(len(t) for t in texts))
+        return EmbedBatchResult(
+            vectors=vectors, model=f"fake/{model}", total_tokens=sum(len(t) for t in texts),
+        )
 
     def estimate_tokens(self, texts: list[str]) -> int:
         return sum(len(t) for t in texts)
@@ -264,26 +281,73 @@ def test_ingest_add_then_dedup_then_update_then_remove(
     assert summary_4["chunks_upserted"] == 0
 
 
-def test_upserted_chunk_embedding_model_is_stamped_from_pipeline_input(
+def test_upserted_chunk_embedding_model_is_the_resolved_model_not_the_alias(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture,
 ) -> None:
-    """Tier 2b: C4 -- every upserted chunk's embedding_model column is
-    stamped from the ingest pipeline's OWN input (not hardcoded), verified
-    by reading it straight back out of the real sqlite store."""
+    """Tier 2b: C4 -- every upserted chunk's embedding_model column names the
+    model that ACTUALLY produced its vector (embed's envelope.model), not the
+    model-CLASS alias the pipeline was invoked with.
+
+    The provider resolves "standard" -> "fake/standard" (see
+    FakeEmbeddingProvider), so the two candidate sources are distinguishable:
+    stamping the pipeline's own input would write "standard" -- a model that
+    never produced these vectors, i.e. the "column becomes a lie" failure
+    FP-0057's C1 gate exists to prevent. Read straight back out of the real
+    sqlite store."""
     monkeypatch.chdir(tmp_path)
     project_root = _write_project(tmp_path)
     docs_dir = project_root / "docs"
     docs_dir.mkdir()
     (docs_dir / "a.txt").write_text("A short note about penguins.", encoding="utf-8")
 
-    _run_ingest(project_root, capsys, embedding_model="fake-embed-v7")
+    _run_ingest(project_root, capsys, embedding_model="standard")
 
     from reyn.builtin.mcp_servers.vector_store_server import SqliteVecStore
 
     with SqliteVecStore(str(project_root / "rag.sqlite")) as store:
         rows = store.list_metadata()
     assert rows, "expected at least one upserted chunk"
-    assert all(r["metadata"]["embedding_model"] == "fake-embed-v7" for r in rows)
+    assert all(r["metadata"]["embedding_model"] == "fake/standard" for r in rows), (
+        "C4 VIOLATION: the embedding_model column must name the RESOLVED model "
+        "(envelope.model = 'fake/standard'), not the requested alias 'standard' "
+        f"-- got {sorted({r['metadata']['embedding_model'] for r in rows})}"
+    )
+
+
+def test_ingest_reports_metered_spend_not_the_chars4_estimate(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture,
+) -> None:
+    """Tier 2b: X2a -- the summary's tokens_embedded is embed's OWN METERED
+    total_tokens (envelope meta), not the pipeline's chars/4 estimate.
+
+    The provider meters len(text) while the pipeline's est_tokens heuristic
+    computes len(text)//4, so the two differ ~4x and the reported figure is
+    attributable to exactly one source. Also pins that the resolved model
+    and the priced flag ride the same envelope meta."""
+    monkeypatch.chdir(tmp_path)
+    project_root = _write_project(tmp_path)
+    docs_dir = project_root / "docs"
+    docs_dir.mkdir()
+    body = "Alpha document about apples and oranges. " * 20
+    (docs_dir / "a.txt").write_text(body, encoding="utf-8")
+
+    summary = _run_ingest(project_root, capsys)["named_stores"]["result"]
+
+    # The metered figure is ~4x the chars/4 estimate of the same text; assert
+    # against the metered side, and explicitly NOT against the estimate.
+    assert summary["tokens_embedded"] > 0
+    assert summary["tokens_embedded"] > summary["estimated_tokens_saved_by_dedup"]
+    approx_estimate = len(body) // 4
+    assert summary["tokens_embedded"] > approx_estimate * 2, (
+        "X2a REGRESSION: tokens_embedded looks like the chars/4 ESTIMATE "
+        f"(~{approx_estimate}), not embed's metered total_tokens (~{len(body)})"
+    )
+    assert summary["embedding_model"] == "fake/standard"
+    assert summary["priced"] is False, (
+        "the fake model is unpriceable by litellm, so priced must be False and "
+        "cost_usd None -- an unpriced model must degrade VISIBLY, never as $0.00"
+    )
+    assert summary["cost_usd"] is None
 
 
 def test_rag_query_returns_the_ingested_chunk_as_top_result(

@@ -1682,14 +1682,39 @@ def unwrap_dispatch_envelope(result: Any) -> Any:
 
 
 def canonical_to_ctx_fields(canonical: CanonicalToolResult) -> "dict[str, Any]":
-    """Reduce a :class:`CanonicalToolResult` to the flat ``{"text": ..., "structured": ...}`` shape a
-    pipeline step's ``ctx.<name>`` exposes (``structured`` key absent when there is no structured
-    attachment) — shape-only, mirroring ``seam.py``'s attachments reduction but with NO size gating:
-    pipeline ctx retains full values for downstream programmatic step processing (owner ruling)."""
+    """Reduce a :class:`CanonicalToolResult` to the flat ``{"text": ..., "structured": ...,
+    "meta": ...}`` shape a pipeline step's ``ctx.<name>`` exposes (``structured``/``meta`` keys
+    absent when there is no structured attachment / no signal meta) — shape-only, mirroring
+    ``seam.py``'s attachments reduction but with NO size gating: pipeline ctx retains full values
+    for downstream programmatic step processing (owner ruling).
+
+    ``meta`` is the producer's SIGNAL channel — the small, high-signal fields a mapper deliberately
+    kept out of the body because they change what the caller does next: ``embed``'s ``model``/
+    ``total_tokens``/``cost_usd``/``priced``, ``sandboxed_exec``'s nonzero ``returncode``, an MCP
+    result's ``isError``. The chat side has always seen these (``seam.py`` reads ``meta``); the
+    pipeline side did not, so a ``tool:`` step could read a producer's body but never its signal.
+
+    FP-0063 P3 (#2966) is why this is no longer acceptable: the ingest pipeline must stamp each
+    chunk's ``embedding_model`` from the model that ACTUALLY produced the vectors (FP-0057 C4 —
+    "one source = one embedding model"). Without ``meta``, the pipeline's only available source was
+    its own INPUT, which is typically a model-CLASS alias (``"standard"``) rather than the resolved
+    id — i.e. the per-chunk ``embedding_model`` column would record a model that never produced
+    those vectors. That is precisely the "the column becomes a lie" failure FP-0057's C1 hard gate
+    exists to prevent (it is why a vector-DB server with a built-in embedder is rejected); reaching
+    it via the ctx reducer instead of via the server would have defeated the gate's purpose by
+    another route. Exposing ``meta`` makes C4 correct BY CONSTRUCTION rather than by documentation.
+
+    Absent-when-empty mirrors ``structured``'s own convention exactly: a mapper that emits no signal
+    meta (the common case — most successful results have none) adds no key, so a step reading
+    ``ctx.<name>.meta`` on such a producer fails loudly rather than silently reading ``{}``. Use
+    ``get(ctx.<name>, "meta.<field>", <default>)`` for safe navigation (see pipeline-dsl.md)."""
     fields: dict[str, Any] = {"text": canonical.get("text", "")}
     structured_items = [
         att.get("data") for att in canonical.get("attachments", []) or [] if att.get("kind") == "structured"
     ]
     if structured_items:
         fields["structured"] = structured_items[0] if len(structured_items) == 1 else structured_items
+    meta = canonical.get("meta") or {}
+    if meta:
+        fields["meta"] = meta
     return fields

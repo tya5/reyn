@@ -1,11 +1,19 @@
 """Tier 1/2: #2425 PR-2 — pipeline `tool:` step results expose the same
-`text`/`structured` two-field ctx shape chat gets, uniformly across op kinds,
+`text`/`structured`/`meta` ctx shape chat gets, uniformly across op kinds,
 and NEVER go through the chat-side offload/size-gate machinery.
 
 Covers:
   1. Tier 1: `canonical_to_ctx_fields` reduces `CanonicalToolResult.attachments`
      to `structured` (absent / single item / list) exactly like `seam.py`'s own
      reduction, minus any size gating.
+  1b. Tier 1 (#2966): the same reducer exposes the producer's SIGNAL channel as
+     `meta`, absent-when-empty on the same convention `structured` uses. Chat
+     always saw `meta` (`seam.py` reads it); the pipeline did not, so a `tool:`
+     step could read a producer's body but never its signal — which forced
+     FP-0063's ingest pipeline to stamp each chunk's `embedding_model` from its
+     own INPUT (a model-CLASS alias) instead of from the model that actually
+     produced the vectors, i.e. the "column becomes a lie" failure FP-0057's C1
+     gate exists to prevent.
   2. Tier 2: a real `PipelineExecutor.run` through `_run_tool_step` exposes
      `ctx.<name>.text`/`.structured` uniformly for TWO distinct real op kinds
      (`mcp`, `sandboxed_exec`) via the REAL R1 expression evaluator.
@@ -80,6 +88,33 @@ def test_canonical_to_ctx_fields_ignores_media_attachments():
         "meta": {},
     }
     assert canonical_to_ctx_fields(canonical) == {"text": "body"}
+
+
+def test_canonical_to_ctx_fields_exposes_meta_signal_fields():
+    """Tier 1: #2966 — a producer's signal meta reaches pipeline ctx as 'meta',
+    so a step can read what a result COST / HOW it was produced — not just its
+    body. Pinned with embed's own field set, the motivating producer."""
+    canonical = {
+        "text": "",
+        "attachments": [{"kind": "structured", "data": [[0.1, 0.2]]}],
+        "source_ref": None,
+        "meta": {"model": "text-embedding-3-small", "total_tokens": 42, "cost_usd": 0.001},
+    }
+    assert canonical_to_ctx_fields(canonical) == {
+        "text": "",
+        "structured": [[0.1, 0.2]],
+        "meta": {"model": "text-embedding-3-small", "total_tokens": 42, "cost_usd": 0.001},
+    }
+
+
+def test_canonical_to_ctx_fields_meta_absent_when_producer_emits_no_signal():
+    """Tier 1: #2966 — no signal meta → no 'meta' key at all (the same
+    absent-when-empty convention 'structured' uses). Load-bearing: a step
+    reading ctx.<name>.meta.<field> on a signal-less producer must RAISE
+    rather than silently read {} and default — see pipeline-dsl.md."""
+    assert canonical_to_ctx_fields(
+        {"text": "hi", "attachments": [], "source_ref": None, "meta": {}}
+    ) == {"text": "hi"}
 
 
 @pytest.mark.asyncio
