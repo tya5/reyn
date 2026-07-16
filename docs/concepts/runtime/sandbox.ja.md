@@ -18,7 +18,7 @@ Reyn のサンドボックスレイヤーは、ワークフローが宣言した
 |---|---|---|---|
 | `network` | `bool` | `false` | アウトバウンドネットワーク接続を許可 |
 | `read_paths` | `list[str]` | `[]` | サブプロセスが読み取り可能なファイルシステムパス（glob パターンおよび `{{workspace}}` テンプレート可） |
-| `write_paths` | `list[str]` | `[]` | サブプロセスが書き込み可能なファイルシステムパス |
+| `write_paths` | `list[str]` | `[]` | サブプロセスが書き込み可能なファイルシステムパス（厳密なガード）。書き込みは読み取りを含む。`~` は展開される。 |
 | `allow_subprocess` | `bool` | `false` | サンドボックス対象プロセスが子プロセスを生成することを許可。Linux (seccomp) / macOS (Seatbelt) で適用（off の時 `process-fork` を deny、対象自身の exec は `process-exec*` で動作）。 |
 | `env_passthrough` | `list[str]` | `[]` | サブプロセスに引き渡す環境変数名（それ以外はすべて除去） |
 | `timeout_seconds` | `int` | `60` | ウォールクロック上限（超過時にプロセスを強制終了） |

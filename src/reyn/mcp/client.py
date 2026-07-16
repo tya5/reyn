@@ -147,6 +147,69 @@ class MCPTransportError(MCPError):
 
 _SUPPORTED_TYPES = {"stdio", "http", "sse"}
 
+# #2976: per-runtime DEFAULT write grants, keyed on the basename of the server's
+# ``command``. A package-manager launcher bootstraps itself into a per-user cache
+# outside the workspace, so a workspace-only write grant denies the very launch
+# the sandbox is wrapping (opaque EPERM, server never starts).
+#
+# THIS MAP IS A CENSUS, AND A CENSUS CANNOT BE COMPLETE. It is a convenience
+# default, NEVER the correctness mechanism — that is the operator-declared
+# ``write_paths`` key (see _build_mcp_sandbox_policy). Two independent reasons
+# this map is wrong-by-construction, both MEASURED, not predicted:
+#
+#   1. Across runtimes — bun / deno / pip / dnx each have their own locations.
+#      Entries here cover only what was measured (npx, uvx); adding a runtime
+#      needs NO code change, only a `write_paths` line in the server's config.
+#   2. WITHIN a runtime we already list — these paths are the DEFAULTS, and every
+#      one of them is relocatable by the user's own environment:
+#          XDG_CACHE_HOME=/tmp/xdg  → `uv cache dir`         → /tmp/xdg/uv
+#          npm_config_cache=/tmp/x  → `npm config get cache` → /tmp/x
+#      An operator who relocates their cache MUST use `write_paths`; this map is
+#      simply wrong for them, and no larger map would fix that.
+#
+# So the failure mode of an incomplete census here is "the operator writes one
+# config line", never "the product is broken". Do NOT add unmeasured runtimes to
+# make this look complete — an entry that was never run against a real server is
+# a guess wearing the costume of a default.
+_RUNTIME_DEFAULT_WRITE_PATHS: dict[str, tuple[str, ...]] = {
+    # measured: npx bootstraps into the npm cache; ~/.npm alone is sufficient
+    # (a writable /tmp is NOT required — verified by running the real server).
+    "npx": ("~/.npm",),
+    "npm": ("~/.npm",),
+    # measured: uv needs BOTH its cache root AND its tool/data root — granting
+    # only ~/.cache/uv still fails on ~/.local/share/uv/tools. Two roots, not one.
+    "uvx": ("~/.cache/uv", "~/.local/share/uv"),
+    "uv": ("~/.cache/uv", "~/.local/share/uv"),
+}
+
+
+def _default_runtime_write_paths(command: str) -> tuple[str, ...]:
+    """DEFAULT write grants for *command*'s runtime, or ``()`` if unknown.
+
+    Unknown is a FIRST-CLASS outcome, not a failure: an unrecognised runtime
+    gets no guessed grant and, if it needs one, the operator declares it (and
+    the init-failure hint names that knob). See _RUNTIME_DEFAULT_WRITE_PATHS.
+    """
+    return _RUNTIME_DEFAULT_WRITE_PATHS.get(os.path.basename(command).lower(), ())
+
+
+# #2976: substrings that mark a sandbox write denial in a failed server's stderr.
+# Both were OBSERVED in real launches under the real Seatbelt profile, not
+# predicted: npm prints ``npm error code EPERM``; uv prints ``Operation not
+# permitted (os error 1)``; a Python server prints ``[Errno 1] Operation not
+# permitted``. Matching is a diagnostic HINT only — a false positive costs one
+# extra sentence in an error that was already failing, so this errs toward
+# offering help rather than staying silent.
+_WRITE_DENIAL_MARKERS = ("eperm", "operation not permitted")
+
+
+def _looks_like_write_denial(stderr_tail: str | None) -> bool:
+    """Whether *stderr_tail* looks like an OS-level permission denial."""
+    if not stderr_tail:
+        return False
+    lowered = stderr_tail.lower()
+    return any(marker in lowered for marker in _WRITE_DENIAL_MARKERS)
+
 # #2597 capability/version gate slice: the ``ServerCapabilities`` fields FastMCP's
 # ``mcp.types.InitializeResult.capabilities`` may carry — each is either a capability
 # object (server advertises it) or None (server does not). ``experimental`` and
@@ -379,6 +442,24 @@ class MCPClient:
                 f"MCP server 'auth' config is only supported for 'http' "
                 f"(Streamable HTTP) servers, not {srv_type!r}."
             )
+        # #2976: same eager-rejection model as 'auth' above — 'write_paths' is a
+        # sandbox grant for a spawned subprocess, so only 'stdio' has one. A
+        # silently-ignored security field on an http/sse server would read as an
+        # applied restriction that was never applied.
+        write_paths = config.get("write_paths")
+        if write_paths is not None:
+            if srv_type != "stdio":
+                raise ValueError(
+                    f"MCP server 'write_paths' is only supported for 'stdio' "
+                    f"servers (it scopes the sandboxed subprocess), not {srv_type!r}."
+                )
+            if not isinstance(write_paths, list) or not all(
+                isinstance(p, str) for p in write_paths
+            ):
+                raise ValueError(
+                    "MCP server 'write_paths' must be a list of strings, got "
+                    f"{write_paths!r}."
+                )
         self._config: dict[str, Any] = dict(config)
         self._type: str = srv_type
         # FP-0016 Component E: agent_id is injected as the
@@ -576,10 +657,35 @@ class MCPClient:
                     "DISABLED (`network: false` in its config). If it needs "
                     "network access, set `network: true` (or remove the override)."
                 )
+            # #2976: same shape as the network hint — a sandbox write denial is
+            # the one failure the operator can always fix, but ONLY if the error
+            # names the knob. This is what makes the per-runtime default map
+            # (_RUNTIME_DEFAULT_WRITE_PATHS) safe to leave incomplete: an unknown
+            # runtime, or a relocated cache (XDG_CACHE_HOME / npm_config_cache),
+            # surfaces as "add this path" rather than an opaque EPERM.
+            if self._type == "stdio" and _looks_like_write_denial(tail):
+                hint += (
+                    "\nHint (#2976): the sandbox DENIED a write to a path outside "
+                    "this server's granted write scope (the stderr below names "
+                    "the exact path). A launcher that bootstraps into a per-user "
+                    "cache needs that cache granted. Add the path to this "
+                    "server's `write_paths` in its MCP config, e.g.\n"
+                    "    write_paths: [\"~/.npm\"]\n"
+                    "Declaring `write_paths` replaces the built-in per-runtime "
+                    "defaults; the server's working directory is always granted."
+                )
             if tail:
+                # #2976: the hint goes BEFORE the stderr dump, not after it. The
+                # message is later summarised by pool.describe_fault(limit=600),
+                # which truncates from the END — a trailing hint is therefore the
+                # FIRST thing dropped, and precisely on the verbose failures that
+                # need it most (npm's cache EPERM alone exceeds the limit, which
+                # is how this was found: the hint reached uvx's short error and
+                # was silently cut from npx's long one). The actionable knob
+                # outranks the tail of a log the operator can re-read.
                 raise MCPError(
-                    f"MCP initialize failed: {exc}\n"
-                    f"--- subprocess stderr (tail) ---\n{tail}{hint}"
+                    f"MCP initialize failed: {exc}{hint}\n"
+                    f"--- subprocess stderr (tail) ---\n{tail}"
                 ) from exc
             raise MCPError(f"MCP initialize failed: {exc}{hint}") from exc
 
@@ -1029,15 +1135,59 @@ class MCPClient:
         still bound the server and its children. An operator who runs a
         genuinely fork-free server sets ``subprocess: false`` to harden it —
         same operator-ownership model as ``network``.
+
+        ``write_paths`` (#2976) is the THIRD field on that same operator-owned
+        model, and it exists to close an ASYMMETRY rather than to add a concept:
+        ``sandboxed_exec`` already lets an operator declare write targets (via
+        ``reyn.yaml sandbox.policy``, which wins over the op's own fields —
+        #1326/#1339); a sandboxed stdio MCP server had NO way to express one.
+        The grant was hardcoded to ``[cwd]``, so a launcher that bootstraps into
+        a per-user cache (``npx`` → ``~/.npm``, ``uvx`` → ``~/.cache/uv`` +
+        ``~/.local/share/uv``) was denied and the server never started.
+
+        Resolution order, most-specific first:
+
+        1. the server's own ``write_paths`` (operator KNOWLEDGE) — replaces the
+           per-runtime defaults entirely, so an operator can NARROW as well as
+           widen (narrowing is a security control: a hardened server may want
+           less than the default);
+        2. otherwise :data:`_RUNTIME_DEFAULT_WRITE_PATHS` for the runtime — a
+           convenience GUESS, honestly a census, never load-bearing;
+        3. an unknown runtime gets nothing extra and degrades to ONE config
+           line, never to a broken product (the init-failure hint names the
+           knob).
+
+        ``cwd`` is always granted: it is the server's own working directory, a
+        structural requirement rather than a per-runtime guess, so declaring
+        ``write_paths`` narrows the EXTRA grants without silently dropping the
+        workspace the caller computed.
+
+        Scoping note (why the defaults are safe): these grants are per-runtime
+        cache/state directories, and a write grant is also a READ re-allow that
+        the Seatbelt backend emits AFTER ``read_deny_paths`` (SBPL is
+        last-match-wins). Granting ``$HOME`` would therefore not merely be
+        "loose" — it would silently NULLIFY the entire sensitive-read deny-list
+        (``~/.ssh`` etc. become both readable and writable). The shipped
+        defaults are mechanically disjoint from every path in
+        ``DEFAULT_SENSITIVE_READ_DENY``, which is pinned by a falsification test.
         """
         from reyn.security.sandbox import SandboxPolicy
         from reyn.security.sandbox.policy import DEFAULT_SANDBOX_NETWORK
 
         cwd = self._config.get("cwd") or os.getcwd()
+        declared = self._config.get("write_paths")
+        extra: tuple[str, ...] | list[str]
+        if declared is not None:
+            extra = [str(p) for p in declared]
+        else:
+            extra = _default_runtime_write_paths(self._config.get("command") or "")
         return SandboxPolicy(
             network=bool(self._config.get("network", DEFAULT_SANDBOX_NETWORK)),
             allow_subprocess=bool(self._config.get("subprocess", True)),
-            write_paths=[cwd],
+            # ``~`` in an operator-declared or default path is expanded by the
+            # backend (expand_policy_path) — NOT here, so every backend applies
+            # one shared contract instead of each caller pre-expanding (#2976).
+            write_paths=[cwd, *extra],
         )
 
     def _sandbox_wrap_stdio(self, command: str, args: list[str]) -> "tuple[str, list[str]]":

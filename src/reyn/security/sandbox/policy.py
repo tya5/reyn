@@ -20,7 +20,8 @@ Fields:
     read_paths: legacy read-allowlist. Under the broad-read scoping model it
         no longer restricts reads (reads are broad by default); retained for
         backward compatibility and as documentation of intended read targets.
-    write_paths: filesystem paths the process may write (write implies read)
+    write_paths: filesystem paths the process may write (write implies read).
+        ``~`` is expanded (see :func:`expand_policy_path`).
     read_deny_paths: sensitive paths to DENY from the broad read surface
         (defense-in-depth). Enforced where the backend can express a
         deny-after-allow rule (Seatbelt / SBPL); NOT enforceable on
@@ -36,8 +37,34 @@ Fields:
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from pathlib import Path
 
 from ._subprocess_io import MAX_SUBPROCESS_OUTPUT_BYTES
+
+
+def expand_policy_path(raw: str) -> Path:
+    """Expand a leading ``~`` in a policy path — the SHARED contract every
+    backend must apply to every path field it enforces (#2976).
+
+    Policy paths are operator-authored (``reyn.yaml sandbox.policy``, an MCP
+    server's ``write_paths``), so ``~/.npm`` is the natural way to write a
+    home-relative path and MUST mean ``$HOME/.npm``.
+
+    This exists because the expansion was applied to ``read_deny_paths`` but
+    NOT to ``write_paths``: ``Path("~/.npm").resolve()`` silently yields
+    ``<cwd>/~/.npm`` — a literal ``~`` directory that does not exist. The grant
+    was therefore emitted for a path the process never touches, so the write
+    stayed denied while the policy object *looked* correct. Nothing failed
+    loudly; the only symptom was an opaque ``Operation not permitted`` from a
+    path the operator had explicitly allowed.
+
+    Deliberately does NOT call ``resolve()``: symlink resolution is a separate,
+    backend-specific decision (Seatbelt resolves for SBPL subpath matching;
+    Landlock hands the path to the kernel as-is). Callers add it where they
+    need it, so this helper stays no more opinionated than its least
+    opinionated caller.
+    """
+    return Path(raw).expanduser()
 
 # OS-level sensitive paths denied from the broad read surface by default
 # (defense-in-depth). These are universal credential / secret store locations,
