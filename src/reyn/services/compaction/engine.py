@@ -134,7 +134,13 @@ def estimate_tokens(text: str, model: str, *, use_chars4: bool = False) -> int:
     """Estimate tokens for a text string.
 
     Axis 10: uses litellm.token_counter by default; falls back to chars//4
-    on error and emits ``token_counter_fallback`` once per process.
+    only when litellm.token_counter itself raises (a genuine failure), and
+    emits ``token_counter_fallback`` the first time that happens in this
+    process (subsequent calls retry litellm.token_counter as normal — the
+    warning is a warn-once notice, not a record of a permanent fallback).
+
+    ``count == 0`` (e.g. estimating an empty string) is a valid litellm
+    result, not a failure, and does NOT trigger the fallback path (#2961).
 
     Results are cached per (model, text-hash) for the process's lifetime,
     bounded by an LRU eviction policy (see ``_token_cache`` docstring above).
@@ -157,17 +163,24 @@ def estimate_tokens(text: str, model: str, *, use_chars4: bool = False) -> int:
         import litellm
         m = model or "gpt-3.5-turbo"
         count = litellm.token_counter(model=m, text=text or "")
-        if count and count > 0:
+        # #2961: litellm.token_counter returns 0 (not an exception) for an
+        # empty string — that is the correct answer, not a failure. Only a
+        # raised exception (the `except` below) is a genuine tokenizer
+        # failure that should fall back to chars//4.
+        if count is not None and count >= 0:
             _token_cache_put(cache_key, count)
             return count
     except Exception:
         pass
-    # Fallback path.
+    # Fallback path — reached only when litellm.token_counter raised (or, in
+    # principle, returned something other than a non-negative int).
     if not _token_counter_fallback_warned:
         _token_counter_fallback_warned = True
         logger.warning(
             "litellm.token_counter failed for model=%r; "
-            "falling back to chars//4 for this process",
+            "using chars//4 for this call. This is a warn-once notice, not "
+            "a record of a permanent fallback: every subsequent call to "
+            "estimate_tokens() retries litellm.token_counter normally.",
             model,
         )
     result = max(1, len(text or "") // 4)
