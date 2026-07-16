@@ -32,9 +32,11 @@ The three MCP servers this needs (`reyn_markitdown` / `reyn_chunker` /
 enabling them stays the operator's explicit decision. `mcp.servers` is
 operator config: **you cannot enable them, and you should not try.**
 
-**If they are not enabled, `rag_ingest` does not explode -- it returns a
-`blocked_reason` naming each unreachable server with a concrete remedy, before
-spending anything on embeddings.** When you get one:
+**If they are not enabled, `rag_ingest` does not explode -- it pre-flights
+them and returns a "blocked" message naming each unreachable server with a
+concrete remedy, before spending anything on embeddings.** So a run that comes
+back describing an unreachable server is the pipeline working as designed, not
+a crash. When you get one:
 
 - **Relay it to the operator as-is.** It already says which server and what to
   do; it is written for them, not for you.
