@@ -101,6 +101,40 @@ class SandboxPolicy:
     max_output_bytes: int = MAX_SUBPROCESS_OUTPUT_BYTES
 
 
+def deny_narrowed_write_grants(policy: SandboxPolicy) -> list[tuple[str, str]]:
+    """Return ``(write_path, deny_path)`` pairs where a ``read_deny_paths`` entry
+    overlaps a ``write_paths`` grant — i.e. where the deny-always-wins rule
+    (#2978) actually NARROWS a grant the operator/caller declared.
+
+    Pure function of the policy (no I/O, no events) so it is trivially testable
+    and can be called from any layer that has an events sink. The op handler
+    uses it to emit a ``sandbox_policy_narrowed`` audit-event so a narrowing is
+    never silent — the owner requirement that a deny winning over a write grant
+    is observable, not a silent drop.
+
+    Overlap = either path contains the other, matching the SBPL ``subpath``
+    semantics the Seatbelt backend enforces (a deny on ``~/.ssh`` narrows a
+    write grant on ``~``; a deny on ``~/.ssh`` also fully nullifies an explicit
+    write grant on ``~/.ssh/x`` — both are reported so the operator can widen
+    ``read_deny_paths`` if the write was intended). Paths are ``~``-expanded and
+    resolved to match what the backend compares.
+    """
+    writes = [
+        (raw, expand_policy_path(raw).resolve(strict=False))
+        for raw in policy.write_paths
+    ]
+    denies = [
+        (raw, expand_policy_path(raw).resolve(strict=False))
+        for raw in policy.read_deny_paths
+    ]
+    narrowed: list[tuple[str, str]] = []
+    for w_raw, w in writes:
+        for d_raw, d in denies:
+            if w == d or w.is_relative_to(d) or d.is_relative_to(w):
+                narrowed.append((w_raw, d_raw))
+    return narrowed
+
+
 # ── default sandbox policy resolution (#1339 / sandbox-model completion) ──────
 #
 # The network default lives in ONE place so the owner can flip it trivially
@@ -115,17 +149,34 @@ def resolve_sandbox_policy(
 ) -> dict:
     """Resolve the effective agent-level sandbox policy as a dict.
 
-    Returns the operator-declared ``reyn.yaml sandbox.policy`` mapping when set;
-    otherwise a concrete DEFAULT (never None) so the op_runtime handler always
-    applies an operator-or-default policy and the LLM-supplied op fields are
-    never used as the sandbox policy (closes #1339). The default = broad-read
+    The concrete DEFAULT is a **floor** (never None) so the op_runtime handler
+    always applies an operator-or-default policy and the LLM-supplied op fields
+    are never used as the sandbox policy (closes #1339). The floor = broad-read
     (no read_paths) + the sensitive deny-list + ``network`` from
-    :data:`DEFAULT_SANDBOX_NETWORK` + ``write_paths`` tight to the workspace.
+    :data:`DEFAULT_SANDBOX_NETWORK` + ``write_paths`` tight to the workspace
+    (the caller-supplied ``write_paths`` = "this op needs this directory", a
+    value the operator cannot know).
+
+    An operator-declared ``reyn.yaml sandbox.policy`` mapping is **merged onto
+    the floor**, not substituted wholesale (#2964). Only the fields the operator
+    actually wrote override the floor; fields they omitted keep the floor value
+    — so writing ``allow_subprocess: false`` alone no longer silently drops the
+    caller's ``write_paths`` (workspace write access). This is the owner design
+    principle: *the default is the floor an operator ADDS to; only an explicit
+    write is the operator's expressed will.*
+
+    "Wrote it" is expressed by dict-key presence: ``write_paths: []`` is an
+    explicit empty grant (respected — the caller's write_paths are overridden by
+    the operator's deliberate empty list), whereas OMITTING ``write_paths``
+    keeps the floor's caller-supplied value. dict semantics make the
+    "explicit-empty vs omitted" distinction the whole fix hinges on directly
+    representable — no separate sentinel is needed.
     """
-    if config_policy is not None:
-        return dict(config_policy)
-    return {
+    floor: dict = {
         "network": DEFAULT_SANDBOX_NETWORK,
         "write_paths": list(write_paths or []),
         "read_deny_paths": list(DEFAULT_SENSITIVE_READ_DENY),
     }
+    if config_policy is not None:
+        floor.update(config_policy)
+    return floor

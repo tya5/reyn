@@ -101,29 +101,40 @@ def _build_sbpl_profile(policy: SandboxPolicy) -> str:
     lines.append("; — broad read (the network gate is the exfiltration guard) —")
     lines.append("(allow file-read*)")
 
-    # Defense-in-depth: deny sensitive paths from the broad read surface. SBPL
-    # is last-match-wins, so these (deny ...) rules placed AFTER the broad allow
-    # take precedence for the listed paths.
-    if policy.read_deny_paths:
-        lines.append("")
-        lines.append("; — sensitive read deny-list (defense-in-depth) —")
-        for raw in policy.read_deny_paths:
-            resolved = str(expand_policy_path(raw).resolve(strict=False))
-            lines.append(f"(deny file-read* (subpath {_sbpl_quote(resolved)}))")
-
-    # User-declared write paths. write implies read: the file-read* re-allow is
-    # placed AFTER the deny-list intentionally, so an explicit write target is
-    # readable even if it falls under a denied prefix (an explicit grant wins).
+    # User-declared write paths. write implies read, so each grant re-allows
+    # both file-read* and file-write* for its subpath.
     if policy.write_paths:
         lines.append("")
         lines.append("; — policy write_paths —")
         for raw in policy.write_paths:
             # expand_policy_path: ``~`` MUST expand here exactly as it does for
-            # read_deny_paths above — without it the grant lands on the literal
+            # read_deny_paths below — without it the grant lands on the literal
             # ``<cwd>/~/...`` and the write stays denied (#2976).
             resolved = str(expand_policy_path(raw).resolve(strict=False))
             lines.append(f"(allow file-read* (subpath {_sbpl_quote(resolved)}))")
             lines.append(f"(allow file-write* (subpath {_sbpl_quote(resolved)}))")
+
+    # Defense-in-depth: deny sensitive paths. SBPL is last-match-wins, so these
+    # (deny ...) rules are emitted AFTER the broad read allow AND after the
+    # write_paths grants above — so an operator's deny of a credential path
+    # ALWAYS wins over a broad write grant that would otherwise engulf it
+    # (#2978). This is the owner rule: "a deny that loses to an allow is not a
+    # deny." Previously the write re-allow was placed after the deny-list, so
+    # ``write_paths=[$HOME]`` silently nullified the ``~/.ssh`` etc. denies —
+    # ``~/.ssh`` became both readable AND writable. Both axes are denied here
+    # (not just file-read*): a write grant makes an engulfed credential path
+    # WRITABLE too, so denying only reads would leave ``touch ~/.ssh/x``
+    # succeeding. An operator who genuinely needs to write under a denied prefix
+    # narrows ``read_deny_paths`` explicitly; the op handler emits a
+    # ``sandbox_policy_narrowed`` audit-event whenever a deny wins here, so the
+    # narrowing is observable rather than silent.
+    if policy.read_deny_paths:
+        lines.append("")
+        lines.append("; — sensitive deny-list (defense-in-depth, deny always wins) —")
+        for raw in policy.read_deny_paths:
+            resolved = str(expand_policy_path(raw).resolve(strict=False))
+            lines.append(f"(deny file-read* (subpath {_sbpl_quote(resolved)}))")
+            lines.append(f"(deny file-write* (subpath {_sbpl_quote(resolved)}))")
 
     # Network.
     if policy.network:

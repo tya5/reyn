@@ -752,13 +752,17 @@ sandbox:
     timeout_seconds: 600
 ```
 
-> ⚠️ **Never put `~`, `$HOME`, or `/` in `write_paths`.** On the Seatbelt backend, each
-> `write_paths` entry emits an *allow-read* rule for that path **after** the
-> `read_deny_paths` deny rules, and SBPL is last-match-wins — so a `write_paths` entry
-> that is a superset of (or overlaps) a `read_deny_paths` entry **silently nullifies
-> that deny**, defeating the credential-path defense-in-depth (`~/.ssh`, `~/.aws`,
-> `~/.gnupg`, etc. — see `read_deny_paths` below) with no warning. Scope `write_paths`
-> to the narrowest directories the process actually needs to persist to.
+> ℹ️ **A `read_deny_paths` entry always wins over an overlapping `write_paths` grant.**
+> On the Seatbelt backend the `read_deny_paths` deny rules are emitted **after** the
+> `write_paths` allow rules, and SBPL is last-match-wins — so a broad `write_paths`
+> entry (e.g. `~`, `$HOME`, `/`) that engulfs a credential path listed in
+> `read_deny_paths` (`~/.ssh`, `~/.aws`, `~/.gnupg`, etc.) does **not** open that path:
+> the deny still applies to **both read and write** there, and the OS emits a
+> `sandbox_policy_narrowed` audit-event so the narrowing is visible (#2978). This is
+> the design rule: the default deny-list is a floor a broad write grant cannot pierce.
+> If you genuinely need to write under a denied prefix, remove that entry from
+> `read_deny_paths` explicitly — an operator owns `read_deny_paths` and can narrow it.
+> Still scope `write_paths` to the narrowest directories the process actually needs.
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
@@ -773,8 +777,8 @@ When `sandbox.policy` is present, these mirror the `SandboxPolicy` fields. Unkno
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | `network` | bool | `false` | Allow outbound network from the sandboxed process. The primary exfiltration gate. |
-| `write_paths` | list[string] | `[]` | Filesystem paths the process may write (tight guard). Write implies read for these paths — so keep the scope tight: a path listed here is also re-opened for *reading* even if `read_deny_paths` would deny it. `~` is expanded. |
-| `read_deny_paths` | list[string] | `~/.ssh`, `~/.aws`, `~/.gnupg`, `~/.config/gcloud`, `~/.kube`, `~/.docker/config.json`, `~/.netrc` | Sensitive paths to DENY from the broad read surface (defense-in-depth) — defaults to these 7 OS-level credential locations when omitted from an explicit `sandbox.policy` block (`SandboxPolicy.read_deny_paths`'s dataclass default), NOT an empty list. Enforced only on backends that support deny-after-allow rules (Seatbelt); not enforceable on allowlist-only backends (Landlock). **Do not let a `write_paths` entry overlap or be a superset of any of these** — see the warning above `write_paths` silently defeats them on Seatbelt. |
+| `write_paths` | list[string] | `[]` | Filesystem paths the process may write (tight guard). Write implies read for these paths. A `read_deny_paths` entry that overlaps a `write_paths` grant still wins (deny-always-wins, #2978) — so a broad `write_paths` does not re-open a denied credential path. `~` is expanded. |
+| `read_deny_paths` | list[string] | `~/.ssh`, `~/.aws`, `~/.gnupg`, `~/.config/gcloud`, `~/.kube`, `~/.docker/config.json`, `~/.netrc` | Sensitive paths to DENY from the broad read surface (defense-in-depth) — defaults to these 7 OS-level credential locations when omitted from an explicit `sandbox.policy` block (`SandboxPolicy.read_deny_paths`'s dataclass default), NOT an empty list. Enforced only on backends that support deny-after-allow rules (Seatbelt); not enforceable on allowlist-only backends (Landlock, which has no read-deny primitive). A `write_paths` entry that overlaps or is a superset of any of these does **not** defeat the deny — the deny always wins on Seatbelt (#2978), and a `sandbox_policy_narrowed` audit-event records the narrowing. |
 | `read_paths` | list[string] | `[]` | **Legacy.** Formerly the strict read allowlist. Reads are broad by default under the current scoping model; this field now documents intended read targets only. |
 | `allow_subprocess` | bool | `false` | Whether the process may spawn children. Enforced — denies `process-fork` when off. |
 | `env_passthrough` | list[string] | `[]` | Env-var names that pass through to the sandboxed process. `PATH` is always passed through. |
@@ -1327,7 +1331,7 @@ mcp:
 | `env` | map[string,string] | stdio (optional) | Extra environment variables for the spawned process. Values support `${VAR}` expansion. |
 | `network` | bool | stdio (optional) | Whether the sandboxed server may use the network. Defaults to the same single-source default as `sandboxed_exec`. Set `false` to isolate a server that should never reach the network. Operator-owned — the model cannot set it. |
 | `subprocess` | bool | stdio (optional) | Whether the sandboxed server may spawn child processes (fork). Defaults to `true` — most stdio servers launch via a fork-based launcher (`npx` → node, `uvx` → the tool) and must fork to start. Set `false` to harden a genuinely fork-free server. Operator-owned — the model cannot set it. |
-| `write_paths` | list[string] | stdio (optional) | **Filesystem paths the sandboxed server may write**, in addition to its working directory (which is always granted). `~` is expanded. Operator-owned — the model cannot set it. A launcher bootstraps into a per-user cache outside the workspace, so reyn grants a **default** scope for the launchers it recognises (`npx`/`npm` → `~/.npm`; `uvx`/`uv` → `~/.cache/uv` + `~/.local/share/uv`). Set this when your server's runtime is not one of those, or when you have relocated its cache (e.g. `XDG_CACHE_HOME`, `npm_config_cache`) — the defaults are keyed to the standard locations and cannot know yours. Declaring `write_paths` **replaces** the built-in defaults, so you can narrow as well as widen. If a server fails to start with `Operation not permitted` / `EPERM`, the error names the denied path — grant that path here. **Keep the scope tight**: a write grant also re-opens *reads* for that path, so granting `~` would defeat the sensitive-read deny-list (`~/.ssh`, `~/.aws`, …). Grant the specific cache directory, never the home directory. |
+| `write_paths` | list[string] | stdio (optional) | **Filesystem paths the sandboxed server may write**, in addition to its working directory (which is always granted). `~` is expanded. Operator-owned — the model cannot set it. A launcher bootstraps into a per-user cache outside the workspace, so reyn grants a **default** scope for the launchers it recognises (`npx`/`npm` → `~/.npm`; `uvx`/`uv` → `~/.cache/uv` + `~/.local/share/uv`). Set this when your server's runtime is not one of those, or when you have relocated its cache (e.g. `XDG_CACHE_HOME`, `npm_config_cache`) — the defaults are keyed to the standard locations and cannot know yours. Declaring `write_paths` **replaces** the built-in defaults, so you can narrow as well as widen. If a server fails to start with `Operation not permitted` / `EPERM`, the error names the denied path — grant that path here. **Keep the scope tight**: a write grant also re-opens *reads* for that path. Granting `~` does not defeat the sensitive-read deny-list (`~/.ssh`, `~/.aws`, …) — the deny wins over an overlapping write grant (#2978) — but it needlessly widens the surface, so grant the specific cache directory, never the home directory. |
 | `url` | string | http, sse | Endpoint URL. |
 | `headers` | map[string,string] | http, sse (optional) | Static request headers. Values support `${VAR}` expansion. |
 | `call_timeout_seconds` | float | all (optional) | Per-call request timeout passed to the MCP SDK's `read_timeout_seconds`. Unset → SDK default applies (= no Reyn-level override; the SDK's transport-specific timeout governs). Set when a specific server is known to be slow or known to be quick + you want `fail-fast`. Independent of `timeout` (which is the HTTP transport's connect timeout for `type: http`). |
