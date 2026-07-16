@@ -341,11 +341,24 @@ def test_from_config_builds_populated_registry_from_project_root(tmp_path: Path)
     fc = SessionFactoryConfig.from_config(config, tmp_path)
 
     # proposal 0060 F3b: the builtin tier (merged as the LOWEST config tier,
-    # below every operator file) now ships one real pipeline
-    # (flagship.research_and_report) alongside whatever the project's own
-    # reyn.yaml declares — both are present, since the builtin tier is
-    # additive, not exclusive.
-    assert set(fc.pipeline_registry.names()) == {"hello.hello", "flagship.research_and_report"}
+    # below every operator file) ships builtin pipelines alongside whatever
+    # the project's own reyn.yaml declares — both are present, since the
+    # builtin tier is additive, not exclusive. Expected builtin names are
+    # derived from BUILTIN_PIPELINES itself (parsing each entry's file) so
+    # this assertion does not need a manual update every time a new builtin
+    # pipeline (or a new sibling `pipeline:` doc inside one) is added —
+    # #2955/FP-0063 P3 added rag_ingest/rag_query, each with several
+    # same-file sibling pipelines.
+    from reyn.builtin.registry import BUILTIN_PIPELINES
+    from reyn.core.pipeline.parser import parse_pipeline_docs
+    from reyn.core.pipeline.schema import SchemaRegistry
+
+    expected_builtin_names = {
+        f"{entry_key}.{doc.name}"
+        for entry_key, entry in BUILTIN_PIPELINES.items()
+        for doc in parse_pipeline_docs(Path(entry["path"]).read_text(encoding="utf-8"), SchemaRegistry())
+    }
+    assert set(fc.pipeline_registry.names()) == {"hello.hello", *expected_builtin_names}
 
 
 def test_from_config_without_project_root_is_empty(tmp_path: Path, monkeypatch) -> None:

@@ -218,19 +218,44 @@ FieldType     ::= "{" "type:" ("bool" | "string" | "number") "}"
 #### `tool` ステップの結果 {#tool-step-results}
 
 `tool`(および `shell`)ステップの結果 — `pipe` と `ctx.<output>` に入るもの —
-は常にフラットな 2 フィールド形状 `{text: ..., structured: ...}` で、
+は常にフラットな形状 `{text: ..., structured: ..., meta: ...}` で、
 すべてのツール種別で統一されています(chat 側が LLM に見せるのと同じ形状):
 
 - **`text`** — ツールの正規の文字列本体(ツールにテキスト形状の結果が無い場合は空文字列)。
 - **`structured`** — ツールが非テキストのデータを出したときだけ存在する。それ以外は
   キー自体が無い。認識されない形状のツール結果 dict は、丸ごと `structured` として
   ラップされる(何も失われない)。
+- **`meta`** — ツールの**シグナル**フィールド。「呼び出し側が次に何をするかを変える」ため、
+  producer が本体からあえて外した、小さく情報量の多い値。ツールが何かシグナルを出した
+  ときだけ存在し、それ以外はキー自体が無い — 成功結果の多くはシグナルを持たないので、
+  無いほうが通常です。
 
 この変換は**形状のみ**です — chat 側のツール結果パスのように値を切り詰めたり
 offload したり cap したりは絶対にしません。pipeline ステップの `ctx` は、後続の
 ステップがプログラム的に消費できるよう、値をフルで保持します。ツールのテキスト本体は
 `ctx.<name>.text` で、structured なペイロードは `ctx.<name>.structured`(またはその
 フィールド、例: `ctx.hits.structured.count`)で読みます。
+
+**`meta` を安全に読む。** `meta` は producer がシグナルを出さないと存在しないため、
+そうした producer に対して素の `ctx.<name>.meta.<field>` パスは**例外を投げます**
+(素のパスは safe navigation ではありません — [R1 式言語](#the-r1-expression-language)
+参照)。これは意図的です: シグナルに依存するステップは、黙って既定値を読むのではなく、
+大きな音を立てて失敗すべきだからです。シグナルが本当に任意の場合は `get(...)` を使います:
+
+```yaml
+- tool: {name: embed, args: {texts: !expr ctx.chunks}, output: embedded}
+# 実際にベクトルを生成したモデル(`embedding_model` 入力は "standard" のような
+# モデル**クラス別名**でありうる。`meta.model` はそれが解決された結果):
+- transform: {value: "ctx.embedded.meta.model", output: resolved_model}
+# 任意のシグナル — raise させずに既定値を使う:
+- transform: {value: "get(ctx.embedded, 'meta.cost_usd', null)", output: spend}
+```
+
+あるツールが `meta` に何を入れるかは、そのツール自身の契約です。代表例:
+`embed` → `model` / `total_tokens` / `cost_usd` / `priced`、`sandboxed_exec` →
+非ゼロの `returncode`(ゼロ終了はシグナルではないのでキー無し)、MCP 呼び出し →
+`isError`。結果そのものである `structured` に対し、`meta` は「その結果が**いくら
+かかったか**」「**どう**生成されたか」が必要なときに使います。
 
 `shell` は `"shell"` という名前の `tool` ステップのシュガーです: `command` は operator のサンドボックス(`sandboxed_exec` — 直接の `sandboxed_exec` 呼び出しと同じ閉じ込め、ポリシー優先順位、監査イベント)の中で `/bin/sh -c <command>` として実行されます。ステップに入ってくる pipe data はプロセスの **STDIN に JSON エンコードされて**渡されます。プロセスの **STDOUT がステップの結果になります** — JSON として parse できればデコードされ(`dict` を要求する `verify: schema` が JSON を出力するコマンドに適用できるように)、できなければ生のテキストのままです — そして、その(生または JSON デコード済みの)値は他の `tool` ステップと同じ `text`/`structured` 変換を経ます(JSON デコードされた dict は `ctx.<name>.structured` に、生のテキストは `ctx.<name>.text` に入ります)。
 

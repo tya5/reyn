@@ -297,7 +297,7 @@ registered tool name (`web_search`).
 #### `tool` step results
 
 A `tool` (and `shell`) step's result — what lands as `pipe` and `ctx.<output>`
-— is always the flat two-field shape `{text: ..., structured: ...}`, uniform
+— is always the flat shape `{text: ..., structured: ..., meta: ...}`, uniform
 across every tool kind (the same shape the chat side exposes to an LLM):
 
 - **`text`** — the tool's canonical string body (empty string when the tool
@@ -305,12 +305,39 @@ across every tool kind (the same shape the chat side exposes to an LLM):
 - **`structured`** — present only when the tool produced non-text data; absent
   entirely (no key) otherwise. A tool result dict with no recognized shape is
   wrapped whole as `structured` (nothing is ever lost).
+- **`meta`** — the tool's **signal** fields: small, high-signal values the
+  producer deliberately kept out of the body because they change what the
+  caller does next. Present only when the tool emitted any; absent entirely
+  (no key) otherwise — which is the common case, since most successful
+  results carry no signal.
 
 This conversion is **shape-only** — it never truncates, offloads, or caps a
 value the way the chat-side tool-result path does; a pipeline step's `ctx`
 retains the full value for downstream steps to consume programmatically.
 Read a tool's text body via `ctx.<name>.text` and its structured payload via
 `ctx.<name>.structured` (or a field of it, e.g. `ctx.hits.structured.count`).
+
+**Reading `meta` safely.** Because `meta` is absent when a producer emits no
+signal, a bare `ctx.<name>.meta.<field>` path *raises* on such a producer
+(bare paths are not safe navigation — see
+[The R1 expression language](#the-r1-expression-language)). That is
+deliberate: a step that depends on a signal fails loudly rather than silently
+reading a default. Use `get(...)` when the signal is genuinely optional:
+
+```yaml
+- tool: {name: embed, args: {texts: !expr ctx.chunks}, output: embedded}
+# the model that ACTUALLY produced the vectors (an `embedding_model` input may
+# be a model-CLASS alias like "standard"; meta.model is what it resolved to):
+- transform: {value: "ctx.embedded.meta.model", output: resolved_model}
+# optional signals — default rather than raise:
+- transform: {value: "get(ctx.embedded, 'meta.cost_usd', null)", output: spend}
+```
+
+What a given tool puts in `meta` is that tool's own contract; common examples:
+`embed` → `model` / `total_tokens` / `cost_usd` / `priced`; `sandboxed_exec` →
+a nonzero `returncode` (a zero exit is not signal, so no key); an MCP call →
+`isError`. Reach for `meta` when you need what a result *cost* or *how* it was
+produced — as opposed to `structured`, which is the result itself.
 
 `shell` is sugar for a `tool` step named `"shell"`: `command` runs as
 `/bin/sh -c <command>` inside the operator's sandbox

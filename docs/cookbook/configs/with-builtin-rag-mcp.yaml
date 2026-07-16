@@ -1,4 +1,6 @@
-# FP-0063 P2 -- builtin turnkey user RAG, the MCP layer.
+# FP-0063 -- builtin user RAG, the MCP layer (P2) + the two
+# builtin pipelines that call it (P3: reyn.builtin.pipelines.rag_ingest /
+# rag_query, registered as rag_ingest.ingest / rag_query.query).
 #
 # This entire ``mcp.servers`` block ships COMMENTED OUT / INERT. Do not
 # assume uncommenting it is safe by default: an MCP server entry, once it
@@ -10,14 +12,16 @@
 # ("the operator explicitly configured this server") only holds if YOU are
 # the one who copies this block into your own reyn.yaml and uncomments it
 # -- reyn itself never wires this in (see reyn.builtin.mcp_servers module
-# docstring). Read the two servers before enabling them: the vector-store
+# docstring). Read the three servers before enabling them: the vector-store
 # server writes to whatever sqlite file `db_path` names; the chunker server
-# reads no filesystem paths itself but the ingest pipeline that will call
-# it (a later phase, P3) reads document files from the folder you point it
-# at.
+# reads no filesystem paths itself; markitdown reads whatever `uri` the
+# ingest pipeline passes it (every file under the folder you point rag_ingest
+# at).
 #
 # Install the extra runtime deps first (NOT part of reyn's base install):
 #   pip install "reyn[builtin-rag]"
+#   uvx markitdown-mcp   # or: pip install markitdown-mcp (pre-install --
+#                         # see the note on R1/uvx-firewall below)
 #
 # Then copy this block into your reyn.yaml (or reyn.local.yaml) and
 # uncomment it:
@@ -25,6 +29,7 @@
 # permissions:
 #   mcp.reyn_vector_store: allow
 #   mcp.reyn_chunker: allow
+#   mcp.reyn_markitdown: allow
 #
 # mcp:
 #   servers:
@@ -45,6 +50,43 @@
 #       # min_characters_per_chunk=24). size/overlap are real parameters,
 #       # not baked-in constants -- tune them per document type.
 #
-# A third-party parser server (e.g. `uvx markitdown-mcp`, Microsoft,
-# converts txt/md/pdf/xlsx/pptx/docx -> Markdown) belongs alongside these
-# two once the ingest pipeline (P3) lands; out of scope for this file.
+#     reyn_markitdown:
+#       type: stdio
+#       command: uvx
+#       args: ["markitdown-mcp"]
+#       # Tool: convert_to_markdown(uri) -- file:/http:/https:/data: -- the
+#       # owner's target format list (txt/md/pdf/xlsx/pptx/docx) plus 15+
+#       # more. `uvx` fetches the package from PyPI on first run: if your
+#       # network is firewalled (FP-0057's own line-55 finding, the same
+#       # failure class as the default embedding model's HuggingFace fetch),
+#       # pre-install instead of relying on the first-run fetch:
+#       #   pip install markitdown-mcp
+#       # and point `command`/`args` at that installed console script
+#       # instead of `uvx`. rag_ingest's own step-0 pre-flight (X1) checks
+#       # reachability BEFORE any embedding spend and fails with this same
+#       # guidance, naming the exact server, rather than a bare transport
+#       # exception.
+#
+# ⚠️ rag_ingest ALSO requires that `python3` on your PATH be reyn's own
+# interpreter -- it shells out to `python3 -m reyn.builtin.rag_ingest_helpers`
+# and sandboxed_exec forwards the ambient PATH. A `pipx install reyn` or a
+# non-activated venv will NOT work. Check with:
+#   python3 -c 'import reyn; print(reyn.__file__)'
+# It must print the same install you run reyn from. rag_ingest's step-0
+# pre-flight reports this rather than failing opaquely, but it is a real
+# limitation (tracked on the FP-0063 umbrella), not a formality.
+#
+# Once the three servers above are configured + granted, run the builtin
+# pipelines directly (no separate skill needed -- invoke-by-name):
+#
+#   run_pipeline(name="rag_ingest.ingest", input={
+#     "input_path": "docs/", "output_db": ".reyn/rag/docs.sqlite"})
+#   run_pipeline(name="rag_query.query", input={
+#     "query_text": "how does X work?", "db": ".reyn/rag/docs.sqlite"})
+#
+# Want a different vector-DB / chunker / parser? Copy
+# src/reyn/builtin/pipelines/rag_ingest.yaml (+ rag_query.yaml) into your
+# own project and re-point the `*_server` inputs (or the MCP config entries
+# they name) at your replacement -- FP-0057 C2: reyn builds no adapter for
+# a user's RAG store, so "copy the builtin and re-point the MCP server" IS
+# the extension mechanism, not a workaround.
