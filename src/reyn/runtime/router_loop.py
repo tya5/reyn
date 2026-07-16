@@ -3757,6 +3757,30 @@ class RouterLoop:
         ``content`` / ``entries`` before returning so the LLM saw a
         bare string / list. This helper applies the same extraction so
         registry dispatch is LLM-visible-identical to the prior path.
+
+        ``list_mcp_servers`` / ``list_mcp_tools`` deliberately do NOT get this
+        treatment (removed — owner-reported bug): unwrapping their
+        ``{"servers": [...]}`` / ``{"mcp_tools": [...]}`` dict down to a bare
+        list here defeated the canonicalization mappers (``list_mcp_servers_
+        to_canonical`` / ``list_mcp_tools_to_canonical``, ``canonical.py``),
+        which expect that dict key to still be present when ``to_canonical``
+        runs — ``dispatch_tool``'s envelope wraps whatever this returns, and
+        ``unwrap_dispatch_envelope`` only peels a ``dict``-shaped ``data``, so
+        a bare list stayed wrapped and the mapper's ``result.get("servers")``
+        found nothing, reporting "0" to the LLM while the raw list still
+        displayed correctly (as "N items") in the conversation transcript.
+        Returning the dict unchanged lets both consumers read the same shape.
+
+        The former ``describe_mcp_tool`` branch was ALSO removed in the same
+        change, but for an unrelated reason (consolidation, not the bug
+        above): it was ``if name == "describe_mcp_tool": return result`` —
+        byte-identical to this function's own unconditional fallthrough
+        (``return result`` at the end), i.e. a documented no-op. Deleting it
+        changes zero behavior; kept only as a comment here so a future reader
+        diffing this docstring against the code doesn't mistake its absence
+        for an accidental drop (co-vet finding, lead-coder — this file's own
+        docstring is exactly what should have named all three removed
+        branches the first time).
         """
         import json
         if name == "read_file":
@@ -3768,23 +3792,6 @@ class RouterLoop:
         if name == "list_directory":
             if isinstance(result, dict):
                 return result.get("entries", [result])
-            return result
-        if name == "list_mcp_servers":
-            if isinstance(result, dict) and "servers" in result:
-                return result["servers"]
-            return result
-        if name == "list_mcp_tools":
-            # FP-0032: key renamed from "tools" to "mcp_tools"; handle both
-            # for backward-compat during transition.
-            if isinstance(result, dict):
-                if "mcp_tools" in result:
-                    return result["mcp_tools"]
-                if "tools" in result:
-                    return result["tools"]
-            return result
-        if name == "describe_mcp_tool":
-            # Return the full dict (= {name, description, input_schema}).
-            # No unwrapping needed — the LLM sees it as structured data.
             return result
         return result
 
