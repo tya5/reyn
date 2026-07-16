@@ -377,6 +377,31 @@ class DockerEnvironmentBackend:
             return False
         return completed.returncode == 0
 
+    def self_test(self) -> str | None:
+        """Always None — this backend is OUTSIDE the #2983 stage-1 enforcement
+        self-test, and says so rather than pretending to have been witnessed.
+
+        The stage-1 probe attempts a HOST filesystem write outside ``write_paths``
+        and requires a refusal. That question does not translate here: the
+        container itself is the isolation boundary, and this backend scopes policy
+        to the fidelity boundary rather than enforcing the host-path model the
+        probe assumes (see ``SandboxBackend.run``'s note on workspace-coupled
+        backends). Running the probe as-is would ask the wrong question and fail a
+        container that is isolating perfectly well.
+
+        Returning None is safe here only because nothing consults it: this backend
+        is INJECTED (``session.py``'s ``sandbox_backend`` / ``environment_backend``
+        seam), never resolved through ``get_default_backend()``, so it never
+        reaches the ``_verify`` gate that applies ``on_unsupported``. It is
+        implemented at all because the Protocol requires every backend to answer —
+        a backend that stays silent would otherwise be the next thing to claim an
+        enforcement nobody checked.
+
+        So: container isolation remains UNWITNESSED by any self-test, exactly as
+        it was before #2983. That is a known stage-1 gap, not a claim of health.
+        """
+        return None
+
     def wrap_command(self, argv: list[str], policy: SandboxPolicy) -> WrappedCommand:
         """Prepend a ``docker exec`` invocation to *argv* for a PERSISTENT-process
         launch (e.g. a stdio MCP server, #2620) inside the SAME container

@@ -64,7 +64,34 @@ class SandboxBackend(Protocol):
     name: str
 
     def available(self) -> bool:
-        """Return True if this backend can be used on the current platform."""
+        """Return True if this backend's enforcement mechanism is PRESENT on the
+        current platform (right OS, package imports, kernel ABI).
+
+        Presence is not function: a backend whose enforcement is dead answers
+        this correctly (#2962 / #2980 both did). ``self_test()`` is the question
+        of whether it WORKS, and `get_default_backend()` asks both before handing
+        a backend to a caller.
+        """
+        ...
+
+    def self_test(self) -> str | None:
+        """Return None if this backend actually FIRED a deny on this host, else a
+        human-readable reason it did not.
+
+        This is the seam that makes "available" mean "enforcing" (#2983). All
+        three sandbox layers were found non-functional while `available()`
+        reported True, because presence was the only thing anything ever checked;
+        `get_default_backend()` calls this at resolution and applies
+        ``sandbox.on_unsupported`` to a non-None result, so a backend that cannot
+        enforce is treated exactly like one that is absent — which is what it is.
+
+        Implementations that CLAIM enforcement delegate to
+        ``reyn.security.sandbox.self_test.enforcement_self_test(self)`` (a real
+        subprocess through this backend's own ``wrap_command``, cached per
+        process). NoopBackend is the sole exemption and documents why on its own
+        override. There is deliberately no default implementation: a backend that
+        forgot to answer must not inherit a silent "yes".
+        """
         ...
 
     def wrap_command(self, argv: list[str], policy: SandboxPolicy) -> WrappedCommand:

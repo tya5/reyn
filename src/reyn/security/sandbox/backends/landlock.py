@@ -110,8 +110,27 @@ class LandlockBackend:
         ``available()`` call when the import fails."""
         return self._import_error
 
+    def self_test(self) -> str | None:
+        """Witness a real deny through the Landlock wrap (#2983): None when a
+        write outside ``write_paths`` was refused, else the reason it was not.
+        Cached per process; see ``reyn.security.sandbox.self_test``.
+
+        Note this probes ``wrap_command`` — the re-exec shim — which is where
+        #2980 lives (the shim calls ``Ruleset`` methods the pinned package does
+        not have, so it raises before restricting anything). The shim reaches
+        ``available()`` on its own side; it never reaches back into this method,
+        so the probe cannot recurse into itself.
+        """
+        from ..self_test import enforcement_self_test  # noqa: PLC0415
+
+        return enforcement_self_test(self)
+
     def available(self) -> bool:
-        """Return True iff Landlock is usable on this platform.
+        """Return True iff the Landlock mechanism is PRESENT on this platform.
+
+        Presence only — Linux + the package imports + kernel ABI >= 1. That is
+        exactly the check #2980 passed while the shim was unreachable, which is
+        why ``self_test()`` (does a deny actually fire) is a separate question.
 
         Caches the result after the first call so repeated invocations are O(1).
         """

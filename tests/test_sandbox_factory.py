@@ -162,7 +162,13 @@ def test_auto_unsupported_does_not_fire_when_backend_available(monkeypatch):
         def available(self) -> bool:
             return True
 
-    # Backend available ⇒ returned, even with on_unsupported='error' (no raise).
+        def self_test(self) -> str | None:
+            # #2983: a healthy backend — the mechanism is present AND a deny
+            # actually fired. Both must hold for selection; this fake asserts the
+            # policy is not consulted when they do.
+            return None
+
+    # Backend available + enforcing ⇒ returned, even with on_unsupported='error'.
     result = _auto_select(None, _FakeLandlock, "error")
     assert result.name == "landlock"
 
