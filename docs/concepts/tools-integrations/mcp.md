@@ -64,7 +64,7 @@ If you prefer to configure a server manually (or are adding a server not in the 
 | `mcp__install_registry({server_id})`                        | Install a server from the official MCP registry |
 | `mcp__install_package({kind, identifier, version?})`        | Install via a third-party package channel (npm / pypi / docker / GitHub URL) |
 | `mcp__install_local({name, command, args})`                 | Register a local command (e.g. LLM-authored script) as an MCP server |
-| `mcp__list_servers()`                                       | Returns the names of all servers configured in `.reyn/mcp.yaml` |
+| `mcp__list_servers()`                                       | Returns the names of all servers configured in `.reyn/config/mcp.yaml` |
 | `mcp__list_tools({server})`                                 | Returns the tools exposed by one server (each entry has `name="<server>__<tool>"`, `description`, `inputSchema`) |
 | `mcp__call_tool({tool, tool_args})`                              | Call a tool by `<server>__<tool>` identifier (from `mcp__list_tools`) with its declared tool_args |
 | `mcp__drop_server({server})`                                | Remove an installed server from the config |
@@ -248,7 +248,7 @@ MCP operations are gated at two points:
 
 Before any MCP server can be added to the configuration, the install op's writes go through the OS's standard list-axis gates. The legacy `permissions.mcp_install: ask | allow | deny` bool axis was removed in the collapse arc — install gating now flows through:
 
-- `file.write` on `.reyn/mcp.yaml` (= the canonical mutation target). `startup_guard` prompts the operator once per workflow+path; runtime is silent after approval.
+- `file.write` on `.reyn/config/mcp.yaml` (= the canonical mutation target). `startup_guard` prompts the operator once per workflow+path; runtime is silent after approval.
 - `http.get` on `registry.modelcontextprotocol.io` (= the registry fetch). Same prompt model.
 - `secret.write` on the env-var keys the registry declares as `isSecret` (= wildcard `"*"` because the key set is runtime-determined).
 
@@ -264,7 +264,7 @@ mcp:
     - https://registry.modelcontextprotocol.io  # public fallback
 permissions:
   web.fetch: allow      # blanket allow for registry fetches
-  file.write: allow     # blanket approval for .reyn/mcp.yaml writes
+  file.write: allow     # blanket approval for .reyn/config/mcp.yaml writes
 ```
 
 **B. `REYN_MCP_REGISTRY_URLS` (plural) env var** — explicit operator override, useful for CI / per-shell config:

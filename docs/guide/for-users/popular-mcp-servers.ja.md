@@ -41,7 +41,7 @@ Reyn で人気のローカル MCP サーバー 5 種を、コピー&ペースト
 
 smoke ランナー `scripts/mcp_smoke.py` はチャットルーターをバイパスして直接 `reyn.mcp.client.MCPClient` に向かいます。接続性の健全性確認に便利です。エージェント駆動の利用（= 典型的なエンドユーザーの形）では、チャットルーターが汎用の `mcp__call_tool` / `invoke_action` ディスパッチ経由でサーバーを呼びます。
 
-> 各セクションの `reyn mcp install --source ...` シェルコマンドには、チャット側の同等な動詞があります: `mcp__install_package({kind, identifier, version?})`（= 同じパッケージチャネル: `npm` / `pypi` / `docker` / `github`）。ワークフローに合う面を使ってください。どちらも同じ `.reyn/mcp.yaml` への書き込みに収束します。完全な対応は [`reyn mcp` CLI § Chat-side equivalents](../../reference/cli/mcp.md#chat-side-equivalents) を参照してください。
+> 各セクションの `reyn mcp install --source ...` シェルコマンドには、チャット側の同等な動詞があります: `mcp__install_package({kind, identifier, version?})`（= 同じパッケージチャネル: `npm` / `pypi` / `docker` / `github`）。ワークフローに合う面を使ってください。どちらも同じ `.reyn/config/mcp.yaml` への書き込みに収束します。完全な対応は [`reyn mcp` CLI § Chat-side equivalents](../../reference/cli/mcp.md#chat-side-equivalents) を参照してください。
 
 ---
 

@@ -64,7 +64,7 @@ reyn mcp install --source https://github.com/modelcontextprotocol/servers/tree/m
 | `mcp__install_registry({server_id})`                        | 公式 MCP registry の server を install |
 | `mcp__install_package({kind, identifier, version?})`        | npm / pypi / docker / GitHub URL から install |
 | `mcp__install_local({name, command, args})`                 | local command (LLM 生成 script 等) を直接 MCP server として登録 |
-| `mcp__list_servers()`                                       | `.reyn/mcp.yaml` に設定された全サーバー名を返す |
+| `mcp__list_servers()`                                       | `.reyn/config/mcp.yaml` に設定された全サーバー名を返す |
 | `mcp__list_tools({server})`                                 | 1 サーバーが露出する tool 一覧を `{name: "<server>__<tool>", description, inputSchema}` 形式で返す |
 | `mcp__call_tool({tool, tool_args})`                              | `<server>__<tool>` ID + tool の declared tool_args で tool を call |
 | `mcp__drop_server({server})`                                | install 済サーバーを config から削除 |
@@ -235,7 +235,7 @@ MCP の操作は 2 つのポイントでゲートされます：
 
 MCP サーバーを設定に追加する際、install op の書き込みは OS の標準 list-axis gate を通ります。 旧 `permissions.mcp_install: ask | allow | deny` bool 軸は collapse arc で撤去され、 install 制御は以下の経路に統一されました:
 
-- `.reyn/mcp.yaml` への `file.write` (= canonical mutation target)。 `startup_guard` が workflow+path ごとに 1 回 operator に prompt、 承認後の runtime は silent。
+- `.reyn/config/mcp.yaml` への `file.write` (= canonical mutation target)。 `startup_guard` が workflow+path ごとに 1 回 operator に prompt、 承認後の runtime は silent。
 - `registry.modelcontextprotocol.io` への `http.get` (= registry fetch)。 同じ prompt model。
 - registry が `isSecret` 指定する env-var key への `secret.write` (= key set が runtime 決定なので wildcard `"*"`)。
 
@@ -251,7 +251,7 @@ mcp:
     - https://registry.modelcontextprotocol.io  # public fallback
 permissions:
   web.fetch: allow      # registry fetch の blanket allow
-  file.write: allow     # .reyn/mcp.yaml 書き込みの blanket 承認
+  file.write: allow     # .reyn/config/mcp.yaml 書き込みの blanket 承認
 ```
 
 **B. `REYN_MCP_REGISTRY_URLS` (plural) env var** — explicit operator override、 CI / per-shell config 用途:

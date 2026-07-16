@@ -1056,7 +1056,7 @@ permissions:
       - statistics
       - json
       - re
-  # MCP server install is gated via file.write on .reyn/mcp.yaml +
+  # MCP server install is gated via file.write on .reyn/config/mcp.yaml +
   # http.get on the registry host. See "MCP install" below.
   file.write: allow
 ```
@@ -1068,7 +1068,7 @@ The legacy `permissions.mcp_install: ask | allow | deny` bool axis was removed. 
 ```yaml
 # reyn.yaml — install permissions express through file.write + http.get
 permissions:
-  file.write: allow      # blanket allow for .reyn/mcp.yaml (= install target)
+  file.write: allow      # blanket allow for .reyn/config/mcp.yaml (= install target)
   web.fetch: allow       # blanket allow for the registry fetch (= legacy alias)
 ```
 
@@ -1076,7 +1076,7 @@ For finer control, the skill's `skill.md` declares the canonical paths and hosts
 
 | Want | New shape |
 |------|-----------|
-| Block all installs project-wide | `file.write: deny` for `.reyn/mcp.yaml` paths, or `web.fetch: deny` for the registry host |
+| Block all installs project-wide | `file.write: deny` for `.reyn/config/mcp.yaml` paths, or `web.fetch: deny` for the registry host |
 | Allow installs without prompting | `file.write: allow` and `web.fetch: allow` at the project scope |
 | Allow only certain hosts | Skill declares `http.get: [{host: "..."}]` explicitly; wildcard `["*"]` defers to per-host prompts |
 
@@ -1090,7 +1090,7 @@ mcp:
     - https://registry.modelcontextprotocol.io  # public fallback
 permissions:
   web.fetch: allow      # blanket allow for registry fetches
-  file.write: allow     # blanket approval for .reyn/mcp.yaml writes
+  file.write: allow     # blanket approval for .reyn/config/mcp.yaml writes
 ```
 
 Equivalent env-var override (= wins when both set):
@@ -1180,15 +1180,15 @@ For each setting, reyn merges these sources, lowest priority first — later lay
 2. `~/.reyn/config.yaml` — user-global.
 3. `reyn.yaml` — project, committed.
 4. `reyn.local.yaml` — project, gitignored (machine-local overrides + values written by `reyn config set`).
-5. `<project>/.reyn/mcp.yaml` — the dynamic MCP server registry. Merged **last for the `mcp.servers` section**, so servers added by `reyn mcp install` override any `mcp.servers` you hand-edit in `reyn.yaml` / `reyn.local.yaml`.
-6. `<project>/.reyn/cron.yaml` — the dynamic cron registry. Merged **last for the `cron.jobs` section**, so jobs registered at runtime override `cron.jobs` in `reyn.yaml` on a name collision.
+5. `<project>/.reyn/config/mcp.yaml` — the dynamic MCP server registry. Merged **last for the `mcp.servers` section**, so servers added by `reyn mcp install` override any `mcp.servers` you hand-edit in `reyn.yaml` / `reyn.local.yaml`.
+6. `<project>/.reyn/config/cron.yaml` — the dynamic cron registry. Merged **last for the `cron.jobs` section**, so jobs registered at runtime override `cron.jobs` in `reyn.yaml` on a name collision.
 7. CLI flags — applied last, per invocation.
 
 Layers 5 and 6 are scoped: each carries only its own section (`mcp.servers` / `cron.jobs`) and is merged section-by-section, so it never touches unrelated settings. `${VAR}` interpolation is applied once after all YAML layers are merged, before CLI flags.
 
-> **Why `.reyn/mcp.yaml` and `.reyn/cron.yaml` win**: these are the runtime-mutable registries (written by `reyn mcp install` and runtime cron registration) rather than the edit-and-restart static files. Putting them last means a freshly installed server or registered job is the effective entry without the operator also having to touch `reyn.yaml`.
+> **Why `.reyn/config/mcp.yaml` and `.reyn/config/cron.yaml` win**: these are the runtime-mutable registries (written by `reyn mcp install` and runtime cron registration) rather than the edit-and-restart static files. Putting them last means a freshly installed server or registered job is the effective entry without the operator also having to touch `reyn.yaml`.
 
-`<project>/.reyn/config.yaml` is no longer loaded — it is a deprecated general-config file, not the active `.reyn/mcp.yaml` / `.reyn/cron.yaml` registries above. If it still exists on disk, reyn prints a warning and skips it. Move its contents to `reyn.local.yaml`, then delete it.
+`<project>/.reyn/config.yaml` is no longer loaded — it is a deprecated general-config file, not the active `.reyn/config/mcp.yaml` / `.reyn/config/cron.yaml` registries above. If it still exists on disk, reyn prints a warning and skips it. Move its contents to `reyn.local.yaml`, then delete it.
 
 ## `cost` block
 

@@ -75,7 +75,7 @@ shape), the chat router calls the server via the universal
 > equivalent chat-side verb: `mcp__install_package({kind, identifier,
 > version?})` (= same package channels: `npm` / `pypi` / `docker` /
 > `github`). Use whichever surface fits your workflow — both converge
-> on the same `.reyn/mcp.yaml` write. See
+> on the same `.reyn/config/mcp.yaml` write. See
 > [`reyn mcp` CLI § Chat-side equivalents](../../reference/cli/mcp.md#chat-side-equivalents)
 > for the full mapping.
 
