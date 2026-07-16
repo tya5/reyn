@@ -158,7 +158,7 @@ def test_file_glob_large_match_list_offloads_smaller_than_old_text_shape():
     """
     def _rendered_char_count(canonical: dict) -> int:
         _fake_save.stored = []
-        frontmatter, text, _media = build_offload_body(canonical, save_fn=_fake_save)
+        frontmatter, text, _media, _ct = build_offload_body(canonical, save_fn=_fake_save)
         return len(render_tool_result(frontmatter, text))
 
     def _old_shape(n: int) -> int:
