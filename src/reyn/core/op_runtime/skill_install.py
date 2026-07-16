@@ -12,7 +12,7 @@ Local-path install (``op.source is None``):
      (scope="strict") — block on a blocking-severity match.
   4. Gate via ``PermissionResolver.require_file_write`` for the skills.yaml path.
   5. Read ``.reyn/config/skills.yaml`` (or empty dict), set
-     ``skills.entries.<name>`` = ``{path, description, enabled, auto_invoke}``,
+     ``skills.entries.<name>`` = ``{path, description, enabled, visibility}``,
      write back.
   6. ``record_config_generation`` on the skills.yaml path AFTER write —
      the truncation-surviving recovery base (#2259 / CLAUDE.md recovery gate).
@@ -44,6 +44,7 @@ import shutil
 from pathlib import Path
 from urllib.parse import urlparse
 
+from reyn.data.skills.registry import VISIBILITY_MENU
 from reyn.schemas.models import SkillInstallIROp
 
 # Module-level import so tests can monkeypatch the threat-scan callables;
@@ -529,11 +530,16 @@ async def handle(
         existing["skills"] = {}
     if "entries" not in existing["skills"] or not isinstance(existing["skills"].get("entries"), dict):
         existing["skills"]["entries"] = {}
+    # #2971: `visibility: menu` replaces the removed `auto_invoke: true`. An
+    # explicitly-installed skill lands on the system-prompt menu — the operator
+    # named it deliberately, so advertising it is the behavior they asked for
+    # (identical to what `auto_invoke: true` produced). They can narrow it to
+    # `on_demand` / `hidden` afterwards by editing the written entry.
     entry: dict = {
         "path": install_path,
         "description": description,
         "enabled": True,
-        "auto_invoke": True,
+        "visibility": VISIBILITY_MENU,
     }
     if op.source:
         entry["source"] = op.source

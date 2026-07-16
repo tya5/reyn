@@ -31,6 +31,12 @@ _EXTERNAL = {
     # resources surface above (external server-authored listing / content).
     "list_mcp_prompts", "get_mcp_prompt",
     "web_search", "web_fetch",           # internet
+    # #2971: skill descriptions are operator- or third-party-authored text —
+    # skill_install_source registers them straight out of a fetched git repo.
+    # They are threat-scanned at install, but skill_list re-surfaces them on
+    # every later call, when a scan-rule update may have changed the verdict.
+    # Same rationale as list_mcp_tools' server-authored descriptions.
+    "skill_list",
 }
 
 # Not fenced (returns_external_content=False): each justified below. Scan-all

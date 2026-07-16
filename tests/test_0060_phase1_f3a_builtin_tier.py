@@ -12,10 +12,14 @@ Co-vet-style pins:
      ``provenance_from_ctx`` must NEVER be able to produce ``"builtin"`` for
      any ``ctx.turn_origin`` value (including unmapped/None) — if it could,
      an LLM-driven install could spoof builtin provenance.
-  2. **Inert-by-construction (A3).** A builtin skill entry has ``auto_invoke``
-     forced ``False`` regardless of what the source entry declares (so a
-     builtin skill can never auto-fire by default); ``enabled`` is left
-     whatever the entry declares (default True) — discoverable, not hidden.
+  2. **Inert-by-construction (A3).** A builtin skill entry has ``visibility``
+     forced to ``"on_demand"`` regardless of what the source entry declares
+     (so a builtin skill never occupies system-prompt budget by default);
+     ``enabled`` is left whatever the entry declares (default True). #2971
+     changed the forced value from the removed ``auto_invoke=False``, which
+     made builtin skills unreachable rather than merely unadvertised —
+     ``on_demand`` keeps them out of the menu while ``skill_list`` still
+     returns them.
      Pipelines/presentations need no such force (invoke-by-name is
      inherently inert).
   3. **F3a ships EMPTY (mechanism only).** ``BUILTIN_SKILLS`` /
@@ -145,28 +149,28 @@ def test_builtin_entry_stamped_provenance_builtin(monkeypatch) -> None:
 
 
 def test_builtin_skill_entry_is_inert_by_construction(monkeypatch) -> None:
-    """Tier 2: A3 — a builtin skill is discoverable (enabled, default True)
-    but auto_invoke is forced False regardless of the source declaration —
-    it never auto-fires by default."""
+    """Tier 2: A3 — a builtin skill stays enabled (default True) but has
+    visibility forced to "on_demand" regardless of the source declaration:
+    out of the system-prompt menu, still reachable via skill_list (#2971)."""
     monkeypatch.setitem(
         builtin_registry.BUILTIN_SKILLS,
         "fixture_skill",
         {
             "description": "fixture",
             "path": "builtin/fixture_skill/SKILL.md",
-            "auto_invoke": True,  # declared true in source — must be overridden
+            "visibility": "menu",  # declared menu in source — must be overridden
         },
     )
     cfg = build_builtin_config()
     entry = cfg["skills"]["entries"]["fixture_skill"]
-    assert entry.get("enabled", True) is True  # discoverable, default-True path
-    assert entry["auto_invoke"] is False  # forced inert regardless of source
+    assert entry.get("enabled", True) is True  # registered, default-True path
+    assert entry["visibility"] == "on_demand"  # forced regardless of source
 
 
 def test_builtin_pipeline_and_presentation_entries_stamped_too(monkeypatch) -> None:
     """Tier 2: the stamping mechanism applies uniformly to all three
     part-types the builtin tier populates (pipelines/presentations have no
-    auto_invoke field to force — invoke-by-name is inherently inert, A3)."""
+    visibility field to force — invoke-by-name is inherently inert, A3)."""
     monkeypatch.setitem(
         builtin_registry.BUILTIN_PIPELINES,
         "fixture_pipeline",

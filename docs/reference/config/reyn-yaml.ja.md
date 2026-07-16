@@ -800,15 +800,19 @@ skills:
       path: skills/pdf-editing/SKILL.md   # project-root 相対または絶対
       description: "PDF フォームのフィールドを入力・結合・抽出する"
       enabled: true
-      auto_invoke: true
+      visibility: menu                    # menu | on_demand | hidden
 ```
 
 | フィールド | 型 | デフォルト | 説明 |
 |-----------|-----|----------|------|
 | `path` | string | 必須 | `SKILL.md`、またはそれを含むディレクトリへのパス。 |
 | `description` | string | `""` | モデル向けの `## Skills` メニューに表示される一行サマリー(最初の行のみ、200 文字上限)。 |
-| `enabled` | bool | `true` | `false` にするとエントリはレジストリから完全に除外されます。 |
-| `auto_invoke` | bool | `true` | `false` にすると skill は登録されたままシステムプロンプトメニューから除外されます。 |
+| `enabled` | bool | `true` | `false` にするとエントリはレジストリから完全に除外されます。`visibility` より優先します。 |
+| `visibility` | enum | `menu` | どの面が skill を名指すか: `menu`(`## Skills` システムプロンプトメニューに載る)\| `on_demand`(メニューには載らないが `skill_list` ツールが返す — 常駐トークンコストなし)\| `hidden`(どのモデル向け面にも現れない)。 |
+
+`enabled: false` は `visibility` を参照する前にエントリを落とすため、2 つのフィールドが表すのは 6 状態ではなく 4 状態です。
+
+**#2971 で削除: `auto_invoke`**(misnomer — skill を自動起動する機構は無く、メニュー描画だけを制御していた。当時メニューは skill を名指す唯一の面だったため、`false` は「広告しない」ではなく到達不能を意味した)。`auto_invoke` が残った config は load 時にエラーとなり置換先を提示します: `auto_invoke: true` → `visibility: menu`、`auto_invoke: false` → `visibility: hidden`。
 
 `skills.entries` は `~/.reyn/config.yaml` ⊕ `reyn.yaml` ⊕ `reyn.local.yaml` ⊕ 動的な `<project>/.reyn/config/skills.yaml`(`skill_management__install_local` / `skill_management__install_source` chat ツールが書き込む)をまたいでマージされ、名前が衝突した場合は後の tier が優先します — `mcp.servers` と同じマージ形です。
 

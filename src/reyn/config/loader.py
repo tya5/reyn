@@ -394,6 +394,71 @@ def _validate_retrieval_scheme_embedding(cfg: "ReynConfig") -> None:
     )
 
 
+def _validate_skill_visibility(cfg: "ReynConfig") -> None:
+    """Enforce the #2971 clean break: ``skills.entries.<name>.auto_invoke`` is
+    removed, and ``visibility`` accepts only its three declared values.
+
+    Raises ``ValueError`` at LOAD (never silently migrating), mirroring
+    ``_validate_retrieval_scheme_embedding`` above — the enforce-at-load
+    precedent. Two reasons this is a hard error rather than a deprecation
+    alias:
+
+    1. ``auto_invoke`` is a MISNOMER, not merely an old name. No mechanism has
+       ever auto-invoked a skill (the flag's sole consumer was the L1 menu
+       filter), so keeping it as an alias would preserve a name that lies
+       about what it does — and the new axis has three states, which no
+       boolean can spell.
+    2. The rewrite is mechanical and information-preserving, so this error can
+       print the operator's EXACT replacement line rather than a direction to
+       go read a doc. That is what makes a clean break decision-enabling
+       instead of merely obstructive.
+
+    The mapping deliberately preserves each entry's TODAY behavior, not the
+    behavior its old doc line promised: ``auto_invoke: false`` documented only
+    "excluded from the system-prompt menu", but what it actually DELIVERED was
+    total invisibility to the model — because the menu was the only surface
+    naming a skill. #2971 adds ``skill_list`` as a second surface, so the two
+    readings now diverge; ``false`` maps to ``hidden`` (today's behavior),
+    never to ``on_demand`` (the doc's wording). An operator who wants the new
+    middle state opts into it explicitly.
+    """
+    from reyn.data.skills.registry import VISIBILITIES
+
+    entries = cfg.skills.get("entries") if isinstance(cfg.skills, dict) else None
+    if not isinstance(entries, dict):
+        return
+
+    for name, raw in entries.items():
+        if not isinstance(raw, dict):
+            continue
+        if "auto_invoke" in raw:
+            declared = bool(raw.get("auto_invoke"))
+            replacement = "menu" if declared else "hidden"
+            raise ValueError(
+                f"skills.entries.{name}: 'auto_invoke' was removed (#2971) — it never "
+                f"controlled auto-invocation (nothing auto-invokes a skill; the flag "
+                f"only chose whether the skill was rendered into the system-prompt "
+                f"menu), and the replacement axis has three states, not two. Replace "
+                f"'auto_invoke: {str(declared).lower()}' with 'visibility: "
+                f"{replacement}' to keep this skill behaving exactly as it does "
+                f"today. The full axis: 'menu' = rendered into the system-prompt "
+                f"menu; 'on_demand' = not in the menu, but discoverable via the "
+                f"skill_list tool (new in #2971 — costs no tokens until the model "
+                f"asks); 'hidden' = on no model-facing surface at all. See "
+                f"docs/concepts/tools-integrations/skills.md."
+            )
+        if "visibility" in raw and str(raw.get("visibility")) not in VISIBILITIES:
+            raise ValueError(
+                f"skills.entries.{name}: visibility {str(raw.get('visibility'))!r} is "
+                f"not a valid value — expected one of {list(VISIBILITIES)}. 'menu' = "
+                f"rendered into the system-prompt menu; 'on_demand' = not in the menu, "
+                f"but discoverable via the skill_list tool; 'hidden' = on no "
+                f"model-facing surface at all. To turn the skill off entirely use "
+                f"'enabled: false', which drops the entry regardless of visibility. "
+                f"See docs/concepts/tools-integrations/skills.md."
+            )
+
+
 def load_config(cwd: Path | None = None) -> ReynConfig:
     """Load and merge config from all sources. CLI flags are applied by the caller."""
     cwd = (cwd or Path.cwd()).resolve()
@@ -638,6 +703,7 @@ def load_config(cwd: Path | None = None) -> ReynConfig:
     )
     _reconcile_embedding_class(_cfg)
     _validate_retrieval_scheme_embedding(_cfg)
+    _validate_skill_visibility(_cfg)
     return _cfg
 
 

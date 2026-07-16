@@ -4084,13 +4084,13 @@ class Session:
         old_names = {s.name for s in (self._available_skills or [])}
         new_names = {s.name for s in new_skills}
         if old_names == new_names:
-            # Check if any entry fields changed (description / path / enabled / auto_invoke).
+            # Check if any entry fields changed (description / path / enabled / visibility).
             old_map = {s.name: s for s in (self._available_skills or [])}
             if all(
                 new_s.description == old_map[new_s.name].description
                 and new_s.path == old_map[new_s.name].path
                 and new_s.enabled == old_map[new_s.name].enabled
-                and new_s.auto_invoke == old_map[new_s.name].auto_invoke
+                and new_s.visibility == old_map[new_s.name].visibility
                 for new_s in new_skills
             ):
                 return False  # no change

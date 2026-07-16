@@ -452,6 +452,15 @@ misleadingly-named permission test, and one possibly-stale dogfood scenario
 (`stdlib_skills_core.yaml`). Abolishing `stdlib` and creating the `builtin`
 tier are one rename/repurpose.
 
+> **Superseded by #2971 (record kept — this reasoning is the defect's origin).**
+> A3 assumed a distinction the system did not implement: nothing has ever
+> auto-invoked a skill, so `auto_invoke` only ever controlled menu rendering —
+> and the menu was the sole surface naming a skill, making
+> `auto_invoke=False` builtins *unreachable*, not inert. #2971 replaced the
+> flag with `visibility: menu | on_demand | hidden` and added the `skill_list`
+> discovery tool; builtin skills now ship `visibility="on_demand"`. Read the
+> paragraph below as the historical proposal, not as current mechanism.
+
 **A3. Inert shipping is representable per-type.** Skills carry two axes
 (`enabled`, `auto_invoke`) → `enabled=True, auto_invoke=False` =
 registered-but-not-auto-invoked. Pipelines and present-views have only

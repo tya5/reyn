@@ -226,11 +226,15 @@ ACTION_CATEGORIES_LINES = [
         "request needs multi-step tracking or delegation, not a single reply."
     ),
     (
-        "- **skill_management** — manage skill definitions: "
-        "`skill_management__install_local` to register a local skill directory "
-        "(one containing a SKILL.md file) into .reyn/config/skills.yaml; "
-        "`skill_management__install_source` to fetch and install a skill from "
-        "a git/GitHub URL (shallow-clones to .reyn/skills/<name>/)."
+        "- **skill_management** — discover and manage skill definitions: "
+        "`skill_management__list` returns every skill available to you "
+        "(name, description, file path) — including on-demand skills that are "
+        "not listed in the Skills menu above; read a listed skill's path with "
+        "the file read tool to use it. `skill_management__install_local` "
+        "registers a local skill directory (one containing a SKILL.md file) "
+        "into .reyn/config/skills.yaml; `skill_management__install_source` "
+        "fetches and installs a skill from a git/GitHub URL (shallow-clones "
+        "to .reyn/skills/<name>/)."
     ),
     (
         "- **pipeline** — launch a registered pipeline: "
@@ -423,7 +427,7 @@ def build_environment_how_clause(*, universal_wrappers_enabled: bool) -> str:
 # =============================================================================
 # Skills block (slot_post_skills, #2548 PR-A)
 # =============================================================================
-# WHEN: when at least one skill is enabled=True + auto_invoke=True.
+# WHEN: when at least one skill is enabled=True + visibility="menu".
 # WHERE: injected at the DEDICATED slot_post_skills position (separate from
 #        slot_post_catalog so retrieval's overwrite of slot_post_catalog
 #        cannot clobber the Skills block).
@@ -458,14 +462,23 @@ SKILLS_INTRO_LINES = [
 
 
 def build_skills_slot(available_skills: "list | None") -> "str | None":
-    """Skills block: the slot_post_skills content, or ``None`` when there is
-    no enabled+auto_invoke skill. Exact copy of the previously inlined
-    ``_s_lines`` list-assembly."""
+    """Skills block: the slot_post_skills content, or ``None`` when no skill
+    is ``enabled`` with ``visibility="menu"``.
+
+    #2971: the filter reads ``visibility`` (the three-state discovery axis)
+    where it previously read the removed ``auto_invoke`` boolean. Only ``menu``
+    renders here — ``on_demand`` skills are reachable exclusively through the
+    ``skill_list`` tool (that is the point of the state: existence without
+    standing token cost), and ``hidden`` reaches no model-facing surface.
+    """
     if not available_skills:
         return None
+    from reyn.data.skills.registry import VISIBILITY_DEFAULT, VISIBILITY_MENU
+
     _sp_skills = [
         s for s in available_skills
-        if getattr(s, "enabled", True) and getattr(s, "auto_invoke", True)
+        if getattr(s, "enabled", True)
+        and getattr(s, "visibility", VISIBILITY_DEFAULT) == VISIBILITY_MENU
     ]
     if not _sp_skills:
         return None

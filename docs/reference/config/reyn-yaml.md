@@ -1370,15 +1370,19 @@ skills:
       path: skills/pdf-editing/SKILL.md   # project-root-relative or absolute
       description: "Fill, merge, and extract fields from PDF forms"
       enabled: true
-      auto_invoke: true
+      visibility: menu                    # menu | on_demand | hidden
 ```
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `path` | string | required | Path to `SKILL.md`, or its containing directory. |
 | `description` | string | `""` | One-line summary shown in the model-facing `## Skills` menu (first line only, 200-char cap). |
-| `enabled` | bool | `true` | `false` removes the entry from the registry entirely. |
-| `auto_invoke` | bool | `true` | `false` keeps the skill registered but excludes it from the system-prompt menu. |
+| `enabled` | bool | `true` | `false` removes the entry from the registry entirely. Dominates `visibility`. |
+| `visibility` | enum | `menu` | Which surface names the skill: `menu` (in the `## Skills` system-prompt menu) \| `on_demand` (not in the menu, but returned by the `skill_list` tool — no standing token cost) \| `hidden` (no model-facing surface at all). |
+
+`enabled: false` drops the entry before `visibility` is consulted, so the pair spans 4 states, not 6.
+
+**Removed in #2971: `auto_invoke`** (a misnomer — nothing auto-invokes a skill; it only controlled menu rendering, which was then the sole surface naming a skill, so `false` made the skill unreachable rather than merely unadvertised). A config still carrying it fails at load naming the replacement: `auto_invoke: true` → `visibility: menu`; `auto_invoke: false` → `visibility: hidden`.
 
 `skills.entries` merges across `~/.reyn/config.yaml` ⊕ `reyn.yaml` ⊕ `reyn.local.yaml` ⊕ the dynamic `<project>/.reyn/config/skills.yaml` (written by the `skill_management__install_local` / `skill_management__install_source` chat tools), later tiers winning on name collision — the same merge shape as `mcp.servers`.
 

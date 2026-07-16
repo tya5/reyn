@@ -339,6 +339,9 @@ _OPERATION_RULES: Final[dict[str, tuple[str, Callable[[str, Mapping[str, Any]], 
     # colliding with that resource namespace — mirrors mcp__ (mgmt) vs mcp.<s>.<t> (res).
     "skill_management__install_local":  ("skill_install_local",  _passthrough_args),
     "skill_management__install_source": ("skill_install_source", _passthrough_args),
+    # #2971: the discovery verb. Without it a skill outside the L1 menu had no
+    # surface naming it, so it was unreachable rather than merely unadvertised.
+    "skill_management__list":           ("skill_list",           _passthrough_args),
 
     # pipeline_management category: pipeline directory/DSL install verbs
     # (mirrors skill_management__install_local / __install_source above).

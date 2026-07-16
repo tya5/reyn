@@ -1348,6 +1348,23 @@ def list_mcp_servers_to_canonical(result: dict) -> CanonicalToolResult:
     return _records_to_canonical(text, servers)
 
 
+def skill_list_to_canonical(result: dict) -> CanonicalToolResult:
+    """``skill_list`` result -> canonical (#2971). ``skills`` entries carry
+    ``{name, description, path}`` — the discovery view of every registered,
+    non-hidden skill.
+
+    ``path`` rides in the records (not the summary line): it is the field the
+    model acts on — a skill is invoked by reading its body with the ``file``
+    read op — so it must survive offload, while the summary only needs to say
+    what is on offer.
+    """
+    skills = result.get("skills") or []
+    n = len(skills)
+    preview = _bounded_join(skills, "name")
+    text = f"{n} skill{'s' if n != 1 else ''}" + (f": {preview}" if preview else "") + "."
+    return _records_to_canonical(text, skills)
+
+
 def list_mcp_tools_to_canonical(result: dict) -> CanonicalToolResult:
     """``list_mcp_tools`` result -> canonical (#2681 Bucket B). ``mcp_tools`` entries carry the
     ``<server>__<tool>`` identifier + description + inputSchema."""

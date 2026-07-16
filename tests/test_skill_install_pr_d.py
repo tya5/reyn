@@ -168,7 +168,7 @@ async def test_skill_install_source_e2e_clones_and_registers(tmp_path):
     raw = yaml.safe_load(config_path.read_text(encoding="utf-8"))
     entry = raw["skills"]["entries"]["source-skill"]
     assert entry["enabled"] is True
-    assert entry["auto_invoke"] is True
+    assert entry["visibility"] == "menu"  # #2971: replaces auto_invoke: true
     assert entry["source"] == source_url
     assert ".reyn" in entry["path"] or str(tmp_path) in entry["path"]
 

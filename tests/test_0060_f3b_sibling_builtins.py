@@ -6,8 +6,9 @@ spine (#2912) — the `draft_judge_revise` workflow SKILL and the
 Co-vet-style pins:
 
   1. **Both builtins load with provenance="builtin" and are inert.** The
-     skill is `auto_invoke=False` (discoverable, not auto-firing); the
-     presentation is invoke-by-name (inherently inert, A3).
+     skill is `visibility="on_demand"` (#2971: out of the system-prompt menu,
+     reachable via `skill_list`); the presentation is invoke-by-name
+     (inherently inert, A3).
   2. **The skill's SKILL.md is well-formed** (parseable YAML frontmatter
      with `name`/`description`) and its body is wheel-reachable via the same
      `read_builtin_body_bytes` bypass #2913/#2914 established for
@@ -77,18 +78,18 @@ def _extract_fenced_block(text: str, lang: str) -> str:
 
 def test_draft_judge_revise_skill_ships_builtin_provenance_and_inert() -> None:
     """Tier 2: the draft_judge_revise skill loads with provenance="builtin",
-    auto_invoke=False (discoverable, not auto-firing), enabled=True
-    (discoverable)."""
+    visibility="on_demand" (#2971: out of the menu, reachable via skill_list),
+    enabled=True."""
     cfg = build_builtin_config()
     entry = cfg["skills"]["entries"]["draft_judge_revise"]
     assert entry["provenance"] == "builtin"
-    assert entry["auto_invoke"] is False
+    assert entry["visibility"] == "on_demand"
     assert entry.get("enabled", True) is True
 
 
 def test_status_card_presentation_ships_builtin_provenance() -> None:
     """Tier 2: the status_card presentation loads with provenance="builtin"
-    -- invoke-by-name is inherently inert (A3), no auto_invoke-shaped field
+    -- invoke-by-name is inherently inert (A3), no visibility-shaped field
     exists on a presentation entry to force."""
     cfg = build_builtin_config()
     entry = cfg["presentations"]["entries"]["status_card"]

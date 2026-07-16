@@ -22,17 +22,59 @@ skills:
       path: skills/pdf-editing/SKILL.md
       description: "Fill, merge, and extract fields from PDF forms"
       enabled: true
-      auto_invoke: true
+      visibility: menu
 ```
 
 | Field | Type | Default | Meaning |
 |-------|------|---------|---------|
 | `path` | string | required | Path to `SKILL.md` (or its containing directory). Project-root-relative or absolute. |
 | `description` | string | `""` | One-line summary shown in the L1 menu. Truncated to the first line, capped at 200 characters. |
-| `enabled` | bool | `true` | `false` removes the entry from the registry entirely (not just hidden). |
-| `auto_invoke` | bool | `true` | `false` keeps the skill registered but excludes it from the L1 system-prompt menu — the model won't be told it exists unless something else surfaces it. |
+| `enabled` | bool | `true` | `false` removes the entry from the registry entirely (not just hidden). Dominates `visibility`. |
+| `visibility` | enum | `menu` | Which discovery surface the skill reaches: `menu` \| `on_demand` \| `hidden`. See below. |
 
-The registry never reads `SKILL.md` itself — only `path` and `description` from the config entry populate the L1 menu. The file is read by the model at L2, on demand, via the ordinary file-read op.
+### `visibility` — which surface names the skill
+
+| Value | In the L1 menu? | Returned by `skill_list`? | Use it when |
+|-------|-----------------|---------------------------|-------------|
+| `menu` | yes | yes | The skill is broadly relevant and worth its standing token cost. |
+| `on_demand` | no | yes | The skill exists and should be used when it fits, but should not occupy the system prompt. Costs nothing until the model asks. Builtin skills ship in this state. |
+| `hidden` | no | no | The model must never use it — it reaches no model-facing surface at all. |
+
+`enabled` and `visibility` are not independent: **`enabled: false` dominates.** A
+disabled entry is dropped from the registry outright, so its `visibility` is
+never consulted. The two fields therefore describe **four** states, not six —
+"not registered", plus the three above.
+
+> **Removed in #2971: `auto_invoke`.** It was a misnomer — nothing has ever
+> auto-invoked a skill, and the flag only ever chose whether the skill was
+> rendered into the menu. Because the menu was then the *only* surface naming a
+> skill, `auto_invoke: false` did not merely unadvertise a skill, it made it
+> unreachable. `visibility` names the axis honestly and adds the state that was
+> missing (`on_demand`). Config still carrying `auto_invoke` fails at load with
+> the exact replacement: **`auto_invoke: true` → `visibility: menu`**,
+> **`auto_invoke: false` → `visibility: hidden`** (`hidden` preserves the
+> behavior `false` actually delivered, not the narrower thing its old
+> description promised).
+
+The registry never reads `SKILL.md` itself — only `path` and `description` from the config entry populate the L1 menu and the `skill_list` result. The file is read by the model at L2, on demand, via the ordinary file-read op.
+
+## Discovering and using a skill
+
+There is no `run_skill` tool, by design. A skill body is *instructions for the
+model*, not code to execute, so **reading the file is the invocation**:
+
+1. **Discover** — `menu` skills are already listed in the L1 `## Skills` block.
+   For the rest, `skill_management__list` (the `skill_list` tool) returns every
+   registered skill whose `visibility` is not `hidden`, with its `name`,
+   `description`, and `path`.
+2. **Read** — the model reads that `path` with the ordinary file-read op and
+   follows the instructions for the current task.
+
+Builtin skills ship inside the installed package, physically outside any
+project root; the file-read op resolves those paths through a least-privilege
+carve-out scoped to the package's `skills/` and `pipelines/` directories, so
+they read cleanly in a non-interactive run without an operator to approve
+anything.
 
 ## Config cascade
 

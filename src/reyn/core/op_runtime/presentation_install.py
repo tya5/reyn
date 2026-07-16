@@ -32,7 +32,8 @@ small declarative data carried inline, never a file-backed artifact):
 Ships inert-by-construction (A3, no new state needed): a present-view is
 invoke-by-name — it renders only when a ``present(view=<name>)`` op names it, so
 a freshly-installed template is discoverable but dormant until referenced,
-exactly like a builtin skill (``auto_invoke=False``) or pipeline (invoke-by-name).
+exactly like a builtin skill (``visibility="on_demand"``) or pipeline
+(invoke-by-name).
 
 This mirrors ``skill_install.py`` / ``pipeline_install.py``'s STRUCTURE
 (permission gate → config write → record_config_generation → emit event →

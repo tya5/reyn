@@ -8,9 +8,16 @@ Covers:
     earlier tiers survive when no collision.
   - ``.reyn/config/skills.yaml`` is read as part of ``load_config`` (dynamic layer).
   - Tier 2 (OS invariant): the built system-prompt CONTAINS the ``## Skills`` heading
-    and each skill's name / description / path when N enabled+auto_invoke skills exist.
+    and each skill's name / description / path when N enabled skills with
+    ``visibility="menu"`` exist.
   - Tier 2 (OS invariant): ``## Skills`` is absent from the SP when the list is empty.
-  - Filtering: ``enabled=False`` and ``auto_invoke=False`` skills excluded from SP list.
+  - Filtering: ``enabled=False`` and non-``menu`` skills excluded from the SP list.
+
+#2971 replaced the ``auto_invoke`` boolean with the three-state ``visibility``
+axis; these cases now pin ``visibility="menu"`` where they pinned
+``auto_invoke=True``. The ``on_demand`` state (SP-excluded but reachable via
+``skill_list``) and the ``auto_invoke``-rejected-at-load contract are pinned in
+``tests/test_2971_skill_visibility.py``.
 """
 from __future__ import annotations
 
@@ -25,21 +32,21 @@ from reyn.tools.schemes._universal_sp import build_universal_tool_use_slots
 
 
 def test_skill_entry_defaults() -> None:
-    """Tier 1: SkillEntry defaults: enabled=True, auto_invoke=True."""
+    """Tier 1: SkillEntry defaults: enabled=True, visibility="menu"."""
     e = SkillEntry(name="foo", description="does foo", path="skills/foo/SKILL.md")
     assert e.enabled is True
-    assert e.auto_invoke is True
+    assert e.visibility == "menu"
     assert e.name == "foo"
     assert e.description == "does foo"
     assert e.path == "skills/foo/SKILL.md"
 
 
 def test_skill_entry_explicit_disabled() -> None:
-    """Tier 1: SkillEntry can be created with enabled=False, auto_invoke=False."""
+    """Tier 1: SkillEntry can be created with enabled=False, visibility="hidden"."""
     e = SkillEntry(name="bar", description="does bar", path="skills/bar/SKILL.md",
-                   enabled=False, auto_invoke=False)
+                   enabled=False, visibility="hidden")
     assert e.enabled is False
-    assert e.auto_invoke is False
+    assert e.visibility == "hidden"
 
 
 # ── build_skill_registry ──────────────────────────────────────────────────────
@@ -63,7 +70,7 @@ def test_build_skill_registry_parses_entries() -> None:
     assert entry.description == "does something useful"
     assert entry.path == "skills/my-skill/SKILL.md"
     assert entry.enabled is True
-    assert entry.auto_invoke is True
+    assert entry.visibility == "menu"
 
 
 def test_build_skill_registry_filters_disabled() -> None:
@@ -287,9 +294,9 @@ def test_sp_skills_block_excludes_disabled_skills() -> None:
     """Tier 2: skills with enabled=False are not rendered in the SP list."""
     skills = [
         SkillEntry(name="visible", description="should appear", path="skills/vis/SKILL.md",
-                   enabled=True, auto_invoke=True),
+                   enabled=True, visibility="menu"),
         SkillEntry(name="hidden", description="should not appear", path="skills/hid/SKILL.md",
-                   enabled=False, auto_invoke=True),
+                   enabled=False, visibility="menu"),
     ]
     slots = build_universal_tool_use_slots(
         universal_wrappers_enabled=True,
@@ -303,13 +310,20 @@ def test_sp_skills_block_excludes_disabled_skills() -> None:
     assert "hidden" not in sp, "enabled=False skill must not appear in SP"
 
 
-def test_sp_skills_block_excludes_non_auto_invoke_skills() -> None:
-    """Tier 2: skills with auto_invoke=False are not rendered in the SP list."""
+def test_sp_skills_block_excludes_non_menu_skills() -> None:
+    """Tier 2: only visibility="menu" skills are rendered in the SP list.
+
+    Both non-menu states are placed OUTSIDE the boundary here — `on_demand` and
+    `hidden` are distinct downstream (skill_list returns the first, never the
+    second) but the SP menu must exclude both, so both are pinned.
+    """
     skills = [
         SkillEntry(name="auto", description="shown", path="skills/auto/SKILL.md",
-                   enabled=True, auto_invoke=True),
-        SkillEntry(name="manual", description="hidden from sp", path="skills/manual/SKILL.md",
-                   enabled=True, auto_invoke=False),
+                   enabled=True, visibility="menu"),
+        SkillEntry(name="manual", description="on demand only", path="skills/manual/SKILL.md",
+                   enabled=True, visibility="on_demand"),
+        SkillEntry(name="secret", description="never shown", path="skills/secret/SKILL.md",
+                   enabled=True, visibility="hidden"),
     ]
     slots = build_universal_tool_use_slots(
         universal_wrappers_enabled=True,
@@ -319,15 +333,16 @@ def test_sp_skills_block_excludes_non_auto_invoke_skills() -> None:
         available_skills=skills,
     )
     sp = slots.get("slot_post_skills", "")
-    assert "auto" in sp, "auto_invoke=True skill should appear"
-    assert "manual" not in sp, "auto_invoke=False skill must not appear in SP"
+    assert "auto" in sp, 'visibility="menu" skill should appear'
+    assert "manual" not in sp, 'visibility="on_demand" skill must not appear in SP'
+    assert "secret" not in sp, 'visibility="hidden" skill must not appear in SP'
 
 
 def test_sp_skills_block_absent_when_all_filtered_out() -> None:
-    """Tier 2: slot_post_skills absent when all skills are filtered out (disabled/no-auto-invoke)."""
+    """Tier 2: slot_post_skills absent when all skills are filtered out (disabled/non-menu)."""
     skills = [
         SkillEntry(name="no-show", description="filtered", path="skills/no/SKILL.md",
-                   enabled=False, auto_invoke=True),
+                   enabled=False, visibility="menu"),
     ]
     slots = build_universal_tool_use_slots(
         universal_wrappers_enabled=True,

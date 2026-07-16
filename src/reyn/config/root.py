@@ -304,7 +304,13 @@ class ReynConfig:
     #         path: "skills/foo/SKILL.md"
     #         description: "One-line description"
     #         enabled: true
-    #         auto_invoke: true
+    #         visibility: menu   # menu | on_demand | hidden (#2971)
+    # `visibility` names which discovery surface the skill reaches: `menu` =
+    # the L1 system-prompt Skills menu; `on_demand` = the skill_list tool only
+    # (no standing token cost); `hidden` = no model-facing surface. `enabled:
+    # false` dominates it — the entry is dropped from the registry outright, so
+    # the pair describes 4 states, not 6. The removed `auto_invoke` key is
+    # rejected at load by loader._validate_skill_visibility.
     # Merged across config tiers by name (explicit entries win on collision).
     skills: dict = field(default_factory=dict)
     # Pipeline registry config. Raw dict passed to

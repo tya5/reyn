@@ -8,6 +8,15 @@ relocation — no LLM-facing text change): the two skill install verbs from
 verbatim from its origin constant; the origin module now aliases its
 ``_SKILL_INSTALL_*_DESCRIPTION`` constants to ``skill.NAME.text``.
 
+#2971 adds a third, ``skill_list`` — the read-only discovery verb. Its text
+is NOT a relocation (the tool is new), and it carries one load-bearing
+instruction the other two do not need: how to actually USE a listed skill.
+There is no ``run_skill`` op, by design — a skill body is instructions for
+the model, so reading the file with the ordinary ``file`` read op IS the
+invocation. The description says so explicitly, because a model that gets a
+list of paths and no stated next step is the exact shape of the reachability
+gap #2971 exists to close.
+
 Note: both carry ``ToolDefinition.category="io"`` — this module groups
 them by feature-area (skill management), matching the ``mcp`` / ``io``
 precedent set in Phase 2 (module grouping is conceptual, not a literal
@@ -68,9 +77,39 @@ skill_install_source = ToolDescription(
     ),
 )
 
+skill_list = ToolDescription(
+    tool_name="skill_list",
+    surfaced="router + phase (gates.router=allow, gates.phase=allow)",
+    purpose=(
+        "Discovery surface for skills that are registered but not "
+        "advertised in the system-prompt menu — returns each one's name, "
+        "description, and file path so the model can read the body it "
+        "needs (#2971)."
+    ),
+    text=(
+        "List the skills registered in this session that you are allowed to "
+        "see, with each skill's name, one-line description, and file path. "
+        "Some skills are already listed in the Skills section of your system "
+        "prompt; this tool additionally returns on-demand skills, which are "
+        "registered and usable but deliberately not advertised there. Call it "
+        "when a task looks like it might have a matching skill and the menu "
+        "does not show one. To use a skill from the result, read its 'path' "
+        "with the file read tool and follow the instructions in the file — "
+        "there is no separate run tool. Reading a skill's file is what "
+        "invokes it."
+    ),
+    ja=(
+        "このセッションで参照可能な skill の一覧を返す（name / description / "
+        "path）。システムプロンプトの '## Skills' に載らない on_demand の "
+        "skill もここには現れる。使うときは path を file read ツールで読み、"
+        "その内容に従う（専用の実行ツールは無い）。"
+    ),
+)
+
 ALL: dict[str, ToolDescription] = {
     "skill_install_local": skill_install_local,
     "skill_install_source": skill_install_source,
+    "skill_list": skill_list,
 }
 
 
