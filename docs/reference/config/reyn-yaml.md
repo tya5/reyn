@@ -746,11 +746,19 @@ sandbox:
   policy:                # optional — the agent-level (operator) sandbox policy
     network: true
     read_paths: ["/"]
-    write_paths: ["/"]
+    write_paths: ["{{workspace}}", "/tmp"]
     allow_subprocess: true
     env_passthrough: ["PATH", "HOME"]
     timeout_seconds: 600
 ```
+
+> ⚠️ **Never put `~`, `$HOME`, or `/` in `write_paths`.** On the Seatbelt backend, each
+> `write_paths` entry emits an *allow-read* rule for that path **after** the
+> `read_deny_paths` deny rules, and SBPL is last-match-wins — so a `write_paths` entry
+> that is a superset of (or overlaps) a `read_deny_paths` entry **silently nullifies
+> that deny**, defeating the credential-path defense-in-depth (`~/.ssh`, `~/.aws`,
+> `~/.gnupg`, etc. — see `read_deny_paths` below) with no warning. Scope `write_paths`
+> to the narrowest directories the process actually needs to persist to.
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
@@ -766,7 +774,7 @@ When `sandbox.policy` is present, these mirror the `SandboxPolicy` fields. Unkno
 |-----|------|---------|-------------|
 | `network` | bool | `false` | Allow outbound network from the sandboxed process. The primary exfiltration gate. |
 | `write_paths` | list[string] | `[]` | Filesystem paths the process may write (tight guard). Write implies read for these paths. |
-| `read_deny_paths` | list[string] | `[]` | Sensitive paths to DENY from the broad read surface (defense-in-depth). Enforced only on backends that support deny-after-allow rules (Seatbelt); not enforceable on allowlist-only backends (Landlock). |
+| `read_deny_paths` | list[string] | `~/.ssh`, `~/.aws`, `~/.gnupg`, `~/.config/gcloud`, `~/.kube`, `~/.docker/config.json`, `~/.netrc` | Sensitive paths to DENY from the broad read surface (defense-in-depth) — defaults to these 7 OS-level credential locations when omitted from an explicit `sandbox.policy` block (`SandboxPolicy.read_deny_paths`'s dataclass default), NOT an empty list. Enforced only on backends that support deny-after-allow rules (Seatbelt); not enforceable on allowlist-only backends (Landlock). **Do not let a `write_paths` entry overlap or be a superset of any of these** — see the warning above `write_paths` silently defeats them on Seatbelt. |
 | `read_paths` | list[string] | `[]` | **Legacy.** Formerly the strict read allowlist. Reads are broad by default under the current scoping model; this field now documents intended read targets only. |
 | `allow_subprocess` | bool | `false` | Whether the process may spawn children. Enforced — denies `process-fork` when off. |
 | `env_passthrough` | list[string] | `[]` | Env-var names that pass through to the sandboxed process. `PATH` is always passed through. |
