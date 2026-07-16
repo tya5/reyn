@@ -29,30 +29,35 @@ venv, and probes it for:
 4. **#2913 builtin body reads (kept, LIVE, unaffected by 0061)** —
    ``read_builtin_body_bytes`` on a real skill/pipeline body, plus the
    least-privilege negative (an in-package ``.py`` module returns ``None``).
-5. **#2972 ambient-``python3`` builtin shell-out (mode-2, XFAIL until
-   fixed)** — the builtin RAG ingest pipeline
-   (``src/reyn/builtin/pipelines/rag_ingest.yaml``) shells out to
-   ``python3 -m reyn.builtin.rag_ingest_helpers`` via ``sandboxed_exec``,
-   which forwards the ambient ``PATH`` through unmodified — never
-   ``sys.executable``, never a venv path baked into the command. This check
-   reproduces that EXACT shape: plain ``python3`` resolved from a PATH
-   shaped like a ``pipx install reyn`` environment (a clean, reyn-less venv
-   sits first on PATH). It is the only check in this file that CAN witness
-   the #2972 regression — every other check here runs the wheel through an
-   interpreter that resolves reyn (``venv_python`` / ``sys.executable``),
-   and a normal pytest job's ambient ``python3`` trivially IS the job's own
-   (reyn-having) interpreter, so "ambient python3 == reyn's interpreter" can
-   never be falsified there. Deliberately EXPECTED TO FAIL (XFAIL) until
-   #2972 lands a fix; an unexpected PASS (XPASS) fails the gate instead of
-   silently going stale — see ``_check_ambient_python3_shellout`` and its
-   caller in ``main()``.
+5. **#2972 builtin MCP console-script launch under a pipx-shaped PATH
+   (mode-2, STRICT)** — the builtin RAG MCP servers must start when the
+   ambient ``python3`` is NOT reyn's interpreter. This check runs the
+   ``reyn-rag-chunker`` console script that ``[project.scripts]`` ships,
+   from inside a PATH shaped like a ``pipx install reyn`` environment (a
+   clean, reyn-less venv sits first on PATH), and asserts it imports reyn
+   and serves. pip stamps a console script's shebang with the absolute path
+   of the interpreter it was installed into, so this is what makes the arc
+   work under pipx — and this is the only check in this file that can
+   witness it: every other check runs the wheel through an interpreter that
+   already resolves reyn (``venv_python`` / ``sys.executable``), and a
+   normal pytest job's ambient ``python3`` trivially IS the job's own
+   (reyn-having) interpreter, so "ambient python3 == reyn's interpreter"
+   can never be falsified there.
 
-Exits 0 iff every check passes (check 5 XFAILs rather than passing); exits
-non-zero (with a PASS/FAIL line per check) on the first structural failure,
-any assertion failure, or check 5 unexpectedly passing (XPASS, #2972 fixed
-but this probe not yet promoted to a strict assertion). Cleans up the temp
-wheel directory and venv in a ``finally`` block, on success or failure
-alike.
+   Until #2972 this probe instead ran ``python3 -m
+   reyn.builtin.rag_ingest_helpers`` — the ingest pipeline's shell-out —
+   as an XFAIL, and its XPASS branch demanded promotion to a strict
+   assertion in the PR that fixed the bug. #2972 removed the shell-out (the
+   pipeline now runs no python of its own) and deleted that module, so the
+   XFAIL is promoted here: the property worth gating is no longer "does the
+   ambient python3 happen to be reyn's" (reyn does not own the operator's
+   python runtime and no longer asks) but "does the launch command reyn
+   SHIPS work where the ambient python3 is not reyn's".
+
+Exits 0 iff every check passes; exits non-zero (with a PASS/FAIL line per
+check) on the first structural failure or any assertion failure. Cleans up
+the temp wheel directory and venv in a ``finally`` block, on success or
+failure alike.
 """
 from __future__ import annotations
 
@@ -125,50 +130,69 @@ def _check_wheel_config_completeness(wheel_path: Path) -> list[str]:
     return failures
 
 
-def _check_ambient_python3_shellout(repo_root: Path, tmp_root: Path) -> tuple[bool, str]:
-    """#2972 mode-2 probe: reproduce the builtin RAG ingest pipeline's
-    ambient-``python3`` shell-out EXACTLY as ``sandboxed_exec`` performs it —
-    resolving ``python3`` from ``PATH`` (never ``sys.executable``, never a
-    venv path baked into the command line) — inside a PATH shaped like a
-    ``pipx install reyn`` environment.
+_CONSOLE_PROBE_SCRIPT = REPO_ROOT / "scripts" / "wheel_mcp_console_probe.py"
 
-    A clean venv WITHOUT reyn installed (``with_pip=False`` — no wheel, no
-    ``-e``, nothing) is built and ONLY its ``bin/`` dir is prepended to
-    ``PATH``, so a bare ``python3`` command resolves to an interpreter that
-    cannot import reyn — manufacturing the "ambient python3 differs from
-    reyn's own interpreter" condition deterministically, on any platform or
-    dev box, regardless of what the CALLING process's own ambient ``python3``
-    happens to be (which is why every OTHER check in this file — running the
-    wheel through ``venv_python`` / ``sys.executable`` — structurally cannot
-    witness this bug; see the module docstring).
 
-    Returns ``(ok, detail)`` — ``ok`` is whether the shell-out succeeded
-    (expected ``False`` until #2972 is fixed); ``detail`` is the last
-    stderr/stdout line for a decision-enabling failure message.
+def _check_builtin_mcp_console_script(wheel_path: Path, tmp_root: Path) -> bool:
+    """#2972 mode-2 check: a builtin RAG MCP server starts via the console
+    script reyn SHIPS, in a PATH shaped like a ``pipx install reyn``
+    environment (ambient ``python3`` is not reyn's interpreter).
+
+    A clean venv WITHOUT reyn (``with_pip=False`` — no wheel, no ``-e``,
+    nothing) is built and its ``bin/`` dir is prepended to the child's
+    ``PATH``, manufacturing "ambient python3 differs from reyn's own
+    interpreter" deterministically on any platform or dev box, regardless of
+    what the CALLING process's ambient ``python3`` happens to be. That is why
+    this is the only check here that can witness the property: every other
+    one runs the wheel through an interpreter that already resolves reyn.
+
+    Needs a SECOND venv: the ``--no-deps`` install the other checks use is
+    deliberately dependency-free (they probe stdlib-only paths), but an MCP
+    server has to actually import ``fastmcp``/``chonkie`` to serve a call.
+    Installing ``<wheel>[builtin-rag]`` resolves those from pyproject itself,
+    so no version is duplicated into this script (measured ~60s — affordable
+    against the job's 5-minute budget, and the alternative of asserting on a
+    ModuleNotFoundError's message text would gate on a string, not a
+    behavior).
+
+    The real MCP client call lives in the committed
+    ``scripts/wheel_mcp_console_probe.py``, run BY THAT VENV's interpreter
+    (this process — the CI job python — has neither reyn nor fastmcp).
+    Returns True iff every check inside the probe passed.
     """
+    rag_venv = tmp_root / "venv-builtin-rag"
+    venv.EnvBuilder(with_pip=True, clear=True).create(str(rag_venv))
+    rag_bin = rag_venv / "bin"
+    if not rag_bin.exists():  # pragma: no cover - Windows layout
+        rag_bin = rag_venv / "Scripts"
+    rag_python = rag_bin / "python"
+    if not rag_python.exists():  # pragma: no cover - Windows layout
+        rag_python = rag_bin / "python.exe"
+
+    _run([str(rag_python), "-m", "pip", "install", "--quiet", f"{wheel_path}[builtin-rag]"])
+
     clean_venv = tmp_root / "venv-no-reyn"
     venv.EnvBuilder(with_pip=False, clear=True).create(str(clean_venv))
     clean_bin = clean_venv / "bin"
     if not clean_bin.exists():  # pragma: no cover - Windows layout
         clean_bin = clean_venv / "Scripts"
 
-    env = dict(os.environ)
-    env["PATH"] = f"{clean_bin}{os.pathsep}{env.get('PATH', '')}"
-    # No PYTHONPATH -- a dev-tree leak here would false-pass the exact thing
-    # this check exists to catch.
-    env.pop("PYTHONPATH", None)
-
+    probe_env = {
+        **os.environ,
+        "REYN_CONSOLE_SCRIPT": str(rag_bin / "reyn-rag-chunker"),
+        "REYN_CLEAN_BIN": str(clean_bin),
+    }
+    probe_env.pop("PYTHONPATH", None)
     result = subprocess.run(
-        ["python3", "-m", "reyn.builtin.rag_ingest_helpers", "probe"],
-        cwd=str(repo_root),
-        env=env,
+        [str(rag_python), str(_CONSOLE_PROBE_SCRIPT)],
         capture_output=True,
         text=True,
+        env=probe_env,
     )
-    ok = result.returncode == 0
-    tail = (result.stderr or result.stdout or "").strip().splitlines()
-    detail = tail[-1] if tail else f"exit {result.returncode}"
-    return ok, detail
+    print(result.stdout, end="")
+    if result.stderr:
+        print(result.stderr, file=sys.stderr, end="")
+    return result.returncode == 0
 
 
 def main() -> int:
@@ -233,22 +257,20 @@ def main() -> int:
             print(f"[FAIL] wheel reachability parity gate FAILED (exit {result.returncode})")
             return 1
 
-        # 7. #2972 mode-2 probe (XFAIL until fixed) -- see module docstring
-        # check 5 and _check_ambient_python3_shellout's docstring for why
-        # THIS is the one check in the file that can witness the regression.
-        mode2_ok, mode2_detail = _check_ambient_python3_shellout(REPO_ROOT, tmp_dir)
-        if mode2_ok:
+        # 7. #2972 mode-2 check (STRICT -- promoted from the XFAIL that
+        # tracked the ambient-python3 shell-out this issue removed). See the
+        # module docstring check 5 and _check_builtin_mcp_console_script for
+        # why THIS is the one check in the file that can witness it.
+        if not _check_builtin_mcp_console_script(wheel_path, tmp_dir):
             print(
-                "[FAIL] XPASS (unexpected): ambient-python3 builtin shell-out "
-                "now succeeds -- #2972 appears fixed. Promote this probe from "
-                "XFAIL to a strict assertion (drop the XFAIL wrap in "
-                "_check_ambient_python3_shellout's caller) in the SAME PR that "
-                f"closes #2972, so this gate does not go silently stale. detail: {mode2_detail}"
+                "[FAIL] #2972 builtin MCP console-script launch: a builtin RAG "
+                "MCP server did not serve via its shipped console script under "
+                "a pipx-shaped PATH -- the builtin RAG arc is broken for any "
+                "install whose ambient python3 is not reyn's interpreter."
             )
             return 1
         print(
-            "[XFAIL] #2972 ambient-python3 builtin shell-out (tracked, expected "
-            f"until fixed): {mode2_detail}"
+            "[PASS] #2972 builtin MCP console-script launch under a pipx-shaped PATH"
         )
 
         print("[PASS] wheel reachability parity gate: all checks green")

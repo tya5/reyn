@@ -25,8 +25,9 @@ over it" instruction, not silently worked around.
 
 Five gates satisfied by construction (proposal 0063 P2 spec):
 
-1. **Pre-computed vectors** -- ``upsert`` takes a ``vector: list[float]``
-   per item; this module never computes an embedding itself.
+1. **Pre-computed vectors** -- ``upsert`` takes a ``vectors`` array
+   parallel to its ``items``; this module never computes an embedding
+   itself.
 2. **User-specified single sqlite file** -- every tool call takes an
    explicit ``db_path``; the schema is created lazily in that one file.
 3. **top-k + metadata filter query** -- ``query`` runs a plain SQL
@@ -36,11 +37,15 @@ Five gates satisfied by construction (proposal 0063 P2 spec):
    embedding_model/chunk_index/size_tokens/parent_context/extra).
 5. **Generic ops for a pipeline-owned diff** -- ``list_metadata`` (no
    vectors, Chroma ``get(where=...)`` shape), ``upsert`` (replaces by
-   ``id``, no duplication), ``delete``. The ``content_hash`` add/update/
-   remove diff logic is deliberately NOT here -- it lives in the ingest
-   pipeline (P3), per C5 ownership settled at co-vet: keeping the server
-   generic keeps a future backend swap "re-point the MCP server", not
-   "find a server that implements our diff semantics".
+   (source_path, chunk_index), no duplication), ``delete``. The
+   ``content_hash`` add/update/remove diff logic is deliberately NOT here
+   -- it lives in the ingest pipeline (P3), per C5 ownership settled at
+   co-vet: keeping the server generic keeps a future backend swap
+   "re-point the MCP server", not "find a server that implements our diff
+   semantics". ``upsert`` deriving its own primary key (#2972) does not
+   breach that line: a key FORMULA is not diff semantics -- the pipeline
+   still decides WHICH chunks are new/changed/removed, and reads opaque
+   ``id`` values back out of ``list_metadata`` to drive ``delete``.
 
 ``SqliteVecStore`` holds the storage logic as a plain Python class so it
 can be exercised directly (no MCP transport needed) by tests; the module-
@@ -157,18 +162,70 @@ class SqliteVecStore:
 
     # -- ops ------------------------------------------------------------
 
-    def upsert(self, items: list[dict[str, Any]]) -> int:
-        """Insert or replace each item (keyed by ``id``). Returns the count
-        upserted. Replaces rather than duplicates: an existing ``id`` is
-        deleted (both tables) before the new row lands.
+    @staticmethod
+    def _rag_id(item: dict[str, Any]) -> str:
+        """This store's primary key for a chunk: ``<source_path>::<chunk_index>``.
+
+        DERIVED here rather than supplied by the caller (#2972). The store
+        owns its own keyspace -- and the caller cannot build this key anyway:
+        the ingest pipeline's R1 expression language has no number->string
+        coercion (``'a.txt' + '::' + 3`` raises "arithmetic '+' requires two
+        numbers"), which is one of the reasons the pipeline used to shell out
+        to ``python3``. Callers identify a chunk by (source_path,
+        chunk_index) and read opaque ``id`` values back out of
+        ``list_metadata`` for ``delete``, so no caller ever spells this
+        format itself.
+
+        This is a key FORMULA, not diff semantics: the content_hash
+        add/update/remove logic (C5) deliberately stays in the ingest
+        pipeline (see module docstring gate 5).
+        """
+        return f"{item['source_path']}::{int(item.get('chunk_index', 0))}"
+
+    def upsert(
+        self,
+        items: list[dict[str, Any]],
+        vectors: list[list[float]],
+        embedding_model: str,
+        parent_context: str | None = None,
+    ) -> int:
+        """Insert or replace each item, pairing it with ``vectors[i]`` BY
+        POSITION. Returns the count upserted. Replaces rather than
+        duplicates: an existing key is deleted (both tables) before the new
+        row lands.
+
+        ``items`` and ``vectors`` are PARALLEL ARRAYS (#2972): each item is
+        ``{"source_path", "content_hash", "chunk_index", "size_tokens"}`` and
+        its vector is the element at the same index of ``vectors`` -- the
+        shape reyn's ``embed`` tool already returns. Pairing by index is done
+        HERE because the caller (the ingest pipeline) cannot: R1 has no
+        index-based zip. That gap is exactly what used to force the ingest
+        pipeline to shell out to a bundled python helper, binding reyn to
+        the ambient ``PATH``'s interpreter (#2972).
+
+        ``embedding_model`` is stamped onto every row: it must be the model
+        that ACTUALLY produced these vectors (the resolved id, never a
+        model-CLASS alias), so the column can never disagree with the vectors
+        beside it (FP-0057 C4). ``parent_context`` tags every row with the
+        ingest root, scoping a later "what did THIS folder ingest" query.
         """
         import sqlite_vec  # noqa: PLC0415
 
+        if len(items) != len(vectors):
+            raise ValueError(
+                f"upsert: {len(items)} items but {len(vectors)} vectors -- "
+                "each item is paired with the vector at its own index, so "
+                "the embedder's output order must match the items it was "
+                "called with"
+            )
         count = 0
-        for item in items:
-            rag_id = item["id"]
-            vector = item["vector"]
-            metadata = item.get("metadata") or {}
+        for item, vector in zip(items, vectors, strict=True):
+            rag_id = self._rag_id(item)
+            metadata = {
+                **item,
+                "embedding_model": embedding_model,
+                "parent_context": parent_context,
+            }
             self._ensure_vec_table(len(vector))
             self._delete_one(rag_id)
             extra = metadata.get("extra") or {}
@@ -346,14 +403,26 @@ def build_server() -> Any:
     mcp = FastMCP("reyn-builtin-vector-store")
 
     @mcp.tool
-    def upsert(db_path: str, items: list[dict[str, Any]]) -> dict[str, Any]:
+    def upsert(
+        db_path: str,
+        items: list[dict[str, Any]],
+        vectors: list[list[float]],
+        embedding_model: str,
+        parent_context: str | None = None,
+    ) -> dict[str, Any]:
         """Insert or replace vector+metadata items in the sqlite-vec store
-        at db_path. Each item: {"id": str, "vector": list[float],
-        "metadata": {source_path, source_type, content_hash,
-        embedding_model, chunk_index, size_tokens, parent_context, extra}}.
-        An existing id is replaced (never duplicated)."""
+        at db_path. `items` and `vectors` are PARALLEL ARRAYS: item[i] is
+        stored with vector[i]. Each item: {"source_path": str,
+        "content_hash": str, "chunk_index": int, "size_tokens": int}.
+        `embedding_model` must name the model that actually produced these
+        vectors (stamped on every row); `parent_context` tags each row with
+        the ingest root. A chunk is keyed by (source_path, chunk_index) and
+        an existing one is replaced (never duplicated). Raises if
+        len(items) != len(vectors)."""
         with SqliteVecStore(db_path) as store:
-            n = store.upsert(items)
+            n = store.upsert(
+                items, vectors, embedding_model, parent_context=parent_context,
+            )
         return {"upserted": n}
 
     @mcp.tool
