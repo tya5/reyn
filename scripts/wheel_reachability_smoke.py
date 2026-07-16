@@ -29,11 +29,30 @@ venv, and probes it for:
 4. **#2913 builtin body reads (kept, LIVE, unaffected by 0061)** —
    ``read_builtin_body_bytes`` on a real skill/pipeline body, plus the
    least-privilege negative (an in-package ``.py`` module returns ``None``).
+5. **#2972 ambient-``python3`` builtin shell-out (mode-2, XFAIL until
+   fixed)** — the builtin RAG ingest pipeline
+   (``src/reyn/builtin/pipelines/rag_ingest.yaml``) shells out to
+   ``python3 -m reyn.builtin.rag_ingest_helpers`` via ``sandboxed_exec``,
+   which forwards the ambient ``PATH`` through unmodified — never
+   ``sys.executable``, never a venv path baked into the command. This check
+   reproduces that EXACT shape: plain ``python3`` resolved from a PATH
+   shaped like a ``pipx install reyn`` environment (a clean, reyn-less venv
+   sits first on PATH). It is the only check in this file that CAN witness
+   the #2972 regression — every other check here runs the wheel through an
+   interpreter that resolves reyn (``venv_python`` / ``sys.executable``),
+   and a normal pytest job's ambient ``python3`` trivially IS the job's own
+   (reyn-having) interpreter, so "ambient python3 == reyn's interpreter" can
+   never be falsified there. Deliberately EXPECTED TO FAIL (XFAIL) until
+   #2972 lands a fix; an unexpected PASS (XPASS) fails the gate instead of
+   silently going stale — see ``_check_ambient_python3_shellout`` and its
+   caller in ``main()``.
 
-Exits 0 iff every check passes; exits non-zero (with a PASS/FAIL line per
-check) on the first structural failure or any assertion failure. Cleans up
-the temp wheel directory and venv in a ``finally`` block, on success or
-failure alike.
+Exits 0 iff every check passes (check 5 XFAILs rather than passing); exits
+non-zero (with a PASS/FAIL line per check) on the first structural failure,
+any assertion failure, or check 5 unexpectedly passing (XPASS, #2972 fixed
+but this probe not yet promoted to a strict assertion). Cleans up the temp
+wheel directory and venv in a ``finally`` block, on success or failure
+alike.
 """
 from __future__ import annotations
 
@@ -106,6 +125,52 @@ def _check_wheel_config_completeness(wheel_path: Path) -> list[str]:
     return failures
 
 
+def _check_ambient_python3_shellout(repo_root: Path, tmp_root: Path) -> tuple[bool, str]:
+    """#2972 mode-2 probe: reproduce the builtin RAG ingest pipeline's
+    ambient-``python3`` shell-out EXACTLY as ``sandboxed_exec`` performs it —
+    resolving ``python3`` from ``PATH`` (never ``sys.executable``, never a
+    venv path baked into the command line) — inside a PATH shaped like a
+    ``pipx install reyn`` environment.
+
+    A clean venv WITHOUT reyn installed (``with_pip=False`` — no wheel, no
+    ``-e``, nothing) is built and ONLY its ``bin/`` dir is prepended to
+    ``PATH``, so a bare ``python3`` command resolves to an interpreter that
+    cannot import reyn — manufacturing the "ambient python3 differs from
+    reyn's own interpreter" condition deterministically, on any platform or
+    dev box, regardless of what the CALLING process's own ambient ``python3``
+    happens to be (which is why every OTHER check in this file — running the
+    wheel through ``venv_python`` / ``sys.executable`` — structurally cannot
+    witness this bug; see the module docstring).
+
+    Returns ``(ok, detail)`` — ``ok`` is whether the shell-out succeeded
+    (expected ``False`` until #2972 is fixed); ``detail`` is the last
+    stderr/stdout line for a decision-enabling failure message.
+    """
+    clean_venv = tmp_root / "venv-no-reyn"
+    venv.EnvBuilder(with_pip=False, clear=True).create(str(clean_venv))
+    clean_bin = clean_venv / "bin"
+    if not clean_bin.exists():  # pragma: no cover - Windows layout
+        clean_bin = clean_venv / "Scripts"
+
+    env = dict(os.environ)
+    env["PATH"] = f"{clean_bin}{os.pathsep}{env.get('PATH', '')}"
+    # No PYTHONPATH -- a dev-tree leak here would false-pass the exact thing
+    # this check exists to catch.
+    env.pop("PYTHONPATH", None)
+
+    result = subprocess.run(
+        ["python3", "-m", "reyn.builtin.rag_ingest_helpers", "probe"],
+        cwd=str(repo_root),
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+    ok = result.returncode == 0
+    tail = (result.stderr or result.stdout or "").strip().splitlines()
+    detail = tail[-1] if tail else f"exit {result.returncode}"
+    return ok, detail
+
+
 def main() -> int:
     tmp_dir = Path(tempfile.mkdtemp(prefix="reyn-wheel-smoke-"))
     wheel_dir = tmp_dir / "dist"
@@ -167,6 +232,24 @@ def main() -> int:
         if result.returncode != 0:
             print(f"[FAIL] wheel reachability parity gate FAILED (exit {result.returncode})")
             return 1
+
+        # 7. #2972 mode-2 probe (XFAIL until fixed) -- see module docstring
+        # check 5 and _check_ambient_python3_shellout's docstring for why
+        # THIS is the one check in the file that can witness the regression.
+        mode2_ok, mode2_detail = _check_ambient_python3_shellout(REPO_ROOT, tmp_dir)
+        if mode2_ok:
+            print(
+                "[FAIL] XPASS (unexpected): ambient-python3 builtin shell-out "
+                "now succeeds -- #2972 appears fixed. Promote this probe from "
+                "XFAIL to a strict assertion (drop the XFAIL wrap in "
+                "_check_ambient_python3_shellout's caller) in the SAME PR that "
+                f"closes #2972, so this gate does not go silently stale. detail: {mode2_detail}"
+            )
+            return 1
+        print(
+            "[XFAIL] #2972 ambient-python3 builtin shell-out (tracked, expected "
+            f"until fixed): {mode2_detail}"
+        )
 
         print("[PASS] wheel reachability parity gate: all checks green")
         return 0
