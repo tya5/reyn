@@ -116,6 +116,32 @@ BUILTIN_PIPELINES: "dict[str, dict[str, Any]]" = {
         "path": str(_BUILTIN_DIR / "pipelines" / "flagship_research_and_report.yaml"),
         "enabled": True,
     },
+    # FP-0063 P3 -- builtin turnkey user RAG (proposal 0063). Both pipelines
+    # call the P2 builtin MCP servers (vector_store_server / chunker_server,
+    # #2952) plus a third-party markitdown MCP server -- all of which ship
+    # INERT (R3, mirrors the skill A3 posture): registering these two
+    # pipelines is itself inert (invoke-by-name only, Addendum A3), and
+    # every step's MCP calls additionally fail cleanly with a decision-
+    # enabling message (X1) until the operator explicitly configures +
+    # grants the three servers (docs/cookbook/configs/with-builtin-rag-mcp.yaml).
+    "rag_ingest": {
+        "description": (
+            "Turnkey RAG ingest: chunk -> embed -> store a file or folder "
+            "into a user-named sqlite vector store, incrementally by "
+            "content_hash (add/update/remove) -- proposal 0063 P3."
+        ),
+        "path": str(_BUILTIN_DIR / "pipelines" / "rag_ingest.yaml"),
+        "enabled": True,
+    },
+    "rag_query": {
+        "description": (
+            "Turnkey RAG query: embed the query text and return the top-k "
+            "nearest chunks from a sqlite vector store rag_ingest wrote to "
+            "-- proposal 0063 P3."
+        ),
+        "path": str(_BUILTIN_DIR / "pipelines" / "rag_query.yaml"),
+        "enabled": True,
+    },
 }
 BUILTIN_PRESENTATIONS: "dict[str, dict[str, Any]]" = {
     # The status/results card exemplar (proposal 0060 Addendum D9.5 curated-5
