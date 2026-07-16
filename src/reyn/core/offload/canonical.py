@@ -564,8 +564,12 @@ def file_to_canonical(result: dict) -> CanonicalToolResult:
 
     - ``read`` → the file ``content`` as ``text`` (an image read surfaces its ``media_blocks`` as media
       attachments, matching the MCP mapper); ``path``/``op``/``status`` are signal meta, never the body.
-    - ``grep`` / ``glob`` → the rendered match / path lines as ``text`` (``content`` mode → ``path:line:
-      text``; ``files_with_matches`` / glob → the paths; ``count`` mode → a one-line total).
+    - ``grep`` → the rendered match lines as ``text`` (``content`` mode → ``path:line: text``;
+      ``files_with_matches`` → the paths; ``count`` mode → a one-line total).
+    - ``glob`` → a short ``"N files"`` / ``"(no matches)"`` ``text`` summary + the full ``matches``
+      path list as a ``structured`` attachment (#2955/#2972 — a genuinely-structured record-list
+      result, the same shape as ``web_search``, NOT free text like ``read``/``grep``; see the branch
+      below for why).
     - ``write`` / ``edit`` / ``delete`` / ``mkdir`` / ``move`` / ``stat`` / ``regenerate_index`` → a short
       status ``text``.
 
@@ -600,9 +604,32 @@ def file_to_canonical(result: dict) -> CanonicalToolResult:
         )
 
     if op == "glob":
+        # #2955/#2972: glob's `matches` is a LIST of paths, not read's prose body — the same
+        # "genuinely-structured record-read" shape as the #2681 Bucket B producers below
+        # (list_agents / list_actions / memory_list / ...), not the free-text shape `read`/`grep`
+        # return. Emitting it as newline-joined `text` (the old behavior) meant
+        # `canonical_to_ctx_fields` could never derive a `structured` field for it (that field is
+        # ONLY derived from a `structured` attachment — see that function's docstring) so a
+        # pipeline `for_each` could never fan out over a glob_files/list_directory result without
+        # first round-tripping through a `python3`-shell helper (rag_ingest.yaml's `list_files`
+        # workaround, itself pinned to the ambient `python3` being reyn's own interpreter — a real
+        # fragility the file's own header calls out). This mirrors `web_search_to_canonical`'s
+        # identical list-of-records -> `structured` shape (built inline here, not via the #2681
+        # Bucket B `_records_to_canonical` helper below, because `file` ops carry their own
+        # `_file_signal_meta` signal meta rather than Bucket B's `meta={}`): `matches` now rides
+        # whole in `structured` (`for_each: ctx.<name>.structured` can fan out without a shell
+        # round-trip), and `text` is a short human-readable count instead of the full (potentially
+        # huge) path list — measured via `build_offload_body`: 60 files today (all-inline text) is
+        # 1,527 chars vs 1,668 with this change (+10%, still inline either way); 1000 files is
+        # 25,027 chars of raw path text hot-pathed to the LLM today vs 725 chars once the large
+        # `structured` attachment offloads to its own ref (-97%) -- i.e. the OLD text-only shape is
+        # the actual token bomb for a large-folder glob, not this change.
         matches = result.get("matches") or []
-        text = "\n".join(str(m) for m in matches) if matches else "(no matches)"
-        return CanonicalToolResult(text=text, attachments=[], source_ref=None, meta=meta)
+        n = len(matches)
+        text = f"{n} file{'s' if n != 1 else ''}" if n else "(no matches)"
+        return CanonicalToolResult(
+            text=text, attachments=[{"kind": "structured", "data": matches}], source_ref=None, meta=meta,
+        )
 
     # write / edit / delete / mkdir / move / stat / regenerate_index → a short status text. A missing/
     # unknown ``op`` is a discriminator-miss → fail-visible (M3), NEVER the old ``"None: ok"`` garbage.

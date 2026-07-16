@@ -208,6 +208,31 @@ def test_bare_absent_path_is_an_eval_error() -> None:
         evaluate_expr("ctx.missing.field", {"ctx": {}})
 
 
+def test_absent_structured_field_gets_decision_enabling_hint() -> None:
+    """Tier 1: #2955/#2972 — reading `.structured` off a ctx.<name> reduced-fields dict
+    (canonical_to_ctx_fields' {"text", "structured"?, "meta"?} shape) that has no `structured`
+    key raises ExprEvalError with a hint naming the cause (producer emitted no structured
+    attachment, absent-when-empty by design) and the remedy (fix the producer's canonical
+    mapper, or read `.text` instead) -- not just an opaque "field is absent"."""
+    ctx = {"ctx": {"glob_result": {"text": "60 files"}}}
+    with pytest.raises(ExprEvalError) as exc_info:
+        evaluate_expr("ctx.glob_result.structured", ctx)
+    message = str(exc_info.value)
+    assert "absent" in message
+    assert "structured" in message.lower()
+    assert "canonical" in message.lower(), "must point at the producer's canonical mapper as the fix site"
+
+
+def test_absent_non_structured_field_has_no_structured_hint() -> None:
+    """Tier 1: NON-REGRESSION -- the decision-enabling hint is specific to `.structured`; an
+    absent field with a different name still gets the plain "is absent" message, no false hint."""
+    with pytest.raises(ExprEvalError) as exc_info:
+        evaluate_expr("ctx.glob_result.nonexistent_field", {"ctx": {"glob_result": {"text": "x"}}})
+    message = str(exc_info.value)
+    assert "absent" in message
+    assert "canonical" not in message.lower()
+
+
 def test_type_errors_raise_eval_error() -> None:
     """Tier 1: type errors (count on non-list, + on incompatible types) raise ExprEvalError."""
     with pytest.raises(ExprEvalError):

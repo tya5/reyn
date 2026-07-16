@@ -472,6 +472,10 @@
           "pattern": {
             "description": "Glob pattern. To match by name anywhere under a directory, always include `**` (e.g. '**/*.py' or 'src/**/*.md'). A bare name without `**` matches only at the exact root level, not recursively.",
             "type": "string"
+          },
+          "max_results": {
+            "description": "Maximum number of matching paths to return. Defaults to 50 — raise this explicitly when enumerating a directory that may hold more entries than that (e.g. bulk ingestion), otherwise matches beyond the cap are silently dropped.",
+            "type": "integer"
           }
         },
         "required": [
@@ -711,6 +715,10 @@
         "properties": {
           "path": {
             "type": "string"
+          },
+          "max_results": {
+            "description": "Maximum number of directory entries to return. Defaults to 50 — raise this explicitly for directories that may hold more entries than that, otherwise entries beyond the cap are silently dropped.",
+            "type": "integer"
           }
         },
         "required": [

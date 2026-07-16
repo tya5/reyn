@@ -92,11 +92,18 @@ def test_file_mapper_raises_discriminator_miss_directly() -> None:
 
 def test_valid_file_op_still_dispatches_no_fallback() -> None:
     """Tier 1: NON-REGRESSION — a VALID ``op`` still dispatches to its per-op body and does NOT
-    trip the discriminator-miss path (the fix triggers only on a miss)."""
+    trip the discriminator-miss path (the fix triggers only on a miss).
+
+    #2955/#2972: glob's matches now ride in a ``structured`` attachment rather than joined into
+    ``text`` (so a pipeline can ``for_each`` over them) — assert the paths are reachable there
+    as the plain ``["alpha.txt", "beta.txt"]`` matches list, NOT the whole-RESULT-dict
+    ``discriminator_miss`` fallback shape ``_structured_data`` also detects (that would be
+    ``result`` itself, e.g. ``{"kind": "file", "op": "glob", "status": "ok", "matches": [...]}``).
+    """
     result = {"kind": "file", "op": "glob", "status": "ok", "matches": ["alpha.txt", "beta.txt"]}
     canonical = to_canonical(result, source="file")
-    assert "alpha.txt" in canonical["text"] and "beta.txt" in canonical["text"]
-    assert not _structured_data(canonical)  # a mapped success is NOT a whole-dict fallback
+    assert canonical["text"] == "2 files"
+    assert _structured_data(canonical) == ["alpha.txt", "beta.txt"]
     assert canonical_fallback_reason("file", canonical=canonical) is None
 
 

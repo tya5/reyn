@@ -54,6 +54,10 @@ _LIST_DIRECTORY_PARAMETERS: dict[str, Any] = {
     "type": "object",
     "properties": {
         "path": {"type": "string"},
+        "max_results": {
+            "type": "integer",
+            "description": _io_descriptions.PARAMS["list_directory"]["max_results"].text,
+        },
     },
     "required": ["path"],
 }
@@ -149,6 +153,10 @@ _GLOB_FILES_PARAMETERS: dict[str, Any] = {
             "type": "string",
             "description": _io_descriptions.PARAMS["glob_files"]["path"].text,
         },
+        "max_results": {
+            "type": "integer",
+            "description": _io_descriptions.PARAMS["glob_files"]["max_results"].text,
+        },
     },
     "required": ["pattern"],
 }
@@ -241,6 +249,11 @@ async def _handle_list(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
 
     Path normalisation: map "" / "/" / "./" to "." so the LLM's typical
     "list files here" intent resolves to cwd rather than filesystem root.
+
+    `max_results` is forwarded to FileIROp.max_results (default 50) for the
+    same reason as _handle_glob below: list_directory synthesises an
+    internal glob op, so it shares FileIROp's 50-match cap and the same
+    silent-truncation hole when a directory holds more than 50 entries.
     """
     from reyn.core.op_runtime import execute_op
     from reyn.schemas.models import FileIROp
@@ -249,7 +262,12 @@ async def _handle_list(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
     if path in ("", "/", "./"):
         path = "."
 
-    op = FileIROp(kind="file", op="glob", path=f"{path.rstrip('/')}/*")
+    op = FileIROp(
+        kind="file",
+        op="glob",
+        path=f"{path.rstrip('/')}/*",
+        max_results=args.get("max_results", 50),
+    )
     legacy_ctx = _build_legacy_op_context(ctx)
     result = await execute_op(op, legacy_ctx)
 
@@ -300,6 +318,15 @@ async def _handle_glob(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
     field that the glob op uses as its glob pattern. The op_runtime glob op
     interprets FileIROp.path as the full glob pattern, so we build
     `<path>/<pattern>` (or just `<pattern>` when path is absent / ".").
+
+    `max_results` is forwarded to FileIROp.max_results (default 50, same as
+    the FileIROp field default) — until this fix it was silently dropped:
+    the param wasn't in the tool schema and this handler never read it, so
+    every glob_files call was hard-capped at 50 matches with no error or
+    warning (found via a real pipeline run: 60 files on disk, step passed
+    max_results=1000, got exactly 50 back). Callers ingesting a whole
+    directory (e.g. RAG folder-indexing) must pass max_results explicitly
+    when more than 50 matches are expected.
     """
     from reyn.core.op_runtime import execute_op
     from reyn.schemas.models import FileIROp
@@ -309,7 +336,12 @@ async def _handle_glob(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
     # Combine: if root is "." use pattern directly (avoids "./**/*.py" oddity
     # when workspace.glob_files is cwd-relative). Otherwise prefix the root.
     combined = pattern if root in ("", ".") else f"{root}/{pattern}"
-    op = FileIROp(kind="file", op="glob", path=combined)
+    op = FileIROp(
+        kind="file",
+        op="glob",
+        path=combined,
+        max_results=args.get("max_results", 50),
+    )
     legacy_ctx = _build_legacy_op_context(ctx)
     result = await execute_op(op, legacy_ctx)
 
