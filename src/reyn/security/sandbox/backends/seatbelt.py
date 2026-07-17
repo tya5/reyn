@@ -174,12 +174,26 @@ class SeatbeltBackend:
     name: str = "seatbelt"
 
     def available(self) -> bool:
-        """Return True iff sandbox-exec is usable on this platform."""
+        """Return True iff the sandbox-exec mechanism is PRESENT on this platform.
+
+        Presence only — Darwin + the binary on PATH. Whether the profile this
+        backend generates actually denies anything is ``self_test()``'s question
+        (#2983): #2978 was a live Seatbelt whose deny-list was silently
+        overridden, and this method reported True throughout.
+        """
         if platform.system() != "Darwin":
             return False
         if shutil.which("sandbox-exec") is None:
             return False
         return True
+
+    def self_test(self) -> str | None:
+        """Witness a real deny through ``sandbox-exec`` (#2983): None when a write
+        outside ``write_paths`` was refused, else the reason it was not. Cached
+        per process; see ``reyn.security.sandbox.self_test``."""
+        from reyn.security.sandbox.self_test import enforcement_self_test  # noqa: PLC0415
+
+        return enforcement_self_test(self)
 
     def wrap_command(self, argv: list[str], policy: SandboxPolicy) -> WrappedCommand:
         """Prepend ``sandbox-exec -f <profile>`` to *argv* for a persistent-process

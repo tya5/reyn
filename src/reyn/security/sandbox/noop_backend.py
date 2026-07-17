@@ -69,6 +69,31 @@ class NoopBackend:
     def available(self) -> bool:
         return True
 
+    def self_test(self) -> str | None:
+        """Always None — NoopBackend is EXEMPT from the enforcement self-test
+        (#2983), and is the only backend that is.
+
+        The self-test exists to catch a backend that CLAIMS enforcement it does
+        not deliver. NoopBackend claims none: "no isolation enforced" is its
+        documented contract, it says so in a WARN on first use, and
+        `get_default_backend()` never selects it while a real backend is working.
+        Its `available()` means "this passthrough will run your command", not
+        "this will contain it" — so there is no false claim here to falsify.
+
+        The decisive reason, though, is structural rather than semantic: Noop is
+        the TARGET of the ``on_unsupported`` fallback. A failing self-test here
+        would demand falling back from Noop to Noop — an infinite regress with no
+        floor beneath it. The one backend that must never be self-tested is the
+        one every failed self-test lands on.
+
+        This exemption is not a hole. `probe_enforcement()` pointed at this very
+        backend is what proves the probe can fail at all (see
+        `tests/test_sandbox_self_test_2983.py`), and CodeAct independently
+        refuses to run on a backend named "noop" (`codeact_runner.py`), so the
+        exemption grants Noop no enforcement credit anywhere.
+        """
+        return None
+
     def wrap_command(self, argv: list[str], policy: SandboxPolicy) -> WrappedCommand:
         """Passthrough: argv is returned UNCHANGED — no enforcement — but the
         call still went THROUGH the sandbox abstraction (the owner-acceptable

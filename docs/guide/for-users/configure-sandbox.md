@@ -30,13 +30,31 @@ platform:
 | Linux | kernel ≥ 5.13, `sandbox-linux` package installed | Landlock (+ optional seccomp-BPF) |
 | Other | — | Noop (audit-only, no enforcement) |
 
-`on_unsupported` controls what happens when you force a backend that is unavailable:
+A backend from this table is used only if it **passes an enforcement self-test** on your machine — see [Reyn checks that your sandbox really sandboxes](#reyn-checks-that-your-sandbox-really-sandboxes) below.
+
+`on_unsupported` controls what happens when no usable backend is available — either because the one you forced is not present on this platform, or because it **is present but does not actually enforce**:
 
 | Value | Behaviour |
 |---|---|
 | `warn` (default) | Log a warning and fall back to Noop |
 | `error` | Raise an error — use this when enforcement is a hard requirement |
 | `ignore` | Silently fall back to Noop |
+
+## Reyn checks that your sandbox really sandboxes
+
+When Reyn picks a backend, it first proves the backend works **on your machine**: it launches a short subprocess through that backend and tries to write a file somewhere the policy forbids. If the write is refused, the sandbox is real and Reyn uses it. If the write goes through, the backend is not enforcing, and Reyn treats it exactly as if it were not installed — applying your `on_unsupported` setting.
+
+This matters because "the sandbox is installed" and "the sandbox works" are different things. A backend can be present and importable while enforcing nothing at all — right OS, package imports fine, and yet every restriction silently absent. Checking only for presence cannot tell those apart. So Reyn checks the thing you actually care about: whether a forbidden action gets refused.
+
+What you should expect to see:
+
+- **Normally, nothing.** A working sandbox passes silently. The check costs tens of milliseconds, once, and only when a run actually uses the sandbox.
+- **If your sandbox is not enforcing**, a warning at startup naming what was attempted and what happened — instead of silently unsandboxed runs.
+- **With `on_unsupported: error`**, Reyn refuses to run rather than execute AI-generated code unsandboxed. This setting now works against a broken sandbox, not just a missing one.
+
+If you see the warning, your AI code has been running without isolation. The message names the backend and the failure so you can fix it or fail closed deliberately.
+
+**Scope.** The check verifies the filesystem write boundary. It does not exercise the network gate or the syscall-filtering layer, so a passing check means one restriction was proven — a good signal, not a guarantee of every restriction listed below.
 
 ## Set the agent-level sandbox policy
 
