@@ -180,7 +180,7 @@ class CodeActScheme:
         ``tool_use_sp`` (#1618 root-3 REPLACE channel — the code-API replaces the
         universal tool-use SP region, vs the #1601 ``sp_fragment`` APPEND that left the
         universal vocab in place) — each action a callable the model invokes via the
-        ``tool(name, **args)`` proxy. No JSON ``tools=`` (``llm_tools_payload`` empty):
+        ``tool(name, /, **args)`` proxy. No JSON ``tools=`` (``llm_tools_payload`` empty):
         the model writes a Python snippet in its content, not tool calls.
 
         ``ops.catalog_entries()`` is async (the SchemeOps adapter ensures the
