@@ -2,7 +2,7 @@
 
 Point Reyn at a folder of documents (`txt` / `md` / `pdf` / `xlsx` / `pptx` / `docx`), get a **sqlite file you own** that Reyn can search by meaning. Two builtin pipelines do it: `rag_ingest.ingest` builds the store, `rag_query.query` searches it.
 
-> **TL;DR**: `pip install "reyn[builtin-rag]"`, copy the MCP block from [`cookbook/configs/with-builtin-rag-mcp.yaml`](../../cookbook/configs/with-builtin-rag-mcp.yaml) into your `reyn.yaml` and uncomment it, then ask Reyn to ingest your folder. It ships **inert** — nothing runs until you enable those three servers yourself.
+> **TL;DR**: `pip install "reyn[builtin-rag]"`, then ask Reyn to ingest your folder. Reyn installs the three MCP servers it needs itself — **it asks you before writing anything to your config**. They ship **inert**: nothing runs until that install is approved.
 
 ## Is this the RAG you want?
 
@@ -11,7 +11,7 @@ Reyn has **two**, and they are not interchangeable:
 | | **this guide** (builtin user RAG) | **[semantic search](enable-semantic-search.md)** (in-core RAG) |
 |---|---|---|
 | Where the data lives | **a sqlite file you name** — yours to keep, copy, or hand to another tool | Reyn's own index under `.reyn/index/<source>/` |
-| What you set up | 3 MCP servers (below) | an indexed source; no servers |
+| What you set up | 3 MCP servers (Reyn installs them; you approve) | an indexed source; no servers |
 | Reads pdf/xlsx/pptx/docx | **yes** (via the markitdown server) | only what your indexing code chunked |
 | Use it when | you have **a folder of documents** and want a portable corpus | you want Reyn to recall docs you already registered as a source |
 
@@ -19,7 +19,7 @@ If you just want Reyn to search docs you already index, you want [Enable semanti
 
 ## Why it ships off
 
-The three MCP servers are **inert by design**. Once a server appears under `mcp.servers.<name>` in any merged config, `reyn pipe run` auto-grants it — that auto-grant is justified only because *you* explicitly configured it. So Reyn ships the servers' **code** and never wires them in: **enabling them is your decision, made once, in your own config.**
+The three MCP servers are **inert by design**. Once a server appears under `mcp.servers.<name>` in any merged config, `reyn pipe run` auto-grants it — so a server must never land in your config without your say-so. Reyn therefore ships the servers' **code** and never wires them in. Reyn can *install* them for you, but the write to your config goes through the permission gate: **you are asked, and a refusal writes nothing.**
 
 Read what you are enabling before you do:
 
@@ -33,12 +33,20 @@ Read what you are enabling before you do:
 
 ```bash
 pip install "reyn[builtin-rag]"     # apsw + sqlite-vec + chonkie
-pip install markitdown-mcp          # the document parser
 ```
 
-> **Firewalled network?** The config's default `command: uvx` fetches `markitdown-mcp` from PyPI **on first run**. If PyPI is blocked, pre-install it as above and point `command` at the installed console script instead of `uvx`. `sqlite-vec` is **wheel-only** (no sdist), so it needs a mirror that serves wheels — an sdist-only internal mirror cannot install it, and musl/Alpine has no wheel at all. Reyn's own `python:3.12-slim` base image is glibc, so containers are unaffected.
+That is the whole dependency step. **Do not `pip install markitdown-mcp`** — the parser runs via `uvx`, which fetches it into its **own isolated environment** on first run. Installing it alongside Reyn only invites a dependency conflict.
 
-**2. Copy the config.** Take the `permissions` + `mcp.servers` block from [`cookbook/configs/with-builtin-rag-mcp.yaml`](../../cookbook/configs/with-builtin-rag-mcp.yaml) into your `reyn.yaml` (or `reyn.local.yaml`) and uncomment it:
+> `sqlite-vec` is **wheel-only** (no sdist), so it needs a mirror that serves wheels — an sdist-only internal mirror cannot install it, and musl/Alpine has no wheel at all. Reyn's own `python:3.12-slim` base image is glibc, so containers are unaffected.
+
+**2. Ask Reyn to install the servers.** You do not have to hand-edit YAML. In `reyn chat`, ask it to ingest a folder: it reads its `build_and_query_rag_corpus` skill and installs the three servers, **asking your permission before it writes** `.reyn/config/mcp.yaml`. That write is the gate: approve it and the servers are live — no `permissions:` block to add, because a configured server is granted when the pipeline runs it. **Refuse and nothing is written.**
+
+Each install is **probed before it is committed**: if a command does not start on your machine, the install fails and writes nothing, rather than leaving a half-configured server.
+
+<details>
+<summary>Prefer to configure it by hand?</summary>
+
+Copy the `permissions` + `mcp.servers` block from [`cookbook/configs/with-builtin-rag-mcp.yaml`](../../cookbook/configs/with-builtin-rag-mcp.yaml) into your `reyn.yaml` (or `reyn.local.yaml`) and uncomment it:
 
 ```yaml
 permissions:
@@ -59,6 +67,17 @@ mcp:
       command: uvx
       args: ["markitdown-mcp"]
 ```
+
+</details>
+
+> **Firewalled network?** `uvx` fetches `markitdown-mcp` from PyPI on first run. If PyPI is blocked, give it its **own venv** — never Reyn's — and point `command` at the absolute path:
+>
+> ```bash
+> python3 -m venv ~/.reyn-markitdown
+> ~/.reyn-markitdown/bin/pip install markitdown-mcp
+> ```
+>
+> then use `command: /home/you/.reyn-markitdown/bin/markitdown-mcp` with `args: []`. Reyn starts whatever `command` names, as-is, so an absolute path to a script whose environment actually has the package is the reliable form.
 
 **Why the `reyn-rag-*` console scripts and not `python -m ...`?** Both work — Reyn launches whatever `command` you write, as-is, in any language, and never rewrites it. **Preparing the runtime an MCP server needs is your job, not Reyn's.** The console scripts are *recommended* only because `pip` stamps their shebang with the absolute path of the interpreter they were installed into, so they always find Reyn. A bare `python3` is resolved from your `PATH` at launch, which is a *different* interpreter under `pipx install reyn`, a non-activated venv, or a `PATH` with another python first — there the server fails with `No module named reyn`. If you prefer the module form, give an absolute interpreter path and check it with `<that python> -c 'import reyn; print(reyn.__file__)'`.
 
