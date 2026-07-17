@@ -7,6 +7,9 @@ on:
 
 jobs:
   landlock-deny-gate:
+    # "single ABI" is the load-bearing half of this name: whatever ABI this
+    # runner's kernel happens to expose (measured: 7, on 6.17.0-azure) is the
+    # ONLY one a green here speaks for. See the script docstring.
     name: Landlock/seccomp deny must fire (single ABI, #2983 stage 3)
     runs-on: ubuntu-latest
     timeout-minutes: 10

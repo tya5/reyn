@@ -40,15 +40,22 @@ inheriting a green from it.
 
 **★ ONE ABI. This green does not mean "Landlock is witnessed".** A runner is one
 kernel, and a kernel is one Landlock ABI — an older ABI cannot be faked in a
-container, because the ABI belongs to the host kernel and not to the image. This
-job witnesses whatever ABI GitHub currently ships on ``ubuntu-latest`` (24.04 ≈
-ABI 4) and prints it, so the witness names its own scope instead of letting a
-green imply a coverage it never had. **ABI 1-2 — Ubuntu 22.04 / RHEL 9 / Debian
-12, i.e. most of the installed base, and where #2975's ``FS.TRUNCATE`` gap
-actually lives — is NOT covered here** and stays covered only by the runtime
-``self_test()`` failing closed on each user's own machine. Do not read a green
-run of this script as "the sandbox is validated on Linux". Read it as: "on this
-one ABI, on this one kernel, both denies fired today."
+container, because the ABI belongs to the host kernel and not to the image. So
+this job witnesses exactly one ABI: whatever GitHub happens to ship. It PRINTS
+that number rather than asserting one, because the number is not ours to predict
+— this gate's first green measured **ABI 7** on ``ubuntu-latest`` (kernel
+6.17.0-azure), where the stage-3 design had estimated 4. Pinning an expectation
+would have been wrong on day one, and GitHub will move it again without telling
+us. The witness names its own scope instead of letting a green imply a coverage
+it never had.
+
+**ABI 1-2 — Ubuntu 22.04 / RHEL 9 / Debian 12, i.e. most of the installed base,
+and where #2975's ``FS.TRUNCATE`` gap actually lives — is NOT covered here** and
+stays covered only by the runtime ``self_test()`` failing closed on each user's
+own machine. Note the direction of the gap: the runner sits ABOVE the installed
+base, not below it, so this job is *least* likely to see the ABI-gated defects.
+Do not read a green run of this script as "the sandbox is validated on Linux".
+Read it as: "on this one ABI, on this one kernel, both denies fired today."
 """
 from __future__ import annotations
 
