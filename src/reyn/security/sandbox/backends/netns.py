@@ -144,13 +144,21 @@ def isolate_network_namespace() -> None:
     # is NOT fail-closed material: the network property this function exists
     # for is already in effect by the time we reach these lines (unshare()
     # above already succeeded), so we log and continue rather than raise.
+    #
+    # The map is `real_uid -> real_uid` (a TRUE 1:1 identity map), not
+    # `0 -> real_uid` — the latter is the "fake root" idiom `unshare
+    # --map-root-user` uses deliberately (make the caller APPEAR as uid 0
+    # inside the namespace), which is the opposite of what "preserve identity"
+    # means here: a sandboxed target must see the SAME `os.getuid()` it would
+    # have outside the sandbox, not an artificially elevated one a target that
+    # branches on `getuid() == 0` could react to differently.
     try:
         with open("/proc/self/setgroups", "w") as fh:
             fh.write("deny")
         with open("/proc/self/uid_map", "w") as fh:
-            fh.write(f"0 {real_uid} 1")
+            fh.write(f"{real_uid} {real_uid} 1")
         with open("/proc/self/gid_map", "w") as fh:
-            fh.write(f"0 {real_gid} 1")
+            fh.write(f"{real_gid} {real_gid} 1")
     except OSError as exc:
         _logger.debug(
             "netns: uid/gid identity map not applied (%s) — network isolation "
