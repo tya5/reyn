@@ -167,10 +167,7 @@ def _apply_landlock(policy: SandboxPolicy) -> None:
     ruleset = build_ruleset(policy, backend.abi_version or 0)
     if not policy.allow_subprocess:
         preload_native_dependency()
-    # STRIP-FALSIFY (#2983 stage 3, TEMPORARY — reverted in the next commit):
-    # Landlock enforcement removed. The write deny arm MUST go red. This is the
-    # #2980 shape exactly: the ruleset is built and then never applied.
-    # ruleset.apply()  # type: ignore[attr-defined]
+    ruleset.apply()  # type: ignore[attr-defined]
     _apply_seccomp(policy)
 
 
