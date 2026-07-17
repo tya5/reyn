@@ -278,6 +278,116 @@ _TOOL_CALL_WRITE_DENIAL_HINT = (
     "server's working directory is always granted."
 )
 
+def _looks_like_init_timeout(exc: BaseException) -> bool:
+    """Whether *exc* is FastMCP's ``init_timeout`` firing on the MCP handshake.
+
+    Structural, not textual: the ``__cause__`` chain is walked for a
+    ``TimeoutError``, because the wording that reaches us carries no usable
+    signal. MEASURED against the real client (fastmcp 3.4.2) with a stdio server
+    that starts and never speaks — the chain arrives as::
+
+        MCPError: MCP initialize failed: Client failed to connect: Failed to
+                  initialize server session
+          __cause__ RuntimeError: Client failed to connect: Failed to initialize …
+          __cause__ RuntimeError: Failed to initialize server session
+          __cause__ TimeoutError
+
+    i.e. FastMCP re-raises its ``anyio.fail_after`` TimeoutError as a bare
+    ``RuntimeError`` whose message names neither a timeout nor the elapsed
+    seconds, but preserves the TimeoutError as ``__cause__``. So the chain is the
+    only load-bearing evidence in the failure; matching the string would pin
+    wording FastMCP owns and can reword in a patch release.
+
+    Deliberately walks ``__cause__`` only, never ``__context__``: an unrelated
+    error raised while *handling* some incidental TimeoutError would be linked by
+    ``__context__``, and treating that as "the handshake timed out" would attach
+    a confidently wrong remedy to it. Defensive on depth — an exception chain is
+    not structurally guaranteed to be acyclic, and a hint must never be the
+    reason a failure path hangs.
+    """
+    seen: set[int] = set()
+    cur: BaseException | None = exc
+    while cur is not None and id(cur) not in seen:
+        seen.add(id(cur))
+        if isinstance(cur, TimeoutError):
+            return True
+        cur = cur.__cause__
+    return False
+
+
+# #3028: how long to wait for a server to answer the MCP handshake before giving up.
+#
+# This bounds ONLY the handshake, never a tool call — see MCPClient.initialize() for
+# why that distinction is the whole point of using FastMCP's ``init_timeout`` rather
+# than copying the HTTP ``timeout`` (= read_timeout_seconds) knob down onto stdio.
+#
+# Sized by two MEASURED constraints, a floor and a ceiling.
+#
+# The floor is a real first-run fetch — the failure the owner actually hit. Cold uv
+# cache, fast connection:
+#
+#     markitdown-mcp   18.1s   (the owner's exact server)
+#     mcp-server-time   2.4s   (a small package, for contrast)
+#
+# So a legitimate launch of a real server burns ~18s before it can speak a word, and
+# a slower link or heavier dependency tree goes multiples above. 30s — the HTTP read
+# timeout's value — would kill exactly the launch this is meant to protect.
+#
+# The ceiling is the gateway. MCPGateway._run wraps acquire+op in
+# ``resolve_call_timeout`` (default 120s) and every production MCP path goes through
+# it (#2421 pins that structurally), so the handshake was ALREADY bounded at 120s
+# there — reyn never actually waited forever on any reachable path, contrary to
+# #3028's premise. What it did was surface that bound as a bare ``MCPFault:
+# TimeoutError:``, naming neither server, cause, nor remedy. So this bound's job is
+# less "make it finite" than "reach a finite end that EXPLAINS ITSELF", and it can
+# only do that by firing FIRST — MEASURED both ways against a real silent server:
+#
+#     init_timeout 5 < call_timeout 30  ->  MCPError + the hint below   (operator can act)
+#     call_timeout 5 < init_timeout 30  ->  MCPFault: TimeoutError:     (operator has nothing)
+#
+# 60s sits between: ~3.3x the measured cold fetch, and strictly under the gateway's
+# 120s so the explaining error wins deterministically rather than by a race. Nothing
+# is lost by landing under that ceiling — a launch slower than 120s was already dead
+# at the gateway, just silently; this one dies sooner and says why.
+#
+# Per the owner's #2964 principle the default is a FLOOR, not a policy: an operator
+# with a genuinely slow server raises it, and `init_timeout: 0` restores an unbounded
+# handshake (still under the gateway's own bound). Neither is reyn's to decide — but
+# note that raising THIS alone cannot buy more than the gateway allows, which is why
+# the hint below names both knobs.
+_DEFAULT_INIT_TIMEOUT_SECONDS = 60
+
+# #3028: the init-timeout sibling of the #2976 launch hint and the #3009 tool-call
+# hint. Same "name the cause, then name the concrete ways out" shape (#2932's
+# ``require_mcp`` error), different place to leave the operator: a write denial means
+# "the server ran and was refused", while THIS means "the server started and never
+# spoke". That silence is diagnostically empty on its own — the process is alive, so
+# there is no exit code, and typically nothing on stderr either — which is precisely
+# why the hint has to supply the interpretation the operator cannot read off the
+# failure. A first-run `uvx`/`npx` fetch is the overwhelmingly likely cause (it is
+# the one thing that makes a healthy server sit silent for tens of seconds), so the
+# zero-config remedy leads and the config knob follows, per #3009's ordering.
+#
+# Written to a HARD LENGTH BUDGET, which is why it is terser than its siblings.
+# ``pool.describe_fault(limit=600)`` summarises this message on its way to the LLM
+# and truncates from the END, and #2976 already paid for that lesson once by losing
+# a trailing hint entirely. Ordering the hint before the stderr dump (as #2976 did)
+# is necessary but NOT sufficient here: this hint carries two remedies, so a verbose
+# version is cut through its own middle and the operator keeps remedy 1 while the
+# knob in remedy 2 silently disappears — which is exactly what the gateway-path test
+# caught. Every clause below is load-bearing; keep the whole thing inside the budget
+# (test_3028 pins it end-to-end through the real seam) rather than trading away the
+# second remedy or raising a shared, MCP-agnostic limit for one caller's benefit.
+_INIT_TIMEOUT_HINT = (
+    "\n\nHint (#3028): server started but never answered the MCP handshake within "
+    "{seconds:g}s — usually a launcher (`uvx`/`npx`) fetching its package on first "
+    "run. Either pre-install it (`uv tool install <pkg>`, then point `command` at "
+    "it) — also needed offline/behind a proxy — or, for a slow launch, raise BOTH "
+    "bounds on `{server}`: `init_timeout: 300` AND `call_timeout_seconds: 600` "
+    "(the per-op bound, default 120s, covers the launch too — `init_timeout` alone "
+    "is not enough)."
+)
+
 # #2597 capability/version gate slice: the ``ServerCapabilities`` fields FastMCP's
 # ``mcp.types.InitializeResult.capabilities`` may carry — each is either a capability
 # object (server advertises it) or None (server does not). ``experimental`` and
@@ -687,6 +797,27 @@ class MCPClient:
                 # default ``read_timeout_seconds`` (same knob call_tool's
                 # per-call ``timeout_seconds`` overrides).
                 client_kwargs["timeout"] = self._config.get("timeout", 30)
+            # #3028: bound the handshake itself, on EVERY transport. Distinct from
+            # the ``timeout`` above in both scope and reach:
+            #
+            #   * scope — ``timeout`` is the session's default read timeout, so it
+            #     bounds every later ``call_tool`` too. Reusing it to bound a launch
+            #     would silently cap tool RUNTIME as a side effect, killing the
+            #     legitimately long call (a RAG ingest over a large folder) to fix a
+            #     launch bug. ``init_timeout`` is FastMCP's dedicated handshake knob
+            #     (``Client.initialize()`` wraps ``session.initialize()`` in
+            #     ``anyio.fail_after``), so it bounds the launch and nothing else.
+            #   * reach — it is set unconditionally, not under the http/sse branch.
+            #     stdio was the transport that hung (#3028) precisely because it fell
+            #     through both: no ``timeout``, and FastMCP's ``client_init_timeout``
+            #     defaults to None = disabled. HTTP only looked protected because its
+            #     ``timeout`` happens to bound the handshake's read as one more
+            #     request — an accident of the read timeout, not a handshake bound.
+            #     Setting this for all three makes "we give up eventually" a property
+            #     of the client rather than of which transport you happened to pick.
+            client_kwargs["init_timeout"] = self._config.get(
+                "init_timeout", _DEFAULT_INIT_TIMEOUT_SECONDS
+            )
             # #2597 S2b: install the notifications bridge, if one was supplied. Passed
             # as a constructor kwarg per FastMCP's own contract (Client(transport,
             # message_handler=...)); ReynMCPMessageHandler's weakref binding to THIS
@@ -741,6 +872,19 @@ class MCPClient:
                     "    write_paths: [\"~/.npm\"]\n"
                     "Declaring `write_paths` replaces the built-in per-runtime "
                     "defaults; the server's working directory is always granted."
+                )
+            # #3028: stdio-gated for the same reason the two hints above are — the
+            # remedy it names (pre-install the package the launcher is fetching) only
+            # exists where reyn spawned a process. An http/sse handshake that times
+            # out already explains itself: the SDK's read timeout raises "Timed out
+            # while waiting for response to InitializeRequest. Waited N seconds",
+            # naming both the request and the duration this wording lacks.
+            if self._type == "stdio" and _looks_like_init_timeout(exc):
+                hint += _INIT_TIMEOUT_HINT.format(
+                    seconds=float(
+                        self._config.get("init_timeout", _DEFAULT_INIT_TIMEOUT_SECONDS)
+                    ),
+                    server=self._server_name or "<server-name>",
                 )
             if tail:
                 # #2976: the hint goes BEFORE the stderr dump, not after it. The
