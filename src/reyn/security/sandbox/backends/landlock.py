@@ -9,11 +9,15 @@ Network restriction note: the py-landlock package (1.0.0.dev*) exposes no
 network-port rule API — no `NetAccess`, no net symbol in `plumbing`, and
 `Ruleset` has exactly `allow`/`apply` (measured on the pinned 1.0.0.dev5, not
 read off the kernel's ABI table). So Landlock does NOT restrict outbound network
-here, at ANY ABI. What carries a `network: false` policy is the seccomp filter's
-default-deny (`_NETWORK_SYSCALLS` are allowlisted only when network is on) — and
-only when `allow_subprocess` is False, because the whole filter is skipped
-otherwise (#3030). The layer logs a one-shot WARN so the gap is diagnosable
-rather than faking enforcement it can't deliver (#1693).
+here, at ANY ABI. What carries a `network: false` policy is Linux
+network-namespace isolation (`backends/netns.isolate_network_namespace`,
+#3030): `_child_preexec` moves the child into a fresh, interface-less netns
+before Landlock/seccomp apply, independent of `allow_subprocess` — the seccomp
+filter's own network allowlist (`_NETWORK_SYSCALLS`, gated on `allow_subprocess`
+same as before) is now defense-in-depth layered on top of the netns boundary,
+not the boundary itself. The layer logs a one-shot WARN when Landlock's OWN
+network gap is hit, so it stays diagnosable rather than implying Landlock
+delivers a restriction it can't (#1693).
 
 Filesystem model: allowlist-only. The HANDLED access set (Ruleset
 ``restrict_rules``) always governs the full write surface (write/make/remove) so
@@ -135,10 +139,12 @@ def build_ruleset(policy: SandboxPolicy, abi: int) -> object:
 
         # Network: the py-landlock package exposes no net-port rule API at ANY
         # ABI, so Landlock CANNOT restrict outbound network here — the deny is
-        # seccomp's, and only where the filter loads at all (#3030). Warn once so
-        # the gap is diagnosable rather than faking an enforcement we can't
-        # deliver (documented residual risk, #1693). See `_warn_net_once` for what
-        # this message used to claim and why each part of it was false.
+        # netns's (`_child_preexec` isolates the child into a fresh network
+        # namespace before this ruleset applies, #3030). Warn once so the gap in
+        # THIS layer specifically is diagnosable rather than faking an
+        # enforcement it can't deliver (documented residual risk, #1693). See
+        # `_warn_net_once` for what this message used to claim and why each part
+        # of it was false.
         if not policy.network:
             _warn_net_once()
 
@@ -150,19 +156,34 @@ def build_ruleset(policy: SandboxPolicy, abi: int) -> object:
 
 
 def _child_preexec(ruleset: object | None, policy: SandboxPolicy) -> None:
-    """Apply Landlock + seccomp restrictions in the child process (preexec_fn).
+    """Apply netns + Landlock + seccomp restrictions in the child process
+    (preexec_fn).
 
-    Called after fork(), before exec(). The ruleset is built in the parent (its
-    ruleset fd survives the fork); ``apply()`` issues ``landlock_restrict_self``
-    on the calling (child) thread and is irrevocable for the rest of that
-    process's lifetime. The seccomp filter is loaded after it and is likewise
-    irrevocable, and survives the execve that follows.
+    Called after fork(), before exec(). Network-namespace isolation (#3030)
+    goes FIRST — before ``ruleset.apply()`` — because it does not depend on
+    Landlock/seccomp and its own (best-effort) ``/proc/self/*`` identity-map
+    writes need filesystem access that Landlock is about to take away. Unlike
+    the Landlock/seccomp steps below, a netns failure is NOT swallowed: it
+    RAISES, which ``subprocess.Popen`` propagates to the parent as a
+    ``SubprocessError`` — fail-closed, because running the target with network
+    reachable when the policy denied it is the exact defect #3030 is.
+
+    The Landlock ruleset is built in the parent (its ruleset fd survives the
+    fork); ``apply()`` issues ``landlock_restrict_self`` on the calling (child)
+    thread and is irrevocable for the rest of that process's lifetime. The
+    seccomp filter is loaded after it and is likewise irrevocable, and survives
+    the execve that follows.
 
     Module-level (rather than a closure inside ``run``) so the seccomp wiring
     below is reachable by a test without a Linux host: ``ruleset=None`` means
     "no Landlock ruleset to apply" and skips straight to the seccomp step.
     Production always passes a real ruleset.
     """
+    if not policy.network:
+        from .netns import isolate_network_namespace
+
+        isolate_network_namespace()  # raises -> propagates as SubprocessError
+
     if ruleset is not None:
         try:
             ruleset.apply()  # type: ignore[attr-defined]
@@ -183,16 +204,42 @@ def _child_preexec(ruleset: object | None, policy: SandboxPolicy) -> None:
         # code, whose syscalls are filtered too — hence `close_range` in the
         # baseline, which the landlock_exec shim's plain-execvp shape never needs.
         #
-        # ⚠ This gate is the SIBLING of `landlock_exec._apply_seccomp`'s and
-        # carries the same live defect: the filter also holds the NETWORK gate, so
-        # skipping it on allow_subprocess=True leaves `network: false` enforcing
-        # nothing (#3030). Not fixed here — see that function's docstring for why
-        # the fix is a design decision rather than a one-line move.
+        # This gate is the SIBLING of `landlock_exec._apply_seccomp`'s: it still
+        # skips the whole filter (including its own network allowlist) when
+        # `allow_subprocess` is True. That no longer leaves `network: false`
+        # unenforced (#3030) — the netns step above is the actual network
+        # boundary and does not depend on this gate at all. Whether the FORK
+        # gate belongs on the whole filter or only on the allowlist contents
+        # remains #2962's open, un-fixed design question.
         #
         # The import must already be warm: pyseccomp resolves native libs at
         # import via the filesystem, which Landlock has just closed above. `run()`
         # warms it in the parent before the fork; this child inherits it (#3020).
         load_seccomp_filter(policy)
+
+
+def _preexec_failure_message(exc: Exception, policy: SandboxPolicy) -> str:
+    """Build the stderr text for a ``Popen`` failure raised out of
+    ``_child_preexec``.
+
+    ``subprocess.Popen`` re-raises a ``preexec_fn`` exception in the parent as
+    a generic ``subprocess.SubprocessError("Exception occurred in
+    preexec_fn.")`` — the original message (e.g. the errno detail from
+    ``isolate_network_namespace``) does not survive the round trip (measured:
+    Python's ``_posixsubprocess`` error-pipe protocol reports the class of
+    failure, not the instance). ``_child_preexec`` raises from exactly one
+    place when ``policy.network`` is False, so a ``SubprocessError`` under that
+    policy is attributable to the netns step without needing the swallowed
+    detail; an ``OSError`` (e.g. the executable itself could not be found) is
+    passed through unchanged.
+    """
+    if isinstance(exc, subprocess.SubprocessError) and not policy.network:
+        return (
+            "sandbox refused to run: network-namespace isolation failed in the "
+            "child before exec (policy.network=False requires it on Linux; the "
+            "host cannot deliver a network deny for this run — see #3030)"
+        )
+    return str(exc)
 
 
 def _warn_net_once() -> None:
@@ -209,12 +256,16 @@ def _warn_net_once() -> None:
 
     It also used to point at "the no-network-fd / proxy gate" as the mechanism
     that delivers the deny instead. That gate does not exist: the phrase appears
-    nowhere in this repo outside this module's own comments, and what actually
-    refuses `socket`/`connect` is the seccomp filter's default-deny — which is
-    skipped entirely when `allow_subprocess` is True (#3030, measured: a real
-    outbound connect+send SUCCEEDED under `network=False, allow_subprocess=True`).
-    Naming a mechanism that does not exist is worse than naming none: it tells an
-    operator the axis is covered elsewhere. The message names the real condition.
+    nowhere in this repo outside this module's own comments. #3030 initially
+    named the seccomp filter's default-deny as the real mechanism instead — also
+    wrong in general, since that filter is skipped entirely when
+    `allow_subprocess` is True (the stdio-MCP default), which is exactly what let
+    a real outbound connect+send SUCCEED under `network=False,
+    allow_subprocess=True`. The actual mechanism, since #3030's fix, is
+    `backends.netns.isolate_network_namespace` — independent of
+    `allow_subprocess` and not a syscall-name boundary at all. This WARN exists
+    only because THIS layer (Landlock itself) still cannot restrict network; the
+    message names netns as what actually does.
 
     All three corrections are #2980's class — a claim about what the installed
     code does, inferred rather than measured.
@@ -227,10 +278,9 @@ def _warn_net_once() -> None:
         "LandlockBackend: this policy denies network, but Landlock will NOT "
         "restrict outbound network here — the pinned `landlock` package exposes "
         "no network-rule API on any kernel ABI (upgrading the kernel does not "
-        "change this). The deny is carried by the seccomp-BPF filter's "
-        "default-deny, which applies ONLY when allow_subprocess is False; with "
-        "allow_subprocess True the filter is skipped and outbound network is NOT "
-        "restricted at all (see issue #3030)."
+        "change this). The deny is instead carried by moving the sandboxed "
+        "process into a fresh, interface-less network namespace before it runs "
+        "(see issue #3030), independent of allow_subprocess."
     )
 
 
@@ -240,8 +290,9 @@ class LandlockBackend:
     Applies filesystem path-beneath rules before exec via
     ``landlock.Ruleset(restrict_rules=…).allow(path, rules=…)`` built in the
     parent, then ``ruleset.apply()`` in a preexec_fn. The restriction is
-    irrevocable within the child process. (Network is not enforced at this layer
-    — the py-landlock package has no net-port rule API; see module docstring.)
+    irrevocable within the child process. (Network is enforced via a Linux
+    network namespace applied in the same preexec_fn, not by Landlock itself —
+    the py-landlock package has no net-port rule API; see module docstring.)
     """
 
     name: str = "landlock"
@@ -439,11 +490,11 @@ class LandlockBackend:
                         stderr=stderr_b or b"",
                         truncated=truncated,
                     )
-                except OSError as exc:
+                except (OSError, subprocess.SubprocessError) as exc:
                     return SandboxResult(
                         returncode=-1,
                         stdout=b"",
-                        stderr=str(exc).encode(),
+                        stderr=_preexec_failure_message(exc, policy).encode(),
                         truncated=False,
                     )
 
@@ -472,8 +523,10 @@ class LandlockBackend:
                     preexec_fn=lambda: _child_preexec(ruleset, policy),
                 ),
             )
-        except OSError as exc:
-            return SandboxResult(returncode=-1, stdout=b"", stderr=str(exc).encode())
+        except (OSError, subprocess.SubprocessError) as exc:
+            return SandboxResult(
+                returncode=-1, stdout=b"", stderr=_preexec_failure_message(exc, policy).encode()
+            )
 
         if stdin is not None:
             try:

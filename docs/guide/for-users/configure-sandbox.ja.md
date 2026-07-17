@@ -114,8 +114,8 @@ Linux Landlock LSM のパス以下許可リストルールを使用。
 | フィールド | 適用 |
 |---|---|
 | `write_paths` | 適用 — path-beneath 書き込みルール |
-| `network` | **`allow_subprocess: false` のときのみ適用** — それ以外では**まったく適用されない**（[#3030](https://github.com/tya5/reyn/issues/3030)）。Landlock 自体はどのカーネルでもネットワークを制限しない（pin された `landlock` パッケージがネットワークルール API を持たない）ため、deny は seccomp だけが担う — そしてフィルタ全体が `allow_subprocess: true` でスキップされ、ネットワークゲートも道連れになる。stdio MCP サーバは `subprocess: true` が既定なので、**既定の MCP 構成では外向きネットワークは制限されない**。 |
-| `read_deny_paths` | **非対応** — Landlock は許可リストのみで、許可した親から子パスを除外できない。ネットワークゲートが代償の外部流出制御となる想定だが、上の `network` 行を参照 — `allow_subprocess: true` ではどちらも効かない。秘密を読めるプロセスの封じ込めをこのプラットフォームに依存しないこと。 |
+| `network` | **`allow_subprocess` に関係なく適用** — サンドボックス化されたプロセスは、Landlock/seccomp が適用される前に、インタフェースを持たない新しい Linux ネットワーク名前空間へ移される（[#3030](https://github.com/tya5/reyn/issues/3030)）。Landlock 自体はどのカーネルでもネットワークを制限しない（pin された `landlock` パッケージがネットワークルール API を持たない）し、seccomp 自身の `_NETWORK_SYSCALLS` 許可リストも `allow_subprocess: true` では丸ごとスキップされる — が、もはやどちらも境界ではない。netns による隔離は `allow_subprocess` にもシステムコール名の拒否リストにも依存しないため（denylist が見落とす io_uring の穴も塞ぐ）、stdio MCP サーバの既定である `subprocess: true` 下でも `network: false` は適用される。 |
+| `read_deny_paths` | **非対応** — Landlock は許可リストのみで、許可した親から子パスを除外できない。代償の外部流出制御はネットワーク名前空間ゲート（`network` 行を参照）で、#3030 以前と異なり `allow_subprocess` に関係なく効く。秘密を読めるプロセスの封じ込めをこのプラットフォームに依存しないこと。 |
 | `allow_subprocess` | 利用可能な場合 seccomp-BPF で適用 |
 | `timeout_seconds` | 適用 |
 

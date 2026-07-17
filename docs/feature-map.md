@@ -706,7 +706,7 @@ The dynamic work-unit model: small composable ops the LLM reaches for as structu
 | Feature | Description | Documentation |
 |---------|-------------|---------------|
 | `SeatbeltBackend` | macOS `sandbox-exec` SBPL profile generation | [Concepts: Sandbox](concepts/runtime/sandbox.md) |
-| `LandlockBackend` | Linux 5.13+ Landlock LSM + seccomp-BPF stacking | [Concepts: Sandbox](concepts/runtime/sandbox.md) |
+| `LandlockBackend` | Linux 5.13+ Landlock LSM + seccomp-BPF stacking, plus network-namespace isolation for `network: false` (independent of `allow_subprocess`, #3030) | [Concepts: Sandbox](concepts/runtime/sandbox.md) |
 | `NoopBackend` | Fallback audit-only with one-time WARN log | [Concepts: Sandbox](concepts/runtime/sandbox.md) |
 | `SandboxPolicy` | `network` / `read_paths` / `write_paths` / `subprocess` / `env_passthrough` / `timeout` | [Control IR — sandboxed_exec](reference/runtime/control-ir.md) |
 | Auto-selection | Platform detection + enforcement self-test (below) + `on_unsupported: warn\|error\|ignore` — the policy applies both when a backend is ABSENT and when one is present but does not enforce | [reyn-yaml § sandbox](reference/config/reyn-yaml.md#sandbox-block) · [Concepts: Sandbox](concepts/runtime/sandbox.md) |

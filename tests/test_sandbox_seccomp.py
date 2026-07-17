@@ -315,6 +315,12 @@ def test_landlock_child_preexec_invokes_the_seccomp_installer(
     Linux. Guards the #2962 regression at the landlock.py:196 callsite. This
     callsite has its own syscall requirements (CPython's post-preexec_fn
     close_range), so it is verified separately from the shim below.
+
+    ``network=True`` isolates this test to the SECCOMP axis: ``_child_preexec``
+    also runs netns isolation (#3030) when ``policy.network`` is False, and that
+    step checks ``platform.system()`` itself — under the monkeypatched "Darwin"
+    it would raise before this test ever reaches the seccomp step it means to
+    exercise.
     """
     import reyn.security.sandbox.backends.landlock as landlock_mod
 
@@ -322,7 +328,9 @@ def test_landlock_child_preexec_invokes_the_seccomp_installer(
     monkeypatch.setattr("platform.system", lambda: "Darwin")
 
     with caplog.at_level(logging.WARNING, logger="reyn.security.sandbox.backends.seccomp"):
-        landlock_mod._child_preexec(None, SandboxPolicy(allow_subprocess=False))
+        landlock_mod._child_preexec(
+            None, SandboxPolicy(allow_subprocess=False, network=True)
+        )
 
     assert any("seccomp" in record.message.lower() for record in caplog.records), (
         "LandlockBackend's preexec_fn never loaded the seccomp filter — the "
@@ -339,7 +347,14 @@ def test_landlock_child_preexec_skips_seccomp_when_subprocess_allowed(
     The negative half of the wiring pin: without it, a callsite that invoked the
     installer unconditionally would also pass the positive test above. Documents
     today's gate — allow_subprocess=True removes the seccomp layer entirely
-    (#2962 flags this as the open design question; not changed here).
+    (#2962 flags this as the open design question; not changed here — #3030
+    closed the NETWORK gap this used to leave via netns isolation instead, a
+    separate mechanism from this filter, so it does not change this test).
+
+    ``network=True`` isolates this test to the SECCOMP axis for the same
+    reason as the positive test above: otherwise the netns step (#3030) raises
+    under the monkeypatched "Darwin" before reaching the code this test means
+    to exercise.
     """
     import reyn.security.sandbox.backends.landlock as landlock_mod
 
@@ -347,7 +362,9 @@ def test_landlock_child_preexec_skips_seccomp_when_subprocess_allowed(
     monkeypatch.setattr("platform.system", lambda: "Darwin")
 
     with caplog.at_level(logging.WARNING, logger="reyn.security.sandbox.backends.seccomp"):
-        landlock_mod._child_preexec(None, SandboxPolicy(allow_subprocess=True))
+        landlock_mod._child_preexec(
+            None, SandboxPolicy(allow_subprocess=True, network=True)
+        )
 
     assert not caplog.records, (
         "Expected no seccomp activity when allow_subprocess=True; "

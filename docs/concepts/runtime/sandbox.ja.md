@@ -31,7 +31,7 @@ Reyn のサンドボックスレイヤーは、ワークフローが宣言した
 |---|---|---|---|
 | macOS | < 26 | `SeatbeltBackend` | `sandbox-exec` 経由の SBPL プロファイル。上流で非推奨 — Apple が macOS 26 で削除予定。 |
 | macOS | ≥ 26（将来） | `AppleContainerBackend` | 未実装（Component E、延期）。`NoopBackend` にフォールバック。 |
-| Linux | カーネル ≥ 5.13 かつ `sandbox-linux` extra インストール済み | `LandlockBackend` + seccomp-BPF | `pip install reyn[sandbox-linux]` が必要。Landlock は**どの ABI でも**外向きネットワークを制限しない — pin された `landlock` パッケージがネットワークルール API を一切公開していないため。`network: false` は別の機構が担保し、backend が一度だけ WARN を出す。 |
+| Linux | カーネル ≥ 5.13 かつ `sandbox-linux` extra インストール済み | `LandlockBackend` + seccomp-BPF | `pip install reyn[sandbox-linux]` が必要。Landlock は**どの ABI でも**外向きネットワークを制限しない — pin された `landlock` パッケージがネットワークルール API を一切公開していないため。`network: false` は Linux のネットワーク名前空間隔離（`backends/netns.isolate_network_namespace`、#3030）が担保する。これは Landlock/seccomp より前に適用され、`allow_subprocess` に依存しない。backend は Landlock 自身にネットワークルール API が無いことを一度だけ WARN で出す。 |
 | Linux | カーネル < 5.13 または `sandbox-linux` 未インストール | `NoopBackend` | 監査のみ、強制なし。 |
 | その他 | 任意 | `NoopBackend` | 監査のみ、強制なし。 |
 

@@ -106,20 +106,19 @@ def _apply_seccomp(policy: SandboxPolicy) -> None:
     which is why ``execve``/``execveat`` are baseline-allowed (denying them would
     kill the shim before it could exec the target at all, #2962).
 
-    ⚠ No-op when ``policy.allow_subprocess`` is True — and that is a live defect,
-    not merely #2962's open question (#3030). The rationale recorded here was
-    "the syscall-reduction layer exists to deny process creation, so an
-    explicitly subprocess-permitting policy has nothing for it to add". It is
-    measurably false: the filter carries TWO gates, and the other one is the
-    NETWORK gate (``_NETWORK_SYSCALLS`` are allowlisted only when
-    ``policy.network``). Skipping the whole filter drops it — measured on Linux
-    6.8, a real outbound connect+send SUCCEEDED under ``network=False,
-    allow_subprocess=True``, which is the stdio-MCP default.
-
-    Left as-is here deliberately: moving the gate from the filter onto the
-    allowlist contents puts every MCP server under a default-deny allowlist for
-    the first time, and that allowlist is a correctness surface (#2962's first
-    live load killed ``/bin/echo``). That is a design decision, and it is #3030.
+    ⚠ No-op when ``policy.allow_subprocess`` is True. #3030 measured this as a
+    live network-deny gap (the filter also carries the NETWORK gate —
+    ``_NETWORK_SYSCALLS`` are allowlisted only when ``policy.network`` — so
+    skipping the whole filter dropped it too, on the stdio-MCP default). That
+    gap is now closed by :func:`_apply_landlock`'s
+    ``isolate_network_namespace()`` step, which is NOT gated on
+    ``allow_subprocess`` and does not depend on this filter loading at all — a
+    namespace with no interfaces refuses network regardless of which syscall
+    (or io_uring opcode) asks. This filter's own network allowlist is
+    defense-in-depth on top of that boundary, not the boundary itself; whether
+    the FORK gate belongs on the whole filter or only on the allowlist contents
+    remains #2962's open, un-fixed design question — unrelated to network now
+    that netns is the network boundary.
     """
     if policy.allow_subprocess:
         return
@@ -127,18 +126,30 @@ def _apply_seccomp(policy: SandboxPolicy) -> None:
 
 
 def _apply_landlock(policy: SandboxPolicy) -> None:
-    """Restrict the CURRENT process under ``policy`` via Landlock, then seccomp.
+    """Restrict the CURRENT process under ``policy`` via netns, Landlock, then
+    seccomp.
 
-    Raises ``RuntimeError`` if Landlock is unavailable on this host — the shim
-    must never exec the target UNRESTRICTED (that would be a silent escape).
+    Raises ``RuntimeError`` if Landlock is unavailable on this host, or if
+    ``policy.network`` is False and network-namespace isolation cannot be
+    established — the shim must never exec the target UNRESTRICTED (that would
+    be a silent escape) or with network reachable when the policy denies it.
 
     The ruleset comes from ``LandlockBackend``'s ``build_ruleset``: ONE builder
     for both seams, so this shim cannot again call methods the pinned package
     does not have while the backend calls the real ones (#2980).
 
-    **The order of the three steps below is the security property**, and two of
-    the three orderings silently produce no enforcement at all:
+    **The order of the steps below is the security property**, and most of the
+    orderings silently produce no enforcement at all:
 
+    0. ``isolate_network_namespace()`` — when ``policy.network`` is False, move
+       this process into a fresh, interface-less network namespace BEFORE
+       anything else. This is the actual boundary for ``network: false``
+       (#3030): it does not depend on ``allow_subprocess``, and it is not a
+       syscall-name denylist (io_uring included), so nothing later in this
+       function can widen or narrow it. Netns entry does not depend on
+       Landlock or seccomp, but doing it first keeps its own (best-effort)
+       ``/proc/self/*`` writes reachable before Landlock closes off filesystem
+       access.
     1. ``preload_native_dependency()`` — resolve pyseccomp's native libraries
        while this process can still reach the filesystem. Its import shells out
        and writes a temp file; run it after step 2 and Landlock denies it, the
@@ -163,6 +174,11 @@ def _apply_landlock(policy: SandboxPolicy) -> None:
             f"(import_error={backend.import_error!r}); refusing to exec the "
             "target unrestricted. Run on Linux 5.13+ with the `landlock` package."
         )
+
+    if not policy.network:
+        from .backends.netns import isolate_network_namespace
+
+        isolate_network_namespace()  # raises RuntimeError -> fail-closed (#3030)
 
     ruleset = build_ruleset(policy, backend.abi_version or 0)
     if not policy.allow_subprocess:
