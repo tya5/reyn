@@ -29,6 +29,7 @@ import pytest
 
 from reyn.config import SandboxConfig
 from reyn.security.sandbox import NoopBackend, get_default_backend
+from reyn.security.sandbox.policy import SandboxPolicy
 from reyn.security.sandbox.self_test import (
     _reset_cache_for_tests,
     enforcement_self_test,
@@ -433,4 +434,80 @@ def test_subprocess_probe_cost_is_bounded():
     assert elapsed < 5.0, (
         f"the subprocess-enforcement probe took {elapsed:.2f}s at backend "
         f"resolution — expected the cost of a few short subprocess launches"
+    )
+
+
+class _WholesaleDead(NoopBackend):
+    """A backend that runs commands normally, EXCEPT under `allow_subprocess=False`,
+    where its wrap refuses everything — the #2962 shape, as a backend.
+
+    A Fake (a real object honouring the real Protocol, built from a real in-repo
+    backend), not a mock: the probe's own logic runs unmodified against it. Its
+    wrap is a real command that really does not run the target.
+    """
+
+    name = "wholesale-dead"
+
+    def wrap_command(self, argv, policy):
+        if policy.allow_subprocess:
+            return super().wrap_command(argv, policy)
+        # Refuses the target outright — the "my filter killed /bin/echo" shape.
+        return super().wrap_command(["/bin/sh", "-c", "exit 71"], policy)
+
+
+def test_a_backend_that_refuses_everything_is_not_reported_as_enforcing():
+    """Tier 2b: ★ the second control's own falsification — a backend whose deny
+    policy refuses EVERY command must be reported as unwitnessed, not as enforcing.
+
+    This is the test that binds the third arm of the probe. `_WholesaleDead`
+    leaves no marker under `allow_subprocess=False` — exactly like a backend that
+    denies `fork` and nothing else — so a probe that only ran a positive control
+    and the deny would call it ENFORCING and hand it to callers. That is #2962
+    restated: the first seccomp filter reyn ever loaded killed `/bin/echo`, and
+    the broadest possible breakage is indistinguishable from perfect enforcement
+    unless something checks that the deny policy can still run a command at all.
+
+    Strip the non-forking control from `probe_subprocess_enforcement` and this
+    test fails; the other tests in this file do not. That is what makes the arm
+    load-bearing rather than merely present.
+    """
+    backend = _WholesaleDead()
+
+    reason = probe_subprocess_enforcement(backend)
+
+    assert reason is not None, (
+        "probe_subprocess_enforcement() reported a backend that cannot run ANY "
+        "command under allow_subprocess=False as enforcing it. No marker appeared, "
+        "but nothing ran either — the probe read wholesale breakage as a deny, "
+        "which is precisely the confound the non-forking control exists to remove."
+    )
+    assert "NON-forking" in reason, (
+        f"The reason must tell the operator that the wrap failed wholesale rather "
+        f"than denying process creation specifically — the two want completely "
+        f"different fixes; got: {reason!r}"
+    )
+
+
+def test_wholesale_dead_backend_still_passes_the_first_control():
+    """Tier 2b: `_WholesaleDead` is a fair test of the SECOND control, not an
+    accident of the first.
+
+    If it failed the positive control (`allow_subprocess=True` + a forking
+    command), the test above would pass for the wrong reason — reporting
+    "unwitnessed" without the second arm ever being consulted. It runs commands
+    normally there, so the arm under test is the one that fires.
+    """
+    backend = _WholesaleDead()
+    policy_permits_spawning = True
+
+    # The same wrap the probe's first arm uses: under allow_subprocess=True this
+    # backend is an ordinary passthrough, so a spawn genuinely happens.
+    wrapped = backend.wrap_command(
+        ["/bin/sh", "-c", "exit 0"],
+        SandboxPolicy(allow_subprocess=policy_permits_spawning),
+    )
+    assert wrapped.argv == ["/bin/sh", "-c", "exit 0"], (
+        f"_WholesaleDead must pass commands through untouched when the policy "
+        f"permits spawning, or it is not isolating the second control; got: "
+        f"{wrapped.argv!r}"
     )
