@@ -384,11 +384,51 @@ async def _handle_mcp_install_local(
         project_root = Path(workspace.root)
     config_path = _scope_to_path("local", project_root)
 
-    decl = PermissionDecl()
-    decl.file_write = [{"path": ".reyn/config/mcp.yaml"}]
-    resolver = getattr(rs, "permission_resolver", None) if rs is not None else None
+    # The OpContext is built HERE — before the gate — because the gate needs the
+    # operator's real PermissionDecl + the intervention bus off it. It used to be
+    # constructed further down (for the hot-reload probe only), which is why the
+    # gate below had nothing real to gate WITH.
+    _op_ctx = (
+        rs.op_context_factory()
+        if rs is not None and getattr(rs, "op_context_factory", None) is not None
+        else None
+    )
+
+    # ``.reyn/config/`` is a RECOVERY-CORE write-gate prefix (#2248 PR-C):
+    # deliberately carved OUT of the broad ``.reyn/`` default write zone, so a
+    # write here must be explicitly declared + gated, never silently allowed.
+    # This verb writes ``.reyn/config/mcp.yaml`` directly (bypassing the
+    # mcp_install op), so it must carry that gate itself.
+    #
+    # Three things were wrong and are fixed together, because fixing any one
+    # alone either leaves the hole open or breaks the verb:
+    #
+    # 1. The resolver was read as ``getattr(rs, "permission_resolver", None)`` —
+    #    a field ``RouterCallerState`` has NEVER declared. ``getattr``'s default
+    #    swallowed the miss, so the gate never fired in ANY context. The resolver
+    #    lives on the ToolContext (populated at all three production sites in
+    #    router_loop.py), so that is where it is read from now.
+    # 2. ``decl`` was a bare ``PermissionDecl()`` synthesized here. Gating against
+    #    a decl this function invented is self-granting: it must be the operator's
+    #    real declaration, which is what the OpContext carries.
+    # 3. No ``bus`` was passed, so an ungranted write would hard-deny
+    #    non-interactively — reviving (1)+(2) alone would make every install fail.
+    #    Threading the bus is what turns this into the operator DECISION the
+    #    inert-ship design (#2932 / proposal 0063 R3) intends: in chat the
+    #    operator is prompted; non-interactive callers (bus=None) still deny.
+    resolver = ctx.permission_resolver
     if resolver is not None:
-        await resolver.require_file_write(decl, str(config_path), "mcp__install_local")
+        decl = getattr(_op_ctx, "permission_decl", None)
+        if decl is None:
+            decl = PermissionDecl()
+            decl.file_write = [{"path": ".reyn/config/mcp.yaml"}]
+        await resolver.require_file_write(
+            decl,
+            str(config_path),
+            "mcp__install_local",
+            sandbox_policy=getattr(_op_ctx, "sandbox_policy", None),
+            bus=getattr(_op_ctx, "intervention_bus", None),
+        )
 
     entry: dict[str, Any] = {
         "type": "stdio",
@@ -411,15 +451,11 @@ async def _handle_mcp_install_local(
     # overwrite or no per-session reloader keeps the existing deferred behavior. The
     # per-session reloader (ctx.hot_reloader, #2761 PR-2) is reached via the router's
     # op-context factory (the single tool→op ctx source); absent (test / CLI) → deferred.
+    # ``_op_ctx`` is built once, above the permission gate (which needs it too).
     from reyn.core.cancellable import Cancelled
     from reyn.core.op_runtime.mcp_install import probe_mcp_server
     from reyn.runtime.hot_reload import dispatch_install_reload, is_pure_addition
 
-    _op_ctx = (
-        rs.op_context_factory()
-        if rs is not None and getattr(rs, "op_context_factory", None) is not None
-        else None
-    )
     _reloader = getattr(_op_ctx, "hot_reloader", None) if _op_ctx is not None else None
     _is_addition = is_pure_addition(name, servers)
     if _is_addition and _reloader is not None:
@@ -467,9 +503,41 @@ async def _handle_mcp_install_local(
     servers[name] = entry
     _write_yaml_config(config_path, data)
 
+    # #2259 PR-1: record the FULL post-state as a truncation-surviving config
+    # generation — the same call the mcp_install op makes after its own write.
+    # Without it this verb's server was SILENTLY ERASED by config reconstruction:
+    # ``_reconcile_config_as_of_cut`` restores every generation-tracked registry
+    # from its LATEST generation, and once ANY generation exists for
+    # ``config/mcp.yaml`` (i.e. after any op-path install), a rewind / crash
+    # recovery rewrote the file from that generation — dropping every server this
+    # verb had added, because it recorded none. ``.reyn/config/`` is recovery-core
+    # precisely because it is reconstructed; a writer there must contribute its
+    # generation or its writes are recovery-invisible.
+    from reyn.core.events.config_recovery import record_config_generation
+    await record_config_generation(
+        getattr(ctx, "state_log", None), config_path, data,
+    )
+
     await dispatch_install_reload(
         _reloader, source="mcp__install_local", is_addition=_is_addition,
     )
+
+    # P6 audit-event. The op path has always emitted ``mcp_server_installed``;
+    # this verb emitted NOTHING on success, so an LLM-initiated install left no
+    # audit trace at all — the operator could not see that a server had been
+    # added to their config. Same event name so both install paths land in one
+    # auditable stream.
+    if ctx.events is not None:
+        ctx.events.emit(
+            "mcp_server_installed",
+            server_id=name,
+            server_name=name,
+            scope="local",
+            runtime="stdio",
+            env_keys_set=sorted(entry.get("env", {})),
+            installed_path=str(config_path),
+            source="mcp__install_local",
+        )
 
     return {
         "status": "ok",
