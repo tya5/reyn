@@ -180,9 +180,20 @@ class RouterHistoryBuffer:
 
     # ── Internal helpers ─────────────────────────────────────────────────────
 
-    def _latest_summary(self) -> Any | None:
-        """Return the most recent summary message, or None."""
-        for m in reversed(self._history_fn()):
+    def _latest_summary(self, history: "list | None" = None) -> Any | None:
+        """Return the most recent summary message, or None.
+
+        ``history`` — the already-materialised history to search. #2939: callers
+        that have ALREADY called ``self._history_fn()`` must pass it, because
+        ``_history_fn`` is not a cheap accessor: in production it is
+        ``Session._active_branch_history``, a recomputed rewind-aware view over
+        the whole conversation. Re-invoking it here made one ``build_history``
+        produce the view 2x (3x on the elide path, which calls this again) —
+        multiplying the most expensive thing on the turn's hot path by 2-3.
+        Omit it only where no history has been fetched yet (the fn is then
+        invoked once, as before).
+        """
+        for m in reversed(self._history_fn() if history is None else history):
             if m.role == "summary":
                 return m
         return None
@@ -313,7 +324,7 @@ class RouterHistoryBuffer:
         # consolidations only (the dedicated `consolidation` field) — normal
         # compaction summaries fall through to the unchanged head/tail+bridge
         # path below, so normal chat stays byte-identical.
-        _fc_summary = self._latest_summary()
+        _fc_summary = self._latest_summary(history)
         if _fc_summary is not None and _is_force_close_consolidation(_fc_summary):
             from reyn.runtime.chat_message import ChatMessage
             _idx = next(
@@ -354,7 +365,7 @@ class RouterHistoryBuffer:
             # Overlap guard: dedupe by identity so no turn appears twice.
             head_ids = {id(t) for t in head}
             tail_deduped = [t for t in tail if id(t) not in head_ids]
-            summary = self._latest_summary()
+            summary = self._latest_summary(history)
             if summary:
                 summary_text = (
                     summary.content if isinstance(summary.content, str)
@@ -432,7 +443,7 @@ class RouterHistoryBuffer:
                 if id(t) not in head_id_set and id(t) not in tail_id_set
             ]
 
-        summary_msg = self._latest_summary()
+        summary_msg = self._latest_summary(history)
         summary_dict: dict | None = None
         if summary_msg is not None:
             structured = (summary_msg.meta or {}).get("structured")

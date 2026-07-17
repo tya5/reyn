@@ -6752,20 +6752,25 @@ class Session:
         dropdown (status bar reads only public accessors, see
         interfaces/inline/app.py's module docstring).
 
-        Non-trivial cost — callers must not invoke this from a per-render-frame
-        path. #2951 added an incremental cache to the advisor's OWN
-        json.dumps + token-estimate of the router-view history, so that step is
-        no longer paid on every call (only on a cache miss: history shrink,
-        model/use_chars4 change, or a changed cached prefix). The remaining —
-        and dominant — cost is the PRODUCER: ``history_fn`` is
-        ``RouterHistoryBuffer.build_history``, which calls
-        ``_active_branch_history`` 2x (3x on the elide path: ``build_history``
-        itself plus each ``_latest_summary``), and each of those does one full
-        ``build_active_predicate`` WAL scan (json-decoding every line, no
-        cache). So this is O(WAL size) per call, NOT O(1) on a cache hit.
-        Measured (#2940, N=2000 msgs / M=100k WAL entries, warm token cache):
-        ~445ms per call, of which build_history is ~99.7%; the #2951 cache
-        saves ~10ms of it. The residual WAL scan is #2939's scope."""
+        Cost is proportional to the CONVERSATION, not to the WAL. Three layers
+        got it there, and each is load-bearing: #2951 caches the advisor's own
+        json.dumps + token-estimate of the router-view history (re-paid only on
+        a miss — history shrink, model/use_chars4 change, changed cached
+        prefix); #2939 made ``build_history`` materialise its producer
+        (``_active_branch_history``) ONCE instead of 2x (3x on the elide path,
+        via each ``_latest_summary``); and #2939 made that producer's
+        ``build_active_predicate`` derivation incremental, so it decodes only
+        WAL entries appended since the previous turn rather than re-scanning
+        every line. Measured (N=2000 msgs, warm token cache, Darwin/arm64):
+        ~2.5ms per call, flat from M=5k to M=100k WAL entries — where before
+        #2939 the same open cost ~20ms at M=5k rising to ~341ms at M=100k
+        (#2940 measured ~445ms at M=100k on the same shape, ~99.7% of it in
+        that scan).
+
+        Still not free, and still not a per-render-frame call: it walks and
+        serialises the whole conversation, so it scales with history length
+        (N). The ctx chip's own denominator should use ``raw_context_window``
+        below, which is O(1)."""
         return self._budget_advisor.context_window_status()
 
     def raw_context_window(self) -> dict:

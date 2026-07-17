@@ -71,13 +71,21 @@ def compute_retention_floor(
     abandoned interval touches the retained window has ``R >= floor`` and is kept.
     This argument is correct for runtime-state reconstruction (WAL replay uses
     only seqs >= floor), but ``history.jsonl`` is append-only and never
-    floor-truncated: ``_active_branch_history`` calls ``is_active_seq`` with
-    ``wal_seq`` anchors from ``history.jsonl`` that may be below the floor
-    (abandoned-branch turns). Dropping a rewind record below the floor therefore
-    lets abandoned conversation turns reappear in the LLM context. Fix: callers
-    of ``truncate_below`` pass ``always_keep_kinds=frozenset({REWIND_KIND})``
+    floor-truncated: ``_active_branch_history`` tests the branch model
+    (``build_active_predicate``) against ``wal_seq`` anchors from
+    ``history.jsonl`` that may be below the floor (abandoned-branch turns).
+    Dropping a rewind record below the floor therefore lets abandoned
+    conversation turns reappear in the LLM context. Fix: callers of
+    ``truncate_below`` pass ``always_keep_kinds=frozenset({REWIND_KIND})``
     (``snapshot_generations.REWIND_KIND``) so reset-records survive truncation
     regardless of the floor.
+
+    Note that this protection is what makes the record survive; it is NOT what
+    makes the branch model notice. The model's rewind-record index is
+    incremental (#2939), so it re-reads the WAL only as it grows — a rewrite is
+    caught by file identity and forces a rebuild. Truncation and the index are
+    therefore independent: keeping a record here keeps its abandoned interval,
+    and dropping one drops it, either way from the file that now exists.
     """
     if policy.is_live or policy.keep_generations is None:
         return live_floor
