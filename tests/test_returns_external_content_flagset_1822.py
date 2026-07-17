@@ -37,6 +37,15 @@ _EXTERNAL = {
     # every later call, when a scan-rule update may have changed the verdict.
     # Same rationale as list_mcp_tools' server-authored descriptions.
     "skill_list",
+    # #3026: pipeline descriptions are operator- or third-party-authored —
+    # pipeline_management__install_source registers them straight out of a fetched
+    # git repo, exactly as skill_install_source does. pipeline_list re-surfaces
+    # them on every later call. Same rationale as skill_list directly above.
+    "pipeline_list",
+    # #3026: a corpus description is set via the agent-callable index_update's
+    # ``description`` parameter, so it is agent-written text that list_rag_sources
+    # re-surfaces later. Same rationale as list_memory ("user/agent-written").
+    "list_rag_sources",
 }
 
 # Not fenced (returns_external_content=False): each justified below. Scan-all

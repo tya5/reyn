@@ -3,15 +3,21 @@
 Each function maps (entry_name, args) → dict for a specific action category.
 They are pure transformations with no side effects — the routing table in
 universal_dispatch maps action names to these helpers at dispatch time.
+
+#3026 deleted the ``_semantic_search_single_source_args`` / ``_mcp_tool_args``
+(and ``_read_memory_body_args`` / ``_pipeline_run_args``) shapers along with the
+resource categories they served, so their cases are removed here rather than
+rewritten: the behaviour they pinned — currying a resource id out of the
+qualified name — is exactly what #3026 removed. The equivalent capability is now
+an ordinary argument on a verb, covered by
+``tests/test_resource_collapse_invariant_3026.py``.
 """
 from __future__ import annotations
 
 from reyn.tools.universal_dispatch import (
-    _mcp_tool_args,
     _multi_agent_delegate_args,
     _multi_agent_list_peers_args,
     _passthrough_args,
-    _semantic_search_single_source_args,
 )
 
 # ── _multi_agent_list_peers_args ──────────────────────────────────────────────
@@ -54,51 +60,6 @@ def test_multi_agent_delegate_args_other_keys_pass_through() -> None:
     """Tier 2: keys other than 'message' are carried to the output unchanged."""
     result = _multi_agent_delegate_args("delegate", {"to": "a", "request": "r", "extra": 1})
     assert result["extra"] == 1
-
-
-# ── _recall_single_source_args ────────────────────────────────────────────────
-
-
-def test_recall_single_source_args_includes_source_from_entry_name() -> None:
-    """Tier 2: the entry_name is wrapped as sources=[entry_name]."""
-    result = _semantic_search_single_source_args("corpus_a", {"query": "test"})
-    assert result["sources"] == ["corpus_a"]
-
-
-def test_recall_single_source_args_passes_query_and_top_k() -> None:
-    """Tier 2: query and top_k from args are forwarded."""
-    result = _semantic_search_single_source_args("corpus_a", {"query": "find x", "top_k": 5})
-    assert result["query"] == "find x"
-    assert result["top_k"] == 5
-
-
-def test_recall_single_source_args_omits_optional_fields_when_absent() -> None:
-    """Tier 2: missing query/top_k are not included in the result dict."""
-    result = _semantic_search_single_source_args("corpus_b", {})
-    assert "query" not in result
-    assert "top_k" not in result
-    assert result["sources"] == ["corpus_b"]
-
-
-# ── _mcp_tool_args ────────────────────────────────────────────────────────────
-
-
-def test_mcp_tool_args_wraps_entry_name_as_tool() -> None:
-    """Tier 2: entry_name is placed under 'tool'."""
-    result = _mcp_tool_args("server__my_tool", {"param": "value"})
-    assert result["tool"] == "server__my_tool"
-
-
-def test_mcp_tool_args_wraps_args_as_tool_args() -> None:
-    """Tier 2: the args dict is placed under 'tool_args'."""
-    result = _mcp_tool_args("server__my_tool", {"x": 1, "y": 2})
-    assert result["tool_args"] == {"x": 1, "y": 2}
-
-
-def test_mcp_tool_args_empty_args_gives_empty_tool_args() -> None:
-    """Tier 2: empty args → tool_args is an empty dict."""
-    result = _mcp_tool_args("server__tool", {})
-    assert result["tool_args"] == {}
 
 
 # ── _passthrough_args ─────────────────────────────────────────────────────────

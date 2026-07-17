@@ -80,17 +80,22 @@ One indexing run covers one source, one path, one chunking approach. To index mu
 semantic_search(query="...", sources=["python_src", "my_docs", "memory"], top_k=5)
 ```
 
-Source metadata is persisted in `.reyn/index/sources.yaml`. Once indexed, a source appears automatically in the LLM's context on every chat turn:
+Source metadata is persisted in `.reyn/index/sources.yaml`. The LLM discovers what
+is indexed by calling `list_rag_sources`, which returns each source's name,
+description, and chunk count:
 
 ```
-## Indexed sources (3 available)
-
-- **memory** — User notes / past session memos (142 chunks)
-- **reyn_code** — Reyn Python framework code (1247 chunks)
-- **my_docs** — Project documentation (89 chunks)
-
-Use the `semantic_search` tool with `sources=[<name>, ...]` to search.
+list_rag_sources()
+→ {"sources": [
+    {"name": "memory",    "description": "User notes / past session memos", "chunk_count": 142},
+    {"name": "reyn_code", "description": "Reyn Python framework code",      "chunk_count": 1247},
+    {"name": "my_docs",   "description": "Project documentation",           "chunk_count": 89}
+  ]}
 ```
+
+Those names are what `semantic_search`'s `sources` argument takes. Discovery is a
+tool call rather than a standing block in the system prompt, so an operator with
+many corpora pays for the list only on the turns the model actually asks.
 
 ## The `semantic_search` tool
 

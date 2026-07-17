@@ -3,15 +3,47 @@
 This module defines the 4 universal wrapper ToolDefinitions
 (``list_actions`` / ``search_actions`` / ``describe_action`` /
 ``invoke_action``) plus the qualified-name parser/builder and the
-canonical 13-category enum that FP-0034 establishes.
+canonical category enum that FP-0034 establishes.
 
 Per FP-0034 §D1, the universal catalog replaces the per-category
 discover ops (= ``list_mcp_tools`` / ``list_memory``
-etc.) with 4 wrappers that cover all 13 categories uniformly. Per
+etc.) with 4 wrappers that cover every category uniformly. Per
 §D18, qualified names use ``<category>__<entry_name>`` format with
-``__`` (double underscore) as the separator. Inside ``entry_name``
-arbitrary characters (including ``.``) are allowed, so MCP tools
-like ``mcp.tool__brave.search`` round-trip correctly.
+``__`` (double underscore) as the separator.
+
+**#3026 — the enumerated action set is a constant.** Every category here
+enumerates a FIXED set of verbs. No category mints an action from operator
+data, so the number of tools the LLM is sent does not depend on how many
+memories, corpora, MCP tools or pipelines the operator has accumulated. This
+is the invariant this module exists to hold: every name it emits comes from
+``universal_dispatch._OPERATION_RULES``, a closed table of full literal names.
+
+``universal_dispatch._RESOURCE_RULES`` still RESOLVES author-time resource
+names (``pipeline__<name>``, ``tool: mcp__echo__ping`` in a pipeline DSL) —
+that table is deliberately NOT read here. Resolving a name the caller already
+typed costs zero tools; enumerating one costs a tool per resource. Keep the
+two apart: reading ``_RESOURCE_RULES`` from an enumerator is precisely the
+#1647 regression.
+
+The four collapses that got here — #879 (mcp.server/mcp.tool), #909
+(agent.peer), and #3026 (memory_entry, rag_corpus, plus the dynamic
+``mcp__<server>__<tool>`` and ``pipeline__<name>`` entries) — all applied one
+rule: a resource is an ARGUMENT to a verb, never a tool of its own. Where
+collapsing removed the only surface that NAMED a resource, #3026 added a
+constant-count discovery verb rather than accepting the loss
+(``rag_operation__list_sources``, ``pipeline__list``, and the
+``memory_operation__list`` / ``__read`` routes).
+
+**#879 → #1647 is the cautionary tale.** #879 collapsed the mcp resource
+categories; #1647 re-added a per-tool action for every MCP tool, citing (a)
+``call_mcp_tool``'s double-``args`` foot-gun — which #1646 had fixed two days
+earlier by renaming the inner param to ``tool_args`` — and (b) the need to
+show each tool's real ``inputSchema``, which #879 had ALREADY solved by
+shipping ``inputSchema`` verbatim in ``list_mcp_tools``' result, explicitly
+so no ``describe_mcp_tool`` round-trip is needed (see the docstring in
+``tools/mcp.py``). Its design note says it mirrors ``skill__<name>`` — a
+category that has never existed. Before re-introducing per-resource actions,
+check whether the motivating gap is still open: twice now it was not.
 
 PR-1 (landed): type surface only — 4 ToolDefinitions with stub
 handlers, qualified-name parse / build / validate, 13-category enum,
@@ -75,16 +107,24 @@ CATEGORIES: Final[tuple[str, ...]] = (
     "mcp",
     "file",
     "web",
-    "memory_entry",
+    # #3026: ``memory_entry`` / ``rag_corpus`` removed. They were RESOURCE
+    # categories — one action per stored memory / indexed corpus — so the LLM's
+    # tools= payload scaled with what the operator had accumulated. Their verb
+    # counterparts below now carry the resource id as an ARGUMENT
+    # (memory_operation__read{layer,slug} / rag_operation__list_sources +
+    # __semantic_search{sources}). Same shape rationale as the #879 mcp collapse
+    # and the #909 agent.peer collapse.
     "memory_operation",
     "reyn_repo",
-    "rag_corpus",
     "rag_operation",
     "exec",
     "task",  # #1953 dynamic-wire: task.* control-IR ops as invoke_action targets
-    # #2548 PR-C: skill management ops (install, future: list, drop). NOT the
-    # ``skill__`` resource category (per-skill dynamic dispatch); this is the
-    # management plane — mirrors the ``mcp`` category pattern.
+    # #2548 PR-C: skill management ops (install / list). Skills are the
+    # already-correct shape and always were: there is no ``skill__`` resource
+    # category — despite what several comments in this repo used to claim, and
+    # what #1647 said it was mirroring — so skills have never added a tool per
+    # skill. #2971 added the ``skill_management__list`` DISCOVERY verb, which is
+    # the same move #3026 makes for corpora and pipelines.
     "skill_management",
     # IS-1/IS-2/IS-4 (docs/proposals/reyn-pipeline-v0.9-design-resolutions.md
     # R6): pipeline launch verbs. ``pipeline__run`` = run_pipeline (sync,
@@ -94,9 +134,10 @@ CATEGORIES: Final[tuple[str, ...]] = (
     # ad-hoc INLINE launches of an agent-GENERATED DSL definition, gated by a
     # static-analysis pass before spawn.
     "pipeline",
-    # pipeline management ops (install_local / install_source). NOT the
-    # ``pipeline__`` resource category (per-registered-pipeline dynamic
-    # dispatch); this is the management plane — mirrors ``skill_management``.
+    # pipeline management ops (install_local / install_source) — the management
+    # plane, mirroring ``skill_management``. (#3026 removed the per-registered-
+    # pipeline ``pipeline__<name>`` dynamic actions; ``pipeline`` is now launch
+    # verbs + ``pipeline__list`` only.)
     "pipeline_management",
     # proposal 0060 Phase 1 Layer A (A8): presentation management ops (install).
     # Single verb (no source/git-fetch counterpart — a blueprint is inline
@@ -125,9 +166,9 @@ def split_qualified_name(qualified_name: str) -> tuple[str, str]:
     further ``__`` sequences (which stay inside the entry portion).
 
     Examples:
-        ``mcp.tool__brave.search``   → ("mcp.tool", "brave.search")
-        ``mcp.operation__drop_server`` → ("mcp.operation", "drop_server")
-        ``rag_corpus__meetings``     → ("rag_corpus", "meetings")
+        ``mcp__call_tool``            → ("mcp", "call_tool")
+        ``rag_operation__list_sources`` → ("rag_operation", "list_sources")
+        ``memory_operation__read``    → ("memory_operation", "read")
 
     Raises:
         ValueError: when the input has no ``__`` separator, the category
@@ -448,14 +489,12 @@ def _missing_action_name_error() -> dict[str, Any]:
 def _enumerate_static_category(category: str) -> list[dict[str, str]]:
     """Enumerate qualified names for a STATIC operation category.
 
-    Static categories (file / web / memory_operation / reyn_repo /
-    rag_operation) have known qualified names declared in
-    universal_dispatch._OPERATION_RULES. Their short_description comes
-    from the target ToolDefinition in the registry.
-
-    Resource categories (agent.peer / mcp.{server,tool} /
-    memory_entry / rag_corpus) are NOT handled here — they need caller
-    state (= ctx.router_state.available_*). See _enumerate_category.
+    #3026: EVERY category is a static operation category now — all qualified
+    names are declared in ``universal_dispatch._OPERATION_RULES``, and each
+    entry's short_description comes from its target ToolDefinition in the
+    registry. The former resource categories, which minted names from caller
+    state (``ctx.router_state.available_*``) and so scaled the payload with the
+    operator's data, are collapsed into verbs.
     """
     # Lazy imports to avoid circular dependency (universal_dispatch imports
     # CATEGORIES + split_qualified_name from THIS module).
@@ -484,66 +523,24 @@ def _enumerate_static_category(category: str) -> list[dict[str, str]]:
     return out
 
 
-def _mcp_tool_qualified_name(server: str, tool: str) -> str:
-    """The first-class per-tool action name (#1647): ``mcp__<server>__<tool>``.
-
-    Single-sourced so enumeration + describe + the dispatch split all agree on
-    the ``<server>__<tool>`` identifier form (double-underscore boundary, the
-    same form ``mcp_call_tool`` splits on)."""
-    return build_qualified_name("mcp", f"{server}__{tool}")
-
-
-def _enumerate_mcp_tools(rs: Any) -> list[dict[str, str]]:
-    """Per-tool MCP actions ``mcp__<server>__<tool>`` from the cached snapshot.
-
-    #1647: reads ``rs.mcp_servers`` — shape ``[{name, description,
-    tools?: [{name, description, inputSchema}]}]`` — which RouterLoop fills from
-    the FP-0037 per-session ``_mcp_tools_cache`` (probed once on the first turn,
-    disk-warm-started). No live probe here: enumeration is a pure read of the
-    cached snapshot, so list_actions / hot-list / retrieval do not re-fetch
-    (FP-0034 caching req). ``tools`` is absent until the cache is warm → graceful
-    empty. Each cached tool ``name`` is the BARE server-side tool name; the
-    qualified action is ``mcp__<server>__<tool>``."""
-    if rs is None:
-        return []
-    servers = getattr(rs, "mcp_servers", None) or []
-    out: list[dict[str, str]] = []
-    for server in servers:
-        if not isinstance(server, Mapping):
-            continue
-        sname = server.get("name")
-        tools = server.get("tools")
-        if not sname or not tools:
-            continue
-        for t in tools:
-            if not isinstance(t, Mapping):
-                continue
-            tname = t.get("name")
-            if not tname:
-                continue
-            out.append({
-                "qualified_name": _mcp_tool_qualified_name(str(sname), str(tname)),
-                "short_description": _truncate_short_description(
-                    t.get("description", ""),
-                ),
-            })
-    return out
-
-
 def _enumerate_category(category: str, ctx: ToolContext) -> list[dict[str, str]]:
-    """Enumerate qualified names for ``category`` consulting caller state.
+    """Enumerate the qualified names ``category`` offers this session.
 
-    Dispatch by category kind:
-      - Static operation categories (file / web / memory_operation /
-        reyn_repo / rag_operation / mcp.operation) →
-        _enumerate_static_category (= populated via universal_dispatch's
-        ``_OPERATION_RULES`` table)
-      - Resource categories → consult ctx.router_state (
-        agents / mcp_servers / mcp_servers[*].tools / list_memory_fn /
-        available_rag_sources)
-      - Categories without state-binding yet (exec) →
-        empty list (Phase 2 will populate via sandbox-backed exec
-        enumeration once the introspection API lands)
+    EVERY category resolves to a fixed verb set read out of
+    ``universal_dispatch._OPERATION_RULES`` via ``_enumerate_static_category``.
+    There is no per-category branch that mints a name from operator data, and
+    ``_RESOURCE_RULES`` is deliberately NOT read here (#3026) — that table
+    exists so an author-time name a human already typed still RESOLVES, which
+    costs no tools; enumerating one costs a tool per resource. This function is
+    where the payload invariant lives, so keep it that way: the number of names
+    returned must not depend on how many memories / corpora / MCP tools /
+    pipelines the operator has accumulated.
+
+    ``ctx.router_state`` is consulted, but only ever to decide whether a FIXED
+    verb is AVAILABLE this session — never to invent one:
+      - ``excluded_categories`` (#1667) — the caller drops a whole category.
+      - ``sandbox_backend`` (D14-ext) — ``exec`` enumerates its single verb only
+        when a real backend is configured, and nothing otherwise.
 
     The output items each carry ``qualified_name`` (= what
     invoke_action / describe_action expects) and ``short_description``
@@ -593,83 +590,27 @@ def _enumerate_category(category: str, ctx: ToolContext) -> list[dict[str, str]]
     ):
         return _enumerate_static_category(category)
 
-    # #1647: the ``mcp`` category carries BOTH the static management verbs
-    # (mcp__call_tool / mcp__list_tools / mcp__install_* / …) AND first-class
-    # per-tool actions ``mcp__<server>__<tool>`` for every tool on a connected
-    # server (from the FP-0037 cached snapshot on router_state). The per-tool
-    # actions make each MCP tool selectable by name with its real inputSchema,
-    # superseding the generic call_mcp_tool double-args foot-gun (#1646).
+    # #3026: the ``mcp`` category is its static verbs and nothing else. #1647
+    # additionally emitted one ``mcp__<server>__<tool>`` action per tool on every
+    # connected server, so the payload scaled with the operator's MCP surface.
+    # Its own commit called that layer "purely a catalog/args ergonomics layer
+    # over call_mcp_tool" — zero capability of its own. See the module docstring
+    # for why the ergonomics argument no longer holds either.
     if category == "mcp":
-        items = list(_enumerate_static_category("mcp"))
-        items.extend(_enumerate_mcp_tools(rs))
-        return items
-
-    if category == "rag_corpus":
-        # FP-0034 Phase 2 prep: enumerate indexed RAG corpora from the
-        # router caller state snapshot.  RouterLoop populates this from
-        # ``SourceManifest.get_all()`` once per loop iteration; the
-        # handler reads it without a fresh manifest round-trip.
-        if rs is None or not rs.available_rag_sources:
-            return []
-        return [
-            {
-                "qualified_name": build_qualified_name("rag_corpus", c["name"]),
-                "short_description": _truncate_short_description(
-                    c.get("description", ""),
-                ),
-            }
-            for c in rs.available_rag_sources
-            if isinstance(c, Mapping) and "name" in c
-        ]
-
-    if category == "memory_entry":
-        if rs is None or rs.list_memory_fn is None:
-            return []
-        try:
-            entries = rs.list_memory_fn("") or []
-        except Exception:
-            return []
-        out2: list[dict[str, str]] = []
-        for entry in entries:
-            if not isinstance(entry, Mapping):
-                continue
-            name = entry.get("name")
-            if not name:
-                continue
-            out2.append({
-                "qualified_name": build_qualified_name("memory_entry", name),
-                "short_description": _truncate_short_description(
-                    entry.get("description", ""),
-                ),
-            })
-        return out2
+        return _enumerate_static_category("mcp")
 
     if category == "pipeline":
-        # #2589: HYBRID enumeration — mirrors the ``mcp`` category above.
-        # Static launch verbs (pipeline__run / _async / _inline / _inline_async)
-        # are in ``_OPERATION_RULES`` (universal_dispatch.py), floored under
-        # "pipeline-run" (capability_profile.py), and classified — but were
-        # NEVER enumerated, so a default enumerate-all agent could dispatch
-        # them (invoke_action) yet never discover them (list_actions never
-        # surfaced them). Enumerate the static verbs FIRST, then extend with
-        # the IS-5 dynamic per-registered-pipeline ``pipeline__<name>``
-        # entries (D19 resource invoke, ``universal_dispatch._RESOURCE_
-        # RULES["pipeline"]`` curries ``name`` and forwards ``input`` to
-        # ``run_pipeline`` — same pattern as ``rag_corpus__<name>`` currying
-        # ``sources`` into ``semantic_search``). None registry (narrow test hosts / a
-        # host that doesn't support run_pipeline) → static verbs only.
-        items = list(_enumerate_static_category("pipeline"))
-        pipeline_registry = getattr(rs, "pipeline_registry", None) if rs is not None else None
-        if pipeline_registry is None:
-            return items
-        items.extend(
-            {
-                "qualified_name": build_qualified_name("pipeline", name),
-                "short_description": _truncate_short_description(description),
-            }
-            for name, description in pipeline_registry.entries()
-        )
-        return items
+        # #2589: the static launch verbs (pipeline__run / _async / _inline /
+        # _inline_async) live in ``_OPERATION_RULES`` but were never enumerated,
+        # so a default enumerate-all agent could dispatch them yet never
+        # discover them. #3026: this is now the WHOLE of the category — the IS-5
+        # per-registered-pipeline ``pipeline__<name>`` entries are gone, because
+        # one action per registered pipeline made the payload scale with the
+        # operator's pipelines. They cost no capability to remove (each merely
+        # curried ``name`` into the ``pipeline__run`` this list already carries);
+        # the one thing they did uniquely — NAMING the registered pipelines — is
+        # now ``pipeline__list``, a single fixed verb.
+        return _enumerate_static_category("pipeline")
 
     # exec category — sandboxed_exec (FP-0017).
     # Visible only when a real sandbox backend is configured (D14-ext).
@@ -715,6 +656,11 @@ _LEGACY_CATEGORY_REDIRECTS: Final[dict[str, str]] = {
     # operation category (= multi_agent__list_peers / __describe_peer /
     # __delegate).
     "agent.peer": "multi_agent",
+    # #3026 — the last two resource categories collapsed into their verb
+    # counterparts. A model whose catalog snapshot pre-dates the collapse asks
+    # for these by name; the redirect lets it self-correct in one turn.
+    "memory_entry": "memory_operation",
+    "rag_corpus": "rag_operation",
 }
 
 
@@ -1038,10 +984,16 @@ def _describe_one(
     describe_action metadata block and the B41 post-call directive stay in
     ``describe_action`` and are not carried into ``list_actions`` items.
 
-    Per-resource description/schema (``_resource_description`` /
-    ``_resource_input_schema``) win over the dispatcher target's generic
-    fields; the target ``.description`` / ``.parameters`` are the fallback for
-    operation-category actions (file__edit, exec__sandboxed_exec, …).
+    #3026: every action's description + schema is now simply its target
+    ToolDefinition's, because every action IS a verb whose target is the action.
+    The former per-resource override pair (``_resource_description`` /
+    ``_resource_input_schema``) existed to paper over resource actions whose
+    target was a generic dispatcher — ``rag_corpus__<name>`` showing
+    ``semantic_search``'s schema minus the curried ``sources``, and so on. With
+    the resource categories collapsed there is no such action left, so the
+    override seam is gone rather than kept as an unused hook. ``ctx`` stays in
+    the signature: it is what ``list_actions`` / ``catalog_entries`` already
+    thread, and removing it would churn both call sites for nothing.
     """
     from reyn.tools.universal_dispatch import (
         UnknownActionError,
@@ -1056,17 +1008,10 @@ def _describe_one(
     if target is None:
         return None
 
-    resource_schema = _resource_input_schema(qualified_name, ctx, registry)
-    input_schema = (
-        resource_schema if resource_schema is not None
-        else dict(target.parameters)
-    )
-    resource_desc = _resource_description(qualified_name, ctx, registry)
-    description = (
-        resource_desc if resource_desc is not None
-        else target.description
-    )
-    return {"description": description, "input_schema": input_schema}
+    return {
+        "description": target.description,
+        "input_schema": dict(target.parameters),
+    }
 
 
 def catalog_entries(ctx: ToolContext) -> list[dict[str, Any]]:
@@ -1090,9 +1035,13 @@ def catalog_entries(ctx: ToolContext) -> list[dict[str, Any]]:
     no-arg signature) rather than ``None``.
 
     Deterministic ``name`` sort (stable ``tools=`` ordering → replay-fixture
-    stability). **Pass a ``ToolContext`` with ``router_state`` populated** or the
-    resource categories (agents / mcp_servers / …) enumerate empty and
-    only static categories survive (the "usable this session" semantics).
+    stability). **Pass a ``ToolContext`` with ``router_state`` populated**: no
+    category needs it to produce names any more (#3026), but it still gates
+    AVAILABILITY — ``excluded_categories`` and ``exec``'s sandbox backend — so a
+    None ``router_state`` yields a superset-shaped list that is not the "usable
+    this session" set. Note the count does NOT depend on how much the operator
+    has accumulated; that invariant is pinned in
+    ``tests/test_resource_collapse_invariant_3026.py``.
     """
     from reyn.tools import get_default_registry
 
@@ -1128,14 +1077,11 @@ async def _handle_describe_action(
     ``.parameters`` directly — which is correct for operation-category
     actions (web__fetch / file__read / …) whose target IS the action.
 
-    For resource-category actions (``agent.peer__X``,
-    ``mcp.tool__X.Y``, ``mcp.server__X``, ``rag_corpus__X``) the target
-    is a generic dispatcher (``delegate_to_agent`` /
-    ``call_mcp_tool`` / …) whose ``.parameters`` is the dispatcher's
-    own args shape, NOT the resource's actual input schema. D2-full
-    extends the handler to look up the per-resource schema via
-    ``ctx.router_state`` so the LLM gets actionable structure instead
-    of an opaque ``{name, input}`` envelope (or worse — empty stub).
+    #3026: that is now the whole story — every enumerated action IS its target,
+    so the target's ``.parameters`` is always the right schema. The D2-full
+    per-resource override (look the schema up from ``ctx.router_state`` because
+    the target was a generic dispatcher) went with the resource categories it
+    served; see ``_describe_one``.
 
     For unknown qualified_name, returns the §D12 error-with-suggestions
     response.
@@ -1198,198 +1144,6 @@ async def _handle_describe_action(
             "natural-language reply explaining this action. Write the reply now."
         ),
     }
-
-
-def _drop_field_from_schema(params: Mapping[str, Any], field_name: str) -> dict:
-    """Return a copy of a JSON schema with ``field_name`` removed from
-    ``properties`` and ``required``.
-
-    Used to strip curried fields from a dispatcher's parameters before
-    exposing them as the resource's input schema (e.g. ``delegate_to_agent``
-    carries ``to`` which is curried from ``agent.peer__<name>``).
-    """
-    out = dict(params)
-    props = dict(out.get("properties") or {})
-    props.pop(field_name, None)
-    out["properties"] = props
-    req = [r for r in (out.get("required") or []) if r != field_name]
-    out["required"] = req
-    return out
-
-
-def _find_mcp_tool(entry_name: str, rs: Any) -> "Mapping | None":
-    """Find the cached MCP tool dict for a ``mcp__<server>__<tool>`` action's
-    entry_name (= ``"<server>__<tool>"``), or ``None``.
-
-    #1647: returns None for a static mcp verb (entry_name has no ``__``, e.g.
-    ``call_tool`` / ``list_tools``), for an unknown server/tool, or when the
-    FP-0037 snapshot (``rs.mcp_servers[*].tools``) isn't warm — so the describe
-    helpers fall back to the dispatcher target for verbs while surfacing the real
-    per-tool schema/description for tools. Splits on the FIRST ``__`` (server =
-    first segment; the same convention ``mcp_call_tool`` uses), so a tool name
-    may itself contain ``__``."""
-    if rs is None or "__" not in entry_name:
-        return None
-    server_name, tool_name = entry_name.split("__", 1)
-    if not server_name or not tool_name:
-        return None
-    for server in (getattr(rs, "mcp_servers", None) or []):
-        if not isinstance(server, Mapping) or server.get("name") != server_name:
-            continue
-        for t in (server.get("tools") or []):
-            if isinstance(t, Mapping) and t.get("name") == tool_name:
-                return t
-    return None
-
-
-def _resource_input_schema(
-    qualified_name: str,
-    ctx: ToolContext,
-    registry: Any,
-) -> "dict | None":
-    """Return the per-resource input schema for a resource-category action,
-    or ``None`` for operation categories (= caller falls back to target's
-    parameters).
-
-    Covered:
-      - ``agent.peer__<name>`` — ``delegate_to_agent`` parameters minus ``to``.
-      - ``mcp.server__<name>`` — empty object (``list_mcp_tools`` takes
-        only the curried ``server`` arg).
-      - ``rag_corpus__<name>`` — ``semantic_search`` parameters minus ``sources``.
-      - ``mcp__<server>__<tool>`` — scans ``ctx.router_state.mcp_servers``
-        for the tool's declared ``inputSchema`` (#1647 per-tool action; static
-        mcp verbs fall through to the verb's parameters).
-      - ``pipeline__<name>`` (IS-5) — ``run_pipeline`` parameters minus
-        ``name`` (the registered pipeline's own name, curried from the
-        qualified name).
-
-    Returns ``None`` when the category isn't a resource category, or when
-    the per-resource metadata isn't reachable (= test sites with stub
-    router_state, plan-step host without mcp_servers, …).
-    """
-    rs = getattr(ctx, "router_state", None)
-
-    try:
-        category, entry_name = split_qualified_name(qualified_name)
-    except ValueError:
-        return None
-
-    if category == "rag_corpus":
-        tool = registry.lookup("semantic_search")
-        if tool is None:
-            return None
-        return _drop_field_from_schema(tool.parameters, "sources")
-
-    if category == "mcp":
-        # #1647: a per-tool action mcp__<server>__<tool> describes with the MCP
-        # tool's OWN declared inputSchema (so the LLM constructs args directly,
-        # one level — no generic call_mcp_tool {tool, tool_args} envelope). Static
-        # mcp verbs (entry_name w/o "__") → None → caller falls back to the verb's
-        # parameters.
-        t = _find_mcp_tool(entry_name, rs)
-        if t is not None and isinstance(t.get("inputSchema"), Mapping):
-            return dict(t["inputSchema"])
-        return None
-
-    if category == "pipeline":
-        # IS-5: pipeline__<name> curries the pipeline name (mirrors rag_corpus
-        # currying ``sources``) — strip ``name`` from run_pipeline's
-        # parameters so the LLM only sees ``input``. The static
-        # ``pipeline__run`` verb itself is an exact _OPERATION_RULES match
-        # (checked first) so it never reaches this per-category fallback.
-        tool = registry.lookup("run_pipeline")
-        if tool is None:
-            return None
-        return _drop_field_from_schema(tool.parameters, "name")
-
-    # memory_entry__X and any other category: pre-existing dispatch shape
-    # mismatch (memory_entry's transform sends {name} but read_memory_body
-    # wants {layer, slug}); fall back to target.parameters so the LLM at
-    # least sees the dispatcher's shape and can recover via list_actions.
-    return None
-
-
-def _resource_description(
-    qualified_name: str,
-    ctx: ToolContext,
-    registry: Any,
-) -> "str | None":
-    """Return the per-resource description for a resource-category action,
-    or ``None`` for operation categories (= caller falls back to
-    ``target.description``, which is the correct text for operation
-    categories whose target IS the action).
-
-    Mirrors ``_resource_input_schema`` for the description field. B42-NF-W7-1
-    fix: without per-resource descriptions, describe_action on a resource
-    returns the dispatcher's generic instruction text — uninformative for
-    the LLM trying to narrate "tell me more about <resource>".
-
-    Covered (= categories with per-resource description metadata on the
-    host side):
-      - ``agent.peer__<name>`` — pulls ``description`` (or ``role``
-        fallback) from ``ctx.router_state.host.list_available_agents()``.
-      - ``mcp__<server>__<tool>`` — pulls ``description`` from the tool's
-        MCP-server entry in ``ctx.router_state.mcp_servers`` (#1647 per-tool
-        action; static mcp verbs fall through to the verb's description).
-      - ``mcp.server__<name>`` — pulls server-level ``description`` from
-        ``ctx.router_state.mcp_servers``.
-      - ``pipeline__<name>`` (IS-5) — pulls the registered ``Pipeline``'s
-        own ``description`` from ``ctx.router_state.pipeline_registry``.
-
-    Falls through to ``target.description`` (= caller default) for:
-      - ``rag_corpus__<name>`` — no per-corpus description metadata
-        surface today; caller falls back to the ``semantic_search`` tool
-        description (= acceptable generic context for LLM narration).
-      - ``memory_entry__<name>`` — memory entries don't carry description
-        fields; caller falls back to ``read_memory_body`` description.
-      - Operation categories (= ``file__/web__/exec__/...``): the target
-        ToolDefinition IS the action, so ``target.description`` is
-        already the correct per-action text.
-
-    Coverage delta vs ``_resource_input_schema``: that helper covers
-    4 categories (agent.peer / mcp.server / **rag_corpus** /
-    mcp.tool). This helper covers 4 (= same set minus rag_corpus) because
-    the host-side per-corpus description surface doesn't exist; if a
-    ``list_available_corpora()`` surface is added later, this helper
-    should grow a matching branch.
-
-    Returns ``None`` for unrecognised categories or when per-resource
-    metadata isn't reachable (= test sites with stub router_state, etc.).
-    """
-    rs = getattr(ctx, "router_state", None)
-
-    try:
-        category, entry_name = split_qualified_name(qualified_name)
-    except ValueError:
-        return None
-
-    if category == "mcp":
-        # #1647: per-tool action mcp__<server>__<tool> — the MCP tool's own
-        # description. Static verbs → None → caller falls back to the verb's text.
-        t = _find_mcp_tool(entry_name, rs)
-        if t is not None:
-            desc = t.get("description")
-            return str(desc) if desc else None
-        return None
-
-    if category == "pipeline":
-        # IS-5: pipeline__<name> — the REGISTERED pipeline's own description
-        # (so describe_action / the enumerate-all flat tool description shows
-        # what THIS pipeline does, not the generic run_pipeline blurb).
-        # None registry / not-found → caller falls back to run_pipeline's text.
-        from reyn.core.pipeline.registry import PipelineNotFoundError
-
-        pipeline_registry = getattr(rs, "pipeline_registry", None) if rs is not None else None
-        if pipeline_registry is None:
-            return None
-        try:
-            pipeline = pipeline_registry.get(entry_name)
-        except PipelineNotFoundError:
-            return None
-        return pipeline.description or None
-
-    # rag_corpus / memory_entry / unknown — fall through to target.description
-    return None
 
 
 async def _handle_invoke_action(
@@ -1457,11 +1211,16 @@ def _augment_suggestions(
     """Re-suggest using router_state-aware candidates when available.
 
     The PR-2 default suggestion pool is the static catalogue
-    (= KNOWN_STATIC_QUALIFIED_NAMES, 13 names). When ``ctx.router_state``
-    is populated, we widen the pool with dynamic items (= 
-    agents / mcp.tool / mcp.server / memory_entry) so the suggestion
-    surfaces names the LLM can actually invoke. Falls back to the
-    original exception unchanged when no dynamic items exist.
+    (= KNOWN_STATIC_QUALIFIED_NAMES). This re-derives it from the live
+    enumeration instead, so a suggestion is availability-aware: a category the
+    caller excluded (#1667), or ``exec`` without a sandbox backend, contributes
+    nothing here and is never suggested.
+
+    #3026: it no longer WIDENS the pool. It used to add per-resource names
+    (memory entries / corpora / MCP tools) that only caller state knew; those
+    are collapsed, so enumeration and the static catalogue now describe the
+    same action set and this narrows rather than grows. Falls back to the
+    original exception unchanged when enumeration yields nothing.
     """
     # Lazy import for circular-dep safety
     from reyn.tools.universal_dispatch import (

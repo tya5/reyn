@@ -122,11 +122,20 @@ NOTE (surfacing, IS-5): this tool is registered in the unified
 capability-floor guards) and IS surfaced to the live LLM — not via
 ``build_tools()`` (which is hand-assembled and strips direct tools once the
 universal-catalog wrappers are on; PR-3b already shipped that default-on),
-but via the same modern path every other universal-catalog wrapper uses: the
-``pipeline`` resource category in ``tools/universal_catalog.py:
-_enumerate_category`` lists each REGISTERED pipeline (name + description)
-from ``ctx.router_state.pipeline_registry``, and the LLM launches a chosen
-one through ``invoke_action(action="pipeline__run", args={name, input})``.
+but via the same modern path every other universal-catalog wrapper uses.
+
+#3026: discovery of a REGISTERED pipeline is now the ``pipeline__list`` verb
+(``pipeline_list`` below), which returns each registered pipeline's name +
+description from ``ctx.router_state.pipeline_registry``; the LLM launches a
+chosen one through ``invoke_action(action="pipeline__run", args={name,
+input})``. Previously ``_enumerate_category`` emitted one
+``pipeline__<name>`` action per REGISTERED pipeline — so the LLM's ``tools=``
+payload grew with the operator's pipelines, and the per-pipeline action was
+in any case a pure currying of ``pipeline__run`` (it forwarded ``input``
+and curried ``name``, reaching ``run_pipeline`` with identical effective
+args). Collapsing it cost no capability; the one thing it did uniquely —
+NAMING the registered pipelines — is what ``pipeline__list`` now does in a
+constant single tool.
 ``Session`` (``runtime/session.py``) constructs + owns the production
 ``PipelineRegistry`` that backs this (empty until a later slice populates it
 from disk / a parser); it is threaded through ``RouterHostAdapter`` onto
@@ -380,8 +389,69 @@ async def _handle_run_pipeline(
 
 
 from reyn.core.offload.canonical import (  # noqa: E402
+    pipeline_list_to_canonical,
     run_pipeline_async_to_canonical,
     run_pipeline_to_canonical,
+)
+
+# ── pipeline__list (#3026) ───────────────────────────────────────────────────
+
+_PIPELINE_LIST_DESCRIPTION = _pipeline_descriptions.pipeline_list.text
+
+# No parameters: the result is already scoped to this session's registered set,
+# and the caller's whole problem is that it does not yet know what exists — so
+# there is nothing for it to filter by.
+_PIPELINE_LIST_PARAMETERS: dict[str, Any] = {
+    "type": "object",
+    "properties": {},
+}
+
+
+async def _handle_pipeline_list(
+    args: Mapping[str, Any], ctx: ToolContext,
+) -> ToolResult:
+    """Return the registered pipelines: ``{pipelines: [{name, description}, ...]}``.
+
+    Reads the SAME ``ctx.router_state.pipeline_registry`` the catalog used to
+    enumerate ``pipeline__<name>`` from, so this verb and ``pipeline__run``
+    cannot disagree about which pipelines exist.
+
+    A None registry — a narrow test host, or a host that does not support
+    run_pipeline — yields an empty list rather than an error: "no pipelines are
+    registered" is the truthful answer in exactly that case, and it matches how
+    the catalog enumeration has always degraded.
+
+    ``name`` is the load-bearing field: it is what the caller passes back as
+    ``pipeline__run(name=...)``.
+    """
+    rs = getattr(ctx, "router_state", None)
+    registry = getattr(rs, "pipeline_registry", None) if rs is not None else None
+    if registry is None:
+        return {"pipelines": []}
+    return {
+        "pipelines": [
+            {"name": name, "description": description or ""}
+            for name, description in registry.entries()
+        ]
+    }
+
+
+PIPELINE_LIST = ToolDefinition(
+    canonical=pipeline_list_to_canonical,
+    name="pipeline_list",
+    description=_PIPELINE_LIST_DESCRIPTION,
+    parameters=_PIPELINE_LIST_PARAMETERS,
+    gates=ToolGates(router="allow", phase="allow"),
+    handler=_handle_pipeline_list,
+    category="discovery",
+    purity="read_only",
+    # A pipeline's description is operator- OR third-party-authored text:
+    # ``pipeline_management__install_source`` registers a pipeline straight out of
+    # a fetched git repo. It is threat-scanned at install, but this tool
+    # re-surfaces it on every later call, when a scan-rule update may have changed
+    # the verdict. Identical rationale to ``skill_list`` (#2971), whose
+    # install-from-git surface this one mirrors exactly.
+    returns_external_content=True,
 )
 
 RUN_PIPELINE = ToolDefinition(
@@ -804,6 +874,7 @@ RUN_PIPELINE_INLINE_ASYNC = ToolDefinition(
 )
 
 __all__ = [
+    "PIPELINE_LIST",
     "RUN_PIPELINE",
     "RUN_PIPELINE_ASYNC",
     "RUN_PIPELINE_INLINE",

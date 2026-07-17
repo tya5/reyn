@@ -76,9 +76,15 @@ def test_file_action_names_backtick_wrapped() -> None:
 
 def test_action_example_backtick_wrapped() -> None:
     """Tier 2: #1475 — the action-name example in ROUTING RULE ABSOLUTE
-    appears backtick-wrapped."""
+    appears backtick-wrapped.
+
+    #3026 changed the example from ``mcp__brave__search`` to ``mcp__call_tool``:
+    the former was a per-MCP-tool action, and those are no longer enumerated, so
+    the rule was illustrating itself with a name absent from the catalog it tells
+    the model to invoke from. The property under test (backtick-wrapped) is
+    unchanged."""
     sp = _sp()
-    assert "`mcp__brave__search`" in sp, (
+    assert "`mcp__call_tool`" in sp, (
         "the action-name example in ROUTING RULE ABSOLUTE must be backtick-wrapped"
     )
 

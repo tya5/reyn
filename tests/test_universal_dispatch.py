@@ -100,45 +100,50 @@ def test_resolve_invoke_action_mcp_call_tool_keys_match_wrapper_schema() -> None
     )
 
 
-def test_resolve_invoke_action_memory_entry_routes_to_read_body() -> None:
-    """Tier 2: memory_entry__<slug> → read_memory_body({layer: shared, slug}).
+def test_resolve_invoke_action_memory_read_takes_layer_explicitly() -> None:
+    """Tier 2: #3026 — memory_operation__read → read_memory_body({layer, slug}),
+    with the layer supplied by the CALLER rather than curried from the action name.
 
-    §D19 resource invoke: invoking a memory entry returns its body.
-
-    Post-N4 (2026-05-17): the transform was updated to emit the canonical
-    ``{layer, slug}`` pair that ``read_memory_body`` requires. The previous
-    ``{name}`` shape caused dispatch failure when memory_entry aliases were
-    invoked (= the pre-existing shape mismatch surfaced by N4-d).
-    """
-    result = resolve_invoke_action("memory_entry__pref_dates", {})
-    assert result.target_tool_name == "read_memory_body"
-    assert result.target_args == {"layer": "shared", "slug": "pref_dates"}
-
-
-def test_resolve_invoke_action_rag_corpus_curries_single_source() -> None:
-    """Tier 2: rag_corpus__<name> → semantic_search(sources=[name], query, top_k?)
-    (FP-0057 Phase 2a: renamed from recall).
-
-    §D19 single-source resource invoke.
-    """
+    This is the capability GAIN of the memory_entry collapse. The old
+    ``memory_entry__<slug>`` action hard-coded ``layer="shared"``, so an
+    AGENT-layer memory — everything ``memory_operation__remember_agent`` writes —
+    could not be read back through the catalog at all. Pinned with the
+    non-default value so a regression to a hard-coded layer fails here."""
     result = resolve_invoke_action(
-        "rag_corpus__meetings", {"query": "Q3 plans", "top_k": 5},
+        "memory_operation__read", {"layer": "agent", "slug": "pref_dates"},
+    )
+    assert result.target_tool_name == "read_memory_body"
+    assert result.target_args == {"layer": "agent", "slug": "pref_dates"}
+
+
+def test_resolve_invoke_action_memory_list_routes_to_list_memory() -> None:
+    """Tier 2: #3026 — memory_operation__list → list_memory. The category was
+    write-only (remember/forget) before; the read+discovery halves are what make
+    collapsing the per-entry ``memory_entry__<slug>`` actions capability-neutral."""
+    result = resolve_invoke_action("memory_operation__list", {"path": ""})
+    assert result.target_tool_name == "list_memory"
+
+
+def test_resolve_invoke_action_rag_search_takes_sources_explicitly() -> None:
+    """Tier 2: #3026 — rag_operation__semantic_search carries the corpus in its
+    ``sources`` ARGUMENT, replacing rag_corpus__<name>'s currying of it out of the
+    action name. Same reach, but one fixed action instead of one per corpus."""
+    result = resolve_invoke_action(
+        "rag_operation__semantic_search",
+        {"sources": ["meetings"], "query": "Q3 plans", "top_k": 5},
     )
     assert result.target_tool_name == "semantic_search"
     assert result.target_args == {
-        "sources": ["meetings"],
-        "query": "Q3 plans",
-        "top_k": 5,
+        "sources": ["meetings"], "query": "Q3 plans", "top_k": 5,
     }
 
 
-def test_resolve_invoke_action_rag_corpus_without_top_k() -> None:
-    """Tier 2: rag_corpus__<name> omits top_k when caller doesn't supply it."""
-    result = resolve_invoke_action(
-        "rag_corpus__meetings", {"query": "X"},
-    )
-    assert "top_k" not in result.target_args
-    assert result.target_args["sources"] == ["meetings"]
+def test_resolve_invoke_action_rag_list_sources_routes_to_discovery_verb() -> None:
+    """Tier 2: #3026 — rag_operation__list_sources → list_rag_sources, the verb that
+    NAMES the corpora. Without it, ``sources`` (required, operator-chosen names)
+    would be unanswerable once rag_corpus__<name> stopped being enumerated."""
+    result = resolve_invoke_action("rag_operation__list_sources", {})
+    assert result.target_tool_name == "list_rag_sources"
 
 
 # ── 2. resolve_invoke_action — operation categories (passthrough) ────────
@@ -188,9 +193,9 @@ def test_operation_category_empty_args_pass_through() -> None:
 
 def test_invoke_action_with_none_args_treats_as_empty() -> None:
     """Tier 2: passing args=None is equivalent to args={}."""
-    result = resolve_invoke_action("memory_entry__foo", None)
-    assert result.target_tool_name == "read_memory_body"
-    assert result.target_args == {"layer": "shared", "slug": "foo"}
+    result = resolve_invoke_action("mcp__list_servers", None)
+    assert result.target_tool_name == "list_mcp_servers"
+    assert result.target_args == {}
 
 
 # ── 3. UnknownActionError + §D12 error response shape ─────────────────────
@@ -309,8 +314,10 @@ def test_suggest_similar_names_empty_candidates_returns_empty() -> None:
         ("mcp__install_package",     "mcp_install_package"),
         ("mcp__install_local",       "mcp_install_local"),
         ("mcp__drop_server",         "mcp_drop_server"),
-        ("memory_entry__pref_dates", "read_memory_body"),
-        ("rag_corpus__meetings",     "semantic_search"),
+        ("memory_operation__read",   "read_memory_body"),
+        ("memory_operation__list",   "list_memory"),
+        ("rag_operation__list_sources", "list_rag_sources"),
+        ("pipeline__list",           "pipeline_list"),
         ("file__read",               "read_file"),
         ("web__search",              "web_search"),
         ("memory_operation__forget", "forget_memory"),
@@ -372,7 +379,8 @@ def test_known_static_names_excludes_resource_categories() -> None:
     Their entries are dynamic (= populated by caller state in PR-3).
     """
     names = set(KNOWN_STATIC_QUALIFIED_NAMES)
-    # Resource categories should have no static qualified names.
+    # #3026: memory_entry__ / rag_corpus__ are gone entirely (collapsed into
+    # verbs). ``skill__`` never existed. None of these may have static entries.
     for prefix in ("skill__", "memory_entry__", "rag_corpus__"):
         matches = [n for n in names if n.startswith(prefix)]
         assert matches == [], (
@@ -420,8 +428,17 @@ def test_known_qualified_name_for_category() -> None:
         "file__read", "file__write", "file__delete", "file__list",
         "file__grep", "file__glob", "file__edit",
     }
-    # Resource category returns empty
-    assert known_qualified_name_for_category("memory_entry") == ()
+    # #3026: a collapsed category is not a category at all any more — asking for
+    # it is a programming error, not an empty result.
+    with pytest.raises(ValueError, match="unknown category"):
+        known_qualified_name_for_category("memory_entry")
+    # #3026: the memory category's full verb set — write (remember/forget) PLUS
+    # the read+list halves that replaced the per-entry actions.
+    assert set(known_qualified_name_for_category("memory_operation")) == {
+        "memory_operation__remember_shared", "memory_operation__remember_agent",
+        "memory_operation__forget", "memory_operation__list",
+        "memory_operation__read",
+    }
     # exec has sandboxed_exec (FP-0034 Phase 2)
     assert known_qualified_name_for_category("exec") == ("exec__sandboxed_exec",)
     # mcp (= issue #879 + 2026-05-25 install 3-verb split) verb set.
@@ -536,8 +553,13 @@ _ROUTE_CONTRACT_SAMPLES: list[tuple[str, dict[str, Any]]] = [
     ("multi_agent__list_peers", {}),
     ("multi_agent__describe_peer", {"name": "planner"}),
     ("multi_agent__delegate", {"to": "planner", "message": "hi", "request": "hi"}),
-    ("memory_entry__pref_dates", {}),
-    ("rag_corpus__notes", {"query": "what"}),
+    # #3026: the verbs that replaced the memory_entry / rag_corpus resource
+    # actions. ``read`` uses a NON-DEFAULT layer so a regression to the old
+    # hard-coded ``shared`` fails the contract here.
+    ("memory_operation__list", {"path": ""}),
+    ("memory_operation__read", {"layer": "agent", "slug": "pref_dates"}),
+    ("rag_operation__list_sources", {}),
+    ("pipeline__list", {}),
     # Operation categories (= _OPERATION_RULES) — passthrough transformers,
     # so the caller args must already include the target's required keys.
     # Issue #879 collapsed mcp surface + 2026-05-25 install 3-verb split.

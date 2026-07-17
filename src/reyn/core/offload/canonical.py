@@ -1461,6 +1461,37 @@ def skill_list_to_canonical(result: dict) -> CanonicalToolResult:
     return _records_to_canonical(text, skills)
 
 
+def pipeline_list_to_canonical(result: dict) -> CanonicalToolResult:
+    """``pipeline_list`` result -> canonical (#3026). ``pipelines`` entries carry
+    ``{name, description}`` — the discovery view of every REGISTERED pipeline.
+
+    ``name`` rides in the records because it is the field the model acts on: it
+    is passed straight back as ``pipeline__run(name=...)``, so it must survive
+    offload. The summary only needs to say what is on offer.
+    """
+    pipelines = result.get("pipelines") or []
+    n = len(pipelines)
+    preview = _bounded_join(pipelines, "name")
+    text = f"{n} pipeline{'s' if n != 1 else ''}" + (f": {preview}" if preview else "") + "."
+    return _records_to_canonical(text, pipelines)
+
+
+def list_rag_sources_to_canonical(result: dict) -> CanonicalToolResult:
+    """``list_rag_sources`` result -> canonical (#3026). ``sources`` entries carry
+    ``{name, description, backend, chunk_count}`` — the discovery view of every
+    corpus indexed for this session.
+
+    ``name`` rides in the records because it is the field the model acts on: it
+    is passed straight back as ``semantic_search(sources=[...])``, so it must
+    survive offload. The summary only needs to say what is on offer.
+    """
+    sources = result.get("sources") or []
+    n = len(sources)
+    preview = _bounded_join(sources, "name")
+    text = f"{n} indexed source{'s' if n != 1 else ''}" + (f": {preview}" if preview else "") + "."
+    return _records_to_canonical(text, sources)
+
+
 def list_mcp_tools_to_canonical(result: dict) -> CanonicalToolResult:
     """``list_mcp_tools`` result -> canonical (#2681 Bucket B). ``mcp_tools`` entries carry the
     ``<server>__<tool>`` identifier + description + inputSchema."""

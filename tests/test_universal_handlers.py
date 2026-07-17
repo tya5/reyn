@@ -98,7 +98,16 @@ def test_list_actions_web_static_category() -> None:
 
 
 def test_list_actions_memory_operation_static_category() -> None:
-    """Tier 2: list_actions(category=['memory_operation']) returns 3 ops."""
+    """Tier 2: list_actions(category=['memory_operation']) returns 5 ops.
+
+    #3026 added the READ half (``__list`` / ``__read``) alongside the
+    pre-existing write verbs. Before #3026 the only read surface was the
+    per-memory ``memory_entry__<slug>`` RESOURCE action (one LLM tool per
+    stored memory + hard-coded ``layer="shared"``, so agent-layer memories
+    were unreadable through the catalog). ``memory_operation__read`` is a
+    strict capability GAIN over what it replaces: a single fixed verb that
+    takes ``layer`` + ``slug`` explicitly, reaching both layers.
+    """
     result = _run(LIST_ACTIONS.handler(
         {"category": ["memory_operation"]}, _make_ctx(),
     ))
@@ -107,6 +116,8 @@ def test_list_actions_memory_operation_static_category() -> None:
         "memory_operation__remember_shared",
         "memory_operation__remember_agent",
         "memory_operation__forget",
+        "memory_operation__list",
+        "memory_operation__read",
     }
 
 
@@ -187,14 +198,21 @@ def test_list_actions_multi_agent_static_category_returns_verbs() -> None:
 
 
 def test_list_actions_rag_corpus_category_uses_router_state() -> None:
-    """Tier 2: rag_corpus category enumerates from rs.available_rag_sources.
+    """Tier 2: the rag_operation__list_sources VERB enumerates
+    rs.available_rag_sources — the #3026 replacement for the ``rag_corpus``
+    RESOURCE category this test used to pin.
 
-    Phase 2 prep wiring: RouterLoop populates ``available_rag_sources``
-    from ``SourceManifest.get_all()`` so ``list_actions(category=
-    ["rag_corpus"])`` returns the configured corpora as
-    ``rag_corpus__<name>`` qualified names.  Previously rag_corpus
-    always returned [] (= deferred branch); this test pins the new
-    enumeration behavior.
+    #3026 removed ``rag_corpus`` from CATEGORIES (a resource category that
+    minted one ``rag_corpus__<name>`` action per indexed corpus, so
+    ``list_actions`` itself no longer names corpora). ``rag_operation`` now
+    enumerates as a single fixed set of verbs (see
+    ``test_list_actions_..._static_category`` siblings); the corpus names +
+    descriptions instead come back as DATA from invoking
+    ``rag_operation__list_sources`` (target: ``list_rag_sources``), which
+    still reads the same ``rs.available_rag_sources`` snapshot RouterLoop
+    populates from ``SourceManifest.get_all()``. This pins that data path
+    directly, via invoke_action, since list_actions no longer surfaces
+    per-corpus names at all.
     """
     rs = RouterCallerState(
         available_rag_sources=[
@@ -212,28 +230,44 @@ def test_list_actions_rag_corpus_category_uses_router_state() -> None:
             },
         ],
     )
-    result = _run(LIST_ACTIONS.handler(
-        {"category": ["rag_corpus"]}, _make_ctx(rs),
+    result = _run(INVOKE_ACTION.handler(
+        {"action_name": "rag_operation__list_sources"}, _make_ctx(rs),
     ))
-    qns = {it["qualified_name"] for it in result["items"]}
-    assert qns == {"rag_corpus__meetings", "rag_corpus__design_docs"}
-    # Short description carries the corpus description, not internals.
-    desc_by_name = {it["qualified_name"]: it["short_description"] for it in result["items"]}
-    assert "Q3 meeting minutes" in desc_by_name["rag_corpus__meetings"]
+    names = {s["name"] for s in result["sources"]}
+    assert names == {"meetings", "design_docs"}
+    desc_by_name = {s["name"]: s["description"] for s in result["sources"]}
+    assert desc_by_name["meetings"] == "Q3 meeting minutes"
+
+    # list_actions(category=['rag_operation']) itself stays a FIXED verb
+    # set regardless of how many corpora are configured — the invariant
+    # #3026 exists to hold.
+    list_result = _run(LIST_ACTIONS.handler(
+        {"category": ["rag_operation"]}, _make_ctx(rs),
+    ))
+    qns = {it["qualified_name"] for it in list_result["items"]}
+    assert qns == {
+        "rag_operation__semantic_search",
+        "rag_operation__drop_source",
+        "rag_operation__list_sources",
+    }
+    assert not any(qn.startswith("rag_corpus__") for qn in qns)
 
 
 def test_list_actions_rag_corpus_empty_when_state_absent() -> None:
-    """Tier 2: rag_corpus returns empty list when router didn't snapshot manifest.
+    """Tier 2: rag_operation__list_sources returns an empty ``sources`` list
+    when the router didn't snapshot a manifest.
 
-    Plan-mode hosts / test sites without a SourceManifest available
-    leave ``available_rag_sources=None`` — the handler must treat
-    that identically to an empty list rather than crashing.
+    #3026 replacement for the deleted ``rag_corpus`` category's
+    empty-state test: plan-mode hosts / test sites without a
+    ``SourceManifest`` leave ``available_rag_sources=None`` — the verb's
+    handler (``_handle_list_rag_sources``) must treat that identically to
+    an empty list rather than crashing, same graceful-degradation contract
+    the removed resource category had.
     """
-    result = _run(LIST_ACTIONS.handler(
-        {"category": ["rag_corpus"]}, _make_ctx(None),
+    result = _run(INVOKE_ACTION.handler(
+        {"action_name": "rag_operation__list_sources"}, _make_ctx(None),
     ))
-    assert result["items"] == []
-    assert result["total"] == 0
+    assert result["sources"] == []
 
 
 # ── search_actions handler (FP-0034 Phase 2 step 1) ──────────────────────
@@ -356,6 +390,14 @@ def test_search_actions_filters_by_category(
 ) -> None:
     """Tier 2: category filter restricts to qualified_names in those categories.
 
+    #3026: ``memory_entry`` is no longer a valid category (dropped from
+    CATEGORIES), so a ``category=["memory_entry"]`` filter would now hit the
+    #934 stale-enum error path before ever reaching the index — this test's
+    subject is the FILTER MATCHING logic, so the fixture is updated to use
+    ``memory_operation``, its still-valid replacement category, to keep
+    testing that logic rather than the (correct, but different) stale-enum
+    error behavior pinned separately.
+
     #2861-class root fix (CI flake, confirmed via a foreign-live-PID
     lock-holder repro): ``ActionEmbeddingIndex()`` with no
     ``workspace_root`` defaults to ``Path.cwd() / .reyn/cache/index/actions/``
@@ -373,9 +415,9 @@ def test_search_actions_filters_by_category(
     structurally rather than retrying/timing-out.
     """
     items = [
-        {"qualified_name": "memory_entry__alpha", "short_description": "Alpha"},
+        {"qualified_name": "memory_operation__alpha", "short_description": "Alpha"},
         {"qualified_name": "file__read", "short_description": "Read"},
-        {"qualified_name": "memory_entry__beta", "short_description": "Beta"},
+        {"qualified_name": "memory_operation__beta", "short_description": "Beta"},
         {"qualified_name": "file__write", "short_description": "Write"},
     ]
     provider = _StubProvider()
@@ -388,29 +430,34 @@ def test_search_actions_filters_by_category(
         op_context_factory=lambda: op_ctx,
     )
     result = _run(SEARCH_ACTIONS.handler(
-        {"query": "x", "category": ["memory_entry"], "limit": 10}, _make_ctx(rs),
+        {"query": "x", "category": ["memory_operation"], "limit": 10}, _make_ctx(rs),
     ))
     qns = {it["qualified_name"] for it in result["items"]}
-    # Only memory_entry__ qualified names; no file__ entries.
-    assert all(qn.startswith("memory_entry__") for qn in qns)
-    assert qns == {"memory_entry__alpha", "memory_entry__beta"}
+    # Only memory_operation__ qualified names; no file__ entries.
+    assert all(qn.startswith("memory_operation__") for qn in qns)
+    assert qns == {"memory_operation__alpha", "memory_operation__beta"}
 
 
-def test_list_actions_dynamic_category_empty_when_state_absent() -> None:
-    """Tier 2: dynamic categories return empty without router_state.
+def test_list_actions_legacy_rag_corpus_and_memory_entry_redirect() -> None:
+    """Tier 2: #3026 dropped ``rag_corpus`` / ``memory_entry`` from CATEGORIES.
 
-    Restricted to truly dynamic categories (= those whose enumeration
-    requires session state). Pre-#882 / pre-#909 names ``agent.peer``
-    / ``mcp.server`` / ``mcp.tool`` were dropped from CATEGORIES and
-    now surface as explicit errors per #934 — their handling is
-    verified by the dedicated stale-enum tests below.
+    Before #3026 this test pinned that these RESOURCE categories degrade to
+    an empty result without router_state (= a "dynamic category" contract).
+    #3026 removed them from CATEGORIES entirely, so they now join the
+    ``mcp.server`` / ``agent.peer`` legacy names covered above: a stale-enum
+    model asking for them by name gets the #934 explicit error envelope with
+    a redirect hint to the new verb category, not a silent empty result —
+    same self-correcting-in-one-turn contract, same
+    ``_LEGACY_CATEGORY_REDIRECTS`` mechanism.
     """
     result = _run(LIST_ACTIONS.handler(
         {"category": ["rag_corpus", "memory_entry"]},
         _make_ctx(),
     ))
-    assert result["items"] == []
-    assert result["total"] == 0
+    assert "error" in result
+    assert "items" not in result
+    assert "'rag_corpus' → 'rag_operation'" in result["reason"]
+    assert "'memory_entry' → 'memory_operation'" in result["reason"]
 
 
 # ── 3. pagination ─────────────────────────────────────────────────────────

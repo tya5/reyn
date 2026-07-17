@@ -451,10 +451,15 @@ class _FakeHost:
 
 @pytest.mark.asyncio
 async def test_disk_loaded_pipeline_surfaces_in_list_actions(tmp_path: Path) -> None:
-    """Tier 2: a pipeline loaded from a config entry surfaces as
-    ``pipeline__<name>`` with its own description via
-    list_actions(category=["pipeline"]) — the enumerate path the default
-    scheme flat-lists. Proves config-entry→catalog end-to-end."""
+    """Tier 2: #3026 — a pipeline loaded from a config entry is NAMED by the
+    ``pipeline__list`` verb, not enumerated as its own ``pipeline__<name>`` action.
+
+    This pinned the config-entry→catalog path when each registered pipeline was a
+    flat-listed action; #3026 removed that enumeration (the payload must not scale
+    with the operator's pipelines) and moved the naming duty into one constant
+    verb. The config-entry→registry→LLM chain is still proven end-to-end here —
+    just through the verb's result. Invocation is covered by
+    test_disk_loaded_pipeline_invokable_through_full_live_loop."""
     from reyn.runtime.router_loop import RouterLoop
     from reyn.tools.types import ToolContext
     from reyn.tools.universal_catalog import LIST_ACTIONS
@@ -472,8 +477,18 @@ async def test_disk_loaded_pipeline_surfaces_in_list_actions(tmp_path: Path) -> 
     result = await LIST_ACTIONS.handler({"category": ["pipeline"]}, ctx)
 
     items = {it["qualified_name"]: it for it in result["items"]}
-    assert "pipeline__hello.hello" in items
-    assert items["pipeline__hello.hello"]["short_description"] == "greet the seed name"
+    assert "pipeline__hello.hello" not in items, (
+        "a disk-registered pipeline must not become an enumerated action (#3026)"
+    )
+    assert "pipeline__list" in items, "the verb that names it is enumerated"
+
+    # The disk-loaded pipeline's name + description reach the LLM through the
+    # verb's result — the same config-entry→catalog chain, one hop later.
+    from reyn.tools.pipeline_verbs import PIPELINE_LIST
+
+    listed = await PIPELINE_LIST.handler({}, ctx)
+    assert {"name": "hello.hello",
+            "description": "greet the seed name"} in listed["pipelines"]
 
 
 # ── 5. Cross-pipeline call: a loaded pipeline calls another loaded pipeline ────

@@ -94,9 +94,9 @@ def test_flag_on_lists_all_categories() -> None:
         "multi_agent",
         "mcp",
         "file", "web",
-        "memory_entry", "memory_operation",
+        "memory_operation",
         "reyn_repo",
-        "rag_corpus", "rag_operation",
+        "rag_operation",
         "exec",
     ):
         assert f"**{cat}**" in prompt, (

@@ -48,6 +48,15 @@ def test_categories_master_table_order() -> None:
     """Tier 2: CATEGORIES order matches the §D18 master table.
 
     Reviewers reading the design doc and the code see the same shape.
+
+    #3026 dropped ``memory_entry`` / ``rag_corpus`` from this table: both
+    were RESOURCE categories that minted one LLM tool per stored memory /
+    indexed corpus, so the enumerated payload scaled with the operator's
+    data. Their capability survives as verbs in ``memory_operation`` (the
+    new ``__list`` / ``__read`` pair) and ``rag_operation`` (the new
+    ``__list_sources`` verb) — a fixed-count discovery action replaces the
+    per-resource naming surface. See the module docstring's "four collapses"
+    note.
     """
     assert CATEGORIES == (
         "multi_agent",
@@ -57,10 +66,10 @@ def test_categories_master_table_order() -> None:
         "mcp",
         "file",
         "web",
-        "memory_entry",
+        # #3026: ``memory_entry`` removed (was a resource category).
         "memory_operation",
         "reyn_repo",
-        "rag_corpus",
+        # #3026: ``rag_corpus`` removed (was a resource category).
         "rag_operation",
         "exec",
         # #1953 dynamic-wire: task.* control-IR ops as invoke_action targets.
@@ -99,9 +108,17 @@ def test_categories_no_duplicates() -> None:
         ("exec__sandboxed_exec", "exec", "sandboxed_exec"),
         # Dotted category, simple entry
         ("multi_agent__delegate", "multi_agent", "delegate"),
-        ("memory_entry__pref_dates", "memory_entry", "pref_dates"),
+        # #3026: ``memory_entry__<slug>`` (a per-memory RESOURCE name) no
+        # longer parses — replaced by the ``memory_operation__read`` VERB,
+        # which takes ``layer`` + ``slug`` as explicit arguments instead of
+        # currying the slug into the qualified name.
+        ("memory_operation__read", "memory_operation", "read"),
         ("memory_operation__remember_shared", "memory_operation", "remember_shared"),
-        ("rag_corpus__meetings", "rag_corpus", "meetings"),
+        # #3026: ``rag_corpus__<name>`` (a per-corpus RESOURCE name) no longer
+        # parses — replaced by ``rag_operation__list_sources`` (discovery
+        # verb, names carried in the RESULT, not the tool name) plus
+        # ``rag_operation__semantic_search`` (takes ``sources`` as an arg).
+        ("rag_operation__list_sources", "rag_operation", "list_sources"),
         ("rag_operation__semantic_search", "rag_operation", "semantic_search"),
         ("reyn_repo__read", "reyn_repo", "read"),
         # Issue #879 collapsed mcp surface — verb_object actions.
@@ -128,7 +145,9 @@ def test_split_qualified_name_parses_correctly(
 @pytest.mark.parametrize(
     "category, entry_name, expected",
     [
-        ("rag_corpus", "meetings", "rag_corpus__meetings"),
+        # #3026: ``rag_corpus`` is gone; ``rag_operation__list_sources`` is
+        # the discovery verb replacement (fixed name, no per-corpus growth).
+        ("rag_operation", "list_sources", "rag_operation__list_sources"),
         # Issue #879 collapsed mcp surface.
         ("mcp", "search_registry", "mcp__search_registry"),
         ("mcp", "call_tool", "mcp__call_tool"),

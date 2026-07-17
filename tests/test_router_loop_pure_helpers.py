@@ -4,7 +4,6 @@
 ``_overflow_ref_text(ref)``           — format image-overflow reference message
 ``_is_context_overflow_error(exc)``   — keyword-match context length errors
 ``_is_unsupported_param_error(exc)``  — class-name/keyword unsupported param errors
-``_drop_required_field(params, name)``— remove a field from a JSON schema dict
 """
 from __future__ import annotations
 
@@ -16,7 +15,6 @@ if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
 from reyn.runtime.router_loop import (
-    _drop_required_field,
     _is_context_overflow_error,
     _is_unsupported_param_error,
     _overflow_ref_text,
@@ -152,46 +150,3 @@ def test_is_unsupported_param_error_unrelated() -> None:
 
 
 # ---------------------------------------------------------------------------
-# _drop_required_field
-# ---------------------------------------------------------------------------
-
-
-def test_drop_required_field_removes_from_properties() -> None:
-    """Tier 2: field is removed from properties dict."""
-    params = {
-        "properties": {"action_name": {"type": "string"}, "args": {"type": "object"}},
-        "required": ["action_name", "args"],
-    }
-    result = _drop_required_field(params, "action_name")
-    assert "action_name" not in result["properties"]
-    assert "args" in result["properties"]
-
-
-def test_drop_required_field_removes_from_required() -> None:
-    """Tier 2: field is removed from required list."""
-    params = {
-        "properties": {"action_name": {"type": "string"}, "args": {}},
-        "required": ["action_name", "args"],
-    }
-    result = _drop_required_field(params, "action_name")
-    assert "action_name" not in result["required"]
-    assert "args" in result["required"]
-
-
-def test_drop_required_field_missing_field_is_noop() -> None:
-    """Tier 2: field not present → no crash, schema unchanged."""
-    params = {"properties": {"foo": {}}, "required": ["foo"]}
-    result = _drop_required_field(params, "nonexistent")
-    assert result["properties"] == {"foo": {}}
-    assert result["required"] == ["foo"]
-
-
-def test_drop_required_field_does_not_mutate_original() -> None:
-    """Tier 2: returns a copy; original params dict is not mutated."""
-    params = {
-        "properties": {"a": {}, "b": {}},
-        "required": ["a", "b"],
-    }
-    _ = _drop_required_field(params, "a")
-    assert "a" in params["properties"]
-    assert "a" in params["required"]

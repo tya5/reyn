@@ -8,7 +8,7 @@
 
 `search_actions` は次の違いを生みます:
 
-- **無い場合**: LLM はあなたの意図がどのカテゴリ（`file` / `mcp` / `memory_entry` / …）に属するかを推測し、`list_actions(category=[...])` を実行して列挙する必要があります。_「PDF をテキストに変換するアクションを探して」_ のような自然言語の依頼では、すぐに一致が見つからないと LLM が試したうえで断ることもあります。
+- **無い場合**: LLM はあなたの意図がどのカテゴリ（`file` / `mcp` / `memory_operation` / …）に属するかを推測し、`list_actions(category=[...])` を実行して列挙する必要があります。_「PDF をテキストに変換するアクションを探して」_ のような自然言語の依頼では、すぐに一致が見つからないと LLM が試したうえで断ることもあります。
 - **有る場合**: LLM は `search_actions(query="PDF to text")` を実行し、全カテゴリ横断で関連度順に並んだ top-K のリストを得ます。その後そのまま `describe_action` や `invoke_action` を実行できます。
 
 `action_retrieval.embedding_class` のデフォルトは `null`（無効）です — semantic search は opt-in なので、明示的な `reyn.yaml` 設定と（ローカル経路の場合）`local-embed` extras の両方が必要です。クラス未設定の場合、`search_actions` は LLM のツールリストから **除外** され（[可視性ゲート](../../concepts/tools-integrations/universal-catalog.md#what-stays-out-of-phase-1) を参照）— これは何も試行されないため起動時警告なしで silent に行われます。ST 系クラスを設定したのに extras が無い場合も Session は同様に「クラス未設定」として graceful に扱い、`list_actions` が本ガイドを指す hidden-state ヒントを提示します。

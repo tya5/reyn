@@ -860,7 +860,7 @@ When enabled (default), the chat router's `tools=` includes the wrappers at the 
 - `describe_action(action_name="mcp__call_tool")` → fetch the input schema
 - `invoke_action(action_name="mcp__call_tool", args={...})` → execute via the existing handler
 
-Resource categories (`mcp.server`, `rag_corpus`, `memory_entry`, …) also support `invoke_action`.  Unknown action names return a structured error with `suggestions` ranked by string similarity, so the LLM recovers in one turn.
+Every category enumerates a fixed set of verbs — a resource (a stored memory, an indexed corpus, an MCP tool, a registered pipeline) is an argument to a verb, not an action of its own, so the enumerated set does not grow with what you have accumulated.  Discover resources with the category's discovery verb (`memory_operation__list`, `rag_operation__list_sources`, `mcp__list_tools`, `pipeline__list`) and pass the id as an argument.  Unknown action names return a structured error with `suggestions` ranked by string similarity, so the LLM recovers in one turn.
 
 See Concepts: architecture (architecture doc removed) for the tool registry / dispatch background.
 

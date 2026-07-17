@@ -34,10 +34,14 @@ already short-circuits the out-of-project read gate for exactly the
 second execution surface duplicating that chain, with its own permission story
 to get wrong. Discovery was the only missing link, so it is the only one added.
 
-NOTE: ``skill__`` is the RESOURCE category prefix used for per-skill dynamic
-dispatch (e.g. ``skill__code_review``). Management operations use
-``skill_management__`` to avoid colliding with that resource namespace —
-mirrors ``mcp__`` (management) vs dynamic ``mcp.<server>.<tool>`` (resource).
+NOTE: there is NO ``skill__`` category and there never has been. This note used
+to claim otherwise ("the RESOURCE category prefix for per-skill dynamic
+dispatch, e.g. ``skill__code_review``"), and the claim propagated: #1647 cited
+``skill__<name>`` as the precedent it was mirroring when it added one enumerated
+action per MCP tool — a phantom, and one of the two reasons that PR should not
+have landed (see ``universal_catalog``'s module docstring). Skills have never
+cost a tool per skill; ``skill_management__list`` is the whole discovery
+surface, and #3026 applied that same shape to corpora and pipelines.
 
 Both verbs delegate to ``op_runtime/skill_install.py`` via the
 ``build_legacy_op_context`` bridge (same pattern as the mcp-install verbs).

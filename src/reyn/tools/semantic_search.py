@@ -97,8 +97,8 @@ async def _handle_semantic_search(args: Mapping[str, Any], ctx: ToolContext) -> 
     from reyn.security.permissions.permissions import PermissionDecl
 
     # Defensive arg validation. LLMs sometimes call `semantic_search` without
-    # the required keys (= when no "Indexed sources" appears in the
-    # system prompt, or when the LLM forgets the schema). Raising a
+    # the required keys (= when the LLM has not discovered the source names, or
+    # when it forgets the schema). Raising a
     # raw KeyError leaks the literal Python exception into the
     # tool_failed event and the user-facing reply (observed in
     # dogfood B45/B46 W3 `recall_indexed_source` scenario, pre-rename). Return
@@ -111,9 +111,9 @@ async def _handle_semantic_search(args: Mapping[str, Any], ctx: ToolContext) -> 
             "error_kind": "missing_required_arg",
             "error_message": (
                 f"semantic_search requires {missing}. "
-                "Available sources are listed under 'Indexed sources' in "
-                "the system prompt; if none are listed, no sources have "
-                "been indexed yet for this agent."
+                "Call list_rag_sources to see the available source names; "
+                "if it returns none, no sources have been indexed yet for "
+                "this agent."
             ),
             "missing": missing,
         }
