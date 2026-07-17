@@ -40,7 +40,10 @@ Three lenses name a *discipline* whose *universal mechanism* is a band member: *
 
 The testing policy is at **`docs/deep-dives/contributing/testing.ja.md`** (English:
 `docs/deep-dives/contributing/testing.md`). It is normative — read it before adding
-or modifying tests.
+or modifying tests. For co-vet review and gate-design specifically, also read
+`docs/deep-dives/contributing/verification-hazards.md` — a checklist of ways a
+green result can mean less than it looks like it means, each with a real instance
+and a detection technique that closed it.
 
 Key constraints (full rationale in the doc):
 
@@ -185,6 +188,8 @@ and run the checklist below before continuing:
 
 ## When in doubt — read these
 
+- **Verification hazards** (why a green result can mean less than it looks
+  like — co-vet review, gate design): `docs/deep-dives/contributing/verification-hazards.md`
 - **Workspace** (single source of truth): `docs/concepts/runtime/workspace.md`
 - **Events / replay** (audit truth): `docs/concepts/runtime/events.md`
 - **`.reyn/` directory layout** (what's recovery-core vs persist/audit/cache/outside, the
