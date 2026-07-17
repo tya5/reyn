@@ -506,22 +506,53 @@ unexpected workflow behavior would otherwise leave open.
 
 Shell hooks run inside the same backend-agnostic sandbox abstraction as
 Control IR `shell_exec` ops: Seatbelt (macOS), Landlock/seccomp (Linux), Noop
-(unsupported platforms), or a container backend. Safe defaults apply:
+(unsupported platforms), or a container backend.
 
-- `network: false` — outbound network blocked
-- No subprocess spawning — the **floor**, not a fixed rule: an operator may
-  permit fork per hook with [`subprocess: true`](../../reference/config/reyn-yaml.md#hooks-block).
-  Omitting the key keeps this floor. The knob is deliberately per-hook and
-  defaults off (unlike a stdio MCP server's `subprocess:`, which defaults on
-  because such a server forks to exist): a hook's fork need is a property of
-  the operator's own command. A command that forks internally — a bare command
-  resolving to a `pyenv`/`asdf`/`mise` shim, or an `npx`/`uvx` launcher — is
-  denied under the floor and logged with `denial_class=fork_denied`, naming it
-  an environment/config problem rather than a command failure.
+A hook shell's sandbox is scoped **per hook**. Three axes start at a floor and
+only an explicit key on that hook moves them
+([`hooks:` block](../../reference/config/reyn-yaml.md#hooks-block)):
+
+| Axis | Floor | The operator's key |
+|---|---|---|
+| fork | no subprocess spawning | `subprocess: true` |
+| network | outbound network blocked | `network: true` |
+| writes | no writable paths | `write_paths: [...]` |
+
+Omitting a key keeps that floor, so a hook that declares nothing is as bounded
+as it has always been. Each axis is deliberately per-hook rather than global:
+what a hook needs from the sandbox is a property of the operator's own command.
+A `git`/`npm` hook forks; a pure-python one does not — so there is no safe
+blanket default (contrast a stdio MCP server's `subprocess:`, which defaults
+*on* because such a server forks to exist). A command that forks internally — a
+bare command resolving to a `pyenv`/`asdf`/`mise` shim, or an `npx`/`uvx`
+launcher — is denied under the floor and logged with `denial_class=fork_denied`,
+naming it an environment/config problem rather than a command failure.
+
+Two boundaries hold regardless of the keys:
+
 - The sensitive-file read deny-list (`~/.ssh`, `~/.aws`, …) applies to shell
-  hooks as it does to any other sandboxed run
-- Consent fail-closed: if the sandbox backend cannot be confirmed, the shell
-  hook is refused rather than run unsandboxed
+  hooks as it does to any other sandboxed run, and a `write_paths` grant does
+  not pierce it — the deny wins over an overlapping grant.
+- Consent is fail-closed: if the sandbox backend cannot be confirmed, the shell
+  hook is refused rather than run unsandboxed.
+
+### Why the agent-level `sandbox.policy` is not the hook's policy
+
+The agent-level [`sandbox.policy`](../../reference/config/reyn-yaml.md#sandbox-block)
+governs sandboxed ops and the OS's in-process file/http gates. It does **not**
+reach a hook shell. That is a structural choice, not an oversight: a hook is a
+small declarative reaction to a lifecycle event, so its floor should not move
+because a run's *ops* are deliberately unsandboxed. The hook site is where a
+hook's sandbox is decided.
+
+What the OS does not do is ignore you. If the agent-level policy declares one of
+the three axes above and a shell hook does not re-declare it, the run logs a
+WARNING naming the per-hook key that reaches it and emits a
+`sandbox_policy_not_applied` audit-event recording what was configured, what
+actually applied, and which hook. Declaring the key on the hook — to *any*
+value, including the floor — is your decision on that axis, and a decision is
+never reported. The invariant: an operator's expressed will is applied or
+refused, never silently dropped.
 
 ### Consent and allowlist
 

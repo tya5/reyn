@@ -255,6 +255,36 @@ class HookDef:
         shell's fork need instead depends on the operator's own command — a
         ``git``/``npm``/pipeline hook forks; a pure-python one may not — so the
         judgment is the operator's per hook, not a blanket flip (#2827).
+    network:
+        OPERATOR-declared per-hook sandbox knob (#3005): may this hook's shell
+        command reach the network? Same shape, scheme-restriction and
+        ``bool | None`` semantics as ``subprocess`` above — ``None`` = omitted =
+        the ``False`` floor.
+
+        Exists because the agent-level ``reyn.yaml sandbox.policy`` does NOT
+        reach a hook shell (it is resolved only on the op path), so before this
+        knob an operator had **no** way to grant a hook network at all — their
+        global ``network: true`` was silently dropped. The direction of that
+        drop was fail-safe (the hook got *less* than asked), which is why it was
+        a legibility defect and not a security hole; the fix is to make the axis
+        reachable at the site that owns it *and* to stop dropping the global
+        silently (see ``reyn.hooks.sandbox_scope``).
+    write_paths:
+        OPERATOR-declared per-hook sandbox knob (#3005): filesystem paths this
+        hook's shell command may write (``~`` expanded by the backend, write
+        implies read). ``None`` = omitted = the floor, which grants **no** write
+        paths; an explicit list — including ``[]`` — is the operator's expressed
+        will. Optional (``... | None``) rather than a bare sequence for the same
+        #2964 reason ``subprocess`` is ``bool | None``: an empty list cannot
+        otherwise be told from an omission. Stored as a ``tuple`` because
+        ``HookDef`` is frozen — the loader converts the YAML list.
+
+        A write grant does not defeat the sensitive-read deny-list — the deny
+        wins over an overlapping grant (#2978), exactly as on the op path.
+
+        Together with ``subprocess`` and ``network`` this completes the per-site
+        sandbox triad an operator already has on a stdio MCP server, so the same
+        three axes are expressible at every per-site sandbox surface.
     """
 
     on: str
@@ -265,3 +295,5 @@ class HookDef:
     pipeline_launch: PipelineLaunchBlock | None = field(default=None)
     matcher: "dict[str, str] | None" = field(default=None)
     subprocess: bool | None = field(default=None)
+    network: bool | None = field(default=None)
+    write_paths: "tuple[str, ...] | None" = field(default=None)

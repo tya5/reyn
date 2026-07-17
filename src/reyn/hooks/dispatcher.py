@@ -264,9 +264,15 @@ class HookDispatcher:
                 template_vars,
                 sandbox_backend=self._sandbox_backend,
                 sandbox_config=self._sandbox_config,
-                # #2827: the operator's per-hook fork knob. None = omitted =
-                # the runner keeps its False floor (today's behaviour).
+                # #2827/#3005: the operator's per-hook sandbox knobs. None =
+                # omitted = the runner keeps that axis at its floor (today's
+                # behaviour). The agent-level sandbox.policy does not reach a
+                # hook shell, so these keys are the operator's whole surface —
+                # threading only some of them would leave the rest of the
+                # asymmetry the issue names in place.
                 allow_subprocess=hook.subprocess,
+                network=hook.network,
+                write_paths=hook.write_paths,
                 consent_bus=self._consent_bus_now(),
                 hook_name=hook.name,
                 emit_event=self._emit_event,
@@ -285,10 +291,12 @@ class HookDispatcher:
                 sandbox_backend=self._sandbox_backend,
                 sandbox_config=self._sandbox_config,
                 capture_stdout=True,
-                # #2827: same knob on the shell_push sibling — the fork need is
-                # a property of the operator's command, not of which scheme
-                # consumes its stdout.
+                # #2827/#3005: the same knobs on the shell_push sibling — what a
+                # command needs from the sandbox is a property of the command,
+                # not of which scheme consumes its stdout.
                 allow_subprocess=hook.subprocess,
+                network=hook.network,
+                write_paths=hook.write_paths,
                 consent_bus=self._consent_bus_now(),
                 hook_name=hook.name,
                 emit_event=self._emit_event,

@@ -280,6 +280,66 @@ async def _prompt_consent_via_bus(
     return False
 
 
+def _report_unapplied_agent_policy(
+    *,
+    sandbox_config: "SandboxConfig | None",
+    policy: "SandboxPolicy",
+    hook_label: str,
+    declared: dict,
+    emit_event: "Callable[..., Any] | None",
+) -> None:
+    """Speak every agent-level ``sandbox.policy`` field this hook shell did not
+    honour — as a WARNING + a ``sandbox_policy_not_applied`` audit-event (#3005).
+
+    The agent-level policy is op-scoped by construction, so a hook shell IGNORING
+    it is correct; a hook shell ignoring it *silently* is not. An operator who
+    writes ``sandbox.policy: {network: true}`` and gets a hook with no network
+    has had their expressed will neither applied nor refused — and no signal
+    exists anywhere from which they could learn that, or learn that the per-hook
+    key is the surface that would work. Both directions matter: an ignored
+    ``network``/``write_paths`` grant fails safe (the hook gets less than asked)
+    while an ignored ``allow_subprocess`` would fail loose, and neither is
+    discoverable while the drop is mute.
+
+    Mirrors the ``sandbox_policy_narrowed`` shape (#2978/#2986) rather than
+    inventing one: a policy decision the operator did not write is emitted where
+    it is taken, so ``reyn events`` can reconstruct which policy a hook actually
+    ran under. Best-effort throughout — reporting must never break the hook run.
+    """
+    from reyn.hooks.sandbox_scope import (  # noqa: PLC0415 — keep import cost off the no-policy path
+        unapplied_policy_fields,
+        unapplied_policy_message,
+    )
+
+    config_policy = getattr(sandbox_config, "policy", None)
+    unapplied = unapplied_policy_fields(config_policy, declared)
+    if not unapplied:
+        return
+
+    for policy_field, hook_key in unapplied:
+        message = unapplied_policy_message(
+            hook_label=hook_label,
+            policy_field=policy_field,
+            hook_key=hook_key,
+            configured=config_policy[policy_field],
+            effective=getattr(policy, policy_field),
+        )
+        _log.warning("shell-hook: %s", message)
+        if emit_event is None:
+            continue
+        try:
+            emit_event(
+                "sandbox_policy_not_applied",
+                hook=hook_label,
+                policy_field=policy_field,
+                hook_key=hook_key,
+                configured=config_policy[policy_field],
+                effective=getattr(policy, policy_field),
+            )
+        except Exception as exc:  # noqa: BLE001 — telemetry is best-effort
+            _log.debug("shell-hook: emit_event failed for %r: %s", hook_label, exc)
+
+
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
@@ -295,6 +355,8 @@ async def run_shell_hook(
     sandbox_config: "SandboxConfig | None" = None,
     sandbox_policy: "SandboxPolicy | None" = None,
     allow_subprocess: bool | None = None,
+    network: bool | None = None,
+    write_paths: "tuple[str, ...] | list[str] | None" = None,
     allowlist_path: Path | None = None,
     capture_stdout: bool = False,
     consent_bus: "RequestBus | None" = None,
@@ -344,6 +406,15 @@ async def run_shell_hook(
         applied to the DEFAULT policy built here. ``None`` = omitted = keep the
         floor (``False``); an explicit bool is the operator's expressed will.
         Only consulted when *sandbox_policy* is None.
+    network:
+        #3005 — the operator's per-hook ``network:`` knob (``HookDef``). Same
+        ``None`` = omitted = floor (``False``) semantics as *allow_subprocess*,
+        and likewise only consulted when *sandbox_policy* is None.
+    write_paths:
+        #3005 — the operator's per-hook ``write_paths:`` knob (``HookDef``).
+        ``None`` = omitted = the floor, which grants no write paths; an explicit
+        sequence (including an empty one) is the operator's expressed will. Only
+        consulted when *sandbox_policy* is None.
     allowlist_path:
         Override the allowlist file path (used by tests to point at a tmp
         file).  Defaults to ``~/.reyn/shell-hooks-allowlist.json`` (or the
@@ -422,22 +493,42 @@ async def run_shell_hook(
     backend = sandbox_backend if sandbox_backend is not None else get_default_backend(sandbox_config)
 
     # Build a safe default policy when none is supplied.
-    # #2827: allow_subprocess is the operator's per-hook ``subprocess:`` knob.
-    # None (omitted) keeps the False floor — today's behaviour, byte-identical
-    # for every hook that predates the knob; only an explicit operator bool
-    # moves it. (read_deny_paths is NOT set here on purpose: SandboxPolicy's
-    # own default_factory already supplies DEFAULT_SENSITIVE_READ_DENY, so the
+    # #2827/#3005: allow_subprocess / network / write_paths are the operator's
+    # per-hook knobs (``subprocess:`` / ``network:`` / ``write_paths:``). None
+    # (omitted) keeps the floor — today's behaviour, byte-identical for every
+    # hook that predates the knobs; only an explicit operator value moves an
+    # axis. (read_deny_paths is NOT set here on purpose: SandboxPolicy's own
+    # default_factory already supplies DEFAULT_SENSITIVE_READ_DENY, so the
     # sensitive-file deny-list applies to hook shells too — verified, not
     # assumed.)
-    policy: SandboxPolicy = (
-        sandbox_policy
-        if sandbox_policy is not None
-        else _SandboxPolicy(
-            network=False,
+    policy: SandboxPolicy
+    if sandbox_policy is not None:
+        policy = sandbox_policy
+    else:
+        policy = _SandboxPolicy(
+            network=bool(network) if network is not None else False,
             allow_subprocess=bool(allow_subprocess) if allow_subprocess is not None else False,
+            write_paths=list(write_paths) if write_paths is not None else [],
             timeout_seconds=timeout_seconds,
         )
-    )
+        # #3005: the agent-level ``reyn.yaml sandbox.policy`` never reaches this
+        # policy — it is resolved on the op path only. That scoping is
+        # deliberate (a hook's floor should not move because a run's *ops* are
+        # unsandboxed), but dropping the operator's declaration in SILENCE is
+        # not: their expressed will must be applied or refused, never ignored.
+        # This is the only place that holds both the declaration and the policy
+        # it did not become, so it is where the refusal has to be spoken.
+        _report_unapplied_agent_policy(
+            sandbox_config=sandbox_config,
+            policy=policy,
+            hook_label=hook_name or command,
+            declared={
+                "subprocess": allow_subprocess,
+                "network": network,
+                "write_paths": write_paths,
+            },
+            emit_event=emit_event,
+        )
 
     # --- Run via backend (same abstraction as sandboxed_exec.py) ----------
     try:
