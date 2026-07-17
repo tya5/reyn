@@ -143,13 +143,13 @@ def _apply_landlock(policy: SandboxPolicy) -> None:
 
     0. ``isolate_network_namespace()`` — when ``policy.network`` is False, move
        this process into a fresh, interface-less network namespace BEFORE
-       anything else. This is the actual boundary for ``network: false``
-       (#3030): it does not depend on ``allow_subprocess``, and it is not a
-       syscall-name denylist (io_uring included), so nothing later in this
-       function can widen or narrow it. Netns entry does not depend on
-       Landlock or seccomp, but doing it first keeps its own (best-effort)
-       ``/proc/self/*`` writes reachable before Landlock closes off filesystem
-       access.
+       seccomp. This is the actual boundary for ``network: false`` (#3030): it
+       does not depend on ``allow_subprocess``, and it is not a syscall-name
+       denylist (io_uring included), so nothing later in this function can
+       widen or narrow it. It must precede the seccomp step (``unshare`` is not
+       in the seccomp allowlist, so it would be refused afterward); it has no
+       ordering dependency on Landlock (it writes no ``/proc/self/*`` map — see
+       ``backends/netns``).
     1. ``preload_native_dependency()`` — resolve pyseccomp's native libraries
        while this process can still reach the filesystem. Its import shells out
        and writes a temp file; run it after step 2 and Landlock denies it, the

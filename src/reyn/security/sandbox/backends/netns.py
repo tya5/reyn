@@ -104,10 +104,12 @@ def isolate_network_namespace() -> None:
     Call this in a re-exec shim before the target `exec`s (namespaces are
     per-process and are inherited across `fork`/`exec`, so applying it once
     here restricts everything downstream), or from a `preexec_fn` in the
-    fork-then-exec `subprocess.Popen` path — before Landlock/seccomp are
-    applied, since neither of those layers governs namespace syscalls and
-    doing it first means the identity-map file writes below (best-effort) run
-    while the process can still reach `/proc/self/*`.
+    fork-then-exec `subprocess.Popen` path. It performs NO `/proc/self/*`
+    identity-map writes (see module docstring for why the map was dropped), so
+    it has no ordering dependency on filesystem reachability and may run before
+    or after Landlock/seccomp — though it must stay BEFORE seccomp, since
+    `unshare` is not in the seccomp allowlist and would be refused after the
+    filter loads.
 
     Raises:
         RuntimeError: the namespace could not be created (non-Linux, or the

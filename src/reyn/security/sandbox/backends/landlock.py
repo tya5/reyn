@@ -160,13 +160,13 @@ def _child_preexec(ruleset: object | None, policy: SandboxPolicy) -> None:
     (preexec_fn).
 
     Called after fork(), before exec(). Network-namespace isolation (#3030)
-    goes FIRST — before ``ruleset.apply()`` — because it does not depend on
-    Landlock/seccomp and its own (best-effort) ``/proc/self/*`` identity-map
-    writes need filesystem access that Landlock is about to take away. Unlike
-    the Landlock/seccomp steps below, a netns failure is NOT swallowed: it
-    RAISES, which ``subprocess.Popen`` propagates to the parent as a
-    ``SubprocessError`` — fail-closed, because running the target with network
-    reachable when the policy denied it is the exact defect #3030 is.
+    goes before the seccomp step (``unshare`` is not in the seccomp allowlist,
+    so it would be refused afterward); it writes no ``/proc/self/*`` map, so it
+    has no ordering dependency on Landlock. Unlike the Landlock/seccomp steps
+    below, a netns failure is NOT swallowed: it RAISES, which
+    ``subprocess.Popen`` propagates to the parent as a ``SubprocessError`` —
+    fail-closed, because running the target with network reachable when the
+    policy denied it is the exact defect #3030 is.
 
     The Landlock ruleset is built in the parent (its ruleset fd survives the
     fork); ``apply()`` issues ``landlock_restrict_self`` on the calling (child)
