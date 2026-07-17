@@ -123,12 +123,7 @@ def _apply_seccomp(policy: SandboxPolicy) -> None:
     """
     if policy.allow_subprocess:
         return
-    # STRIP-FALSIFY (#2983 stage 3, TEMPORARY — reverted in the next commit):
-    # the seccomp filter never loads. The spawn deny arm MUST go red, while the
-    # write arm stays green (that boundary is Landlock's). This is #2962/#3020's
-    # shape: the filter is dead and the layer above it is unaffected.
-    # load_seccomp_filter(policy)
-    return
+    load_seccomp_filter(policy)
 
 
 def _apply_landlock(policy: SandboxPolicy) -> None:
