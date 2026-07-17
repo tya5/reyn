@@ -157,6 +157,8 @@ Tier 1〜3 に明確に位置づけられないテストは、ほぼ例外なく
 ## Mock vs Fake
 
 LLM 依存テストは必ず Fake（`LLMReplay`）を使う必要があります。Mock は禁止です。
+**この禁止は litellm 固有ではありません — テストが構築するあらゆる collaborator（callable
+と plain な data/state object の両方）に適用されます**（下記「[data/state object の fake](#datastate-object-の-fake-同じ禁止より鋭い失敗モード)」参照）。litellm/`LLMReplay` は単に、このリポジトリの規範的な実例が存在する場所です。
 
 ### 理由
 
@@ -172,6 +174,29 @@ with patch("litellm.acompletion", return_value=hand_built_dict):
 これは実際の API コントラクトをバイパスします。`litellm` のシグネチャやレスポンス形状が変わったとき（例: LangChain が `__call__` を `invoke()` にリネームしたとき、エコシステム全体の Mock テストは pass し続けながら本番が壊れていました — Lincoln Loop, "Avoiding Mocks: Testing LLM Applications with LangChain in Django" 参照）、Mock テストはそれを検出できません。
 
 Fake は実際の API サーフェスを通じてルーティングします。`LLMReplay` は `litellm.acompletion` をパッチしますが、記録済みデータから本物の `litellm.ModelResponse` を再構築します。シグネチャのドリフトは呼び出しサイト（TypeError、AttributeError）またはルックアップ時（`MissingFixture`）で検出されます。
+
+**2つの異なる失敗モードがあり、1つではありません。** fake された **callable**（関数 / `__call__`）はシグネチャドリフト検出をバイパスします — 本物の呼び出しならコントラクトが変わった時に大きく（`TypeError` で）失敗するはずが、mock は指示された値を黙って返すだけです。fake された **data/state object**（呼び出されるのではなく collaborator として渡される、手書きの代替物）はより悪い失敗モードを持ちます: 本物の型には存在しないフィールドを黙って持たせることができ、`getattr(obj, "field", default)` で存在しないフィールドを読むと**何も発生しません** — 単にデフォルト値を永遠に返すだけで、ドリフトすべきシグネチャも、失敗すべき呼び出しもありません。本物の collaborator が安価に構築できる（plain な dataclass で I/O なし）なら、本物を構築してください — fake する理由になるコストトレードオフは存在しません。
+
+#### `data/state object` の fake — 同じ禁止・より鋭い失敗モード
+
+```python
+# 禁止
+class FakeRouterCallerState:
+    def __init__(self):
+        self.permission_resolver = _AllowAllResolver()  # 発明された — 本物の
+                                                          # RouterCallerState にこのフィールドは無い
+```
+
+**#3037**: `RouterCallerState` 用の手書き fake が、本物の dataclass には存在しない
+`permission_resolver` フィールドを発明していました。検査対象の gate は
+`getattr(state, "permission_resolver", None)` でそのフィールドを読み、fake が発明した
+値を見つけて CLEAR と報告しました — その gate は本物の `RouterCallerState` に対して一度も
+実行されたことがなく、本物の型にそのフィールドが無い以上、実行できるはずもありませんでした。
+本番では、これにより LLM が permission gate 無しで `.reyn/config/mcp.yaml` を書けて
+いました。これが上述の「より鋭い失敗モード」です: 違反すべきシグネチャも、失敗すべき呼び出しも
+なく、ただ黙って永遠に間違ったデフォルト値があるだけです。**本物の collaborator が plain な
+dataclass なら、本物を構築してください — 構築コストがゼロのものを手書きで代替する
+test-isolation 上の理由はありません。**
 
 #### test seam は construction-wiring gate を弱めてはならない
 
