@@ -365,6 +365,33 @@ When adding new infra that touches user home (`~/.reyn/registry-cache/`, `~/.rey
 
 Module-level constants (`_SECRETS_FILE = Path.home() / ".reyn" / "secrets.env"`) are evaluated at import time — `monkeypatch.setenv("HOME", ...)` after import has no effect. The env-var-at-call-time pattern avoids that footgun.
 
+## Spawning a subprocess that imports `reyn` (= declare it)
+
+**In-process, a test always reads the checkout it was started from** — `[tool.pytest.ini_options] pythonpath = ["src"]` puts `<rootdir>/src` on `sys.path`. **A subprocess gets no such favour**: it re-resolves `reyn` from the venv. In a git worktree — which has no venv of its own, and borrows the main checkout's — that answer is **whatever checkout the venv's editable `.pth` points at**, i.e. *someone else's working tree*. Both halves then go green while disagreeing, and the spawning half is the wrong one (#3024).
+
+**If your test spawns anything that imports `reyn`, request `out_of_process_reyn` and pin what it returns:**
+
+```python
+def test_something(out_of_process_reyn):
+    env = {**os.environ, "PYTHONPATH": out_of_process_reyn}
+    subprocess.run([sys.executable, "-c", script], env=env)
+```
+
+The fixture derives the src root from the **in-process** `reyn` and verifies by measurement that a subprocess pinned to it reads that same `reyn` — so the test measures the tree under test, in a worktree as well as in CI.
+
+**An MCP stdio server needs the pin threaded through the server's *configured* env**, not inherited: the MCP SDK passes a six-key whitelist (`HOME`, `LOGNAME`, `PATH`, `SHELL`, `TERM`, `USER`) that **drops `PYTHONPATH`**. See `tests/test_fp0063_p3_rag_pipelines.py`.
+
+**If your test runs a `[project.scripts]` console script by name** (`reyn`, `reyn-rag-chunker`, `reyn-rag-vector-store`), also request **`reyn_console_scripts`**. A venv installed before an entry point was declared does not carry that script, and the failure says neither "absent" nor "stale venv" — it surfaces as `execvp() failed` or, through a stdio client, `McpError: Connection closed`, both of which read as a broken feature. The fixture skips with the absent subject named, and **fails under CI** (where the venv installs this checkout, so an absence there is a CI-setup defect rather than a reason to go green).
+
+To diagnose an environment directly — including outside pytest, e.g. a manual e2e or a co-vet run:
+
+```bash
+python scripts/verify_env_identity.py            # all checks
+python scripts/verify_env_identity.py --only console-scripts
+```
+
+**Never re-install a stale venv by running `pip install -e .` from inside a worktree.** That repoints the shared venv's editable `.pth` at that worktree, and every other consumer of the venv silently starts reading it. Install from the checkout the venv is meant to serve.
+
 ## Out of policy
 
 These belong outside the test suite:
