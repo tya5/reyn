@@ -17,6 +17,27 @@ see `_embed_batch_with_retry`'s docstring). The fix passes `max_retries=0`
 into every `litellm.aembedding(...)` call (`_aembedding_bounded`), making
 reyn's own retry loop the ONLY retry layer.
 
+**Blast-radius check (architect co-vet on #3054): does chat's wire count
+change too?** The fix also sets `litellm.DEFAULT_MAX_RETRIES = 0` — a
+process-wide global, not a per-call kwarg, since a falsy ``max_retries=0``
+kwarg alone revives the same ``x or DEFAULT`` trap. That global is read in
+exactly one place in the pinned litellm: `OpenAIChatCompletion.embedding()`'s
+``max_retries = max_retries or litellm.DEFAULT_MAX_RETRIES``
+(`llms/openai/openai.py`). The sibling `OpenAIChatCompletion.completion()`
+method — chat's call path — never reads `litellm.DEFAULT_MAX_RETRIES` at
+all: it does ``inference_params.pop("max_retries", 2)``, and reyn's chat path
+(`llm.py`) always passes an explicit non-`None` `num_retries` into
+`litellm.acompletion`, which `litellm.main.py` maps onto `max_retries` in
+`optional_params` BEFORE `completion()` ever pops it — so the fallback
+literal `2` there is dead code for every reyn chat call, same as the global
+mutation is. `test_chat_acompletion_wire_count_unaffected_by_embed_global_mutation`
+below drives ONE real `litellm.acompletion` call shaped like reyn's chat call
+site (explicit `num_retries`, `stream=False`) against the same
+request-counting server, once with the global at its untouched litellm
+default (2) and once forced to 0 (the fix's post-import state), and asserts
+the wire count is identical — closing the "discussed structurally, not
+driven" gap the architect flagged.
+
 **Why this needs a real request-counting server, not a mock.** A test that
 patches `litellm.aembedding` never exercises the OpenAI SDK client that does
 the amplifying — it would pass identically whether the fix is wired or not.
@@ -33,6 +54,7 @@ from __future__ import annotations
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
+import litellm
 import pytest
 
 from reyn.data.embedding.litellm_provider import LiteLLMEmbeddingProvider
@@ -131,3 +153,48 @@ async def test_single_attempt_no_reyn_retry_delivers_exactly_one_request(
         await provider.embed(["hello"], "standard")
 
     assert counting_server.request_count == 1
+
+
+@pytest.mark.asyncio
+async def test_chat_acompletion_wire_count_unaffected_by_embed_global_mutation(
+    counting_server, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Tier 2: the embed fix's `litellm.DEFAULT_MAX_RETRIES = 0` global mutation
+    does not change chat's wire count (architect co-vet on #3054, driven not
+    inferred).
+
+    Drives ONE `litellm.acompletion(...)` call — shaped like reyn's real chat
+    call site in `llm.py` (explicit `num_retries=`, `stream=False`, routed at
+    a real local HTTP server via `api_base`, no monkeypatching of litellm or
+    of the call itself) — against the SAME request-counting server the embed
+    tests above use, once with `litellm.DEFAULT_MAX_RETRIES` at the untouched
+    litellm default (2, i.e. the state BEFORE any embed provider has run) and
+    once forced to 0 (the state AFTER `_aembedding_bounded` has run, since the
+    mutation is process-wide and permanent). If the two wire counts differ,
+    the embed fix's global has reached into chat's retry count and the fix
+    needs a different (non-global) shape.
+    """
+    import os
+
+    api_base = os.environ["LITELLM_API_BASE"]  # set by the counting_server fixture
+    counts: dict[int, int] = {}
+    for default_max_retries in (2, 0):
+        monkeypatch.setattr(litellm, "DEFAULT_MAX_RETRIES", default_max_retries)
+        counting_server.request_count = 0
+        with pytest.raises(litellm.exceptions.InternalServerError):
+            await litellm.acompletion(
+                model="openai/gpt-4o-mini",
+                messages=[{"role": "user", "content": "hi"}],
+                num_retries=3,  # same shape as llm.py's call_kwargs["num_retries"]
+                timeout=5.0,
+                stream=False,
+                api_base=api_base,
+            )
+        counts[default_max_retries] = counting_server.request_count
+
+    assert counts[2] == counts[0], (
+        f"chat's wire count changed with litellm.DEFAULT_MAX_RETRIES "
+        f"(2 -> {counts[2]} requests, 0 -> {counts[0]} requests) — the embed "
+        f"fix's global mutation is NOT scoped to embedding as intended"
+    )
+    assert counts[2] > 0, "sanity: the stand-in server must have been hit at all"
