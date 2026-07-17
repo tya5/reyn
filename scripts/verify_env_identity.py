@@ -325,8 +325,8 @@ def check_console_scripts(root: Path) -> list[Finding]:
 
 
 # The enumeration. A check is registered here or it does not run — `main` and the
-# pytest session gate both derive their work from this map rather than from a
-# hand-kept call list, so adding a check cannot leave a caller behind.
+# `tests/conftest.py` fixtures both derive their work from this map rather than
+# from a hand-kept call list, so adding a check cannot leave a caller behind.
 CHECKS = {
     "tree-identity": check_tree_identity,
     "pinned-tree": check_pinned_tree,

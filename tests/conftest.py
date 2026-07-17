@@ -20,12 +20,20 @@ Record mode is also activated automatically when a fixture file is missing
 
 Environment identity
 --------------------
-``pytest_sessionstart`` refuses to start a session whose venv is missing a
-console script this checkout declares, and ``out_of_process_reyn`` is the
-fixture a test requests when it spawns something that imports ``reyn``. Both
-delegate to ``scripts/verify_env_identity.py`` — see #3024 and that module's
-docstring for why "the environment runs the tree I am measuring" is not
-something a test may assume.
+Two fixtures a test requests to declare what it depends on, both delegating to
+``scripts/verify_env_identity.py``:
+
+``out_of_process_reyn``
+    Requested when the test spawns something that imports ``reyn``. Yields the
+    src root to pin as ``PYTHONPATH``, so the spawn reads the checkout under
+    test rather than whichever one the venv resolves.
+``reyn_console_scripts``
+    Requested when the test runs a ``[project.scripts]`` console script by name.
+    Skips (or, under CI, fails) when this venv predates a declared script.
+
+Neither is autouse: a test that does not spawn declares nothing and pays
+nothing. See #3024 and that module's docstring for why "the environment runs
+the tree I am measuring" is not something a test may assume.
 """
 from __future__ import annotations
 
