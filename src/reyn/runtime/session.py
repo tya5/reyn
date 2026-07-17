@@ -6750,9 +6750,22 @@ class Session:
         Public — read by both the RouterHostAdapter SP context-size signal
         (via the callback wired at __init__) and the inline UI's ctx chip
         dropdown (status bar reads only public accessors, see
-        interfaces/inline/app.py's module docstring). Non-trivial cost: does a
-        json.dumps + token-estimate of the full router-view history on every
-        call — callers should not invoke this from a per-render-frame path."""
+        interfaces/inline/app.py's module docstring).
+
+        Non-trivial cost — callers must not invoke this from a per-render-frame
+        path. #2951 added an incremental cache to the advisor's OWN
+        json.dumps + token-estimate of the router-view history, so that step is
+        no longer paid on every call (only on a cache miss: history shrink,
+        model/use_chars4 change, or a changed cached prefix). The remaining —
+        and dominant — cost is the PRODUCER: ``history_fn`` is
+        ``RouterHistoryBuffer.build_history``, which calls
+        ``_active_branch_history`` 2x (3x on the elide path: ``build_history``
+        itself plus each ``_latest_summary``), and each of those does one full
+        ``build_active_predicate`` WAL scan (json-decoding every line, no
+        cache). So this is O(WAL size) per call, NOT O(1) on a cache hit.
+        Measured (#2940, N=2000 msgs / M=100k WAL entries, warm token cache):
+        ~445ms per call, of which build_history is ~99.7%; the #2951 cache
+        saves ~10ms of it. The residual WAL scan is #2939's scope."""
         return self._budget_advisor.context_window_status()
 
     def raw_context_window(self) -> dict:
