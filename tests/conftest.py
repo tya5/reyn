@@ -17,9 +17,19 @@ Environment variables
 
 Record mode is also activated automatically when a fixture file is missing
 (first-run bootstrap).
+
+Environment identity
+--------------------
+``pytest_sessionstart`` refuses to start a session whose venv is missing a
+console script this checkout declares, and ``out_of_process_reyn`` is the
+fixture a test requests when it spawns something that imports ``reyn``. Both
+delegate to ``scripts/verify_env_identity.py`` — see #3024 and that module's
+docstring for why "the environment runs the tree I am measuring" is not
+something a test may assume.
 """
 from __future__ import annotations
 
+import importlib.util
 import os
 import sys
 from pathlib import Path
@@ -64,6 +74,105 @@ if _REPO_ROOT not in sys.path:
 # tests) force a fresh re-import of ``reyn.interfaces.web.server`` per test —
 # it does not rely on, or get affected by, this session-wide default.
 os.environ.setdefault("REYN_WEB_ENABLE_SURFACES", "a2a,mcp")
+
+# ── Environment identity (#3024) ───────────────────────────────────────────────
+#
+# Loaded by path, not imported as a package: `scripts/` is not importable, and
+# the checker is deliberately stdlib-only and reyn-free (it cannot ask `reyn`
+# where `reyn` is — that is the question).
+
+
+def _load_env_identity():
+    path = Path(_REPO_ROOT) / "scripts" / "verify_env_identity.py"
+    spec = importlib.util.spec_from_file_location("_reyn_env_identity", path)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    # Registered before exec: `@dataclass` resolves its own module through
+    # `sys.modules[cls.__module__]` while the class body executes.
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+_ENV_IDENTITY = _load_env_identity()
+
+
+@pytest.fixture(scope="session")
+def reyn_console_scripts() -> None:
+    """Declare that this test runs a `[project.scripts]` console script by name.
+
+    A `[project.scripts]` entry is a declaration; the console script is a file `pip`
+    writes into a venv. A venv installed before the entry existed has never heard of
+    it, and the resulting failure names neither the venv nor the absence — it
+    surfaces as ``execvp() failed``, or, through a stdio client, as
+    ``McpError: Connection closed``. Both read as a broken feature. #3024: that
+    misread reached a co-vet verdict twice in one day, once as "a pre-existing flake
+    on origin/main" for a venv that was simply missing the script.
+
+    Unlike tree divergence — which a test dissolves itself by pinning
+    ``out_of_process_reyn`` — an absent console script cannot be fixed from inside
+    the suite: installing it belongs to whoever provisions the venv. So the
+    unreachability here is genuine, and the honest response is to skip **naming the
+    absent subject**, rather than to run and report a deterministic RED as evidence
+    about the feature.
+
+    Under CI it **fails** instead. A skip is only honest while the property is
+    witnessed somewhere, and CI — which installs this checkout — is that somewhere.
+    A CI venv missing a script this checkout declares is a defect in CI's setup, and
+    silently skipping there would make the whole mechanism dormant.
+    """
+    findings = _ENV_IDENTITY.verify(Path(_REPO_ROOT), only=("console-scripts",))
+    if not findings:
+        return
+    rendered = "\n".join(f.render() for f in findings)
+    message = (
+        f"this venv does not carry every console script {_REPO_ROOT} declares, so "
+        f"running one would measure the venv's staleness, not the feature.\n{rendered}"
+    )
+    if os.environ.get("CI"):
+        pytest.fail(f"env-identity (CI installs this checkout — its venv must be complete): {message}")
+    pytest.skip(f"env-identity: {message}")
+
+
+@pytest.fixture(scope="session")
+def out_of_process_reyn() -> str:
+    """Declare that this test spawns something importing ``reyn``; yield the src root to pin.
+
+    In-process, a test always reads the checkout it was started from —
+    ``[tool.pytest.ini_options] pythonpath`` puts ``<rootdir>/src`` on `sys.path`.
+    A subprocess gets no such favour: it re-resolves `reyn` from the venv, and in a
+    git worktree (which has no venv of its own) that answer is whatever checkout
+    the ambient venv's editable ``.pth`` points at. The two halves then disagree
+    silently, and the spawning half is the one that is wrong.
+
+    Pin the returned path as ``PYTHONPATH`` in the spawn's environment. Note that
+    an MCP stdio server needs it threaded through the server's *configured* env:
+    the SDK passes a six-key whitelist that drops ``PYTHONPATH``, so inheriting is
+    not enough (``tests/test_fp0063_p3_rag_pipelines.py`` does this).
+
+    Requesting the fixture is what makes the dependency a declaration rather than a
+    thing each author rediscovers — the pin exists by hand in several files today,
+    each added after the same lesson was learned again.
+
+    The root is derived from the **in-process** ``reyn``, not from the rootdir, so
+    the check below is the invariant itself rather than a proxy for it: *the reyn a
+    spawn reads is the reyn this test imports*. That can be false exactly where it
+    matters (a worktree, where the two halves diverge) and it is asserted there —
+    a check that can only run where its property is trivially true is not a witness.
+    """
+    import reyn
+
+    root = Path(reyn.__file__).resolve().parents[2]
+    findings = _ENV_IDENTITY.verify(root, only=("pinned-tree",))
+    if findings:
+        rendered = "\n".join(f.render() for f in findings)
+        pytest.fail(
+            f"env-identity: a subprocess pinned to this checkout does not read the same "
+            f"reyn this test imported ({reyn.__file__}), so the two halves of this test "
+            f"would measure different checkouts.\n{rendered}"
+        )
+    return str(root / "src")
+
 
 # ── Secret store isolation ─────────────────────────────────────────────────────
 
