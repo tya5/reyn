@@ -291,26 +291,60 @@ def _parse_entry(
     shell_exec: str | None = _shell_cmd("shell_exec") if "shell_exec" in raw else None
     shell_push: str | None = _shell_cmd("shell_push") if "shell_push" in raw else None
 
-    # ── subprocess (optional, #2827 — the operator's per-hook fork knob) ──────
+    # ── per-hook sandbox knobs: subprocess (#2827) / network + write_paths ────
+    # (#3005). The three axes an operator owns per-site — the same triad a stdio
+    # MCP server exposes. They exist per-hook because the agent-level
+    # ``sandbox.policy`` is resolved on the op path only and does NOT reach a
+    # hook shell; the hook site is where a hook shell's sandbox is decided.
+    #
     # Eager-rejection model (#2976's 'write_paths'/'auth' on a non-stdio MCP
     # server): a security field that only SOME schemes honour must be rejected on
     # the others, never silently ignored — a silently-ignored security field reads
     # as an applied restriction that was never applied. Key PRESENCE (not the
     # value) expresses the operator's will, so `subprocess: false` on a
     # template_push hook is rejected too: it would restrict nothing.
-    subprocess_raw = raw.get("subprocess", None)
-    if "subprocess" in raw:
+    def _shell_only(key: str) -> None:
         if shell_exec is None and shell_push is None:
             raise HookConfigError(
-                f"hooks[{entry_index}].subprocess is only supported on a "
+                f"hooks[{entry_index}].{key} is only supported on a "
                 f"shell_exec / shell_push hook (it scopes the sandboxed shell "
                 f"command); this hook declares {present[0]!r}."
             )
-        if not isinstance(subprocess_raw, bool):
+
+    def _sandbox_bool(key: str) -> bool | None:
+        if key not in raw:
+            return None
+        _shell_only(key)
+        value = raw[key]
+        if not isinstance(value, bool):
             raise HookConfigError(
-                f"hooks[{entry_index}].subprocess must be a boolean, got "
-                f"{type(subprocess_raw).__name__!r}."
+                f"hooks[{entry_index}].{key} must be a boolean, got "
+                f"{type(value).__name__!r}."
             )
+        return value
+
+    subprocess_raw = _sandbox_bool("subprocess")
+    network_raw = _sandbox_bool("network")
+
+    # write_paths — a list of path strings. An explicit `[]` is a real (empty)
+    # grant, so presence, not truthiness, decides "the operator wrote this";
+    # stored as a tuple because HookDef is frozen.
+    write_paths_raw: "tuple[str, ...] | None" = None
+    if "write_paths" in raw:
+        _shell_only("write_paths")
+        value = raw["write_paths"]
+        if not isinstance(value, list):
+            raise HookConfigError(
+                f"hooks[{entry_index}].write_paths must be a list of path strings, "
+                f"got {type(value).__name__!r}."
+            )
+        for item_index, item in enumerate(value):
+            if not isinstance(item, str) or not item.strip():
+                raise HookConfigError(
+                    f"hooks[{entry_index}].write_paths[{item_index}] must be a "
+                    f"non-empty path string, got {item!r}."
+                )
+        write_paths_raw = tuple(value)
 
     # ── pipeline_launch block (#2608 H3) ──────────────────────────────────────
     pipeline_launch: PipelineLaunchBlock | None = None
@@ -359,9 +393,11 @@ def _parse_entry(
         shell_push=shell_push,
         pipeline_launch=pipeline_launch,
         matcher=matcher,
-        # #2827: None when omitted (keep the floor) vs an explicit bool (the
-        # operator's expressed will) — the distinction the knob hinges on.
-        subprocess=subprocess_raw if "subprocess" in raw else None,
+        # #2827/#3005: None when omitted (keep the floor) vs an explicit value
+        # (the operator's expressed will) — the distinction the knobs hinge on.
+        subprocess=subprocess_raw,
+        network=network_raw,
+        write_paths=write_paths_raw,
     )
 
 

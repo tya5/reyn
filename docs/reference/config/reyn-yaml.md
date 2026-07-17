@@ -637,9 +637,11 @@ hooks:
   - on: cron_fired                # external-event point — a message-based cron job fires
     matcher: {job_name: "backup"}
     shell_exec: "echo backup ran >> /tmp/reyn-hooks.log"
-  - on: turn_end                  # a command that FORKS needs the knob (shell schemes only)
-    shell_exec: "npm run lint"    # npx/npm, or a pyenv/asdf/mise-shimmed bare command
-    subprocess: true              # omit → the false floor → an opaque `fork: Operation not permitted`
+  - on: turn_end                  # per-hook sandbox knobs (shell schemes only). The
+    shell_exec: "npm run lint"    # agent-level `sandbox.policy` does NOT reach a hook
+    subprocess: true              # shell — these keys are where a hook's sandbox is set.
+    network: true                 # omit any of them → that axis stays at the hook floor
+    write_paths: ["/tmp/lint"]    # (no fork / no network / no writes)
   - on: webhook_received          # external-event point — an inbound webhook resolves to a session
     matcher: {transport: "slack"}
     template_push:
@@ -656,6 +658,8 @@ hooks:
 | `shell_exec` | string | _none_ | A shell command run as a pure side-effect (one of the four schemes). Sandbox-gated + consent-allowlisted; stdout/stderr are logs, never parsed. |
 | `shell_push` | string | _none_ | A shell command whose **stdout is a single JSON object** `{"push_when": bool, "wake": bool, "message": str, "session"?: str}` (first three required), pushed via the same path as `template_push`. stdout must be pure JSON (logs → stderr). Sandbox-gated + consent-allowlisted. Any failure (non-zero exit, invalid JSON, missing/wrong-typed field) skips the push (fail-safe). |
 | `subprocess` | bool | `false` (the floor) | **`shell_exec` / `shell_push` only** — may this hook's command spawn child processes? Declaring it on another scheme is a `HookConfigError` (a silently-ignored security field would read as an applied restriction that was never applied), as is a non-bool value. Omitting the key keeps the `false` floor; only an explicit `true`/`false` is your expressed will. Set `true` when the command forks: a bare command that resolves to a version-manager shim (`pyenv`/`asdf`/`mise`) or a spawn-based launcher (`npx`/`uvx`) forks **internally**, so it is denied under the default even though the command itself never forks — the symptom is an opaque `fork: Operation not permitted` (now logged with `denial_class=fork_denied` naming it an environment/config problem). Using an absolute path to the real binary is the alternative. Unlike a stdio [MCP server's `subprocess:`](#mcp-servers) (default `true` — such a server *forks to exist*), a hook's fork need depends on your own command, so there is no safe blanket default: the judgment is per hook. Note the agent's own `hooks_add` tool can only create `template_push` hooks, so `shell_exec`/`shell_push` — and this knob — remain operator-owned. |
+| `network` | bool | `false` (the floor) | **`shell_exec` / `shell_push` only** — may this hook's command reach the network? Same rules as `subprocess` above: declaring it on another scheme or giving it a non-bool value is a `HookConfigError`, and omitting it keeps the `false` floor (only an explicit `true`/`false` is your expressed will). Set `true` for a hook that posts to an API or pulls from a registry. Note that the agent-level [`sandbox.policy`](#sandboxpolicy-sub-keys) does **not** grant this — see the boundary note under that block. |
+| `write_paths` | list[string] | `[]` (the floor) | **`shell_exec` / `shell_push` only** — filesystem paths this hook's command may write (`~` expanded; write implies read). Same rules as `subprocess` above; omitting the key keeps the floor, which grants **no** writes, while an explicit list — including `[]` — is your expressed will. Keep the scope tight: grant the specific directory the hook writes, never `~`. A grant does not defeat the sensitive-read deny-list — the deny wins over an overlapping grant (#2978), exactly as on the op path. Not granted by the agent-level [`sandbox.policy`](#sandboxpolicy-sub-keys) — see the boundary note under that block. |
 | `pipeline_launch` | map | _none_ | Launch a registered pipeline (one of the four schemes). `name` (required — the pipeline's registered name; unregistered → warns and skips the launch, the hook point still completes), `input_template` (optional — a `dict`'s string leaves are each Jinja2-rendered against the event's template vars; a plain string is rendered once and its output parsed as a JSON object; omitted → `input=None`). Async/detached: the result arrives later on this session's own inbox as a `pipeline_result` message. |
 
 ## `composers` block
@@ -787,6 +791,17 @@ When `sandbox.policy` is present, these mirror the `SandboxPolicy` fields. Unkno
 | `allow_subprocess` | bool | `false` | Whether the process may spawn children. Enforced — denies `process-fork` when off. |
 | `env_passthrough` | list[string] | `[]` | Env-var names that pass through to the sandboxed process. `PATH` is always passed through. |
 | `timeout_seconds` | int | `60` | Wall-clock cap enforced by the backend. |
+
+> ⚠️ **`sandbox.policy` does not apply to shell hooks.** It governs sandboxed ops and
+> the OS's in-process file/http gates; a [hook shell](#hooks-block)'s sandbox is scoped
+> **per hook**, by that hook's own `subprocess:` / `network:` / `write_paths:` keys. This
+> is deliberate — a hook is a small declarative reaction to a lifecycle event, so "no
+> fork, no network, no writes" stays the right floor for it even in a run whose *ops*
+> are deliberately unsandboxed. It is **not** silent: if you declare one of those three
+> axes here and a shell hook does not re-declare it, the OS logs a WARNING naming the
+> per-hook key that reaches it and emits a `sandbox_policy_not_applied` audit-event
+> (#3005). Setting the key on the hook — to any value — is your decision on that axis
+> and stops the warning.
 
 See [Reference: control-ir — `sandboxed_exec`](../runtime/control-ir.md#sandboxed_exec) for the op schema and backend selection details.
 
