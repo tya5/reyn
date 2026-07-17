@@ -199,17 +199,15 @@ async def replay_run(
         # correctly in offline / unit-test contexts.
         #
         # When the CLI wires in the real chat-router runner (post-MVP), it
-        # will call that runner here and collect reply_text, events, artifacts
+        # will call that runner here and collect reply_text, events
         # before the context exits (which triggers flush/restore).
         try:
             return ScenarioRunResult(
                 scenario_id=scenario.id,
                 reply_text="(replay runner: live runner not wired at MVP)",
                 events=[],
-                artifacts=[],
                 reply_outcome="inconclusive",
                 events_outcome="inconclusive",
-                artifacts_outcome="inconclusive",
             )
         except MissingFixture as exc:
             logger.warning(
@@ -221,8 +219,6 @@ async def replay_run(
                 scenario_id=scenario.id,
                 reply_text="",
                 events=[],
-                artifacts=[],
                 reply_outcome="blocked",
                 events_outcome="blocked",
-                artifacts_outcome="blocked",
             )

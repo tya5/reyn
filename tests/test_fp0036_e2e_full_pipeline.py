@@ -99,44 +99,38 @@ _SCENARIO_SET_YAML = textwrap.dedent("""\
 async def _stub_runner_fn(scenario: Scenario) -> ScenarioRunResult:
     """Deterministic runner that returns fixed results per scenario_id.
 
-    verified_scenario → overall verified (all three verifiers: verified)
-    refuted_scenario  → overall refuted  (all three verifiers: refuted)
+    verified_scenario → overall verified (both verifiers: verified)
+    refuted_scenario  → overall refuted  (both verifiers: refuted)
 
     Note: ScenarioRunResult.__post_init__ recomputes overall_outcome as the
-    worst-case of (reply_outcome, events_outcome, artifacts_outcome). To get
-    overall_outcome == "verified" all three must be "verified"; likewise for
-    "refuted". Using "blocked" for any sub-verifier would pull the overall to
-    "blocked" (rank 0 = worst) and make regression detection trivially fail.
+    worst-case of (reply_outcome, events_outcome). To get overall_outcome ==
+    "verified" both must be "verified"; likewise for "refuted". Using
+    "blocked" for either sub-verifier would pull the overall to "blocked"
+    (rank 0 = worst) and make regression detection trivially fail.
     """
     if scenario.id == "verified_scenario":
         return ScenarioRunResult(
             scenario_id=scenario.id,
             reply_text="ok",
             events=[{"type": "skill_run_started", "data": {}}],
-            artifacts=[],
             reply_outcome="verified",
             events_outcome="verified",
-            artifacts_outcome="verified",
         )
     if scenario.id == "refuted_scenario":
         return ScenarioRunResult(
             scenario_id=scenario.id,
             reply_text="something else",
             events=[],
-            artifacts=[],
             reply_outcome="refuted",
             events_outcome="refuted",
-            artifacts_outcome="refuted",
         )
     # Fallback for any unexpected scenario
     return ScenarioRunResult(
         scenario_id=scenario.id,
         reply_text="",
         events=[],
-        artifacts=[],
         reply_outcome="inconclusive",
         events_outcome="inconclusive",
-        artifacts_outcome="inconclusive",
     )
 
 
@@ -144,38 +138,32 @@ async def _stub_runner_fn_degraded(scenario: Scenario) -> ScenarioRunResult:
     """Like _stub_runner_fn but with verified_scenario degraded to refuted.
 
     Used as the 'candidate' run to exercise regression detection.
-    verified_scenario: all verifiers → refuted (was all verified in baseline).
+    verified_scenario: both verifiers → refuted (was both verified in baseline).
     refuted_scenario: unchanged.
     """
     if scenario.id == "verified_scenario":
-        # Degraded: verified → refuted on all sub-verifiers so overall = refuted
+        # Degraded: verified → refuted on both sub-verifiers so overall = refuted
         return ScenarioRunResult(
             scenario_id=scenario.id,
             reply_text="something wrong",
             events=[],
-            artifacts=[],
             reply_outcome="refuted",
             events_outcome="refuted",
-            artifacts_outcome="refuted",
         )
     if scenario.id == "refuted_scenario":
         return ScenarioRunResult(
             scenario_id=scenario.id,
             reply_text="something else",
             events=[],
-            artifacts=[],
             reply_outcome="refuted",
             events_outcome="refuted",
-            artifacts_outcome="refuted",
         )
     return ScenarioRunResult(
         scenario_id=scenario.id,
         reply_text="",
         events=[],
-        artifacts=[],
         reply_outcome="inconclusive",
         events_outcome="inconclusive",
-        artifacts_outcome="inconclusive",
     )
 
 
@@ -237,17 +225,16 @@ async def test_full_pipeline_scenario_load_run_summary(tmp_path: Path):
 async def test_compare_runs_detects_regression(tmp_path: Path):
     """Tier 2c: compare_runs detects regression when verified_scenario degrades to refuted.
 
-    Now that the verifier triad fires inside run_scenario_set, stub runner_fns
+    Now that the verifier pair fires inside run_scenario_set, stub runner_fns
     must return data the verifier will score correctly.  The scenario used here
     has only expected_reply (substring) so:
-      - artifacts_outcome is always 'blocked' (no assertion) — same in both runs
       - events_outcome is always 'blocked' (no assertion) — same in both runs
       - reply_outcome differs: baseline 'verified' (substring present),
         candidate 'refuted' (substring absent)
-      - overall = worst('verified'/'refuted', 'blocked', 'blocked') = 'blocked'
+      - overall = worst('verified'/'refuted', 'blocked') = 'blocked'
 
     Because both baseline and candidate overall_outcome collapse to 'blocked'
-    (artifacts not declared), regression at the per-scenario level is not
+    (events not declared), regression at the per-scenario level is not
     visible through overall_outcome alone.  We verify instead that the
     reply_outcome sub-verdict changes — and we use compare_runs on RunResult
     objects that were produced by the runner/verifier pipeline, confirming the
@@ -256,7 +243,7 @@ async def test_compare_runs_detects_regression(tmp_path: Path):
     we assert the per-verifier detail is correct instead.
     """
     # Minimal YAML: only expected_reply so the reply verifier fires but
-    # events + artifacts verifiers return 'blocked' (no assertions).
+    # the events verifier returns 'blocked' (no assertion).
     regression_yaml = textwrap.dedent("""\
         type: dogfood_scenario_set
         name: regression_test_set
@@ -278,7 +265,6 @@ async def test_compare_runs_detects_regression(tmp_path: Path):
             scenario_id=scenario.id,
             reply_text="pong — baseline reply",
             events=[],
-            artifacts=[],
         )
 
     async def _degraded_runner(scenario) -> ScenarioRunResult:
@@ -287,7 +273,6 @@ async def test_compare_runs_detects_regression(tmp_path: Path):
             scenario_id=scenario.id,
             reply_text="error — no response",
             events=[],
-            artifacts=[],
         )
 
     baseline_dir = tmp_path / "run_baseline"
@@ -317,8 +302,8 @@ async def test_compare_runs_detects_regression(tmp_path: Path):
         f"Candidate reply_outcome must be 'refuted'; got {candidate_sr.reply_outcome!r}"
     )
 
-    # Both overall_outcome are 'blocked' because expected_events and
-    # expected_artifacts are absent — the verifiers return 'blocked' for those.
+    # Both overall_outcome are 'blocked' because expected_events is
+    # absent — the verifier returns 'blocked' for that axis.
     # compare_runs detects no overall regression (both are 'blocked'),
     # but the per-verifier detail shows the degradation.
     report = compare_runs(baseline, candidate)

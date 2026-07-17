@@ -70,7 +70,7 @@ def _make_run_result(
 ) -> RunResult:
     """Build a RunResult from a scenario_id → outcome mapping.
 
-    All three verifier outcomes are set to the desired outcome so that
+    Both verifier outcomes are set to the desired outcome so that
     __post_init__ computes the same overall_outcome.
     """
     now = _utc_now()
@@ -83,10 +83,8 @@ def _make_run_result(
             scenario_id=sid,
             reply_text="(stub)",
             events=[],
-            artifacts=[],
             reply_outcome=outcome,
             events_outcome=outcome,
-            artifacts_outcome=outcome,
             detail=detail,
         )
         results.append(sr)
@@ -126,29 +124,25 @@ def test_worst_outcome_selects_lowest_rank() -> None:
 
 
 def test_scenario_run_result_overall_outcome_is_worst() -> None:
-    """Tier 1: ScenarioRunResult.overall_outcome is set to worst-case of the three verifiers."""
+    """Tier 1: ScenarioRunResult.overall_outcome is set to worst-case of the two verifiers."""
     sr = ScenarioRunResult(
         scenario_id="s1",
         reply_text="ok",
         events=[],
-        artifacts=[],
         reply_outcome="verified",
         events_outcome="refuted",
-        artifacts_outcome="inconclusive",
     )
     assert sr.overall_outcome == "refuted"
 
 
 def test_scenario_run_result_all_verified() -> None:
-    """Tier 1: ScenarioRunResult.overall_outcome is 'verified' when all three are verified."""
+    """Tier 1: ScenarioRunResult.overall_outcome is 'verified' when both are verified."""
     sr = ScenarioRunResult(
         scenario_id="s1",
         reply_text="ok",
         events=[],
-        artifacts=[],
         reply_outcome="verified",
         events_outcome="verified",
-        artifacts_outcome="verified",
     )
     assert sr.overall_outcome == "verified"
 
@@ -360,10 +354,8 @@ def _stub_runner(outcome: str):
             scenario_id=scenario.id,
             reply_text="stub reply",
             events=[{"type": "stub_event"}],
-            artifacts=[{"type": "stub_artifact"}],
             reply_outcome=outcome,
             events_outcome=outcome,
-            artifacts_outcome=outcome,
         )
     return _fn
 
@@ -444,10 +436,8 @@ def test_run_scenario_set_n_repetitions_worst_case(tmp_path: Path) -> None:
             scenario_id=scenario.id,
             reply_text="",
             events=[],
-            artifacts=[],
             reply_outcome=outcome,
             events_outcome=outcome,
-            artifacts_outcome=outcome,
         )
 
     scenario_set = _make_scenario_set("stability", ["s1"])
@@ -714,12 +704,12 @@ def test_outcome_prediction_attached_from_scenario(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# 14. Verifier triad wired into run_scenario_set (task #93)
+# 14. Verifier pair wired into run_scenario_set (task #93)
 # ---------------------------------------------------------------------------
 
 
 def test_verifier_triad_produces_real_reply_outcome_for_substring_match(tmp_path: Path) -> None:
-    """Tier 2: verifier triad wired — substring match on reply elevates reply_outcome
+    """Tier 2: verifier pair wired — substring match on reply elevates reply_outcome
     from the default 'inconclusive' to 'verified'.
 
     Before task #93 the verifiers were never called; every scenario run
@@ -735,9 +725,9 @@ def test_verifier_triad_produces_real_reply_outcome_for_substring_match(tmp_path
     - The scenario declares expected_reply with kind='substring', value='hello'.
     - After run_scenario_set the runner fills in the verifier-driven outcomes;
       reply_outcome must be 'verified' (substring present in reply_text).
-    - events_outcome and artifacts_outcome are 'blocked' because the scenario
-      declares no expected_events or expected_artifacts.
-    - overall_outcome = worst-case('verified', 'blocked', 'blocked') = 'blocked'.
+    - events_outcome is 'blocked' because the scenario declares no
+      expected_events.
+    - overall_outcome = worst-case('verified', 'blocked') = 'blocked'.
     """
     from reyn.dev.dogfood.scenarios import ExpectedReply
 
@@ -747,9 +737,8 @@ def test_verifier_triad_produces_real_reply_outcome_for_substring_match(tmp_path
             scenario_id=scenario.id,
             reply_text="hello world",
             events=[],
-            artifacts=[],
             # Outcomes deliberately left at 'inconclusive' (= what live runner returns).
-            # The verifier triad inside run_scenario_set must overwrite them.
+            # The verifier pair inside run_scenario_set must overwrite them.
         )
 
     scenario = Scenario(
@@ -757,7 +746,6 @@ def test_verifier_triad_produces_real_reply_outcome_for_substring_match(tmp_path
         input="greet me",
         expected_reply=ExpectedReply(kind="substring", value="hello"),
         expected_events=None,
-        expected_artifacts=None,
     )
     scenario_set = ScenarioSet(name="verifier-triad-test", scenarios=[scenario])
 
@@ -775,20 +763,17 @@ def test_verifier_triad_produces_real_reply_outcome_for_substring_match(tmp_path
     # The verifier must have fired: reply_outcome is 'verified' because
     # 'hello' appears in 'hello world'.
     assert sr.reply_outcome == "verified", (
-        f"Expected reply_outcome='verified' after verifier triad; got {sr.reply_outcome!r}. "
-        "The verifier triad may not be wired into run_scenario_set."
+        f"Expected reply_outcome='verified' after verifier pair; got {sr.reply_outcome!r}. "
+        "The verifier pair may not be wired into run_scenario_set."
     )
-    # No expected_events / expected_artifacts → both are 'blocked' (no assertion declared).
+    # No expected_events → 'blocked' (no assertion declared).
     assert sr.events_outcome == "blocked", (
         f"Expected events_outcome='blocked' (no events assertion); got {sr.events_outcome!r}"
     )
-    assert sr.artifacts_outcome == "blocked", (
-        f"Expected artifacts_outcome='blocked' (no artifacts assertion); got {sr.artifacts_outcome!r}"
-    )
-    # overall = worst('verified', 'blocked', 'blocked') = 'blocked'
+    # overall = worst('verified', 'blocked') = 'blocked'
     assert sr.overall_outcome == "blocked", (
         f"Expected overall_outcome='blocked'; got {sr.overall_outcome!r}"
     )
     # detail must carry per-verifier breakdown
-    assert "reply" in sr.detail, "detail['reply'] must be populated by verifier triad"
+    assert "reply" in sr.detail, "detail['reply'] must be populated by verifier pair"
     assert sr.detail["reply"].get("kind") == "substring"

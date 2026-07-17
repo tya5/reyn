@@ -5,8 +5,8 @@ description: >
   Chat-router-level smoke suite covering intent routing (FP-0034 universal catalog,
   wrapper-only path) + basic stdlib catalog dispatch. Regression baseline for the
   routing_decided event, skill_run_spawned / skill_run_completed lifecycle, and
-  graceful no-permission handling. 5-7 scenarios mixing structural (events +
-  artifacts) and judge (reply) verifiers.
+  graceful no-permission handling. 5-7 scenarios mixing structural (events)
+  and judge (reply) verifiers.
 covers:
   - cli/reyn-chat
   - stdlib-skills/direct-llm
@@ -131,13 +131,13 @@ scenarios:
           - { type: skill_run_completed, status: finished }
         must_not_emit:
           - { type: permission_denied }
-      artifacts:
-        - { skill: word_stats_demo, present: true }
       # outcome_prediction refitted from B27/B28/B30/B32 actuals (H5 ablation, 2026-05-17)
+      # artifacts assertion removed (was: dead mechanism, see #2959) — refuted mass
+      # attributable to it redistributed to verified
       outcome_prediction:
-        verified: 0.25
+        verified: 0.5
         inconclusive: 0.25
-        refuted: 0.25
+        refuted: 0.0
         blocked: 0.25
 
   # ── 5. Universal catalog routing event (routing_decided) ─────────────────
@@ -161,13 +161,13 @@ scenarios:
           - { type: chat_turn_completed_inline, count: ">=1" }
         must_not_emit:
           - { type: permission_denied }
-      artifacts:
-        - { skill: direct_llm, present: true }
       # outcome_prediction refitted from B27/B28/B30/B32 actuals (H5 ablation, 2026-05-17)
+      # artifacts assertion removed (was: dead mechanism, see #2959) — refuted mass
+      # attributable to it redistributed to verified
       outcome_prediction:
-        verified: 0.0
+        verified: 0.75
         inconclusive: 0.0
-        refuted: 0.75
+        refuted: 0.0
         blocked: 0.25
 
   # ── 6. Multi-turn pronoun reference ─────────────────────────────────────

@@ -1,4 +1,4 @@
-"""Tier 1: Contract tests for FP-0036 verifier triad (reply / events / artifacts).
+"""Tier 1: Contract tests for FP-0036 verifier pair (reply / events).
 
 Tests use real instances of the data model classes (from scenarios.py)
 and plain async-def stubs for the LLM judge backend.
@@ -6,21 +6,15 @@ No MagicMock / AsyncMock / patch used.
 """
 from __future__ import annotations
 
-import hashlib
-import json
-
 import pytest
 
 from reyn.dev.dogfood.scenarios import (
-    ArtifactAssertion,
     EventAssertion,
-    ExpectedArtifacts,
     ExpectedEvents,
     ExpectedReply,
 )
 from reyn.dev.dogfood.verifiers import (
     VerifierResult,
-    verify_artifacts,
     verify_events,
     verify_reply,
 )
@@ -28,13 +22,6 @@ from reyn.dev.dogfood.verifiers import (
 # ===========================================================================
 # Helpers / stubs
 # ===========================================================================
-
-
-def _fp(data: dict) -> str:
-    """Compute the canonical fingerprint (mirrors artifacts.py)."""
-    return hashlib.sha256(
-        json.dumps(data, sort_keys=True, separators=(",", ":")).encode()
-    ).hexdigest()
 
 
 async def _judge_pass(rubric: list[str], reply_text: str) -> dict:
@@ -325,124 +312,3 @@ class TestVerifyEventsCountComparators:
         )
 
 
-# ===========================================================================
-# verify_artifacts
-# ===========================================================================
-
-
-def _art(**data) -> dict:
-    """Build a minimal artifact dict.
-
-    Pass ``type="..."`` explicitly in data if needed. All other keyword
-    arguments become the inner data payload.
-    """
-    a: dict = {}
-    # Pull out "type" from data if caller supplied it as a kwarg
-    if "type" in data:
-        a["type"] = data.pop("type")
-    a["data"] = data
-    return a
-
-
-class TestVerifyArtifactsPresent:
-    """Tier 1: present=True assertions."""
-
-    def test_present_type_filter_matches_verified(self):
-        """Tier 1: present=True + type filter matches → verified."""
-        expected = ExpectedArtifacts(items=[ArtifactAssertion(type="summary_result", present=True)])
-        artifacts = [{"type": "summary_result", "data": {"content": "text"}}]
-        result = verify_artifacts(expected, artifacts)
-        assert result.outcome == "verified"
-
-    def test_present_type_filter_no_match_refuted(self):
-        """Tier 1: present=True + type filter not matched → refuted."""
-        expected = ExpectedArtifacts(items=[ArtifactAssertion(type="summary_result", present=True)])
-        artifacts = [{"type": "other_type", "data": {}}]
-        result = verify_artifacts(expected, artifacts)
-        assert result.outcome == "refuted"
-
-    def test_present_no_filter_any_artifact_verified(self):
-        """Tier 1: present=True + no type filter → any artifact satisfies."""
-        expected = ExpectedArtifacts(items=[ArtifactAssertion(present=True)])
-        artifacts = [_art(key="val")]
-        result = verify_artifacts(expected, artifacts)
-        assert result.outcome == "verified"
-
-
-class TestVerifyArtifactsAbsent:
-    """Tier 1: present=False assertions."""
-
-    def test_absent_type_not_in_artifacts_verified(self):
-        """Tier 1: present=False + type not found → verified."""
-        expected = ExpectedArtifacts(items=[ArtifactAssertion(type="plan_result", present=False)])
-        artifacts = [{"type": "other_type", "data": {}}]
-        result = verify_artifacts(expected, artifacts)
-        assert result.outcome == "verified"
-
-    def test_absent_type_in_artifacts_refuted(self):
-        """Tier 1: present=False + type found → refuted."""
-        expected = ExpectedArtifacts(items=[ArtifactAssertion(type="plan_result", present=False)])
-        artifacts = [{"type": "plan_result", "data": {}}]
-        result = verify_artifacts(expected, artifacts)
-        assert result.outcome == "refuted"
-        assert any(f["check"] == "absent" for f in result.detail["failures"])
-
-
-class TestVerifyArtifactsFingerprint:
-    """Tier 1: fingerprint matching."""
-
-    def test_fingerprint_match_verified(self):
-        """Tier 1: fingerprint matches normalised artifact data → verified."""
-        data = {"answer": 42, "text": "hello"}
-        fp = _fp(data)
-        expected = ExpectedArtifacts(
-            items=[ArtifactAssertion(type="eval_result", present=True, fingerprint=fp)]
-        )
-        artifacts = [{"type": "eval_result", "data": data}]
-        result = verify_artifacts(expected, artifacts)
-        assert result.outcome == "verified"
-
-    def test_fingerprint_mismatch_refuted(self):
-        """Tier 1: fingerprint set but artifact data differs → refuted."""
-        data = {"answer": 42}
-        fp = _fp(data)
-        wrong_data = {"answer": 99}
-        expected = ExpectedArtifacts(
-            items=[ArtifactAssertion(type="eval_result", present=True, fingerprint=fp)]
-        )
-        artifacts = [{"type": "eval_result", "data": wrong_data}]
-        result = verify_artifacts(expected, artifacts)
-        assert result.outcome == "refuted"
-        assert any(f["check"] == "fingerprint" for f in result.detail["failures"])
-
-    def test_fingerprint_set_no_matching_artifact_refuted(self):
-        """Tier 1: fingerprint set but no matching artifact at all → refuted."""
-        data = {"answer": 42}
-        fp = _fp(data)
-        expected = ExpectedArtifacts(
-            items=[ArtifactAssertion(type="eval_result", present=True, fingerprint=fp)]
-        )
-        artifacts = []  # no artifacts
-        result = verify_artifacts(expected, artifacts)
-        assert result.outcome == "refuted"
-
-
-class TestVerifyArtifactsEdgeCases:
-    """Tier 1: edge cases."""
-
-    def test_empty_artifacts_assertion_present_refuted(self):
-        """Tier 1: empty artifacts list + present=True assertion → refuted."""
-        expected = ExpectedArtifacts(items=[ArtifactAssertion(present=True)])
-        result = verify_artifacts(expected, [])
-        assert result.outcome == "refuted"
-
-    def test_none_expected_blocked(self):
-        """Tier 1: expected=None → blocked."""
-        result = verify_artifacts(None, [_art(key="val")])
-        assert result.outcome == "blocked"
-
-    def test_no_assertions_empty_artifacts_verified(self):
-        """Tier 1: no assertions declared → vacuously verified."""
-        expected = ExpectedArtifacts(items=[])
-        result = verify_artifacts(expected, [])
-        assert result.outcome == "verified"

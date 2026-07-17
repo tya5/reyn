@@ -1,8 +1,8 @@
 """Tier 1: Contract tests for the FP-0036 dogfood scenario set YAML loader.
 
 Verifies the public API of ``src/reyn/dogfood/scenarios.py`` including:
-  - ScenarioSet / Scenario / ExpectedReply / ExpectedEvents / ExpectedArtifacts /
-    OutcomePrediction / EventAssertion / ArtifactAssertion dataclass shapes
+  - ScenarioSet / Scenario / ExpectedReply / ExpectedEvents /
+    OutcomePrediction / EventAssertion dataclass shapes
   - load_scenario_set() validation and error paths
   - Backward compatibility with long_session_v1.yaml (legacy metadata format)
   - scenario_by_id() accessor
@@ -19,9 +19,7 @@ from pathlib import Path
 import pytest
 
 from reyn.dev.dogfood import (
-    ArtifactAssertion,
     EventAssertion,
-    ExpectedArtifacts,
     ExpectedEvents,
     ExpectedReply,
     OutcomePrediction,
@@ -65,7 +63,6 @@ def test_minimal_valid_set_loads(tmp_path: Path) -> None:
     assert scenario.prompts == []
     assert scenario.expected_reply is None
     assert scenario.expected_events is None
-    assert scenario.expected_artifacts is None
     assert scenario.outcome_prediction is None
     assert ss.source_path == str(p.resolve())
 
@@ -521,47 +518,6 @@ def test_scenario_by_id_unknown_returns_none(tmp_path: Path) -> None:
     assert ss.scenario_by_id("nonexistent") is None
 
 
-# ── 15. ArtifactAssertion optional fields ────────────────────────────────
-
-
-def test_artifact_assertion_optional_fields_load(tmp_path: Path) -> None:
-    """Tier 1: ArtifactAssertion with optional type/present/fingerprint loads correctly."""
-    p = write_yaml(
-        tmp_path,
-        """\
-        type: dogfood_scenario_set
-        name: artifact_test
-        scenarios:
-          - id: s1
-            input: "hello"
-            expected:
-              artifacts:
-                - present: true
-                - type: plan_artifact
-                  present: false
-                  fingerprint: "abc123def456"
-                - type: eval_result
-        """,
-    )
-    ss = load_scenario_set(p)
-    ea = ss.scenarios[0].expected_artifacts
-    assert ea is not None
-    assert isinstance(ea, ExpectedArtifacts)
-    items = ea.items
-    assert items, "expected_artifacts must have at least one item"
-
-    assert items[0].type is None
-    assert items[0].present is True
-    assert items[0].fingerprint is None
-
-    assert items[1].type == "plan_artifact"
-    assert items[1].present is False
-    assert items[1].fingerprint == "abc123def456"
-
-    assert items[2].type == "eval_result"
-    assert items[2].present is True
-
-
 # ── full-featured scenario smoke ──────────────────────────────────────────
 
 
@@ -599,9 +555,6 @@ def test_full_featured_scenario_loads(tmp_path: Path) -> None:
                 sequence:
                   - skill_run_spawned
                   - skill_run_completed
-              artifacts:
-                - type: eval_result
-                  present: true
             outcome_prediction:
               verified: 0.7
               inconclusive: 0.2
@@ -636,11 +589,6 @@ def test_full_featured_scenario_loads(tmp_path: Path) -> None:
     assert ee.must_not_emit, "must_not_emit must be non-empty"
     assert ee.must_not_emit[0].type == "permission_denied"
     assert ee.sequence == ["skill_run_spawned", "skill_run_completed"]
-
-    ea = s.expected_artifacts
-    assert ea is not None
-    assert ea.items[0].type == "eval_result"
-    assert ea.items[0].present is True
 
     op = s.outcome_prediction
     assert op is not None

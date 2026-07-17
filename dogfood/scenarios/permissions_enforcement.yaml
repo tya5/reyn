@@ -50,8 +50,8 @@ scenarios:
         must_not_emit:
           - { type: write_file }
         sequence: []
-      artifacts:
-        - { present: true }
+    # artifacts assertion removed (was: dead mechanism, see #2959); refuted was
+    # already 0.0 here so no redistribution needed
     outcome_prediction:
       verified: 0.0
       inconclusive: 1.0
@@ -81,8 +81,8 @@ scenarios:
           - { type: routing_decided, count: ">=1" }
         must_not_emit: []
         sequence: []
-      artifacts:
-        - { present: true }
+    # artifacts assertion removed (was: dead mechanism, see #2959); refuted was
+    # already 0.0 here so no redistribution needed
     outcome_prediction:
       verified: 0.25
       inconclusive: 0.75
@@ -115,8 +115,8 @@ scenarios:
         must_not_emit:
           - { type: write_file }
         sequence: []
-      artifacts:
-        - { present: true }
+    # artifacts assertion removed (was: dead mechanism, see #2959); refuted was
+    # already 0.0 here so no redistribution needed
     outcome_prediction:
       verified: 0.0
       inconclusive: 1.0
@@ -148,8 +148,8 @@ scenarios:
           - { type: routing_decided, count: ">=1" }
         must_not_emit: []
         sequence: []
-      artifacts:
-        - { present: true }
+    # artifacts assertion removed (was: dead mechanism, see #2959); refuted was
+    # already 0.0 here so no redistribution needed
     outcome_prediction:
       verified: 0.25
       inconclusive: 0.75

@@ -2,7 +2,7 @@
 
 Generates a 3-line natural-language summary for one scenario run:
 - Did the run match the scenario's declared expectations?
-- If not, what specifically diverged (reply / events / artifacts)?
+- If not, what specifically diverged (reply / events)?
 
 The summary is consumed by ``reyn dogfood publish`` to embed a human-
 readable activity block per scenario inside the Discussion thread.
@@ -64,12 +64,6 @@ def _format_expected(scenario: "Scenario") -> str:
         if ee.sequence:
             blocks.append("sequence: " + " -> ".join(ee.sequence))
 
-    if scenario.expected_artifacts is not None:
-        ea = scenario.expected_artifacts
-        names = [a.type for a in ea.assertions]
-        if names:
-            blocks.append("artifacts: " + ", ".join(names))
-
     return "\n".join(blocks) if blocks else "(no explicit expectations)"
 
 
@@ -111,7 +105,6 @@ def build_prompt(
         "\n"
         f"Verifier verdicts: reply={scenario_result.reply_outcome}, "
         f"events={scenario_result.events_outcome}, "
-        f"artifacts={scenario_result.artifacts_outcome}, "
         f"overall={scenario_result.overall_outcome}\n"
     )
 

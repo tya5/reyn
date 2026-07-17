@@ -274,7 +274,6 @@ def _load_scenario_records(storage_dir: Path) -> list[dict]:
             "reply_text": data.get("reply_text", ""),
             "reply_outcome": data.get("reply_outcome", "inconclusive"),
             "events_outcome": data.get("events_outcome", "inconclusive"),
-            "artifacts_outcome": data.get("artifacts_outcome", "inconclusive"),
             "overall_outcome": data.get("overall_outcome", "inconclusive"),
             "detail": data.get("detail", {}),
             "event_types": event_types,
@@ -384,7 +383,6 @@ def build_transcripts_section(
         block_lines.append("|---|---|")
         block_lines.append(f"| reply | {rec['reply_outcome']} |")
         block_lines.append(f"| events | {rec['events_outcome']} |")
-        block_lines.append(f"| artifacts | {rec['artifacts_outcome']} |")
         block_lines.append("</details>")
         block_lines.append("")
 

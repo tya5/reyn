@@ -1,14 +1,12 @@
 """Dogfood scenario runner (FP-0036 Component B).
 
 Drives the chat router (= same path as ``reyn chat``) with a scenario's
-``input`` / ``prompts``, captures the reply text, the emitted P6 events,
-and the workspace artifacts. Returns a RunResult per scenario for the
-verifier (F3) to score.
+``input`` / ``prompts``, captures the reply text and the emitted P6
+events. Returns a RunResult per scenario for the verifier (F3) to score.
 
 Storage layout under ``.reyn/dogfood/runs/<run_id>/``:
   scenarios/<scenario_id>/output.json    # reply + verifier verdicts
   scenarios/<scenario_id>/events.jsonl   # captured event tail
-  scenarios/<scenario_id>/artifacts/     # workspace snapshot
   summary.json                            # 4-band aggregate + Brier
 
 Injection seam
@@ -92,11 +90,9 @@ class ScenarioRunResult:
     scenario_id: str
     reply_text: str
     events: list[dict]
-    artifacts: list[dict]
     reply_outcome: str = "inconclusive"    # from verifiers.reply
     events_outcome: str = "inconclusive"   # from verifiers.events
-    artifacts_outcome: str = "inconclusive"  # from verifiers.artifacts
-    overall_outcome: str = "inconclusive"  # worst-case of the three
+    overall_outcome: str = "inconclusive"  # worst-case of the two
     detail: dict = field(default_factory=dict)
     #: Explicit hot-list state annotation — "fresh" means the scenario ran
     #: from DEFAULT_HOT_LIST_SEED with no carry-over state. Set to
@@ -105,11 +101,10 @@ class ScenarioRunResult:
     state_mode: str = field(default_factory=_resolve_state_mode)
 
     def __post_init__(self) -> None:
-        # Recompute overall_outcome from the three verifier outcomes
+        # Recompute overall_outcome from the two verifier outcomes
         self.overall_outcome = _worst_outcome(
             self.reply_outcome,
             self.events_outcome,
-            self.artifacts_outcome,
         )
 
 
@@ -213,19 +208,12 @@ def _persist_scenario_result(
         "reply_text": result.reply_text,
         "reply_outcome": result.reply_outcome,
         "events_outcome": result.events_outcome,
-        "artifacts_outcome": result.artifacts_outcome,
         "overall_outcome": result.overall_outcome,
         "state_mode": result.state_mode,
         "detail": result.detail,
     }
     _write_json(sdir / "output.json", output_data)
     _write_jsonl(sdir / "events.jsonl", result.events)
-
-    # Persist artifact snapshots as JSON files under artifacts/
-    artifact_dir = _ensure_dir(sdir / "artifacts")
-    for i, artifact in enumerate(result.artifacts):
-        art_name = artifact.get("id") or artifact.get("type") or f"artifact_{i}"
-        _write_json(artifact_dir / f"{art_name}.json", artifact)
 
 
 def _build_summary(run_result: RunResult) -> dict:
@@ -258,10 +246,8 @@ async def _default_runner_fn(scenario: "Scenario") -> ScenarioRunResult:  # prag
         scenario_id=scenario.id,
         reply_text="(live runner not configured)",
         events=[],
-        artifacts=[],
         reply_outcome="inconclusive",
         events_outcome="inconclusive",
-        artifacts_outcome="inconclusive",
     )
 
 
@@ -357,7 +343,6 @@ async def run_scenario_set(
     # single ImportError means the package is not installed.
     try:
         from reyn.dev.dogfood.verifiers import (
-            verify_artifacts,
             verify_events,
             verify_reply,
         )
@@ -369,8 +354,8 @@ async def run_scenario_set(
         for scenario in scenario_set.scenarios:
             result = await effective_runner_fn(scenario)
 
-            # ── Verifier triad ──────────────────────────────────────────────
-            # Invoke verify_reply / verify_events / verify_artifacts and
+            # ── Verifier pair ────────────────────────────────────────────────
+            # Invoke verify_reply / verify_events and
             # write outcomes + detail back onto the result so the 4-band
             # aggregate reflects real verdicts rather than the "inconclusive"
             # default that runner_fn returns.
@@ -385,7 +370,6 @@ async def run_scenario_set(
             _has_expected = (
                 scenario.expected_reply is not None
                 or scenario.expected_events is not None
-                or scenario.expected_artifacts is not None
             )
             if _verifiers_available and _has_expected:
                 # reply verifier is async (may invoke LLM judge)
@@ -393,29 +377,22 @@ async def run_scenario_set(
                     scenario.expected_reply,
                     result.reply_text,
                 )
-                # events and artifacts verifiers are synchronous
+                # events verifier is synchronous
                 events_result = verify_events(
                     scenario.expected_events,
                     result.events,
                 )
-                artifacts_result = verify_artifacts(
-                    scenario.expected_artifacts,
-                    result.artifacts,
-                )
 
                 result.reply_outcome = reply_result.outcome
                 result.events_outcome = events_result.outcome
-                result.artifacts_outcome = artifacts_result.outcome
                 result.detail.update({
                     "reply": reply_result.detail,
                     "events": events_result.detail,
-                    "artifacts": artifacts_result.detail,
                 })
                 # Recompute overall_outcome from the updated sub-outcomes.
                 result.overall_outcome = _worst_outcome(
                     result.reply_outcome,
                     result.events_outcome,
-                    result.artifacts_outcome,
                 )
 
             # Attach outcome_prediction from the scenario definition if
@@ -521,10 +498,8 @@ def load_run_result_from_storage(run_dir: Path) -> RunResult:
                 scenario_id=data["scenario_id"],
                 reply_text=data.get("reply_text", ""),
                 events=events,
-                artifacts=[],
                 reply_outcome=data.get("reply_outcome", "inconclusive"),
                 events_outcome=data.get("events_outcome", "inconclusive"),
-                artifacts_outcome=data.get("artifacts_outcome", "inconclusive"),
                 overall_outcome=data.get("overall_outcome", "inconclusive"),
                 state_mode=data.get("state_mode", _DEFAULT_STATE_MODE),
                 detail=data.get("detail", {}),

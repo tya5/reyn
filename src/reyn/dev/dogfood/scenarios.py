@@ -19,7 +19,6 @@ Schema (= top-level frontmatter / list under ``scenarios:``):
         expected:
           reply: {kind, rubric/value}  # see ExpectedReply below
           events: {must_emit, must_not_emit, sequence}  # ExpectedEvents
-          artifacts: [{...}]             # ExpectedArtifacts
         outcome_prediction:        # 4-band distribution, summing to ~1.0
           verified: 0.7
           inconclusive: 0.2
@@ -98,26 +97,6 @@ class ExpectedEvents:
     must_emit_any: list[EventAssertion] = field(default_factory=list)
 
 
-# ── artifacts ─────────────────────────────────────────────────────────────
-
-@dataclass
-class ArtifactAssertion:
-    """One workspace-artifact assertion.
-
-    type: artifact type name (= matches ``Artifact.type``)
-    present: True/False — assert artifact exists / doesn't exist
-    fingerprint: optional SHA256 hex of normalised content; pinned regression
-    """
-    type: str | None = None
-    present: bool = True
-    fingerprint: str | None = None
-
-
-@dataclass
-class ExpectedArtifacts:
-    items: list[ArtifactAssertion] = field(default_factory=list)
-
-
 # ── outcome prediction ────────────────────────────────────────────────────
 
 @dataclass
@@ -143,7 +122,6 @@ class Scenario:
     kind: str | None = None
     expected_reply: ExpectedReply | None = None
     expected_events: ExpectedEvents | None = None
-    expected_artifacts: ExpectedArtifacts | None = None
     outcome_prediction: OutcomePrediction | None = None
 
     @property
@@ -255,30 +233,6 @@ def _parse_expected_reply(raw: Any, context: str) -> ExpectedReply:
     return ExpectedReply(kind=kind, rubric=list(rubric) if rubric else [], value=str(value) if value else "")
 
 
-def _parse_artifact_assertion(raw: Any, context: str) -> ArtifactAssertion:
-    if not isinstance(raw, dict):
-        raise ScenarioLoadError(f"{context}: artifact assertion must be a mapping")
-    return ArtifactAssertion(
-        type=raw.get("type"),
-        present=bool(raw.get("present", True)),
-        fingerprint=raw.get("fingerprint"),
-    )
-
-
-def _parse_expected_artifacts(raw: Any, context: str) -> ExpectedArtifacts:
-    if isinstance(raw, list):
-        items = [_parse_artifact_assertion(item, f"{context}[{i}]") for i, item in enumerate(raw)]
-    elif isinstance(raw, dict):
-        # Allow mapping form with 'items' key
-        items = [
-            _parse_artifact_assertion(item, f"{context}/items[{i}]")
-            for i, item in enumerate(raw.get("items", []))
-        ]
-    else:
-        raise ScenarioLoadError(f"{context}: 'artifacts' must be a list or mapping")
-    return ExpectedArtifacts(items=items)
-
-
 def _parse_outcome_prediction(raw: Any, context: str) -> OutcomePrediction:
     if not isinstance(raw, dict):
         raise ScenarioLoadError(f"{context}: 'outcome_prediction' must be a mapping")
@@ -342,7 +296,6 @@ def _parse_scenario(raw: Any, index: int, source: str) -> Scenario:
     expected_raw = raw.get("expected")
     expected_reply: ExpectedReply | None = None
     expected_events: ExpectedEvents | None = None
-    expected_artifacts: ExpectedArtifacts | None = None
 
     if expected_raw is not None:
         if not isinstance(expected_raw, dict):
@@ -351,10 +304,6 @@ def _parse_scenario(raw: Any, index: int, source: str) -> Scenario:
             expected_reply = _parse_expected_reply(expected_raw["reply"], f"{ctx}/expected/reply")
         if "events" in expected_raw:
             expected_events = _parse_expected_events(expected_raw["events"], f"{ctx}/expected/events")
-        if "artifacts" in expected_raw:
-            expected_artifacts = _parse_expected_artifacts(
-                expected_raw["artifacts"], f"{ctx}/expected/artifacts"
-            )
 
     outcome_prediction: OutcomePrediction | None = None
     if "outcome_prediction" in raw:
@@ -368,7 +317,6 @@ def _parse_scenario(raw: Any, index: int, source: str) -> Scenario:
         kind=str(kind) if kind is not None else None,
         expected_reply=expected_reply,
         expected_events=expected_events,
-        expected_artifacts=expected_artifacts,
         outcome_prediction=outcome_prediction,
     )
 

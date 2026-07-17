@@ -54,9 +54,9 @@ scenarios:
           - { type: routing_decided, count: ">=1" }
         must_not_emit: []
         sequence: []
-      artifacts:
-        - { present: true }
     # outcome_prediction refitted from B27/B28/B30/B32 actuals (H5 ablation, 2026-05-17)
+    # artifacts assertion removed (was: dead mechanism, see #2959); refuted was
+    # already 0.0 here so no redistribution needed
     outcome_prediction:
       verified: 0.5
       inconclusive: 0.5
@@ -85,9 +85,9 @@ scenarios:
           - { type: chat_turn_completed_inline, count: ">=1" }
         must_not_emit: []
         sequence: []
-      artifacts:
-        - { present: true }
     # outcome_prediction refitted from B27/B28/B30/B32 actuals (H5 ablation, 2026-05-17)
+    # artifacts assertion removed (was: dead mechanism, see #2959); refuted was
+    # already 0.0 here so no redistribution needed
     outcome_prediction:
       verified: 0.5
       inconclusive: 0.5
@@ -117,9 +117,9 @@ scenarios:
           - { type: chat_turn_completed_inline, count: ">=1" }
         must_not_emit: []
         sequence: []
-      artifacts:
-        - { present: true }
     # outcome_prediction refitted from B27/B28/B30/B32 actuals (H5 ablation, 2026-05-17)
+    # artifacts assertion removed (was: dead mechanism, see #2959); refuted was
+    # already 0.0 here so no redistribution needed
     outcome_prediction:
       verified: 0.0
       inconclusive: 1.0
@@ -155,9 +155,9 @@ scenarios:
           - { type: chat_turn_completed_inline, count: ">=1" }
         must_not_emit: []
         sequence: []
-      artifacts:
-        - { present: true }
     # outcome_prediction refitted from B27/B28/B30/B32 actuals (H5 ablation, 2026-05-17)
+    # artifacts assertion removed (was: dead mechanism, see #2959); refuted was
+    # already 0.0 here so no redistribution needed
     outcome_prediction:
       verified: 0.5
       inconclusive: 0.5
@@ -192,9 +192,9 @@ scenarios:
           - { type: chat_turn_completed_inline, count: ">=1" }
         must_not_emit: []
         sequence: []
-      artifacts:
-        - { present: true }
     # outcome_prediction refitted from B27/B28/B30/B32 actuals (H5 ablation, 2026-05-17)
+    # artifacts assertion removed (was: dead mechanism, see #2959); refuted was
+    # already 0.0 here so no redistribution needed
     outcome_prediction:
       verified: 0.5
       inconclusive: 0.5
@@ -220,13 +220,13 @@ scenarios:
           - { type: routing_decided, count: ">=1" }
         must_not_emit: []
         sequence: []
-      artifacts:
-        - { present: true }
     # outcome_prediction refitted from B27/B28/B30/B32 actuals (H5 ablation, 2026-05-17)
+    # artifacts assertion removed (was: dead mechanism, see #2959) — refuted mass
+    # attributable to it redistributed to verified
     outcome_prediction:
-      verified: 0.25
+      verified: 1.0
       inconclusive: 0.0
-      refuted: 0.75
+      refuted: 0.0
       blocked: 0.0
 
   # NOTE: realignment permission/sandbox-ENFORCEMENT scenarios (carve-out
