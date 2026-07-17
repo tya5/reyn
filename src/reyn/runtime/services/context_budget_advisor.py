@@ -97,8 +97,21 @@ class ContextBudgetAdvisor:
         """Estimated token count of the full router-view history (#2940).
 
         Incremental: only the slice of history NEWER than the last call is
-        json.dumps'd + estimated; a cache hit (no new messages since last
-        call) is O(1). A shrink, a model/use_chars4 change, OR the cached
+        json.dumps'd + estimated; on a cache hit (no new messages since the
+        last call) THIS function's own dump+estimate work is O(1).
+
+        That O(1) is scoped to the dump+estimate ONLY — it is NOT the cost of
+        calling this. ``self._history_fn()`` is invoked before the cache is
+        consulted (the cache is keyed on the history it returns, so it cannot
+        be), and in production that fn is
+        ``RouterHistoryBuffer.build_history`` → ``Session._active_branch_history``,
+        which does an uncached full-WAL scan per call. Measured (#2940,
+        N=2000 msgs / M=100k WAL entries): ~445ms per call on a cache HIT, of
+        which the producer is ~99.7% and this cache saves ~10ms. Do not read
+        "cache hit" here as "cheap call" — the caller-facing cost is O(WAL
+        size) either way. Flattening that is #2939's scope.
+
+        A shrink, a model/use_chars4 change, OR the cached
         PREFIX's content actually differing (checked via a boundary — the
         json dump of the last cached message, not assumed from length alone
         — history_fn is often a recomputed derived view, e.g. a rewind-aware
