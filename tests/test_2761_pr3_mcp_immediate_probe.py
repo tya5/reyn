@@ -29,6 +29,7 @@ from __future__ import annotations
 import asyncio
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -45,6 +46,7 @@ from reyn.runtime.hot_reload import HotReloader, set_active_hot_reloader
 from reyn.runtime.session import Session
 from reyn.security.permissions.permissions import PermissionDecl
 from reyn.tools.mcp_verbs import _handle_mcp_install_local
+from reyn.tools.types import RouterCallerState, ToolContext
 
 _PID_SERVER = Path(__file__).parent / "_support" / "mcp_tools_only_pid_server.py"
 _STDIO = {"command": sys.executable, "args": [str(_PID_SERVER)]}
@@ -67,22 +69,33 @@ def _seam_recorder():
     return ran, make
 
 
-class _RS:
-    """Minimal RouterState carrying the op-context factory + resolver the install_local
-    handler reads — wired to REAL objects (a real session factory / a real reloader)."""
+def _RS(factory) -> RouterCallerState:
+    """The REAL RouterCallerState, carrying the op-context factory the handler reads.
 
-    def __init__(self, factory, resolver=None) -> None:
-        self.op_context_factory = factory
-        self.permission_resolver = resolver
+    This used to be a hand-rolled stand-in that also declared a ``permission_resolver``
+    attribute — a field ``RouterCallerState`` has never had. That invented field is what
+    kept the install_local permission gate looking tested while it could never fire in
+    production: the handler read the resolver off the router-state, which only the FAKE
+    supplied. Constructing the real dataclass is what makes this suite able to witness
+    that class of drift at all.
+    """
+    return RouterCallerState(op_context_factory=factory)
 
 
-class _Ctx:
-    """Minimal ToolContext plumbing (mirrors the existing install_local test's _FakeCtx)
-    — router_state + a workspace with a ``root``. All wired to real components."""
+def _Ctx(root: Path, rs: "RouterCallerState | None") -> ToolContext:
+    """The REAL ToolContext (a plain dataclass — a real instance, not a stand-in).
 
-    def __init__(self, root: Path, rs: "_RS | None") -> None:
-        self.router_state = rs
-        self.workspace = type("_W", (), {"root": str(root)})()
+    ``permission_resolver=None`` keeps these probe/reload tests focused on their own
+    invariant: the handler skips the gate without a resolver (the test / CLI contract).
+    The gate itself is covered in test_3037_mcp_install_local_recovery_core_gate.py.
+    """
+    return ToolContext(
+        events=None,
+        permission_resolver=None,
+        workspace=SimpleNamespace(root=str(root)),
+        caller_kind="router",
+        router_state=rs,
+    )
 
 
 def _session(tmp: Path) -> Session:
@@ -94,16 +107,16 @@ def _session(tmp: Path) -> Session:
     )
 
 
-def _session_ctx(session: Session, tmp: Path) -> _Ctx:
+def _session_ctx(session: Session, tmp: Path) -> ToolContext:
     """A ctx whose op-context factory is the session's REAL make_router_op_context (so
     ctx.hot_reloader is the session's per-session reloader). resolver=None → the
     install_local file-write gate is skipped (not under test)."""
-    return _Ctx(tmp, _RS(session._router_host.make_router_op_context, None))
+    return _Ctx(tmp, _RS(session._router_host.make_router_op_context))
 
 
 def _reloader_ctx(
     reloader: HotReloader, tmp: Path, *, cancel_event: "asyncio.Event | None" = None,
-) -> _Ctx:
+) -> ToolContext:
     """A ctx whose factory returns a bare OpContext carrying ``reloader`` — for the
     probe-then-commit tests that only need the immediate path to fire (no full roster).
 
@@ -119,7 +132,7 @@ def _reloader_ctx(
         hot_reloader=reloader,
         cancel_event=cancel_event,
     )
-    return _Ctx(tmp, _RS(lambda: op_ctx, None))
+    return _Ctx(tmp, _RS(lambda: op_ctx))
 
 
 def _servers_on_disk(tmp: Path) -> dict:
@@ -293,7 +306,7 @@ async def test_local_install_no_per_session_reloader_defers_no_probe(
     try:
         result = await _handle_mcp_install_local(
             {"name": "clisrv", "command": "/nonexistent/reyn-xyz", "args": []},
-            _Ctx(tmp_path, _RS(factory=None, resolver=None)),  # no op-context factory
+            _Ctx(tmp_path, _RS(factory=None)),  # no op-context factory
         )
     finally:
         set_active_hot_reloader(None)

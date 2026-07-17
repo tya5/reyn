@@ -14,7 +14,9 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
-from typing import Any
+from types import SimpleNamespace
+
+from reyn.tools.types import ToolContext
 
 
 class _FakeReloader:
@@ -29,25 +31,25 @@ class _FakeReloader:
         self.sources.append(source)
 
 
-class _FakePermissionResolver:
-    async def require_file_write(self, decl: Any, path: str, caller: str) -> None:
-        pass
+def _ctx(project_root: Path) -> ToolContext:
+    """The REAL ToolContext (a plain dataclass — a real instance, not a stand-in).
 
-
-class _FakeCtx:
-    router_state = None
-    permission_resolver = _FakePermissionResolver()
-
-    def __init__(self, project_root: Path) -> None:
-        self._root = project_root
-
-    @property
-    def workspace(self) -> Any:
-        class _W:
-            pass
-        w = _W()
-        w.root = str(self._root)
-        return w
+    This used to be a hand-rolled ``_FakeCtx`` carrying a ``_FakePermissionResolver``
+    whose ``require_file_write`` signature was frozen at the call shape of the day. Both
+    are gone: the fake resolver made the permission gate look exercised here while the
+    handler read its resolver off ``router_state`` (a field the real ``RouterCallerState``
+    never declared), so nothing was gated in production. ``permission_resolver=None``
+    keeps these tests on their own invariant — the hot-reload dispatch — and the gate is
+    covered against a REAL ``PermissionResolver`` in
+    test_3037_mcp_install_local_recovery_core_gate.py.
+    """
+    return ToolContext(
+        events=None,
+        permission_resolver=None,
+        workspace=SimpleNamespace(root=str(project_root)),
+        caller_kind="router",
+        router_state=None,
+    )
 
 
 def _run_install(
@@ -67,7 +69,7 @@ def _run_install(
         return asyncio.run(
             _handle_mcp_install_local(
                 {"name": name, "command": command, "args": args or ["/tmp/server.py"]},
-                _FakeCtx(project_root),
+                _ctx(project_root),
             )
         )
     finally:
