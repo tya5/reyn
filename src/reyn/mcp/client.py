@@ -193,22 +193,90 @@ def _default_runtime_write_paths(command: str) -> tuple[str, ...]:
     return _RUNTIME_DEFAULT_WRITE_PATHS.get(os.path.basename(command).lower(), ())
 
 
-# #2976: substrings that mark a sandbox write denial in a failed server's stderr.
+# #2976: substrings that mark a sandbox write denial in a failed server's output.
 # Both were OBSERVED in real launches under the real Seatbelt profile, not
 # predicted: npm prints ``npm error code EPERM``; uv prints ``Operation not
 # permitted (os error 1)``; a Python server prints ``[Errno 1] Operation not
 # permitted``. Matching is a diagnostic HINT only — a false positive costs one
 # extra sentence in an error that was already failing, so this errs toward
 # offering help rather than staying silent.
+#
+# #3009: these are the SEATBELT (EPERM) shapes, and that is a KNOWN, DELIBERATE
+# limit, not an oversight. Landlock denies with EACCES ("Permission denied"),
+# which none of these match — so on a Linux host whose Landlock enforces, the
+# hints below go silent. That asymmetry is NOT closed here for two reasons:
+#   1. It cannot be witnessed from this arc. Landlock is unreachable from
+#      production today (#2980: the shim's ``Ruleset`` API raises AttributeError),
+#      so a Linux host resolves to NoopBackend and fires no write denial at all —
+#      there is nothing to observe, and a marker added on the strength of a man
+#      page rather than a measurement is exactly the census this repo keeps
+#      finding under its "the mechanism is present" claims.
+#   2. Widening to a bare "permission denied" would be WRONG even where it fires:
+#      EACCES is also what an ordinary read-only file produces, so the "add it to
+#      `write_paths`" advice would be handed to operators whose problem is not the
+#      sandbox at all. The correct shape is a per-backend marker set (Seatbelt →
+#      EPERM, Landlock → EACCES), which the backend that can actually be TESTED
+#      should carry.
+# So: #2980's fix — the PR that first makes a Landlock denial observable — owns
+# closing this. Until then a Linux operator is no worse off than today (no
+# enforcement → no denial → no hint needed).
+#
+# That handoff is a GATE, not a note: test_3009's end-to-end case skips only while
+# no backend on the host enforces. The moment #2980 makes Landlock deny, the test
+# starts RUNNING on Linux and goes RED on this marker set — so the asymmetry
+# cannot be reintroduced silently by the very PR that makes it reachable.
 _WRITE_DENIAL_MARKERS = ("eperm", "operation not permitted")
 
 
-def _looks_like_write_denial(stderr_tail: str | None) -> bool:
-    """Whether *stderr_tail* looks like an OS-level permission denial."""
-    if not stderr_tail:
+def _looks_like_write_denial(text: str | None) -> bool:
+    """Whether *text* looks like an OS-level permission denial.
+
+    Pure and channel-agnostic on purpose: a denial reaches this module through
+    two DIFFERENT transports and the same question is asked of both — a launch
+    denial arrives on the subprocess's stderr (:meth:`MCPClient.initialize`),
+    while a denial inside a running server's tool handler never touches stderr
+    at all and arrives as JSON-RPC tool-error content
+    (:meth:`MCPClient.call_tool`). See :data:`_TOOL_CALL_WRITE_DENIAL_HINT`.
+    """
+    if not text:
         return False
-    lowered = stderr_tail.lower()
+    lowered = text.lower()
     return any(marker in lowered for marker in _WRITE_DENIAL_MARKERS)
+
+
+# #3009: the tool-call sibling of initialize()'s #2976 launch hint. Separate text,
+# same predicate, because the two denials leave the operator in different places:
+# a launch denial means "this server never started" (the fix is about the
+# runtime's own cache), while this one means "the server is running fine and the
+# path YOU passed is outside its write scope" (the fix is about that path).
+#
+# MEASURED, not predicted — the real builtin vector-store server under the real
+# Seatbelt profile, ``db_path`` outside cwd, returns:
+#
+#     {"isError": true, "content": [{"type": "text", "text":
+#       "Error calling tool 'upsert': [Errno 1] Operation not permitted: '<dir>'"}]}
+#
+# i.e. FastMCP prefixes the handler's exception but preserves ``str(exc)``
+# verbatim, so the errno survives into the payload and _looks_like_write_denial
+# matches it. Both concrete remedies are named (the #2932 ``require_mcp`` shape),
+# and the zero-config one goes FIRST per #3009's principle: the path that needs no
+# declaration is the recommendation, the grant is the documented deviation.
+_TOOL_CALL_WRITE_DENIAL_HINT = (
+    "\n\nHint (#3009): this looks like reyn's MCP sandbox DENYING the server a "
+    "write to a path outside its granted write scope — NOT a bug in the tool "
+    "(the error above names the exact path). A sandboxed stdio MCP server may "
+    "write only inside its working directory unless its config says otherwise. "
+    "Two ways forward:\n"
+    "  1. Pass a path INSIDE the server's working directory (a relative path "
+    "like \"rag/docs.sqlite\" needs no configuration at all), or\n"
+    "  2. Grant the location you want — add it to this server's `write_paths`:\n"
+    "         mcp:\n"
+    "           servers:\n"
+    "             {server}:\n"
+    "               write_paths: [\"~/reyn-rag\"]\n"
+    "Declaring `write_paths` replaces the built-in per-runtime defaults; the "
+    "server's working directory is always granted."
+)
 
 # #2597 capability/version gate slice: the ``ServerCapabilities`` fields FastMCP's
 # ``mcp.types.InitializeResult.capabilities`` may carry — each is either a capability
@@ -775,7 +843,49 @@ class MCPClient:
             result = await self._client.call_tool_mcp(name, args or {}, **kwargs)
         except Exception as exc:
             _classify_and_raise(exc, f"MCP tools/call error: {exc}")
-        return _result_to_dict(result)
+        return self._annotate_write_denial(_result_to_dict(result))
+
+    def _annotate_write_denial(self, result: dict[str, Any]) -> dict[str, Any]:
+        """Append the ``write_paths`` hint to *result* when it carries a sandbox
+        write denial. Returns *result* unchanged otherwise (#3009).
+
+        Why HERE and not in ``_result_to_dict``: that helper is a pure flattener
+        of the SDK's shape, and this is reyn's own diagnosis of a reyn-imposed
+        restriction — different altitude. This is also the deepest single seam
+        every tool call passes through: ``gateway.call_tool`` and
+        ``connection_service.call_tool`` both reach the server via THIS method,
+        so wiring it here covers both without either needing to know about it.
+
+        Gated on ``stdio`` for the same reason ``initialize``'s hint is: only a
+        spawned subprocess is sandboxed, so only it can be denied by one, and
+        only its config has a ``write_paths`` to point the operator at. Advice
+        about a knob an http/sse server does not have would be a wrong turn.
+
+        The hint is APPENDED, unlike #2976's, which is deliberately prepended.
+        That was forced by ``pool.describe_fault(limit=600)`` truncating an init
+        error from the END; nothing truncates this path — a tool-error result is
+        returned normally (never raised), and ``op_runtime/mcp.py`` joins every
+        text block into the LLM's tool result whole. So the natural order stands:
+        what happened, then what to do about it.
+        """
+        if self._type != "stdio" or not result.get("isError"):
+            return result
+        content = result.get("content")
+        if not isinstance(content, list):
+            return result
+        text = "\n".join(
+            item.get("text", "") for item in content
+            if isinstance(item, dict) and item.get("type") == "text"
+        )
+        if not _looks_like_write_denial(text):
+            return result
+        hint = _TOOL_CALL_WRITE_DENIAL_HINT.format(
+            server=self._server_name or "<server-name>",
+        )
+        # A separate block, not an edit of the server's own text: the server's
+        # message is data reyn relays, the hint is reyn's. Both reach the reader
+        # either way (op_runtime joins them), so keep the provenance clean.
+        return {**result, "content": [*content, {"type": "text", "text": hint}]}
 
     async def list_tools(self) -> list[dict[str, Any]]:
         """Return the tools advertised by this server as plain dicts.

@@ -82,9 +82,15 @@ path outside the project)? That is supported, but it is a **declared
 deviation, not the default**: the operator must add a `write_paths` entry
 naming that location to the `reyn_vector_store` server's config (see
 `docs/cookbook/configs/with-builtin-rag-mcp.yaml`). Without it, the sandbox
-denies the write and the ingest fails with a raw sqlite error -- **do not
-pass an absolute `output_db`/`db` unless the operator has already declared
-`write_paths` for it.**
+denies the write -- **do not pass an absolute `output_db`/`db` unless the
+operator has already declared `write_paths` for it.**
+
+If you do hit that denial, the error says so: it names the sandbox, the
+exact path, and the `write_paths` knob. **Relay it to the operator rather
+than reporting a broken tool or retrying** -- only they can grant the path
+(`write_paths` is operator-owned config, not something you can set). The
+alternative you CAN act on yourself is the zero-config one: a cwd-relative
+`output_db`.
 
 Returns `[{id, distance, metadata}, ...]`, **nearest first**. `metadata`
 carries `source_path` / `chunk_index` / `content_hash` / `embedding_model`.
