@@ -221,7 +221,7 @@ implementation would. **This allowance is for callables only** — it does
 not extend to hand-rolling a hand-shaped stand-in for a plain data/state
 object; see below.
 
-#### Faking a data/state object — same ban, sharper failure mode
+#### Faking a data/state object: same ban, sharper failure mode
 
 ```python
 # FORBIDDEN
