@@ -66,7 +66,7 @@ def test_resolve_view_excludes_complement_of_categories():
     assert "file" not in excluded and "web" not in excluded
     assert excluded == frozenset(CATEGORIES) - {"file", "web"}
     # every other catalog category is hidden
-    assert "memory_entry" in excluded and "exec" in excluded
+    assert "memory_operation" in excluded and "exec" in excluded
 
 
 def test_resolve_no_categories_no_view_narrowing():

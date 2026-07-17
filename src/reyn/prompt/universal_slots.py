@@ -212,11 +212,18 @@ ACTION_CATEGORIES_LINES = [
     "- **mcp** — MCP server management + tool dispatch.",
     "- **file** — workspace file ops (read/write/delete/list).",
     "- **web** — web search and content fetch.",
-    "- **memory_entry** — persistent memory records; invoke to read body.",
-    "- **memory_operation** — memory CRUD (remember_shared / remember_agent / forget).",
+    (
+        "- **memory_operation** — persistent memory: `memory_operation__list` "
+        "names the entries, `memory_operation__read` returns one body "
+        "(`layer` shared|agent + `slug`); remember_shared / remember_agent / "
+        "forget write them."
+    ),
     "- **reyn_repo** — Reyn source/docs (read-only).",
-    "- **rag_corpus** — indexed corpora; invoke with `query` for single-source semantic search.",
-    "- **rag_operation** — RAG management (multi-source semantic_search, drop_source).",
+    (
+        "- **rag_operation** — indexed corpora: `rag_operation__list_sources` "
+        "names them, then `rag_operation__semantic_search` with those names in "
+        "`sources`; drop_source removes one."
+    ),
     "- **exec** — sandboxed argv execution (only when sandbox backend is enabled).",
     (
         "- **task** — dynamically create + manage sub-tasks: decompose a "
@@ -237,9 +244,9 @@ ACTION_CATEGORIES_LINES = [
         "to .reyn/skills/<name>/)."
     ),
     (
-        "- **pipeline** — launch a registered pipeline: "
-        "`pipeline__run` runs a REGISTERED pipeline by name to completion "
-        "and returns its final output (synchronous — blocks until done)."
+        "- **pipeline** — launch a registered pipeline: `pipeline__list` names "
+        "them; `pipeline__run` runs one by name to completion and returns its "
+        "final output (synchronous — blocks until done)."
     ),
     (
         "- **pipeline_management** — manage pipeline definitions: "
@@ -340,13 +347,13 @@ NEVER_INVENT_WRAPPERS_OFF = (
 
 ROUTING_RULE_WRAPPERS_ON = (
     "  ROUTING RULE (ABSOLUTE): When the user message contains an action"
-    " name (= valid `invoke_action` action_name, e.g. `mcp__brave__search`),"
+    " name (= valid `invoke_action` action_name, e.g. `mcp__call_tool`),"
     " call `invoke_action` immediately. NO clarifying questions. NO text replies."
 )
 
 ROUTING_RULE_WRAPPERS_OFF = (
     "  ROUTING RULE (ABSOLUTE): When the user message contains an action"
-    " name (e.g. `mcp__brave__search`), call that action directly by its"
+    " name (e.g. `mcp__call_tool`), call that action directly by its"
     " name immediately. NO clarifying questions. NO text replies."
 )
 

@@ -14,9 +14,9 @@ the LLM a fresh tool to learn.
 
 The **universal action catalog** (FP-0034) replaces N per-kind discover /
 describe / invoke tools with **4 wrappers that cover every category
-uniformly**. Every action — a workflow, a peer agent, an MCP tool, a memory
-entry, a file op, an indexed corpus, … — is addressed by a single
-qualified name (`<category>__<entry>`) and dispatched through
+uniformly**. Every action — run a workflow, delegate to a peer agent, call an
+MCP tool, read a memory, search an indexed corpus, … — is addressed by a
+single qualified name (`<category>__<entry>`) and dispatched through
 `invoke_action`. Discovery happens through `list_actions` and detail
 introspection through `describe_action`; semantic / natural-language
 discovery uses `search_actions` (embedding-backed).
@@ -64,11 +64,9 @@ adds an entry to the `CATEGORIES` tuple and one routing rule.
 | `mcp` | MCP server management + tool dispatch | six verb_object actions — see below |
 | `file` | Workspace file ops | read / write / delete / list |
 | `web` | Web search + fetch | search or fetch |
-| `memory_entry` | Persistent memory records | read the entry's body |
-| `memory_operation` | Memory CRUD ops | `remember_shared` / `remember_agent` / `forget` |
+| `memory_operation` | Memory ops | `list` / `read` (by `layer` + `slug`) / `remember_shared` / `remember_agent` / `forget` |
 | `reyn_repo` | Reyn source / docs (read-only) | read or list |
-| `rag_corpus` | Indexed corpora (resource) | semantic_search against this single source |
-| `rag_operation` | RAG management ops | multi-source semantic_search / drop source |
+| `rag_operation` | RAG ops | `list_sources` / multi-source `semantic_search` / drop source |
 | `exec` | Sandboxed argv execution | run argv under the sandbox backend |
 
 The `mcp` category provides six verb_object actions that cover the LLM-visible surface:
@@ -88,6 +86,15 @@ The `mcp` category provides six verb_object actions that cover the LLM-visible s
 sandbox backend (= not `"noop"`) is configured. The rest are always
 visible.
 
+**Every category enumerates a fixed set of verbs.** A resource — a stored
+memory, an indexed corpus, an installed MCP tool, a registered pipeline — is an
+**argument** to a verb, never an enumerated action of its own, so the number of
+actions the LLM is shown does not grow with what the operator has accumulated.
+Where collapsing a resource category removed the only surface that *named* those
+resources, a constant-count discovery verb replaces it (`memory_operation__list`,
+`rag_operation__list_sources`, `mcp__list_tools`, `pipeline__list`,
+`skill_management__list`).
+
 ## Qualified-name format
 
 ```
@@ -95,7 +102,7 @@ visible.
 ```
 
 The separator is **double underscore** (`__`). Categories may contain
-dots (`agent.peer`, `rag_corpus`, `reyn_repo`, …); entry names may
+dots (`agent.peer`, …); entry names may
 contain anything except the `__` sequence at the boundary. The split
 rule is "first `__` after the category name" so `agent.peer__alice`
 correctly parses as (`agent.peer`, `alice`).
@@ -107,14 +114,14 @@ Examples:
 | `agent.peer__alice` | (`agent.peer`, `alice`) |
 | `mcp__call_tool` | (`mcp`, `call_tool`) |
 | `mcp__install_registry` | (`mcp`, `install_registry`) |
-| `rag_corpus__meetings` | (`rag_corpus`, `meetings`) |
+| `rag_operation__semantic_search` | (`rag_operation`, `semantic_search`) |
 | `file__read` | (`file`, `read`) |
 
 ### Provider portability — dots in qualified names
 
 OpenAI's native function-call API restricts tool names to
 `^[a-zA-Z0-9_-]{1,64}$` (= no `.`). Reyn's qualified names with
-dotted categories (`agent.peer`, `rag_corpus`, `reyn_repo`, etc.)
+dotted categories (`agent.peer`, etc.)
 therefore **work via a LiteLLM proxy** but may be rejected by direct
 OpenAI native callers.
 
@@ -181,26 +188,33 @@ A fourth wrapper, `search_actions`, is reserved for semantic
 (embedding-backed) search. It is **not visible in Phase 1** — the
 handler is a stub, the embedding plumbing waits for Phase 2.
 
-## Canonical-default semantic (§D19)
+## Resource names: enumeration vs resolution (§D19)
 
-Resource categories support invoke as well as discover. Invoking a
-resource runs the *canonical default operation* for that kind:
+**Enumeration** is what the LLM is *shown*; **resolution** is what a name a
+caller already typed *does*. The two are deliberately different surfaces, and
+only enumeration governs payload size.
 
-| Resource category | Canonical default invoke |
-|---|---|
-| `skill` | run the workflow |
-| `agent.peer` | delegate a message |
-| `memory_entry` | read the body |
-| `rag_corpus` | single-source semantic_search |
+No resource is enumerated. To reach one, discover it with the category's
+discovery verb, then pass its id as an argument:
 
-The previous `mcp.server` / `mcp.tool` resource entries are removed; per-MCP-server / per-MCP-tool dispatch now flows through the verb actions in the `mcp` category (= `mcp__list_tools` →
-`mcp__call_tool({tool: "<server>__<tool>", tool_args})`).
+| To … | Discover with | Then invoke |
+|---|---|---|
+| search an indexed corpus | `rag_operation__list_sources` | `rag_operation__semantic_search({sources: ["meetings"], query: "Q3 roadmap"})` |
+| read a stored memory | `memory_operation__list` | `memory_operation__read({layer: "shared", slug: "..."})` |
+| call an MCP tool | `mcp__list_tools` | `mcp__call_tool({tool: "<server>__<tool>", tool_args})` |
+| run a registered pipeline | `pipeline__list` | `pipeline__run({name: "greet", input: {...}})` |
 
-This means an LLM can say `invoke_action("rag_corpus__meetings",
-{"query": "Q3 roadmap"})` and the wrapper expands it to
-`semantic_search(sources=["meetings"], query="Q3 roadmap")` without the LLM
-needing to remember the underlying call shape. The canonical default
-is documented in `describe_action`'s response.
+`memory_operation__read` takes an explicit `layer` (`shared` or `agent`), so
+both memory layers are reachable through the catalog.
+
+Two **author-time** resource forms still **resolve** even though they are not
+enumerated, because a human or an agent writes them by hand: `pipeline__<name>`
+(the form the [pipeline guide](../../guide/for-users/write-a-pipeline.md)
+teaches — `pipeline__greet({name: "Reyn"})`) and `mcp__<server>__<tool>` (a
+`tool: mcp__echo__ping` step in a pipeline DSL file). Each reaches the same
+target with the same effective args as its verb counterpart; resolving a name
+the caller already typed costs zero tools, whereas enumerating one costs a tool
+per resource.
 
 ## Dispatch (routing layer)
 
@@ -209,19 +223,22 @@ The qualified name → target tool name mapping lives in
 It is **pure** — no I/O, no state, no live invocation. Two tables drive
 the routing:
 
-- **`_OPERATION_RULES`** — qualified name → `(target_tool_name,
-  arg_transformer)` for static operation categories (file / web /
-  memory_operation / reyn_repo / rag_operation / mcp).
-- **`_RESOURCE_RULES`** — category → `(target_tool_name,
-  arg_transformer)` for resource categories whose entries come from
-  `RouterCallerState` (workflows / agents / memory entries / rag corpora).
+- **`_OPERATION_RULES`** — a **closed table of full literal qualified names** →
+  `(target_tool_name, arg_transformer)`, covering every category. This is the
+  enumerated surface: it is the only table an enumerator may read, which is what
+  keeps the payload constant.
+- **`_RESOURCE_RULES`** — category → `(target_tool_name, arg_transformer)`,
+  consulted only when the full name is absent from `_OPERATION_RULES`. It holds
+  the two author-time forms (`pipeline` / `mcp`) described above, and is
+  **never** read by an enumerator.
 
 Routing always:
 
 1. Splits the qualified name into (`category`, `entry_name`).
-2. Looks up the rule for that category / qualified name.
-3. Runs the arg transformer (e.g. `_invoke_skill_args` wraps the
-   caller args under the workflow's input artifact).
+2. Looks up the full qualified name in `_OPERATION_RULES`, falling back to
+   the category's `_RESOURCE_RULES` entry.
+3. Runs the arg transformer (e.g. `_mcp_tool_args` rewraps
+   `mcp__echo__ping({...})` as `mcp_call_tool({tool, tool_args})`).
 4. Returns a `ResolvedAction(target_tool_name, target_args)` that
    the wrapper hands to the unified `ToolRegistry`.
 
@@ -480,17 +497,14 @@ deferred:
 `list_actions(category=[...])` and `search_actions(category=[...])`
 validate every supplied name against the live category enum.
 Unknown names return an explicit error carrying a `legacy → current`
-mapping (`mcp.server` → `mcp`, `agent.peer` → `multi_agent`, …) so
+mapping (`mcp.server` → `mcp`, `agent.peer` → `multi_agent`,
+`memory_entry` → `memory_operation`, `rag_corpus` → `rag_operation`) so
 LLMs whose training data references a pre-collapse name self-correct
 in a single retry. See `_LEGACY_CATEGORY_REDIRECTS` in
 `src/reyn/tools/universal_catalog.py`.
 
 **Deferred to Phase 2:**
 
-- **`rag_corpus` enumeration** — needs a `RouterCallerState` field
-  carrying indexed-source metadata, then plumbing through
-  `RouterHostAdapter`. The `invoke` and `describe` paths already work
-  for `rag_corpus__<name>` if the LLM knows the name.
 - **`exec` enumeration** — needs sandbox-backend introspection. The
   visibility predicate exists; the catalogue body waits for the
   introspection API.

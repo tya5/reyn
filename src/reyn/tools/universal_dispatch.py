@@ -3,7 +3,35 @@
 This module is the **pure-function routing layer** that maps a
 qualified action name (= ``<category>__<entry_name>``) to the existing
 ToolDefinition handler that fulfils it, plus any arg transformation
-the category's canonical semantic prescribes (= D19 resource invoke).
+the target's arg shape needs.
+
+**#3026 — resolution and enumeration are different things.** This module
+RESOLVES a name the caller already has. It does not decide what the LLM is
+SHOWN; that is ``universal_catalog._enumerate_category``. The payload
+invariant — the number of tools the LLM is sent must not depend on how many
+memories / corpora / MCP tools / pipelines the operator has accumulated — is
+therefore a property of the ENUMERATOR, and #3026 fixes it there.
+
+``_OPERATION_RULES`` (below) is the enumerated surface: a closed table of full
+literal names, and the ONLY table any enumerator may read.
+``_RESOURCE_RULES`` survives for author-time names only — ``pipeline__<name>``
+is taught in the user guide, and ``tool: mcp__echo__ping`` is a supported
+pipeline DSL step — because resolving a name a human typed costs zero tools.
+Collapsing the two concepts would break those surfaces for no invariant gain.
+
+**#879 → #1647 is the cautionary tale, and it is an ENUMERATION story.**
+#879 collapsed the mcp resource categories. #1647 re-added an enumerated
+action per MCP tool, citing (a) ``call_mcp_tool``'s double-``args`` foot-gun,
+which #1646 had fixed two days earlier by renaming the inner param to
+``tool_args``, and (b) the need to show each tool's real ``inputSchema``,
+which #879 had ALREADY solved by shipping ``inputSchema`` verbatim in
+``list_mcp_tools``' result explicitly so no ``describe_mcp_tool`` round-trip
+is needed (see ``tools/mcp.py``). Its design note says it mirrors
+``skill__<name>`` — a category that has never existed. Both motivations were
+dead on arrival; only nobody re-checked. Before enumerating per-resource
+actions again, verify the motivating gap is still open — twice now it was
+not — and note that ``tests/test_resource_collapse_invariant_3026.py`` will
+fail if you do.
 
 PR-2 scope (this file):
   - ``ResolvedAction`` dataclass — target tool name + transformed args
@@ -11,9 +39,9 @@ PR-2 scope (this file):
   - ``resolve_describe_action`` — routes describe target (= same lookup
     table, returns the canonical target tool name for the introspection
     surface)
-  - ``ACTION_ROUTING`` table — declarative mapping of category +
-    entry-pattern → target tool name + arg transform per FP-0034
-    §"Qualified name format" + §D19 canonical default semantic
+  - ``_OPERATION_RULES`` table — declarative mapping of a full qualified
+    name → target tool name + arg transform per FP-0034
+    §"Qualified name format"
   - ``suggest_similar_names`` — D12 error-with-suggestions helper using
     difflib similarity ranking
   - ``UnknownActionError`` — raised when routing fails, carries
@@ -22,15 +50,12 @@ PR-2 scope (this file):
 This layer is **pure**: no I/O, no state, no live invocation. It is
 the design fault-line between the static schema (= PR-1) and the live
 runtime wire-up (= PR-3 router_loop integration). Tests verify
-routing decisions for all 13 categories without invoking any handler.
+routing decisions without invoking any handler.
 
-Not in PR-2:
-  - Wire-up to ``ctx.router_state`` callables (= PR-3)
-  - Dynamic enumeration of actions/agents/mcp-tools/memory-entries/
-    rag-corpora (= caller-state dependent, PR-3)
-  - The ``list_actions`` enumeration body (= PR-3 with caller-state
-    integration)
-  - ``mcp.operation__drop_server`` op handler (= PR-4 new op)
+Because the table is closed (#3026), routing is also independent of
+``ctx.router_state``: resolving a name no longer consults what the operator
+has accumulated. Enumeration still reads caller-state — but only to decide
+whether a FIXED verb is available this session, never to mint new names.
 """
 from __future__ import annotations
 
@@ -123,58 +148,16 @@ def _multi_agent_delegate_args(
     return out
 
 
-def _read_memory_body_args(
-    entry_name: str, args: Mapping[str, Any],
-) -> dict[str, Any]:
-    """``memory_entry__<name>`` → ``read_memory_body({layer, slug})``.
-
-    D19 resource invoke: invoking a memory entry returns its body.
-
-    The qualified-name format ``memory_entry__<slug>`` does not encode a
-    layer; we default to "shared" because that is what the
-    ``memory_operation__remember_shared`` write surface produces, and
-    therefore what users encounter from natural-language "remember X"
-    requests (= e2e-coder 2026-05-17 N4 probe). Agent-layer entries
-    require a separate alias namespace (= follow-up if a real probe
-    surfaces the gap).
-    """
-    return {"layer": "shared", "slug": entry_name}
-
-
-def _semantic_search_single_source_args(
-    entry_name: str, args: Mapping[str, Any],
-) -> dict[str, Any]:
-    """``rag_corpus__<name>`` → ``semantic_search({sources: [name], query, top_k?})``
-    (FP-0057 Phase 2a; renamed from ``recall``).
-
-    D19 resource invoke: invoking a rag corpus performs a single-source
-    semantic search against that source. The caller passes ``query`` and
-    optionally ``top_k``; the source is curried from the entry name.
-    """
-    out: dict[str, Any] = {"sources": [entry_name]}
-    if "query" in args:
-        out["query"] = args["query"]
-    if "top_k" in args:
-        out["top_k"] = args["top_k"]
-    return out
-
-
 def _pipeline_run_args(entry_name: str, args: Mapping[str, Any]) -> dict[str, Any]:
-    """``pipeline__<name>`` → ``run_pipeline({name, input})`` (IS-5 D19
-    resource invoke).
+    """``pipeline__<name>`` → ``run_pipeline({name, input})``.
 
-    The catalog's ``pipeline`` resource category (``universal_catalog.py:
-    _enumerate_category``) lists each REGISTERED pipeline as
-    ``pipeline__<name>``; invoking that qualified name curries the pipeline
-    name from the entry (same pattern as ``rag_corpus__<name>`` currying
-    ``sources``) and forwards the caller's ``input`` object unchanged as the
-    pipeline's seed context. This is ADDITIVE to the pre-existing static
-    ``pipeline__run`` verb in ``_OPERATION_RULES`` (checked first by
-    ``resolve_invoke_action``/``resolve_describe_action`` — an explicit
-    qualified-name match always wins over this per-category fallback), so
-    both ``invoke_action(action="pipeline__run", args={name, input})`` and
-    ``invoke_action(action="pipeline__<name>", args={input})`` reach
-    ``run_pipeline`` with the same effective args.
+    An AUTHOR-TIME name, not an enumerated action (#3026). ``pipeline__<name>``
+    is the form the user guide teaches (``docs/guide/for-users/write-a-pipeline
+    .md``: ``pipeline__greet({name: "Reyn"})``) and the form a ``tool:`` step in
+    a pipeline DSL file may carry, so it must keep RESOLVING. It is no longer
+    ENUMERATED — the catalog lists ``pipeline__run`` / ``pipeline__list``, never
+    one action per registered pipeline — which is the whole of the payload
+    invariant. Both forms reach ``run_pipeline`` with identical effective args.
     """
     out: dict[str, Any] = {"name": entry_name}
     if "input" in args:
@@ -183,18 +166,18 @@ def _pipeline_run_args(entry_name: str, args: Mapping[str, Any]) -> dict[str, An
 
 
 def _mcp_tool_args(entry_name: str, args: Mapping[str, Any]) -> dict[str, Any]:
-    """``mcp__<server>__<tool>`` → ``mcp_call_tool({tool, tool_args})`` (#1647).
+    """``mcp__<server>__<tool>`` → ``mcp_call_tool({tool, tool_args})``.
 
-    First-class per-tool MCP action. The LLM passes the target MCP tool's OWN
-    parameters as the top-level ``args`` (matching the tool's real inputSchema,
-    surfaced by describe_action) — ONE args level, no generic ``server`` /
-    ``mcp_tool_name`` / nested-args foot-gun (#1646). This shaper wraps them into
-    the EXISTING ``mcp_call_tool`` verb's shape: the ``<server>__<tool>``
-    identifier (= entry_name, already in that form) under ``tool``, the tool's
-    params under ``tool_args``. Dispatch then routes through the SAME
-    ``mcp_call_tool`` ToolDefinition that ``mcp__call_tool`` uses → identical
-    permission gate + MCPClient path (zero new dispatch/gate surface — the
-    per-tool action is purely a catalog/args ergonomics layer over call_mcp_tool).
+    An AUTHOR-TIME name, not an enumerated action (#3026). A ``tool:`` step in a
+    pipeline DSL file may name an MCP tool directly (``tool: mcp__echo__ping``);
+    ``interfaces/cli/commands/pipe.py`` builds a real ``router_state`` precisely
+    so such a step resolves, so this rule must stay for that path. It is no
+    longer ENUMERATED into the LLM's ``tools=`` — see the module docstring on
+    #879 → #1647.
+
+    Wraps the caller's one-level tool params into the EXISTING ``mcp_call_tool``
+    verb's shape, routing through the same ToolDefinition + permission gate
+    ``mcp__call_tool`` uses (zero extra dispatch/gate surface).
     """
     return {"tool": entry_name, "tool_args": dict(args)}
 
@@ -214,42 +197,39 @@ def _passthrough_args(
 
 # ── ACTION_ROUTING — central declarative routing table ────────────────────
 #
-# Maps qualified-name **prefix** to a routing rule. Two flavours:
+# Maps a FULL qualified name (= category + entry_name) to a routing rule
+# ``(target_tool_name, arg_transformer)``. Example: ``file__read`` →
+# read_file, ``web__search`` → web_search.
 #
-#   (a) Resource categories (= D19): the routing rule is one rule per
-#       *category* and the rule uses the entry_name as the resource id.
-#       Example: ``mcp.server`` → list_mcp_tools, entry_name=server name.
-#
-#   (b) Operation categories: the routing rule is per **qualified name**
-#       (= category + entry_name), each mapping to its own target tool.
-#       Example: ``file__read`` → read_file, ``web__search`` → web_search.
-#
-# Each rule is a tuple ``(target_tool_name, arg_transformer)``.
-#
-# Categories with multiple discrete entry-name choices (file, web,
-# memory_operation, reyn_repo, rag_operation) list each pair
-# explicitly. Resource categories (mcp, memory_entry, rag_corpus)
-# use the entry_name as the resource id and so have a single rule
-# per category.
+# #3026: this is the ONE routing table — the per-category ``_RESOURCE_RULES``
+# flavour is gone (see the module docstring). Every action is a verb whose
+# resource id, when it has one, is an ordinary argument (``mcp__call_tool``
+# takes ``tool``; ``memory_operation__read`` takes ``layer`` + ``slug``;
+# ``pipeline__run`` takes ``name``). Keep it that way: a rule keyed by
+# anything other than a full literal name re-opens operator-scaled growth.
 
-# Per-category default rule (= used when entry_name is the resource id)
-# Issue #879: mcp.server / mcp.tool resource rules removed; verb actions
-# in the new ``mcp`` category live in _OPERATION_RULES below.
-# Phase 1 follow-up (2026-05-25): ``agent.peer`` collapsed into the
-# ``multi_agent`` verb category; resource rule removed.
+# ── Author-time resource rules (resolution ONLY — never enumerated) ────────
+#
+# #3026: a per-CATEGORY rule, applied when the full qualified name is not in
+# _OPERATION_RULES. It exists for exactly one reason: names a HUMAN OR AGENT
+# WRITES BY HAND must keep resolving. ``pipeline__<name>`` is taught in the user
+# guide and ``tool: mcp__echo__ping`` is a supported pipeline DSL step.
+#
+# **This table must never be read by an enumerator.** The payload invariant —
+# the number of tools the LLM is sent does not depend on how much the operator
+# has accumulated — is a property of ENUMERATION (universal_catalog.
+# _enumerate_category), not of resolution: resolving a name the caller already
+# typed costs zero tools. #1647's mistake was to enumerate what only needed to
+# resolve. ``memory_entry`` / ``rag_corpus`` are absent because nothing authors
+# those names by hand; their capability is memory_operation__read / list and
+# rag_operation__semantic_search / list_sources.
+#
+# ``tests/test_resource_collapse_invariant_3026.py`` pins both halves: the
+# payload stays constant as resources grow, AND these author-time names still
+# resolve.
 _RESOURCE_RULES: Final[dict[str, tuple[str, Callable[[str, Mapping[str, Any]], dict[str, Any]]]]] = {
-    "memory_entry":  ("read_memory_body",    _read_memory_body_args),
-    "rag_corpus":    ("semantic_search",     _semantic_search_single_source_args),
-    # #1647: per-tool MCP actions ``mcp__<server>__<tool>`` resolve here (the
-    # full name is NOT a static verb in _OPERATION_RULES, so it falls through to
-    # this per-category rule). entry_name = ``<server>__<tool>`` → wrapped into
-    # the existing mcp_call_tool verb (same gate). Static mcp__* verbs
-    # (mcp__call_tool / mcp__list_tools / …) match _OPERATION_RULES FIRST, so they
-    # are unaffected; only dynamic per-tool names reach this rule.
-    "mcp":           ("mcp_call_tool",       _mcp_tool_args),
-    # IS-5: pipeline__<name> → run_pipeline({name, input}) — see
-    # _pipeline_run_args. Additive alongside the static pipeline__run verb.
-    "pipeline":      ("run_pipeline",        _pipeline_run_args),
+    "mcp":      ("mcp_call_tool", _mcp_tool_args),
+    "pipeline": ("run_pipeline",  _pipeline_run_args),
 }
 
 
@@ -275,6 +255,19 @@ _OPERATION_RULES: Final[dict[str, tuple[str, Callable[[str, Mapping[str, Any]], 
     "memory_operation__remember_shared": ("remember_shared", _passthrough_args),
     "memory_operation__remember_agent":  ("remember_agent",  _passthrough_args),
     "memory_operation__forget":          ("forget_memory",   _passthrough_args),
+    # #3026: the READ half. The category was write-only (remember/forget); the
+    # only read surface was the per-entry ``memory_entry__<slug>`` action, which
+    # put one LLM tool in ``tools=`` per stored memory. Both targets were already
+    # registered ToolDefinitions with no route — they reached the LLM only as
+    # ``build_tools`` direct tools, which the wrapper scheme strips.
+    #
+    # ``memory_operation__read`` is strictly MORE capable than the action it
+    # replaces: ``memory_entry__<slug>`` hard-coded ``layer="shared"`` (see the
+    # deleted ``_read_memory_body_args``), so an AGENT-layer memory — everything
+    # ``memory_operation__remember_agent`` writes — was unreadable through the
+    # catalog. Passing ``layer`` explicitly makes both layers reachable.
+    "memory_operation__list":            ("list_memory",      _passthrough_args),
+    "memory_operation__read":            ("read_memory_body", _passthrough_args),
 
     # reyn_repo category — §D20 surface: read / list / glob / grep.
     # FP-0038 closed the glob / grep gap (= S2 + S3).
@@ -288,6 +281,11 @@ _OPERATION_RULES: Final[dict[str, tuple[str, Callable[[str, Mapping[str, Any]], 
     # semantic_search tool rename, no compat alias)
     "rag_operation__semantic_search": ("semantic_search", _passthrough_args),
     "rag_operation__drop_source":     ("drop_source",     _passthrough_args),
+    # #3026: the discovery verb. ``semantic_search`` takes a REQUIRED ``sources``
+    # list of operator-chosen corpus names; before this, the only surface naming
+    # them was the per-corpus ``rag_corpus__<name>`` action (one LLM tool per
+    # corpus). Same shape as skill_management__list (#2971) / mcp__list_tools.
+    "rag_operation__list_sources":    ("list_rag_sources", _passthrough_args),
 
     # task category (#1953 dynamic-wire): the 12 task.* control-IR ops. Each
     # maps to the same-named ToolDefinition (tools/task_ops.py) whose handler
@@ -360,6 +358,11 @@ _OPERATION_RULES: Final[dict[str, tuple[str, Callable[[str, Mapping[str, Any]], 
     # IS-2: async launch in a crash-recoverable driver-session;
     # IS-4: ad-hoc INLINE launches — agent-GENERATED DSL + a static-analysis
     # gate, sync-attached and async, sharing the registered launch downstream).
+    # #3026: the discovery verb. ``pipeline__run`` takes a REQUIRED ``name``
+    # chosen by the operator; before this, the only surface naming a registered
+    # pipeline was the per-pipeline ``pipeline__<name>`` action (one LLM tool per
+    # pipeline). Same shape as skill_management__list (#2971).
+    "pipeline__list": ("pipeline_list", _passthrough_args),
     "pipeline__run": ("run_pipeline", _passthrough_args),
     "pipeline__run_async": ("run_pipeline_async", _passthrough_args),
     "pipeline__run_inline": ("run_pipeline_inline", _passthrough_args),
@@ -395,19 +398,22 @@ def resolve_invoke_action(
 
     Steps:
       1. Parse the qualified name (= category, entry_name).
-      2. Look up the category in _OPERATION_RULES (= the full
-         qualified name has an explicit per-op routing rule) — if found,
+      2. Look up the FULL qualified name in _OPERATION_RULES — if found,
          apply that rule.
-      3. Else, look up the category in _RESOURCE_RULES (= the category
-         has a per-category D19 resource invoke semantic) — if found,
-         apply that rule with entry_name as the resource id.
-      4. Else, raise UnknownActionError.
+      3. Else, raise UnknownActionError.
+
+    #3026: there is no step 3 per-category fallback any more. The old
+    ``_RESOURCE_RULES`` table let an unrecognised ``<category>__<anything>``
+    resolve by currying ``entry_name`` as a resource id, which is what made
+    the action set — and therefore the enumerate-all ``tools=`` payload —
+    grow with the operator's memories / corpora / MCP tools / pipelines.
+    Every action is now a fixed verb whose resource id rides in ``args``,
+    so the routing table is CLOSED and the payload is a constant by
+    construction (not by convention). See the module docstring.
 
     Args:
         qualified_name: ``<category>__<entry_name>`` per §D18.
-        args: Caller-supplied arg dict; transformed per the category
-            rule. May be None / empty for resources whose canonical
-            invoke takes no args (= memory_entry__foo).
+        args: Caller-supplied arg dict; transformed per the rule.
 
     Returns:
         ResolvedAction with the target ToolDefinition name and the
@@ -433,7 +439,8 @@ def resolve_invoke_action(
             target_args=transform(entry_name, args),
         )
 
-    # Fall back to per-category rule (= resource categories, D19)
+    # Author-time resource name (pipeline DSL / user-guide form) — resolution
+    # only; these are never enumerated into the LLM payload.
     rule = _RESOURCE_RULES.get(category)
     if rule is not None:
         target_name, transform = rule
@@ -458,9 +465,10 @@ def resolve_describe_action(qualified_name: str) -> ResolvedAction:
     ``target_tool_name`` to fetch the target ToolDefinition's
     description + parameters from the registry.
 
-    Resource categories return the canonical invoke target (= what
-    invoke_action would call) so describe shows the same surface the
-    LLM will actually use.
+    #3026: the two resolvers share ONE closed table (_OPERATION_RULES), so
+    "describable" and "invokable" are the same set by construction — a name
+    can no longer describe via a per-category resource fallback that
+    invoke resolves differently.
     """
     try:
         category, _entry_name = split_qualified_name(qualified_name)

@@ -101,6 +101,7 @@ def get_default_registry() -> ToolRegistry:
         PIPELINE_INSTALL_SOURCE,
     )
     from reyn.tools.pipeline_verbs import (
+        PIPELINE_LIST,
         RUN_PIPELINE,
         RUN_PIPELINE_ASYNC,
         RUN_PIPELINE_INLINE,
@@ -108,6 +109,7 @@ def get_default_registry() -> ToolRegistry:
     )
     from reyn.tools.present import PRESENT
     from reyn.tools.presentation_management_verbs import PRESENTATION_INSTALL
+    from reyn.tools.rag_discovery import LIST_RAG_SOURCES
     from reyn.tools.render_template import RENDER_TEMPLATE
     from reyn.tools.reyn_repo import (
         REYN_REPO_GLOB,
@@ -144,6 +146,12 @@ def get_default_registry() -> ToolRegistry:
     # RAG ops (ADR-0033 Phase 1; FP-0057 Phase 2a renamed recall -> semantic_search)
     registry.register(SEMANTIC_SEARCH)
     registry.register(DROP_SOURCE)
+    # #3026: RAG discovery verb — the surface that NAMES the indexed corpora.
+    # Constant-count replacement for the per-corpus ``rag_corpus__<name>``
+    # catalog actions (which scaled the LLM payload with the operator's corpus
+    # count); ``semantic_search``'s required ``sources`` argument is a closed
+    # set of operator-chosen names and is unguessable without it.
+    registry.register(LIST_RAG_SOURCES)
     # FP-0057 Phase 1: raw embed primitive (user-facing; composes with an
     # external MCP vector-DB via pipeline — reyn hosts no user RAG store).
     registry.register(EMBED)
@@ -280,6 +288,12 @@ def get_default_registry() -> ToolRegistry:
     # universal-catalog wrapper uses, NOT build_tools() (which is
     # hand-assembled and strips direct tools once wrappers are on).
     registry.register(RUN_PIPELINE)
+    # #3026: pipeline discovery verb — the surface that NAMES the registered
+    # pipelines. Constant-count replacement for the per-pipeline
+    # ``pipeline__<name>`` catalog actions (which scaled the LLM payload with
+    # the operator's pipeline count); ``pipeline__run``'s ``name`` argument is
+    # unguessable without it.
+    registry.register(PIPELINE_LIST)
     # IS-2: run_pipeline_async — background launch in a crash-recoverable
     # driver-session; returns {status: started, run_id} immediately, the
     # result arrives later as a pipeline_result inbox message.

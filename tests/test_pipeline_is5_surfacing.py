@@ -187,10 +187,16 @@ def test_pipeline_and_agent_registry_missing_method_falls_back_to_none() -> None
 
 @pytest.mark.asyncio
 async def test_list_actions_pipeline_category_surfaces_registered_pipeline() -> None:
-    """Tier 2: list_actions(category=["pipeline"]) returns the registered
-    pipeline's qualified name + its OWN description (not a generic
-    run_pipeline blurb) — proves the enumerator + registry wiring end-to-end
-    at the universal-catalog layer."""
+    """Tier 2: #3026 — list_actions(category=["pipeline"]) does NOT return one
+    entry per registered pipeline; the registered pipeline is NAMED by the
+    pipeline__list verb instead.
+
+    IS-5 enumerated ``pipeline__<name>`` per registered pipeline, so the LLM's
+    tools= payload grew with the operator's pipelines. #3026 removed the
+    enumeration (the per-name action only curried ``name`` into ``pipeline__run``
+    — no capability of its own) and added ``pipeline__list`` to carry the naming
+    duty in a single constant verb. Invocation by name still RESOLVES — see
+    test_run_pipeline_via_d19_pipeline_name_full_live_loop."""
     from reyn.tools.types import ToolContext
     from reyn.tools.universal_catalog import LIST_ACTIONS
 
@@ -215,25 +221,31 @@ async def test_list_actions_pipeline_category_surfaces_registered_pipeline() -> 
     result = await LIST_ACTIONS.handler({"category": ["pipeline"]}, ctx)
 
     items = {it["qualified_name"]: it for it in result["items"]}
-    assert "pipeline__digest_report" in items
-    assert items["pipeline__digest_report"]["short_description"] == (
-        "Summarize the week's incoming reports."
+    assert "pipeline__digest_report" not in items, (
+        "a registered pipeline must not become an enumerated action (#3026)"
     )
-    # #2589: the static launch verbs (incl. the previously-unreachable
-    # async/inline ones) are ALSO surfaced alongside the dynamic per-name
-    # entry — the hybrid enumeration mirroring the ``mcp`` category.
+    # #2589: the static launch verbs are surfaced; #3026 adds the list verb that
+    # replaces the per-name entries as the naming surface.
     assert {
         "pipeline__run", "pipeline__run_async",
         "pipeline__run_inline", "pipeline__run_inline_async",
+        "pipeline__list",
     } <= items.keys()
+
+    # The registered pipeline's name + its OWN description are still reachable —
+    # through the verb, whose result carries them (drives the real handler).
+    from reyn.tools.pipeline_verbs import PIPELINE_LIST
+
+    listed = await PIPELINE_LIST.handler({}, ctx)
+    assert {"name": "digest_report",
+            "description": "Summarize the week's incoming reports."} in listed["pipelines"]
 
 
 @pytest.mark.asyncio
 async def test_list_actions_pipeline_category_empty_registry_returns_static_verbs_only() -> None:
-    """Tier 2: no registered pipelines -> list_actions(category=["pipeline"])
-    returns ONLY the static launch verbs (#2589 hybrid enumeration), not an
-    empty list — the ``mcp`` category's hybrid pattern always surfaces its
-    static verbs regardless of dynamic population; ``pipeline`` now matches."""
+    """Tier 2: #2589/#3026 — no registered pipelines -> the static launch verbs +
+    pipeline__list, not an empty list. Post-#3026 this is the same set a POPULATED
+    registry yields: enumeration no longer depends on registry contents at all."""
     from reyn.tools.types import ToolContext
     from reyn.tools.universal_catalog import LIST_ACTIONS
 
@@ -253,6 +265,7 @@ async def test_list_actions_pipeline_category_empty_registry_returns_static_verb
     assert names == {
         "pipeline__run", "pipeline__run_async",
         "pipeline__run_inline", "pipeline__run_inline_async",
+        "pipeline__list",
     }
 
 

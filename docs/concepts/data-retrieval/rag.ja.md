@@ -78,17 +78,22 @@ LLM internally calls: semantic_search(query="認証設計", sources=["my_docs"],
 semantic_search(query="...", sources=["python_src", "my_docs", "memory"], top_k=5)
 ```
 
-source のメタデータは `.reyn/config/index/sources.yaml` に保存されます。一度 index された source は、すべてのチャットターンで LLM のコンテキストに自動的に表示されます：
+source のメタデータは `.reyn/config/index/sources.yaml` に保存されます。LLM は
+`list_rag_sources` を呼んで、index 済みの source を名前・説明・チャンク数つきで
+取得します：
 
 ```
-## Indexed sources (3 available)
-
-- **memory** — User notes / past session memos (142 chunks)
-- **reyn_code** — Reyn Python framework code (1247 chunks)
-- **my_docs** — Project documentation (89 chunks)
-
-Use the `semantic_search` tool with `sources=[<name>, ...]` to search.
+list_rag_sources()
+→ {"sources": [
+    {"name": "memory",    "description": "User notes / past session memos", "chunk_count": 142},
+    {"name": "reyn_code", "description": "Reyn Python framework code",      "chunk_count": 1247},
+    {"name": "my_docs",   "description": "Project documentation",           "chunk_count": 89}
+  ]}
 ```
+
+ここで返る name が、`semantic_search` の `sources` 引数に渡す名前です。discovery は
+system prompt の常設ブロックではなくツール呼び出しなので、corpus を多数持つ運用者でも
+モデルが実際に尋ねたターンでしかコストを払いません。
 
 ## `semantic_search` ツール
 

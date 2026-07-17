@@ -126,12 +126,17 @@ async def test_recall_returns_error_when_sources_is_empty_list():
 
 
 @pytest.mark.asyncio
-async def test_recall_error_message_guides_llm_to_indexed_sources():
-    """Tier 2: error message text must guide the LLM toward the
-    fix (= reference the 'Indexed sources' section of the system
-    prompt). Pinning the keyword in the message keeps the
-    educational pointer if someone edits the wording — without
-    this hint, the LLM is likely to retry with the same missing
-    arg."""
+async def test_recall_error_message_names_the_source_discovery_verb():
+    """Tier 2: the error message must guide the LLM to the surface that actually
+    answers `sources` — without a usable pointer it just retries with the same
+    missing arg.
+
+    #3026 changed WHERE that pointer points, not whether there is one. The message
+    used to name the 'Indexed sources' system-prompt section; that section is not
+    rendered (the SP builder accepts an ``indexed_sources_section`` argument and
+    discards it — see #3025), so the message was directing the model to something
+    that was never in its context. It now names ``list_rag_sources``, the verb
+    #3026 added to enumerate the corpora. Pinning the referent keeps the
+    educational pointer honest if someone edits the wording."""
     result = await _handle_semantic_search({"query": "x"}, _make_ctx())
-    assert "Indexed sources" in result["error_message"]
+    assert "list_rag_sources" in result["error_message"]

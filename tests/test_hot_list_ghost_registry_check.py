@@ -14,11 +14,12 @@ Test plan:
   R3. valid static-op alias (in KNOWN_STATIC_QUALIFIED_NAMES) passes through.
   R4. ghost static-op (structurally valid category, not in static ops) is filtered.
   R7. mcp.tool ghost (not in mcp_tool_map) is filtered.
-  R8. valid mcp.tool (in mcp_tool_map) passes through.
-  R11. memory_entry name in known_memory_entries passes through (dynamic
-       enumeration from .reyn/memory/*.md).
-  R12. memory_entry name NOT in known_memory_entries is filtered (stale name
-       from action_usage tracker after the entry was deleted).
+  R8. #3026 — a legacy DOTTED mcp.tool name is filtered regardless of
+      mcp_tool_map: ``mcp.tool`` stopped being a category at #879.
+  R11. #3026 — a memory_entry name is ALWAYS filtered now: the category is
+       collapsed, so no such name resolves and none is ever seeded.
+  R12. memory_entry name is filtered (stale name from the action_usage
+       tracker after the entry was deleted / after the #3026 collapse).
 
 No mocks. Uses real _filter_ghost_names_by_registry + real
 KNOWN_STATIC_QUALIFIED_NAMES. No RouterLoop instantiation required.
@@ -35,20 +36,18 @@ def _call_filter(
     names: list[str],
     mcp_tool_map: dict | None = None,
     available_agents: list[dict] | None = None,
-    known_memory_entries: frozenset[str] | None = None,
 ) -> list[str]:
     """Convenience wrapper with empty defaults.
 
-    ``known_memory_entries`` defaults to an empty frozenset (= no entries),
-    which is the realistic state for tests that aren't exercising the
-    memory_entry path. Test-internal default — the production signature
-    requires the parameter, see ``_filter_ghost_names_by_registry``.
+    #3026 removed the ``known_memory_entries`` parameter along with the
+    per-session ``.reyn/memory/*.md`` enumeration that fed it — the static op
+    registry is now the complete action set, so the filter needs no
+    dynamic-category side-channel.
     """
     return _filter_ghost_names_by_registry(
         names,
         mcp_tool_map=mcp_tool_map,
         available_agents=available_agents,
-        known_memory_entries=known_memory_entries if known_memory_entries is not None else frozenset(),
     )
 
 
@@ -108,8 +107,19 @@ def test_r4_structurally_valid_nonexistent_op_filtered() -> None:
 # ── R8. valid mcp.tool passes ────────────────────────────────────────────────
 
 
-def test_r8_valid_mcp_tool_passes_registry_check() -> None:
-    """Tier 2: mcp.tool present in mcp_tool_map passes registry check."""
+def test_r8_legacy_dotted_mcp_tool_name_filtered_even_if_in_tool_map() -> None:
+    """Tier 2: #3026 — a legacy dotted ``mcp.tool__<server>.<tool>`` name is
+    filtered even when it is present in mcp_tool_map.
+
+    This test used to assert the opposite. Both the old expectation and the old
+    pass were artifacts: ``mcp.tool`` ceased to be a category at #879 (collapsed
+    into ``mcp``), so the name has not parsed since — it never reached the
+    mcp_tool_map branch this test believed it was exercising. It reached the
+    unparseable branch, which passed it through. #3026 makes that branch DROP
+    instead, because a name that cannot resolve must not become a function name;
+    the outcome is now correct for the right reason. (Belt-and-braces: the #1456
+    wire-grammar guard in _build_hot_list_aliases would also reject the dot.)
+    """
     mcp_tool_map = {
         "mcp.tool__github.search_code": {
             "description": "Search GitHub code",
@@ -121,51 +131,46 @@ def test_r8_valid_mcp_tool_passes_registry_check() -> None:
         mcp_tool_map=mcp_tool_map,
     )
 
-    assert "mcp.tool__github.search_code" in result
+    assert result == [], "a name from a category collapsed at #879 cannot resolve"
 
 
 # ── R11. memory_entry passes when in known_memory_entries ─────────────────────
 
 
-def test_r11_memory_entry_passes_when_in_known_set() -> None:
-    """Tier 2: memory_entry__<slug> in known_memory_entries passes the filter.
+def test_r11_memory_entry_always_filtered_after_collapse() -> None:
+    """Tier 2: #3026 — a memory_entry__<slug> name is filtered even though the
+    matching .md file exists on disk.
 
-    Regression guard for the 2026-05-17 N4+B38 W2 interaction: PR #138
-    seeded dynamic memory_entry aliases into the hot-list, but the B38 W2
-    ghost-filter that landed later did not know about dynamic categories.
-    Result: all memory_entry aliases were rejected via the static_ops
-    fall-through. This test pins the fix that adds the known-set check.
+    The N4 mechanism (2026-05-17) seeded one hot-list alias per shared memory
+    file, and this test used to pin that such an alias SURVIVES the ghost filter.
+    #3026 collapsed the memory_entry category — the name no longer resolves, so
+    letting it through would emit a function name the dispatcher rejects.
+    Reading a memory is now memory_operation__read (which also reaches the AGENT
+    layer the alias never could). The filter needs no special case to get this
+    right: with no dynamic categories left, the static op registry is the whole
+    action set and a memory_entry name simply is not in it.
     """
-    filtered = _filter_ghost_names_by_registry(
-        ["memory_entry__user_project_phoenix"],
-        mcp_tool_map=None,
-        available_agents=None,
-        known_memory_entries=frozenset({"memory_entry__user_project_phoenix"}),
-    )
-    assert filtered == ["memory_entry__user_project_phoenix"], (
-        "memory_entry name in known set must pass the filter."
+    filtered = _call_filter(["memory_entry__user_project_phoenix"])
+    assert filtered == [], (
+        "a collapsed-category name must never reach the wire (#3026)"
     )
 
 
 # ── R12. memory_entry filtered when not in known_memory_entries ───────────────
 
 
-def test_r12_memory_entry_filtered_when_absent_from_known_set() -> None:
-    """Tier 2: memory_entry__<slug> NOT in known_memory_entries is filtered.
+def test_r12_stale_tracker_name_filtered() -> None:
+    """Tier 2: a stale memory_entry__<slug> from the action_usage tracker's freq
+    history is filtered.
 
-    Scenario: user deleted .reyn/memory/<slug>.md between sessions, but
-    the action_usage tracker still has it from prior freq history. The
-    filter must reject the stale name so the LLM doesn't see a ghost
-    alias that would dispatch to a non-existent entry.
+    Scenario (unchanged by #3026, and now also the upgrade path): the tracker's
+    on-disk freq table survives across sessions, so it can still name actions from
+    before the entry was deleted — or from before the category was collapsed. The
+    filter must reject them so the LLM never sees an alias that cannot dispatch.
     """
-    filtered = _filter_ghost_names_by_registry(
-        ["memory_entry__deleted_slug"],
-        mcp_tool_map=None,
-        available_agents=None,
-        known_memory_entries=frozenset(),  # zero entries this session
-    )
+    filtered = _call_filter(["memory_entry__deleted_slug"])
     assert filtered == [], (
-        "memory_entry name not in known set must be removed."
+        "a name absent from the registry must be removed."
     )
 
 

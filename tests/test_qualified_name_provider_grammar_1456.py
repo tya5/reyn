@@ -19,7 +19,12 @@ verbatim passthrough, so checking the sources checks the wire):
   - CATEGORIES (the category prefix of every qualified name)
   - DEFAULT_HOT_LIST_SEED (seed aliases → function names directly)
   - _OPERATION_RULES keys (operation-category full qualified names)
-  - _RESOURCE_RULES keys (resource-category prefixes)
+
+#3026 removed the ``_RESOURCE_RULES`` table (resource categories collapsed into
+verbs), so the surface it contributed — resource-category PREFIXES — is gone as
+a distinct source. No coverage is lost: those prefixes were CATEGORIES entries,
+which ``test_categories_are_grammar_safe`` already checks, and _OPERATION_RULES
+is now the only routing table.
 """
 from __future__ import annotations
 
@@ -27,7 +32,7 @@ import re
 
 from reyn.tools.action_usage_tracker import DEFAULT_HOT_LIST_SEED
 from reyn.tools.universal_catalog import CATEGORIES
-from reyn.tools.universal_dispatch import _OPERATION_RULES, _RESOURCE_RULES
+from reyn.tools.universal_dispatch import _OPERATION_RULES
 
 # OpenAI's function-name grammar — the tightest of the providers we target.
 _FUNCTION_NAME_RE = re.compile(r"^[a-zA-Z0-9_-]{1,64}$")
@@ -59,13 +64,6 @@ def test_operation_routing_keys_are_grammar_safe() -> None:
     assert bad == [], f"operation routing keys violate function-name grammar: {bad}"
 
 
-def test_resource_routing_keys_are_grammar_safe() -> None:
-    """Tier 2: #1456 — every _RESOURCE_RULES key (a resource-category prefix)
-    is grammar-safe, so any qualified name built under it is too."""
-    bad = [k for k in _RESOURCE_RULES if not _CATEGORY_RE.match(k)]
-    assert bad == [], f"resource routing keys violate function-name grammar: {bad}"
-
-
 def test_no_dotted_names_anywhere_in_the_static_surface() -> None:
     """Tier 2: #1456 — the decisive guard: no dot in any category / seed /
     routing key. Dots are the specific violation #1456 removed; this fails fast
@@ -74,7 +72,6 @@ def test_no_dotted_names_anywhere_in_the_static_surface() -> None:
         list(CATEGORIES)
         + list(DEFAULT_HOT_LIST_SEED)
         + list(_OPERATION_RULES)
-        + list(_RESOURCE_RULES)
     )
     dotted = [n for n in surface if "." in n]
     assert dotted == [], f"dotted names reintroduced (provider-grammar risk): {dotted}"

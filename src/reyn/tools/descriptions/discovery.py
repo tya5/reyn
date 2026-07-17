@@ -9,9 +9,19 @@ its origin tool module; the origin module now aliases its
 call site is unchanged.
 
 Covers: embed, semantic_search (+ the currently-unwired
-``_HIDE_LEGACY`` enriched variant), web_fetch, web_search,
-mcp_search_registry, and universal_catalog's list_actions /
+``_HIDE_LEGACY`` enriched variant), list_rag_sources, web_fetch,
+web_search, mcp_search_registry, and universal_catalog's list_actions /
 search_actions / describe_action.
+
+``list_rag_sources`` (#3026) is NOT a relocation — the tool is new. It is
+the discovery verb that replaced the ``rag_corpus__<name>`` catalog
+category when #3026 collapsed the per-resource action surface, so
+``semantic_search``'s ``sources`` argument stays answerable without one
+action per corpus in ``tools=``. Its text (and ``semantic_search``'s, which
+used to point at an "Indexed sources" system-prompt section that is no
+longer rendered — see #3025) names it explicitly, because a required
+closed-set argument with no stated way to enumerate it is the same
+reachability gap #2971 closed for skills.
 """
 from __future__ import annotations
 
@@ -60,8 +70,8 @@ semantic_search = ToolDescription(
         "relevant chunks with text + metadata. Use this when the user's "
         "question is about a topic an indexed source covers — including "
         "'what is X?', 'explain X', 'how does X work?' style questions. "
-        "Pick sources from the 'Indexed sources' section in the system "
-        "prompt; each source's description tells you what topics it covers. "
+        "Call `list_rag_sources` to see which sources exist; each source's "
+        "description tells you what topics it covers. "
         "Prefer this over `reyn_repo_read` / file_read when an indexed source "
         "description matches the question's topic — semantic search across "
         "indexed chunks is more reliable than guessing a file path."
@@ -70,9 +80,8 @@ semantic_search = ToolDescription(
         "自然言語クエリでインデックス済みソースを検索する。トップKの関連"
         "チャンク（テキスト＋メタデータ）を返す。ユーザーの質問がインデック"
         "ス済みソースの話題と一致する場合（「Xとは？」「Xを説明して」等）に"
-        "使う。ファイルパスを推測するより、システムプロンプトの「Indexed "
-        "sources」セクションからソースを選んでこのツールを使う方が信頼で"
-        "きる。"
+        "使う。ファイルパスを推測するより、list_rag_sources で得たソース"
+        "からこのツールを使う方が信頼できる。"
     ),
 )
 
@@ -90,7 +99,7 @@ semantic_search_hide_legacy = ToolDescription(
     ),
     purpose=(
         "Enriched WHAT/WHEN/WHEN_NOT variant disambiguating semantic_search "
-        "from memory_entry retrieval, for a wrapper-only exposure path."
+        "from memory retrieval, for a wrapper-only exposure path."
     ),
     text=(
         "WHAT: Semantic search over indexed corpora (= RAG retrieval). "
@@ -99,24 +108,52 @@ semantic_search_hide_legacy = ToolDescription(
         "'what is X?' / 'explain X' / 'how does X work?' style question when "
         "an indexed source covers the topic. Multilingual — works across languages. "
         "WHEN NOT: "
-        "For personal memory retrieval, use the memory_entry actions "
-        "(memory_entry__<name>). semantic_search is for indexed corpora, NOT memory. "
+        "For personal memory retrieval, use `list_memory` / `read_memory_body`. "
+        "semantic_search is for indexed corpora, NOT memory. "
         "The word 'recall' in user input refers to THIS tool — never map it "
-        "to memory_entry / memory_operation actions. "
-        "PREFERRED OVER: memory_entry actions when content is indexed (source-"
+        "to the memory tools. "
+        "PREFERRED OVER: the memory tools when content is indexed (source-"
         "level), not personal memory. "
-        "Pick sources from the 'Indexed sources' section in the system prompt; "
+        "Call `list_rag_sources` to see which sources exist; "
         "each source's description tells you what topics it covers. "
         "Prefer this over reyn_repo_read / file_read when an indexed source "
         "description matches the question's topic — semantic search across "
         "indexed chunks is more reliable than guessing a file path."
     ),
     ja=(
-        "semantic_search とメモリ（memory_entry）検索を区別するための、"
+        "semantic_search とメモリ検索を区別するための、"
         "WHAT/WHEN/WHEN NOT 形式の拡張版説明。個人メモリの取得には "
-        "memory_entry を使い、インデックス済みコーパスの検索には "
+        "read_memory_body を使い、インデックス済みコーパスの検索には "
         "semantic_search を使う、という判断基準を明示する。現在どの "
         "ToolDefinition にも配線されていない補助定数。"
+    ),
+)
+
+list_rag_sources = ToolDescription(
+    tool_name="list_rag_sources",
+    surfaced="router + phase (gates.router=allow, gates.phase=allow)",
+    purpose=(
+        "The discovery half of the RAG surface (#3026): names the indexed "
+        "corpora so `semantic_search`'s `sources` argument is answerable. "
+        "Replaces the per-corpus `rag_corpus__<name>` catalog actions, whose "
+        "count scaled with the operator's corpora."
+    ),
+    text=(
+        "List the indexed sources (RAG corpora) available in this session, "
+        "with each source's name, description, and indexed chunk count. Call "
+        "this before `semantic_search` when you do not already know a source "
+        "name: `semantic_search` requires `sources`, and the names are chosen "
+        "by the operator, so they cannot be guessed. An empty list means "
+        "nothing has been indexed yet — say so rather than guessing a source "
+        "name."
+    ),
+    ja=(
+        "このセッションでインデックス済みのソース（RAG コーパス）を、"
+        "名前・説明・チャンク数つきで列挙する。semantic_search の sources は "
+        "必須かつ運用者が決めた名前なので推測できない。ソース名を知らない"
+        "場合はまずこれを呼ぶ。#3026 で rag_corpus__<name> のコーパス毎の"
+        "アクション（= payload が運用者のコーパス数に比例して増える原因）を"
+        "畳んだ代わりに置かれた、定数個の discovery verb。"
     ),
 )
 
@@ -208,7 +245,7 @@ list_actions = ToolDescription(
         "Returns {items: [{qualified_name, short_description}, ...], total: int}. "
         "An empty items array means no actions match — report this honestly. "
         "WHEN: PREFERRED FIRST for known-category enumeration (e.g. 'show me all "
-        "memory_entry actions', 'what exec actions are available?') or exact-name "
+        "memory_operation actions', 'what exec actions are available?') or exact-name "
         "lookup when you already know the category but not the exact entry. "
         "ALWAYS call list_actions BEFORE refusing a category-listable capability "
         "request. Refusing without a list_actions check is a FAILURE MODE "
@@ -262,7 +299,7 @@ search_actions = ToolDescription(
         "Handles both semantic descriptions AND free-text keyword lookup "
         "(e.g. an action containing 'http'). "
         "WHEN NOT: For known-category enumeration (e.g. 'show me all exec actions', "
-        "'list of memory_entry actions' — again, phrasable in any language) "
+        "'list of memory_operation actions' — again, phrasable in any language) "
         "use list_actions(category=[...]) instead — "
         "it returns the flat catalogue slice rather than relevance-ranked hits. "
         "If you already know the exact action name, skip both and call "
@@ -348,8 +385,8 @@ PARAMS: dict[str, dict[str, ParamDescription]] = {
             ja="検索する自然言語クエリ。",
         ),
         "sources": ParamDescription(
-            text="Logical source names to search (from Indexed sources list).",
-            ja="検索対象の論理ソース名（Indexed sources 一覧から）。",
+            text="Logical source names to search (from list_rag_sources).",
+            ja="検索対象の論理ソース名（list_rag_sources の結果から）。",
         ),
         "top_k": ParamDescription(
             text="Number of top chunks to return.",
@@ -435,12 +472,12 @@ PARAMS: dict[str, dict[str, ParamDescription]] = {
     "describe_action": {
         "action_name": ParamDescription(
             text=(
-                "Qualified name of the action/resource to describe "
-                "(e.g. 'mcp__brave__search', 'rag_corpus__meetings')."
+                "Qualified name of the action to describe "
+                "(e.g. 'mcp__call_tool', 'rag_operation__semantic_search')."
             ),
             ja=(
-                "説明対象のアクション/リソースの修飾名（例 "
-                "'mcp__brave__search', 'rag_corpus__meetings'）。"
+                "説明対象のアクションの修飾名（例 "
+                "'mcp__call_tool', 'rag_operation__semantic_search'）。"
             ),
         ),
     },

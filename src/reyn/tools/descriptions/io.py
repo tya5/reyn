@@ -346,8 +346,8 @@ PARAMS: dict[str, dict[str, ParamDescription]] = {
     },
     "drop_source": {
         "source": ParamDescription(
-            text="Logical source name to remove (from Indexed sources list).",
-            ja="削除する論理ソース名（Indexed sources 一覧から）。",
+            text="Logical source name to remove (from list_rag_sources).",
+            ja="削除する論理ソース名（list_rag_sources の結果から）。",
         ),
     },
     "index_update": {

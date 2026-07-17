@@ -412,7 +412,7 @@ action_retrieval:
 - `describe_action(action_name="mcp__call_tool")` → input schema を取得
 - `invoke_action(action_name="mcp__call_tool", args={...})` → 既存 handler 経由で実行
 
-リソースカテゴリ (`mcp.server`, `rag_corpus`, `memory_entry`, …) も `invoke_action` をサポート。 不明な action 名は文字列類似度でランクされた `suggestions` を含む構造化エラーを返し、 LLM は 1 turn で復帰可能。
+どのカテゴリも列挙する action は固定 verb 集合 — リソース（保存済み memory / indexed corpus / MCP tool / 登録済 pipeline）は verb の引数であって action そのものではないため、 列挙される集合は蓄積量に依存しない。 リソースはカテゴリの discovery verb (`memory_operation__list`, `rag_operation__list_sources`, `mcp__list_tools`, `pipeline__list`) で discover し、 その id を引数として渡す。 不明な action 名は文字列類似度でランクされた `suggestions` を含む構造化エラーを返し、 LLM は 1 turn で復帰可能。
 
 ツールレジストリ / dispatch の背景は Concepts: architecture (architecture doc removed) を参照。
 
