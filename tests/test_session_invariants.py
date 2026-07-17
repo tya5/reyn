@@ -394,8 +394,14 @@ async def test_chain_timeout_fires_upstream_error_and_emits_event(tmp_path, monk
         "chain_id": "chain-timeout-001",
     })
 
-    # Wait long enough for the timeout to fire.
-    await asyncio.sleep(0.2)
+    # Wait for the watchdog to ACTUALLY fire, not for a fixed span to elapse.
+    # `upstream_received` is the fire's observable effect and it happens-after the
+    # WAL append: `ChainManager.fire_timeout` awaits `record_chain_timeout_fired`
+    # before returning the chain the upstream response is built from — so the
+    # `flush()` below drains an append that is already queued.
+    assert await wait_until(lambda: bool(upstream_received)), (
+        "chain timeout never fired within the bounded wait"
+    )
 
     # WAL must contain chain_register → chain_timeout_fired.
     await session._journal.flush()  # #2259 PR-2b: drain async WAL writes
