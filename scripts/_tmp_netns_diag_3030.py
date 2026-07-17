@@ -127,6 +127,47 @@ def _step_landlock_then_userns() -> None:
     _probe("after-landlock-then-userns")
 
 
+def _step_parent_writes_child_map() -> None:
+    """The standard container-runtime approach: the PARENT (in the init userns,
+    with CAP_SETUID over the child's new userns) writes the child's uid_map,
+    which is NOT subject to the single-line self-map restriction that blocks the
+    child writing its own. Tests whether AppArmor's unprivileged-userns
+    restriction also blocks THIS (the child self-map is already known blocked)."""
+    r_uid, r_gid = os.getuid(), os.getgid()
+    c2p_r, c2p_w = os.pipe()  # child -> parent: "I've unshared"
+    p2c_r, p2c_w = os.pipe()  # parent -> child: "map written, continue"
+    pid = os.fork()
+    if pid == 0:
+        os.close(c2p_r)
+        os.close(p2c_w)
+        libc = ctypes.CDLL(None, use_errno=True)
+        rc = libc.unshare(0x10000000 | 0x40000000)
+        os.write(c2p_w, b"1" if rc == 0 else b"0")
+        os.close(c2p_w)
+        os.read(p2c_r, 1)  # wait for parent to write the map
+        _probe("child-after-parent-map")
+        os._exit(0)
+    os.close(c2p_w)
+    os.close(p2c_r)
+    ok = os.read(c2p_r, 1)
+    print(f"  child unshared: {ok!r}", flush=True)
+    # Parent writes the CHILD's maps.
+    for name, val in (
+        ("setgroups", "deny"),
+        ("uid_map", f"{r_uid} {r_uid} 1"),
+        ("gid_map", f"{r_gid} {r_gid} 1"),
+    ):
+        try:
+            with open(f"/proc/{pid}/{name}", "w") as fh:
+                fh.write(val)
+            print(f"  parent wrote /proc/{pid}/{name} = {val!r} OK", flush=True)
+        except OSError as e:
+            print(f"  parent write /proc/{pid}/{name} FAIL: {e!r}", flush=True)
+    os.write(p2c_w, b"1")
+    os.close(p2c_w)
+    os.waitpid(pid, 0)
+
+
 def main() -> int:
     from reyn.security.sandbox.backends.landlock import LandlockBackend
     b = LandlockBackend()
@@ -141,6 +182,8 @@ def main() -> int:
     _in_child(_step_userns_then_landlock)
     print("\n=== Landlock THEN userns (reorder hypothesis) ===", flush=True)
     _in_child(_step_landlock_then_userns)
+    print("\n=== parent-writes-child-uid_map handshake ===", flush=True)
+    _step_parent_writes_child_map()
     return 0
 
 
