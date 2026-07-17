@@ -82,6 +82,61 @@ class VectorDimensionMismatchError(ValueError):
     established dimension (fixed at the first upsert into a fresh db)."""
 
 
+def _describe_open_failure(db_path: str) -> str | None:
+    """Reproduce a failed open of *db_path* through plain ``open()`` and return
+    the OS's own error text, or None if it cannot be reproduced (#3009).
+
+    Exists because ``apsw.Connection`` DISCARDS errno. MEASURED, same path, same
+    Seatbelt profile, same denied directory::
+
+        apsw.Connection(p)  -> CantOpenError("unable to open database file")
+        open(p, "a")        -> PermissionError("[Errno 1] Operation not
+                                                permitted: '<path>'")
+
+    Only the second carries a signature anything downstream can classify: reyn's
+    MCP client keys its "add the path to `write_paths`" hint off that errno text
+    (``reyn/mcp/client.py::_looks_like_write_denial``), and "unable to open
+    database file" is indistinguishable, at that layer, from a typo. So on the
+    failure path only, we ask the OS the same question in a way that answers it.
+
+    Returning None (the open SUCCEEDED, so apsw failed for some unrelated reason
+    — a corrupt file, a lock) is a first-class outcome: the caller then re-raises
+    apsw's own error untouched rather than attaching a diagnosis that would be a
+    guess.
+    """
+    path = Path(db_path)
+    existed = path.exists()
+    try:
+        with open(path, "a"):
+            pass
+    except OSError as exc:
+        return str(exc)
+    # The probe could open it, so it must not leave a file behind: apsw already
+    # refused this path, and a stray 0-byte file is a VALID empty sqlite db that
+    # would silently become the store on the operator's next attempt.
+    if not existed:
+        try:
+            path.unlink()
+        except OSError:  # noqa: S110 -- best-effort cleanup; the real error wins
+            pass
+    return None
+
+
+def _connect(db_path: str) -> Any:
+    """``apsw.Connection(db_path)``, re-raising a failure with the OS-level
+    reason restored (see :func:`_describe_open_failure` for why it is missing).
+    """
+    import apsw  # noqa: PLC0415 -- optional extra (builtin-rag)
+
+    try:
+        return apsw.Connection(db_path)
+    except apsw.Error as exc:
+        detail = _describe_open_failure(db_path)
+        if detail is None:
+            raise
+        raise OSError(f"cannot open sqlite db at {db_path!r}: {detail}") from exc
+
+
 class SqliteVecStore:
     """Thin generic vector store over one sqlite file, backed by
     ``sqlite-vec`` loaded through ``apsw`` (see module docstring for why
@@ -96,12 +151,25 @@ class SqliteVecStore:
     """
 
     def __init__(self, db_path: str) -> None:
-        import apsw  # noqa: PLC0415 -- optional extra (builtin-rag)
         import sqlite_vec  # noqa: PLC0415 -- optional extra (builtin-rag)
 
         self._db_path = db_path
+        # LOAD-BEARING FOR DIAGNOSABILITY, not just convenience (#3009). The
+        # obvious cleanup -- "drop this, sqlite creates the file itself" -- is
+        # WRONG: this mkdir is the first thing a sandbox write denial hits, and
+        # it raises PermissionError with the errno and the offending path in its
+        # message, which is what lets reyn's MCP client tell the operator "the
+        # sandbox denied this; add the path to `write_paths`" instead of showing
+        # a bare sqlite error. `apsw` throws that signature away (see _connect).
+        # Deleting this line would not break a single test -- it would only make
+        # every denial in the common case undiagnosable.
         Path(db_path).parent.mkdir(parents=True, exist_ok=True)
-        self._conn = apsw.Connection(db_path)
+        # ...and _connect covers the case this mkdir CANNOT: an operator who
+        # created the target directory themselves leaves mkdir a no-op with
+        # nothing to raise, so the denial first surfaces at the open below.
+        # MEASURED: that case reported "unable to open database file" -- marker-
+        # free -- until _connect restored the errno. Neither site is redundant.
+        self._conn = _connect(db_path)
         self._conn.enable_load_extension(True)
         self._conn.load_extension(sqlite_vec.loadable_path())
         self._conn.enable_load_extension(False)

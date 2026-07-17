@@ -127,9 +127,9 @@
 #
 # -- then `output_db`/`db` may point anywhere under it, absolute or not.
 # Without a matching `write_paths` entry, the sandbox DENIES the write and
-# the ingest fails with a raw sqlite error, not a reyn-authored one -- do
-# not hand an absolute `output_db` to `rag_ingest` unless this is already
-# in place.
+# the ingest fails -- so do not hand an absolute `output_db` to `rag_ingest`
+# unless this is already in place. If you do, the failure tells you: it
+# names the sandbox, the exact path refused, and this `write_paths` knob.
 #
 # The `build_and_query_rag_corpus` builtin SKILL (FP-0063 P4) carries the
 # "when/how" these two one-line descriptions cannot: which of reyn's two
