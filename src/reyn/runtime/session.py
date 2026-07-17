@@ -1960,14 +1960,11 @@ class Session:
             # refusing. Non-driver / detached / ephemeral sessions (bridge is None) keep the
             # self-bound bus, byte-identical. Mirror of the presentation_renderer_factory
             # spawn-bridge below.
-            intervention_bus_factory=lambda: (
-                self._intervention_bridge.bus(run_id=None, actor="chat_router")
-                if self._intervention_bridge is not None
-                else ChatInterventionBus(
-                    self, run_id=None, actor="chat_router",
-                    channel_id=DEFAULT_CHAT_CHANNEL_ID,
-                )
-            ),
+            # #3049: single-sourced with the MCP op callers via
+            # ``_make_router_intervention_bus`` (bridge-aware — driver → parent, else
+            # self-bound) so router-op interventions resolve to the SAME surface
+            # regardless of which seam builds the OpContext.
+            intervention_bus_factory=self._make_router_intervention_bus,
             # FP-0054 PR-B / #2708 P1: give the router OpContext a real PresentationRenderer
             # so a `present` op reaches the surface's sink instead of PR-A's null surface.
             # Built per make_router_op_context() call, mirroring the intervention_bus_factory
@@ -6231,6 +6228,36 @@ class Session:
             budget_gateway=self._budget,  # FP-0063 PC: embedding-cost recording entry point (enumerate ALL op-ctx builders; the load-bearing one for `embed` is RouterHostAdapter's)
         )
 
+    def _make_router_intervention_bus(self):
+        """The chat-router intervention bus for a router-initiated op, resolved
+        BRIDGE-AWARE.
+
+        SINGLE SOURCE for "which surface answers a router op's intervention",
+        shared with the ``RouterHostAdapter`` ``intervention_bus_factory``
+        (constructed above, ~session.py:1963): when this session is an ATTACHED
+        pipeline DRIVER (it carries a ``SpawnBridgeInterventionListener`` — see
+        ``_spawn_pipeline_driver_session``), the bus dispatches on the PARENT
+        session's live-operator listener (compositionally resolved toward the
+        outermost attached originator); otherwise a self-bound
+        ``ChatInterventionBus`` on this session's own registry (a root chat, or a
+        detached/headless run whose bridge is ``AuditOnlyInterventionBridge`` and
+        thus fail-closes).
+
+        #3049: the MCP op callers below (``_mcp_call_tool`` and its resource /
+        prompt siblings) previously HARDCODED the self-bound branch, so a driver
+        session's ``call_mcp_tool`` permission prompt (e.g. the ``rag_ingest``
+        X1 pre-flight probes) orphaned on the driver's own listener-less
+        registry — dispatched, stalled, and awaited forever (the confirmed hang).
+        Routing them through this helper makes every IV-raising router leaf reach
+        the pipeline originator uniformly, exactly as ``ask_user`` / ``present``
+        already do via the bridge-aware ``RouterHostAdapter.make_router_op_context``."""
+        if self._intervention_bridge is not None:
+            return self._intervention_bridge.bus(run_id=None, actor="chat_router")
+        return ChatInterventionBus(
+            self, run_id=None, actor="chat_router",
+            channel_id=DEFAULT_CHAT_CHANNEL_ID,
+        )
+
     async def _file_op(self, op_dict: dict) -> dict:
         """Dispatch a file op via op_runtime. Returns result dict."""
         from reyn.core.op_runtime import execute_op
@@ -6464,10 +6491,9 @@ class Session:
 
         op = MCPReadResourceIROp(kind="mcp_read_resource", server=server, uri=uri)
         ctx = self._make_router_op_context()
-        ctx.intervention_bus = ChatInterventionBus(
-            self, run_id=None, actor="chat_router",
-            channel_id=DEFAULT_CHAT_CHANNEL_ID,
-        )
+        # #3049: bridge-aware — a driver session's MCP permission prompt reaches the
+        # pipeline originator instead of orphaning on the driver's own registry.
+        ctx.intervention_bus = self._make_router_intervention_bus()
         ctx.permission_decl = PermissionDecl(
             file_read=ctx.permission_decl.file_read,
             file_write=ctx.permission_decl.file_write,
@@ -6509,10 +6535,9 @@ class Session:
 
         op = MCPSubscribeResourceIROp(kind="mcp_subscribe_resource", server=server, uri=uri)
         ctx = self._make_router_op_context()
-        ctx.intervention_bus = ChatInterventionBus(
-            self, run_id=None, actor="chat_router",
-            channel_id=DEFAULT_CHAT_CHANNEL_ID,
-        )
+        # #3049: bridge-aware — a driver session's MCP permission prompt reaches the
+        # pipeline originator instead of orphaning on the driver's own registry.
+        ctx.intervention_bus = self._make_router_intervention_bus()
         ctx.permission_decl = PermissionDecl(
             file_read=ctx.permission_decl.file_read,
             file_write=ctx.permission_decl.file_write,
@@ -6538,10 +6563,9 @@ class Session:
 
         op = MCPUnsubscribeResourceIROp(kind="mcp_unsubscribe_resource", server=server, uri=uri)
         ctx = self._make_router_op_context()
-        ctx.intervention_bus = ChatInterventionBus(
-            self, run_id=None, actor="chat_router",
-            channel_id=DEFAULT_CHAT_CHANNEL_ID,
-        )
+        # #3049: bridge-aware — a driver session's MCP permission prompt reaches the
+        # pipeline originator instead of orphaning on the driver's own registry.
+        ctx.intervention_bus = self._make_router_intervention_bus()
         ctx.permission_decl = PermissionDecl(
             file_read=ctx.permission_decl.file_read,
             file_write=ctx.permission_decl.file_write,
@@ -6612,10 +6636,9 @@ class Session:
             kind="mcp_get_prompt", server=server, name=name, arguments=dict(arguments or {}),
         )
         ctx = self._make_router_op_context()
-        ctx.intervention_bus = ChatInterventionBus(
-            self, run_id=None, actor="chat_router",
-            channel_id=DEFAULT_CHAT_CHANNEL_ID,
-        )
+        # #3049: bridge-aware — a driver session's MCP permission prompt reaches the
+        # pipeline originator instead of orphaning on the driver's own registry.
+        ctx.intervention_bus = self._make_router_intervention_bus()
         ctx.permission_decl = PermissionDecl(
             file_read=ctx.permission_decl.file_read,
             file_write=ctx.permission_decl.file_write,
@@ -6656,10 +6679,9 @@ class Session:
         op = MCPIROp(kind="mcp", server=server, tool=tool, args=args)
         ctx = self._make_router_op_context()
         # MCP handler requires intervention_bus; wire the session's bus
-        ctx.intervention_bus = ChatInterventionBus(
-            self, run_id=None, actor="chat_router",
-            channel_id=DEFAULT_CHAT_CHANNEL_ID,
-        )
+        # #3049: bridge-aware — a driver session's MCP permission prompt reaches the
+        # pipeline originator instead of orphaning on the driver's own registry.
+        ctx.intervention_bus = self._make_router_intervention_bus()
         # Narrow mcp scope to just this server while preserving file perms from the
         # populated decl. PermissionDecl.mcp must include the server for require_mcp to pass.
         ctx.permission_decl = PermissionDecl(
