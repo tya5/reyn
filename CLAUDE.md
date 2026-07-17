@@ -47,9 +47,14 @@ Key constraints (full rationale in the doc):
 - Each test belongs to exactly one Tier (1: Contract / 2: OS invariant /
   3: LLM-replay behavior). Anything that doesn't fit a Tier is **Tier 4 —
   do not write**.
-- NEVER use `unittest.mock.MagicMock` / `AsyncMock` / `patch` to fake
-  collaborators. Use real instances or the `LLMReplay` Fake. Mocks bypass
-  real API contracts and silently rot.
+- NEVER fake a collaborator — `unittest.mock.MagicMock` / `AsyncMock` /
+  `patch`, or a hand-rolled stand-in class — when a real instance is cheaply
+  constructible. Use real instances or the `LLMReplay` Fake. A faked callable
+  bypasses signature-drift detection (raises loudly when it should); a faked
+  data/state object can silently carry a field the real type doesn't have,
+  which raises nothing at all (#3037: an invented `permission_resolver`
+  field made a dead permission gate look tested). Same ban, two failure
+  modes — see `testing.md` § Mock vs Fake.
 - NEVER assert on private state (`tracker._daily_tokens == 100`,
   `mgr._timers["c1"]`, `reg._active[id]`). Use the public surface or a
   `snapshot()`-style read.

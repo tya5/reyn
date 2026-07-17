@@ -171,6 +171,10 @@ Counting failures across pipeline re-runs without establishing a zero-floor base
 ## Mock vs Fake
 
 LLM-dependent tests **must** use the Fake (`LLMReplay`). Mocks are forbidden.
+**This ban is not litellm-specific — it applies to every collaborator a test
+constructs, callables and plain data/state objects alike** (see
+[Faking a data/state object](#faking-a-datastate-object-same-ban-sharper-failure-mode)
+below); litellm/`LLMReplay` is simply where the repo's normative example lives.
 
 ### Why
 
@@ -186,6 +190,8 @@ with patch("litellm.acompletion", return_value=hand_built_dict):
 This bypasses the real API contract. When `litellm` changes its signature or response shape (e.g. when LangChain renamed `__call__` to `invoke()`, mocked tests across the ecosystem continued to pass while production was broken — see Lincoln Loop, "Avoiding Mocks: Testing LLM Applications with LangChain in Django"), mocked tests do not detect it.
 
 A fake routes through the real API surface. `LLMReplay` patches `litellm.acompletion`, but reconstructs a real `litellm.ModelResponse` from recorded data. Signature drift is detected at the call site (TypeError, AttributeError) or at lookup time (`MissingFixture`).
+
+**Two distinct failure modes, not one.** A faked *callable* (a function/`__call__`) bypasses signature-drift detection — a real call would raise loudly (`TypeError`) when the contract changes; a mock just silently returns whatever it was told to. A faked *data/state object* (a hand-rolled stand-in passed as a collaborator, not invoked) has a worse failure mode: it can silently carry a field the real type doesn't have, and reading a nonexistent field via `getattr(obj, "field", default)` **raises nothing at all** — it just returns the default, forever, with no signature to drift and no call to fail. If the real collaborator is cheaply constructible (a plain dataclass, no I/O), build the real one — there is no cost trade-off that justifies faking it.
 
 #### `monkeypatch.setattr` with a real callable — allowed
 
@@ -211,7 +217,31 @@ monkeypatch.setattr(runtime_mod, "call_llm", _ScriptedLLM(script))
 
 The replacement here is a real class with a typed `__call__`; signature
 drift in `call_llm` raises `TypeError` at invocation, just like a real
-implementation would.
+implementation would. **This allowance is for callables only** — it does
+not extend to hand-rolling a hand-shaped stand-in for a plain data/state
+object; see below.
+
+#### Faking a data/state object: same ban, sharper failure mode
+
+```python
+# FORBIDDEN
+class FakeRouterCallerState:
+    def __init__(self):
+        self.permission_resolver = _AllowAllResolver()  # invented — the real
+                                                          # RouterCallerState has no such field
+```
+
+`#3037`: a hand-rolled fake for `RouterCallerState` invented a
+`permission_resolver` field the real dataclass does not have. The gate under
+test read that field via `getattr(state, "permission_resolver", None)`,
+found the fake's invented value, and reported CLEAR — the gate had never
+once executed against a real `RouterCallerState` and could not have, since
+the real type has no such field. In production this let an LLM write
+`.reyn/config/mcp.yaml` with no permission gate at all. This is the sharper
+failure mode described above: no signature to violate, no call to fail —
+just a silently-wrong default, forever. **If the real collaborator is a
+plain dataclass, construct it for real; there is no test-isolation reason to
+hand-roll a stand-in for something that costs nothing to build.**
 
 For LLM-dependent paths, prefer `LLMReplay` (Tier 3) — it preserves the
 full litellm boundary. Stub callables are appropriate for Tier 2c
