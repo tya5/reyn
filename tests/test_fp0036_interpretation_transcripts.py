@@ -77,15 +77,13 @@ def _make_result(
     if interpretation is not None:
         detail["interpretation"] = interpretation
     # ScenarioRunResult.__post_init__ recomputes overall as worst-of(reply,
-    # events, artifacts); align all three so the desired overall sticks.
+    # events); align both so the desired overall sticks.
     return ScenarioRunResult(
         scenario_id=sid,
         reply_text=reply,
         events=[{"type": "skill_started"}, {"type": "skill_finished"}],
-        artifacts=[],
         reply_outcome=overall,
         events_outcome=overall,
-        artifacts_outcome=overall,
         overall_outcome=overall,
         detail=detail,
     )
@@ -103,7 +101,6 @@ def _write_scenario_storage(
             "reply_text": result.reply_text,
             "reply_outcome": result.reply_outcome,
             "events_outcome": result.events_outcome,
-            "artifacts_outcome": result.artifacts_outcome,
             "overall_outcome": result.overall_outcome,
             "detail": result.detail,
         }, ensure_ascii=False),

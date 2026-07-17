@@ -35,13 +35,13 @@ scenarios:
           - { type: tool_executed, count: ">=1" }
         must_not_emit:
           - { type: permission_denied }
-      artifacts:
-        - { present: true }
     # outcome_prediction refitted from B27/B28/B30/B32 actuals (H5 ablation, 2026-05-17)
+    # artifacts assertion removed (was: dead mechanism, see #2959) — refuted mass
+    # attributable to it redistributed to verified
     outcome_prediction:
-      verified: 0.5
+      verified: 0.75
       inconclusive: 0.25
-      refuted: 0.25
+      refuted: 0.0
       blocked: 0.0
 
   # ── 2. file.glob + file.grep via chat router ──────────────────────────────
@@ -69,13 +69,13 @@ scenarios:
           - { type: tool_executed, count: ">=1" }
         must_not_emit:
           - { type: permission_denied }
-      artifacts:
-        - { present: true }
     # outcome_prediction refitted from B27/B28/B30/B32 actuals (H5 ablation, 2026-05-17)
+    # artifacts assertion removed (was: dead mechanism, see #2959) — refuted mass
+    # attributable to it redistributed to verified
     outcome_prediction:
-      verified: 0.25
+      verified: 1.0
       inconclusive: 0.0
-      refuted: 0.75
+      refuted: 0.0
       blocked: 0.0
 
   # ── 3. web_search via chat router ─────────────────────────────────────────
@@ -97,9 +97,9 @@ scenarios:
         must_not_emit:
           - { type: permission_denied }
           - { type: web_search_failed }
-      artifacts:
-        - { present: true }
     # outcome_prediction refitted from B27/B28/B30/B32 actuals (H5 ablation, 2026-05-17)
+    # artifacts assertion removed (was: dead mechanism, see #2959); refuted was
+    # already 0.0 here so no redistribution needed
     outcome_prediction:
       verified: 0.75
       inconclusive: 0.25
@@ -133,13 +133,13 @@ scenarios:
           - { type: web_fetch_started, count: ">=1" }
         must_not_emit:
           - { type: permission_denied }
-      artifacts:
-        - { present: true }
     # outcome_prediction refitted from B27/B28/B30/B32 actuals (H5 ablation, 2026-05-17)
+    # artifacts assertion removed (was: dead mechanism, see #2959) — refuted mass
+    # attributable to it redistributed to verified
     outcome_prediction:
-      verified: 0.5
+      verified: 0.75
       inconclusive: 0.25
-      refuted: 0.25
+      refuted: 0.0
       blocked: 0.0
 
   # ── 5. sandboxed_exec simple calculation ─────────────────────────────────
@@ -171,13 +171,13 @@ scenarios:
           - { type: sandboxed_exec_completed, count: ">=1" }
         must_not_emit:
           - { type: permission_denied }
-      artifacts:
-        - { present: true }
     # outcome_prediction refitted from B27/B28/B30/B32 actuals (H5 ablation, 2026-05-17)
+    # artifacts assertion removed (was: dead mechanism, see #2959) — refuted mass
+    # attributable to it redistributed to verified
     outcome_prediction:
-      verified: 0.0
+      verified: 0.75
       inconclusive: 0.25
-      refuted: 0.75
+      refuted: 0.0
       blocked: 0.0
 
   # ── 6. lint via chat router ────────────────────────────────────────────────
@@ -204,12 +204,12 @@ scenarios:
           - { type: lint_completed, count: ">=1" }
         must_not_emit:
           - { type: permission_denied }
-      artifacts:
-        - { present: true }
+    # artifacts assertion removed (was: dead mechanism, see #2959) — refuted mass
+    # attributable to it redistributed to verified
     outcome_prediction:
-      verified: 0.5
+      verified: 0.75
       inconclusive: 0.25
-      refuted: 0.25
+      refuted: 0.0
       blocked: 0.0
 
   # ── 7. recall indexed source ──────────────────────────────────────────────
@@ -238,12 +238,12 @@ scenarios:
           - { type: routing_decided, count: ">=1" }
         must_not_emit:
           - { type: permission_denied }
-      artifacts:
-        - { present: true }
+    # artifacts assertion removed (was: dead mechanism, see #2959) — refuted mass
+    # attributable to it redistributed to verified
     outcome_prediction:
-      verified: 0.5
+      verified: 0.65
       inconclusive: 0.3
-      refuted: 0.15
+      refuted: 0.0
       blocked: 0.05
 
   # ── 9. ask_user round-trip (multi-turn) ──────────────────────────────────
@@ -288,10 +288,10 @@ scenarios:
           - { type: chat_turn_completed_inline, count: ">=1" }
         must_not_emit:
           - { type: permission_denied }
-      artifacts:
-        - { present: true }
+    # artifacts assertion removed (was: dead mechanism, see #2959) — refuted mass
+    # attributable to it redistributed to verified
     outcome_prediction:
-      verified: 0.65
+      verified: 0.75
       inconclusive: 0.2
-      refuted: 0.1
+      refuted: 0.0
       blocked: 0.05

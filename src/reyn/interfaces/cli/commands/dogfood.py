@@ -442,13 +442,6 @@ def _build_live_runner(agent_name: str, *, env_backend=None, ws_base_dir=None, w
     - Drops the cached Session from the registry between scenarios so
       the session's in-memory EventLog starts empty each time.
 
-    Artifact collection:
-    - Snapshots .reyn/agents/<name>/artifacts/ after the run (if present).
-      Artifact diffs (= new files only) are not computed here; the caller
-      receives the full post-run snapshot.  Per-scenario artifact diffs
-      would require a pre-run snapshot which adds latency; the verifier can
-      compare across scenarios if needed.
-
     Permission injection:
     - PermissionResolver is constructed with interactive=False so the runner
       never blocks on stdin prompts.  This accepts the limitation that ops
@@ -618,27 +611,6 @@ def _build_live_runner(agent_name: str, *, env_backend=None, ws_base_dir=None, w
         except Exception:
             return []
 
-    def _collect_artifacts() -> list[dict]:
-        """Snapshot artifact files in .reyn/agents/<name>/artifacts/."""
-        artifacts_dir = project_root / ".reyn" / "agents" / agent_name / "artifacts"
-        if not artifacts_dir.is_dir():
-            return []
-        import json
-        results: list[dict] = []
-        for f in sorted(artifacts_dir.iterdir()):
-            if not f.is_file():
-                continue
-            try:
-                raw = f.read_text(encoding="utf-8")
-                try:
-                    data = json.loads(raw)
-                except Exception:
-                    data = {"raw": raw}
-                results.append({"path": str(f.name), **data} if isinstance(data, dict) else {"path": str(f.name), "content": data})
-            except Exception:
-                continue
-        return results
-
     async def runner_fn(scenario) -> ScenarioRunResult:
         """Async callable (Scenario) -> ScenarioRunResult.
 
@@ -657,10 +629,8 @@ def _build_live_runner(agent_name: str, *, env_backend=None, ws_base_dir=None, w
                 scenario_id=scenario.id,
                 reply_text="",
                 events=[],
-                artifacts=[],
                 reply_outcome="blocked",
                 events_outcome="blocked",
-                artifacts_outcome="blocked",
                 detail={"error": str(exc), "stage": "ensure_running"},
             )
 
@@ -691,10 +661,8 @@ def _build_live_runner(agent_name: str, *, env_backend=None, ws_base_dir=None, w
                 scenario_id=scenario.id,
                 reply_text="\n\n".join(reply_parts),
                 events=events,
-                artifacts=[],
                 reply_outcome="blocked",
                 events_outcome="blocked",
-                artifacts_outcome="blocked",
                 detail={"error": str(exc), "stage": "send_to_agent"},
             )
         finally:
@@ -704,16 +672,14 @@ def _build_live_runner(agent_name: str, *, env_backend=None, ws_base_dir=None, w
                 pass
 
         events = _collect_events(registry)
-        artifacts = _collect_artifacts()
         reply_text = "\n\n".join(reply_parts).strip()
 
         return ScenarioRunResult(
             scenario_id=scenario.id,
             reply_text=reply_text,
             events=events,
-            artifacts=artifacts,
             # Verifier outcomes are left at "inconclusive" (default).
-            # The verifier triad (run_scenario_set's caller layer) fills
+            # The verifier pair (run_scenario_set's caller layer) fills
             # these in after this function returns.
         )
 

@@ -8,7 +8,7 @@ OutcomeBand = Literal["verified", "inconclusive", "refuted", "blocked"]
 
 @dataclass
 class VerifierResult:
-    """Outcome of one verifier (reply / events / artifacts).
+    """Outcome of one verifier (reply / events).
 
     outcome: 4-band band
     detail: structured machine-readable explanation (= shown in reports)

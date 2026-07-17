@@ -39,10 +39,15 @@ from reyn.dev.dogfood.verifiers.asset_refs import (
 # resolve them (delete/re-point/drop needs an owner call).
 KNOWN_PENDING_VIOLATIONS: frozenset[tuple[str, str, str, str]] = frozenset({
     # chat_router_smoke.yaml IS the main dogfood smoke set (#2965).
+    # NOTE: the two "skill" entries that used to live here
+    # (explicit_skill_invocation_word_stats / catalog_routing_decided_emitted)
+    # were sourced from the scenario's ``artifacts: [{skill: ...}]`` block,
+    # which #2959 removed as a dead mechanism (see dogfood/scenarios/
+    # chat_router_smoke.yaml). With the ``artifacts:`` key gone, asset_refs.py
+    # no longer extracts a skill reference from those scenarios, so these two
+    # entries no longer reproduce and were removed rather than left stale.
     ("chat_router_smoke.yaml", "explicit_skill_invocation_word_stats", "event", "skill_run_spawned"),
     ("chat_router_smoke.yaml", "explicit_skill_invocation_word_stats", "event", "skill_run_completed"),
-    ("chat_router_smoke.yaml", "explicit_skill_invocation_word_stats", "skill", "word_stats_demo"),
-    ("chat_router_smoke.yaml", "catalog_routing_decided_emitted", "skill", "direct_llm"),
     # control_ir_ops.yaml: #2958 removed the judge_output_direct sibling
     # (same class); these two were still there.
     ("control_ir_ops.yaml", "lint_a_skill", "event", "lint_completed"),

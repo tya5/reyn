@@ -160,7 +160,6 @@ class TestStateModeField:
             scenario_id="s1",
             reply_text="hi",
             events=[],
-            artifacts=[],
         )
         assert result.state_mode == "fresh"
 
@@ -178,7 +177,6 @@ class TestStateModeField:
             scenario_id="s1",
             reply_text="hi",
             events=[],
-            artifacts=[],
         )
         assert result.state_mode == "non-fresh"
 
@@ -194,7 +192,6 @@ class TestStateModeField:
             scenario_id="s-fresh-1",
             reply_text="ok",
             events=[],
-            artifacts=[],
         )
         _persist_scenario_result(tmp_path, result)
 
@@ -223,7 +220,6 @@ class TestStateModeField:
             scenario_id="s-rt-1",
             reply_text="hello",
             events=[],
-            artifacts=[],
             state_mode="fresh",
         )
         _persist_scenario_result(run_dir, result)
@@ -278,7 +274,6 @@ class TestStateModeField:
             scenario_id="s-legacy",
             reply_text="old reply",
             events=[],
-            artifacts=[],
         )
         run_result = RunResult(
             run_id=run_id,
@@ -301,7 +296,6 @@ class TestStateModeField:
             id = "s-e2e-fresh"
             expected_reply = None
             expected_events = None
-            expected_artifacts = None
             outcome_prediction = None
 
         class _FakeScenarioSet:
@@ -313,7 +307,6 @@ class TestStateModeField:
                 scenario_id=scenario.id,
                 reply_text="stub reply",
                 events=[],
-                artifacts=[],
             )
 
         asyncio.run(

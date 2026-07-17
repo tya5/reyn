@@ -1,8 +1,8 @@
 """Dogfood scenario asset-reference contract check (#2965).
 
-``dogfood/scenarios/*.yaml`` names skills (``expected_skill:`` / an
-artifact assertion's ``skill:`` key) and event kinds (``expected.events.
-must_emit`` / ``must_not_emit`` / ``must_emit_any`` / ``sequence``) as bare
+``dogfood/scenarios/*.yaml`` names skills (``expected_skill:``) and event
+kinds (``expected.events.must_emit`` / ``must_not_emit`` / ``must_emit_any``
+/ ``sequence``) as bare
 strings. Nothing at scenario-load time checks those strings against
 anything real — dogfood does not run in CI (it calls an LLM), so a
 reference that goes stale between one bulk deletion and the next stays
@@ -173,11 +173,6 @@ def _iter_skill_refs(raw_scenario: dict[str, Any], expected: dict[str, Any]) -> 
     expected_skill = raw_scenario.get("expected_skill")
     if isinstance(expected_skill, str):
         refs.append(expected_skill)
-    artifacts = expected.get("artifacts")
-    if isinstance(artifacts, list):
-        for item in artifacts:
-            if isinstance(item, dict) and isinstance(item.get("skill"), str):
-                refs.append(item["skill"])
     return refs
 
 
@@ -211,10 +206,8 @@ def find_violations(scenarios_dir: Path | None = None) -> list[ScenarioRefViolat
     Scans every ``<scenarios_dir>/*.yaml`` file (default: this repo's
     ``dogfood/scenarios/``) directly via ``yaml.safe_load`` (not through
     ``load_scenario_set``) because the legacy G4-spike scenario format
-    (``expected_skill:``, no ``type:`` key) and the ``skill:`` key on an
-    artifact assertion (accepted but silently dropped by
-    ``ArtifactAssertion``, since it has no ``skill`` field) both carry
-    references this check needs that the typed loader does not preserve.
+    (``expected_skill:``, no ``type:`` key) carries a reference this check
+    needs that the typed loader does not preserve.
 
     ``scenarios_dir`` is overridable so a test can point this at a
     synthetic fixture directory and prove the detector fires, without
