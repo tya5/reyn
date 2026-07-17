@@ -41,22 +41,23 @@ capabilities WITHIN that new namespace, which is what makes the following
 requested in ONE `unshare()` call so the process never has a fresh user
 namespace without a fresh net namespace.
 
-**Identity (uid/gid) mapping is best-effort, not the security property.**
-Without writing `/proc/self/{uid,gid}_map`, the process's OWN view of its uid
-(`os.getuid()`) becomes the kernel's overflow id (`65534`/"nobody") inside the
-new user namespace — cosmetic, because DAC permission checks compare the
-process's REAL kernel uid (fixed at `unshare()` time), not the namespace-local
-view a later `getuid()` reports. Measured (colima, Ubuntu 24.04, kernel 6.8,
-`/proc/sys/kernel/apparmor_restrict_unprivileged_userns=1`): `unshare()` itself
-SUCCEEDS, but the subsequent `setgroups`/`uid_map`/`gid_map` writes are refused
-with `EPERM` by AppArmor's unprivileged-userns mediation regardless — yet a
-file this process owns was still written, read back, and reported its correct
-host-side owner afterward. So a mapping failure does not touch the property
-this module exists for (network reachability); it is logged and swallowed, not
-raised. A caller who needs `os.getuid()`/`getpwuid()` to report the real
-identity inside the sandboxed process does not get that on such a host — a
-documented residual, matching the `read_deny_paths` asymmetry already
-disclosed in `backends/landlock.py`.
+**No uid/gid identity mapping — deliberately.** Without writing
+`/proc/self/{uid,gid}_map`, the process's OWN view of its uid (`os.getuid()`)
+becomes the kernel's overflow id (`65534`/"nobody") inside the new user
+namespace. An earlier revision attempted a best-effort identity map here (real
+uid/gid mapped 1:1, so `os.getuid()` would still report the caller's real
+identity); that attempt is what turned a live x86_64 CI host (Landlock
+present, unprivileged user namespaces enabled, no AppArmor mediation blocking
+the map writes) into a reproducible regression — a plain `ls /` under
+`_child_preexec` started failing with `Permission denied` on `opendir("/")`
+specifically once the map writes started succeeding there, for a mechanism not
+root-caused before this revision shipped. Network reachability (the actual
+property this module exists for) is established by `unshare()` alone, before
+any map write would happen, so dropping the map removes an unexplained
+interaction without touching the security property. A caller who needs
+`os.getuid()`/`getpwuid()` to report the real identity inside the sandboxed
+process does not get that — a documented residual, matching the
+`read_deny_paths` asymmetry already disclosed in `backends/landlock.py`.
 
 **Fail-closed, not fail-open.** If the `unshare()` call itself fails (e.g.
 `/proc/sys/kernel/unprivileged_userns_clone=0`, or a per-namespace-count limit
@@ -119,13 +120,6 @@ def isolate_network_namespace() -> None:
             f"(unshare(CLONE_NEWNET) has no equivalent on {platform.system()})"
         )
 
-    # Captured BEFORE unshare(): once inside the fresh user namespace and
-    # before any uid_map is written, os.getuid()/os.getgid() report the
-    # kernel's overflow id, not the real identity — mapping that back to
-    # itself would be a no-op that defeats the point of mapping at all.
-    real_uid = os.getuid()
-    real_gid = os.getgid()
-
     try:
         _unshare(_CLONE_NEWUSER | _CLONE_NEWNET)
     except OSError as exc:
@@ -140,33 +134,28 @@ def isolate_network_namespace() -> None:
             "(#3030)."
         ) from exc
 
-    # Best-effort identity preservation — see module docstring. A failure here
-    # is NOT fail-closed material: the network property this function exists
-    # for is already in effect by the time we reach these lines (unshare()
-    # above already succeeded), so we log and continue rather than raise.
-    #
-    # The map is `real_uid -> real_uid` (a TRUE 1:1 identity map), not
-    # `0 -> real_uid` — the latter is the "fake root" idiom `unshare
-    # --map-root-user` uses deliberately (make the caller APPEAR as uid 0
-    # inside the namespace), which is the opposite of what "preserve identity"
-    # means here: a sandboxed target must see the SAME `os.getuid()` it would
-    # have outside the sandbox, not an artificially elevated one a target that
-    # branches on `getuid() == 0` could react to differently.
-    try:
-        with open("/proc/self/setgroups", "w") as fh:
-            fh.write("deny")
-        with open("/proc/self/uid_map", "w") as fh:
-            fh.write(f"{real_uid} {real_uid} 1")
-        with open("/proc/self/gid_map", "w") as fh:
-            fh.write(f"{real_gid} {real_gid} 1")
-    except OSError as exc:
-        _logger.debug(
-            "netns: uid/gid identity map not applied (%s) — network isolation "
-            "still holds; os.getuid()/os.getgid() will report the namespace "
-            "overflow id (65534) rather than the real identity in the "
-            "sandboxed process",
-            exc,
-        )
+    # No uid/gid identity mapping. An earlier revision attempted a best-effort
+    # `real_uid -> real_uid` map here (never required for the security property
+    # — see module docstring) and that attempt is what a live x86_64/Landlock
+    # CI host (kernel with unprivileged user namespaces enabled and no
+    # AppArmor mediation blocking the map writes, unlike the aarch64 host this
+    # module was developed against) turned into a reproducible regression: a
+    # plain `ls /` under `_child_preexec` started failing with
+    # `Permission denied` on `opendir("/")` specifically once the map writes
+    # started succeeding, for a mechanism not fully root-caused before this
+    # revision (#3030 PR discussion). Rather than ship an unexplained
+    # interaction on a security-critical path, this drops the identity map
+    # entirely: the process is left at the kernel's overflow uid/gid (65534,
+    # "nobody") inside the namespace, which is the SAME state every host that
+    # cannot write the map (e.g. the aarch64 host this was live-validated
+    # against) already runs under, with no observed issue there. Network
+    # isolation (the actual property this module exists for) is unaffected
+    # either way — it is established by `unshare()` above, before this point.
+    _logger.debug(
+        "netns: no uid/gid identity map applied — os.getuid()/os.getgid() "
+        "will report the namespace overflow id (65534) rather than the real "
+        "identity in the sandboxed process; network isolation is unaffected"
+    )
 
 
 # Process-global cache — the probe below forks a throwaway child to observe a

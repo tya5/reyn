@@ -11,8 +11,9 @@ independent of `allow_subprocess`, and not a syscall-name boundary at all.
 
 Three groups, mirroring `test_landlock_exec_shim_1344e.py`'s shape:
   - pure/structural: the function's own contract (non-Linux raises, a real
-    `unshare()` failure raises, mapping failures don't) — no real namespace
-    needed, driven with a monkeypatched `_unshare`;
+    `unshare()` failure raises, both CLONE_NEWUSER and CLONE_NEWNET are
+    requested in one call) — no real namespace needed, driven with a
+    monkeypatched `_unshare`;
   - real enforcement, where netns is actually available on this host — a real
     outbound connect through the production `wrap_command` seam, for both the
     exec-shim path and the fork+preexec_fn `run()` path;
@@ -112,33 +113,8 @@ def test_isolate_requests_both_clone_flags(monkeypatch: pytest.MonkeyPatch) -> N
         seen.append(flags)
 
     monkeypatch.setattr(netns_mod, "_unshare", _record)
-    # /proc/self/{setgroups,uid_map,gid_map} writes will fail in-process (this
-    # test process is not actually in a fresh userns) — that is the documented
-    # best-effort path, not an error, so no exception is expected here.
     isolate_network_namespace()
     assert seen == [_CLONE_NEWUSER | _CLONE_NEWNET]
-
-
-def test_mapping_failure_does_not_raise(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Tier 2: a failure writing /proc/self/{uid,gid}_map (measured on real
-    Ubuntu 24.04 hosts with AppArmor's unprivileged-userns restriction — the
-    unshare() itself succeeds but these writes are refused) must NOT raise.
-    Network isolation (the property this module exists for) is already in
-    effect once unshare() returns; identity-map fidelity is best-effort."""
-    import reyn.security.sandbox.backends.netns as netns_mod
-
-    monkeypatch.setattr("platform.system", lambda: "Linux")
-    monkeypatch.setattr(netns_mod, "_unshare", lambda flags: None)
-
-    real_open = open
-
-    def _blocked_open(path, mode="r", *a, **kw):  # noqa: ANN001
-        if str(path).startswith("/proc/self/") and "w" in mode:
-            raise PermissionError(1, "Operation not permitted")
-        return real_open(path, mode, *a, **kw)
-
-    monkeypatch.setattr("builtins.open", _blocked_open)
-    isolate_network_namespace()  # must not raise
 
 
 # ── real enforcement, where netns is actually available on this host ─────────
