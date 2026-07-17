@@ -11,9 +11,13 @@ Supports:
     at the op because that is where `ctx.cancel_event` lives and because every
     embedding egress in the OS funnels through that op.
     The bound is a LATENCY invariant, not a COST one — it caps how long we
-    wait, not how many requests the provider receives (the OpenAI SDK client
-    retries underneath it: up to 3 per attempt, 9 across `max_retries: 3`).
-    See `_embed_batch_with_retry` for the measured detail and #3047.
+    wait, not how many requests the provider receives. The COST invariant
+    (#3047) is `max_retries=0` passed explicitly to every `litellm.aembedding`
+    call in `_aembedding_bounded`, so the OpenAI SDK client cannot silently
+    retry underneath reyn's own retry loop (unset -> litellm's
+    `DEFAULT_MAX_RETRIES` = 2 SDK-internal retries per attempt, 9 requests
+    across `max_retries: 3` instead of 3). See `_aembedding_bounded` for the
+    measured detail.
   - Exponential-backoff retry on transient errors
   - tiktoken-based token estimation with char-count fallback
   - Static dimension table with 1536 default for unknown models
@@ -366,14 +370,14 @@ class LiteLLMEmbeddingProvider:
         actually reads this knob at: one deadline for the whole attempt. Without the
         wrap, ``timeout: 60`` would silently mean up to 180s per attempt.
 
-        ★ SCOPE — this bounds WAITING, not SPENDING. It does not reduce how many
-        requests reach the provider: the SDK's internal retry sits UNDER this bound,
-        so one attempt can deliver up to 3 requests and ``max_retries: 3`` up to 9.
-        Against a fast-erroring provider all 9 were measured delivered in 7.6s with
-        the default 60.0s bound — i.e. the bound never engaged. Lowering it does not
-        lower that count. Reducing REQUESTS is a different lever (an explicit
-        ``max_retries=0`` to litellm, collapsing 9 -> 3) and an open decision in
-        #3047 — deliberately NOT bundled here.
+        ★ SCOPE — this bounds WAITING, not SPENDING. Left alone, the OpenAI SDK
+        client retries INTERNALLY under this bound (litellm's implicit
+        ``max_retries or DEFAULT_MAX_RETRIES`` -> 2), so one attempt could
+        deliver up to 3 requests and ``max_retries: 3`` up to 9 — measured, all
+        9 delivered in 7.6s against a fast-erroring provider with the default
+        60.0s bound never engaging. ``_aembedding_bounded`` closes that lever
+        with an explicit ``max_retries=0``, collapsing 9 -> 3: reyn's own retry
+        loop here is then the ONLY retry layer (#3047).
         """
         extra = _proxy_kwargs()
         # Strip provider prefix when routing via local proxy (mirrors call_llm)
@@ -431,7 +435,47 @@ class LiteLLMEmbeddingProvider:
         ``aembedding`` unbounded by forgetting to wrap it (the swept-missed shape
         that produced this bug). ``self._timeout is None`` = operator opted out
         (``embedding.timeout <= 0``) → the historical unbounded call, unchanged.
+
+        ``max_retries=0`` (#3047, measured): without it, litellm's
+        ``llms/openai/openai.py::OpenAIChatCompletion.embedding``'s
+        ``max_retries = max_retries or litellm.DEFAULT_MAX_RETRIES`` turns our
+        omitted kwarg (``None``) into ``2``, which litellm hands to the OpenAI
+        SDK client as ``AsyncOpenAI(max_retries=2)`` — 1 initial + 2 SDK-internal
+        retries = 3 HTTP requests PER attempt of the retry loop above, i.e. 9 on
+        the wire for ``max_retries: 3``, all invisible to the ``attempt %d/%d``
+        log line.
+
+        ★ Passing ``max_retries=0`` as a kwarg ALONE does not fix this — ``0`` is
+        just as falsy as ``None``, so ``0 or litellm.DEFAULT_MAX_RETRIES`` lands
+        on ``2`` again (measured: still 9 requests). This is the SECOND ``x or
+        DEFAULT`` trap in the same code path (the first is the one that made the
+        omitted kwarg silently mean ``2`` in the first place) — passing our own
+        falsy value straight into it changes nothing. The fix has to defeat the
+        ``or`` itself: setting ``litellm.DEFAULT_MAX_RETRIES = 0`` makes the
+        right-hand side of that ``or`` resolve to ``0`` too, so ANY falsy
+        ``max_retries`` (ours, or a future omitted one) now correctly means "no
+        SDK-level retry" instead of silently reviving 2. Audited for blast
+        radius: reyn's chat-completion path (`llm.py`) always passes an
+        explicit non-``None`` ``num_retries`` into ``litellm.acompletion``,
+        which litellm maps to its own ``max_retries`` BEFORE this fallback would
+        ever run (`main.py`: ``if num_retries is not None: max_retries =
+        num_retries``) — so this global does not change chat's retry count, only
+        embedding's, which is exactly the intended scope. Set once, permanently
+        for the process (no per-call save/restore) — a temporal monkeypatch
+        would race concurrent litellm calls sharing this event loop; a
+        permanent process-wide 0 does not, because nothing in reyn ever relies
+        on the ``2`` fallback firing.
+
+        Passing ``max_retries=0`` explicitly as a kwarg too (redundant given the
+        above, kept for self-documentation): reyn's own retry loop above is then
+        the ONLY retry layer — 3 requests for 3 configured attempts, matching
+        what the operator's config says. This is the SPENDING lever (vs.
+        ``self._timeout``, the WAITING lever, above) — see #3047 for the
+        measured 9->3 wire count. Does not touch cost-tracking's
+        post-await-only recording (#3047 part b, separate follow-up).
         """
+        litellm.DEFAULT_MAX_RETRIES = 0
+        kwargs.setdefault("max_retries", 0)
         if self._timeout is None:
             return await litellm.aembedding(**kwargs)
         async with asyncio.timeout(self._timeout):
