@@ -359,12 +359,21 @@ def test_landlock_exec_shim_invokes_the_seccomp_installer(
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """Tier 2: the landlock_exec shim actually loads the seccomp filter.
+    """Tier 2: the landlock_exec shim's ``_apply_seccomp`` loads the filter.
 
     Drives the real ``_apply_seccomp`` that ``_apply_landlock`` calls before
-    ``os.execvp``. Guards the #2962 regression at the landlock_exec.py:135
-    callsite — a plain-execvp shape whose syscall needs differ from the
+    ``os.execvp`` — a plain-execvp shape whose syscall needs differ from the
     LandlockBackend preexec_fn above, hence the separate verification.
+
+    ⚠ Scope, stated because overreading it cost 41 days: this pins that
+    ``_apply_seccomp`` LOADS when called, and nothing about whether anything
+    calls it. It is one step below the production entry point, and #2980 lived in
+    the step above — ``_apply_landlock`` raised ``AttributeError`` before
+    reaching this function, so the shim applied nothing while this test stayed
+    green (#2980's title: "its test bypasses the production entry point").
+    What covers the entry point is
+    ``test_landlock_exec_shim_1344e.py``'s enforcement group, which launches
+    through ``wrap_command`` — and only where Landlock is present.
     """
     import reyn.security.sandbox.landlock_exec as shim
 

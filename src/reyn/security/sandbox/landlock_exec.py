@@ -9,24 +9,29 @@ IS the wrapper::
 
     python -m reyn.security.sandbox.landlock_exec --policy <json> -- <command> <args...>
 
-``main()`` applies ``landlock.Ruleset().restrict_self()`` to *itself*, then
-``os.execvp()``s the target — the target inherits the irrevocable restriction
-(Landlock restrictions survive ``execve``).
+``main()`` applies ``LandlockBackend``'s ruleset to *itself* via ``apply()``,
+loads the seccomp filter, then ``os.execvp()``s the target — which inherits both
+irrevocable restrictions (they survive ``execve``). On a non-Linux / no-landlock
+host the shim REFUSES to run (raises), so a caller never gets a false sense of
+enforcement.
 
-Linux-validation-pending. The ruleset build + ``restrict_self()`` here MIRROR
-``LandlockBackend.run`` and carry the SAME ``fp-0017-b`` "Linux validation
-needed" TODOs (the maintainer dev environment is macOS-only). On a non-Linux /
-no-landlock host the shim REFUSES to run (raises), so a caller never gets a
-false sense of enforcement. When the backend's ruleset build is Linux-validated,
-this and the backend should consolidate onto one shared ruleset builder; until
-then they intentionally duplicate (each independently carries the unvalidated
-caveat — no NEW unvalidated surface is introduced).
+**This module used to duplicate the backend's ruleset build, and the copies
+drifted** (#2980). The backend was ported to the real py-landlock porcelain
+(#1693); this shim went on calling ``Ruleset.add_path_beneath_rule`` /
+``restrict_self`` / ``add_net_port_rule`` — methods the pinned
+``landlock==1.0.0.dev5`` does not define — so every launch through here raised
+``AttributeError`` before restricting anything, and the MCP-stdio and CodeAct
+seams ran unsandboxed for 41 days. Both seams now call ONE
+:func:`~reyn.security.sandbox.backends.landlock.build_ruleset`; do not
+reintroduce a second one here.
 
-Deferred-validation plan (#1344): real end-to-end enforcement is validated on a
-Linux host — reyn's own docker backend (#1324 launcher) can spin a Linux
-container and exercise this shim's restrict_self() effects (fs/net actually
-blocked). Tracked as a follow-up; not run here (these tests are structural +
-skip-if-no-landlock).
+What kept that invisible is worth more than the fix: a TODO on the old build
+named the exact check that would have caught it ("verify … for the installed
+landlock package version"), the tests drove ``_apply_seccomp`` directly rather
+than this module's entry point, and ``available()`` only ever asked whether the
+package imported. The observation that closes it is
+``reyn.security.sandbox.self_test``, which launches THROUGH ``wrap_command`` on
+the host making the claim.
 """
 from __future__ import annotations
 
@@ -36,8 +41,8 @@ import json
 import os
 import sys
 
-from .backends.seccomp import load_seccomp_filter
-from .policy import SandboxPolicy, expand_policy_path
+from .backends.seccomp import load_seccomp_filter, preload_native_dependency
+from .policy import SandboxPolicy
 
 _MODULE = "reyn.security.sandbox.landlock_exec"
 
@@ -101,10 +106,20 @@ def _apply_seccomp(policy: SandboxPolicy) -> None:
     which is why ``execve``/``execveat`` are baseline-allowed (denying them would
     kill the shim before it could exec the target at all, #2962).
 
-    No-op when ``policy.allow_subprocess`` is True: the syscall-reduction layer
-    exists to deny process creation, so an explicitly subprocess-permitting
-    policy has nothing for it to add here. (Whether that gate belongs on the
-    whole filter or only on the allowlist contents is #2962's open question.)
+    ⚠ No-op when ``policy.allow_subprocess`` is True — and that is a live defect,
+    not merely #2962's open question (#3030). The rationale recorded here was
+    "the syscall-reduction layer exists to deny process creation, so an
+    explicitly subprocess-permitting policy has nothing for it to add". It is
+    measurably false: the filter carries TWO gates, and the other one is the
+    NETWORK gate (``_NETWORK_SYSCALLS`` are allowlisted only when
+    ``policy.network``). Skipping the whole filter drops it — measured on Linux
+    6.8, a real outbound connect+send SUCCEEDED under ``network=False,
+    allow_subprocess=True``, which is the stdio-MCP default.
+
+    Left as-is here deliberately: moving the gate from the filter onto the
+    allowlist contents puts every MCP server under a default-deny allowlist for
+    the first time, and that allowlist is a correctness surface (#2962's first
+    live load killed ``/bin/echo``). That is a design decision, and it is #3030.
     """
     if policy.allow_subprocess:
         return
@@ -112,14 +127,34 @@ def _apply_seccomp(policy: SandboxPolicy) -> None:
 
 
 def _apply_landlock(policy: SandboxPolicy) -> None:
-    """Restrict the CURRENT process under ``policy`` via Landlock.
+    """Restrict the CURRENT process under ``policy`` via Landlock, then seccomp.
 
     Raises ``RuntimeError`` if Landlock is unavailable on this host — the shim
     must never exec the target UNRESTRICTED (that would be a silent escape).
 
-    Mirrors ``LandlockBackend.run``'s ruleset build + ``restrict_self`` (same
-    ``fp-0017-b`` Linux-validation TODOs)."""
-    from .backends.landlock import LandlockBackend
+    The ruleset comes from ``LandlockBackend``'s ``build_ruleset``: ONE builder
+    for both seams, so this shim cannot again call methods the pinned package
+    does not have while the backend calls the real ones (#2980).
+
+    **The order of the three steps below is the security property**, and two of
+    the three orderings silently produce no enforcement at all:
+
+    1. ``preload_native_dependency()`` — resolve pyseccomp's native libraries
+       while this process can still reach the filesystem. Its import shells out
+       and writes a temp file; run it after step 2 and Landlock denies it, the
+       filter never loads, and ``allow_subprocess=False`` enforces nothing
+       (#3020). The shim is ALWAYS a fresh process, so it can never inherit the
+       import from a parent the way ``LandlockBackend.run``'s child accidentally
+       could.
+    2. ``ruleset.apply()`` — irrevocable, survives the ``execvp`` in
+       :func:`main`.
+    3. ``_apply_seccomp()`` — must come after 2, not before. Measured, not
+       assumed: with the filter loaded first, ``apply()`` dies on
+       ``landlock_restrict_self`` (``syscall(446, …) = -1``, EPERM) — the filter
+       refuses the syscall Landlock's own setup needs, since it is not in the
+       allowlist. Landlock would then be absent while the shim exec'd the target.
+    """
+    from .backends.landlock import LandlockBackend, build_ruleset
 
     backend = LandlockBackend()
     if not backend.available():
@@ -129,29 +164,10 @@ def _apply_landlock(policy: SandboxPolicy) -> None:
             "target unrestricted. Run on Linux 5.13+ with the `landlock` package."
         )
 
-    # TODO(fp-0017-b): Linux validation needed — verify Ruleset construction,
-    # add_path_beneath_rule / add_net_port_rule API + access constants for the
-    # installed landlock package version (mirrors LandlockBackend.run).
-    import landlock  # noqa: PLC0415
-
-    ruleset = landlock.Ruleset()  # type: ignore[attr-defined]
-    # Broad read (#1199 / #1323): allowlist-only, so a single read rule on "/".
-    # read_deny_paths is NOT expressible on Landlock (the network gate is the
-    # exfil guard) — same residual-risk asymmetry as the backend.
-    ruleset.add_path_beneath_rule("/", read_only=True)  # type: ignore[attr-defined]
-    for path in policy.write_paths:
-        # expand_policy_path: the THIRD write_paths grant emitter, and the one
-        # the MCP stdio path actually goes through on Linux (#2976). Same ``~``
-        # contract as both backends — without it the grant lands on a literal
-        # ``<cwd>/~/...`` and the intended write stays denied. No resolve():
-        # Landlock hands the path to the kernel as-is.
-        ruleset.add_path_beneath_rule(  # type: ignore[attr-defined]
-            str(expand_policy_path(path)), read_only=False,
-        )
-    if not policy.network and hasattr(ruleset, "add_net_port_rule"):
-        ruleset.add_net_port_rule(deny_all_outbound=True)  # type: ignore[attr-defined]
-    ruleset.restrict_self()  # type: ignore[attr-defined]
-
+    ruleset = build_ruleset(policy, backend.abi_version or 0)
+    if not policy.allow_subprocess:
+        preload_native_dependency()
+    ruleset.apply()  # type: ignore[attr-defined]
     _apply_seccomp(policy)
 
 

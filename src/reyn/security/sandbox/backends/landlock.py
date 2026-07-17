@@ -6,10 +6,14 @@ support is absent, `available()` returns False and the OS falls back to
 NoopBackend (per FP-0017 auto-selection table).
 
 Network restriction note: the py-landlock package (1.0.0.dev*) exposes no
-network-port rule API, so Landlock does NOT restrict outbound network here. When
-a policy denies network, that guarantee comes from a different mechanism (the
-no-network-fd / proxy gate); the Landlock layer logs a one-shot WARN so the gap
-is diagnosable rather than faking enforcement it can't deliver (#1693).
+network-port rule API — no `NetAccess`, no net symbol in `plumbing`, and
+`Ruleset` has exactly `allow`/`apply` (measured on the pinned 1.0.0.dev5, not
+read off the kernel's ABI table). So Landlock does NOT restrict outbound network
+here, at ANY ABI. What carries a `network: false` policy is the seccomp filter's
+default-deny (`_NETWORK_SYSCALLS` are allowlisted only when network is on) — and
+only when `allow_subprocess` is False, because the whole filter is skipped
+otherwise (#3030). The layer logs a one-shot WARN so the gap is diagnosable
+rather than faking enforcement it can't deliver (#1693).
 
 Filesystem model: allowlist-only. The HANDLED access set (Ruleset
 ``restrict_rules``) always governs the full write surface (write/make/remove) so
@@ -30,12 +34,119 @@ import subprocess
 from .._subprocess_io import communicate_capped, kill_process_tree
 from ..backend import SandboxResult, WrappedCommand
 from ..policy import SandboxPolicy, expand_policy_path
-from .seccomp import load_seccomp_filter
+from .seccomp import load_seccomp_filter, preload_native_dependency
 
 _logger = logging.getLogger(__name__)
 
 # One-shot warning latch for missing net restriction.
 _NET_WARN_ISSUED = False
+
+
+def build_ruleset(policy: SandboxPolicy, abi: int) -> object:
+    """Build the Landlock ruleset for *policy* against the kernel ABI *abi*.
+
+    THE one ruleset builder — both Landlock seams call it: ``run()`` (builds in
+    the parent, ``apply()``s in a preexec_fn) and ``landlock_exec._apply_landlock``
+    (builds and applies in the re-exec shim). It deliberately does not apply
+    anything; who applies it, and in which process, is the caller's difference.
+
+    Sharing it is the fix for #2980, not a tidy-up. The two seams used to build
+    the ruleset separately, each carrying the same "Linux validation needed" TODO
+    — and they drifted: the backend was ported to this real porcelain API
+    (``Ruleset(restrict_rules=…)`` / ``.allow(path, rules=…)`` / ``.apply()``,
+    #1693) while the shim went on calling ``add_path_beneath_rule`` /
+    ``restrict_self`` / ``add_net_port_rule``, which the pinned
+    ``landlock==1.0.0.dev5`` does not have (its ``Ruleset`` exposes exactly
+    ``allow`` and ``apply`` — measured, not read). The shim therefore raised
+    ``AttributeError`` before restricting anything, for 41 days, on a path no
+    test drove. Two builders is what let one be right and the other fiction; one
+    builder cannot drift from itself.
+
+    Args:
+        policy: the policy to translate into Landlock rules.
+        abi: the kernel's supported Landlock ABI, from
+            ``landlock.landlock_abi_version()`` (via ``available()``). Rights that
+            exist only at a higher ABI are gated on it — an unsupported flag makes
+            ruleset creation fail outright, so this is not optional.
+
+    Returns:
+        A ``landlock.Ruleset`` the caller applies.
+
+    Raises:
+        RuntimeError: if the ruleset cannot be built (a clear message beats a
+            bare ctypes/attribute error at the seam).
+    """
+    import landlock  # noqa: PLC0415
+
+    try:
+        FS = landlock.FSAccess  # type: ignore[attr-defined]
+
+        # Rights GRANTED on the broad-read surface: read files, list dirs, and
+        # execute binaries (so the child can load /usr,/lib and exec the
+        # target). Mirrors Seatbelt's broad ``(allow file-read*)`` +
+        # ``(allow process-exec*)``.
+        read_rules = FS.READ_FILE | FS.READ_DIR | FS.EXECUTE
+        # Rights GRANTED on each write_path: the full create/modify/remove
+        # surface; write implies read, so the read rights are included.
+        write_rules = (
+            read_rules
+            | FS.WRITE_FILE
+            | FS.MAKE_REG | FS.MAKE_DIR | FS.MAKE_SYM
+            | FS.MAKE_CHAR | FS.MAKE_BLOCK | FS.MAKE_FIFO | FS.MAKE_SOCK
+            | FS.REMOVE_FILE | FS.REMOVE_DIR
+        )
+        # REFER (cross-directory link/rename) is ABI 2+. Grant it on write_paths
+        # so intra-sandbox moves between writable dirs work; gate it on the probed
+        # ABI so neither the handled set nor a grant ever exceeds the kernel (an
+        # unsupported flag would make ruleset creation fail).
+        if abi >= 2:
+            write_rules |= FS.REFER
+
+        # HANDLED (governed) set: every access type the ruleset restricts. An
+        # access type NOT handled is UNRESTRICTED (a hole), so we always handle
+        # the full write surface — even with no write_paths — so writes are
+        # governed (denied-by-default) and granted ONLY to write_paths. With no
+        # write_paths that means no writes anywhere, which is exactly correct for
+        # a sandbox (lead-confirmed secure default, #1693).
+        handled = read_rules | write_rules
+
+        # #1199 realignment — broad read surface. Landlock is allowlist-only
+        # (path-beneath grants; anything not granted is denied), so broad-read is
+        # a single read+exec grant on the filesystem root. This subsumes the old
+        # per-path read allowlist (policy.read_paths) AND fixes the Linux gap
+        # where system paths (/usr, /lib) had to be enumerated for binaries to
+        # even load.
+        #
+        # Residual risk: Landlock CANNOT express a read deny-list (you cannot
+        # carve a subpath out of an allowed parent), so policy.read_deny_paths is
+        # NOT enforced here — unlike Seatbelt (SBPL deny-after-allow). The core
+        # guarantee rests instead on the network gate: a compromised process on
+        # Linux may read sensitive paths but cannot exfiltrate (network off unless
+        # policy.network). This asymmetry is documented in the permission-model
+        # residual-risk section.
+        ruleset = landlock.Ruleset(restrict_rules=handled)  # type: ignore[attr-defined]
+        ruleset.allow("/", rules=read_rules)
+        for path in policy.write_paths:
+            # expand_policy_path: same ``~`` contract as Seatbelt (#2976) — a
+            # literal ``~`` path would be granted to a directory that does not
+            # exist, silently leaving the intended write denied. No resolve():
+            # Landlock hands the path to the kernel as-is.
+            ruleset.allow(str(expand_policy_path(path)), rules=write_rules)
+
+        # Network: the py-landlock package exposes no net-port rule API at ANY
+        # ABI, so Landlock CANNOT restrict outbound network here — the deny is
+        # seccomp's, and only where the filter loads at all (#3030). Warn once so
+        # the gap is diagnosable rather than faking an enforcement we can't
+        # deliver (documented residual risk, #1693). See `_warn_net_once` for what
+        # this message used to claim and why each part of it was false.
+        if not policy.network:
+            _warn_net_once()
+
+        return ruleset
+    except Exception as exc:  # noqa: BLE001
+        raise RuntimeError(
+            f"LandlockBackend: failed to build Landlock ruleset: {exc}"
+        ) from exc
 
 
 def _child_preexec(ruleset: object | None, policy: SandboxPolicy) -> None:
@@ -71,18 +182,55 @@ def _child_preexec(ruleset: object | None, policy: SandboxPolicy) -> None:
         # Popen issues next. Note this runs BEFORE CPython's own post-preexec_fn
         # code, whose syscalls are filtered too — hence `close_range` in the
         # baseline, which the landlock_exec shim's plain-execvp shape never needs.
+        #
+        # ⚠ This gate is the SIBLING of `landlock_exec._apply_seccomp`'s and
+        # carries the same live defect: the filter also holds the NETWORK gate, so
+        # skipping it on allow_subprocess=True leaves `network: false` enforcing
+        # nothing (#3030). Not fixed here — see that function's docstring for why
+        # the fix is a design decision rather than a one-line move.
+        #
+        # The import must already be warm: pyseccomp resolves native libs at
+        # import via the filesystem, which Landlock has just closed above. `run()`
+        # warms it in the parent before the fork; this child inherits it (#3020).
         load_seccomp_filter(policy)
 
 
-def _warn_net_once(abi: int) -> None:
+def _warn_net_once() -> None:
+    """Warn once that this policy's network deny is not Landlock's to deliver.
+
+    The message used to blame the kernel ABI ("requires ABI >= 4 (Linux 6.7+);
+    current ABI=%d"), which was false and, on an ABI-4 host, self-refuting — it
+    printed "requires ABI >= 4 … current ABI=4" and still declined to restrict.
+    An operator reading it would go upgrade a kernel that was never the problem.
+    Measured on the pinned `landlock==1.0.0.dev5`: the package exposes no network
+    API at ALL — no `NetAccess`, no net symbol anywhere in `plumbing`, and
+    `Ruleset` has exactly `allow`/`apply` — so no kernel ABI makes this reachable.
+    It is a package gap, and the message now says so.
+
+    It also used to point at "the no-network-fd / proxy gate" as the mechanism
+    that delivers the deny instead. That gate does not exist: the phrase appears
+    nowhere in this repo outside this module's own comments, and what actually
+    refuses `socket`/`connect` is the seccomp filter's default-deny — which is
+    skipped entirely when `allow_subprocess` is True (#3030, measured: a real
+    outbound connect+send SUCCEEDED under `network=False, allow_subprocess=True`).
+    Naming a mechanism that does not exist is worse than naming none: it tells an
+    operator the axis is covered elsewhere. The message names the real condition.
+
+    All three corrections are #2980's class — a claim about what the installed
+    code does, inferred rather than measured.
+    """
     global _NET_WARN_ISSUED
     if _NET_WARN_ISSUED:
         return
     _NET_WARN_ISSUED = True
     _logger.warning(
-        "LandlockBackend: network restriction requires ABI >= 4 (Linux 6.7+); "
-        "current ABI=%d — outbound network will NOT be restricted.",
-        abi,
+        "LandlockBackend: this policy denies network, but Landlock will NOT "
+        "restrict outbound network here — the pinned `landlock` package exposes "
+        "no network-rule API on any kernel ABI (upgrading the kernel does not "
+        "change this). The deny is carried by the seccomp-BPF filter's "
+        "default-deny, which applies ONLY when allow_subprocess is False; with "
+        "allow_subprocess True the filter is skipped and outbound network is NOT "
+        "restricted at all (see issue #3030)."
     )
 
 
@@ -102,6 +250,16 @@ class LandlockBackend:
         self._abi_version: int | None = None  # populated on first available() call
         self._import_error: str | None = None
         self._available: bool | None = None  # cached result
+
+    @property
+    def abi_version(self) -> int | None:
+        """The kernel's supported Landlock ABI, or None before the first
+        ``available()`` call has probed for it. Public because the ruleset build
+        is ABI-gated and :mod:`reyn.security.sandbox.landlock_exec` builds one
+        through :func:`build_ruleset` too — the shim needs the same number this
+        backend does, and reaching into ``_abi_version`` for it is what a shared
+        builder exists to avoid."""
+        return self._abi_version
 
     @property
     def import_error(self) -> str | None:
@@ -214,13 +372,7 @@ class LandlockBackend:
                 "Requires Linux 5.13+ with the `landlock` package installed."
             )
 
-        abi = self._abi_version  # guaranteed non-None after available() == True
-
-        # Build the Landlock ruleset against the real py-landlock porcelain API
-        # (landlock 1.0.0.dev*): ``Ruleset(restrict_rules=FSAccess…)`` declares the
-        # HANDLED (governed) access set, ``.allow(path, rules=FSAccess…)`` grants
-        # rights on a path-beneath, ``.apply()`` enforces irrevocably (#1693).
-        import landlock  # noqa: PLC0415
+        abi = self._abi_version or 0  # guaranteed non-None after available() == True
 
         # Build env from the passthrough allowlist (mirrors NoopBackend exactly).
         env: dict[str, str] = {}
@@ -230,76 +382,21 @@ class LandlockBackend:
         if "PATH" not in env and "PATH" in os.environ:
             env["PATH"] = os.environ["PATH"]
 
-        # Build the ruleset (real py-landlock porcelain API).
-        try:
-            FS = landlock.FSAccess  # type: ignore[attr-defined]
+        # THE shared builder — the same call the landlock_exec shim makes, so the
+        # two seams cannot drift apart again (#2980).
+        ruleset = build_ruleset(policy, abi)
 
-            # Rights GRANTED on the broad-read surface: read files, list dirs, and
-            # execute binaries (so the child can load /usr,/lib and exec the
-            # target). Mirrors Seatbelt's broad ``(allow file-read*)`` +
-            # ``(allow process-exec*)``.
-            read_rules = FS.READ_FILE | FS.READ_DIR | FS.EXECUTE
-            # Rights GRANTED on each write_path: the full create/modify/remove
-            # surface; write implies read, so the read rights are included.
-            write_rules = (
-                read_rules
-                | FS.WRITE_FILE
-                | FS.MAKE_REG | FS.MAKE_DIR | FS.MAKE_SYM
-                | FS.MAKE_CHAR | FS.MAKE_BLOCK | FS.MAKE_FIFO | FS.MAKE_SOCK
-                | FS.REMOVE_FILE | FS.REMOVE_DIR
-            )
-            # REFER (cross-directory link/rename) is ABI 2+. Grant it on
-            # write_paths so intra-sandbox moves between writable dirs work; gate it
-            # on the probed ABI so neither the handled set nor a grant ever exceeds
-            # the kernel (an unsupported flag would make ruleset creation fail).
-            if (abi or 0) >= 2:
-                write_rules |= FS.REFER
-
-            # HANDLED (governed) set: every access type the ruleset restricts. An
-            # access type NOT handled is UNRESTRICTED (a hole), so we always handle
-            # the full write surface — even with no write_paths — so writes are
-            # governed (denied-by-default) and granted ONLY to write_paths. With no
-            # write_paths that means no writes anywhere, which is exactly correct
-            # for a sandbox (lead-confirmed secure default, #1693).
-            handled = read_rules | write_rules
-
-            # #1199 realignment — broad read surface. Landlock is allowlist-only
-            # (path-beneath grants; anything not granted is denied), so broad-read
-            # is a single read+exec grant on the filesystem root. This subsumes the
-            # old per-path read allowlist (policy.read_paths) AND fixes the Linux
-            # gap where system paths (/usr, /lib) had to be enumerated for binaries
-            # to even load.
-            #
-            # Residual risk: Landlock CANNOT express a read deny-list (you cannot
-            # carve a subpath out of an allowed parent), so policy.read_deny_paths
-            # is NOT enforced here — unlike Seatbelt (SBPL deny-after-allow). The
-            # core guarantee rests instead on the network gate: a compromised
-            # process on Linux may read sensitive paths but cannot exfiltrate
-            # (network off unless policy.network). This asymmetry is documented in
-            # the permission-model residual-risk section.
-            ruleset = landlock.Ruleset(restrict_rules=handled)  # type: ignore[attr-defined]
-            ruleset.allow("/", rules=read_rules)
-            for path in policy.write_paths:
-                # expand_policy_path: same ``~`` contract as Seatbelt (#2976) —
-                # a literal ``~`` path would be granted to a directory that does
-                # not exist, silently leaving the intended write denied. No
-                # resolve(): Landlock hands the path to the kernel as-is.
-                ruleset.allow(str(expand_policy_path(path)), rules=write_rules)
-
-            # Network: the py-landlock package exposes no net-port rule API at this
-            # ABI, so Landlock CANNOT restrict outbound network here. When the
-            # policy denies network, that guarantee is delivered by a DIFFERENT
-            # mechanism (the no-network-fd / proxy gate), not Landlock — warn once
-            # so the gap is diagnosable rather than faking an enforcement we can't
-            # deliver (documented residual risk, #1693).
-            if not policy.network:
-                _warn_net_once(abi or 0)
-
-        except Exception as exc:  # noqa: BLE001
-            # If ruleset construction fails, surface a clear error.
-            raise RuntimeError(
-                f"LandlockBackend: failed to build Landlock ruleset: {exc}"
-            ) from exc
+        # Resolve pyseccomp's native libraries HERE, in the PARENT, before the
+        # fork. `_child_preexec` loads the filter in a child that Landlock has
+        # already restricted, where the import's own filesystem work is denied —
+        # so deferring it to the child made the filter load only when something
+        # else in the parent happened to have imported pyseccomp first (#3020,
+        # measured: without this the child died in preexec_fn). The import is
+        # inherited across fork, so warming it here is what makes the child's load
+        # a pure in-memory operation. Gated exactly as `_child_preexec` gates the
+        # load, so a subprocess-permitting policy pays nothing.
+        if not policy.allow_subprocess:
+            preload_native_dependency()
 
         loop = asyncio.get_running_loop()
 
