@@ -22,6 +22,7 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
+from weakref import WeakKeyDictionary
 
 from reyn.core.events.agent_snapshot import AgentSnapshot
 from reyn.core.events.state_log import StateLog
@@ -131,13 +132,62 @@ class RewindBeyondRetentionError(Exception):
     """
 
 
+class _RewindIndex:
+    """Incrementally-maintained rewind reset-record list for ONE StateLog (#2939).
+
+    Rewind records are a vanishingly small, append-only subset of the WAL, but
+    deriving them cost a FULL WAL scan (json-decoding every line) every time —
+    and every branch-model query below re-derives them. #2941 hoisted that scan
+    out of the per-MESSAGE loop (O(N x M) → O(N + M) per turn); the residual
+    O(M) is this: the scan still re-read the whole WAL once per turn, so the
+    cost of opening the chat's context dropdown grew with WAL SIZE, not with
+    what had actually changed (#2940 measured ~99.7% of that open in this scan).
+
+    Folding the records over a :class:`WalTailReader` makes the steady-state
+    cost O(delta) — normally zero new bytes, hence no decode at all. The reader
+    owns the correctness: it reports ``restarted`` whenever the WAL file was
+    rewritten (retention's ``truncate_below`` renames a fresh file into place),
+    and we then REBUILD from the new file instead of extending. That is what
+    keeps the index from serving a **stale abandoned interval** — a rewind
+    record the truncated WAL no longer holds would resurrect abandoned turns
+    into the LLM's context. The guarantee is structural (a rewrite cannot keep
+    the inode), not an argument about what retention chooses to keep.
+    """
+
+    def __init__(self, state_log: StateLog) -> None:
+        self._reader = state_log.tail_reader()
+        self._records: list[tuple[int, int]] = []
+
+    def records(self) -> list[tuple[int, int]]:
+        entries, restarted = self._reader.poll()
+        if restarted:
+            self._records = []
+        for e in entries:
+            if e.get("kind") == REWIND_KIND:
+                self._records.append((e["seq"], int(e["target_n"])))
+        return list(self._records)
+
+
+# Keyed by StateLog IDENTITY and weak, so an index never outlives its log (no
+# cross-test bleed, no unbounded growth); two StateLogs over the same file each
+# keep their own cursor, which is correct — each validates against the file
+# itself, not against the other's belief about it.
+_REWIND_INDEXES: "WeakKeyDictionary[StateLog, _RewindIndex]" = WeakKeyDictionary()
+
+
 def _rewind_records(state_log: StateLog) -> list[tuple[int, int]]:
-    """All rewind reset-records as ``(R, target_n)`` (R = the record's own seq)."""
-    out: list[tuple[int, int]] = []
-    for e in state_log.iter_from(1):
-        if e.get("kind") == REWIND_KIND and isinstance(e.get("seq"), int):
-            out.append((e["seq"], int(e["target_n"])))
-    return out
+    """All rewind reset-records as ``(R, target_n)`` (R = the record's own seq).
+
+    Incremental (#2939): folded over a resumable tail-reader per ``state_log``,
+    so repeated calls re-scan only WAL bytes appended since the last call —
+    see :class:`_RewindIndex`. Result is identical to the full re-scan this
+    replaces (same records, same file order); only the cost changes.
+    """
+    index = _REWIND_INDEXES.get(state_log)
+    if index is None:
+        index = _RewindIndex(state_log)
+        _REWIND_INDEXES[state_log] = index
+    return index.records()
 
 
 def _abandoned_intervals(rewinds: list[tuple[int, int]]) -> list[tuple[int, int]]:
@@ -179,21 +229,25 @@ def is_active_seq(state_log: StateLog, seq: int) -> bool:
 
 
 def build_active_predicate(state_log: StateLog) -> Callable[[int], bool]:
-    """Build a reusable ``is_active(seq)`` predicate — ONE WAL scan for MANY seqs.
+    """Build a reusable ``is_active(seq)`` predicate — ONE derivation for MANY seqs.
 
     #2941 (owner-reported ``reyn chat`` freeze, growing with session length):
     ``_abandoned_intervals(_rewind_records(state_log))`` depends only on the
     state_log's rewind records, NOT on ``seq`` — so calling ``is_active_seq``
     once per history message (``Session._active_branch_history``, the
-    LLM-facing hot path run every turn) re-scans the *entire* WAL
-    (``iter_from(1)``, json-decoding every line) once per message: O(N
-    messages x M WAL entries) per turn. This factors the seq-independent scan
-    out of that loop: call once per turn, then reuse the returned predicate
-    for every message's seq — O(N + M) per turn instead of O(N x M). Same
-    derivation as ``is_active_seq``; semantics are identical (this is a
-    call-shape optimization, not a behavior change) — ``is_active_seq`` itself
-    is UNCHANGED and still used by other (non-hot-loop) callers, including
-    crash-recovery paths, so their contract is untouched.
+    LLM-facing hot path run every turn) re-derived the whole branch model once
+    per message: O(N messages x M WAL entries) per turn. This factors the
+    seq-independent derivation out of that loop: call once per turn, then reuse
+    the returned predicate for every message's seq.
+
+    Prefer this over ``is_active_seq`` for ANY loop over seqs — that is the
+    whole point, and the sibling hot paths that still called ``is_active_seq``
+    per seq were the #2948 follow-up. Both share one derivation now, so the
+    per-turn cost is O(N + delta) rather than O(N + M): ``_rewind_records`` is
+    incremental (#2939), decoding only WAL entries appended since the previous
+    call instead of re-reading every line. ``is_active_seq`` is UNCHANGED and
+    equally cheap; it is simply the wrong shape when there is more than one seq
+    to test, since it rebuilds the predicate per call.
     """
     return _make_is_active(_abandoned_intervals(_rewind_records(state_log)))
 

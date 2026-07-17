@@ -104,12 +104,14 @@ class ContextBudgetAdvisor:
         calling this. ``self._history_fn()`` is invoked before the cache is
         consulted (the cache is keyed on the history it returns, so it cannot
         be), and in production that fn is
-        ``RouterHistoryBuffer.build_history`` → ``Session._active_branch_history``,
-        which does an uncached full-WAL scan per call. Measured (#2940,
-        N=2000 msgs / M=100k WAL entries): ~445ms per call on a cache HIT, of
-        which the producer is ~99.7% and this cache saves ~10ms. Do not read
-        "cache hit" here as "cheap call" — the caller-facing cost is O(WAL
-        size) either way. Flattening that is #2939's scope.
+        ``RouterHistoryBuffer.build_history`` → ``Session._active_branch_history``
+        — a whole-conversation derivation that runs on every call regardless of
+        this cache. So a "cache hit" here is not a cheap call: it still costs
+        O(history), and this cache's share of the total is small (#2940
+        measured it at ~2% when the producer was also re-scanning the WAL).
+        #2939 removed that WAL scan from the producer, so the caller-facing
+        cost now scales with the conversation rather than with WAL size — but
+        it is still the producer, not this, that dominates.
 
         A shrink, a model/use_chars4 change, OR the cached
         PREFIX's content actually differing (checked via a boundary — the

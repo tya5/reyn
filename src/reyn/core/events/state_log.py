@@ -120,6 +120,115 @@ WAL_EVENT_KINDS = (
 )
 
 
+class WalTailReader:
+    """Resumable reader over ONE StateLog file's durable entries (#2939).
+
+    ``iter_from(min_seq)`` re-reads and json-decodes the WHOLE file on every
+    call — it filters by ``seq >= min_seq`` only AFTER decoding, so it has no
+    seek and its cost is O(WAL size) regardless of how little is new. Any
+    derived state rebuilt from a full scan every turn therefore grows with the
+    WAL, not with the session's activity (#2939; the ``_rewind_records`` →
+    ``build_active_predicate`` chain is the motivating instance).
+
+    This reader closes that by remembering a **byte offset** into the file:
+    each :meth:`poll` returns only the entries appended since the previous
+    poll, so a caller folding them into derived state pays O(delta), not O(WAL).
+
+    Two properties make that safe rather than merely fast:
+
+    - **Rewrite detection is structural, not argued.** The WAL is append-only
+      in place, but ``truncate_below`` rewrites it via ``tmp.replace(path)`` —
+      a rename, so the surviving file always has a NEW inode. The reader
+      fingerprints ``(st_dev, st_ino)`` and treats any change (or a size that
+      fell below the cursor) as a **restart**: the offset resets to 0, the
+      whole new file is re-yielded, and ``restarted=True`` tells the caller to
+      REBUILD its derived state rather than extend it. So a cache built on this
+      reader cannot outlive the entries it was built from — it cannot serve a
+      record retention has since dropped.
+    - **The identity check and the read are atomic w.r.t. the rename.** The
+      stat is an ``fstat`` on the already-open descriptor and the delta bytes
+      are read through that same descriptor, so a ``truncate_below`` rewrite
+      landing mid-poll cannot make us read the NEW file at the OLD file's
+      offset. (POSIX keeps our fd pointed at the old inode; the next poll then
+      sees the new inode and restarts.)
+
+    Durability matches ``iter_from``: the log's single in-flight entry (written
+    but not yet fsync'd) is the tail, so the scan stops there WITHOUT advancing
+    past it — a later poll re-reads it once durable. A torn trailing line (no
+    newline yet) is likewise not consumed.
+
+    Contract: consume a poll's entries before calling ``poll`` again — the
+    cursor is advanced as they are yielded.
+    """
+
+    def __init__(self, state_log: "StateLog") -> None:
+        self._log = state_log
+        self._fingerprint: "tuple[int, int] | None" = None
+        self._offset = 0
+
+    def poll(self) -> "tuple[Iterator[dict], bool]":
+        """Return ``(entries, restarted)`` — durable entries appended since the
+        previous poll, and whether the file was rewritten (caller must rebuild).
+        """
+        try:
+            with self._log.path.open("rb") as f:
+                st = os.fstat(f.fileno())
+                fingerprint = (st.st_dev, st.st_ino)
+                restarted = (
+                    fingerprint != self._fingerprint or st.st_size < self._offset
+                )
+                start = 0 if restarted else self._offset
+                f.seek(start)
+                data = f.read()
+        except OSError:
+            # No file yet (or it vanished): nothing durable to report. Treat a
+            # previously-seen file's disappearance as a restart so a caller's
+            # derived state is rebuilt rather than silently kept.
+            restarted = self._fingerprint is not None
+            self._fingerprint = None
+            self._offset = 0
+            return iter(()), restarted
+        self._fingerprint = fingerprint
+        # Advance eagerly so an unconsumed batch re-reads from `start` on the
+        # next poll instead of resuming at a stale offset in a rewritten file.
+        self._offset = start
+        return self._iter_delta(data, start), restarted
+
+    def _iter_delta(self, data: bytes, start: int) -> "Iterator[dict]":
+        inflight = self._log._inflight_seq
+        pos = 0
+        while True:
+            nl = data.find(b"\n", pos)
+            if nl == -1:
+                break  # trailing partial line — a torn/incomplete write; retry next poll
+            entry = _parse_wal_line(data[pos:nl])
+            if entry is not None and entry.get("seq") == inflight:
+                break  # the in-flight (non-durable) entry — stop before consuming it
+            pos = nl + 1
+            self._offset = start + pos
+            if entry is not None:
+                yield entry
+
+
+def _parse_wal_line(raw: bytes) -> "dict | None":
+    """Decode one WAL line, or None if it is not a usable entry.
+
+    Mirrors ``iter_from``'s tolerance: blank lines, non-JSON (torn writes from a
+    crash), non-dicts, and entries without an integer ``seq`` are skipped rather
+    than raising — recovery is best-effort from whatever survived.
+    """
+    stripped = raw.strip()
+    if not stripped:
+        return None
+    try:
+        entry = json.loads(stripped)
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return None
+    if not isinstance(entry, dict) or not isinstance(entry.get("seq"), int):
+        return None
+    return entry
+
+
 class StateLog:
     """Single-file WAL. Process-shared; ownership lives in AgentRegistry."""
 
@@ -169,6 +278,16 @@ class StateLog:
     @property
     def path(self) -> Path:
         return self._path
+
+    def tail_reader(self) -> WalTailReader:
+        """A fresh :class:`WalTailReader` cursor over this log (#2939).
+
+        For derived state that would otherwise be rebuilt by a full ``iter_from``
+        scan every turn. Each reader owns an independent cursor, so callers do
+        not interfere; a reader starts at offset 0 (its first poll yields the
+        whole file with ``restarted=True``).
+        """
+        return WalTailReader(self)
 
     @property
     def current_seq(self) -> int:
@@ -409,10 +528,15 @@ class StateLog:
         ``always_keep_kinds``: entries whose ``kind`` is in this set are kept
         unconditionally regardless of seq. Pass
         ``frozenset({REWIND_KIND})`` (``snapshot_generations.REWIND_KIND``) to
-        protect reset-records from being dropped: ``_active_branch_history`` calls
-        ``is_active_seq`` with ``wal_seq`` values from ``history.jsonl`` (which are
+        protect reset-records from being dropped: ``_active_branch_history`` tests
+        the branch model against ``wal_seq`` values from ``history.jsonl`` (which are
         append-only and can be below the floor), so dropping a rewind record causes
         abandoned conversation turns to reappear in the LLM context.
+
+        This rewrite is also the restart signal for :class:`WalTailReader` cursors
+        (the rename gives the surviving file a new inode), so derived state built
+        on one is rebuilt from the rewritten file rather than kept — a reader
+        cannot serve an entry this dropped.
 
         Atomic strategy (mirrors per-snapshot atomic save):
           1. Stream-read current ``wal.jsonl``, write surviving entries to
