@@ -5,9 +5,9 @@ description: Make a folder of the operator's own documents (txt/md/pdf/xlsx/pptx
 
 # Build and query a RAG corpus
 
-Two builtin pipelines do the work; this skill is the part neither of their
-one-line descriptions can carry -- **when to reach for them, what order they
-go in, and the one mismatch that silently ruins a corpus** (proposal 0063 P4).
+Two builtin pipelines do the work; this skill carries what their one-line
+descriptions cannot -- **when to reach for them, what order they go in, and
+the one mismatch that silently ruins a corpus**.
 
 ## First: is this even the right mechanism?
 
@@ -16,43 +16,61 @@ go in, and the one mismatch that silently ruins a corpus** (proposal 0063 P4).
 | | **this skill** (builtin user RAG) | **`semantic_search`** (in-core RAG) |
 |---|---|---|
 | Store | an **external** sqlite file **you name** (`docs.sqlite`) | reyn's own index, `.reyn/index/<source>/` |
-| Setup | operator enables **3 MCP servers** first | operator indexes a **source**; nothing else |
+| Setup | you install **3 MCP servers** first (operator is prompted) | operator indexes a **source**; nothing else |
 | Reach for it when | the operator points at **a folder/file of documents** and wants a corpus they own, keep, and can hand to another tool | the operator asks about docs **already indexed** as a reyn source |
-| Formats | pdf/xlsx/pptx/docx + txt/md (via the markitdown MCP server) | whatever the indexing code chunked |
+| Formats | pdf/xlsx/pptx/docx + txt/md (via markitdown) | whatever the indexing code chunked |
 
 If `semantic_search` already covers the question, **use it** -- it needs no
-setup. Reach here when the documents are not in it and the operator wants
-their own portable store. Do not ingest a corpus just to answer one question
-about one file: **read the file.**
+setup. Do not ingest a corpus just to answer one question about one file:
+**read the file.**
 
-## Prerequisites -- and you cannot satisfy them yourself
+## Prerequisites -- install them yourself
 
-The three MCP servers this needs (`reyn_markitdown` / `reyn_chunker` /
-`reyn_vector_store`) **ship INERT** -- deliberately unconfigured, so that
-enabling them stays the operator's explicit decision. `mcp.servers` is
-operator config: **you cannot enable them, and you should not try.**
+The three servers **ship INERT**, so enabling them is a decision, not a
+default. **The decision is the operator's; making the request is yours** --
+install them and the permission gate prompts them before anything reaches
+their config. **Do not tell the operator to hand-edit YAML.**
 
-**If they are not enabled, `rag_ingest` does not explode -- it pre-flights
-them and returns a "blocked" message naming each unreachable server with a
-concrete remedy, before spending anything on embeddings.** So a run that comes
-back describing an unreachable server is the pipeline working as designed, not
-a crash. When you get one:
+```
+mcp__install_local(name="reyn_chunker",      command="reyn-rag-chunker",      args=[])
+mcp__install_local(name="reyn_vector_store", command="reyn-rag-vector-store", args=[])
+mcp__install_local(name="reyn_markitdown",   command="uvx", args=["markitdown-mcp"])
+```
 
-- **Relay it to the operator as-is.** It already says which server and what to
-  do; it is written for them, not for you.
-- **Do not retry, and do not work around it** by shelling out or hand-rolling
-  an ingest. The remedy is a config change only the operator can make. Point
-  them at `docs/guide/for-users/build-a-rag-corpus.md`.
+**No `permissions:` block to add** -- a server in the merged config is granted
+when the pipeline runs it. Each install is **probed before it commits**: a
+command that does not start fails the install rather than half-writing config.
+
+`rag_ingest` pre-flights all three and returns a **"blocked"** message naming
+any unreachable server *before* spending on embeddings -- the design working,
+not a crash. When you get one:
+
+- **Not installed yet** (the common case): install it with the call above, re-run.
+- **Operator refused**: stop and relay it. A refusal is an answer, not an error
+  to route around -- **do not shell out, hand-roll an ingest, or re-ask.**
+- **Probe failed**: the runtime is missing. `reyn-rag-*` come from
+  `pip install "reyn[builtin-rag]"` (apsw + sqlite-vec + chonkie) -- **the
+  operator's machine, not your call**; name what failed and let them.
+
+**Never `pip install markitdown-mcp` beside Reyn** -- it invites a dependency
+conflict, and `uvx` fetches it into an isolated environment so it need not
+share. If `uvx` cannot reach PyPI (firewalled), use a **separate venv + an
+absolute path** -- never Reyn's own venv:
+
+```
+python3 -m venv ~/.reyn-markitdown && ~/.reyn-markitdown/bin/pip install markitdown-mcp
+mcp__install_local(name="reyn_markitdown", args=[],
+                   command="/abs/path/.reyn-markitdown/bin/markitdown-mcp")
+```
 
 ## The workflow
 
 **1. Ingest** -- `input_path` **must be absolute**; the pipeline globs it
 directly, and a relative pattern yields the wrong `source_path` column.
-`output_db`, in contrast, is written by the `reyn_vector_store` MCP server
-itself and resolves like any other write: **relative to the sandbox's
-default write grant, which is the directory you ran `reyn` from.** A
-**cwd-relative `output_db` needs no config at all** -- keep it there unless
-the operator wants the store somewhere else (see below).
+`output_db`, by contrast, is written by the `reyn_vector_store` server and
+resolves **relative to the sandbox's default write grant = the directory you
+ran `reyn` from**. A **cwd-relative `output_db` needs no config at all** --
+keep it there unless the operator wants the store elsewhere (see below).
 
 ```
 run_pipeline(name="rag_ingest.ingest", input={
@@ -77,20 +95,14 @@ run_pipeline(name="rag_query.query", input={
 })
 ```
 
-**Want the store somewhere outside cwd instead** (an absolute path, or a
-path outside the project)? That is supported, but it is a **declared
-deviation, not the default**: the operator must add a `write_paths` entry
-naming that location to the `reyn_vector_store` server's config (see
-`docs/cookbook/configs/with-builtin-rag-mcp.yaml`). Without it, the sandbox
-denies the write -- **do not pass an absolute `output_db`/`db` unless the
-operator has already declared `write_paths` for it.**
-
-If you do hit that denial, the error says so: it names the sandbox, the
-exact path, and the `write_paths` knob. **Relay it to the operator rather
-than reporting a broken tool or retrying** -- only they can grant the path
-(`write_paths` is operator-owned config, not something you can set). The
-alternative you CAN act on yourself is the zero-config one: a cwd-relative
-`output_db`.
+**Want the store outside cwd?** A **declared deviation, not the default**: the
+operator must add a `write_paths` entry for that location to
+`reyn_vector_store`'s config (see `docs/cookbook/configs/with-builtin-rag-mcp.yaml`);
+without it the sandbox denies the write. **Do not pass an absolute
+`output_db`/`db` unless they already have.** Unlike the server entry,
+`write_paths` is **not** something `mcp__install_local` can set -- relay that
+denial (it names the sandbox, path, and knob) rather than retrying. The
+alternative you can act on: a cwd-relative `output_db`.
 
 Returns `[{id, distance, metadata}, ...]`, **nearest first**. `metadata`
 carries `source_path` / `chunk_index` / `content_hash` / `embedding_model`.
@@ -102,39 +114,35 @@ quote a hit, read `metadata.source_path` with the ordinary file read op.
 `embedding_model` defaults to `"standard"` on **both** pipelines. If you pass
 it to one, **pass the same value to the other** -- a mismatch changes the
 vector space, and the query either raises `VectorDimensionMismatchError` or,
-same dimension but a different model, returns **quietly meaningless
-neighbours**. Different model -> different sqlite file. To re-embed an
-existing corpus with a new model, ingest into a **new** `output_db`; pointing
-a new model at the old file corrupts it.
+at the same dimension, returns **quietly meaningless neighbours**. Different
+model -> different sqlite file: to re-embed, ingest into a **new** `output_db`;
+pointing a new model at the old file corrupts it.
 
 ## Re-running ingest is cheap -- and is how you update
 
-Ingest is **incremental by `content_hash`** (add / update / remove). Re-run it
-on the same `input_path` + `output_db` after the documents change: unchanged
-chunks are **skipped, not re-embedded** (`chunks_unchanged_skipped` and
-`estimated_tokens_saved_by_dedup` report what the skip saved), changed chunks
-are re-embedded and replaced, and chunks whose file is gone are deleted. **Do
-not delete the sqlite and start over** to "refresh" a corpus -- that pays full
-embedding cost for documents that did not change.
+Ingest is **incremental by `content_hash`**: re-run it on the same
+`input_path` + `output_db` after documents change and unchanged chunks are
+**skipped, not re-embedded** (`chunks_unchanged_skipped` /
+`estimated_tokens_saved_by_dedup` report the saving); changed chunks are
+replaced, and chunks whose file is gone are deleted. **Do not delete the
+sqlite and start over** to "refresh" -- that re-pays full embedding cost for
+documents that did not change.
 
 ## Tuning (only when the defaults underperform)
 
 `chunk_size` (default 400) and `chunk_overlap_ratio` (default 0.125) are
-inputs, not baked-in constants. The defaults are the 2026 persistent-RAG band
+inputs, not constants -- the defaults are the 2026 persistent-RAG band
 (256-512 tokens, 10-15% overlap) and cover most corpora. Raise `chunk_size`
 for dense prose whose ideas span paragraphs; lower it for reference material
-queried by narrow fact. **Changing either re-chunks everything** -> new
-`content_hash` for every chunk -> a full re-embed of the corpus. Decide before
-the first big ingest, not after.
+queried by narrow fact. **Changing either re-chunks everything** -> a full
+re-embed. Decide before the first big ingest, not after.
 
-## Swapping the backend -- copy the pipeline, re-point the server
+## Swapping the backend -- re-point the server
 
-Want a different vector DB, chunker, or parser? **Copy
-`src/reyn/builtin/pipelines/rag_ingest.yaml` (+ `rag_query.yaml`) into the
-operator's project and re-point the `*_server` inputs** (or the `mcp.servers`
-entries they name) at the replacement. Every server name is an input with a
-default (`markitdown_server` / `chunker_server` / `vectorstore_server`), so a
-drop-in swap needs no edit at all -- just pass the new name:
+Want a different vector DB, chunker, or parser? Every server name is an input
+with a default (`markitdown_server` / `chunker_server` / `vectorstore_server`),
+so a drop-in swap needs **no file edit** -- just pass the new name (install it
+first, same as above):
 
 ```
 run_pipeline(name="rag_ingest.ingest", input={
@@ -144,9 +152,10 @@ run_pipeline(name="rag_ingest.ingest", input={
 ```
 
 The replacement must expose the same tool shapes (`upsert` / `query` /
-`list_metadata` / `delete`). **This is the intended extension mechanism, not a
-workaround**: reyn builds no adapter for a user's RAG store (FP-0057 C2), so
-"copy the builtin and re-point it" is the supported path.
+`list_metadata` / `delete`). Need to change the *steps*, not just the server?
+Copy `src/reyn/builtin/pipelines/rag_ingest.yaml` (+ `rag_query.yaml`) into the
+operator's project and edit it. **This is the intended extension mechanism, not
+a workaround**: reyn builds no adapter for a user's RAG store (FP-0057 C2).
 
 Full setup + backend-swap guide: `docs/guide/for-users/build-a-rag-corpus.md`.
 Config to copy: `docs/cookbook/configs/with-builtin-rag-mcp.yaml`.

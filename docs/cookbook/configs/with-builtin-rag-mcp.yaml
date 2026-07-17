@@ -2,26 +2,36 @@
 # builtin pipelines that call it (P3: reyn.builtin.pipelines.rag_ingest /
 # rag_query, registered as rag_ingest.ingest / rag_query.query).
 #
+# This file is the BY-HAND option. You do not need it: ask reyn to ingest a
+# folder in chat and it installs these three servers itself via
+# ``mcp__install_local``, prompting you at the permission gate before it
+# writes anything to ``.reyn/config/mcp.yaml``. Copy this block only if you
+# would rather declare them yourself. Either way the DECISION is yours --
+# by hand here, or at the prompt there.
+#
 # This entire ``mcp.servers`` block ships COMMENTED OUT / INERT. Do not
 # assume uncommenting it is safe by default: an MCP server entry, once it
 # appears under ``mcp.servers.<name>`` in ANY merged config tier, is
 # auto-granted the moment you run ``reyn pipe run`` (#2932's
 # trusted-by-configuration auto-grant -- it keys purely on the server's
 # NAME being present in the merged config, not on any "enabled" flag,
-# because no such flag exists on an MCP server entry today). That premise
-# ("the operator explicitly configured this server") only holds if YOU are
-# the one who copies this block into your own reyn.yaml and uncomments it
-# -- reyn itself never wires this in (see reyn.builtin.mcp_servers module
-# docstring). Read the three servers before enabling them: the vector-store
-# server writes to whatever sqlite file `db_path` names; the chunker server
-# reads no filesystem paths itself; markitdown reads whatever `uri` the
-# ingest pipeline passes it (every file under the folder you point rag_ingest
-# at).
+# because no such flag exists on an MCP server entry today). That is why
+# reyn itself never wires this in (see reyn.builtin.mcp_servers module
+# docstring) and why the install path is permission-gated: a server must
+# not reach the merged config without an explicit operator decision.
+# Read the three servers before enabling them: the vector-store server
+# writes to whatever sqlite file `db_path` names; the chunker server reads
+# no filesystem paths itself; markitdown reads whatever `uri` the ingest
+# pipeline passes it (every file under the folder you point rag_ingest at).
 #
 # Install the extra runtime deps first (NOT part of reyn's base install):
 #   pip install "reyn[builtin-rag]"
-#   uvx markitdown-mcp   # or: pip install markitdown-mcp (pre-install --
-#                         # see the note on R1/uvx-firewall below)
+#
+# That is the whole dependency step. Do NOT ``pip install markitdown-mcp``:
+# ``command: uvx`` below fetches it into uvx's OWN isolated environment on
+# first run, which is the point -- installing it beside reyn only invites a
+# dependency conflict. (Firewalled? See the R1/uvx note below: give it a
+# separate venv and an absolute path, never reyn's venv.)
 #
 # Then copy this block into your reyn.yaml (or reyn.local.yaml) and
 # uncomment it:
@@ -59,10 +69,14 @@
 #       # more. `uvx` fetches the package from PyPI on first run: if your
 #       # network is firewalled (FP-0057's own line-55 finding, the same
 #       # failure class as the default embedding model's HuggingFace fetch),
-#       # pre-install instead of relying on the first-run fetch:
-#       #   pip install markitdown-mcp
-#       # and point `command`/`args` at that installed console script
-#       # instead of `uvx`. rag_ingest's own step-0 pre-flight (X1) checks
+#       # give it its OWN venv -- never reyn's, that is the dependency
+#       # conflict uvx exists to avoid -- and point `command` at the
+#       # absolute path of the console script in it:
+#       #   python3 -m venv ~/.reyn-markitdown
+#       #   ~/.reyn-markitdown/bin/pip install markitdown-mcp
+#       # then: command: /home/you/.reyn-markitdown/bin/markitdown-mcp
+#       #       args: []
+#       # rag_ingest's own step-0 pre-flight (X1) checks
 #       # reachability BEFORE any embedding spend and fails with this same
 #       # guidance, naming the exact server, rather than a bare transport
 #       # exception.
