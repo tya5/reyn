@@ -13,12 +13,15 @@ install verbs:
     the installed copy. Requires a ``require_http_get`` gate for the source
     host + the ``require_file_write`` gate for pipelines.yaml.
 
-NOTE: ``pipeline__`` is the RESOURCE category prefix used for per-pipeline
-dynamic dispatch (e.g. ``pipeline__hello`` launching a registered pipeline).
-Management operations use ``pipeline_management__`` to avoid colliding with
-that resource namespace — mirrors ``skill__`` (resource) vs
-``skill_management__`` (management), which itself mirrors ``mcp__``
-(management) vs dynamic ``mcp.<server>.<tool>`` (resource).
+NOTE: ``pipeline__`` is the LAUNCH category (``pipeline__run`` / ``__list`` /
+the async + inline variants). Management operations use
+``pipeline_management__`` to keep the two planes apart. ``pipeline__<name>``
+(e.g. ``pipeline__hello``) still RESOLVES as an author-time name — it is the
+form the user guide teaches — but #3026 stopped ENUMERATING it: one action per
+registered pipeline made the LLM's tools= payload scale with the operator's
+pipelines. (The old wording here called that a "resource namespace" mirroring
+``skill__``; there is no ``skill__`` category and never has been — see
+``universal_catalog``'s module docstring on how that phantom misled #1647.)
 
 Both verbs delegate to ``op_runtime/pipeline_install.py`` via the
 ``build_legacy_op_context`` bridge (same pattern as the skill/mcp-install

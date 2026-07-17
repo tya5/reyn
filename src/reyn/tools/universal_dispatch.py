@@ -332,9 +332,12 @@ _OPERATION_RULES: Final[dict[str, tuple[str, Callable[[str, Mapping[str, Any]], 
     "exec__sandboxed_exec": ("sandboxed_exec", _passthrough_args),
 
     # skill_management category (#2548 PR-C/PR-D: skill directory install verbs).
-    # NOTE: skill__ is the RESOURCE category prefix (per-skill dynamic dispatch, e.g.
-    # skill__code_review). Management operations use skill_management__ to avoid
-    # colliding with that resource namespace — mirrors mcp__ (mgmt) vs mcp.<s>.<t> (res).
+    # NOTE: there is NO ``skill__`` resource category and there never has been —
+    # despite what this comment used to claim, and what #1647 said it was
+    # mirroring when it added a per-tool MCP action (see the module docstring).
+    # Skills have never cost a tool per skill: #2971 added the
+    # ``skill_management__list`` DISCOVERY verb instead, which is the shape
+    # #3026 then applied to corpora and pipelines.
     "skill_management__install_local":  ("skill_install_local",  _passthrough_args),
     "skill_management__install_source": ("skill_install_source", _passthrough_args),
     # #2971: the discovery verb. Without it a skill outside the L1 menu had no
@@ -343,9 +346,9 @@ _OPERATION_RULES: Final[dict[str, tuple[str, Callable[[str, Mapping[str, Any]], 
 
     # pipeline_management category: pipeline directory/DSL install verbs
     # (mirrors skill_management__install_local / __install_source above).
-    # NOTE: pipeline__ is the RESOURCE category prefix (per-registered-pipeline
-    # dynamic dispatch, e.g. pipeline__hello). Management operations use
-    # pipeline_management__ to avoid colliding with that resource namespace.
+    # NOTE: pipeline__ is the LAUNCH category; pipeline_management__ is the
+    # management plane. ``pipeline__<name>`` still resolves via _RESOURCE_RULES
+    # as an author-time name, but is not enumerated (#3026).
     "pipeline_management__install_local":  ("pipeline_install_local",  _passthrough_args),
     "pipeline_management__install_source": ("pipeline_install_source", _passthrough_args),
 
@@ -375,8 +378,10 @@ _OPERATION_RULES: Final[dict[str, tuple[str, Callable[[str, Mapping[str, Any]], 
 # This is the set of qualified names that PR-2 can route statically
 # (= without consulting runtime caller state). Used by
 # ``suggest_similar_names`` when callers don't supply a candidate list.
-# Dynamic items (multi_agent__*, per-tool mcp__* entries, memory_entry__*,
-# rag_corpus__*) live in caller state and are not enumerated here. PR-3
+# #3026: there are no dynamic items to miss — every action is a static name in
+# _OPERATION_RULES, so this pool is the complete set. (The author-time
+# ``mcp__<server>__<tool>`` / ``pipeline__<name>`` names resolve but are
+# deliberately not suggested: they are not actions the LLM is offered.) PR-3
 # combines this static set with the dynamic items from RouterCallerState to
 # feed the actual suggestion engine. (The legacy agent.peer / mcp.tool /
 # mcp.server dotted sub-categories were collapsed into multi_agent / mcp;
@@ -537,9 +542,12 @@ def suggest_similar_names(
 def known_qualified_name_for_category(category: str) -> tuple[str, ...]:
     """Return the static qualified names PR-2 knows about for ``category``.
 
-    Resource categories (mcp dynamic per-tool entries / memory_entry /
-    rag_corpus) return an empty tuple because their entries are dynamic
-    (= populated by caller state in PR-3).
+    #3026: every category's names are static, so this returns the WHOLE of
+    what ``category`` offers — there is no dynamic remainder to fetch from
+    caller state. ``memory_entry`` / ``rag_corpus`` are not categories at all
+    any more and RAISE here rather than returning empty; the dynamic
+    ``mcp__<server>__<tool>`` / ``pipeline__<name>`` names still resolve, but
+    are not names this (or any) enumerator knows.
 
     Operation categories (file / web / memory_operation / reyn_repo /
     rag_operation / mcp / exec) return the qualified names this module

@@ -524,19 +524,23 @@ def _enumerate_static_category(category: str) -> list[dict[str, str]]:
 
 
 def _enumerate_category(category: str, ctx: ToolContext) -> list[dict[str, str]]:
-    """Enumerate qualified names for ``category`` consulting caller state.
+    """Enumerate the qualified names ``category`` offers this session.
 
-    Dispatch by category kind:
-      - Static operation categories (file / web / memory_operation /
-        reyn_repo / rag_operation / mcp.operation) →
-        _enumerate_static_category (= populated via universal_dispatch's
-        ``_OPERATION_RULES`` table)
-      - Resource categories → consult ctx.router_state (
-        agents / mcp_servers / mcp_servers[*].tools / list_memory_fn /
-        available_rag_sources)
-      - Categories without state-binding yet (exec) →
-        empty list (Phase 2 will populate via sandbox-backed exec
-        enumeration once the introspection API lands)
+    EVERY category resolves to a fixed verb set read out of
+    ``universal_dispatch._OPERATION_RULES`` via ``_enumerate_static_category``.
+    There is no per-category branch that mints a name from operator data, and
+    ``_RESOURCE_RULES`` is deliberately NOT read here (#3026) — that table
+    exists so an author-time name a human already typed still RESOLVES, which
+    costs no tools; enumerating one costs a tool per resource. This function is
+    where the payload invariant lives, so keep it that way: the number of names
+    returned must not depend on how many memories / corpora / MCP tools /
+    pipelines the operator has accumulated.
+
+    ``ctx.router_state`` is consulted, but only ever to decide whether a FIXED
+    verb is AVAILABLE this session — never to invent one:
+      - ``excluded_categories`` (#1667) — the caller drops a whole category.
+      - ``sandbox_backend`` (D14-ext) — ``exec`` enumerates its single verb only
+        when a real backend is configured, and nothing otherwise.
 
     The output items each carry ``qualified_name`` (= what
     invoke_action / describe_action expects) and ``short_description``
@@ -1031,9 +1035,13 @@ def catalog_entries(ctx: ToolContext) -> list[dict[str, Any]]:
     no-arg signature) rather than ``None``.
 
     Deterministic ``name`` sort (stable ``tools=`` ordering → replay-fixture
-    stability). **Pass a ``ToolContext`` with ``router_state`` populated** or the
-    resource categories (agents / mcp_servers / …) enumerate empty and
-    only static categories survive (the "usable this session" semantics).
+    stability). **Pass a ``ToolContext`` with ``router_state`` populated**: no
+    category needs it to produce names any more (#3026), but it still gates
+    AVAILABILITY — ``excluded_categories`` and ``exec``'s sandbox backend — so a
+    None ``router_state`` yields a superset-shaped list that is not the "usable
+    this session" set. Note the count does NOT depend on how much the operator
+    has accumulated; that invariant is pinned in
+    ``tests/test_resource_collapse_invariant_3026.py``.
     """
     from reyn.tools import get_default_registry
 
@@ -1069,14 +1077,11 @@ async def _handle_describe_action(
     ``.parameters`` directly — which is correct for operation-category
     actions (web__fetch / file__read / …) whose target IS the action.
 
-    For resource-category actions (``agent.peer__X``,
-    ``mcp.tool__X.Y``, ``mcp.server__X``, ``rag_corpus__X``) the target
-    is a generic dispatcher (``delegate_to_agent`` /
-    ``call_mcp_tool`` / …) whose ``.parameters`` is the dispatcher's
-    own args shape, NOT the resource's actual input schema. D2-full
-    extends the handler to look up the per-resource schema via
-    ``ctx.router_state`` so the LLM gets actionable structure instead
-    of an opaque ``{name, input}`` envelope (or worse — empty stub).
+    #3026: that is now the whole story — every enumerated action IS its target,
+    so the target's ``.parameters`` is always the right schema. The D2-full
+    per-resource override (look the schema up from ``ctx.router_state`` because
+    the target was a generic dispatcher) went with the resource categories it
+    served; see ``_describe_one``.
 
     For unknown qualified_name, returns the §D12 error-with-suggestions
     response.
@@ -1206,11 +1211,16 @@ def _augment_suggestions(
     """Re-suggest using router_state-aware candidates when available.
 
     The PR-2 default suggestion pool is the static catalogue
-    (= KNOWN_STATIC_QUALIFIED_NAMES, 13 names). When ``ctx.router_state``
-    is populated, we widen the pool with dynamic items (= 
-    agents / mcp.tool / mcp.server / memory_entry) so the suggestion
-    surfaces names the LLM can actually invoke. Falls back to the
-    original exception unchanged when no dynamic items exist.
+    (= KNOWN_STATIC_QUALIFIED_NAMES). This re-derives it from the live
+    enumeration instead, so a suggestion is availability-aware: a category the
+    caller excluded (#1667), or ``exec`` without a sandbox backend, contributes
+    nothing here and is never suggested.
+
+    #3026: it no longer WIDENS the pool. It used to add per-resource names
+    (memory entries / corpora / MCP tools) that only caller state knew; those
+    are collapsed, so enumeration and the static catalogue now describe the
+    same action set and this narrows rather than grows. Falls back to the
+    original exception unchanged when enumeration yields nothing.
     """
     # Lazy import for circular-dep safety
     from reyn.tools.universal_dispatch import (

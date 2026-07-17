@@ -832,9 +832,11 @@ def _filter_ghost_names_by_registry(
     available.
 
     Categories and their existence signals:
-    - ``agent.peer__*`` → must match a name in ``available_agents``.
-    - ``mcp.tool__*`` / ``mcp.server__*`` → must be a key in ``mcp_tool_map``
-      (or any server name prefix for ``mcp.server__*``).
+    - ``agent.peer__*`` / ``mcp.tool__*`` / ``mcp.server__*`` → DEAD legs. These
+      categories were collapsed at #909 / #879, so such a name has not parsed
+      since; #3026 made the unparseable branch DROP rather than pass, so they
+      are now filtered for the right reason and these branches are unreachable.
+      Kept only until someone confirms no tracker table still carries the shape.
     - Every other name → must be in ``KNOWN_STATIC_QUALIFIED_NAMES`` (the
       static op registry). #3026: since no category mints names from operator
       data any more, that registry is the WHOLE action set, and this check is
@@ -1042,11 +1044,14 @@ def _operation_alias_metadata(
     target ``ToolDefinition.description`` and ``ToolDefinition.parameters``
     are the correct alias metadata.
 
-    Returns ``None`` for resource-category aliases (agent.peer /
-    mcp.tool / memory_entry / rag_corpus) — those route through
-    ``_RESOURCE_RULES`` whose target is a generic dispatcher
-    whose parameters do NOT match the resource's actual input schema.
-    Those need per-resource schema introspection (D2-full).
+    #3026: this is total for every alias the hot-list can hold. It used to
+    return ``None`` for resource-category aliases (agent.peer / mcp.tool /
+    memory_entry / rag_corpus), whose generic-dispatcher target did not match
+    the resource's real schema, leaving a ``_resource_alias_metadata``
+    companion to introspect it per-resource (D2-full). Those categories are
+    collapsed and that companion is gone; a name that is not an exact
+    ``_OPERATION_RULES`` key is not an alias candidate at all — the ghost
+    filter drops it before this is reached.
     """
     # Late imports to avoid circular dependency at module load time.
     from reyn.tools import get_default_registry
@@ -1373,8 +1378,10 @@ class RouterLoop:
         _mcp_tool_map: dict[str, dict] = {}
         if _univ_enabled:
             # Skill enumeration removed (stage1 decouple): the short-description
-            # map stays declared (empty) because downstream hot-list code still
-            # reads it for the memory_entry alias descriptions.
+            # map stays declared (empty) because ``_build_hot_list_aliases``
+            # still takes it as its per-name description fallback. (#3026: it is
+            # no longer populated for memory_entry aliases either — that
+            # category, and the per-memory seeding that fed it, are gone.)
             _short_desc_map: dict[str, str] = {}
             # Issue #879: per-mcp-tool aliases (``mcp.tool__<srv>.<tool>``)
             # were removed when the mcp surface collapsed to six verb
@@ -1439,7 +1446,6 @@ class RouterLoop:
                     _top_names,
                     mcp_tool_map=_mcp_tool_map or None,
                     available_agents=host.list_available_agents() or None,
-                    # Dynamic memory_entry__<slug> names enumerated above
                 )
                 if _top_names:
                     _hot_list_aliases = _build_hot_list_aliases(
@@ -2834,9 +2840,12 @@ class RouterLoop:
         (#1598: the all-entries→schemas projection, single-source with
         list/describe via ``_enumerate_category`` + ``_describe_one``, #1455
         invariant; name-sorted; ``parameters`` never None). Async because the
-        complete caller-state is built async (caveat-1: a ``ToolContext`` WITHOUT
-        ``router_state`` drops the resource categories — agents/mcp — and
-        the rag manifest fetch is the genuine await). Maps each generic entry →
+        complete caller-state is built async (caveat-1, #3026: a ``ToolContext``
+        WITHOUT ``router_state`` no longer drops whole categories — none are
+        resource-backed — but it does lose the AVAILABILITY gates
+        (``excluded_categories``, ``exec``'s sandbox backend), so the result is
+        not the "usable this session" set; the rag manifest fetch is the genuine
+        await). Maps each generic entry →
         the OpenAI ``{type: function, function: {name, description, parameters}}``
         shape so the flat tools= is uniform with ``base_tools``."""
         from reyn.tools import universal_catalog
