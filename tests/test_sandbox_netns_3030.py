@@ -143,11 +143,32 @@ def test_mapping_failure_does_not_raise(monkeypatch: pytest.MonkeyPatch) -> None
 
 # ── real enforcement, where netns is actually available on this host ─────────
 
+
+def _landlock_available() -> bool:
+    try:
+        from reyn.security.sandbox.backends.landlock import LandlockBackend
+    except ImportError:
+        return False
+    return LandlockBackend().available()
+
+
+# Both conditions are required: these tests drive through the real Landlock
+# `wrap_command`/`run()` seams, which refuse to run at all (a SEPARATE,
+# correct "Landlock unavailable" refusal — see `_apply_landlock`) when the
+# `landlock` package is absent. `test.yml` deliberately omits the
+# `sandbox-linux` extra (the seccomp module docstring explains why — loading
+# a real filter is irrevocable for the pytest process), so netns can be
+# available on that host (unprivileged user namespaces enabled) while
+# Landlock is not — checking only `netns_available()` let these tests run
+# there and fail on an unrelated "Landlock unavailable" error rather than
+# skip, which is what actually happened in CI on `test.yml`'s Python 3.11/3.12
+# jobs before this guard was added.
 requires_netns = pytest.mark.skipif(
-    not netns_available(),
-    reason="network-namespace isolation unavailable on this host — real "
-    "enforcement cannot be witnessed (non-Linux, or unprivileged user "
-    "namespaces disabled)",
+    not (netns_available() and _landlock_available()),
+    reason="network-namespace isolation and/or Landlock unavailable on this "
+    "host — real enforcement (via wrap_command/run()) cannot be witnessed "
+    "(non-Linux, unprivileged user namespaces disabled, or the "
+    "sandbox-linux extra not installed)",
 )
 
 _EXFIL_PROBE = """
@@ -244,8 +265,8 @@ def test_shim_non_networking_command_still_runs_under_network_false(tmp_path) ->
 
 
 @pytest.mark.skipif(
-    not netns_available() or shutil.which("python3") is None,
-    reason="netns unavailable, or no interpreter for a fresh io_uring check",
+    not (netns_available() and _landlock_available()) or shutil.which("python3") is None,
+    reason="netns/Landlock unavailable, or no interpreter for a fresh io_uring check",
 )
 def test_shim_blocks_io_uring_connect_too(tmp_path) -> None:
     """Tier 2c: the io_uring hole a syscall-name denylist would have missed —
