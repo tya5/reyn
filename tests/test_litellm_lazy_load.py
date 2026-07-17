@@ -22,11 +22,11 @@ import sys
 import textwrap
 from pathlib import Path
 
-SRC_DIR = Path(__file__).resolve().parents[1] / "src"
 
-
-def _run(script: str, extra_env: dict | None = None) -> subprocess.CompletedProcess:
-    env = {**os.environ, "PYTHONPATH": str(SRC_DIR)}
+def _run(
+    src_root: str, script: str, extra_env: dict | None = None
+) -> subprocess.CompletedProcess:
+    env = {**os.environ, "PYTHONPATH": src_root}
     if extra_env:
         env.update(extra_env)
     return subprocess.run(
@@ -38,7 +38,7 @@ def _run(script: str, extra_env: dict | None = None) -> subprocess.CompletedProc
     )
 
 
-def test_setup_interactive_logging_does_not_import_litellm(tmp_path) -> None:
+def test_setup_interactive_logging_does_not_import_litellm(tmp_path, out_of_process_reyn) -> None:
     """Tier 2: `_setup_interactive_logging` — the chat startup-path call — leaves
     litellm out of `sys.modules`.
 
@@ -54,12 +54,12 @@ def test_setup_interactive_logging_does_not_import_litellm(tmp_path) -> None:
         assert "litellm" not in sys.modules, "litellm was imported on the startup path"
         print("OK")
         """
-    result = _run(script)
+    result = _run(out_of_process_reyn, script)
     assert result.returncode == 0, result.stderr
     assert "OK" in result.stdout
 
 
-def test_chat_startup_path_clean_of_litellm_at_input_box_point(tmp_path) -> None:
+def test_chat_startup_path_clean_of_litellm_at_input_box_point(tmp_path, out_of_process_reyn) -> None:
     """Tier 2: the full chat.py startup-path import (module import + the
     startup-logging call, i.e. everything that runs before `run_repl`/the
     input box) never touches litellm.
@@ -81,12 +81,12 @@ def test_chat_startup_path_clean_of_litellm_at_input_box_point(tmp_path) -> None
         )
         print("OK")
         """
-    result = _run(script)
+    result = _run(out_of_process_reyn, script)
     assert result.returncode == 0, result.stderr
     assert "OK" in result.stdout
 
 
-def test_ensure_litellm_ready_imports_litellm_and_is_idempotent(tmp_path) -> None:
+def test_ensure_litellm_ready_imports_litellm_and_is_idempotent(tmp_path, out_of_process_reyn) -> None:
     """Tier 2: `ensure_litellm_ready` (the first-real-use chokepoint) imports
     litellm exactly once, is safe to call repeatedly, and sets
     `suppress_debug_info`.
@@ -102,7 +102,7 @@ def test_ensure_litellm_ready_imports_litellm_and_is_idempotent(tmp_path) -> Non
         assert litellm.suppress_debug_info is True
         print("OK")
         """
-    result = _run(script)
+    result = _run(out_of_process_reyn, script)
     assert result.returncode == 0, result.stderr
     assert "OK" in result.stdout
 
@@ -192,7 +192,7 @@ def test_first_use_routes_litellm_logger_to_file_not_console(tmp_path) -> None:
         litellm_bootstrap._litellm_ready = saved_ready
 
 
-def test_first_use_routes_litellm_import_time_warning_to_file(tmp_path) -> None:
+def test_first_use_routes_litellm_import_time_warning_to_file(tmp_path, out_of_process_reyn) -> None:
     """Tier 2: litellm's cost-map-fetch-failure warning, emitted synchronously
     *during* ``import litellm`` (not a runtime call reyn controls, so exercised
     via a real subprocess), lands in reyn.log and NOT on stderr — now via the
@@ -218,7 +218,7 @@ def test_first_use_routes_litellm_import_time_warning_to_file(tmp_path) -> None:
         assert "litellm" not in __import__("sys").modules
         ensure_litellm_ready()  # first real litellm use -> import happens here
         """
-    result = _run(script)
+    result = _run(out_of_process_reyn, script)
     assert result.returncode == 0, result.stderr
     log_file = project_root / ".reyn" / "logs" / "reyn.log"
     log_text = log_file.read_text()
@@ -226,7 +226,7 @@ def test_first_use_routes_litellm_import_time_warning_to_file(tmp_path) -> None:
     assert "Failed to fetch remote model cost map" not in result.stderr
 
 
-def test_sibling_first_import_routes_import_time_warning_to_file(tmp_path) -> None:
+def test_sibling_first_import_routes_import_time_warning_to_file(tmp_path, out_of_process_reyn) -> None:
     """Tier 2: chokepoint-completeness — when a NON-recorded_acompletion litellm
     call site is the FIRST to import litellm, the import-time cost-map-fetch
     warning still lands in reyn.log, NOT stderr.
@@ -262,7 +262,7 @@ def test_sibling_first_import_routes_import_time_warning_to_file(tmp_path) -> No
         estimate_tokens("some text to size", "gpt-3.5-turbo")
         assert "litellm" in sys.modules, "sibling call did not import litellm"
         """
-    result = _run(script)
+    result = _run(out_of_process_reyn, script)
     assert result.returncode == 0, result.stderr
     log_file = project_root / ".reyn" / "logs" / "reyn.log"
     log_text = log_file.read_text()
@@ -270,7 +270,7 @@ def test_sibling_first_import_routes_import_time_warning_to_file(tmp_path) -> No
     assert "Failed to fetch remote model cost map" not in result.stderr
 
 
-def test_measured_startup_latency_delta_from_deferring_litellm() -> None:
+def test_measured_startup_latency_delta_from_deferring_litellm(out_of_process_reyn) -> None:
     """Tier 2: measures the actual latency delta the perf fix targets — the
     startup-path work (importing `reyn.interfaces.cli.commands.chat` +
     calling `_setup_interactive_logging`) is fast, while a bare
@@ -295,8 +295,8 @@ def test_measured_startup_latency_delta_from_deferring_litellm() -> None:
         import litellm
         print(time.perf_counter() - t)
         """
-    startup_result = _run(startup_script)
-    litellm_result = _run(litellm_script)
+    startup_result = _run(out_of_process_reyn, startup_script)
+    litellm_result = _run(out_of_process_reyn, litellm_script)
     assert startup_result.returncode == 0, startup_result.stderr
     assert litellm_result.returncode == 0, litellm_result.stderr
 

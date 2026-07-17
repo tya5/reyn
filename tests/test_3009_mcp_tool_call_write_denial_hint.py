@@ -180,7 +180,9 @@ def _enforcing_backend_or_skip():
 
 
 @pytest.mark.parametrize("precreate_target_dir", [False, True], ids=["dir-absent", "dir-exists"])
-def test_a_denied_tool_write_tells_the_operator_the_knob(precreate_target_dir, monkeypatch):
+def test_a_denied_tool_write_tells_the_operator_the_knob(
+    precreate_target_dir, monkeypatch, reyn_console_scripts, out_of_process_reyn
+):
     """Tier 2c: a real server denied a real write names the sandbox and the knob.
 
     The whole chain, real throughout — real sandbox backend, real spawned MCP
@@ -202,10 +204,11 @@ def test_a_denied_tool_write_tells_the_operator_the_knob(precreate_target_dir, m
     # The mcp SDK hands the child an allowlisted env subset that drops
     # PYTHONPATH, so an editable/src-layout checkout must pass it explicitly or
     # the SERVER silently runs a different tree than the one under test.
-    src_root = str(Path(__file__).resolve().parents[1] / "src")
+    # `out_of_process_reyn` derives and verifies that pin; `reyn_console_scripts`
+    # states that this test runs `reyn-rag-vector-store` by name (#3024).
     client = MCPClient(
         {"type": "stdio", "command": "reyn-rag-vector-store",
-         "env": {"PATH": os.environ.get("PATH", ""), "PYTHONPATH": src_root}},
+         "env": {"PATH": os.environ.get("PATH", ""), "PYTHONPATH": out_of_process_reyn}},
         server_name="reyn_vector_store",
     )
 
