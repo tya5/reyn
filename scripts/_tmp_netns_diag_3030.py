@@ -14,17 +14,25 @@ import sys
 
 
 def _probe(label: str) -> None:
+    import tempfile
+    parts = []
+    for d in ("/", "/usr", "/lib", "/bin", "/etc", "/tmp", "/usr/lib", "/home"):
+        try:
+            os.listdir(d)
+            parts.append(f"ls({d})=OK")
+        except OSError as e:
+            parts.append(f"ls({d})=FAIL({e.errno})")
     try:
-        n = len(os.listdir("/"))
-        r = f"opendir('/')=OK({n})"
+        td = tempfile.mkdtemp()
+        with open(os.path.join(td, "f"), "w") as fh:
+            fh.write("x")
+        with open(os.path.join(td, "f")) as fh:
+            fh.read()
+        os.listdir(td)
+        parts.append("tmpdir-rw=OK")
     except OSError as e:
-        r = f"opendir('/')=FAIL({e.__class__.__name__}:{e})"
-    try:
-        os.stat("/etc/hostname")
-        s = "stat(/etc/hostname)=OK"
-    except OSError as e:
-        s = f"stat(/etc/hostname)=FAIL({e})"
-    print(f"[{label}] uid={os.getuid()} gid={os.getgid()} euid={os.geteuid()} {r} {s}", flush=True)
+        parts.append(f"tmpdir-rw=FAIL({e.errno})")
+    print(f"[{label}] uid={os.getuid()} gid={os.getgid()} " + " ".join(parts), flush=True)
 
 
 def _in_child(fn) -> None:
