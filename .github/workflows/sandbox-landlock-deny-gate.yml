@@ -1,0 +1,60 @@
+name: sandbox Landlock deny gate
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  landlock-deny-gate:
+    name: Landlock/seccomp deny must fire (single ABI, #2983 stage 3)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      # `sandbox-linux` is deliberately OMITTED from test.yml's extras (loading a
+      # real default-deny seccomp filter is irrevocable for the process that does
+      # it, which is the wrong shape for pytest's shared session). The cost of
+      # that correct decision is that the enforcement arms of
+      # tests/test_landlock_exec_shim_1344e.py skip in EVERY job we have — and a
+      # skip is green. Until this job, the only host that had ever witnessed a
+      # Linux deny was one maintainer's colima VM, run by hand. One host is not a
+      # gate.
+      - name: Install sandbox-linux extra
+        run: pip install -e ".[dev,sandbox-linux]"
+
+      # The gate. It has no skip path: if Landlock or pyseccomp is missing it
+      # exits FATAL rather than passing having observed nothing, because those
+      # are precisely the conditions under which the deny arms report nothing
+      # while rc stays 0.
+      #
+      # Deliberately NOT path-filtered, same reasoning as wheel-reachability.yml
+      # and the seccomp x86_64 job: an incomplete include-list is itself a
+      # false-allow surface. Letting an enforcement regression under an unlisted
+      # path merge because this gate silently never ran would reproduce the exact
+      # class (#2962 / #2980 / #3020) the gate exists to catch.
+      - name: Landlock + seccomp deny gate (probes must fire a real deny)
+        run: python scripts/sandbox_landlock_deny_gate.py
+
+      # Supplementary: the enforcement group of the shim tests, which has never
+      # run in CI. It is not the gate — the script above is, and it is what
+      # cannot skip. This step is safe from the "skip is green" trap for one
+      # specific reason: `requires_landlock` skips exactly when
+      # `LandlockBackend().available()` is False, which the gate above already
+      # FATALs on. So these arms cannot silently skip while the step above is
+      # green.
+      #
+      # Only this file is collected, and nothing in it loads a filter into the
+      # pytest process (each arm launches the shim as a subprocess). -rs prints
+      # what skipped and why, so "what ran" stays legible rather than being
+      # inferred from a pass count.
+      - name: Shim enforcement tests (supplementary — the gate above is the gate)
+        run: python -m pytest tests/test_landlock_exec_shim_1344e.py -v -rs --timeout=120

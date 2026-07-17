@@ -20,12 +20,19 @@ because nothing drove ``_apply_landlock`` and the ruleset build carried a TODO
 naming the exact check ("verify … for the installed landlock package version")
 that nobody could run. A correct, predictive comment guarded nothing.
 
-⚠ **The enforcement group SKIPS where Landlock is absent, which is macOS and, at
-the time of writing, every CI job** (``test.yml`` omits the ``sandbox-linux``
-extra). A green run of this file on a dev box is therefore NOT evidence about
-enforcement — read the skips. What witnesses it is running this on a Linux host
-with the extra installed, or ``LandlockBackend.self_test()`` at runtime, which
-probes the same two axes on whatever host the operator is actually on.
+⚠ **The enforcement group SKIPS where Landlock is absent, which is macOS and
+every job in ``test.yml``** (it omits the ``sandbox-linux`` extra — loading a real
+filter is irrevocable, so pytest's shared session is the wrong shape for it). A
+green run of this file on a dev box is therefore NOT evidence about enforcement —
+read the skips.
+
+What witnesses it: ``sandbox-landlock-deny-gate.yml`` (#2983 stage 3), which
+installs the extra on a Linux runner and runs this file — plus, as its actual
+gate, ``scripts/sandbox_landlock_deny_gate.py``, which drives the same two axes
+through the production probes and cannot skip. That job witnesses ONE Landlock
+ABI (the runner kernel's; an older ABI cannot be faked in a container), so ABI
+1-2 — most of the installed base — is still covered only by
+``LandlockBackend.self_test()`` failing closed on the operator's own host.
 
 No mocks — the real SandboxPolicy / real shim functions / a real subprocess.
 """
