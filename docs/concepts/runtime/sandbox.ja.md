@@ -45,7 +45,9 @@ Reyn のサンドボックスレイヤーは、ワークフローが宣言した
 
 コストは1プロセスあたり probe 2回（短いサブプロセスが数個、数十ミリ秒）でバックエンド名に対してキャッシュされます。実際に real backend を解決する run だけが払い、sandbox に触れない run は払いません。chat 起動経路にも乗りません。
 
-**なぜ probe が2つで、assertion 1つ増ではないか**: 2つの軸は**矛盾する policy を要求します** — write probe は syscall 層から自軸を隔離するために `allow_subprocess: true` を設定し、spawn probe はそのフラグ自体が主題なので `false` を要求します ∴ 1回の launch で両方は witness できません。そして両者は**独立に壊れます**: write 境界は Landlock だけのものである ∴ seccomp filter が一度も load しないホストでも、禁じられた書き込みは完璧に拒否されます — その間、sandbox 内のコードは好きなだけプロセスを spawn できます。write だけの検査は、そのホストを「封じ込め済み」と報告します。
+**なぜ probe が2つで、assertion 1つ増ではないか**: 2つの軸は**矛盾する policy を要求します** — write probe は syscall 層から自軸を隔離するために `allow_subprocess: true` を設定し、spawn probe はそのフラグ自体が主題なので `false` を要求します ∴ 1回の launch で両方は witness できません。そして2つの**検査**は独立に落ちます: Linux では write 境界は Landlock、spawn ゲートは seccomp ∴ filter が死んでいても path rule は動きます。write だけの検査は、そのホストを「封じ込め済み」と報告します。
+
+**なぜ「通った方だけ残す」ではなく両方必須か**: **検査は分解できますが、保護は分解できません。** Landlock は通常の write を govern しますが **`chmod` 権限を一切持たず**、path ベースの `truncate` も handled set の外です ∴ **seccomp が無ければ、どちらも無統治**です。**Linux 6.8 で実測**（Landlock 発効・filter 不在）: `write_paths` 外のファイルへの `open()` は拒否され、**同じファイルへの `os.truncate()` は成功して中身を消しました**。それらの syscall を拒否しているのは、**allowlist に載せないことによる default-deny filter** です（`backends/seccomp.py` の `_EXCLUDED_UNGOVERNABLE` 参照）。∴ **Landlock-without-seccomp は「弱い sandbox」ではなく「首尾一貫しない sandbox」**であり、spawn probe が **filter が load したこと自体を witness する**ことで、その穴を閉じ続けます。
 
 各 probe は deny の前に **positive control** を確立します: policy が *許可している* 操作が実際に起きたことを観測できなければ、通過ではなく「未 witness」と報告します。これが無ければ、何も実行しなかった wrap もまた禁じられたファイルを残さない ∴ 「何も起きなかった」が「deny が発火した」と全く同じに読めてしまいます。spawn probe は control をもう1つ持ちます（`allow_subprocess: false` 下で fork *しない* コマンドは動き続けねばならない）— その機構が default-deny の syscall filter であり、**全てを拒否する filter**と**`fork` だけを拒否する filter**は、それが無ければ判別不能だからです。
 

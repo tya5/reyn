@@ -352,6 +352,26 @@ def enforcement_self_test(backend: "SandboxBackend") -> str | None:
     ``available()`` must stop meaning "yes" for: reyn documents both, and
     ``sandboxed_exec`` callers set both.
 
+    **Why this is all-or-nothing, and not "keep whichever axis passes".** The
+    obvious objection is that failing a Linux host over seccomp discards a
+    Landlock write boundary that demonstrably works — trading real protection for
+    honesty. It does not, because the axes are independent as CHECKS but not as
+    PROTECTION. Landlock has no ``chmod`` right at all and path-based ``truncate``
+    is outside its handled set, so with seccomp absent BOTH are ungoverned; what
+    refuses them is this filter's default-deny, by omitting them from the
+    allowlist (``_EXCLUDED_UNGOVERNABLE`` in ``backends/seccomp.py`` records the
+    reasoning, and ``seccomp.py``'s module docstring notes Landlock cannot block
+    ``ptrace`` either). Measured on Linux 6.8 with Landlock enforcing and no
+    filter: ``open()`` on a file outside ``write_paths`` was refused while
+    ``os.truncate()`` on that same file succeeded and emptied it. So
+    Landlock-without-seccomp is not a weaker sandbox, it is an incoherent one —
+    and "writes are enforced" would be a claim about a boundary that a sandboxed
+    process can walk around. Failing closed is the correct outcome, not a cost.
+
+    Note the spawn probe does not itself attempt ``truncate``: it witnesses that
+    the filter LOADED, which is the precondition for every deny the allowlist
+    expresses by omission.
+
     Cached process-globally on ``backend.name``; see :data:`_CACHE` for why the
     scope is the process and not the instance, and why failures are cached too.
     """
