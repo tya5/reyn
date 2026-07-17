@@ -66,9 +66,16 @@ class EmbeddingConfig:
                        logged as warnings until the concurrent path lands.
         max_retries:   Transient-error retries (0–10).
         retry_backoff: Backoff strategy: ``'exponential'`` or ``'linear'``.
-        timeout:       Per-attempt deadline in seconds for ONE embedding API
-                       call (#3043). ``<= 0`` opts out (= no bound), mirroring
-                       the MCP gateway's ``call_timeout_seconds`` contract.
+        timeout:       Per-attempt deadline in seconds — how long reyn WAITS for
+                       one embedding attempt (#3043). ``<= 0`` opts out (= no
+                       bound), mirroring the MCP gateway's
+                       ``call_timeout_seconds`` contract.
+                       Bounds waiting, NOT spending: the OpenAI SDK client
+                       retries beneath this knob, so one attempt can deliver up
+                       to 3 requests and ``max_retries: 3`` up to 9 (measured:
+                       all 9 delivered in 7.6s under the 60.0s default, which
+                       never engages). Lowering it does not lower that count —
+                       reducing REQUESTS is a separate lever, open in #3047.
                        Default 60.0 == ``chat.timeout.llm_call_seconds``: an
                        embedding call is the same KIND of thing as a chat LLM
                        call (one HTTP round-trip to a model provider), so it

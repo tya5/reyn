@@ -10,6 +10,10 @@ Supports:
     matching cancel half is the `embed` op's `race_cancellable` seam, which is
     at the op because that is where `ctx.cancel_event` lives and because every
     embedding egress in the OS funnels through that op.
+    The bound is a LATENCY invariant, not a COST one — it caps how long we
+    wait, not how many requests the provider receives (the OpenAI SDK client
+    retries underneath it: up to 3 per attempt, 9 across `max_retries: 3`).
+    See `_embed_batch_with_retry` for the measured detail and #3047.
   - Exponential-backoff retry on transient errors
   - tiktoken-based token estimation with char-count fallback
   - Static dimension table with 1536 default for unknown models
@@ -354,8 +358,22 @@ class LiteLLMEmbeddingProvider:
             The bound must not depend on the provider library's cooperation —
             that dependency is exactly what made 6000s the real ceiling here.
 
-        Whichever fires first, both carry the SAME deadline, so the observable
-        contract is one bound per attempt.
+        The two are NOT the same deadline, and that is precisely why both are here
+        (measured, #3047): litellm forwards ``timeout=`` to the OpenAI SDK client as
+        a PER-HTTP-REQUEST deadline, and that client retries INTERNALLY
+        (``max_retries=2`` by default), so ``timeout=2`` alone was measured taking
+        7.9s — 3 requests, not one. ``asyncio.timeout`` is the altitude an operator
+        actually reads this knob at: one deadline for the whole attempt. Without the
+        wrap, ``timeout: 60`` would silently mean up to 180s per attempt.
+
+        ★ SCOPE — this bounds WAITING, not SPENDING. It does not reduce how many
+        requests reach the provider: the SDK's internal retry sits UNDER this bound,
+        so one attempt can deliver up to 3 requests and ``max_retries: 3`` up to 9.
+        Against a fast-erroring provider all 9 were measured delivered in 7.6s with
+        the default 60.0s bound — i.e. the bound never engaged. Lowering it does not
+        lower that count. Reducing REQUESTS is a different lever (an explicit
+        ``max_retries=0`` to litellm, collapsing 9 -> 3) and an open decision in
+        #3047 — deliberately NOT bundled here.
         """
         extra = _proxy_kwargs()
         # Strip provider prefix when routing via local proxy (mirrors call_llm)

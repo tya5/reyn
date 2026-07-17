@@ -24,7 +24,10 @@ the two altitudes each one belongs at:
 
   - the BOUND is inside the provider (`LiteLLMEmbeddingProvider`, resolved by
     `resolve_embed_timeout` from `embedding.timeout`) — so it covers every
-    caller of the provider by construction, not per-call-site;
+    caller of the provider by construction, not per-call-site. It is a LATENCY
+    invariant, not a COST one: it caps how long we wait, not how many requests
+    the provider receives (the OpenAI SDK client retries beneath it — 9 per
+    `embed` at `max_retries: 3`, measured; #3047);
   - the CANCEL is HERE, at the op, racing `provider.embed()` against
     `ctx.cancel_event` via `race_cancellable` — the same primitive and the same
     `Cancelled` → `status="cancelled"` + `<op>_cancelled` audit-event surface
@@ -157,7 +160,11 @@ async def handle(op: EmbedIROp, ctx: OpContext) -> dict:
     except Cancelled:
         # #3043: distinct from a provider failure (P6 audit) — mirrors mcp_cancelled
         # / sandboxed_exec_cancelled. No cost is recorded: the call never returned a
-        # token count, so pricing it would be an invention.
+        # token count, so pricing it would be an invention. NOTE (#3047): requests
+        # already DELIVERED before the cancel are therefore not reflected here —
+        # that under-count is structural to recording post-await (it predates this
+        # path and is not specific to cancel), and closing it needs a design, not a
+        # guess at this seam.
         ctx.events.emit("embed_cancelled", model=op.embedding_model)
         return {"kind": "embed", "status": "cancelled", "model": op.embedding_model}
 
