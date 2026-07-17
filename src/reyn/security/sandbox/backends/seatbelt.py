@@ -188,9 +188,15 @@ class SeatbeltBackend:
         return True
 
     def self_test(self) -> str | None:
-        """Witness a real deny through ``sandbox-exec`` (#2983): None when a write
-        outside ``write_paths`` was refused, else the reason it was not. Cached
-        per process; see ``reyn.security.sandbox.self_test``."""
+        """Witness real denies through ``sandbox-exec`` (#2983): None when a write
+        outside ``write_paths`` was refused AND a spawn under
+        ``allow_subprocess=False`` was refused, else the reason one was not.
+        Cached per process; see ``reyn.security.sandbox.self_test``.
+
+        The second axis is this profile's ``(deny process-fork)`` (#1914) — the
+        macOS counterpart of the Linux seccomp gate, and the one an ``(import
+        "bsd.sb")`` base grants back unless the explicit deny is emitted, which is
+        precisely the kind of silent re-grant #2978 was."""
         from reyn.security.sandbox.self_test import enforcement_self_test  # noqa: PLC0415
 
         return enforcement_self_test(self)

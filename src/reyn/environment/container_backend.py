@@ -378,15 +378,16 @@ class DockerEnvironmentBackend:
         return completed.returncode == 0
 
     def self_test(self) -> str | None:
-        """Always None — this backend is OUTSIDE the #2983 stage-1 enforcement
-        self-test, and says so rather than pretending to have been witnessed.
+        """Always None — this backend is OUTSIDE the #2983 enforcement self-test,
+        and says so rather than pretending to have been witnessed.
 
-        The stage-1 probe attempts a HOST filesystem write outside ``write_paths``
-        and requires a refusal. That question does not translate here: the
-        container itself is the isolation boundary, and this backend scopes policy
-        to the fidelity boundary rather than enforcing the host-path model the
-        probe assumes (see ``SandboxBackend.run``'s note on workspace-coupled
-        backends). Running the probe as-is would ask the wrong question and fail a
+        The probes attempt a HOST filesystem write outside ``write_paths``, and a
+        HOST process spawn under ``allow_subprocess=False``, and require a refusal
+        of each. Neither question translates here: the container itself is the
+        isolation boundary, and this backend scopes policy to the fidelity
+        boundary rather than enforcing the host-path / host-syscall model the
+        probes assume (see ``SandboxBackend.run``'s note on workspace-coupled
+        backends). Running them as-is would ask the wrong question and fail a
         container that is isolating perfectly well.
 
         Returning None is safe here only because nothing consults it: this backend

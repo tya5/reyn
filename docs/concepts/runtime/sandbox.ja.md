@@ -39,13 +39,17 @@ Reyn のサンドボックスレイヤーは、ワークフローが宣言した
 
 ### 封じ込め self-test
 
-バックエンドが選択されるのは、それが**このマシンで実際に deny を発火した**場合のみです。解決時に Reyn はそのバックエンド自身の wrap 経由で短いサブプロセスを起動し、`write_paths` の外への書き込み — 実在するバックエンドなら必ず拒否すべき操作 — を試みます。書き込みが成功してしまえば、そのバックエンドは封じ込めていない ∴ `sandbox.on_unsupported` が「バックエンドが存在しない」場合と同様に適用されます。
+バックエンドが選択されるのは、それが**このマシンで実際に deny を発火した**場合のみです — **主張している全ての軸で**。解決時に Reyn はそのバックエンド自身の wrap 経由で短いサブプロセスを起動し、実在するバックエンドなら必ず拒否すべき2つを試みます: `write_paths` の外への書き込みと、`allow_subprocess: false` 下でのプロセス spawn です。どちらかが成功してしまえば、そのバックエンドは主張どおりには封じ込めていない ∴ `sandbox.on_unsupported` が「バックエンドが存在しない」場合と同様に適用されます。
 
 これが在るのは、**「機構が在る」と「機構が効く」が別の主張**であり、これまで前者しか検査されていなかったからです。バックエンドは、存在し import でき、それでいて完全に不活性であり得ます ∴ 存在だけを問う検査は、何も強制されていない状態で通ります。self-test は後者を、その主張を語っている当のホスト上で問います。
 
-コストは1プロセスあたり probe 1回（短いサブプロセス2つ、数十ミリ秒）でバックエンド名に対してキャッシュされます。実際に real backend を解決する run だけが払い、sandbox に触れない run は払いません。chat 起動経路にも乗りません。
+コストは1プロセスあたり probe 2回（短いサブプロセスが数個、数十ミリ秒）でバックエンド名に対してキャッシュされます。実際に real backend を解決する run だけが払い、sandbox に触れない run は払いません。chat 起動経路にも乗りません。
 
-**覆っていない範囲**: probe が witness するのはファイルシステムの書き込み境界です。ネットワークゲート、`allow_subprocess` / seccomp の syscall 層、ポリシーが統べるすべての経路を exercise するものではありません。通過したバックエンドは **deny を1つ発火した** — 主張するすべての deny の証明ではありません。
+**なぜ probe が2つで、assertion 1つ増ではないか**: 2つの軸は**矛盾する policy を要求します** — write probe は syscall 層から自軸を隔離するために `allow_subprocess: true` を設定し、spawn probe はそのフラグ自体が主題なので `false` を要求します ∴ 1回の launch で両方は witness できません。そして両者は**独立に壊れます**: write 境界は Landlock だけのものである ∴ seccomp filter が一度も load しないホストでも、禁じられた書き込みは完璧に拒否されます — その間、sandbox 内のコードは好きなだけプロセスを spawn できます。write だけの検査は、そのホストを「封じ込め済み」と報告します。
+
+各 probe は deny の前に **positive control** を確立します: policy が *許可している* 操作が実際に起きたことを観測できなければ、通過ではなく「未 witness」と報告します。これが無ければ、何も実行しなかった wrap もまた禁じられたファイルを残さない ∴ 「何も起きなかった」が「deny が発火した」と全く同じに読めてしまいます。spawn probe は control をもう1つ持ちます（`allow_subprocess: false` 下で fork *しない* コマンドは動き続けねばならない）— その機構が default-deny の syscall filter であり、**全てを拒否する filter**と**`fork` だけを拒否する filter**は、それが無ければ判別不能だからです。
+
+**覆っていない範囲**: probe が witness するのはファイルシステムの書き込み境界と、プロセス spawn ゲートで、いずれも command-level の wrap 経由です。ネットワークゲート、`read_deny_paths`、one-shot `run()` 経路の別の preexec ruleset を exercise するものではありません。通過したバックエンドは **deny を2つ発火した** — 主張するすべての deny の証明ではありません。
 
 **macOS 26.3+ と `SeatbeltBackend`**: macOS 26.3 では `sandbox-exec` は継続出荷されています。SBPL プロファイルに `(import "bsd.sb")` と `(allow process-exec*)` を含めることでバックエンドが動作します。詳細は FP-0017 の post-dogfood fix landing notes（コミット `b477508`）を参照してください。
 

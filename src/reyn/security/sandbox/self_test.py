@@ -40,18 +40,31 @@ fails reports the backend as unwitnessed rather than passing it. The oracle is
 the filesystem — whether the file exists — not the exit code, because the file is
 the security property and the exit code is only a backend's report of it.
 
-**Known blind spot (stage 1 is one deny, not a matrix).** This witnesses the
-filesystem write boundary through ``wrap_command``. It does NOT witness the
-network gate, the ``allow_subprocess`` / seccomp syscall layer (the probe policy
-sets ``allow_subprocess=True`` precisely to isolate the write axis from it), or
-the one-shot ``run()`` path's separate preexec ruleset. A backend that passes has
-fired one deny — strictly more than the zero any environment witnessed before
-this — not every deny it claims.
+**Two axes, two probes, because one policy cannot express both (#2983 stage 2).**
+The write probe must set ``allow_subprocess=True`` to isolate its axis from the
+syscall layer; the subprocess probe must set it to ``False``, because that flag
+IS its subject. The policies contradict, so a single launch cannot witness both
+and :func:`probe_subprocess_enforcement` is a second probe rather than another
+assertion inside the first. It matters that it exists at all: the write boundary
+is Landlock's (or Seatbelt's file rules), so a host where the seccomp filter
+never loads — #2962, exactly — passes the write probe green. Until stage 2 a
+passing ``available()`` said nothing whatsoever about ``allow_subprocess``, while
+``configure-sandbox.md`` told operators it was enforced.
+
+**Known blind spot (two denies, still not a matrix).** These witness the
+filesystem write boundary and the subprocess-spawn deny, both through
+``wrap_command``. They do NOT witness the network gate, ``read_deny_paths`` (not
+expressible on Landlock at all), or the one-shot ``run()`` path's separate
+preexec ruleset — which loads its filter through a DIFFERENT code path than the
+shim ``wrap_command`` re-execs, so passing here does not speak for it. A backend
+that passes has fired two denies — strictly more than the zero any environment
+witnessed before #2983 — not every deny it claims.
 """
 from __future__ import annotations
 
 import logging
 import os
+import shlex
 import shutil
 import subprocess
 import tempfile
@@ -93,9 +106,9 @@ def _attempt_create(
     backend: "SandboxBackend",
     policy: SandboxPolicy,
     target: Path,
-    touch: str,
+    argv: list[str],
 ) -> tuple[bool, str]:
-    """Try to create *target* by running ``touch`` through *backend*'s own wrap.
+    """Try to create *target* by running *argv* through *backend*'s own wrap.
 
     Returns ``(created, detail)`` where ``created`` is read from the FILESYSTEM
     (not the exit code — the file is the security property; the exit code is only
@@ -108,7 +121,7 @@ def _attempt_create(
     caught here rather than reported as healthy.
     """
     try:
-        wrapped = backend.wrap_command([touch, str(target)], policy)
+        wrapped = backend.wrap_command(list(argv), policy)
     except Exception as exc:  # noqa: BLE001 — any wrap failure is a probe failure
         return False, f"wrap_command() raised {type(exc).__name__}: {exc}"
 
@@ -182,7 +195,7 @@ def probe_enforcement(backend: "SandboxBackend") -> str | None:
         #    Without this, "the file is absent" below could just mean the command
         #    never ran, and the self-test would pass by observing nothing.
         control = granted / "control"
-        created, detail = _attempt_create(backend, policy, control, touch)
+        created, detail = _attempt_create(backend, policy, control, [touch, str(control)])
         if not created:
             return (
                 f"the enforcement probe could not establish a positive control: "
@@ -194,7 +207,7 @@ def probe_enforcement(backend: "SandboxBackend") -> str | None:
 
         # 2. The deny — the actual claim under test.
         escape = denied / "escape"
-        created, detail = _attempt_create(backend, policy, escape, touch)
+        created, detail = _attempt_create(backend, policy, escape, [touch, str(escape)])
         if created:
             return (
                 f"no deny fired: writing {escape} SUCCEEDED even though it is "
@@ -209,9 +222,135 @@ def probe_enforcement(backend: "SandboxBackend") -> str | None:
         shutil.rmtree(denied, ignore_errors=True)
 
 
+def probe_subprocess_enforcement(backend: "SandboxBackend") -> str | None:
+    """Witness whether *backend* actually denies process spawning under
+    ``allow_subprocess=False`` — the axis ``configure-sandbox.md`` attributes to
+    seccomp-BPF on Linux and to ``(deny process-fork)`` on macOS (#2983 stage 2).
+
+    Returns ``None`` when the spawn was refused, else an operator-readable reason.
+    Uncached; :func:`enforcement_self_test` is the cached entry point.
+
+    Separate from :func:`probe_enforcement` because the two policies contradict —
+    see the module docstring. This is the probe that makes ``available() == True``
+    say anything at all about ``allow_subprocess``: the write probe is satisfied
+    by Landlock alone, so a host whose seccomp filter never loads passes it.
+
+    **Three launches, because two different lies are available here.** The oracle
+    is again the filesystem, never the exit code — measured, not assumed: under a
+    loaded filter ``touch`` CREATES the file via ``openat`` and only then takes
+    EPERM on ``utimensat``, so it reports failure on a write that happened. An
+    exit-code oracle would read that as a deny.
+
+    1. ``allow_subprocess=True`` + a forking command must CREATE its marker —
+       the positive control of #3016: if the probe cannot watch a spawn succeed,
+       the same marker's absence under a deny proves nothing.
+    2. ``allow_subprocess=False`` + a NON-forking command must still create its
+       marker. This control is specific to this axis and load-bearing: the
+       mechanism under test is a default-deny syscall filter, and the first one
+       reyn ever loaded killed ``/bin/echo`` outright (#2962). Without this arm a
+       filter that refuses EVERYTHING is indistinguishable from one that refuses
+       exactly ``fork`` — both leave no marker — and we would report the broadest
+       possible breakage as enforcement.
+    3. Only then the deny: ``allow_subprocess=False`` + the forking command must
+       NOT create its marker. Arms 2 and 3 differ in nothing but the fork, so the
+       absence is attributable to the fork rather than to a wrap that is simply
+       dead under this policy.
+    """
+    sh = shutil.which("sh")
+    touch = shutil.which("touch")
+    cat = shutil.which("cat")
+    if sh is None or touch is None or cat is None:
+        return (
+            "the subprocess-enforcement probe needs 'sh', 'touch' and 'cat' on "
+            "PATH and did not find them all, so it could not be run — this "
+            "backend's allow_subprocess enforcement is unwitnessed, not confirmed"
+        )
+
+    granted = Path(tempfile.mkdtemp(prefix="reyn-sandbox-selftest-spawn-")).resolve()
+    try:
+        def _policy(allow_subprocess: bool) -> SandboxPolicy:
+            # Fixed and synthetic, like the write probe's: write is GRANTED to
+            # `granted` throughout, so nothing here turns on a filesystem deny —
+            # the only variable across the three arms is allow_subprocess (and,
+            # in arm 2, whether the command forks at all).
+            return SandboxPolicy(
+                write_paths=[str(granted)],
+                read_deny_paths=[],
+                network=True,
+                allow_subprocess=allow_subprocess,
+                timeout_seconds=_PROBE_TIMEOUT_SECONDS,
+            )
+
+        def _forking_argv(marker: Path) -> list[str]:
+            # A PIPELINE, not a nested `sh -c`: measured on both platforms, a
+            # shell asked to run one simple command may exec it in place with no
+            # fork at all (macOS /bin/sh does exactly that), which would make the
+            # deny arm's empty marker mean "nothing forked", not "the fork was
+            # refused". A pipeline forces the shell to fork its left-hand side.
+            # `pipe`/`pipe2` are seccomp-baseline (#2962), so under the filter
+            # this reaches the fork and is refused THERE — the denial `denial.py`
+            # already knows how to classify.
+            return [sh, "-c", f"{shlex.quote(touch)} {shlex.quote(str(marker))} "
+                              f"| {shlex.quote(cat)}"]
+
+        # 1. Positive control — a spawn this probe is ALLOWED to make happens.
+        control = granted / "control-spawn"
+        created, detail = _attempt_create(
+            backend, _policy(True), control, _forking_argv(control)
+        )
+        if not created:
+            return (
+                f"the subprocess-enforcement probe could not establish a positive "
+                f"control: a command that forks — permitted here by "
+                f"allow_subprocess=True — did not produce {control} ({detail}). "
+                f"The probe cannot observe a spawn through this backend at all, so "
+                f"a missing marker under allow_subprocess=False would prove "
+                f"nothing; treating enforcement as unwitnessed"
+            )
+
+        # 2. The deny policy must still be able to run a command at all.
+        alive = granted / "control-nofork"
+        created, detail = _attempt_create(
+            backend, _policy(False), alive, [touch, str(alive)]
+        )
+        if not created:
+            return (
+                f"under allow_subprocess=False this backend could not run even a "
+                f"NON-forking command: {alive} — a path this policy GRANTS — was "
+                f"not written ({detail}). Something in this policy's wrap is "
+                f"failing wholesale rather than denying process creation "
+                f"specifically, so a denied spawn cannot be attributed to the "
+                f"allow_subprocess gate; treating enforcement as unwitnessed"
+            )
+
+        # 3. The deny — the actual claim under test.
+        spawned = granted / "spawned"
+        created, detail = _attempt_create(
+            backend, _policy(False), spawned, _forking_argv(spawned)
+        )
+        if created:
+            return (
+                f"no subprocess deny fired: a command that must fork to run wrote "
+                f"{spawned} even though the policy set allow_subprocess=False "
+                f"({detail}). The backend reports allow_subprocess as enforced "
+                f"while sandboxed code can still spawn arbitrary processes — the "
+                f"syscall layer (seccomp-BPF on Linux, (deny process-fork) on "
+                f"macOS) is not active"
+            )
+        return None
+    finally:
+        shutil.rmtree(granted, ignore_errors=True)
+
+
 def enforcement_self_test(backend: "SandboxBackend") -> str | None:
-    """Cached :func:`probe_enforcement` — ``None`` when *backend* fired the deny,
-    else the reason it did not.
+    """Cached probe suite — ``None`` when *backend* fired a real deny on EVERY
+    axis it claims, else the reason one did not.
+
+    Both :func:`probe_enforcement` (filesystem write) and
+    :func:`probe_subprocess_enforcement` (process spawn) must pass. A backend
+    that enforces one axis and silently ignores the other is exactly what
+    ``available()`` must stop meaning "yes" for: reyn documents both, and
+    ``sandboxed_exec`` callers set both.
 
     Cached process-globally on ``backend.name``; see :data:`_CACHE` for why the
     scope is the process and not the instance, and why failures are cached too.
@@ -219,7 +358,7 @@ def enforcement_self_test(backend: "SandboxBackend") -> str | None:
     name = backend.name
     if name in _CACHE:
         return _CACHE[name]
-    reason = probe_enforcement(backend)
+    reason = probe_enforcement(backend) or probe_subprocess_enforcement(backend)
     _CACHE[name] = reason
     if reason is not None:
         _logger.debug("sandbox self-test failed for %r: %s", name, reason)

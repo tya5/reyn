@@ -42,9 +42,11 @@ A backend from this table is used only if it **passes an enforcement self-test**
 
 ## Reyn checks that your sandbox really sandboxes
 
-When Reyn picks a backend, it first proves the backend works **on your machine**: it launches a short subprocess through that backend and tries to write a file somewhere the policy forbids. If the write is refused, the sandbox is real and Reyn uses it. If the write goes through, the backend is not enforcing, and Reyn treats it exactly as if it were not installed — applying your `on_unsupported` setting.
+When Reyn picks a backend, it first proves the backend works **on your machine**. It launches short subprocesses through that backend and tries two things the policy forbids: writing a file outside the writable paths, and spawning a process while `allow_subprocess` is off. Both must be refused. If either goes through, the backend is not enforcing what it claims, and Reyn treats it exactly as if it were not installed — applying your `on_unsupported` setting.
 
 This matters because "the sandbox is installed" and "the sandbox works" are different things. A backend can be present and importable while enforcing nothing at all — right OS, package imports fine, and yet every restriction silently absent. Checking only for presence cannot tell those apart. So Reyn checks the thing you actually care about: whether a forbidden action gets refused.
+
+The two checks are separate on purpose, because they can fail independently. The write boundary and the process-spawn gate are enforced by different mechanisms — on Linux, path rules come from Landlock and the spawn gate from seccomp-BPF — so a host where the syscall filter never loads still refuses forbidden writes perfectly. Checking only writes would call that host sandboxed while any code it runs could still launch whatever it liked.
 
 What you should expect to see:
 
@@ -54,7 +56,7 @@ What you should expect to see:
 
 If you see the warning, your AI code has been running without isolation. The message names the backend and the failure so you can fix it or fail closed deliberately.
 
-**Scope.** The check verifies the filesystem write boundary. It does not exercise the network gate or the syscall-filtering layer, so a passing check means one restriction was proven — a good signal, not a guarantee of every restriction listed below.
+**Scope.** The check verifies the filesystem write boundary and the process-spawn gate. It does not exercise the network gate or `read_deny_paths`, so a passing check means two restrictions were proven — a good signal, not a guarantee of every restriction listed below.
 
 ## Set the agent-level sandbox policy
 
@@ -126,7 +128,7 @@ Uses the Linux Landlock LSM with path-beneath allowlist rules.
 | `write_paths` | Enforced — path-beneath write rules |
 | `network` | Enforced on Linux 6.7+ (ABI v4); warning logged on older kernels |
 | `read_deny_paths` | **Not enforced** — Landlock is allowlist-only and cannot carve a subpath out of an allowed parent. The network gate is the primary exfiltration control. |
-| `allow_subprocess` | Enforced via seccomp-BPF when available |
+| `allow_subprocess` | **Enforced** — seccomp-BPF refuses `fork`/`clone`. Landlock is not selected unless the self-test witnesses this deny on your host, so this is a checked claim rather than a hope that `pyseccomp` is installed and loading |
 | `timeout_seconds` | Enforced |
 
 ### Noop
