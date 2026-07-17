@@ -4,7 +4,7 @@ Invoked as ``python -m reyn.core.kernel._codeact_harness`` inside the sandbox. U
 ``_python_harness`` (a pure one-shot function runner), CodeAct code interleaves
 computation with **synchronous tool calls** mid-execution, so this harness opens a
 **duplex control channel** to the parent: the only world-effect path exposed to the
-snippet is a ``tool(name, **args)`` shim that round-trips each call to the parent,
+snippet is a ``tool(name, /, **args)`` shim that round-trips each call to the parent,
 where the SAME OS exclude + ``dispatch_tool`` + permission gate runs it (P5). The
 snippet never holds permission authority or reaches Reyn internals directly.
 
@@ -83,15 +83,29 @@ class _ControlChannelClosed(RuntimeError):
 
 
 def _make_tool_shim(channel: _ControlChannel):
-    """Build the ``tool(name, **args)`` callable injected into the snippet namespace.
+    """Build the ``tool(name, /, **args)`` callable injected into the snippet namespace.
 
     Marshals ``(name, args)`` to the parent, which runs the OS exclude +
     ``dispatch_tool`` + permission gate, and returns the result envelope's payload.
     A ``status == "error"`` envelope is raised as ``ToolError`` so the snippet can
     try/except it the way it would a normal Python call (permission_denied /
-    tool_excluded / unknown_tool surface here)."""
+    tool_excluded / unknown_tool surface here).
 
-    def tool(name: str, **args: Any) -> Any:
+    ``name`` is **positional-only** (#3041). It means "which tool to call", but
+    ``**args`` carries the TARGET tool's own schema keys — and ~20 registered tools
+    (``mcp__install_local``, ``agent_spawn``, ``remember_shared``, ``pipeline__run``
+    …) declare a parameter literally called ``name``. Without the ``/``, that key
+    binds to this function's own ``name`` slot, which ``_make_action_stub`` has
+    ALREADY filled positionally, and Python raises ``TypeError: got multiple values
+    for argument 'name'`` before the call ever reaches the parent gate — making every
+    such tool uncallable under CodeAct with no LLM-side workaround (the collision is
+    in the shim, not in the snippet). The ``/`` closes the namespace: a positional-only
+    parameter cannot be filled by a keyword, so ``name='reyn_chunker'`` lands in
+    ``**args`` where it belongs. A ``**kwargs`` catch-all can never collide, so
+    pinning ``name`` behind the ``/`` is sufficient — no other parameter here is
+    keyword-reachable."""
+
+    def tool(name: str, /, **args: Any) -> Any:
         reply = channel.call({"op": "tool_call", "name": name, "args": args})
         result = reply.get("result", {})
         if isinstance(result, dict) and result.get("status") == "error":
@@ -117,7 +131,12 @@ def _make_action_stub(qualified_name: str, tool_shim: Any):
     identical to the old ``tool('file__read', ...)`` proxy; only the LLM-facing surface
     changes (a selected identifier, never a produced string). Keyword args only
     (matches the proxy contract + the SP's keyword example); a positional call raises a
-    clear TypeError the model self-corrects from."""
+    clear TypeError the model self-corrects from.
+
+    The qualified name rides ``tool``'s POSITIONAL-ONLY first slot (#3041), so a
+    ``kwargs`` key named ``name`` — which the target tool's own schema is entitled to
+    declare — flows through to the parent as an argument instead of colliding with
+    this stub's "which tool" channel."""
 
     def _stub(**kwargs: Any) -> Any:
         return tool_shim(qualified_name, **kwargs)

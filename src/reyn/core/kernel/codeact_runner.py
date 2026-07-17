@@ -1,7 +1,7 @@
 """Parent-side orchestrator for a CodeAct snippet (#1593 PR-3, S2).
 
 Runs the model's snippet in a subprocess (``reyn.core.kernel._codeact_harness``) and
-services its duplex permission-proxy: each ``tool(name, **args)`` the snippet calls
+services its duplex permission-proxy: each ``tool(name, /, **args)`` the snippet calls
 round-trips over an inherited AF_UNIX socketpair to ``dispatch`` here in the parent
 — the SAME OS exclude + ``dispatch_tool`` + permission gate (P5). The snippet holds
 no permission authority and cannot reach Reyn internals; the socket is the single,
