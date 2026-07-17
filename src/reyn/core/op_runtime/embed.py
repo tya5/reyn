@@ -14,6 +14,33 @@ itself: `provider.embed()` already internally splits into
 simply list-in -> list-out (ADR-0033 §2.1 / FP-0057 design "batch: list ->
 vectors").
 
+Bound + cancel seam (#3043). `embed` was the ONE provider call in the OS that
+was neither bounded nor cancellable: MCP has the gateway's 120s bound +
+`race_cancellable`; the chat LLM path has `chat.timeout.llm_call_seconds` + a
+timeout-exhaustion channel; `litellm.aembedding` had neither, so its only
+ceiling was litellm's own `request_timeout` default (6000s/attempt, ~5h across
+`max_retries`) and a Ctrl-C could not interrupt it. The two halves now live at
+the two altitudes each one belongs at:
+
+  - the BOUND is inside the provider (`LiteLLMEmbeddingProvider`, resolved by
+    `resolve_embed_timeout` from `embedding.timeout`) — so it covers every
+    caller of the provider by construction, not per-call-site. It is a LATENCY
+    invariant, not a COST one: it caps how long we wait, not how many requests
+    the provider receives (the OpenAI SDK client retries beneath it — 9 per
+    `embed` at `max_retries: 3`, measured; #3047);
+  - the CANCEL is HERE, at the op, racing `provider.embed()` against
+    `ctx.cancel_event` via `race_cancellable` — the same primitive and the same
+    `Cancelled` → `status="cancelled"` + `<op>_cancelled` audit-event surface
+    `mcp` / `sandboxed_exec` already use. This is the right altitude because
+    EVERY embedding egress in the OS funnels through this op (`semantic_search`,
+    `index_update`, and `ActionEmbeddingIndex` all dispatch `EmbedIROp` rather
+    than calling `provider.embed()` provider-direct — see the redaction-egress
+    seam below, which is load-bearing for the same reason), so one seam here
+    makes every embedding egress cancellable. `race_cancellable` cancels the
+    HOST task, so the cancel propagates through the provider's internal
+    `asyncio.gather` into the in-flight HTTP read — it does not wait out the
+    bound above.
+
 Redaction-egress seam (co-vet #3, security): embedding via an API-backed
 provider is a DATA EGRESS point — text content leaves the process to an
 external embedding API. Every text is passed through the PRE-embed scan
@@ -31,6 +58,7 @@ from __future__ import annotations
 
 import os
 
+from reyn.core.cancellable import Cancelled, race_cancellable
 from reyn.data.embedding import get_provider
 from reyn.schemas.models import EmbedIROp
 from reyn.security.secret_redaction import redact_secrets
@@ -96,6 +124,10 @@ async def handle(op: EmbedIROp, ctx: OpContext) -> dict:
 
     Returns: `{"kind": "embed", "vectors": list[list[float]], "model": str,
     "total_tokens": int, "cost_usd": float | None, "priced": bool}`.
+    On a Ctrl-C mid-embed (#3043) the shape is instead `{"kind": "embed",
+    "status": "cancelled", "model": str}` + an `embed_cancelled` audit-event —
+    the `mcp` / `sandboxed_exec` cancelled-surface, not an error.
+
     `cost_usd` is `None` (with `priced=False`) when litellm cannot price
     `model` — an unpriced/unknown model must degrade VISIBLY, never silently
     read as $0.00 (#1829 sentinel, extended to embedding mode). Errors
@@ -120,7 +152,21 @@ async def handle(op: EmbedIROp, ctx: OpContext) -> dict:
         )
 
     provider = _resolve_provider(event_sink=ctx.embedding_event_sink)
-    result = await provider.embed(scanned_texts, op.embedding_model)
+    try:
+        result = await race_cancellable(
+            provider.embed(scanned_texts, op.embedding_model),
+            cancel_event=ctx.cancel_event,
+        )
+    except Cancelled:
+        # #3043: distinct from a provider failure (P6 audit) — mirrors mcp_cancelled
+        # / sandboxed_exec_cancelled. No cost is recorded: the call never returned a
+        # token count, so pricing it would be an invention. NOTE (#3047): requests
+        # already DELIVERED before the cancel are therefore not reflected here —
+        # that under-count is structural to recording post-await (it predates this
+        # path and is not specific to cancel), and closing it needs a design, not a
+        # guess at this seam.
+        ctx.events.emit("embed_cancelled", model=op.embedding_model)
+        return {"kind": "embed", "status": "cancelled", "model": op.embedding_model}
 
     model_used = result.get("model", op.embedding_model)
     total_tokens = result.get("total_tokens", 0)

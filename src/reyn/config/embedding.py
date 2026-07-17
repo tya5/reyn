@@ -66,6 +66,24 @@ class EmbeddingConfig:
                        logged as warnings until the concurrent path lands.
         max_retries:   Transient-error retries (0–10).
         retry_backoff: Backoff strategy: ``'exponential'`` or ``'linear'``.
+        timeout:       Per-attempt deadline in seconds — how long reyn WAITS for
+                       one embedding attempt (#3043). ``<= 0`` opts out (= no
+                       bound), mirroring the MCP gateway's
+                       ``call_timeout_seconds`` contract.
+                       Bounds waiting, NOT spending: the OpenAI SDK client
+                       retries beneath this knob, so one attempt can deliver up
+                       to 3 requests and ``max_retries: 3`` up to 9 (measured:
+                       all 9 delivered in 7.6s under the 60.0s default, which
+                       never engages). Lowering it does not lower that count —
+                       reducing REQUESTS is a separate lever, open in #3047.
+                       Default 60.0 == ``chat.timeout.llm_call_seconds``: an
+                       embedding call is the same KIND of thing as a chat LLM
+                       call (one HTTP round-trip to a model provider), so it
+                       carries the same bound — unlike an MCP call (120.0),
+                       which also pays a subprocess spawn. Without this the
+                       effective bound was litellm's own ``request_timeout``
+                       default of 6000s (= 100 min/attempt, ~5h across
+                       ``max_retries``) — indistinguishable from a hang.
         tokenizer:     tiktoken encoding used for chunk-size estimation.
         cost_warn_threshold:
                        Ask-user gate fires when estimated chunk count
@@ -80,6 +98,7 @@ class EmbeddingConfig:
     max_concurrent_batches: int = 1
     max_retries: int = 3
     retry_backoff: Literal["exponential", "linear"] = "exponential"
+    timeout: float = 60.0
     tokenizer: str = "cl100k_base"
     cost_warn_threshold: int = 10000
 
@@ -187,6 +206,13 @@ def _build_embedding_config(raw: object) -> EmbeddingConfig:
     max_concurrent_batches = int(raw.get("max_concurrent_batches", defaults.max_concurrent_batches))
     max_retries = int(raw.get("max_retries", defaults.max_retries))
     retry_backoff = str(raw.get("retry_backoff", defaults.retry_backoff))
+    raw_timeout = raw.get("timeout", defaults.timeout)
+    try:
+        timeout = float(raw_timeout)
+    except (TypeError, ValueError):
+        raise ValueError(
+            f"embedding.timeout must be a number of seconds, got {raw_timeout!r}"
+        ) from None
     tokenizer = str(raw.get("tokenizer", defaults.tokenizer))
     cost_warn_threshold = int(raw.get("cost_warn_threshold", defaults.cost_warn_threshold))
     default_class = str(raw.get("default_class", defaults.default_class))
@@ -210,6 +236,14 @@ def _build_embedding_config(raw: object) -> EmbeddingConfig:
         raise ValueError(
             f"embedding.max_retries must be 0–10, got {max_retries}"
         )
+    if timeout <= 0:
+        logging.getLogger(__name__).warning(
+            "embedding.timeout=%s opts OUT of the per-attempt bound: an embedding "
+            "API call that stalls will run to litellm's own request_timeout "
+            "(6000s/attempt) with nothing to interrupt it (#3043). Set a positive "
+            "number of seconds to restore a finite bound.",
+            timeout,
+        )
     if retry_backoff not in {"exponential", "linear"}:
         raise ValueError(
             f"embedding.retry_backoff must be 'exponential' or 'linear', "
@@ -228,6 +262,7 @@ def _build_embedding_config(raw: object) -> EmbeddingConfig:
         max_concurrent_batches=max_concurrent_batches,
         max_retries=max_retries,
         retry_backoff=retry_backoff,  # type: ignore[arg-type]
+        timeout=timeout,
         tokenizer=tokenizer,
         cost_warn_threshold=cost_warn_threshold,
     )

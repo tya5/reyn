@@ -4,6 +4,16 @@ Supports:
   - Model class lookup: config["classes"]["standard"] → literal model string
   - Dict-form ModelSpec with `extends` chain resolution (mirrors llm.ModelResolver)
   - Internal batching + concurrency limit via asyncio.Semaphore
+  - A finite per-attempt bound on every aembedding call (#3043) —
+    `embedding.timeout`, default 60.0s, `<= 0` opts out. Applied HERE (not at
+    the op) so it covers every caller of this provider by construction. The
+    matching cancel half is the `embed` op's `race_cancellable` seam, which is
+    at the op because that is where `ctx.cancel_event` lives and because every
+    embedding egress in the OS funnels through that op.
+    The bound is a LATENCY invariant, not a COST one — it caps how long we
+    wait, not how many requests the provider receives (the OpenAI SDK client
+    retries underneath it: up to 3 per attempt, 9 across `max_retries: 3`).
+    See `_embed_batch_with_retry` for the measured detail and #3047.
   - Exponential-backoff retry on transient errors
   - tiktoken-based token estimation with char-count fallback
   - Static dimension table with 1536 default for unknown models
@@ -38,6 +48,47 @@ _MODEL_DIMENSIONS: dict[str, int] = {
 }
 
 _DEFAULT_DIMENSION = 1536  # fallback for unknown models
+
+
+# ---------------------------------------------------------------------------
+# Per-attempt bound (#3043)
+# ---------------------------------------------------------------------------
+
+#: Per-attempt deadline for ONE ``litellm.aembedding`` call, in seconds.
+#: Matches ``chat.timeout.llm_call_seconds`` (``reyn.config.chat``): an embedding
+#: call is the same KIND of external call as a chat LLM call — one HTTP round-trip
+#: to a model provider — so it carries the same bound. (The MCP gateway's 120.0 is
+#: deliberately NOT the mirror target for the VALUE: an MCP call also pays a
+#: subprocess spawn, which an embedding call does not. It IS the mirror target for
+#: the SHAPE — see ``_bounded_timeout`` and the op-level cancel race.)
+#: Without a bound, litellm's own ``request_timeout`` default (6000.0 = 100 min per
+#: attempt, ~5h across ``max_retries``) is the only ceiling — a hang, to an operator.
+_DEFAULT_EMBED_TIMEOUT_SECONDS: float = 60.0
+
+
+def resolve_embed_timeout(config: "dict[str, Any] | Any") -> "float | None":
+    """Per-attempt embedding timeout: the finite default, overridden by ``timeout``
+    (``embedding.timeout`` in reyn.yaml); ``<= 0`` opts out (no bound). A malformed
+    value falls back to the default — fail-safe, i.e. keep a finite bound.
+
+    Mirrors :func:`reyn.mcp.gateway.resolve_call_timeout` (the same contract, so an
+    operator who knows one knob knows the other), reading from either the
+    ``EmbeddingConfig`` dataclass or the legacy plain-dict config form.
+    """
+    raw = (
+        config.get("timeout")
+        if isinstance(config, dict)
+        else getattr(config, "timeout", None)
+    )
+    timeout: "float | None" = _DEFAULT_EMBED_TIMEOUT_SECONDS
+    if raw is not None:
+        try:
+            timeout = float(raw)
+        except (TypeError, ValueError):
+            timeout = _DEFAULT_EMBED_TIMEOUT_SECONDS
+    if timeout is not None and timeout <= 0:
+        return None
+    return timeout
 
 
 # ---------------------------------------------------------------------------
@@ -132,6 +183,9 @@ class LiteLLMEmbeddingProvider:
               retry_backoff     float (default 2.0, base for 2^attempt seconds)
             Optional:
               tokenizer         str (default "cl100k_base")
+              timeout           float (default 60.0; <= 0 opts out) — the
+                                per-attempt deadline for one aembedding call
+                                (#3043), resolved via resolve_embed_timeout.
     """
 
     def __init__(self, config: "dict[str, Any] | Any | None" = None) -> None:
@@ -166,6 +220,10 @@ class LiteLLMEmbeddingProvider:
             self._max_retries: int = int(config.get("max_retries", 3))
             self._retry_backoff: float = float(config.get("retry_backoff", 2.0))
             self.tokenizer: str = config.get("tokenizer", "cl100k_base")
+        # #3043: resolved from EITHER config form by the same function, so the
+        # dict (legacy / test) path and the dataclass (production) path cannot
+        # disagree about the bound. None = operator opted out (`timeout <= 0`).
+        self._timeout: "float | None" = resolve_embed_timeout(config)
 
     # ── Config read-only accessors ────────────────────────────────────────
     # Tier-C1 cleanup: expose the init-time-frozen config fields via
@@ -188,6 +246,11 @@ class LiteLLMEmbeddingProvider:
     @property
     def retry_backoff(self) -> float:
         return self._retry_backoff
+
+    @property
+    def timeout(self) -> "float | None":
+        """Per-attempt bound in seconds; ``None`` = operator opted out (#3043)."""
+        return self._timeout
 
     # ── Model resolution ───────────────────────────────────────────────────
 
@@ -280,7 +343,38 @@ class LiteLLMEmbeddingProvider:
     async def _embed_batch_with_retry(
         self, batch: list[str], resolved_model: str
     ) -> EmbedBatchResult:
-        """Call litellm.aembedding() with exponential-backoff retry."""
+        """Call litellm.aembedding() with a per-attempt bound + exponential-backoff retry.
+
+        #3043: the bound is applied TWICE, deliberately — mirroring
+        ``MCPGateway._run``, which likewise passes ``timeout_seconds`` INTO the
+        client and ALSO wraps the await in ``asyncio.timeout``:
+
+          - ``timeout=`` into ``aembedding`` lets litellm enforce its own HTTP
+            deadline and tear its connection down cleanly (and raise its own
+            ``Timeout``, which the retry loop below then treats as any other
+            transient error);
+          - ``asyncio.timeout`` around the await is the STRUCTURAL ceiling that
+            holds even if litellm ignores, mishandles, or reinterprets the kwarg.
+            The bound must not depend on the provider library's cooperation —
+            that dependency is exactly what made 6000s the real ceiling here.
+
+        The two are NOT the same deadline, and that is precisely why both are here
+        (measured, #3047): litellm forwards ``timeout=`` to the OpenAI SDK client as
+        a PER-HTTP-REQUEST deadline, and that client retries INTERNALLY
+        (``max_retries=2`` by default), so ``timeout=2`` alone was measured taking
+        7.9s — 3 requests, not one. ``asyncio.timeout`` is the altitude an operator
+        actually reads this knob at: one deadline for the whole attempt. Without the
+        wrap, ``timeout: 60`` would silently mean up to 180s per attempt.
+
+        ★ SCOPE — this bounds WAITING, not SPENDING. It does not reduce how many
+        requests reach the provider: the SDK's internal retry sits UNDER this bound,
+        so one attempt can deliver up to 3 requests and ``max_retries: 3`` up to 9.
+        Against a fast-erroring provider all 9 were measured delivered in 7.6s with
+        the default 60.0s bound — i.e. the bound never engaged. Lowering it does not
+        lower that count. Reducing REQUESTS is a different lever (an explicit
+        ``max_retries=0`` to litellm, collapsing 9 -> 3) and an open decision in
+        #3047 — deliberately NOT bundled here.
+        """
         extra = _proxy_kwargs()
         # Strip provider prefix when routing via local proxy (mirrors call_llm)
         effective_model = (
@@ -301,7 +395,8 @@ class LiteLLMEmbeddingProvider:
                 from reyn.llm.litellm_bootstrap import ensure_litellm_ready
                 ensure_litellm_ready()
                 import litellm
-                response = await litellm.aembedding(
+                response = await self._aembedding_bounded(
+                    litellm,
                     model=effective_model,
                     input=batch,
                     # #1616: drop provider-unsupported params (e.g. encoding_format
@@ -328,6 +423,19 @@ class LiteLLMEmbeddingProvider:
             f"Embedding failed after {self._max_retries} attempts. "
             f"Last error: {last_exc}"
         ) from last_exc
+
+    async def _aembedding_bounded(self, litellm: Any, **kwargs: Any) -> Any:
+        """One ``litellm.aembedding`` call under the per-attempt bound (#3043).
+
+        The single place the bound is applied, so a future call site cannot reach
+        ``aembedding`` unbounded by forgetting to wrap it (the swept-missed shape
+        that produced this bug). ``self._timeout is None`` = operator opted out
+        (``embedding.timeout <= 0``) → the historical unbounded call, unchanged.
+        """
+        if self._timeout is None:
+            return await litellm.aembedding(**kwargs)
+        async with asyncio.timeout(self._timeout):
+            return await litellm.aembedding(timeout=self._timeout, **kwargs)
 
     @staticmethod
     def _parse_response(response: Any, fallback_model: str) -> EmbedBatchResult:
