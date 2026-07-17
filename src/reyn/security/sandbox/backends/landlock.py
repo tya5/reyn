@@ -111,13 +111,21 @@ class LandlockBackend:
         return self._import_error
 
     def self_test(self) -> str | None:
-        """Witness a real deny through the Landlock wrap (#2983): None when a
-        write outside ``write_paths`` was refused, else the reason it was not.
+        """Witness real denies through the Landlock wrap (#2983): None when a
+        write outside ``write_paths`` was refused AND a spawn under
+        ``allow_subprocess=False`` was refused, else the reason one was not.
         Cached per process; see ``reyn.security.sandbox.self_test``.
 
-        Note this probes ``wrap_command`` — the re-exec shim — which is where
-        #2980 lives (the shim calls ``Ruleset`` methods the pinned package does
-        not have, so it raises before restricting anything). The shim reaches
+        The second axis is seccomp's, not Landlock's (``_child_preexec`` /
+        ``landlock_exec._apply_seccomp`` gate ``fork``/``clone`` on
+        ``allow_subprocess``), and it is why passing the write probe was never
+        evidence about this backend's syscall layer: the write boundary is
+        Landlock's alone, so #2962 — a filter that never loaded — is invisible to
+        it.
+
+        Note both probes go through ``wrap_command`` — the re-exec shim — which is
+        where #2980 lives (the shim calls ``Ruleset`` methods the pinned package
+        does not have, so it raises before restricting anything). The shim reaches
         ``available()`` on its own side; it never reaches back into this method,
         so the probe cannot recurse into itself.
         """

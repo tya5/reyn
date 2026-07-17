@@ -24,7 +24,7 @@ sandbox:
 | プラットフォーム | 条件 | バックエンド |
 |---|---|---|
 | macOS | `sandbox-exec` が利用可能 | Seatbelt（SBPL deny-default） |
-| Linux | カーネル ≥ 5.13 かつ `sandbox-linux` パッケージインストール済み | Landlock（+ オプション seccomp-BPF） |
+| Linux | カーネル ≥ 5.13 かつ `sandbox-linux` パッケージインストール済み | Landlock **+ seccomp-BPF（両方必須）** |
 | その他 | — | Noop（監査のみ、封じ込め無し） |
 
 この表のバックエンドは、あなたのマシンで**封じ込め self-test に通った場合にのみ**使用されます（後述）。
