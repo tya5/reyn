@@ -114,8 +114,8 @@ Linux Landlock LSM のパス以下許可リストルールを使用。
 | フィールド | 適用 |
 |---|---|
 | `write_paths` | 適用 — path-beneath 書き込みルール |
-| `network` | Linux 6.7+（ABI v4）で適用。旧カーネルでは警告ログを出力 |
-| `read_deny_paths` | **非対応** — Landlock は許可リストのみで、許可した親から子パスを除外できない。ネットワークゲートが主要な外部流出制御。 |
+| `network` | **`allow_subprocess: false` のときのみ適用** — それ以外では**まったく適用されない**（[#3030](https://github.com/tya5/reyn/issues/3030)）。Landlock 自体はどのカーネルでもネットワークを制限しない（pin された `landlock` パッケージがネットワークルール API を持たない）ため、deny は seccomp だけが担う — そしてフィルタ全体が `allow_subprocess: true` でスキップされ、ネットワークゲートも道連れになる。stdio MCP サーバは `subprocess: true` が既定なので、**既定の MCP 構成では外向きネットワークは制限されない**。 |
+| `read_deny_paths` | **非対応** — Landlock は許可リストのみで、許可した親から子パスを除外できない。ネットワークゲートが代償の外部流出制御となる想定だが、上の `network` 行を参照 — `allow_subprocess: true` ではどちらも効かない。秘密を読めるプロセスの封じ込めをこのプラットフォームに依存しないこと。 |
 | `allow_subprocess` | 利用可能な場合 seccomp-BPF で適用 |
 | `timeout_seconds` | 適用 |
 

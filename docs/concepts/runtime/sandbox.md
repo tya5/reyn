@@ -31,7 +31,7 @@ Defined in `src/reyn/security/sandbox/policy.py`. Passed as fields on a `sandbox
 | Platform | Condition | Backend | Notes |
 |----------|-----------|---------|-------|
 | macOS | `sandbox-exec` present **and self-test passes** | `SeatbeltBackend` | SBPL deny-default profile via `sandbox-exec`. `sandbox-exec` is deprecated upstream but remains functional on macOS 26.3. Falls back to `NoopBackend` if the binary is absent. |
-| Linux | kernel ≥ 5.13, `sandbox-linux` extra installed, **self-test passes** | `LandlockBackend` + seccomp-BPF | `pip install reyn[sandbox-linux]` required. ABI v4+ adds network port rules. |
+| Linux | kernel ≥ 5.13, `sandbox-linux` extra installed, **self-test passes** | `LandlockBackend` + seccomp-BPF | `pip install reyn[sandbox-linux]` required. Landlock does **not** restrict outbound network at any ABI — the pinned `landlock` package exposes no network-rule API, so a `network: false` policy is delivered by a different mechanism and the backend WARNs once to say so. |
 | Linux | kernel < 5.13 or `sandbox-linux` not installed | `NoopBackend` | Audit-only; no enforcement. |
 | Any | a backend is present but **fails its self-test** | `NoopBackend` (per `on_unsupported`) | The mechanism is installed but does not enforce. Treated exactly like an absent one. |
 | Other | any | `NoopBackend` | Audit-only; no enforcement. |

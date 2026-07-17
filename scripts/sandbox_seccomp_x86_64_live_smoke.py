@@ -21,8 +21,12 @@ shipped with, not all of them:
 
   - x86_64 syscall NAME resolution (stat/lstat are real x86_64 syscall numbers,
     unlike aarch64 where they don't exist)          -> closed by this script
-  - whether an installed `landlock` package version matches the pinned API
-    (add_path_beneath_rule vs allow()/apply(), #2980)  -> reported, not fixed
+  - whether an installed `landlock` package version matches the API the shim
+    calls (#2980)                                   -> now CHECKED, not merely
+    reported. Both Landlock seams build their ruleset through one shared
+    `build_ruleset`, so this script drives `landlock_exec.main()` — the real
+    production entry point — and RECORDS the result instead of printing an
+    `[INFO]` note about a defect it had to route around.
   - Landlock ABI 1-2 (the truncate gap's actual affected range: Ubuntu 22.04
     LTS / RHEL 9 / Debian 12 — most of the installed base) -> NOT closed; this
     runner's kernel ABI is whatever GitHub ships, not chosen for ABI coverage
@@ -273,12 +277,13 @@ def _validate_callsite1(workdir: str) -> None:
 
 def _validate_callsite2(workdir: str) -> None:
     """Drive `_apply_seccomp` (the shim's real seccomp step) followed by a real
-    `os.execvp`, matching the shape `landlock_exec.main()` uses in production —
-    without going through the shim's `_apply_landlock`, which #2975's PR body
-    already found unreachable on the pinned `landlock==1.0.0.dev5` package
-    (`add_path_beneath_rule` raises `AttributeError` before seccomp is ever
-    applied — a pre-existing #2980 defect, not something to route around
-    silently)."""
+    `os.execvp`, matching the shape `landlock_exec.main()` uses in production.
+
+    This isolates the seccomp step, which is what this script is FOR (x86_64
+    syscall-name resolution). The full entry point — `_apply_landlock`, which
+    used to raise `AttributeError` on the pinned package before seccomp was ever
+    reached (#2980) — is exercised separately by `_validate_shim_entry_point`
+    below, now that it is reachable at all."""
     def _run(code_after_apply: str) -> subprocess.CompletedProcess:
         script = f"""
 import sys
@@ -325,18 +330,44 @@ _apply_seccomp(SandboxPolicy(write_paths=[{workdir!r}]))
     except Exception as exc:  # noqa: BLE001
         _record("callsite2 defend: subprocess spawn", False, f"raised {exc!r}")
 
-    # Report (do not route around) whether the shim's real Landlock step is
-    # reachable on the installed landlock package version — this is #2980,
-    # surfaced here rather than fixed here.
-    #
+
+# ---------------------------------------------------------------------------
+# Callsite 2b: the shim's FULL entry point (_apply_landlock + _apply_seccomp)
+# ---------------------------------------------------------------------------
+
+
+def _validate_shim_entry_point(workdir: str) -> None:
+    """Drive `landlock_exec.main()` end to end — the production entry point.
+
+    This is the check #2980 was: for 41 days the shim called `Ruleset` methods
+    the pinned `landlock==1.0.0.dev5` does not define, so `main()` raised
+    `AttributeError` before restricting anything, and nothing drove it. An
+    earlier revision of this script PRINTED that as `[INFO] NOT reachable` and
+    carried on green — an accurate note that gated nothing, which is the whole
+    shape of the defect. It is a recorded probe now.
+
+    Records a FAIL (not a skip) when Landlock is present but the entry point
+    does not work. When Landlock is absent it records a PASS on the shim's OTHER
+    guarantee — refusing to exec the target unrestricted — because that is the
+    correct behaviour there and is still worth witnessing; what must never
+    happen is `rc=0` with the target run and nothing applied.
+    """
+    from reyn.security.sandbox.backends.landlock import LandlockBackend
+    from reyn.security.sandbox.landlock_exec import _policy_to_json
+    from reyn.security.sandbox.policy import SandboxPolicy
+
+    landlock_present = LandlockBackend().available()
+    print(f"[INFO] LandlockBackend().available() = {landlock_present}")
+
     # Build the shim's own `--policy` JSON via its real serializer
     # (`_policy_to_json`) rather than hand-formatting JSON into an f-string —
     # a hand-rolled version broke on quote-collision between the JSON string
     # and the Python source string during local validation of this script.
-    from reyn.security.sandbox.landlock_exec import _policy_to_json
-    from reyn.security.sandbox.policy import SandboxPolicy
-
-    policy_arg = _policy_to_json(SandboxPolicy(write_paths=[workdir]))
+    # allow_subprocess=True: this probe is about the entry point being reachable
+    # at all, not about the fork gate (the self-test's spawn probe owns that).
+    policy_arg = _policy_to_json(
+        SandboxPolicy(write_paths=[workdir], allow_subprocess=True)
+    )
     shim_probe = f"""
 import sys
 sys.path.insert(0, {os.getcwd()!r})
@@ -347,21 +378,24 @@ sys.exit(main(["--policy", {policy_arg!r}, "--", "/bin/echo", "shim-main-ok"]))
         proc = subprocess.run(
             [sys.executable, "-c", shim_probe], capture_output=True, timeout=10,
         )
-        reachable = proc.returncode == 0 and b"shim-main-ok" in proc.stdout
-        print(
-            "[INFO] landlock_exec.main() end-to-end (includes _apply_landlock): "
-            + ("REACHABLE" if reachable else "NOT reachable")
-            + f" — rc={proc.returncode} stderr={proc.stderr[:300]!r}"
-        )
-        if not reachable and b"AttributeError" in proc.stderr:
-            print(
-                "[INFO] Matches #2975 PR body's finding: the shim's "
-                "_apply_landlock uses an API (add_path_beneath_rule) not "
-                "exposed by the pinned landlock package version — #2980, "
-                "pre-existing, not introduced or fixed here."
-            )
     except Exception as exc:  # noqa: BLE001
-        print(f"[INFO] landlock_exec.main() probe raised: {exc!r}")
+        _record("callsite2b: landlock_exec.main() end-to-end", False, f"raised {exc!r}")
+        return
+
+    detail = f"rc={proc.returncode} stdout={proc.stdout[:120]!r} stderr={proc.stderr[:300]!r}"
+    if landlock_present:
+        _record(
+            "callsite2b: landlock_exec.main() restricts and execs the target (#2980)",
+            proc.returncode == 0 and b"shim-main-ok" in proc.stdout,
+            detail,
+        )
+    else:
+        _record(
+            "callsite2b: landlock_exec.main() REFUSES to exec unrestricted "
+            "(no Landlock on this host)",
+            proc.returncode != 0 and b"shim-main-ok" not in proc.stdout,
+            detail,
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -408,6 +442,9 @@ def main() -> int:
 
         print("\n=== Callsite 2: landlock_exec._apply_seccomp ===")
         _validate_callsite2(workdir)
+
+        print("\n=== Callsite 2b: landlock_exec.main() end-to-end (#2980) ===")
+        _validate_shim_entry_point(workdir)
 
         print("\n=== denial.py (#2820) launcher-fork classification ===")
         _validate_denial_classification(workdir)

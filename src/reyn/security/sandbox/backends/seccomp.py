@@ -245,6 +245,36 @@ def is_available() -> bool:
     return _AVAILABLE
 
 
+def preload_native_dependency() -> None:
+    """Resolve pyseccomp's native libraries NOW, while the calling process can
+    still reach the filesystem — the ordering :func:`load_seccomp_filter` depends
+    on and cannot enforce itself (#3020).
+
+    ``pyseccomp``'s module body is not inert: at import it runs
+    ``ctypes.CDLL(ctypes.util.find_library("c"))`` and ``find_library("seccomp")``,
+    and ``find_library`` writes a temp file and shells out to ``gcc``/``ldconfig``
+    to do it. Landlock denies all three once a ruleset is applied, so an import
+    deferred until after ``apply()`` dies — measured on Linux 6.8 as
+    ``FileNotFoundError: No usable temporary directory found``, and as ``Unable to
+    find libseccomp`` even when ``/tmp`` is granted. The filter then never loads,
+    which is #2962's outcome reached by a second route.
+
+    Call this BEFORE the Landlock restriction goes on: in the shim, before
+    ``ruleset.apply()``; on the ``run()`` seam, in the PARENT before the fork,
+    since ``preexec_fn`` executes in an already-restricted child. Afterwards the
+    module is in ``sys.modules`` (and inherited across ``fork``), so
+    ``load_seccomp_filter`` only USES an already-resolved library and touches no
+    path.
+
+    It is a separate named call rather than an ``is_available()`` invoked for its
+    side effect: the ordering is the security property here, and a bare
+    availability check at that callsite reads like a redundant probe that a later
+    reader would move or drop. Safe to call unconditionally — non-Linux or
+    pyseccomp-missing makes it a no-op, exactly as ``is_available()`` is.
+    """
+    is_available()
+
+
 def load_seccomp_filter(policy: SandboxPolicy) -> None:
     """Load a default-deny seccomp-BPF filter into the CURRENT process.
 
@@ -253,6 +283,12 @@ def load_seccomp_filter(policy: SandboxPolicy) -> None:
     re-exec shim. It applies to the calling thread at once, is irrevocable, and
     survives the `execve` that follows — which is why `execve` itself must be in
     the allowlist (`_BASELINE`).
+
+    ⚠ It has a PRECONDITION it cannot enforce: `pyseccomp` must already be
+    imported when this runs, because that import resolves native libraries via
+    the filesystem and Landlock has, by this point, denied it. Callers satisfy it
+    with `preload_native_dependency()` before the restriction goes on; see #3020
+    for the measurement.
 
     There is deliberately NO deferred form and NO return value. This function
     used to be `install_seccomp_filter`, which *returned* an installer that the
