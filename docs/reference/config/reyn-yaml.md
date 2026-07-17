@@ -1486,6 +1486,7 @@ embedding:
   max_concurrent_batches: 1       # parallel batch calls in flight (1–10)
   max_retries: 3                  # transient-error retries (0–10)
   retry_backoff: exponential      # exponential | linear
+  timeout: 60.0                   # per-attempt deadline, seconds (<= 0 opts out)
   tokenizer: cl100k_base          # tiktoken encoding for chunk-size estimation
   cost_warn_threshold: 10000      # ask_user gate fires above this estimated chunk count
   classes:
@@ -1510,6 +1511,7 @@ embedding:
 | `max_concurrent_batches` | int | `1` | Parallel batch calls in flight. Valid range: 1–10. Values > 1 are accepted but log a warning until concurrent support lands. |
 | `max_retries` | int | `3` | Transient-error retries per batch call. Valid range: 0–10. |
 | `retry_backoff` | string | `exponential` | Backoff strategy: `exponential` or `linear`. |
+| `timeout` | float | `60.0` | Per-attempt deadline in seconds for one embedding API call. `<= 0` opts out (no bound — the call is then capped only by litellm's own `request_timeout`, 6000s/attempt, which is indistinguishable from a hang; a warning is logged). The default matches `safety.timeout.llm_call_seconds`: an embedding call is the same kind of call as a chat LLM call. Applies **per attempt**, so the worst case is `timeout × max_retries` plus backoff. |
 | `tokenizer` | string | `cl100k_base` | tiktoken encoding used for chunk-size estimation. |
 | `cost_warn_threshold` | int | `10000` | Estimated chunk count above which the `ask_user` gate fires before indexing. |
 

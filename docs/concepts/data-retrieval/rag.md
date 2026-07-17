@@ -171,8 +171,11 @@ embedding:
     local-e5:   sentence-transformers/intfloat/multilingual-e5-small
   batch_size: 100
   max_retries: 3
+  timeout: 60.0
   cost_warn_threshold: 10000
 ```
+
+`timeout` is the per-attempt deadline (seconds) for one embedding API call. It exists because a stalled embedding endpoint would otherwise be capped only by litellm's own `request_timeout` default of 6000s per attempt — an operator cannot tell that from a hang. `<= 0` opts out. See [reyn.yaml § `embedding` fields](../../reference/config/reyn-yaml.md#embedding-fields).
 
 Dispatch is **provider-prefix-based**: classes whose `model` string starts with `sentence-transformers/` route to the local backend; everything else (`openai/`, future LiteLLM-routable providers) routes through LiteLLM. Existing OpenAI-backed callers are byte-identical to pre-FP-0043; the routing wrapper passes them through transparently.
 
