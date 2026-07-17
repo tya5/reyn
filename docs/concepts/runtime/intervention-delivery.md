@@ -52,8 +52,19 @@ For router-initiated ops, that bus is built in exactly one place —
 
 - **bridge present** (this session is an attached driver/worker) → dispatch on the parent's
   live-operator listener (the chain above);
-- **no bridge** (a root chat, or a detached session whose bridge is `AuditOnly`) → a self-bound
-  `ChatInterventionBus` on this session's own registry.
+- **no bridge** (a root chat) → deliver to this session's OWN live listener when one is bound
+  (an interactive TUI/CUI/AGUI front-end — all register on `DEFAULT_CHAT_CHANNEL_ID`); when NO
+  listener is bound (a headless / run-once root, a test harness), there is no reachable operator
+  → a typed, reason'd **refusal** (`AuditOnlyInterventionBridge`), the fail-close clause applied
+  to the root branch — the SAME two terminals the bridge chain uses for its parent.
+
+These are the only two terminals, at every depth: deliver to a live listener, or fail-close.
+The root branch must **never** hand back a channel-id-stamped bus on a listener-less session —
+a stamped iv on an absent listener trips the origin-pin stall (`InterventionCoordinator`
+parks it in the stalled queue and `await`s a future no channel will resolve), *hanging forever*
+instead of answering. (#3053-fix2: the `safety.limit` buses newly routed through this seam first
+exposed that gap — the branch previously stamped unconditionally, so a headless root's cap/budget
+prompt parked stalled and hung 120s rather than fail-closing.)
 
 `RouterHostAdapter`'s intervention-bus factory, every MCP op method (`_mcp_call_tool` and its
 resource/prompt siblings), and both `safety.limit` checkpoint buses — the per-LLM-call budget/

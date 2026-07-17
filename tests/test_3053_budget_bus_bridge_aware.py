@@ -184,6 +184,53 @@ async def test_detached_driver_budget_exceed_fail_closed_refuse(tmp_path: Path) 
     _cancel_tasks(reg)
 
 
+# ── Root, no listener: a headless root session's limit gate fails closed (never parks/hangs) ──
+
+
+@pytest.mark.asyncio
+async def test_root_no_listener_budget_exceed_fail_closed_not_parked(tmp_path: Path) -> None:
+    """Tier 2: a ROOT session (no intervention bridge) with NO live listener — a headless /
+    run-once / test-harness chat — resolves its budget-exceed gate to a deliberate refusal
+    (``allow_continue=False``) that returns IMMEDIATELY, never parking the intervention in the
+    stalled queue to ``await`` a future no one will resolve.
+
+    This is the fail-close half of the delivery rule applied to the ROOT (no-bridge) branch of
+    ``_make_router_intervention_bus``. Regression guard for #3053-fix2: routing the
+    ``safety.limit`` buses through that seam first exposed a latent gap — its self-bound branch
+    unconditionally returned a channel-id-STAMPED ``ChatInterventionBus``, and on a no-listener
+    session the stamp tripped the #268 origin-pin stall (``InterventionCoordinator.dispatch``
+    parks the iv + ``await``s its future forever) instead of the ``enforce_listener_presence``
+    auto-refuse. Five router-cap / i18n-fallback tests hung 120s on exactly this before the
+    branch was completed with the no-listener fail-close terminal. Uses ``non_interactive=False``
+    (an interactive-mode root that simply has no listener bound yet) so the gate genuinely
+    reaches the bus rather than short-circuiting on the non-interactive auto-extend branch."""
+    state_log = StateLog(tmp_path / ".reyn" / "wal.jsonl")
+    reg = _registry(tmp_path, state_log)
+    # A root session, loaded but with NO intervention listener registered (headless root).
+    root = reg.get_or_load("worker")
+    assert root.interventions.list_active() == []  # sanity: nothing pending at start
+
+    check = BudgetCheck(allowed=False, hard_dimension="test_budget")
+    # MUST resolve promptly. Before the fix this parked + awaited forever (the 120s CI hang);
+    # a tight wait_for turns that latent hang into a loud failure here.
+    allow_continue = await asyncio.wait_for(
+        _budget_exceed_allows_continue(check, "worker"), timeout=3.0
+    )
+    assert allow_continue is False, (
+        "a headless root session's budget-exceed gate must fail-close (deny), never silently allow."
+    )
+    # The iv must NOT have been parked in the stalled queue (the origin-pin park = the hang).
+    assert root.list_stalled_interventions() == [], (
+        "the root no-listener budget-exceed prompt was parked stalled (the #3053-fix2 origin-pin "
+        "hang) instead of fail-closing immediately."
+    )
+    assert root.interventions.list_active() == [], (
+        "the root no-listener budget-exceed prompt was left pending instead of fail-closing."
+    )
+
+    _cancel_tasks(reg)
+
+
 # ── Structural: the budget bus resolves through the single bridge-aware seam, not a frozen ──
 # ── self-bound `_dispatch_intervention` capture ──────────────────────────────────────────────
 

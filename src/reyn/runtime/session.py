@@ -79,6 +79,7 @@ from reyn.runtime.services.inter_agent_messaging import InterAgentMessaging
 from reyn.runtime.services.task_wake import WAKE_READY_KIND, WAKE_REQUESTER_KIND
 from reyn.runtime.session_buses import (
     AgentRequestBus,
+    AuditOnlyInterventionBridge,
     ChatInterventionBus,
 )
 from reyn.security.permissions.permissions import PermissionResolver
@@ -6275,13 +6276,31 @@ class Session:
         registry — dispatched, stalled, and awaited forever (the confirmed hang).
         Routing them through this helper makes every IV-raising router leaf reach
         the pipeline originator uniformly, exactly as ``ask_user`` / ``present``
-        already do via the bridge-aware ``RouterHostAdapter.make_router_op_context``."""
+        already do via the bridge-aware ``RouterHostAdapter.make_router_op_context``.
+
+        #3053-fix2: the no-bridge (root-session) branch resolves the SAME two
+        terminals ``SpawnBridgeInterventionListener.bus`` uses for its parent —
+        a LIVE listener on this session's own channel → deliver there (an
+        interactive TUI/CUI/AGUI chat; every front-end registers on
+        ``DEFAULT_CHAT_CHANNEL_ID``); NO listener → a typed, reason'd REFUSAL
+        (``AuditOnlyInterventionBridge``), NEVER a stamped bus that origin-pin
+        PARKS the iv forever. The park was a latent hang the MCP callers never
+        witnessed (a no-listener root chat doesn't exercise a permission prompt),
+        but the ``safety.limit`` budget/cap buses newly route here and hit it
+        directly: the pre-#3053 direct ``_dispatch_intervention`` path auto-refused
+        via ``enforce_listener_presence`` (no channel-id stamp → no origin-pin
+        stall). Failing close by construction here restores that, and hardens the
+        MCP leaf against the same no-operator hang — one uniform terminal, per the
+        delivery rule's "no attached originator → close and answer" clause."""
         if self._intervention_bridge is not None:
             return self._intervention_bridge.bus(run_id=None, actor="chat_router")
-        return ChatInterventionBus(
-            self, run_id=None, actor="chat_router",
-            channel_id=DEFAULT_CHAT_CHANNEL_ID,
-        )
+        if self.interventions.has_listener(DEFAULT_CHAT_CHANNEL_ID):
+            return ChatInterventionBus(
+                self, run_id=None, actor="chat_router",
+                channel_id=DEFAULT_CHAT_CHANNEL_ID,
+            )
+        # No bridge AND no live listener → no reachable operator → fail-close.
+        return AuditOnlyInterventionBridge().bus(run_id=None, actor="chat_router")
 
     async def _file_op(self, op_dict: dict) -> dict:
         """Dispatch a file op via op_runtime. Returns result dict."""
