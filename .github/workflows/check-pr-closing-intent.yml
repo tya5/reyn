@@ -1,0 +1,42 @@
+name: PR closing-intent check
+
+# #3007: detect contradictions between what a PR body *declares* about
+# issue #N (Closes/Fixes/Resolves, or part-of/toward) and what GitHub's
+# own closing-issue parser (`closingIssuesReferences`) actually resolved
+# for #N — all *before* merge, while the PR is still open.
+#
+# A dedicated workflow (not folded into test.yml's bare `pull_request:`
+# trigger) because this check must also re-run on `edited` — an author
+# who edits the body after opening (e.g. adds/removes a `Closes #N`) needs
+# the gate to re-evaluate, and `edited` is not one of the default
+# pull_request event types.
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  closing-intent:
+    name: closing-intent contradiction check
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      # scripts/check_pr_closing_intent.py is stdlib-only (argparse / json /
+      # re / subprocess). No pip install needed.
+      - name: Check PR body vs GitHub's parsed closing intent
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python scripts/check_pr_closing_intent.py --pr "${{ github.event.pull_request.number }}"
