@@ -54,6 +54,7 @@ from reyn.hooks.event import HookEvent
 from reyn.hooks.registry import HookRegistry
 from reyn.hooks.schema import HookDef, PushBlock
 from reyn.runtime.session import Session
+from reyn.runtime.session_params import ReactivityConfig
 
 # ---------------------------------------------------------------------------
 # Recording seam (mirrors test_hook_dispatcher_1800_5b.py's _Recorder)
@@ -316,7 +317,7 @@ def _make_session(tmp_path: Path, *, name: str) -> Session:
         agent_name="test-agent",
         state_log=StateLog(tmp_path / f"{name}.wal"),
         snapshot_path=tmp_path / f"{name}.json",
-        hooks_config=None,
+        reactivity=ReactivityConfig(hooks_config=None),
     )
 
 

@@ -75,6 +75,7 @@ from reyn.core.events.state_log import StateLog
 from reyn.core.pipeline.work_order import pipeline_run_dir, read_result
 from reyn.runtime.registry import AgentRegistry
 from reyn.runtime.session import Session
+from reyn.runtime.session_params import PresentationWiring
 from reyn.tools.pipeline_verbs import _handle_run_pipeline, _handle_run_pipeline_async
 from reyn.tools.types import RouterCallerState, ToolContext
 
@@ -98,8 +99,7 @@ def _agent_registry(tmp_path: Path, state_log: "StateLog") -> AgentRegistry:
         s = Session(
             agent_name=profile.name, state_log=state_log,
             registry=holder.get("reg"), non_interactive=True,
-            presentation_consumer=presentation_consumer,
-            intervention_bridge=intervention_bridge,
+            presentation_wiring=PresentationWiring(presentation_consumer=presentation_consumer, intervention_bridge=intervention_bridge),
             pipeline_registry=frozen_registry,
         )
         return s

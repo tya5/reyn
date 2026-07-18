@@ -36,7 +36,12 @@ from typing import TYPE_CHECKING, Any
 from reyn.runtime.agent import Agent
 from reyn.runtime.factory_config import SessionFactoryConfig
 from reyn.runtime.session import Session
-from reyn.runtime.session_params import CapabilityScope, PresentationWiring, TaskWiring
+from reyn.runtime.session_params import (
+    CapabilityScope,
+    PresentationWiring,
+    ReactivityConfig,
+    TaskWiring,
+)
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -107,12 +112,20 @@ def build_scoped_chat_session(
     if _registry is not None:
         from reyn.runtime.services.task_wake import TaskWaker  # noqa: PLC0415
         task_waker = TaskWaker(_registry, base["agent_name"])
-    # #3121 step1: group the scoped capability / task / presentation params into
-    # their cohesive parameter objects at this single construction chokepoint.
-    # ``intervention_bridge`` arrives via ``**base`` (each frontend's
-    # ``_session_factory`` wrapper forwards it) -- popped here so it joins its
-    # PresentationWiring siblings instead of flowing through Session directly.
+    # #3121 step1: group the scoped capability / task / presentation / reactivity
+    # params into their cohesive parameter objects at this single construction
+    # chokepoint. ``intervention_bridge`` and the ``hooks_config``/
+    # ``composers_config``/``fs_watch_config`` reyn.yaml blocks arrive via
+    # ``**base`` (each frontend passes them straight through to
+    # ``build_scoped_chat_session``) -- popped here so they join their
+    # PresentationWiring / ReactivityConfig siblings instead of flowing
+    # through Session as flat params.
     intervention_bridge = base.pop("intervention_bridge", None)
+    reactivity = ReactivityConfig(
+        hooks_config=base.pop("hooks_config", None),
+        composers_config=base.pop("composers_config", None),
+        fs_watch_config=base.pop("fs_watch_config", None),
+    )
     return Session(
         agent=agent,
         environment_backend=environment_backend,
@@ -124,6 +137,7 @@ def build_scoped_chat_session(
         non_interactive=non_interactive,
         eager_embedding_build=eager_embedding_build,
         allowed_mcp=allowed_mcp,
+        reactivity=reactivity,
         capability_scope=CapabilityScope(
             exclude_tools=exclude_tools,
             excluded_categories=excluded_categories,

@@ -51,6 +51,7 @@ from reyn.hooks.event_pattern import EventPattern, validate_against_schema
 from reyn.hooks.loader import HookConfigError, load_hooks
 from reyn.hooks.schema_registry import HookSchemaError
 from reyn.runtime.session import Session
+from reyn.runtime.session_params import ReactivityConfig
 
 _DEPLOY_APPROVED_SCHEMAS: "dict[str, frozenset[str]]" = {
     "composed:deploy_approved": frozenset({"inputs", "correlation_key"}),
@@ -224,8 +225,7 @@ def test_session_boot_fails_loud_on_typo_composed_matcher(tmp_path: Path) -> Non
             agent_name="composed-matcher-2889-agent",
             state_log=StateLog(tmp_path / "state.wal"),
             snapshot_path=tmp_path / "snap.json",
-            hooks_config=hooks_config,
-            composers_config=_composer_config(),
+            reactivity=ReactivityConfig(hooks_config=hooks_config, composers_config=_composer_config()),
         )
 
 
@@ -244,8 +244,7 @@ def test_session_boot_loads_clean_with_valid_composed_matcher(tmp_path: Path) ->
         agent_name="composed-matcher-2889-agent-ok",
         state_log=StateLog(tmp_path / "state.wal"),
         snapshot_path=tmp_path / "snap.json",
-        hooks_config=hooks_config,
-        composers_config=_composer_config(),
+        reactivity=ReactivityConfig(hooks_config=hooks_config, composers_config=_composer_config()),
     )  # no raise
 
 
@@ -259,8 +258,7 @@ def test_session_boot_fails_loud_on_dangling_composed_subscription(tmp_path: Pat
             agent_name="composed-dangling-2889-agent",
             state_log=StateLog(tmp_path / "state.wal"),
             snapshot_path=tmp_path / "snap.json",
-            hooks_config=hooks_config,
-            composers_config=_composer_config(),  # produces a DIFFERENT composed kind
+            reactivity=ReactivityConfig(hooks_config=hooks_config, composers_config=_composer_config()),
         )
 
 

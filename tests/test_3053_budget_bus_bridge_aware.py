@@ -52,6 +52,7 @@ from reyn.runtime.budget.budget import BudgetCheck
 from reyn.runtime.registry import AgentRegistry
 from reyn.runtime.session import DEFAULT_CHAT_CHANNEL_ID, Session
 from reyn.runtime.session_api import _build_agent_step_narrowing, spawn_ephemeral_session
+from reyn.runtime.session_params import PresentationWiring
 from reyn.runtime.spawn_routing import AuditOnlyNoSurface, BridgeToParent
 
 
@@ -66,8 +67,7 @@ def _registry(tmp_path: Path, state_log: "StateLog") -> AgentRegistry:
     def _factory(profile, *, presentation_consumer=None, intervention_bridge=None) -> Session:
         return Session(
             agent_name=profile.name, state_log=state_log, registry=holder.get("reg"),
-            non_interactive=False, presentation_consumer=presentation_consumer,
-            intervention_bridge=intervention_bridge,
+            non_interactive=False, presentation_wiring=PresentationWiring(presentation_consumer=presentation_consumer, intervention_bridge=intervention_bridge),
         )
 
     reg = AgentRegistry(project_root=tmp_path, session_factory=_factory, state_log=state_log)

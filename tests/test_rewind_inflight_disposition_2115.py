@@ -20,6 +20,7 @@ import pytest
 from reyn.core.events.state_log import StateLog
 from reyn.runtime.registry import _count_inflight_disposition
 from reyn.runtime.session import Session
+from reyn.runtime.session_params import ReactivityConfig
 
 
 @pytest.mark.asyncio
@@ -48,7 +49,7 @@ def _make_session(tmp_path: Path) -> Session:
         agent_name="t",
         state_log=StateLog(tmp_path / "state.wal"),
         snapshot_path=tmp_path / "snap.json",
-        hooks_config=None,
+        reactivity=ReactivityConfig(hooks_config=None),
     )
 
 

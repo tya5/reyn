@@ -69,6 +69,7 @@ from reyn.runtime.registry import AgentRegistry
 from reyn.runtime.services.pipeline_executor_driver import PipelineExecutorDriver
 from reyn.runtime.session import Session
 from reyn.runtime.session_api import run_pipeline_attached, start_pipeline_run
+from reyn.runtime.session_params import PresentationWiring
 from reyn.tools.pipeline_verbs import _make_tool_dispatch
 from reyn.tools.types import ToolContext
 
@@ -102,8 +103,7 @@ def _agent_registry(
         s = Session(
             agent_name=profile.name, state_log=state_log,
             registry=holder.get("reg"), non_interactive=True,
-            presentation_consumer=presentation_consumer,
-            intervention_bridge=intervention_bridge,  # #2708 P3.2a: accept + forward the attached driver spawn's intervention bridge
+            presentation_wiring=PresentationWiring(presentation_consumer=presentation_consumer, intervention_bridge=intervention_bridge),
         )
         if scripted is not None:
             s._loop_driver._loop_observer = (

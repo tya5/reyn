@@ -55,6 +55,7 @@ from reyn.runtime.session_buses import (
     AuditOnlyInterventionBridge,
     SpawnBridgeInterventionListener,
 )
+from reyn.runtime.session_params import PresentationWiring
 from reyn.schemas.models import PresentIROp
 from reyn.security.permissions.permissions import PermissionDecl, PermissionResolver
 from reyn.user_intervention import UserIntervention
@@ -87,8 +88,7 @@ def _recording_registry(tmp_path: Path, state_log: "StateLog") -> "tuple[AgentRe
     def _factory(profile, *, presentation_consumer=None, intervention_bridge=None) -> Session:
         s = Session(
             agent_name=profile.name, state_log=state_log, registry=holder.get("reg"),
-            non_interactive=True, presentation_consumer=presentation_consumer,
-            intervention_bridge=intervention_bridge,
+            non_interactive=True, presentation_wiring=PresentationWiring(presentation_consumer=presentation_consumer, intervention_bridge=intervention_bridge),
         )
         s._loop_driver._loop_observer = (  # noqa: SLF001 — designed Tier-2 LLM seam
             lambda loop: setattr(loop, "_llm_caller", scripted)

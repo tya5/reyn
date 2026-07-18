@@ -31,6 +31,7 @@ from reyn.data.presentations.registry import (
 )
 from reyn.data.workspace.workspace import Workspace
 from reyn.runtime.session import Session
+from reyn.runtime.session_params import PresentationWiring
 from reyn.schemas.models import ALL_OP_KINDS, PresentIROp
 from reyn.security.permissions.permissions import PermissionDecl, PermissionResolver
 
@@ -357,7 +358,7 @@ def _make_session(tmp_path: Path) -> Session:
         agent_name="prc-test",
         state_log=StateLog(tmp_path / "state.wal"),
         snapshot_path=tmp_path / "snap.json",
-        presentation_registry=build_presentation_registry(cfg.presentations),
+        presentation_wiring=PresentationWiring(presentation_registry=build_presentation_registry(cfg.presentations)),
     )
 
 

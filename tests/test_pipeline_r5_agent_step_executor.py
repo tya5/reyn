@@ -35,6 +35,7 @@ from reyn.llm.llm import LLMToolCallResult
 from reyn.llm.pricing import TokenUsage
 from reyn.runtime.registry import AgentRegistry
 from reyn.runtime.session import Session
+from reyn.runtime.session_params import PresentationWiring
 
 # ── real-callable LLM stub (Tier 2c: LLM is incidental — see module docstring) ──
 
@@ -74,8 +75,7 @@ def _registry(
 
     def _factory(profile, *, presentation_consumer=None, intervention_bridge=None) -> Session:
         s = Session(
-            presentation_consumer=presentation_consumer,
-            intervention_bridge=intervention_bridge,
+            presentation_wiring=PresentationWiring(presentation_consumer=presentation_consumer, intervention_bridge=intervention_bridge),
             agent_name=profile.name, state_log=state_log,
             registry=holder.get("reg"), non_interactive=True,
             resolver=resolver,

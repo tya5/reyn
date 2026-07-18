@@ -38,6 +38,7 @@ from reyn.core.events.state_log import StateLog
 from reyn.llm.llm import LLMToolCallResult
 from reyn.llm.pricing import TokenUsage
 from reyn.runtime.session import Session
+from reyn.runtime.session_params import ReactivityConfig
 
 _EMPTY_USAGE = TokenUsage(prompt_tokens=5, completion_tokens=3)
 
@@ -77,7 +78,7 @@ def _make_session(tmp_path: Path, *, hooks_config: list) -> Session:
         agent_name="test-agent",
         state_log=StateLog(tmp_path / "state.wal"),
         snapshot_path=tmp_path / "snap.json",
-        hooks_config=hooks_config,
+        reactivity=ReactivityConfig(hooks_config=hooks_config),
     )
 
 

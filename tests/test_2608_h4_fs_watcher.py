@@ -40,6 +40,7 @@ import pytest
 from reyn.hooks.matcher import matches
 from reyn.hooks.schema import ALLOWED_HOOK_POINTS
 from reyn.runtime.fs_watcher import FsWatcher
+from reyn.runtime.session_params import ReactivityConfig
 
 watchdog = pytest.importorskip("watchdog", reason="fs-watch extra ('pip install reyn[fs-watch]') not installed")
 
@@ -352,8 +353,7 @@ async def test_session_owned_watcher_fires_configured_hook_into_inbox(tmp_path):
         agent_name="test-agent",
         state_log=StateLog(tmp_path / "state.wal"),
         snapshot_path=tmp_path / "snap.json",
-        hooks_config=hooks_config,
-        fs_watch_config=FsWatchConfig(paths=[str(watched_dir)], debounce_seconds=0.05),
+        reactivity=ReactivityConfig(hooks_config=hooks_config, fs_watch_config=FsWatchConfig(paths=[str(watched_dir)], debounce_seconds=0.05)),
     )
     try:
         await session._fs_watcher.start()  # mirrors run()'s own call; started via the public surface below is asserted

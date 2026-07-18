@@ -28,6 +28,7 @@ import yaml
 from reyn.core.events.state_log import StateLog
 from reyn.data.skills.registry import SkillEntry
 from reyn.runtime.session import Session
+from reyn.runtime.session_params import CapabilityScope
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -49,7 +50,7 @@ def _make_session(tmp_path: Path, *, agent_name: str = "test-agent") -> Session:
         agent_name=agent_name,
         state_log=StateLog(tmp_path / "state.wal"),
         snapshot_path=tmp_path / "snap.json",
-        available_skills=available_skills,
+        capability_scope=CapabilityScope(available_skills=available_skills),
     )
 
 
@@ -175,10 +176,10 @@ def test_toggle_disable_skill_removes_from_live_list(tmp_path: Path) -> None:
     session = Session(
         agent_name="a", state_log=StateLog(tmp_path / "s.wal"),
         snapshot_path=tmp_path / "snap.json",
-        available_skills=[
+        capability_scope=CapabilityScope(available_skills=[
             SkillEntry(name="deploy", description="deploy", path="skills/deploy/SKILL.md"),
             SkillEntry(name="review", description="review", path="skills/review/SKILL.md"),
-        ],
+        ]),
     )
     assert "deploy" in _skill_names(session)
 
@@ -198,9 +199,9 @@ def test_toggle_reenable_skill_restores_to_live_list(tmp_path: Path) -> None:
     session = Session(
         agent_name="a", state_log=StateLog(tmp_path / "s.wal"),
         snapshot_path=tmp_path / "snap.json",
-        available_skills=[
+        capability_scope=CapabilityScope(available_skills=[
             SkillEntry(name="deploy", description="deploy", path="skills/deploy/SKILL.md"),
-        ],
+        ]),
     )
     session.set_capability_visible("skill", "deploy", False)
     assert "deploy" not in _skill_names(session)
@@ -218,9 +219,9 @@ def test_toggle_disable_unregistered_skill_is_noop(tmp_path: Path) -> None:
     session = Session(
         agent_name="a", state_log=StateLog(tmp_path / "s.wal"),
         snapshot_path=tmp_path / "snap.json",
-        available_skills=[
+        capability_scope=CapabilityScope(available_skills=[
             SkillEntry(name="real-skill", description="real", path="skills/real/SKILL.md"),
-        ],
+        ]),
     )
     # Disable a name that is NOT in the registered set.
     session.set_capability_visible("skill", "nonexistent-skill", False)
@@ -246,9 +247,9 @@ def test_capability_visibility_state_includes_skill_kind(tmp_path: Path) -> None
     session = Session(
         agent_name="a", state_log=StateLog(tmp_path / "s.wal"),
         snapshot_path=tmp_path / "snap.json",
-        available_skills=[
+        capability_scope=CapabilityScope(available_skills=[
             SkillEntry(name="review", description="review", path="skills/review/SKILL.md"),
-        ],
+        ]),
     )
     state = session.capability_visibility_state()
     authorized_skills = [e for e in state["authorized"] if e["kind"] == "skill"]
@@ -276,9 +277,9 @@ def test_skill_toggle_persists_to_visibility_yaml(tmp_path: Path) -> None:
     session = Session(
         agent_name="a", state_log=StateLog(tmp_path / "s.wal"),
         snapshot_path=snap,
-        available_skills=[
+        capability_scope=CapabilityScope(available_skills=[
             SkillEntry(name="linter", description="lint", path="skills/linter/SKILL.md"),
-        ],
+        ]),
     )
     session.set_capability_visible("skill", "linter", False)
 
@@ -300,10 +301,10 @@ def test_skill_toggle_restored_by_load_persisted_toggles(tmp_path: Path) -> None
     session_a = Session(
         agent_name="a", state_log=StateLog(tmp_path / "s_a.wal"),
         snapshot_path=snap,
-        available_skills=[
+        capability_scope=CapabilityScope(available_skills=[
             SkillEntry(name="deploy", description="deploy", path="skills/deploy/SKILL.md"),
             SkillEntry(name="review", description="review", path="skills/review/SKILL.md"),
-        ],
+        ]),
     )
     session_a.set_capability_visible("skill", "deploy", False)
 
@@ -311,10 +312,10 @@ def test_skill_toggle_restored_by_load_persisted_toggles(tmp_path: Path) -> None
     session_b = Session(
         agent_name="a", state_log=StateLog(tmp_path / "s_b.wal"),
         snapshot_path=snap,
-        available_skills=[
+        capability_scope=CapabilityScope(available_skills=[
             SkillEntry(name="deploy", description="deploy", path="skills/deploy/SKILL.md"),
             SkillEntry(name="review", description="review", path="skills/review/SKILL.md"),
-        ],
+        ]),
     )
     # Before restore the full set is visible (persisted toggle not yet applied).
     assert "deploy" in _skill_names(session_b)
@@ -337,9 +338,9 @@ def test_skill_toggle_persist_clears_when_reenabled(tmp_path: Path) -> None:
     session = Session(
         agent_name="a", state_log=StateLog(tmp_path / "s.wal"),
         snapshot_path=snap,
-        available_skills=[
+        capability_scope=CapabilityScope(available_skills=[
             SkillEntry(name="linter", description="lint", path="skills/linter/SKILL.md"),
-        ],
+        ]),
     )
     session.set_capability_visible("skill", "linter", False)
     vpath = snap.parent / "visibility.yaml"

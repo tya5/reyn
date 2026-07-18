@@ -21,6 +21,7 @@ from reyn.core.events.state_log import StateLog
 from reyn.runtime.registry import AgentRegistry
 from reyn.runtime.session import Session
 from reyn.runtime.session_api import spawn_ephemeral_session
+from reyn.runtime.session_params import PresentationWiring
 
 
 def _registry(tmp_path: Path) -> AgentRegistry:
@@ -29,8 +30,7 @@ def _registry(tmp_path: Path) -> AgentRegistry:
     def _factory(profile, *, presentation_consumer=None, intervention_bridge=None) -> Session:
         return Session(
             agent_name=profile.name, state_log=state_log,
-            presentation_consumer=presentation_consumer,
-            intervention_bridge=intervention_bridge,
+            presentation_wiring=PresentationWiring(presentation_consumer=presentation_consumer, intervention_bridge=intervention_bridge),
         )
 
     reg = AgentRegistry(project_root=tmp_path, session_factory=_factory, state_log=state_log)

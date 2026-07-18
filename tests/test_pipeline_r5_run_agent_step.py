@@ -48,6 +48,7 @@ from reyn.runtime.session_api import (
     run_agent_step,
     spawn_ephemeral_session,
 )
+from reyn.runtime.session_params import PresentationWiring
 
 # ── real-callable LLM stub (Tier 2c: LLM is incidental) ─────────────────────
 
@@ -97,8 +98,7 @@ def _registry(tmp_path: Path, scripted: "_ScriptedAgentReply | None") -> AgentRe
         s = Session(
             agent_name=profile.name, state_log=state_log,
             registry=holder.get("reg"), non_interactive=True,
-            presentation_consumer=presentation_consumer,
-            intervention_bridge=intervention_bridge,
+            presentation_wiring=PresentationWiring(presentation_consumer=presentation_consumer, intervention_bridge=intervention_bridge),
             resolver=resolver,
         )
         if scripted is not None:

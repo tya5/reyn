@@ -52,6 +52,7 @@ from reyn.llm.llm import LLMToolCallResult
 from reyn.llm.pricing import TokenUsage
 from reyn.runtime.registry import AgentRegistry
 from reyn.runtime.session import Session
+from reyn.runtime.session_params import PresentationWiring, ReactivityConfig
 
 # ---------------------------------------------------------------------------
 # Recording seam (mirrors test_hook_dispatcher_1800_5b.py's _Recorder)
@@ -342,11 +343,10 @@ def _agent_registry_with_hooks(
 
     def _factory(profile, *, presentation_consumer=None, intervention_bridge=None) -> Session:
         s = Session(
-            presentation_consumer=presentation_consumer,
-            intervention_bridge=intervention_bridge,
+            presentation_wiring=PresentationWiring(presentation_consumer=presentation_consumer, intervention_bridge=intervention_bridge),
             agent_name=profile.name, state_log=state_log,
             registry=holder.get("reg"), non_interactive=True,
-            hooks_config=hooks_config, pipeline_registry=pipeline_registry,
+            reactivity=ReactivityConfig(hooks_config=hooks_config), pipeline_registry=pipeline_registry,
         )
         if scripted is not None:
             s._loop_driver._loop_observer = (

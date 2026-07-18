@@ -53,6 +53,7 @@ from reyn.hooks.schema_registry import BUILTIN_HOOK_SCHEMAS, HookSchemaError
 from reyn.runtime.profile import AgentProfile
 from reyn.runtime.registry import AgentRegistry
 from reyn.runtime.session import Session
+from reyn.runtime.session_params import ReactivityConfig
 
 
 async def _wait_for(predicate, *, attempts: int = 100, delay: float = 0.02) -> None:
@@ -199,7 +200,7 @@ async def test_cron_adapter_resolve_session_and_deliver_reaches_real_dispatcher(
     state_log = StateLog(tmp_path / ".reyn" / "wal.jsonl")
 
     def _factory(profile: AgentProfile) -> Session:
-        s = Session(agent_name=profile.name, state_log=state_log, hooks_config=hooks_config)
+        s = Session(agent_name=profile.name, state_log=state_log, reactivity=ReactivityConfig(hooks_config=hooks_config))
         s.register_intervention_listener("test")
         return s
 
@@ -233,7 +234,7 @@ async def test_webhook_adapter_resolve_session_and_deliver_reaches_real_dispatch
     state_log = StateLog(tmp_path / ".reyn" / "wal.jsonl")
 
     def _factory(profile: AgentProfile) -> Session:
-        s = Session(agent_name=profile.name, state_log=state_log, hooks_config=hooks_config)
+        s = Session(agent_name=profile.name, state_log=state_log, reactivity=ReactivityConfig(hooks_config=hooks_config))
         s.register_intervention_listener("test")
         return s
 

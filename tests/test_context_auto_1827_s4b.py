@@ -19,6 +19,7 @@ from pathlib import Path
 from reyn.core.events.state_log import StateLog
 from reyn.runtime.chat_message import ChatMessage
 from reyn.runtime.session import Session
+from reyn.runtime.session_params import CapabilityScope
 from reyn.security.permissions.effective import (
     ContextualPermission,
     tool_contextually_denied,
@@ -30,7 +31,7 @@ def _session(tmp_path: Path, *, contextual=None) -> Session:
         agent_name="alpha",
         state_log=StateLog(tmp_path / "state.wal"),
         snapshot_path=tmp_path / "snap.json",
-        contextual_permission=contextual,
+        capability_scope=CapabilityScope(contextual_permission=contextual),
     )
     return s
 

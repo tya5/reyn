@@ -30,6 +30,7 @@ from reyn.core.events.state_log import StateLog
 from reyn.runtime.registry import AgentRegistry
 from reyn.runtime.session import Session
 from reyn.runtime.session_buses import SpawnBridgeInterventionListener
+from reyn.runtime.session_params import PresentationWiring
 from reyn.runtime.spawn_routing import BridgeToParent
 from tests._support.router_host_adapter import make_adapter
 
@@ -44,8 +45,7 @@ def _registry(tmp_path: Path, state_log: StateLog, *, max_depth: int = 0) -> Age
         return Session(
             agent_name=profile.name, state_log=state_log,
             registry=holder.get("reg"), non_interactive=True,
-            presentation_consumer=presentation_consumer,
-            intervention_bridge=intervention_bridge,
+            presentation_wiring=PresentationWiring(presentation_consumer=presentation_consumer, intervention_bridge=intervention_bridge),
         )
 
     reg = AgentRegistry(
