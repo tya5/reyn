@@ -1,5 +1,6 @@
-# Builtin RAG -- ingest pipeline (FP-0063 P3).
-# docs/deep-dives/proposals/0063-builtin-turnkey-user-rag.md
+# Builtin RAG -- ingest pipeline. Ships as part of the `rag` builtin plugin
+# (ADR 0064 P5 -- docs/deep-dives/proposals/0064-plugin-model.md), originally
+# authored under FP-0063 (docs/deep-dives/proposals/0063-builtin-turnkey-user-rag.md).
 #
 # Reads a file or a folder, converts each document to Markdown (the
 # `markitdown` MCP server), chunks it (the `chunker` MCP server), embeds
@@ -21,12 +22,12 @@
 # each chunk's own content_hash/chunk_index/est_tokens, and the vector
 # store pairs items with vectors by index inside `upsert`.
 #
-# Preparing the MCP servers' runtime is the OPERATOR's responsibility --
-# reyn ships their code in the wheel and launches whatever `command` the
-# config names, in any language. See
-# docs/cookbook/configs/with-builtin-rag-mcp.yaml for the recommended
-# console-script form (it works under pipx; `python -m ...` depends on the
-# ambient interpreter and can fail).
+# Both builtin MCP servers + this pipeline itself are registered by
+# `plugin_install(source={"kind": "builtin", "name": "rag"})` -- one call
+# copies the plugin to ~/.reyn/plugins/rag/, materialises its dependencies
+# (chonkie/apsw/sqlite-vec) into a dedicated per-plugin venv (network at
+# install time only), and registers the mcp servers + pipelines + skill.
+# Spawn is then network-free (ADR 0064 §3.11).
 #
 # Inputs (all optional except `input_path`/`output_db`):
 #   input_path          -- (required) an ABSOLUTE path to a document file
@@ -131,8 +132,8 @@ steps:
   - transform:
       value: >-
         {markitdown: "MarkItDown MCP server '" + ctx.markitdown_server + "' is unreachable. (1) it is probably not installed yet -- builtin MCP configs ship INERT by design, so install it yourself and the operator is prompted at the permission gate: mcp__install_local(name=\"" + ctx.markitdown_server + "\", command=\"uvx\", args=[\"markitdown-mcp\"]). Do not ask the operator to hand-edit YAML, and do not add a permissions block -- a configured server is granted when this pipeline runs it. (2) if the install itself fails, uvx could not fetch markitdown-mcp from PyPI on first run (e.g. a firewalled network) -- install it into its OWN isolated venv (never reyn's) and point command at that absolute path: python3 -m venv ~/.reyn-markitdown && ~/.reyn-markitdown/bin/pip install markitdown-mcp, then command=\"~/.reyn-markitdown/bin/markitdown-mcp\" (absolute).",
-         chunker: "Chunker MCP server '" + ctx.chunker_server + "' is unreachable. (1) it is probably not installed yet -- install it yourself and the operator is prompted at the permission gate: mcp__install_local(name=\"" + ctx.chunker_server + "\", command=\"reyn-rag-chunker\", args=[]). Do not ask the operator to hand-edit YAML, and do not add a permissions block. The `reyn-rag-chunker` console script is the recommended command (its shebang points at reyn's own interpreter, so it works under pipx, unlike `python -m ...` which depends on the ambient python). (2) if the install fails its pre-install probe, the runtime is missing -- that is the operator's machine to fix: pip install \"reyn[builtin-rag]\" (chonkie). reyn launches whatever the config names and does not prepare the runtime for you.",
-         vectorstore: "Vector-store MCP server '" + ctx.vectorstore_server + "' is unreachable. (1) it is probably not installed yet -- install it yourself and the operator is prompted at the permission gate: mcp__install_local(name=\"" + ctx.vectorstore_server + "\", command=\"reyn-rag-vector-store\", args=[]). Do not ask the operator to hand-edit YAML, and do not add a permissions block. The `reyn-rag-vector-store` console script is the recommended command (its shebang points at reyn's own interpreter, so it works under pipx, unlike `python -m ...` which depends on the ambient python). (2) if the install fails its pre-install probe, the runtime is missing -- that is the operator's machine to fix: pip install \"reyn[builtin-rag]\" (apsw + sqlite-vec). reyn launches whatever the config names and does not prepare the runtime for you."}
+         chunker: "Chunker MCP server '" + ctx.chunker_server + "' is unreachable. It ships as part of the builtin `rag` plugin, not pre-installed -- install it yourself and the operator is prompted at the permission gate: plugin_install(source={\"kind\": \"builtin\", \"name\": \"rag\"}). This installs ALL of the rag plugin's capabilities (both MCP servers + the ingest/query pipelines + the build_and_query_rag_corpus skill) in one call and materialises chonkie/apsw/sqlite-vec into a dedicated per-plugin environment -- no `pip install` into reyn's own env, and no hand-edited YAML. Do not add a permissions block. If the install itself fails (dependency materialisation error), that is the operator's machine to fix -- name what failed and let them.",
+         vectorstore: "Vector-store MCP server '" + ctx.vectorstore_server + "' is unreachable. It ships as part of the builtin `rag` plugin, not pre-installed -- install it yourself and the operator is prompted at the permission gate: plugin_install(source={\"kind\": \"builtin\", \"name\": \"rag\"}). This installs ALL of the rag plugin's capabilities (both MCP servers + the ingest/query pipelines + the build_and_query_rag_corpus skill) in one call and materialises chonkie/apsw/sqlite-vec into a dedicated per-plugin environment -- no `pip install` into reyn's own env, and no hand-edited YAML. Do not add a permissions block. If the install itself fails (dependency materialisation error), that is the operator's machine to fix -- name what failed and let them."}
       output: remedies
 
   # X1 pre-flight is now PURELY MCP reachability (#2972). It used to also
@@ -174,8 +175,8 @@ steps:
         transform:
           # #3070: a branch is dropped on ANY failure of its `tool` step --
           # including the "handshake ok, the PROBE TOOL CALL ITSELF errored"
-          # case (e.g. a missing `pip install "reyn[builtin-rag]"` extra
-          # raising ImportError inside the server, or a bad tool arg) -- which
+          # case (e.g. a half-materialised per-plugin venv raising ImportError
+          # inside the server, or a bad tool arg) -- which
           # is a DIFFERENT fact than "the MCP server is unreachable" and was
           # previously indistinguishable from it. `get(pipe, "__branch_errors__.<name>",
           # "")` (executor.py's PARALLEL_BRANCH_ERRORS_KEY) reads the real

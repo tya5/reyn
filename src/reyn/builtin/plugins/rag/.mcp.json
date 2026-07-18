@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "reyn_chunker": {
+      "command": "python",
+      "args": ["${REYN_PLUGIN_ROOT}/scripts/chunker_server.py"]
+    },
+    "reyn_vector_store": {
+      "command": "python",
+      "args": ["${REYN_PLUGIN_ROOT}/scripts/vector_store_server.py"]
+    }
+  }
+}

@@ -1,5 +1,5 @@
 """Tier 2b: subsystem invariant -- FP-0063 P2, the two builtin MCP servers
-(``reyn.builtin.mcp_servers.vector_store_server`` / ``chunker_server``),
+(``reyn.builtin.plugins.rag.scripts.vector_store_server`` / ``chunker_server``),
 docs/deep-dives/proposals/0063-builtin-turnkey-user-rag.md.
 
 Pins the five vector-store gates + the chunker size/overlap-is-a-parameter
@@ -57,8 +57,8 @@ pytest.importorskip(
     "chonkie", reason="builtin-rag extra ('pip install reyn[builtin-rag]') not installed",
 )
 
-from reyn.builtin.mcp_servers.chunker_server import chunk_text  # noqa: E402
-from reyn.builtin.mcp_servers.vector_store_server import (  # noqa: E402
+from reyn.builtin.plugins.rag.scripts.chunker_server import chunk_text  # noqa: E402
+from reyn.builtin.plugins.rag.scripts.vector_store_server import (  # noqa: E402
     METADATA_COLUMNS,
     SqliteVecStore,
     VectorDimensionMismatchError,

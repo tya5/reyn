@@ -42,8 +42,10 @@ deny arm) + this file, both installing the ``sandbox-linux`` extra on a real
 Linux runner.
 
 No mocks — the real ``SandboxPolicy`` / real shim / real subprocesses / real
-builtin MCP servers (``reyn-rag-chunker``, ``reyn-rag-vector-store``) via the
-real production ``MCPClient`` seam.
+builtin ``rag`` plugin MCP server scripts (``chunker_server.py``,
+``vector_store_server.py``, launched directly — ADR 0064 P5 retired the
+``reyn-rag-chunker``/``reyn-rag-vector-store`` console scripts) via the real
+production ``MCPClient`` seam.
 """
 from __future__ import annotations
 
@@ -57,6 +59,16 @@ from pathlib import Path
 import pytest
 
 from reyn.security.sandbox.policy import SandboxPolicy
+
+
+def _rag_plugin_script(name: str) -> Path:
+    """Path to a builtin ``rag`` plugin MCP server script
+    (``src/reyn/builtin/plugins/rag/scripts/<name>``), resolved package-
+    relative so this works identically in a dev checkout or an installed
+    wheel (ADR 0064 P5 — mirrors ``plugin_install._builtin_plugin_dir``)."""
+    import reyn.builtin as _builtin_pkg
+
+    return Path(_builtin_pkg.__file__).resolve().parent / "plugins" / "rag" / "scripts" / name
 
 
 def _landlock_available() -> bool:
@@ -283,24 +295,30 @@ def _patch_landlock_backend(monkeypatch: pytest.MonkeyPatch) -> None:
 async def test_chunker_server_starts_and_responds_under_seccomp_allowlist(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
 ) -> None:
-    """Tier 2c: ``reyn-rag-chunker`` (a real console-script MCP server RAG
-    actually uses) starts and answers a real tool call through the
+    """Tier 2c: the builtin ``rag`` plugin's chunker server (a real MCP server
+    RAG actually uses) starts and answers a real tool call through the
     now-unconditional seccomp allowlist.
 
     Runs at ``network=True`` — see the "why network=True" note above. Needs the
     ``builtin-rag`` extra (chonkie import happens lazily inside the tool,
-    exercised here for real, not stubbed)."""
+    exercised here for real, not stubbed). Launched directly as
+    ``<this interpreter> <plugin script path>`` — ADR 0064 P5 retired the
+    ``reyn-rag-chunker`` console script (a real plugin install spawns via a
+    materialised per-plugin venv's own interpreter instead); this test's
+    job is the seccomp-allowlist completeness property, which needs only
+    SOME real chonkie-backed MCP server process, not the install mechanism
+    itself (covered by tests/test_plugin_install.py)."""
     from reyn.mcp.client import MCPClient
 
     _patch_landlock_backend(monkeypatch)
-    command = shutil.which("reyn-rag-chunker")
-    if command is None:
-        pytest.skip("reyn-rag-chunker console script not on PATH — pip install "
-                    "'reyn[builtin-rag]' not run in this environment")
+    script = _rag_plugin_script("chunker_server.py")
+    if not script.exists():  # pragma: no cover - packaging regression only
+        pytest.skip(f"builtin rag plugin chunker script not found at {script}")
 
     cfg = {
         "type": "stdio",
-        "command": command,
+        "command": sys.executable,
+        "args": [str(script)],
         "network": True,
         "subprocess": True,  # the stdio-MCP default this fix is about
         "cwd": str(tmp_path),
@@ -326,27 +344,29 @@ async def test_chunker_server_starts_and_responds_under_seccomp_allowlist(
 async def test_vector_store_server_starts_and_responds_under_seccomp_allowlist(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
 ) -> None:
-    """Tier 2c: ``reyn-rag-vector-store`` starts and answers a real tool call
-    through the now-unconditional seccomp allowlist.
+    """Tier 2c: the builtin ``rag`` plugin's vector-store server starts and
+    answers a real tool call through the now-unconditional seccomp allowlist.
 
     Runs at ``network=True`` (see the "why network=True" note above). The tool
     exercised — ``list_metadata`` — is a LOCAL sqlite operation, so it is what
     surfaced the `fsync`/`fdatasync` durability gap (SQLite "disk I/O error"),
     network-independently. Needs the ``builtin-rag`` extra (apsw/sqlite-vec) —
     skips (not fails) when absent, same posture as
-    ``test_fp0063_p3_rag_pipelines.py``."""
+    ``test_fp0063_p3_rag_pipelines.py``. See the chunker test above for why
+    this launches the plugin script directly rather than via a console
+    script (ADR 0064 P5)."""
     pytest.importorskip("apsw", reason="builtin-rag extra not installed")
     from reyn.mcp.client import MCPClient
 
     _patch_landlock_backend(monkeypatch)
-    command = shutil.which("reyn-rag-vector-store")
-    if command is None:
-        pytest.skip("reyn-rag-vector-store console script not on PATH — pip "
-                    "install 'reyn[builtin-rag]' not run in this environment")
+    script = _rag_plugin_script("vector_store_server.py")
+    if not script.exists():  # pragma: no cover - packaging regression only
+        pytest.skip(f"builtin rag plugin vector-store script not found at {script}")
 
     cfg = {
         "type": "stdio",
-        "command": command,
+        "command": sys.executable,
+        "args": [str(script)],
         "network": True,
         "subprocess": True,
         "cwd": str(tmp_path),

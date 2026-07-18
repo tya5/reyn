@@ -38,7 +38,9 @@ jobs:
       # default-deny syscall filter for the first time — the #2962 correctness
       # risk (its first live load killed /bin/echo). Installing this extra is
       # what lets tests/test_sandbox_seccomp_network_3030.py's representative-
-      # real-MCP-server probes (reyn-rag-chunker / reyn-rag-vector-store) RUN
+      # real-MCP-server probes (the builtin rag plugin's chunker_server.py /
+      # vector_store_server.py, launched directly since ADR 0064 P5 retired
+      # the reyn-rag-chunker / reyn-rag-vector-store console scripts) RUN
       # rather than skip on this job.
       - name: Install sandbox-linux + builtin-rag extras
         run: pip install -e ".[dev,sandbox-linux,builtin-rag]"
@@ -82,7 +84,7 @@ jobs:
       # condition that used to leak network), the io_uring completeness probe
       # (bounded-by-construction — the exact gap a syscall-name denylist would
       # have missed), and the representative-real-MCP-server completeness group
-      # (reyn-rag-chunker / reyn-rag-vector-store / uvx markitdown-mcp) — the
+      # (the builtin rag plugin's chunker/vector-store scripts + uvx markitdown-mcp) — the
       # ★★ hard gate that an incomplete allowlist does not silently kill a real
       # MCP server (#2962's class). Same `requires_landlock` skip-safety as the
       # step above; -rs so a markitdown-mcp network-reachability skip (this

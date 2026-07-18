@@ -27,23 +27,25 @@ jobs:
       # (2) reads README/docs/source through reyn_repo's dual-mode resolver
       # and asserts byte-identity with the dev checkout, (3) asserts a
       # non-declared path is refused, (4) re-checks the still-LIVE
-      # read_builtin_body_bytes path (#2913, untouched by 0061), (5) starts a
-      # builtin RAG MCP server through the `reyn-rag-chunker` console script
-      # the wheel ships, from a PATH shaped like a `pipx install reyn`
-      # environment (ambient `python3` cannot import reyn), and calls a real
-      # tool on it -- #2972. This is deliberately NOT path-filtered: a
-      # positive include-list is itself a false-allow surface — an incomplete
-      # list lets a packaging regression under an unlisted path merge with the
-      # gate silently never running. Cost is ~1 minute end-to-end (checks 1-4
-      # install the wheel with no dependencies and stay a few seconds; check 5
-      # needs a second venv with `[builtin-rag]` because an MCP server must
-      # really import fastmcp/chonkie to serve a call) — trivial next to the
-      # severity of a production wheel silently shipping a broken/incomplete
-      # repo-access surface with zero CI signal, so this runs unconditionally
-      # on every PR instead of trying to enumerate "every packaging-affecting
-      # path".
+      # read_builtin_body_bytes path (#2913, untouched by 0061), (5) installs
+      # the builtin `rag` PLUGIN via a real `plugin_install` call (ADR 0064
+      # P5 -- supersedes #2972's retired `reyn-rag-chunker` console script),
+      # which materialises its dependencies into a dedicated per-plugin venv
+      # via real `uv`, then spawns the registered chunker server from a PATH
+      # shaped like a `pipx install reyn` environment (ambient `python3`
+      # cannot import reyn) and calls a real tool on it. This is deliberately
+      # NOT path-filtered: a positive include-list is itself a false-allow
+      # surface — an incomplete list lets a packaging regression under an
+      # unlisted path merge with the gate silently never running. Cost is
+      # ~1-2 minutes end-to-end (checks 1-4 install the wheel with no
+      # dependencies and stay a few seconds; check 5 needs a second venv plus
+      # `plugin_install`'s own real `uv venv`/`uv pip install` fetch of
+      # chonkie/apsw/sqlite-vec/fastmcp) — trivial next to the severity of a
+      # production wheel silently shipping a broken/incomplete repo-access
+      # surface with zero CI signal, so this runs unconditionally on every PR
+      # instead of trying to enumerate "every packaging-affecting path".
       - name: Install build tooling
-        run: pip install build
+        run: pip install build uv
 
       - name: Wheel reachability parity gate
         run: python scripts/wheel_reachability_smoke.py

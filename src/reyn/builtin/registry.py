@@ -128,31 +128,16 @@ BUILTIN_SKILLS: "dict[str, dict[str, Any]]" = {
         "enabled": True,
         "visibility": VISIBILITY_ON_DEMAND,
     },
-    # FP-0063 P4 -- the "when/how" for the two builtin RAG pipelines below
-    # (proposal 0063 §Architecture: "builtin skill: when/how to run the two
-    # pipelines"). The pipelines are already LLM-discoverable on their own
-    # (list_actions enumerates a `pipeline__<name>` per registered entry,
-    # carrying that entry's own `description`), so this skill is NOT a
-    # discovery surface -- it exists for exactly what a one-line description
-    # cannot carry: which of reyn's TWO RAGs to reach
-    # for, the ingest->query order, that the operator -- not the model --
-    # owns the INERT MCP servers' enablement, and the C4 one-db-one-
-    # embedding-model rule whose violation degrades a corpus SILENTLY
-    # (same dimension, different model -> meaningless neighbours, no error).
-    "build_and_query_rag_corpus": {
-        "description": (
-            "Make a folder of the operator's own documents "
-            "(txt/md/pdf/xlsx/pptx/docx) searchable by meaning: ingest them "
-            "into a user-named sqlite vector store, then query it for the "
-            "top-k relevant chunks. Read this before running the builtin "
-            "`rag_ingest` / `rag_query` pipelines, or when asked to search "
-            "documents that are NOT already in reyn's own semantic_search "
-            "index."
-        ),
-        "path": str(_BUILTIN_DIR / "skills" / "build_and_query_rag_corpus" / "SKILL.md"),
-        "enabled": True,
-        "visibility": VISIBILITY_ON_DEMAND,
-    },
+    # FP-0063's `build_and_query_rag_corpus` skill (+ the `rag_ingest`/
+    # `rag_query` pipelines it documents) moved OUT of this always-on
+    # builtin registry under ADR 0064 P5 ("builtin RAG becomes the first
+    # plugin") -- they now ship as `src/reyn/builtin/plugins/rag/` and are
+    # only registered once an operator/LLM calls
+    # `plugin_install(source={"kind": "builtin", "name": "rag"})`. Unlike
+    # A3's "ships inert but present" posture, a plugin's capabilities are
+    # not present in the registry AT ALL until installed -- the plugin
+    # model's own copy+register mechanism (`reyn.core.op_runtime.
+    # plugin_install`) is what makes them reachable, not this map.
 }
 BUILTIN_PIPELINES: "dict[str, dict[str, Any]]" = {
     "flagship": {
@@ -164,36 +149,8 @@ BUILTIN_PIPELINES: "dict[str, dict[str, Any]]" = {
         "path": str(_BUILTIN_DIR / "pipelines" / "flagship_research_and_report.yaml"),
         "enabled": True,
     },
-    # FP-0063 P3 -- builtin user RAG (proposal 0063). Both pipelines
-    # call the P2 builtin MCP servers (vector_store_server / chunker_server,
-    # #2952) plus a third-party markitdown MCP server -- all of which ship
-    # INERT (R3, mirrors the skill A3 posture): registering these two
-    # pipelines is itself inert (invoke-by-name only, Addendum A3), and
-    # every step's MCP calls additionally fail cleanly with a decision-
-    # enabling message (X1) until the operator explicitly configures +
-    # grants the three servers (docs/cookbook/configs/with-builtin-rag-mcp.yaml).
-    # The "when/how to run these two" knowledge lives in the
-    # `build_and_query_rag_corpus` skill above (P4).
-    "rag_ingest": {
-        "description": (
-            "RAG ingest: chunk -> embed -> store a file or folder into a "
-            "user-named sqlite vector store, incrementally by content_hash "
-            "(add/update/remove). Runs no python of its own -- MCP tools and "
-            "reyn ops only; step 0 pre-flights the MCP servers it needs "
-            "(#2972) -- proposal 0063 P3."
-        ),
-        "path": str(_BUILTIN_DIR / "pipelines" / "rag_ingest.yaml"),
-        "enabled": True,
-    },
-    "rag_query": {
-        "description": (
-            "RAG query: embed the query text and return the top-k nearest "
-            "chunks from a sqlite vector store rag_ingest wrote to "
-            "-- proposal 0063 P3."
-        ),
-        "path": str(_BUILTIN_DIR / "pipelines" / "rag_query.yaml"),
-        "enabled": True,
-    },
+    # `rag_ingest` / `rag_query` moved OUT of this always-on builtin
+    # registry under ADR 0064 P5 -- see the comment in BUILTIN_SKILLS above.
 }
 BUILTIN_PRESENTATIONS: "dict[str, dict[str, Any]]" = {
     # The status/results card exemplar (proposal 0060 Addendum D9.5 curated-5

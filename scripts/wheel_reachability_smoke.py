@@ -29,30 +29,24 @@ venv, and probes it for:
 4. **#2913 builtin body reads (kept, LIVE, unaffected by 0061)** —
    ``read_builtin_body_bytes`` on a real skill/pipeline body, plus the
    least-privilege negative (an in-package ``.py`` module returns ``None``).
-5. **#2972 builtin MCP console-script launch under a pipx-shaped PATH
-   (mode-2, STRICT)** — the builtin RAG MCP servers must start when the
-   ambient ``python3`` is NOT reyn's interpreter. This check runs the
-   ``reyn-rag-chunker`` console script that ``[project.scripts]`` ships,
-   from inside a PATH shaped like a ``pipx install reyn`` environment (a
-   clean, reyn-less venv sits first on PATH), and asserts it imports reyn
-   and serves. pip stamps a console script's shebang with the absolute path
-   of the interpreter it was installed into, so this is what makes the arc
-   work under pipx — and this is the only check in this file that can
-   witness it: every other check runs the wheel through an interpreter that
-   already resolves reyn (``venv_python`` / ``sys.executable``), and a
-   normal pytest job's ambient ``python3`` trivially IS the job's own
-   (reyn-having) interpreter, so "ambient python3 == reyn's interpreter"
-   can never be falsified there.
-
-   Until #2972 this probe instead ran ``python3 -m
-   reyn.builtin.rag_ingest_helpers`` — the ingest pipeline's shell-out —
-   as an XFAIL, and its XPASS branch demanded promotion to a strict
-   assertion in the PR that fixed the bug. #2972 removed the shell-out (the
-   pipeline now runs no python of its own) and deleted that module, so the
-   XFAIL is promoted here: the property worth gating is no longer "does the
-   ambient python3 happen to be reyn's" (reyn does not own the operator's
-   python runtime and no longer asks) but "does the launch command reyn
-   SHIPS work where the ambient python3 is not reyn's".
+5. **ADR 0064 P5 builtin ``rag`` PLUGIN install + spawn under a pipx-shaped
+   PATH (STRICT)** — ``plugin_install(source={"kind": "builtin", "name":
+   "rag"})`` against a wheel-only reyn install must copy the plugin,
+   materialise its dependencies into a per-plugin venv (real ``uv``), and
+   register its mcp servers with the spawn command rewritten to that venv's
+   own interpreter; the registered chunker server must then actually start
+   and serve a real tool call when the ambient ``python3`` is NOT reyn's
+   interpreter. This supersedes the retired #2972
+   ``reyn-rag-chunker``/``reyn-rag-vector-store`` console scripts (ADR 0064
+   §4: "no console-scripts ... spawn is network-free by construction") — the
+   plugin's absolute-path-to-materialised-venv spawn command is now what
+   makes the arc work under ``pipx install reyn``, a non-activated venv, or
+   any environment whose ambient ``python3`` differs from reyn's own, and
+   this is the only check in this file that can witness it: every other
+   check runs the wheel through an interpreter that already resolves reyn
+   (``venv_python`` / ``sys.executable``), and a normal pytest job's ambient
+   ``python3`` trivially IS the job's own (reyn-having) interpreter, so
+   "ambient python3 == reyn's interpreter" can never be falsified there.
 
 Exits 0 iff every check passes; exits non-zero (with a PASS/FAIL line per
 check) on the first structural failure or any assertion failure. Cleans up
@@ -130,37 +124,35 @@ def _check_wheel_config_completeness(wheel_path: Path) -> list[str]:
     return failures
 
 
-_CONSOLE_PROBE_SCRIPT = REPO_ROOT / "scripts" / "wheel_mcp_console_probe.py"
+_PLUGIN_INSTALL_PROBE_SCRIPT = REPO_ROOT / "scripts" / "wheel_plugin_install_probe.py"
 
 
-def _check_builtin_mcp_console_script(wheel_path: Path, tmp_root: Path) -> bool:
-    """#2972 mode-2 check: a builtin RAG MCP server starts via the console
-    script reyn SHIPS, in a PATH shaped like a ``pipx install reyn``
-    environment (ambient ``python3`` is not reyn's interpreter).
+def _check_builtin_rag_plugin_install(wheel_path: Path, tmp_root: Path) -> bool:
+    """ADR 0064 P5 check: the builtin ``rag`` plugin installs (real
+    ``plugin_install``) and spawns via its own materialised per-plugin venv,
+    in a PATH shaped like a ``pipx install reyn`` environment (ambient
+    ``python3`` is not reyn's interpreter).
 
     A clean venv WITHOUT reyn (``with_pip=False`` — no wheel, no ``-e``,
-    nothing) is built and its ``bin/`` dir is prepended to the child's
-    ``PATH``, manufacturing "ambient python3 differs from reyn's own
-    interpreter" deterministically on any platform or dev box, regardless of
-    what the CALLING process's ambient ``python3`` happens to be. That is why
-    this is the only check here that can witness the property: every other
-    one runs the wheel through an interpreter that already resolves reyn.
+    nothing) is built and its ``bin/`` dir is prepended to the SPAWNED
+    server's ``PATH``, manufacturing "ambient python3 differs from reyn's own
+    interpreter" deterministically. That is why this is the only check here
+    that can witness the property: every other one runs the wheel through an
+    interpreter that already resolves reyn.
 
-    Needs a SECOND venv: the ``--no-deps`` install the other checks use is
-    deliberately dependency-free (they probe stdlib-only paths), but an MCP
-    server has to actually import ``fastmcp``/``chonkie`` to serve a call.
-    Installing ``<wheel>[builtin-rag]`` resolves those from pyproject itself,
-    so no version is duplicated into this script (measured ~60s — affordable
-    against the job's 5-minute budget, and the alternative of asserting on a
-    ModuleNotFoundError's message text would gate on a string, not a
-    behavior).
+    Needs a SECOND venv with the wheel installed WITHOUT the ``builtin-rag``
+    extra (that extra is dev/test-only now, ADR 0064 P5) — ``plugin_install``
+    itself materialises chonkie/apsw/sqlite-vec/fastmcp into a THIRD,
+    per-plugin venv via real ``uv venv``/``uv pip install`` (needs ``uv`` on
+    PATH and real network — the install-time fetch ADR 0064 §3.11
+    describes; measured ~60s, affordable against the job's 5-minute budget).
 
-    The real MCP client call lives in the committed
-    ``scripts/wheel_mcp_console_probe.py``, run BY THAT VENV's interpreter
-    (this process — the CI job python — has neither reyn nor fastmcp).
-    Returns True iff every check inside the probe passed.
+    The real ``plugin_install`` call + MCP client call live in the committed
+    ``scripts/wheel_plugin_install_probe.py``, run BY THE WHEEL-ONLY venv's
+    interpreter (this process — the CI job python — has neither reyn nor
+    fastmcp). Returns True iff every check inside the probe passed.
     """
-    rag_venv = tmp_root / "venv-builtin-rag"
+    rag_venv = tmp_root / "venv-rag-plugin"
     venv.EnvBuilder(with_pip=True, clear=True).create(str(rag_venv))
     rag_bin = rag_venv / "bin"
     if not rag_bin.exists():  # pragma: no cover - Windows layout
@@ -169,7 +161,10 @@ def _check_builtin_mcp_console_script(wheel_path: Path, tmp_root: Path) -> bool:
     if not rag_python.exists():  # pragma: no cover - Windows layout
         rag_python = rag_bin / "python.exe"
 
-    _run([str(rag_python), "-m", "pip", "install", "--quiet", f"{wheel_path}[builtin-rag]"])
+    # No [builtin-rag] extra here — the plugin materialises its OWN deps at
+    # install time; this venv only needs reyn itself (+ yaml, a core dep) to
+    # run the plugin_install op.
+    _run([str(rag_python), "-m", "pip", "install", "--quiet", str(wheel_path)])
 
     clean_venv = tmp_root / "venv-no-reyn"
     venv.EnvBuilder(with_pip=False, clear=True).create(str(clean_venv))
@@ -177,14 +172,17 @@ def _check_builtin_mcp_console_script(wheel_path: Path, tmp_root: Path) -> bool:
     if not clean_bin.exists():  # pragma: no cover - Windows layout
         clean_bin = clean_venv / "Scripts"
 
+    reyn_home = tmp_root / "reyn-home"
+    reyn_home.mkdir(parents=True, exist_ok=True)
+
     probe_env = {
         **os.environ,
-        "REYN_CONSOLE_SCRIPT": str(rag_bin / "reyn-rag-chunker"),
+        "REYN_HOME": str(reyn_home),
         "REYN_CLEAN_BIN": str(clean_bin),
     }
     probe_env.pop("PYTHONPATH", None)
     result = subprocess.run(
-        [str(rag_python), str(_CONSOLE_PROBE_SCRIPT)],
+        [str(rag_python), str(_PLUGIN_INSTALL_PROBE_SCRIPT)],
         capture_output=True,
         text=True,
         env=probe_env,
@@ -257,20 +255,19 @@ def main() -> int:
             print(f"[FAIL] wheel reachability parity gate FAILED (exit {result.returncode})")
             return 1
 
-        # 7. #2972 mode-2 check (STRICT -- promoted from the XFAIL that
-        # tracked the ambient-python3 shell-out this issue removed). See the
-        # module docstring check 5 and _check_builtin_mcp_console_script for
-        # why THIS is the one check in the file that can witness it.
-        if not _check_builtin_mcp_console_script(wheel_path, tmp_dir):
+        # 7. ADR 0064 P5 check (STRICT). See the module docstring check 5 and
+        # _check_builtin_rag_plugin_install for why THIS is the one check in
+        # the file that can witness ambient-python3-independence.
+        if not _check_builtin_rag_plugin_install(wheel_path, tmp_dir):
             print(
-                "[FAIL] #2972 builtin MCP console-script launch: a builtin RAG "
-                "MCP server did not serve via its shipped console script under "
+                "[FAIL] ADR 0064 P5 builtin rag plugin install: plugin_install "
+                "did not install + spawn the rag plugin's chunker server under "
                 "a pipx-shaped PATH -- the builtin RAG arc is broken for any "
                 "install whose ambient python3 is not reyn's interpreter."
             )
             return 1
         print(
-            "[PASS] #2972 builtin MCP console-script launch under a pipx-shaped PATH"
+            "[PASS] ADR 0064 P5 builtin rag plugin install + spawn under a pipx-shaped PATH"
         )
 
         print("[PASS] wheel reachability parity gate: all checks green")
