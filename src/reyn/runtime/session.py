@@ -668,6 +668,24 @@ class DurabilityHaltError(RuntimeError):
     caller sees it synchronously on their next op, not only a CRITICAL log they would scroll past."""
 
 
+@dataclass(frozen=True)
+class _AuditEventBundle:
+    """#3082 Family 1: the audit-event spine (P6) — ``event_store`` (disk-backed
+    log) → ``chat_events`` (the ``EventLog`` nearly every other Session
+    sub-component consumes) → ``outbox_hub`` (the outbox fan-out), plus the
+    opt-in OTEL subscriber attached to ``chat_events``. Pure output→input
+    value object: :meth:`Session._build_audit_event_bundle` is a byte-identical
+    extraction of the construction sequence that used to run inline in
+    ``Session.__init__`` — same objects, same order, same args. This is the
+    FIRST family built (the spine); later families' builders take its fields
+    as explicit inputs instead of reaching into ``self`` mid-construction."""
+
+    event_store: EventStore
+    chat_events: EventLog
+    outbox_hub: OutboxHub
+    otel_exporter: "object | None"
+
+
 class Session:
     def __init__(
         self,
@@ -1557,13 +1575,18 @@ class Session:
         self.history: list[ChatMessage] = []
         self.inbox: asyncio.Queue = asyncio.Queue()
         self.outbox: asyncio.Queue = asyncio.Queue()
-        # ADR-0039 P6b: the outbox is single-consumer (asyncio.Queue hands each
-        # item to exactly ONE getter). The hub is the SOLE ``outbox.get()``
-        # consumer and fans every message out to N per-surface subscriptions, so
-        # the local REPL forwarder and each AG-UI surface receive the FULL stream
-        # instead of stealing frames from one another. Drain starts lazily on the
-        # first ``subscribe`` (no running loop needed here at construction).
-        self.outbox_hub = OutboxHub(self.outbox, name=self.agent_name)
+        # #3082 Family 1 (audit-event spine, P6): event_store -> chat_events
+        # (EventLog) -> outbox_hub (+ the opt-in OTEL subscriber attached to
+        # chat_events) extracted into _build_audit_event_bundle. Byte-identical
+        # extraction — same objects, same construction order, same args as the
+        # inline sequence this replaced; see _AuditEventBundle / the builder's
+        # docstrings for the per-component rationale (outbox single-consumer
+        # fan-out, opt-in OTEL attach).
+        _audit_bundle = self._build_audit_event_bundle(observability_config)
+        self.outbox_hub = _audit_bundle.outbox_hub
+        self._event_store = _audit_bundle.event_store
+        self._chat_events = _audit_bundle.chat_events
+        self._otel_exporter = _audit_bundle.otel_exporter
         # #2103 S1bc-exec: sid → original-task record for sessions THIS session spawned.
         # When a spawned session's result routes back, the result header renders
         # ``task=<the spawner's OWN request>`` from THIS trusted record (keyed by the
@@ -1576,30 +1599,6 @@ class Session:
         # agents don't accumulate display noise.
         self.is_attached: bool = False
 
-        self._event_store = EventStore(
-            self.events_dir,
-            max_bytes=self._events_config.max_bytes,
-            max_age_seconds=self._events_config.max_age_seconds,
-        )
-        self._chat_events = EventLog(
-            subscribers=[self._event_store],
-            agent_id=self._agent_id,  # FP-0016 E: auto-inject agent_id into every event
-        )
-        # P5 ADR-0039: opt-in OpenTelemetry export. Attaches a fail-open,
-        # off-loop OTLP subscriber to this session's EventLog ONLY when an OTLP
-        # endpoint is configured (observability.otel.endpoint or the
-        # OTEL_EXPORTER_OTLP_ENDPOINT env). With no endpoint build_otel_exporter
-        # returns None → nothing attached, zero overhead, behavior byte-identical
-        # to no OTEL. The exporter is a lossy downstream: it never writes to
-        # .reyn/events or the WAL, so recovery/replay is independent of it (SR4).
-        self._otel_exporter = None
-        try:
-            from reyn.observability.otel_exporter import build_otel_exporter
-            self._otel_exporter = build_otel_exporter(observability_config)
-            if self._otel_exporter is not None:
-                self._chat_events.add_subscriber(self._otel_exporter)
-        except Exception:  # noqa: BLE001 — OTEL attach must never break session init
-            self._otel_exporter = None
         # #2073 S1: the config hot-reloader. Reads ONLY the IN-set (.reyn/*.yaml);
         # the OUT-set (reyn.yaml) is restart-only. Applies at the turn_end safe-point
         # (apply_pending below). Per-component reapply seams are registered in S2.
@@ -3839,6 +3838,65 @@ class Session:
                 for name, tools in snapshot_after.items()
             },
         }
+
+    # ── #3082 Family 1: audit-event spine builder ──
+
+    def _build_audit_event_bundle(
+        self, observability_config: "object | None"
+    ) -> "_AuditEventBundle":
+        """#3082 Family 1: build the audit-event (P6) spine — ``event_store``
+        (disk-backed) -> ``chat_events`` (the ``EventLog`` nearly every other
+        Session sub-component consumes) -> ``outbox_hub`` (the outbox
+        fan-out), plus the opt-in OTEL subscriber attached to ``chat_events``.
+
+        Byte-identical extraction of the sequence that used to run inline in
+        ``__init__`` — same objects, same construction order, same args.
+        Reads only attributes ``__init__`` has already set by this point
+        (``self.outbox`` / ``self.agent_name`` / ``self.events_dir`` /
+        ``self._events_config`` / ``self._agent_id``); takes
+        ``observability_config`` explicitly since it is an ``__init__``
+        parameter, not a ``self`` attribute.
+
+        ADR-0039 P6b: the outbox is single-consumer (asyncio.Queue hands each
+        item to exactly ONE getter). The hub is the SOLE ``outbox.get()``
+        consumer and fans every message out to N per-surface subscriptions, so
+        the local REPL forwarder and each AG-UI surface receive the FULL
+        stream instead of stealing frames from one another. Drain starts
+        lazily on the first ``subscribe`` (no running loop needed here at
+        construction).
+
+        P5 ADR-0039: opt-in OpenTelemetry export. Attaches a fail-open,
+        off-loop OTLP subscriber to this session's EventLog ONLY when an OTLP
+        endpoint is configured (observability.otel.endpoint or the
+        OTEL_EXPORTER_OTLP_ENDPOINT env). With no endpoint build_otel_exporter
+        returns None -> nothing attached, zero overhead, behavior
+        byte-identical to no OTEL. The exporter is a lossy downstream: it
+        never writes to .reyn/events or the WAL, so recovery/replay is
+        independent of it (SR4)."""
+        outbox_hub = OutboxHub(self.outbox, name=self.agent_name)
+        event_store = EventStore(
+            self.events_dir,
+            max_bytes=self._events_config.max_bytes,
+            max_age_seconds=self._events_config.max_age_seconds,
+        )
+        chat_events = EventLog(
+            subscribers=[event_store],
+            agent_id=self._agent_id,  # FP-0016 E: auto-inject agent_id into every event
+        )
+        otel_exporter = None
+        try:
+            from reyn.observability.otel_exporter import build_otel_exporter
+            otel_exporter = build_otel_exporter(observability_config)
+            if otel_exporter is not None:
+                chat_events.add_subscriber(otel_exporter)
+        except Exception:  # noqa: BLE001 — OTEL attach must never break session init
+            otel_exporter = None
+        return _AuditEventBundle(
+            event_store=event_store,
+            chat_events=chat_events,
+            outbox_hub=outbox_hub,
+            otel_exporter=otel_exporter,
+        )
 
     # ── #2073 S2: config hot-reload reapply seams (registered on the HotReloader) ──
 
