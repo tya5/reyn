@@ -1104,6 +1104,48 @@ class _MemoryBundle:
     memory: "MemoryService"
 
 
+@dataclass(frozen=True)
+class _MCPConnectionBundle:
+    """#3082 Family 8c (mcp_connection_service, the FINAL family — landing
+    this bundle completes #3082's Session.__init__ God-constructor
+    decomposition): ``mcp_connection_service`` (``MCPConnectionService``,
+    the per-session held-open MCP connection service — see the residual-
+    five DAG-correction note on :class:`_InterAgentMessagingBundle`'s
+    docstring: mcp_connection_service, render_template_bounds,
+    task_subscription_writer, memory (8b), inter_agent_messaging (8a) are
+    mutually independent leaves that could not be gathered into one
+    builder; the two trivial ones stay inline, the three substantial ones
+    each got their own no-move single-component builder). Single-field
+    bundle (mirrors Family 4/6a/8a's shape); kept as a bundle rather than a
+    bare return for pipeline-pattern consistency with every other Family
+    builder.
+
+    ★★ This family's crux (the sharpest deferred-resolution case in all of
+    F8 — 4 refs, vs Family 5's 2): ``mcp_connection_service`` is
+    constructed EARLY (original inline position ~:1511), but FOUR of its
+    six keyword args are ``lambda`` closures over ``self`` that resolve
+    ``self._chat_events`` (Family 1) / ``self._router_host`` (Family 6a) /
+    ``self._hook_dispatcher`` (Family 3) / ``self._interventions`` (Family
+    7) at CALL time — none of those four attributes exist yet at this
+    builder's call site. Eager-izing ANY of the four (the Family 3/4
+    pattern, correct THERE because those builders run after their
+    dependencies exist) would raise ``AttributeError`` at construction
+    time here, since this builder runs before all four. Only
+    ``elicitation_bus=self.as_request_bus()`` (needs only ``self``, always
+    resolvable) and ``agent_name=self.agent_name`` (property backed by
+    ``self._agent``, set much earlier in ``__init__``) are eager — both
+    already available at this position. Builder is an instance method
+    precisely so the four lambdas keep capturing ``self``, exactly as they
+    did inline.
+
+    Pure output→input value object: :meth:`Session._build_mcp_connection_service`
+    is a byte-identical extraction of the construction that used to run
+    inline in ``Session.__init__`` — same object, same 6 keyword args, same
+    (unmoved) position."""
+
+    mcp_connection_service: "MCPConnectionService"
+
+
 class Session:
     def __init__(
         self,
@@ -1513,49 +1555,14 @@ class Session:
         self._embedding_event_sink = _retrieval_bundle.embedding_event_sink
         self._action_usage_tracker = _retrieval_bundle.action_usage_tracker
         self._mcp_servers = mcp_servers
-        # #2597 S2a: the session-owned held-open MCP connection service (Option C —
-        # one persistent MCPClient per server, reused across chat turns/tasks for
-        # this session's whole lifetime). Constructed unconditionally (cheap — an
-        # empty dict until first ``get()``); ONLY the non-ephemeral MCP call sites
-        # (_mcp_call_tool / _mcp_list_tools) route through it — an ephemeral session
-        # (``self._ephemeral`` set post-construction by the registry) keeps using the
-        # per-call MCPClientPool so a sub-second-lived session never holds a
-        # connection open. Closed at session teardown via aclose_mcp_connections
-        # (registry.remove_session / archive_agent's main-session path).
-        # #2597 S2b: emit_sink / tools_cache_invalidate are lambdas that defer
-        # resolution of ``self._chat_events`` / ``self._router_host`` to CALL time
-        # (mirrors the ``emit_event=lambda et, **d: self._chat_events.emit(et, **d)``
-        # pattern used a few lines below) — both attributes are assigned LATER in this
-        # __init__ (``_chat_events`` at construction of the EventLog; ``_router_host``
-        # when the RouterHostAdapter is built), but neither lambda is ever CALLED until
-        # a held MCP connection actually receives a server-pushed notification, long
-        # after __init__ has finished.
-        # #2608 H1: ``hook_trigger`` is the SAME deferred-lambda pattern, over
-        # ``self._hook_dispatcher`` — constructed further below in this __init__ (the
-        # HookDispatcher itself needs ``self._put_inbox`` / ``self._stage_next_turn_context``
-        # / etc, already bound methods, so it's built after this point) — but, like
-        # ``emit_sink``/``tools_cache_invalidate`` above, never CALLED until a held MCP
-        # connection's receive loop enqueues an external event, long after __init__ has
-        # finished. ``self.agent_name`` IS already resolvable here (``self._agent`` is
-        # set earlier in this __init__), so it's passed eagerly (not deferred).
-        # #2597 slice ③ (elicitation): SAME consent_bus/consent_gate split
-        # #2095's shell-hook consent already uses (see the HookDispatcher
-        # construction above) — a server->client elicitation is routed
-        # through THIS session's RequestBus ONLY when a live intervention
-        # listener is attached; headless (no listener) auto-declines inside
-        # the handler (reyn.mcp.elicitation), never here. ``as_request_bus()``
-        # is safe to call eagerly here (unlike the deferred lambdas above) —
-        # it just wraps ``self`` in an adapter, no attribute it reads is
-        # constructed later in this __init__.
-        from reyn.mcp.connection_service import MCPConnectionService
-        self._mcp_connection_service = MCPConnectionService(
-            emit_sink=lambda et, **d: self._chat_events.emit(et, **d),
-            tools_cache_invalidate=lambda server: self._router_host.invalidate_mcp_tools_cache(server),
-            hook_trigger=lambda point, template_vars: self._hook_dispatcher.dispatch(point, template_vars),
-            elicitation_bus=self.as_request_bus(),
-            elicitation_gate=lambda: self._interventions.has_active_listener(),
-            agent_name=self.agent_name,
-        )
+        # #3082 Family 8c: mcp_connection_service — see
+        # _build_mcp_connection_service's docstring for the full ★ deferred-
+        # resolution crux (4 lambdas resolving self._chat_events /
+        # self._router_host / self._hook_dispatcher / self._interventions at
+        # CALL time, none of which exist yet at this position) and
+        # _MCPConnectionBundle's docstring for the family-grouping context.
+        _mcp_connection_bundle = self._build_mcp_connection_service()
+        self._mcp_connection_service = _mcp_connection_bundle.mcp_connection_service
         # #2608 H4 / #3082 Family 3: resolve the ``fs_watch:`` config block here
         # (a precursor / builder input); the FsWatcher itself is constructed in
         # ``_build_hook_event_bundle`` alongside the rest of the hook-event
@@ -4951,6 +4958,75 @@ class Session:
             file_regenerate_index=self._file_regenerate_index,
         )
         return _MemoryBundle(memory=memory)
+
+    def _build_mcp_connection_service(self) -> "_MCPConnectionBundle":
+        """#3082 Family 8c (mcp_connection_service, the FINAL family): build
+        the session-owned held-open MCP connection service. Byte-identical
+        extraction of the construction that used to run inline in
+        ``__init__`` — same object, same 6 keyword args, same (unmoved)
+        position (its original inline position, ~:1511, BEFORE Family 1 /
+        ``_build_audit_event_bundle``, Family 3 / ``_build_hook_event_bundle``,
+        Family 6a / ``_build_router_waist``, and Family 7 /
+        ``_build_intervention_bundle`` all run).
+
+        ★★ This family's crux (see :class:`_MCPConnectionBundle`'s
+        docstring for the full DAG-correction context): FOUR of the six
+        keyword args below are ``lambda`` closures that resolve
+        ``self._chat_events`` / ``self._router_host`` /
+        ``self._hook_dispatcher`` / ``self._interventions`` at CALL time —
+        none of those four attributes exist yet at this builder's call
+        site. Eager-izing ANY of them (the Family 3/4 pattern, wrong HERE)
+        would raise ``AttributeError`` the moment this builder runs, since
+        it runs before all four are constructed. This builder is an
+        instance method precisely so the four lambdas keep capturing
+        ``self`` — kept verbatim, never eager-ized. Only
+        ``elicitation_bus``/``agent_name`` are eager (both already
+        resolvable at this position — see their inline comments below,
+        reproduced verbatim from the original construction)."""
+        # #2597 S2a: the session-owned held-open MCP connection service (Option C —
+        # one persistent MCPClient per server, reused across chat turns/tasks for
+        # this session's whole lifetime). Constructed unconditionally (cheap — an
+        # empty dict until first ``get()``); ONLY the non-ephemeral MCP call sites
+        # (_mcp_call_tool / _mcp_list_tools) route through it — an ephemeral session
+        # (``self._ephemeral`` set post-construction by the registry) keeps using the
+        # per-call MCPClientPool so a sub-second-lived session never holds a
+        # connection open. Closed at session teardown via aclose_mcp_connections
+        # (registry.remove_session / archive_agent's main-session path).
+        # #2597 S2b: emit_sink / tools_cache_invalidate are lambdas that defer
+        # resolution of ``self._chat_events`` / ``self._router_host`` to CALL time
+        # (mirrors the ``emit_event=lambda et, **d: self._chat_events.emit(et, **d)``
+        # pattern used a few lines below) — both attributes are assigned LATER in this
+        # __init__ (``_chat_events`` at construction of the EventLog; ``_router_host``
+        # when the RouterHostAdapter is built), but neither lambda is ever CALLED until
+        # a held MCP connection actually receives a server-pushed notification, long
+        # after __init__ has finished.
+        # #2608 H1: ``hook_trigger`` is the SAME deferred-lambda pattern, over
+        # ``self._hook_dispatcher`` — constructed further below in this __init__ (the
+        # HookDispatcher itself needs ``self._put_inbox`` / ``self._stage_next_turn_context``
+        # / etc, already bound methods, so it's built after this point) — but, like
+        # ``emit_sink``/``tools_cache_invalidate`` above, never CALLED until a held MCP
+        # connection's receive loop enqueues an external event, long after __init__ has
+        # finished. ``self.agent_name`` IS already resolvable here (``self._agent`` is
+        # set earlier in this __init__), so it's passed eagerly (not deferred).
+        # #2597 slice ③ (elicitation): SAME consent_bus/consent_gate split
+        # #2095's shell-hook consent already uses (see the HookDispatcher
+        # construction above) — a server->client elicitation is routed
+        # through THIS session's RequestBus ONLY when a live intervention
+        # listener is attached; headless (no listener) auto-declines inside
+        # the handler (reyn.mcp.elicitation), never here. ``as_request_bus()``
+        # is safe to call eagerly here (unlike the deferred lambdas above) —
+        # it just wraps ``self`` in an adapter, no attribute it reads is
+        # constructed later in this __init__.
+        from reyn.mcp.connection_service import MCPConnectionService
+        mcp_connection_service = MCPConnectionService(
+            emit_sink=lambda et, **d: self._chat_events.emit(et, **d),
+            tools_cache_invalidate=lambda server: self._router_host.invalidate_mcp_tools_cache(server),
+            hook_trigger=lambda point, template_vars: self._hook_dispatcher.dispatch(point, template_vars),
+            elicitation_bus=self.as_request_bus(),
+            elicitation_gate=lambda: self._interventions.has_active_listener(),
+            agent_name=self.agent_name,
+        )
+        return _MCPConnectionBundle(mcp_connection_service=mcp_connection_service)
 
     # ── #2073 S2: config hot-reload reapply seams (registered on the HotReloader) ──
 
