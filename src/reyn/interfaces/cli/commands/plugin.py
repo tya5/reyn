@@ -87,7 +87,14 @@ def _build_plugin_cli_tool_context(project_root: Path, *, interactive: bool) -> 
     from reyn.user_intervention import StdinInterventionBus
 
     try:
-        config = load_config()
+        # Load config ANCHORED at project_root (not the default cwd) so
+        # `--project /foo` honours /foo's `permissions:` — the resolver's
+        # project_root / file_zone_root below are already /foo, and applying a
+        # DIFFERENT cwd's permissions to a /foo install would be incoherent
+        # (e.g. running from /bar would silently apply /bar's grants). When no
+        # --project is passed, project_root is the closest reyn.yaml ancestor of
+        # cwd, so this is byte-identical to the from-within-project case.
+        config = load_config(cwd=project_root)
         perm_config = dict(getattr(config, "permissions", {}) or {})
     except Exception:
         perm_config = {}

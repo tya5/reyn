@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -35,6 +36,36 @@ import yaml
 from reyn.interfaces.cli.commands import plugin as plugin_cli
 
 # ── shared fixtures ─────────────────────────────────────────────────────────
+
+
+def _make_git_plugin_repo(base: Path, name: str = "gitplugin") -> Path:
+    """A real local git repo holding a minimal plugin (skills capability only —
+    no requirements.txt ⇒ no dep-materialisation http.get), usable as a
+    ``file://`` git source (mirrors tests/test_plugin_install.py::
+    _make_git_plugin_repo). Using a REAL, reachable repo is what makes the
+    run-code-gate strip-falsify meaningful: with the gate stripped the clone
+    SUCCEEDS and the install proceeds, so the test flips RED — an unreachable
+    URL would instead keep failing (clone error → same SystemExit) and mask
+    the strip."""
+    repo = base / "repo"
+    (repo / ".reyn-plugin").mkdir(parents=True, exist_ok=True)
+    (repo / ".reyn-plugin" / "plugin.json").write_text(
+        json.dumps({
+            "name": name, "version": "0.1.0", "description": "git plugin",
+            "capabilities": [{"kind": "skills"}],
+        }),
+        encoding="utf-8",
+    )
+    (repo / "skills" / "hi").mkdir(parents=True, exist_ok=True)
+    (repo / "skills" / "hi" / "SKILL.md").write_text(
+        "---\nname: hi\ndescription: from git\n---\n\nBody.\n", encoding="utf-8",
+    )
+    subprocess.run(["git", "init"], cwd=repo, capture_output=True, check=True)
+    subprocess.run(["git", "config", "user.email", "t@example.com"], cwd=repo, capture_output=True, check=True)
+    subprocess.run(["git", "config", "user.name", "T"], cwd=repo, capture_output=True, check=True)
+    subprocess.run(["git", "add", "."], cwd=repo, capture_output=True, check=True)
+    subprocess.run(["git", "commit", "-m", "init"], cwd=repo, capture_output=True, check=True)
+    return repo
 
 
 def _write_local_plugin(base: Path, name: str = "myplugin") -> Path:
@@ -57,10 +88,22 @@ def _write_local_plugin(base: Path, name: str = "myplugin") -> Path:
     return plugin_dir
 
 
-def _project(tmp_path: Path, *, allow_file_write: bool = True) -> Path:
+def _project(
+    tmp_path: Path, *, allow_file_write: bool = True, allow_web_fetch: bool = False,
+) -> Path:
     proj = tmp_path / "proj"
     proj.mkdir()
-    perms = {"file.write": "allow"} if allow_file_write else {}
+    perms: dict = {}
+    if allow_file_write:
+        perms["file.write"] = "allow"
+    # ``web.fetch: allow`` config-approves the http.get FETCH axis (git clone /
+    # pypi reachability). Set it to ISOLATE the run-code trust gate: with the
+    # fetch axis granted, the ONLY thing that can deny a {kind:git} install is
+    # require_plugin_git_run_code_trust — so a green "fails closed" result
+    # actually witnesses THAT gate, not a redundant fetch-axis deny (mirrors
+    # the P2 op-level test's approve_all_http=True isolation).
+    if allow_web_fetch:
+        perms["web.fetch"] = "allow"
     (proj / "reyn.yaml").write_text(
         yaml.safe_dump({"permissions": perms}), encoding="utf-8",
     )
@@ -169,7 +212,9 @@ def test_cli_local_install_uninstall_roundtrip_real_stack(tmp_path, monkeypatch)
 
     project = _project(tmp_path, allow_file_write=True)
     src = _write_local_plugin(tmp_path / "src")
-    monkeypatch.chdir(project)
+    # Deliberately NO chdir: `--project` must load the target project's
+    # permissions itself (load_config(cwd=project_root)); a cwd-dependent
+    # install would be a latent `--project` bug.
 
     install_args = _install_args("local", str(src), project, non_interactive=True)
     plugin_cli.run_install(install_args)
@@ -188,33 +233,53 @@ def test_cli_local_install_uninstall_roundtrip_real_stack(tmp_path, monkeypatch)
 
 
 # ── 3. {kind:git} fails closed non-interactively (Security lens) ──────────
+#
+# CONFOUND ISOLATION (why these use a REAL local git repo + web.fetch:allow):
+# the {kind:git} handler runs the run-code trust gate FIRST, then (for an https
+# host) require_http_get, then clones. If the test used an UNREACHABLE
+# `https://example.invalid/...` URL with web.fetch NOT granted, THREE independent
+# causes each produce the SAME SystemExit(2): the run-code deny, the http.get
+# non-interactive deny, AND the clone failure. Stripping the run-code gate would
+# leave the test GREEN (masked by the other two) — "green ≠ the gate ran". Using
+# a REAL, reachable `file://` repo removes ALL of that: `_source_host` returns
+# None for file:// so require_http_get is skipped (web.fetch:allow is belt-and-
+# suspenders isolation of the fetch axis regardless), and the clone SUCCEEDS —
+# so the run-code trust gate is the ONE remaining thing that can deny. Strip it
+# and the install proceeds (no SystemExit) → the test flips RED. Verified by
+# strip-falsify (temporarily removing the gate call) — see PR notes.
 
 
 def test_cli_git_install_noninteractive_fails_closed_real_gate(tmp_path, monkeypatch) -> None:
-    """Tier 2: a {kind:git} install run via `--non-interactive` hits the REAL
-    require_plugin_git_run_code_trust gate (no stub) and is denied — SystemExit(2)
-    with a permission-denied message, no fetch/write attempted."""
+    """Tier 2: a {kind:git} install run via `--non-interactive`, against a REAL
+    reachable file:// repo with the fetch axis fully granted (web.fetch:allow),
+    is denied ONLY by the REAL require_plugin_git_run_code_trust gate (no stub)
+    — SystemExit(2), nothing installed. Isolated so stripping the gate flips it
+    RED (the clone would otherwise succeed)."""
     home = tmp_path / "home"
     home.mkdir()
     monkeypatch.setattr(Path, "home", lambda: home)
 
-    project = _project(tmp_path, allow_file_write=True)
-    args = _install_args(
-        "git", "https://example.invalid/some/plugin.git", project,
-        non_interactive=True,
-    )
+    repo = _make_git_plugin_repo(tmp_path)
+    project = _project(tmp_path, allow_file_write=True, allow_web_fetch=True)
+    args = _install_args("git", repo.as_uri(), project, non_interactive=True)
 
     with pytest.raises(SystemExit) as exc_info:
         plugin_cli.run_install(args)
     assert exc_info.value.code == 2
-    # No plugin copy should have been attempted.
-    assert not (home / ".reyn" / "plugins").exists()
+    # Gate fired BEFORE any clone/copy: nothing landed under ~/.reyn/plugins/.
+    installed = [
+        p for p in (home / ".reyn" / "plugins").glob("*")
+        if not p.name.startswith(".")
+    ] if (home / ".reyn" / "plugins").exists() else []
+    assert installed == [], f"git plugin installed despite no run-code trust: {installed}"
 
 
 def test_cli_git_install_notty_fails_closed_even_without_flag(tmp_path, monkeypatch) -> None:
     """Tier 2: even WITHOUT --non-interactive, a non-tty CLI invocation (sys.stdin.isatty()
     False, the real subprocess/CI condition) must fail closed for {kind:git} — the CLI's
-    `interactive = not non_interactive and sys.stdin.isatty()` wiring, not just the flag."""
+    `interactive = not non_interactive and sys.stdin.isatty()` wiring, not just the flag.
+    Same real-repo + web.fetch:allow isolation as above so the run-code gate is the sole
+    denier."""
     import sys
 
     home = tmp_path / "home"
@@ -222,12 +287,15 @@ def test_cli_git_install_notty_fails_closed_even_without_flag(tmp_path, monkeypa
     monkeypatch.setattr(Path, "home", lambda: home)
     monkeypatch.setattr(sys.stdin, "isatty", lambda: False)
 
-    project = _project(tmp_path, allow_file_write=True)
-    args = _install_args(
-        "git", "https://example.invalid/some/plugin.git", project,
-        non_interactive=False,
-    )
+    repo = _make_git_plugin_repo(tmp_path)
+    project = _project(tmp_path, allow_file_write=True, allow_web_fetch=True)
+    args = _install_args("git", repo.as_uri(), project, non_interactive=False)
 
     with pytest.raises(SystemExit) as exc_info:
         plugin_cli.run_install(args)
     assert exc_info.value.code == 2
+    installed = [
+        p for p in (home / ".reyn" / "plugins").glob("*")
+        if not p.name.startswith(".")
+    ] if (home / ".reyn" / "plugins").exists() else []
+    assert installed == [], f"git plugin installed despite no run-code trust: {installed}"

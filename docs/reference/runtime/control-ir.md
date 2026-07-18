@@ -820,9 +820,12 @@ ADR §3.9 (P3): the SAME typed op is also exposed as a slash command
 <NAME>`, `interfaces/cli/commands/plugin.py`) — both thin adapters that build
 a `ToolContext` and call `invoke_tool(get_default_registry(),
 "plugin_management__install"/"__uninstall", ...)`, the SAME lookup+dispatch a
-live chat-router LLM tool call uses, so the composite permission decl and the
-`{kind: "git"}` run-code trust gate (below) live in exactly one place. The
-slash surface threads the session's LIVE `RouterHostAdapter.
+live chat-router LLM tool call uses. No surface re-implements the security
+logic: the composite permission decl is declared once in
+`tools/plugin_management_verbs.py` (the tool wrapper), and the `{kind: "git"}`
+run-code trust gate itself (below) lives one layer down in
+`core/op_runtime/plugin_install.py::handle` — the op handler every surface
+funnels into. The slash surface threads the session's LIVE `RouterHostAdapter.
 make_router_op_context` (real intervention bus - a `{kind: "git"}` install
 prompts interactively, and the OpContext carries the `#1339` sandbox floor -
 `resolve_sandbox_policy`, write_paths default-restricted to the workspace -
@@ -836,6 +839,19 @@ CLI-is-the-operator-trusted-entry-point precedent) whose `interactive` flag is
 non-interactive caller (no intervention bus) fails the `{kind: "git"}`
 run-code trust gate closed - that gate is unconditional deny-else
 (`require_plugin_git_run_code_trust`), independent of the sandbox floor.
+
+The CLI's floor-bypass is safe by construction because LLM reach into
+`~/.reyn/plugins/` is closed at TWO layers, and the CLI is only reachable by
+the operator (not the LLM): (1) the OpContext-layer gate — on any LLM-reachable
+path (tool/slash) the `#1339` sandbox floor + `require_file_write` deny a write
+to `~/.reyn/plugins/` without an explicit operator grant; and (2) the OS-layer —
+even an LLM `exec` that tries to write there directly is denied by the sandbox
+backend, because the enforced exec policy's `write_paths` is workspace-tight
+(`resolve_sandbox_policy` floor = `[workspace.base_dir]`, operator-wins over
+LLM op fields per #1326) and Landlock/Seatbelt deny-by-default any write outside
+`write_paths` — and `~/.reyn/plugins/` (under `$HOME`) is never under the
+workspace grant. So the operator-only CLI skipping the OpContext-layer floor
+removes nothing the LLM could have reached anyway.
 
 `plugin_install` example (typed discriminated `source`, §3.8 — never a
 form-sniffed string):
