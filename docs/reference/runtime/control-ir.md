@@ -93,7 +93,7 @@ Each is a distinct op kind with its own schema; there is no `op` sub-field.
 
 | Kind | Permission | Notes |
 |------|-----------|-------|
-| `read_file` | `file.read` | `offset` / `limit` (line range) optional. |
+| `read_file` | `file.read` | `offset` / `limit` (line range) optional. When the resolved path's filename is exactly `SKILL.md`, the decoded content additionally passes through invocation-time `${REYN_*}`/`${CLAUDE_*}`/`${env:VAR}` expansion (`reyn.plugins.skill_load.load_skill_body`, ADR 0064 §3.5, P4/#3070) before it is returned — every other path is unaffected. |
 | `write_file` | `file.write` | Creates or overwrites; parent dirs created as needed. |
 | `edit_file` | `file.write` | `old_string` must be unique unless `replace_all: true`. |
 | `delete_file` | `file.write` | |
@@ -900,8 +900,16 @@ higher-trust one.
    (VCS metadata excluded) into `~/.reyn/plugins/<name>/`. Emit
    `plugin_install_copied`.
 6. Expand `${REYN_*}` stable-location tokens (P1 `reyn.plugins.tokens.
-   expand_reyn_tokens`) into the copied `.mcp.json` / `pipelines/*.yaml` /
-   `skills/*/SKILL.md` files.
+   expand_reyn_tokens`) into the copied `.mcp.json` / `pipelines/*.yaml`
+   files (every token the copy-time context carries a value for). A
+   `skills/*/SKILL.md` file gets a NARROWER bake: only `${REYN_PLUGIN_ROOT}`
+   (`plugin_install.py`'s `_bake_plugin_root_only`) — `${REYN_SKILL_DIR}` and
+   `${REYN_PROJECT_DIR}` are deliberately left as literal tokens for the
+   skill-load verb (`reyn.plugins.skill_load.load_skill_body`, P4/#3070) to
+   resolve fresh at every invocation, since the plugin's global
+   `~/.reyn/plugins/<name>/` copy can be enabled into more than one project
+   (§3.3) — baking one install call's project into the shared copy would
+   freeze every later enabling project to whichever one installed it first.
 7. Materialise deps (gate 2, when `requirements.txt` is present). Emit
    `plugin_install_deps_materialised`.
 8. Register: for each manifest capability, call `skill_install.handle` /

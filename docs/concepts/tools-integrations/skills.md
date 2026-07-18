@@ -56,7 +56,7 @@ never consulted. The two fields therefore describe **four** states, not six —
 > behavior `false` actually delivered, not the narrower thing its old
 > description promised).
 
-The registry never reads `SKILL.md` itself — only `path` and `description` from the config entry populate the L1 menu and the `skill_list` result. The file is read by the model at L2, on demand, via the ordinary file-read op.
+The registry never reads `SKILL.md` itself — only `path` and `description` from the config entry populate the L1 menu and the `skill_list` result. The file is read by the model at L2, on demand, via the ordinary file-read op — which, for exactly the `SKILL.md` filename, additionally expands invocation-time `${REYN_*}`/`${CLAUDE_*}`/`${env:VAR}` tokens in the body before returning it (see [Skill-load variable expansion](#skill-load-variable-expansion) below).
 
 ## Discovering and using a skill
 
@@ -75,6 +75,38 @@ project root; the file-read op resolves those paths through a least-privilege
 carve-out scoped to the package's `skills/` and `pipelines/` directories, so
 they read cleanly in a non-interactive run without an operator to approve
 anything.
+
+## Skill-load variable expansion
+
+Reading a `SKILL.md` body is not a byte-identical file read: the `file` read
+op (`reyn.core.op_runtime.file.handle`) routes the SAME request through a
+skill-load pass (`reyn.plugins.skill_load`, ADR 0064 §3.5) whenever the
+resolved path's filename is exactly `SKILL.md`. This is still the ordinary
+read op — no dedicated "invoke skill" verb exists (see below) — the pass
+just does one more thing to the content before returning it.
+
+Three token kinds expand, in order:
+
+| Token | Source | Resolved |
+|-------|--------|----------|
+| `${REYN_PLUGIN_ROOT}` | the skill's plugin directory (a `.reyn-plugin/plugin.json` marker found walking up from the skill's own directory; falls back to the skill's own directory for a standalone, non-plugin skill) | every load (see note below) |
+| `${REYN_SKILL_DIR}` | the skill's own containing directory | every load |
+| `${REYN_PROJECT_DIR}` | the current session's workspace root | every load, freshly |
+| `${CLAUDE_PLUGIN_ROOT}` / `${CLAUDE_SKILL_DIR}` / `${CLAUDE_PROJECT_DIR}` | alias of the three `${REYN_*}` tokens above (ADR §3.6) — `SKILL.md` is a shared open standard (agentskills.io), so this alias is always active for a skill-load, not gated behind a separate provenance check | every load |
+| `${env:VAR_NAME}` | `os.environ` — namespaced (`env:` prefix), deliberately NOT the bare `${VAR}` syntax mcp spawn config uses, so a literal `${VAR}`-shaped code example in a skill body's prose is never mistaken for a token; an unset `${env:VAR_NAME}` is left untouched rather than blanked | every load, freshly |
+
+`${REYN_PLUGIN_ROOT}`/`${REYN_SKILL_DIR}` are, per the ADR, "stable location"
+values meant to be baked once at plugin-install copy time (`plugin_install`,
+plugin-model P2 — not yet built) rather than re-expanded per read; skill-load
+expands them anyway today because no installed skill body has ever had them
+baked, and doing so is a no-op once P2 starts baking them (a baked body has
+no `${...}` left to match). `${REYN_PROJECT_DIR}` and `${env:VAR_NAME}` are
+genuinely dynamic and are always resolved fresh, never baked.
+
+Reuses `reyn.plugins.tokens` (`PluginTokenContext` / `expand_reyn_tokens`) —
+the same expansion primitive an mcp server's spawn config and a pipeline's
+`ctx` params use (ADR §3.4's "uniform across capabilities" split) — rather
+than a skill-specific reimplementation.
 
 ## Config cascade
 
@@ -107,7 +139,7 @@ Use `pypdf` for form-field operations...
 | Layer | What the model sees | Mechanism |
 |-------|---------------------|-----------|
 | **L1 — menu** | A dedicated `## Skills` system-prompt block, one line per enabled + auto-invoke skill: `name — description [path]`. | Built once per turn from the registry; no dedicated dispatch. |
-| **L2 — instructions** | The full `SKILL.md` body, read only when the model judges the current task matches an entry's description. | Ordinary `file__read` — no dedicated "invoke skill" op. |
+| **L2 — instructions** | The full `SKILL.md` body, read only when the model judges the current task matches an entry's description. | Ordinary `file__read` — no dedicated "invoke skill" op, but the body passes through invocation-time variable expansion (see [Skill-load variable expansion](#skill-load-variable-expansion)) before it reaches the model. |
 | **L3 — bundled assets** | Any additional files the skill's instructions reference (templates, scripts, reference data) sitting alongside `SKILL.md`. | Ordinary `file__read`, gated by the standard permission model like any other path. |
 
 There is no dedicated "run this skill" primitive at any layer — a skill is discovered via L1, loaded via L2, and its assets are just files. The model decides relevance from the L1 description; the OS does not gate *which* skill the model may read, only *which paths* it may read (the standard permission model — reading inside the project root is a default; outside requires the usual declaration + approval).

@@ -9,6 +9,7 @@ from typing import Any, Literal
 
 from reyn.builtin.docs import read_builtin_body_bytes
 from reyn.data.workspace.text_codec import decode_text_or_none, encode_text
+from reyn.plugins.skill_load import is_skill_body_path, load_skill_body
 from reyn.schemas.models import FileIROp
 
 from . import register
@@ -326,6 +327,29 @@ async def handle(op: FileIROp, ctx: OpContext) -> dict:
         # charset-normalizer); the plain-UTF-8 fast path keeps the result shape
         # byte-identical (no `encoding` field) for the common case.
         _enc_field = {"encoding": _detected_encoding} if _detected_encoding else {}
+
+        # ADR 0064 §3.5 (plugin-model P4, #3070): a SKILL.md body gets ONE
+        # additional pass — invocation-time ${REYN_*}/${CLAUDE_*}/${env:...}
+        # expansion (`reyn.plugins.skill_load`) — before the windowing/
+        # truncation logic below runs on it. This is still the SAME `read`
+        # op (#2971: reading is the invocation, no dedicated verb), it just
+        # no longer hands back byte-identical disk content for exactly this
+        # one filename. `alias_claude=True` unconditionally: SKILL.md is the
+        # one open standard (agentskills.io) multiple hosts share, so every
+        # skill-load IS the ingestion boundary §3.6 scopes the alias to —
+        # there is no narrower "this one is Claude-authored" signal to gate
+        # on, and a stray literal `${CLAUDE_*}` in prose is vanishingly
+        # unlikely. project_dir comes from the live workspace root — the
+        # dynamic param that must be resolved fresh on every load, never
+        # baked (§3.4).
+        if is_skill_body_path(op.path):
+            content = load_skill_body(
+                content,
+                skill_path=_resolve_for_gate(ctx, op.path),
+                project_dir=ctx.workspace.base_dir,
+                alias_claude=True,
+            )
+            ctx.events.emit("skill_body_loaded", path=op.path)
         # #2335: read MODE. An explicit LINE window (offset/limit given, no char_offset) is honored
         # VERBATIM — the LLM's line-based read contract, byte-identical — AS LONG AS its slice fits
         # the inline cap. Otherwise (an unbounded read, a char_offset mid-line RESUME, OR an explicit

@@ -334,23 +334,59 @@ def _expand_plugin_files(plugin_root: Path, token_ctx: PluginTokenContext) -> No
     capability might read (§3.4/§3.5): the root ``.mcp.json``, every
     ``pipelines/*.yaml``, and every ``skills/*/SKILL.md``. Non-existent
     globs are simply empty — every capability is optional (§3.1)."""
-    candidates: list[Path] = [plugin_root / ".mcp.json"]
+    mcp_and_pipeline_candidates: list[Path] = [plugin_root / ".mcp.json"]
     pipelines_dir = plugin_root / "pipelines"
     if pipelines_dir.is_dir():
-        candidates.extend(pipelines_dir.glob("*.yaml"))
+        mcp_and_pipeline_candidates.extend(pipelines_dir.glob("*.yaml"))
+    for path in mcp_and_pipeline_candidates:
+        _bake_all_tokens(path, token_ctx)
+
+    # SKILL.md bakes ONLY ${REYN_PLUGIN_ROOT} here — ${REYN_PROJECT_DIR} is a
+    # dynamic param (§3.4), never baked at copy: the plugin's global
+    # ~/.reyn/plugins/ copy can be ENABLED into many different projects
+    # (§3.3 — code installs once globally, enablement is project-local), so
+    # baking THIS install call's project_root into the shared copy would
+    # freeze every future enabling project to whichever one happened to
+    # install it first. ${REYN_SKILL_DIR} is left unbaked too. Both resolve
+    # fresh at invocation instead, via the skill-load verb
+    # (`reyn.plugins.skill_load.load_skill_body`, P4/#3070).
     skills_dir = plugin_root / "skills"
     if skills_dir.is_dir():
-        candidates.extend(skills_dir.glob("*/SKILL.md"))
-    for path in candidates:
-        if not path.is_file():
-            continue
-        try:
-            text = path.read_text(encoding="utf-8")
-        except OSError:
-            continue
-        expanded = expand_reyn_tokens(text, token_ctx)
-        if expanded != text:
-            path.write_text(expanded, encoding="utf-8")
+        for path in skills_dir.glob("*/SKILL.md"):
+            _bake_plugin_root_only(path, token_ctx.plugin_root)
+
+
+def _bake_all_tokens(path: Path, token_ctx: PluginTokenContext) -> None:
+    """Expand every ``${REYN_*}`` token *token_ctx* carries a value for, in
+    place — the mcp/pipeline copy-time bake, unchanged from pre-#3070
+    behavior."""
+    if not path.is_file():
+        return
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return
+    expanded = expand_reyn_tokens(text, token_ctx)
+    if expanded != text:
+        path.write_text(expanded, encoding="utf-8")
+
+
+def _bake_plugin_root_only(path: Path, plugin_root: Path) -> None:
+    """Expand ONLY ``${REYN_PLUGIN_ROOT}`` in *path*, in place — every other
+    ``${REYN_*}``/``${CLAUDE_*}``/``${env:...}`` token is left as a literal
+    string for the invocation-time skill-load pass. A targeted string
+    replace rather than ``expand_reyn_tokens`` (whose ``PluginTokenContext``
+    requires ``project_dir``, which this call must NOT supply a baked value
+    for — see the caller's docstring)."""
+    if not path.is_file():
+        return
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return
+    expanded = text.replace("${REYN_PLUGIN_ROOT}", str(plugin_root))
+    if expanded != text:
+        path.write_text(expanded, encoding="utf-8")
 
 
 async def _materialise_deps(
