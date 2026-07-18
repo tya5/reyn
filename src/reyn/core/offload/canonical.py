@@ -1627,15 +1627,30 @@ _DISCRIMINATOR_MISS_MARKER = "_discriminator_miss"
 
 def _fallback_structured(result: dict, *, discriminator_miss: bool = False) -> CanonicalToolResult:
     """The lossless whole-dict fallback: the entire result becomes a ``structured`` attachment
-    (readable as frontmatter YAML, ``ctx.<name>.structured.<field>`` still programmatically reachable),
-    ``text`` empty. Used for a declared ``STRUCTURED_PASSTHROUGH`` producer, a provisional
+    (readable as frontmatter YAML, ``ctx.<name>.structured.<field>`` still programmatically reachable).
+    Used for a declared ``STRUCTURED_PASSTHROUGH`` producer, a provisional
     ``CANONICAL_TODO`` producer, a genuinely unregistered ``source`` (dynamic/edge), AND a mapped
     producer whose inner discriminator missed (``discriminator_miss=True`` — FP-0056 v2 piece #3, M3).
     PR-F2 emits ``canonical_fallback_used`` on the ``CANONICAL_TODO`` + unregistered paths, and piece #3
     on the discriminator-miss path (degrade-with-audit) — but NOT on ``STRUCTURED_PASSTHROUGH`` (a
-    reviewed, legitimate whole-dict view)."""
+    reviewed, legitimate whole-dict view).
+
+    #3104 — the whole-dict view is lossless but NOT error-shape-neutral: an op-level failure
+    (``_is_error``) on ANY of these paths (the 9 ``STRUCTURED_PASSTHROUGH`` admin/install verbs +
+    ``None``/unregistered + ``CANONICAL_TODO`` + discriminator-miss — the full ``_fallback_structured``
+    registry) must still surface through the SAME ``meta.isError`` + non-empty ``text`` signal
+    :func:`error_to_canonical` stamps, so the shared on_error seam (:func:`is_error_result` consumers,
+    #3105's ``_tool_step_canonical_error``) fires uniformly regardless of dispatch path. A SUCCESS
+    fallback (the common case) is unchanged: ``text=""``, ``meta={}``. Only the error branch gains a
+    signal; the whole-dict attachment (both branches) and the dispatch order in :func:`to_canonical`
+    are untouched — this is a chokepoint stamp, not a re-dispatch (FP-0056 dispatch-reorder risk
+    avoided per architect design, #3104)."""
+    is_err = _is_error(result)
     canonical = CanonicalToolResult(
-        text="", attachments=[{"kind": "structured", "data": result}], source_ref=None, meta={},
+        text=_extract_error_message(result) if is_err else "",
+        attachments=[{"kind": "structured", "data": result}],
+        source_ref=None,
+        meta={"isError": True} if is_err else {},
     )
     if discriminator_miss:
         canonical[_DISCRIMINATOR_MISS_MARKER] = True  # type: ignore[typeddict-unknown-key]
