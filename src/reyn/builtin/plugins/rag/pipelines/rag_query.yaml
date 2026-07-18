@@ -7,7 +7,20 @@
 #
 # Inputs (all optional except `query_text`/`db`):
 #   query_text          -- (required) the natural-language query.
-#   db                  -- (required) the sqlite file rag_ingest wrote to.
+#   db                  -- (required) the sqlite file rag_ingest wrote to
+#                          (rag_ingest's `output_db` INPUT param -- the
+#                          param name here is EXACTLY `db`, not `db_path`
+#                          -- that is the raw vector-store MCP tool's OWN
+#                          arg name, one layer down -- and not
+#                          `vector_store_path`, a plausible-sounding name
+#                          this pipeline has never accepted. #2955
+#                          weak-model-hardening follow-up: a live dogfood
+#                          witness had a weak model invent
+#                          `vector_store_path` unprompted; a missing/
+#                          misnamed `db` is now caught explicitly below
+#                          with this exact remedy, before it can be
+#                          misdiagnosed as the vector-store server being
+#                          unreachable).
 #   top_k               -- how many nearest chunks to return (default 5).
 #   embedding_model     -- MUST match what rag_ingest used for this db (a
 #                          mismatched vector dimension raises
@@ -22,11 +35,22 @@
 #                          `mcp.servers` (default reyn_vector_store).
 #
 # Output: `ctx.result` -- either the top-k list
-# `[{"id", "distance", "metadata"}, ...]` (nearest-first) or the pre-flight
-# decision-enabling message if the vector-store server is unreachable.
+# `[{"id", "distance", "metadata"}, ...]` (nearest-first) or a
+# decision-enabling blocked message: a missing/misnamed `db` param, an
+# unreachable vector-store server, or (#2955 follow-up) a failed query
+# embed -- each distinguished by cause, never a single generic string.
 schema: PreflightCheck
 fields:
   status: {type: enum, values: ["ok"]}
+---
+# #2955 weak-model-hardening follow-up (see rag_ingest.yaml's identical
+# EmbedOk doc for the full rationale): gates `_query_body`'s `embed` tool
+# step so a litellm failure surfaces its own error text at the embed step,
+# not as a misleading "field absent" crash on `ctx.embedded.structured` two
+# steps later.
+schema: EmbedOk
+fields:
+  total_tokens: {type: number, required: true}
 ---
 pipeline: query
 description: >-
@@ -39,13 +63,50 @@ steps:
   - transform: {value: "get(ctx, 'filters', null)", output: filters}
   - transform: {value: "get(ctx, 'vectorstore_server', 'reyn_vector_store')", output: vectorstore_server}
 
-  # X1-equivalent pre-flight: a real, cheap probe (list_metadata against
-  # THIS db, limit 1) before spending on the query embed -- schema-gated to
-  # status=="ok" (see rag_ingest.yaml for the full rationale). `parallel`
-  # with a single branch is reused (rather than a bare `tool` step) purely
-  # to get the "reachable: bool, no raised exception" shape ingest's own
-  # pre-flight uses -- a dropped (on_error: continue) branch's key is
-  # simply absent from collect's named map.
+  # #2955 weak-model-hardening follow-up: catch a missing/misnamed `db`
+  # BEFORE the MCP pre-flight probe below. Previously a null `ctx.db` (from
+  # e.g. a model calling with `vector_store_path` instead of `db`) flowed
+  # straight into the probe's `db_path` arg, the probe tool call itself
+  # errored (not a transport failure), the branch dropped, and the result
+  # was misdiagnosed as "the vector-store MCP server is unreachable" -- a
+  # server-down claim that was simply false. Caught explicitly here with
+  # the correct diagnosis and the exact required param name, at zero probe
+  # cost.
+  - transform: {value: "get(ctx, 'db', null) == null", output: db_missing}
+  - transform:
+      value: >-
+        "Missing required parameter `db` (the sqlite file rag_ingest wrote to, i.e. rag_ingest's `output_db`). The parameter name is EXACTLY `db` -- not `db_path`, not `vector_store_path`. Example: pipeline__run(name=\"rag_query.query\", input={\"query_text\": \"...\", \"db\": \"./rag/docs.sqlite\"})."
+      output: db_missing_message
+  - match:
+      on: ctx.db_missing
+      cases:
+        "True":
+          pipeline: _query_blocked
+          pass:
+            message: ctx.db_missing_message
+      default:
+        pipeline: _query_preflight
+        pass:
+          query_text: ctx.query_text
+          db: ctx.db
+          top_k: ctx.top_k
+          embedding_model: ctx.embedding_model
+          filters: ctx.filters
+          vectorstore_server: ctx.vectorstore_server
+      output: result
+---
+pipeline: _query_preflight
+description: >-
+  X1-equivalent pre-flight for query: a real, cheap probe (list_metadata
+  against THIS db, limit 1) before spending on the query embed. Ported from
+  rag_ingest.yaml's #3064 cause-capture idiom (#2955 weak-model-hardening
+  follow-up) -- a dropped probe branch's real cause (e.g. a genuinely
+  unreachable server, a half-materialised per-plugin venv, or any other
+  probe-call error `_query.query`'s own db-missing gate above did not
+  already catch) is now surfaced as EVIDENCE alongside the remedy, instead
+  of collapsing into one static "is unreachable" string regardless of the
+  actual fault.
+steps:
   - parallel:
       on_error: continue
       branches:
@@ -59,14 +120,21 @@ steps:
               tool_args: !expr "{db_path: ctx.db, limit: 1}"
       collect:
         transform:
-          value: "get(pipe, 'vectorstore', null) != null"
-      output: vectorstore_reachable
+          # #3070's PARALLEL_BRANCH_ERRORS_KEY (executor.py) carries the
+          # real cause text a dropped branch's schema-validation-failure
+          # exception now includes -- empty string for a branch that never
+          # dropped. Mirrors rag_ingest.yaml's `reachable` shape exactly.
+          value: >-
+            {ok: get(pipe, "vectorstore", null) != null,
+             cause: get(pipe, "__branch_errors__.vectorstore", "")}
+      output: reachable
   - transform:
       value: >-
         "Vector-store MCP server '" + ctx.vectorstore_server + "' is unreachable. It ships as part of the builtin `rag` plugin, not pre-installed -- install it yourself and the operator is prompted at the permission gate: plugin_management__install(source={\"kind\": \"builtin\", \"name\": \"rag\"}). This installs ALL of the rag plugin's capabilities in one call and materialises its dependencies (chonkie/apsw/sqlite-vec) into a dedicated per-plugin environment -- no hand-edited YAML."
+        + join(map(filter([{fired: ctx.reachable.cause != "", text: "\n\n[actual error observed] " + ctx.reachable.cause}], f -> f.fired), f -> f.text), "")
       output: remedy
   - match:
-      on: ctx.vectorstore_reachable
+      on: ctx.reachable.ok
       cases:
         "True":
           pipeline: _query_body
@@ -84,12 +152,13 @@ steps:
 ---
 pipeline: _query_blocked
 description: >-
-  Sibling of query -- returns the pre-flight failure as the run's own
-  (successful) output: a decision-enabling message, never a bare MCP
-  transport exception.
+  Sibling of query/_query_preflight -- returns a pre-flight failure (a
+  missing `db` param, an unreachable vector-store server, or a failed query
+  embed) as the run's own (successful) output: a decision-enabling message
+  naming the actual cause, never a bare transport/field-access exception.
 steps:
   - transform:
-      value: "'rag query blocked -- the vector-store MCP server is unreachable: ' + ctx.message"
+      value: "'rag query blocked: ' + ctx.message"
       output: blocked_reason
 ---
 pipeline: _query_body
@@ -99,6 +168,7 @@ description: >-
 steps:
   - tool:
       name: embed
+      schema: EmbedOk
       args:
         texts: !expr "[ctx.query_text]"
         embedding_model: !expr ctx.embedding_model

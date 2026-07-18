@@ -104,6 +104,23 @@ schema: PreflightCheck
 fields:
   status: {type: enum, values: ["ok"]}
 ---
+# #2955 weak-model-hardening follow-up: gates `_ingest_embed_and_upsert`'s
+# `embed` tool step. `embed`'s op handler (op_runtime/embed.py) stamps
+# `total_tokens` ONLY on a successful embed -- an error/cancelled result
+# carries `status`+`error`/`model` instead and never `total_tokens`. Before
+# this gate, a litellm failure (bad key, unpriceable model, provider outage)
+# canonicalized to an EMPTY view (`embed_to_canonical`'s `meta`/`structured`
+# stay unpopulated on error), so the pipeline crashed two steps later on
+# `ctx.embedded.meta.model` being absent -- discarding the real litellm
+# error text in favour of a generic "field absent" message. Requiring
+# `total_tokens` here makes the SAME `_run_tool_step` schema-failure detail
+# path #3070/#3064 already built (`result.get("error")` appended to the
+# raised message) surface the actual provider failure at the embed step
+# itself, not a misleading one two steps downstream.
+schema: EmbedOk
+fields:
+  total_tokens: {type: number, required: true}
+---
 pipeline: ingest
 description: >-
   FP-0063 P3 builtin RAG ingest: chunk -> embed -> store a file or folder
@@ -771,6 +788,7 @@ description: >-
 steps:
   - tool:
       name: embed
+      schema: EmbedOk
       args:
         texts: !expr "map(ctx.to_upsert, i -> i.text)"
         embedding_model: !expr ctx.embedding_model
