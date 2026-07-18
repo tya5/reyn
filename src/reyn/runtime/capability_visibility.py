@@ -19,19 +19,53 @@ Ownership split:
   other ``Session`` code path reassigns them), so full ownership here avoids a
   second, potentially-stale copy on ``Session``.
 - **Injected dependency (constructor)**: ``registry`` / ``router_host`` /
-  ``session_id`` / ``agent_name`` — stable for the session's lifetime, read
-  but never mutated here. ``available_skills_provider`` is a zero-arg callable reading
-  ``Session._available_skills`` LIVE (that field is Session-owned state
-  mutated elsewhere too, e.g. ``_reapply_skills`` on hot-reload skill
-  changes — a snapshot taken once at construction would go stale, so this
-  class reads through a live getter rather than owning a second copy).
+  ``agent_name`` — stable for the session's lifetime, read but never mutated
+  here. ``available_skills_provider`` and ``session_id_provider`` are zero-arg
+  callables reading ``Session._available_skills`` / ``Session._session_id``
+  LIVE — both are Session-owned state that CAN be reassigned post-construction
+  by the owning ``AgentRegistry`` (skill hot-reload; spawn-time session_id
+  re-key, ``registry.py`` ``spawn_session_recorded`` — a snapshot taken once
+  at construction would go stale and silently re-derive the envelope against
+  the WRONG session id after a re-key), so this class reads through a live
+  getter rather than owning a second, staleable copy.
 """
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Callable
+from typing import TYPE_CHECKING, Callable, Protocol
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+
+class _EnvelopeSource(Protocol):
+    """The one method this class needs from its ``registry`` dep (the
+    ``AgentRegistry``): resolve the agent's authorized envelope for a session.
+    A Protocol keeps ``CapabilityVisibility`` decoupled from the concrete
+    registry type (no import of a Session sibling) while giving Pyright the
+    attribute it verifies."""
+
+    def resolved_profile_for(
+        self, agent_name: str, *, sid: "str | None",
+    ) -> "tuple[object | None, frozenset[str]]": ...
+
+
+class _RouterHost(Protocol):
+    """The two seams this class needs from its ``router_host`` dep (the
+    ``RouterHostAdapter``): the live MCP-server roster (read) + the filtered
+    skill list (write). Protocol, same decoupling rationale as
+    ``_EnvelopeSource``. ``_available_skills`` is a live-mutated attribute, not
+    a property, so it is typed as a plain field here."""
+
+    _available_skills: "list | None"
+
+    def get_mcp_servers(self) -> "list[dict]": ...
+
+
+class _SkillEntry(Protocol):
+    """The one field this class reads off each available-skill entry
+    (``SkillEntry.name``)."""
+
+    name: str
 
 
 class CapabilityVisibility:
@@ -43,19 +77,19 @@ class CapabilityVisibility:
     def __init__(
         self,
         *,
-        registry: "object | None",
-        router_host: "object",
-        session_id: "str | None",
+        registry: "_EnvelopeSource | None",
+        router_host: "_RouterHost",
+        session_id_provider: "Callable[[], str | None]",
         agent_name: "str",
-        available_skills_provider: "Callable[[], list | None]",
+        available_skills_provider: "Callable[[], list[_SkillEntry] | None]",
         contextual_permission: "object | None" = None,
         excluded_categories: "frozenset[str] | None" = None,
     ) -> None:
         self._registry = registry
         self._router_host = router_host
-        self._session_id = session_id
+        self._session_id_provider = session_id_provider
         # Immutable for the session's lifetime (Agent is frozen), same stability class as
-        # session_id — needed by resolved_profile_for(agent_name, sid=...) in the two
+        # agent_name — needed by resolved_profile_for(agent_name, sid=...) in the two
         # envelope-resolving methods below.
         self._agent_name = agent_name
         self._available_skills_provider = available_skills_provider
@@ -127,6 +161,8 @@ class CapabilityVisibility:
         never re-granted beyond it (an envelope-denied capability stays denied). The per-turn
         RouterLoop reads these fields at construction, so the change is live next turn.
         """
+        from typing import cast
+
         from reyn.security.permissions.capability_profile import (
             CapabilityProfile,
             compose_resolved,
@@ -135,12 +171,16 @@ class CapabilityVisibility:
         from reyn.security.permissions.effective import ContextualPermission
         from reyn.tools.universal_catalog import CATEGORIES
 
-        base_ctx: "object | None" = None
+        # resolved_profile_for is documented to return (ContextualPermission | None, ...);
+        # its declared type is the wider `object | None`, so cast to the concrete type the
+        # downstream compose_resolved requires (registry.py:3509 guarantees it).
+        base_ctx: "ContextualPermission | None" = None
         base_excl: "frozenset[str]" = frozenset()
         if self._registry is not None and hasattr(self._registry, "resolved_profile_for"):
-            base_ctx, base_excl = self._registry.resolved_profile_for(
-                self._agent_name, sid=self._session_id,
+            raw_ctx, base_excl = self._registry.resolved_profile_for(
+                self._agent_name, sid=self._session_id_provider(),
             )
+            base_ctx = cast("ContextualPermission | None", raw_ctx)
 
         ov = self._visibility_override
         keep_categories: "tuple[str, ...] | None" = None
@@ -211,16 +251,25 @@ class CapabilityVisibility:
         (tools / mcp / categories / skills) filtered by the envelope's ``allows`` — so it always
         reflects visible ⊆ authorized (nothing outside the envelope is ever togglable).
         Kind ∈ tool / mcp / category / skill."""
-        from reyn.security.permissions.effective import CapabilityAxis, ContextualLayer
+        from typing import cast
+
+        from reyn.security.permissions.effective import (
+            CapabilityAxis,
+            ContextualLayer,
+            ContextualPermission,
+        )
         from reyn.tools import get_default_registry
         from reyn.tools.universal_catalog import CATEGORIES
 
-        base_ctx: "object | None" = None
+        # resolved_profile_for's declared return is the wider `object | None`; cast to the
+        # concrete type ContextualLayer expects (registry.py:3509 documents ContextualPermission).
+        base_ctx: "ContextualPermission | None" = None
         base_excl: "frozenset[str]" = frozenset()
         if self._registry is not None and hasattr(self._registry, "resolved_profile_for"):
-            base_ctx, base_excl = self._registry.resolved_profile_for(
-                self._agent_name, sid=self._session_id,
+            raw_ctx, base_excl = self._registry.resolved_profile_for(
+                self._agent_name, sid=self._session_id_provider(),
             )
+            base_ctx = cast("ContextualPermission | None", raw_ctx)
         ctx = ContextualLayer(base_ctx)  # the envelope gate (None → allows all)
 
         authorized: "list[dict]" = []
@@ -266,22 +315,25 @@ class CapabilityVisibility:
         except Exception as exc:  # noqa: BLE001 — persist is best-effort (live toggle already applied)
             logger.warning("#2285: persist visibility override failed: %r", exc)
 
-    def load_persisted(self, data: dict) -> bool:
+    def load_persisted(self, data: dict) -> "tuple[bool, bool]":
         """#2285 step2: restore a previously-persisted visibility override (parsed from
         ``visibility.yaml``) into the in-memory toggle state. Resets to a clean baseline first so a
         reload fully re-derives from the given data — idempotent + leak-free if called more than
-        once. Returns whether anything was actually loaded (the caller only needs to
-        ``reapply_visibility_override`` / ``reapply_skill_visibility`` when True)."""
+        once. Returns ``(loaded_any, loaded_skill)`` — the caller reapplies
+        ``reapply_visibility_override`` when ``loaded_any`` and ``reapply_skill_visibility`` when
+        ``loaded_skill`` (mirrors the pre-extraction two-flag behavior exactly: a tool/mcp/category-only
+        change does not need the (separate, live-router-mutating) skill reapply, and vice versa)."""
         self._visibility_override = {"tool": set(), "mcp": set(), "category": set(), "skill": set()}
-        loaded = False
+        loaded_any = False
+        loaded_skill = False
         if isinstance(data, dict):
             for kind in ("tool", "mcp", "category"):
                 vals = data.get(kind)
                 if isinstance(vals, list):
                     self._visibility_override[kind] = {str(v) for v in vals}
-                    loaded = True
+                    loaded_any = True
             skill_vals = data.get("skill")
             if isinstance(skill_vals, list):
                 self._visibility_override["skill"] = {str(v) for v in skill_vals}
-                loaded = True
-        return loaded
+                loaded_skill = True
+        return loaded_any, loaded_skill

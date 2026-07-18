@@ -35,7 +35,7 @@ def _make_registry(tmp_path: Path) -> AgentRegistry:
 
 
 def _allows(session: Session, name: str) -> bool:
-    return ContextualLayer(session._contextual_permission).allows(CapabilityAxis.TOOL, name)
+    return ContextualLayer(session.contextual_permission).allows(CapabilityAxis.TOOL, name)
 
 
 async def _session(tmp_path) -> Session:

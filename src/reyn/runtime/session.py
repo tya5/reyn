@@ -50,6 +50,7 @@ from reyn.runtime.budget.budget import (
     format_refusal_message,
     format_warn_message,
 )
+from reyn.runtime.capability_visibility import CapabilityVisibility
 from reyn.runtime.chat_message import (  # #312 C1: extracted VO + helpers
     ChatMessage,
     _migrate_legacy_chat_message,
@@ -1269,8 +1270,9 @@ class Session:
         self._safety = _safety
         # Tool names excluded from the MAIN chat RouterLoop's LLM-visible catalog (#187, see session-construction.md#capability-permission-visibility)
         self._exclude_tools = frozenset(exclude_tools or ())
-        # Per-session capability_profile narrowing threaded to RouterLoop + OpContext (#1827 S3, see session-construction.md#capability-permission-visibility)
-        self._contextual_permission = contextual_permission
+        # contextual_permission (#1827 S3) is owned by CapabilityVisibility, constructed below
+        # once registry/router_host/session_id exist; `contextual_permission` (this local) is
+        # threaded in as its initial value (see #3121 step3 Extract Class).
         # Session-scoped Task backend instance, threaded to task.* op handlers (#1953 slice 3a, see session-construction.md#capability-permission-visibility)
         self._task_backend = task_backend
         self._task_waker = task_waker  # #1953 slice 7
@@ -1292,12 +1294,8 @@ class Session:
         self._vanish_task: "asyncio.Task | None" = None
         # Lazily-resolved minimal _untrusted ContextualPermission cache (#1827 S4b context-auto)
         self._untrusted_contextual_cache = None
-        # Catalog categories hidden at the universal-catalog source (#1667, see session-construction.md#capability-permission-visibility)
-        self._excluded_categories = frozenset(excluded_categories or ())
-        # Session-scoped LLM tool-VISIBILITY override, restrict-only on top of the resolved agent envelope (#2285, see session-construction.md#capability-permission-visibility)
-        self._visibility_override: "dict[str, set[str]]" = {
-            "tool": set(), "mcp": set(), "category": set(), "skill": set(),
-        }
+        # excluded_categories (#1667) + the visibility override (#2285) are owned by
+        # CapabilityVisibility, constructed below (see #3121 step3 Extract Class).
         # Session-scoped hook APPLICABILITY override, per-session by construction (#2285, see session-construction.md#capability-permission-visibility)
         self._disabled_hooks: "set[str]" = set()
         # Per-message tool-call budget for the MAIN chat RouterLoop (#187, see session-construction.md#safety-limits-interactive-mode)
@@ -1555,8 +1553,25 @@ class Session:
         self._router_loop_agent_replies: list[str] | None = None
 
         # Router-host WAIST: RouterHostAdapter aggregates ~40 already-built sub-components most later families read through, byte-identical (#3082 Family 6a, see session-construction.md#family-6a-router-waist-routerhostadapter)
-        _router_waist_bundle = self._build_router_waist()
+        # contextual_permission is the RAW constructor-supplied initial value here (#3121 step3:
+        # CapabilityVisibility, which owns the LIVE composed value, does not exist yet -- it needs
+        # router_host, which THIS call builds -- so this one eager pre-waist consumer is threaded
+        # the local var explicitly rather than reading a not-yet-constructed self._capability_visibility).
+        _router_waist_bundle = self._build_router_waist(contextual_permission=contextual_permission)
         self._router_host = _router_waist_bundle.router_host
+
+        # Owns the per-session capability/skill visibility override + the envelope-composed
+        # contextual_permission/excluded_categories it derives (#2285, see #3121 step3 Extract Class);
+        # Session holds one reference + delegates, does not re-own the state (see capability_visibility.py).
+        self._capability_visibility = CapabilityVisibility(
+            registry=self._registry,
+            router_host=self._router_host,
+            session_id_provider=lambda: self._session_id,  # live -- session_id is re-keyed post-construction (registry.py spawn_session_recorded)
+            agent_name=self.agent_name,
+            available_skills_provider=lambda: self._available_skills,
+            contextual_permission=contextual_permission,
+            excluded_categories=excluded_categories,
+        )
 
         # owns + orchestrates them in one method (#2073 S2, see session-construction.md#family-3-hook-event-reactivity)
         self._register_hot_reload_seams()
@@ -1602,9 +1617,9 @@ class Session:
                 budget_tracker=self._budget_tracker,
                 non_interactive=self._non_interactive,
                 exclude_tools=self._exclude_tools,
-                contextual_permission=self._contextual_permission,  # #1827 S3 → RouterLoop live gate
+                contextual_permission=self._capability_visibility.contextual_permission,  # #1827 S3 → RouterLoop live gate
                 contextual_for_turn_fn=self._effective_contextual_for_turn,  # #1827 S4b context-auto
-                excluded_categories=self._excluded_categories,
+                excluded_categories=self._capability_visibility.excluded_categories,
                 budget=self._budget,
                 resolver=self._resolver,
                 compaction=self._compaction,
@@ -1909,12 +1924,12 @@ class Session:
     @property
     def contextual_permission(self) -> "object | None":
         """#3097: read-only accessor for the live ``ContextualPermission`` (#1827
-        S3) — the per-turn gate value ``_reapply_visibility_override`` maintains
-        (envelope ∩ session override, restrict-only, narrow-only). A
+        S3) — the per-turn gate value ``CapabilityVisibility.reapply_visibility_override``
+        maintains (envelope ∩ session override, restrict-only, narrow-only). A
         ``snapshot()``-style public read so a test can verify the security-core
         seam narrows correctly (``visible ⊆ authorized``) without reaching into
-        the private ``_contextual_permission`` field directly."""
-        return self._contextual_permission
+        the private field directly (#3121 step3 Extract Class)."""
+        return self._capability_visibility.contextual_permission
 
     @property
     def presentation_registry(self):
@@ -2193,82 +2208,21 @@ class Session:
         self, contextual_permission: "object | None", excluded_categories,
     ) -> None:
         """#2126: re-inject the spawner-set per-session capability narrowing AFTER
-        spawn-time config resolution.
-
-        The #1827 / #2103-S1a per-session layer only composes when
-        ``resolved_profile_for`` is called WITH a ``sid`` — and no construction-time
-        factory caller passes one (every frontend resolves ``sid=None``), so the
-        narrowing a spawner writes to the session's ``config.yaml`` is otherwise never
-        enforced (``_contextual_permission`` is set once at construction from the
-        ``sid=None`` resolution). The registry calls this right after spawn-recording,
-        BEFORE the session's run-loop reads these into the live tool gate, so the first
-        turn already gates against the narrowing. Mirrors ``attach_anchor_store``: a
-        registry-driven post-construct injection.
-
-        ``contextual_permission`` is the FULL ``resolved_profile_for(name, sid=sid)``
-        composition (topology + delegate floor + per-session ∩), so it is overwritten —
-        it can only be MORE restrictive than the ``sid=None`` value it replaces (the
-        per-session config is an extra ∩ conjunct, never a re-grant). ``excluded_categories``
-        is UNIONED (never overwritten) so it composes with any construction-time view
-        narrowing (e.g. the #1667 eval ``reyn_repo`` exclusions, which are not
-        capability-profile-derived).
-        """
-        self._contextual_permission = contextual_permission
-        self._excluded_categories = self._excluded_categories | frozenset(
-            excluded_categories or ()
+        spawn-time config resolution. Thin forwarder — see
+        ``CapabilityVisibility.apply_per_session_narrowing`` for the full
+        rationale (#3121 step3 Extract Class)."""
+        self._capability_visibility.apply_per_session_narrowing(
+            contextual_permission, excluded_categories,
         )
 
     # ── #2285: session-scoped LLM tool-VISIBILITY toggle (the status-bar seam) ──────────────
-
-    def _reapply_visibility_override(self) -> None:
-        """#2285: recompute the live tool gate from the agent envelope ∩ the session override.
-
-        SECURITY CORE (visible ⊆ authorized): re-resolves the WHOLE agent envelope from base
-        (topology bindings ∩ the #2081 delegate floor ∩ the persisted per-session config — via
-        ``resolved_profile_for``) and composes the in-memory override as ONE MORE restrict-only ∩
-        conjunct, then SETs both live fields (never a union — ``apply_per_session_narrowing`` unions
-        excluded, so it can't RE-WIDEN; re-resolve-from-base + SET can). Because the override only
-        adds deny/exclusion ON TOP of the envelope, a toggle can only HIDE within the authorized set
-        — toggle-ON discards from the override so the capability is restored *up to the envelope*,
-        never re-granted beyond it (an envelope-denied capability stays denied). The per-turn
-        RouterLoop reads these fields at construction, so the change is live next turn.
-        """
-        from reyn.security.permissions.capability_profile import (
-            CapabilityProfile,
-            compose_resolved,
-            resolve_profile,
-        )
-        from reyn.security.permissions.effective import ContextualPermission
-        from reyn.tools.universal_catalog import CATEGORIES
-
-        base_ctx: "object | None" = None
-        base_excl: "frozenset[str]" = frozenset()
-        if self._registry is not None and hasattr(self._registry, "resolved_profile_for"):
-            base_ctx, base_excl = self._registry.resolved_profile_for(
-                self.agent_name, sid=self._session_id,
-            )
-
-        ov = self._visibility_override
-        keep_categories: "tuple[str, ...] | None" = None
-        if ov["category"]:
-            keep_categories = tuple(c for c in CATEGORIES if c not in ov["category"])
-        override_profile = CapabilityProfile(
-            name="_session_visibility_override",
-            tool_deny=tuple(sorted(ov["tool"])),
-            mcp_deny=tuple(sorted(ov["mcp"])),
-            categories=keep_categories,
-        )
-        final_ctx, final_excl = compose_resolved([
-            (base_ctx or ContextualPermission(), base_excl),
-            resolve_profile(override_profile),
-        ])
-        self._contextual_permission = final_ctx
-        self._excluded_categories = final_excl
+    # Owned by CapabilityVisibility (#3121 step3 Extract Class); Session forwards.
 
     async def _reapply_visibility_override_seam(self, in_set: dict) -> bool:
-        """#3097: ``HotReloader``-seam wrapper for ``_reapply_visibility_override``
-        (security-core — see that method's docstring for the restrict-only compose
-        that keeps ``visible ⊆ authorized`` by construction). Registered so both the
+        """#3097: ``HotReloader``-seam wrapper for
+        ``CapabilityVisibility.reapply_visibility_override`` (security-core —
+        see that method's docstring for the restrict-only compose that keeps
+        ``visible ⊆ authorized`` by construction). Registered so both the
         operator ``/reload`` path and ``Session.refresh_config_projections()``'s
         spawn-time family gate cover it uniformly, DERIVED from the seam registry
         rather than a hand-picked call site.
@@ -2281,91 +2235,23 @@ class Session:
         no cheap way to detect a true no-op short of re-running the compose and
         diffing the result, which is exactly what re-resolving already does) —
         matches ``_reapply_hooks``'s always-True posture."""
-        self._reapply_visibility_override()
+        self._capability_visibility.reapply_visibility_override()
         return True
 
-    def _reapply_skill_visibility(self) -> None:
-        """#2548 PR-B: recompute the live skill list from the base registered set minus the session override.
-
-        Mutates ``_router_host._available_skills`` so the next turn's ``get_available_skills()``
-        returns the filtered view. Re-derives from ``self._available_skills`` (the base registered
-        set captured at construction / reapply) so toggle-ON correctly restores a skill — it is NOT
-        a union of the current view, which would lose previously-disabled skills."""
-        base = self._available_skills or []
-        disabled = self._visibility_override.get("skill", set())
-        filtered = [s for s in base if s.name not in disabled]
-        self._router_host._available_skills = filtered or None
-
     def set_capability_visible(self, kind: str, name: str, visible: bool) -> None:
-        """#2285: toggle the session-visibility of a tool / mcp / category / skill (status-bar seam).
-
-        ``visible=False`` hides it from the LLM catalog next turn; ``visible=True`` restores it —
-        but only UP TO the agent envelope (toggling ON a capability the envelope denies is a no-op
-        for visibility: ``_reapply_visibility_override`` re-resolves from base, which still denies
-        it). Session-scoped (this sid only); live next turn; persists across restart (step2).
-
-        For ``kind="skill"``: restrict-only within the registered set — disabling a skill name not
-        in the registered set is silently ignored (no error; the override is a no-op). Enabling a
-        skill name not in the registered set is also silently ignored (can never re-grant beyond the
-        registered set). ``_reapply_skill_visibility`` re-derives the filtered list from
-        ``_available_skills`` (the base registered set) each time."""
-        if kind not in self._visibility_override:
-            raise ValueError(
-                f"unknown capability kind {kind!r} (expected tool / mcp / category / skill)"
-            )
-        if visible:
-            self._visibility_override[kind].discard(name)
-        else:
-            self._visibility_override[kind].add(name)
-        if kind == "skill":
-            self._reapply_skill_visibility()
-        else:
-            self._reapply_visibility_override()
-        self._persist_visibility_override()  # #2285 step2 — survive restart (best-effort)
+        """#2285: toggle the session-visibility of a tool / mcp / category / skill
+        (status-bar seam). Thin forwarder — see
+        ``CapabilityVisibility.set_capability_visible`` for the full rationale
+        (#3121 step3 Extract Class)."""
+        self._capability_visibility.set_capability_visible(
+            kind, name, visible, self._toggle_store_dir(),
+        )
 
     def capability_visibility_state(self) -> dict:
-        """#2285: the status-bar's read model.
-
-        ``authorized`` = every capability the AGENT ENVELOPE permits for this session (topology ∩
-        delegate ∩ per-session config, WITHOUT the visibility override) — the full togglable
-        universe. ``hidden_by_session`` = the override set (what the user turned OFF). The UI renders
-        ``on = item not in hidden_by_session``. authorized is computed from the live catalogs
-        (tools / mcp / categories / skills) filtered by the envelope's ``allows`` — so it always
-        reflects visible ⊆ authorized (nothing outside the envelope is ever togglable).
-        Kind ∈ tool / mcp / category / skill."""
-        from reyn.security.permissions.effective import CapabilityAxis, ContextualLayer
-        from reyn.tools import get_default_registry
-        from reyn.tools.universal_catalog import CATEGORIES
-
-        base_ctx: "object | None" = None
-        base_excl: "frozenset[str]" = frozenset()
-        if self._registry is not None and hasattr(self._registry, "resolved_profile_for"):
-            base_ctx, base_excl = self._registry.resolved_profile_for(
-                self.agent_name, sid=self._session_id,
-            )
-        ctx = ContextualLayer(base_ctx)  # the envelope gate (None → allows all)
-
-        authorized: "list[dict]" = []
-        for name in sorted(get_default_registry().names()):
-            if ctx.allows(CapabilityAxis.TOOL, name):
-                authorized.append({"kind": "tool", "name": name})
-        for server in self._router_host.get_mcp_servers():
-            n = server.get("name")
-            if n and ctx.allows(CapabilityAxis.MCP, n):
-                authorized.append({"kind": "mcp", "name": n})
-        for category in CATEGORIES:
-            if category not in base_excl:
-                authorized.append({"kind": "category", "name": category})
-        # #2548 PR-B: skills are togglable per-session; the registered base set is the envelope.
-        for entry in (self._available_skills or []):
-            authorized.append({"kind": "skill", "name": entry.name})
-
-        hidden = [
-            {"kind": kind, "name": name}
-            for kind, names in self._visibility_override.items()
-            for name in sorted(names)
-        ]
-        return {"authorized": authorized, "hidden_by_session": hidden}
+        """#2285: the status-bar's read model. Thin forwarder — see
+        ``CapabilityVisibility.capability_visibility_state`` for the full
+        rationale (#3121 step3 Extract Class)."""
+        return self._capability_visibility.capability_visibility_state()
 
     # ── #2285: session-scoped hook APPLICABILITY toggle (the status-bar seam) ──────────────
 
@@ -2387,23 +2273,6 @@ class Session:
         """The per-session state dir holding the toggle stores (parent of the snapshot path — set
         per (name, sid) by spawn_session; the agent state dir for the main session)."""
         return Path(self._snapshot_path).parent
-
-    def _persist_visibility_override(self) -> None:
-        """#2285 step2: persist the visibility override to ``<state dir>/visibility.yaml`` — a store
-        DISTINCT from the config.yaml spawner-narrowing (the authorized floor). Keeping it separate is
-        load-bearing: a toggle-ON must never edit the floor's denies (that would re-widen past
-        authorized). Best-effort: a write failure logs, never breaks the already-applied live toggle."""
-        import yaml
-        try:
-            data = {k: sorted(v) for k, v in self._visibility_override.items() if v}
-            path = self._toggle_store_dir() / "visibility.yaml"
-            if data:
-                path.parent.mkdir(parents=True, exist_ok=True)
-                path.write_text(yaml.safe_dump(data), encoding="utf-8")
-            elif path.exists():
-                path.unlink(missing_ok=True)
-        except Exception as exc:  # noqa: BLE001 — persist is best-effort (live toggle already applied)
-            logger.warning("#2285: persist visibility override failed: %r", exc)
 
     def _persist_hook_disabled(self) -> None:
         """#2285 step2: persist the hook disabled-set to ``<state dir>/hooks.yaml``'s ``disabled:``
@@ -2438,32 +2307,26 @@ class Session:
         its toggles. The loaded override composes ON TOP of the authoritative envelope exactly like
         the live path (just file-sourced) → visible ⊆ authorized survives persist + reload (the floor
         is re-resolved fresh from ``resolved_profile_for``; the loaded override never touches it).
-        Best-effort."""
+        Best-effort. The visibility-override half of the load is delegated to
+        ``CapabilityVisibility.load_persisted`` (#3121 step3 Extract Class — out of
+        scope for the move itself: this method also loads the hook disabled-set, a
+        distinct subsystem this step does not touch)."""
         import yaml
         state_dir = self._toggle_store_dir()
-        # Reset to a clean baseline first so the load fully re-derives from THIS (final) state dir —
-        # idempotent + leak-free if called more than once or after the per-session dir is re-keyed.
-        self._visibility_override = {"tool": set(), "mcp": set(), "category": set(), "skill": set()}
         self._disabled_hooks = set()
-        loaded_visibility = False
-        loaded_skill_visibility = False
+        vdata: dict = {}
         try:
             vpath = state_dir / "visibility.yaml"
             if vpath.is_file():
-                data = yaml.safe_load(vpath.read_text(encoding="utf-8"))
-                if isinstance(data, dict):
-                    for kind in ("tool", "mcp", "category"):
-                        vals = data.get(kind)
-                        if isinstance(vals, list):
-                            self._visibility_override[kind] = {str(v) for v in vals}
-                            loaded_visibility = True
-                    # #2548 PR-B: restore skill visibility override
-                    skill_vals = data.get("skill")
-                    if isinstance(skill_vals, list):
-                        self._visibility_override["skill"] = {str(v) for v in skill_vals}
-                        loaded_skill_visibility = True
+                loaded = yaml.safe_load(vpath.read_text(encoding="utf-8"))
+                vdata = loaded if isinstance(loaded, dict) else {}
         except Exception as exc:  # noqa: BLE001
             logger.warning("#2285: load visibility override failed: %r", exc)
+            vdata = {}
+        # ``load_persisted`` unconditionally resets to a clean baseline first so the load fully
+        # re-derives from THIS (final) state dir — idempotent + leak-free if called more than once
+        # or after the per-session dir is re-keyed (matches the pre-extraction unconditional reset).
+        loaded_visibility, loaded_skill_visibility = self._capability_visibility.load_persisted(vdata)
         try:
             hpath = state_dir / "hooks.yaml"
             if hpath.is_file():
@@ -2474,9 +2337,9 @@ class Session:
         except Exception as exc:  # noqa: BLE001
             logger.warning("#2285: load hook disabled-set failed: %r", exc)
         if loaded_visibility:
-            self._reapply_visibility_override()  # only re-resolve when something was actually loaded
+            self._capability_visibility.reapply_visibility_override()  # only re-resolve when something was actually loaded
         if loaded_skill_visibility:
-            self._reapply_skill_visibility()  # #2548 PR-B: restore skill filter on the host
+            self._capability_visibility.reapply_skill_visibility()  # #2548 PR-B: restore skill filter on the host
 
     def hook_state(self) -> "list[dict]":
         """#2285: the status-bar's hook read model — each NAMED hook in this session's merged
@@ -2677,7 +2540,7 @@ class Session:
         from reyn.security.permissions.capability_profile import metas_have_untrusted
 
         if not metas_have_untrusted(m.meta for m in self.history):
-            return self._contextual_permission
+            return self._capability_visibility.contextual_permission
         from reyn.security.permissions.capability_profile import (
             compose_resolved,
             load_untrusted_profile,
@@ -2689,8 +2552,8 @@ class Session:
                 load_untrusted_profile(root)
             )[0]
         resolved = [(self._untrusted_contextual_cache, frozenset())]
-        if self._contextual_permission is not None:
-            resolved.insert(0, (self._contextual_permission, frozenset()))
+        if self._capability_visibility.contextual_permission is not None:
+            resolved.insert(0, (self._capability_visibility.contextual_permission, frozenset()))
         return compose_resolved(resolved)[0]
 
     # ── persistence ─────────────────────────────────────────────────────────────
@@ -3887,7 +3750,7 @@ class Session:
             action_usage_tracker=action_usage_tracker,
         )
 
-    def _build_router_waist(self) -> "_RouterWaistBundle":
+    def _build_router_waist(self, *, contextual_permission: "object | None" = None) -> "_RouterWaistBundle":
         """#3082 Family 6a: build the router-host WAIST — ``router_host``
         (``RouterHostAdapter``, the concrete ``RouterLoopHost`` implementation
         that aggregates ~40 already-constructed Session sub-components).
@@ -3895,15 +3758,23 @@ class Session:
         Byte-identical extraction of the construction sequence that used to
         run inline in ``__init__`` at its ORIGINAL position (line ~1726,
         no-move — every dep below is already set on ``self`` by this point)
-        — same object, same construction order, same ~40 args. This builder
-        takes NO explicit params (unlike Families 2-5, which thread one or a
-        few LOCAL ``__init__`` params/eager siblings explicitly): parameterizing
-        ~40 args is impractical, and every one of router_host's dependencies
-        is ALREADY an attribute on ``self`` (or a bound method / property) by
-        the time this builder runs — so, following the Family 3/5
-        instance-method precedent for eager sibling reads, this builder reads
-        every dependency as ``self._X`` / ``self.X`` directly, exactly as the
-        inline construction did.
+        — same object, same construction order, same ~40 args. Almost every
+        dependency is ALREADY an attribute on ``self`` (or a bound method /
+        property) by the time this builder runs — so, following the Family
+        3/5 instance-method precedent for eager sibling reads, this builder
+        reads every OTHER dependency as ``self._X`` / ``self.X`` directly,
+        exactly as the inline construction did. ``contextual_permission`` is
+        the one EXPLICIT param (#3121 step3 Extract Class): it is the RAW
+        constructor-supplied initial value (RouterHostAdapter freezes its own
+        copy at construction, same as the pre-extraction code — later toggles
+        via ``CapabilityVisibility`` do not retroactively update it, matching
+        byte-identical pre-#3121 behavior), threaded explicitly because
+        ``CapabilityVisibility`` (which owns the LIVE composed value everywhere
+        else) needs ``router_host`` — THIS call's output — so it cannot exist
+        yet when this builder runs. Defaults to ``None`` (= no narrowing) so a
+        bare ``_build_router_waist()`` (e.g. a builder-contract test) stays
+        constructible; the sole production caller, ``__init__``, always passes
+        the real constructor value.
 
         ★ Three args are DEFERRED lambdas, NOT eager values —
         ``live_session_id_fn`` / ``current_task_id_fn`` / ``turn_origin_fn``
@@ -3959,7 +3830,7 @@ class Session:
             turn_budget_engine=_chat_turn_budget_engine,
             # FP-0050 / #1822 S2: content-threat scan + fence config.
             threat_scan=self._safety.threat_scan,
-            contextual_permission=self._contextual_permission,  # #1827 S3 → control-IR OpContext
+            contextual_permission=contextual_permission,  # #1827 S3 → control-IR OpContext (raw initial value, see docstring)
             hot_reloader=self._hot_reloader,  # #2073 S3 → per-session reload route (tool ctx)
             # FP-0063 PC: the router-dispatched `embed` TOOL builds its OpContext from
             # THIS host (RouterCallerState.op_context_factory = host.make_router_op_context),
@@ -4807,7 +4678,7 @@ class Session:
                 return False  # no change
         # Update the base registered set (Session) + the filtered view (router_host).
         self._available_skills = new_skills or None
-        self._reapply_skill_visibility()  # re-derives router_host._available_skills from new base
+        self._capability_visibility.reapply_skill_visibility()  # re-derives router_host._available_skills from new base
         return True
 
     async def _reapply_pipelines(self, in_set: dict) -> bool:
@@ -6949,7 +6820,7 @@ class Session:
             # base64 to the LLM instead of a small path-ref (the clean-payload/offload gate needs the
             # image out of the inline body).
             media_store=self._media_store,
-            contextual_permission=self._contextual_permission,  # #1827 S3 → control-IR OpContext
+            contextual_permission=self._capability_visibility.contextual_permission,  # #1827 S3 → control-IR OpContext
             hook_dispatcher=self._hook_dispatcher,  # #1800 slice 5c: complete-by-construction (both router callers)
             hook_bus=self._hook_bus,  # Hook-Event Redesign Phase 5 part 2: emit_hook_event's publish target (both router op-ctx builders complete-by-construction)
             current_task_id=self._current_task_id,  # #1953 §16: ownership-derivation for task.create (enumerate ALL op-ctx builders)
