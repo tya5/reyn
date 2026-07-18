@@ -466,20 +466,70 @@ description: >-
   dedup-saved estimate.
 steps:
   # ---- file discovery (#2972: reyn's own `glob_files` op, no shell-out) ----
-  # One recursive glob pattern per target extension, PLUS input_path itself
-  # as a literal pattern -- that one match is what makes "input_path names a
-  # single FILE" work: `glob_files` returns files only, so a literal file
-  # path matches itself while a literal directory path matches nothing, and
-  # the extension patterns do the reverse. Union covers both cases with no
-  # is-it-a-file test (R1 cannot stat anything).
+  # One recursive glob pattern per target extension (input_path itself is
+  # NOT in this list -- see the #3101 upfront-gate step immediately below,
+  # which globs it separately and FIRST).
   #
   # The extensions live in the PATTERN rather than in an R1 `filter`
   # because R1 has no string-suffix/lower primitive -- there is no
   # expression that says "ends with .pdf". The glob character classes
   # (`[pP][dD][fF]`) get case-insensitivity from the globber instead.
   - transform:
-      value: "map(ctx.file_extensions, e -> ctx.input_path + '/**/*.' + e) + [ctx.input_path]"
+      value: "map(ctx.file_extensions, e -> ctx.input_path + '/**/*.' + e)"
       output: file_patterns
+
+  # ---- #3101: upfront recursive-grant gate, SERIAL and BEFORE the fan-out
+  # below ----
+  #
+  # Requests read access to the corpus directory (`input_path`) itself, in
+  # ONE call, before ANY of the (up to 7) glob_files calls below run
+  # concurrently. This is the FIRST `glob_files` call this pipeline makes
+  # against `input_path` -- it also does the "input_path names a single
+  # FILE" job the removed 7th fan-out pattern used to do (`glob_files`
+  # returns files only, so a literal file path matches itself while a
+  # literal directory path matches nothing -- its result is folded into
+  # `files` below alongside the fan-out's).
+  #
+  # WHY upfront, not inside the fan-out: `require_file_read`'s recursive-
+  # parent grant (permissions.py's "[r] grant the parent directory
+  # recursively" JIT choice) is the model's already-correct answer to "one
+  # approval should cover this whole corpus" -- but it only WORKS when the
+  # grant is established before any sibling glob consults it. Architect
+  # analysis (#3101): there is no data race (approvals are a shared
+  # in-memory map, consulted/persisted synchronously, single-threaded
+  # asyncio) -- the bug is purely that the fan-out's `max_parallel: 4`
+  # starts every pattern's permission consult BEFORE any of them has
+  # reached the grant, so each one independently JIT-prompts (N prompts for
+  # 1 conceptual approval, and #3101's witness saw a `.txt` pattern denied
+  # mid-run because ITS prompt was answered "no" while another pattern's
+  # "yes, recursively" was still in flight). Gating the directory ONCE,
+  # here, before the fan-out starts means every pattern the fan-out globs
+  # is a descendant of `input_path` and therefore already covered by the
+  # recursive grant this call either found pre-existing or, on a fresh
+  # corpus, obtained interactively right here -- decision-enabling: the
+  # operator sees ONE prompt naming the corpus directory, not one per file
+  # extension. No new permission model or op -- this reuses `glob_files`'
+  # existing `require_file_read` gate (src/reyn/core/op_runtime/file.py),
+  # just called once, serially, ahead of the parallel patterns.
+  #
+  # `schema: PreflightCheck` is REQUIRED here (unlike the fan-out `do:`
+  # step below, where #3099 corrective (a) made a per-call schema gate
+  # redundant): this is a single, non-fan-out `tool:` step, and only the
+  # fan-out coordinator was taught to trip `on_error` on a canonical error
+  # result (#3099). A bare `tool:` step still returns a `status: "denied"`
+  # result NORMALLY (`execute_op` degrades every op error to a status-
+  # carrying dict rather than raising) -- without this gate, a denied
+  # upfront glob would flow on silently instead of aborting cleanly the
+  # same way the fan-out below does.
+  - tool:
+      name: glob_files
+      schema: PreflightCheck
+      args:
+        pattern: !expr ctx.input_path
+        max_results: !expr ctx.max_files
+        absolute: true
+      output: upfront_glob
+
   # #3095/#3099 corrective (a): the `on_error: abort` below FIRES on a
   # `glob_files` failure without any `schema:` gate. #3098 landed an interim
   # `schema: PreflightCheck` here (a non-"ok" status fails validation and
@@ -496,7 +546,11 @@ steps:
   # below -- see `meta.isError` further down this file), not just a raised
   # exception. The per-call `schema: PreflightCheck` gate is therefore
   # redundant here and removed -- point-fix + the now-general mechanism
-  # would otherwise coexist (owner no-debt ruling).
+  # would otherwise coexist (owner no-debt ruling). By the time this fan-out
+  # starts, the #3101 upfront step above has already established (or
+  # confirmed) the recursive read-grant on `input_path`, so every pattern
+  # here -- a descendant path -- resolves as a synchronous grant HIT with no
+  # further prompt.
   - for_each:
       over: ctx.file_patterns
       max_parallel: 4
@@ -533,17 +587,24 @@ steps:
             absolute: true
       collect: {transform: {value: "pipe"}}
       output: globbed
-  # Flatten one list per pattern into one flat file list. `structured` is
-  # glob's real list of paths (#2994); before that it was newline-joined
-  # text, which R1 (no `split`) could not consume at all -- the reason this
-  # step had to be a python shell-out. Every item reaching here is now
-  # GUARANTEED `status: "ok"` (the `for_each: on_error: abort` above now
-  # fires on a canonical-error result too -- #3099 corrective (a) -- so a
-  # failed glob never survives to be collected), so `.structured` is
-  # guaranteed a list -- `acc + item.structured` can no longer see a dict.
+  # Flatten one list per pattern into one flat file list, SEEDED with the
+  # #3101 upfront glob's own match(es) (`ctx.upfront_glob.structured` --
+  # `init`, like every other step, is a plain R1 expression evaluated
+  # against `ctx`) so the "input_path names a single FILE" match that step
+  # discovers is not lost now that it is no longer one of the fan-out's own
+  # patterns. `structured` is glob's real list of paths (#2994); before
+  # that it was newline-joined text, which R1 (no `split`) could not
+  # consume at all -- the reason this step had to be a python shell-out.
+  # Every item reaching here from the fan-out is now GUARANTEED
+  # `status: "ok"` (the `for_each: on_error: abort` above now fires on a
+  # canonical-error result too -- #3099 corrective (a) -- so a failed glob
+  # never survives to be collected), and the upfront glob is GUARANTEED
+  # `status: "ok"` by its own `schema: PreflightCheck` gate above, so
+  # `.structured` is guaranteed a list on both sides -- `acc + item.structured`
+  # can no longer see a dict.
   - fold:
       over: ctx.globbed
-      init: "[]"
+      init: "ctx.upfront_glob.structured"
       do: {transform: {value: "acc + item.structured"}}
       output: files
 

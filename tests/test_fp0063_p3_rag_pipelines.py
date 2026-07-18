@@ -628,13 +628,17 @@ def test_ingest_preflight_blocks_on_unreachable_vectorstore_with_named_remedy(
 def test_ingest_file_discovery_aborts_clean_on_unreadable_input_path(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture,
 ) -> None:
-    """Tier 2b: #3095 -- `_ingest_body`'s file-discovery `for_each` over
-    `glob_files` (one call per extension pattern PLUS `input_path` itself,
-    see the pipeline's own comment) must abort CLEANLY when a `glob_files`
-    call fails -- e.g. `input_path` names a folder OUTSIDE the reyn project
-    root with no `file.read` permission granted for it yet, the ordinary
-    case for a real corpus (the reported dogfood witness pointed at
-    `/tmp/rag_witness5_docs`, well outside the project).
+    """Tier 2b: #3095 -- `_ingest_body`'s file discovery (the #3101 upfront
+    `glob_files` gate against `input_path` itself, followed by a `for_each`
+    fan-out of one `glob_files` call per extension pattern -- see the
+    pipeline's own comments) must abort CLEANLY when a `glob_files` call
+    fails -- e.g. `input_path` names a folder OUTSIDE the reyn project root
+    with no `file.read` permission granted for it yet, the ordinary case for
+    a real corpus (the reported dogfood witness pointed at
+    `/tmp/rag_witness5_docs`, well outside the project). Non-interactively
+    (this test's `bus=None` path) the very FIRST `glob_files` call --
+    #3101's upfront gate -- is the one that denies and aborts; the fan-out
+    below it never runs.
 
     Before the fix, a `glob_files` failure returned NORMALLY (op_runtime's
     own `except PermissionError`/`except Exception` degrade every op error
