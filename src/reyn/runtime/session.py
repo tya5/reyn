@@ -1321,6 +1321,47 @@ class Session:
             redirect snapshot I/O to a tmp_path without touching private
             attributes.
         """
+        # #3121 step1: resolve the 4 parameter objects against the flat params
+        # they replace. When a caller passes the object, its fields are the
+        # single source (the flat params are then dead pass-through, kept in
+        # the signature only for byte-identical direct/test construction that
+        # has not migrated to the object). When the object is omitted, it is
+        # built from the flat params -- identical to today's per-field
+        # defaults, so this resolution changes no observable behaviour.
+        reactivity = reactivity if reactivity is not None else ReactivityConfig(
+            hooks_config=hooks_config,
+            composers_config=composers_config,
+            fs_watch_config=fs_watch_config,
+        )
+        capability_scope = capability_scope if capability_scope is not None else CapabilityScope(
+            exclude_tools=exclude_tools,
+            excluded_categories=excluded_categories,
+            contextual_permission=contextual_permission,
+            available_skills=available_skills,
+        )
+        task_wiring = task_wiring if task_wiring is not None else TaskWiring(
+            task_backend=task_backend,
+            task_waker=task_waker,
+        )
+        presentation_wiring = (
+            presentation_wiring if presentation_wiring is not None else PresentationWiring(
+                presentation_registry=presentation_registry,
+                presentation_consumer=presentation_consumer,
+                intervention_bridge=intervention_bridge,
+            )
+        )
+        hooks_config = reactivity.hooks_config
+        composers_config = reactivity.composers_config
+        fs_watch_config = reactivity.fs_watch_config
+        exclude_tools = capability_scope.exclude_tools
+        excluded_categories = capability_scope.excluded_categories
+        contextual_permission = capability_scope.contextual_permission
+        available_skills = capability_scope.available_skills
+        task_backend = task_wiring.task_backend
+        task_waker = task_wiring.task_waker
+        presentation_registry = presentation_wiring.presentation_registry
+        presentation_consumer = presentation_wiring.presentation_consumer
+        intervention_bridge = presentation_wiring.intervention_bridge
         # FP-0043 Stage 2: the identity cluster is owned by the Agent value object,
         # assembled at the build_scoped_chat_session chokepoint and passed in. A
         # direct/test construction without one falls back to building it from the

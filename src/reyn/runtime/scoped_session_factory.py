@@ -36,6 +36,7 @@ from typing import TYPE_CHECKING, Any
 from reyn.runtime.agent import Agent
 from reyn.runtime.factory_config import SessionFactoryConfig
 from reyn.runtime.session import Session
+from reyn.runtime.session_params import CapabilityScope, PresentationWiring, TaskWiring
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -106,23 +107,38 @@ def build_scoped_chat_session(
     if _registry is not None:
         from reyn.runtime.services.task_wake import TaskWaker  # noqa: PLC0415
         task_waker = TaskWaker(_registry, base["agent_name"])
+    # #3121 step1: group the scoped capability / task / presentation params into
+    # their cohesive parameter objects at this single construction chokepoint.
+    # ``intervention_bridge`` arrives via ``**base`` (each frontend's
+    # ``_session_factory`` wrapper forwards it) -- popped here so it joins its
+    # PresentationWiring siblings instead of flowing through Session directly.
+    intervention_bridge = base.pop("intervention_bridge", None)
     return Session(
         agent=agent,
-        task_waker=task_waker,
         environment_backend=environment_backend,
         sandbox_backend=sandbox_backend,
         workspace_base_dir=workspace_base_dir,
         workspace_state_dir=workspace_state_dir,
-        exclude_tools=exclude_tools,
-        excluded_categories=excluded_categories,
-        contextual_permission=contextual_permission,
         agent_id=agent_id,
         router_max_iterations=router_max_iterations,
         non_interactive=non_interactive,
         eager_embedding_build=eager_embedding_build,
         allowed_mcp=allowed_mcp,
-        task_backend=task_backend,  # #1953 slice R
-        presentation_consumer=presentation_consumer,  # #2708 P1: present-sink consumer (.sink deferred to Session init)
+        capability_scope=CapabilityScope(
+            exclude_tools=exclude_tools,
+            excluded_categories=excluded_categories,
+            contextual_permission=contextual_permission,
+            available_skills=factory_config.available_skills,  # #2548 PR-A
+        ),
+        task_wiring=TaskWiring(
+            task_backend=task_backend,  # #1953 slice R
+            task_waker=task_waker,
+        ),
+        presentation_wiring=PresentationWiring(
+            presentation_registry=factory_config.presentation_registry,  # FP-0054 PR-C
+            presentation_consumer=presentation_consumer,  # #2708 P1: present-sink consumer (.sink deferred to Session init)
+            intervention_bridge=intervention_bridge,
+        ),
         sandbox_config=factory_config.sandbox_config,
         multimodal_config=factory_config.multimodal_config,
         action_retrieval_config=factory_config.action_retrieval_config,
@@ -130,9 +146,7 @@ def build_scoped_chat_session(
         router_config=factory_config.router_config,
         retry_config=factory_config.retry_config,  # #1835
         chat_tool_use_scheme=factory_config.chat_tool_use_scheme,
-        available_skills=factory_config.available_skills,  # #2548 PR-A
         pipeline_registry=factory_config.pipeline_registry,  # #2575
-        presentation_registry=factory_config.presentation_registry,  # FP-0054 PR-C
         observability_config=factory_config.observability_config,  # P5 ADR-0039
         **base,
     )
