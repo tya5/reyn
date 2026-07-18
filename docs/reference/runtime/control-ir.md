@@ -813,6 +813,30 @@ surface: `plugin_management__install` / `plugin_management__uninstall`
 avoid a canonical-declaration collision (mirrors the `mcp_install_local` vs
 `mcp_install` op-kind precedent).
 
+ADR §3.9 (P3): the SAME typed op is also exposed as a slash command
+(`/plugin install builtin|local|git <SOURCE> [as <INSTALL_NAME>]` /
+`/plugin uninstall <NAME>`, `interfaces/slash/plugin.py`) and a CLI command
+(`reyn plugin install builtin|local|git <SOURCE>` / `reyn plugin uninstall
+<NAME>`, `interfaces/cli/commands/plugin.py`) — both thin adapters that build
+a `ToolContext` and call `invoke_tool(get_default_registry(),
+"plugin_management__install"/"__uninstall", ...)`, the SAME lookup+dispatch a
+live chat-router LLM tool call uses, so the composite permission decl and the
+`{kind: "git"}` run-code trust gate (below) live in exactly one place. The
+slash surface threads the session's LIVE `RouterHostAdapter.
+make_router_op_context` (real intervention bus - a `{kind: "git"}` install
+prompts interactively, and the OpContext carries the `#1339` sandbox floor -
+`resolve_sandbox_policy`, write_paths default-restricted to the workspace -
+so installing a `{kind: "local"}`/`{kind: "git"}` plugin from `/plugin`
+additionally needs an operator `reyn.yaml` `sandbox.policy.write_paths` grant
+covering `~/.reyn/plugins/`, same as a live LLM tool call would). The CLI
+surface instead builds a standalone `OpContext` directly (no
+`build_router_op_context`, no sandbox floor - mirrors `reyn mcp install`'s
+CLI-is-the-operator-trusted-entry-point precedent) whose `interactive` flag is
+`not --non-interactive and sys.stdin.isatty()`. Either surface, a
+non-interactive caller (no intervention bus) fails the `{kind: "git"}`
+run-code trust gate closed - that gate is unconditional deny-else
+(`require_plugin_git_run_code_trust`), independent of the sandbox floor.
+
 `plugin_install` example (typed discriminated `source`, §3.8 — never a
 form-sniffed string):
 ```json
