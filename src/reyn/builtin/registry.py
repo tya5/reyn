@@ -133,7 +133,7 @@ BUILTIN_SKILLS: "dict[str, dict[str, Any]]" = {
     # builtin registry under ADR 0064 P5 ("builtin RAG becomes the first
     # plugin") -- they now ship as `src/reyn/builtin/plugins/rag/` and are
     # only registered once an operator/LLM calls
-    # `plugin_install(source={"kind": "builtin", "name": "rag"})`. Unlike
+    # `plugin_management__install(source={"kind": "builtin", "name": "rag"})`. Unlike
     # A3's "ships inert but present" posture, a plugin's capabilities are
     # not present in the registry AT ALL until installed -- the plugin
     # model's own copy+register mechanism (`reyn.core.op_runtime.

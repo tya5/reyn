@@ -33,11 +33,11 @@ permission gate prompts them before anything reaches config. **Do not tell
 the operator to hand-edit YAML.**
 
 ```
-plugin_install(source={"kind": "builtin", "name": "rag"})
+plugin_management__install(source={"kind": "builtin", "name": "rag"})
 mcp__install_local(name="reyn_markitdown", command="uvx", args=["markitdown-mcp"])
 ```
 
-The single `plugin_install` call installs **everything the rag plugin
+The single `plugin_management__install` call installs **everything the rag plugin
 ships** -- both MCP servers (`reyn_chunker` / `reyn_vector_store`), the
 `rag_ingest` / `rag_query` pipelines, and this very skill -- in one step: it
 copies the plugin to `~/.reyn/plugins/rag/`, materialises its dependencies
@@ -73,6 +73,14 @@ mcp__install_local(name="reyn_markitdown", args=[],
 
 ## The workflow
 
+Both steps below run through `pipeline__run` -- the launch verb for a
+**REGISTERED** pipeline, invoked by the name it was installed under
+(`"rag_ingest.ingest"` / `"rag_query.query"`). This is **not**
+`pipeline__run_inline`, which takes an inline DSL definition instead of a
+name and is a different tool for a different purpose (defining a pipeline
+on the fly) -- passing `rag_ingest.ingest`'s `name`/`input` shape to
+`pipeline__run_inline` fails; it expects a `pipeline` body, not a `name`.
+
 **1. Ingest** -- `input_path` **must be absolute**; the pipeline globs it
 directly, and a relative pattern yields the wrong `source_path` column.
 `output_db`, by contrast, is written by the `reyn_vector_store` server and
@@ -81,7 +89,7 @@ ran `reyn` from**. A **cwd-relative `output_db` needs no config at all** --
 keep it there unless the operator wants the store elsewhere (see below).
 
 ```
-run_pipeline(name="rag_ingest.ingest", input={
+pipeline__run(name="rag_ingest.ingest", input={
   "input_path": "/abs/path/to/docs",        # a folder OR a single file
   "output_db": "./rag/docs.sqlite",         # zero-config: written under cwd
 })
@@ -96,7 +104,7 @@ with `priced: false` means the model could not be priced -- report it as
 **2. Query** -- the same `db` the ingest wrote.
 
 ```
-run_pipeline(name="rag_query.query", input={
+pipeline__run(name="rag_query.query", input={
   "query_text": "how does X work?",
   "db": "./rag/docs.sqlite",
   "top_k": 5,                                # default 5
@@ -153,7 +161,7 @@ so a drop-in swap needs **no file edit** -- just pass the new name (install it
 first, same as above):
 
 ```
-run_pipeline(name="rag_ingest.ingest", input={
+pipeline__run(name="rag_ingest.ingest", input={
   "input_path": "/abs/docs", "output_db": "./docs.sqlite",
   "vectorstore_server": "my_qdrant",
 })
@@ -164,7 +172,7 @@ The replacement must expose the same tool shapes (`upsert` / `query` /
 Copy `~/.reyn/plugins/rag/pipelines/rag_ingest.yaml` (+ `rag_query.yaml`,
 present once the plugin is installed) into the operator's project and edit
 it -- or promote your edited copy back as its own plugin
-(`plugin_install(source={"kind": "local", "path": "..."})`). **This is the
+(`plugin_management__install(source={"kind": "local", "path": "..."})`). **This is the
 intended extension mechanism, not a workaround**: reyn builds no adapter for
 a user's RAG store (FP-0057 C2).
 
