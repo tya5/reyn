@@ -745,25 +745,6 @@ class _HookEventBundle:
 
 
 @dataclass(frozen=True)
-class _CostBundle:
-    """#3082 Family 4: the cost/budget gateway — ``budget`` (``BudgetGateway``,
-    the per-session budget adapter that absorbs total_usage / total_cost_usd /
-    router-cap state). Single-field bundle for now (the simplest family — one
-    unconditional component, no intra-family DAG); kept as a bundle rather
-    than a bare return for pipeline-pattern consistency with Families 1-3, and
-    so it can grow without a call-site signature change if a future PR adds a
-    sibling cost component. Pure output→input value object:
-    :meth:`Session._build_cost_bundle` is a byte-identical extraction of the
-    construction that used to run inline in ``Session.__init__`` — same
-    object, same args. This family CONSUMES Family 1's ``chat_events``
-    (``BudgetGateway`` reads it eagerly at construction, ``events=``), so the
-    builder takes it as an explicit input rather than reading ``self.``
-    directly (same pattern as Family 3's ``hot_reloader``)."""
-
-    budget: "BudgetGateway"
-
-
-@dataclass(frozen=True)
 class _RetrievalBundle:
     """#3082 Family 5: the retrieval spine — the embedding block
     (``embedding_provider`` / ``embedding_event_sink`` / ``embedding_model_class``
@@ -1526,10 +1507,9 @@ class Session:
         )
 
         # Budget adapter, byte-identical extraction, simplest of the #3082 families (Family 4, see session-construction.md#family-4-cost-budget)
-        _cost_bundle = self._build_cost_bundle(
+        self._budget = self._build_budget(
             budget_tracker, self._chat_events, self.agent_name, _router_cap,
         )
-        self._budget = _cost_bundle.budget
 
         # Memory persistence adapter, byte-identical extraction, pre-waist position (#3082 Family 8b, see session-construction.md#family-8b-memory)
         _memory_bundle = self._build_memory_bundle()
@@ -3535,13 +3515,13 @@ class Session:
 
     # ── #3082 Family 4: cost/budget bundle builder ──
 
-    def _build_cost_bundle(
+    def _build_budget(
         self,
         budget_tracker: "BudgetTracker | None",
         chat_events: "EventLog",
         agent_name: str,
         router_cap: int,
-    ) -> "_CostBundle":
+    ) -> "BudgetGateway":
         """#3082 Family 4: build the cost/budget gateway — ``budget``
         (``BudgetGateway``, the per-session budget adapter). The simplest
         family: a single unconditional component, no intra-family DAG, no
@@ -3567,14 +3547,15 @@ class Session:
 
         PR-refactor-session-1 wave 3 PR1: per-session budget adapter.
         Absorbs total_usage / total_cost_usd / router-cap state that
-        previously lived as scattered attributes on Session."""
-        budget = BudgetGateway(
+        previously lived as scattered attributes on Session. (#3121 step4:
+        returns the ``BudgetGateway`` directly — the single-field
+        ``_CostBundle`` wrapper was ceremony, see #3082 anti-pattern #2.)"""
+        return BudgetGateway(
             budget_tracker=budget_tracker,
             events=chat_events,
             agent_name=agent_name,
             default_router_cap=router_cap,
         )
-        return _CostBundle(budget=budget)
 
     def _build_retrieval_bundle(
         self,

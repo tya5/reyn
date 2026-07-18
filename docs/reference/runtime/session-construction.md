@@ -157,9 +157,10 @@ Hooks specifically use S2b; validate-before-apply applies too.
 
 ## Family 4 — Cost / budget
 
-`_build_cost_bundle` constructs the budget adapter — a byte-identical extraction, the
+`_build_budget` constructs the budget adapter — a byte-identical extraction, the
 simplest of the `#3082` families (no reordering). It runs here (unchanged position) because
-it *consumes* Family 1's `chat_events`, read EAGERLY (`events=`).
+it *consumes* Family 1's `chat_events`, read EAGERLY (`events=`). It returns the
+`BudgetGateway` directly (`#3121` step4 removed the single-field `_CostBundle` wrapper).
 
 Two other cost-adjacent construction points stay inline:
 - `_cost_warn_config` (#2230): the resolved `cost_warn:` config so the high-cost-model
