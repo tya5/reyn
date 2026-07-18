@@ -784,50 +784,6 @@ class _RetrievalBundle:
 
 
 @dataclass(frozen=True)
-class _RouterWaistBundle:
-    """#3082 Family 6a: the router-host WAIST — ``router_host``
-    (``RouterHostAdapter``, the concrete ``RouterLoopHost`` implementation
-    that aggregates ~40 already-constructed Session sub-components —
-    Families 1-5's outputs (``chat_events`` / ``journal`` / ``hot_reloader``
-    / ``hook_dispatcher`` / ``hook_bus`` / ``budget``) plus the many
-    params/early attrs set earlier in ``__init__`` (``task_backend`` /
-    ``permission_resolver`` / ``resolver`` / ``registry`` /
-    ``pipeline_registry`` / ``presentation_registry`` / ``file_*`` /
-    ``mcp_*`` / ``memory`` / …) — into a single object most later families
-    read through. Single-field bundle (mirrors ``_CostBundle``'s
-    one-unconditional-component shape) so it can grow without a call-site
-    signature change.
-
-    Pure output→input value object: :meth:`Session._build_router_waist` is
-    a byte-identical extraction of the construction that used to run inline
-    in ``Session.__init__`` at its ORIGINAL position (line ~1726, no-move —
-    every one of the ~40 deps is already set on ``self`` by that point) —
-    same object, same construction order, same ~40 args. Because
-    parameterizing ~40 explicit builder args is impractical (and Families
-    3-5 already establish the instance-method-reads-``self`` precedent for
-    eager sibling dependencies), this builder takes NO explicit params: it
-    reads every dependency as ``self._X`` / ``self.X`` directly, exactly as
-    the inline construction did.
-
-    ★ Three of the ~40 args are DEFERRED lambdas, NOT eager values —
-    ``live_session_id_fn`` / ``current_task_id_fn`` / ``turn_origin_fn``
-    resolve per-turn / post-construction Session state (``_current_task_id``
-    and ``_current_turn_origin`` are not even SET until the first turn
-    runs — eager-reading them here would raise ``AttributeError``, and even
-    where the attribute already exists at construction time,
-    e.g. ``_session_id``, the value can change afterward for spawned
-    sessions). These three (plus the bound method
-    ``record_spawned_task`` and the two tracker lambdas
-    ``delegation_tracker`` / ``agent_replies_tracker``, already
-    lambdas pre-extraction) are kept byte-identical, still closing over
-    ``self`` and resolved at CALL time — eager-izing any of them would
-    freeze a per-turn value at construction (the Family 3/5 deferred/eager
-    pitfall this builder must not repeat)."""
-
-    router_host: "RouterHostAdapter"
-
-
-@dataclass(frozen=True)
 class _HistoryCompactionBundle:
     """#3082 Family 6b: the history-compaction chain — ``history_buffer``
     (``RouterHistoryBuffer``), ``compaction_controller``
@@ -1537,8 +1493,7 @@ class Session:
         # CapabilityVisibility, which owns the LIVE composed value, does not exist yet -- it needs
         # router_host, which THIS call builds -- so this one eager pre-waist consumer is threaded
         # the local var explicitly rather than reading a not-yet-constructed self._capability_visibility).
-        _router_waist_bundle = self._build_router_waist(contextual_permission=contextual_permission)
-        self._router_host = _router_waist_bundle.router_host
+        self._router_host = self._build_router_waist(contextual_permission=contextual_permission)
 
         # Owns the per-session capability/skill visibility override + the envelope-composed
         # contextual_permission/excluded_categories it derives (#2285, see #3121 step3 Extract Class);
@@ -3731,7 +3686,7 @@ class Session:
             action_usage_tracker=action_usage_tracker,
         )
 
-    def _build_router_waist(self, *, contextual_permission: "object | None" = None) -> "_RouterWaistBundle":
+    def _build_router_waist(self, *, contextual_permission: "object | None" = None) -> "RouterHostAdapter":
         """#3082 Family 6a: build the router-host WAIST — ``router_host``
         (``RouterHostAdapter``, the concrete ``RouterLoopHost`` implementation
         that aggregates ~40 already-constructed Session sub-components).
@@ -4003,7 +3958,7 @@ class Session:
             # checks it via getattr at each iteration boundary.
             turn_cancel_fn=self._is_turn_cancel_requested,
         )
-        return _RouterWaistBundle(router_host=router_host)
+        return router_host
 
     def _build_history_compaction_bundle(
         self, merge_action_usage: "Callable[[list[ChatMessage]], None]",
