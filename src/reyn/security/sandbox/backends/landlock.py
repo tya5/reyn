@@ -37,7 +37,7 @@ import subprocess
 
 from .._subprocess_io import communicate_capped, kill_process_tree
 from ..backend import SandboxResult, WrappedCommand
-from ..policy import SandboxPolicy, expand_policy_path
+from ..policy import SandboxPolicy, expand_policy_path, resolve_passthrough_env
 from .seccomp import load_seccomp_filter, preload_native_dependency
 
 _logger = logging.getLogger(__name__)
@@ -387,11 +387,10 @@ class LandlockBackend:
 
         abi = self._abi_version or 0  # guaranteed non-None after available() == True
 
-        # Build env from the passthrough allowlist (mirrors NoopBackend exactly).
-        env: dict[str, str] = {}
-        for name in policy.env_passthrough:
-            if name in os.environ:
-                env[name] = os.environ[name]
+        # Build env from the passthrough allowlist ∪ the standard proxy/CA env
+        # (#3075) — mirrors NoopBackend/SeatbeltBackend exactly via the shared
+        # resolve_passthrough_env chokepoint.
+        env = resolve_passthrough_env(policy)
         if "PATH" not in env and "PATH" in os.environ:
             env["PATH"] = os.environ["PATH"]
 

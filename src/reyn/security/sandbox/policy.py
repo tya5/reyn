@@ -36,6 +36,7 @@ Fields:
 """
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -83,6 +84,31 @@ DEFAULT_SENSITIVE_READ_DENY: tuple[str, ...] = (
     "~/.docker/config.json",
     "~/.netrc",
 )
+
+
+def resolve_passthrough_env(policy: "SandboxPolicy") -> dict[str, str]:
+    """Build the env dict every sandbox backend passes to a spawned child
+    (#3075 fix 5 — the shared chokepoint all three backends call).
+
+    ``policy.env_passthrough`` ∪ the standard proxy/CA env
+    (:data:`reyn._network.STANDARD_NETWORK_ENV_NAMES`) — the sandbox forwards
+    the standard set to EVERY sandboxed child by default, generalising the
+    git-clone-specific forwarding that used to live only in
+    ``skill_install.py`` (#3075's sharpest symptom: git-clone conformed,
+    its sibling uvx/npx subprocess did not). This is additive only — an
+    operator-declared ``env_passthrough`` entry is still honoured, and no
+    secret-bearing var is ever added here (the standard set is a curated,
+    known-non-secret allowlist: proxy URLs + CA bundle *paths*, not
+    credentials — the CA bundle *file* was already broad-read-floor
+    readable; only the env var pointing at it was missing before #3075).
+
+    PATH fallback is applied by each backend after calling this (preserves the
+    existing "PATH always available" behaviour independent of this set).
+    """
+    from reyn._network import STANDARD_NETWORK_ENV_NAMES
+
+    names = set(policy.env_passthrough) | set(STANDARD_NETWORK_ENV_NAMES)
+    return {name: os.environ[name] for name in names if name in os.environ}
 
 
 @dataclass

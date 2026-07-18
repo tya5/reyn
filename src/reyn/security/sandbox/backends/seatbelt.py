@@ -31,7 +31,11 @@ from pathlib import Path
 
 from reyn.security.sandbox._subprocess_io import communicate_capped, kill_process_tree
 from reyn.security.sandbox.backend import SandboxResult, WrappedCommand
-from reyn.security.sandbox.policy import SandboxPolicy, expand_policy_path
+from reyn.security.sandbox.policy import (
+    SandboxPolicy,
+    expand_policy_path,
+    resolve_passthrough_env,
+)
 
 _logger = logging.getLogger(__name__)
 
@@ -245,11 +249,9 @@ class SeatbeltBackend:
         """
         profile_text = _build_sbpl_profile(policy)
 
-        # Build env from passthrough allowlist; fall back PATH if not listed.
-        env: dict[str, str] = {}
-        for name in policy.env_passthrough:
-            if name in os.environ:
-                env[name] = os.environ[name]
+        # Build env from passthrough allowlist ∪ the standard proxy/CA env
+        # (#3075); fall back PATH if not listed.
+        env = resolve_passthrough_env(policy)
         if "PATH" not in env and "PATH" in os.environ:
             env["PATH"] = os.environ["PATH"]
 

@@ -18,7 +18,7 @@ import subprocess
 
 from ._subprocess_io import communicate_capped, kill_process_tree
 from .backend import SandboxBackend, SandboxResult, WrappedCommand
-from .policy import SandboxPolicy
+from .policy import SandboxPolicy, resolve_passthrough_env
 
 _logger = logging.getLogger(__name__)
 
@@ -44,10 +44,9 @@ def _reset_warning_for_tests() -> None:
 
 
 def _build_env(policy: SandboxPolicy) -> dict[str, str]:
-    env: dict[str, str] = {}
-    for name in policy.env_passthrough:
-        if name in os.environ:
-            env[name] = os.environ[name]
+    # #3075: resolve_passthrough_env unions policy.env_passthrough with the
+    # standard proxy/CA env (forwarded to every sandboxed child by default).
+    env = resolve_passthrough_env(policy)
     if "PATH" not in env and "PATH" in os.environ:
         env["PATH"] = os.environ["PATH"]
     return env

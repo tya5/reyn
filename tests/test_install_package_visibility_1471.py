@@ -65,7 +65,15 @@ class _RegistryClientNotFound:
     Used via monkeypatch.setattr on reyn.core.registry.client.RegistryClient so
     mcp_install.handle's local import resolves to this class without touching
     the real network.  No AsyncMock — pure subclass with real coroutine methods.
+
+    ``__init__`` accepts (and ignores) the real ``RegistryClient``'s
+    ``verify``/``events`` constructor args (#3075 added ``events``) so this
+    fake's signature stays a drop-in match for however ``mcp_install.handle``
+    constructs it.
     """
+
+    def __init__(self, *args: object, **kwargs: object) -> None:
+        pass
 
     async def __aenter__(self) -> "_RegistryClientNotFound":
         return self
@@ -79,6 +87,9 @@ class _RegistryClientNotFound:
 
 class _RegistryClientNetworkError:
     """Real fake RegistryClient that raises a non-404 network error."""
+
+    def __init__(self, *args: object, **kwargs: object) -> None:
+        pass
 
     async def __aenter__(self) -> "_RegistryClientNetworkError":
         return self

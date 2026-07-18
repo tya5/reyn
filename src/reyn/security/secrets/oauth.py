@@ -284,10 +284,10 @@ async def _post_refresh(
     pass an httpx.AsyncClient configured with a MockTransport so we
     avoid network I/O without introducing MagicMock.
     """
-    import httpx
-
     if http_client is None:
-        http_client = httpx.AsyncClient(timeout=timeout)
+        from reyn._network import build_async_http_client
+
+        http_client = build_async_http_client(timeout=timeout, egress="oauth_refresh")
         owns_client = True
     else:
         owns_client = False
@@ -628,11 +628,13 @@ async def device_grant_flow(
     5. After expires_in seconds without success → raise
        DeviceGrantError(error_code="timeout").
     """
-    import httpx
-
     owns_client = http_client is None
     if owns_client:
-        http_client = httpx.AsyncClient(timeout=_DEVICE_HTTP_TIMEOUT)
+        from reyn._network import build_async_http_client
+
+        http_client = build_async_http_client(
+            timeout=_DEVICE_HTTP_TIMEOUT, egress="oauth_device_grant"
+        )
 
     try:
         # ── Step 1: request device_code ──────────────────────────────────

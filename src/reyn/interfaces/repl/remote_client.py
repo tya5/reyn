@@ -116,7 +116,11 @@ async def run_remote_repl(
     if token:
         params["token"] = token
 
-    async with httpx.AsyncClient(timeout=httpx.Timeout(None, connect=10.0)) as client:
+    from reyn._network import build_async_http_client
+
+    async with build_async_http_client(
+        timeout=httpx.Timeout(None, connect=10.0), egress="remote_repl"
+    ) as client:
         # Monotonic timestamp of the last client→server POST of ANY kind (a real
         # turn/answer/cancel, or a prior heartbeat). The heartbeat loop piggybacks
         # on real traffic: if one already crossed the wire within the interval

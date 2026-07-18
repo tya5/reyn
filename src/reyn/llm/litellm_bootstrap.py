@@ -124,5 +124,15 @@ def ensure_litellm_ready() -> None:
         try:
             import litellm
             litellm.suppress_debug_info = True
+            # #3075 fix 1: litellm's aiohttp transport defaults
+            # aiohttp_trust_env=False, so it is proxy-blind even when the
+            # operator's standard HTTP(S)_PROXY/NO_PROXY env is set — the
+            # highest-volume egress reyn originates (every LLM/embedding call)
+            # was the sharpest non-conformer in the #3075 enumeration. Flipping
+            # this makes litellm read the standard proxy env like every other
+            # conforming egress; it already honours SSL_CERT_FILE/
+            # REQUESTS_CA_BUNDLE via get_ssl_verify(), so this is the one
+            # missing piece for full conformance.
+            litellm.aiohttp_trust_env = True
         except Exception:  # noqa: BLE001 — best-effort; never block the caller on this
             pass

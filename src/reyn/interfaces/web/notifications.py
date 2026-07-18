@@ -68,7 +68,7 @@ async def post_webhook(
     created automatically.
     """
     try:
-        import httpx
+        import httpx  # noqa: F401 — availability probe only; see except below
     except ImportError:
         logger.warning(
             "webhook post skipped: httpx not installed. "
@@ -81,7 +81,7 @@ async def post_webhook(
 
     for attempt_idx in range(policy.max_attempts):
         last_result = await _post_once(
-            url, payload, timeout=timeout, httpx_mod=httpx,
+            url, payload, timeout=timeout,
             http_client=_http_client,
         )
         if last_result.ok:
@@ -106,7 +106,6 @@ async def _post_once(
     payload: dict,
     *,
     timeout: float,
-    httpx_mod: object,
     http_client: "httpx.AsyncClient | None",
 ) -> DeliveryResult:
     """One attempt at POSTing the payload, returning categorised result."""
@@ -114,7 +113,11 @@ async def _post_once(
         if http_client is not None:
             response = await http_client.post(url, json=payload)
         else:
-            async with httpx_mod.AsyncClient(timeout=timeout) as client:
+            from reyn._network import build_async_http_client
+
+            async with build_async_http_client(
+                timeout=timeout, egress="webhook_notification"
+            ) as client:
                 response = await client.post(url, json=payload)
     except Exception as exc:  # noqa: BLE001 — transport errors categorised
         logger.warning("webhook post failed: url=%s error=%s", url, exc)

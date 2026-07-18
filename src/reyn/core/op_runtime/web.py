@@ -5,7 +5,7 @@ import asyncio
 import html.parser
 from typing import Literal
 
-from reyn._ssrf_pin import PinnedAsyncHTTPTransport
+from reyn._network import build_async_http_client
 from reyn.schemas.models import WebFetchIROp, WebSearchIROp
 
 from . import register
@@ -287,16 +287,22 @@ async def handle_web_fetch(op: WebFetchIROp, ctx: OpContext) -> dict:
     try:
         # SSL verification — priority: reyn.yaml web.fetch config → env-var chain.
         # #1956: follow_redirects=False — we follow manually so each hop is gated.
-        # #1972: PinnedAsyncHTTPTransport pins each hop's connect to the pre-
-        # validated IP (resolve_and_validate at gate time) so the client never
-        # re-resolves the host at connect time — closing the DNS-rebind TOCTOU.
-        # The manual redirect loop's _gate_hop L1+L2 logic is preserved; the
-        # transport adds connect-time pinning on top of the check-time gate.
-        async with httpx.AsyncClient(
+        # #1972/#3075: pin_ssrf=True routes through PinnedAsyncHTTPTransport,
+        # which pins each hop's connect to the pre-validated IP
+        # (resolve_and_validate at gate time) so the client never re-resolves
+        # the host at connect time — closing the DNS-rebind TOCTOU — AND (as of
+        # #3075) is proxy-aware: when the standard HTTP(S)_PROXY env is set, the
+        # proxy endpoint is validated once and final-target rebind protection is
+        # delegated to it (see ``ssrf_aware_client_kwargs`` docstring). The
+        # manual redirect loop's _gate_hop L1+L2 logic is preserved either way.
+        async with build_async_http_client(
             timeout=op.timeout,
             follow_redirects=False,
             headers={"User-Agent": "reyn/1.0"},
-            transport=PinnedAsyncHTTPTransport(verify=_resolve_ssl_verify(ctx)),
+            verify=_resolve_ssl_verify(ctx),
+            pin_ssrf=True,
+            events=ctx.events,
+            egress="web_fetch",
         ) as client:
             _url = op.url
             for _hop in range(_ssrf_guard.MAX_REDIRECTS + 1):
