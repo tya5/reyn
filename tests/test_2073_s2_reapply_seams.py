@@ -89,12 +89,17 @@ def _make_session(tmp_path: Path, *, agent_name: str = "test-agent") -> Session:
 def test_seams_registered_on_the_reloader(tmp_path: Path) -> None:
     """Tier 2: the Session registers its reapply seams on the HotReloader (the 4 S2
     seams + the S2b hooks seam + the #2548 PR-B skills seam + the #2581 pipelines
-    seam + the FP-0054 PR-C presentations seam)."""
+    seam + the FP-0054 PR-C presentations seam + the #3097 visibility_override
+    seam). Reads the PUBLIC ``hot_reload_seam_names()`` accessor (not the private
+    ``_hot_reloader._seams`` list) — #3097's completeness gate
+    (``tests/test_3097_config_projection_refresh_family_gate.py``) is the one that
+    actually needs this enumeration to grow with the registry automatically; this
+    test just pins today's registered set for visibility."""
     session = _make_session(tmp_path)
-    names = [name for (name, _fn) in session._hot_reloader._seams]
+    names = list(session.hot_reload_seam_names())
     assert names == [
         "cron", "mcp", "per_agent_capability", "new_agent", "hooks", "skills",
-        "pipelines", "presentations",
+        "pipelines", "presentations", "visibility_override",
     ]
 
 

@@ -2480,6 +2480,16 @@ class Session:
         return self._pipeline_registry
 
     @property
+    def contextual_permission(self) -> "object | None":
+        """#3097: read-only accessor for the live ``ContextualPermission`` (#1827
+        S3) — the per-turn gate value ``_reapply_visibility_override`` maintains
+        (envelope ∩ session override, restrict-only, narrow-only). A
+        ``snapshot()``-style public read so a test can verify the security-core
+        seam narrows correctly (``visible ⊆ authorized``) without reaching into
+        the private ``_contextual_permission`` field directly."""
+        return self._contextual_permission
+
+    @property
     def presentation_registry(self):
         """Read-only accessor for the session's owning PresentationRegistry
         (FP-0054 PR-C — operator named templates from presentations.yaml). Mirrors
@@ -2827,6 +2837,25 @@ class Session:
         ])
         self._contextual_permission = final_ctx
         self._excluded_categories = final_excl
+
+    async def _reapply_visibility_override_seam(self, in_set: dict) -> bool:
+        """#3097: ``HotReloader``-seam wrapper for ``_reapply_visibility_override``
+        (security-core — see that method's docstring for the restrict-only compose
+        that keeps ``visible ⊆ authorized`` by construction). Registered so both the
+        operator ``/reload`` path and ``Session.refresh_config_projections()``'s
+        spawn-time family gate cover it uniformly, DERIVED from the seam registry
+        rather than a hand-picked call site.
+
+        ``in_set`` is unused — the envelope's own source is
+        ``AgentRegistry.resolved_profile_for`` (topology ∩ delegate floor ∩ the
+        persisted per-session narrowing config), independent of the hot-reload
+        IN-set — same "in_set ignored, re-derive from the real source" shape as
+        ``_reapply_skills``/``_reapply_pipelines``. Always reports a fire (there is
+        no cheap way to detect a true no-op short of re-running the compose and
+        diffing the result, which is exactly what re-resolving already does) —
+        matches ``_reapply_hooks``'s always-True posture."""
+        self._reapply_visibility_override()
+        return True
 
     def _reapply_skill_visibility(self) -> None:
         """#2548 PR-B: recompute the live skill list from the base registered set minus the session override.
@@ -3866,6 +3895,74 @@ class Session:
             },
         }
 
+    # ── #3097: config-projection refresh family-gate ─────────────────────────
+
+    async def refresh_config_projections(self) -> dict:
+        """#3097 (#3061 follow-up): fire EVERY registered config hot-reload seam
+        (``_register_hot_reload_seams()``) at THIS session's own ephemeral/spawn
+        action-boundary — EXCLUDING ``cron`` (the one genuinely SIDE-EFFECTING
+        seam: it mutates the global scheduler; a short-lived programmatically-
+        spawned worker must never reschedule cron on its own, and has no active
+        scheduler to reschedule anyway).
+
+        Closes the #3036/#3061 gap the RAG turnkey flow hit: a programmatic spawn
+        (``AgentRegistry.spawn_session_recorded`` — every agent-step ephemeral
+        worker, pipeline driver-session, and ``session_spawn``/``delegate_to_agent``
+        target) never fires a chat "turn boundary" of its own before its first
+        dispatch, so every one of its config-derived projections (MCP roster,
+        pipeline/presentation/skill registries, hooks, per-agent capability, the
+        session visibility override, …) is otherwise frozen at whatever the
+        (baked-once-at-registry-construction) ``session_factory`` closure
+        captured — stale even for config an install wrote moments before this
+        spawn. #3061 closed this for MCP alone; #3094 point-fixed the pipeline
+        registry alone after it surfaced live — this closes the WHOLE family
+        uniformly, DERIVED from the seam registry (never a hand-picked subset),
+        so a future ``register_seam`` addition is covered on registration, with
+        no one needing to remember it.
+
+        Every included seam is a read-only projection (re-read the IN-set /
+        cascade → swap or re-derive) or a confirming no-op
+        (``_reapply_new_agent``) — never a mutation of anything outside this
+        session's own in-memory holders — so firing them off the chat turn
+        boundary is idempotent-safe: a spawn with unchanged config is a no-op,
+        and a spawn racing a fresh install simply picks up the fresher state.
+
+        ``_reapply_visibility_override`` (security-core: visible ⊆ authorized)
+        is included — firing it here re-resolves the JUST-SPAWNED session's OWN
+        envelope from its CURRENT base (topology ∩ delegate floor ∩ persisted
+        per-session narrowing) ∩ its (empty, freshly-constructed) override, which
+        can only narrow relative to the authorized envelope, never grant beyond
+        it (see that method's own docstring for why the compose is restrict-only
+        by construction).
+
+        ``_reapply_skill_visibility`` has no seam of its own — it is already
+        re-derived as the tail of the ``skills`` seam (``_reapply_skills``)
+        whenever the base skill set changes, so it is covered transitively.
+
+        MUST NOT be called on a crash-recovery re-wake (``AgentRegistry.
+        restore_all`` / ``_rewake_pipeline_runs``, registry.py): those paths
+        call the lower-level ``spawn_session`` directly (never
+        ``spawn_session_recorded``, the sole caller of this method), by
+        construction — recovery RESTORES the pre-crash snapshot (snapshot
+        fidelity), it must not overwrite it with whatever the CURRENT on-disk
+        config happens to be.
+
+        Returns the ``HotReloader.apply_all()`` summary
+        (``{"source", "invoked", "applied", "failed"}``) — ``invoked`` is the
+        set a completeness gate checks against ``hot_reload_seam_names()`` minus
+        ``{"cron"}``. Never raises (each seam is isolated by the applier)."""
+        return await self._hot_reloader.apply_all(exclude=frozenset({"cron"}))
+
+    def hot_reload_seam_names(self) -> "tuple[str, ...]":
+        """#3097: the public read of every hot-reload seam name registered on
+        this session's ``HotReloader`` (``_register_hot_reload_seams()``), in
+        registration order. The completeness-gate test for
+        ``refresh_config_projections()`` derives its expected-coverage set from
+        THIS (never a hand-written marker subset), so a future
+        ``register_seam`` addition is covered automatically — the same
+        registry-derived-enumeration discipline the family gate itself uses."""
+        return self._hot_reloader.seam_names()
+
     # ── #3082 Family 1: audit-event spine builder ──
 
     def _build_audit_event_bundle(
@@ -3945,6 +4042,10 @@ class Session:
         hr.register_seam("skills", self._reapply_skills)  # #2548 PR-B: skills hot-reload
         hr.register_seam("pipelines", self._reapply_pipelines)  # #2581: pipeline hot-reload
         hr.register_seam("presentations", self._reapply_presentations)  # FP-0054 PR-C
+        # #3097: the security-core envelope re-resolve (see the wrapper's own docstring
+        # for why it needs its own seam — its data source, resolved_profile_for, is
+        # independent of every other registered seam's IN-set/cascade re-read).
+        hr.register_seam("visibility_override", self._reapply_visibility_override_seam)
 
     def _build_hook_registry(self, in_set: "dict | None" = None) -> "object":
         """Build the LAYERED hook registry — the three-layer COMBINE (#2073 S2b + the
@@ -4456,6 +4557,14 @@ class Session:
             return
 
         from reyn.runtime.session_api import start_pipeline_run
+        # #3097: no explicit pipeline_registry hand-off needed — the spawned
+        # driver-session's own _reapply_pipelines seam fires uniformly at ITS
+        # spawn (AgentRegistry.spawn_session_recorded -> refresh_config_projections,
+        # inside start_pipeline_run -> _spawn_pipeline_driver_session), rebuilding
+        # from the current on-disk cascade directly. Folds out #3094's spawn-local
+        # override (which forwarded THIS session's live registry object) — the
+        # family gate achieves the same effect without depending on the caller
+        # having a fresh in-memory copy to hand off.
         await start_pipeline_run(
             self._registry,
             pipeline=pipeline,
@@ -4465,10 +4574,6 @@ class Session:
             reply_to_sid=self._session_id,
             state_log=self._state_log,
             schema_registry=schema_registry,
-            # #3093: THIS session's own live PipelineRegistry — a sibling
-            # call/match target resolves correctly in the spawned driver
-            # instead of against the frozen per-frontend startup snapshot.
-            pipeline_registry=self._pipeline_registry,
         )
 
     async def _drain_to_wake(

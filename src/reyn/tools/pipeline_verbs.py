@@ -542,12 +542,6 @@ async def _handle_run_pipeline_async(
             reply_to_sid=reply_sid,
             state_log=state_log,
             schema_registry=schema_registry,
-            # #3093: hand the caller's OWN (already hot-reloaded) live
-            # PipelineRegistry to the spawn so the detached driver-session
-            # resolves a call/match sibling correctly instead of against the
-            # frozen per-frontend startup snapshot every spawn otherwise
-            # inherits — see start_pipeline_run's docstring.
-            pipeline_registry=pipeline_registry,
         )
     except ValueError as exc:
         return {"status": "error", "data": {"error": str(exc)}}
@@ -837,12 +831,10 @@ async def _handle_run_pipeline_inline_async(
     from reyn.runtime.session_api import start_pipeline_run
 
     reply_sid = getattr(host, "live_session_id", None) or "main"
-    rs = ctx.router_state
-    # #3093: an inline definition can still `call`/`match` a REGISTERED sibling
-    # by name — hand the caller's own live PipelineRegistry to the spawn so the
-    # detached driver-session resolves it correctly, same as the non-inline
-    # async path above.
-    pipeline_registry = rs.pipeline_registry if rs is not None else None
+    # #3097: an inline definition can still `call`/`match` a REGISTERED sibling by
+    # name — resolved correctly because the detached driver-session's OWN registry
+    # is refreshed at ITS spawn by the config-projection family gate (folds out
+    # #3093/#3094's explicit caller-registry hand-off).
     try:
         run_id = await start_pipeline_run(
             agent_registry,
@@ -853,7 +845,6 @@ async def _handle_run_pipeline_inline_async(
             reply_to_sid=reply_sid,
             state_log=state_log,
             schema_registry=schema_registry,
-            pipeline_registry=pipeline_registry,
         )
     except ValueError as exc:
         return {"status": "error", "data": {"error": str(exc)}}

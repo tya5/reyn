@@ -379,31 +379,27 @@ async def _spawn_pipeline_driver_session(
     run_id: "str | None" = None,
     schema_registry: "SchemaRegistry | None" = None,
     attached_parent_session: "Any | None" = None,
-    pipeline_registry: "Any | None" = None,
 ) -> "tuple[Any, str, str]":
     """Spawn + arm a pipeline driver-session, up to (but NOT including) the
     run/resume nudge — the shared launch prefix of the async (``start_pipeline_run``)
     and sync-attached (``run_pipeline_attached``) paths.
 
-    ``pipeline_registry`` (#3093): when given, the freshly-spawned driver-
-    session's OWN ``PipelineRegistry`` is overwritten with it
-    (``Session.set_pipeline_registry`` — the same dual-write the hot-reload
-    seam uses) right after spawn. Every spawned session otherwise inherits
-    the ``SessionFactoryConfig.pipeline_registry`` snapshot, built ONCE per
-    frontend at startup and never touched by later hot-reloads (those only
-    mutate the LAUNCHING session's own registry in place) — so a pipeline
-    installed mid-conversation resolves fine when the caller looks its NAME
-    up (it already has the fresh registry), but a driver-session spawned to
-    RUN it inherits the stale pre-install snapshot. The pipeline's own steps
-    still execute (the whole ``Pipeline`` is serialized by VALUE into
-    ``invocation.json`` — no registry lookup needed for itself), but a
-    ``call``/``match`` step's SIBLING target, resolved by NAME against the
-    driver's registry at run time, fails "not registered" — exactly the
-    symptom a plugin-installed multi-document pipeline file hits when its
-    main pipeline calls a same-file sibling. Callers pass the LAUNCHING
-    caller's current (already-live) registry here; omitting it preserves
-    the pre-#3093 inherited-snapshot behavior (e.g. a caller with no live
-    registry to hand off).
+    #3097 (folds out #3094's spawn-local override): the freshly-spawned
+    driver-session's ``PipelineRegistry`` no longer needs an explicit hand-off
+    from the caller. ``registry.spawn_session_recorded`` below (the single
+    funnel every programmatic spawn shares) now fires
+    ``Session.refresh_config_projections()`` on the newly-spawned session
+    BEFORE this function returns — which includes the ``pipelines`` seam
+    (``Session._reapply_pipelines``), rebuilding the driver-session's OWN
+    registry from the CURRENT on-disk config cascade uniformly, the same
+    mechanism a live ``/reload`` uses. This is equivalent to (and supersedes)
+    #3093/#3094's point-fix: a pipeline installed mid-conversation writes to
+    disk BEFORE the spawn that runs it (confirmed topology, #3061), so the
+    driver-session's own fresh rebuild finds it without needing the caller to
+    have already hot-reloaded its own in-memory copy. See
+    ``Session.refresh_config_projections``'s docstring for the full family-gate
+    mechanism and ``Session._reapply_pipelines`` for the pipeline-specific
+    rebuild.
 
     In crash-safety order:
 
@@ -496,11 +492,6 @@ async def _spawn_pipeline_driver_session(
             f"pipeline launch: spawned driver-session ({reply_to_agent!r}, "
             f"{sid!r}) not found in the registry"
         )
-    # #3093: seed the driver-session with the LAUNCHING caller's current
-    # PipelineRegistry — see this function's docstring. Skipped when omitted
-    # (the pre-#3093 inherited-SessionFactoryConfig-snapshot behavior).
-    if pipeline_registry is not None:
-        session.set_pipeline_registry(pipeline_registry)
     session.set_loop_driver(
         PipelineExecutorDriver(
             work_order, registry=registry, state_log=state_log,
@@ -521,7 +512,6 @@ async def start_pipeline_run(
     state_log: "object",
     run_id: "str | None" = None,
     schema_registry: "SchemaRegistry | None" = None,
-    pipeline_registry: "Any | None" = None,
 ) -> str:
     """IS-2: launch an ASYNC pipeline run in a dedicated driver-session (D案).
 
@@ -536,11 +526,10 @@ async def start_pipeline_run(
     (``schema_defs``) so the driver-session's ``verify: schema`` steps are
     enforced — on the original run and on any later crash-recovery re-wake.
 
-    ``pipeline_registry`` (#3093): the LAUNCHING caller's current
-    ``PipelineRegistry`` — forwarded to ``_spawn_pipeline_driver_session`` so
-    the driver-session resolves a ``call``/``match`` sibling correctly
-    instead of against the frozen per-frontend startup snapshot. See that
-    function's docstring for the full mechanism.
+    #3097: the driver-session's OWN pipeline registry is refreshed at ITS
+    spawn by the config-projection family gate (``spawn_session_recorded`` ->
+    ``Session.refresh_config_projections()``) — no caller hand-off needed. See
+    ``_spawn_pipeline_driver_session``'s docstring for the full mechanism.
 
     Returns the ``run_id`` immediately; the result arrives later on the invoker's
     inbox as a ``pipeline_result`` message."""
@@ -555,7 +544,6 @@ async def start_pipeline_run(
         notify_reply=True,
         run_id=run_id,
         schema_registry=schema_registry,
-        pipeline_registry=pipeline_registry,
     )
     await session.submit_user_text("")  # the no-payload run nudge (D案)
     registry.ensure_session_running(reply_to_agent, sid)
@@ -655,17 +643,11 @@ async def run_pipeline_attached(
     # blocks the run).
     caller_session = registry.get_session(reply_to_agent, reply_to_sid)
 
-    # #3093: the SAME live caller_session already resolved above (for the present-sink
-    # bridge) also carries the launching caller's CURRENT (already hot-reloaded)
-    # PipelineRegistry — hand it to the spawn so the driver-session resolves a
-    # call/match sibling correctly instead of against the frozen per-frontend startup
-    # snapshot every spawn otherwise inherits. See _spawn_pipeline_driver_session's
-    # docstring for the full mechanism. None caller_session (should not happen on the
-    # attached path) → no override, same as the pre-#3093 behavior.
-    caller_pipeline_registry = (
-        getattr(caller_session, "pipeline_registry", None) if caller_session is not None else None
-    )
-
+    # #3097: no explicit pipeline_registry hand-off needed — the driver-session's
+    # OWN registry is refreshed at ITS spawn by the config-projection family gate
+    # (spawn_session_recorded -> Session.refresh_config_projections(), which
+    # includes the pipelines seam). Folds out #3094's caller_pipeline_registry
+    # forwarding. See _spawn_pipeline_driver_session's docstring for the mechanism.
     session, rid, sid = await _spawn_pipeline_driver_session(
         registry,
         pipeline=pipeline,
@@ -678,7 +660,6 @@ async def run_pipeline_attached(
         run_id=run_id,
         schema_registry=schema_registry,
         attached_parent_session=caller_session,
-        pipeline_registry=caller_pipeline_registry,
     )
     if caller_events is not None:
         caller_events.emit(
