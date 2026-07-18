@@ -963,57 +963,6 @@ class _InterventionBundle:
 
 
 @dataclass(frozen=True)
-class _InterAgentMessagingBundle:
-    """#3082 Family 8a: ``inter_agent_messaging`` (``InterAgentMessaging``,
-    the agent-to-agent messaging service — depth-guarded request/response
-    dispatch, inbox handlers, multi-hop chain relay resolution). Per the
-    architect's ★ Family 8 DAG correction, the originally-planned "Family 8
-    = memory → inter_agent_messaging + mcp_connection_service" grouping does
-    not hold: the residual five leftover components (mcp_connection_service,
-    render_template_bounds, task_subscription_writer, memory,
-    inter_agent_messaging) are mutually independent, scattered, and straddle
-    the router-host WAIST (Family 6a) on BOTH sides — they cannot be
-    gathered into one builder. render_template_bounds (a 2-arg config) and
-    task_subscription_writer (a 1-line ternary) stay inline (trivial, not
-    worth a builder). The three substantial leaves — inter_agent_messaging
-    (8a, this one), memory (8b), mcp_connection_service (8c) — each get
-    their own no-move, single-component builder, landing in separate PRs.
-
-    Single-field bundle (mirrors Family 4's ``_CostBundle`` and Family 6a's
-    ``_RouterWaistBundle`` — one unconditional component, no intra-family
-    DAG); kept as a bundle rather than a bare return for pipeline-pattern
-    consistency with every other Family builder.
-
-    ``inter_agent_messaging`` is POST-WAIST: it reads Family 7's ``chains``
-    (``chain_manager=self._chains``) and Family 1's ``chat_events``
-    (``event_log=self._chat_events``) EAGERLY, plus a long tail of Session
-    bound methods (``self._put_outbox`` / ``self._a2a_send_request`` /
-    ``self._on_chain_timeout_fire`` / etc.) — all already set on ``self`` by
-    the time this builder runs (its call site sits at the construction's
-    ORIGINAL position, right after Family 7's ``_build_intervention_bundle``
-    returns). A handful of args are DEFERRED ``lambda``s that close over
-    ``self`` and resolve at CALL time, long after ``__init__`` returns —
-    these read per-turn / post-construction state
-    (``self._router_loop_delegations`` / ``self._router_loop_agent_replies``
-    / ``self._session_id``) that has no stable value yet at construction
-    time, so eager-izing them would either read a stale/None snapshot or
-    (for the setter lambdas) be impossible to express eagerly at all. This
-    is a SINGLE independent component (unlike Family 6b/7's multi-component
-    families), so there is no intra-family local-vs-self split — every
-    reference here is either an eager ``self._X`` (cross-family / config,
-    already resolved) or a deferred ``self.*`` bound method / ``lambda:
-    self.*`` closure (kept verbatim, never eager-ized).
-
-    Pure output→input value object:
-    :meth:`Session._build_inter_agent_messaging_bundle` is a byte-identical
-    extraction of the construction that used to run inline in
-    ``Session.__init__`` — same object, same 22 keyword args, same
-    construction order, same (unmoved) position."""
-
-    inter_agent_messaging: "InterAgentMessaging"
-
-
-@dataclass(frozen=True)
 class _MemoryBundle:
     """#3082 Family 8b: ``memory`` (``MemoryService``, the memory-persistence
     adapter that absorbs memory path resolution + remember / forget /
@@ -1539,8 +1488,7 @@ class Session:
         self._budget_advisor = _history_compaction_bundle.budget_advisor
 
         # InterAgentMessaging: agent-to-agent messaging service, hybrid design (FP-0019 Wave 2 part 2); byte-identical extraction, post-waist (#3082 Family 8a, see session-construction.md#family-8a-inter-agent-messaging)
-        _inter_agent_messaging_bundle = self._build_inter_agent_messaging_bundle()
-        self._inter_agent_messaging = _inter_agent_messaging_bundle.inter_agent_messaging
+        self._inter_agent_messaging = self._build_inter_agent_messaging()
 
         # RouterLoopDriver owns the per-turn loop orchestration (session.py refactor PR-3, see session-construction.md#misc-lifecycle-wiring)
         from reyn.runtime.services.router_loop_driver import RouterLoopDriver
@@ -4191,7 +4139,7 @@ class Session:
             chain_timeout_glue=chain_timeout_glue,
         )
 
-    def _build_inter_agent_messaging_bundle(self) -> "_InterAgentMessagingBundle":
+    def _build_inter_agent_messaging(self) -> "InterAgentMessaging":
         """#3082 Family 8a: build ``inter_agent_messaging``. Byte-identical
         extraction of the construction that used to run inline in
         ``__init__`` — same object, same 22 keyword args, same construction
@@ -4210,8 +4158,9 @@ class Session:
         / ``session_id_fn`` all resolve per-turn / post-construction state at
         CALL time, not at builder-call time). No intra-family local-vs-self
         split applies — there is nothing else in this family to be local
-        against. See :class:`_InterAgentMessagingBundle`'s docstring for the
-        full eager-vs-deferred provenance per arg."""
+        against. Returns the ``InterAgentMessaging`` instance directly
+        (#3121 step4 removed the single-field ``_InterAgentMessagingBundle``
+        wrapper)."""
         inter_agent_messaging = InterAgentMessaging(
             event_log=self._chat_events,
             chain_manager=self._chains,
@@ -4240,7 +4189,7 @@ class Session:
             session_id_fn=lambda: self._session_id,
             lookup_spawned_task=self.lookup_and_evict_spawned_task,
         )
-        return _InterAgentMessagingBundle(inter_agent_messaging=inter_agent_messaging)
+        return inter_agent_messaging
 
     def _build_memory_bundle(self) -> "_MemoryBundle":
         """#3082 Family 8b: build ``memory``. Byte-identical extraction of the
