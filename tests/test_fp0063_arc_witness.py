@@ -406,6 +406,7 @@ def _build_registry(tmp_path: Path, project_root: Path):
     from reyn.llm.model_resolver import ModelResolver
     from reyn.runtime.registry import AgentRegistry
     from reyn.runtime.session import Session
+    from reyn.runtime.session_params import PresentationWiring
     from reyn.security.permissions.permissions import PermissionResolver
 
     state_log = StateLog(project_root / ".reyn" / "wal.jsonl")
@@ -465,8 +466,12 @@ def _build_registry(tmp_path: Path, project_root: Path):
         return Session(
             agent_name=profile.name, state_log=state_log,
             registry=holder.get("reg"), non_interactive=True,
-            presentation_consumer=presentation_consumer,
-            intervention_bridge=intervention_bridge,
+            # #3121 step1 folded presentation_consumer / intervention_bridge into
+            # the PresentationWiring parameter object.
+            presentation_wiring=PresentationWiring(
+                presentation_consumer=presentation_consumer,
+                intervention_bridge=intervention_bridge,
+            ),
             resolver=resolver, permission_resolver=perm_resolver,
             sandbox_config=sandbox_config,
         )
