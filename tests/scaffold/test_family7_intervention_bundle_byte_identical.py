@@ -182,7 +182,8 @@ class TestFamily7InterventionBundleByteIdentical:
         inter_agent_messaging = session._inter_agent_messaging
         assert isinstance(inter_agent_messaging, InterAgentMessaging)
         wired_chains = inter_agent_messaging._chains
-        assert wired_chains is session._chains
+        session_chains = session._chains
+        assert wired_chains is session_chains
 
     # ── deferred: chains → chain_timeout_glue resolves only via a bound method, at CALL time ──
 
@@ -249,9 +250,10 @@ class TestFamily7InterventionBundleByteIdentical:
         )
 
         wired_chains = session._inter_agent_messaging._chains
+        session_chains = session._chains
 
-        assert fresh_chains is not session._chains
-        assert wired_chains is session._chains
+        assert fresh_chains is not session_chains
+        assert wired_chains is session_chains
         assert wired_chains is not fresh_chains
 
 
