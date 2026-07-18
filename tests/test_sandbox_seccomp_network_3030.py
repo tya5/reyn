@@ -259,19 +259,37 @@ def _patch_landlock_backend(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @requires_landlock
-@pytest.mark.parametrize("network", [True, False])
+# ── why network=True (not parametrized over network=False) ───────────────────
+#
+# Measured (#3059 co-vet, deny-gate x86_64): a FastMCP-based stdio server issues
+# a network-family syscall (`socket`/`connect`) during its init handshake, so
+# under `network=False` the seccomp filter now CORRECTLY denies it and the server
+# cannot initialize (Connection closed) — chunker/vector-store init succeeded at
+# network=True and failed at network=False, a network-flag-correlated result. That
+# denial is #3030's fix working, NOT an allowlist gap (an allowlist gap is
+# network-flag-INDEPENDENT — it fails at network=True too, which is exactly how
+# the sqlite `disk I/O error` / uv `flock` gaps were told apart from this).
+#
+# So these completeness probes run at network=True: the server's own network
+# needs are met, leaving the unconditional syscall filter as the ONLY variable
+# vs baseline — the clean "#2962 recurrence: does the filter break a server that
+# would otherwise work?" witness. The network=False security behavior (a socket
+# is refused) is witnessed precisely, and without this init-network confound, by
+# `test_shim_denies_outbound_socket_*` + the io_uring probe + the deny-gate
+# `network` arm above.
+
+
 @pytest.mark.asyncio
 async def test_chunker_server_starts_and_responds_under_seccomp_allowlist(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, network: bool,
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
 ) -> None:
     """Tier 2c: ``reyn-rag-chunker`` (a real console-script MCP server RAG
     actually uses) starts and answers a real tool call through the
-    now-unconditional seccomp allowlist, at both ``network`` settings.
+    now-unconditional seccomp allowlist.
 
-    No apsw/chonkie/builtin-rag extra needed — the chunker server is pure
-    Python (chonkie import happens lazily inside the tool, exercised here for
-    real, not stubbed).
-    """
+    Runs at ``network=True`` — see the "why network=True" note above. Needs the
+    ``builtin-rag`` extra (chonkie import happens lazily inside the tool,
+    exercised here for real, not stubbed)."""
     from reyn.mcp.client import MCPClient
 
     _patch_landlock_backend(monkeypatch)
@@ -283,7 +301,7 @@ async def test_chunker_server_starts_and_responds_under_seccomp_allowlist(
     cfg = {
         "type": "stdio",
         "command": command,
-        "network": network,
+        "network": True,
         "subprocess": True,  # the stdio-MCP default this fix is about
         "cwd": str(tmp_path),
     }
@@ -291,29 +309,32 @@ async def test_chunker_server_starts_and_responds_under_seccomp_allowlist(
         tools = await client.list_tools()
         assert any(t.get("name") == "chunk" for t in tools), (
             f"reyn-rag-chunker did not advertise its 'chunk' tool under the "
-            f"seccomp allowlist (network={network}); tools={tools!r}"
+            f"seccomp allowlist; tools={tools!r}"
         )
         result = await client.call_tool(
             "chunk", {"text": "hello world " * 50, "size": 20}
         )
         assert not result.get("isError"), (
             f"reyn-rag-chunker's real 'chunk' tool call FAILED under the "
-            f"allowlist (network={network}) — an allowlist gap silently broke a "
-            f"real MCP server, the #2962 recurrence this test exists to catch: "
-            f"{result!r}"
+            f"allowlist — an allowlist gap silently broke a real MCP server, "
+            f"the #2962 recurrence this test exists to catch: {result!r}"
         )
 
 
 @requires_landlock
-@pytest.mark.parametrize("network", [True, False])
 @pytest.mark.asyncio
 async def test_vector_store_server_starts_and_responds_under_seccomp_allowlist(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, network: bool,
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
 ) -> None:
     """Tier 2c: ``reyn-rag-vector-store`` starts and answers a real tool call
-    through the now-unconditional seccomp allowlist, at both ``network``
-    settings. Needs the ``builtin-rag`` extra (apsw/sqlite-vec) — skips (not
-    fails) when absent, same posture as ``test_fp0063_p3_rag_pipelines.py``."""
+    through the now-unconditional seccomp allowlist.
+
+    Runs at ``network=True`` (see the "why network=True" note above). The tool
+    exercised — ``list_metadata`` — is a LOCAL sqlite operation, so it is what
+    surfaced the `fsync`/`fdatasync` durability gap (SQLite "disk I/O error"),
+    network-independently. Needs the ``builtin-rag`` extra (apsw/sqlite-vec) —
+    skips (not fails) when absent, same posture as
+    ``test_fp0063_p3_rag_pipelines.py``."""
     pytest.importorskip("apsw", reason="builtin-rag extra not installed")
     from reyn.mcp.client import MCPClient
 
@@ -326,7 +347,7 @@ async def test_vector_store_server_starts_and_responds_under_seccomp_allowlist(
     cfg = {
         "type": "stdio",
         "command": command,
-        "network": network,
+        "network": True,
         "subprocess": True,
         "cwd": str(tmp_path),
     }
@@ -334,15 +355,15 @@ async def test_vector_store_server_starts_and_responds_under_seccomp_allowlist(
         tools = await client.list_tools()
         assert any(t.get("name") == "list_metadata" for t in tools), (
             f"reyn-rag-vector-store did not advertise its tools under the "
-            f"seccomp allowlist (network={network}); tools={tools!r}"
+            f"seccomp allowlist; tools={tools!r}"
         )
         result = await client.call_tool(
             "list_metadata", {"db_path": str(tmp_path / "probe.sqlite"), "filters": None}
         )
         assert not result.get("isError"), (
             f"reyn-rag-vector-store's real 'list_metadata' tool call FAILED "
-            f"under the allowlist (network={network}) — an allowlist gap "
-            f"silently broke a real MCP server: {result!r}"
+            f"under the allowlist — an allowlist gap (e.g. sqlite fsync) silently "
+            f"broke a real MCP server: {result!r}"
         )
 
 
@@ -352,24 +373,27 @@ async def test_markitdown_mcp_starts_and_responds_under_seccomp_allowlist(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
 ) -> None:
     """Tier 2c: ``uvx markitdown-mcp`` — the third RAG server, and the one with
-    the widest syscall footprint (network fetch by ``uvx`` on first run, then a
-    real parse) — starts and converts a real file under the allowlist.
+    the widest syscall footprint (uv's Tokio runtime + cache lock, then a real
+    parse) — starts and converts a real file under the allowlist.
 
-    Prewarms uvx's cache with an UNSANDBOXED run first (mirrors what a real
-    operator's first `reyn` launch does): the sandboxed run below then needs no
-    network even under ``network=False``, which is also the more realistic
-    steady-state an operator actually hits after day one.
+    Runs at ``network=True`` (see the "why network=True" note above the chunker
+    test): uv/markitdown make network-family syscalls at startup, so this
+    isolates allowlist completeness from the server's own network use. Note the
+    allowlist gaps this server surfaces are network-INDEPENDENT anyway — `eventfd`
+    (Tokio runtime, round 1) and `flock` (uv cache lock, round 2) are denied
+    regardless of the network flag, which is why they are the completeness
+    signal.
 
     ⚠ Skip discipline (#3059 co-vet — a skip must not MASK an allowlist gap).
     Skips ONLY on genuine environment-reachability failure (uvx absent, PyPI
     fetch blocked). A failure whose signature is a SANDBOX DENIAL — a seccomp
-    EPERM that stops the async runtime from even starting (`Operation not
-    permitted` / `PermissionDenied` / `socketpair` / Tokio "Failed building the
-    Runtime") — is the exact #2962 completeness bug this test exists to catch,
-    so it must FAIL, not skip. The first #3059 CI run skipped here on a Tokio
-    `eventfd` denial while telling the operator to "set network: true" — a local
-    IPC denial mis-reported as a network problem. This guard makes that a hard
-    failure.
+    EPERM that stops the runtime/cache-lock (`Operation not permitted` /
+    `PermissionDenied` / `socketpair` / `failed to lock` / Tokio "Failed building
+    the Runtime") — is the exact #2962 completeness bug this test exists to
+    catch, so it must FAIL, not skip. The first #3059 CI run skipped here on a
+    Tokio `eventfd` denial while telling the operator to "set network: true" — a
+    local IPC denial mis-reported as a network problem. This guard makes that a
+    hard failure.
     """
     from reyn.mcp.client import MCPClient
 
@@ -393,7 +417,7 @@ async def test_markitdown_mcp_starts_and_responds_under_seccomp_allowlist(
         "type": "stdio",
         "command": uvx,
         "args": ["markitdown-mcp"],
-        "network": False,  # the security-conscious config #3030 is about
+        "network": True,  # isolate allowlist completeness from uv's own net use
         "subprocess": True,
         "cwd": str(tmp_path),
     }
@@ -405,6 +429,7 @@ async def test_markitdown_mcp_starts_and_responds_under_seccomp_allowlist(
         "PermissionError",
         "socketpair",
         "Failed building the Runtime",  # Tokio, on an eventfd/similar denial
+        "failed to lock",  # uv cache flock denied (round-2 gap)
     )
     try:
         async with MCPClient(cfg) as client:

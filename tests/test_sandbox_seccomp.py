@@ -183,16 +183,18 @@ def test_syscall_allowlist_excludes_syscalls_landlock_cannot_govern() -> None:
     )
 
 
-def test_syscall_allowlist_includes_async_runtime_startup_primitives() -> None:
-    """Tier 2: the async-runtime event-loop startup primitives are baseline (#3059).
+def test_syscall_allowlist_includes_async_runtime_and_durability_primitives() -> None:
+    """Tier 2: the async-runtime startup + durability primitives are baseline (#3059).
 
     When #3030 made the seccomp filter load unconditionally, every stdio MCP
     server (all built on an async runtime) came under this default-deny allowlist
-    for the first time — and `socketpair` (CPython asyncio self-pipe) / `eventfd`
-    (Tokio mio waker) were absent, so the runtime could not start. Measured on
-    x86_64 CI, not the aarch64 host the first completeness witness ran on. These
-    are local-fd/IPC primitives (no network reach), so they belong in the
-    baseline, not behind the network or subprocess gate.
+    for the first time. Two x86_64-CI rounds surfaced the gaps the aarch64 witness
+    missed: round 1 `socketpair` (CPython asyncio self-pipe) / `eventfd` (Tokio
+    mio waker) — the runtime could not start; round 2 `fsync`/`fdatasync` (SQLite
+    "disk I/O error" in the vector-store) / `flock` (uv cache lock in markitdown)
+    — the started server could not do local I/O. All are local-fd/IPC primitives
+    (no network reach), so they belong in the baseline, not behind the network or
+    subprocess gate.
 
     Pinned as a platform-independent builder assertion so their removal is caught
     even where Landlock is absent (macOS, `test.yml`) — the enforce-arch server
@@ -205,16 +207,22 @@ def test_syscall_allowlist_includes_async_runtime_startup_primitives() -> None:
     # the most restrictive policy (network off, subprocess off).
     result = _build_syscall_allowlist(SandboxPolicy())
     for name in (
+        # event-loop startup (round 1)
         "socketpair",
         "eventfd", "eventfd2",
         "timerfd_create", "timerfd_settime", "timerfd_gettime",
         "signalfd4",
         "epoll_create",
+        # durability + advisory locking on already-open fds (round 2): SQLite
+        # fsync (vector-store "disk I/O error") + uv cache flock (markitdown).
+        "fsync", "fdatasync", "sync_file_range",
+        "flock",
     ):
         assert name in result, (
             f"{name!r} must be baseline: an async runtime (asyncio/Tokio/libuv) "
-            "needs it to build its event loop, and #3030 now subjects every stdio "
-            "MCP server to this filter. Absent, the server cannot start (#3059)"
+            "needs it to build its event loop or persist/lock its files, and "
+            "#3030 now subjects every stdio MCP server to this filter. Absent, "
+            "the server cannot start or do local I/O (#3059)"
         )
 
     # …but they must NOT smuggle in network reach — the network syscalls stay

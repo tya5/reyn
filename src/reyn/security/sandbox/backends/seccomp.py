@@ -32,13 +32,25 @@ module's validation history above is about — see
 `tests/test_sandbox_seccomp_network_3030.py` for the representative-real-MCP-server
 probes (`reyn-rag-chunker` / `reyn-rag-vector-store` / `uvx markitdown-mcp`) this
 change specifically needed, on top of the synthetic echo/ls/cat workloads above.
-That risk materialized in review (#3059): the first x86_64 CI run RED'd because
-`_BASELINE` lacked the async-runtime event-loop startup primitives (`socketpair`
-for CPython's asyncio self-pipe, `eventfd` for Tokio's mio waker) EVERY stdio
-MCP server needs — a class the aarch64 completeness witness had not surfaced.
-Those are now in `_BASELINE` (the "Async-runtime event-loop startup primitives"
-block), witnessed by the x86_64 deny-gate job, not an aarch64 host whose green
-does not speak for the enforce arch.
+That risk materialized in review (#3059), across two x86_64 CI rounds the aarch64
+completeness witness had not surfaced:
+  - round 1: `_BASELINE` lacked the async-runtime event-loop startup primitives
+    (`socketpair` for CPython's asyncio self-pipe, `eventfd` for Tokio's mio
+    waker) EVERY stdio MCP server needs — see the "Async-runtime event-loop
+    startup primitives" block.
+  - round 2: it lacked the durability/locking-on-open-fd primitives (`fsync`/
+    `fdatasync` — SQLite "disk I/O error" in reyn-rag-vector-store; `flock` — uv's
+    cache lock in `uvx markitdown-mcp`) — see the "Durability + advisory
+    file-locking" block.
+Both are witnessed by the x86_64 deny-gate job, not an aarch64 host whose green
+does not speak for the enforce arch. The representative-server completeness
+probes run at `network=True` (the server's own network needs met, so the only
+variable vs baseline is the syscall filter): a FastMCP/uvx server issues
+network-family syscalls during init, which `network=False` now CORRECTLY denies
+(that is #3030's fix, not a gap), so a `network=False` server run witnesses the
+network gate, not allowlist completeness — the latter is a `network=True`
+question, the former is covered precisely by the dedicated socket/io_uring deny
+probes.
 
 - aarch64 Linux (Ubuntu 24.04, kernel 6.8, glibc 2.39): live-validated —
   the filter loads and ordinary workloads (echo / ls / cat / python file
@@ -212,6 +224,27 @@ _BASELINE: list[str] = [
     "timerfd_create", "timerfd_settime", "timerfd_gettime",
     "signalfd4",
     "epoll_create",
+    # Durability + advisory file-locking on ALREADY-OPEN fds (#3059, 2nd x86_64
+    # CI round). Completing the "I/O on already-opened fds" category the baseline
+    # opened at the top (read/write/lseek/close/fcntl/fstat) — these operate on an
+    # fd Landlock already adjudicated at open, so allowing them grants no new path
+    # or network access. Primary data (deny-gate job, x86_64):
+    #   - reyn-rag-vector-store's `list_metadata` returned SQLite "disk I/O error"
+    #     (SQLITE_IOERR) creating a fresh db — SQLite's unix VFS fsync/fdatasync
+    #     on the first commit was refused (fcntl locking is already baseline, so
+    #     the remaining durability syscall is the gap). Network-INDEPENDENT: it
+    #     failed at network=True too, which is what distinguishes it from the
+    #     FastMCP-startup-network failures below.
+    #   - `uvx markitdown-mcp` (uv, Rust): "failed to lock
+    #     `~/.cache/uv/.lock`: Operation not permitted" — uv `flock`s its cache.
+    # Each is an fd/durability primitive with no network reach:
+    #   - fsync/fdatasync: flush an open fd's data to disk.
+    #   - sync_file_range: flush a byte-range of an open fd (glibc/kernel may
+    #     route a partial sync through it) — same class, added so the durability
+    #     gap is closed rather than re-surfacing as the next RED.
+    #   - flock: a BSD advisory lock on an already-open fd (no path, no network).
+    "fsync", "fdatasync", "sync_file_range",
+    "flock",
     # Replacing THIS process's image. Baseline — not gated on allow_subprocess.
     # Both callsites load the filter in a pre-exec position (LandlockBackend from
     # a preexec_fn, immediately before Popen's execve; landlock_exec from
