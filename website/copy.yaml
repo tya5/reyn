@@ -69,14 +69,14 @@ S01_BODY_HTML: >-
 # ── section 02: How it works ────────────────────────────────────────────────
 S02_NUM: "02"
 S02_LABEL: "How it works"
-S02_HEADING_HTML: "A skill graph, <em>conducted.</em>"
+S02_HEADING_HTML: "Every action, <em>typed.</em>"
 S02_BODY_P1: >-
-  A Skill is a directed graph of Phases. Each Phase declares its input
-  contract and runs to completion under a permission scope you control.
+  The LLM decides what to do next — call a tool, read a Skill's
+  instructions, delegate to another agent. Every decision becomes a
+  schema-validated Control IR op before it touches the world.
 S02_BODY_P2: >-
-  The LLM picks only from candidates the OS provides. Output is validated
-  against the next Phase's input schema. Workspace and Events make every
-  step replayable.
+  The OS dispatches the op under a permission gate you control. Workspace
+  and Events make every step inspectable and replayable.
 
 # ── section 03: Key concepts ────────────────────────────────────────────────
 S03_NUM: "03"
@@ -90,10 +90,10 @@ S03_C1_BODY: >-
   set of Skills it can invoke.
 
 S03_C2_LABEL: "Skill"
-S03_C2_TITLE: "A graph of phases."
+S03_C2_TITLE: "Instructions the model reads."
 S03_C2_BODY: >-
-  A directed graph plus a final-output schema. The OS routes work between
-  Phases based on LLM decisions and validated artifacts.
+  A folder the model chooses to open, not a program the OS executes —
+  a menu entry, an on-demand full read, and the assets it bundles.
 
 S03_C3_LABEL: "OS"
 S03_C3_TITLE: "An auditable runtime."
@@ -130,9 +130,10 @@ ARCH_S01_LABEL: "At a glance"
 ARCH_S01_HEADING_HTML: "The whole system,<br/>on one <em>page.</em>"
 ARCH_S01_BODY: >-
   Reyn is built from a small set of components. Agents hold long-lived
-  conversations. Skills describe directed phase graphs. Phases loop the LLM
-  through one task at a time. The OS runs everything under a strict
-  validation contract. Workspace and Events make every step inspectable
+  conversations and route each decision through a RouterLoop. Skills are
+  instructions the model reads on demand, not phase graphs the OS executes.
+  Every LLM decision becomes a typed Control IR op, validated and dispatched
+  under a permission gate. Workspace and Events make every step inspectable
   and replayable.
 
 # ── section 02: the pieces ──────────────────────────────────────────────────
@@ -140,9 +141,9 @@ ARCH_S02_NUM: "02"
 ARCH_S02_LABEL: "The pieces"
 ARCH_S02_HEADING_HTML: "Five components.<br/>Sharp <em>boundaries.</em>"
 ARCH_S02_BODY: >-
-  Each component has one job. Agents don't know about Phases.
-  Phases don't know about Skills. The OS is the only layer that touches
-  all of them — and it never embeds skill-specific logic.
+  Each component has one job. Agents don't know how a Skill's
+  instructions are written. The OS is the only layer that touches all of
+  them — and it never embeds skill-specific logic.
 
 ARCH_S02_C1_LABEL: "Agent"
 ARCH_S02_C1_BODY: >-
@@ -152,15 +153,15 @@ ARCH_S02_C1_BODY: >-
 
 ARCH_S02_C2_LABEL: "Skill"
 ARCH_S02_C2_BODY: >-
-  A directed graph of Phases. Owns the entry phase, the allowed
-  transitions, and the final-output schema. Cycles are first-class —
-  revision loops are a feature, not a workaround.
+  Layered-disclosure instructions the model chooses to read — a one-line
+  menu entry, an on-demand full read, and bundled assets. Not a program
+  the OS executes.
 
-ARCH_S02_C3_LABEL: "Phase"
+ARCH_S02_C3_LABEL: "Control IR"
 ARCH_S02_C3_BODY: >-
-  The execution unit. Declares an input contract and instructions, runs a
-  preprocessor, calls the LLM, dispatches Control IR ops. Loops until it
-  decides to transition or finish.
+  The typed contract. Every LLM decision — a tool call, a skill read, a
+  delegation — becomes a schema-validated op before it touches the world.
+  No side effect ever rides a free-form string.
 
 ARCH_S02_C4_LABEL: "OS"
 ARCH_S02_C4_BODY: >-
@@ -179,13 +180,14 @@ ARCH_S03_NUM: "03"
 ARCH_S03_LABEL: "A request, end to end"
 ARCH_S03_HEADING_HTML: "From message<br/>to <em>reply.</em>"
 ARCH_S03_BODY: >-
-  A user message arrives at an Agent. The RouterLoop picks a Skill.
-  The OS enters the entry Phase, runs its preprocessor, calls the LLM
-  with a closed candidate set, and validates the response. Control IR ops
-  are dispatched under permission gates and write to the Workspace.
-  An event records each step. The Phase either transitions to a peer or
-  finishes; the OS validates the final output against the Skill's schema
-  and the reply travels back to the user.
+  A user message arrives at an Agent. The RouterLoop decides what to do —
+  call a tool, read a Skill's instructions, or delegate to another agent.
+  The OS builds context, calls the LLM with a closed candidate set, and
+  validates the response as a typed Control IR op. The op dispatches
+  under a permission gate and writes to the Workspace; an event records
+  each step. The loop continues, bounded by force-close, until the
+  RouterLoop decides the turn is done, and the reply travels back to the
+  user.
 
 # ── section 04: beyond a single agent ───────────────────────────────────────
 ARCH_S04_NUM: "04"

@@ -78,7 +78,7 @@ SECTION 01 — At a glance
         U(["User / External System"])
         subgraph I01["01 · Interface"]
             direction LR
-            CLI["CLI"] ~~~ TUI["TUI (Textual)"] ~~~ WEB["Web UI (FastAPI + WebSocket)"]
+            CLI["CLI"] ~~~ TUI["Inline CUI (terminal)"] ~~~ WEB["Web UI (FastAPI + WebSocket)"]
         end
         subgraph I02["02 · Agent Registry"]
             direction LR
@@ -94,11 +94,11 @@ SECTION 01 — At a glance
         end
         subgraph I05["05 · Skill"]
             direction LR
-            PG["Phase Graph + Transitions"] ~~~ FO["final_output_schema"] ~~~ PP["Postprocessor"]
+            L1["L1 · menu entry"] ~~~ L2["L2 · on-demand read"] ~~~ L3["L3 · bundled assets"]
         end
-        subgraph I06["06 · Phase"]
+        subgraph I06["06 · Control IR"]
             direction LR
-            PRE["Preprocessor"] ~~~ LO["LLM + Control IR ops"] ~~~ LP["↺ loops until transition/finish"]
+            OPV["Schema-validated op"] ~~~ PG2["Permission gate"] ~~~ DISP["Dispatch to tool/skill/pipeline/agent"]
         end
         subgraph I07["07 · Persistence"]
             direction LR
@@ -138,25 +138,21 @@ SECTION 03 — A request, end to end
     sequenceDiagram
         participant U as User
         participant A as Agent (ChatSession)
-        participant SK as Skill graph
-        participant PH as Phase loop
+        participant RL as RouterLoop
+        participant OS as OS (context · LLM · validation)
         participant WS as Workspace + Events
         U->>A: message
-        A->>A: RouterLoop picks Skill
-        A->>SK: invoke skill
-        SK->>PH: enter entry phase
-        loop Until transition or finish
-            PH->>PH: preprocessor (deterministic)
-            PH->>PH: LLM call (closed candidate set)
-            PH->>PH: validate output against schema
-            PH->>WS: execute Control IR ops · emit events
-            PH-->>SK: result + control decision
-            alt decision = transition
-                Note over SK: validate against next.input_schema
-                SK->>PH: enter next phase
+        A->>RL: dispatch turn
+        loop Bounded by force-close
+            RL->>OS: build context (incl. Skill instructions on demand)
+            OS->>OS: call LLM (closed candidate set)
+            OS->>OS: validate response as typed Control IR op
+            OS->>WS: dispatch op under permission gate · emit event
+            OS-->>RL: op result
+            alt decision = continue
+                Note over RL: pick next action — tool · skill read · delegate · pipeline
             else decision = finish
-                Note over SK: validate against final_output_schema
-                SK-->>A: final output
+                RL-->>A: final reply
             end
         end
         A-->>U: reply
@@ -201,11 +197,11 @@ SECTION 04 — Beyond a single agent
         end
         subgraph CLI2["MCP Client — implemented (stdio · HTTP)"]
             direction TB
-            PHASE["Reyn Phase (control_ir)"]
+            CTRL["Control IR (mcp op)"]
             MCIROP["MCPIROp  kind: mcp"]
             MCLIENT["MCPClient\nstdio / HTTP transport"]
             EXTMCP["External MCP Server"]
-            PHASE --> MCIROP --> MCLIENT --> EXTMCP
+            CTRL --> MCIROP --> MCLIENT --> EXTMCP
         end
     ```
 
@@ -282,7 +278,7 @@ Section 02 (The pieces):
 - {{ARCH_S02_NUM}}, {{ARCH_S02_LABEL}}, {{ARCH_S02_HEADING_HTML}}, {{ARCH_S02_BODY}}
 - {{ARCH_S02_C1_LABEL}}, {{ARCH_S02_C1_BODY}}  — Agent card
 - {{ARCH_S02_C2_LABEL}}, {{ARCH_S02_C2_BODY}}  — Skill card
-- {{ARCH_S02_C3_LABEL}}, {{ARCH_S02_C3_BODY}}  — Phase card
+- {{ARCH_S02_C3_LABEL}}, {{ARCH_S02_C3_BODY}}  — Control IR card
 - {{ARCH_S02_C4_LABEL}}, {{ARCH_S02_C4_BODY}}  — OS card
 - {{ARCH_S02_C5_LABEL}}, {{ARCH_S02_C5_BODY}}  — State card
 
