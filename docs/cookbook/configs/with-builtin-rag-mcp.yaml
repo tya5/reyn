@@ -1,120 +1,71 @@
-# FP-0063 -- builtin user RAG, the MCP layer (P2) + the two
-# builtin pipelines that call it (P3: reyn.builtin.pipelines.rag_ingest /
-# rag_query, registered as rag_ingest.ingest / rag_query.query).
+# ADR 0064 P5 -- builtin user RAG, now shipped as the `rag` PLUGIN
+# (src/reyn/builtin/plugins/rag/): two MCP servers (chunker/vector-store) +
+# two pipelines (rag_ingest.ingest / rag_query.query) + the
+# build_and_query_rag_corpus skill, installed together in one call.
+# Originally authored under FP-0063 (P2 MCP layer / P3 pipelines / P4 skill).
 #
-# This file is the BY-HAND option. You do not need it: ask reyn to ingest a
-# folder in chat and it installs these three servers itself via
-# ``mcp__install_local``, prompting you at the permission gate before it
-# writes anything to ``.reyn/config/mcp.yaml``. Copy this block only if you
-# would rather declare them yourself. Either way the DECISION is yours --
-# by hand here, or at the prompt there.
+# This file is a REFERENCE, not something you copy into reyn.yaml -- unlike
+# the pre-ADR-0064 shape, there is no "by-hand YAML" option any more: a
+# plugin's capabilities are registered by `plugin_install`, not by
+# hand-editing `mcp.servers`/`pipelines.entries`. You do not need to do
+# anything by hand at all: ask reyn to ingest a folder in chat and it installs
+# the plugin itself via `plugin_install`, prompting you at the permission
+# gate before it writes anything.
 #
-# This entire ``mcp.servers`` block ships COMMENTED OUT / INERT. Do not
-# assume uncommenting it is safe by default: an MCP server entry, once it
-# appears under ``mcp.servers.<name>`` in ANY merged config tier, is
-# auto-granted the moment you run ``reyn pipe run`` (#2932's
-# trusted-by-configuration auto-grant -- it keys purely on the server's
-# NAME being present in the merged config, not on any "enabled" flag,
-# because no such flag exists on an MCP server entry today). That is why
-# reyn itself never wires this in (see reyn.builtin.mcp_servers module
-# docstring) and why the install path is permission-gated: a server must
-# not reach the merged config without an explicit operator decision.
-# Read the three servers before enabling them: the vector-store server
-# writes to whatever sqlite file `db_path` names; the chunker server reads
-# no filesystem paths itself; markitdown reads whatever `uri` the ingest
-# pipeline passes it (every file under the folder you point rag_ingest at).
+# ---------------------------------------------------------------------------
+# Install
+# ---------------------------------------------------------------------------
 #
-# Install the extra runtime deps first (NOT part of reyn's base install):
-#   pip install "reyn[builtin-rag]"
+#   plugin_install(source={"kind": "builtin", "name": "rag"})
 #
-# That is the whole dependency step. Do NOT ``pip install markitdown-mcp``:
-# ``command: uvx`` below fetches it into uvx's OWN isolated environment on
-# first run, which is the point -- installing it beside reyn only invites a
-# dependency conflict. (Firewalled? See the R1/uvx note below: give it a
-# separate venv and an absolute path, never reyn's venv.)
+# One call does everything the old three-server-by-hand block used to
+# require: it copies `src/reyn/builtin/plugins/rag/` to
+# `~/.reyn/plugins/rag/`, materialises its runtime deps
+# (chonkie/apsw/sqlite-vec/fastmcp) into a DEDICATED per-plugin venv (never
+# reyn's own environment -- no `pip install "reyn[builtin-rag]"` needed),
+# and registers both MCP servers + both pipelines + the skill into your
+# project's `.reyn/config/{mcp,pipelines,skills}.yaml`. The registered
+# server commands point at the materialised venv's own interpreter, so
+# spawning them needs no network and does not depend on your ambient
+# `python3` (works under `pipx install reyn`, a non-activated venv, or any
+# PATH whose `python3` differs from reyn's own).
 #
-# Then copy this block into your reyn.yaml (or reyn.local.yaml) and
-# uncomment it:
+# The permission gate still fires exactly where you would expect: writing
+# `~/.reyn/plugins/rag/` (outside the workspace) and each MCP server's grant
+# (auto-granted the moment `mcp.servers.<name>` appears in the merged config
+# and a pipeline runs it -- #2932) are both explicit operator decisions, not
+# silent defaults.
 #
-# permissions:
-#   mcp.reyn_vector_store: allow
-#   mcp.reyn_chunker: allow
-#   mcp.reyn_markitdown: allow
+# The THIRD server -- markitdown, a third-party MCP server, not part of the
+# rag plugin -- is installed separately (it is not reyn's code to bundle):
 #
-# mcp:
-#   servers:
-#     reyn_vector_store:
-#       type: stdio
-#       command: reyn-rag-vector-store
-#       # Tools: upsert(db_path, items, vectors, embedding_model,
-#       # parent_context) -- items/vectors are parallel arrays, paired by
-#       # index server-side / query(db_path, vector, top_k, filters) /
-#       # list_metadata(db_path, filters, limit) / delete(db_path, ids).
-#       # Every call takes db_path explicitly -- there is no server-side
-#       # default; you always name the sqlite file.
+#   mcp__install_local(name="reyn_markitdown", command="uvx", args=["markitdown-mcp"])
 #
-#     reyn_chunker:
-#       type: stdio
-#       command: reyn-rag-chunker
-#       # Tool: chunk(text, size=400, overlap_ratio=0.125,
-#       # min_characters_per_chunk=24). size/overlap are real parameters,
-#       # not baked-in constants -- tune them per document type.
+# Do NOT `pip install markitdown-mcp` beside reyn: `command: uvx` fetches it
+# into uvx's OWN isolated environment on first run, which is the point --
+# installing it beside reyn only invites a dependency conflict. Firewalled?
+# Give it its own venv and an absolute path, never reyn's venv:
 #
-#     reyn_markitdown:
-#       type: stdio
-#       command: uvx
-#       args: ["markitdown-mcp"]
-#       # Tool: convert_to_markdown(uri) -- file:/http:/https:/data: -- the
-#       # owner's target format list (txt/md/pdf/xlsx/pptx/docx) plus 15+
-#       # more. `uvx` fetches the package from PyPI on first run: if your
-#       # network is firewalled (FP-0057's own line-55 finding, the same
-#       # failure class as the default embedding model's HuggingFace fetch),
-#       # give it its OWN venv -- never reyn's, that is the dependency
-#       # conflict uvx exists to avoid -- and point `command` at the
-#       # absolute path of the console script in it:
-#       #   python3 -m venv ~/.reyn-markitdown
-#       #   ~/.reyn-markitdown/bin/pip install markitdown-mcp
-#       # then: command: /home/you/.reyn-markitdown/bin/markitdown-mcp
-#       #       args: []
-#       # rag_ingest's own step-0 pre-flight (X1) checks
-#       # reachability BEFORE any embedding spend and fails with this same
-#       # guidance, naming the exact server, rather than a bare transport
-#       # exception.
+#   python3 -m venv ~/.reyn-markitdown
+#   ~/.reyn-markitdown/bin/pip install markitdown-mcp
+#   mcp__install_local(name="reyn_markitdown", args=[],
+#                      command="/home/you/.reyn-markitdown/bin/markitdown-mcp")
 #
-# Why `command: reyn-rag-chunker` and not `python -m ...`?
-#
-# Both work, and the choice is YOURS -- reyn starts whatever `command` you
-# write, as-is, in any language, and never rewrites it. Preparing the
-# runtime an MCP server needs is your responsibility, not reyn's.
-#
-# The console scripts are RECOMMENDED because they remove one way to get
-# it wrong. pip stamps a console script's shebang with the absolute path of
-# the interpreter it was installed into, so `reyn-rag-chunker` always runs
-# under the python that actually has reyn. A bare `python`/`python3` is
-# resolved from your PATH at launch time instead, which is a different
-# interpreter under `pipx install reyn`, a non-activated venv, or a shell
-# whose PATH puts another python first -- there the server fails to start
-# with `No module named reyn`.
-#
-# If you prefer the module form, point it at a python that has reyn --
-# either activate the venv you installed reyn into, or give the absolute
-# path:
-#   command: /path/to/venv/bin/python
-#   args: ["-m", "reyn.builtin.mcp_servers.chunker_server"]
-# Check any candidate with:
-#   <that python> -c 'import reyn; print(reyn.__file__)'
-#
-# Either way, rag_ingest's step-0 pre-flight (X1) probes each server for
-# real BEFORE any embedding spend and names the one that failed with a
+# rag_ingest's own step-0 pre-flight (X1) probes each of the three servers
+# for real BEFORE any embedding spend and names the one that failed with a
 # concrete remedy, rather than failing opaquely.
 #
-# Once the three servers above are configured + granted, invoke the builtin
-# pipelines by name. `input_path` must be ABSOLUTE (the pipeline globs it
-# directly); it may be a folder or a single file. `output_db`/`db`, in
-# contrast, is a plain sandboxed write: the default write grant for a
-# stdio MCP server is its own `cwd` (the directory you ran `reyn` from),
-# so a CWD-RELATIVE path needs no extra config at all -- this is the
-# zero-config default, not a shortcut:
+# ---------------------------------------------------------------------------
+# Run
+# ---------------------------------------------------------------------------
+#
+# Once the plugin + markitdown are installed, invoke the two pipelines by
+# name. `input_path` must be ABSOLUTE (the pipeline globs it directly); it
+# may be a folder or a single file. `output_db`/`db`, in contrast, is a
+# plain sandboxed write: the default write grant for a stdio MCP server is
+# its own `cwd` (the directory you ran `reyn` from), so a CWD-RELATIVE path
+# needs no extra config at all -- this is the zero-config default, not a
+# shortcut:
 #
 #   run_pipeline(name="rag_ingest.ingest", input={
 #     "input_path": "/abs/path/to/docs", "output_db": "./rag/docs.sqlite"})
@@ -128,15 +79,15 @@
 #
 # Want the store somewhere OUTSIDE cwd instead (an absolute path, or a
 # path in another project)? That is supported, but it is a DECLARED
-# DEVIATION from the default above, not a drop-in substitute for it: add
-# a `write_paths` entry naming that location to the `reyn_vector_store`
-# server's own config --
+# DEVIATION from the default above, not a drop-in substitute for it: add a
+# `write_paths` entry naming that location to the `reyn_vector_store`
+# server's own config (`.reyn/config/mcp.yaml`, the entry `plugin_install`
+# wrote) --
 #
 #   mcp:
 #     servers:
 #       reyn_vector_store:
-#         type: stdio
-#         command: reyn-rag-vector-store
+#         # ... plugin_install's own fields unchanged ...
 #         write_paths: ["~/reyn-rag"]
 #
 # -- then `output_db`/`db` may point anywhere under it, absolute or not.
@@ -144,22 +95,28 @@
 # the ingest fails -- so do not hand an absolute `output_db` to `rag_ingest`
 # unless this is already in place. If you do, the failure tells you: it
 # names the sandbox, the exact path refused, and this `write_paths` knob.
+# `write_paths` is not something `plugin_install`/`mcp__install_local` can
+# set -- it is a hand-edit to the registered entry.
 #
-# The `build_and_query_rag_corpus` builtin SKILL (FP-0063 P4) carries the
-# "when/how" these two one-line descriptions cannot: which of reyn's two
-# RAGs to reach for, the ingest->query order, and the C4 rule that one
-# sqlite file holds ONE embedding model (pass the same `embedding_model` to
-# both pipelines -- a mismatch either raises VectorDimensionMismatchError
-# or, at the same dimension, returns quietly meaningless neighbours). Like
-# every builtin skill it ships `visibility: on_demand` -- the model finds it
-# via `skill_list` and reads its body, no config needed. Operator-facing
-# walkthrough: docs/guide/for-users/build-a-rag-corpus.md.
+# The `build_and_query_rag_corpus` skill (installed alongside the plugin's
+# other capabilities) carries the "when/how" these two one-line pipeline
+# descriptions cannot: which of reyn's two RAGs to reach for, the
+# ingest->query order, and the C4 rule that one sqlite file holds ONE
+# embedding model (pass the same `embedding_model` to both pipelines -- a
+# mismatch either raises VectorDimensionMismatchError or, at the same
+# dimension, returns quietly meaningless neighbours). It ships
+# `visibility: on_demand` -- the model finds it via `skill_list` and reads
+# its body, no config needed. Operator-facing walkthrough:
+# docs/guide/for-users/build-a-rag-corpus.md.
 #
 # Want a different vector-DB / chunker / parser? Copy
-# src/reyn/builtin/pipelines/rag_ingest.yaml (+ rag_query.yaml) into your
-# own project and re-point the `*_server` inputs (or the MCP config entries
-# they name) at your replacement -- FP-0057 C2: reyn builds no adapter for
-# a user's RAG store, so "copy the builtin and re-point the MCP server" IS
-# the extension mechanism, not a workaround. Every server name is already an
+# ~/.reyn/plugins/rag/pipelines/rag_ingest.yaml (+ rag_query.yaml, present
+# once the plugin is installed) into your own project and re-point the
+# `*_server` inputs (or the MCP config entries they name) at your
+# replacement -- FP-0057 C2: reyn builds no adapter for a user's RAG store,
+# so "copy the plugin's pipeline and re-point the MCP server" IS the
+# extension mechanism, not a workaround. Every server name is already an
 # input with a default, so a drop-in replacement exposing the same tool
 # shapes needs no file edit -- just pass `vectorstore_server: "my_qdrant"`.
+# Prefer to keep your edit reusable? Promote it back as its own plugin:
+# `plugin_install(source={"kind": "local", "path": "..."})`.

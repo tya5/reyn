@@ -1,8 +1,8 @@
 # Build a RAG corpus from your own documents
 
-Point Reyn at a folder of documents (`txt` / `md` / `pdf` / `xlsx` / `pptx` / `docx`), get a **sqlite file you own** that Reyn can search by meaning. Two builtin pipelines do it: `rag_ingest.ingest` builds the store, `rag_query.query` searches it.
+Point Reyn at a folder of documents (`txt` / `md` / `pdf` / `xlsx` / `pptx` / `docx`), get a **sqlite file you own** that Reyn can search by meaning. The builtin `rag` **plugin** does it: `rag_ingest.ingest` builds the store, `rag_query.query` searches it.
 
-> **TL;DR**: `pip install "reyn[builtin-rag]"`, then ask Reyn to ingest your folder. Reyn installs the three MCP servers it needs itself — **it asks you before writing anything to your config**. They ship **inert**: nothing runs until that install is approved.
+> **TL;DR**: ask Reyn to ingest your folder. Reyn installs the `rag` plugin (+ a third-party markitdown MCP server) itself via `plugin_install` — **it asks you before writing anything to your config**. Nothing runs until that install is approved.
 
 ## Is this the RAG you want?
 
@@ -11,15 +11,15 @@ Reyn has **two**, and they are not interchangeable:
 | | **this guide** (builtin user RAG) | **[semantic search](enable-semantic-search.md)** (in-core RAG) |
 |---|---|---|
 | Where the data lives | **a sqlite file you name** — yours to keep, copy, or hand to another tool | Reyn's own index under `.reyn/index/<source>/` |
-| What you set up | 3 MCP servers (Reyn installs them; you approve) | an indexed source; no servers |
+| What you set up | the `rag` plugin + a markitdown MCP server (Reyn installs them; you approve) | an indexed source; no servers |
 | Reads pdf/xlsx/pptx/docx | **yes** (via the markitdown server) | only what your indexing code chunked |
 | Use it when | you have **a folder of documents** and want a portable corpus | you want Reyn to recall docs you already registered as a source |
 
-If you just want Reyn to search docs you already index, you want [Enable semantic search](enable-semantic-search.md) — it needs no MCP servers. Come here when you have documents in real-world formats and want a store you own.
+If you just want Reyn to search docs you already index, you want [Enable semantic search](enable-semantic-search.md) — it needs no plugin. Come here when you have documents in real-world formats and want a store you own.
 
 ## Why it ships off
 
-The three MCP servers are **inert by design**. Once a server appears under `mcp.servers.<name>` in any merged config, `reyn pipe run` auto-grants it — so a server must never land in your config without your say-so. Reyn therefore ships the servers' **code** and never wires them in. Reyn can *install* them for you, but the write to your config goes through the permission gate: **you are asked, and a refusal writes nothing.**
+Nothing in the `rag` plugin is installed by default. Once an MCP server appears under `mcp.servers.<name>` in any merged config, `reyn pipe run` auto-grants it — so a server must never land in your config without your say-so. Reyn therefore ships the plugin's **code** (inside the wheel) but never installs or wires it in on your behalf. Reyn can *install* it for you, but every write goes through the permission gate: **you are asked, and a refusal writes nothing.**
 
 Read what you are enabling before you do:
 
@@ -29,48 +29,20 @@ Read what you are enabling before you do:
 
 ## Setup
 
-**1. Install the extra dependencies** (not part of Reyn's base install):
+**Ask Reyn to install the plugin.** You do not have to hand-edit YAML, and there is no extra `pip install` step: dependencies (chonkie/apsw/sqlite-vec) are materialised automatically into a **dedicated per-plugin environment**, never Reyn's own. In `reyn chat`, ask it to ingest a folder: it installs the `rag` plugin, **asking your permission before it writes** anything —
 
-```bash
-pip install "reyn[builtin-rag]"     # apsw + sqlite-vec + chonkie
+```
+plugin_install(source={"kind": "builtin", "name": "rag"})
+mcp__install_local(name="reyn_markitdown", command="uvx", args=["markitdown-mcp"])
 ```
 
-That is the whole dependency step. **Do not `pip install markitdown-mcp`** — the parser runs via `uvx`, which fetches it into its **own isolated environment** on first run. Installing it alongside Reyn only invites a dependency conflict.
+One `plugin_install` call registers **both MCP servers, both pipelines, and the `build_and_query_rag_corpus` skill** together — no `permissions:` block to add, because a configured server is granted when the pipeline runs it. **Refuse and nothing is written.**
 
-> `sqlite-vec` is **wheel-only** (no sdist), so it needs a mirror that serves wheels — an sdist-only internal mirror cannot install it, and musl/Alpine has no wheel at all. Reyn's own `python:3.12-slim` base image is glibc, so containers are unaffected.
+Each server is **probed before its registration is committed**: if a command does not start on your machine, that server is skipped rather than leaving a half-configured entry.
 
-**2. Ask Reyn to install the servers.** You do not have to hand-edit YAML. In `reyn chat`, ask it to ingest a folder: it reads its `build_and_query_rag_corpus` skill and installs the three servers, **asking your permission before it writes** `.reyn/config/mcp.yaml`. That write is the gate: approve it and the servers are live — no `permissions:` block to add, because a configured server is granted when the pipeline runs it. **Refuse and nothing is written.**
+> `sqlite-vec` is **wheel-only** (no sdist), so the per-plugin materialise step needs a package index that serves wheels — an sdist-only internal mirror cannot install it, and musl/Alpine has no wheel at all. Reyn's own `python:3.12-slim` base image is glibc, so containers are unaffected.
 
-Each install is **probed before it is committed**: if a command does not start on your machine, the install fails and writes nothing, rather than leaving a half-configured server.
-
-<details>
-<summary>Prefer to configure it by hand?</summary>
-
-Copy the `permissions` + `mcp.servers` block from [`cookbook/configs/with-builtin-rag-mcp.yaml`](../../cookbook/configs/with-builtin-rag-mcp.yaml) into your `reyn.yaml` (or `reyn.local.yaml`) and uncomment it:
-
-```yaml
-permissions:
-  mcp.reyn_vector_store: allow
-  mcp.reyn_chunker: allow
-  mcp.reyn_markitdown: allow
-
-mcp:
-  servers:
-    reyn_vector_store:
-      type: stdio
-      command: reyn-rag-vector-store
-    reyn_chunker:
-      type: stdio
-      command: reyn-rag-chunker
-    reyn_markitdown:
-      type: stdio
-      command: uvx
-      args: ["markitdown-mcp"]
-```
-
-</details>
-
-> **Firewalled network?** `uvx` fetches `markitdown-mcp` from PyPI on first run. If PyPI is blocked, give it its **own venv** — never Reyn's — and point `command` at the absolute path:
+> **Firewalled network?** `uvx` fetches `markitdown-mcp` from PyPI on first run, and `plugin_install` fetches the `rag` plugin's own deps from PyPI at install time. If PyPI is blocked for `markitdown-mcp`, give it its **own venv** — never Reyn's — and point `command` at the absolute path:
 >
 > ```bash
 > python3 -m venv ~/.reyn-markitdown
@@ -79,7 +51,7 @@ mcp:
 >
 > then use `command: /home/you/.reyn-markitdown/bin/markitdown-mcp` with `args: []`. Reyn starts whatever `command` names, as-is, so an absolute path to a script whose environment actually has the package is the reliable form.
 
-**Why the `reyn-rag-*` console scripts and not `python -m ...`?** Both work — Reyn launches whatever `command` you write, as-is, in any language, and never rewrites it. **Preparing the runtime an MCP server needs is your job, not Reyn's.** The console scripts are *recommended* only because `pip` stamps their shebang with the absolute path of the interpreter they were installed into, so they always find Reyn. A bare `python3` is resolved from your `PATH` at launch, which is a *different* interpreter under `pipx install reyn`, a non-activated venv, or a `PATH` with another python first — there the server fails with `No module named reyn`. If you prefer the module form, give an absolute interpreter path and check it with `<that python> -c 'import reyn; print(reyn.__file__)'`.
+**Why does the registered `reyn_chunker`/`reyn_vector_store` command look like an absolute path to a `.venv/bin/python`, not `python`?** `plugin_install` rewrites it for you at install time, to the materialised per-plugin venv's own interpreter — so spawning it never depends on your ambient `PATH`'s `python3`, which is a *different* interpreter under `pipx install reyn`, a non-activated venv, or a `PATH` with another python first. You never need to write this by hand; see [`cookbook/configs/with-builtin-rag-mcp.yaml`](../../cookbook/configs/with-builtin-rag-mcp.yaml) if you want to read what the registered entry looks like.
 
 ## Use it
 
@@ -103,7 +75,7 @@ The query returns `[{id, distance, metadata}, ...]`, nearest first. `metadata` c
 
 ### If a server isn't reachable
 
-`rag_ingest` **pre-flights all three servers before spending anything on embeddings** and returns a message naming the one that failed plus a concrete remedy — rather than a bare `ImportError: No module named 'apsw'` from inside a subprocess. Follow the remedy it prints; it is written for exactly this situation.
+`rag_ingest` **pre-flights all three servers before spending anything on embeddings** and returns a message naming the one that failed plus a concrete remedy (`plugin_install(source={"kind": "builtin", "name": "rag"})` for the two builtin servers, `mcp__install_local(...)` for markitdown) — rather than a bare `ImportError: No module named 'apsw'` from inside a subprocess. Follow the remedy it prints; it is written for exactly this situation.
 
 ## Keeping the corpus current
 
@@ -125,7 +97,7 @@ Other inputs: `file_extensions` (which formats to pick up from a folder), `max_f
 
 ## Swapping the backend — copy the pipeline
 
-Want Qdrant instead of sqlite-vec, a different chunker, or Docling instead of MarkItDown? **Copy `src/reyn/builtin/pipelines/rag_ingest.yaml` (+ `rag_query.yaml`) into your project and re-point the `*_server` inputs** at your replacement. This is the **intended extension mechanism, not a workaround**: Reyn deliberately builds no adapter for a user's RAG store, so the builtin pipeline *is* the template you copy.
+Want Qdrant instead of sqlite-vec, a different chunker, or Docling instead of MarkItDown? **Copy `~/.reyn/plugins/rag/pipelines/rag_ingest.yaml` (+ `rag_query.yaml`, present once the plugin is installed) into your project and re-point the `*_server` inputs** at your replacement. This is the **intended extension mechanism, not a workaround**: Reyn deliberately builds no adapter for a user's RAG store, so the builtin pipeline *is* the template you copy. Want to keep the edit reusable across projects? Promote it back as your own plugin: `plugin_install(source={"kind": "local", "path": "..."})`.
 
 Every server name is an input with a default, so a drop-in replacement exposing the same tools (`upsert` / `query` / `list_metadata` / `delete`) needs no file edit at all — just name it:
 

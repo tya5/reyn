@@ -1,10 +1,23 @@
-"""Tier 2b: subsystem invariant -- FP-0063 P3, the two builtin RAG pipelines
-(``reyn.builtin.pipelines.rag_ingest`` / ``rag_query``),
-docs/deep-dives/proposals/0063-builtin-turnkey-user-rag.md.
+"""Tier 2b: subsystem invariant -- the two builtin RAG pipelines
+(``rag_ingest`` / ``rag_query``), now shipped as part of the builtin ``rag``
+plugin (ADR 0064 P5, ``src/reyn/builtin/plugins/rag/pipelines/``; originally
+authored under FP-0063 P3,
+docs/deep-dives/proposals/0063-builtin-turnkey-user-rag.md).
+
+This test drives the pipeline FILES directly (a project-local
+``.reyn/config.yaml`` declaring ``pipelines.entries`` by absolute path, see
+``_write_project`` below) rather than going through a real
+``plugin_install`` -- the install mechanism itself (copy, materialise deps
+into a per-plugin venv, register) has its own coverage in
+``tests/test_plugin_install.py`` and ``scripts/wheel_plugin_install_probe.py``;
+this file's job is the PIPELINE BEHAVIOR, so it stays fast/offline by
+pointing straight at the plugin's shipped files with the ``builtin-rag``
+extra installed for direct import, instead of paying a real ``uv``
+materialise + network fetch on every test run.
 
 Drives both pipelines end-to-end through the REAL ``reyn pipe run`` CLI path
 (``src/reyn/interfaces/cli/commands/pipe.py::run_run``) against REAL builtin
-MCP servers (``reyn.builtin.mcp_servers.vector_store_server`` /
+MCP servers (``reyn.builtin.plugins.rag.scripts.vector_store_server`` /
 ``chunker_server``, started as real ``python -m ...`` stdio subprocesses --
 the ``builtin-rag`` extra IS installed in this environment, verified by
 ``pytest.importorskip`` guarding the whole module so a base install still
@@ -65,13 +78,14 @@ pytest.importorskip(
     "sqlite_vec", reason="builtin-rag extra ('pip install reyn[builtin-rag]') not installed",
 )
 
-from reyn.builtin.registry import BUILTIN_PIPELINES  # noqa: E402
+import reyn.builtin as _builtin_pkg  # noqa: E402
 from reyn.core.pipeline.parser import parse_pipeline_docs  # noqa: E402
 from reyn.core.pipeline.schema import SchemaRegistry  # noqa: E402
 from reyn.interfaces.cli.commands.pipe import run_run  # noqa: E402
 
-_INGEST_PATH = Path(BUILTIN_PIPELINES["rag_ingest"]["path"])
-_QUERY_PATH = Path(BUILTIN_PIPELINES["rag_query"]["path"])
+_RAG_PLUGIN_DIR = Path(_builtin_pkg.__file__).resolve().parent / "plugins" / "rag"
+_INGEST_PATH = _RAG_PLUGIN_DIR / "pipelines" / "rag_ingest.yaml"
+_QUERY_PATH = _RAG_PLUGIN_DIR / "pipelines" / "rag_query.yaml"
 
 # ---------------------------------------------------------------------------
 # A real, minimal FastMCP stdio server standing in for markitdown-mcp (not
@@ -203,13 +217,13 @@ def _write_project(tmp_path: Path, *, vectorstore_server: str = "reyn_vector_sto
                         "reyn_chunker": {
                             "type": "stdio",
                             "command": sys.executable,
-                            "args": ["-m", "reyn.builtin.mcp_servers.chunker_server"],
+                            "args": ["-m", "reyn.builtin.plugins.rag.scripts.chunker_server"],
                             "env": _server_env(),
                         },
                         vectorstore_server: {
                             "type": "stdio",
                             "command": sys.executable,
-                            "args": ["-m", "reyn.builtin.mcp_servers.vector_store_server"],
+                            "args": ["-m", "reyn.builtin.plugins.rag.scripts.vector_store_server"],
                             "env": _server_env(),
                         },
                     },
@@ -367,7 +381,7 @@ def test_only_real_document_content_reaches_the_store(
 
     summary = _run_ingest(project_root, capsys)["named_stores"]["result"]
 
-    from reyn.builtin.mcp_servers.vector_store_server import SqliteVecStore
+    from reyn.builtin.plugins.rag.scripts.vector_store_server import SqliteVecStore
 
     with SqliteVecStore(str(project_root / "rag.sqlite")) as store:
         rows = store.list_metadata()
@@ -417,7 +431,7 @@ def test_a_none_conversion_is_reported_as_a_failure_not_indexed(
 
     summary = _run_ingest(project_root, capsys)["named_stores"]["result"]
 
-    from reyn.builtin.mcp_servers.vector_store_server import SqliteVecStore
+    from reyn.builtin.plugins.rag.scripts.vector_store_server import SqliteVecStore
 
     with SqliteVecStore(str(project_root / "rag.sqlite")) as store:
         indexed = {Path(r["metadata"]["source_path"]).name for r in store.list_metadata()}
@@ -452,7 +466,7 @@ def test_the_none_filter_is_opt_out(
 
     summary = _run_ingest(project_root, capsys, filter_none_conversions=False)["named_stores"]["result"]
 
-    from reyn.builtin.mcp_servers.vector_store_server import SqliteVecStore
+    from reyn.builtin.plugins.rag.scripts.vector_store_server import SqliteVecStore
 
     with SqliteVecStore(str(project_root / "rag.sqlite")) as store:
         indexed = {Path(r["metadata"]["source_path"]).name for r in store.list_metadata()}
@@ -484,7 +498,7 @@ def test_upserted_chunk_embedding_model_is_the_resolved_model_not_the_alias(
 
     _run_ingest(project_root, capsys, embedding_model="standard")
 
-    from reyn.builtin.mcp_servers.vector_store_server import SqliteVecStore
+    from reyn.builtin.plugins.rag.scripts.vector_store_server import SqliteVecStore
 
     with SqliteVecStore(str(project_root / "rag.sqlite")) as store:
         rows = store.list_metadata()

@@ -16,7 +16,7 @@ the one mismatch that silently ruins a corpus**.
 | | **this skill** (builtin user RAG) | **`semantic_search`** (in-core RAG) |
 |---|---|---|
 | Store | an **external** sqlite file **you name** (`docs.sqlite`) | reyn's own index, `.reyn/index/<source>/` |
-| Setup | you install **3 MCP servers** first (operator is prompted) | operator indexes a **source**; nothing else |
+| Setup | you install the **`rag` plugin** + a markitdown MCP server (operator is prompted) | operator indexes a **source**; nothing else |
 | Reach for it when | the operator points at **a folder/file of documents** and wants a corpus they own, keep, and can hand to another tool | the operator asks about docs **already indexed** as a reyn source |
 | Formats | pdf/xlsx/pptx/docx + txt/md (via markitdown) | whatever the indexing code chunked |
 
@@ -26,31 +26,39 @@ setup. Do not ingest a corpus just to answer one question about one file:
 
 ## Prerequisites -- install them yourself
 
-The three servers **ship INERT**, so enabling them is a decision, not a
-default. **The decision is the operator's; making the request is yours** --
-install them and the permission gate prompts them before anything reaches
-their config. **Do not tell the operator to hand-edit YAML.**
+Neither the builtin `rag` plugin nor the third-party markitdown server ships
+pre-installed, so enabling them is a decision, not a default. **The decision
+is the operator's; making the request is yours** -- install and the
+permission gate prompts them before anything reaches config. **Do not tell
+the operator to hand-edit YAML.**
 
 ```
-mcp__install_local(name="reyn_chunker",      command="reyn-rag-chunker",      args=[])
-mcp__install_local(name="reyn_vector_store", command="reyn-rag-vector-store", args=[])
-mcp__install_local(name="reyn_markitdown",   command="uvx", args=["markitdown-mcp"])
+plugin_install(source={"kind": "builtin", "name": "rag"})
+mcp__install_local(name="reyn_markitdown", command="uvx", args=["markitdown-mcp"])
 ```
 
-**No `permissions:` block to add** -- a server in the merged config is granted
-when the pipeline runs it. Each install is **probed before it commits**: a
-command that does not start fails the install rather than half-writing config.
+The single `plugin_install` call installs **everything the rag plugin
+ships** -- both MCP servers (`reyn_chunker` / `reyn_vector_store`), the
+`rag_ingest` / `rag_query` pipelines, and this very skill -- in one step: it
+copies the plugin to `~/.reyn/plugins/rag/`, materialises its dependencies
+(chonkie/apsw/sqlite-vec) into a **dedicated per-plugin environment** (never
+reyn's own env), and registers everything into the project's config. **No
+`permissions:` block to add** -- a server in the merged config is granted
+when the pipeline runs it. The registration step is **probed before it
+commits**: a server that does not start is skipped rather than half-writing
+config.
 
-`rag_ingest` pre-flights all three and returns a **"blocked"** message naming
-any unreachable server *before* spending on embeddings -- the design working,
-not a crash. When you get one:
+`rag_ingest` pre-flights all three servers and returns a **"blocked"**
+message naming any unreachable one *before* spending on embeddings -- the
+design working, not a crash. When you get one:
 
-- **Not installed yet** (the common case): install it with the call above, re-run.
+- **Not installed yet** (the common case): install it with the call(s)
+  above, re-run.
 - **Operator refused**: stop and relay it. A refusal is an answer, not an error
   to route around -- **do not shell out, hand-roll an ingest, or re-ask.**
-- **Probe failed**: the runtime is missing. `reyn-rag-*` come from
-  `pip install "reyn[builtin-rag]"` (apsw + sqlite-vec + chonkie) -- **the
-  operator's machine, not your call**; name what failed and let them.
+- **Materialisation failed**: `plugin_install` reports the failure inline
+  (e.g. it could not fetch chonkie/apsw/sqlite-vec) -- **the operator's
+  machine or network, not your call**; name what failed and let them.
 
 **Never `pip install markitdown-mcp` beside Reyn** -- it invites a dependency
 conflict, and `uvx` fetches it into an isolated environment so it need not
@@ -153,9 +161,12 @@ run_pipeline(name="rag_ingest.ingest", input={
 
 The replacement must expose the same tool shapes (`upsert` / `query` /
 `list_metadata` / `delete`). Need to change the *steps*, not just the server?
-Copy `src/reyn/builtin/pipelines/rag_ingest.yaml` (+ `rag_query.yaml`) into the
-operator's project and edit it. **This is the intended extension mechanism, not
-a workaround**: reyn builds no adapter for a user's RAG store (FP-0057 C2).
+Copy `~/.reyn/plugins/rag/pipelines/rag_ingest.yaml` (+ `rag_query.yaml`,
+present once the plugin is installed) into the operator's project and edit
+it -- or promote your edited copy back as its own plugin
+(`plugin_install(source={"kind": "local", "path": "..."})`). **This is the
+intended extension mechanism, not a workaround**: reyn builds no adapter for
+a user's RAG store (FP-0057 C2).
 
 Full setup + backend-swap guide: `docs/guide/for-users/build-a-rag-corpus.md`.
 Config to copy: `docs/cookbook/configs/with-builtin-rag-mcp.yaml`.

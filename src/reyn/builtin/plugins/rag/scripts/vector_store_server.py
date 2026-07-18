@@ -50,8 +50,10 @@ Five gates satisfied by construction (proposal 0063 P2 spec):
 ``SqliteVecStore`` holds the storage logic as a plain Python class so it
 can be exercised directly (no MCP transport needed) by tests; the module-
 level ``mcp = FastMCP(...)`` object below is the thin tool-call skin over
-it, run via ``python -m reyn.builtin.mcp_servers.vector_store_server``
-(stdio transport).
+it, run directly as ``python <this file's path>`` (stdio transport) --
+either from a dev checkout, or (ADR 0064 P5) via the builtin ``rag``
+plugin's materialised per-plugin venv interpreter once
+``plugin_install(source={"kind": "builtin", "name": "rag"})`` has run.
 """
 from __future__ import annotations
 

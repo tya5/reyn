@@ -43,7 +43,7 @@ pytest.importorskip(
     "sqlite_vec", reason="builtin-rag extra ('pip install reyn[builtin-rag]') not installed",
 )
 
-from reyn.builtin.mcp_servers.vector_store_server import (  # noqa: E402
+from reyn.builtin.plugins.rag.scripts.vector_store_server import (  # noqa: E402
     _connect,
     _describe_open_failure,
 )
@@ -181,7 +181,7 @@ def _enforcing_backend_or_skip():
 
 @pytest.mark.parametrize("precreate_target_dir", [False, True], ids=["dir-absent", "dir-exists"])
 def test_a_denied_tool_write_tells_the_operator_the_knob(
-    precreate_target_dir, monkeypatch, reyn_console_scripts, out_of_process_reyn
+    precreate_target_dir, monkeypatch, out_of_process_reyn
 ):
     """Tier 2c: a real server denied a real write names the sandbox and the knob.
 
@@ -204,10 +204,18 @@ def test_a_denied_tool_write_tells_the_operator_the_knob(
     # The mcp SDK hands the child an allowlisted env subset that drops
     # PYTHONPATH, so an editable/src-layout checkout must pass it explicitly or
     # the SERVER silently runs a different tree than the one under test.
-    # `out_of_process_reyn` derives and verifies that pin; `reyn_console_scripts`
-    # states that this test runs `reyn-rag-vector-store` by name (#3024).
+    # `out_of_process_reyn` derives and verifies that pin. ADR 0064 P5 retired
+    # the `reyn-rag-vector-store` console script (#3024's original subject) --
+    # a real plugin install spawns via a materialised per-plugin venv's own
+    # interpreter, but the property under test here (a denied write is
+    # diagnosable) needs only a real vector-store server process, so this
+    # launches the plugin script directly with THIS interpreter.
+    import sys as _sys
+
+    from reyn.builtin.plugins.rag.scripts import vector_store_server as _vss
+
     client = MCPClient(
-        {"type": "stdio", "command": "reyn-rag-vector-store",
+        {"type": "stdio", "command": _sys.executable, "args": [_vss.__file__],
          "env": {"PATH": os.environ.get("PATH", ""), "PYTHONPATH": out_of_process_reyn}},
         server_name="reyn_vector_store",
     )
