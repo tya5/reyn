@@ -308,6 +308,7 @@ async def test_chunker_server_starts_and_responds_under_seccomp_allowlist(
     job is the seccomp-allowlist completeness property, which needs only
     SOME real chonkie-backed MCP server process, not the install mechanism
     itself (covered by tests/test_plugin_install.py)."""
+    pytest.importorskip("chonkie", reason="builtin-rag extra not installed")
     from reyn.mcp.client import MCPClient
 
     _patch_landlock_backend(monkeypatch)

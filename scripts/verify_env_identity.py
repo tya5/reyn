@@ -242,12 +242,14 @@ def check_console_scripts(root: Path) -> list[Finding]:
 
     A `[project.scripts]` entry in pyproject.toml is a *declaration*; the console
     script is a file `pip` writes into a venv's `bin/`. Adding an entry does not
-    reach into a venv that was installed before it (#2955 P2 added
-    ``reyn-rag-vector-store``; every venv installed earlier has never heard of
-    it). The absent script then surfaces as ``execvp() failed`` or, through a
-    stdio client, ``McpError: Connection closed`` — neither of which says
-    "absent", so both read as a broken feature. That misread reached a co-vet
-    verdict twice in one day.
+    reach into a venv that was installed before it (e.g. the top-level ``reyn``
+    CLI entry; the builtin RAG ``reyn-rag-*`` scripts were retired under ADR
+    0064 P5, so ``reyn`` is now the primary declared script — every venv
+    installed before an entry existed has never heard of it). The absent script
+    then surfaces as ``execvp() failed`` or, through a stdio client,
+    ``McpError: Connection closed`` — neither of which says "absent", so both
+    read as a broken feature. That misread reached a co-vet verdict twice in one
+    day.
     """
     bin_dir = Path(sys.executable).parent
     findings: list[Finding] = []
