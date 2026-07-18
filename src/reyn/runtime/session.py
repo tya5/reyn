@@ -82,6 +82,12 @@ from reyn.runtime.session_buses import (
     AuditOnlyInterventionBridge,
     ChatInterventionBus,
 )
+from reyn.runtime.session_params import (
+    CapabilityScope,
+    PresentationWiring,
+    ReactivityConfig,
+    TaskWiring,
+)
 from reyn.security.permissions.permissions import PermissionResolver
 from reyn.services.compaction.engine import CompactionEngine
 from reyn.task.subscription import SubscriptionWriter
@@ -1297,6 +1303,16 @@ class Session:
         # reusable capability-bundle inheritance seam — same threading as
         # ``presentation_consumer`` (P3.1).
         intervention_bridge: "object | None" = None,
+        # #3121 step1 (Introduce Parameter Object): cohesive replacements for
+        # the 12 flat params above (hooks_config/composers_config/fs_watch_config,
+        # exclude_tools/excluded_categories/contextual_permission/available_skills,
+        # task_backend/task_waker, presentation_registry/presentation_consumer/
+        # intervention_bridge). None -> built from the flat params (byte-identical
+        # fallback); once a caller passes the object, its fields take precedence.
+        reactivity: "ReactivityConfig | None" = None,
+        capability_scope: "CapabilityScope | None" = None,
+        task_wiring: "TaskWiring | None" = None,
+        presentation_wiring: "PresentationWiring | None" = None,
     ) -> None:
         """
         snapshot_path: optional override for the per-agent snapshot file
