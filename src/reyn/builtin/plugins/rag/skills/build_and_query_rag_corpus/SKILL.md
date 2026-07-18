@@ -221,6 +221,44 @@ result with a populated db usually means a Case B naming mismatch (Step 3);
 `rag_ingest` returning "blocked" means a server, not the embedding
 endpoint, is unreachable -- see "Prerequisites" above.
 
+### Choosing a local model (Case B) -- pick once, it's expensive to change
+
+**"One sqlite file = one embedding model" (below) makes this choice
+sticky** -- swapping models later means a full re-ingest into a *new*
+`output_db`, not an in-place update. Decide with these axes before your
+first big ingest, not after:
+
+- **Language.** English-only corpus -> a small English-only model is
+  enough. Japanese, Chinese, or mixed-language corpora -> use a
+  multilingual model; an English-only model's cross-lingual recall is
+  poor.
+- **Size vs. recall.** A smaller model embeds faster and costs less
+  compute per query; a larger model trades that for better recall.
+  Reyn's *other* local-embedding backend (`sentence-transformers`, used
+  by `search_actions`, not this RAG) documents this exact tradeoff with
+  measured numbers worth reusing as a reference point --
+  `all-MiniLM-L6-v2` (22 MB, 384-dim, English-only, fastest) vs.
+  `multilingual-e5-small` (118 MB, 50 languages, better cross-lingual
+  recall) vs. OpenAI's `text-embedding-3-small` API (~5 pp higher MTEB
+  than `multilingual-e5-small`, at API cost) -- see
+  `docs/guide/for-users/enable-semantic-search.md` for the full
+  comparison and the numbers' provenance. Those are a **different
+  mechanism** (in-process, not litellm-proxy-served) but the same three
+  tradeoffs -- language / size / quality -- apply when picking a model to
+  serve through Ollama or another local server for Case B.
+- **Server ecosystem.** Serving via Ollama (Step 1 above), the easiest
+  openai-compatible option is `nomic-embed-text`. Serving via HuggingFace
+  `text-embeddings-inference` or `infinity` instead, the `bge-*` /
+  `e5-*` families are common choices there. **Verify the exact
+  size/dimension/language numbers on the model's own card** -- unlike
+  the `all-MiniLM-L6-v2` / `multilingual-e5-small` figures above, these
+  are not numbers this skill has independently confirmed.
+
+In short: **English corpus, want it fast -> a small English model
+(`nomic-embed-text` is a reasonable Ollama default). Japanese/multilingual
+corpus -> a multilingual model. Want the best recall and already have an
+API key -> skip Case B, use Case A instead.**
+
 This section covers the **embedding provider** only -- a separate concern
 from the vector store / chunker / parser servers. See "Swapping the
 backend" below to change those. For local-model tradeoffs against an API-backed class
