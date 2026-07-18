@@ -336,6 +336,55 @@ at the same dimension, returns **quietly meaningless neighbours**. Different
 model -> different sqlite file: to re-embed, ingest into a **new** `output_db`;
 pointing a new model at the old file corrupts it.
 
+The next section shows the **mechanism** that enforces this rule --
+`reyn_rag_config.dim`, fixed on the first upsert.
+
+## What ingest writes into the sqlite -- the three-table schema
+
+The sqlite file `reyn_vector_store` writes is a plain database you can open
+and inspect (`sqlite3 docs.sqlite '.schema'`). Ingest populates **three
+tables**:
+
+**`reyn_rag_chunks`** -- one row per chunk, all the metadata (but **not** the
+chunk text -- there is no text column, by design):
+
+| column | type | meaning |
+|---|---|---|
+| `rag_id` | `TEXT UNIQUE NOT NULL` | primary key. **Formula = `<source_path>::<chunk_index>`** -- the store derives it; a caller never sets it. |
+| `source_path` | `TEXT NOT NULL` | the source file the chunk came from. |
+| `source_type` | `TEXT NOT NULL DEFAULT 'generic'` | source kind. |
+| `content_hash` | `TEXT NOT NULL` | sha256 of the chunk body -- the **change-detection key** (re-ingest compares this). |
+| `embedding_model` | `TEXT NOT NULL` | the **resolved** model id that actually produced the vector (never a class alias like `standard`) -- stamped on every row. |
+| `chunk_index` | `INTEGER NOT NULL DEFAULT 0` | 0-based position within `source_path`. |
+| `size_tokens` | `INTEGER NOT NULL DEFAULT 0` | token count of the chunk. |
+| `parent_context` | `TEXT` | the ingest root -- a scope tag for "which folder this ingest covered". |
+| `extra` | `TEXT NOT NULL DEFAULT '{}'` | JSON blob for extension metadata. |
+
+**`reyn_rag_config`** -- a single `dim INTEGER NOT NULL`: the embedding
+**dimension**, fixed on the **first** upsert. A later upsert whose vector has
+a different `dim` raises `VectorDimensionMismatchError` -- this is the
+**mechanism** behind "one sqlite = one embedding model = one vector space"
+above (the model stamp in `embedding_model` records *which* model; `dim`
+*enforces* that only one is ever mixed in).
+
+**`reyn_rag_vectors`** -- a sqlite-vec virtual table,
+`USING vec0(embedding float[<dim>])`, holding the vectors themselves. It is
+kept in **positional (parallel-array) correspondence** with
+`reyn_rag_chunks` by shared `rowid`: vector *i* belongs to chunk row *i*.
+
+**How writes behave:**
+
+- **Upsert = delete-then-insert on `rag_id`** (a "replace", so re-ingesting a
+  chunk never duplicates it): the store deletes any existing row with the same
+  `<source_path>::<chunk_index>` id, then inserts the new chunk row **and** its
+  vector together.
+- **Delete identifies a chunk by `(source_path, chunk_index)`** -- exactly the
+  pair that composes `rag_id` -- so the add/update/remove diff (driven by
+  `content_hash`) can target one chunk precisely.
+- **Query** joins the two data tables on `rowid` and returns
+  `[{id, distance, metadata}, ...]` -- the `metadata` you already saw under
+  "2. Query" is these `reyn_rag_chunks` columns, minus the never-stored text.
+
 ## Re-running ingest is cheap -- and is how you update
 
 Ingest is **incremental by `content_hash`**: re-run it on the same
