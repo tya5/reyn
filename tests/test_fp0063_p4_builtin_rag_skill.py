@@ -218,7 +218,19 @@ def _qualified_tool_names_referenced_by_the_skill() -> "set[str]":
     `mcp__install_local(...)`, `pipeline__run(...)`. Extracted, never
     restated, for the same reason as `_pipeline_names_referenced_by_the_skill`:
     a hardcoded list here would drift with the prose it claims to guard and
-    stay green through the exact bug (#3090) this test exists to catch."""
+    stay green through the exact bug (#3090) this test exists to catch.
+
+    REACH LIMIT (do not read this gate's green as "no drift anywhere"): it
+    matches only the CALL shape `verb(` — a tool name mentioned in prose
+    WITHOUT parens is invisible to it. That is a deliberate precision/reach
+    trade, not an oversight: a bare `plugin_install` in prose can equally be a
+    legitimate reference to the internal op-kind / module of that name
+    (`op_runtime/plugin_install.py`), so flagging every bare mention would
+    false-positive on non-drift. The residue is caught by review reading the
+    LLM-facing prose (#3091 review found a bare `plugin_install` on SKILL.md's
+    "Materialisation failed" line that this gate could not see). Widening the
+    gate to bare mentions is NOT the fix — it would trade this clean signal for
+    a noisy one."""
     return set(re.findall(
         r"\b([a-zA-Z][a-zA-Z0-9_]*__[a-zA-Z][a-zA-Z0-9_]*)\(", _skill_body(),
     ))

@@ -56,7 +56,7 @@ design working, not a crash. When you get one:
   above, re-run.
 - **Operator refused**: stop and relay it. A refusal is an answer, not an error
   to route around -- **do not shell out, hand-roll an ingest, or re-ask.**
-- **Materialisation failed**: `plugin_install` reports the failure inline
+- **Materialisation failed**: `plugin_management__install` reports the failure inline
   (e.g. it could not fetch chonkie/apsw/sqlite-vec) -- **the operator's
   machine or network, not your call**; name what failed and let them.
 
