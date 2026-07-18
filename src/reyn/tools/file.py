@@ -285,7 +285,21 @@ async def _handle_list(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
             "entries": matches,
             "matches": matches,
         }
-    return {"error": result.get("error", "list_directory failed")}
+    # #3095: preserve `status` on the error branch too (op_runtime's own
+    # denied/error result always carries one). Dropping it here made this
+    # adapter's error shape `{"error": ...}` — no `status` key at all — an
+    # ASYMMETRIC contract vs. the success shape above (`status: "ok"`
+    # always present). A pipeline `tool:` step gates on tool-level failure
+    # via `schema: {status: {type: enum, values: ["ok"]}}` (see
+    # rag_ingest.yaml's X1 preflight); with `status` missing, that gate
+    # silently PASSES a failed call (enum check only fires when the field
+    # is present-and-wrong, and this field was absent-not-required), so the
+    # failure surfaced later and opaquely wherever the caller consumed the
+    # data instead of at the schema gate meant to catch it.
+    return {
+        "status": result.get("status", "error"),
+        "error": result.get("error", "list_directory failed"),
+    }
 
 
 async def _handle_grep(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
@@ -357,7 +371,22 @@ async def _handle_glob(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
             "matches": result.get("matches", []),
             "count": result.get("count", 0),
         }
-    return {"error": result.get("error", "glob_files failed")}
+    # #3095: preserve `status` on the error branch (see the matching comment
+    # in `_handle_list` above — same adapter-level bug, same fix). Without
+    # it, a glob_files failure (e.g. a permission-denied source directory)
+    # produced `{"error": ...}` with no `status` key: a pipeline `tool:`
+    # step that gates on `schema: {status: {type: enum, values: ["ok"]}}`
+    # (the rag_ingest.yaml X1 preflight pattern) could not catch it (the
+    # enum check only fires when the field is present-and-wrong), so the
+    # already-declared `for_each: on_error: abort` around this exact call in
+    # `rag_ingest.yaml`'s file-discovery step never engaged — the failure
+    # instead flowed on as a normal "success" item into a `fold` that
+    # assumed every item's `.structured` was a list, and broke on `list +
+    # dict` several steps downstream of the real failure (#3095).
+    return {
+        "status": result.get("status", "error"),
+        "error": result.get("error", "glob_files failed"),
+    }
 
 
 from reyn.core.offload.canonical import file_to_canonical  # noqa: E402

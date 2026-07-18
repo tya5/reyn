@@ -602,6 +602,86 @@ def test_ingest_preflight_blocks_on_unreachable_vectorstore_with_named_remedy(
     assert "pip install" in blocked, "the remedy must name a concrete fix, not just the cause"
 
 
+# ---------------------------------------------------------------------------
+# 4b. #3095: file-discovery aborts CLEAN on a glob_files failure, instead of
+# corrupting the downstream fold's list-only assumption.
+# ---------------------------------------------------------------------------
+
+
+def test_ingest_file_discovery_aborts_clean_on_unreadable_input_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture,
+) -> None:
+    """Tier 2b: #3095 -- `_ingest_body`'s file-discovery `for_each` over
+    `glob_files` (one call per extension pattern PLUS `input_path` itself,
+    see the pipeline's own comment) must abort CLEANLY when a `glob_files`
+    call fails -- e.g. `input_path` names a folder OUTSIDE the reyn project
+    root with no `file.read` permission granted for it yet, the ordinary
+    case for a real corpus (the reported dogfood witness pointed at
+    `/tmp/rag_witness5_docs`, well outside the project).
+
+    Before the fix, a `glob_files` failure returned NORMALLY (op_runtime's
+    own `except PermissionError`/`except Exception` degrade every op error
+    to a `status`-carrying result dict rather than raising) with a payload
+    whose `.structured` was the WHOLE raw error dict (`error_to_canonical`'s
+    deliberate, lossless, uniform shape for ANY producer's error case) --
+    NOT the list `glob_files`' own SUCCESS shape always produces. The
+    `for_each`'s already-declared `on_error: abort` never saw this as a
+    failure (only a raised Python exception trips it), so the bad item
+    flowed on into `fold: {do: {transform: {value: "acc + item.structured"}}}`,
+    which broke with an opaque `arithmetic '+' requires two numbers ... got
+    list and dict` several steps downstream of the actual cause.
+
+    The fix closes this in two parts (both required -- see the strip-falsify
+    note below): (1) `_handle_glob`/`_handle_list` (src/reyn/tools/file.py)
+    now preserve `status` on their error branch (previously dropped,
+    `{"error": ...}` with no `status` key at all -- an asymmetric contract
+    vs. their own `status: "ok"` success shape); (2) the `glob_files`
+    `tool:` step in `_ingest_body`'s `for_each` now declares
+    `schema: PreflightCheck` (the SAME `status == "ok"` gate X1 already uses
+    per MCP server, reused here) so a non-"ok" status now FAILS schema
+    validation and raises -- which is what actually makes the pipeline's own
+    already-declared `on_error: abort` engage. Every item that survives to
+    the `fold` is now GUARANTEED `status: "ok"`, so `.structured` is
+    guaranteed a list.
+
+    strip-falsify: reverting either (1) or (2) alone reproduces the original
+    'list and dict' failure (both were independently verified against this
+    test while developing the fix).
+    """
+    monkeypatch.chdir(tmp_path)
+    project_root = _write_project(tmp_path)
+    # A folder OUTSIDE project_root with no permission grant -- Workspace's
+    # own default-deny boundary for absolute paths outside base_dir/state_dir
+    # (see tests/test_workspace_glob_outside_root_perm.py) with `reyn pipe
+    # run`'s non-interactive resolver (`_build_run_tool_context`: "fail-
+    # closed by default"), so the PermissionError is real, not simulated.
+    outside_docs = tmp_path.parent / f"{tmp_path.name}_outside_docs"
+    outside_docs.mkdir()
+    (outside_docs / "a.txt").write_text("content", encoding="utf-8")
+
+    seed = {
+        "input_path": str(outside_docs),
+        "output_db": str(project_root / "rag.sqlite"),
+    }
+    args = _ns(
+        name="rag_ingest.ingest", input=json.dumps(seed),
+        project=str(project_root), async_=False,
+    )
+    with pytest.raises(SystemExit) as exc_info:
+        run_run(args)
+    assert exc_info.value.code == 1
+    err = capsys.readouterr().err
+    assert "arithmetic" not in err and "list and dict" not in err, (
+        f"regressed to the opaque fold list+dict TypeError instead of a clean "
+        f"abort at the real failure site: {err!r}"
+    )
+    # Decision-enabling: names the failing tool + the real cause (glob_files'
+    # own denial message, surfaced via the schema gate's #3070 detail
+    # extraction), not a bare downstream arithmetic exception.
+    assert "glob_files" in err
+    assert "not permitted" in err or "permission" in err.lower()
+
+
 def test_ingest_is_unaffected_by_a_hostile_ambient_python3(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture,
 ) -> None:
