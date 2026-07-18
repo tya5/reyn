@@ -118,7 +118,7 @@ async def handle(
         _sandbox = _sandbox_policy_from_ctx(ctx)
         await ctx.permission_resolver.require_file_write(
             ctx.permission_decl, str(config_path), ctx.actor,
-            sandbox_policy=_sandbox,
+            sandbox_policy=_sandbox, bus=ctx.intervention_bus,
         )
 
     # ── 3. Write presentations.entries.<name> to .reyn/config/presentations.yaml ─
