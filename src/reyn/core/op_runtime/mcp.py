@@ -152,9 +152,18 @@ async def _execute(op: MCPIROp, ctx: OpContext) -> dict:
             media_blocks.append(item)
 
     is_error = bool(result.get("isError"))
+    # #3070: an errored tool call previously logged ONLY the boolean — the tool's
+    # own error text (e.g. "Error calling tool 'list_metadata': No module named
+    # 'apsw'") lived in `text` above but was never audited, so a probe failure
+    # was indistinguishable, from the P6 audit log alone, from any other error.
+    # `mcp_failed` (the transport-fault branch above) already carries `error`
+    # in full — this mirrors it for the "handshake ok, tool call itself errored"
+    # case, which is a DIFFERENT failure than a transport fault and was
+    # previously undiagnosable without re-running the call under a debugger.
     ctx.events.emit(
         "mcp_completed", server=op.server, tool=op.tool, is_error=is_error,
         media_block_count=len(media_blocks),
+        error=text if is_error else None,
     )
     out = {
         "kind": "mcp",

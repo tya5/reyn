@@ -172,23 +172,41 @@ steps:
               tool_args: !expr "{db_path: ctx.output_db, limit: 1}"
       collect:
         transform:
+          # #3070: a branch is dropped on ANY failure of its `tool` step --
+          # including the "handshake ok, the PROBE TOOL CALL ITSELF errored"
+          # case (e.g. a missing `pip install "reyn[builtin-rag]"` extra
+          # raising ImportError inside the server, or a bad tool arg) -- which
+          # is a DIFFERENT fact than "the MCP server is unreachable" and was
+          # previously indistinguishable from it. `get(pipe, "__branch_errors__.<name>",
+          # "")` (executor.py's PARALLEL_BRANCH_ERRORS_KEY) reads the real
+          # cause text a dropped branch's schema-validation-failure exception
+          # now carries (`_run_tool_step`'s tool-result detail, #3070) --
+          # empty string for a branch that never dropped.
           value: >-
-            {markitdown: get(pipe, "markitdown", null) != null,
-             chunker: get(pipe, "chunker", null) != null,
-             vectorstore: get(pipe, "vectorstore", null) != null}
+            {markitdown: {ok: get(pipe, "markitdown", null) != null, cause: get(pipe, "__branch_errors__.markitdown", "")},
+             chunker: {ok: get(pipe, "chunker", null) != null, cause: get(pipe, "__branch_errors__.chunker", "")},
+             vectorstore: {ok: get(pipe, "vectorstore", null) != null, cause: get(pipe, "__branch_errors__.vectorstore", "")}}
       output: reachable
   - transform:
       value: >-
-        [{name: "markitdown (" + ctx.markitdown_server + ")", ok: ctx.reachable.markitdown, remedy: ctx.remedies.markitdown},
-         {name: "chunker (" + ctx.chunker_server + ")", ok: ctx.reachable.chunker, remedy: ctx.remedies.chunker},
-         {name: "vectorstore (" + ctx.vectorstore_server + ")", ok: ctx.reachable.vectorstore, remedy: ctx.remedies.vectorstore}]
+        [{name: "markitdown (" + ctx.markitdown_server + ")", ok: ctx.reachable.markitdown.ok, remedy: ctx.remedies.markitdown, cause: ctx.reachable.markitdown.cause},
+         {name: "chunker (" + ctx.chunker_server + ")", ok: ctx.reachable.chunker.ok, remedy: ctx.remedies.chunker, cause: ctx.reachable.chunker.cause},
+         {name: "vectorstore (" + ctx.vectorstore_server + ")", ok: ctx.reachable.vectorstore.ok, remedy: ctx.remedies.vectorstore, cause: ctx.reachable.vectorstore.cause}]
       output: preflight_checks
   - transform:
       value: "count(filter(ctx.preflight_checks, c -> not c.ok)) == 0"
       output: preflight_ok
+  # The real per-server cause (#3070) is appended to its remedy, never
+  # replacing it: the remedy still names the concrete install/config step,
+  # and the cause is the EVIDENCE the failed branch actually reported --
+  # "install not done" vs "misconfigured" vs "transport fault" now read
+  # differently instead of collapsing into one static "is unreachable" string.
   - transform:
       value: >-
-        join(map(filter(ctx.preflight_checks, c -> not c.ok), c -> c.name + ": " + c.remedy), "\n\n")
+        join(map(filter(ctx.preflight_checks, c -> not c.ok),
+                 c -> c.name + ": " + c.remedy +
+                      join(map(filter([{fired: c.cause != "", text: "\n\n[actual error observed] " + c.cause}], f -> f.fired), f -> f.text), "")),
+             "\n\n")
       output: preflight_message
 
   # ---- gate: only proceed to the real ingest work if every server probed
