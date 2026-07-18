@@ -32,6 +32,13 @@ module's validation history above is about — see
 `tests/test_sandbox_seccomp_network_3030.py` for the representative-real-MCP-server
 probes (`reyn-rag-chunker` / `reyn-rag-vector-store` / `uvx markitdown-mcp`) this
 change specifically needed, on top of the synthetic echo/ls/cat workloads above.
+That risk materialized in review (#3059): the first x86_64 CI run RED'd because
+`_BASELINE` lacked the async-runtime event-loop startup primitives (`socketpair`
+for CPython's asyncio self-pipe, `eventfd` for Tokio's mio waker) EVERY stdio
+MCP server needs — a class the aarch64 completeness witness had not surfaced.
+Those are now in `_BASELINE` (the "Async-runtime event-loop startup primitives"
+block), witnessed by the x86_64 deny-gate job, not an aarch64 host whose green
+does not speak for the enforce arch.
 
 - aarch64 Linux (Ubuntu 24.04, kernel 6.8, glibc 2.39): live-validated —
   the filter loads and ordinary workloads (echo / ls / cat / python file
@@ -165,6 +172,46 @@ _BASELINE: list[str] = [
     # (plain os.execvp) does NOT exercise, which is why both callsites were
     # validated separately.
     "close_range",
+    # Async-runtime event-loop startup primitives (#3059, the #3030 fix's #2962
+    # blast radius made concrete). When #3030 made the filter load
+    # unconditionally, every stdio MCP server — all built on an async runtime —
+    # came under this default-deny allowlist for the FIRST time, and these were
+    # absent, so the runtime could not even start. Primary data (deny-gate job,
+    # x86_64/ubuntu-24.04, measured — NOT the aarch64 host the completeness
+    # witness first ran on, which is exactly why it missed these):
+    #   - `_socket.socketpair()` -> EPERM: CPython's asyncio event loop builds
+    #     its wakeup self-pipe (`_ssock`/`_csock`) with socketpair() at startup,
+    #     so FastMCP / anyio / asyncio servers (reyn-rag-chunker,
+    #     reyn-rag-vector-store) died in `initialize()` before serving anything.
+    #   - Tokio (uvx / Rust): "Failed building the Runtime: PermissionDenied" —
+    #     mio's I/O-driver waker uses eventfd on Linux, so `uvx markitdown-mcp`
+    #     could not construct its runtime.
+    #
+    # None of these can reach the network or escape the sandbox — each is a
+    # LOCAL-fd/IPC primitive, so adding them does NOT reopen #3030 (the network
+    # gate is `_NETWORK_SYSCALLS`, still gated on `policy.network`):
+    #   - socketpair: a connected pair in ONE address family, local only. On
+    #     Linux only AF_UNIX is supported (AF_INET/AF_INET6 -> EOPNOTSUPP), so it
+    #     cannot create a network socket — `socket`/`connect` stay network-gated.
+    #   - eventfd/eventfd2: a counter object fd for wakeups; no I/O target but
+    #     itself. (glibc's eventfd() issues the eventfd2 syscall; both named so
+    #     libseccomp resolves whichever the running libc uses.)
+    #   - timerfd_create/settime/gettime: a timer-expiration fd; delivers time,
+    #     not data. (Node/libuv async timers.)
+    #   - signalfd4: delivers pending signals as fd reads; no network.
+    #   - epoll_create: readiness monitor over fds the process already holds
+    #     (epoll_create1 is already baseline above; the legacy create is added
+    #     for runtimes/libc that still issue it).
+    # Derived as a CLASS, not one syscall at a time: fixing socketpair alone
+    # would only surface eventfd as the next deny (#3059 co-vet). Witnessed on
+    # x86_64 (the enforce arch) by the representative-server group in
+    # tests/test_sandbox_seccomp_network_3030.py + the deny-gate CI job, not on
+    # the aarch64 host whose green did not speak for x86_64.
+    "socketpair",
+    "eventfd", "eventfd2",
+    "timerfd_create", "timerfd_settime", "timerfd_gettime",
+    "signalfd4",
+    "epoll_create",
     # Replacing THIS process's image. Baseline — not gated on allow_subprocess.
     # Both callsites load the filter in a pre-exec position (LandlockBackend from
     # a preexec_fn, immediately before Popen's execve; landlock_exec from

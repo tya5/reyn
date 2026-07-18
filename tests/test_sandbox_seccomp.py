@@ -183,6 +183,49 @@ def test_syscall_allowlist_excludes_syscalls_landlock_cannot_govern() -> None:
     )
 
 
+def test_syscall_allowlist_includes_async_runtime_startup_primitives() -> None:
+    """Tier 2: the async-runtime event-loop startup primitives are baseline (#3059).
+
+    When #3030 made the seccomp filter load unconditionally, every stdio MCP
+    server (all built on an async runtime) came under this default-deny allowlist
+    for the first time — and `socketpair` (CPython asyncio self-pipe) / `eventfd`
+    (Tokio mio waker) were absent, so the runtime could not start. Measured on
+    x86_64 CI, not the aarch64 host the first completeness witness ran on. These
+    are local-fd/IPC primitives (no network reach), so they belong in the
+    baseline, not behind the network or subprocess gate.
+
+    Pinned as a platform-independent builder assertion so their removal is caught
+    even where Landlock is absent (macOS, `test.yml`) — the enforce-arch server
+    probes in `test_sandbox_seccomp_network_3030.py` witness they are SUFFICIENT;
+    this witnesses they are PRESENT.
+    """
+    from reyn.security.sandbox.backends.seccomp import _build_syscall_allowlist
+
+    # Present regardless of policy — an async runtime needs these to start under
+    # the most restrictive policy (network off, subprocess off).
+    result = _build_syscall_allowlist(SandboxPolicy())
+    for name in (
+        "socketpair",
+        "eventfd", "eventfd2",
+        "timerfd_create", "timerfd_settime", "timerfd_gettime",
+        "signalfd4",
+        "epoll_create",
+    ):
+        assert name in result, (
+            f"{name!r} must be baseline: an async runtime (asyncio/Tokio/libuv) "
+            "needs it to build its event loop, and #3030 now subjects every stdio "
+            "MCP server to this filter. Absent, the server cannot start (#3059)"
+        )
+
+    # …but they must NOT smuggle in network reach — the network syscalls stay
+    # gated on policy.network (socketpair is AF_UNIX-only at the kernel, so it is
+    # not one of them).
+    assert "socket" not in result, (
+        "socket must stay network-gated — adding the async-runtime local-fd "
+        "primitives must not reopen #3030"
+    )
+
+
 def test_syscall_allowlist_excludes_escape_hatches() -> None:
     """Tier 2: escape-hatch syscalls never allowed regardless of policy."""
     from reyn.security.sandbox.backends.seccomp import _build_syscall_allowlist

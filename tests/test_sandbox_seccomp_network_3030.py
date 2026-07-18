@@ -358,10 +358,18 @@ async def test_markitdown_mcp_starts_and_responds_under_seccomp_allowlist(
     Prewarms uvx's cache with an UNSANDBOXED run first (mirrors what a real
     operator's first `reyn` launch does): the sandboxed run below then needs no
     network even under ``network=False``, which is also the more realistic
-    steady-state an operator actually hits after day one. Skips (not fails) on
-    any network/uvx unavailability — that is an environment-reachability
-    concern (rag_ingest's own X1 pre-flight treats it the same way), orthogonal
-    to allowlist completeness.
+    steady-state an operator actually hits after day one.
+
+    ⚠ Skip discipline (#3059 co-vet — a skip must not MASK an allowlist gap).
+    Skips ONLY on genuine environment-reachability failure (uvx absent, PyPI
+    fetch blocked). A failure whose signature is a SANDBOX DENIAL — a seccomp
+    EPERM that stops the async runtime from even starting (`Operation not
+    permitted` / `PermissionDenied` / `socketpair` / Tokio "Failed building the
+    Runtime") — is the exact #2962 completeness bug this test exists to catch,
+    so it must FAIL, not skip. The first #3059 CI run skipped here on a Tokio
+    `eventfd` denial while telling the operator to "set network: true" — a local
+    IPC denial mis-reported as a network problem. This guard makes that a hard
+    failure.
     """
     from reyn.mcp.client import MCPClient
 
@@ -389,6 +397,15 @@ async def test_markitdown_mcp_starts_and_responds_under_seccomp_allowlist(
         "subprocess": True,
         "cwd": str(tmp_path),
     }
+    # A sandbox-denial signature = a seccomp EPERM killing the async runtime =
+    # the #2962 completeness bug. It must NOT be skipped as a network issue.
+    _SANDBOX_DENIAL_MARKERS = (
+        "Operation not permitted",
+        "PermissionDenied",
+        "PermissionError",
+        "socketpair",
+        "Failed building the Runtime",  # Tokio, on an eventfd/similar denial
+    )
     try:
         async with MCPClient(cfg) as client:
             tools = await client.list_tools()
@@ -400,9 +417,18 @@ async def test_markitdown_mcp_starts_and_responds_under_seccomp_allowlist(
                 "convert_to_markdown", {"uri": src.as_uri()}
             )
     except Exception as exc:  # noqa: BLE001
+        msg = repr(exc)
+        if any(marker in msg for marker in _SANDBOX_DENIAL_MARKERS):
+            pytest.fail(
+                f"markitdown-mcp was DENIED a syscall by the seccomp allowlist — "
+                f"a completeness gap (#2962's class), NOT a network problem, so "
+                f"it must fail rather than skip and must NOT tell the operator to "
+                f"enable network. Add the denied local-IPC syscall to `_BASELINE`: "
+                f"{msg}"
+            )
         pytest.skip(
-            f"markitdown-mcp did not start/respond in this environment "
-            f"(network-dependent uvx fetch): {exc!r}"
+            f"markitdown-mcp unreachable for a non-sandbox reason "
+            f"(uvx/PyPI/transport env), orthogonal to allowlist completeness: {msg}"
         )
     assert not result.get("isError"), (
         f"markitdown-mcp's real 'convert_to_markdown' tool call FAILED under "
