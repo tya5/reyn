@@ -104,7 +104,7 @@ Today a skill body is read raw with zero substitution — the only capability wi
 
 `${CLAUDE_*}` is honoured by **exactly one host** (Claude Code); no other agent expands it; there is **no vendor-neutral token** (LSP/DAP/MCP define none). Adopting it verbatim brand-locks to a competitor and buys no portability.
 
-- **Canonical**: `${REYN_PLUGIN_ROOT}` / `${REYN_SKILL_DIR}` / `${REYN_PROJECT_DIR}`, resolved via the existing `resolve_reyn_root()` (`runtime/reyn_repo.py`), as a layer **distinct from** the os.environ `expand_env` (config env-injection ≠ plugin/skill location).
+- **Canonical**: `${REYN_PLUGIN_ROOT}` / `${REYN_SKILL_DIR}` / `${REYN_PROJECT_DIR}`, as a layer **distinct from** the os.environ `expand_env` (config env-injection ≠ plugin/skill location). Two different value sources: `${REYN_PLUGIN_ROOT}` / `${REYN_SKILL_DIR}` are **anchor** locations (the plugin's / skill's own copied dir) — the anchoring uses reyn's dual-mode `resolve_reyn_root()` (`runtime/reyn_repo.py`) to find reyn's *own* install for a builtin plugin; `${REYN_PROJECT_DIR}` is **not** `resolve_reyn_root()` (that resolves reyn-the-project, not the operator's project) — it is a *dynamic* per-invocation value carried from the live session's workspace root and threaded through the expansion context (`PluginTokenContext`), matching §3.4's stable-location-vs-dynamic-param split.
 - **Alias `${CLAUDE_*}`** only in the code path that ingests a Claude-authored SKILL.md/plugin. Preserve the `SKILL_DIR` vs `PLUGIN_ROOT` distinction.
 - The **SKILL.md format** is the one genuine open standard (agentskills.io; adopted by Codex/Gemini/Cursor/Copilot) — honour as-is.
 

@@ -102,10 +102,13 @@ def _resolve_token_map(ctx: PluginTokenContext, *, alias_claude: bool) -> dict[s
 
 def _expand_str(value: str, token_map: dict[str, str]) -> str:
     def _replace(m: re.Match) -> str:
-        name = m.group(1)
+        # group(1) is the (\w+) capture — always present on a match (the
+        # pattern cannot match without it), so ``name`` is a concrete str.
+        name: str = m.group(1)
+        whole: str = m.group(0)
         # Unrecognised token (an expand_env var, a pipeline ctx param, an
         # unresolved dynamic param) is left as-is for a later expansion pass.
-        return token_map.get(name, m.group(0))
+        return token_map.get(name, whole)
 
     return _TOKEN_RE.sub(_replace, value)
 
