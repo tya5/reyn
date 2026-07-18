@@ -472,6 +472,18 @@ steps:
   - transform:
       value: "map(ctx.file_extensions, e -> ctx.input_path + '/**/*.' + e) + [ctx.input_path]"
       output: file_patterns
+  # #3095: `schema: PreflightCheck` (same status=="ok" gate X1 above already
+  # uses per MCP server) is what makes the `on_error: abort` above actually
+  # FIRE. Without it, a `tool:` step never raises on a tool-level failure
+  # (only a real transport/dispatch exception does) -- a `glob_files` call
+  # that hits `status: "denied"` (e.g. no file.read permission granted yet
+  # for `input_path`, the common case when it names a folder outside the
+  # reyn project root) returned NORMALLY with an error-shaped payload, so
+  # `on_error: abort` never engaged: the failed item flowed on as an
+  # ordinary "success" into the `fold` below, which assumes every item's
+  # `.structured` is a list -- and broke several steps downstream of the
+  # real failure with an opaque `list + dict` arithmetic error instead of a
+  # clean, decision-enabling "input_path is not readable" abort here.
   - for_each:
       over: ctx.file_patterns
       max_parallel: 4
@@ -479,6 +491,7 @@ steps:
       do:
         tool:
           name: glob_files
+          schema: PreflightCheck
           args:
             pattern: !expr item
             # EXPLICIT, load-bearing: glob_files defaults to 50 and truncates
@@ -491,7 +504,10 @@ steps:
   # Flatten one list per pattern into one flat file list. `structured` is
   # glob's real list of paths (#2994); before that it was newline-joined
   # text, which R1 (no `split`) could not consume at all -- the reason this
-  # step had to be a python shell-out.
+  # step had to be a python shell-out. Every item reaching here is now
+  # GUARANTEED `status: "ok"` (the `schema: PreflightCheck` gate above
+  # aborts the step on anything else), so `.structured` is guaranteed a
+  # list -- `acc + item.structured` can no longer see a dict.
   - fold:
       over: ctx.globbed
       init: "[]"
