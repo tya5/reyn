@@ -791,6 +791,50 @@ class _RetrievalBundle:
     action_usage_tracker: "object | None"
 
 
+@dataclass(frozen=True)
+class _RouterWaistBundle:
+    """#3082 Family 6a: the router-host WAIST — ``router_host``
+    (``RouterHostAdapter``, the concrete ``RouterLoopHost`` implementation
+    that aggregates ~40 already-constructed Session sub-components —
+    Families 1-5's outputs (``chat_events`` / ``journal`` / ``hot_reloader``
+    / ``hook_dispatcher`` / ``hook_bus`` / ``budget``) plus the many
+    params/early attrs set earlier in ``__init__`` (``task_backend`` /
+    ``permission_resolver`` / ``resolver`` / ``registry`` /
+    ``pipeline_registry`` / ``presentation_registry`` / ``file_*`` /
+    ``mcp_*`` / ``memory`` / …) — into a single object most later families
+    read through. Single-field bundle (mirrors ``_CostBundle``'s
+    one-unconditional-component shape) so it can grow without a call-site
+    signature change.
+
+    Pure output→input value object: :meth:`Session._build_router_waist` is
+    a byte-identical extraction of the construction that used to run inline
+    in ``Session.__init__`` at its ORIGINAL position (line ~1726, no-move —
+    every one of the ~40 deps is already set on ``self`` by that point) —
+    same object, same construction order, same ~40 args. Because
+    parameterizing ~40 explicit builder args is impractical (and Families
+    3-5 already establish the instance-method-reads-``self`` precedent for
+    eager sibling dependencies), this builder takes NO explicit params: it
+    reads every dependency as ``self._X`` / ``self.X`` directly, exactly as
+    the inline construction did.
+
+    ★ Three of the ~40 args are DEFERRED lambdas, NOT eager values —
+    ``live_session_id_fn`` / ``current_task_id_fn`` / ``turn_origin_fn``
+    resolve per-turn / post-construction Session state (``_current_task_id``
+    and ``_current_turn_origin`` are not even SET until the first turn
+    runs — eager-reading them here would raise ``AttributeError``, and even
+    where the attribute already exists at construction time,
+    e.g. ``_session_id``, the value can change afterward for spawned
+    sessions). These three (plus the bound method
+    ``record_spawned_task`` and the two tracker lambdas
+    ``delegation_tracker`` / ``agent_replies_tracker``, already
+    lambdas pre-extraction) are kept byte-identical, still closing over
+    ``self`` and resolved at CALL time — eager-izing any of them would
+    freeze a per-turn value at construction (the Family 3/5 deferred/eager
+    pitfall this builder must not repeat)."""
+
+    router_host: "RouterHostAdapter"
+
+
 class Session:
     def __init__(
         self,
@@ -1701,230 +1745,20 @@ class Session:
         # forward the reply upstream. None = not capturing (user-turn context).
         self._router_loop_agent_replies: list[str] | None = None
 
-        # #1092 PR-F1 (chat activation): build the chat axis's turn_budget engine
-        # off the RESOLVED model (#1172-safe — resolve self.model exactly as the
-        # CompactionEngine does; never hand the cosmetic class to the budget).
-        # try_build_* returns None (NOT raise) when the model's context is too
-        # small to satisfy the by-construction force-close floor (output_reserve +
-        # offload_cap < threshold) — a small-context model is a legitimate chat
-        # session that simply cannot support force-close, so it degrades to the
-        # pre-force-close path (no cap, no handoff) rather than failing __init__.
-        # ADDITIVE: the engine's sole consumer is
-        # RouterHostAdapter.wrap_up_output_reserve, inert until the F2 handoff
-        # calls _force_close_call — chat stays REACTIVE-only (see the property's
-        # docstring for the deliberate per-axis choice).
-        from reyn.services.turn_budget import try_build_default_turn_budget_engine
-        _chat_turn_budget_engine = try_build_default_turn_budget_engine(
-            self._resolver.resolve(self.model).model,
-            use_chars4=getattr(self._compaction, "use_chars4_estimate", False),
-        )
-
-        # PR-refactor-session-1 wave 3 PR3: RouterHostAdapter — concrete
-        # RouterLoopHost implementation extracted from Session. Constructed
-        # last in __init__ because it receives callbacks that reference self
-        # (all of which are bound methods, resolved at call time not here).
-        self._router_host = RouterHostAdapter(
-            # #2175: the safety.on_limit checkpoint + the shared per-run extension dict —
-            # so the spawn SEAM (agent_spawn / topology_create) routes spawn-limit exceeds
-            # through the same mode-driven framework as inter_agent_messaging's max_agent_hops.
-            handle_chat_limit_checkpoint=self._handle_chat_limit_checkpoint,
-            safety_extensions=self._safety_extensions,
-            # #1092 PR-F1: the chat turn_budget engine (resolved-model, asserted).
-            turn_budget_engine=_chat_turn_budget_engine,
-            # FP-0050 / #1822 S2: content-threat scan + fence config.
-            threat_scan=self._safety.threat_scan,
-            contextual_permission=self._contextual_permission,  # #1827 S3 → control-IR OpContext
-            hot_reloader=self._hot_reloader,  # #2073 S3 → per-session reload route (tool ctx)
-            # FP-0063 PC: the router-dispatched `embed` TOOL builds its OpContext from
-            # THIS host (RouterCallerState.op_context_factory = host.make_router_op_context),
-            # so this is the live interactive path's embedding-cost wiring. The gateway is
-            # the single recording entry point (session scope on itself; agent/project via
-            # the shared tracker it holds). Session's own _make_router_op_context serves
-            # file/MCP ops, which no embed op reaches.
-            budget_gateway=self._budget,
-            state_log=self._state_log,  # #2259 PR-1 → config generation emit from config ops
-            # #1953 dynamic-wire: thread the REAL session id + Task backend so
-            # router-dispatched task.* ops hit the assignee/requester CAS gate.
-            session_id=self._session_id,
-            task_backend=self._task_backend,
-            task_waker=self._task_waker,  # #2107: thread the TaskWaker into the router op-ctx
-            task_subscription_writer=self._task_subscription_writer,  # #2187 backend-master: the Task subscription WAL writer
-            hook_dispatcher=self._hook_dispatcher,  # #1800 slice 5c: task_start/end (router path)
-            hook_bus=self._hook_bus,  # Hook-Event Redesign Phase 5 part 2: emit_hook_event's publish target
-            agent_name=self.agent_name,
-            agent_role=self._agent_role,
-            output_language=self.output_language,
-            allowed_mcp=self._allowed_mcp,
-            permission_resolver=self._perm,
-            mcp_servers=self._mcp_servers,
-            project_context=self._project_context,
-            events=self._chat_events,
-            resolver=self._resolver,
-            memory=self._memory,
-            journal=self._journal,
-            agent_registry=self._registry,
-            # IS-5: the session's real (initially empty) PipelineRegistry —
-            # mirrors agent_registry above. Exposed via
-            # RouterHostAdapter.get_pipeline_registry() and read onto
-            # RouterCallerState.pipeline_registry by
-            # RouterLoop._build_router_caller_state.
-            pipeline_registry=self._pipeline_registry,
-            # FP-0054 PR-C: the session's PresentationRegistry — mirrors
-            # pipeline_registry above; the adapter threads its CURRENT snapshot into
-            # each router OpContext, and _reapply_presentations swaps both copies.
-            presentation_registry=self._presentation_registry,
-            # #2103 S1bc-exec: record a spawned session's sid→task (the trusted result
-            # header source) + read this session's LIVE sid (the cached session_id above
-            # is stale for spawned sessions, stamped post-construction) for the non-main
-            # spawn guard.
-            record_spawned_task=self.record_spawned_task,
-            live_session_id_fn=lambda: self._session_id,
-            # #1953 §16: the per-turn execution context (set in run_one_iteration),
-            # read at op-ctx-build time so a router task.create derives ownership.
-            current_task_id_fn=lambda: self._current_task_id,
-            # proposal 0060 Phase 1 (A7): mirrors current_task_id_fn exactly — a live
-            # callback (not a fixed init value) because turn_origin varies per turn.
-            turn_origin_fn=lambda: self._current_turn_origin,
-            agent_workspace_dir=self.workspace_dir,
-            file_read=self._file_read,
-            file_write=self._file_write,
-            file_delete=self._file_delete,
-            file_list_directory=self._file_list_directory,
-            file_regenerate_index=self._file_regenerate_index,
-            mcp_list_servers=self._mcp_list_servers,
-            mcp_list_tools=self._mcp_list_tools,
-            mcp_call_tool=self._mcp_call_tool,
-            # #2597 slice ②a: resources consumption (list/read/templates).
-            mcp_list_resources=self._mcp_list_resources,
-            mcp_list_resource_templates=self._mcp_list_resource_templates,
-            mcp_read_resource=self._mcp_read_resource,
-            # #2597 slice ②b: resource subscriptions.
-            mcp_subscribe_resource=self._mcp_subscribe_resource,
-            mcp_unsubscribe_resource=self._mcp_unsubscribe_resource,
-            # #2597 slice ②c: prompts consumption (list/get).
-            mcp_list_prompts=self._mcp_list_prompts,
-            mcp_get_prompt=self._mcp_get_prompt,
-            send_to_agent=self._send_to_agent,
-            put_outbox=self._put_outbox,
-            append_history=self._append_history,
-            delegation_tracker=lambda: self._router_loop_delegations,
-            agent_replies_tracker=lambda: self._router_loop_agent_replies,
-            universal_wrappers_enabled=self._action_retrieval.universal_wrappers_enabled,
-            action_embedding_index=self._action_embedding_index,
-            embedding_provider=self._embedding_provider,
-            embedding_model_class=self._embedding_model_class,
-            embedding_event_sink=self._embedding_event_sink,  # FP-0057 #2856 Part A: forwarded to make_router_op_context
-            # FP-0034 Phase 2 step 5: ActionUsageTracker for hot list.
-            action_usage_tracker=self._action_usage_tracker,
-            uncompacted_tool_call_records_fn=(
-                self._uncompacted_tool_call_records
-            ),
-            action_retrieval_config=self._action_retrieval,
-            available_skills=self._available_skills,  # #2548 PR-A
-            # FP-0034 Phase 2: sandbox backend for exec D14 visibility gate.
-            # #1417: gate on the INJECTED backend's real capability, not the
-            # reyn.yaml config STRING. The exec capability comes from the
-            # injected ``self._sandbox_backend`` instance (the SAME object used
-            # for actual exec at line 1847 / sandboxed_exec.py: ``ctx.sandbox_
-            # backend or get_default_backend(...)``); both injected types expose
-            # ``.name`` (DockerEnvironmentBackend.name="docker" / SandboxBackend
-            # .name). Without this, ``sandbox.backend=noop`` config + an injected
-            # exec backend (``--env-backend=docker``) would HIDE exec from
-            # discovery even though sandboxed_exec is functionally available
-            # (the construction-forwarding-gap: config string ≠ live instance).
-            # No injected instance → fall back to the config string (auto /
-            # host-default behaviour unchanged).
-            sandbox_backend=_exec_gate_backend_name(
-                self._sandbox_backend, self._sandbox_config
-            ),
-            # #187: the FS env-backend instance + container repo root + host-side
-            # state dir for the LIVE router OpContext Workspace (the registry
-            # file-dispatch factory). Same source as the chat OpContext (#1410).
-            environment_backend=self._environment_backend,
-            workspace_base_dir=self._workspace_base_dir,
-            workspace_state_dir=self._workspace_state_dir,
-            # #187 exec-seam (10th defect): the exec backend INSTANCE so the LIVE
-            # router's sandboxed_exec runs in the container repo, not the host
-            # seatbelt fallback. Same instance the legacy _make_router_op_context
-            # passes (4824); chat.py injects the SAME docker backend at both FS +
-            # exec seams (#1289 single-shared-sandbox). Distinct from the D14
-            # STRING above.
-            sandbox_backend_instance=self._sandbox_backend,
-            # #1339 / sandbox-model completion: thread the operator sandbox
-            # policy so make_router_op_context resolves a concrete agent-level
-            # policy onto the router OpContext (closes the chat-factory wiring gap).
-            sandbox_policy=(
-                self._sandbox_config.policy if self._sandbox_config is not None
-                else None
-            ),
-            # Issue #364 multi-modal cluster: media-size gate config.
-            multimodal_config=self._multimodal_config,
-            # FP-0055 / #2679: operator render_template output bounds → the router
-            # OpContext (the render_template op reads ctx.render_template_bounds).
-            render_template_bounds=self._render_template_bounds,
-            # #1652: reasoning config (display/continuity/recent_turns gates) +
-            # the bounded prior-reasoning section renderer (reads this session's
-            # history). The host exposes reasoning_display_enabled() /
-            # reasoning_continuity_enabled() / reasoning_continuity_section() to
-            # the router loop for emit-gating, persist-gating, and SP replay.
-            reasoning_config=self._reasoning,
-            reasoning_continuity_section_fn=self.reasoning_continuity_section,
-            # Issue #383 PR-C: shared MediaStore for image + tool-result storage.
-            media_store=self._media_store,
-            # #1128 size axis: per-turn tool-result cap/offload (dead-end #1).
-            # Late-bound method — the engine budgets it reads are computed by
-            # the time a tool result flows through router_loop at runtime.
-            cap_tool_result=self._cap_tool_result,
-            # #272 media axis: per-turn media budget (= cap − tool text tokens)
-            # so router_loop bounds the media follow-up (overflow media → ref).
-            media_followup_budget=self._media_followup_budget,
-            # tool-result-schema-redesign §5: gates build_offload_body's structured
-            # inline-size gate (STRUCTURED_INLINE_MAX_CHARS). Static per-session config,
-            # not a callable (unlike the two budgets above, which read live engine state).
-            offload_enabled=self._offload_config.enabled,
-            # #272/#1128 compact op: voluntary-compaction callback so the LLM-
-            # emittable `compact` control_ir op can compact chat history.
-            compact_now=self._compact_now_for_op,
-            # #272/#1128 context-size signal: live exact-token budget so the
-            # router SP can show the LLM the free window (header).
-            context_window_status=self.context_window_status,
-            # B25-S5-1: thread eager-build flag so RouterLoop awaits build
-            # before computing _search_visible on the first turn.
-            eager_embedding_build=self._eager_embedding_build,
-            # FP-0022 fix (#53): give the router OpContext a real
-            # InterventionBus so web_fetch / mcp install / mcp drop
-            # handlers can run their interactive (Layer 4) approval
-            # flow. The bus is built per make_router_op_context() call
-            # — short-lived, scoped to the chat_router turn, identical
-            # to what session._mcp_call_tool wires manually today.
-            # #2708 P3.2a: when this session is an ATTACHED pipeline driver (it carries a
-            # SpawnBridgeInterventionListener), the router intervention bus dispatches on the
-            # PARENT session's live-operator listener instead of the driver's own
-            # listener-less registry — so a pipeline-step ``ask_user`` reaches the operator
-            # blocked on the parent by construction (#2721), instead of silently auto-
-            # refusing. Non-driver / detached / ephemeral sessions (bridge is None) keep the
-            # self-bound bus, byte-identical. Mirror of the presentation_renderer_factory
-            # spawn-bridge below.
-            # #3049: single-sourced with the MCP op callers via
-            # ``_make_router_intervention_bus`` (bridge-aware — driver → parent, else
-            # self-bound) so router-op interventions resolve to the SAME surface
-            # regardless of which seam builds the OpContext.
-            intervention_bus_factory=self._make_router_intervention_bus,
-            # FP-0054 PR-B / #2708 P1: give the router OpContext a real PresentationRenderer
-            # so a `present` op reaches the surface's sink instead of PR-A's null surface.
-            # Built per make_router_op_context() call, mirroring the intervention_bus_factory
-            # above. The sink is obtained from the surface's declared PresentationConsumer
-            # (orphan-impossible: OutboxPresentationRenderer is constructible ONLY inside
-            # OutboxPresentationConsumer.sink) — bound to THIS Session via sink(self).
-            presentation_renderer_factory=lambda: self._presentation_consumer.sink(self),
-            # FP-0037 S2: yaml mtime watch needs the project root to resolve
-            # the 3 yaml scope tier paths. None falls back to user-global only.
-            project_root=getattr(self._registry, "_project_root", None),
-            # #1468: cooperative turn-cancel forwarding. The adapter's
-            # _is_turn_cancel_requested() forwards to RouterLoopDriver; run_loop
-            # checks it via getattr at each iteration boundary.
-            turn_cancel_fn=self._is_turn_cancel_requested,
-        )
+        # #3082 Family 6a: the router-host WAIST — RouterHostAdapter aggregates
+        # ~40 already-constructed Session sub-components (Families 1-5's
+        # outputs + params/early attrs set earlier in __init__) into a
+        # single object most later families read through. Byte-identical
+        # extraction — same object, same construction order, same ~40 args
+        # (including the 3 DEFERRED per-turn lambdas —
+        # live_session_id_fn / current_task_id_fn / turn_origin_fn — kept
+        # verbatim, still closing over self and resolved at call time, NOT
+        # eager-ized); unmoved (invoked HERE, at its ORIGINAL position —
+        # every dep is already set on self by this point). See
+        # _RouterWaistBundle / _build_router_waist's docstring for the full
+        # per-arg provenance (reproduced verbatim in the builder below).
+        _router_waist_bundle = self._build_router_waist()
+        self._router_host = _router_waist_bundle.router_host
 
         # #2073 S2: register the per-component hot-reload reapply seams now that the
         # sub-components they orchestrate (router_host etc.) exist. Each
@@ -4390,6 +4224,272 @@ class Session:
             action_embedding_index=action_embedding_index,
             action_usage_tracker=action_usage_tracker,
         )
+
+    def _build_router_waist(self) -> "_RouterWaistBundle":
+        """#3082 Family 6a: build the router-host WAIST — ``router_host``
+        (``RouterHostAdapter``, the concrete ``RouterLoopHost`` implementation
+        that aggregates ~40 already-constructed Session sub-components).
+
+        Byte-identical extraction of the construction sequence that used to
+        run inline in ``__init__`` at its ORIGINAL position (line ~1726,
+        no-move — every dep below is already set on ``self`` by this point)
+        — same object, same construction order, same ~40 args. This builder
+        takes NO explicit params (unlike Families 2-5, which thread one or a
+        few LOCAL ``__init__`` params/eager siblings explicitly): parameterizing
+        ~40 args is impractical, and every one of router_host's dependencies
+        is ALREADY an attribute on ``self`` (or a bound method / property) by
+        the time this builder runs — so, following the Family 3/5
+        instance-method precedent for eager sibling reads, this builder reads
+        every dependency as ``self._X`` / ``self.X`` directly, exactly as the
+        inline construction did.
+
+        ★ Three args are DEFERRED lambdas, NOT eager values —
+        ``live_session_id_fn`` / ``current_task_id_fn`` / ``turn_origin_fn``
+        keep resolving ``self._session_id`` / ``self._current_task_id`` /
+        ``self._current_turn_origin`` at CALL time, not here: both already
+        carry a pre-turn DEFAULT at construction (``_current_task_id`` is
+        ``None``, set at :1074; ``_current_turn_origin`` is
+        ``"auto_improvement"``, set at :1083 — both BEFORE this builder
+        runs), but both are then REASSIGNED per turn inside
+        ``run_one_iteration`` (far after ``__init__`` returns) — an
+        eager-captured value here would freeze the pre-turn default forever,
+        never seeing a real turn's task id / origin; ``live_session_id_fn``
+        is deferred because a spawned session's live session id can change
+        AFTER this constructor runs (the cached ``self._session_id`` read
+        here is stale for that case — see the inline comment above
+        ``record_spawned_task`` below). Eager-izing any of the three would
+        freeze a per-turn value at
+        construction time — the Family 3/5 deferred/eager pitfall repeated
+        here for a third and heavier family. ``record_spawned_task`` (a bound
+        method) and the two tracker lambdas ``delegation_tracker`` /
+        ``agent_replies_tracker`` are likewise kept verbatim, still closing
+        over ``self``.
+
+        PR-refactor-session-1 wave 3 PR3: RouterHostAdapter — concrete
+        RouterLoopHost implementation extracted from Session. Constructed
+        last in __init__ because it receives callbacks that reference self
+        (all of which are bound methods, resolved at call time not here)."""
+        # #1092 PR-F1 (chat activation): build the chat axis's turn_budget engine
+        # off the RESOLVED model (#1172-safe — resolve self.model exactly as the
+        # CompactionEngine does; never hand the cosmetic class to the budget).
+        # try_build_* returns None (NOT raise) when the model's context is too
+        # small to satisfy the by-construction force-close floor (output_reserve +
+        # offload_cap < threshold) — a small-context model is a legitimate chat
+        # session that simply cannot support force-close, so it degrades to the
+        # pre-force-close path (no cap, no handoff) rather than failing __init__.
+        # ADDITIVE: the engine's sole consumer is
+        # RouterHostAdapter.wrap_up_output_reserve, inert until the F2 handoff
+        # calls _force_close_call — chat stays REACTIVE-only (see the property's
+        # docstring for the deliberate per-axis choice).
+        from reyn.services.turn_budget import try_build_default_turn_budget_engine
+        _chat_turn_budget_engine = try_build_default_turn_budget_engine(
+            self._resolver.resolve(self.model).model,
+            use_chars4=getattr(self._compaction, "use_chars4_estimate", False),
+        )
+
+        router_host = RouterHostAdapter(
+            # #2175: the safety.on_limit checkpoint + the shared per-run extension dict —
+            # so the spawn SEAM (agent_spawn / topology_create) routes spawn-limit exceeds
+            # through the same mode-driven framework as inter_agent_messaging's max_agent_hops.
+            handle_chat_limit_checkpoint=self._handle_chat_limit_checkpoint,
+            safety_extensions=self._safety_extensions,
+            # #1092 PR-F1: the chat turn_budget engine (resolved-model, asserted).
+            turn_budget_engine=_chat_turn_budget_engine,
+            # FP-0050 / #1822 S2: content-threat scan + fence config.
+            threat_scan=self._safety.threat_scan,
+            contextual_permission=self._contextual_permission,  # #1827 S3 → control-IR OpContext
+            hot_reloader=self._hot_reloader,  # #2073 S3 → per-session reload route (tool ctx)
+            # FP-0063 PC: the router-dispatched `embed` TOOL builds its OpContext from
+            # THIS host (RouterCallerState.op_context_factory = host.make_router_op_context),
+            # so this is the live interactive path's embedding-cost wiring. The gateway is
+            # the single recording entry point (session scope on itself; agent/project via
+            # the shared tracker it holds). Session's own _make_router_op_context serves
+            # file/MCP ops, which no embed op reaches.
+            budget_gateway=self._budget,
+            state_log=self._state_log,  # #2259 PR-1 → config generation emit from config ops
+            # #1953 dynamic-wire: thread the REAL session id + Task backend so
+            # router-dispatched task.* ops hit the assignee/requester CAS gate.
+            session_id=self._session_id,
+            task_backend=self._task_backend,
+            task_waker=self._task_waker,  # #2107: thread the TaskWaker into the router op-ctx
+            task_subscription_writer=self._task_subscription_writer,  # #2187 backend-master: the Task subscription WAL writer
+            hook_dispatcher=self._hook_dispatcher,  # #1800 slice 5c: task_start/end (router path)
+            hook_bus=self._hook_bus,  # Hook-Event Redesign Phase 5 part 2: emit_hook_event's publish target
+            agent_name=self.agent_name,
+            agent_role=self._agent_role,
+            output_language=self.output_language,
+            allowed_mcp=self._allowed_mcp,
+            permission_resolver=self._perm,
+            mcp_servers=self._mcp_servers,
+            project_context=self._project_context,
+            events=self._chat_events,
+            resolver=self._resolver,
+            memory=self._memory,
+            journal=self._journal,
+            agent_registry=self._registry,
+            # IS-5: the session's real (initially empty) PipelineRegistry —
+            # mirrors agent_registry above. Exposed via
+            # RouterHostAdapter.get_pipeline_registry() and read onto
+            # RouterCallerState.pipeline_registry by
+            # RouterLoop._build_router_caller_state.
+            pipeline_registry=self._pipeline_registry,
+            # FP-0054 PR-C: the session's PresentationRegistry — mirrors
+            # pipeline_registry above; the adapter threads its CURRENT snapshot into
+            # each router OpContext, and _reapply_presentations swaps both copies.
+            presentation_registry=self._presentation_registry,
+            # #2103 S1bc-exec: record a spawned session's sid→task (the trusted result
+            # header source) + read this session's LIVE sid (the cached session_id above
+            # is stale for spawned sessions, stamped post-construction) for the non-main
+            # spawn guard.
+            record_spawned_task=self.record_spawned_task,
+            live_session_id_fn=lambda: self._session_id,
+            # #1953 §16: the per-turn execution context (set in run_one_iteration),
+            # read at op-ctx-build time so a router task.create derives ownership.
+            current_task_id_fn=lambda: self._current_task_id,
+            # proposal 0060 Phase 1 (A7): mirrors current_task_id_fn exactly — a live
+            # callback (not a fixed init value) because turn_origin varies per turn.
+            turn_origin_fn=lambda: self._current_turn_origin,
+            agent_workspace_dir=self.workspace_dir,
+            file_read=self._file_read,
+            file_write=self._file_write,
+            file_delete=self._file_delete,
+            file_list_directory=self._file_list_directory,
+            file_regenerate_index=self._file_regenerate_index,
+            mcp_list_servers=self._mcp_list_servers,
+            mcp_list_tools=self._mcp_list_tools,
+            mcp_call_tool=self._mcp_call_tool,
+            # #2597 slice ②a: resources consumption (list/read/templates).
+            mcp_list_resources=self._mcp_list_resources,
+            mcp_list_resource_templates=self._mcp_list_resource_templates,
+            mcp_read_resource=self._mcp_read_resource,
+            # #2597 slice ②b: resource subscriptions.
+            mcp_subscribe_resource=self._mcp_subscribe_resource,
+            mcp_unsubscribe_resource=self._mcp_unsubscribe_resource,
+            # #2597 slice ②c: prompts consumption (list/get).
+            mcp_list_prompts=self._mcp_list_prompts,
+            mcp_get_prompt=self._mcp_get_prompt,
+            send_to_agent=self._send_to_agent,
+            put_outbox=self._put_outbox,
+            append_history=self._append_history,
+            delegation_tracker=lambda: self._router_loop_delegations,
+            agent_replies_tracker=lambda: self._router_loop_agent_replies,
+            universal_wrappers_enabled=self._action_retrieval.universal_wrappers_enabled,
+            action_embedding_index=self._action_embedding_index,
+            embedding_provider=self._embedding_provider,
+            embedding_model_class=self._embedding_model_class,
+            embedding_event_sink=self._embedding_event_sink,  # FP-0057 #2856 Part A: forwarded to make_router_op_context
+            # FP-0034 Phase 2 step 5: ActionUsageTracker for hot list.
+            action_usage_tracker=self._action_usage_tracker,
+            uncompacted_tool_call_records_fn=(
+                self._uncompacted_tool_call_records
+            ),
+            action_retrieval_config=self._action_retrieval,
+            available_skills=self._available_skills,  # #2548 PR-A
+            # FP-0034 Phase 2: sandbox backend for exec D14 visibility gate.
+            # #1417: gate on the INJECTED backend's real capability, not the
+            # reyn.yaml config STRING. The exec capability comes from the
+            # injected ``self._sandbox_backend`` instance (the SAME object used
+            # for actual exec at line 1847 / sandboxed_exec.py: ``ctx.sandbox_
+            # backend or get_default_backend(...)``); both injected types expose
+            # ``.name`` (DockerEnvironmentBackend.name="docker" / SandboxBackend
+            # .name). Without this, ``sandbox.backend=noop`` config + an injected
+            # exec backend (``--env-backend=docker``) would HIDE exec from
+            # discovery even though sandboxed_exec is functionally available
+            # (the construction-forwarding-gap: config string ≠ live instance).
+            # No injected instance → fall back to the config string (auto /
+            # host-default behaviour unchanged).
+            sandbox_backend=_exec_gate_backend_name(
+                self._sandbox_backend, self._sandbox_config
+            ),
+            # #187: the FS env-backend instance + container repo root + host-side
+            # state dir for the LIVE router OpContext Workspace (the registry
+            # file-dispatch factory). Same source as the chat OpContext (#1410).
+            environment_backend=self._environment_backend,
+            workspace_base_dir=self._workspace_base_dir,
+            workspace_state_dir=self._workspace_state_dir,
+            # #187 exec-seam (10th defect): the exec backend INSTANCE so the LIVE
+            # router's sandboxed_exec runs in the container repo, not the host
+            # seatbelt fallback. Same instance the legacy _make_router_op_context
+            # passes (4824); chat.py injects the SAME docker backend at both FS +
+            # exec seams (#1289 single-shared-sandbox). Distinct from the D14
+            # STRING above.
+            sandbox_backend_instance=self._sandbox_backend,
+            # #1339 / sandbox-model completion: thread the operator sandbox
+            # policy so make_router_op_context resolves a concrete agent-level
+            # policy onto the router OpContext (closes the chat-factory wiring gap).
+            sandbox_policy=(
+                self._sandbox_config.policy if self._sandbox_config is not None
+                else None
+            ),
+            # Issue #364 multi-modal cluster: media-size gate config.
+            multimodal_config=self._multimodal_config,
+            # FP-0055 / #2679: operator render_template output bounds → the router
+            # OpContext (the render_template op reads ctx.render_template_bounds).
+            render_template_bounds=self._render_template_bounds,
+            # #1652: reasoning config (display/continuity/recent_turns gates) +
+            # the bounded prior-reasoning section renderer (reads this session's
+            # history). The host exposes reasoning_display_enabled() /
+            # reasoning_continuity_enabled() / reasoning_continuity_section() to
+            # the router loop for emit-gating, persist-gating, and SP replay.
+            reasoning_config=self._reasoning,
+            reasoning_continuity_section_fn=self.reasoning_continuity_section,
+            # Issue #383 PR-C: shared MediaStore for image + tool-result storage.
+            media_store=self._media_store,
+            # #1128 size axis: per-turn tool-result cap/offload (dead-end #1).
+            # Late-bound method — the engine budgets it reads are computed by
+            # the time a tool result flows through router_loop at runtime.
+            cap_tool_result=self._cap_tool_result,
+            # #272 media axis: per-turn media budget (= cap − tool text tokens)
+            # so router_loop bounds the media follow-up (overflow media → ref).
+            media_followup_budget=self._media_followup_budget,
+            # tool-result-schema-redesign §5: gates build_offload_body's structured
+            # inline-size gate (STRUCTURED_INLINE_MAX_CHARS). Static per-session config,
+            # not a callable (unlike the two budgets above, which read live engine state).
+            offload_enabled=self._offload_config.enabled,
+            # #272/#1128 compact op: voluntary-compaction callback so the LLM-
+            # emittable `compact` control_ir op can compact chat history.
+            compact_now=self._compact_now_for_op,
+            # #272/#1128 context-size signal: live exact-token budget so the
+            # router SP can show the LLM the free window (header).
+            context_window_status=self.context_window_status,
+            # B25-S5-1: thread eager-build flag so RouterLoop awaits build
+            # before computing _search_visible on the first turn.
+            eager_embedding_build=self._eager_embedding_build,
+            # FP-0022 fix (#53): give the router OpContext a real
+            # InterventionBus so web_fetch / mcp install / mcp drop
+            # handlers can run their interactive (Layer 4) approval
+            # flow. The bus is built per make_router_op_context() call
+            # — short-lived, scoped to the chat_router turn, identical
+            # to what session._mcp_call_tool wires manually today.
+            # #2708 P3.2a: when this session is an ATTACHED pipeline driver (it carries a
+            # SpawnBridgeInterventionListener), the router intervention bus dispatches on the
+            # PARENT session's live-operator listener instead of the driver's own
+            # listener-less registry — so a pipeline-step ``ask_user`` reaches the operator
+            # blocked on the parent by construction (#2721), instead of silently auto-
+            # refusing. Non-driver / detached / ephemeral sessions (bridge is None) keep the
+            # self-bound bus, byte-identical. Mirror of the presentation_renderer_factory
+            # spawn-bridge below.
+            # #3049: single-sourced with the MCP op callers via
+            # ``_make_router_intervention_bus`` (bridge-aware — driver → parent, else
+            # self-bound) so router-op interventions resolve to the SAME surface
+            # regardless of which seam builds the OpContext.
+            intervention_bus_factory=self._make_router_intervention_bus,
+            # FP-0054 PR-B / #2708 P1: give the router OpContext a real PresentationRenderer
+            # so a `present` op reaches the surface's sink instead of PR-A's null surface.
+            # Built per make_router_op_context() call, mirroring the intervention_bus_factory
+            # above. The sink is obtained from the surface's declared PresentationConsumer
+            # (orphan-impossible: OutboxPresentationRenderer is constructible ONLY inside
+            # OutboxPresentationConsumer.sink) — bound to THIS Session via sink(self).
+            presentation_renderer_factory=lambda: self._presentation_consumer.sink(self),
+            # FP-0037 S2: yaml mtime watch needs the project root to resolve
+            # the 3 yaml scope tier paths. None falls back to user-global only.
+            project_root=getattr(self._registry, "_project_root", None),
+            # #1468: cooperative turn-cancel forwarding. The adapter's
+            # _is_turn_cancel_requested() forwards to RouterLoopDriver; run_loop
+            # checks it via getattr at each iteration boundary.
+            turn_cancel_fn=self._is_turn_cancel_requested,
+        )
+        return _RouterWaistBundle(router_host=router_host)
 
     # ── #2073 S2: config hot-reload reapply seams (registered on the HotReloader) ──
 
