@@ -704,6 +704,35 @@ class _RecoveryBundle:
     journal: SnapshotJournal
 
 
+@dataclass(frozen=True)
+class _HookEventBundle:
+    """#3082 Family 3: the hook-event / reactivity spine — ``hook_bus``
+    (the per-Session HookBus, Phase 4a) → ``hook_dispatcher`` (the awaited
+    HookDispatcher every lifecycle dispatch() site routes through) →
+    ``fs_watcher`` (the session-owned filesystem watcher, #2608 H4) →
+    ``composer_registry`` (the composed:* Composers) → ``composed_consumer``
+    (the composed:*→Sync bridge) → ``hot_reloader`` (the IN-set config
+    hot-reloader). Pure output→input value object:
+    :meth:`Session._build_hook_event_bundle` is a byte-identical extraction of
+    the construction sequence that used to run inline in ``Session.__init__``
+    — same objects, same construction order, same args (eager sibling reads
+    use the builder's LOCAL variables; deferred lambdas keep resolving
+    ``self._hook_dispatcher`` / ``self._chat_events`` at call time, exactly as
+    before). This family CONSUMES Family 1's ``chat_events`` (the
+    ``hot_reloader`` reads it eagerly at construction), so the builder is
+    invoked AFTER the audit-event bundle is unpacked — the #3082 pipeline's
+    output→input order. Config-derivation (``_boot_in_set`` /
+    ``_composer_defs`` / ``_composed_schemas`` / ``_fs_watch_cfg``) is a
+    precursor that stays inline and is threaded in as explicit inputs."""
+
+    hook_bus: "HookBus"
+    hook_dispatcher: "HookDispatcher"
+    fs_watcher: "FsWatcher"
+    composer_registry: "ComposerRegistry"
+    composed_consumer: "ComposedEventConsumer"
+    hot_reloader: "HotReloader"
+
+
 class Session:
     def __init__(
         self,
@@ -1262,25 +1291,15 @@ class Session:
             elicitation_gate=lambda: self._interventions.has_active_listener(),
             agent_name=self.agent_name,
         )
-        # #2608 H4: the session-owned filesystem watcher (see
-        # reyn.runtime.fs_watcher's module docstring for the thread->async
-        # bridge design). Constructed unconditionally (cheap — no OS thread
-        # spun up here, only inside FsWatcher.start()); ``hook_trigger`` is the
-        # SAME deferred-lambda-over-``self._hook_dispatcher`` pattern H1 uses
-        # above (the dispatcher itself is built later in this __init__, but
-        # this lambda is never CALLED until FsWatcher.start() is awaited from
-        # ``run()``, long after __init__ has finished). ``paths``/
-        # ``debounce_seconds`` default to empty/0.2 when no ``fs_watch:``
-        # config block was resolved (mirrors ``hooks_config`` defaulting to []).
+        # #2608 H4 / #3082 Family 3: resolve the ``fs_watch:`` config block here
+        # (a precursor / builder input); the FsWatcher itself is constructed in
+        # ``_build_hook_event_bundle`` alongside the rest of the hook-event
+        # family. ``paths``/``debounce_seconds`` default to empty/0.2 when no
+        # ``fs_watch:`` config block was resolved (mirrors ``hooks_config``
+        # defaulting to []).
         from reyn.config.infra import FsWatchConfig
-        from reyn.runtime.fs_watcher import FsWatcher
         _fs_watch_cfg = (
             fs_watch_config if isinstance(fs_watch_config, FsWatchConfig) else FsWatchConfig()
-        )
-        self._fs_watcher = FsWatcher(
-            paths=_fs_watch_cfg.paths,
-            debounce_seconds=_fs_watch_cfg.debounce_seconds,
-            hook_trigger=lambda point, template_vars: self._hook_dispatcher.dispatch(point, template_vars),
         )
         self.output_language = output_language
         self._prompt_cache_enabled = prompt_cache_enabled
@@ -1426,26 +1445,12 @@ class Session:
         # restore_state.  Cleared (durably) after injection at the trigger turn.
         self._next_turn_context: list[dict] = []
 
-        # #1800 slice 5b: the awaited HookDispatcher. Hooks load from the resolved
-        # ``hooks:`` block; None/absent → empty registry → every dispatch() is a
-        # no-op (run-loop byte-identical to a hooks-free build). Constructed
-        # unconditionally so the 4 lifecycle dispatch() sites are uniform.
-        from reyn.hooks.bus import HookBus
-        from reyn.hooks.dispatcher import HookDispatcher
-        # Hook-Event Redesign Phase 4a (proposal 0059 §3.2/§3.3): one HookBus
-        # PER SESSION, constructed here alongside the HookDispatcher it feeds
-        # and never shared across sessions (§3.3 v1 = per-Session scope — no
-        # cross-session event observation/correlation). No subscriber ever
-        # attaches unless something explicitly calls ``session._hook_bus.
-        # subscribe()`` (nothing does yet in Phase 4a — the Composer, Phase
-        # 4b, is the first consumer) — until then this is a no-op alongside
-        # every dispatch() call (see HookBus.publish's zero-subscriber path).
-        # #2886: the same deferred-lambda emit_event sink threaded into
-        # HookDispatcher/Composer below (self._chat_events is assigned later
-        # in __init__; the lambda only resolves it at first-drop time, never
-        # at construction) — so a subscriber-queue drop is fail-visible via a
-        # metadata-only bus_subscriber_dropped P6 audit-event.
-        self._hook_bus = HookBus(emit_event=lambda et, **d: self._chat_events.emit(et, **d))
+        # #1800 slice 5b / #3082 Family 3: the HookBus + awaited HookDispatcher
+        # (+ fs_watcher / composers / hot_reloader) are constructed together in
+        # ``_build_hook_event_bundle`` (invoked below, after the Family 1
+        # chat_events assignment this family consumes). The config-derivation
+        # that feeds them — the startup hooks/composers layers, the boot IN-set,
+        # and the composer defs/schemas — stays inline here as builder inputs.
         # #2073 S2b: hooks are LAYERED — the reyn.yaml startup layer (OUT-set,
         # captured once here, NEVER re-read on a reload) ∪ the .reyn/hooks.yaml
         # runtime layer (IN-set, hot-reloadable; the LLM-op writes it in S3).
@@ -1487,70 +1492,6 @@ class Session:
         self._composed_schemas: "dict[str, frozenset[str]]" = {
             d.emit_kind: frozenset({"inputs", "correlation_key"}) for d in self._composer_defs
         }
-        self._hook_dispatcher = HookDispatcher(
-            self._build_hook_registry(_boot_in_set),
-            put_inbox=self._put_inbox,
-            stage_next_turn_context=self._stage_next_turn_context,
-            # #2072: route a push whose `session` names a different session to THAT session
-            # (cross-session); `current_session_id` keeps a self/unnamed push local.
-            cross_session_put=self._cross_session_hook_put,
-            current_session_id=self._session_id,
-            # #2608 H3: launch a registered pipeline from a hook's
-            # pipeline_launch action (async/detached start_pipeline_run) —
-            # the closure resolves against THIS session's own PipelineRegistry
-            # / AgentRegistry / StateLog / (agent, sid) identity.
-            launch_pipeline=self._launch_pipeline_from_hook,
-            # #2285: per-session hook applicability gate — skip a hook this session disabled. A
-            # callable (not a snapshot) so a toggle applies live to the next dispatch.
-            is_hook_disabled=lambda hook: hook.name is not None and hook.name in self._disabled_hooks,
-            sandbox_config=self._sandbox_config,
-            sandbox_backend=self._sandbox_backend,
-            # #2095: route a not-yet-allowlisted shell-hook's consent prompt
-            # through this session's RequestBus, but ONLY when a live
-            # intervention listener is attached (TUI / web / A2A-override) —
-            # i.e. a surface that will actually answer. ``has_active_listener``
-            # is checked per-dispatch (listeners attach/detach after this
-            # construction: TUI mount, A2A request windows). Plain mcp-serve and
-            # headless (no listener) → the dispatcher passes consent_bus=None →
-            # the runner's REYN_ACCEPT_HOOKS / fail-closed path, and ``reyn run``
-            # on a TTY (no listener) → the runner's stdin prompt — both
-            # byte-identical to pre-#2095.
-            consent_bus=self.as_request_bus(),
-            # Lambda defers the lookup: ``self._interventions`` is constructed
-            # below this point, and the gate is only called at dispatch time.
-            consent_gate=lambda: self._interventions.has_active_listener(),
-            # #2095 P3: P6-event sink so an auto-run (allowlisted) shell hook
-            # surfaces in the events tab instead of being a silent side-effect.
-            # Lambda defers ``self._chat_events`` (assigned below this point);
-            # only called at dispatch time.
-            emit_event=lambda et, **d: self._chat_events.emit(et, **d),
-            # Phase 4a: broadcast every dispatched HookEvent to this session's
-            # own bus, independently of the Sync hooks_for() loop above.
-            bus=self._hook_bus,
-        )
-        # Hook-Event Redesign Phase 4b/5 (#2880/#2881): the Composer definitions
-        # (``self._composer_defs``, built above — ahead of the hook registry,
-        # #2889) + the composed:*->Sync consumer bridge. Neither is STARTED
-        # here (starting means spawning background asyncio tasks, which
-        # belongs in ``run()``, this session's async entry point —
-        # construction here is synchronous); `run()` calls
-        # `self._composer_registry.start()` / `self._composed_consumer.
-        # start()` once. `stop()`ed in `run()`'s shutdown `finally` (mirrors
-        # the FsWatcher start/stop shape).
-        from reyn.hooks.composed_consumer import ComposedEventConsumer
-        from reyn.hooks.composer import Composer, ComposerRegistry
-        self._composer_registry = ComposerRegistry(
-            composers=[
-                Composer(
-                    d, bus=self._hook_bus,
-                    emit_event=lambda et, **kw: self._chat_events.emit(et, **kw),
-                )
-                for d in self._composer_defs
-            ],
-        )
-        self._composed_consumer = ComposedEventConsumer(
-            bus=self._hook_bus, dispatcher=self._hook_dispatcher,
-        )
         # #2073 S4: track the RUNTIME (.reyn/cron.yaml) cron job names so the cron
         # reapply seam can unschedule jobs removed from the runtime file WITHOUT
         # touching startup (reyn.yaml) jobs (the same startup/runtime layering as
@@ -1604,6 +1545,37 @@ class Session:
         self._event_store = _audit_bundle.event_store
         self._chat_events = _audit_bundle.chat_events
         self._otel_exporter = _audit_bundle.otel_exporter
+        # #3082 Family 3 (hook-event / reactivity): hook_bus -> hook_dispatcher
+        # -> fs_watcher -> composer_registry -> composed_consumer -> hot_reloader
+        # extracted into _build_hook_event_bundle. Byte-identical extraction —
+        # same objects, same construction order, same args as the inline
+        # sequence this replaced. Invoked HERE, right after the Family 1
+        # chat_events assignment above, because this family CONSUMES chat_events:
+        # hot_reloader reads it EAGERLY at construction (``events=chat_events``),
+        # and hook_bus / hook_dispatcher / the Composers emit through deferred
+        # ``self._chat_events`` lambdas. The config-derivation this builder
+        # takes as inputs (_boot_in_set / _composer_defs / _fs_watch_cfg) is a
+        # precursor already resolved above. See _HookEventBundle / the builder's
+        # docstring for the eager-vs-deferred sibling-reference split.
+        _hook_bundle = self._build_hook_event_bundle(
+            _boot_in_set,
+            self._composer_defs,
+            _fs_watch_cfg,
+            self._chat_events,
+            self._registry,
+            self._session_id,
+        )
+        self._hook_bus = _hook_bundle.hook_bus
+        self._hook_dispatcher = _hook_bundle.hook_dispatcher
+        self._fs_watcher = _hook_bundle.fs_watcher
+        self._composer_registry = _hook_bundle.composer_registry
+        self._composed_consumer = _hook_bundle.composed_consumer
+        self._hot_reloader = _hook_bundle.hot_reloader
+        # #2073 S3: publish as the process-wide active reloader so the hooks-write
+        # LLM-op can request_reload after writing .reyn/hooks.yaml (mirrors
+        # set_active_scheduler). Multi-session = last-registered wins (cron caveat).
+        from reyn.runtime.hot_reload import set_active_hot_reloader
+        set_active_hot_reloader(self._hot_reloader)
         # #2103 S1bc-exec: sid → original-task record for sessions THIS session spawned.
         # When a spawned session's result routes back, the result header renders
         # ``task=<the spawner's OWN request>`` from THIS trusted record (keyed by the
@@ -1616,18 +1588,6 @@ class Session:
         # agents don't accumulate display noise.
         self.is_attached: bool = False
 
-        # #2073 S1: the config hot-reloader. Reads ONLY the IN-set (.reyn/*.yaml);
-        # the OUT-set (reyn.yaml) is restart-only. Applies at the turn_end safe-point
-        # (apply_pending below). Per-component reapply seams are registered in S2.
-        from reyn.runtime.hot_reload import HotReloader, set_active_hot_reloader
-        self._hot_reloader = HotReloader(
-            project_root=getattr(self._registry, "_project_root", None) or Path.cwd(),
-            events=self._chat_events,
-        )
-        # #2073 S3: publish as the process-wide active reloader so the hooks-write
-        # LLM-op can request_reload after writing .reyn/hooks.yaml (mirrors
-        # set_active_scheduler). Multi-session = last-registered wins (cron caveat).
-        set_active_hot_reloader(self._hot_reloader)
         # #1669: publish this session's EventLog as the ambient sink for the LLM
         # acompletion chokepoint, so every in-session LLM call emits an observable
         # `llm_request` event (non-message params) without threading events through
@@ -4088,6 +4048,176 @@ class Session:
         return _RecoveryBundle(
             generation_store=generation_store,
             journal=journal,
+        )
+
+    # ── #3082 Family 3: hook-event / reactivity bundle builder ──
+
+    def _build_hook_event_bundle(
+        self,
+        boot_in_set: "dict",
+        composer_defs: list,
+        fs_watch_cfg: "object",
+        chat_events: "EventLog",
+        registry: "AgentRegistry | None",
+        session_id: str,
+    ) -> "_HookEventBundle":
+        """#3082 Family 3: build the hook-event / reactivity spine —
+        ``hook_bus`` → ``hook_dispatcher`` → ``fs_watcher`` →
+        ``composer_registry`` → ``composed_consumer`` → ``hot_reloader``, in
+        dependency order.
+
+        Byte-identical extraction of the sequence that used to run inline in
+        ``__init__`` — same objects, same construction order, same args. The
+        subtlety this family carries: eager sibling references use this
+        builder's LOCAL variables, while deferred lambdas keep resolving
+        ``self.*`` at CALL time exactly as before. Concretely — the
+        HookDispatcher's ``bus=``, the ComposedEventConsumer's ``bus=`` /
+        ``dispatcher=``, and each Composer's ``bus=`` are read AT
+        construction, before ``__init__`` unpacks the bundle onto ``self``, so
+        they must read the local ``hook_bus`` / ``hook_dispatcher``; whereas
+        fs_watcher's ``hook_trigger`` and every ``emit_event`` sink are
+        lambdas that fire only from ``run()`` / dispatch (long after
+        __init__), so they keep resolving ``self._hook_dispatcher`` /
+        ``self._chat_events`` unchanged.
+
+        Placement (call-site in ``__init__``): this family is built AFTER the
+        Family 1 audit-event bundle because it CONSUMES ``chat_events`` —
+        ``hot_reloader`` reads it EAGERLY (``events=chat_events``). That is the
+        #3082 pipeline's output→input order (Family 1 → Family 3), and it is
+        also byte-identical to the original inline code, where the
+        hot_reloader was likewise constructed after the ``chat_events`` EventLog.
+
+        Config-derivation is a precursor threaded in explicitly rather than
+        folded in: ``boot_in_set`` (the IN-set — ALSO read by cron, so it must
+        stay a shared precursor, not a hook-only concern), ``composer_defs``
+        (the resolved ComposerDefs — ALSO the source of ``_composed_schemas``),
+        and ``fs_watch_cfg`` (the resolved FsWatchConfig). ``registry`` supplies
+        the hot-reloader's project_root; ``session_id`` is the dispatcher's
+        cross-session-routing self-id.
+
+        None of the six constructors (nor FsWatcher's inner FsIngressAdapter)
+        starts a thread / task / observer — each just stores its args
+        (FsWatcher keeps ``_observer=None`` / ``_started=False``;
+        ComposerRegistry / ComposedEventConsumer keep ``_tasks=[]`` /
+        ``_task=None`` until ``start()`` is called from ``run()``), so gathering
+        them here (moving the FsWatcher / HookBus constructions down from their
+        former, earlier positions) re-times no side effect."""
+        from reyn.hooks.bus import HookBus
+        from reyn.hooks.composed_consumer import ComposedEventConsumer
+        from reyn.hooks.composer import Composer, ComposerRegistry
+        from reyn.hooks.dispatcher import HookDispatcher
+        from reyn.runtime.fs_watcher import FsWatcher
+        from reyn.runtime.hot_reload import HotReloader
+        # Hook-Event Redesign Phase 4a (proposal 0059 §3.2/§3.3): one HookBus
+        # PER SESSION, constructed here alongside the HookDispatcher it feeds
+        # and never shared across sessions (§3.3 v1 = per-Session scope — no
+        # cross-session event observation/correlation). No subscriber ever
+        # attaches unless something explicitly calls ``session._hook_bus.
+        # subscribe()`` (nothing does yet in Phase 4a — the Composer, Phase
+        # 4b, is the first consumer) — until then this is a no-op alongside
+        # every dispatch() call (see HookBus.publish's zero-subscriber path).
+        # #2886: the same deferred-lambda emit_event sink threaded into
+        # HookDispatcher/Composer below — the lambda resolves ``self._chat_events``
+        # only at first-drop time, never at construction — so a subscriber-queue
+        # drop is fail-visible via a metadata-only bus_subscriber_dropped P6
+        # audit-event.
+        hook_bus = HookBus(emit_event=lambda et, **d: self._chat_events.emit(et, **d))
+        # #1800 slice 5b: the awaited HookDispatcher. Hooks load from the resolved
+        # ``hooks:`` block; None/absent → empty registry → every dispatch() is a
+        # no-op (run-loop byte-identical to a hooks-free build). Constructed
+        # unconditionally so the 4 lifecycle dispatch() sites are uniform.
+        hook_dispatcher = HookDispatcher(
+            self._build_hook_registry(boot_in_set),
+            put_inbox=self._put_inbox,
+            stage_next_turn_context=self._stage_next_turn_context,
+            # #2072: route a push whose `session` names a different session to THAT session
+            # (cross-session); `current_session_id` keeps a self/unnamed push local.
+            cross_session_put=self._cross_session_hook_put,
+            current_session_id=session_id,
+            # #2608 H3: launch a registered pipeline from a hook's
+            # pipeline_launch action (async/detached start_pipeline_run) —
+            # the closure resolves against THIS session's own PipelineRegistry
+            # / AgentRegistry / StateLog / (agent, sid) identity.
+            launch_pipeline=self._launch_pipeline_from_hook,
+            # #2285: per-session hook applicability gate — skip a hook this session disabled. A
+            # callable (not a snapshot) so a toggle applies live to the next dispatch.
+            is_hook_disabled=lambda hook: hook.name is not None and hook.name in self._disabled_hooks,
+            sandbox_config=self._sandbox_config,
+            sandbox_backend=self._sandbox_backend,
+            # #2095: route a not-yet-allowlisted shell-hook's consent prompt
+            # through this session's RequestBus, but ONLY when a live
+            # intervention listener is attached (TUI / web / A2A-override) —
+            # i.e. a surface that will actually answer. ``has_active_listener``
+            # is checked per-dispatch (listeners attach/detach after this
+            # construction: TUI mount, A2A request windows). Plain mcp-serve and
+            # headless (no listener) → the dispatcher passes consent_bus=None →
+            # the runner's REYN_ACCEPT_HOOKS / fail-closed path, and ``reyn run``
+            # on a TTY (no listener) → the runner's stdin prompt — both
+            # byte-identical to pre-#2095.
+            consent_bus=self.as_request_bus(),
+            # Lambda defers the lookup: ``self._interventions`` is constructed
+            # later in ``__init__`` (after this builder returns), and the gate is
+            # only called at dispatch time.
+            consent_gate=lambda: self._interventions.has_active_listener(),
+            # #2095 P3: P6-event sink so an auto-run (allowlisted) shell hook
+            # surfaces in the events tab instead of being a silent side-effect.
+            # Lambda defers ``self._chat_events`` resolution to dispatch time.
+            emit_event=lambda et, **d: self._chat_events.emit(et, **d),
+            # Phase 4a: broadcast every dispatched HookEvent to this session's
+            # own bus, independently of the Sync hooks_for() loop above.
+            bus=hook_bus,
+        )
+        # #2608 H4: the session-owned filesystem watcher (see
+        # reyn.runtime.fs_watcher's module docstring for the thread->async
+        # bridge design). Constructed unconditionally (cheap — no OS thread
+        # spun up here, only inside FsWatcher.start()); ``hook_trigger`` is the
+        # SAME deferred-lambda-over-``self._hook_dispatcher`` pattern H1 uses
+        # (the dispatcher is unpacked onto ``self`` after this builder returns,
+        # but this lambda is never CALLED until FsWatcher.start() is awaited from
+        # ``run()``, long after __init__ has finished). ``paths``/
+        # ``debounce_seconds`` default to empty/0.2 when no ``fs_watch:``
+        # config block was resolved (mirrors ``hooks_config`` defaulting to []).
+        fs_watcher = FsWatcher(
+            paths=fs_watch_cfg.paths,
+            debounce_seconds=fs_watch_cfg.debounce_seconds,
+            hook_trigger=lambda point, template_vars: self._hook_dispatcher.dispatch(point, template_vars),
+        )
+        # Hook-Event Redesign Phase 4b/5 (#2880/#2881): the Composer definitions
+        # (``composer_defs``, built above — ahead of the hook registry, #2889) +
+        # the composed:*->Sync consumer bridge. Neither is STARTED here (starting
+        # means spawning background asyncio tasks, which belongs in ``run()``,
+        # this session's async entry point — construction here is synchronous);
+        # `run()` calls `self._composer_registry.start()` / `self.
+        # _composed_consumer.start()` once. `stop()`ed in `run()`'s shutdown
+        # `finally` (mirrors the FsWatcher start/stop shape).
+        composer_registry = ComposerRegistry(
+            composers=[
+                Composer(
+                    d, bus=hook_bus,
+                    emit_event=lambda et, **kw: self._chat_events.emit(et, **kw),
+                )
+                for d in composer_defs
+            ],
+        )
+        composed_consumer = ComposedEventConsumer(
+            bus=hook_bus, dispatcher=hook_dispatcher,
+        )
+        # #2073 S1: the config hot-reloader. Reads ONLY the IN-set (.reyn/*.yaml);
+        # the OUT-set (reyn.yaml) is restart-only. Applies at the turn_end safe-point
+        # (apply_pending below). Per-component reapply seams are registered in S2.
+        # Reads ``chat_events`` EAGERLY (this is why the family is built after the
+        # Family 1 bundle) and ``registry`` for its project_root.
+        hot_reloader = HotReloader(
+            project_root=getattr(registry, "_project_root", None) or Path.cwd(),
+            events=chat_events,
+        )
+        return _HookEventBundle(
+            hook_bus=hook_bus,
+            hook_dispatcher=hook_dispatcher,
+            fs_watcher=fs_watcher,
+            composer_registry=composer_registry,
+            composed_consumer=composed_consumer,
+            hot_reloader=hot_reloader,
         )
 
     # ── #2073 S2: config hot-reload reapply seams (registered on the HotReloader) ──
