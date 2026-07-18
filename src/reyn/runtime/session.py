@@ -835,6 +835,98 @@ class _RouterWaistBundle:
     router_host: "RouterHostAdapter"
 
 
+@dataclass(frozen=True)
+class _HistoryCompactionBundle:
+    """#3082 Family 6b: the history-compaction chain — ``history_buffer``
+    (``RouterHistoryBuffer``), ``compaction_controller``
+    (``CompactionController`` wrapping a ``CompactionEngine``), and
+    ``budget_advisor`` (``ContextBudgetAdvisor``). Family 6a
+    (``router_host``, the WAIST) was extracted separately (#3113) and is
+    NOT touched here — this builder only reads it as an already-built
+    cross-family dependency (``self._router_host``).
+
+    ★ Bidirectional circular dependency between ``history_buffer`` and
+    ``compaction_controller``, both directions preserved verbatim:
+    ``compaction_controller``'s inner ``CompactionEngine`` needs
+    ``history_buffer.build_system_prompt`` (called during
+    ``recompute_budgets()`` at ``CompactionEngine`` construction time), so
+    ``history_buffer`` must exist FIRST — but ``history_buffer`` also needs
+    a (circular) reference to ``compaction_controller`` for its own
+    ``force_compact_now`` path. The pre-extraction code broke this cycle
+    with a None-then-patch: construct ``history_buffer`` with
+    ``compaction_controller=None``, construct ``compaction_controller``
+    (reading ``history_buffer.build_system_prompt``, already available),
+    then patch ``history_buffer._compaction_controller =
+    compaction_controller`` once both exist. The builder reproduces this
+    sequence byte-identically, entirely with LOCAL variables (see below).
+
+    ★★ Why LOCAL, not ``self._history_buffer`` — the crash this builder
+    must avoid: ``self._history_buffer`` is assigned by ``__init__`` only
+    AFTER this builder RETURNS (unpacking the bundle). Reading
+    ``self._history_buffer`` from INSIDE this builder — e.g. for
+    ``system_prompt_provider`` or the patch line — would raise
+    ``AttributeError`` (the attribute does not exist yet). Every reference
+    among this family's OWN three components (history_buffer ↔
+    compaction_controller ↔ budget_advisor) is therefore threaded through
+    the builder's LOCAL variables (``history_buffer`` /
+    ``compaction_controller``), never ``self._X``. Three reference
+    classes, judged one at a time:
+      - **intra-6b eager** (this family's own components referencing each
+        other at CONSTRUCTION time): LOCAL variable —
+        ``system_prompt_provider=history_buffer.build_system_prompt``, the
+        patch line, ``compaction_controller=compaction_controller`` and
+        ``history_fn=history_buffer.build_history`` on ``budget_advisor``.
+      - **deferred** (a lambda resolved at CALL time, long after
+        ``__init__`` returns, by which point ``self._history_buffer`` IS
+        set): kept as ``self.*`` — ``model_fn=lambda:
+        self._resolver.resolve(self.model).model`` and
+        ``history_access=lambda: self.history`` (the latter reaches
+        ``history_buffer`` indirectly via ``self.history``, once it
+        exists).
+      - **cross-family** (Families 1/5/6a's already-built outputs, or
+        early ``__init__`` params/config, all set on ``self`` before this
+        builder runs): kept as ``self._X`` — ``self._chat_events``
+        (Family 1), ``self._router_host`` (Family 6a), ``self._resolver``
+        / ``self._compaction`` / ``self._media_store`` /
+        ``self._offload_config`` / ``self._budget_tracker`` /
+        ``self._safety`` / ``self._latest_summary`` /
+        ``self._action_retrieval`` / ``self._non_interactive`` /
+        ``self._reasoning`` / ``self._active_branch_history`` /
+        ``self._append_history`` / ``self.agent_name``.
+
+    ``merge_action_usage`` (the ``_merge_action_usage_from_candidates``
+    closure, defined in ``__init__`` immediately before this builder is
+    called, at its original position — it is not itself one of this
+    family's three components, so it is NOT moved into the builder body)
+    is threaded through as an explicit LOCAL param, mirroring Family
+    2/4's pattern of passing a ``__init__``-local value the builder
+    cannot reach via ``self``.
+
+    ★ ``budget_advisor`` UP-move: originally constructed AFTER
+    ``InterAgentMessaging`` (Family 8) at line ~1893; this builder
+    constructs it BEFORE ``InterAgentMessaging`` (which stays untouched,
+    still constructed directly in ``__init__`` right after this builder
+    returns) so the whole history-compaction chain — including the
+    forward-patch — lands as one contiguous builder call. Safe because
+    every one of ``budget_advisor``'s dependencies (``compaction_controller``
+    / ``history_buffer`` / ``media_store`` / ``offload_config``, all
+    LOCAL-or-cross-family-available at this point) is already resolved,
+    nothing between the old and new position reads ``budget_advisor``, and
+    ``InterAgentMessaging`` does not depend on any of this family's three
+    components.
+
+    Pure output→input value object: :meth:`Session._build_history_compaction_bundle`
+    is a byte-identical extraction of the construction sequence that used
+    to run inline in ``Session.__init__`` at its ORIGINAL position (line
+    ~1797, no-move — every cross-family dep is already set on ``self`` by
+    this point, since ``history_buffer`` eager-depends on Family 6a's
+    ``router_host``)."""
+
+    history_buffer: "RouterHistoryBuffer"
+    compaction_controller: "CompactionController"
+    budget_advisor: "ContextBudgetAdvisor"
+
+
 class Session:
     def __init__(
         self,
@@ -1789,66 +1881,20 @@ class Session:
             chars4_mode=self._compaction.use_chars4_estimate,
         )
 
-        # session.py refactor PR-2: RouterHistoryBuffer must exist before
-        # CompactionController so that system_prompt_provider (called during
-        # CompactionEngine.recompute_budgets() at construction time) resolves.
-        # compaction_controller=None here; patched below after construction.
-        from reyn.runtime.services.router_history_buffer import RouterHistoryBuffer
-        self._history_buffer = RouterHistoryBuffer(
-            history_fn=self._active_branch_history,
-            compaction=self._compaction,
-            compaction_controller=None,  # patched after CompactionController below
-            # #1752: live resolved model — a /model override changes the context
-            # window, so resolve the active class → litellm string each call
-            # instead of caching the construction-time model.
-            model_fn=lambda: self._resolver.resolve(self.model).model,
-            events=self._chat_events,
-            media_store=self._media_store,
-            router_host=self._router_host,
-            action_retrieval=self._action_retrieval,
-            non_interactive=self._non_interactive,
-            reasoning=self._reasoning,  # #1652/② native reasoning re-attach + bound
-        )
-
-        self._compaction_controller = CompactionController(
-            event_log=self._chat_events,
-            config=self._compaction,
-            # FP-0050/#1822 S3 (#1820): secret-redact turn text before summary.
-            threat_scan=self._safety.threat_scan,
-            history_access=lambda: self.history,
-            latest_summary=self._latest_summary,
-            compaction_engine=CompactionEngine(
-                # #1172: pass a model CLASS (like "standard") plus the resolver —
-                # CompactionEngine resolves to a litellm string by construction.
-                # Without resolution the engine would hand "standard" straight to
-                # litellm (BadRequestError) and every compaction trigger would
-                # fail (dead-end-critical).
-                # #1679: honor a documented model_class_by_purpose.compaction
-                # override when set; otherwise keep self.model (byte-identical to
-                # the former hardcode, incl. a per-run model override).
-                model=self._resolver.purpose_class_or("compaction", self.model),
-                events=self._chat_events,
-                system_prompt_provider=self._history_buffer.build_system_prompt,
-                resolver=self._resolver,
-                # #1190 stage (ii): record chat compaction LLM spend (purpose=compaction).
-                recorder=self._budget_tracker,
-                # #1190 stage (iii) Part 4: attribute chat compaction to this session's agent.
-                recorder_agent=self.agent_name,
-            ),
-            history_appender=self._append_history,
-            make_summary_message=lambda rendered, structured, covers: ChatMessage(
-                role="summary",
-                content=rendered,
-                ts=_now_iso(),
-                meta={"structured": structured, "covers_through_seq": covers},
-            ),
-            render_summary=_render_summary_for_storage,
-            # Feed compacted candidates' tool calls into the per-agent
-            # action_usage table so the hot-list survives summarisation.
+        # #3082 Family 6b: history_buffer / compaction_controller (incl. the
+        # None-then-patch that breaks their circular dependency) /
+        # budget_advisor — byte-identical extraction, same construction
+        # sequence, same position (line ~1797, right after Family 6a's
+        # router_host — history_buffer eager-depends on it). See
+        # _HistoryCompactionBundle / _build_history_compaction_bundle's
+        # docstring for the full local-vs-self-vs-deferred provenance per
+        # arg and the forward-patch / budget_advisor UP-move rationale.
+        _history_compaction_bundle = self._build_history_compaction_bundle(
             merge_action_usage=_merge_action_usage_from_candidates,
         )
-        # Wire compaction_controller now that it exists.
-        self._history_buffer._compaction_controller = self._compaction_controller
+        self._history_buffer = _history_compaction_bundle.history_buffer
+        self._compaction_controller = _history_compaction_bundle.compaction_controller
+        self._budget_advisor = _history_compaction_bundle.budget_advisor
 
         # FP-0019 Wave 2 part 2: InterAgentMessaging — agent-to-agent messaging service.
         # Extracts _send_to_agent / _send_agent_response / _handle_agent_request /
@@ -1884,21 +1930,6 @@ class Session:
             # tag; + the trusted spawned-task lookup for rendering a returning result.
             session_id_fn=lambda: self._session_id,
             lookup_spawned_task=self.lookup_and_evict_spawned_task,
-        )
-
-        # session.py refactor PR-1: ContextBudgetAdvisor owns the five
-        # per-turn budget-arithmetic methods.  Session keeps forwarding
-        # properties so RouterHostAdapter callbacks are unchanged.
-        from reyn.runtime.services.context_budget_advisor import ContextBudgetAdvisor
-        self._budget_advisor = ContextBudgetAdvisor(
-            compaction=self._compaction,
-            compaction_controller=self._compaction_controller,
-            media_store=self._media_store,
-            # #1752: live resolved model (see RouterHistoryBuffer above).
-            model_fn=lambda: self._resolver.resolve(self.model).model,
-            events=self._chat_events,
-            history_fn=self._history_buffer.build_history,
-            offload_config=self._offload_config,
         )
 
         # session.py refactor PR-3: RouterLoopDriver owns the per-turn loop
@@ -4490,6 +4521,125 @@ class Session:
             turn_cancel_fn=self._is_turn_cancel_requested,
         )
         return _RouterWaistBundle(router_host=router_host)
+
+    def _build_history_compaction_bundle(
+        self, merge_action_usage: "Callable[[list[ChatMessage]], None]",
+    ) -> "_HistoryCompactionBundle":
+        """#3082 Family 6b: build the history-compaction chain —
+        ``history_buffer`` / ``compaction_controller`` (incl. the
+        None-then-patch forward-reference) / ``budget_advisor``. Byte-identical
+        extraction of the construction sequence that used to run inline in
+        ``__init__`` at its ORIGINAL position (line ~1797, no-move — every
+        cross-family dep, including Family 6a's ``router_host``, is already
+        set on ``self`` by this point).
+
+        ★ The None-then-patch circular-dependency break is reproduced with
+        LOCAL variables end to end: ``history_buffer`` is built with
+        ``compaction_controller=None`` first; ``compaction_controller`` (and
+        its inner ``CompactionEngine``) is then built reading the LOCAL
+        ``history_buffer.build_system_prompt`` (NOT ``self._history_buffer``
+        — that attribute does not exist yet, since ``__init__`` only assigns
+        it AFTER this builder returns; reading ``self._history_buffer`` here
+        would raise ``AttributeError``); then the LOCAL patch
+        ``history_buffer._compaction_controller = compaction_controller``
+        closes the cycle; ``budget_advisor`` is built last, also reading the
+        LOCAL ``compaction_controller`` / ``history_buffer.build_history``.
+        See :class:`_HistoryCompactionBundle`'s docstring for the full
+        per-arg local-vs-deferred-self-vs-cross-family-self classification.
+
+        ``merge_action_usage`` is the ``_merge_action_usage_from_candidates``
+        closure defined in ``__init__`` immediately before this builder is
+        called (unmoved, at its original position) — it is not one of this
+        family's three components, so it is threaded through as an explicit
+        param (mirroring Family 2/4's LOCAL-param pattern) rather than
+        redefined inside the builder.
+
+        ★ ``budget_advisor`` UP-move: this builder constructs it right after
+        the forward-patch, BEFORE ``InterAgentMessaging`` (Family 8), which
+        used to sit between them and is now constructed AFTER this builder
+        returns (unmoved itself). Safe: every ``budget_advisor`` dep resolves
+        here (LOCAL ``compaction_controller`` / ``history_buffer``,
+        cross-family ``self._media_store`` / ``self._offload_config``), and
+        ``InterAgentMessaging`` does not read any of this family's three
+        components."""
+        from reyn.runtime.services.router_history_buffer import RouterHistoryBuffer
+        history_buffer = RouterHistoryBuffer(
+            history_fn=self._active_branch_history,
+            compaction=self._compaction,
+            compaction_controller=None,  # patched below after CompactionController
+            # #1752: live resolved model — a /model override changes the context
+            # window, so resolve the active class → litellm string each call
+            # instead of caching the construction-time model.
+            model_fn=lambda: self._resolver.resolve(self.model).model,
+            events=self._chat_events,
+            media_store=self._media_store,
+            router_host=self._router_host,
+            action_retrieval=self._action_retrieval,
+            non_interactive=self._non_interactive,
+            reasoning=self._reasoning,  # #1652/② native reasoning re-attach + bound
+        )
+
+        compaction_controller = CompactionController(
+            event_log=self._chat_events,
+            config=self._compaction,
+            # FP-0050/#1822 S3 (#1820): secret-redact turn text before summary.
+            threat_scan=self._safety.threat_scan,
+            history_access=lambda: self.history,
+            latest_summary=self._latest_summary,
+            compaction_engine=CompactionEngine(
+                # #1172: pass a model CLASS (like "standard") plus the resolver —
+                # CompactionEngine resolves to a litellm string by construction.
+                # Without resolution the engine would hand "standard" straight to
+                # litellm (BadRequestError) and every compaction trigger would
+                # fail (dead-end-critical).
+                # #1679: honor a documented model_class_by_purpose.compaction
+                # override when set; otherwise keep self.model (byte-identical to
+                # the former hardcode, incl. a per-run model override).
+                model=self._resolver.purpose_class_or("compaction", self.model),
+                events=self._chat_events,
+                system_prompt_provider=history_buffer.build_system_prompt,
+                resolver=self._resolver,
+                # #1190 stage (ii): record chat compaction LLM spend (purpose=compaction).
+                recorder=self._budget_tracker,
+                # #1190 stage (iii) Part 4: attribute chat compaction to this session's agent.
+                recorder_agent=self.agent_name,
+            ),
+            history_appender=self._append_history,
+            make_summary_message=lambda rendered, structured, covers: ChatMessage(
+                role="summary",
+                content=rendered,
+                ts=_now_iso(),
+                meta={"structured": structured, "covers_through_seq": covers},
+            ),
+            render_summary=_render_summary_for_storage,
+            # Feed compacted candidates' tool calls into the per-agent
+            # action_usage table so the hot-list survives summarisation.
+            merge_action_usage=merge_action_usage,
+        )
+        # Wire compaction_controller now that it exists (the patch that closes
+        # the circular dependency — LOCAL history_buffer, not self._history_buffer).
+        history_buffer._compaction_controller = compaction_controller
+
+        # session.py refactor PR-1: ContextBudgetAdvisor owns the five
+        # per-turn budget-arithmetic methods. Session keeps forwarding
+        # properties so RouterHostAdapter callbacks are unchanged.
+        from reyn.runtime.services.context_budget_advisor import ContextBudgetAdvisor
+        budget_advisor = ContextBudgetAdvisor(
+            compaction=self._compaction,
+            compaction_controller=compaction_controller,
+            media_store=self._media_store,
+            # #1752: live resolved model (see RouterHistoryBuffer above).
+            model_fn=lambda: self._resolver.resolve(self.model).model,
+            events=self._chat_events,
+            history_fn=history_buffer.build_history,
+            offload_config=self._offload_config,
+        )
+
+        return _HistoryCompactionBundle(
+            history_buffer=history_buffer,
+            compaction_controller=compaction_controller,
+            budget_advisor=budget_advisor,
+        )
 
     # ── #2073 S2: config hot-reload reapply seams (registered on the HotReloader) ──
 
