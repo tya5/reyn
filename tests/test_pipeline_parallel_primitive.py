@@ -261,8 +261,12 @@ async def test_on_error_continue_drops_failed_branch_and_collect_sees_survivors(
     )
     # collect saw only the survivors — the failed branch is absent, not None.
     # #2425 PR-2: a str ToolStep result maps to the flat {"text": ...} ctx shape.
-    assert result.pipe_data == {"good": {"text": "OK"}}
+    # #3070: a genuine drop additionally exposes its real cause under the
+    # reserved `__branch_errors__` key (additive — "good"'s own shape is
+    # untouched).
+    assert result.pipe_data["good"] == {"text": "OK"}
     assert "bad" not in result.pipe_data
+    assert "boom" in result.pipe_data["__branch_errors__"]["bad"]
     dropped = result.completed_step_results["0.parallel.bad"]
     assert dropped["__fan_out_dropped__"] is True
     assert "boom" in dropped["error"]

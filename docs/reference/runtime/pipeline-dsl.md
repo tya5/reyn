@@ -566,6 +566,18 @@ not any one branch's result directly.
 | `on_error` | no | One of `continue`, `abort` (the default when omitted — unlike `for_each`, where `on_error` is required), or `retry(N)` — same semantics as `for_each`'s `on_error`. A `continue`-dropped branch's key is absent from `collect`'s named map. |
 | `output` | no | Named store to write `collect`'s result to. |
 
+When at least one branch actually dropped (`on_error: continue`), `collect`'s
+named map ALSO carries a reserved `__branch_errors__` entry — `{branch_name:
+error_text}` for every dropped branch, the failing branch's own error text
+(e.g. a `verify: schema` failure names the tool's own `error`/`content` when
+the result carried one, not just which field mismatched) — so `collect` can
+report **why** a branch failed, not just that it did (a schema-gated
+reachability probe like the builtin RAG ingest pipeline's X1 pre-flight reads
+`get(pipe, "__branch_errors__.<name>", "")` for this). Absent entirely when no
+branch dropped — a `collect` step that never loses a branch sees no shape
+change. A branch may not be named `__branch_errors__` (parse error) since it
+would collide with this reserved key.
+
 Each branch's context is `{ctx, pipe}` — `ctx` an isolated copy of the outer
 named stores, `pipe` this step's own incoming pipe data held constant across
 every branch. There is no `item`/`acc` (those are `for_each`/`fold`-only) and

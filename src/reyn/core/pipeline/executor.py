@@ -581,6 +581,20 @@ _DEFAULT_MAX_PIPELINE_SPAWNS = 100
 # ``serde``'s ``__exprref__`` marker uses.
 _FAN_OUT_DROPPED_KEY = "__fan_out_dropped__"
 
+# #3070: a DROPPED parallel branch's real failure text used to be recorded
+# ONLY in the internal recovery/resume ``completed_step_results`` map (never
+# reachable from the R1 expression language a ``collect`` step evaluates), so
+# a pre-flight probe built from ``parallel``/``on_error: continue`` (e.g.
+# rag_ingest.yaml's X1) could tell a branch was DROPPED but never WHY — it
+# fell back to a static, cause-blind message. This reserved key is injected
+# into the SAME named map ``collect``'s ``pipe`` already receives, alongside
+# the (unchanged, still-filtered) surviving branch results, so an author who
+# wants the real cause can read ``get(pipe, "__branch_errors__", {})`` — one
+# more dict entry, never a shape change to the branches' own keys. A branch is
+# not permitted to be named this (see the parser-side guard) so the two can
+# never collide.
+PARALLEL_BRANCH_ERRORS_KEY = "__branch_errors__"
+
 _ON_ERROR_RETRY_RE = re.compile(r"^retry\((?P<n>\d+)\)$")
 
 
@@ -787,9 +801,24 @@ async def _run_tool_step(inv: "_StepInvocation") -> "tuple[Any, bool, dict[str, 
             )
         validation = validate(result, step.schema, deps.schema_registry)
         if not validation.conforming:
+            # #3070: `validation.errors` alone only ever says WHICH FIELD failed
+            # (e.g. "status: 'error' not in ['ok']") — never WHY the tool itself
+            # reported an error. A dict-result op almost always carries that
+            # cause under `error` (the ops/__init__.py + most op_runtime handlers'
+            # own convention) or, for the mcp op's `isError` branch specifically,
+            # under `content` (the MCP tool's own error text — see
+            # reyn.core.op_runtime.mcp._execute). Surfacing it here means a
+            # schema-gated pre-flight probe (e.g. rag_ingest.yaml's X1) can
+            # report the REAL exception instead of a generic "schema mismatch"
+            # or a static "unreachable" that swallows it (#3070).
+            detail = ""
+            if isinstance(result, dict):
+                tool_message = result.get("error") or result.get("content")
+                if isinstance(tool_message, str) and tool_message.strip():
+                    detail = f" — the tool's own result: {tool_message}"
             raise PipelineExecutionError(
                 f"step {inv.step_label} (tool {step.name!r}) output failed schema "
-                f"{step.schema!r}: {validation.errors}"
+                f"{step.schema!r}: {validation.errors}{detail}"
             )
     # #2425 PR-2: ctx exposes the same text/structured shape chat gets, uniformly across every op
     # kind — shape-only (to_canonical), NEVER offloaded/size-gated (owner ruling: ctx/pipe data
@@ -1307,6 +1336,23 @@ def _parallel_results(
     return out
 
 
+def _parallel_branch_errors(
+    completed_step_results: "dict[str, Any]", label: str, names: "list[str]",
+) -> "dict[str, str]":
+    """The DROPPED branches' real failure text, keyed by branch name (#3070) —
+    the counterpart :func:`_parallel_results` omits by design (a dropped
+    branch's kind-marker is never a legitimate ``do`` result). Only names
+    with a genuinely dropped branch appear; a branch that ran to completion
+    (success OR a still-conforming error result) is absent, same convention
+    as ``_parallel_results`` itself."""
+    out: "dict[str, str]" = {}
+    for name in names:
+        value = completed_step_results[f"{label}.parallel.{name}"]
+        if _is_dropped_marker(value):
+            out[name] = value.get("error", "")
+    return out
+
+
 async def _run_parallel_step(inv: "_StepInvocation") -> "tuple[Any, bool, dict[str, Any]]":
     """The heterogeneous NAMED-branch fan-out runner (S5-bounded) — reuses the
     EXACT fan-out substrate :func:`_run_for_each_step` established (concurrent
@@ -1440,6 +1486,12 @@ async def _run_parallel_step(inv: "_StepInvocation") -> "tuple[Any, bool, dict[s
     # collect runs ONCE over the NAMED MAP of surviving results (dropped
     # filtered out).
     results_map = _parallel_results(completed, label, names)
+    # #3070: inject the dropped branches' real error text under the reserved
+    # key ONLY when at least one branch actually dropped — a `collect` step
+    # that never fails a branch sees no shape change at all.
+    branch_errors = _parallel_branch_errors(completed, label, names)
+    if branch_errors:
+        results_map = {**results_map, PARALLEL_BRANCH_ERRORS_KEY: branch_errors}
     collect_ctx = {"ctx": outer_stores, "pipe": results_map}
     collect_runner = STEP_DISPATCH.get(type(step.collect))
     if collect_runner is None:  # pragma: no cover - Step is a closed union

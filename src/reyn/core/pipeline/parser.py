@@ -611,6 +611,17 @@ def _parse_parallel_step(body: "dict[str, Any]", *, index: "int | str") -> Paral
     raw_branches = body.get("branches")
     if not isinstance(raw_branches, dict) or not raw_branches:
         _fail("parallel step: 'branches' must be a non-empty mapping of NAME -> Step")
+    # #3070: the executor injects a dropped-branch-error map into `collect`'s
+    # named `pipe` under this reserved key (PARALLEL_BRANCH_ERRORS_KEY) — a
+    # branch actually named this would collide with it silently.
+    from reyn.core.pipeline.executor import PARALLEL_BRANCH_ERRORS_KEY  # noqa: PLC0415
+
+    if PARALLEL_BRANCH_ERRORS_KEY in raw_branches:
+        _fail(
+            f"parallel step: branch name {PARALLEL_BRANCH_ERRORS_KEY!r} is reserved "
+            "(the executor uses it to carry dropped-branch error text into "
+            "collect's `pipe`) -- rename this branch"
+        )
     branches = {
         name: _parse_step(branch_body, index=f"{index} (parallel branch {name!r})")
         for name, branch_body in raw_branches.items()
