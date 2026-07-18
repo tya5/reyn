@@ -106,23 +106,33 @@ def _apply_seccomp(policy: SandboxPolicy) -> None:
     which is why ``execve``/``execveat`` are baseline-allowed (denying them would
     kill the shim before it could exec the target at all, #2962).
 
-    ⚠ No-op when ``policy.allow_subprocess`` is True — and that is a live defect,
-    not merely #2962's open question (#3030). The rationale recorded here was
-    "the syscall-reduction layer exists to deny process creation, so an
-    explicitly subprocess-permitting policy has nothing for it to add". It is
-    measurably false: the filter carries TWO gates, and the other one is the
-    NETWORK gate (``_NETWORK_SYSCALLS`` are allowlisted only when
-    ``policy.network``). Skipping the whole filter drops it — measured on Linux
-    6.8, a real outbound connect+send SUCCEEDED under ``network=False,
-    allow_subprocess=True``, which is the stdio-MCP default.
+    ALWAYS loads, regardless of ``policy.allow_subprocess`` (#3030 fix). It used
+    to early-return when ``allow_subprocess`` was True, on the rationale that "the
+    syscall-reduction layer exists to deny process creation, so an explicitly
+    subprocess-permitting policy has nothing for it to add". That was measurably
+    false: the same filter also carries the NETWORK gate
+    (``_NETWORK_SYSCALLS`` are allowlisted only when ``policy.network``), and
+    skipping the whole filter dropped that gate too — measured on Linux 6.8, a
+    real outbound connect+send SUCCEEDED under ``network=False,
+    allow_subprocess=True``, which is the stdio-MCP default (every stdio MCP
+    server was reachable on Linux regardless of its ``network: false`` config).
 
-    Left as-is here deliberately: moving the gate from the filter onto the
-    allowlist contents puts every MCP server under a default-deny allowlist for
-    the first time, and that allowlist is a correctness surface (#2962's first
-    live load killed ``/bin/echo``). That is a design decision, and it is #3030.
+    The fix is the seccomp **allowlist**, not a denylist: ``_build_syscall_allowlist``
+    already adds ``_SUBPROCESS_SYSCALLS`` when ``policy.allow_subprocess`` and
+    ``_NETWORK_SYSCALLS`` when ``policy.network``, so a subprocess-permitting
+    policy still gets exactly the syscalls it asked for — nothing more. Every
+    syscall NOT named (``io_uring_setup``, ``socketcall``, future network syscalls
+    not yet enumerated, …) stays refused by construction, which is why an
+    allowlist closes this class of gap and a denylist mirroring
+    ``_NETWORK_SYSCALLS`` would not (io_uring never calls ``socket``/``connect``
+    as syscalls, so a denylist naming only those would let `IORING_OP_CONNECT`
+    through). This DOES put every ``allow_subprocess: True`` MCP server under a
+    default-deny syscall filter for the first time — the #2962 correctness risk
+    (its first live load killed ``/bin/echo``) — mitigated by the allowlist
+    already being live-validated for ordinary MCP-server workloads (see
+    ``backends/seccomp.py``'s module docstring and the representative-server
+    probes in ``tests/test_sandbox_seccomp_network_3030.py``).
     """
-    if policy.allow_subprocess:
-        return
     load_seccomp_filter(policy)
 
 
@@ -142,10 +152,12 @@ def _apply_landlock(policy: SandboxPolicy) -> None:
     1. ``preload_native_dependency()`` — resolve pyseccomp's native libraries
        while this process can still reach the filesystem. Its import shells out
        and writes a temp file; run it after step 2 and Landlock denies it, the
-       filter never loads, and ``allow_subprocess=False`` enforces nothing
-       (#3020). The shim is ALWAYS a fresh process, so it can never inherit the
-       import from a parent the way ``LandlockBackend.run``'s child accidentally
-       could.
+       filter never loads, and the shim's seccomp step enforces nothing (#3020).
+       Called UNCONDITIONALLY now (#3030): ``_apply_seccomp`` below always loads
+       the filter, so this must always run first, not only when
+       ``allow_subprocess`` is False. The shim is ALWAYS a fresh process, so it
+       can never inherit the import from a parent the way ``LandlockBackend.run``'s
+       child accidentally could.
     2. ``ruleset.apply()`` — irrevocable, survives the ``execvp`` in
        :func:`main`.
     3. ``_apply_seccomp()`` — must come after 2, not before. Measured, not
@@ -165,8 +177,7 @@ def _apply_landlock(policy: SandboxPolicy) -> None:
         )
 
     ruleset = build_ruleset(policy, backend.abi_version or 0)
-    if not policy.allow_subprocess:
-        preload_native_dependency()
+    preload_native_dependency()
     ruleset.apply()  # type: ignore[attr-defined]
     _apply_seccomp(policy)
 

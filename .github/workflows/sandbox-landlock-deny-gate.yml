@@ -31,8 +31,24 @@ jobs:
       # skip is green. Until this job, the only host that had ever witnessed a
       # Linux deny was one maintainer's colima VM, run by hand. One host is not a
       # gate.
-      - name: Install sandbox-linux extra
-        run: pip install -e ".[dev,sandbox-linux]"
+      #
+      # `builtin-rag` is ALSO installed here (#3030): the seccomp allowlist now
+      # loads unconditionally (previously skipped whenever allow_subprocess was
+      # True, the stdio-MCP default), so every such MCP server is now under a
+      # default-deny syscall filter for the first time — the #2962 correctness
+      # risk (its first live load killed /bin/echo). Installing this extra is
+      # what lets tests/test_sandbox_seccomp_network_3030.py's representative-
+      # real-MCP-server probes (reyn-rag-chunker / reyn-rag-vector-store) RUN
+      # rather than skip on this job.
+      - name: Install sandbox-linux + builtin-rag extras
+        run: pip install -e ".[dev,sandbox-linux,builtin-rag]"
+
+      # `uvx` (bundled with the `uv` PyPI package) for the third representative
+      # server probe below (markitdown-mcp, #3030) — the RAG server with the
+      # widest syscall footprint (network fetch on first run via uvx, then a
+      # real file parse).
+      - name: Install uv (for uvx)
+        run: pip install uv
 
       # The gate. It has no skip path: if Landlock or pyseccomp is missing it
       # exits FATAL rather than passing having observed nothing, because those
@@ -61,3 +77,16 @@ jobs:
       # inferred from a pass count.
       - name: Shim enforcement tests (supplementary — the gate above is the gate)
         run: python -m pytest tests/test_landlock_exec_shim_1344e.py -v -rs --timeout=120
+
+      # #3030: the network-deny falsification (the exact allow_subprocess=True
+      # condition that used to leak network), the io_uring completeness probe
+      # (bounded-by-construction — the exact gap a syscall-name denylist would
+      # have missed), and the representative-real-MCP-server completeness group
+      # (reyn-rag-chunker / reyn-rag-vector-store / uvx markitdown-mcp) — the
+      # ★★ hard gate that an incomplete allowlist does not silently kill a real
+      # MCP server (#2962's class). Same `requires_landlock` skip-safety as the
+      # step above; -rs so a markitdown-mcp network-reachability skip (this
+      # runner's own PyPI egress, orthogonal to allowlist completeness) is
+      # visible rather than silently absorbed into a pass count.
+      - name: Network-gate + io_uring + representative-MCP-server tests (#3030)
+        run: python -m pytest tests/test_sandbox_seccomp_network_3030.py -v -rs --timeout=180

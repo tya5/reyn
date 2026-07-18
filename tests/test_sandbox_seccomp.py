@@ -330,16 +330,20 @@ def test_landlock_child_preexec_invokes_the_seccomp_installer(
     )
 
 
-def test_landlock_child_preexec_skips_seccomp_when_subprocess_allowed(
+def test_landlock_child_preexec_loads_seccomp_even_when_subprocess_allowed(
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """Tier 2: LandlockBackend's preexec_fn installs no seccomp filter when subprocess is allowed.
+    """Tier 2: LandlockBackend's preexec_fn loads the seccomp filter even when
+    allow_subprocess=True (#3030 fix).
 
-    The negative half of the wiring pin: without it, a callsite that invoked the
-    installer unconditionally would also pass the positive test above. Documents
-    today's gate — allow_subprocess=True removes the seccomp layer entirely
-    (#2962 flags this as the open design question; not changed here).
+    This USED TO be the negative half of the wiring pin — allow_subprocess=True
+    removed the seccomp layer entirely, silently dropping the NETWORK gate along
+    with the syscall-reduction one (#3030: a real outbound connect+send SUCCEEDED
+    under `network=False, allow_subprocess=True`, the stdio-MCP default). The
+    filter now always loads; `_build_syscall_allowlist` is what actually widens
+    the allowlist for allow_subprocess=True (adding `_SUBPROCESS_SYSCALLS`), not
+    a callsite-level skip of the filter itself.
     """
     import reyn.security.sandbox.backends.landlock as landlock_mod
 
@@ -349,9 +353,9 @@ def test_landlock_child_preexec_skips_seccomp_when_subprocess_allowed(
     with caplog.at_level(logging.WARNING, logger="reyn.security.sandbox.backends.seccomp"):
         landlock_mod._child_preexec(None, SandboxPolicy(allow_subprocess=True))
 
-    assert not caplog.records, (
-        "Expected no seccomp activity when allow_subprocess=True; "
-        f"got: {[r.message for r in caplog.records]}"
+    assert any("seccomp" in record.message.lower() for record in caplog.records), (
+        "LandlockBackend's preexec_fn skipped the seccomp filter under "
+        "allow_subprocess=True — the #3030 network-gate regression"
     )
 
 

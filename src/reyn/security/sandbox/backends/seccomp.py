@@ -18,6 +18,21 @@ fixed, the allowlist is live and a name missing from it makes that syscall fail
 with EPERM in the sandboxed process — so this list is a correctness surface, not
 just a hardening surface.
 
+Unconditional load (#3030). Both production callsites (`landlock.py`'s
+`_child_preexec`, `landlock_exec.py`'s `_apply_seccomp`) used to skip this
+filter ENTIRELY whenever `policy.allow_subprocess` was True — the stdio-MCP
+default — which silently dropped the NETWORK gate (`_NETWORK_SYSCALLS` are
+allowlisted only when `policy.network`) along with the syscall-reduction one.
+Both callsites now load this filter unconditionally; `_build_syscall_allowlist`
+already adds `_SUBPROCESS_SYSCALLS`/`_NETWORK_SYSCALLS` per-policy, so this was
+a caller-side gate, not a builder change. The practical consequence: every
+`allow_subprocess: True` MCP server (the default) is now under this default-deny
+allowlist for the first time, which is exactly the #2962 correctness risk this
+module's validation history above is about — see
+`tests/test_sandbox_seccomp_network_3030.py` for the representative-real-MCP-server
+probes (`reyn-rag-chunker` / `reyn-rag-vector-store` / `uvx markitdown-mcp`) this
+change specifically needed, on top of the synthetic echo/ls/cat workloads above.
+
 - aarch64 Linux (Ubuntu 24.04, kernel 6.8, glibc 2.39): live-validated —
   the filter loads and ordinary workloads (echo / ls / cat / python file
   read+write, mkdir / remove / rename / rmtree) run under it, while fork,
