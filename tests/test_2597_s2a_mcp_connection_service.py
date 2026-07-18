@@ -189,14 +189,34 @@ async def test_remove_session_teardown_closes_held_connections(tmp_path: Path):
     """Tier 2: registry.remove_session's teardown seam closes any MCP connections a
     spawned session held open (#2597 S2a wiring) — a dropped/rewound session must not
     leak an open subprocess. Real AgentRegistry + real spawned session + real stdio
-    server (no mocks)."""
+    server (no mocks).
+
+    #3036: ``spawn_session_recorded`` now refreshes the spawned session's MCP roster
+    from the on-disk config cascade right after construction (closing the "spawned
+    session's roster frozen at the registry's boot-time session_factory snapshot"
+    gap) — so ``srv`` must be written to the IN-set ``.reyn/config/mcp.yaml`` under
+    THIS registry's ``project_root`` (not merely passed via the factory's in-memory
+    ``mcp_servers=`` kwarg), and the factory must thread ``registry=`` through so the
+    spawned session resolves that same root (mirrors every real frontend factory).
+    Otherwise the #3036 refresh would read an empty/foreign cascade and wipe the
+    in-memory-only ``srv`` entry before this test ever calls it."""
+    import yaml
+
     from reyn.runtime.registry import AgentRegistry
     from reyn.runtime.session import Session
 
+    (tmp_path / "reyn.yaml").write_text("model: standard\n", encoding="utf-8")
+    cfg_path = tmp_path / ".reyn" / "config" / "mcp.yaml"
+    cfg_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg_path.write_text(yaml.safe_dump({"mcp": {"servers": {"srv": _CFG}}}), encoding="utf-8")
+
+    holder: dict = {}
+
     def _factory(profile, *, presentation_consumer=None, intervention_bridge=None) -> Session:
-        return Session(agent_name=profile.name, mcp_servers={"srv": _CFG})
+        return Session(agent_name=profile.name, mcp_servers={"srv": _CFG}, registry=holder.get("reg"))
 
     registry = AgentRegistry(project_root=tmp_path, session_factory=_factory)
+    holder["reg"] = registry
     registry.create("s2a-owner")
     sid = await registry.spawn_session_recorded("s2a-owner", mode="persistent", presentation_consumer=None, intervention_bridge=None)
     session = registry._peek_session("s2a-owner", sid)

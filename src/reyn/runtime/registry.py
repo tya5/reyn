@@ -2957,13 +2957,35 @@ class AgentRegistry:
             presentation_consumer=presentation_consumer,
             intervention_bridge=intervention_bridge,
         )
+        # #3036: every programmatic spawn funnels through here (agent-step ephemeral
+        # workers via spawn_ephemeral_session, pipeline driver-sessions via
+        # _spawn_pipeline_driver_session — mode="persistent" — and delegate_to_agent's
+        # session_spawn tool). None of these callers ever fire a "turn boundary" of
+        # their own BEFORE their first programmatic step runs — that trigger is a
+        # RouterLoopDriver-only chat-turn concept (Session._run_router_loop), and the
+        # spawned session's config-derived projections (MCP roster first — the family's
+        # other 9 reapply seams are latent until each is independently driven-verified
+        # safe off the chat turn boundary, see #3036) are otherwise frozen at whatever
+        # the (baked-once-at-registry-construction) session_factory closure captured —
+        # stale even for a server installed (mcp_install writes the IN-set
+        # .reyn/config/mcp.yaml) moments before THIS spawn. Reading it fresh here — the
+        # spawned session's own action-boundary (invariant: "programmatic/ephemeral
+        # sessions refresh at spawn + before each dispatch", #3036 architect verdict) —
+        # closes the gap the RAG turnkey flow hit 100%: install (chat session) always
+        # precedes the pipeline-driver/agent-step spawn that consumes it, so a
+        # spawn-time refresh alone is sufficient (no mid-run re-spawn case exists on
+        # this path). ``refresh_mcp_servers`` never raises (documented contract) — no
+        # try/except needed. Best-effort no-op when the peeked session is somehow gone
+        # (should not happen — spawn_session above just constructed it).
+        spawned_session = self._peek_session(name, sid)
+        if spawned_session is not None:
+            await spawned_session.refresh_mcp_servers()
         if mode == "ephemeral":
             # #2103: mark the live session so it auto-vanishes once its task is done
             # (Session._maybe_schedule_ephemeral_vanish, via this registry's
             # remove_session teardown seam). Persistent spawns leave the flag False.
-            ephemeral_session = self._peek_session(name, sid)
-            if ephemeral_session is not None:
-                ephemeral_session._ephemeral = True
+            if spawned_session is not None:
+                spawned_session._ephemeral = True
                 # #2585 PR2: an ephemeral spawn is structurally headless — it
                 # receives exactly ONE prompt via MessageBus.request (see
                 # session_api.run_agent_step) and returns; there is no
@@ -2974,7 +2996,7 @@ class AgentRegistry:
                 # have a real user eventually) so the worker always lands on
                 # the "proceed with assumption" SP branch instead of wasting
                 # its one turn asking a question no one can answer.
-                ephemeral_session._non_interactive = True
+                spawned_session._non_interactive = True
         if narrowing:
             import yaml
             cfg_path = self._session_state_dir(name, sid) / "config.yaml"
