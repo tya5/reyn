@@ -42,7 +42,7 @@ def _make_registry(tmp_path: Path) -> AgentRegistry:
 
 
 def _allows_tool(session: Session, name: str) -> bool:
-    return ContextualLayer(session._contextual_permission).allows(CapabilityAxis.TOOL, name)
+    return ContextualLayer(session.contextual_permission).allows(CapabilityAxis.TOOL, name)
 
 
 def _write_agent_hook(tmp_path: Path, name: str) -> None:

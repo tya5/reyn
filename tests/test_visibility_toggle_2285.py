@@ -1,9 +1,11 @@
 """Tier 2: #2285 step1 — session-scoped LLM tool-VISIBILITY toggle, visible ⊆ authorized.
 
 set_capability_visible(kind, name, visible) mutates a per-session override and re-applies it live:
-_reapply_visibility_override RE-RESOLVES the agent envelope from base (topology ∩ delegate ∩
-per-session config via resolved_profile_for) and composes the override as ONE MORE restrict-only ∩
-conjunct, then SETs the live tool gate (_contextual_permission / _excluded_categories). The core
+CapabilityVisibility.reapply_visibility_override RE-RESOLVES the agent envelope from base (topology ∩
+delegate ∩ per-session config via resolved_profile_for) and composes the override as ONE MORE
+restrict-only ∩ conjunct, then SETs the live tool gate (contextual_permission / excluded_categories,
+#3121 step3 Extract Class -- owned by CapabilityVisibility, exposed on Session via the public
+``contextual_permission`` property). The core
 security invariant: a toggle can only HIDE within the authorized envelope — toggle-ON cannot revive
 a capability the envelope denies (re-resolve-from-base stops at the envelope). Real AgentRegistry +
 spawn_session_recorded(narrowing=...) sets a REAL envelope (no mocks).
@@ -37,7 +39,7 @@ def _make_registry(tmp_path: Path) -> AgentRegistry:
 
 
 def _allows_tool(session: Session, name: str) -> bool:
-    return ContextualLayer(session._contextual_permission).allows(CapabilityAxis.TOOL, name)
+    return ContextualLayer(session.contextual_permission).allows(CapabilityAxis.TOOL, name)
 
 
 @pytest.mark.asyncio
