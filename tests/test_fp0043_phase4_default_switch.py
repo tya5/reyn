@@ -215,7 +215,7 @@ def test_probe_st_prefix_substring_doesnt_trigger() -> None:
 
 
 def test_probe_is_referenced_in_session_init_source() -> None:
-    """Tier 2: the probe call appears in Session.__init__'s gate.
+    """Tier 2: the probe call appears in the gate Session.__init__ wires up.
 
     We don't construct a full Session here (= heavy deps). Instead
     we sanity-check that ``_embedding_class_needs_missing_extras`` is
@@ -224,9 +224,18 @@ def test_probe_is_referenced_in_session_init_source() -> None:
     the graceful-degrade branch (= the existing default-flip would
     then start raising ImportError at first embed() for fresh users
     without extras).
+
+    #3082 Family 5: the gate itself moved from inline ``__init__`` code
+    into ``Session._build_retrieval_bundle`` (a byte-identical extraction —
+    same conditional, same probe call, same position ~line 1152, just
+    pulled into its own method). This test now checks BOTH hops: the probe
+    call lives in the builder, AND ``__init__`` still reaches the builder
+    (so a future accidental removal of either hop is still caught).
     """
     import inspect
 
     import reyn.runtime.session as session_mod
-    src = inspect.getsource(session_mod.Session.__init__)
-    assert "_embedding_class_needs_missing_extras" in src
+    builder_src = inspect.getsource(session_mod.Session._build_retrieval_bundle)
+    init_src = inspect.getsource(session_mod.Session.__init__)
+    assert "_embedding_class_needs_missing_extras" in builder_src
+    assert "_build_retrieval_bundle" in init_src
