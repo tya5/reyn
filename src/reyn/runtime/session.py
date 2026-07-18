@@ -79,6 +79,7 @@ from reyn.runtime.services.inter_agent_messaging import InterAgentMessaging
 from reyn.runtime.services.task_wake import WAKE_READY_KIND, WAKE_REQUESTER_KIND
 from reyn.runtime.session_buses import (
     AgentRequestBus,
+    AuditOnlyInterventionBridge,
     ChatInterventionBus,
 )
 from reyn.security.permissions.permissions import PermissionResolver
@@ -1635,11 +1636,25 @@ class Session:
         # the WAL intervention events). run_id falls back to agent_name (session
         # scope, mirroring _handle_limit_checkpoint); non_interactive flows so a
         # non-tty run fails closed (bounded). UNSET → fail-closed deny.
-        _session_dispatch = self._dispatch_intervention
+        #
+        # #3053: resolve the bus BRIDGE-AWARE via ``_make_router_intervention_bus``
+        # (the SAME seam #3052 gave every MCP router-op) instead of a self-bound
+        # ``_dispatch_intervention`` captured on THIS session. Before this fix a
+        # ``safety.limit`` prompt raised on an ATTACHED spawned/driver session (a
+        # pipeline driver, a delegated sub-agent) dispatched on the driver's OWN
+        # listener-less ``InterventionRegistry`` — silently auto-refusing
+        # (``enforce_listener_presence`` short-circuit) without ever reaching the
+        # pipeline originator's live operator, violating the same
+        # intervention-delivery rule #3052 fixed for MCP ops (fails SAFE here, not
+        # into a hang, since ``handle_limit_exceeded`` treats an empty/refused
+        # answer as "deny" — but still the wrong surface). Resolving fresh on each
+        # call (not capturing a frozen bus reference) means a re-bound bridge is
+        # picked up uniformly, exactly like every other router-op intervention.
+        _make_router_bus = self._make_router_intervention_bus
 
         class _ChatBudgetBus:
             async def request(self, iv):  # type: ignore[no-untyped-def]
-                return await _session_dispatch(iv)
+                return await _make_router_bus().request(iv)
 
         from reyn.llm.llm import set_llm_call_limit_context
         # #2210: publish the per-call timeout/retries so the chat ROUTER path (which passes
@@ -5320,17 +5335,28 @@ class Session:
         current chain_id for chain-scoped checkpoints). Emits a
         ``safety_limit_checkpoint`` audit event so the decision is
         visible alongside the existing chat events.
+
+        #3053: the bus resolves BRIDGE-AWARE via ``_make_router_intervention_bus``
+        (the SAME seam #3052 gave every MCP router-op, and #3053 gave the
+        per-LLM-call ``_ChatBudgetBus``) — this checkpoint (``router_cap`` /
+        ``max_agent_hops`` / ``phase_seconds`` / ``chain_seconds``) is reachable on
+        an ATTACHED pipeline driver session exactly like the per-call budget gate,
+        so freezing a self-bound ``_dispatch_intervention`` here would auto-refuse
+        on the driver's own listener-less registry instead of reaching the
+        pipeline originator — the identical anti-pattern #3053's structural guard
+        also caught here.
         """
-        # Adapter that conforms to the InterventionBus Protocol by
-        # delegating to Session's existing intervention dispatcher.
-        # _dispatch_intervention records the intervention_dispatched /
-        # intervention_resolved WAL events automatically, so per-site
-        # callers don't need to.
-        session_dispatch = self._dispatch_intervention
+        # Adapter that conforms to the InterventionBus Protocol by resolving the
+        # bridge-aware bus fresh on each call (never a frozen self-bound
+        # dispatcher — #3053). ``_dispatch_intervention`` (reached transitively
+        # through the resolved bus) records the intervention_dispatched /
+        # intervention_resolved WAL events automatically, so per-site callers
+        # don't need to.
+        make_router_bus = self._make_router_intervention_bus
 
         class _ChatLimitBus:
             async def request(self, iv):  # type: ignore[no-untyped-def]
-                return await session_dispatch(iv)
+                return await make_router_bus().request(iv)
 
         decision = await handle_limit_exceeded(
             bus=_ChatLimitBus(),
@@ -6250,13 +6276,31 @@ class Session:
         registry — dispatched, stalled, and awaited forever (the confirmed hang).
         Routing them through this helper makes every IV-raising router leaf reach
         the pipeline originator uniformly, exactly as ``ask_user`` / ``present``
-        already do via the bridge-aware ``RouterHostAdapter.make_router_op_context``."""
+        already do via the bridge-aware ``RouterHostAdapter.make_router_op_context``.
+
+        #3053-fix2: the no-bridge (root-session) branch resolves the SAME two
+        terminals ``SpawnBridgeInterventionListener.bus`` uses for its parent —
+        a LIVE listener on this session's own channel → deliver there (an
+        interactive TUI/CUI/AGUI chat; every front-end registers on
+        ``DEFAULT_CHAT_CHANNEL_ID``); NO listener → a typed, reason'd REFUSAL
+        (``AuditOnlyInterventionBridge``), NEVER a stamped bus that origin-pin
+        PARKS the iv forever. The park was a latent hang the MCP callers never
+        witnessed (a no-listener root chat doesn't exercise a permission prompt),
+        but the ``safety.limit`` budget/cap buses newly route here and hit it
+        directly: the pre-#3053 direct ``_dispatch_intervention`` path auto-refused
+        via ``enforce_listener_presence`` (no channel-id stamp → no origin-pin
+        stall). Failing close by construction here restores that, and hardens the
+        MCP leaf against the same no-operator hang — one uniform terminal, per the
+        delivery rule's "no attached originator → close and answer" clause."""
         if self._intervention_bridge is not None:
             return self._intervention_bridge.bus(run_id=None, actor="chat_router")
-        return ChatInterventionBus(
-            self, run_id=None, actor="chat_router",
-            channel_id=DEFAULT_CHAT_CHANNEL_ID,
-        )
+        if self.interventions.has_listener(DEFAULT_CHAT_CHANNEL_ID):
+            return ChatInterventionBus(
+                self, run_id=None, actor="chat_router",
+                channel_id=DEFAULT_CHAT_CHANNEL_ID,
+            )
+        # No bridge AND no live listener → no reachable operator → fail-close.
+        return AuditOnlyInterventionBridge().bus(run_id=None, actor="chat_router")
 
     async def _file_op(self, op_dict: dict) -> dict:
         """Dispatch a file op via op_runtime. Returns result dict."""

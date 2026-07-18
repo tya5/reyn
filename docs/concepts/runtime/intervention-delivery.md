@@ -52,13 +52,28 @@ For router-initiated ops, that bus is built in exactly one place —
 
 - **bridge present** (this session is an attached driver/worker) → dispatch on the parent's
   live-operator listener (the chain above);
-- **no bridge** (a root chat, or a detached session whose bridge is `AuditOnly`) → a self-bound
-  `ChatInterventionBus` on this session's own registry.
+- **no bridge** (a root chat) → deliver to this session's OWN live listener when one is bound
+  (an interactive TUI/CUI/AGUI front-end — all register on `DEFAULT_CHAT_CHANNEL_ID`); when NO
+  listener is bound (a headless / run-once root, a test harness), there is no reachable operator
+  → a typed, reason'd **refusal** (`AuditOnlyInterventionBridge`), the fail-close clause applied
+  to the root branch — the SAME two terminals the bridge chain uses for its parent.
 
-`RouterHostAdapter`'s intervention-bus factory and every MCP op method (`_mcp_call_tool` and its
-resource/prompt siblings) route through this one seam. `ask_user` and `present` already reached
-the originator because they, too, ride the spawn-time bridge (`present` via the analogous
-`SpawnBridgePresentationConsumer`) — the fix brought the MCP leaf into the same discipline.
+These are the only two terminals, at every depth: deliver to a live listener, or fail-close.
+The root branch must **never** hand back a channel-id-stamped bus on a listener-less session —
+a stamped iv on an absent listener trips the origin-pin stall (`InterventionCoordinator`
+parks it in the stalled queue and `await`s a future no channel will resolve), *hanging forever*
+instead of answering. (#3053-fix2: the `safety.limit` buses newly routed through this seam first
+exposed that gap — the branch previously stamped unconditionally, so a headless root's cap/budget
+prompt parked stalled and hung 120s rather than fail-closing.)
+
+`RouterHostAdapter`'s intervention-bus factory, every MCP op method (`_mcp_call_tool` and its
+resource/prompt siblings), and both `safety.limit` checkpoint buses — the per-LLM-call budget/
+timeout gate's `_ChatBudgetBus` and the chat-side `router_cap`/`max_agent_hops`/`phase_seconds`/
+`chain_seconds` checkpoint's `_ChatLimitBus` (`Session._handle_chat_limit_checkpoint`) — all
+route through this one seam. `ask_user` and `present` already reached the originator because
+they, too, ride the spawn-time bridge (`present` via the analogous
+`SpawnBridgePresentationConsumer`) — the #3049/#3053 fixes brought every remaining leaf into the
+same discipline.
 
 ## The failure that motivated the rule (#3049)
 
@@ -88,14 +103,21 @@ constructs its own self-bound bus reintroduces the #3049 orphan for any attached
 structural guard in `tests/test_3049_driver_router_op_intervention_reaches_originator.py`
 fails on exactly that.
 
-## Not yet uniform: the limit-policy bus
+## The sibling gap that closed it uniformly (#3053)
 
-The per-LLM-call `safety.limit` gates (`cost.*`, `timeout.llm_call`) are dispatched through a
-**separate** bus wiring (`_ChatBudgetBus` → `Session._dispatch_intervention`), not the router-op
-seam above. For a spawned session this bus is *also* not bridge-aware — a `safety.limit` prompt
-there does not reach the originator (it auto-refuses locally rather than hanging). This is the
-same fix-class as #3049 but a distinct seam and a distinct symptom; it was not the measured RAG
-hang and is tracked separately. The rule stated above is the target for that seam too.
+The per-LLM-call `safety.limit` gates (`cost.*`, `timeout.llm_call`, via `_ChatBudgetBus`) and the
+chat-side limit checkpoint (`router_cap`/`max_agent_hops`/`phase_seconds`/`chain_seconds`, via
+`_ChatLimitBus`) used to each capture `self._dispatch_intervention` directly at construction time
+— a distinct bus wiring from the router-op seam above, bypassing `_intervention_bridge` entirely.
+For a spawned session that meant a `safety.limit` prompt auto-refused on the driver's own
+listener-less registry instead of reaching the originator — the same fix-class as #3049 (a
+self-bound bus that cannot tell a root chat from an attached driver apart), but a distinct seam
+and a distinct (fail-safe, not hung) symptom, since `handle_limit_exceeded` treats a
+listener-less auto-refusal as a plain "deny" rather than parking a future forever. #3053 routed
+both buses through `_make_router_intervention_bus`, closing the gap: every IV-raising leaf in the
+codebase now resolves through the single construction seam described above. The structural guard
+in `tests/test_3053_budget_bus_bridge_aware.py` fails if a future limit/budget-style bus
+reintroduces a frozen self-bound `_dispatch_intervention` capture.
 
 ## See also
 
