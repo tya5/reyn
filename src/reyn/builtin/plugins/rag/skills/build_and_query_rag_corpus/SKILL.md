@@ -71,6 +71,202 @@ mcp__install_local(name="reyn_markitdown", args=[],
                    command="/abs/path/.reyn-markitdown/bin/markitdown-mcp")
 ```
 
+## Embedding setup -- confirm before you spend on ingest
+
+`rag_ingest` needs a working embedding provider, or every chunk it embeds is
+wasted spend against a call that was never going to succeed. Unless the
+resolved model carries the `sentence-transformers/` prefix (a separate,
+in-process backend -- see the next section), **every embedding call in reyn
+routes through `litellm`**: straight to the provider's own API, or through a
+**litellm proxy** if the env var `LITELLM_API_BASE` is set (the same variable
+`call_llm` reads -- one proxy serves both). Default classes: `light` /
+`standard` -> `openai/text-embedding-3-small`, `strong` ->
+`openai/text-embedding-3-large`.
+
+### Pre-flight: confirm the endpoint actually answers (do this before `rag_ingest`)
+
+One curl, before you spend anything on an ingest. This check is
+**transport-independent by construction**: reyn always sends embedding
+requests to an OpenAI-compatible `/embeddings` endpoint at whatever
+`LITELLM_API_BASE` names -- a litellm proxy, a direct embedding API, or a
+local server all look the same from reyn's side, so the same one-liner
+verifies any of them:
+
+```bash
+curl -s "${LITELLM_API_BASE:-<your-endpoint>}/embeddings" \
+  -H "Authorization: Bearer ${OPENAI_API_KEY:-dummy}" \
+  -H "Content-Type: application/json" \
+  -d '{"model": "<the model name your endpoint expects>", "input": "hello"}' \
+  | jq '.data[0].embedding | length'
+```
+
+Replace `<your-endpoint>` / the model name / the key with your actual
+values -- this is a shape to adapt, not a literal command. **Healthy**:
+prints a positive integer (the embedding dimension, e.g. `1536`) --
+`data[0].embedding` came back as a non-empty float array. Typical failure
+signatures:
+
+- **401** -- wrong or missing API key.
+- **404 / "model not found"** -- that model name isn't registered at this
+  endpoint (proxy `model_list` mismatch, or a wrong direct-API model
+  string).
+- **400, unsupported param** -- *only relevant when routing through a
+  proxy* (see Case B): the proxy is missing
+  `litellm_settings.drop_params: true` (#1616).
+- **connection refused** -- nothing is listening at that endpoint, or
+  `LITELLM_API_BASE` points at the wrong address.
+
+### Case A -- you have an embedding API key -- no proxy needed
+
+This is the shortest path, and it does **not** go through a proxy at all:
+`reyn secret set OPENAI_API_KEY` (or your provider's key), and stop --
+that's it. With `LITELLM_API_BASE` unset, reyn's litellm client calls the
+provider's API **directly** (`_proxy_kwargs()` returns nothing when the env
+var is absent), so the default `standard` class
+(`openai/text-embedding-3-small`) works with **no `reyn.yaml` edit, no
+`LITELLM_API_BASE`, no proxy, and no `drop_params` setting** -- the client
+already passes `drop_params=True` on every call, which is only a no-op when
+a proxy sits in between (see Case B). Run the pre-flight curl above against
+the provider's own endpoint (e.g. `https://api.openai.com/v1`) to confirm.
+
+If your organization already routes LLM traffic through a shared litellm
+proxy, you're effectively in the Case B situation below (proxy in the
+path) even though you have a key -- the proxy's `drop_params` note applies
+to you too.
+
+### Case B -- no embedding API contract -> litellm proxy + a local model
+
+No key, and you don't want one: run a local embedding model behind a
+litellm proxy. The proxy is what turns that local model into the
+OpenAI-compatible endpoint reyn already expects -- reyn itself never talks
+to the local server directly.
+
+**Step 1 -- start a local embedding server.** Ollama is the lightest setup
+(openai-compatible embeddings out of the box); reference commands below,
+**verify on your own machine, versions/ports may differ**:
+
+```bash
+ollama pull nomic-embed-text
+ollama serve   # if not already running as a background service
+curl http://localhost:11434/api/embeddings -d '{"model": "nomic-embed-text", "prompt": "hello"}'
+```
+
+(Alternatives, one line each: HuggingFace `text-embeddings-inference`, or
+`infinity` -- both also expose an OpenAI-compatible embeddings endpoint.)
+
+**Step 2 -- register it in the litellm proxy's `config.yaml`.** Syntax
+confirmed against litellm's own docs
+(https://docs.litellm.ai/docs/proxy/embedding,
+https://docs.litellm.ai/docs/proxy/configs, checked 2026-07):
+
+```yaml
+model_list:
+  - model_name: text-embedding-3-small   # see the naming rule below
+    litellm_params:
+      model: ollama/nomic-embed-text
+      api_base: http://localhost:11434
+
+litellm_settings:
+  drop_params: true   # required -- see the 400 failure signature above (#1616)
+```
+
+Restart the proxy after editing.
+
+**Step 3 -- point reyn at the proxy:**
+
+```bash
+export LITELLM_API_BASE=http://localhost:4000   # your proxy's address
+```
+
+**Naming rule (read before choosing a model name):** when
+`LITELLM_API_BASE` is set, reyn strips the resolved model string's leading
+`provider/` segment before sending it to the proxy -- `openai/foo` arrives
+at the proxy as plain `foo`. So the proxy's `model_list[].model_name` must
+equal **everything after the first `/`** of whichever reyn-side model
+string you use:
+
+- **(a) Simplest -- no `reyn.yaml` edit at all.** Keep using the default
+  `standard`/`light` class (`openai/text-embedding-3-small`). Register the
+  proxy's `model_name` as `text-embedding-3-small` (as in Step 2 above) --
+  the local model now answers under reyn's default class name.
+- **(b) Or add an explicit class**, e.g. in `reyn.yaml`:
+  ```yaml
+  embedding:
+    classes:
+      local:
+        model: openai/nomic-embed-text
+  ```
+  Here the proxy's `model_name` must be `nomic-embed-text` (everything
+  after `openai/`), and you'd pass `embedding_model: "local"` to
+  `rag_ingest.ingest` / `rag_query.query`.
+
+**Step 4 -- confirm it end to end.** Re-run the pre-flight curl above
+first (cheapest check). Then run a real ingest + query and confirm a chunk
+actually comes back:
+
+```
+pipeline__run(name="rag_ingest.ingest", input={
+  "input_path": "/abs/path/to/docs", "output_db": "./rag/docs.sqlite",
+})
+pipeline__run(name="rag_query.query", input={
+  "query_text": "<something you know is in the docs>",
+  "db": "./rag/docs.sqlite", "top_k": 3,
+})
+```
+
+A non-empty `[{id, distance, metadata}, ...]` list is the real signal --
+`chunks_upserted > 0` on the ingest response alone does not prove the
+vectors are meaningful. Typical failure at this step: an empty query
+result with a populated db usually means a Case B naming mismatch (Step 3);
+`rag_ingest` returning "blocked" means a server, not the embedding
+endpoint, is unreachable -- see "Prerequisites" above.
+
+### Choosing a local model (Case B) -- pick once, it's expensive to change
+
+**"One sqlite file = one embedding model" (below) makes this choice
+sticky** -- swapping models later means a full re-ingest into a *new*
+`output_db`, not an in-place update. Decide with these axes before your
+first big ingest, not after:
+
+- **Language.** English-only corpus -> a small English-only model is
+  enough. Japanese, Chinese, or mixed-language corpora -> use a
+  multilingual model; an English-only model's cross-lingual recall is
+  poor.
+- **Size vs. recall.** A smaller model embeds faster and costs less
+  compute per query; a larger model trades that for better recall.
+  Reyn's *other* local-embedding backend (`sentence-transformers`, used
+  by `search_actions`, not this RAG) documents this exact tradeoff with
+  measured numbers worth reusing as a reference point --
+  `all-MiniLM-L6-v2` (22 MB, 384-dim, English-only, fastest) vs.
+  `multilingual-e5-small` (118 MB, 50 languages, better cross-lingual
+  recall) vs. OpenAI's `text-embedding-3-small` API (~5 pp higher MTEB
+  than `multilingual-e5-small`, at API cost) -- see
+  `docs/guide/for-users/enable-semantic-search.md` for the full
+  comparison and the numbers' provenance. Those are a **different
+  mechanism** (in-process, not litellm-proxy-served) but the same three
+  tradeoffs -- language / size / quality -- apply when picking a model to
+  serve through Ollama or another local server for Case B.
+- **Server ecosystem.** Serving via Ollama (Step 1 above), the easiest
+  openai-compatible option is `nomic-embed-text`. Serving via HuggingFace
+  `text-embeddings-inference` or `infinity` instead, the `bge-*` /
+  `e5-*` families are common choices there. **Verify the exact
+  size/dimension/language numbers on the model's own card** -- unlike
+  the `all-MiniLM-L6-v2` / `multilingual-e5-small` figures above, these
+  are not numbers this skill has independently confirmed.
+
+In short: **English corpus, want it fast -> a small English model
+(`nomic-embed-text` is a reasonable Ollama default). Japanese/multilingual
+corpus -> a multilingual model. Want the best recall and already have an
+API key -> skip Case B, use Case A instead.**
+
+This section covers the **embedding provider** only -- a separate concern
+from the vector store / chunker / parser servers. See "Swapping the
+backend" below to change those. For local-model tradeoffs against an API-backed class
+(cost, latency, offline use), see
+`docs/guide/for-users/enable-semantic-search.md` -- written for reyn's
+*other* RAG (`semantic_search`) but the embedding-provider tradeoffs it
+walks through are the same ones this section's Case A/B choice makes.
+
 ## The workflow
 
 Both steps below run through `pipeline__run` -- the launch verb for a
@@ -139,6 +335,55 @@ vector space, and the query either raises `VectorDimensionMismatchError` or,
 at the same dimension, returns **quietly meaningless neighbours**. Different
 model -> different sqlite file: to re-embed, ingest into a **new** `output_db`;
 pointing a new model at the old file corrupts it.
+
+The next section shows the **mechanism** that enforces this rule --
+`reyn_rag_config.dim`, fixed on the first upsert.
+
+## What ingest writes into the sqlite -- the three-table schema
+
+The sqlite file `reyn_vector_store` writes is a plain database you can open
+and inspect (`sqlite3 docs.sqlite '.schema'`). Ingest populates **three
+tables**:
+
+**`reyn_rag_chunks`** -- one row per chunk, all the metadata (but **not** the
+chunk text -- there is no text column, by design):
+
+| column | type | meaning |
+|---|---|---|
+| `rag_id` | `TEXT UNIQUE NOT NULL` | primary key. **Formula = `<source_path>::<chunk_index>`** -- the store derives it; a caller never sets it. |
+| `source_path` | `TEXT NOT NULL` | the source file the chunk came from. |
+| `source_type` | `TEXT NOT NULL DEFAULT 'generic'` | source kind. |
+| `content_hash` | `TEXT NOT NULL` | sha256 of the chunk body -- the **change-detection key** (re-ingest compares this). |
+| `embedding_model` | `TEXT NOT NULL` | the **resolved** model id that actually produced the vector (never a class alias like `standard`) -- stamped on every row. |
+| `chunk_index` | `INTEGER NOT NULL DEFAULT 0` | 0-based position within `source_path`. |
+| `size_tokens` | `INTEGER NOT NULL DEFAULT 0` | token count of the chunk. |
+| `parent_context` | `TEXT` | the ingest root -- a scope tag for "which folder this ingest covered". |
+| `extra` | `TEXT NOT NULL DEFAULT '{}'` | JSON blob for extension metadata. |
+
+**`reyn_rag_config`** -- a single `dim INTEGER NOT NULL`: the embedding
+**dimension**, fixed on the **first** upsert. A later upsert whose vector has
+a different `dim` raises `VectorDimensionMismatchError` -- this is the
+**mechanism** behind "one sqlite = one embedding model = one vector space"
+above (the model stamp in `embedding_model` records *which* model; `dim`
+*enforces* that only one is ever mixed in).
+
+**`reyn_rag_vectors`** -- a sqlite-vec virtual table,
+`USING vec0(embedding float[<dim>])`, holding the vectors themselves. It is
+kept in **positional (parallel-array) correspondence** with
+`reyn_rag_chunks` by shared `rowid`: vector *i* belongs to chunk row *i*.
+
+**How writes behave:**
+
+- **Upsert = delete-then-insert on `rag_id`** (a "replace", so re-ingesting a
+  chunk never duplicates it): the store deletes any existing row with the same
+  `<source_path>::<chunk_index>` id, then inserts the new chunk row **and** its
+  vector together.
+- **Delete identifies a chunk by `(source_path, chunk_index)`** -- exactly the
+  pair that composes `rag_id` -- so the add/update/remove diff (driven by
+  `content_hash`) can target one chunk precisely.
+- **Query** joins the two data tables on `rowid` and returns
+  `[{id, distance, metadata}, ...]` -- the `metadata` you already saw under
+  "2. Query" is these `reyn_rag_chunks` columns, minus the never-stored text.
 
 ## Re-running ingest is cheap -- and is how you update
 
