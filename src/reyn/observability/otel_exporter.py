@@ -521,6 +521,27 @@ def build_otel_exporter(
         return exporter
 
 
+def _bridge_standard_ca_to_otel_env() -> None:
+    """#3075 fix 3: bridge the standard CA env to OTEL's own env var.
+
+    The OTLP HTTP exporters (``opentelemetry-exporter-otlp-proto-http``) read
+    ``OTEL_EXPORTER_OTLP_CERTIFICATE`` for a custom CA bundle — a DIFFERENT
+    variable than the standard ``SSL_CERT_FILE``/``REQUESTS_CA_BUNDLE`` every
+    other reyn egress honours, so an operator with a corporate CA configured
+    the standard way was silently unauthenticated (or failing TLS) for OTEL
+    only. Bridge once, here, right before the exporter reads its env — never
+    overrides an operator who already set ``OTEL_EXPORTER_OTLP_CERTIFICATE``
+    explicitly (``setdefault``).
+    """
+    if os.environ.get("OTEL_EXPORTER_OTLP_CERTIFICATE"):
+        return
+    for name in ("SSL_CERT_FILE", "REQUESTS_CA_BUNDLE"):
+        ca_path = os.environ.get(name, "").strip()
+        if ca_path:
+            os.environ["OTEL_EXPORTER_OTLP_CERTIFICATE"] = ca_path
+            return
+
+
 def _build_pipeline(
     *,
     endpoint: str,
@@ -533,6 +554,8 @@ def _build_pipeline(
     atexit shutdown. Raises if the OpenTelemetry SDK is not installed — the
     caller catches and falls back to not-attached (fail-open)."""
     import atexit
+
+    _bridge_standard_ca_to_otel_env()
 
     from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
     from opentelemetry.sdk.metrics import MeterProvider

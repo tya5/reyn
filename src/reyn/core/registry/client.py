@@ -25,11 +25,8 @@ import os
 import urllib.parse
 from typing import TYPE_CHECKING
 
-from reyn import _ssrf_guard
-from reyn._ssrf_pin import PinnedAsyncHTTPTransport
-
 if TYPE_CHECKING:
-    pass
+    from reyn.core.events.events import EventLog
 
 
 class RegistryError(Exception):
@@ -150,13 +147,22 @@ class RegistryClient:
     existing env-var behaviour so all current callers remain unaffected.
     """
 
-    def __init__(self, verify: bool | str | None = None) -> None:
+    def __init__(
+        self,
+        verify: bool | str | None = None,
+        *,
+        events: "EventLog | None" = None,
+    ) -> None:
         self._client = None  # httpx.AsyncClient — lazy init
         self._verify = verify  # None = use litellm env-var fallback
+        # Optional — op-handler callers (mcp_install.py) pass ctx.events so a
+        # verify=False resolution emits the #3075 audit-event; standalone CLI
+        # callers that construct RegistryClient outside an op context omit it
+        # (the WARN still fires; only the P6 event is skipped — see
+        # reyn._network.note_ssl_verify_disabled).
+        self._events = events
 
     async def __aenter__(self) -> "RegistryClient":
-        import httpx
-
         # perf/log-routing chokepoint: this client can be the FIRST litellm
         # import in the process — funnel it through ensure_litellm_ready() so
         # litellm's import-time console log routing (#2929) wraps it too
@@ -165,18 +171,24 @@ class RegistryClient:
         ensure_litellm_ready()
         from litellm.llms.custom_httpx.http_handler import get_ssl_verify
 
+        from reyn._network import build_async_http_client
+
         # Resolve the verify value: explicit arg takes priority; None falls
         # through to the litellm env-var chain (same as web_fetch handler).
         verify = self._verify if self._verify is not None else get_ssl_verify()
         # SSL verification — priority: constructor arg → litellm env-var chain.
-        # #1972: PinnedAsyncHTTPTransport replaces the old event_hooks approach —
+        # #1972/#3075: pin_ssrf=True routes through PinnedAsyncHTTPTransport —
         # it both validates (L2 SSRF IP-deny, #1956) AND pins the connect-time
-        # socket to the pre-validated IP, closing the DNS-rebind TOCTOU window.
-        self._client = httpx.AsyncClient(
+        # socket to the pre-validated IP, closing the DNS-rebind TOCTOU window,
+        # and (as of #3075) is proxy-aware — see ``ssrf_aware_client_kwargs``.
+        self._client = build_async_http_client(
             timeout=15.0,
             follow_redirects=True,
             headers={"User-Agent": "reyn/1.0"},
-            transport=PinnedAsyncHTTPTransport(verify=verify),
+            verify=verify,
+            pin_ssrf=True,
+            events=self._events,
+            egress="mcp_registry",
         )
         return self
 

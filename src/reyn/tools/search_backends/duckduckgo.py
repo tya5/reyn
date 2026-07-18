@@ -1,3 +1,5 @@
+from reyn._network import resolve_env_proxy_url
+
 from . import SearchResult
 
 
@@ -13,7 +15,14 @@ class DuckDuckGoBackend:
                 "Install with: pip install ddgs"
             ) from exc
 
-        raw = list(DDGS().text(query, max_results=max_results))
+        # #3075 fix 4: ddgs only reads its own DDGS_PROXY env var, not the
+        # standard HTTP(S)_PROXY/ALL_PROXY — pass the resolved standard-env
+        # proxy explicitly so this egress conforms like every other one.
+        raw = list(
+            DDGS(proxy=resolve_env_proxy_url("https")).text(
+                query, max_results=max_results
+            )
+        )
         return [
             SearchResult(
                 title=hit.get("title", ""),

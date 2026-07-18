@@ -404,8 +404,6 @@ def _graphql_request(
     httpx.Client configured with a MockTransport so we avoid network I/O
     without introducing MagicMock.
     """
-    import httpx
-
     payload = {"query": query}
     if variables:
         payload["variables"] = variables
@@ -418,7 +416,9 @@ def _graphql_request(
 
     owns_client = False
     if http_client is None:
-        http_client = httpx.Client(timeout=15.0)
+        from reyn._network import build_sync_http_client
+
+        http_client = build_sync_http_client(timeout=15.0, egress="github_graphql")
         owns_client = True
 
     try:

@@ -15,6 +15,14 @@ value to httpx's TLS layer, based on the priority order:
 real httpx transport (which would load a fake CA path). ``httpx.AsyncClient`` is
 still monkeypatched to capture constructor kwargs (now ``transport=``).
 
+#3075: both call sites now build their client via
+``reyn._network.build_async_http_client(pin_ssrf=True, ...)``, which delegates
+transport construction to ``reyn._ssrf_pin.ssrf_aware_client_kwargs`` — the
+``PinnedAsyncHTTPTransport`` symbol used at construction time is therefore
+``reyn._ssrf_pin.PinnedAsyncHTTPTransport`` regardless of which production
+module (``web.py`` / ``registry/client.py``) triggered the construction, so
+every monkeypatch below targets that one definition site.
+
 No unittest.mock. All helpers are real instances / recording stand-ins — a
 structural invariant (the right layer receives the verify value), not a
 behavioral assertion on httpx internals.
@@ -162,7 +170,7 @@ def test_verify_ssl_ca_bundle_in_config_passes_to_httpx(monkeypatch: pytest.Monk
 
     monkeypatch.setattr(httpx, "AsyncClient", _CaptureAsyncClient)
     monkeypatch.setattr(
-        "reyn.core.op_runtime.web.PinnedAsyncHTTPTransport", _RecordVerifyTransport,
+        "reyn._ssrf_pin.PinnedAsyncHTTPTransport", _RecordVerifyTransport,
     )
     asyncio.run(handle_web_fetch(op=op, ctx=ctx))
 
@@ -189,7 +197,7 @@ def test_verify_ssl_false_in_config_passes_to_httpx(monkeypatch: pytest.MonkeyPa
 
     monkeypatch.setattr(httpx, "AsyncClient", _CaptureAsyncClient)
     monkeypatch.setattr(
-        "reyn.core.op_runtime.web.PinnedAsyncHTTPTransport", _RecordVerifyTransport,
+        "reyn._ssrf_pin.PinnedAsyncHTTPTransport", _RecordVerifyTransport,
     )
     asyncio.run(handle_web_fetch(op=op, ctx=ctx))
 
@@ -214,7 +222,7 @@ def test_verify_ssl_true_in_config_passes_to_httpx(monkeypatch: pytest.MonkeyPat
 
     monkeypatch.setattr(httpx, "AsyncClient", _CaptureAsyncClient)
     monkeypatch.setattr(
-        "reyn.core.op_runtime.web.PinnedAsyncHTTPTransport", _RecordVerifyTransport,
+        "reyn._ssrf_pin.PinnedAsyncHTTPTransport", _RecordVerifyTransport,
     )
     asyncio.run(handle_web_fetch(op=op, ctx=ctx))
 
@@ -243,7 +251,7 @@ def test_ca_bundle_takes_priority_over_verify_ssl(monkeypatch: pytest.MonkeyPatc
 
     monkeypatch.setattr(httpx, "AsyncClient", _CaptureAsyncClient)
     monkeypatch.setattr(
-        "reyn.core.op_runtime.web.PinnedAsyncHTTPTransport", _RecordVerifyTransport,
+        "reyn._ssrf_pin.PinnedAsyncHTTPTransport", _RecordVerifyTransport,
     )
     asyncio.run(handle_web_fetch(op=op, ctx=ctx))
 
@@ -280,7 +288,7 @@ def test_env_var_fallback_when_config_unset(
 
     monkeypatch.setattr(httpx, "AsyncClient", _CaptureAsyncClient)
     monkeypatch.setattr(
-        "reyn.core.op_runtime.web.PinnedAsyncHTTPTransport", _RecordVerifyTransport,
+        "reyn._ssrf_pin.PinnedAsyncHTTPTransport", _RecordVerifyTransport,
     )
     asyncio.run(handle_web_fetch(op=op, ctx=ctx))
 
@@ -356,7 +364,7 @@ def test_registry_client_verify_false_passed_to_httpx(monkeypatch: pytest.Monkey
 
     monkeypatch.setattr(httpx, "AsyncClient", _CapturingClient)
     monkeypatch.setattr(
-        "reyn.core.registry.client.PinnedAsyncHTTPTransport", _RecordVerifyTransport,
+        "reyn._ssrf_pin.PinnedAsyncHTTPTransport", _RecordVerifyTransport,
     )
 
     async def _run() -> None:
@@ -393,7 +401,7 @@ def test_registry_client_ca_bundle_passed_to_httpx(monkeypatch: pytest.MonkeyPat
 
     monkeypatch.setattr(httpx, "AsyncClient", _CapturingClient)
     monkeypatch.setattr(
-        "reyn.core.registry.client.PinnedAsyncHTTPTransport", _RecordVerifyTransport,
+        "reyn._ssrf_pin.PinnedAsyncHTTPTransport", _RecordVerifyTransport,
     )
 
     async def _run() -> None:

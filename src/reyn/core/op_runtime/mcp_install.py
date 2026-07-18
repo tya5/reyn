@@ -316,7 +316,7 @@ async def handle(
         from reyn.core.registry.client import RegistryClient, RegistryError
 
         try:
-            async with RegistryClient() as client:
+            async with RegistryClient(events=ctx.events) as client:
                 server_json = await client.get_server(op.server_id)
         except RegistryError as exc:
             # #1471: 404 = server not in registry → decision-enabling guidance so
