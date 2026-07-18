@@ -100,9 +100,12 @@ class TestFamily6aRouterWaistBundleByteIdentical:
         wired_agent_registry = router_host.get_agent_registry()
         wired_pipeline_registry = router_host.get_pipeline_registry()
         wired_presentation_registry = router_host.get_presentation_registry()
-        assert wired_agent_registry is session._registry
-        assert wired_pipeline_registry is session._pipeline_registry
-        assert wired_presentation_registry is session._presentation_registry
+        session_agent_registry = session._registry
+        session_pipeline_registry = session._pipeline_registry
+        session_presentation_registry = session._presentation_registry
+        assert wired_agent_registry is session_agent_registry
+        assert wired_pipeline_registry is session_pipeline_registry
+        assert wired_presentation_registry is session_presentation_registry
 
     def test_events_state_log_permission_resolver_resolver_wired(
         self, session: Session,
@@ -115,10 +118,14 @@ class TestFamily6aRouterWaistBundleByteIdentical:
         wired_state_log = router_host.state_log
         wired_permission_resolver = router_host.permission_resolver
         wired_resolver = router_host.resolver
-        assert wired_events is session._chat_events
-        assert wired_state_log is session._state_log
-        assert wired_permission_resolver is session._perm
-        assert wired_resolver is session._resolver
+        session_chat_events = session._chat_events
+        session_state_log = session._state_log
+        session_perm = session._perm
+        session_resolver = session._resolver
+        assert wired_events is session_chat_events
+        assert wired_state_log is session_state_log
+        assert wired_permission_resolver is session_perm
+        assert wired_resolver is session_resolver
 
     def test_agent_name_and_role_passthrough(self, session: Session) -> None:
         """Tier 1: ``agent_name``/``agent_role`` passthrough — proven via
@@ -126,23 +133,25 @@ class TestFamily6aRouterWaistBundleByteIdentical:
         router_host = session._router_host
         wired_agent_name = router_host.agent_name
         wired_agent_role = router_host.agent_role
+        session_agent_role = session._agent_role
         assert wired_agent_name == session.agent_name
-        assert wired_agent_role == session._agent_role
+        assert wired_agent_role == session_agent_role
 
     # ── ★ the 3 deferred per-turn lambdas: crux of this family ───────────
 
     def test_live_session_id_resolves_at_call_time_not_construction_time(
         self, session: Session,
     ) -> None:
-        """Tier 1 / ★ crux: ``live_session_id_fn=lambda: self._session_id``
+        """Tier 1: ★ crux — ``live_session_id_fn=lambda: self._session_id``
         must be DEFERRED — reassigning ``session._session_id`` AFTER
         construction (mirroring a spawned session's post-construction sid
         stamp) must show up on ``router_host.live_session_id`` immediately.
         If the lambda had been eager-ized to a fixed value at builder-call
         time, this would still show the OLD sid — the strip-falsify shape."""
         router_host = session._router_host
+        session_session_id = session._session_id
         original_live_sid = router_host.live_session_id
-        assert original_live_sid == session._session_id
+        assert original_live_sid == session_session_id
 
         session._session_id = "spawned-session-live-sid"
 
@@ -155,7 +164,7 @@ class TestFamily6aRouterWaistBundleByteIdentical:
     def test_current_task_id_and_turn_origin_resolve_at_call_time(
         self, session: Session,
     ) -> None:
-        """Tier 1 / ★ crux: ``current_task_id_fn`` / ``turn_origin_fn`` must
+        """Tier 1: ★ crux — ``current_task_id_fn`` / ``turn_origin_fn`` must
         be DEFERRED per-turn callbacks, NOT frozen at construction. Both
         ``_current_task_id`` (default ``None``) and ``_current_turn_origin``
         (default ``"auto_improvement"``) already carry a PRE-TURN default at
