@@ -1014,6 +1014,57 @@ class _InterventionBundle:
     chain_timeout_glue: "ChainTimeoutGlue"
 
 
+@dataclass(frozen=True)
+class _InterAgentMessagingBundle:
+    """#3082 Family 8a: ``inter_agent_messaging`` (``InterAgentMessaging``,
+    the agent-to-agent messaging service — depth-guarded request/response
+    dispatch, inbox handlers, multi-hop chain relay resolution). Per the
+    architect's ★ Family 8 DAG correction, the originally-planned "Family 8
+    = memory → inter_agent_messaging + mcp_connection_service" grouping does
+    not hold: the residual five leftover components (mcp_connection_service,
+    render_template_bounds, task_subscription_writer, memory,
+    inter_agent_messaging) are mutually independent, scattered, and straddle
+    the router-host WAIST (Family 6a) on BOTH sides — they cannot be
+    gathered into one builder. render_template_bounds (a 2-arg config) and
+    task_subscription_writer (a 1-line ternary) stay inline (trivial, not
+    worth a builder). The three substantial leaves — inter_agent_messaging
+    (8a, this one), memory (8b), mcp_connection_service (8c) — each get
+    their own no-move, single-component builder, landing in separate PRs.
+
+    Single-field bundle (mirrors Family 4's ``_CostBundle`` and Family 6a's
+    ``_RouterWaistBundle`` — one unconditional component, no intra-family
+    DAG); kept as a bundle rather than a bare return for pipeline-pattern
+    consistency with every other Family builder.
+
+    ``inter_agent_messaging`` is POST-WAIST: it reads Family 7's ``chains``
+    (``chain_manager=self._chains``) and Family 1's ``chat_events``
+    (``event_log=self._chat_events``) EAGERLY, plus a long tail of Session
+    bound methods (``self._put_outbox`` / ``self._a2a_send_request`` /
+    ``self._on_chain_timeout_fire`` / etc.) — all already set on ``self`` by
+    the time this builder runs (its call site sits at the construction's
+    ORIGINAL position, right after Family 7's ``_build_intervention_bundle``
+    returns). A handful of args are DEFERRED ``lambda``s that close over
+    ``self`` and resolve at CALL time, long after ``__init__`` returns —
+    these read per-turn / post-construction state
+    (``self._router_loop_delegations`` / ``self._router_loop_agent_replies``
+    / ``self._session_id``) that has no stable value yet at construction
+    time, so eager-izing them would either read a stale/None snapshot or
+    (for the setter lambdas) be impossible to express eagerly at all. This
+    is a SINGLE independent component (unlike Family 6b/7's multi-component
+    families), so there is no intra-family local-vs-self split — every
+    reference here is either an eager ``self._X`` (cross-family / config,
+    already resolved) or a deferred ``self.*`` bound method / ``lambda:
+    self.*`` closure (kept verbatim, never eager-ized).
+
+    Pure output→input value object:
+    :meth:`Session._build_inter_agent_messaging_bundle` is a byte-identical
+    extraction of the construction that used to run inline in
+    ``Session.__init__`` — same object, same 22 keyword args, same
+    construction order, same (unmoved) position."""
+
+    inter_agent_messaging: "InterAgentMessaging"
+
+
 class Session:
     def __init__(
         self,
@@ -1970,35 +2021,16 @@ class Session:
         # Hybrid design (案 C): InterAgentMessaging owns agent-side logic; transport-side
         # routing handled by FP-0013 RoutingLayer via send_request_callback /
         # send_response_callback injection.
-
-        self._inter_agent_messaging = InterAgentMessaging(
-            event_log=self._chat_events,
-            chain_manager=self._chains,
-            agent_name=self.agent_name,
-            max_hop_depth=self._max_hop_depth,
-            safety_extensions=self._safety_extensions,
-            output_language=self.output_language,
-            # FP-0050/#1822 S4b (EP5): fence untrusted inbound peer text.
-            threat_scan=self._safety.threat_scan,
-            append_history=self._append_history_for_inter_agent_messaging,
-            put_outbox=self._put_outbox,
-            handle_chat_limit_checkpoint=self._handle_chat_limit_checkpoint,
-            run_router_loop=lambda text, cid: self._run_router_loop(text, cid),
-            reset_router_turn_counter=self._reset_router_turn_counter,
-            send_request_callback=self._a2a_send_request,
-            send_response_callback=self._a2a_send_response,
-            on_chain_timeout_fire=self._on_chain_timeout_fire,
-            emit_router_cap_exhausted_fn=self._emit_router_cap_exhausted_user,
-            get_router_loop_delegations=lambda: self._router_loop_delegations,
-            set_router_loop_delegations=lambda v: setattr(self, "_router_loop_delegations", v),
-            get_router_loop_agent_replies=lambda: self._router_loop_agent_replies,
-            set_router_loop_agent_replies=lambda v: setattr(self, "_router_loop_agent_replies", v),
-            # #2103 S1bc-exec: read this session's LIVE sid (spawned sessions are stamped
-            # post-construction, so a cached value would be stale) for the responder_sid
-            # tag; + the trusted spawned-task lookup for rendering a returning result.
-            session_id_fn=lambda: self._session_id,
-            lookup_spawned_task=self.lookup_and_evict_spawned_task,
-        )
+        #
+        # #3082 Family 8a: byte-identical extraction, same construction order,
+        # same (unmoved) position — post-waist, reads Family 7's self._chains
+        # and Family 1's self._chat_events eagerly (both already set by this
+        # point) plus a tail of deferred self.*/lambda: self.* closures kept
+        # verbatim. See _InterAgentMessagingBundle /
+        # _build_inter_agent_messaging_bundle's docstring for the full
+        # eager-vs-deferred provenance per arg.
+        _inter_agent_messaging_bundle = self._build_inter_agent_messaging_bundle()
+        self._inter_agent_messaging = _inter_agent_messaging_bundle.inter_agent_messaging
 
         # session.py refactor PR-3: RouterLoopDriver owns the per-turn loop
         # orchestration (run_turn, shrink/overflow, cap enforcement, cancel).
@@ -4800,6 +4832,57 @@ class Session:
             intervention_coordinator=intervention_coordinator,
             chain_timeout_glue=chain_timeout_glue,
         )
+
+    def _build_inter_agent_messaging_bundle(self) -> "_InterAgentMessagingBundle":
+        """#3082 Family 8a: build ``inter_agent_messaging``. Byte-identical
+        extraction of the construction that used to run inline in
+        ``__init__`` — same object, same 22 keyword args, same construction
+        order, same (unmoved) position (right after Family 7's
+        ``_build_intervention_bundle`` returns).
+
+        This is a single independent leaf component (unlike Family 6b/7's
+        multi-component families) — every arg is either an eager
+        ``self._X`` (cross-family / config, already set on ``self`` by this
+        point: Family 7's ``self._chains``, Family 1's
+        ``self._chat_events``, plus early params/properties) or a deferred
+        bound method / ``lambda`` closing over ``self`` (kept verbatim,
+        NEVER eager-ized — ``run_router_loop`` /
+        ``get_router_loop_delegations`` / ``set_router_loop_delegations`` /
+        ``get_router_loop_agent_replies`` / ``set_router_loop_agent_replies``
+        / ``session_id_fn`` all resolve per-turn / post-construction state at
+        CALL time, not at builder-call time). No intra-family local-vs-self
+        split applies — there is nothing else in this family to be local
+        against. See :class:`_InterAgentMessagingBundle`'s docstring for the
+        full eager-vs-deferred provenance per arg."""
+        inter_agent_messaging = InterAgentMessaging(
+            event_log=self._chat_events,
+            chain_manager=self._chains,
+            agent_name=self.agent_name,
+            max_hop_depth=self._max_hop_depth,
+            safety_extensions=self._safety_extensions,
+            output_language=self.output_language,
+            # FP-0050/#1822 S4b (EP5): fence untrusted inbound peer text.
+            threat_scan=self._safety.threat_scan,
+            append_history=self._append_history_for_inter_agent_messaging,
+            put_outbox=self._put_outbox,
+            handle_chat_limit_checkpoint=self._handle_chat_limit_checkpoint,
+            run_router_loop=lambda text, cid: self._run_router_loop(text, cid),
+            reset_router_turn_counter=self._reset_router_turn_counter,
+            send_request_callback=self._a2a_send_request,
+            send_response_callback=self._a2a_send_response,
+            on_chain_timeout_fire=self._on_chain_timeout_fire,
+            emit_router_cap_exhausted_fn=self._emit_router_cap_exhausted_user,
+            get_router_loop_delegations=lambda: self._router_loop_delegations,
+            set_router_loop_delegations=lambda v: setattr(self, "_router_loop_delegations", v),
+            get_router_loop_agent_replies=lambda: self._router_loop_agent_replies,
+            set_router_loop_agent_replies=lambda v: setattr(self, "_router_loop_agent_replies", v),
+            # #2103 S1bc-exec: read this session's LIVE sid (spawned sessions are stamped
+            # post-construction, so a cached value would be stale) for the responder_sid
+            # tag; + the trusted spawned-task lookup for rendering a returning result.
+            session_id_fn=lambda: self._session_id,
+            lookup_spawned_task=self.lookup_and_evict_spawned_task,
+        )
+        return _InterAgentMessagingBundle(inter_agent_messaging=inter_agent_messaging)
 
     # ── #2073 S2: config hot-reload reapply seams (registered on the HotReloader) ──
 
