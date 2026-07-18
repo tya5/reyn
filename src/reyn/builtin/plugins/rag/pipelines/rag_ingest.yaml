@@ -472,18 +472,23 @@ steps:
   - transform:
       value: "map(ctx.file_extensions, e -> ctx.input_path + '/**/*.' + e) + [ctx.input_path]"
       output: file_patterns
-  # #3095: `schema: PreflightCheck` (same status=="ok" gate X1 above already
-  # uses per MCP server) is what makes the `on_error: abort` above actually
-  # FIRE. Without it, a `tool:` step never raises on a tool-level failure
-  # (only a real transport/dispatch exception does) -- a `glob_files` call
-  # that hits `status: "denied"` (e.g. no file.read permission granted yet
-  # for `input_path`, the common case when it names a folder outside the
-  # reyn project root) returned NORMALLY with an error-shaped payload, so
-  # `on_error: abort` never engaged: the failed item flowed on as an
-  # ordinary "success" into the `fold` below, which assumes every item's
-  # `.structured` is a list -- and broke several steps downstream of the
-  # real failure with an opaque `list + dict` arithmetic error instead of a
-  # clean, decision-enabling "input_path is not readable" abort here.
+  # #3095/#3099 corrective (a): the `on_error: abort` below FIRES on a
+  # `glob_files` failure without any `schema:` gate. #3098 landed an interim
+  # `schema: PreflightCheck` here (a non-"ok" status fails validation and
+  # raises) because at the time the executor's `for_each`/`parallel`
+  # on_error trigger was raise-only -- a `tool:` step's own op-level failure
+  # (e.g. `glob_files` hitting `status: "denied"`, no file.read permission
+  # yet for `input_path`, the common case when it names a folder outside the
+  # reyn project root) returns NORMALLY (`execute_op` degrades it to a
+  # status-carrying dict, by design, rather than raising), so `on_error`
+  # never saw it. #3099 corrective (a) closed that at the SOURCE: the
+  # executor's fan-out coordinator now also trips `on_error` on a `tool:`
+  # step's CANONICAL error result (`meta.isError`, the SAME FP-0056 v2
+  # shared-error-seam signal a handle-inline step already branches on
+  # below -- see `meta.isError` further down this file), not just a raised
+  # exception. The per-call `schema: PreflightCheck` gate is therefore
+  # redundant here and removed -- point-fix + the now-general mechanism
+  # would otherwise coexist (owner no-debt ruling).
   - for_each:
       over: ctx.file_patterns
       max_parallel: 4
@@ -491,7 +496,6 @@ steps:
       do:
         tool:
           name: glob_files
-          schema: PreflightCheck
           args:
             pattern: !expr item
             # EXPLICIT, load-bearing: glob_files defaults to 50 and truncates
@@ -505,9 +509,10 @@ steps:
   # glob's real list of paths (#2994); before that it was newline-joined
   # text, which R1 (no `split`) could not consume at all -- the reason this
   # step had to be a python shell-out. Every item reaching here is now
-  # GUARANTEED `status: "ok"` (the `schema: PreflightCheck` gate above
-  # aborts the step on anything else), so `.structured` is guaranteed a
-  # list -- `acc + item.structured` can no longer see a dict.
+  # GUARANTEED `status: "ok"` (the `for_each: on_error: abort` above now
+  # fires on a canonical-error result too -- #3099 corrective (a) -- so a
+  # failed glob never survives to be collected), so `.structured` is
+  # guaranteed a list -- `acc + item.structured` can no longer see a dict.
   - fold:
       over: ctx.globbed
       init: "[]"
