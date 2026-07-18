@@ -30,12 +30,16 @@
 # Spawn is then network-free (ADR 0064 §3.11).
 #
 # Inputs (all optional except `input_path`/`output_db`):
-#   input_path          -- (required) an ABSOLUTE path to a document file
-#                          OR a folder of them. Absolute because the file
-#                          discovery below globs it directly: an absolute
-#                          pattern yields absolute source paths (which is
-#                          what `file://` conversion and the stored
-#                          source_path column both need).
+#   input_path          -- (required) a path to a document file OR a folder
+#                          of them, absolute OR relative (resolved against
+#                          the workspace root/CWD, same as any other reyn
+#                          file op -- #3102). The file-discovery `glob_files`
+#                          call below always passes `absolute: true`, so the
+#                          matches handed to `file://` conversion and the
+#                          stored source_path column are absolute regardless
+#                          of which form `input_path` was given in -- that
+#                          contract holds unconditionally, not just when the
+#                          operator happens to type an absolute path.
 #   output_db           -- (required) the sqlite file to write into.
 #   file_extensions     -- extensions to ingest when input_path is a folder
 #                          (default: the proposal-0063 target formats
@@ -88,7 +92,11 @@
 # and #3010's `files_skipped` / `skipped_files` naming every discovered file
 # that produced NO indexed content -- whether its conversion failed, it
 # reported an empty body, or it simply chunked to zero -- each with the
-# reason, so a file can never leave the corpus silently)
+# reason, so a file can never leave the corpus silently -- plus #3102's
+# `all_discovered_files_skipped`, true when EVERY discovered file was
+# skipped (0 chunks indexed this run despite `status: ok`), so a caller
+# does not have to re-derive that special case from files_scanned ==
+# files_skipped itself)
 # or `_blocked`'s X1 pre-flight failure message (cause + concrete remedy
 # per unreachable server -- mirrors #2932's `require_mcp` decision-enabling
 # error, never a bare transport exception).
@@ -499,6 +507,26 @@ steps:
             # corpus is dropped with no error anywhere -- the summary would
             # report a files_scanned that is simply wrong.
             max_results: !expr ctx.max_files
+            # #3102: EXPLICIT, load-bearing. `_ingest_one_file` builds
+            # `file://` + this match verbatim (see that pipeline's convert
+            # step) -- a bare relative match there ('corpus/note1.md')
+            # produces a MALFORMED URI ('file://corpus/note1.md', which the
+            # URI parser reads 'corpus' as a netloc, not a path segment) --
+            # markitdown then rejects every file with "Netloc must be empty
+            # or localhost", the whole folder is silently skipped, and
+            # ingest still reports `status: ok` with 0 chunks. `input_path`
+            # being relative (the natural way an operator points this
+            # pipeline at a project-root corpus, e.g. './corpus') is enough
+            # to hit this -- glob_files' own pattern-vs-path-root contract
+            # (a relative PATTERN globs relative to base_dir/CWD and
+            # returns project-relative matches; see Workspace.glob_files)
+            # is correct and shared by many other callers that WANT
+            # relative display paths, so it stays the default. `absolute:
+            # true` is the opt-in that makes THIS caller's contract hold
+            # unconditionally: file:// is always built from an absolute
+            # path, regardless of whether the operator's own input_path was
+            # relative or absolute.
+            absolute: true
       collect: {transform: {value: "pipe"}}
       output: globbed
   # Flatten one list per pattern into one flat file list. `structured` is
@@ -556,6 +584,21 @@ steps:
         map(filter(ctx.per_file_outcomes, o -> o.skipped_reason != ""),
             o -> {source_path: o.source_path, reason: o.skipped_reason})
       output: skipped_files
+
+  # #3102 -- the STRUCTURAL zero-yield gate. `skipped_files` (above) already
+  # names every individual file and why it was skipped, but a caller has to
+  # compute `files_scanned == files_skipped` itself to notice the SPECIAL
+  # case: every single discovered file was unusable, so this run indexed
+  # NOTHING, yet the pipeline still returns `status: ok` (no step raised --
+  # #3010's per-file skip path is a legitimate non-error outcome, and
+  # correctly so for a PARTIAL skip). A caller (chat rendering, an
+  # orchestrating pipeline, or an operator reading the summary) should not
+  # have to re-derive "ok but did nothing" from two counts; this flag names
+  # it directly. `count(ctx.files) > 0` excludes the (also legitimate)
+  # "input_path matched nothing" case from being reported as a skip.
+  - transform:
+      value: "count(ctx.files) > 0 and count(ctx.skipped_files) == count(ctx.files)"
+      output: all_discovered_files_skipped
 
   # C5: fetch the existing corpus SCOPED TO THIS input_path (via
   # `parent_context` -- repurposed here as the ingest-root tag stamped on
@@ -641,6 +684,7 @@ steps:
         {files_scanned: count(ctx.files),
          files_skipped: count(ctx.skipped_files),
          skipped_files: ctx.skipped_files,
+         all_discovered_files_skipped: ctx.all_discovered_files_skipped,
          chunks_upserted: ctx.upsert_outcome.upserted,
          chunks_removed: ctx.delete_result.structured.deleted,
          chunks_unchanged_skipped: ctx.unchanged_count,

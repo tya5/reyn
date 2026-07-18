@@ -157,6 +157,10 @@ _GLOB_FILES_PARAMETERS: dict[str, Any] = {
             "type": "integer",
             "description": _io_descriptions.PARAMS["glob_files"]["max_results"].text,
         },
+        "absolute": {
+            "type": "boolean",
+            "description": _io_descriptions.PARAMS["glob_files"]["absolute"].text,
+        },
     },
     "required": ["pattern"],
 }
@@ -341,6 +345,13 @@ async def _handle_glob(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
     max_results=1000, got exactly 50 back). Callers ingesting a whole
     directory (e.g. RAG folder-indexing) must pass max_results explicitly
     when more than 50 matches are expected.
+
+    `absolute` (#3102) is forwarded to `FileIROp.absolute` — opt-in, default
+    False (unchanged project-relative return for every existing caller). A
+    caller that needs an absolute path regardless of whether its OWN
+    pattern was relative (e.g. building a `file://` URI) passes
+    `absolute: true` explicitly rather than relativizing/re-resolving the
+    match itself, which R1 pipelines have no primitive to do.
     """
     from reyn.core.op_runtime import execute_op
     from reyn.schemas.models import FileIROp
@@ -355,6 +366,7 @@ async def _handle_glob(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
         op="glob",
         path=combined,
         max_results=args.get("max_results", 50),
+        absolute=bool(args.get("absolute", False)),
     )
     legacy_ctx = _build_legacy_op_context(ctx)
     result = await execute_op(op, legacy_ctx)

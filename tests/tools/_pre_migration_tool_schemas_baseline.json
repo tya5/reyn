@@ -465,6 +465,10 @@
       "name": "glob_files",
       "parameters": {
         "properties": {
+          "absolute": {
+            "description": "When true, return absolute paths even for a relative pattern (default false = project-relative paths). Set this when the result feeds something that needs an absolute path regardless of the pattern's own form (e.g. a file:// URI) — do not try to reconstruct an absolute path from a relative match yourself.",
+            "type": "boolean"
+          },
           "max_results": {
             "description": "Maximum number of matching paths to return. Defaults to 50 — raise this explicitly when enumerating a directory that may hold more entries than that (e.g. bulk ingestion), otherwise matches beyond the cap are silently dropped.",
             "type": "integer"

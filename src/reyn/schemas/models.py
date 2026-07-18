@@ -18,6 +18,7 @@ class FileIROp(BaseModel):
     content: str | None = None       # write only
     dest_path: str | None = None     # move only: destination path
     max_results: int = 50            # glob only: cap on number of matching paths returned
+    absolute: bool = False           # glob only: return absolute paths even for a relative pattern (#3102)
     # read-specific
     offset: int | None = None        # line number to start reading from (0-indexed); None = beginning
     limit: int | None = None         # number of lines to read; None = all
