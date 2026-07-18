@@ -10,10 +10,14 @@ network-port rule API — no `NetAccess`, no net symbol in `plumbing`, and
 `Ruleset` has exactly `allow`/`apply` (measured on the pinned 1.0.0.dev5, not
 read off the kernel's ABI table). So Landlock does NOT restrict outbound network
 here, at ANY ABI. What carries a `network: false` policy is the seccomp filter's
-default-deny (`_NETWORK_SYSCALLS` are allowlisted only when network is on) — and
-only when `allow_subprocess` is False, because the whole filter is skipped
-otherwise (#3030). The layer logs a one-shot WARN so the gap is diagnosable
-rather than faking enforcement it can't deliver (#1693).
+default-deny (`_NETWORK_SYSCALLS` are allowlisted only when network is on) —
+loaded UNCONDITIONALLY as of #3030 (it used to be skipped whenever
+`allow_subprocess` was True, silently dropping the network gate along with it —
+the stdio-MCP default is `allow_subprocess: true`, so this used to mean the
+default MCP configuration enforced no network gate on Linux at all). The layer
+still logs a one-shot WARN that Landlock ITSELF cannot restrict network, so the
+gap in this specific layer stays diagnosable even though the seccomp layer now
+compensates unconditionally (#1693).
 
 Filesystem model: allowlist-only. The HANDLED access set (Ruleset
 ``restrict_rules``) always governs the full write surface (write/make/remove) so
@@ -177,22 +181,25 @@ def _child_preexec(ruleset: object | None, policy: SandboxPolicy) -> None:
                 file=sys.stderr,
             )
 
-    if not policy.allow_subprocess:
-        # Loads immediately in this (child) process and survives the execve that
-        # Popen issues next. Note this runs BEFORE CPython's own post-preexec_fn
-        # code, whose syscalls are filtered too — hence `close_range` in the
-        # baseline, which the landlock_exec shim's plain-execvp shape never needs.
-        #
-        # ⚠ This gate is the SIBLING of `landlock_exec._apply_seccomp`'s and
-        # carries the same live defect: the filter also holds the NETWORK gate, so
-        # skipping it on allow_subprocess=True leaves `network: false` enforcing
-        # nothing (#3030). Not fixed here — see that function's docstring for why
-        # the fix is a design decision rather than a one-line move.
-        #
-        # The import must already be warm: pyseccomp resolves native libs at
-        # import via the filesystem, which Landlock has just closed above. `run()`
-        # warms it in the parent before the fork; this child inherits it (#3020).
-        load_seccomp_filter(policy)
+    # Loads immediately in this (child) process and survives the execve that
+    # Popen issues next. Note this runs BEFORE CPython's own post-preexec_fn
+    # code, whose syscalls are filtered too — hence `close_range` in the
+    # baseline, which the landlock_exec shim's plain-execvp shape never needs.
+    #
+    # ALWAYS loads now, regardless of `policy.allow_subprocess` (#3030 fix). This
+    # gate used to be the SIBLING of `landlock_exec._apply_seccomp`'s old gate,
+    # and carried the same defect: the filter also holds the NETWORK gate, so
+    # skipping it on allow_subprocess=True left `network: false` enforcing
+    # nothing — the stdio-MCP default. `_build_syscall_allowlist` already adds
+    # `_SUBPROCESS_SYSCALLS` when `policy.allow_subprocess`, so an
+    # allow_subprocess=True policy still gets exactly the syscalls it asked for;
+    # loading unconditionally only closes the network (and every other unnamed)
+    # gap, it does not narrow what a subprocess-permitting policy is granted.
+    #
+    # The import must already be warm: pyseccomp resolves native libs at
+    # import via the filesystem, which Landlock has just closed above. `run()`
+    # warms it in the parent before the fork; this child inherits it (#3020).
+    load_seccomp_filter(policy)
 
 
 def _warn_net_once() -> None:
@@ -210,13 +217,20 @@ def _warn_net_once() -> None:
     It also used to point at "the no-network-fd / proxy gate" as the mechanism
     that delivers the deny instead. That gate does not exist: the phrase appears
     nowhere in this repo outside this module's own comments, and what actually
-    refuses `socket`/`connect` is the seccomp filter's default-deny — which is
-    skipped entirely when `allow_subprocess` is True (#3030, measured: a real
-    outbound connect+send SUCCEEDED under `network=False, allow_subprocess=True`).
-    Naming a mechanism that does not exist is worse than naming none: it tells an
-    operator the axis is covered elsewhere. The message names the real condition.
+    refuses `socket`/`connect` is the seccomp filter's default-deny — which
+    (#3030) used to be skipped entirely when `allow_subprocess` was True,
+    measured as a real outbound connect+send SUCCEEDING under `network=False,
+    allow_subprocess=True`. Naming a mechanism that does not exist is worse than
+    naming none: it tells an operator the axis is covered elsewhere. The message
+    names the real condition.
 
-    All three corrections are #2980's class — a claim about what the installed
+    #3030 fixed the `allow_subprocess` gate (the filter now always loads), so
+    this WARN's remaining scope is narrower and permanent: Landlock ITSELF still
+    has no network API at any ABI, so the deny is carried entirely by the
+    seccomp layer rather than by this backend — worth saying so an operator
+    reading Landlock's own docs does not conclude this layer restricts network.
+
+    All three corrections were #2980's class — a claim about what the installed
     code does, inferred rather than measured.
     """
     global _NET_WARN_ISSUED
@@ -227,10 +241,9 @@ def _warn_net_once() -> None:
         "LandlockBackend: this policy denies network, but Landlock will NOT "
         "restrict outbound network here — the pinned `landlock` package exposes "
         "no network-rule API on any kernel ABI (upgrading the kernel does not "
-        "change this). The deny is carried by the seccomp-BPF filter's "
-        "default-deny, which applies ONLY when allow_subprocess is False; with "
-        "allow_subprocess True the filter is skipped and outbound network is NOT "
-        "restricted at all (see issue #3030)."
+        "change this). The deny is carried entirely by the seccomp-BPF filter's "
+        "default-deny, which now loads unconditionally (#3030) regardless of "
+        "allow_subprocess."
     )
 
 
@@ -393,10 +406,10 @@ class LandlockBackend:
         # else in the parent happened to have imported pyseccomp first (#3020,
         # measured: without this the child died in preexec_fn). The import is
         # inherited across fork, so warming it here is what makes the child's load
-        # a pure in-memory operation. Gated exactly as `_child_preexec` gates the
-        # load, so a subprocess-permitting policy pays nothing.
-        if not policy.allow_subprocess:
-            preload_native_dependency()
+        # a pure in-memory operation. Called UNCONDITIONALLY (#3030): the child
+        # now always loads the filter regardless of `policy.allow_subprocess`, so
+        # this must always warm the import, not only when subprocess is denied.
+        preload_native_dependency()
 
         loop = asyncio.get_running_loop()
 

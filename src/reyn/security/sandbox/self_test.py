@@ -51,14 +51,41 @@ never loads — #2962, exactly — passes the write probe green. Until stage 2 a
 passing ``available()`` said nothing whatsoever about ``allow_subprocess``, while
 ``configure-sandbox.md`` told operators it was enforced.
 
-**Known blind spot (two denies, still not a matrix).** These witness the
-filesystem write boundary and the subprocess-spawn deny, both through
-``wrap_command``. They do NOT witness the network gate, ``read_deny_paths`` (not
-expressible on Landlock at all), or the one-shot ``run()`` path's separate
-preexec ruleset — which loads its filter through a DIFFERENT code path than the
-shim ``wrap_command`` re-execs, so passing here does not speak for it. A backend
-that passes has fired two denies — strictly more than the zero any environment
-witnessed before #2983 — not every deny it claims.
+**A third probe exists, added for #3030, but is deliberately NOT folded into
+the cached suite below.** :func:`probe_network_enforcement` witnesses the
+network gate the same way — a socket-create attempted under ``network=False``
+MUST be refused, with the same positive-control / non-networking-control /
+deny three-arm shape as the subprocess probe. It closes the gap #3030 found:
+the network gate lived inside the SAME seccomp filter the subprocess axis does,
+and that filter used to be skipped entirely whenever ``allow_subprocess`` was
+True — the stdio-MCP default — so neither ``probe_enforcement`` nor
+``probe_subprocess_enforcement`` (both of which pass ``allow_subprocess=True``
+to isolate their own axis) had ever exercised it.
+
+It stays OUT of :func:`enforcement_self_test` — the function every real backend
+resolution calls — on purpose: that function's blast radius is every
+sandboxed op on every host, and a probe bug (a timeout, a host where bare
+``socket()`` creation is itself blocked by something unrelated to this fix)
+would silently fall every op back to ``NoopBackend`` rather than only failing
+to witness one axis. ``probe_network_enforcement`` is instead a directly
+callable, uncached probe — the same shape ``sandbox_landlock_deny_gate.py``
+(#2983 stage 3) already uses for the other two axes as CI-only deny arms, not
+production gates. Widening the cached, production-gating suite to a third axis
+is a follow-up decision, not this fix's.
+
+**Known blind spot (two denies in the cached suite, a third probe alongside
+it).** :func:`enforcement_self_test` witnesses the filesystem write boundary
+and the subprocess-spawn deny, both through ``wrap_command``. It does NOT
+witness the network gate (covered by the separate, uncached
+:func:`probe_network_enforcement`), ``read_deny_paths`` (not expressible on
+Landlock at all), io_uring specifically (covered instead by
+``tests/test_sandbox_seccomp_network_3030.py``'s dedicated probe, since it needs
+a raw-syscall oracle rather than a marker file), or the one-shot ``run()``
+path's separate preexec ruleset — which loads its filter through a DIFFERENT
+code path than the shim ``wrap_command`` re-execs, so passing here does not
+speak for it. A backend that passes the cached suite has fired two denies —
+strictly more than the zero any environment witnessed before #2983 — not every
+deny it claims.
 """
 from __future__ import annotations
 
@@ -67,6 +94,7 @@ import os
 import shlex
 import shutil
 import subprocess
+import sys
 import tempfile
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -342,6 +370,117 @@ def probe_subprocess_enforcement(backend: "SandboxBackend") -> str | None:
         shutil.rmtree(granted, ignore_errors=True)
 
 
+def probe_network_enforcement(backend: "SandboxBackend") -> str | None:
+    """Witness whether *backend* actually denies outbound-socket creation under
+    ``network=False`` (#3030).
+
+    Returns ``None`` when the deny fired, else an operator-readable reason.
+    Uncached, and — unlike :func:`probe_enforcement` /
+    :func:`probe_subprocess_enforcement` — deliberately NOT folded into
+    :func:`enforcement_self_test`'s cached, production-gating suite; see that
+    function's and the module's docstrings for why. Called directly by CI
+    (``scripts/sandbox_landlock_deny_gate.py``'s ``network`` deny arm) and by
+    ``tests/test_sandbox_seccomp_network_3030.py``.
+
+    The oracle is ``socket.socket()`` succeeding or raising, marked via a file
+    (same idiom as :func:`probe_subprocess_enforcement`) rather than a live
+    connect: the seccomp filter refuses the ``socket`` syscall itself, before any
+    address is even resolved, so no outbound connectivity is needed to witness
+    the deny — and none is risked on a network-restricted host running this
+    probe.
+
+    **``allow_subprocess=True`` throughout — deliberately, unlike the write
+    probe's isolation choice.** #3030 is specifically the discovery that
+    ``network=False`` was silently unenforced whenever ``allow_subprocess`` was
+    True (the stdio-MCP default), because the whole seccomp filter — network
+    gate included — used to be skipped in that case. Probing with
+    ``allow_subprocess=False`` would not exercise the condition that was
+    actually broken.
+
+    Three launches, same shape as :func:`probe_subprocess_enforcement` and for
+    the same reason — two different lies are available:
+
+    1. ``network=True`` + a socket create must SUCCEED (positive control) — else
+       the probe cannot observe a working socket() through this wrap at all.
+    2. ``network=False`` + a NON-networking command must still run — else a
+       filter that is dead wholesale under this policy (exactly #3030's shape:
+       the whole filter skipped, not "network off, everything else on") is
+       indistinguishable from one that denies only sockets.
+    3. Only then the deny: ``network=False`` + a socket create must NOT
+       succeed.
+    """
+    touch = shutil.which("touch")
+    if touch is None:
+        return (
+            "no 'touch' binary found on PATH, so the network-enforcement probe "
+            "could not be run — this backend's network enforcement is "
+            "unwitnessed, not confirmed"
+        )
+
+    granted = Path(tempfile.mkdtemp(prefix="reyn-sandbox-selftest-net-")).resolve()
+    try:
+        def _policy(network: bool) -> SandboxPolicy:
+            return SandboxPolicy(
+                write_paths=[str(granted)],
+                read_deny_paths=[],
+                network=network,
+                allow_subprocess=True,  # the exact #3030 condition
+                timeout_seconds=_PROBE_TIMEOUT_SECONDS,
+            )
+
+        def _socket_argv(marker: Path) -> list[str]:
+            code = (
+                "import socket\n"
+                "s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)\n"
+                f"open({str(marker)!r}, 'w').close()\n"
+            )
+            return [sys.executable, "-c", code]
+
+        # 1. Positive control.
+        control = granted / "control-socket"
+        created, detail = _attempt_create(backend, _policy(True), control, _socket_argv(control))
+        if not created:
+            return (
+                f"the network-enforcement probe could not establish a positive "
+                f"control: creating a socket — permitted here by network=True — "
+                f"did not produce {control} ({detail}). The probe cannot observe "
+                f"a socket through this backend at all, so a missing marker "
+                f"under network=False would prove nothing; treating enforcement "
+                f"as unwitnessed"
+            )
+
+        # 2. The deny policy must still be able to run a command at all.
+        alive = granted / "control-nonet"
+        created, detail = _attempt_create(backend, _policy(False), alive, [touch, str(alive)])
+        if not created:
+            return (
+                f"under network=False (allow_subprocess=True) this backend "
+                f"could not run even a NON-networking command: {alive} — a path "
+                f"this policy GRANTS — was not written ({detail}). Something in "
+                f"this policy's wrap is failing wholesale rather than denying "
+                f"sockets specifically, so a denied socket cannot be attributed "
+                f"to the network gate; treating enforcement as unwitnessed"
+            )
+
+        # 3. The deny — the actual claim under test.
+        escaped = granted / "escaped-socket"
+        created, detail = _attempt_create(
+            backend, _policy(False), escaped, _socket_argv(escaped)
+        )
+        if created:
+            return (
+                f"no network deny fired: creating a socket wrote {escaped} even "
+                f"though the policy set network=False ({detail}). The backend "
+                f"reports network as enforced while sandboxed code can still "
+                f"open outbound sockets — the exact #3030 condition "
+                f"(allow_subprocess=True skipped the whole syscall filter, "
+                f"network gate included)"
+            )
+        return None
+    finally:
+        shutil.rmtree(granted, ignore_errors=True)
+
+
 def enforcement_self_test(backend: "SandboxBackend") -> str | None:
     """Cached probe suite — ``None`` when *backend* fired a real deny on EVERY
     axis it claims, else the reason one did not.
@@ -351,6 +490,9 @@ def enforcement_self_test(backend: "SandboxBackend") -> str | None:
     that enforces one axis and silently ignores the other is exactly what
     ``available()`` must stop meaning "yes" for: reyn documents both, and
     ``sandboxed_exec`` callers set both.
+
+    ``probe_network_enforcement`` (#3030) is deliberately NOT part of this
+    cached suite — see the module docstring's "third probe" section for why.
 
     **Why this is all-or-nothing, and not "keep whichever axis passes".** The
     obvious objection is that failing a Linux host over seccomp discards a

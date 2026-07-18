@@ -55,7 +55,7 @@ stays covered only by the runtime ``self_test()`` failing closed on each user's
 own machine. Note the direction of the gap: the runner sits ABOVE the installed
 base, not below it, so this job is *least* likely to see the ABI-gated defects.
 Do not read a green run of this script as "the sandbox is validated on Linux".
-Read it as: "on this one ABI, on this one kernel, both denies fired today."
+Read it as: "on this one ABI, on this one kernel, all three denies fired today."
 """
 from __future__ import annotations
 
@@ -87,10 +87,15 @@ from reyn.security.sandbox import NoopBackend
 from reyn.security.sandbox.backends.landlock import LandlockBackend
 from reyn.security.sandbox.self_test import (
     probe_enforcement,
+    probe_network_enforcement,
     probe_subprocess_enforcement,
 )
 
-_PROBES = {"write": probe_enforcement, "spawn": probe_subprocess_enforcement}
+_PROBES = {
+    "write": probe_enforcement,
+    "spawn": probe_subprocess_enforcement,
+    "network": probe_network_enforcement,
+}
 _BACKENDS = {"landlock": LandlockBackend, "noop": NoopBackend}
 
 reason = _PROBES[sys.argv[1]](_BACKENDS[sys.argv[2]]())
@@ -102,11 +107,16 @@ _PROBE_TIMEOUT_SECONDS = 180
 
 # The deny arms this gate declares. Named here, and cross-checked against what
 # actually ran, so "the gate executed zero deny arms" cannot be a green.
-_DENY_ARMS = ("write", "spawn")
+_DENY_ARMS = ("write", "spawn", "network")
 
 _ARM_DESCRIPTION = {
     "write": "a write outside write_paths is REFUSED (Landlock's filesystem boundary)",
     "spawn": "a fork under allow_subprocess=False is REFUSED (the seccomp filter loaded)",
+    "network": (
+        "a socket() create under network=False, allow_subprocess=True is REFUSED "
+        "(#3030: the seccomp filter used to be skipped entirely in this exact "
+        "condition — the stdio-MCP default — dropping the network gate with it)"
+    ),
 }
 
 
@@ -211,7 +221,7 @@ def _preflight() -> int:
         "  installed base, and where #2975's FS.TRUNCATE gap lives — is NOT\n"
         "  covered by this job at all. There it stays covered only by the runtime\n"
         "  self_test() failing closed on the user's own machine. A green here is\n"
-        f"  'both denies fired on ABI {backend.abi_version} today', NOT 'Landlock\n"
+        f"  'all denies fired on ABI {backend.abi_version} today', NOT 'Landlock\n"
         "  is witnessed on Linux'."
     )
 
@@ -290,10 +300,11 @@ def main() -> int:
         return 1
 
     print(
-        f"\nBoth denies FIRED on this runner (Landlock ABI {abi}). Scope: one "
-        "ABI, one kernel, the write + spawn axes through wrap_command. NOT "
-        "witnessed here: ABI 1-2, the network gate, read_deny_paths "
-        "(inexpressible on Landlock), or the run() preexec path."
+        f"\nAll {len(_DENY_ARMS)} denies FIRED on this runner (Landlock ABI "
+        f"{abi}). Scope: one ABI, one kernel, the write + spawn + network axes "
+        "through wrap_command. NOT witnessed here: ABI 1-2, read_deny_paths "
+        "(inexpressible on Landlock), io_uring specifically (see "
+        "tests/test_sandbox_seccomp_network_3030.py), or the run() preexec path."
     )
     return 0
 

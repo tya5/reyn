@@ -183,6 +183,57 @@ def test_syscall_allowlist_excludes_syscalls_landlock_cannot_govern() -> None:
     )
 
 
+def test_syscall_allowlist_includes_async_runtime_and_durability_primitives() -> None:
+    """Tier 2: the async-runtime startup + durability primitives are baseline (#3059).
+
+    When #3030 made the seccomp filter load unconditionally, every stdio MCP
+    server (all built on an async runtime) came under this default-deny allowlist
+    for the first time. Two x86_64-CI rounds surfaced the gaps the aarch64 witness
+    missed: round 1 `socketpair` (CPython asyncio self-pipe) / `eventfd` (Tokio
+    mio waker) — the runtime could not start; round 2 `fsync`/`fdatasync` (SQLite
+    "disk I/O error" in the vector-store) / `flock` (uv cache lock in markitdown)
+    — the started server could not do local I/O. All are local-fd/IPC primitives
+    (no network reach), so they belong in the baseline, not behind the network or
+    subprocess gate.
+
+    Pinned as a platform-independent builder assertion so their removal is caught
+    even where Landlock is absent (macOS, `test.yml`) — the enforce-arch server
+    probes in `test_sandbox_seccomp_network_3030.py` witness they are SUFFICIENT;
+    this witnesses they are PRESENT.
+    """
+    from reyn.security.sandbox.backends.seccomp import _build_syscall_allowlist
+
+    # Present regardless of policy — an async runtime needs these to start under
+    # the most restrictive policy (network off, subprocess off).
+    result = _build_syscall_allowlist(SandboxPolicy())
+    for name in (
+        # event-loop startup (round 1)
+        "socketpair",
+        "eventfd", "eventfd2",
+        "timerfd_create", "timerfd_settime", "timerfd_gettime",
+        "signalfd4",
+        "epoll_create",
+        # durability + advisory locking on already-open fds (round 2): SQLite
+        # fsync (vector-store "disk I/O error") + uv cache flock (markitdown).
+        "fsync", "fdatasync", "sync_file_range",
+        "flock",
+    ):
+        assert name in result, (
+            f"{name!r} must be baseline: an async runtime (asyncio/Tokio/libuv) "
+            "needs it to build its event loop or persist/lock its files, and "
+            "#3030 now subjects every stdio MCP server to this filter. Absent, "
+            "the server cannot start or do local I/O (#3059)"
+        )
+
+    # …but they must NOT smuggle in network reach — the network syscalls stay
+    # gated on policy.network (socketpair is AF_UNIX-only at the kernel, so it is
+    # not one of them).
+    assert "socket" not in result, (
+        "socket must stay network-gated — adding the async-runtime local-fd "
+        "primitives must not reopen #3030"
+    )
+
+
 def test_syscall_allowlist_excludes_escape_hatches() -> None:
     """Tier 2: escape-hatch syscalls never allowed regardless of policy."""
     from reyn.security.sandbox.backends.seccomp import _build_syscall_allowlist
@@ -330,16 +381,20 @@ def test_landlock_child_preexec_invokes_the_seccomp_installer(
     )
 
 
-def test_landlock_child_preexec_skips_seccomp_when_subprocess_allowed(
+def test_landlock_child_preexec_loads_seccomp_even_when_subprocess_allowed(
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """Tier 2: LandlockBackend's preexec_fn installs no seccomp filter when subprocess is allowed.
+    """Tier 2: LandlockBackend's preexec_fn loads the seccomp filter even when
+    allow_subprocess=True (#3030 fix).
 
-    The negative half of the wiring pin: without it, a callsite that invoked the
-    installer unconditionally would also pass the positive test above. Documents
-    today's gate — allow_subprocess=True removes the seccomp layer entirely
-    (#2962 flags this as the open design question; not changed here).
+    This USED TO be the negative half of the wiring pin — allow_subprocess=True
+    removed the seccomp layer entirely, silently dropping the NETWORK gate along
+    with the syscall-reduction one (#3030: a real outbound connect+send SUCCEEDED
+    under `network=False, allow_subprocess=True`, the stdio-MCP default). The
+    filter now always loads; `_build_syscall_allowlist` is what actually widens
+    the allowlist for allow_subprocess=True (adding `_SUBPROCESS_SYSCALLS`), not
+    a callsite-level skip of the filter itself.
     """
     import reyn.security.sandbox.backends.landlock as landlock_mod
 
@@ -349,9 +404,9 @@ def test_landlock_child_preexec_skips_seccomp_when_subprocess_allowed(
     with caplog.at_level(logging.WARNING, logger="reyn.security.sandbox.backends.seccomp"):
         landlock_mod._child_preexec(None, SandboxPolicy(allow_subprocess=True))
 
-    assert not caplog.records, (
-        "Expected no seccomp activity when allow_subprocess=True; "
-        f"got: {[r.message for r in caplog.records]}"
+    assert any("seccomp" in record.message.lower() for record in caplog.records), (
+        "LandlockBackend's preexec_fn skipped the seccomp filter under "
+        "allow_subprocess=True — the #3030 network-gate regression"
     )
 
 

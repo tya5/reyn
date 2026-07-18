@@ -18,6 +18,40 @@ fixed, the allowlist is live and a name missing from it makes that syscall fail
 with EPERM in the sandboxed process — so this list is a correctness surface, not
 just a hardening surface.
 
+Unconditional load (#3030). Both production callsites (`landlock.py`'s
+`_child_preexec`, `landlock_exec.py`'s `_apply_seccomp`) used to skip this
+filter ENTIRELY whenever `policy.allow_subprocess` was True — the stdio-MCP
+default — which silently dropped the NETWORK gate (`_NETWORK_SYSCALLS` are
+allowlisted only when `policy.network`) along with the syscall-reduction one.
+Both callsites now load this filter unconditionally; `_build_syscall_allowlist`
+already adds `_SUBPROCESS_SYSCALLS`/`_NETWORK_SYSCALLS` per-policy, so this was
+a caller-side gate, not a builder change. The practical consequence: every
+`allow_subprocess: True` MCP server (the default) is now under this default-deny
+allowlist for the first time, which is exactly the #2962 correctness risk this
+module's validation history above is about — see
+`tests/test_sandbox_seccomp_network_3030.py` for the representative-real-MCP-server
+probes (`reyn-rag-chunker` / `reyn-rag-vector-store` / `uvx markitdown-mcp`) this
+change specifically needed, on top of the synthetic echo/ls/cat workloads above.
+That risk materialized in review (#3059), across two x86_64 CI rounds the aarch64
+completeness witness had not surfaced:
+  - round 1: `_BASELINE` lacked the async-runtime event-loop startup primitives
+    (`socketpair` for CPython's asyncio self-pipe, `eventfd` for Tokio's mio
+    waker) EVERY stdio MCP server needs — see the "Async-runtime event-loop
+    startup primitives" block.
+  - round 2: it lacked the durability/locking-on-open-fd primitives (`fsync`/
+    `fdatasync` — SQLite "disk I/O error" in reyn-rag-vector-store; `flock` — uv's
+    cache lock in `uvx markitdown-mcp`) — see the "Durability + advisory
+    file-locking" block.
+Both are witnessed by the x86_64 deny-gate job, not an aarch64 host whose green
+does not speak for the enforce arch. The representative-server completeness
+probes run at `network=True` (the server's own network needs met, so the only
+variable vs baseline is the syscall filter): a FastMCP/uvx server issues
+network-family syscalls during init, which `network=False` now CORRECTLY denies
+(that is #3030's fix, not a gap), so a `network=False` server run witnesses the
+network gate, not allowlist completeness — the latter is a `network=True`
+question, the former is covered precisely by the dedicated socket/io_uring deny
+probes.
+
 - aarch64 Linux (Ubuntu 24.04, kernel 6.8, glibc 2.39): live-validated —
   the filter loads and ordinary workloads (echo / ls / cat / python file
   read+write, mkdir / remove / rename / rmtree) run under it, while fork,
@@ -150,6 +184,67 @@ _BASELINE: list[str] = [
     # (plain os.execvp) does NOT exercise, which is why both callsites were
     # validated separately.
     "close_range",
+    # Async-runtime event-loop startup primitives (#3059, the #3030 fix's #2962
+    # blast radius made concrete). When #3030 made the filter load
+    # unconditionally, every stdio MCP server — all built on an async runtime —
+    # came under this default-deny allowlist for the FIRST time, and these were
+    # absent, so the runtime could not even start. Primary data (deny-gate job,
+    # x86_64/ubuntu-24.04, measured — NOT the aarch64 host the completeness
+    # witness first ran on, which is exactly why it missed these):
+    #   - `_socket.socketpair()` -> EPERM: CPython's asyncio event loop builds
+    #     its wakeup self-pipe (`_ssock`/`_csock`) with socketpair() at startup,
+    #     so FastMCP / anyio / asyncio servers (reyn-rag-chunker,
+    #     reyn-rag-vector-store) died in `initialize()` before serving anything.
+    #   - Tokio (uvx / Rust): "Failed building the Runtime: PermissionDenied" —
+    #     mio's I/O-driver waker uses eventfd on Linux, so `uvx markitdown-mcp`
+    #     could not construct its runtime.
+    #
+    # None of these can reach the network or escape the sandbox — each is a
+    # LOCAL-fd/IPC primitive, so adding them does NOT reopen #3030 (the network
+    # gate is `_NETWORK_SYSCALLS`, still gated on `policy.network`):
+    #   - socketpair: a connected pair in ONE address family, local only. On
+    #     Linux only AF_UNIX is supported (AF_INET/AF_INET6 -> EOPNOTSUPP), so it
+    #     cannot create a network socket — `socket`/`connect` stay network-gated.
+    #   - eventfd/eventfd2: a counter object fd for wakeups; no I/O target but
+    #     itself. (glibc's eventfd() issues the eventfd2 syscall; both named so
+    #     libseccomp resolves whichever the running libc uses.)
+    #   - timerfd_create/settime/gettime: a timer-expiration fd; delivers time,
+    #     not data. (Node/libuv async timers.)
+    #   - signalfd4: delivers pending signals as fd reads; no network.
+    #   - epoll_create: readiness monitor over fds the process already holds
+    #     (epoll_create1 is already baseline above; the legacy create is added
+    #     for runtimes/libc that still issue it).
+    # Derived as a CLASS, not one syscall at a time: fixing socketpair alone
+    # would only surface eventfd as the next deny (#3059 co-vet). Witnessed on
+    # x86_64 (the enforce arch) by the representative-server group in
+    # tests/test_sandbox_seccomp_network_3030.py + the deny-gate CI job, not on
+    # the aarch64 host whose green did not speak for x86_64.
+    "socketpair",
+    "eventfd", "eventfd2",
+    "timerfd_create", "timerfd_settime", "timerfd_gettime",
+    "signalfd4",
+    "epoll_create",
+    # Durability + advisory file-locking on ALREADY-OPEN fds (#3059, 2nd x86_64
+    # CI round). Completing the "I/O on already-opened fds" category the baseline
+    # opened at the top (read/write/lseek/close/fcntl/fstat) — these operate on an
+    # fd Landlock already adjudicated at open, so allowing them grants no new path
+    # or network access. Primary data (deny-gate job, x86_64):
+    #   - reyn-rag-vector-store's `list_metadata` returned SQLite "disk I/O error"
+    #     (SQLITE_IOERR) creating a fresh db — SQLite's unix VFS fsync/fdatasync
+    #     on the first commit was refused (fcntl locking is already baseline, so
+    #     the remaining durability syscall is the gap). Network-INDEPENDENT: it
+    #     failed at network=True too, which is what distinguishes it from the
+    #     FastMCP-startup-network failures below.
+    #   - `uvx markitdown-mcp` (uv, Rust): "failed to lock
+    #     `~/.cache/uv/.lock`: Operation not permitted" — uv `flock`s its cache.
+    # Each is an fd/durability primitive with no network reach:
+    #   - fsync/fdatasync: flush an open fd's data to disk.
+    #   - sync_file_range: flush a byte-range of an open fd (glibc/kernel may
+    #     route a partial sync through it) — same class, added so the durability
+    #     gap is closed rather than re-surfacing as the next RED.
+    #   - flock: a BSD advisory lock on an already-open fd (no path, no network).
+    "fsync", "fdatasync", "sync_file_range",
+    "flock",
     # Replacing THIS process's image. Baseline — not gated on allow_subprocess.
     # Both callsites load the filter in a pre-exec position (LandlockBackend from
     # a preexec_fn, immediately before Popen's execve; landlock_exec from
