@@ -2567,6 +2567,33 @@ class Session:
         """Forwarding → RouterLoopDriver.is_cancel_requested (PR-3)."""
         return self._loop_driver.is_cancel_requested()
 
+    def set_pipeline_registry(self, registry: "PipelineRegistry") -> None:
+        """Swap this session's ``PipelineRegistry`` post-construction (#3093).
+
+        Dual-write — mirrors ``_reapply_pipelines``'s tail exactly:
+        ``RouterHostAdapter`` holds its OWN ``_pipeline_registry`` attribute
+        captured at construction and never re-reads Session, so both holders
+        must be reassigned or the adapter's copy (the one ``run_pipeline``
+        actually resolves ``call``/``match`` targets against, via
+        ``get_pipeline_registry()``) would silently keep serving the stale
+        registry.
+
+        Used by two callers: (1) ``_reapply_pipelines`` itself (the hot-reload
+        seam, after a full rebuild-from-disk), and (2)
+        ``session_api._spawn_pipeline_driver_session`` (#3093), which seeds a
+        freshly-spawned PIPELINE DRIVER session with the LAUNCHING caller's
+        current (already hot-reloaded) registry instead of the frozen
+        ``SessionFactoryConfig.pipeline_registry`` snapshot every spawn
+        otherwise inherits (built ONCE per frontend at startup — a plugin/
+        pipeline installed mid-conversation is invisible to it). Without this,
+        a driver-session resolves its OWN pipeline by VALUE (no lookup — the
+        whole ``Pipeline`` is serialized into ``invocation.json``), but a
+        ``call``/``match`` step's SIBLING target is looked up BY NAME against
+        this registry at run time — so a just-installed pipeline's main entry
+        appears to work while any sibling it calls fails "not registered"."""
+        self._pipeline_registry = registry
+        self._router_host._pipeline_registry = registry
+
     def set_loop_driver(self, driver: "ExecutionDriver") -> None:
         """IS-2: swap this session's execution driver post-construction.
 
@@ -4221,8 +4248,7 @@ class Session:
             return False
         # Dual-write swap (Session + the adapter's own captured copy) — only reached
         # after a fully successful build, so a failure above never half-applies.
-        self._pipeline_registry = new_registry
-        self._router_host._pipeline_registry = new_registry
+        self.set_pipeline_registry(new_registry)
         return True
 
     async def _reapply_presentations(self, in_set: dict) -> bool:
@@ -4439,6 +4465,10 @@ class Session:
             reply_to_sid=self._session_id,
             state_log=self._state_log,
             schema_registry=schema_registry,
+            # #3093: THIS session's own live PipelineRegistry — a sibling
+            # call/match target resolves correctly in the spawned driver
+            # instead of against the frozen per-frontend startup snapshot.
+            pipeline_registry=self._pipeline_registry,
         )
 
     async def _drain_to_wake(
