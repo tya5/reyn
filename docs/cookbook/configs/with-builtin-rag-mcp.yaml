@@ -6,17 +6,17 @@
 #
 # This file is a REFERENCE, not something you copy into reyn.yaml -- unlike
 # the pre-ADR-0064 shape, there is no "by-hand YAML" option any more: a
-# plugin's capabilities are registered by `plugin_install`, not by
+# plugin's capabilities are registered by `plugin_management__install`, not by
 # hand-editing `mcp.servers`/`pipelines.entries`. You do not need to do
 # anything by hand at all: ask reyn to ingest a folder in chat and it installs
-# the plugin itself via `plugin_install`, prompting you at the permission
+# the plugin itself via `plugin_management__install`, prompting you at the permission
 # gate before it writes anything.
 #
 # ---------------------------------------------------------------------------
 # Install
 # ---------------------------------------------------------------------------
 #
-#   plugin_install(source={"kind": "builtin", "name": "rag"})
+#   plugin_management__install(source={"kind": "builtin", "name": "rag"})
 #
 # One call does everything the old three-server-by-hand block used to
 # require: it copies `src/reyn/builtin/plugins/rag/` to
@@ -67,9 +67,9 @@
 # needs no extra config at all -- this is the zero-config default, not a
 # shortcut:
 #
-#   run_pipeline(name="rag_ingest.ingest", input={
+#   pipeline__run(name="rag_ingest.ingest", input={
 #     "input_path": "/abs/path/to/docs", "output_db": "./rag/docs.sqlite"})
-#   run_pipeline(name="rag_query.query", input={
+#   pipeline__run(name="rag_query.query", input={
 #     "query_text": "how does X work?", "db": "./rag/docs.sqlite"})
 #
 # Or, outside a chat session:
@@ -81,13 +81,13 @@
 # path in another project)? That is supported, but it is a DECLARED
 # DEVIATION from the default above, not a drop-in substitute for it: add a
 # `write_paths` entry naming that location to the `reyn_vector_store`
-# server's own config (`.reyn/config/mcp.yaml`, the entry `plugin_install`
+# server's own config (`.reyn/config/mcp.yaml`, the entry `plugin_management__install`
 # wrote) --
 #
 #   mcp:
 #     servers:
 #       reyn_vector_store:
-#         # ... plugin_install's own fields unchanged ...
+#         # ... plugin_management__install's own fields unchanged ...
 #         write_paths: ["~/reyn-rag"]
 #
 # -- then `output_db`/`db` may point anywhere under it, absolute or not.
@@ -95,7 +95,7 @@
 # the ingest fails -- so do not hand an absolute `output_db` to `rag_ingest`
 # unless this is already in place. If you do, the failure tells you: it
 # names the sandbox, the exact path refused, and this `write_paths` knob.
-# `write_paths` is not something `plugin_install`/`mcp__install_local` can
+# `write_paths` is not something `plugin_management__install`/`mcp__install_local` can
 # set -- it is a hand-edit to the registered entry.
 #
 # The `build_and_query_rag_corpus` skill (installed alongside the plugin's
@@ -119,4 +119,4 @@
 # input with a default, so a drop-in replacement exposing the same tool
 # shapes needs no file edit -- just pass `vectorstore_server: "my_qdrant"`.
 # Prefer to keep your edit reusable? Promote it back as its own plugin:
-# `plugin_install(source={"kind": "local", "path": "..."})`.
+# `plugin_management__install(source={"kind": "local", "path": "..."})`.

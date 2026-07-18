@@ -53,7 +53,7 @@ level ``mcp = FastMCP(...)`` object below is the thin tool-call skin over
 it, run directly as ``python <this file's path>`` (stdio transport) --
 either from a dev checkout, or (ADR 0064 P5) via the builtin ``rag``
 plugin's materialised per-plugin venv interpreter once
-``plugin_install(source={"kind": "builtin", "name": "rag"})`` has run.
+``plugin_management__install(source={"kind": "builtin", "name": "rag"})`` has run.
 """
 from __future__ import annotations
 
