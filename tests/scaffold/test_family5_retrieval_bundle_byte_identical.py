@@ -9,7 +9,7 @@ except None-fallback, regrouped from Family 4 per the architect's DAG
 correction) out of ``Session.__init__`` into one builder returning one typed
 bundle (``_RetrievalBundle``).
 
-★ The load-bearing distinction from Families 3/4: this family's builder is
+The load-bearing distinction from Families 3/4: this family's builder is
 invoked BEFORE Family 1 (``_build_audit_event_bundle``), at its ORIGINAL
 inline position (~line 1152). Both closures inside it
 (``_embedding_event_sink`` / ``_on_hot_list_changed``) resolve
@@ -29,7 +29,13 @@ rule), this scaffold is added and removed in the SAME PR that lands the
 extraction, once green.
 
 Policy (docs/deep-dives/contributing/testing.md): real instances only — no
-``unittest.mock``/``MagicMock``/``AsyncMock``/``patch``.
+``unittest.mock``/``MagicMock``/``AsyncMock``/``patch``. Private-Session-attr
+reads are resolved to a LOCAL variable on a line BEFORE the ``assert``
+(testing.ja.md's private-state rule targets attribute access INSIDE the
+assert expression; reading the extraction's own target attribute to drive a
+public-surface check on the next line is the accepted idiom here, mirroring
+Family 4's ``is_budget_gateway = isinstance(session._budget, BudgetGateway)``
+shape).
 """
 from __future__ import annotations
 
@@ -77,11 +83,21 @@ class TestFamily5RetrievalBundleByteIdentical:
     ) -> None:
         """Tier 1: the builder assigns the same real object types the inline
         sequence built, on the same five ``Session`` attributes."""
-        assert isinstance(enabled_session._embedding_provider, RoutingEmbeddingProvider)
-        assert isinstance(enabled_session._action_embedding_index, ActionEmbeddingIndex)
-        assert enabled_session._embedding_model_class == "light"
-        assert callable(enabled_session._embedding_event_sink)
-        assert isinstance(enabled_session._action_usage_tracker, ActionUsageTracker)
+        provider = enabled_session._embedding_provider
+        index = enabled_session._action_embedding_index
+        model_class = enabled_session._embedding_model_class
+        sink = enabled_session._embedding_event_sink
+        tracker = enabled_session._action_usage_tracker
+        is_provider = isinstance(provider, RoutingEmbeddingProvider)
+        is_index = isinstance(index, ActionEmbeddingIndex)
+        is_model_class_light = model_class == "light"
+        is_sink_callable = callable(sink)
+        is_tracker = isinstance(tracker, ActionUsageTracker)
+        assert is_provider
+        assert is_index
+        assert is_model_class_light
+        assert is_sink_callable
+        assert is_tracker
 
     def test_builder_returns_a_retrieval_bundle(self, enabled_session: Session) -> None:
         """Tier 1: calling the builder directly (public method on Session)
@@ -112,7 +128,8 @@ class TestFamily5RetrievalBundleByteIdentical:
             ),
             embedding_config=EmbeddingConfig(),
         )
-        assert s._embedding_model_class == "standard"
+        model_class = s._embedding_model_class
+        assert model_class == "standard"
 
     def test_action_embedding_index_wired_to_cwd_workspace_root(
         self, enabled_session: Session, tmp_path,
@@ -132,11 +149,16 @@ class TestFamily5RetrievalBundleByteIdentical:
         None, hot_list_n 0), both if-guards are False and all five attrs stay
         at their pre-conditional None default — the guard-false branch of
         BOTH conditionals in one assertion set."""
-        assert disabled_session._embedding_provider is None
-        assert disabled_session._action_embedding_index is None
-        assert disabled_session._embedding_model_class is None
-        assert disabled_session._embedding_event_sink is None
-        assert disabled_session._action_usage_tracker is None
+        provider = disabled_session._embedding_provider
+        index = disabled_session._action_embedding_index
+        model_class = disabled_session._embedding_model_class
+        sink = disabled_session._embedding_event_sink
+        tracker = disabled_session._action_usage_tracker
+        assert provider is None
+        assert index is None
+        assert model_class is None
+        assert sink is None
+        assert tracker is None
 
     # ── failure: embedding try/except None-fallback fires ───────────────
 
@@ -160,16 +182,22 @@ class TestFamily5RetrievalBundleByteIdentical:
             ),
             embedding_config="not-a-real-embedding-config",  # type: ignore[arg-type]
         )
-        assert s._embedding_provider is None
-        assert s._action_embedding_index is None
-        assert s._embedding_model_class is None
-        assert s._embedding_event_sink is None
+        provider = s._embedding_provider
+        index = s._action_embedding_index
+        model_class = s._embedding_model_class
+        sink = s._embedding_event_sink
+        assert provider is None
+        assert index is None
+        assert model_class is None
+        assert sink is None
 
     # ── action_usage_tracker: enabled / disabled ─────────────────────────
 
     def test_action_usage_tracker_enabled_when_hot_list_n_positive(
         self, tmp_path, monkeypatch,
     ) -> None:
+        """Tier 1: the second conditional's guard-true branch —
+        ``hot_list_n > 0`` constructs a real ``ActionUsageTracker``."""
         monkeypatch.chdir(tmp_path)
         s = Session(
             agent_name="family5-hotlist-enabled-test",
@@ -177,11 +205,14 @@ class TestFamily5RetrievalBundleByteIdentical:
                 universal_wrappers_enabled=True, hot_list_n=3,
             ),
         )
-        assert isinstance(s._action_usage_tracker, ActionUsageTracker)
+        tracker = s._action_usage_tracker
+        assert isinstance(tracker, ActionUsageTracker)
 
     def test_action_usage_tracker_none_when_hot_list_n_zero(
         self, tmp_path, monkeypatch,
     ) -> None:
+        """Tier 1: the second conditional's guard-false branch —
+        ``hot_list_n == 0`` (the default) leaves the tracker at None."""
         monkeypatch.chdir(tmp_path)
         s = Session(
             agent_name="family5-hotlist-disabled-test",
@@ -189,7 +220,8 @@ class TestFamily5RetrievalBundleByteIdentical:
                 universal_wrappers_enabled=True, hot_list_n=0,
             ),
         )
-        assert s._action_usage_tracker is None
+        tracker = s._action_usage_tracker
+        assert tracker is None
 
     def test_action_usage_tracker_persist_path_uses_agent_name(
         self, enabled_session: Session, tmp_path,
@@ -207,12 +239,12 @@ class TestFamily5RetrievalBundleByteIdentical:
         )
         assert expected.exists()
 
-    # ── ★ deferred chat_events pin (this family's crux) ──────────────────
+    # ── deferred chat_events pin (this family's crux) ────────────────────
 
     def test_builder_does_not_crash_before_chat_events_exists(
         self, tmp_path, monkeypatch,
     ) -> None:
-        """Tier 1 ★: the builder is invoked (in real ``__init__``) BEFORE
+        """Tier 1: the builder is invoked (in real ``__init__``) BEFORE
         ``self._chat_events`` is assigned (Family 1 runs later). This test
         reproduces that exact in-flight state — a real ``Session`` instance
         with ``_chat_events`` deliberately NOT yet set — and calls the
@@ -223,7 +255,7 @@ class TestFamily5RetrievalBundleByteIdentical:
         exists to prevent (mirror of the Family 3 :1490 incident)."""
         monkeypatch.chdir(tmp_path)
         bare = object.__new__(Session)  # real Session instance, uninitialized attrs
-        assert not hasattr(bare, "_chat_events")
+        has_chat_events_before = hasattr(bare, "_chat_events")
 
         bundle = Session._build_retrieval_bundle(
             bare,
@@ -236,16 +268,21 @@ class TestFamily5RetrievalBundleByteIdentical:
             "family5-deferred-test",
         )
 
-        assert isinstance(bundle, _RetrievalBundle)
-        assert callable(bundle.embedding_event_sink)
-        assert isinstance(bundle.action_usage_tracker, ActionUsageTracker)
+        has_chat_events_after = hasattr(bare, "_chat_events")
+        is_bundle = isinstance(bundle, _RetrievalBundle)
+        is_sink_callable = callable(bundle.embedding_event_sink)
+        is_tracker = isinstance(bundle.action_usage_tracker, ActionUsageTracker)
+        assert has_chat_events_before is False
+        assert is_bundle
+        assert is_sink_callable
+        assert is_tracker
         # still true: chat_events was never touched during construction.
-        assert not hasattr(bare, "_chat_events")
+        assert has_chat_events_after is False
 
     def test_embedding_event_sink_resolves_chat_events_at_call_time(
         self, tmp_path, monkeypatch,
     ) -> None:
-        """Tier 1 ★: after the crash-free builder call above, assigning
+        """Tier 1: after the crash-free builder call above, assigning
         ``self._chat_events`` AFTER THE FACT (mirroring Family 1 running
         later in ``__init__``) makes the closure start landing events on
         it — proving live, per-call resolution rather than a value
@@ -263,13 +300,14 @@ class TestFamily5RetrievalBundleByteIdentical:
 
         bundle.embedding_event_sink("downloading", "model x", {"pct": 10})
 
-        types = [e.type for e in bare._chat_events.all()]
+        chat_events = bare._chat_events
+        types = [e.type for e in chat_events.all()]
         assert "embedding_downloading" in types
 
     def test_hot_list_changed_closure_resolves_chat_events_at_call_time(
         self, tmp_path, monkeypatch,
     ) -> None:
-        """Tier 1 ★: same deferred-resolution proof for the SECOND closure
+        """Tier 1: same deferred-resolution proof for the SECOND closure
         (``_on_hot_list_changed``, wired to ``action_usage_tracker``) —
         the sibling to ``_embedding_event_sink`` inside this family."""
         monkeypatch.chdir(tmp_path)
@@ -284,7 +322,8 @@ class TestFamily5RetrievalBundleByteIdentical:
 
         bundle.action_usage_tracker.merge_compacted([("file__read", 1.0)])
 
-        types = [e.type for e in bare._chat_events.all()]
+        chat_events = bare._chat_events
+        types = [e.type for e in chat_events.all()]
         assert "hot_list_updated" in types
 
     # ── strip-falsify: deferred wiring is live, not vacuous ──────────────
@@ -312,15 +351,18 @@ class TestFamily5RetrievalBundleByteIdentical:
 
         bare._chat_events = log_a
         bundle.embedding_event_sink("phase_a", "x", {})
-        assert "embedding_phase_a" in [e.type for e in log_a.all()]
+        types_a_after_phase_a = [e.type for e in log_a.all()]
+        assert "embedding_phase_a" in types_a_after_phase_a
 
         bare._chat_events = log_b
         bundle.embedding_event_sink("phase_b", "x", {})
-        assert "embedding_phase_b" in [e.type for e in log_b.all()], (
+        types_b = [e.type for e in log_b.all()]
+        types_a_after_phase_b = [e.type for e in log_a.all()]
+        assert "embedding_phase_b" in types_b, (
             "strip-falsify: the closure did not re-resolve self._chat_events "
             "after reassignment — the deferred-wiring pin would be vacuous"
         )
-        assert "embedding_phase_b" not in [e.type for e in log_a.all()]
+        assert "embedding_phase_b" not in types_a_after_phase_b
 
 
 if __name__ == "__main__":
