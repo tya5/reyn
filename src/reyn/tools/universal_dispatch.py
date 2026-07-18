@@ -357,6 +357,21 @@ _OPERATION_RULES: Final[dict[str, tuple[str, Callable[[str, Mapping[str, Any]], 
     # counterpart — a blueprint is inline declarative data, never file-backed).
     "presentation_management__install": ("presentation_install_local", _passthrough_args),
 
+    # plugin_management category (ADR 0064 P2: plugin_install / plugin_uninstall).
+    # #3083: these two ToolDefinitions were registered in the default registry
+    # (src/reyn/tools/__init__.py) with their OWN qualified names as their bare
+    # tool name (``plugin_management__install`` / ``__uninstall`` — unlike most
+    # other management verbs, there is no separate "bare" spelling to alias),
+    # but were never added to this routing table, so ``invoke_action`` /
+    # ``describe_action`` could not resolve them and ``_enumerate_category``
+    # (which reads its static name set from THIS table via
+    # ``known_qualified_name_for_category``) never emitted them into any
+    # ``tools=`` payload — reachable via direct registry lookup only, never via
+    # the universal-catalog schemes chat actually uses. Same "registered +
+    # dispatchable-but-catalog-invisible" bug class as #2589/#2621/#2032.
+    "plugin_management__install":   ("plugin_management__install",   _passthrough_args),
+    "plugin_management__uninstall": ("plugin_management__uninstall", _passthrough_args),
+
     # pipeline category (IS-1: sync + REGISTERED-only run_pipeline;
     # IS-2: async launch in a crash-recoverable driver-session;
     # IS-4: ad-hoc INLINE launches — agent-GENERATED DSL + a static-analysis

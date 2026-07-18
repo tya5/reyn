@@ -45,8 +45,11 @@ def _make_session(tmp_path) -> Session:
     """Create a Session with a small synthetic T_max to force non-empty candidates.
 
     #1128 step 3: _select_candidates uses token-budget boundaries from the engine.
-    With ``t_max=2000`` and ``section_caps_spec_tokens=0`` (T_SP≈1125, T_comp_SP≈481):
-    head_budget≈87, tail_budget≈131, effective_trigger≈570.
+    With ``t_max=2800`` and ``section_caps_spec_tokens=0`` (re-measured post-#3083
+    plugin_management SP addition; the original ≈570/t_max=2000 pin went stale
+    as the SP grew across many unrelated PRs and finally crashed to a negative
+    effective_trigger — #3083 was simply the straw that tipped it):
+    head_budget≈74, tail_budget≈112, effective_trigger≈489.
     Turns of 'x'*4000 (=1000 tokens) each individually exceed both budgets, so
     the Axis-7 single-oversized-turn rule includes exactly one turn in head and
     one in tail.  With 8 turns: middle=[t1..t6]=6 candidates ≥ min_compact_batch=1.
@@ -54,7 +57,7 @@ def _make_session(tmp_path) -> Session:
     import reyn.llm.model_budget as _mb
 
     original = _mb.get_max_input_tokens
-    _mb.get_max_input_tokens = lambda model, **kw: 2000  # type: ignore[assignment]
+    _mb.get_max_input_tokens = lambda model, **kw: 2800  # type: ignore[assignment]
     try:
         session = Session(
             agent_name="default",

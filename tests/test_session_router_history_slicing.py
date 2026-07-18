@@ -79,23 +79,23 @@ def test_single_turn_returns_single_message(tmp_path):
 # ── Elide branch (total > effective_trigger) ─────────────────────────────────
 
 # Each "XXXXXXXXXXX...X" text is 320 chars → 80 tokens (chars4).
-# 30 turns × 80 tokens = 2400 tokens. With t_max=2000, effective_trigger is
+# 30 turns × 80 tokens = 2400 tokens. With t_max=2800, effective_trigger is
 # always < t_max by construction, so 2400 > effective_trigger regardless of SP
 # size — default-independent (hot_list_n changes don't affect this bound).
 
-_LONG_TEXT = "X" * 320  # 80 tokens via chars4; use with t_max=2000
+_LONG_TEXT = "X" * 320  # 80 tokens via chars4; use with t_max=2800
 
 
 def test_history_exceeds_trigger_elides_middle(tmp_path):
     """Tier 2: when total tokens > effective_trigger, the middle turns are
     elided and head + tail are returned without duplication.
 
-    Uses T_max=2000 with 30 turns of 80-token text (total=2400 tokens).
-    2400 > T_max=2000 so the elide branch fires regardless of SP size —
+    Uses T_max=2800 with 30 turns of 80-token text (total=2400 tokens).
+    2400 > T_max=2800 so the elide branch fires regardless of SP size —
     default-independent: hot_list_n and other SP-affecting defaults don't
     change whether elide fires.
     """
-    session = _make_session(tmp_path, t_max=2000)
+    session = _make_session(tmp_path, t_max=2800)
     texts = [f"turn-{i}:" + _LONG_TEXT for i in range(30)]
     for i, text in enumerate(texts):
         _push(session, "user" if i % 2 == 0 else "assistant", text)
@@ -126,7 +126,7 @@ def test_elide_inserts_summary_bridge_when_summary_present(tmp_path):
     test_history_exceeds_trigger_elides_middle for the default-independent
     size rationale).
     """
-    session = _make_session(tmp_path, t_max=2000)
+    session = _make_session(tmp_path, t_max=2800)
     # Inject a summary before the turns.
     session.history.append(ChatMessage(
         role="summary",
@@ -134,7 +134,7 @@ def test_elide_inserts_summary_bridge_when_summary_present(tmp_path):
         ts=_now(),
         meta={"structured": {"topic_arc": "test"}, "covers_through_seq": 0},
     ))
-    # 30 turns × 80 tokens = 2400 > T_max=2000 → elide fires.
+    # 30 turns × 80 tokens = 2400 > T_max=2800 → elide fires.
     texts = [f"turn-{i}:" + _LONG_TEXT for i in range(30)]
     for i, text in enumerate(texts):
         _push(session, "user" if i % 2 == 0 else "assistant", text)

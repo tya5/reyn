@@ -263,7 +263,17 @@ ACTION_CATEGORIES_LINES = [
         ".reyn/config/presentations.yaml, so a later `present(view=<name>)` "
         "op can render it (proposal 0060 Phase 1 Layer A)."
     ),
+    (
+        "- **plugin_management** — install / uninstall a plugin: "
+        "`plugin_management__install` promotes one from `source` "
+        "(`{kind: builtin, name}` for a plugin reyn ships, `{kind: local, "
+        "path}` for one you authored/tested, or `{kind: git, url}` for a "
+        "remote repo) into your active plugin set; "
+        "`plugin_management__uninstall` removes an installed plugin by name "
+        "(ADR 0064)."
+    ),
 ]
+
 
 HOT_LIST_ALIASES_HINT = (
     "The function list visible to you is a HOT-LIST (= a subset of "

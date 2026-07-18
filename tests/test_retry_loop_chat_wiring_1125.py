@@ -52,11 +52,13 @@ def _make_session(tmp_path: Path, *, t_max: int = 1_000_000) -> Session:
     Default t_max=1_000_000 → effective_trigger is large → small histories
     return all turns (no elide).  Pass a small t_max to force the elide branch.
 
-    With t_max=2000 (section_caps_spec_tokens=0, T_SP≈1125 from real router SP,
-    T_comp_SP≈481 from real compaction SP):
-      head_budget≈87, tail_budget≈131, effective_trigger≈570.
+    With t_max=2800 (section_caps_spec_tokens=0; re-measured post-#3083
+    plugin_management SP addition — the original ≈570/t_max=2000 pin went
+    stale as the SP grew across many unrelated PRs and finally crashed to a
+    negative effective_trigger, #3083 was simply the straw that tipped it):
+      head_budget≈74, tail_budget≈112, effective_trigger≈489.
     Turns of content ``'X'*320`` each cost 80 tokens via chars4.  With 8 such
-    turns (total=640 > 570), elide fires.  head=[t0], tail=[t7], middle=[t1-t6].
+    turns (total=640 > 489), elide fires.  head=[t0], tail=[t7], middle=[t1-t6].
     """
     import reyn.llm.model_budget as _mb
 
@@ -103,12 +105,12 @@ def test_decompose_slices_head_raw_middle_tail(tmp_path) -> None:
     non-empty head, raw_middle, and tail, and head + raw_middle + tail is a
     lossless in-order partition of all turns (no dropped or duplicated turn).
 
-    Uses t_max=2000 with 30 turns of 80-token content (total=2400 tokens).
-    2400 > T_max=2000 by construction so elide fires regardless of SP size —
+    Uses t_max=2800 with 30 turns of 80-token content (total=2400 tokens).
+    2400 > T_max=2800 by construction so elide fires regardless of SP size —
     default-independent: hot_list_n and other SP-affecting defaults don't change
     whether elide fires.
     """
-    session = _make_session(tmp_path, t_max=2000)
+    session = _make_session(tmp_path, t_max=2800)
     msgs_pushed = 30
     for i in range(msgs_pushed):
         _push(session, "user" if i % 2 == 0 else "assistant", _TURN_80TOK)
@@ -175,10 +177,10 @@ def test_decompose_wire_shape_matches_build_history(tmp_path) -> None:
     produced; a divergent wire shape (different role normalisation, missing
     tool fields) would make the recovery prompt differ.
 
-    This test forces the elide branch on both paths via t_max=2000 so that
+    This test forces the elide branch on both paths via t_max=2800 so that
     _build_history_for_router also returns head+tail (no summary bridge).
     """
-    session = _make_session(tmp_path, t_max=2000)
+    session = _make_session(tmp_path, t_max=2800)
     for i in range(8):
         _push(session, "user" if i % 2 == 0 else "assistant", _TURN_80TOK)
 
@@ -208,7 +210,7 @@ def test_recovery_summary_bridge_matches_normal_path(tmp_path) -> None:
     """
     from reyn.runtime.session import _render_summary_for_storage
 
-    session = _make_session(tmp_path, t_max=2000)
+    session = _make_session(tmp_path, t_max=2800)
     structured = {
         "topic_arc": "planning the trip",
         "decisions": ["book the tuesday flight"],
@@ -223,7 +225,7 @@ def test_recovery_summary_bridge_matches_normal_path(tmp_path) -> None:
         ts=_now(),
         meta={"structured": structured, "covers_through_seq": 2},
     ))
-    # 30 turns × 80 tokens = 2400 > T_max=2000 → elide fires → bridge inserted
+    # 30 turns × 80 tokens = 2400 > T_max=2800 → elide fires → bridge inserted
     # (default-independent: 2400 > T_max by construction regardless of SP size).
     for i in range(30):
         _push(session, "user" if i % 2 == 0 else "assistant", _TURN_80TOK)

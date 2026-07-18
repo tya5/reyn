@@ -2,7 +2,7 @@
 
 ``catalog_entries(ctx)`` is the substrate behind ``SchemeOps.catalog_entries``:
 every usable action as a flat ``{name, description, parameters}`` dict (the actions
-exposed, the 13-category structure hidden = the P7 boundary). It is built from the
+exposed, the 14-category structure hidden = the P7 boundary). It is built from the
 SAME ``_enumerate_category`` + ``_describe_one`` machinery ``list_actions`` /
 ``describe_action`` use, so all agree BY CONSTRUCTION (#1455 list ≡ describe).
 

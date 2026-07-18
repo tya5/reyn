@@ -88,12 +88,102 @@ def test_categories_master_table_order() -> None:
         # pipeline_management); required for presentation_management__install to
         # dispatch.
         "presentation_management",
+        # #3083: ADR 0064 P2 plugin management ops (install / uninstall).
+        # Management plane (mirrors skill_management / pipeline_management);
+        # was registered + dispatch-wired but missing from CATEGORIES, which
+        # made plugin_management__install/__uninstall unreachable via every
+        # enumerate-all / retrieval / codeact catalog scheme.
+        "plugin_management",
     )
 
 
 def test_categories_no_duplicates() -> None:
     """Tier 2: CATEGORIES taxonomy has no duplicate entries."""
     assert len(set(CATEGORIES)) == len(CATEGORIES)
+
+
+def test_categories_covers_every_dispatch_wired_category() -> None:
+    """Tier 2: every category with dispatch rules is enumerable via CATEGORIES.
+
+    #3083: ``plugin_management__install`` / ``plugin_management__uninstall``
+    were registered in the default ToolRegistry AND given routing rules in
+    ``universal_dispatch._OPERATION_RULES``, but ``CATEGORIES`` (this
+    module's closed tuple) never gained a ``"plugin_management"`` entry —
+    so ``_enumerate_category`` never emitted either action into ANY
+    catalog scheme's ``tools=`` payload (dogfood witness: 0/75 tools). Same
+    "registered + dispatchable but catalog-invisible" class as
+    #2589/#2621/#2032 (skill_management / pipeline_management /
+    presentation_management all needed the identical fix previously).
+
+    This test derives the expected category set from
+    ``KNOWN_STATIC_QUALIFIED_NAMES`` — the public, registration-derived view
+    of ``_OPERATION_RULES`` (the actual dispatch-routing source of truth) —
+    rather than hand-listing categories a second time, so a future category
+    that gains dispatch rules but not a CATEGORIES entry fails LOUD here
+    instead of silently vanishing from the LLM's tool surface.
+    """
+    from reyn.tools.universal_dispatch import KNOWN_STATIC_QUALIFIED_NAMES
+
+    dispatch_wired_categories = {
+        qualified_name.split("__", 1)[0]
+        for qualified_name in KNOWN_STATIC_QUALIFIED_NAMES
+    }
+    missing = dispatch_wired_categories - set(CATEGORIES)
+    assert not missing, (
+        f"categories {sorted(missing)} have _OPERATION_RULES routing but are "
+        f"missing from CATEGORIES — their actions are dispatchable via "
+        f"invoke_action but will never appear in an enumerated tools= "
+        f"payload (see #3083)"
+    )
+
+
+def test_action_categories_sp_slot_covers_every_category() -> None:
+    """Tier 2: every CATEGORIES entry has an explanatory bullet in the SP.
+
+    ``reyn.prompt.universal_slots.ACTION_CATEGORIES_LINES`` is the
+    hand-maintained "## Action categories" system-prompt slot content
+    (R2) — the per-category one-liner that teaches a (frequently weak)
+    router model what a category is for and its qualified-name shape.
+    It is a SEPARATE closed list from ``CATEGORIES`` (same #2032/#3083
+    "closed enum forgot the new member" shape, just a second surface),
+    so a category can be dispatch-wired and catalog-enumerable while
+    still being unexplained in the prompt the LLM actually reads. #3083
+    found ``plugin_management`` missing from both; this pins the SP-slot
+    side so a future category addition that updates CATEGORIES but not
+    this list fails here instead of leaving the LLM to guess.
+    """
+    from reyn.prompt.universal_slots import ACTION_CATEGORIES_LINES
+
+    slot_text = "\n".join(ACTION_CATEGORIES_LINES)
+    missing = [
+        category for category in CATEGORIES
+        if f"**{category}**" not in slot_text
+    ]
+    assert not missing, (
+        f"categories {missing} have no explanatory bullet in "
+        f"ACTION_CATEGORIES_LINES (the '## Action categories' SP slot)"
+    )
+
+
+def test_plugin_management_actions_reachable_via_catalog_entries() -> None:
+    """Tier 2: plugin_management actions appear in the flat catalog payload.
+
+    #3083 root-cause: ``catalog_entries()`` — the function every enumerate-
+    all / retrieval / codeact chat scheme calls to build the LLM's ``tools=``
+    — never surfaced ``plugin_management__install`` / ``__uninstall``
+    because ``CATEGORIES`` omitted ``"plugin_management"``. This directly
+    exercises the real production entry point (not a private accessor) with
+    a minimal real ``ToolContext`` and asserts both qualified names are
+    present, closing the exact reachability gap the dogfood trace witnessed
+    (0/75 tools).
+    """
+    from reyn.tools.universal_catalog import catalog_entries
+
+    ctx = _make_minimal_ctx()
+    entries = catalog_entries(ctx)
+    qualified_names = {item["name"] for item in entries}
+    assert "plugin_management__install" in qualified_names
+    assert "plugin_management__uninstall" in qualified_names
 
 
 # ── 2. Qualified-name parse / build / validate round-trip ─────────────────
