@@ -38,6 +38,7 @@ from reyn.runtime.errors import (
 from reyn.runtime.registry import AgentRegistry
 from reyn.runtime.session import Session
 from reyn.runtime.session_api import run_agent_step
+from reyn.runtime.session_params import PresentationWiring
 
 _REVIEW_SCHEMA = {
     "fields": {
@@ -94,8 +95,7 @@ def _registry(
         s = Session(
             agent_name=profile.name, state_log=state_log,
             registry=holder.get("reg"), non_interactive=True,
-            presentation_consumer=presentation_consumer,
-            intervention_bridge=intervention_bridge,
+            presentation_wiring=PresentationWiring(presentation_consumer=presentation_consumer, intervention_bridge=intervention_bridge),
             resolver=_resolver,
         )
         if scripted is not None:

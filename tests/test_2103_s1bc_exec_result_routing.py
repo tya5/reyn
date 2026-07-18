@@ -28,6 +28,7 @@ from reyn.llm.pricing import TokenUsage
 from reyn.runtime.profile import AgentProfile
 from reyn.runtime.registry import AgentRegistry
 from reyn.runtime.session import Session
+from reyn.runtime.session_params import PresentationWiring
 
 
 def _registry(tmp_path: Path) -> AgentRegistry:
@@ -40,8 +41,7 @@ def _registry(tmp_path: Path) -> AgentRegistry:
         # response is silently dropped (registry is None).
         return Session(
             agent_name=profile.name, state_log=state_log, registry=holder.get("reg"),
-            presentation_consumer=presentation_consumer, intervention_bridge=intervention_bridge,
-        )
+            presentation_wiring=PresentationWiring(presentation_consumer=presentation_consumer, intervention_bridge=intervention_bridge),         )
 
     reg = AgentRegistry(project_root=tmp_path, session_factory=_factory, state_log=state_log)
     holder["reg"] = reg  # set BEFORE any session is constructed (get_or_load / spawn)

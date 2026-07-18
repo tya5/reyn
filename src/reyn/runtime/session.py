@@ -82,6 +82,12 @@ from reyn.runtime.session_buses import (
     AuditOnlyInterventionBridge,
     ChatInterventionBus,
 )
+from reyn.runtime.session_params import (
+    CapabilityScope,
+    PresentationWiring,
+    ReactivityConfig,
+    TaskWiring,
+)
 from reyn.security.permissions.permissions import PermissionResolver
 from reyn.services.compaction.engine import CompactionEngine
 from reyn.task.subscription import SubscriptionWriter
@@ -1188,21 +1194,6 @@ class Session:
         budget_tracker: BudgetTracker | None = None,
         snapshot_path: "Path | None" = None,
         sandbox_config: "SandboxConfig | None" = None,
-        # #1800 slice 5b: the resolved ``hooks:`` config block (the parsed list,
-        # mirroring sandbox_config's seam). None/absent → empty registry → every
-        # HookDispatcher.dispatch() is a no-op (the no-hooks equivalence property).
-        hooks_config: "object | None" = None,
-        # Hook-Event Redesign Phase 4b/5 (proposal 0059 §5/§9, #2880/#2881):
-        # the resolved ``composers:`` config block (the raw parsed-at-load-time
-        # list, mirroring ``hooks_config``'s seam). None/absent → empty list →
-        # ``load_composers`` returns ``[]`` → ``start_composers`` never starts
-        # a Composer (byte-identical to pre-Composer-wiring behavior).
-        composers_config: "object | None" = None,
-        # #2608 H4: the resolved ``fs_watch:`` config block (``FsWatchConfig``,
-        # mirroring ``hooks_config``'s seam). None/absent -> FsWatchConfig()
-        # (paths=[]) -> the session-owned FsWatcher never starts (byte-identical
-        # to pre-H4). OUT-set-only in practice (see reyn.config.infra.FsWatchConfig).
-        fs_watch_config: "object | None" = None,
         # #1200 PR-F1 (agent-level-uniform backend, FS seam): the agent's
         # EnvironmentBackend INSTANCE, threaded to the chat Workspace so chat's
         # file ops run on the SAME backend as the phase path. None → HostBackend (the
@@ -1224,11 +1215,6 @@ class Session:
         sandbox_backend: "SandboxBackend | None" = None,
         multimodal_config: "MultimodalConfig | None" = None,
         action_retrieval_config: "ActionRetrievalConfig | None" = None,
-        # #2548 PR-A: enabled skill registry snapshot (list[SkillEntry]), built
-        # from config.skills by SessionFactoryConfig.from_config. Threaded to the
-        # RouterHostAdapter so the router renders the ## Skills block. None → no
-        # skills (byte-identical to no-skills configs / direct test construction).
-        available_skills: Any = None,
         # #1593 PR-2: the chat-layer tool-use scheme name (config.tool_use.chat).
         # Threaded → RouterLoopDriver → RouterLoop(scheme_name=) so the chat
         # router resolves the selected ToolUseScheme. Default "universal-category"
@@ -1251,11 +1237,6 @@ class Session:
         router_config: "RouterConfig | None" = None,
         retry_config: "object | None" = None,  # #1835: reyn.yaml llm.retry.* timing config
         agent_id: str | None = None,
-        exclude_tools: "frozenset[str] | set[str] | None" = None,  # #187: tool names hidden from the LLM catalog (e.g. web for faithful eval)
-        excluded_categories: "frozenset[str] | set[str] | None" = None,  # #1667: catalog categories hidden at source (e.g. reyn_repo for external-repo eval)
-        contextual_permission: "object | None" = None,  # #1827 S3: per-session capability_profile narrowing (ContextualPermission); from registry.resolved_profile_for; None = byte-identical
-        task_backend: "object | None" = None,  # #1953 slice 3a: session-scoped Task backend instance (injected by the session factory); None → op-runtime in-memory fallback
-        task_waker: "object | None" = None,  # #1953 slice 7: the OS TaskWaker driver (injected by the session factory); None → op-runtime no-op stub
         router_max_iterations: int = 5,  # #187: per-message tool-call budget for the MAIN chat loop (interactive=5; one-shot autonomous SWE sets higher)
         non_interactive: bool = False,  # #1439 Fix #1: run-once (piped, no TTY) — no user to ask, so the SP directs proceed-with-assumption instead of clarifying
         # FP-0043 Stage 5: the conversation session id this Session records WAL
@@ -1273,30 +1254,24 @@ class Session:
         # session). None (direct/test construction) → an empty registry, byte-
         # identical to pre-#2575's own-constructed empty one.
         pipeline_registry: "PipelineRegistry | None" = None,
-        # FP-0054 PR-C: the pre-built PresentationRegistry (operator named templates
-        # from presentations.yaml, built once at the session factory). None
-        # (direct/test construction) → an empty registry (byte-identical to pre-PR-C:
-        # every named template is "unknown" → generic fallback viewer).
-        presentation_registry: "object | None" = None,
-        # #2708 P1: the surface's present-sink CONSUMER. In production every Session is
-        # built via build_scoped_chat_session, which REQUIRES this (no default) — a
-        # frontend cannot silently omit a present sink. None is reachable ONLY by
-        # direct/test construction (forbidden in src/reyn by the #1402 invariant), where
-        # it falls back to the outbox-backed consumer (byte-identical to the pre-#2708
-        # uniform ``OutboxPresentationRenderer(self)`` default). The renderer is obtained
-        # lazily via ``consumer.sink(self)`` (deferred so the outbox sink can bind this
-        # Session, which does not exist when the factory kwarg is passed).
-        presentation_consumer: "object | None" = None,
-        # #2708 P3.2a: the spawn-time intervention BRIDGE (a
-        # ``SpawnBridgeInterventionListener``). None (every non-spawn / detached /
-        # ephemeral construction) keeps today's self-bound fail-closed behavior — the
-        # driver's ``ask_user`` routes through its own listener-less registry. Only the
-        # ATTACHED pipeline driver spawn (``session_api._spawn_pipeline_driver_session``)
-        # passes one, so the driver's router intervention bus dispatches on the PARENT
-        # session's live-operator listener instead of silently auto-refusing (#2721). The
-        # reusable capability-bundle inheritance seam — same threading as
-        # ``presentation_consumer`` (P3.1).
-        intervention_bridge: "object | None" = None,
+        # #3121 step1 (Introduce Parameter Object): 4 cohesive param objects
+        # replacing 12 flat params (see reyn.runtime.session_params for the
+        # per-field rationale each used to carry inline):
+        #   reactivity          -- hooks_config / composers_config / fs_watch_config
+        #   capability_scope    -- exclude_tools / excluded_categories /
+        #                          contextual_permission / available_skills
+        #   task_wiring         -- task_backend / task_waker
+        #   presentation_wiring -- presentation_registry / presentation_consumer /
+        #                          intervention_bridge (REQUIRED in production --
+        #                          build_scoped_chat_session always supplies a
+        #                          presentation_consumer; None is reachable only
+        #                          by direct/test construction)
+        # None -> the object's own all-None defaults (byte-identical to the old
+        # flat-param None defaults).
+        reactivity: "ReactivityConfig | None" = None,
+        capability_scope: "CapabilityScope | None" = None,
+        task_wiring: "TaskWiring | None" = None,
+        presentation_wiring: "PresentationWiring | None" = None,
     ) -> None:
         """
         snapshot_path: optional override for the per-agent snapshot file
@@ -1305,6 +1280,28 @@ class Session:
             redirect snapshot I/O to a tmp_path without touching private
             attributes.
         """
+        # #3121 step1: default each omitted parameter object to its own
+        # all-None defaults (byte-identical to the old flat-param None
+        # defaults), then unpack into the local names the rest of __init__
+        # reads (unchanged below this point).
+        reactivity = reactivity if reactivity is not None else ReactivityConfig()
+        capability_scope = capability_scope if capability_scope is not None else CapabilityScope()
+        task_wiring = task_wiring if task_wiring is not None else TaskWiring()
+        presentation_wiring = (
+            presentation_wiring if presentation_wiring is not None else PresentationWiring()
+        )
+        hooks_config = reactivity.hooks_config
+        composers_config = reactivity.composers_config
+        fs_watch_config = reactivity.fs_watch_config
+        exclude_tools = capability_scope.exclude_tools
+        excluded_categories = capability_scope.excluded_categories
+        contextual_permission = capability_scope.contextual_permission
+        available_skills = capability_scope.available_skills
+        task_backend = task_wiring.task_backend
+        task_waker = task_wiring.task_waker
+        presentation_registry = presentation_wiring.presentation_registry
+        presentation_consumer = presentation_wiring.presentation_consumer
+        intervention_bridge = presentation_wiring.intervention_bridge
         # FP-0043 Stage 2: the identity cluster is owned by the Agent value object,
         # assembled at the build_scoped_chat_session chokepoint and passed in. A
         # direct/test construction without one falls back to building it from the

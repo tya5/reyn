@@ -73,6 +73,7 @@ from reyn.core.op_runtime.emit_hook_event import handle as emit_handle
 from reyn.hooks.bus import HookBus
 from reyn.hooks.schema_registry import is_emittable_llm_kind
 from reyn.runtime.session import Session
+from reyn.runtime.session_params import ReactivityConfig
 from reyn.schemas.models import EmitHookEventIROp
 from reyn.security.permissions.permissions import PermissionDecl
 from reyn.tools.emit_hook_event import EMIT_HOOK_EVENT
@@ -345,8 +346,7 @@ def _make_session(
         session_id="emit-sess",
         state_log=StateLog(tmp_path / "state.wal"),
         snapshot_path=tmp_path / "snap.json",
-        hooks_config=hooks_config,
-        composers_config=composers_config,
+        reactivity=ReactivityConfig(hooks_config=hooks_config, composers_config=composers_config),
         safety=safety,
     )
 

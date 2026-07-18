@@ -33,6 +33,7 @@ from reyn.runtime.cron.runners import build_default_runner
 from reyn.runtime.profile import AgentProfile
 from reyn.runtime.registry import AgentRegistry
 from reyn.runtime.session import Session
+from reyn.runtime.session_params import ReactivityConfig
 
 
 class _NoRunAgentRegistry(AgentRegistry):
@@ -48,7 +49,7 @@ def _make_registry(tmp_path: Path, *, hooks_config=None) -> AgentRegistry:
     state_log = StateLog(tmp_path / ".reyn" / "wal.jsonl")
 
     def _factory(profile: AgentProfile) -> Session:
-        s = Session(agent_name=profile.name, state_log=state_log, hooks_config=hooks_config)
+        s = Session(agent_name=profile.name, state_log=state_log, reactivity=ReactivityConfig(hooks_config=hooks_config))
         s.register_intervention_listener("test")
         return s
 

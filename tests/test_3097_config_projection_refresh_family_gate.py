@@ -50,6 +50,7 @@ from reyn.core.events.state_log import StateLog
 from reyn.runtime.profile import AgentProfile
 from reyn.runtime.registry import AgentRegistry
 from reyn.runtime.session import Session
+from reyn.runtime.session_params import PresentationWiring
 from reyn.runtime.spawn_routing import ReviewedNA
 
 
@@ -66,8 +67,7 @@ def _make_registry(tmp_path: Path) -> AgentRegistry:
         s = Session(
             agent_name=profile.name, state_log=state_log,
             registry=holder.get("reg"), non_interactive=True,
-            presentation_consumer=presentation_consumer,
-            intervention_bridge=intervention_bridge,
+            presentation_wiring=PresentationWiring(presentation_consumer=presentation_consumer, intervention_bridge=intervention_bridge),
             mcp_servers={},
         )
         return s

@@ -41,6 +41,7 @@ from reyn.core.pipeline.work_order import PipelineWorkOrder
 from reyn.runtime.registry import AgentRegistry
 from reyn.runtime.services.pipeline_executor_driver import PipelineExecutorDriver
 from reyn.runtime.session import Session
+from reyn.runtime.session_params import PresentationWiring
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -267,8 +268,7 @@ def _worker_registry(tmp_path: Path, state_log: StateLog, pipeline_registry: Pip
 
     def _factory(profile, *, presentation_consumer=None, intervention_bridge=None) -> Session:
         return Session(
-            presentation_consumer=presentation_consumer,
-            intervention_bridge=intervention_bridge,
+            presentation_wiring=PresentationWiring(presentation_consumer=presentation_consumer, intervention_bridge=intervention_bridge),
             agent_name=profile.name, state_log=state_log,
             registry=holder.get("reg"), non_interactive=True,
             pipeline_registry=pipeline_registry,

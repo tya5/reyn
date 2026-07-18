@@ -48,6 +48,7 @@ from reyn.llm.llm import LLMToolCallResult
 from reyn.llm.pricing import TokenUsage
 from reyn.runtime.registry import AgentRegistry
 from reyn.runtime.session import Session
+from reyn.runtime.session_params import PresentationWiring
 
 
 def _registry_backed_session(tmp_path: Path):
@@ -69,8 +70,7 @@ def _registry_backed_session(tmp_path: Path):
             agent_name=profile.name, state_log=state_log,
             registry=holder.get("reg"), non_interactive=True,
             chat_tool_use_scheme="universal-category",
-            presentation_consumer=presentation_consumer,
-            intervention_bridge=intervention_bridge,  # #2708 P3.2a: accept + forward the attached driver spawn's intervention bridge
+            presentation_wiring=PresentationWiring(presentation_consumer=presentation_consumer, intervention_bridge=intervention_bridge),
         )
 
     reg = AgentRegistry(project_root=tmp_path, session_factory=_factory, state_log=state_log)

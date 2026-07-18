@@ -46,6 +46,7 @@ from reyn.llm.pricing import TokenUsage
 from reyn.runtime.registry import AgentRegistry
 from reyn.runtime.session import Session
 from reyn.runtime.session_api import run_pipeline_attached
+from reyn.runtime.session_params import PresentationWiring
 
 # A distinctive token carried in the PRESENTED data. Its purpose is to prove the
 # render reached the PARENT surface — it is NOT part of the present op's compact
@@ -82,8 +83,7 @@ def _agent_registry(tmp_path: Path, state_log: "StateLog") -> AgentRegistry:
         return Session(
             agent_name=profile.name, state_log=state_log,
             registry=holder.get("reg"), non_interactive=True,
-            presentation_consumer=presentation_consumer,
-            intervention_bridge=intervention_bridge,  # #2708 P3.2a: accept + forward the attached driver spawn's intervention bridge
+            presentation_wiring=PresentationWiring(presentation_consumer=presentation_consumer, intervention_bridge=intervention_bridge),
         )
 
     reg = AgentRegistry(project_root=tmp_path, session_factory=_factory, state_log=state_log)

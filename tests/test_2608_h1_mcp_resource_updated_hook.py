@@ -27,6 +27,7 @@ import pytest
 from reyn.core.events.state_log import StateLog
 from reyn.mcp.connection_service import MCPConnectionService
 from reyn.runtime.session import Session
+from reyn.runtime.session_params import ReactivityConfig
 
 _SUPPORT_DIR = Path(__file__).parent / "_support"
 _SUBSCRIBABLE_SERVER = _SUPPORT_DIR / "mcp_subscribable_resources_server.py"
@@ -52,7 +53,7 @@ def _make_session(tmp_path: Path, *, hooks_config=None) -> Session:
         agent_name="test-agent",
         state_log=StateLog(tmp_path / "state.wal"),
         snapshot_path=tmp_path / "snap.json",
-        hooks_config=hooks_config,
+        reactivity=ReactivityConfig(hooks_config=hooks_config),
     )
 
 
