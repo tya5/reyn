@@ -107,6 +107,7 @@ def get_default_registry() -> ToolRegistry:
         RUN_PIPELINE_INLINE,
         RUN_PIPELINE_INLINE_ASYNC,
     )
+    from reyn.tools.plugin_management_verbs import PLUGIN_INSTALL, PLUGIN_UNINSTALL
     from reyn.tools.present import PRESENT
     from reyn.tools.presentation_management_verbs import PRESENTATION_INSTALL
     from reyn.tools.rag_discovery import LIST_RAG_SOURCES
@@ -280,6 +281,12 @@ def get_default_registry() -> ToolRegistry:
     # proposal 0060 Phase 1 Layer A (A8): present-view install verb (register a
     # named presentation template) — mirrors SKILL_INSTALL_LOCAL / PIPELINE_INSTALL_LOCAL.
     registry.register(PRESENTATION_INSTALL)
+    # ADR 0064 plugin model P2: plugin_install / plugin_uninstall — promote/
+    # install and uninstall a self-contained plugin directory (security-critical:
+    # composite of require_file_write (~/.reyn/plugins/, recursive) +
+    # require_http_get (git fetch / dep materialisation)).
+    registry.register(PLUGIN_INSTALL)
+    registry.register(PLUGIN_UNINSTALL)
     # IS-1 (pipeline v0.9 R6): run_pipeline — sync launch of a REGISTERED
     # pipeline. Router+phase allow. IS-5: surfaced to the live LLM catalog
     # via the ``pipeline`` universal-catalog category enumerator (lists

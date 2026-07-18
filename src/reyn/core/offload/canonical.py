@@ -1874,3 +1874,38 @@ def canonical_to_ctx_fields(canonical: CanonicalToolResult) -> "dict[str, Any]":
     if meta:
         fields["meta"] = meta
     return fields
+
+
+def _render_plugin_install_verb(result: dict) -> str:
+    name = result.get("name", "")
+    status = result.get("status", "")
+    if status == "skipped":
+        return f"Plugin '{name}' install skipped: {result.get('error', '')}"
+    caps = result.get("capabilities") or []
+    return f"Installed plugin '{name}' ({', '.join(caps) or 'no capabilities'})."
+
+
+# ``plugin_install`` (tools/plugin_management_verbs.py, ADR 0064 P2) — delegates to
+# ``op_runtime.plugin_install.handle`` and surfaces its
+# ``{status:"installed"/"skipped"/"error", name, plugin_root, source_kind, capabilities, registered}``
+# verbatim (envelope peeled the same way as the pipeline/skill install verbs).
+plugin_install_verb_to_canonical = make_status_text_mapper(
+    render=_render_plugin_install_verb,
+    meta_keys=("name", "plugin_root", "source_kind", "capabilities", "registered"),
+)
+
+
+def _render_plugin_uninstall_verb(result: dict) -> str:
+    name = result.get("name", "")
+    removed = result.get("removed") or {}
+    total = sum(len(v) for v in removed.values())
+    return f"Uninstalled plugin '{name}' ({total} registry entries removed)."
+
+
+# ``plugin_uninstall`` (tools/plugin_management_verbs.py, ADR 0064 P2) — delegates to
+# ``op_runtime.plugin_uninstall.handle`` and surfaces its
+# ``{status:"uninstalled", name, removed, copy_removed}`` verbatim.
+plugin_uninstall_verb_to_canonical = make_status_text_mapper(
+    render=_render_plugin_uninstall_verb,
+    meta_keys=("name", "removed", "copy_removed"),
+)

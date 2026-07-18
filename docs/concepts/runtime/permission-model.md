@@ -275,6 +275,10 @@ Each side-effect kind has a corresponding declarable axis. The axis vocabulary i
 | `shell` | `bool` | abstract | `require_shell()` | binary: any shell access at all |
 | `allowed_mcp` | `list[str] \| None` | ACL filter | implicit at MCP call | per-agent restriction, cross-cuts `mcp` |
 
+### A deliberately non-declarable gate: plugin git run-code trust
+
+One gate is intentionally absent from the axis table above: `require_plugin_git_run_code_trust` (ADR 0064 §3.10, the `{kind: "git"}` branch of `plugin_install`). It has **no declarable axis, no config key, and no persisted approval** — by design. Installing a git-sourced plugin FETCHES remote code and then RUNS it (an MCP server / pipeline / skill registered to run in future sessions), an RCE trust boundary distinct from the *fetch* axis (`http.get`). If this decision were declarable or persistable, a single ALWAYS / `reyn.yaml` grant would become a standing silent-RCE authorisation for every future git plugin — and worse, an `http.get` approval (per-host, persistent, `web.fetch`-shared) could be mistaken for authority to run code from that host. So the run-code gate is a **per-install, never-persisted operator confirmation**: it consults/writes no approvals map, its choice set (`plugin_run_code_trust_choices`) offers only yes/no (structurally no ALWAYS), and it re-asks every install. Fail-closed: non-interactive callers deny. It is the one gate whose *non-declarability is the security property* — the taxonomy's declarable/persistable axes are exactly what it must not be.
+
 ### Why `shell` is the only bool
 
 `shell` is process exec of an arbitrary command. The side-effect set is unbounded (= a shell command can read any file, write any file, network any host) and the author cannot enumerate which side effects a particular invocation will produce. There is no single I/O scope to reduce it to — process exec **is** the irreducible primitive.

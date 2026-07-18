@@ -77,6 +77,25 @@ def elicitation_gate_choices() -> list[InterventionChoice]:
     ]
 
 
+def plugin_run_code_trust_choices() -> list[InterventionChoice]:
+    """`[y]es / [N]o` for the plugin run-code trust gate (ADR 0064 §3.10, P2).
+
+    Installing a ``{kind:git}`` plugin FETCHES remote code and then RUNS it —
+    an RCE trust boundary distinct from the fetch axis (``require_http_get``).
+    Deliberately **only** ``YES``/``NO`` — NO ``ALWAYS``/``NEVER`` — mirroring
+    ``elicitation_gate_choices``: a run-code trust decision is **per-install
+    and NEVER persisted** (§3.10 "never auto-run"). Offering a persist option
+    would let one approval become a standing silent-RCE grant for every future
+    git plugin — the exact hazard this gate closes. The absence of a persist
+    choice is a STRUCTURAL guarantee (the UI cannot even present it), not a
+    convention the resolver has to remember to enforce.
+    """
+    return [
+        InterventionChoice(id=YES, label="[y]es, install and run", hotkey="y"),
+        InterventionChoice(id=NO, label="[N]o", hotkey="N"),
+    ]
+
+
 __all__ = [
     "ACCEPT",
     "ALWAYS",
@@ -89,5 +108,6 @@ __all__ = [
     "elicitation_gate_choices",
     "file_access_choices",
     "generic_yn_choices",
+    "plugin_run_code_trust_choices",
     "shell_hook_choices",
 ]

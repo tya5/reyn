@@ -543,6 +543,12 @@ async def handle(
     }
     if op.source:
         entry["source"] = op.source
+    # ADR 0064 §3.7 (plugin model P2): additive provenance field a
+    # plugin_install call sets to its plugin name — plugin_uninstall reads
+    # it back to find every entry a given plugin created. Absent for a
+    # direct (non-plugin) skill_install, same as before this field existed.
+    if op.plugin_id:
+        entry["plugin_id"] = op.plugin_id
     # proposal 0060 Phase 1 Layer A (A9): provenance is stamped from the single
     # OS-authoritative source (ctx.turn_origin, set by Session._stamp_execution_context
     # — A7) — never from an op field, so an auto-improvement turn cannot self-declare

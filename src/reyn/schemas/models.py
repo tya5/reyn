@@ -393,6 +393,16 @@ class SkillInstallIROp(BaseModel):
     # Supports optional subdir via "//": "https://github.com/user/repo" (root) or
     # "https://github.com/user/repo//skills/my-skill" (skills/my-skill subdir).
     source: str | None = None              # git/GitHub URL (installs to .reyn/skills/<name>/)
+    # ADR 0064 §3.7 (plugin model P2): when set, stamped verbatim as
+    # `entry["plugin_id"]` on the written skills.yaml entry — the additive
+    # provenance field a `plugin_uninstall` reads back to find every registry
+    # entry a given plugin created, across all three capability registries.
+    # Not security-sensitive (unlike `provenance`, which is OS-stamped from
+    # `ctx.turn_origin` alone to prevent an LLM self-declaring a gate bypass) —
+    # this is bookkeeping only, so it is safe to accept as a caller-supplied
+    # op field. None (the default) preserves pre-plugin-model behavior: a
+    # direct skill_install never carries a plugin_id.
+    plugin_id: str | None = None
 
 
 class PipelineInstallIROp(BaseModel):
@@ -427,6 +437,9 @@ class PipelineInstallIROp(BaseModel):
     # Supports optional subdir via "//": "https://github.com/user/repo" (root) or
     # "https://github.com/user/repo//pipelines/my-pipeline" (pipelines/my-pipeline subdir).
     source: str | None = None                   # git/GitHub URL (installs to .reyn/pipelines/<name>/)
+    # ADR 0064 §3.7 (plugin model P2): mirrors SkillInstallIROp.plugin_id
+    # verbatim — see that field's docstring for the full rationale.
+    plugin_id: str | None = None
 
 
 class PresentationInstallIROp(BaseModel):
@@ -459,6 +472,76 @@ class PresentationInstallIROp(BaseModel):
     kind: Literal["presentation_install"]
     name: str                                    # registry key (present(view=<name>) resolves against this)
     blueprint: "dict[str, Any] | list[Any]"       # the declarative component tree (same shape as inline present)
+
+
+# ---------------------------------------------------------------------------
+# Plugin model (ADR 0064) — P2 install machinery.
+# ---------------------------------------------------------------------------
+# A plugin is a self-contained directory (manifest + optional mcp/pipelines/
+# skills subdirs, ADR §3.1) promoted into `~/.reyn/plugins/<name>/` and
+# registered against the SAME three capability registries `skill_install` /
+# `pipeline_install` / (a local mcp entry) already write — `plugin_install`
+# is an orchestration layer over those existing verbs (§3.2), not a fourth
+# registry. `source` is a typed discriminated union (§3.8) — never a
+# form-sniffed string the handler parses by shape (Tool Contract lens).
+
+
+class PluginSourceBuiltin(BaseModel):
+    """reyn's own shipped plugin under `src/reyn/builtin/plugins/<name>/`
+    (ADR §3.1/§3.8). Lowest RCE trust risk — wins any name collision."""
+    kind: Literal["builtin"] = "builtin"
+    name: str
+
+
+class PluginSourceLocal(BaseModel):
+    """A local directory the LLM authored/tested (ADR §3.2's primary daily
+    "promote" loop) or a hand-written plugin already on disk. Middle RCE
+    trust risk — already on the operator's own machine."""
+    kind: Literal["local"] = "local"
+    path: str
+
+
+class PluginSourceGit(BaseModel):
+    """A remote git URL (ADR §3.8, extensible to `registry` etc. later).
+    Highest RCE trust risk — fetching + then running remote code is an
+    explicit operator-trust decision, never auto-run (§3.10)."""
+    kind: Literal["git"] = "git"
+    url: str
+
+
+PluginSource = Annotated[
+    Union[PluginSourceBuiltin, PluginSourceLocal, PluginSourceGit],
+    Field(discriminator="kind"),
+]
+
+
+class PluginInstallIROp(BaseModel):
+    """Promote/install a plugin (ADR 0064 §3.2/§3.8): resolve `source` → a
+    source directory, copy it to `~/.reyn/plugins/<name>/`, expand
+    `${REYN_*}` stable-location tokens (P1 `reyn.plugins.tokens`), validate
+    its `.reyn-plugin/plugin.json` manifest (P1 `reyn.plugins.manifest`),
+    materialise any per-plugin runtime deps (§3.11 — install-time network
+    fetch, spawn stays network-free), then register whatever capabilities
+    the manifest declares by calling the EXISTING `skill_install` /
+    `pipeline_install` handlers + a local mcp-registry write (§3.2: "the
+    same copy → expand → register mechanism", never a fourth registry).
+
+    `name` overrides the manifest's own `name` as the install directory /
+    registry-provenance key; when unset, the manifest's `name` is used.
+    """
+    kind: Literal["plugin_install"]
+    source: PluginSource
+    name: str | None = None
+
+
+class PluginUninstallIROp(BaseModel):
+    """Inverse of `plugin_install` (ADR §3.9): drop every `.reyn/config/
+    {mcp,pipelines,skills}.yaml` entry tagged `plugin_id == name` (§3.7),
+    THEN remove the `~/.reyn/plugins/<name>/` copy — drop-registry-first so
+    an interrupted uninstall never leaves a live registry entry pointing at
+    a deleted copy (§3.11)."""
+    kind: Literal["plugin_uninstall"]
+    name: str
 
 
 class EmitHookEventIROp(BaseModel):
@@ -936,6 +1019,11 @@ OP_KIND_MODEL_MAP: dict[str, type[BaseModel]] = {
     # into presentations.entries (mirrors skill_install/pipeline_install's
     # structure; lower threat — validate_blueprint IS the structural gate).
     "presentation_install": PresentationInstallIROp,
+    # ADR 0064 plugin model P2: promote/install and uninstall a self-contained
+    # plugin directory. Orchestrates skill_install/pipeline_install + a local
+    # mcp-registry write — see PluginInstallIROp/PluginUninstallIROp docstrings.
+    "plugin_install": PluginInstallIROp,
+    "plugin_uninstall": PluginUninstallIROp,
     # Hook-Event Redesign Phase 5 part 2 (proposal 0059 §8): LLM-authored
     # hook-event emission onto the caller's own HookBus. See EmitHookEventIROp's
     # docstring for the structural session-binding + kind-whitelist security

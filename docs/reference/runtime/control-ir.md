@@ -616,6 +616,13 @@ Fields:
   The resolved name is **sanitized to a single safe path component** (`[A-Za-z0-9._-]`;
   no `/`, `\`, `..`, or leading `.`) — an unsafe name (from caller `op.name` OR third-party
   SKILL.md frontmatter) is **rejected** with `status="error"`, never used to build a path.
+- `plugin_id` (optional, ADR 0064 §3.7, plugin model P2) — when set, stamped
+  verbatim as `entry["plugin_id"]` on the written `skills.yaml` entry. Set
+  ONLY by `plugin_install` when it calls this handler internally to register
+  a plugin's `skills/` capability — the additive provenance field
+  `plugin_uninstall` reads back to find every entry a given plugin created.
+  Absent (`None`) for a direct `skill_install` call, unchanged from before
+  this field existed.
 
 Handler lifecycle (source path inserts steps 0a–0d before step 1):
 0. **Source path only**: (a) Gate `require_http_get` for the source host. (b) Sanitize the
@@ -685,12 +692,14 @@ Fields:
   Requires `http.get: [{host: <source_host>}]` in the caller's permission declaration.
 - `scope` (optional, default `".reyn/config/pipelines.yaml"`) — retained for
   forward compat; currently unused (all installs write to `.reyn/config/pipelines.yaml`).
-- `name` (optional) — when set, MUST match the DSL's own declared `pipeline:` name
-  exactly; a mismatch is refused (`status="error"`). Unlike `skill_install`'s `name`
-  (which freely renames the registered key), a pipeline's declared `pipeline:` name
-  is ALWAYS the resolution key a `call`/`match` step targets — the config entry key
-  cannot diverge from it. When `name` is omitted, the config key defaults to the
-  DSL's declared name.
+- `name` (optional, #2722) — a free NAMESPACE KEY, NOT coupled to any declared
+  `pipeline:` name. Every `pipeline:` document in the file registers under
+  `{name}.{declared-name}`; `.` is reserved (the namespace separator) and
+  rejected in `name`. When omitted, the key defaults to the DSL file stem
+  (or the source basename for a git install).
+- `plugin_id` (optional, ADR 0064 §3.7, plugin model P2) — mirrors
+  `skill_install`'s `plugin_id` field verbatim (same stamp-on-entry
+  mechanism, set only by `plugin_install`'s internal call).
 
 Handler lifecycle (source path inserts steps 0a–0d before step 1):
 0. **Source path only**: (a) Gate `require_http_get` for the source host. (b) Sanitize the
@@ -701,21 +710,25 @@ Handler lifecycle (source path inserts steps 0a–0d before step 1):
    the sole `*.yaml` file in the repo root/subdir). (d) After the declared name is
    resolved AND sanitized, containment-check + rename clone dir if name ≠ candidate.
 1. Resolve the DSL file path (local: `op.path` directly; source: the located clone file)
-2. Parse via `parse_pipeline_dsl` — a malformed file is refused (`status="error"`), never registered
-3. Resolve + validate the registration name: `op.name` (if set) must match the DSL's
-   declared `pipeline:` name exactly; a mismatch is refused
-4. Threat-scan the pipeline description via `content_guard.scan_for_threats(scope="strict")` — block on
-   blocking-severity match (source path: removes clone on block)
+2. Parse via `parse_pipeline_docs` — a file may hold MULTIPLE `pipeline:` documents
+   (#2722); a malformed file is refused (`status="error"`), never registered
+3. Resolve the registration namespace key (#2722): `op.name` or the DSL file stem
+   (source install: the sanitized candidate derived pre-clone); `.` is rejected
+4. Threat-scan EVERY pipeline document's description via
+   `content_guard.scan_for_threats(scope="strict")` — block on any blocking-severity
+   match (source path: removes clone on block)
 5. Gate via `PermissionResolver.require_file_write` (= `.reyn/config/pipelines.yaml`)
 6. Write `pipelines.entries.<name>` to `.reyn/config/pipelines.yaml` with
-   `{path, description, enabled: true}` (+ `source: <url>` when set)
+   `{path, description, enabled: true}` (+ `source: <url>` / `plugin_id: <id>` when set)
 7. Call `record_config_generation` (recovery-core: truncation-surviving snapshot, #2259 / CLAUDE.md gate)
-8. Emit `pipeline_installed` event (P6 audit trail)
+8. Emit `pipeline_installed` event (P6 audit trail) — carries `registered_names`,
+   the FULL set of `{key}.{declared-name}` global names this install registers (#2722 H6)
 9. Request hot-reload via `get_active_hot_reloader().request_reload(source="pipeline_install")`
    (the existing `"pipelines"` seam — `Session._reapply_pipelines` — rebuilds the registry)
 
-Result fields: `status` (`"installed"` / `"blocked"` / `"error"`), `name`, `path`,
-`description`, `config_path`, `source` (empty string for local installs).
+Result fields: `status` (`"installed"` / `"blocked"` / `"error"`), `name`,
+`registered_names`, `path`, `description`, `config_path`, `source` (empty string for
+local installs).
 
 Events emitted: `pipeline_install_threat_match`, `pipeline_install_threat_blocked` (threat scan),
 `pipeline_installed` (P6 on success).
@@ -782,6 +795,149 @@ Result fields: `status` (`"installed"` / `"blocked"` / `"error"`), `name`,
 
 Events emitted: `presentation_install_blocked` (structural gate),
 `presentation_installed` (P6 on success).
+
+## `plugin_install` / `plugin_uninstall`
+
+ADR 0064 (plugin model) P2 install machinery. A plugin is a self-contained
+directory (`.reyn-plugin/plugin.json` manifest + optional `mcp`/`pipelines`/
+`skills` subdirs, ADR §3.1) — `plugin_install` copies it to
+`~/.reyn/plugins/<name>/` (global, once), expands `${REYN_*}` stable-location
+tokens, materialises per-plugin Python deps (install-time network, network-free
+spawn), and REGISTERS whatever capabilities the manifest declares by calling
+the SAME existing verbs `skill_install` / `pipeline_install` already provide
+(plus a direct `.reyn/config/mcp.yaml` write for the optional root
+`.mcp.json`) — an orchestration layer, not a fourth registry. Handled by
+`op_runtime/plugin_install.py` / `op_runtime/plugin_uninstall.py`. LLM tool
+surface: `plugin_management__install` / `plugin_management__uninstall`
+(`tools/plugin_management_verbs.py`) — named distinctly from the op kind to
+avoid a canonical-declaration collision (mirrors the `mcp_install_local` vs
+`mcp_install` op-kind precedent).
+
+`plugin_install` example (typed discriminated `source`, §3.8 — never a
+form-sniffed string):
+```json
+{
+  "kind": "plugin_install",
+  "source": {"kind": "local", "path": "/path/to/my-plugin"},
+  "name": "my-plugin"
+}
+```
+
+`source` is exactly one of:
+- `{kind: "builtin", name: "<name>"}` — reyn's own shipped plugin under
+  `src/reyn/builtin/plugins/<name>/`. Lowest RCE trust risk.
+- `{kind: "local", path: "<dir>"}` — a local directory the LLM authored/tested
+  (ADR §3.2's primary daily "promote" loop) or a hand-written plugin already
+  on disk. Middle RCE trust risk.
+- `{kind: "git", url: "<url>"}` — a remote git URL, shallow-cloned. Highest
+  RCE trust risk — gated by a DISTINCT per-install run-code trust decision
+  (`require_plugin_git_run_code_trust`, gate 3 below), separate from the fetch
+  axis; fetching and running remote code is an explicit operator-trust
+  decision, never auto-run and never pre-grantable.
+
+Fields (`plugin_install`):
+- `source` (required) — the discriminated union above.
+- `name` (optional) — overrides the manifest's own `name` as the
+  install-directory / registry-provenance key.
+
+Fields (`plugin_uninstall`):
+- `name` (required) — the plugin's install name.
+
+Permission gates (§3.10 — composed from EXISTING gates, no new bool axis; the
+#571 collapse arc removed the old bool-axis pattern):
+1. **Global-copy write** — `require_file_write` for `~/.reyn/plugins/<name>/`.
+   This path is OUTSIDE the default write zone (`.reyn/` under CWD), so the
+   existing gate's "zone OR approved" decl-less rule already denies it
+   without an explicit approval / JIT ask — no new gate needed.
+2. **Dependency materialisation** (`requirements.txt` present) —
+   `require_http_get` for the package-index host (`pypi.org`) before running
+   `uv venv` + `uv pip install` into `<plugin_root>/.venv`. Install-time only;
+   the resulting venv's interpreter is what a `command: "python"` mcp entry's
+   spawn is rewritten to point at — **spawn itself stays network-free**.
+3. **`{kind: "git"}` run-code trust** — a DEDICATED
+   `require_plugin_git_run_code_trust` gate, checked BEFORE the fetch. This is
+   the RCE trust boundary and is deliberately SEPARATE from `require_http_get`
+   (the fetch axis): fetching bytes and RUNNING them are different decisions.
+   `require_http_get` is per-host, PERSISTENT (ALWAYS → `approvals.yaml`), and
+   SHARED with `web.fetch`, so a host approved once for a web fetch must NOT
+   thereby authorise installing + running its plugin code — else that host
+   becomes a standing silent-RCE grant for every future git plugin. The
+   run-code gate consults/writes NO approvals map (no key, no ALWAYS path, no
+   `reyn.yaml` pre-grant); its choice set (`plugin_run_code_trust_choices`)
+   offers only yes/no, so it re-asks EVERY install and can never be
+   pre-granted (§3.10 "never auto-run"). Fail-closed: a non-interactive caller
+   denies. `require_http_get` for the clone host still runs afterwards
+   (defense-in-depth network reachability), but the run-code gate is the one
+   that makes `{kind: "git"}` safe.
+
+Name-collision precedence (§3.8/§3.10): when `~/.reyn/plugins/<name>/`
+already holds a DIFFERENT-kind completed install, `reyn.plugins.source.
+resolve_name_collision` decides the winner (`builtin <= local << git`) — a
+lower-trust source is refused (`status="skipped"`), never silently shadows a
+higher-trust one.
+
+`plugin_install` handler lifecycle (one-shot):
+0. Reconcile: any `~/.reyn/plugins/<name>/` left with an
+   `.reyn-plugin/_install_state.json` marker from a PRIOR crashed/interrupted
+   install is rolled back before this install proceeds (`reconcile_plugin_installs`,
+   §3.11 — self-healing on the next `plugin_install` call; this repo has no
+   general process-startup hook, so "next use" is the documented reconcile
+   trigger). Rollback mirrors uninstall's **drop-registry-first** ordering: a
+   partial that crashed AFTER registering some capabilities left registry
+   entries tagged with its `plugin_id` pointing at the dir about to be deleted,
+   so those entries are dropped from all three `.reyn/config/*.yaml` registries
+   (ungated — OS-internal repair of already-broken entries) BEFORE the copy is
+   removed, or a dangling registry entry would survive.
+1. Resolve `source` → a source directory per its `kind`, applying the source's
+   gate(s): `{kind: "git"}` runs the run-code trust gate (3) then
+   `require_http_get` before cloning; `builtin`/`local` touch no network.
+2. Load + validate `.reyn-plugin/plugin.json` via `reyn.plugins.manifest.
+   load_plugin_manifest` (P1) — a missing/malformed manifest refuses
+   (`status="error"`) BEFORE any copy.
+3. Name-collision precedence check (above).
+4. Gate 1 (global-copy write).
+5. Copy: write the `_install_state.json` marker, THEN copy the source tree
+   (VCS metadata excluded) into `~/.reyn/plugins/<name>/`. Emit
+   `plugin_install_copied`.
+6. Expand `${REYN_*}` stable-location tokens (P1 `reyn.plugins.tokens.
+   expand_reyn_tokens`) into the copied `.mcp.json` / `pipelines/*.yaml` /
+   `skills/*/SKILL.md` files.
+7. Materialise deps (gate 2, when `requirements.txt` is present). Emit
+   `plugin_install_deps_materialised`.
+8. Register: for each manifest capability, call `skill_install.handle` /
+   `pipeline_install.handle` (each sub-op carries `plugin_id=<name>`, §3.7)
+   for skills/pipelines, or write `.reyn/config/mcp.yaml` directly
+   (probe-then-commit, mirrors `mcp__install_local`) for the root `.mcp.json`.
+   Emit `plugin_install_registered`.
+9. Delete the `_install_state.json` marker (absence = completed) and emit
+   `plugin_install_completed`.
+
+`plugin_uninstall` handler lifecycle (drop-registry-first, §3.11 — an
+interrupted uninstall never leaves a live registry entry pointing at a
+deleted copy):
+1. Drop every `.reyn/config/{mcp,pipelines,skills}.yaml` entry tagged
+   `plugin_id == name` (gated `require_file_write` per config file actually
+   touched). Emit `plugin_uninstall_registry_dropped`.
+2. Remove the `~/.reyn/plugins/<name>/` copy (gated `require_file_write`).
+   Emit `plugin_uninstall_completed`.
+
+**Not WAL-derived** (§3.11): the `~/.reyn/plugins/` copies + the materialised
+venv are FILES, not WAL-event-derived state — the CLAUDE.md truncate-falsify
+recovery gate does not apply to them. The reconcile above is a
+filesystem/registry consistency check; the registry entries THEMSELVES still
+ride the existing config-generation recovery path via `skill_install` /
+`pipeline_install`.
+
+Result fields (`plugin_install`): `status` (`"installed"` / `"skipped"` /
+`"error"`), `name`, `plugin_root`, `source_kind`, `capabilities`, `registered`
+(per-capability sub-results).
+
+Result fields (`plugin_uninstall`): `status` (`"uninstalled"` / `"error"`),
+`name`, `removed` (per-registry list of dropped entry names), `copy_removed`.
+
+Events emitted: `plugin_install_started` / `_copied` / `_deps_materialised` /
+`_registered` / `_completed`; `plugin_uninstall_started` /
+`_registry_dropped` / `_completed`.
 
 ## `embed`
 
