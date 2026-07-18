@@ -44,11 +44,10 @@ from urllib.error import HTTPError as _HTTPError
 from urllib.parse import urlparse as _urlparse
 from urllib.request import HTTPRedirectHandler as _HTTPRedirectHandler
 from urllib.request import Request as _Request
-from urllib.request import build_opener as _build_opener
 
 from reyn import _ssrf_guard
 from reyn._http_limits import read_capped
-from reyn._ssrf_pin import _PinnedHTTPHandler, _PinnedHTTPSHandler
+from reyn._ssrf_pin import ssrf_aware_urllib_opener
 
 # ── Internal state ─────────────────────────────────────────────────────────
 #
@@ -132,13 +131,15 @@ class _SSRFSafeRedirectHandler(_HTTPRedirectHandler):
 # kept under the ``_urlopen`` name as the stable seam ``_request`` calls (and
 # that tests patch to inject fake responses) — a drop-in for the old
 # ``urllib.request.urlopen`` but redirect-safe.
-# #1972: _PinnedHTTP(S)Handler ensure each connection goes to the pre-validated
-# IP (pinned at check time), closing the DNS-rebind TOCTOU window.
-_urlopen = _build_opener(
-    _SSRFSafeRedirectHandler(),
-    _PinnedHTTPHandler(),
-    _PinnedHTTPSHandler(),
-).open
+# #1972: the pinned handlers ensure each connection goes to the pre-validated IP
+# (pinned at check time), closing the DNS-rebind TOCTOU window.
+# #3075: constructed via the DRY ``ssrf_aware_urllib_opener`` so this egress
+# honours the standard proxy/CA env + ``REYN_SSRF_STRICT`` like every other
+# reyn egress (no reyn EventLog is in scope at this safe-mode import, so an
+# ``SSL_VERIFY=false`` here still WARNs but skips the P6 audit-event).
+_urlopen = ssrf_aware_urllib_opener(
+    _SSRFSafeRedirectHandler(), egress="safe.http"
+).open  # type: ignore[attr-defined]
 
 
 def _response_dict(resp: Any) -> dict:

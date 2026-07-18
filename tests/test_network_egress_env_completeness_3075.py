@@ -3,25 +3,38 @@
 Issue #3075's requirement is completeness, not a fix per class: EVERY
 reyn-originated network egress honours the standard proxy/CA env
 (``HTTP(S)_PROXY``/``NO_PROXY``, ``SSL_CERT_FILE``/``REQUESTS_CA_BUNDLE``), zero
-exceptions. This file is the "enumerate, don't curate" spine for that claim:
+exceptions. This file is the "enumerate, don't curate" spine for that claim.
 
-* one behavioral test per egress class from #3075's enumeration table, each
-  asserting the class actually reads a SENTINEL value from the standard env
-  (not "the code looks right" — an observed effect of setting the env), and
-* two structural (AST) guards: no ``httpx.Client(``/``httpx.AsyncClient(``
-  construction in ``src/reyn`` bypasses the DRY constructor
-  (``reyn._network.build_async_http_client`` / ``build_sync_http_client``), and
-  the DRY constructor module DOES construct httpx clients (positive guard —
-  the AST-guard pattern from ``test_present_sink_ast_guard_2708.py``: a
-  bypass-check that always passes because the chokepoint is empty is not a
-  guard).
+The enumeration was grep-derived, not memory-derived (an earlier curated version
+missed two whole transport families — ``urllib.request`` and third-party libs —
+which two reviewers found separately, the classic "curated subset" tell). The
+egress classes, by transport:
 
-A new egress class that skips this file's enumeration is invisible to the
-completeness claim by construction — the intended failure mode is "someone
-adds egress #7 and forgets to enumerate it here", which this file cannot
-detect on its own (that's why the structural guard below matters: a NEW
-call site is caught even if nobody remembers to add a class-specific test for
-it, as long as it goes through ``httpx.Client``/``httpx.AsyncClient`` directly).
+* **httpx** (async/sync) — litellm, web_fetch/RegistryClient (SSRF-pin),
+  remote-MCP/OAuth/webhook/remote-repl. All go through the DRY
+  ``reyn._network.build_async_http_client`` / ``build_sync_http_client``.
+* **urllib.request** — safe-mode HTTP (``reyn.api.safe.http``) + safe-mode MCP
+  registry (``reyn.mcp.registry``). Both go through the DRY
+  ``reyn._ssrf_pin.ssrf_aware_urllib_opener``.
+* **third-party libs reyn does not own the client for** — ddgs (web_search),
+  huggingface_hub (local-embed download, via ``requests``), fastmcp
+  (remote-MCP transport, via ``httpx``). These conform by the lib's own
+  ``trust_env``-style default; the witness tests below RED if a lib ships a
+  transport that stops honouring the env (the exact litellm-``aiohttp_trust_env``
+  degradation, generalised).
+* **subprocess** — uvx/npx/uv, via the sandbox child-env forward.
+
+For each class: a behavioral test asserting a SENTINEL value from the standard
+env is actually honoured (an observed effect, not "the code looks right"), plus
+structural (AST) guards that no construction in ``src/reyn`` bypasses the DRY
+constructor for that transport — one for ``httpx.Client``/``AsyncClient``, one
+for ``urllib.request.build_opener`` — mirroring
+``test_present_sink_ast_guard_2708.py`` (a bypass-check that vacuously passes
+because the chokepoint is empty is not a guard, so each has a positive twin).
+
+A NEW egress that free-hands its own client/opener is caught by the structural
+guard even if nobody remembers to add a class-specific behavioral test for it —
+that is what keeps "all" from decaying to "almost all" as the code grows.
 """
 from __future__ import annotations
 
@@ -52,6 +65,8 @@ def _clean_env(monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv(name, raising=False)
     monkeypatch.delenv("REYN_SSRF_STRICT", raising=False)
     monkeypatch.delenv("OTEL_EXPORTER_OTLP_CERTIFICATE", raising=False)
+    monkeypatch.delenv("SSL_VERIFY", raising=False)
+    monkeypatch.delenv("REYN_FETCH_ALLOW_PRIVATE_IPS", raising=False)
 
 
 # ── #1 litellm ──────────────────────────────────────────────────────────────
@@ -153,6 +168,153 @@ def test_ddgs_backend_honours_no_proxy_absence() -> None:
     from reyn._network import resolve_env_proxy_url
 
     assert resolve_env_proxy_url("https") is None
+
+
+# ── urllib.request egress (safe.http + mcp.registry) ────────────────────────
+
+
+def _proxy_handler_proxies(opener: object) -> dict:
+    """Extract the active ProxyHandler's proxy map from a urllib opener (public
+    surface: OpenerDirector.handlers is a documented attribute)."""
+    for handler in opener.handlers:  # type: ignore[attr-defined]
+        if type(handler).__name__ == "ProxyHandler":
+            return dict(getattr(handler, "proxies", {}))
+    return {}
+
+
+def test_urllib_opener_routes_through_proxy_when_env_set(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Tier 2: the urllib egress (safe.http / mcp.registry) honours the standard
+    proxy env — with HTTPS_PROXY set, the opener carries an active ProxyHandler
+    for that scheme instead of the previous env-blind pinned-only opener."""
+    monkeypatch.setenv("HTTPS_PROXY", "http://8.8.8.8:3128")  # public proxy IP
+    from reyn._ssrf_pin import ssrf_aware_urllib_opener
+
+    opener = ssrf_aware_urllib_opener()
+    assert _proxy_handler_proxies(opener).get("https") == "http://8.8.8.8:3128"
+
+
+def test_urllib_opener_pins_when_no_proxy() -> None:
+    """Tier 2: with no proxy env, the urllib opener keeps the DNS-rebind-resistant
+    pinned handlers and no active proxy (unchanged pre-#3075 security posture)."""
+    from reyn._ssrf_pin import ssrf_aware_urllib_opener
+
+    opener = ssrf_aware_urllib_opener()
+    handler_names = [type(h).__name__ for h in opener.handlers]  # type: ignore[attr-defined]
+    assert any("Pinned" in n for n in handler_names)
+    assert _proxy_handler_proxies(opener) == {}
+
+
+def test_urllib_opener_strict_refuses_proxy(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Tier 2: REYN_SSRF_STRICT=true makes the urllib egress refuse the env proxy
+    and keep its own pin — the build_opener auto-added default ProxyHandler must
+    NOT silently re-enable proxying under strict."""
+    monkeypatch.setenv("HTTPS_PROXY", "http://8.8.8.8:3128")
+    monkeypatch.setenv("REYN_SSRF_STRICT", "true")
+    from reyn._ssrf_pin import ssrf_aware_urllib_opener
+
+    opener = ssrf_aware_urllib_opener()
+    assert _proxy_handler_proxies(opener) == {}
+    handler_names = [type(h).__name__ for h in opener.handlers]  # type: ignore[attr-defined]
+    assert any("Pinned" in n for n in handler_names)
+
+
+def test_urllib_opener_private_ip_proxy_exempt_but_metadata_blocked(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Tier 2: an operator proxy on an RFC1918 address is exempt from the
+    private-IP SSRF block (#3075 architect decision), but a proxy pointed at the
+    cloud-metadata endpoint is STILL a hard deny (never a legit operator proxy)."""
+    from reyn._ssrf_guard import SSRFBlocked
+    from reyn._ssrf_pin import ssrf_aware_urllib_opener
+
+    monkeypatch.delenv("REYN_FETCH_ALLOW_PRIVATE_IPS", raising=False)
+    monkeypatch.setenv("HTTPS_PROXY", "http://10.0.0.5:3128")  # RFC1918 — exempt
+    ssrf_aware_urllib_opener()  # no raise
+
+    monkeypatch.setenv("HTTPS_PROXY", "http://169.254.169.254:3128")  # metadata
+    with pytest.raises(SSRFBlocked):
+        ssrf_aware_urllib_opener()
+
+
+def test_urllib_egress_resolves_standard_ca_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Tier 2: the urllib egress's CA resolution honours the standard CA env,
+    including REQUESTS_CA_BUNDLE (which the ssl module does NOT read natively —
+    the gap #3075 closes for this class). Uses a real file so the existing-path
+    check in the resolver passes."""
+    import tempfile
+
+    with tempfile.NamedTemporaryFile(suffix=".pem", delete=False) as fh:
+        fh.write(b"# not a real cert, just an existing path for the resolver\n")
+        ca_path = fh.name
+    monkeypatch.delenv("SSL_CERT_FILE", raising=False)
+    monkeypatch.setenv("REQUESTS_CA_BUNDLE", ca_path)
+    from reyn._network import resolve_ssl_verify_from_env
+
+    assert resolve_ssl_verify_from_env() == ca_path
+
+
+def test_urllib_ssl_verify_false_emits_audit_event(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Tier 2: SSL_VERIFY=false on the urllib egress emits the same
+    network_ssl_verify_disabled P6 audit-event (never silent), wired through the
+    opener's CA-context builder."""
+    monkeypatch.setenv("SSL_VERIFY", "false")
+    from reyn._network import reset_ssl_verify_disabled_latch_for_tests
+    from reyn._ssrf_pin import _build_ca_ssl_context
+    from reyn.core.events.events import EventLog
+
+    reset_ssl_verify_disabled_latch_for_tests()
+    events = EventLog()
+    _build_ca_ssl_context(events=events, egress="urllib_test")
+    matches = [e for e in events.all() if e.type == "network_ssl_verify_disabled"]
+    assert matches
+    assert matches[0].data.get("egress") == "urllib_test"
+    reset_ssl_verify_disabled_latch_for_tests()
+
+
+# ── third-party libs reyn doesn't own the client for (degradation witnesses) ──
+
+
+def test_ddgs_backend_uses_standard_env_proxy_resolver() -> None:
+    """Tier 2: structural — the ddgs backend feeds DDGS(proxy=...) from the
+    standard-env resolver (not ddgs' own non-standard DDGS_PROXY). A refactor
+    that drops the proxy= wiring reopens the env-blind gap."""
+    import inspect
+
+    from reyn.tools.search_backends import duckduckgo
+
+    src = inspect.getsource(duckduckgo)
+    assert "resolve_env_proxy_url" in src
+    assert "DDGS(proxy=" in src
+
+
+def test_huggingface_hub_session_trusts_env() -> None:
+    """Tier 2: degradation witness — huggingface_hub (local-embed download) uses a
+    requests Session with trust_env=True, so it honours HTTP(S)_PROXY /
+    REQUESTS_CA_BUNDLE. RED if a future HF release ships trust_env=False (the
+    litellm-aiohttp_trust_env degradation, in another lib)."""
+    pytest.importorskip("huggingface_hub")
+    from huggingface_hub.utils import get_session
+
+    session = get_session()
+    assert session.trust_env is True
+
+
+def test_fastmcp_remote_transport_built_on_env_trusting_httpx() -> None:
+    """Tier 2: degradation witness — fastmcp's remote-MCP transport
+    (StreamableHttpTransport, which reyn passes to fastmcp.Client without owning
+    the httpx client) is built on httpx and does NOT disable trust_env, so it
+    honours the standard proxy/CA env by httpx's default. RED if fastmcp swaps to
+    a non-env transport or sets trust_env=False."""
+    import inspect
+
+    pytest.importorskip("fastmcp")
+    from fastmcp.client.transports import StreamableHttpTransport
+
+    src = inspect.getsource(StreamableHttpTransport)
+    assert "httpx" in src
+    assert "trust_env=False" not in src
 
 
 # ── #5 subprocess (sandbox child env) ───────────────────────────────────────
@@ -321,4 +483,65 @@ def test_dry_constructor_module_actually_constructs_httpx_clients() -> None:
     assert kinds == {"Client", "AsyncClient"}, (
         f"expected reyn._network to construct both httpx.Client and "
         f"httpx.AsyncClient; found {kinds}"
+    )
+
+
+# ── structural gate: no raw urllib build_opener bypass ─────────────────────
+
+# The urllib DRY constructor is ssrf_aware_urllib_opener in _ssrf_pin.py, so the
+# ONLY build_opener call in src/reyn allowed to exist is the one inside it.
+_URLLIB_CONSTRUCTOR_MODULE = "src/reyn/_ssrf_pin.py"
+
+
+def _is_build_opener_call(node: ast.AST) -> bool:
+    """True for a ``urllib.request.build_opener(...)`` / ``build_opener(...)`` call."""
+    if not isinstance(node, ast.Call):
+        return False
+    func = node.func
+    if isinstance(func, ast.Attribute) and func.attr == "build_opener":
+        return True
+    if isinstance(func, ast.Name) and func.id == "build_opener":
+        return True
+    return False
+
+
+def test_no_raw_urllib_build_opener_bypasses_the_dry_constructor() -> None:
+    """Tier 2: structural — every urllib.request.build_opener(...) in src/reyn
+    lives inside the DRY urllib constructor (ssrf_aware_urllib_opener in
+    reyn._ssrf_pin). This is the guard whose ABSENCE let the urllib egress
+    (safe.http + mcp.registry) ship env-blind before #3075: the httpx-only AST
+    guard could not see a urllib.request bypass. A new urllib egress that
+    free-hands its own build_opener now fails here, named file:line."""
+    root = _repo_root()
+    src = root / "src" / "reyn"
+    constructor_path = (root / _URLLIB_CONSTRUCTOR_MODULE).resolve()
+
+    offenders: list[str] = []
+    for py in src.rglob("*.py"):
+        if py.resolve() == constructor_path:
+            continue
+        tree = ast.parse(py.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if _is_build_opener_call(node):
+                offenders.append(f"{py.relative_to(root)}:{node.lineno}")
+
+    assert not offenders, (
+        "Raw urllib.request.build_opener(...) construction outside the DRY urllib "
+        "constructor (reyn._ssrf_pin.ssrf_aware_urllib_opener) — bypasses #3075's "
+        "standard proxy/CA env + REYN_SSRF_STRICT wiring for the urllib egress. "
+        f"Route it through ssrf_aware_urllib_opener instead. Offending sites: {offenders}"
+    )
+
+
+def test_urllib_dry_constructor_module_actually_calls_build_opener() -> None:
+    """Tier 2: positive twin — the urllib constructor module DOES call
+    build_opener (the chokepoint exists and is used, so the bypass-check above
+    is not vacuously green on an empty chokepoint)."""
+    root = _repo_root()
+    constructor_path = root / _URLLIB_CONSTRUCTOR_MODULE
+    tree = ast.parse(constructor_path.read_text(encoding="utf-8"))
+    calls = [node.lineno for node in ast.walk(tree) if _is_build_opener_call(node)]
+    assert calls, (
+        "reyn._ssrf_pin.ssrf_aware_urllib_opener must call urllib.request."
+        "build_opener (the single allowed urllib-opener chokepoint) — none found"
     )

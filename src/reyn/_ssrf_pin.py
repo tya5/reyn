@@ -32,6 +32,7 @@ import http.client
 import ipaddress
 import os
 import socket
+import urllib.parse
 import urllib.request
 
 from reyn import _ssrf_guard
@@ -110,9 +111,14 @@ def ssrf_aware_client_kwargs(verify: bool | str = True) -> dict:
         # LLM-supplied), so a one-shot validation at construction time is the
         # right scope — not per-request re-pinning (the proxy resolves the
         # actual target on every request, which is the whole point of using it).
-        _ssrf_guard.assert_fetch_host_allowed(
-            proxy_host, allow_private=_resolve_allow_private()
-        )
+        # #3075 private-IP proxy exempt (architect-recommended): a corporate
+        # forward proxy commonly lives on an RFC1918 address, and the operator
+        # explicitly configured it — so RFC1918/ULA is allowed here even when
+        # the run-wide ``allow_private`` is off. ``assert_fetch_host_allowed``
+        # still blocks loopback / link-local / cloud-metadata for the proxy host
+        # (see ``_ssrf_guard._deny_reason``): those are never a legitimate
+        # operator proxy and remain a hard SSRF deny.
+        _ssrf_guard.assert_fetch_host_allowed(proxy_host, allow_private=True)
         mounts[pattern] = httpx.AsyncHTTPTransport(proxy=proxy_url, verify=verify)
 
     return {"transport": default_transport, "mounts": mounts}
@@ -360,3 +366,113 @@ class PinnedAsyncHTTPTransport:
         )
 
         return await self._transport.handle_async_request(pinned_request)
+
+
+# ── urllib (sync, safe-mode) DRY opener constructor ──────────────────────────
+
+
+def _standard_env_proxies() -> dict[str, str]:
+    """Env-only proxy map (mirrors httpx's ``get_environment_proxies`` scope).
+
+    ``urllib.request.getproxies_environment()`` reads ONLY ``*_PROXY`` env vars
+    (not the macOS/Windows system proxy config that bare ``getproxies()`` also
+    consults), keeping the urllib egress's proxy source identical to the httpx
+    egress's — the standard env, nothing more. ``NO_PROXY`` is applied per-host
+    at request time by ``ProxyHandler`` (via ``proxy_bypass``), so an excluded
+    host still bypasses the proxy correctly.
+    """
+    return urllib.request.getproxies_environment()
+
+
+def _build_ca_ssl_context(events: object = None, egress: str = "urllib") -> object:
+    """SSL context for the urllib egress honouring the standard CA env (#3075).
+
+    Resolution via :func:`reyn._network.resolve_ssl_verify_from_env`:
+      * ``SSL_VERIFY=false`` → an unverified context, plus a one-time WARN +
+        ``network_ssl_verify_disabled`` P6 audit-event (never silent).
+      * a CA path (``SSL_CERT_FILE`` / ``REQUESTS_CA_BUNDLE``) → a default context
+        with that bundle loaded (``ssl.create_default_context`` already reads
+        ``SSL_CERT_FILE``; loading the resolved path also covers
+        ``REQUESTS_CA_BUNDLE``, which the ssl module does not read on its own).
+      * ``True`` → the system default context.
+    """
+    import ssl
+
+    from reyn._network import note_ssl_verify_disabled, resolve_ssl_verify_from_env
+
+    verify = resolve_ssl_verify_from_env()
+    if verify is False:
+        note_ssl_verify_disabled(events, egress)  # type: ignore[arg-type]
+        return ssl._create_unverified_context()
+    ctx = ssl.create_default_context()  # reads SSL_CERT_FILE / SSL_CERT_DIR
+    if isinstance(verify, str):
+        ctx.load_verify_locations(cafile=verify)
+    return ctx
+
+
+def ssrf_aware_urllib_opener(
+    *extra_handlers: object,
+    events: object = None,
+    egress: str = "urllib",
+) -> object:
+    """Build a urllib opener honouring the standard proxy/CA env + strict (#3075).
+
+    The single DRY constructor every reyn-owned ``build_opener`` call routes
+    through — the urllib sibling of :func:`ssrf_aware_client_kwargs`, so the
+    completeness gate can assert no ``urllib.request.build_opener`` in
+    ``src/reyn`` bypasses it (a new urllib egress that free-hands its own opener
+    fails CI instead of shipping proxy/CA-blind).
+
+    Handler selection mirrors the SSRF-pin × proxy decision exactly:
+
+    * **No proxy in the standard env, or ``REYN_SSRF_STRICT`` set** — the pinned
+      handlers (``_PinnedHTTP(S)Handler``): DNS-rebind-resistant direct connect,
+      with the CA-aware SSL context applied to the HTTPS pin.
+    * **Proxy in the standard env, non-strict** — each proxy endpoint is
+      validated once (private-IP exempt, same rule as the httpx path: an
+      operator-configured corporate proxy on RFC1918 is allowed, loopback /
+      link-local / cloud-metadata stay blocked), then requests route through a
+      ``ProxyHandler`` + a plain (non-pinned) CA-aware ``HTTPSHandler``. The
+      proxy performs the final target resolution, so pinning the request host is
+      meaningless — identical tradeoff to the httpx egress dropping the pinned
+      transport when a proxy transport is mounted. Check-time SSRF gating on the
+      target is still enforced by the caller's redirect/initial-host guards
+      passed in ``extra_handlers``.
+
+    ``extra_handlers`` (e.g. the caller's SSRF redirect handler) are prepended so
+    they take effect on every request regardless of the proxy branch.
+    """
+    ssl_ctx = _build_ca_ssl_context(events=events, egress=egress)
+    proxies = {} if _ssrf_strict() else _standard_env_proxies()
+
+    if proxies:
+        for proxy_url in proxies.values():
+            parsed = urllib.parse.urlparse(
+                proxy_url if "://" in proxy_url else f"http://{proxy_url}"
+            )
+            proxy_host = parsed.hostname or ""
+            if proxy_host:
+                # Private-IP exempt (architect-recommended, #3075): trust the
+                # operator's configured proxy on RFC1918; metadata/loopback/
+                # link-local remain a hard deny (see _ssrf_guard._deny_reason).
+                _ssrf_guard.assert_fetch_host_allowed(proxy_host, allow_private=True)
+        handlers = [
+            *extra_handlers,
+            urllib.request.ProxyHandler(proxies),
+            urllib.request.HTTPSHandler(context=ssl_ctx),  # type: ignore[arg-type]
+        ]
+    else:
+        # An explicit empty ProxyHandler is REQUIRED here, not merely tidy:
+        # ``build_opener`` auto-adds a default ``ProxyHandler()`` (which reads the
+        # env proxies) whenever the caller passes none — so without this, the
+        # ``REYN_SSRF_STRICT`` branch and the genuinely-no-proxy branch would BOTH
+        # silently proxy via the auto-added default, defeating strict entirely.
+        # ``ProxyHandler({})`` registers no proxy methods AND suppresses the
+        # default, so the pinned direct-connect path is truly proxy-free.
+        handlers = [
+            *extra_handlers,
+            urllib.request.ProxyHandler({}),
+            _PinnedHTTPHandler(),
+            _PinnedHTTPSHandler(context=ssl_ctx),  # type: ignore[arg-type]
+        ]
+    return urllib.request.build_opener(*handlers)

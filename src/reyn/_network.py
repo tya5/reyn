@@ -101,6 +101,34 @@ def reset_ssl_verify_disabled_latch_for_tests() -> None:
     _ssl_verify_disabled_latched.clear()
 
 
+def resolve_ssl_verify_from_env() -> "bool | str":
+    """Resolve SSL verification from the standard env, litellm-free (#3075).
+
+    Mirrors ``litellm.get_ssl_verify``'s precedence for the in-process
+    ``urllib.request`` egress (safe-mode HTTP + safe-mode MCP registry), which
+    must not pull in the heavy ``litellm`` import just to read two env vars:
+
+      1. ``SSL_VERIFY`` ∈ {false, 0, no, off} → ``False`` (verification disabled;
+         the caller is responsible for the :func:`note_ssl_verify_disabled` audit)
+      2. ``SSL_CERT_FILE`` pointing at an existing path  → that path (custom CA)
+      3. ``REQUESTS_CA_BUNDLE`` pointing at an existing path → that path (custom CA)
+      4. otherwise → ``True`` (system trust store)
+
+    ``SSL_CERT_FILE`` is honoured natively by ``ssl.create_default_context()``
+    too; returning it here lets the urllib opener builder apply it uniformly and
+    also pick up ``REQUESTS_CA_BUNDLE`` (which the ssl module does *not* read on
+    its own — the gap #3075 closes for this egress class).
+    """
+    raw = os.environ.get("SSL_VERIFY", "").strip().lower()
+    if raw in ("false", "0", "no", "off"):
+        return False
+    for name in ("SSL_CERT_FILE", "REQUESTS_CA_BUNDLE"):
+        path = os.environ.get(name, "").strip()
+        if path and os.path.exists(path):
+            return path
+    return True
+
+
 def resolve_env_proxy_url(scheme: str = "https") -> str | None:
     """Return the standard-env proxy URL for *scheme*, or ``None``.
 

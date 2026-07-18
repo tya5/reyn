@@ -115,6 +115,17 @@ def ensure_litellm_ready() -> None:
     Call this before any bare ``import litellm`` in a lazy call site that
     might be the first one to run in a given process — it costs one boolean
     check on every call after the first, so it is cheap to call defensively.
+
+    #3075 chokepoint coverage: this is the sole place the
+    ``litellm.aiohttp_trust_env = True`` flip is applied, and BOTH litellm
+    egress families reach it before their first real call — the completion
+    path via ``recorded_acompletion`` (``reyn.llm.llm``, the #1190 single
+    ``litellm.acompletion`` chokepoint, which calls this before the
+    ``acompletion``) and the embedding path via
+    ``LiteLLMEmbeddingProvider.embed_batch`` (``reyn.data.embedding.
+    litellm_provider``, which calls this before ``_aembedding_bounded`` →
+    ``litellm.aembedding``). So the proxy-trust flip covers every
+    litellm-originated request, not just chat.
     """
     global _litellm_ready
     if _litellm_ready:
