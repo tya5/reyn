@@ -1,4 +1,8 @@
-"""Session — long-lived chat loop driving the router turn."""
+"""Session — long-lived chat loop driving the router turn.
+
+See docs/reference/runtime/session-construction.md for __init__ construction
+rationale (Family decomposition).
+"""
 from __future__ import annotations
 
 import asyncio
@@ -1159,7 +1163,7 @@ class Session:
         model: str = "standard",
         resolver: ModelResolver | None = None,
         permission_resolver: PermissionResolver | None = None,
-        # Identity value object; None -> built from the identity params below (FP-0043, see session-construction.md#identity)
+        # Identity value object; None -> built from the identity params below (FP-0043, see session-construction.md#identity-the-agent-value-object-fp-0043-stage-2)
         agent: "Agent | None" = None,
         safety: "SafetyConfig | None" = None,
         mcp_servers: dict | None = None,
@@ -1174,7 +1178,7 @@ class Session:
         events_config: EventsConfig | None = None,
         # Resolved cost_warn: config for the high-cost-model gate (#2230)
         cost_warn_config: CostWarnConfig | None = None,
-        # Debug lever disabling tool-result size gates (see session-construction.md#family-4)
+        # Debug lever disabling tool-result size gates (see session-construction.md#family-4-cost-budget)
         offload_config: OffloadConfig | None = None,
         # Operator render_template output bounds (FP-0055 / #2679)
         render_template_config: RenderTemplateConfig | None = None,
@@ -1182,11 +1186,11 @@ class Session:
         budget_tracker: BudgetTracker | None = None,
         snapshot_path: "Path | None" = None,
         sandbox_config: "SandboxConfig | None" = None,
-        # Agent EnvironmentBackend INSTANCE for the chat FS seam (#1200 PR-F1, see session-construction.md#identity)
+        # Agent EnvironmentBackend INSTANCE for the chat FS seam (#1200 PR-F1, see session-construction.md#identity-the-agent-value-object-fp-0043-stage-2)
         environment_backend: "EnvironmentBackend | None" = None,
         workspace_base_dir: "Path | None" = None,  # #187: chat OpContext FS root — the container repo root (e.g. /testbed) when env-backend routes the repo into a container; None → host cwd
         workspace_state_dir: "Path | None" = None,  # #187: host-side OS state dir, decoupled from a container base_dir (survives container death)
-        # Agent SandboxBackend INSTANCE for the chat exec seam (#1200 PR-F2, see session-construction.md#identity)
+        # Agent SandboxBackend INSTANCE for the chat exec seam (#1200 PR-F2, see session-construction.md#identity-the-agent-value-object-fp-0043-stage-2)
         sandbox_backend: "SandboxBackend | None" = None,
         multimodal_config: "MultimodalConfig | None" = None,
         action_retrieval_config: "ActionRetrievalConfig | None" = None,
@@ -1240,7 +1244,7 @@ class Session:
         presentation_registry = presentation_wiring.presentation_registry
         presentation_consumer = presentation_wiring.presentation_consumer
         intervention_bridge = presentation_wiring.intervention_bridge
-        # Identity cluster owned by Agent; test-construction falls back to identity params (FP-0043, see session-construction.md#identity)
+        # Identity cluster owned by Agent; test-construction falls back to identity params (FP-0043, see session-construction.md#identity-the-agent-value-object-fp-0043-stage-2)
         self._agent = agent if agent is not None else Agent(
             agent_name=agent_name,
             role=agent_role,
@@ -1263,11 +1267,11 @@ class Session:
             self._on_perm_persist_cb = None
         _safety = safety or SafetyConfig()
         self._safety = _safety
-        # Tool names excluded from the MAIN chat RouterLoop's LLM-visible catalog (#187, see session-construction.md#capability-permission--visibility)
+        # Tool names excluded from the MAIN chat RouterLoop's LLM-visible catalog (#187, see session-construction.md#capability-permission-visibility)
         self._exclude_tools = frozenset(exclude_tools or ())
-        # Per-session capability_profile narrowing threaded to RouterLoop + OpContext (#1827 S3, see session-construction.md#capability-permission--visibility)
+        # Per-session capability_profile narrowing threaded to RouterLoop + OpContext (#1827 S3, see session-construction.md#capability-permission-visibility)
         self._contextual_permission = contextual_permission
-        # Session-scoped Task backend instance, threaded to task.* op handlers (#1953 slice 3a, see session-construction.md#capability-permission--visibility)
+        # Session-scoped Task backend instance, threaded to task.* op handlers (#1953 slice 3a, see session-construction.md#capability-permission-visibility)
         self._task_backend = task_backend
         self._task_waker = task_waker  # #1953 slice 7
         # Present-sink consumer; production always supplies one, direct/test construction falls back to outbox-backed default (#2708 P1, see session-construction.md#misc-lifecycle-wiring)
@@ -1278,31 +1282,31 @@ class Session:
         )
         # Spawn-time intervention bridge; binds an attached driver's ask_user to the parent's listener (#2708 P3.2a, see session-construction.md#misc-lifecycle-wiring)
         self._intervention_bridge = intervention_bridge
-        # task_id this session is EXECUTING as a task-as-request, read by op-ctx builders for task.create ownership (#1953 §16, see session-construction.md#safety-limits--interactive-mode)
+        # task_id this session is EXECUTING as a task-as-request, read by op-ctx builders for task.create ownership (#1953 §16, see session-construction.md#safety-limits-interactive-mode)
         self._current_task_id: "str | None" = None
-        # OS-authoritative provenance classification of the current turn, stamps entry["provenance"] (proposal 0060 Phase1 A7, see session-construction.md#safety-limits--interactive-mode)
+        # OS-authoritative provenance classification of the current turn, stamps entry["provenance"] (proposal 0060 Phase1 A7, see session-construction.md#safety-limits-interactive-mode)
         self._current_turn_origin: str = "auto_improvement"
-        # Spawned EPHEMERAL session auto-vanish state, set post-construction by the registry (#2103, see session-construction.md#safety-limits--interactive-mode)
+        # Spawned EPHEMERAL session auto-vanish state, set post-construction by the registry (#2103, see session-construction.md#safety-limits-interactive-mode)
         self._ephemeral: bool = False
         self._vanish_scheduled: bool = False
         self._vanish_task: "asyncio.Task | None" = None
         # Lazily-resolved minimal _untrusted ContextualPermission cache (#1827 S4b context-auto)
         self._untrusted_contextual_cache = None
-        # Catalog categories hidden at the universal-catalog source (#1667, see session-construction.md#capability-permission--visibility)
+        # Catalog categories hidden at the universal-catalog source (#1667, see session-construction.md#capability-permission-visibility)
         self._excluded_categories = frozenset(excluded_categories or ())
-        # Session-scoped LLM tool-VISIBILITY override, restrict-only on top of the resolved agent envelope (#2285, see session-construction.md#capability-permission--visibility)
+        # Session-scoped LLM tool-VISIBILITY override, restrict-only on top of the resolved agent envelope (#2285, see session-construction.md#capability-permission-visibility)
         self._visibility_override: "dict[str, set[str]]" = {
             "tool": set(), "mcp": set(), "category": set(), "skill": set(),
         }
-        # Session-scoped hook APPLICABILITY override, per-session by construction (#2285, see session-construction.md#capability-permission--visibility)
+        # Session-scoped hook APPLICABILITY override, per-session by construction (#2285, see session-construction.md#capability-permission-visibility)
         self._disabled_hooks: "set[str]" = set()
-        # Per-message tool-call budget for the MAIN chat RouterLoop (#187, see session-construction.md#safety-limits--interactive-mode)
+        # Per-message tool-call budget for the MAIN chat RouterLoop (#187, see session-construction.md#safety-limits-interactive-mode)
         self._router_max_iterations = int(router_max_iterations)
-        # Run-once mode: the router SP must not ask a clarifying question nobody can answer (#1439 Fix #1, see session-construction.md#safety-limits--interactive-mode)
+        # Run-once mode: the router SP must not ask a clarifying question nobody can answer (#1439 Fix #1, see session-construction.md#safety-limits-interactive-mode)
         self._non_interactive = bool(non_interactive)
-        # Media-size gate config, plumbed to spawned Agents + router host adapter (#364, see session-construction.md#multimodal--media)
+        # Media-size gate config, plumbed to spawned Agents + router host adapter (#364, see session-construction.md#multimodal-media)
         self._multimodal_config = multimodal_config
-        # Single MediaStore instance per Session (#383 PR-C, see session-construction.md#multimodal--media)
+        # Single MediaStore instance per Session (#383 PR-C, see session-construction.md#multimodal-media)
         from reyn.data.workspace.media_store import MediaStore, MediaStoreConfig
         if multimodal_config is not None:
             self._media_store: "MediaStore | None" = MediaStore(
@@ -1318,14 +1322,14 @@ class Session:
             )
         else:
             self._media_store = None
-        # Queue of /image-attached blocks drained on the next user-message turn (#366, see session-construction.md#multimodal--media)
+        # Queue of /image-attached blocks drained on the next user-message turn (#366, see session-construction.md#multimodal-media)
         self._pending_user_images: list[dict] = []
-        # Drives whether universal catalog wrappers appear in router tools= (FP-0034 PR-3b-iii, see session-construction.md#family-5--retrieval)
+        # Drives whether universal catalog wrappers appear in router tools= (FP-0034 PR-3b-iii, see session-construction.md#family-5-retrieval)
         self._action_retrieval = action_retrieval_config or ActionRetrievalConfig()
         # Enabled skill registry snapshot for the ## Skills block; None -> omitted section (#2548 PR-A)
         self._available_skills = available_skills
         self._chat_tool_use_scheme = chat_tool_use_scheme  # #1593 PR-2, passed to RouterLoopDriver below
-        # RouterLoop awaits the embedding index build synchronously on turn 1 when True (B25-S5-1 fix, see session-construction.md#family-5--retrieval)
+        # RouterLoop awaits the embedding index build synchronously on turn 1 when True (B25-S5-1 fix, see session-construction.md#family-5-retrieval)
         self._eager_embedding_build = eager_embedding_build
         # Falls back to a default identifier when the factory doesn't supply agent.id (FP-0016 Component E)
         if agent_id is None:
@@ -1338,7 +1342,7 @@ class Session:
         self._last_reply_to: Any = None
         # Outbox interceptor for external transport (e.g. Slack via MCP); None skips interception (FP-0041 #489 PR-D2)
         self._outbox_interceptor: Any = None
-        # Embedding block + action_usage_tracker, byte-identical extraction, unmoved (#3082 Family 5, see session-construction.md#family-5--retrieval)
+        # Embedding block + action_usage_tracker, byte-identical extraction, unmoved (#3082 Family 5, see session-construction.md#family-5-retrieval)
         _retrieval_bundle = self._build_retrieval_bundle(
             self._action_retrieval, embedding_config, agent_name,
         )
@@ -1348,10 +1352,10 @@ class Session:
         self._embedding_event_sink = _retrieval_bundle.embedding_event_sink
         self._action_usage_tracker = _retrieval_bundle.action_usage_tracker
         self._mcp_servers = mcp_servers
-        # mcp_connection_service; 4 lambdas deferred-resolve sibling deps at call time (#3082 Family 8c, see session-construction.md#family-8c--mcp-connection-service)
+        # mcp_connection_service; 4 lambdas deferred-resolve sibling deps at call time (#3082 Family 8c, see session-construction.md#family-8c-mcp-connection-service)
         _mcp_connection_bundle = self._build_mcp_connection_service()
         self._mcp_connection_service = _mcp_connection_bundle.mcp_connection_service
-        # Resolve fs_watch: as a builder input; FsWatcher itself is built in _build_hook_event_bundle (#2608 H4 / #3082 Family 3, see session-construction.md#family-3--hook-event--reactivity)
+        # Resolve fs_watch: as a builder input; FsWatcher itself is built in _build_hook_event_bundle (#2608 H4 / #3082 Family 3, see session-construction.md#family-3-hook-event-reactivity)
         from reyn.config.infra import FsWatchConfig
         _fs_watch_cfg = (
             fs_watch_config if isinstance(fs_watch_config, FsWatchConfig) else FsWatchConfig()
@@ -1382,9 +1386,9 @@ class Session:
         )
 
         self._events_config = events_config or EventsConfig()  # PR20: per-chat rotation policy
-        self._cost_warn_config = cost_warn_config or CostWarnConfig()  # #2230, see session-construction.md#family-4--cost--budget
+        self._cost_warn_config = cost_warn_config or CostWarnConfig()  # #2230, see session-construction.md#family-4-cost-budget
         self._offload_config = offload_config or OffloadConfig()  # tool-result-schema-redesign §5 debug lever
-        # Resolve operator render_template bounds once, threaded to every router OpContext builder (FP-0055 / #2679, see session-construction.md#family-4--cost--budget)
+        # Resolve operator render_template bounds once, threaded to every router OpContext builder (FP-0055 / #2679, see session-construction.md#family-4-cost-budget)
         _rt_cfg = render_template_config or RenderTemplateConfig()
         from reyn.core.op_runtime.render_template import RenderTemplateBounds
         self._render_template_bounds = RenderTemplateBounds(
@@ -1392,35 +1396,35 @@ class Session:
             wall_clock_seconds=_rt_cfg.wall_clock_seconds,
         )
 
-        # WAL + per-agent snapshot for crash recovery via SnapshotJournal; snapshot_path kept only for diagnostics (PR21 / PR-refactor-session-1, see session-construction.md#family-2--recovery-wal--journal)
+        # WAL + per-agent snapshot for crash recovery via SnapshotJournal; snapshot_path kept only for diagnostics (PR21 / PR-refactor-session-1, see session-construction.md#family-2-recovery-wal-journal)
         self._session_id = session_id
         self._snapshot_path = snapshot_path or (
             Path(".reyn") / "agents" / self.agent_name / "state" / "snapshot.json"
         )
-        # generation_store -> journal, byte-identical extraction (#3082 Family 2, see session-construction.md#family-2--recovery-wal--journal)
+        # generation_store -> journal, byte-identical extraction (#3082 Family 2, see session-construction.md#family-2-recovery-wal-journal)
         _recovery_bundle = self._build_recovery_bundle(
             self.agent_name, self._snapshot_path, state_log, session_id,
         )
         self._generation_store = _recovery_bundle.generation_store
         self._journal = _recovery_bundle.journal
-        # Turn-idle event for quiescence; lets a global rewind await_quiescent before the reset-record append (ADR-0038 Stage 1c, see session-construction.md#family-2--recovery-wal--journal)
+        # Turn-idle event for quiescence; lets a global rewind await_quiescent before the reset-record append (ADR-0038 Stage 1c, see session-construction.md#family-2-recovery-wal-journal)
         self._turn_idle = asyncio.Event()
         self._turn_idle.set()
         self._turn_owner_task: "asyncio.Task | None" = None  # lets await_quiescent skip its wait when called re-entrantly from the owning task
-        # Joinable handle for fire-and-forget WAL-append tasks so await_quiescent can join them too (ADR-0038 Stage 1c coverage, see session-construction.md#family-2--recovery-wal--journal)
+        # Joinable handle for fire-and-forget WAL-append tasks so await_quiescent can join them too (ADR-0038 Stage 1c coverage, see session-construction.md#family-2-recovery-wal-journal)
         self._inflight_wal_tasks: set[asyncio.Task] = set()
         # Kept directly (not only via journal) so ops launched from this session can emit step events into the same WAL
         self._state_log = state_log
-        self._halted_reason: "str | None" = None  # #2259 PR-3: set on FAIL-STOP, see session-construction.md#family-2--recovery-wal--journal
+        self._halted_reason: "str | None" = None  # #2259 PR-3: set on FAIL-STOP, see session-construction.md#family-2-recovery-wal-journal
         self._task_subscription_writer = SubscriptionWriter(state_log) if state_log is not None else None  # #2187 backend-master, mirrors task_waker
         # In-memory buffer of restored-then-resolved intervention answers, keyed by run_id (PR-intervention-link L6)
         self._buffered_intervention_answers: dict[str, "InterventionAnswer"] = {}
-        # In-memory staging for wake=false ride-along messages, durably persisted in the snapshot (#1800 slice 4b, see session-construction.md#safety-limits--interactive-mode)
+        # In-memory staging for wake=false ride-along messages, durably persisted in the snapshot (#1800 slice 4b, see session-construction.md#safety-limits-interactive-mode)
         self._next_turn_context: list[dict] = []
 
-        # HookBus/HookDispatcher/fs_watcher/composers/hot_reloader built together below; the config-derivation feeding them stays inline as builder inputs (#1800 slice 5b / #3082 Family 3, see session-construction.md#family-3--hook-event--reactivity)
+        # HookBus/HookDispatcher/fs_watcher/composers/hot_reloader built together below; the config-derivation feeding them stays inline as builder inputs (#1800 slice 5b / #3082 Family 3, see session-construction.md#family-3-hook-event-reactivity)
         self._startup_hooks_raw: list = hooks_config if isinstance(hooks_config, list) else []
-        # composers: startup (OUT-set) layer, combined with the other 3 layers by _build_composer_defs; v1 startup-only, no hot-reload (Hook-Event Redesign Phase 4b/5, #2880/#2881, see session-construction.md#family-3--hook-event--reactivity)
+        # composers: startup (OUT-set) layer, combined with the other 3 layers by _build_composer_defs; v1 startup-only, no hot-reload (Hook-Event Redesign Phase 4b/5, #2880/#2881, see session-construction.md#family-3-hook-event-reactivity)
         self._startup_composers_raw: list = (
             composers_config if isinstance(composers_config, list) else []
         )
@@ -1428,12 +1432,12 @@ class Session:
         _boot_in_set = _load_in_set(
             getattr(self._registry, "_project_root", None) or Path.cwd()
         )
-        # Run before _build_hook_registry so composed:* hook matchers can be schema-checked against the full composer set (#2889, see session-construction.md#family-3--hook-event--reactivity)
+        # Run before _build_hook_registry so composed:* hook matchers can be schema-checked against the full composer set (#2889, see session-construction.md#family-3-hook-event-reactivity)
         self._composer_defs = self._build_composer_defs(_boot_in_set)
         self._composed_schemas: "dict[str, frozenset[str]]" = {
             d.emit_kind: frozenset({"inputs", "correlation_key"}) for d in self._composer_defs
         }
-        # RUNTIME (.reyn/cron.yaml) cron job names, so the reapply seam can unschedule removed jobs without touching startup jobs (#2073 S4, see session-construction.md#family-3--hook-event--reactivity)
+        # RUNTIME (.reyn/cron.yaml) cron job names, so the reapply seam can unschedule removed jobs without touching startup jobs (#2073 S4, see session-construction.md#family-3-hook-event-reactivity)
         self._runtime_cron_names: set = {
             j["name"] for j in ((_boot_in_set.get("cron") or {}).get("jobs") or [])
             if isinstance(j, dict) and j.get("name")
@@ -1458,13 +1462,13 @@ class Session:
         self.history: list[ChatMessage] = []
         self.inbox: asyncio.Queue = asyncio.Queue()
         self.outbox: asyncio.Queue = asyncio.Queue()
-        # event_store -> chat_events -> outbox_hub (+ opt-in OTEL), byte-identical extraction (#3082 Family 1, see session-construction.md#family-1--audit-event-spine-p6)
+        # event_store -> chat_events -> outbox_hub (+ opt-in OTEL), byte-identical extraction (#3082 Family 1, see session-construction.md#family-1-audit-event-spine-p6)
         _audit_bundle = self._build_audit_event_bundle(observability_config)
         self.outbox_hub = _audit_bundle.outbox_hub
         self._event_store = _audit_bundle.event_store
         self._chat_events = _audit_bundle.chat_events
         self._otel_exporter = _audit_bundle.otel_exporter
-        # hook_bus -> hook_dispatcher -> fs_watcher -> composer_registry -> composed_consumer -> hot_reloader; runs right after Family 1 since hot_reloader reads chat_events eagerly (#3082 Family 3, see session-construction.md#family-3--hook-event--reactivity)
+        # hook_bus -> hook_dispatcher -> fs_watcher -> composer_registry -> composed_consumer -> hot_reloader; runs right after Family 1 since hot_reloader reads chat_events eagerly (#3082 Family 3, see session-construction.md#family-3-hook-event-reactivity)
         _hook_bundle = self._build_hook_event_bundle(
             _boot_in_set,
             self._composer_defs,
@@ -1479,10 +1483,10 @@ class Session:
         self._composer_registry = _hook_bundle.composer_registry
         self._composed_consumer = _hook_bundle.composed_consumer
         self._hot_reloader = _hook_bundle.hot_reloader
-        # Publish as the process-wide active reloader so the hooks-write LLM-op can request_reload (#2073 S3, see session-construction.md#family-3--hook-event--reactivity)
+        # Publish as the process-wide active reloader so the hooks-write LLM-op can request_reload (#2073 S3, see session-construction.md#family-3-hook-event-reactivity)
         from reyn.runtime.hot_reload import set_active_hot_reloader
         set_active_hot_reloader(self._hot_reloader)
-        # sid -> trusted original-task record for spawned sessions, so a compromised sub-session can't forge task framing (#2103 S1bc-exec, see session-construction.md#capability-permission--visibility)
+        # sid -> trusted original-task record for spawned sessions, so a compromised sub-session can't forge task framing (#2103 S1bc-exec, see session-construction.md#capability-permission-visibility)
         self._spawned_tasks: "OrderedDict[str, str]" = OrderedDict()
         # Detached by default; AgentRegistry.attach() flips this on to stop background display noise
         self.is_attached: bool = False
@@ -1497,7 +1501,7 @@ class Session:
         if retry_config is not None:  # #1835: same guard, ambient retry timing config
             from reyn.llm.llm import set_retry_config
             set_retry_config(retry_config)
-        # Publish the budget-exceed policy for the chat path's per-LLM-call cost gate, bridge-aware so an attached driver's prompt reaches the parent's operator (#1868 / #3053, see session-construction.md#family-4--cost--budget)
+        # Publish the budget-exceed policy for the chat path's per-LLM-call cost gate, bridge-aware so an attached driver's prompt reaches the parent's operator (#1868 / #3053, see session-construction.md#family-4-cost-budget)
         _make_router_bus = self._make_router_intervention_bus
 
         class _ChatBudgetBus:
@@ -1523,20 +1527,20 @@ class Session:
             self._on_chat_event_for_state_change,
         )
 
-        # Budget adapter, byte-identical extraction, simplest of the #3082 families (Family 4, see session-construction.md#family-4--cost--budget)
+        # Budget adapter, byte-identical extraction, simplest of the #3082 families (Family 4, see session-construction.md#family-4-cost-budget)
         _cost_bundle = self._build_cost_bundle(
             budget_tracker, self._chat_events, self.agent_name, _router_cap,
         )
         self._budget = _cost_bundle.budget
 
-        # Memory persistence adapter, byte-identical extraction, pre-waist position (#3082 Family 8b, see session-construction.md#family-8b--memory)
+        # Memory persistence adapter, byte-identical extraction, pre-waist position (#3082 Family 8b, see session-construction.md#family-8b-memory)
         _memory_bundle = self._build_memory_bundle()
         self._memory = _memory_bundle.memory
 
         # One-shot command-UI request (e.g. /rewind checkpoint picker); None = nothing pending, dict carries {"kind", ...} (F4)
         self._pending_command_ui: dict | None = None
 
-        # chains / interventions / intervention_handler / intervention_coordinator / chain_timeout_glue, byte-identical extraction; chain_timeout_glue UP-moved ahead of Family 8 (#3082 Family 7, see session-construction.md#family-7--intervention)
+        # chains / interventions / intervention_handler / intervention_coordinator / chain_timeout_glue, byte-identical extraction; chain_timeout_glue UP-moved ahead of Family 8 (#3082 Family 7, see session-construction.md#family-7-intervention)
         _intervention_bundle = self._build_intervention_bundle()
         self._chains = _intervention_bundle.chains
         self._interventions = _intervention_bundle.interventions
@@ -1550,11 +1554,11 @@ class Session:
         # Agent-reply capture for agent-to-agent RouterLoop paths; None = not capturing (F2)
         self._router_loop_agent_replies: list[str] | None = None
 
-        # Router-host WAIST: RouterHostAdapter aggregates ~40 already-built sub-components most later families read through, byte-identical (#3082 Family 6a, see session-construction.md#family-6a--router-waist-routerhostadapter)
+        # Router-host WAIST: RouterHostAdapter aggregates ~40 already-built sub-components most later families read through, byte-identical (#3082 Family 6a, see session-construction.md#family-6a-router-waist-routerhostadapter)
         _router_waist_bundle = self._build_router_waist()
         self._router_host = _router_waist_bundle.router_host
 
-        # owns + orchestrates them in one method (#2073 S2, see session-construction.md#family-3--hook-event--reactivity)
+        # owns + orchestrates them in one method (#2073 S2, see session-construction.md#family-3-hook-event-reactivity)
         self._register_hot_reload_seams()
 
         # Synchronous head/body/tail compaction callback; session drives compaction via force_compact_now() (FP-0019 Wave 1 / #1128 PR-a)
@@ -1576,7 +1580,7 @@ class Session:
             chars4_mode=self._compaction.use_chars4_estimate,
         )
 
-        # history_buffer / compaction_controller (incl. the None-then-patch breaking their circular dep) / budget_advisor, byte-identical extraction (#3082 Family 6b, see session-construction.md#family-6b--history--compaction)
+        # history_buffer / compaction_controller (incl. the None-then-patch breaking their circular dep) / budget_advisor, byte-identical extraction (#3082 Family 6b, see session-construction.md#family-6b-history-compaction)
         _history_compaction_bundle = self._build_history_compaction_bundle(
             merge_action_usage=_merge_action_usage_from_candidates,
         )
@@ -1584,7 +1588,7 @@ class Session:
         self._compaction_controller = _history_compaction_bundle.compaction_controller
         self._budget_advisor = _history_compaction_bundle.budget_advisor
 
-        # InterAgentMessaging: agent-to-agent messaging service, hybrid design (FP-0019 Wave 2 part 2); byte-identical extraction, post-waist (#3082 Family 8a, see session-construction.md#family-8a--inter-agent-messaging)
+        # InterAgentMessaging: agent-to-agent messaging service, hybrid design (FP-0019 Wave 2 part 2); byte-identical extraction, post-waist (#3082 Family 8a, see session-construction.md#family-8a-inter-agent-messaging)
         _inter_agent_messaging_bundle = self._build_inter_agent_messaging_bundle()
         self._inter_agent_messaging = _inter_agent_messaging_bundle.inter_agent_messaging
 
