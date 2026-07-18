@@ -648,7 +648,7 @@
       "parameters": {
         "properties": {
           "category": {
-            "description": "Filter by category. Pass an array of category names (e.g. category=['exec'], category=['web', 'file']). Omit or pass [] to include all categories. Categories: multi_agent, mcp, file, web, memory_operation, reyn_repo, rag_operation, exec, task, skill_management, pipeline, pipeline_management, presentation_management.",
+            "description": "Filter by category. Pass an array of category names (e.g. category=['exec'], category=['web', 'file']). Omit or pass [] to include all categories. Categories: multi_agent, mcp, file, web, memory_operation, reyn_repo, rag_operation, exec, task, skill_management, pipeline, pipeline_management, presentation_management, plugin_management.",
             "items": {
               "enum": [
                 "multi_agent",
@@ -663,7 +663,8 @@
                 "skill_management",
                 "pipeline",
                 "pipeline_management",
-                "presentation_management"
+                "presentation_management",
+                "plugin_management"
               ],
               "type": "string"
             },
@@ -1711,7 +1712,8 @@
                 "skill_management",
                 "pipeline",
                 "pipeline_management",
-                "presentation_management"
+                "presentation_management",
+                "plugin_management"
               ],
               "type": "string"
             },

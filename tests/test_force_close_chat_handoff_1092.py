@@ -157,7 +157,7 @@ async def test_wrap_up_bounded_fallback_fits(tmp_path) -> None:
     shrinks (through its decreasing candidates) until one fits and the
     consolidation is produced (wrap-up-fits — Fork 1's chat _force_close_call_
     with_retry analogue)."""
-    session = _make_session(tmp_path, t_max=2000)
+    session = _make_session(tmp_path, t_max=2800)
     for t in ("U1", "A1", "U2", "A2"):
         _push(session, "user" if t.startswith("U") else "assistant", t)
     loop = _FailFirstLoop(fail_first=2)
@@ -175,7 +175,7 @@ class _AlwaysOverflowWrapUp:
 async def test_wrap_up_sub_viable_raises(tmp_path) -> None:
     """Tier 2: if even summary-only overflows, the model is RUNTIME sub-viable →
     _force_close_wrap_up raises (the handoff loop surfaces it as a dead-end)."""
-    session = _make_session(tmp_path, t_max=2000)
+    session = _make_session(tmp_path, t_max=2800)
     _push(session, "user", "U1")
     with pytest.raises(ContextOverflowError):
         await session._loop_driver._force_close_wrap_up(_AlwaysOverflowWrapUp(), resolved_model="m")
@@ -190,7 +190,7 @@ async def test_force_close_handoff_installs_covering_consolidation(tmp_path) -> 
     a fake loop) installs a covers-all force-close summary (firing F2a's reset) —
     the consolidation reaches the slice and the covered raw turns are dropped; the
     P6 event fires."""
-    session = _make_session(tmp_path, t_max=2000)
+    session = _make_session(tmp_path, t_max=2800)
     session._append_history(_msg("user", "U1-covered"))
     session._append_history(_msg("assistant", "A1-covered"))
     events = _capture_events(session)

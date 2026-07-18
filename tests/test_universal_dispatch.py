@@ -1,7 +1,7 @@
 """Tier 2: FP-0034 PR-2 universal_dispatch routing contract.
 
 Tests for ``src/reyn/tools/universal_dispatch.py`` covering:
-  1. resolve_invoke_action across all 13 categories (= resource
+  1. resolve_invoke_action across all 14 categories (= resource
      invoke per §D19 AND operation per-name lookup).
   2. Arg transformers for each routing flavour (skill / agent /
      mcp.server / mcp.tool / memory_entry / rag_corpus + passthrough
@@ -632,6 +632,11 @@ _ROUTE_CONTRACT_SAMPLES: list[tuple[str, dict[str, Any]]] = [
      {"definition": "pipeline: p\nsteps:\n  - transform: {value: \"1\"}\n"}),
     ("pipeline__run_inline_async",
      {"definition": "pipeline: p\nsteps:\n  - transform: {value: \"1\"}\n"}),
+    # plugin_management category (ADR 0064 P2, #3083) — install requires
+    # source (a {kind, ...} object); uninstall requires name.
+    ("plugin_management__install",
+     {"source": {"kind": "builtin", "name": "rag"}}),
+    ("plugin_management__uninstall", {"name": "rag"}),
 ]
 
 

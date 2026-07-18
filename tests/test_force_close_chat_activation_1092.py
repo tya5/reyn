@@ -85,7 +85,7 @@ def test_try_build_returns_none_for_small_context_model(monkeypatch) -> None:
     (output_reserve + offload_cap < threshold) yields None — NOT a raise. The
     model genuinely cannot support force-close; the caller degrades."""
     monkeypatch.setattr(
-        "reyn.llm.model_budget.get_max_input_tokens", lambda model, **kw: 2000
+        "reyn.llm.model_budget.get_max_input_tokens", lambda model, **kw: 2800
     )
     assert try_build_default_turn_budget_engine("tiny", use_chars4=True) is None
 
@@ -106,7 +106,7 @@ def test_chat_session_on_small_model_constructs_without_force_close(
     engine unconditionally would assert-fail here and break every small-model
     chat session."""
     monkeypatch.setattr(
-        "reyn.llm.model_budget.get_max_input_tokens", lambda model, **kw: 2000
+        "reyn.llm.model_budget.get_max_input_tokens", lambda model, **kw: 2800
     )
     session = Session(
         agent_name="f1-small",

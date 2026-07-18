@@ -46,7 +46,7 @@ category that has never existed. Before re-introducing per-resource actions,
 check whether the motivating gap is still open: twice now it was not.
 
 PR-1 (landed): type surface only — 4 ToolDefinitions with stub
-handlers, qualified-name parse / build / validate, 13-category enum,
+handlers, qualified-name parse / build / validate, 14-category enum,
 D14 visibility-gating helpers.
 
 PR-2 (landed): pure routing layer — ``universal_dispatch.py`` with
@@ -84,7 +84,7 @@ if TYPE_CHECKING:
     from reyn.tools.universal_dispatch import UnknownActionError
 
 
-# ── Canonical 13-category enum (FP-0034 §D18 master taxonomy) ──────────────
+# ── Canonical 14-category enum (FP-0034 §D18 master taxonomy) ──────────────
 #
 # Order matches the master table in FP-0034 §D18 so reviewers reading the
 # design doc and the code see the same shape. ``exec`` ships last because
@@ -144,6 +144,20 @@ CATEGORIES: Final[tuple[str, ...]] = (
     # declarative data). Management plane — mirrors ``skill_management`` /
     # ``pipeline_management``.
     "presentation_management",
+    # ADR 0064 P2: plugin management ops (install / uninstall). #3083: this
+    # category was ADDED to ``_OPERATION_RULES`` (dispatch-wired) when the P2
+    # verbs landed, but never added HERE — the exact #2032-class gap the
+    # comments above this tuple already document for skill_management /
+    # pipeline_management / presentation_management. Registered +
+    # dispatchable but absent from CATEGORIES means every enumerate-all /
+    # retrieval / codeact scheme's ``tools=`` payload never carried
+    # plugin_management__install/__uninstall, so the LLM could never
+    # discover — let alone call — them. See
+    # ``test_categories_covers_every_dispatch_wired_category`` in
+    # ``tests/test_universal_catalog.py`` for the routing-table-derived
+    # gate that now guards against a category being dispatch-wired without
+    # a matching CATEGORIES entry.
+    "plugin_management",
 )
 
 
@@ -587,6 +601,10 @@ def _enumerate_category(category: str, ctx: ToolContext) -> list[dict[str, str]]
         # list_actions(category=["presentation_management"]) surfaces the
         # install verb (not just dispatchable-but-invisible).
         "presentation_management",
+        # #3083: same enumeration wiring for plugin_management — closes the
+        # dogfood-witnessed 0/75 gap (plugin_management__install/__uninstall
+        # were registered + dispatch-wired but never enumerated).
+        "plugin_management",
     ):
         return _enumerate_static_category(category)
 
@@ -1018,7 +1036,7 @@ def catalog_entries(ctx: ToolContext) -> list[dict[str, Any]]:
     """Every usable action as a FLAT generic tool-schema dict
     ``{name, description, parameters}`` — the #1593 ``SchemeOps.catalog_entries``
     projection a scheme presents however it likes (enumerate-all flat, CodeAct
-    code-API, retrieval subset). Exposes the **actions**, not the 13-category
+    code-API, retrieval subset). Exposes the **actions**, not the 14-category
     hierarchy (the P7 boundary: the catalog structure stays universal-internal;
     what crosses is a flat action list any scheme can render).
 

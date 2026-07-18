@@ -144,10 +144,13 @@ def _push(session, role: str, content: str) -> None:
 
 
 # Content that yields 80 tokens (320 chars / 4) via use_chars4_estimate=True.
-# With T_max=2000 (T_SP≈1125, T_comp_SP≈481, section_caps=0):
-#   effective_trigger≈570, head_budget≈87, tail_budget≈131.
-# 3 turns × 80 tokens = 240 < 570 → no elide.
-# 8 turns × 80 tokens = 640 > 570 → elide fires.
+# With T_max=2800 (headroom re-measured post-#3083 plugin_management SP
+# addition; #1128's original ≈570 pin went stale as the SP grew across many
+# unrelated PRs and finally crashed to a negative effective_trigger — #3083
+# was simply the straw that tipped it):
+#   effective_trigger≈489, head_budget≈74, tail_budget≈112.
+# 3 turns × 80 tokens = 240 < 489 → no elide.
+# 8 turns × 80 tokens = 640 > 489 → elide fires.
 _CONTENT_80TOK = "X" * 320
 
 
@@ -159,8 +162,8 @@ def test_build_history_small_chat_returns_all_turns_raw(tmp_path) -> None:
     the LLM sees the full raw conversation as long as it fits under the
     trigger threshold.  No duplication can occur from this branch.
     """
-    # T_max=2000 → effective_trigger≈570.  3 turns × 80 tokens = 240 < 570.
-    session = _make_session_with_t_max(tmp_path, t_max=2000)
+    # T_max=2800 → effective_trigger≈489.  3 turns × 80 tokens = 240 < 489.
+    session = _make_session_with_t_max(tmp_path, t_max=2800)
     for text in ["alpha", "beta", "gamma"]:
         _push(session, "user", text)
 
@@ -179,13 +182,13 @@ def test_build_history_large_chat_elides_middle(tmp_path) -> None:
     """Tier 2: a large chat (total tokens > effective_trigger) elides the middle —
     head is present, tail is present, and at least one middle turn is absent.
 
-    Uses T_max=2000 with 30 turns of 80-token content (total=2400 tokens).
-    30×80=2400 exceeds any effective_trigger for T_max=2000 regardless of the
+    Uses T_max=2800 with 30 turns of 80-token content (total=2400 tokens).
+    30×80=2400 exceeds any effective_trigger for T_max=2800 regardless of the
     SP size (effective_trigger < T_max by construction), making this test
     default-independent: changing hot_list_n or other SP-affecting defaults
     does not change whether elide fires.
     """
-    session = _make_session_with_t_max(tmp_path, t_max=2000)
+    session = _make_session_with_t_max(tmp_path, t_max=2800)
     texts = [f"turn-{i}:" + _CONTENT_80TOK for i in range(30)]
     for i, text in enumerate(texts):
         _push(session, "user" if i % 2 == 0 else "assistant", text)

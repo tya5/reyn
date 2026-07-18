@@ -340,7 +340,20 @@ class TestSPToolNamesResolveToLiveTools:
 # watch-list extended deliberately (closes the curated-subset trap: adding a
 # 5th SP-referenced bare name must be a conscious edit here, not silent).
 _CURATED_BARE_NAME_WATCHLIST = frozenset(
-    {"list_actions", "search_actions", "invoke_action", "describe_action"}
+    {
+        "list_actions", "search_actions", "invoke_action", "describe_action",
+        # #3083: plugin_management__install / plugin_management__uninstall
+        # (ADR 0064 P2) are registered in the ToolRegistry under their OWN
+        # qualified name — unlike every sibling management verb
+        # (skill_management__install_local -> "skill_install_local",
+        # pipeline_management__install_local -> "pipeline_install_local",
+        # etc.), there is no separate internal bare alias. So referencing
+        # them by backtick in SP prose is the deliberate qualified-name
+        # reference, not an accidental internal-name leak — same reasoning
+        # as the 4 universal-wrapper verbs above, added deliberately here
+        # rather than silently.
+        "plugin_management__install", "plugin_management__uninstall",
+    }
 )
 _BARE_BACKTICK_TOKEN_RE = re.compile(r"`([a-zA-Z_][a-zA-Z0-9_.]*)`")
 
