@@ -56,10 +56,10 @@ from __future__ import annotations
 import pytest
 
 from reyn.llm.model_budget import get_max_input_tokens
+from reyn.runtime.services.compaction_controller import CompactionController
 from reyn.runtime.services.context_budget_advisor import ContextBudgetAdvisor
 from reyn.runtime.services.router_history_buffer import RouterHistoryBuffer
 from reyn.runtime.session import Session, _HistoryCompactionBundle
-from reyn.runtime.services.compaction_controller import CompactionController
 
 
 @pytest.fixture
@@ -155,10 +155,12 @@ class TestFamily6bHistoryCompactionBundleByteIdentical:
         history_buffer = session._history_buffer
         compaction_controller = session._compaction_controller
         engine = compaction_controller._engine
-        assert engine.budgets.effective_trigger > 0
+        effective_trigger = engine.budgets.effective_trigger
+        assert effective_trigger > 0
         # Sanity: the provider really is the LOCAL history_buffer's bound
         # method (same underlying instance), not some other buffer's.
-        assert engine._system_prompt_provider.__self__ is history_buffer
+        provider_owner = engine._system_prompt_provider.__self__
+        assert provider_owner is history_buffer
 
     def test_budget_advisor_wired_to_the_same_compaction_controller_and_history_buffer(
         self, session: Session,
@@ -170,9 +172,13 @@ class TestFamily6bHistoryCompactionBundleByteIdentical:
         budget_advisor = session._budget_advisor
         compaction_controller = session._compaction_controller
         history_buffer = session._history_buffer
-        assert budget_advisor._compaction_controller is compaction_controller
-        assert budget_advisor._history_fn.__self__ is history_buffer
-        assert budget_advisor._history_fn.__func__ is RouterHistoryBuffer.build_history
+        wired_compaction_controller = budget_advisor._compaction_controller
+        wired_history_fn = budget_advisor._history_fn
+        assert wired_compaction_controller is compaction_controller
+        history_fn_owner = wired_history_fn.__self__
+        history_fn_method = wired_history_fn.__func__
+        assert history_fn_owner is history_buffer
+        assert history_fn_method is RouterHistoryBuffer.build_history
 
     def test_up_move_leaves_inter_agent_messaging_independent_and_intact(
         self, session: Session,
@@ -182,7 +188,8 @@ class TestFamily6bHistoryCompactionBundleByteIdentical:
         right after this builder returns) is still built successfully and
         does not depend on any of this family's three components."""
         from reyn.runtime.services.inter_agent_messaging import InterAgentMessaging
-        assert isinstance(session._inter_agent_messaging, InterAgentMessaging)
+        inter_agent_messaging = session._inter_agent_messaging
+        assert isinstance(inter_agent_messaging, InterAgentMessaging)
 
     # ── deferred lambdas: model_fn must re-resolve at CALL time ──────────
 
@@ -247,9 +254,12 @@ class TestFamily6bHistoryCompactionBundleByteIdentical:
             non_interactive=session._non_interactive,
             reasoning=session._reasoning,
         )
-        assert fresh_history_buffer._compaction_controller is None
-        assert bundle.history_buffer._compaction_controller is not None
-        assert bundle.history_buffer._compaction_controller is bundle.compaction_controller
+        fresh_patched_controller = fresh_history_buffer._compaction_controller
+        real_patched_controller = bundle.history_buffer._compaction_controller
+        real_compaction_controller = bundle.compaction_controller
+        assert fresh_patched_controller is None
+        assert real_patched_controller is not None
+        assert real_patched_controller is real_compaction_controller
 
 
 if __name__ == "__main__":
