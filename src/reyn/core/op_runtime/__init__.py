@@ -152,6 +152,13 @@ from . import mcp_unsubscribe_resource as _mcp_unsubscribe_resource  # noqa: F40
 # pipeline install op (register a pipeline DSL file into pipelines.entries — mirrors skill_install).
 from . import pipeline_install as _pipeline_install  # noqa: F401, E402
 
+# ADR 0064 plugin model P2: plugin_install / plugin_uninstall — promote/install
+# and uninstall a self-contained plugin directory (orchestrates skill_install /
+# pipeline_install + a local mcp-registry write). plugin_uninstall imports
+# plugin_install (for plugins_root()), so it must be imported second.
+from . import plugin_install as _plugin_install  # noqa: F401, E402
+from . import plugin_uninstall as _plugin_uninstall  # noqa: F401, E402
+
 # FP-0054 PR-A: present op — user-facing presentation of bulk data (null renderer).
 from . import present as _present  # noqa: F401, E402
 

@@ -38,7 +38,11 @@ from reyn.tools.types import ToolDefinition, ToolGates
 # (FP-0056 owner decision #1). STRUCTURED_PASSTHROUGH membership is EXACTLY this set — no more.
 # proposal 0060 Phase 1 Layer A (A8) added ``presentation_install`` — another
 # install-manifest producer (same admin class as skill_install/pipeline_install),
-# so the reviewed set is now the admin-7.
+# so the reviewed set became the admin-7. ADR 0064 plugin model P2 added
+# ``plugin_install`` / ``plugin_uninstall`` — the SAME admin/install class
+# (orchestrates skill_install/pipeline_install + a local mcp-registry write;
+# its whole-dict result is the reviewed LLM view, same shape as the others) —
+# the reviewed set is now the admin-9.
 _STRUCTURED_PASSTHROUGH_ADMIN_6 = frozenset({
     "mcp_install",
     "mcp_drop_server",
@@ -47,6 +51,8 @@ _STRUCTURED_PASSTHROUGH_ADMIN_6 = frozenset({
     "presentation_install",
     "mcp_subscribe_resource",
     "mcp_unsubscribe_resource",
+    "plugin_install",
+    "plugin_uninstall",
 })
 
 

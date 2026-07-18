@@ -1120,6 +1120,100 @@
     },
     "type": "function"
   },
+  "plugin_management__install": {
+    "function": {
+      "description": "Install a plugin — a self-contained directory with a .reyn-plugin/plugin.json manifest declaring which capabilities (mcp / pipelines / skills, any subset) it ships. The source is one of three kinds, pick exactly one field set: {kind: 'builtin', name: '<name>'} for one of reyn's own shipped plugins (pass just the name); {kind: 'local', path: '<dir>'} for a local directory you just authored/tested (the PRIMARY daily use — 'promote' your own work into something reusable across sessions/projects); {kind: 'git', url: '<url>'} for a remote git repository (the highest-trust-risk source — fetches and can register runnable code from a remote party; use only for a repo you trust). The plugin's code is copied to ~/.reyn/plugins/<name>/ (global, once), its ${REYN_*} location tokens are expanded, any declared Python dependencies (a requirements.txt at the plugin root) are installed into a per-plugin virtual environment, and every capability the manifest declares is registered into this project's config (the exact same registration a direct skill_install / pipeline_install / local mcp install performs) — reusable from the next hot-reload onward. 'name' overrides the manifest's own name as the install/registry key.",
+      "name": "plugin_management__install",
+      "parameters": {
+        "properties": {
+          "name": {
+            "description": "Override the manifest's own name as the install/registry key. Optional.",
+            "type": "string"
+          },
+          "source": {
+            "description": "Discriminated union — exactly one of {kind:'builtin', name}, {kind:'local', path}, {kind:'git', url}. Pick the kind that matches where the plugin comes from; do not guess a shape — use the field names exactly as given for the chosen kind.",
+            "oneOf": [
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "kind": {
+                    "const": "builtin"
+                  },
+                  "name": {
+                    "description": "reyn's own shipped plugin name.",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "name"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "kind": {
+                    "const": "local"
+                  },
+                  "path": {
+                    "description": "Local plugin directory you authored/tested.",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "path"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "kind": {
+                    "const": "git"
+                  },
+                  "url": {
+                    "description": "Remote git URL (highest trust risk).",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "url"
+                ],
+                "type": "object"
+              }
+            ]
+          }
+        },
+        "required": [
+          "source"
+        ],
+        "type": "object"
+      }
+    },
+    "type": "function"
+  },
+  "plugin_management__uninstall": {
+    "function": {
+      "description": "Uninstall a plugin previously installed via plugin_install. Removes every project config entry (mcp / pipelines / skills) the plugin registered, then removes its ~/.reyn/plugins/<name>/ code copy. Pass the plugin's install name (the 'name' plugin_install returned, or the manifest name when no override was given).",
+      "name": "plugin_management__uninstall",
+      "parameters": {
+        "properties": {
+          "name": {
+            "description": "The plugin's install name (as returned by plugin_management__install).",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "type": "object"
+      }
+    },
+    "type": "function"
+  },
   "present": {
     "function": {
       "description": "Show bulk data to the user directly, WITHOUT re-typing it through your own output tokens. Use this after a tool returns a large result (a file, a query result, a list) that the user should see: pass a reference to it and the presentation layer renders it for them. Simple path — just pass 'data_ref' (a zone-readable path or an offloaded result ref) and it is shown with a sensible default view; you do not need to design anything. Optionally pass 'view' (a registered presentation name) to use a named layout, or 'blueprint' (advanced: a declarative component tree) for full control — at most one of the two. Pass 'data_inline' INSTEAD of 'data_ref' only for small data already in your context (exactly one of data_ref / data_inline). Reading a 'data_ref' requires the same file-read permission as reading the file. Returns a compact acknowledgement (what reached the user and whether the view bound), not the data itself.",
