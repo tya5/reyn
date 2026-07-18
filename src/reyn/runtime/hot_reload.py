@@ -155,6 +155,13 @@ class HotReloader:
         whether it changed anything; it must not raise (the applier isolates it)."""
         self._seams.append((name, fn))
 
+    def seam_names(self) -> "tuple[str, ...]":
+        """#3097: the registered seam names, in registration order — the single
+        source of truth a completeness gate derives its expected-coverage set
+        from (never a hand-written subset: a future ``register_seam`` call is
+        covered automatically)."""
+        return tuple(name for name, _fn in self._seams)
+
     def set_validate(self, fn: "Callable[[dict], str | None]") -> None:
         """Set the validate-before-apply hook (#2073 S2): ``fn(in_set) -> reason |
         None``; a non-None reason rejects the reload atomically (no seam runs)."""
@@ -301,6 +308,58 @@ class HotReloader:
                 failed=failed,
             )
         return {"source": source, "applied": applied, "failed": failed}
+
+    async def apply_all(self, *, exclude: "frozenset[str]" = frozenset()) -> "dict":
+        """#3097: fire EVERY registered seam except ``exclude`` — the
+        ephemeral/spawn action-boundary use (``Session.refresh_config_projections``),
+        independent of both the deferred ``pending`` flag (:meth:`apply_pending`) and
+        the source-scoped immediate path (:meth:`apply_now`). Same IN-set safety
+        boundary + validate-before-apply as both: the OUT-set is never opened, and a
+        malformed IN-set REJECTS the whole call (no seam runs, live config unchanged).
+
+        Returns ``{"source": "spawn_refresh", "invoked", "applied", "failed"}`` (plus
+        ``"rejected"`` on a rejected IN-set) — ``invoked`` lists every seam name that
+        was actually called (regardless of whether it reported a change), the set a
+        completeness gate checks against :meth:`seam_names` minus ``exclude``.
+        Never raises out — each seam is isolated exactly like ``apply_pending``/
+        ``apply_now``."""
+        in_set = load_hot_reload_config(self._project_root)
+
+        if self._validate is not None:
+            reason = self._validate(in_set)
+            if reason:
+                _log.warning(
+                    "hot-reload (spawn_refresh) REJECTED (invalid IN-set): %s — "
+                    "live config unchanged", reason,
+                )
+                if self._events is not None:
+                    self._events.emit(
+                        "config_reload_rejected", source="spawn_refresh", reason=reason,
+                    )
+                return {
+                    "source": "spawn_refresh", "rejected": reason,
+                    "invoked": [], "applied": [], "failed": [],
+                }
+
+        invoked: list[str] = []
+        applied: list[str] = []
+        failed: list[str] = []
+        for name, fn in self._seams:
+            if name in exclude:
+                continue
+            invoked.append(name)
+            try:
+                if await fn(in_set):
+                    applied.append(name)
+            except Exception as exc:  # noqa: BLE001 — a seam never breaks the spawn
+                _log.warning("hot-reload (spawn_refresh) seam %r failed: %s", name, exc)
+                failed.append(name)
+
+        if self._events is not None:
+            self._events.emit(
+                "config_reloaded", source="spawn_refresh", components=applied, failed=failed,
+            )
+        return {"source": "spawn_refresh", "invoked": invoked, "applied": applied, "failed": failed}
 
 
 # ── process-wide active HotReloader (#2073 S3) ──────────────────────────────
