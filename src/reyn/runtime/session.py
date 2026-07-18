@@ -686,6 +686,24 @@ class _AuditEventBundle:
     otel_exporter: "object | None"
 
 
+@dataclass(frozen=True)
+class _RecoveryBundle:
+    """#3082 Family 2: the WAL-event/recovery pair — ``generation_store``
+    (ADR-0038 Stage 1a PITR generation store) → ``journal`` (``SnapshotJournal``,
+    the WAL append + snapshot-restore seam nearly every recovery path goes
+    through), constructed in that order because the journal is wired to this
+    same generation_store instance. Pure output→input value object:
+    :meth:`Session._build_recovery_bundle` is a byte-identical extraction of
+    the construction sequence that used to run inline in ``Session.__init__``
+    — same objects, same order, same args (including reading the LOCAL
+    ``state_log`` __init__ parameter, not ``self._state_log``, which is a
+    separate tracking assignment made later and is untouched by this
+    extraction). Same shape as ``_AuditEventBundle`` (#3082 Family 1)."""
+
+    generation_store: SnapshotGenerationStore
+    journal: SnapshotJournal
+
+
 class Session:
     def __init__(
         self,
@@ -1357,17 +1375,16 @@ class Session:
         self._snapshot_path = snapshot_path or (
             Path(".reyn") / "agents" / self.agent_name / "state" / "snapshot.json"
         )
-        # ADR-0038 Stage 1a: PITR generation store, kept beside snapshot.json.
-        self._generation_store = SnapshotGenerationStore(
-            self.agent_name, self._snapshot_path.parent / "generations",
+        # #3082 Family 2 (WAL-event/recovery): generation_store -> journal
+        # extracted into _build_recovery_bundle. Byte-identical extraction —
+        # same objects, same construction order, same args (builder reads the
+        # LOCAL state_log parameter, not self._state_log — see
+        # _RecoveryBundle's docstring).
+        _recovery_bundle = self._build_recovery_bundle(
+            self.agent_name, self._snapshot_path, state_log, session_id,
         )
-        self._journal = SnapshotJournal(
-            agent_name=self.agent_name,
-            snapshot_path=self._snapshot_path,
-            state_log=state_log,
-            generation_store=self._generation_store,
-            session_id=session_id,  # FP-0043 S5: per-session WAL routing
-        )
+        self._generation_store = _recovery_bundle.generation_store
+        self._journal = _recovery_bundle.journal
         # ADR-0038 Stage 1c: turn-idle event for quiescence. Set = no turn in
         # flight; cleared while run_one_iteration processes a turn. Lets a global
         # rewind await all in-flight WAL appends settling (await_quiescent) before
@@ -4020,6 +4037,57 @@ class Session:
             chat_events=chat_events,
             outbox_hub=outbox_hub,
             otel_exporter=otel_exporter,
+        )
+
+    # ── #3082 Family 2: WAL-event/recovery bundle builder ──
+
+    def _build_recovery_bundle(
+        self,
+        agent_name: str,
+        snapshot_path: Path,
+        state_log: "StateLog | None",
+        session_id: str,
+    ) -> "_RecoveryBundle":
+        """#3082 Family 2: build the WAL-event/recovery pair —
+        ``generation_store`` (ADR-0038 Stage 1a PITR generation store, kept
+        beside snapshot.json) -> ``journal`` (``SnapshotJournal``, wired to
+        this same generation_store instance).
+
+        Byte-identical extraction of the sequence that used to run inline in
+        ``__init__`` — same objects, same construction order, same args.
+        Takes ``agent_name`` / ``snapshot_path`` / ``state_log`` / ``session_id``
+        explicitly rather than reaching into ``self`` mid-construction:
+        ``agent_name`` is the property value already resolvable at the
+        original call site, ``snapshot_path`` is ``self._snapshot_path``
+        (constructed immediately before this builder ran), and — critically —
+        ``state_log`` is the LOCAL ``__init__`` parameter, NOT
+        ``self._state_log``. ``self._state_log = state_log`` is a separate
+        tracking assignment made later in ``__init__`` (for ops that need
+        direct WAL access outside the journal) and is out of scope for this
+        extraction; it keeps reading the same local parameter untouched.
+
+        ADR-0038 Stage 1a: PITR generation store, kept beside snapshot.json.
+
+        PR21: WAL + per-agent snapshot for crash recovery. state_log is
+        process-shared (owned by AgentRegistry); when None, persistence is
+        disabled (tests / non-chat invocation). PR-refactor-session-1 wave 2:
+        persistence now flows through SnapshotJournal (extracted service).
+
+        FP-0043 Stage 5: session_id is the conversation session id, threaded
+        to the journal so every WAL append carries it."""
+        generation_store = SnapshotGenerationStore(
+            agent_name, snapshot_path.parent / "generations",
+        )
+        journal = SnapshotJournal(
+            agent_name=agent_name,
+            snapshot_path=snapshot_path,
+            state_log=state_log,
+            generation_store=generation_store,
+            session_id=session_id,  # FP-0043 S5: per-session WAL routing
+        )
+        return _RecoveryBundle(
+            generation_store=generation_store,
+            journal=journal,
         )
 
     # ── #2073 S2: config hot-reload reapply seams (registered on the HotReloader) ──
