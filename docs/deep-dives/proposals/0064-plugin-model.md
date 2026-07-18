@@ -65,7 +65,9 @@ The primary flow, and where each existing mechanism plugs in:
 2. **Test (local, cheap)** —
    - MCP: register the local server against `.reyn/config/mcp.yaml` pointing at the working-copy path, exercise its tools. Loose-coupled from the start via `uv run --with <deps> python <path>` (isolated env, no reyn-env pollution).
    - pipeline: run it **inline** (`run_pipeline_inline`) or as a local `pipelines.yaml` entry.
-3. **Promote (make reusable)** — package the working capability into a plugin: **copy → `~/.reyn/plugins/<name>/`, expand `${REYN_*}`, then call the existing `mcp_install` / `pipeline install` / `skill install` verbs** to register whatever the plugin contains. Now it is reusable across sessions/projects. This *is* `plugin install`, sourced from local work.
+3. **Promote (make reusable)** — package the working capability into a plugin: **copy → `~/.reyn/plugins/<name>/`, expand `${REYN_*}`, materialise its runtime deps (§3.11), then call the existing `mcp_install` / `pipeline install` / `skill install` verbs** to register whatever the plugin contains. Now it is reusable across sessions/projects. This *is* `plugin install`, sourced from local work.
+
+> **Dep-fetch happens at install, never at spawn.** `uv run --with <deps>` fetches over the network; if that fetch is deferred to spawn, a `network:false` server can never start (the general form of #3060). So **install materialises a per-plugin env** (e.g. `uv venv` + install `<deps>` into `~/.reyn/plugins/<name>/.venv`, network available at install time) and the registered spawn command points at that ready env's interpreter — **spawn is network-free**. Detail in §3.11.
 
 Installing a **pre-existing** third-party plugin bundle is the same copy+expand+register mechanism from a different source.
 
@@ -138,9 +140,30 @@ The typed `kind` discriminator (§3.8) carries across every surface (CLI subcomm
 
 Implementation **mirrors how existing ops (e.g. mcp install / `reyn` CLI subcommands / slash commands) are already exposed across tool·slash·CLI** — grounded against those precedents, not a new surface pattern (grep them at impl time).
 
+### 3.10 Security & permission (the capability surface of install)
+
+Install is the plugin model's one place that touches new capability surfaces — it must pass the Security lens explicitly, not by omission.
+
+- **Inherited (existing gates)**: the *register* step reuses the gates the existing verbs already carry (`require_mcp_install`, `require_file_write` on `.reyn/config/*.yaml`, etc.). No new gate there.
+- **New surfaces that are OUTSIDE any existing gate — each needs an explicit gate**:
+  1. **global-copy write** — writing `~/.reyn/plugins/<name>/` is a filesystem write *outside the workspace* (the default file-write gate is workspace-tight). Needs an install-scoped write permission.
+  2. **dep materialisation = network + arbitrary PyPI fetch** (§3.11) — a network + package-fetch capability; gate it as such (and it is **install-time only**, so `network:false` at *run* time is unaffected).
+  3. **`{kind:git}` remote code = RCE trust boundary** — fetching and then *running* remote code is the highest-risk variant. It must be an **explicit operator-trust decision**, never auto-run. `{kind:builtin}` (reyn's own shipped) and `{kind:local}` (already on the operator's disk) carry lower trust risk; **the gate strength scales with `kind`** — builtin ≤ local ≪ git/remote.
+- **Sandbox interaction**: the materialised per-plugin env is where a server's `network:false` / seccomp scope applies at *run* time (unchanged by this ADR); only *install* needs network. This keeps the loose-coupling promise (a server's runtime deps never touch reyn's env) *and* the sandbox promise (run-time network is still gate-controlled).
+
+This section is the constitution pass-line the rest of the ADR was missing; nothing else here fails a lens.
+
+### 3.11 Audit-event, atomicity & crash-recovery
+
+Install/uninstall mutate durable state (a global copy + a materialised env + project registry entries) across several steps — they must be **observable and recoverable**, per the cross-cutting band.
+
+- **Audit-events (P6)**: each install/uninstall emits audit-events — at minimum `plugin_install_started` / `_copied` / `_deps_materialised` / `_registered` / `_completed` (and the uninstall inverses) — so `reyn events` can reconstruct what landed and when.
+- **Atomicity / reconcile**: the steps (copy → materialise deps → register) are not a single atomic write, so a crash mid-install can leave a **partial** plugin — copied but unregistered, or registered pointing at a half-materialised env. Install therefore needs a **reconcile** on next start: detect a `~/.reyn/plugins/<name>/` whose `_completed` event is absent (or whose registry entries/​env are inconsistent) and either finish or roll it back, so no half-installed plugin is left that is neither usable nor cleanly removable. Uninstall is ordered **drop-registry-first, then remove-copy** so an interrupted uninstall never leaves a live registry entry pointing at a deleted copy.
+- **Not WAL-derived**: the `~/.reyn/plugins/` copies and the materialised env are **files**, not WAL-event-derived state, so the recovery-feature truncate-falsify gate (CLAUDE.md) does not apply to them; the reconcile above is a filesystem/registry consistency check, and the registry entries themselves ride the existing config-load path. (Called out explicitly so the distinction is on record.)
+
 ## 4. Consequences
 
-- **#2955 turnkey resolved structurally**: capabilities run via `uv run --with <deps> python ${REYN_PLUGIN_ROOT}/scripts/<server>.py` in an isolated env — no `pip install "reyn[builtin-rag]"`, no reyn-env coupling, no console-scripts. (`builtin-rag` extra survives only as a dev/test dependency for reyn's own direct-import unit tests, not the user launch path.)
+- **#2955 turnkey resolved structurally**: capabilities run from a **per-plugin materialised env** under `~/.reyn/plugins/<name>/` (deps fetched once at install, §3.11) — no `pip install "reyn[builtin-rag]"`, no reyn-env coupling, no console-scripts, and **spawn is network-free** so a `network:false` server still starts. (`builtin-rag` extra survives only as a dev/test dependency for reyn's own direct-import unit tests, not the user launch path.)
 - **The authoring loop is first-class**: author-local → test-local (mcp-install-local / inline pipeline) → promote-to-`~/.reyn/plugins/`. Skills optional throughout.
 - **reyn becomes a standard-plugin host** (first step): SKILL.md open standard honoured; `${CLAUDE_*}` skills run via alias.
 - **No new registries, no new hot-reload machinery** — the three registries + install seams already exist. `.reyn/config/` unchanged bar the additive provenance field.
