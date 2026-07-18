@@ -464,7 +464,9 @@ async def handle(op: FileIROp, ctx: OpContext) -> dict:
         # loop thread (called after the `await`, not inside the threaded call) —
         # EventStore.write ultimately does an `asyncio.Queue.put_nowait`, which is
         # NOT thread-safe if called from a to_thread worker thread.
-        matches = await asyncio.to_thread(ctx.workspace.glob_files, op.path, max_results=op.max_results)
+        matches = await asyncio.to_thread(
+            ctx.workspace.glob_files, op.path, max_results=op.max_results, absolute=op.absolute
+        )
         ctx.events.emit("tool_executed", op="glob_files", path=op.path, match_count=len(matches))
         return {
             "kind": "file",

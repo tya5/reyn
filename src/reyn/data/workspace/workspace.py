@@ -224,10 +224,25 @@ class Workspace:
         path = self._resolve_read(path_str)
         return self._read_backend_for(path).stat(path)
 
-    def glob_files(self, pattern: str, max_results: int = 50) -> list[str]:
+    def glob_files(
+        self, pattern: str, max_results: int = 50, *, absolute: bool = False
+    ) -> list[str]:
         """
         Expand a glob pattern. Relative patterns resolve under base_dir (CWD).
-        Returns project-relative path strings.
+        Returns project-relative path strings by default.
+
+        ``absolute=True`` (#3102) makes the RELATIVE-pattern branch return
+        absolute path strings instead of relativizing them against
+        ``base_dir`` — opt-in, so every existing caller that relies on the
+        project-relative default (the vast majority: display paths, "not
+        found" suggestions, etc.) is unaffected. A consumer that hands a
+        glob match straight into a ``file://`` URI (e.g. rag_ingest.yaml)
+        needs an absolute path regardless of whether the caller's own
+        pattern happened to be relative or absolute — this flag lets it ask
+        for that directly instead of leaving the caller to reconstruct an
+        absolute path itself (R1 pipelines have no abspath/cwd primitive to
+        do that with). The absolute-pattern branch already returns absolute
+        paths unconditionally, so this flag is a no-op there.
         """
         p = Path(pattern)
         if p.is_absolute():
@@ -277,6 +292,11 @@ class Workspace:
         ws_matches = sorted(
             self._read_backend_for(self.base_dir).glob(pattern, root=self.base_dir)
         )
+        if absolute:
+            # backend.glob(root=self.base_dir) already returns paths rooted
+            # at base_dir (Path.glob(root / pattern) is absolute when root
+            # is) — no relativize/re-resolve needed, just pass them through.
+            return [str(m) for m in ws_matches[:max_results]]
         result = []
         for m in ws_matches[:max_results]:
             try:

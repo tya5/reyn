@@ -96,6 +96,7 @@ _QUERY_PATH = _RAG_PLUGIN_DIR / "pipelines" / "rag_query.yaml"
 
 _STUB_MARKITDOWN_SERVER = '''
 import base64
+from urllib.parse import urlsplit
 from fastmcp import FastMCP
 
 mcp = FastMCP("stub-markitdown")
@@ -106,7 +107,23 @@ def convert_to_markdown(uri: str) -> str:
     if uri.startswith("data:"):
         _, _, payload = uri.partition(",")
         return base64.b64decode(payload).decode("utf-8")
-    path = uri[len("file://"):] if uri.startswith("file://") else uri
+    if uri.startswith("file://"):
+        # #3102: real markitdown-mcp parses the URI and REJECTS a non-empty,
+        # non-localhost netloc -- which is exactly what a naive 'file://' +
+        # <relative path> concatenation produces ('file://docs/a.txt' parses
+        # with netloc='docs', path='/a.txt'). Reproducing that check here
+        # (instead of the earlier lenient `uri[len("file://"):]` strip, which
+        # happened to still resolve a relative match against this test's own
+        # CWD and silently masked the bug) is what makes this stub actually
+        # exercise the real-world failure mode instead of passing vacuously.
+        parsed = urlsplit(uri)
+        if parsed.netloc not in ("", "localhost"):
+            raise ValueError(
+                f"Unsupported file URI: {uri}. Netloc must be empty or localhost."
+            )
+        path = parsed.path
+    else:
+        path = uri
     with open(path, encoding="utf-8") as f:
         return f.read()
 
@@ -802,3 +819,117 @@ def test_ingest_preflight_falsify_proceeds_with_the_real_server_name(
     result = _run_ingest(project_root, capsys)  # default vectorstore_server matches config
     summary = result["named_stores"]["result"]
     assert isinstance(summary, dict) and "chunks_upserted" in summary
+
+
+# ---------------------------------------------------------------------------
+# 7. #3102: a RELATIVE input_path must index the corpus, not silently skip
+# every file via a malformed `file://` URI while still reporting status: ok.
+# ---------------------------------------------------------------------------
+
+
+def test_ingest_with_relative_input_path_indexes_the_corpus(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture,
+) -> None:
+    """Tier 2b: #3102 -- a RELATIVE ``input_path`` (the natural way an
+    operator points this pipeline at a project-root corpus, e.g. ``docs`` or
+    ``./docs`` -- the most common real input shape, not an edge case) must
+    index the corpus exactly as an absolute ``input_path`` does.
+
+    Root cause: ``_ingest_body``'s file-discovery builds each glob PATTERN
+    from ``ctx.input_path`` verbatim (``ctx.input_path + '/**/*.' + e``). A
+    relative ``input_path`` makes the pattern relative, and
+    ``Workspace.glob_files``' relative branch (BY DESIGN -- it resolves
+    under ``base_dir``/CWD and returns project-relative matches, a contract
+    many OTHER callers rely on for display paths) then returns
+    project-relative matches too (``docs/a.txt``, not
+    ``/abs/project/docs/a.txt``). ``_ingest_one_file`` builds
+    ``'file://' + ctx.source_path`` from that match verbatim -- a relative
+    match there produces a MALFORMED URI (``file://docs/a.txt``, which a URI
+    parser reads ``docs`` as the netloc/host, not a path segment).
+    markitdown then rejects every file with "Netloc must be empty or
+    localhost", ``for_each: on_error: continue`` swallows each per-file
+    failure through the ordinary #3010 skip path (a real, intentional
+    non-error outcome for a PARTIAL skip), and the run completes with
+    ``status: ok`` and zero chunks -- a silent-success data-loss shape, not
+    a crash.
+
+    The fix (rag_ingest.yaml's file-discovery ``glob_files`` step) passes
+    the new ``absolute: true`` arg (#3102, ``Workspace.glob_files``'
+    opt-in absolute-path mode) so THIS caller's own contract --
+    ``file://`` is always built from an absolute path -- holds
+    unconditionally, without touching ``glob_files``' default
+    project-relative return that every other caller still depends on.
+
+    strip-falsify: reverting the ``absolute: true`` line in
+    rag_ingest.yaml's file-discovery step reproduces the original
+    ``files_skipped == files_scanned``, ``chunks_upserted == 0``,
+    ``status: ok`` silent-zero shape (independently verified while
+    developing this fix).
+    """
+    monkeypatch.chdir(tmp_path)
+    project_root = _write_project(tmp_path)
+    docs_dir = project_root / "docs"
+    docs_dir.mkdir()
+    (docs_dir / "a.txt").write_text("Alpha document about apples.", encoding="utf-8")
+
+    summary = _run_ingest(project_root, capsys, input_path="docs")["named_stores"]["result"]
+    assert isinstance(summary, dict), (
+        f"expected a summary dict (real ingest), got a blocked/str result instead: {summary!r:.300}"
+    )
+    assert summary["files_scanned"] == 1
+    assert summary["files_skipped"] == 0, (
+        "#3102 REGRESSION: a relative input_path must not be silently skipped via a "
+        f"malformed file:// URI -- got skipped_files={summary.get('skipped_files')}"
+    )
+    assert summary["all_discovered_files_skipped"] is False
+    assert summary["chunks_upserted"] >= 1, (
+        "#3102 REGRESSION: relative input_path produced 0 chunks despite status: ok"
+    )
+
+    from reyn.builtin.plugins.rag.scripts.vector_store_server import SqliteVecStore
+
+    with SqliteVecStore(str(project_root / "rag.sqlite")) as store:
+        rows = store.list_metadata()
+    assert rows, "expected at least one indexed chunk"
+    # The fixed contract: file:// (and the stored source_path column riding
+    # the same value) is always built from an ABSOLUTE path, regardless of
+    # whether the operator's own input_path was relative or absolute.
+    assert all(Path(r["metadata"]["source_path"]).is_absolute() for r in rows), (
+        f"stored source_path must be absolute even from a relative input_path -- "
+        f"got {[r['metadata']['source_path'] for r in rows]}"
+    )
+
+
+def test_ingest_all_discovered_files_skipped_flag_names_the_zero_yield_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture,
+) -> None:
+    """Tier 2b: #3102 -- when EVERY discovered file is unusable, the
+    summary's ``all_discovered_files_skipped`` flag is True: 0 chunks
+    indexed despite ``status: ok`` is a structural fact a caller should not
+    have to re-derive itself from ``files_scanned == files_skipped``.
+
+    Falsified in the same test: a normal, at-least-partially-successful
+    ingest reports False (not a flag that is vacuously always True)."""
+    monkeypatch.chdir(tmp_path)
+    project_root = _write_project(tmp_path)
+    docs_dir = project_root / "docs"
+    docs_dir.mkdir()
+    (docs_dir / "corrupt.pdf").write_bytes(b"\xff\xfe\x00\x01broken")
+
+    summary = _run_ingest(project_root, capsys)["named_stores"]["result"]
+    assert summary["files_scanned"] == 1
+    assert summary["files_skipped"] == 1
+    assert summary["chunks_upserted"] == 0
+    assert summary["all_discovered_files_skipped"] is True, (
+        "a run that indexed nothing from a non-empty discovery must be NAMED as such"
+    )
+
+    # falsify: adding one usable file alongside the unusable one flips it False.
+    (docs_dir / "good.txt").write_text("Penguins huddle together for warmth.", encoding="utf-8")
+    summary_2 = _run_ingest(project_root, capsys)["named_stores"]["result"]
+    assert summary_2["files_skipped"] == 1
+    assert summary_2["chunks_upserted"] >= 1
+    assert summary_2["all_discovered_files_skipped"] is False, (
+        "the flag must not be vacuously True whenever ANY file is skipped -- "
+        "only when discovery yielded NOTHING usable at all"
+    )

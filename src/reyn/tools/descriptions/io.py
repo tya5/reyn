@@ -328,6 +328,23 @@ PARAMS: dict[str, dict[str, ParamDescription]] = {
                 "黙って切り捨てられる。"
             ),
         ),
+        "absolute": ParamDescription(
+            text=(
+                "When true, return absolute paths even for a relative "
+                "pattern (default false = project-relative paths). Set "
+                "this when the result feeds something that needs an "
+                "absolute path regardless of the pattern's own form (e.g. "
+                "a file:// URI) — do not try to reconstruct an absolute "
+                "path from a relative match yourself."
+            ),
+            ja=(
+                "true なら相対パターンでも絶対パスを返す（デフォルト false"
+                "＝プロジェクト相対パス）。パターン自体が相対かどうかに"
+                "関わらず絶対パスが必要な用途（file:// URI 構築等）で"
+                "使うこと — 相対一致から絶対パスを自前で組み立てようと"
+                "しないこと。"
+            ),
+        ),
     },
     "list_directory": {
         "max_results": ParamDescription(
