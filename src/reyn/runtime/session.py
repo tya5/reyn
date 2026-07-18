@@ -733,6 +733,25 @@ class _HookEventBundle:
     hot_reloader: "HotReloader"
 
 
+@dataclass(frozen=True)
+class _CostBundle:
+    """#3082 Family 4: the cost/budget gateway — ``budget`` (``BudgetGateway``,
+    the per-session budget adapter that absorbs total_usage / total_cost_usd /
+    router-cap state). Single-field bundle for now (the simplest family — one
+    unconditional component, no intra-family DAG); kept as a bundle rather
+    than a bare return for pipeline-pattern consistency with Families 1-3, and
+    so it can grow without a call-site signature change if a future PR adds a
+    sibling cost component. Pure output→input value object:
+    :meth:`Session._build_cost_bundle` is a byte-identical extraction of the
+    construction that used to run inline in ``Session.__init__`` — same
+    object, same args. This family CONSUMES Family 1's ``chat_events``
+    (``BudgetGateway`` reads it eagerly at construction, ``events=``), so the
+    builder takes it as an explicit input rather than reading ``self.``
+    directly (same pattern as Family 3's ``hot_reloader``)."""
+
+    budget: "BudgetGateway"
+
+
 class Session:
     def __init__(
         self,
@@ -1664,15 +1683,17 @@ class Session:
             self._on_chat_event_for_state_change,
         )
 
-        # PR-refactor-session-1 wave 3 PR1: per-session budget adapter.
-        # Absorbs total_usage / total_cost_usd / router-cap state that
-        # previously lived as scattered attributes on Session.
-        self._budget = BudgetGateway(
-            budget_tracker=budget_tracker,
-            events=self._chat_events,
-            agent_name=self.agent_name,
-            default_router_cap=_router_cap,
+        # #3082 Family 4 (cost/budget): budget adapter extracted into
+        # _build_cost_bundle. Byte-identical extraction — same object, same
+        # args as the inline construction this replaced; unmoved (this
+        # family has no reordering — the simplest of the #3082 families).
+        # Invoked HERE (unchanged position) because it CONSUMES Family 1's
+        # chat_events, read EAGERLY (``events=``); see _CostBundle / the
+        # builder's docstring.
+        _cost_bundle = self._build_cost_bundle(
+            budget_tracker, self._chat_events, self.agent_name, _router_cap,
         )
+        self._budget = _cost_bundle.budget
 
         # PR-refactor-session-1 wave 3 PR2: memory persistence adapter.
         # Absorbs memory path resolution + remember / forget / read_body.
@@ -4219,6 +4240,49 @@ class Session:
             composed_consumer=composed_consumer,
             hot_reloader=hot_reloader,
         )
+
+    # ── #3082 Family 4: cost/budget bundle builder ──
+
+    def _build_cost_bundle(
+        self,
+        budget_tracker: "BudgetTracker | None",
+        chat_events: "EventLog",
+        agent_name: str,
+        router_cap: int,
+    ) -> "_CostBundle":
+        """#3082 Family 4: build the cost/budget gateway — ``budget``
+        (``BudgetGateway``, the per-session budget adapter). The simplest
+        family: a single unconditional component, no intra-family DAG, no
+        reordering — this builder is invoked at its ORIGINAL inline call
+        site, unmoved.
+
+        Byte-identical extraction of the construction that used to run
+        inline in ``__init__`` — same object, same args. Takes
+        ``budget_tracker`` / ``chat_events`` / ``agent_name`` / ``router_cap``
+        explicitly rather than reaching into ``self`` mid-construction:
+        ``budget_tracker`` is the LOCAL ``__init__`` parameter (NOT
+        ``self._budget_tracker``, which is a separate tracking assignment
+        made earlier in ``__init__`` for callers that receive the tracker by
+        value, and is out of scope for this extraction — same shape as
+        Family 2's ``state_log``); ``chat_events`` is Family 1's
+        ``EventLog``, read EAGERLY here (``events=chat_events``), which is
+        why this builder is invoked after the Family 1 bundle is unpacked
+        (same eager-sibling-dependency shape as Family 3's ``hot_reloader``);
+        ``agent_name`` is the property value already resolvable at the
+        original call site; ``router_cap`` is the local ``_router_cap``
+        resolved from ``safety.loop.max_router_calls_per_turn`` immediately
+        before the original inline construction.
+
+        PR-refactor-session-1 wave 3 PR1: per-session budget adapter.
+        Absorbs total_usage / total_cost_usd / router-cap state that
+        previously lived as scattered attributes on Session."""
+        budget = BudgetGateway(
+            budget_tracker=budget_tracker,
+            events=chat_events,
+            agent_name=agent_name,
+            default_router_cap=router_cap,
+        )
+        return _CostBundle(budget=budget)
 
     # ── #2073 S2: config hot-reload reapply seams (registered on the HotReloader) ──
 
