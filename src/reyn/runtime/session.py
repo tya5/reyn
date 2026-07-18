@@ -927,6 +927,93 @@ class _HistoryCompactionBundle:
     budget_advisor: "ContextBudgetAdvisor"
 
 
+@dataclass(frozen=True)
+class _InterventionBundle:
+    """#3082 Family 7: the intervention/chain-lifecycle group — ``chains``
+    (``ChainManager``), ``interventions`` (``InterventionRegistry``),
+    ``intervention_handler`` (``InterventionHandler``),
+    ``intervention_coordinator`` (``InterventionCoordinator``), and
+    ``chain_timeout_glue`` (``ChainTimeoutGlue``). Five components; the DAG
+    grouping is accurate here — all five belong together (unlike Families
+    4/5, which needed a mid-arc correction).
+
+    ★ NO forward-patch / circular dependency (simpler than Family 6b's
+    history_buffer ↔ compaction_controller cycle): ``chains`` and
+    ``chain_timeout_glue`` reference each other, but ASYMMETRICALLY —
+    ``chain_timeout_glue`` reads ``chains`` EAGERLY
+    (``chains=self._chains`` at construction time), while ``chains`` only
+    reaches ``chain_timeout_glue`` INDIRECTLY, through the bound method
+    ``_on_chain_timeout_fire`` wired into ``InterAgentMessaging`` (Family
+    8, unmoved) — that bound method forwards to
+    ``self._chain_timeout_glue.on_chain_timeout_fire`` only when CALLED,
+    long after both exist. So construction is strictly LINEAR: chains →
+    interventions → intervention_handler → intervention_coordinator →
+    chain_timeout_glue. No None-then-patch needed.
+
+    ★ ``chain_timeout_glue`` Family-8-straddling UP-move: originally
+    constructed at line ~1979, ~160 lines AFTER ``InterAgentMessaging``
+    (Family 8, line ~1906); this builder constructs it immediately after
+    ``intervention_coordinator`` (mirroring Family 6b's ``budget_advisor``
+    UP-move) so all five Family 7 components land as one contiguous
+    builder call BEFORE ``InterAgentMessaging`` (which stays untouched,
+    still constructed directly in ``__init__`` right after this builder
+    returns). Safe: every one of ``chain_timeout_glue``'s deps (LOCAL
+    ``chains``, cross-family ``self._journal`` [Family 2] /
+    ``self._chat_events`` [Family 1], plus a handful of already-set bound
+    methods / config) is already resolved at the new position; nothing
+    between the old and new position ever reads ``chain_timeout_glue``
+    (its only caller outside ``__init__`` is at line ~6774); and
+    ``InterAgentMessaging`` does not depend on ``chain_timeout_glue``.
+
+    ★★ Family-8 cross-dep preserved: ``InterAgentMessaging`` (unmoved, at
+    line ~1906) reads ``chain_manager=self._chains``. This builder's call
+    site is placed at ``chains``'s ORIGINAL position (line ~1784), so
+    ``self._chains`` is assigned well before ``InterAgentMessaging`` is
+    constructed — the F8→F7 cross-family dependency resolves exactly as
+    before.
+
+    ★ intra-Family-7 local-vs-self (mirrors Family 6b's local-vs-self
+    split): ``self._interventions`` / ``self._intervention_handler`` /
+    ``self._chains`` are all assigned by ``__init__`` only AFTER this
+    builder RETURNS — reading them as ``self._X`` from INSIDE the builder
+    would raise ``AttributeError``. Every eager reference among this
+    family's OWN five components is therefore threaded through LOCAL
+    variables:
+      - ``intervention_handler``'s ``registry=interventions`` (not
+        ``self._interventions``);
+      - ``intervention_coordinator``'s ``registry=interventions`` /
+        ``handler=intervention_handler`` (not ``self._interventions`` /
+        ``self._intervention_handler``);
+      - ``chain_timeout_glue``'s ``chains=chains`` (not ``self._chains``).
+    Deferred bound methods that resolve at CALL time (long after
+    ``__init__`` returns, by which point the attributes ARE set) are kept
+    as ``self.*`` — ``on_announce=self._announce_intervention`` on
+    ``interventions``. Cross-family / config dependencies (already set on
+    ``self`` before this builder runs) are kept as ``self._X`` —
+    ``self._journal`` (Family 2), ``self._chat_events`` (Family 1),
+    ``self._chain_timeout_seconds``, ``self._max_hop_depth``, plus
+    ``chain_timeout_glue``'s bound-method callbacks
+    (``self._append_history`` / ``self._reset_router_turn_counter`` /
+    ``self._run_router_loop`` / ``self._emit_router_cap_exhausted_user`` /
+    ``self._put_outbox`` / ``self.inbox`` / ``self._on_limit`` /
+    ``self._handle_chat_limit_checkpoint`` / ``self._send_agent_response`` /
+    ``self._put_inbox``).
+
+    Pure output→input value object: :meth:`Session._build_intervention_bundle`
+    is a byte-identical extraction of the construction sequence that used
+    to run inline in ``Session.__init__`` — four of the five components
+    stay at their ORIGINAL position (line ~1784); only
+    ``chain_timeout_glue`` moves UP from line ~1979 to become part of this
+    same contiguous builder call, straddling Family 8's
+    ``InterAgentMessaging``."""
+
+    chains: "ChainManager"
+    interventions: "InterventionRegistry"
+    intervention_handler: "InterventionHandler"
+    intervention_coordinator: "InterventionCoordinator"
+    chain_timeout_glue: "ChainTimeoutGlue"
+
+
 class Session:
     def __init__(
         self,
@@ -1781,49 +1868,30 @@ class Session:
         # queue ownership extracted into services. The session orchestrates the
         # callbacks (_announce_intervention, _on_chain_timeout_fire) but holds
         # no state for them.
-        self._chains = ChainManager(
-            journal=self._journal,
-            events=self._chat_events,
-            chain_timeout_seconds=self._chain_timeout_seconds,
-            max_hop_depth=self._max_hop_depth,
-        )
-        self._interventions = InterventionRegistry(
-            on_announce=self._announce_intervention,
-            # issue #254 Phase 1: fail-closed when no listener is wired
-            # (= no TUI mounted, no A2A override, no test fixture
-            # registered). Without this, ``handle_limit_exceeded`` with
-            # ``ask_timeout_seconds=0`` would await an unresolvable future
-            # in test / headless contexts.
-            enforce_listener_presence=True,
-        )
         # F4: a one-shot command-UI request (e.g. the /rewind checkpoint picker)
         # that a front-end renders as a selector. The inline CUI region polls it
         # (like it polls the head intervention); the plain --cui path renders a
         # text fallback. None = nothing pending. A dict carries {"kind", ...}.
         self._pending_command_ui: dict | None = None
 
-        # FP-0019 Wave 2 part 1: InterventionHandler — ask_user dispatch service.
-        # Extracted from Session.  Session keeps thin wrappers on
-        # _dispatch_intervention / _maybe_answer_oldest_intervention /
-        # _announce_intervention / _deliver_answer_to so the existing test
-        # surface (and ChatInterventionBus) remain stable.
-        self._intervention_handler = InterventionHandler(
-            intervention_registry=self._interventions,
-            journal=self._journal,
-            event_log=self._chat_events,
-            put_outbox=self._put_outbox,
-            append_history=self._append_history_for_handler,
-            # FP-0050 / #1862 (EP7): fences external peer-answer copies
-            # bound for conversation context (history sink only).
-            threat_scan=self._safety.threat_scan,
-        )
-        # Owns the chain-override state + the per-intervention dispatch
-        # orchestration.
-        self._intervention_coordinator = InterventionCoordinator(
-            registry=self._interventions,
-            handler=self._intervention_handler,
-            events=self._chat_events,
-        )
+        # #3082 Family 7: chains / interventions / intervention_handler /
+        # intervention_coordinator / chain_timeout_glue — byte-identical
+        # extraction, same construction order, same position (line ~1784,
+        # chains's original spot). chain_timeout_glue is the one exception —
+        # UP-moved from its original position (~160 lines below, AFTER Family
+        # 8's InterAgentMessaging) to land here, inside this same contiguous
+        # builder call, BEFORE InterAgentMessaging (which stays untouched and
+        # reads self._chains — see _InterventionBundle's docstring for why
+        # this UP-move is safe and why the F8→F7 self._chains cross-dep is
+        # preserved). See _InterventionBundle / _build_intervention_bundle's
+        # docstring for the full local-vs-deferred-self-vs-cross-family-self
+        # provenance per arg.
+        _intervention_bundle = self._build_intervention_bundle()
+        self._chains = _intervention_bundle.chains
+        self._interventions = _intervention_bundle.interventions
+        self._intervention_handler = _intervention_bundle.intervention_handler
+        self._intervention_coordinator = _intervention_bundle.intervention_coordinator
+        self._chain_timeout_glue = _intervention_bundle.chain_timeout_glue
 
         # F2: Delegation tracking for RouterLoop runs. Set to a list before
         # calling RouterLoop.run(); send_to_agent appends dispatched targets.
@@ -1972,26 +2040,6 @@ class Session:
         # step-boundary ``cancel_check``). Empty for every ordinary turn, so the
         # normal turn-cancel path is byte-identical when nothing is registered.
         self._cancel_forward_targets: list[Callable[[], None]] = []
-
-        # session.py refactor PR-4 (FP-0019 series final): ChainTimeoutGlue owns
-        # chain timeout lifecycle.
-        from reyn.runtime.services.chain_timeout_glue import ChainTimeoutGlue
-        self._chain_timeout_glue = ChainTimeoutGlue(
-            append_history_fn=self._append_history,
-            events=self._chat_events,
-            reset_turn_counter_fn=self._reset_router_turn_counter,
-            run_router_loop_fn=self._run_router_loop,
-            emit_cap_exhausted_fn=self._emit_router_cap_exhausted_user,
-            put_outbox_fn=self._put_outbox,
-            inbox=self.inbox,
-            journal=self._journal,
-            on_limit=self._on_limit,
-            chains=self._chains,
-            limit_checkpoint_fn=self._handle_chat_limit_checkpoint,
-            chain_timeout_seconds=self._chain_timeout_seconds,
-            send_agent_response_fn=self._send_agent_response,
-            put_inbox_fn=self._put_inbox,
-        )
 
     # ── cost accumulation ───────────────────────────────────────────────────────
 
@@ -4639,6 +4687,118 @@ class Session:
             history_buffer=history_buffer,
             compaction_controller=compaction_controller,
             budget_advisor=budget_advisor,
+        )
+
+    def _build_intervention_bundle(self) -> "_InterventionBundle":
+        """#3082 Family 7: build ``chains`` / ``interventions`` /
+        ``intervention_handler`` / ``intervention_coordinator`` /
+        ``chain_timeout_glue``. Byte-identical extraction of the
+        construction sequence that used to run inline in ``__init__`` —
+        four of the five components stay at their ORIGINAL position (line
+        ~1784, ``chains``'s original spot); only ``chain_timeout_glue``
+        moves UP from its original position (~160 lines below, AFTER
+        Family 8's ``InterAgentMessaging``) into this same contiguous
+        builder call.
+
+        ★ NO forward-patch / circular dependency: unlike Family 6b's
+        history_buffer ↔ compaction_controller cycle, this family's
+        chains ↔ chain_timeout_glue relationship is ASYMMETRIC —
+        ``chain_timeout_glue`` reads ``chains`` EAGERLY at construction
+        time, while ``chains`` only reaches ``chain_timeout_glue``
+        INDIRECTLY through the bound method ``_on_chain_timeout_fire``
+        (wired into Family 8's ``InterAgentMessaging``, unmoved), which
+        forwards to ``self._chain_timeout_glue.on_chain_timeout_fire``
+        only when CALLED — long after both exist. So construction is
+        strictly LINEAR: chains → interventions → intervention_handler →
+        intervention_coordinator → chain_timeout_glue. No None-then-patch
+        needed.
+
+        ★★ Family-8 cross-dep preserved: Family 8's ``InterAgentMessaging``
+        (unmoved, constructed directly in ``__init__`` right after this
+        builder returns) reads ``chain_manager=self._chains`` — this
+        builder's call site sits at ``chains``'s ORIGINAL position, so
+        ``self._chains`` is assigned by ``__init__`` well before
+        ``InterAgentMessaging`` is constructed. The F8→F7 cross-family
+        dependency resolves exactly as before.
+
+        ★ intra-Family-7 local-vs-self: ``self._interventions`` /
+        ``self._intervention_handler`` / ``self._chains`` are all assigned
+        by ``__init__`` only AFTER this builder RETURNS — reading them as
+        ``self._X`` from INSIDE the builder would raise ``AttributeError``.
+        Every eager reference among this family's OWN five components is
+        threaded through LOCAL variables (``chains`` / ``interventions`` /
+        ``intervention_handler``), never ``self._X``. Deferred bound
+        methods that resolve at CALL time (by which point the attributes
+        ARE set) are kept as ``self.*`` — ``self._announce_intervention``.
+        Cross-family / config dependencies (already set on ``self`` before
+        this builder runs) are kept as ``self._X``. See
+        :class:`_InterventionBundle`'s docstring for the full per-arg
+        classification."""
+        chains = ChainManager(
+            journal=self._journal,
+            events=self._chat_events,
+            chain_timeout_seconds=self._chain_timeout_seconds,
+            max_hop_depth=self._max_hop_depth,
+        )
+        interventions = InterventionRegistry(
+            on_announce=self._announce_intervention,
+            # issue #254 Phase 1: fail-closed when no listener is wired
+            # (= no TUI mounted, no A2A override, no test fixture
+            # registered). Without this, ``handle_limit_exceeded`` with
+            # ``ask_timeout_seconds=0`` would await an unresolvable future
+            # in test / headless contexts.
+            enforce_listener_presence=True,
+        )
+
+        # FP-0019 Wave 2 part 1: InterventionHandler — ask_user dispatch service.
+        # Extracted from Session.  Session keeps thin wrappers on
+        # _dispatch_intervention / _maybe_answer_oldest_intervention /
+        # _announce_intervention / _deliver_answer_to so the existing test
+        # surface (and ChatInterventionBus) remain stable.
+        intervention_handler = InterventionHandler(
+            intervention_registry=interventions,
+            journal=self._journal,
+            event_log=self._chat_events,
+            put_outbox=self._put_outbox,
+            append_history=self._append_history_for_handler,
+            # FP-0050 / #1862 (EP7): fences external peer-answer copies
+            # bound for conversation context (history sink only).
+            threat_scan=self._safety.threat_scan,
+        )
+        # Owns the chain-override state + the per-intervention dispatch
+        # orchestration.
+        intervention_coordinator = InterventionCoordinator(
+            registry=interventions,
+            handler=intervention_handler,
+            events=self._chat_events,
+        )
+
+        # session.py refactor PR-4 (FP-0019 series final): ChainTimeoutGlue owns
+        # chain timeout lifecycle.
+        from reyn.runtime.services.chain_timeout_glue import ChainTimeoutGlue
+        chain_timeout_glue = ChainTimeoutGlue(
+            append_history_fn=self._append_history,
+            events=self._chat_events,
+            reset_turn_counter_fn=self._reset_router_turn_counter,
+            run_router_loop_fn=self._run_router_loop,
+            emit_cap_exhausted_fn=self._emit_router_cap_exhausted_user,
+            put_outbox_fn=self._put_outbox,
+            inbox=self.inbox,
+            journal=self._journal,
+            on_limit=self._on_limit,
+            chains=chains,
+            limit_checkpoint_fn=self._handle_chat_limit_checkpoint,
+            chain_timeout_seconds=self._chain_timeout_seconds,
+            send_agent_response_fn=self._send_agent_response,
+            put_inbox_fn=self._put_inbox,
+        )
+
+        return _InterventionBundle(
+            chains=chains,
+            interventions=interventions,
+            intervention_handler=intervention_handler,
+            intervention_coordinator=intervention_coordinator,
+            chain_timeout_glue=chain_timeout_glue,
         )
 
     # ── #2073 S2: config hot-reload reapply seams (registered on the HotReloader) ──
