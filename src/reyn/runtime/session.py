@@ -752,6 +752,45 @@ class _CostBundle:
     budget: "BudgetGateway"
 
 
+@dataclass(frozen=True)
+class _RetrievalBundle:
+    """#3082 Family 5: the retrieval spine — the embedding block
+    (``embedding_provider`` / ``embedding_event_sink`` / ``embedding_model_class``
+    / ``action_embedding_index``, four attrs, one conditional construction
+    guarded by ``universal_wrappers_enabled and embedding_class`` with a
+    try/except None-fallback) plus ``action_usage_tracker`` (hot-list
+    freq+recency, a SEPARATE conditional guarded by
+    ``universal_wrappers_enabled and hot_list_n > 0``, also with a
+    try/except None-fallback). Regrouped here per the #3082 DAG correction
+    in the Family 4 spec (``action_usage_tracker`` was originally mis-grouped
+    under Family 4/budget; it has no dependency on ``BudgetGateway`` and is
+    retrieval-adjacent — co-located with ``action_embedding_index`` under the
+    shared ``action_retrieval`` config). Two DAG corrections also apply here:
+    the originally-listed ``render_bounds`` does not exist in this codebase
+    (dropped) and ``subscription_writer`` is WAL-derived task-subscription
+    state, not retrieval (excluded, reassigned to a later family).
+
+    Pure output→input value object, with one inversion from Families 3/4:
+    :meth:`Session._build_retrieval_bundle` is a byte-identical extraction of
+    the construction sequence that used to run inline in ``Session.__init__``
+    at its ORIGINAL position (line ~1152), which is BEFORE Family 1
+    (``_build_audit_event_bundle``) runs — so unlike ``hot_reloader``
+    (Family 3) or ``budget`` (Family 4), this family's two closures
+    (``_embedding_event_sink`` / ``_on_hot_list_changed``) do NOT take
+    ``chat_events`` as an eager builder input. They keep resolving
+    ``self._chat_events`` at CALL time (the EventLog is constructed later in
+    ``__init__``), exactly as the pre-extraction closures did — eager-izing
+    that reference here would raise ``AttributeError`` at construction, since
+    ``self._chat_events`` does not exist yet at line ~1152. The builder is an
+    instance method precisely so these closures can keep capturing ``self``."""
+
+    embedding_provider: "object | None"
+    embedding_event_sink: "object | None"
+    embedding_model_class: "str | None"
+    action_embedding_index: "object | None"
+    action_usage_tracker: "object | None"
+
+
 class Session:
     def __init__(
         self,
@@ -1143,129 +1182,23 @@ class Session:
         # lifespan / session factory when external transports are
         # configured; ``None`` skips interception (= default).
         self._outbox_interceptor: Any = None
-        # FP-0034 Phase 2 step 1: build the ActionEmbeddingIndex +
-        # EmbeddingProvider once per session when the operator has
-        # configured ``action_retrieval.embedding_class``.  Both stay
-        # None when embedding is not configured, in which case the
-        # ``search_actions`` wrapper is hidden by ``build_tools`` and
-        # the handler degrades to an empty-result response.
-        self._action_embedding_index: Any = None
-        self._embedding_provider: Any = None
-        self._embedding_model_class: str | None = None
-        # FP-0057 #2856 Part A: the TUI model-download status sink CALLABLE
-        # (set below, alongside ``_embedding_provider``), threaded onto every
-        # router OpContext as ``ctx.embedding_event_sink`` so the `embed` op
-        # (which ``ActionEmbeddingIndex`` now routes through instead of
-        # calling ``provider.embed()`` directly) can forward it into the
-        # FRESH per-call provider it resolves — preserving the download-status
-        # rows without the caller holding a long-lived provider instance.
-        self._embedding_event_sink: Any = None
-        if (
-            self._action_retrieval.universal_wrappers_enabled
-            and self._action_retrieval.embedding_class
-            and embedding_config is not None
-            and not _embedding_class_needs_missing_extras(
-                self._action_retrieval.embedding_class,
-                embedding_config,
-            )
-        ):
-            try:
-                from reyn.data.embedding import get_provider as _get_provider
-                from reyn.tools.action_index import ActionEmbeddingIndex
-
-                # FP-0043 Component C.3: surface the sentence-transformers
-                # lazy model-load lifecycle (= downloading / loaded /
-                # error) via the session's events bus so the TUI
-                # surface can render a sticky status row + a
-                # green "done" frame + a retry-hint error row. The sink
-                # is called from the embed worker thread; events.emit is
-                # GIL-protected + sync so this is safe without a
-                # call_soon_threadsafe bridge.
-                #
-                # C.4 hotfix (2026-05-27): the sink closure resolves
-                # ``self._chat_events`` at *call* time, not at
-                # construction time — the EventLog is built later in
-                # __init__ (= line ~1482). The previous C.3 wiring
-                # captured ``self.events`` (= attribute that does NOT
-                # exist on Session), which silently raised
-                # AttributeError at this point and the outer ``except``
-                # swallowed it, disabling search_actions for every
-                # operator who had ``embedding_class`` set. Mirrors the
-                # ``_on_hot_list_changed`` closure pattern in the
-                # ActionUsageTracker setup below.
-                def _embedding_event_sink(
-                    kind: str, text: str, meta: dict,
-                ) -> None:
-                    try:
-                        self._chat_events.emit(
-                            f"embedding_{kind}",
-                            text=text,
-                            **meta,
-                        )
-                    except Exception:
-                        pass
-
-                self._embedding_provider = _get_provider(
-                    "litellm",
-                    embedding_config,
-                    event_sink=_embedding_event_sink,
-                )
-                # FP-0057 #2856 Part A: keep the sink CALLABLE addressable on
-                # its own so it can be threaded onto router OpContexts
-                # (ctx.embedding_event_sink) independently of
-                # ``_embedding_provider`` (which stays for non-tool-use /
-                # legacy callers until they migrate).
-                self._embedding_event_sink = _embedding_event_sink
-                self._embedding_model_class = self._action_retrieval.embedding_class
-                # FP-0057 Phase 0: unified onto IndexBackend's cache
-                # convention (.reyn/cache/index/<source>/); the old
-                # .reyn/cache/action_index/ path is no longer read or
-                # written (clean-break — cache is regenerable).
-                self._action_embedding_index = ActionEmbeddingIndex(
-                    workspace_root=Path.cwd(),
-                )
-            except Exception:
-                # If provider construction fails for any reason (= missing
-                # dependency / malformed config), fall through to "no index"
-                # so the rest of the session continues without
-                # search_actions rather than refusing to start.
-                self._embedding_provider = None
-                self._action_embedding_index = None
-                self._embedding_model_class = None
-                self._embedding_event_sink = None
-        # FP-0034 Phase 2 step 5: ActionUsageTracker for hot list freq+recency.
-        # Created when universal_wrappers_enabled=True and hot_list_n > 0.
-        # Per-agent compacted table at
-        # ``.reyn/agents/<agent_name>/action_usage.json``. The table is fed
-        # by the chat-compactor sink (see ``CompactionController`` wiring
-        # below); uncompacted turns are scanned at hot-list-build time.
-        self._action_usage_tracker: Any = None
-        if (
-            self._action_retrieval.universal_wrappers_enabled
-            and self._action_retrieval.hot_list_n > 0
-        ):
-            try:
-                from reyn.tools.action_usage_tracker import ActionUsageTracker
-                # Issue #192: wire a callback that emits ``hot_list_updated``
-                # on every reorder of the compacted ranking. Lambda defers
-                # ``self._chat_events`` resolution to call time (it's
-                # constructed below at the EventLog init).
-                def _on_hot_list_changed(ranking: list[dict]) -> None:
-                    try:
-                        self._chat_events.emit(
-                            "hot_list_updated", ranking=ranking,
-                        )
-                    except Exception:
-                        pass
-                self._action_usage_tracker = ActionUsageTracker(
-                    persist_path=(
-                        Path(".reyn") / "agents" / agent_name
-                        / "action_usage.json"
-                    ),
-                    on_ranking_changed=_on_hot_list_changed,
-                )
-            except Exception:
-                self._action_usage_tracker = None
+        # #3082 Family 5 (retrieval): the embedding block (four attrs) +
+        # action_usage_tracker extracted into _build_retrieval_bundle.
+        # Byte-identical extraction — same objects, same conditionals, same
+        # try/except None-fallbacks, same args as the inline sequence this
+        # replaced; unmoved (invoked HERE, at its ORIGINAL position, BEFORE
+        # Family 1 / _build_audit_event_bundle runs — this family has no
+        # eager dependency on chat_events, only the two closures' DEFERRED
+        # self._chat_events resolution, kept verbatim since this is an
+        # instance method). See _RetrievalBundle / the builder's docstring.
+        _retrieval_bundle = self._build_retrieval_bundle(
+            self._action_retrieval, embedding_config, agent_name,
+        )
+        self._action_embedding_index = _retrieval_bundle.action_embedding_index
+        self._embedding_provider = _retrieval_bundle.embedding_provider
+        self._embedding_model_class = _retrieval_bundle.embedding_model_class
+        self._embedding_event_sink = _retrieval_bundle.embedding_event_sink
+        self._action_usage_tracker = _retrieval_bundle.action_usage_tracker
         self._mcp_servers = mcp_servers
         # #2597 S2a: the session-owned held-open MCP connection service (Option C —
         # one persistent MCPClient per server, reused across chat turns/tasks for
@@ -4283,6 +4216,180 @@ class Session:
             default_router_cap=router_cap,
         )
         return _CostBundle(budget=budget)
+
+    def _build_retrieval_bundle(
+        self,
+        action_retrieval: "ActionRetrievalConfig",
+        embedding_config: "EmbeddingConfig | None",
+        agent_name: str,
+    ) -> "_RetrievalBundle":
+        """#3082 Family 5: build the retrieval spine — the embedding block
+        (four attrs, one conditional construction guarded by
+        ``universal_wrappers_enabled and embedding_class`` with a try/except
+        None-fallback) and ``action_usage_tracker`` (a SEPARATE conditional
+        guarded by ``universal_wrappers_enabled and hot_list_n > 0``, also
+        with a try/except None-fallback). ``action_usage_tracker`` is
+        regrouped here per the Family 4 spec's DAG correction — it has no
+        dependency on ``BudgetGateway`` and is co-located with
+        ``action_embedding_index`` under the shared ``action_retrieval``
+        config. ``render_bounds`` (never existed in this codebase) and
+        ``subscription_writer`` (WAL-derived task-subscription state, not
+        retrieval) are excluded per this same spec's DAG corrections.
+
+        Byte-identical extraction of the construction sequence that used to
+        run inline in ``__init__`` at its ORIGINAL position (line ~1152,
+        BEFORE Family 1 / ``_build_audit_event_bundle`` runs) — same
+        objects, same order, same conditionals, same try/except
+        None-fallbacks, same args. ``action_retrieval`` / ``embedding_config``
+        / ``agent_name`` are the ``self._action_retrieval`` value / the
+        ``embedding_config`` __init__ parameter / the LOCAL ``agent_name``
+        __init__ parameter (NOT ``self.agent_name``, mirroring the original
+        inline reference at the ``action_usage_tracker`` persist path) — all
+        resolvable before this builder's original call site.
+
+        ``chat_events`` is deliberately NOT a builder input, unlike Family
+        3's ``hot_reloader`` or Family 4's ``budget``: both closures below
+        (``_embedding_event_sink`` / ``_on_hot_list_changed``) resolve
+        ``self._chat_events`` at CALL time, not construction time — the
+        EventLog is built later in ``__init__`` (Family 1, ~line 1560+).
+        Eager-izing that reference (the Family 3/4 pattern) would raise
+        ``AttributeError`` here, since this builder runs BEFORE Family 1.
+        This builder is an instance method precisely so the closures can
+        keep capturing ``self``.
+
+        FP-0034 Phase 2 steps 1 + 5 / FP-0057 #2856 Part A / Issue #192:
+        see the four embedding attrs' and ``action_usage_tracker``'s
+        original inline comments, reproduced verbatim below."""
+        # FP-0034 Phase 2 step 1: build the ActionEmbeddingIndex +
+        # EmbeddingProvider once per session when the operator has
+        # configured ``action_retrieval.embedding_class``.  Both stay
+        # None when embedding is not configured, in which case the
+        # ``search_actions`` wrapper is hidden by ``build_tools`` and
+        # the handler degrades to an empty-result response.
+        action_embedding_index: Any = None
+        embedding_provider: Any = None
+        embedding_model_class: str | None = None
+        # FP-0057 #2856 Part A: the TUI model-download status sink CALLABLE
+        # (set below, alongside ``embedding_provider``), threaded onto every
+        # router OpContext as ``ctx.embedding_event_sink`` so the `embed` op
+        # (which ``ActionEmbeddingIndex`` now routes through instead of
+        # calling ``provider.embed()`` directly) can forward it into the
+        # FRESH per-call provider it resolves — preserving the download-status
+        # rows without the caller holding a long-lived provider instance.
+        embedding_event_sink: Any = None
+        if (
+            action_retrieval.universal_wrappers_enabled
+            and action_retrieval.embedding_class
+            and embedding_config is not None
+            and not _embedding_class_needs_missing_extras(
+                action_retrieval.embedding_class,
+                embedding_config,
+            )
+        ):
+            try:
+                from reyn.data.embedding import get_provider as _get_provider
+                from reyn.tools.action_index import ActionEmbeddingIndex
+
+                # FP-0043 Component C.3: surface the sentence-transformers
+                # lazy model-load lifecycle (= downloading / loaded /
+                # error) via the session's events bus so the TUI
+                # surface can render a sticky status row + a
+                # green "done" frame + a retry-hint error row. The sink
+                # is called from the embed worker thread; events.emit is
+                # GIL-protected + sync so this is safe without a
+                # call_soon_threadsafe bridge.
+                #
+                # C.4 hotfix (2026-05-27): the sink closure resolves
+                # ``self._chat_events`` at *call* time, not at
+                # construction time — the EventLog is built later in
+                # __init__ (= line ~1482). The previous C.3 wiring
+                # captured ``self.events`` (= attribute that does NOT
+                # exist on Session), which silently raised
+                # AttributeError at this point and the outer ``except``
+                # swallowed it, disabling search_actions for every
+                # operator who had ``embedding_class`` set. Mirrors the
+                # ``_on_hot_list_changed`` closure pattern in the
+                # ActionUsageTracker setup below.
+                def _embedding_event_sink(
+                    kind: str, text: str, meta: dict,
+                ) -> None:
+                    try:
+                        self._chat_events.emit(
+                            f"embedding_{kind}",
+                            text=text,
+                            **meta,
+                        )
+                    except Exception:
+                        pass
+
+                embedding_provider = _get_provider(
+                    "litellm",
+                    embedding_config,
+                    event_sink=_embedding_event_sink,
+                )
+                # FP-0057 #2856 Part A: keep the sink CALLABLE addressable on
+                # its own so it can be threaded onto router OpContexts
+                # (ctx.embedding_event_sink) independently of
+                # ``embedding_provider`` (which stays for non-tool-use /
+                # legacy callers until they migrate).
+                embedding_event_sink = _embedding_event_sink
+                embedding_model_class = action_retrieval.embedding_class
+                # FP-0057 Phase 0: unified onto IndexBackend's cache
+                # convention (.reyn/cache/index/<source>/); the old
+                # .reyn/cache/action_index/ path is no longer read or
+                # written (clean-break — cache is regenerable).
+                action_embedding_index = ActionEmbeddingIndex(
+                    workspace_root=Path.cwd(),
+                )
+            except Exception:
+                # If provider construction fails for any reason (= missing
+                # dependency / malformed config), fall through to "no index"
+                # so the rest of the session continues without
+                # search_actions rather than refusing to start.
+                embedding_provider = None
+                action_embedding_index = None
+                embedding_model_class = None
+                embedding_event_sink = None
+        # FP-0034 Phase 2 step 5: ActionUsageTracker for hot list freq+recency.
+        # Created when universal_wrappers_enabled=True and hot_list_n > 0.
+        # Per-agent compacted table at
+        # ``.reyn/agents/<agent_name>/action_usage.json``. The table is fed
+        # by the chat-compactor sink (see ``CompactionController`` wiring
+        # below); uncompacted turns are scanned at hot-list-build time.
+        action_usage_tracker: Any = None
+        if (
+            action_retrieval.universal_wrappers_enabled
+            and action_retrieval.hot_list_n > 0
+        ):
+            try:
+                from reyn.tools.action_usage_tracker import ActionUsageTracker
+                # Issue #192: wire a callback that emits ``hot_list_updated``
+                # on every reorder of the compacted ranking. Lambda defers
+                # ``self._chat_events`` resolution to call time (it's
+                # constructed below at the EventLog init).
+                def _on_hot_list_changed(ranking: list[dict]) -> None:
+                    try:
+                        self._chat_events.emit(
+                            "hot_list_updated", ranking=ranking,
+                        )
+                    except Exception:
+                        pass
+                action_usage_tracker = ActionUsageTracker(
+                    persist_path=(
+                        Path(".reyn") / "agents" / agent_name
+                        / "action_usage.json"
+                    ),
+                    on_ranking_changed=_on_hot_list_changed,
+                )
+            except Exception:
+                action_usage_tracker = None
+        return _RetrievalBundle(
+            embedding_provider=embedding_provider,
+            embedding_event_sink=embedding_event_sink,
+            embedding_model_class=embedding_model_class,
+            action_embedding_index=action_embedding_index,
+            action_usage_tracker=action_usage_tracker,
+        )
 
     # ── #2073 S2: config hot-reload reapply seams (registered on the HotReloader) ──
 
