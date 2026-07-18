@@ -196,7 +196,8 @@ class TestFamily8cMCPConnectionBundleByteIdentical:
         tools_cache_invalidate = bundle.mcp_connection_service._tools_cache_invalidate
         tools_cache_invalidate("srv")
 
-        assert session._router_host.mcp_tools_cache_snapshot is None
+        snapshot_after_invalidate = session._router_host.mcp_tools_cache_snapshot
+        assert snapshot_after_invalidate is None
 
     def test_hook_trigger_resolves_hook_dispatcher_at_call_time(
         self, session: Session,
