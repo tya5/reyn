@@ -830,8 +830,10 @@ form-sniffed string):
   (ADR §3.2's primary daily "promote" loop) or a hand-written plugin already
   on disk. Middle RCE trust risk.
 - `{kind: "git", url: "<url>"}` — a remote git URL, shallow-cloned. Highest
-  RCE trust risk — gated `require_http_get` for the URL host; fetching and
-  running remote code is an explicit operator-trust decision, never auto-run.
+  RCE trust risk — gated by a DISTINCT per-install run-code trust decision
+  (`require_plugin_git_run_code_trust`, gate 3 below), separate from the fetch
+  axis; fetching and running remote code is an explicit operator-trust
+  decision, never auto-run and never pre-grantable.
 
 Fields (`plugin_install`):
 - `source` (required) — the discriminated union above.
@@ -852,9 +854,21 @@ Permission gates (§3.10 — composed from EXISTING gates, no new bool axis; the
    `uv venv` + `uv pip install` into `<plugin_root>/.venv`. Install-time only;
    the resulting venv's interpreter is what a `command: "python"` mcp entry's
    spawn is rewritten to point at — **spawn itself stays network-free**.
-3. **`{kind: "git"}` remote-code fetch** — `require_http_get` for the URL
-   host before the shallow-clone (mirrors `skill_install`'s source-fetch
-   gate).
+3. **`{kind: "git"}` run-code trust** — a DEDICATED
+   `require_plugin_git_run_code_trust` gate, checked BEFORE the fetch. This is
+   the RCE trust boundary and is deliberately SEPARATE from `require_http_get`
+   (the fetch axis): fetching bytes and RUNNING them are different decisions.
+   `require_http_get` is per-host, PERSISTENT (ALWAYS → `approvals.yaml`), and
+   SHARED with `web.fetch`, so a host approved once for a web fetch must NOT
+   thereby authorise installing + running its plugin code — else that host
+   becomes a standing silent-RCE grant for every future git plugin. The
+   run-code gate consults/writes NO approvals map (no key, no ALWAYS path, no
+   `reyn.yaml` pre-grant); its choice set (`plugin_run_code_trust_choices`)
+   offers only yes/no, so it re-asks EVERY install and can never be
+   pre-granted (§3.10 "never auto-run"). Fail-closed: a non-interactive caller
+   denies. `require_http_get` for the clone host still runs afterwards
+   (defense-in-depth network reachability), but the run-code gate is the one
+   that makes `{kind: "git"}` safe.
 
 Name-collision precedence (§3.8/§3.10): when `~/.reyn/plugins/<name>/`
 already holds a DIFFERENT-kind completed install, `reyn.plugins.source.
@@ -865,11 +879,18 @@ higher-trust one.
 `plugin_install` handler lifecycle (one-shot):
 0. Reconcile: any `~/.reyn/plugins/<name>/` left with an
    `.reyn-plugin/_install_state.json` marker from a PRIOR crashed/interrupted
-   install is rolled back (removed) before this install proceeds
-   (`reconcile_plugin_installs`, §3.11 — self-healing on the next
-   `plugin_install` call; this repo has no general process-startup hook, so
-   "next use" is the documented reconcile trigger).
-1. Resolve `source` → a source directory per its `kind` (above).
+   install is rolled back before this install proceeds (`reconcile_plugin_installs`,
+   §3.11 — self-healing on the next `plugin_install` call; this repo has no
+   general process-startup hook, so "next use" is the documented reconcile
+   trigger). Rollback mirrors uninstall's **drop-registry-first** ordering: a
+   partial that crashed AFTER registering some capabilities left registry
+   entries tagged with its `plugin_id` pointing at the dir about to be deleted,
+   so those entries are dropped from all three `.reyn/config/*.yaml` registries
+   (ungated — OS-internal repair of already-broken entries) BEFORE the copy is
+   removed, or a dangling registry entry would survive.
+1. Resolve `source` → a source directory per its `kind`, applying the source's
+   gate(s): `{kind: "git"}` runs the run-code trust gate (3) then
+   `require_http_get` before cloning; `builtin`/`local` touch no network.
 2. Load + validate `.reyn-plugin/plugin.json` via `reyn.plugins.manifest.
    load_plugin_manifest` (P1) — a missing/malformed manifest refuses
    (`status="error"`) BEFORE any copy.

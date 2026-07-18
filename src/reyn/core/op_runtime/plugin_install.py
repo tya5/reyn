@@ -123,6 +123,63 @@ def plugins_root() -> Path:
     return Path.home() / ".reyn" / "plugins"
 
 
+# ---------------------------------------------------------------------------
+# Registry-drop helpers (shared by plugin_uninstall + reconcile, §3.7/§3.11)
+# ---------------------------------------------------------------------------
+# A plugin's registered capabilities live in the SAME three project registries
+# skill_install / pipeline_install / a local mcp entry write, each entry tagged
+# with ``plugin_id`` (§3.7). Uninstall AND reconcile-rollback both need to drop
+# every entry a given plugin_id created — so the pure "find + remove by
+# plugin_id" logic lives here once and both callers reuse it (uninstall wraps
+# it with the operator permission gate; reconcile calls it ungated as OS-
+# internal consistency repair — see reconcile_plugin_installs).
+
+_REGISTRY_KINDS: tuple[str, ...] = ("mcp", "pipelines", "skills")
+
+
+def registry_config_paths(project_root: Path) -> "dict[str, Path]":
+    """The three per-project capability-registry config files."""
+    config_dir = project_root / ".reyn" / "config"
+    return {
+        "mcp": config_dir / "mcp.yaml",
+        "pipelines": config_dir / "pipelines.yaml",
+        "skills": config_dir / "skills.yaml",
+    }
+
+
+def _registry_entries_key(registry_kind: str) -> str:
+    """mcp nests under ``servers``; pipelines/skills under ``entries``."""
+    return "servers" if registry_kind == "mcp" else "entries"
+
+
+def registry_entries_section(data: dict, registry_kind: str) -> "dict | None":
+    """Return the ``<registry_kind>.<entries|servers>`` mapping, or None when
+    absent/malformed."""
+    section = data.get(registry_kind)
+    if not isinstance(section, dict):
+        return None
+    entries = section.get(_registry_entries_key(registry_kind))
+    return entries if isinstance(entries, dict) else None
+
+
+def drop_entries_by_plugin_id(
+    data: dict, registry_kind: str, plugin_name: str,
+) -> list[str]:
+    """PURE: remove every entry in ``data``'s ``<registry_kind>`` section tagged
+    ``plugin_id == plugin_name``, mutating ``data`` in place. Returns the
+    removed entry names (empty when the section is absent or nothing matched)."""
+    entries = registry_entries_section(data, registry_kind)
+    if not entries:
+        return []
+    to_remove = [
+        name for name, entry in entries.items()
+        if isinstance(entry, dict) and entry.get("plugin_id") == plugin_name
+    ]
+    for name in to_remove:
+        del entries[name]
+    return to_remove
+
+
 def _builtin_plugin_dir(name: str) -> Path:
     """``src/reyn/builtin/plugins/<name>/`` — reyn's own shipped plugins.
 
@@ -164,20 +221,47 @@ def _read_install_state(plugin_root: Path) -> dict | None:
     return data if isinstance(data, dict) else None
 
 
-def reconcile_plugin_installs(root: "Path | None" = None) -> list[str]:
-    """Filesystem-consistency reconcile (§3.11): any ``~/.reyn/plugins/<name>/``
-    whose ``_install_state.json`` marker is STILL PRESENT never reached
-    ``plugin_install_completed`` — a crash/interrupt mid-copy-or-later left a
-    partial plugin that is neither usable nor cleanly removable via
-    ``plugin_uninstall`` (its registry entries, if any, may be half-written).
+async def reconcile_plugin_installs(
+    root: "Path | None" = None,
+    *,
+    project_root: "Path | None" = None,
+    state_log: "object | None" = None,
+    events: "object | None" = None,
+) -> list[str]:
+    """Filesystem+registry-consistency reconcile (§3.11): any
+    ``~/.reyn/plugins/<name>/`` whose ``_install_state.json`` marker is STILL
+    PRESENT never reached ``plugin_install_completed`` — a crash/interrupt
+    mid-copy-or-later left a partial plugin that is neither usable nor cleanly
+    removable via ``plugin_uninstall`` (its registry entries, if any, may be
+    half-written).
 
-    Chosen recovery: ROLL BACK (remove the partial ``<name>/`` directory)
-    rather than "finish" — resuming a partial copy/materialise/register
-    correctly requires knowing exactly which sub-step completed, which the
-    marker does not (yet) distinguish; re-running the FULL install from
-    scratch is cheap (the LLM just re-issues ``plugin_install``) and always
-    safe, so it is the conservative default. Returns the list of plugin
-    names rolled back.
+    Chosen recovery: ROLL BACK rather than "finish" — resuming a partial
+    copy/materialise/register correctly requires knowing exactly which sub-step
+    completed, which the marker does not (yet) distinguish; re-running the FULL
+    install from scratch is cheap (the LLM just re-issues ``plugin_install``)
+    and always safe, so it is the conservative default.
+
+    **Rollback mirrors uninstall's drop-registry-FIRST ordering (§3.11).** A
+    partial install may have crashed AFTER registering some capabilities but
+    before completing — leaving registry entries tagged with the partial's
+    ``plugin_id`` that point at a directory this reconcile is about to delete.
+    Dropping the copy WITHOUT dropping those entries would leave a **dangling
+    registry entry** (a skill/pipeline/mcp entry whose ``path`` no longer
+    exists). So when ``project_root`` is supplied, each rolled-back plugin's
+    entries are dropped from all three ``.reyn/config/*.yaml`` registries
+    BEFORE its copy is removed. The registry-drop is UNGATED here (unlike
+    ``plugin_uninstall``, which is an operator-initiated action): reconcile is
+    OS-internal consistency repair removing entries that are already broken
+    (they reference a directory being deleted), so it needs no operator
+    consent — removing a dangling entry is always the safe/correct repair. Each
+    dropped registry still records a config generation (recovery-core) so the
+    repair survives rewind/crash the same way the install did.
+
+    ``project_root`` omitted (a bare filesystem sweep, e.g. the standalone
+    test/CLI path) drops no registry entries — only the copies — which is the
+    correct behavior when there is no project registry in scope.
+
+    Returns the list of plugin names rolled back.
     """
     base = root if root is not None else plugins_root()
     if not base.is_dir():
@@ -187,15 +271,48 @@ def reconcile_plugin_installs(root: "Path | None" = None) -> list[str]:
         if not entry.is_dir() or entry.name.startswith("."):
             continue
         state = _read_install_state(entry)
-        if state is not None:
-            shutil.rmtree(entry, ignore_errors=True)
-            rolled_back.append(entry.name)
+        if state is None:
+            continue
+        # Drop-registry-FIRST (§3.11): remove any entries this partial install
+        # registered before deleting the copy they point at.
+        if project_root is not None:
+            await _reconcile_drop_registry_entries(
+                project_root, entry.name, state_log=state_log, events=events,
+            )
+        shutil.rmtree(entry, ignore_errors=True)
+        rolled_back.append(entry.name)
+        if events is not None:
+            events.emit("plugin_install_reconciled", name=entry.name, action="rolled_back")
     # A staging clone dir interrupted mid-clone is never "installed" under
     # any name — always safe to sweep in full.
     staging = base / ".staging"
     if staging.is_dir():
         shutil.rmtree(staging, ignore_errors=True)
     return rolled_back
+
+
+async def _reconcile_drop_registry_entries(
+    project_root: Path, plugin_name: str,
+    *, state_log: "object | None", events: "object | None",
+) -> dict[str, list[str]]:
+    """Drop every ``.reyn/config/{mcp,pipelines,skills}.yaml`` entry tagged
+    ``plugin_id == plugin_name`` (UNGATED — OS-internal repair; see
+    ``reconcile_plugin_installs``). Records a config generation per touched
+    file so the repair is recovery-visible."""
+    from reyn.core.events.config_recovery import record_config_generation
+
+    removed: dict[str, list[str]] = {}
+    for registry_kind, config_path in registry_config_paths(project_root).items():
+        if not config_path.exists():
+            removed[registry_kind] = []
+            continue
+        data = _read_yaml(config_path)
+        dropped = drop_entries_by_plugin_id(data, registry_kind, plugin_name)
+        removed[registry_kind] = dropped
+        if dropped:
+            _write_yaml(config_path, data)
+            await record_config_generation(state_log, config_path, data)
+    return removed
 
 
 def _copy_plugin_tree(source_dir: Path, plugin_root: Path) -> None:
@@ -254,6 +371,14 @@ async def _materialise_deps(
 
     backend = ctx.sandbox_backend or get_default_backend(ctx.sandbox_config)
     venv_dir = plugin_root / ".venv"
+    # uv's default cache dir is ``~/.cache/uv`` — OUTSIDE the sandbox
+    # write_paths (which are scoped tight to plugin_root), so under an enforcing
+    # backend (Seatbelt/Landlock) uv's cache write is denied and materialise
+    # fails with "Operation not permitted". Point the cache INSIDE plugin_root
+    # (within write_paths) via ``--cache-dir`` — a CLI arg, so no os.environ
+    # mutation and no broad ~/.cache grant. This is a real correctness fix, not
+    # a test artifact: the default-cache write would fail under a real sandbox.
+    cache_dir = plugin_root / ".uv-cache"
     policy = SandboxPolicy(
         network=True,
         write_paths=[str(plugin_root)],
@@ -269,7 +394,8 @@ async def _materialise_deps(
     )
     try:
         venv_result = await backend.run(
-            ["uv", "venv", str(venv_dir)], policy, cwd=str(plugin_root),
+            ["uv", "venv", "--cache-dir", str(cache_dir), str(venv_dir)],
+            policy, cwd=str(plugin_root),
         )
     except Exception as exc:  # noqa: BLE001 — surface as a materialise error, not a crash
         return None, f"uv venv error: {exc}"
@@ -280,7 +406,8 @@ async def _materialise_deps(
     venv_python = venv_dir / "bin" / "python"
     try:
         install_result = await backend.run(
-            ["uv", "pip", "install", "--python", str(venv_python), "-r", str(requirements)],
+            ["uv", "pip", "install", "--cache-dir", str(cache_dir),
+             "--python", str(venv_python), "-r", str(requirements)],
             policy,
             cwd=str(plugin_root),
         )
@@ -401,7 +528,14 @@ async def handle(op: PluginInstallIROp, ctx: OpContext) -> dict:
     root = plugins_root()
 
     # ── 0. Reconcile stale partial installs (§3.11) ───────────────────────────
-    reconcile_plugin_installs(root)
+    # Drop-registry-first for any crashed partial (its dangling entries + copy),
+    # then proceed. project_root/state_log/events threaded so the registry-drop
+    # half of the rollback actually runs (a bare copy-only sweep would leave
+    # dangling registry entries).
+    await reconcile_plugin_installs(
+        root, project_root=project_root,
+        state_log=getattr(ctx, "state_log", None), events=ctx.events,
+    )
 
     staging_cleanup: "Path | None" = None
     source_kind = op.source.kind
@@ -423,6 +557,20 @@ async def handle(op: PluginInstallIROp, ctx: OpContext) -> dict:
                 "error": f"local plugin path {op.source.path!r} is not a directory.",
             }
     else:  # git
+        # ── RUN-CODE TRUST GATE (§3.10 item 3 — the RCE boundary) ──────────────
+        # This is the DISTINCT, per-install, never-persisted operator-trust
+        # decision for installing + RUNNING remote code — checked BEFORE the
+        # fetch, so a declined trust never even reaches the network. It is
+        # SEPARATE from require_http_get below: a persistent http.get /
+        # web.fetch host approval must NEVER be able to satisfy the run-code
+        # decision (else a host approved once for a fetch becomes silent-RCE
+        # for every future git plugin). require_http_get still gates the
+        # network reachability of the fetch itself (defense in depth), but the
+        # run-code trust gate is the one that makes {kind:git} safe.
+        if ctx.permission_resolver is not None:
+            await ctx.permission_resolver.require_plugin_git_run_code_trust(
+                op.source.url, ctx.intervention_bus, ctx.actor,
+            )
         host = _source_host(op.source.url)
         if ctx.permission_resolver is not None and host is not None:
             sandbox = _sandbox_policy_from_ctx(ctx)

@@ -22,47 +22,33 @@ from reyn.schemas.models import PluginUninstallIROp
 from . import register
 from .context import OpContext
 from .context import sandbox_policy_from_ctx as _sandbox_policy_from_ctx
-from .plugin_install import plugins_root
+from .plugin_install import (
+    drop_entries_by_plugin_id,
+    plugins_root,
+    registry_config_paths,
+    registry_entries_section,
+)
 from .skill_install import _read_yaml, _resolve_project_root, _write_yaml
-
-
-def _registry_paths(project_root: Path) -> "dict[str, Path]":
-    config_dir = project_root / ".reyn" / "config"
-    return {
-        "mcp": config_dir / "mcp.yaml",
-        "pipelines": config_dir / "pipelines.yaml",
-        "skills": config_dir / "skills.yaml",
-    }
-
-
-def _entries_section(data: dict, top_key: str) -> "dict | None":
-    """Return the ``<top_key>.entries``/``<top_key>.servers`` mapping (mcp
-    uses ``servers``, pipelines/skills use ``entries``), or None when absent
-    / malformed."""
-    section = data.get(top_key)
-    if not isinstance(section, dict):
-        return None
-    entries_key = "servers" if top_key == "mcp" else "entries"
-    entries = section.get(entries_key)
-    return entries if isinstance(entries, dict) else None
 
 
 async def _drop_plugin_entries(
     registry_kind: str, config_path: Path, plugin_name: str, ctx: OpContext,
 ) -> list[str]:
-    """Remove every entry tagged ``plugin_id == plugin_name`` from one
-    registry file. Returns the removed entry names."""
+    """Remove every entry tagged ``plugin_id == plugin_name`` from one registry
+    file, GATED by the operator permission (unlike reconcile's ungated repair —
+    uninstall is an operator-initiated action). Reuses the shared pure
+    ``drop_entries_by_plugin_id`` so the "find + remove by plugin_id" logic is
+    identical to reconcile's. Returns the removed entry names."""
     if not config_path.exists():
         return []
     data = _read_yaml(config_path)
-    entries = _entries_section(data, registry_kind)
-    if not entries:
-        return []
-    to_remove = [
-        name for name, entry in entries.items()
-        if isinstance(entry, dict) and entry.get("plugin_id") == plugin_name
-    ]
-    if not to_remove:
+    # Peek first (pure, non-mutating check) so the permission gate only fires
+    # when there is actually something to drop — a no-match uninstall for this
+    # registry never prompts.
+    entries = registry_entries_section(data, registry_kind)
+    if not entries or not any(
+        isinstance(e, dict) and e.get("plugin_id") == plugin_name for e in entries.values()
+    ):
         return []
 
     if ctx.permission_resolver is not None:
@@ -72,8 +58,7 @@ async def _drop_plugin_entries(
             sandbox_policy=sandbox, bus=ctx.intervention_bus,
         )
 
-    for name in to_remove:
-        del entries[name]
+    to_remove = drop_entries_by_plugin_id(data, registry_kind, plugin_name)
     _write_yaml(config_path, data)
 
     from reyn.core.events.config_recovery import record_config_generation
@@ -92,7 +77,7 @@ async def handle(op: PluginUninstallIROp, ctx: OpContext) -> dict:
 
     # ── 1. Drop registry entries FIRST (§3.11 crash-safety ordering) ─────────
     removed: dict[str, list[str]] = {}
-    for registry_kind, config_path in _registry_paths(project_root).items():
+    for registry_kind, config_path in registry_config_paths(project_root).items():
         removed[registry_kind] = await _drop_plugin_entries(registry_kind, config_path, name, ctx)
 
     if any(removed.values()):

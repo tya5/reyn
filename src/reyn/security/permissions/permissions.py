@@ -1081,6 +1081,72 @@ class PermissionResolver:
                 f"HTTP access to host {host!r} denied (legacy compat path)."
             )
 
+    async def require_plugin_git_run_code_trust(
+        self,
+        url: str,
+        bus: "RequestBus | None",
+        actor: str = "",
+    ) -> None:
+        """Per-install operator-trust gate for installing + RUNNING remote
+        plugin code from a git source (ADR 0064 §3.10 item 3).
+
+        **DISTINCT from ``require_http_get`` (the fetch axis).** Fetching bytes
+        from a host and RUNNING code from that host are different trust
+        decisions. ``require_http_get`` is per-host, PERSISTENT (ALWAYS →
+        ``approvals.yaml``), and SHARED with ``web.fetch`` — so a host approved
+        once for a web fetch would, if it also gated plugin install, become a
+        standing silent-RCE grant: any later ``{kind:git}`` plugin from that
+        host installs + runs with no prompt. This gate closes that hole by
+        being a SEPARATE axis that a fetch/http.get approval can never satisfy.
+
+        **Per-install, NEVER auto-run, NEVER persisted.** This method
+        deliberately does NOT consult (or write) ``approvals.yaml`` / the
+        session-approval map / config ``allow`` at all — there is no key, no
+        ALWAYS path, no ``reyn.yaml`` pre-grant. Every ``{kind:git}`` install
+        re-asks, because "never auto-run" (§3.10) means the decision cannot be
+        pre-made. The choice set (``plugin_run_code_trust_choices``) offers
+        only yes/no, so the UI cannot even present a persist option — the
+        non-persistence is structural, not a convention.
+
+        Fail-closed: a non-interactive caller (``bus is None`` OR
+        ``self._interactive is False``) DENIES — remote code is never run
+        without an explicit, live operator yes.
+        """
+        from reyn.intervention_choices import plugin_run_code_trust_choices
+
+        if bus is None or not self._interactive:
+            raise PermissionError(
+                f"installing + running remote plugin code from git source "
+                f"{url!r} requires an explicit operator-trust decision, which "
+                f"cannot be made non-interactively.\n"
+                f"Why: fetching and RUNNING remote code is an RCE trust "
+                f"boundary (ADR 0064 §3.10) — it is deliberately NOT "
+                f"pre-grantable (no reyn.yaml allow, no persisted approval), so "
+                f"a run without a live prompt is refused.\n"
+                f"Run interactively and approve the install-and-run prompt, or "
+                f"use a {{kind:local}} source (already-on-disk code) instead."
+            )
+        iv = UserIntervention(
+            kind="permission.plugin_git_run_code_trust",
+            prompt=(
+                f"Install AND RUN plugin code from remote git source {url!r}?"
+            ),
+            detail=(
+                f"This fetches code from {url!r} and registers it to run in "
+                f"future sessions (an MCP server / pipeline / skill). Only "
+                f"approve a source you trust to run code on this machine. This "
+                f"decision is asked FRESH every install — it is never saved."
+            ),
+            choices=plugin_run_code_trust_choices(),
+        )
+        answer = await bus.request(iv)
+        if answer.choice_id == YES:
+            return
+        raise PermissionError(
+            f"installing + running remote plugin code from git source {url!r} "
+            f"was declined by the operator (run-code trust not granted)."
+        )
+
     def require_secret_write(
         self, decl: PermissionDecl, key: str, actor: str = "",
     ) -> None:
