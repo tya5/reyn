@@ -54,6 +54,15 @@ Coverage:
      spawns no subprocess at all, and it passes ``max_results`` explicitly
      so a folder larger than ``glob_files``' silent 50-file default cap is
      still ingested whole.
+  7. #2955 weak-model-hardening follow-up (grounded in a live dogfood
+     witness, gh issue 2955's final comments): (a) a missing/misnamed
+     ``db`` query param is diagnosed as a missing-param message, never
+     misdiagnosed as "the vector-store MCP server is unreachable"; (b)
+     ``rag_query``'s pre-flight (ported from ``rag_ingest``'s #3064
+     cause-capture idiom) still blocks with a named remedy on a genuinely
+     unreachable server; (c) a failed query embed (a real provider error)
+     surfaces its own cause at the embed step, not an opaque "field ...
+     absent" crash two steps downstream.
 """
 from __future__ import annotations
 
@@ -293,11 +302,13 @@ def test_rag_ingest_pipeline_parses() -> None:
 
 
 def test_rag_query_pipeline_parses() -> None:
-    """Tier 2b: rag_query.yaml parses -- 3 pipeline: docs (query,
-    _query_blocked, _query_body)."""
+    """Tier 2b: rag_query.yaml parses -- 4 pipeline: docs (query,
+    _query_preflight, _query_blocked, _query_body -- #2955 weak-model-
+    hardening follow-up added _query_preflight, porting rag_ingest's #3064
+    cause-capture pre-flight idiom into query)."""
     docs = parse_pipeline_docs(_QUERY_PATH.read_text(encoding="utf-8"), SchemaRegistry())
     names = {p.name for p in docs}
-    assert names == {"query", "_query_blocked", "_query_body"}
+    assert names == {"query", "_query_preflight", "_query_blocked", "_query_body"}
 
 
 # ---------------------------------------------------------------------------
@@ -595,6 +606,54 @@ def test_rag_query_returns_the_ingested_chunk_as_top_result(
 
 
 # ---------------------------------------------------------------------------
+# 3b. #2955 weak-model-hardening follow-up: a missing/misnamed `db` query
+# param is diagnosed correctly, not misdiagnosed as an unreachable server.
+# ---------------------------------------------------------------------------
+
+
+def test_query_missing_db_param_is_diagnosed_not_misdiagnosed_as_unreachable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture,
+) -> None:
+    """Tier 2b: #2955 -- a live dogfood witness had a weak model call
+    ``rag_query.query`` with an invented param name (``vector_store_path``
+    instead of the correct ``db``), leaving ``ctx.db`` null. Before this
+    fix, that null flowed straight into the MCP pre-flight probe's
+    ``db_path`` arg, the probe call itself errored (not a transport
+    failure), and the run was misdiagnosed as "the vector-store MCP server
+    is unreachable" -- a claim that was simply false (the server was up).
+
+    strip-falsify: reverting ``query``'s explicit ``db_missing`` gate (and
+    routing straight to ``_query_preflight``/the old inline probe) restores
+    the old behavior -- the blocked message says "is unreachable" and never
+    names the missing parameter.
+    """
+    monkeypatch.chdir(tmp_path)
+    project_root = _write_project(tmp_path)
+    docs_dir = project_root / "docs"
+    docs_dir.mkdir()
+    (docs_dir / "a.txt").write_text("content", encoding="utf-8")
+
+    args = _ns(
+        name="rag_query.query",
+        # The exact weak-model mistake observed live: a plausible-sounding
+        # but wrong param name instead of `db`.
+        input=json.dumps({"query_text": "banana", "vector_store_path": str(project_root / "rag.sqlite")}),
+        project=str(project_root), async_=False,
+    )
+    run_run(args)
+    out = capsys.readouterr().out
+    result = json.loads(out)
+    blocked = result["named_stores"]["result"]
+    assert isinstance(blocked, str)
+    assert "`db`" in blocked, (
+        f"blocked message must name the exact required param name: {blocked!r}"
+    )
+    assert "is unreachable" not in blocked, (
+        f"a missing param must not be misdiagnosed as a server-down claim: {blocked!r}"
+    )
+
+
+# ---------------------------------------------------------------------------
 # 4. X1 pre-flight: decision-enabling block + falsifying control
 # ---------------------------------------------------------------------------
 
@@ -823,6 +882,129 @@ def test_ingest_preflight_falsify_proceeds_with_the_real_server_name(
     result = _run_ingest(project_root, capsys)  # default vectorstore_server matches config
     summary = result["named_stores"]["result"]
     assert isinstance(summary, dict) and "chunks_upserted" in summary
+
+
+# ---------------------------------------------------------------------------
+# 4c. #2955 weak-model-hardening follow-up: rag_query's OWN pre-flight
+# (ported from rag_ingest's #3064 cause-capture idiom) still blocks with a
+# named remedy on a genuinely unreachable vector-store server.
+# ---------------------------------------------------------------------------
+
+
+def test_query_preflight_blocks_on_unreachable_vectorstore_with_named_remedy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture,
+) -> None:
+    """Tier 2b: #2955 follow-up -- rag_query's own pre-flight (restructured
+    into `_query_preflight`, mirroring rag_ingest's X1) still blocks a
+    genuinely unreachable vectorstore_server with a message naming the
+    server + a concrete remedy, once a valid `db` param rules out the
+    missing-param diagnosis (the sibling test above)."""
+    monkeypatch.chdir(tmp_path)
+    project_root = _write_project(tmp_path)  # only registers "reyn_vector_store"
+    docs_dir = project_root / "docs"
+    docs_dir.mkdir()
+    (docs_dir / "a.txt").write_text("content", encoding="utf-8")
+
+    args = _ns(
+        name="rag_query.query",
+        input=json.dumps({
+            "query_text": "banana",
+            "db": str(project_root / "rag.sqlite"),
+            "vectorstore_server": "not_configured_server",
+        }),
+        project=str(project_root), async_=False,
+    )
+    run_run(args)
+    out = capsys.readouterr().out
+    result = json.loads(out)
+    blocked = result["named_stores"]["result"]
+    assert isinstance(blocked, str)
+    assert "not_configured_server" in blocked
+    assert "plugin_management__install" in blocked, (
+        "the remedy must name a concrete fix, not just the cause"
+    )
+
+
+# ---------------------------------------------------------------------------
+# 4d. #2955 weak-model-hardening follow-up: a failed query embed surfaces
+# its own real cause at the embed step, not an opaque "field ... absent"
+# crash two steps downstream.
+# ---------------------------------------------------------------------------
+
+
+class FailingEmbeddingProvider:
+    """A real (non-mock) EmbeddingProvider whose ``embed`` always raises --
+    stands in for a real litellm failure (bad API key / unpriced model /
+    provider outage) without a real network call, mirroring
+    ``FakeEmbeddingProvider`` above (same file, same established pattern)
+    but simulating the FAILURE branch instead of the success one."""
+
+    def __init__(self, message: str) -> None:
+        self._message = message
+        self._batch_size = 100
+
+    async def embed(self, texts: list[str], model: str):
+        raise RuntimeError(self._message)
+
+    def estimate_tokens(self, texts: list[str]) -> int:
+        return sum(len(t) for t in texts)
+
+    def get_dimension(self, model: str) -> int:
+        return 3
+
+
+def test_query_embed_failure_surfaces_the_real_provider_error_not_a_field_absent_crash(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture,
+) -> None:
+    """Tier 2b: #2955 follow-up -- when the `embed` op fails (a real
+    provider error, e.g. litellm's own `insufficient_quota` message), the
+    `embed` tool step in `_query_body` is now gated with `schema: EmbedOk`
+    (mirroring #3070's schema-gate idiom), so the raised
+    `PipelineExecutionError` carries the REAL provider error text at the
+    embed step itself.
+
+    Before this fix, an embed failure canonicalized to an empty view (no
+    `meta`, no `structured` -- `embed_to_canonical` only populates those
+    keys on success), and the pipeline crashed two steps later on
+    `find(ctx.embedded.structured, ...)` being absent -- an opaque
+    "path 'embedded.structured' is absent" message with no trace of the
+    real litellm failure.
+
+    strip-falsify: removing `schema: EmbedOk` from `_query_body`'s `embed`
+    step reproduces the old opaque "is absent" crash with the real message
+    (`insufficient_quota: the operator's API key`) nowhere in stderr.
+    """
+    monkeypatch.chdir(tmp_path)
+    project_root = _write_project(tmp_path)
+    docs_dir = project_root / "docs"
+    docs_dir.mkdir()
+    (docs_dir / "a.txt").write_text("content", encoding="utf-8")
+    _run_ingest(project_root, capsys)
+
+    real_message = "insufficient_quota: the operator's API key has no remaining balance"
+    import reyn.core.op_runtime.embed as embed_mod
+    monkeypatch.setattr(
+        embed_mod, "get_provider", lambda *a, **k: FailingEmbeddingProvider(real_message),
+    )
+
+    args = _ns(
+        name="rag_query.query",
+        input=json.dumps({
+            "query_text": "banana",
+            "db": str(project_root / "rag.sqlite"),
+        }),
+        project=str(project_root), async_=False,
+    )
+    with pytest.raises(SystemExit) as exc_info:
+        run_run(args)
+    assert exc_info.value.code == 1
+    err = capsys.readouterr().err
+    assert real_message in err, (
+        f"the real provider error must be surfaced at the embed step: {err!r}"
+    )
+    assert "is absent" not in err, (
+        f"must not regress to the opaque downstream field-absent crash: {err!r}"
+    )
 
 
 # ---------------------------------------------------------------------------

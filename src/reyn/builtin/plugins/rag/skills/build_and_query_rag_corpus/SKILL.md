@@ -101,12 +101,18 @@ Returns a summary: `files_scanned` / `chunks_upserted` / `chunks_removed` /
 with `priced: false` means the model could not be priced -- report it as
 "unknown", never as free.**
 
-**2. Query** -- the same `db` the ingest wrote.
+**2. Query** -- the same `db` the ingest wrote. **The parameter name is
+EXACTLY `db`** -- not `db_path` (the raw vector-store MCP tool's own arg
+name, one layer down) and not `vector_store_path` (a plausible-sounding
+name this pipeline has never accepted). A missing or misnamed `db` is not
+silently ignored: `rag_query.query` returns a blocked message naming this
+exact requirement, but passing the right name the first time saves a
+round trip.
 
 ```
 pipeline__run(name="rag_query.query", input={
   "query_text": "how does X work?",
-  "db": "./rag/docs.sqlite",
+  "db": "./rag/docs.sqlite",                 # EXACT param name: "db"
   "top_k": 5,                                # default 5
 })
 ```
