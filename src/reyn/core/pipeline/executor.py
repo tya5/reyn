@@ -625,6 +625,55 @@ def _parse_on_error(raw: str) -> "_OnError":
     )
 
 
+def _tool_step_canonical_error(step: "Step", result: Any) -> "str | None":
+    """#3099 corrective (a): the ``on_error`` trigger for a fan-out ``do``/branch
+    (:func:`_run_item` / :func:`_run_branch` below) was raise-only — an
+    ``execute_op`` degrade (``PermissionError`` → ``status:"denied"``, or any other
+    op-level failure) never raises (``op_runtime/__init__.py``'s ``execute_op``
+    catches it BY DESIGN: "this function never raises for op-level failures"), so
+    it returned NORMALLY with an error-shaped payload and a declared
+    ``on_error: abort``/``continue``/``retry(n)`` silently never engaged (#3095's
+    root: the ``fold`` after ``for_each`` assumed every surviving item's
+    ``.structured`` was a list, and broke opaquely several steps downstream of the
+    real cause).
+
+    This closes that gap by consuming the ALREADY-COMPUTED canonical error signal
+    — not inventing a new field (FP-0056 v2's shared error seam, whose SSoT
+    predicate is ``reyn.core.offload.canonical._is_error``/``is_error_result``,
+    already runs on every ``tool:`` step's raw result inside
+    ``_run_tool_step``/``to_canonical`` and surfaces as ``meta.isError`` on the
+    ``ctx_result`` this function receives — the SAME field a handle-inline step
+    already branches on, e.g. ``rag_ingest.yaml``'s
+    ``get(ctx.converted, 'meta.isError', false)``). Reading ``meta.isError`` here
+    is reading that seam's output, not re-deriving it — ``_run_tool_step`` already
+    converted the raw dispatch result via ``to_canonical``/``canonical_to_ctx_fields``
+    before a fan-out coordinator ever sees it, so the raw ``status``/``isError``
+    keys are gone by this point; ``meta.isError`` is what survives the transform.
+
+    Returns the tool's own error message (from ``ctx_result["text"]``, which
+    ``error_to_canonical`` guarantees non-empty) when ``step`` is a :class:`ToolStep`
+    AND its result is canonical-error-flagged, else ``None`` (no trigger).
+
+    Scoped to :class:`ToolStep` ONLY: every other step kind (``transform``/
+    ``agent``/``call``/nested ``for_each``/``parallel``) already raises its OWN
+    :class:`PipelineExecutionError` (or propagates one) on failure through the
+    ordinary ``except Exception`` clause below — they never reach here with a
+    "normal return that is secretly a failure". Widening this predicate past
+    ``ToolStep`` would risk false-positiving on a legitimate ``isError``-named DATA
+    field some other step computed on purpose (the same over-match hazard
+    ``is_error_result``'s own docstring warns about) — canonicalize a NEW
+    non-conforming producer instead of widening this check (#3099 census note)."""
+    if not isinstance(step, ToolStep):
+        return None
+    if not isinstance(result, dict):
+        return None
+    meta = result.get("meta")
+    if isinstance(meta, dict) and meta.get("isError"):
+        text = result.get("text")
+        return str(text) if text else "tool step returned a canonical error result"
+    return None
+
+
 def _is_dropped_marker(value: Any) -> bool:
     """True iff ``value`` is a fan-out DROPPED kind-marker (exact 2-key set
     ``{_FAN_OUT_DROPPED_KEY, 'error'}``) — the ONE shared predicate the collect
@@ -1248,6 +1297,18 @@ async def _run_for_each_step(inv: "_StepInvocation") -> "tuple[Any, bool, dict[s
             )
             try:
                 result, durable, _ = await runner(do_inv)
+                canonical_error = _tool_step_canonical_error(step.do, result)
+                if canonical_error is not None:
+                    # #3099 corrective (a): a normal return that is secretly a
+                    # canonical-error result trips on_error exactly like a raised
+                    # exception (retry(n) re-runs it below, same as any other
+                    # item failure).
+                    last_exc = PipelineExecutionError(
+                        f"step {label}.for_each.{item_idx} (tool "
+                        f"{step.do.name!r}) returned a canonical error result: "
+                        f"{canonical_error}"
+                    )
+                    continue
                 return item_idx, result, durable, None
             except Exception as exc:  # noqa: BLE001 - item-failure boundary (on_error policy)
                 last_exc = exc
@@ -1435,6 +1496,18 @@ async def _run_parallel_step(inv: "_StepInvocation") -> "tuple[Any, bool, dict[s
             )
             try:
                 result, durable, _ = await runner(branch_inv)
+                canonical_error = _tool_step_canonical_error(branch_step, result)
+                if canonical_error is not None:
+                    # #3099 corrective (a): see the matching comment in
+                    # _run_item above — a normal return that is secretly a
+                    # canonical-error result trips on_error exactly like a
+                    # raised exception.
+                    last_exc = PipelineExecutionError(
+                        f"step {label}.parallel.{name} (tool "
+                        f"{branch_step.name!r}) returned a canonical error "
+                        f"result: {canonical_error}"
+                    )
+                    continue
                 return name, result, durable, None
             except Exception as exc:  # noqa: BLE001 - branch-failure boundary (on_error policy)
                 last_exc = exc
