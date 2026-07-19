@@ -1132,13 +1132,26 @@ class AgentRegistry:
         if not all_snaps:
             return {}
 
-        # 2-3. WAL replay from min(applied_seq) + 1. Each snapshot's
-        # _matches_agent now filters by (agent, session_id), so a shared WAL tail
-        # routes every entry to exactly its (name, sid) snapshot.
+        # 2-3. WAL replay from min(applied_seq) + 1.
+        # #2946 item 2: read the shared tail ONCE, then bucket it by (agent,
+        # session_id) — ``AgentSnapshot.event_route_key`` — BEFORE handing entries
+        # to snapshots. Handing every snapshot the same full `wal_entries` list (the
+        # prior shape) made EACH snapshot's `apply_events` walk the WHOLE tail and
+        # call `_matches_agent` on every OTHER (agent, session)'s entries too — an
+        # O(agents × tail) re-scan where one lagging idle agent's low applied_seq
+        # widens the tail for every OTHER agent's walk as well. Bucketing makes the
+        # tail-walk O(tail) once (one route_key lookup per entry) and each
+        # snapshot's apply O(its own bucket) — O(tail) total, not O(agents × tail).
+        # Structural, not a census fix: this holds regardless of how many (agent,
+        # session) pairs restore_all discovers.
         min_seq = min(s.applied_seq for s in all_snaps.values())
-        wal_entries = list(self._state_log.iter_from(min_seq + 1))
-        for snap in all_snaps.values():
-            snap.apply_events(wal_entries)
+        buckets: dict[tuple[str, str], list[dict]] = {}
+        for event in self._state_log.iter_from(min_seq + 1):
+            key = AgentSnapshot.event_route_key(event)
+            if key is not None:
+                buckets.setdefault(key, []).append(event)
+        for key, snap in all_snaps.items():
+            snap.apply_events(buckets.get(key, ()))
 
         # 4. Save the post-replay snapshots back to their per-session paths.
         for (name, sid), snap in all_snaps.items():

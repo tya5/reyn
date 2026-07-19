@@ -212,12 +212,39 @@ class AgentSnapshot:
         ``session_id`` defaults to "main" when absent (legacy entries written
         pre-S5, and the default single session) — so legacy entries deterministically
         replay into the agent's "main" session, and a spawned session only absorbs
-        its own entries. This is the per-session replay-determinism guarantee."""
-        agent_matches = (
-            event.get("target") == self.agent_name
-            or event.get("agent") == self.agent_name
-        )
-        return agent_matches and event.get("session_id", "main") == self.session_id
+        its own entries. This is the per-session replay-determinism guarantee.
+
+        #2946 item 2: delegates to ``event_route_key`` (the single source of truth
+        for the routing rule) so a bucketing caller (``registry.restore_all``) can
+        pre-sort a WAL tail by (agent, session) WITHOUT re-deriving — and risking
+        drift from — this matching rule."""
+        return self.event_route_key(event) == (self.agent_name, self.session_id)
+
+    @staticmethod
+    def event_route_key(event: dict) -> "tuple[str, str] | None":
+        """The (agent_name, session_id) bucket a WAL ``event`` routes to, or
+        ``None`` if it carries neither ``target`` nor ``agent`` (never matches
+        any snapshot — same as ``_matches_agent`` returning False for every
+        snapshot).
+
+        #2946 item 2: ``restore_all`` calls this ONCE per WAL entry to bucket
+        the shared tail by (agent, session) up front, so each snapshot applies
+        only its own bucket instead of re-walking the whole tail and calling
+        ``_matches_agent`` on every OTHER agent's entries too (the O(agents ×
+        tail) re-scan the issue describes). Mirrors ``_matches_agent``'s rule
+        exactly: falls back from ``target`` to ``agent`` (the two are written
+        mutually-exclusively — ``SnapshotJournal``'s single WAL-append
+        chokepoint passes exactly one per call — so this is equivalent to the
+        boolean-or `agent_matches` it replaces, not a precedence choice over a
+        case that occurs), and ``session_id`` defaults to "main" when absent
+        (the same legacy/default-session fallback ``_matches_agent`` documents
+        above)."""
+        agent_name = event.get("target")
+        if agent_name is None:
+            agent_name = event.get("agent")
+        if agent_name is None:
+            return None
+        return (agent_name, event.get("session_id", "main"))
 
     def _apply_one(self, event: dict) -> None:
         kind = event.get("kind")
