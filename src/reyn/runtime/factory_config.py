@@ -43,6 +43,14 @@ class SessionFactoryConfig:
     # #2548 PR-A: enabled skill registry snapshot (list[SkillEntry]), built from
     # config.skills. Uniform config-derived arg → reaches all factory sites.
     available_skills: Any
+    # #3100 Axis 4: same-name-across-config-tiers collision map for skills
+    # (``{name: [tier, tier, ...]}``), extracted from ``config.skills.
+    # _collisions`` (built by ``config.loader._merge``'s skills branch while
+    # tiers are still separate). Threaded uniformly so the operator-explicit
+    # ``:skill`` invocation path (``reyn.interfaces.skill_invoke``) can fire a
+    # LOUD audit-event + warning instead of silently resolving to whichever
+    # tier happened to load last.
+    skill_collisions: Any
     # #2575: the populated PipelineRegistry, built ONCE per frontend from
     # config.pipelines (disk scan → parse → register). Threaded to every Session
     # (incl. spawns, which reuse this bundle) so the pipelines dir is parsed once
@@ -106,6 +114,13 @@ class SessionFactoryConfig:
             # #2548 PR-A: build the enabled skill registry once here (filtered to
             # enabled=True) so every factory site threads the same snapshot.
             available_skills=build_skill_registry(config.skills),
+            # #3100 Axis 4: raw collision map built at merge time; empty dict
+            # when config.skills isn't a mapping (lenient, mirrors every other
+            # ``.get`` read of this raw dict elsewhere in the loader).
+            skill_collisions=(
+                config.skills.get("_collisions", {})
+                if isinstance(config.skills, dict) else {}
+            ),
             # #2575: built once here (empty when project_root is unknown).
             pipeline_registry=pipeline_registry,
             # FP-0054 PR-C: built once here from config.presentations.

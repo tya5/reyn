@@ -47,6 +47,11 @@ class CapabilityScope:
     excluded_categories: "frozenset[str] | set[str] | None" = None
     contextual_permission: "object | None" = None
     available_skills: Any = None
+    # #3100 Axis 4: same-name-across-config-tiers collision map for skills
+    # (``{name: [tier, ...]}``), threaded from ``SessionFactoryConfig.
+    # skill_collisions`` so ``:skill`` invocation can fire a LOUD warning
+    # instead of a silent shadow. None/absent -> {} (no collisions known).
+    skill_collisions: Any = None
 
 
 @dataclass(frozen=True)

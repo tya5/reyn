@@ -122,8 +122,19 @@ def _as_config_dict(val: object, key: str) -> dict:
     return val
 
 
-def _merge(base: dict, override: dict) -> dict:
-    """Merge override into base. models and permissions dicts are shallow-merged; all other keys override."""
+def _merge(base: dict, override: dict, *, tier_label: str | None = None) -> dict:
+    """Merge override into base. models and permissions dicts are shallow-merged; all other keys override.
+
+    ``tier_label`` (#3100 Axis 4) is an OPTIONAL provenance tag identifying
+    which config layer *override* came from (e.g. ``"user_global"`` /
+    ``"project"`` / ``"dynamic"``). It is consulted ONLY by the ``skills``
+    branch below, to build a same-name-across-tiers collision map for the
+    operator-explicit ``:skill`` invocation namespace (#3100 Axis 4: LOUD
+    collision — never a silent shadow). Every other caller of ``_merge``
+    omits it (default ``None``), which is a no-op — byte-identical to the
+    pre-#3100 merge for every non-skills key and for a skills merge with no
+    label supplied.
+    """
     result = dict(base)
     for key, val in override.items():
         if val is None:
@@ -219,10 +230,42 @@ def _merge(base: dict, override: dict) -> dict:
             existing = result.get("skills", {})
             existing_entries = existing.get("entries", {}) if isinstance(existing, dict) else {}
             new_entries = val.get("entries", {}) if isinstance(val, dict) else {}
+            # #3100 Axis 4: track WHICH tier last declared each skill name, and
+            # record a collision the moment a second, DIFFERENTLY-labeled tier
+            # declares the same name. This is the only point in the config
+            # pipeline that still sees every tier one at a time (load_config
+            # calls _merge sequentially, tier by tier) — once entries are
+            # unioned below, the losing tier's declaration is gone for good.
+            # ``_provenance``/``_collisions`` are internal bookkeeping keys
+            # that ride along inside ``skills`` (harmless to every other
+            # consumer, which only reads ``entries``) until the operator
+            # `:skill` invocation path (reyn.interfaces.skill_invoke) reads
+            # ``_collisions`` to fire a LOUD audit-event + warning instead of
+            # silently resolving to the last-tier-wins entry.
+            existing_provenance = (
+                existing.get("_provenance", {}) if isinstance(existing, dict) else {}
+            )
+            collisions = {
+                k: list(v)
+                for k, v in (existing.get("_collisions", {}) if isinstance(existing, dict) else {}).items()
+            }
+            new_provenance = dict(existing_provenance)
+            if tier_label is not None:
+                for name in new_entries:
+                    prior_tier = existing_provenance.get(name)
+                    if prior_tier is not None and prior_tier != tier_label:
+                        tiers = collisions.setdefault(name, [prior_tier])
+                        if prior_tier not in tiers:
+                            tiers.append(prior_tier)
+                        if tier_label not in tiers:
+                            tiers.append(tier_label)
+                    new_provenance[name] = tier_label
             result["skills"] = {
                 **existing,
                 **val,
                 "entries": {**existing_entries, **new_entries},
+                "_provenance": new_provenance,
+                "_collisions": collisions,
             }
         elif key == "pipelines" and isinstance(val, dict):
             # Pipeline registry entries union across config tiers — mirrors the
@@ -487,19 +530,19 @@ def load_config(cwd: Path | None = None) -> ReynConfig:
     # install op — and ships EMPTY in F3a (mechanism only; F3b populates the
     # exemplar content), so this merge is presently a no-op.
     from reyn.builtin.registry import build_builtin_config
-    merged = _merge(merged, build_builtin_config())
+    merged = _merge(merged, build_builtin_config(), tier_label="builtin")
 
     # User global
     user_global = _load_yaml(Path.home() / ".reyn" / "config.yaml")
-    merged = _merge(merged, user_global)
+    merged = _merge(merged, user_global, tier_label="user_global")
 
     # Project + local
     project_root = _find_project_root(cwd)
     if project_root:
         project = _load_yaml(project_root / "reyn.yaml")
-        merged = _merge(merged, project)
+        merged = _merge(merged, project, tier_label="project")
         project_local = _load_yaml(project_root / "reyn.local.yaml")
-        merged = _merge(merged, project_local)
+        merged = _merge(merged, project_local, tier_label="project_local")
 
         # Issue #470: dynamic MCP registry separated from static config.
         # ``.reyn/mcp.yaml`` carries op-managed server entries; merged
@@ -533,7 +576,7 @@ def load_config(cwd: Path | None = None) -> ReynConfig:
         # branch above. #2548 PR-B: this file is also in _HOT_RELOAD_FILES
         # (the IN-set) so skill declarations hot-reload at the turn boundary.
         dynamic_skills = _load_yaml(project_root / ".reyn" / "config" / "skills.yaml")
-        merged = _merge(merged, dynamic_skills)
+        merged = _merge(merged, dynamic_skills, tier_label="dynamic")
 
         # Pipeline registry separated from static config — same #470 invariant
         # as skills/MCP. .reyn/config/pipelines.yaml carries project-local

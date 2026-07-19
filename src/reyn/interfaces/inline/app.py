@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import time
 from dataclasses import dataclass
 from typing import Callable
@@ -87,6 +88,70 @@ class _SlashCompleter(Completer):
 
 
 _SLASH_COMPLETER = _SlashCompleter()
+
+
+@dataclass(frozen=True)
+class _SkillCompletionCandidate:
+    """Adapts a ``read_model.snapshot()["skills"]`` dict (``{"name": ...}``,
+    see ``_extract_skills``) to the attribute shape
+    ``reyn.interfaces.skill_invoke.skill_invoke_completions`` expects
+    (mirrors ``SkillEntry``'s ``name``/``description``/``enabled``/
+    ``visibility``), so the TUI completer reuses the SAME pure filtering
+    function the invocation path's tests exercise, rather than
+    re-implementing the menu/on_demand/hidden filter inline."""
+
+    name: str
+    description: str = ""
+    enabled: bool = True
+    visibility: str = "menu"
+
+
+class _SkillInvokeCompleter(Completer):
+    """Autocomplete the CURRENTLY-TYPED ``:name`` token (#3100 Axis 6, owner-
+    mandated TUI completion, reusing this exact completion mechanism —
+    ``_SlashCompleter`` above — for the separate ``:`` namespace).
+
+    Only the LAST ``:name`` token (no following space) is a completion
+    target: once a space follows a resolved ``:name``, we're past the point
+    of completing IT — a further ``:name2`` (stacking, #3100 Axis 3) or
+    trailing args are not name-completion targets. Reads skill names from
+    the SAME ``read_model.snapshot()["skills"]`` list the status-bar "more"
+    chip already displays (``_extract_skills``) — a config-derived name
+    list, not visibility-filtered by the live per-session toggle; a stale/
+    hidden suggestion here is a completion-UX nicety gap, not a security
+    concern (``:name`` invocation itself still enforces the `menu`/
+    `on_demand`/`hidden` surface, see ``Session._maybe_handle_skill_invoke``
+    -> ``invocable_skill_names``).
+    """
+
+    _TOKEN_RE = re.compile(r"(?:^|\s):([A-Za-z0-9_-]*)$")
+
+    def __init__(self, read_model) -> None:
+        self._read_model = read_model
+
+    def get_completions(self, document, complete_event):
+        text = document.text_before_cursor
+        if "\n" in text:
+            return
+        m = self._TOKEN_RE.search(text)
+        if not m:
+            return
+        prefix = m.group(1)
+        try:
+            snap = self._read_model.snapshot() or {}
+        except Exception:  # noqa: BLE001 — a completer must never crash input
+            return
+        from reyn.interfaces.skill_invoke import skill_invoke_completions
+        candidates = [
+            _SkillCompletionCandidate(name=str(s.get("name", "")))
+            for s in (snap.get("skills") or [])
+            if s.get("name")
+        ]
+        for name, summary in skill_invoke_completions(prefix, candidates):
+            yield Completion(
+                name, start_position=-len(prefix),
+                display=f":{name}", display_meta=summary,
+            )
 
 # Maximum rows the above-input region (interventions, /rewind picker) may occupy.
 # Capping prevents prompt_toolkit "Window too small" when the picker has more rows
@@ -1017,9 +1082,14 @@ async def run_inline_input(read_model, renderer, config=None, transport=None) ->
     # see the "enter" binding below, which inverts it. FileHistory already
     # round-trips multi-line entries natively ("+"-prefixed continuation lines,
     # history.py:297-306) — no reyn-side change needed there.
+    # #3100 Axis 6: merge the `/` slash completer with a per-app `:` skill
+    # completer (the latter needs a live `read_model` reference, so it can't
+    # be a module-level singleton like `_SLASH_COMPLETER`).
+    from prompt_toolkit.completion import merge_completers
     buf = Buffer(
         multiline=True, history=history,
-        completer=_SLASH_COMPLETER, complete_while_typing=True,
+        completer=merge_completers([_SLASH_COMPLETER, _SkillInvokeCompleter(read_model)]),
+        complete_while_typing=True,
     )
     # sel: which main chip; open: its detail/picker shown. The dropdown's
     # selectable cursor lives in `menu_region` (the below-input Region hosting

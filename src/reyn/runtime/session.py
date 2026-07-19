@@ -997,6 +997,7 @@ class Session:
         excluded_categories = capability_scope.excluded_categories
         contextual_permission = capability_scope.contextual_permission
         available_skills = capability_scope.available_skills
+        skill_collisions = capability_scope.skill_collisions
         task_backend = task_wiring.task_backend
         task_waker = task_wiring.task_waker
         presentation_registry = presentation_wiring.presentation_registry
@@ -1075,6 +1076,10 @@ class Session:
         self._action_retrieval = action_retrieval_config or ActionRetrievalConfig()
         # Enabled skill registry snapshot for the ## Skills block; None -> omitted section (#2548 PR-A)
         self._available_skills = available_skills
+        # #3100 Axis 4: same-name-across-config-tiers collision map, consulted
+        # by ``:skill`` invocation (reyn.interfaces.skill_invoke) to fire a
+        # LOUD audit-event + warning instead of a silent shadow.
+        self._skill_collisions: dict = skill_collisions or {}
         self._chat_tool_use_scheme = chat_tool_use_scheme  # #1593 PR-2, passed to RouterLoopDriver below
         # RouterLoop awaits the embedding index build synchronously on turn 1 when True (B25-S5-1 fix, see session-construction.md#family-5-retrieval)
         self._eager_embedding_build = eager_embedding_build
@@ -5398,6 +5403,19 @@ class Session:
         if text.startswith("/"):
             if await self._maybe_handle_slash(text):
                 return
+        # #3100: operator-explicit `:skill [:skill2 ...] [trailing]` skill
+        # invocation — a namespace separate from `/` (Axis 4: syntactic
+        # closed-type distinction, not a runtime precedence lookup). Unlike
+        # slash (an OS-executed handler), a successful `:` invocation
+        # REPLACES `text` with the composed skill body(ies) + trailing args
+        # and falls through into the ordinary router turn below — one turn,
+        # one LLM wake, however many skills were stacked (Axis 2/3).
+        if text.lstrip().startswith(":"):
+            skill_consumed, skill_text = await self._maybe_handle_skill_invoke(text)
+            if skill_consumed is True:
+                return
+            if skill_consumed is False:
+                text = skill_text or text
         # If a spawned run is waiting on a user intervention (ask_user or
         # permission prompt), route this input to that intervention instead of
         # starting a fresh router turn.
@@ -6521,6 +6539,117 @@ class Session:
     # live in ``src/reyn/runtime/slash/`` per the cli-redesign plan.
     # ``_resolve_intervention_id`` / ``_deliver_answer_to`` stay here as
     # session-state helpers the slash modules call back into.
+
+    async def _maybe_handle_skill_invoke(
+        self, text: str,
+    ) -> "tuple[bool | None, str | None]":
+        """Dispatch ``:skill [:skill2 ...] [trailing]`` (#3100 operator-explicit
+        skill invocation — see ``reyn.interfaces.skill_invoke`` module docstring
+        for the full design). Returns ``(consumed, replacement_text)``:
+
+        - ``(None, None)`` — *text* is not a `:` invocation at all; the caller
+          proceeds with the ORIGINAL text unchanged (falls through to the
+          intervention router / a fresh turn exactly as before #3100).
+        - ``(True, None)`` — recognized as a `:` invocation but it failed
+          (unknown skill name) or was a discovery request (bare ``:`` /
+          ``:list``); the reply/error was already put on the outbox — the
+          caller MUST stop, no router turn fires for this message.
+        - ``(False, text)`` — success; the caller replaces its working
+          ``text`` with the returned composed skill-body(ies) + trailing
+          args and continues into the ordinary turn pipeline below, so
+          however many skills were stacked, the model sees them in ONE
+          turn (Axis 2: skills are always LLM-wake, never mechanical;
+          Axis 3: stacking is "load N SKILL.md bodies into one wake").
+        """
+        from reyn.interfaces.skill_invoke import (
+            invocable_skill_names,
+            parse_skill_invocation,
+            read_skill_frontmatter_meta,
+            resolve_skill_body,
+            substitute_arguments,
+            suggest_unknown_skill,
+        )
+
+        stripped = text.strip()
+        if stripped in (":", ":list"):
+            known = invocable_skill_names(self._available_skills)
+            listing = ", ".join(f":{n}" for n in known) if known else "(none registered)"
+            await self._put_outbox(OutboxMessage(
+                kind="system", text=f"installed skills: {listing}",
+            ))
+            return True, None
+
+        parsed = parse_skill_invocation(text)
+        if parsed is None:
+            return None, None
+
+        known_names = invocable_skill_names(self._available_skills)
+        entries_by_name = {
+            e.name: e for e in (self._available_skills or []) if e.name in known_names
+        }
+
+        resolved = []
+        for name in parsed.names:
+            entry = entries_by_name.get(name)
+            if entry is None:
+                # Axis 5: explicit, actionable error — never a silent no-op.
+                suggestions = suggest_unknown_skill(name, known_names=known_names)
+                hint = ", ".join(f":{n}" for n in suggestions) if suggestions else "(no skills registered)"
+                await self._put_outbox(OutboxMessage(
+                    kind="error",
+                    text=f"no skill ':{name}' — try: {hint} / :list for every invocable skill",
+                ))
+                return True, None
+            # Axis 4: same-name-across-config-tiers collision — LOUD, never a
+            # silent shadow. `self._skill_collisions` is built at config-merge
+            # time (config.loader._merge's skills branch, #3100) while tiers
+            # are still separate; by the time `entry` is resolved above, the
+            # merge has already picked the winner (last tier wins) — this is
+            # the audit trail + operator-visible warning that a losing
+            # declaration existed at all.
+            tiers = self._skill_collisions.get(name)
+            if tiers:
+                self._chat_events.emit(
+                    "skill_invoke_collision", name=name, tiers=list(tiers),
+                )
+                await self._put_outbox(OutboxMessage(
+                    kind="system",
+                    text=(
+                        f"note: ':{name}' is declared in multiple config sources "
+                        f"({', '.join(tiers)}); using the most specific one. "
+                        "Rename one of them to disambiguate."
+                    ),
+                ))
+            resolved.append(entry)
+
+        project_dir = self._hot_reload_project_root()
+        parts: list[str] = []
+        for entry in resolved:
+            try:
+                body = resolve_skill_body(entry.path, project_dir=project_dir)
+            except (OSError, UnicodeDecodeError) as exc:
+                await self._put_outbox(OutboxMessage(
+                    kind="error",
+                    text=f":{entry.name} failed to load ({entry.path}): {exc}",
+                ))
+                return True, None
+            meta = read_skill_frontmatter_meta(body)
+            substituted = substitute_arguments(
+                body, trailing=parsed.trailing, arg_spec=meta.arguments,
+            )
+            parts.append(f"[:{entry.name}]\n{substituted}")
+            # Audit trail: mirrors `skill_body_loaded` (the ordinary file-read
+            # op's skill-load event, reyn.core.op_runtime.file), scoped to the
+            # explicit `:` path specifically so a replay can tell "the model
+            # read this on its own" apart from "the operator explicitly asked".
+            self._chat_events.emit(
+                "skill_invoke_body_loaded", name=entry.name, path=entry.path,
+            )
+
+        composed = "\n\n".join(parts)
+        if parsed.trailing:
+            composed = f"{composed}\n\n{parsed.trailing}"
+        return False, composed
 
     # ── RouterLoop helper methods (Wave 3 F1, kept for session callbacks) ──────────
     # _make_router_op_context + 3 helpers remain on Session because the
