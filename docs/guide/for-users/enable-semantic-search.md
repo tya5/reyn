@@ -133,8 +133,12 @@ If you skip both Case A and Case B and still ask the LLM to "find an action for 
 
 ```bash
 $ reyn embeddings status
-NAME        BACKEND  MODEL                                LAST_BUILT
-standard    litellm  openai/text-embedding-3-small        2026-07-19T12:00:00+00:00
+
+NAME      BACKEND  MODEL                           CACHE_PATH                  SIZE_MB  ACTIONS  LAST_BUILT
+────────────────────────────────────────────────────────────────────────────────────────────────────────────
+light     litellm  openai/text-embedding-3-small   .reyn/cache/index/actions      0.31       87  (never)
+standard  litellm  openai/text-embedding-3-small   .reyn/cache/index/actions      0.31       87  2026-05-27T19:02:00+00:00
+strong    litellm  openai/text-embedding-3-large   .reyn/cache/index/actions      0.31        0  (never)
 ```
 
 **The pre-flight curl fails** — see the failure signatures under [§ Pre-flight](#pre-flight-confirm-the-endpoint-actually-answers-do-this-before-opting-in) above: 401 (bad key), 404 (model name / proxy `model_list` mismatch), 400 unsupported-param (missing proxy `drop_params: true`, #1616), connection refused (nothing listening / wrong `LITELLM_API_BASE`).
