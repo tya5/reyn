@@ -91,12 +91,12 @@ def test_retrieval_scheme_with_embedding_class_loads_cleanly(tmp_path: Path) -> 
 tool_use:
   chat: retrieval
 action_retrieval:
-  embedding_class: local-mini
+  embedding_class: standard
 """,
     )
     cfg: ReynConfig = load_config(cwd=tmp_path)
     assert cfg.tool_use.chat == "retrieval"
-    assert cfg.action_retrieval.embedding_class == "local-mini"
+    assert cfg.action_retrieval.embedding_class == "standard"
 
 
 def test_other_schemes_do_not_require_embedding(tmp_path: Path) -> None:

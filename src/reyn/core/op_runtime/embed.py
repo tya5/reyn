@@ -7,8 +7,8 @@ hosts a user RAG store) AND the shared logic Phase 2's `index_update` /
 duplicated embed logic, split only by audience surface.
 
 Reuses the existing `EmbeddingProvider` (`get_provider` -> the
-`RoutingEmbeddingProvider`, the sole embedder — local sentence-transformers +
-API classes are handled INSIDE the provider). This handler batches nothing
+`LiteLLMEmbeddingProvider`, the sole embedder — reyn depends on litellm
+exclusively for embeddings, #3128). This handler batches nothing
 itself: `provider.embed()` already internally splits into
 `embedding.batch_size` (default 100) sized API calls; the op contract is
 simply list-in -> list-out (ADR-0033 §2.1 / FP-0057 design "batch: list ->
@@ -71,7 +71,7 @@ def _resolve_provider(event_sink=None):
     """Resolve the embedding provider (env override + reyn.yaml embedding config).
 
     Mirrors `op_runtime.semantic_search._resolve_provider` — both call sites
-    resolve the SAME shared `EmbeddingProvider` (`RoutingEmbeddingProvider` via
+    resolve the SAME shared `EmbeddingProvider` (`LiteLLMEmbeddingProvider` via
     `get_provider`); semantic_search's provider-direct query embed and this
     op's batch embed are independent call sites into one shared provider, not
     duplicated embedding logic. Kept as a small local helper (not a

@@ -1,42 +1,41 @@
 """Reyn embedding infrastructure — public API.
 
 Provider registry pattern:
-  - Default provider (``get_provider("litellm")``): RoutingEmbeddingProvider
-    which dispatches by resolved model prefix to either the LiteLLM
-    backend (= openai/* and other LiteLLM-routable models) or the
-    sentence-transformers backend (= ``sentence-transformers/<id>``,
-    FP-0043 local-embed extras).
-  - The ``"litellm"`` provider name is preserved for backward compat —
-    existing consumers receive a wrapper whose LiteLLM-backed behaviour
-    is byte-identical to the old direct LiteLLMEmbeddingProvider; the
-    only change is that ``sentence-transformers/`` models are now
-    routable through the same factory.
+  - Default provider (``get_provider("litellm")``): ``LiteLLMEmbeddingProvider``,
+    the sole embedding backend. Reyn depends on litellm exclusively for
+    embeddings — no in-process model backend — so every embedding class
+    (``light`` / ``standard`` / ``strong`` and any operator-defined class in
+    ``embedding.classes``) resolves through litellm's provider routing
+    (``openai/*`` and any other litellm-routable model string).
   - Operators can register additional providers via register_provider().
 
-Layers (ADR-0033 + FP-0043):
+History: FP-0043 Phase 2 added a local sentence-transformers backend behind
+a ``RoutingEmbeddingProvider`` prefix-dispatch wrapper. #3128 removed the
+in-process backend (reyn depends on litellm exclusively; local embedding
+models are reached, if desired, via a litellm-fronted proxy) — the wrapper
+had become a pure pass-through to ``LiteLLMEmbeddingProvider`` and was
+collapsed away. ``get_provider("litellm")`` now returns
+``LiteLLMEmbeddingProvider`` directly.
+
+Layers (ADR-0033):
   - LiteLLM passthrough (litellm.aembedding) — ADR-0033 Phase 1
   - Cost preflight estimator
   - Static dimension table
-  - Local sentence-transformers backend — FP-0043 Phase 2 (extras-gated)
-  - Provider-prefix dispatch routing — FP-0043 Phase 2 Component A
 """
 from __future__ import annotations
 
+import inspect
 from typing import Any
 
 from reyn.data.embedding.cost_estimator import CostEstimate, estimate_indexing_cost
 from reyn.data.embedding.litellm_provider import LiteLLMEmbeddingProvider
 from reyn.data.embedding.provider import EmbedBatchResult, EmbeddingProvider
-from reyn.data.embedding.router_provider import RoutingEmbeddingProvider
 
-# Registry maps provider name → factory class. The ``"litellm"`` slot
-# points at the routing wrapper so callers using the historical name
-# transparently pick up the local-embed dispatch path; the bare
-# ``LiteLLMEmbeddingProvider`` stays available under ``"litellm-only"``
-# for tests / callers that want to bypass routing explicitly.
+# Registry maps provider name → factory class. The ``"litellm"`` slot is the
+# default and only built-in backend; ``"litellm-only"`` is kept as an alias
+# for callers/tests that want to name the concrete class explicitly.
 _PROVIDERS: dict[str, type] = {
-    "litellm": RoutingEmbeddingProvider,
-    "routing": RoutingEmbeddingProvider,
+    "litellm": LiteLLMEmbeddingProvider,
     "litellm-only": LiteLLMEmbeddingProvider,
 }
 
@@ -61,19 +60,15 @@ def get_provider(
     """Instantiate and return an EmbeddingProvider by name.
 
     Args:
-        name:   Provider name. Default ``"litellm"`` returns the routing
-                wrapper (= dispatches by model prefix; sentence-
-                transformers backend is reached when the resolved model
-                carries the ``sentence-transformers/`` prefix).
+        name:   Provider name. Default ``"litellm"`` returns
+                ``LiteLLMEmbeddingProvider``.
         config: Provider configuration dict (e.g. reyn.yaml ``embedding:``
                 section). Empty dict used when None.
-        event_sink: Optional ``(kind, text, meta) -> None`` callable
-                forwarded to backends that emit lifecycle events (= the
-                routing wrapper passes it through to the lazily-built
-                sentence-transformers backend for model-load
-                notifications). Passed only to provider classes that
-                accept the kwarg; ignored otherwise.
-                FP-0043 Component C.3 onboarding UX.
+        event_sink: Optional ``(kind, text, meta) -> None`` callable forwarded
+                to backends that accept the kwarg. ``LiteLLMEmbeddingProvider``
+                does not accept it (no lazy-load lifecycle to report on), so
+                it is silently ignored for the default provider — kept on the
+                signature for registered custom providers that do consume it.
 
     Returns:
         An EmbeddingProvider instance.
@@ -82,7 +77,7 @@ def get_provider(
         KeyError: if name is not registered.
     """
     cls = _PROVIDERS[name]
-    if event_sink is not None and cls is RoutingEmbeddingProvider:
+    if event_sink is not None and "event_sink" in inspect.signature(cls).parameters:
         return cls(config or {}, event_sink=event_sink)  # type: ignore[call-arg]
     return cls(config or {})  # type: ignore[call-arg]
 
@@ -91,7 +86,6 @@ __all__ = [
     "EmbeddingProvider",
     "EmbedBatchResult",
     "LiteLLMEmbeddingProvider",
-    "RoutingEmbeddingProvider",
     "CostEstimate",
     "estimate_indexing_cost",
     "register_provider",

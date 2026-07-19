@@ -68,22 +68,25 @@ def test_none_class_is_noop():
     assert cfg.action_retrieval.embedding_class is None
 
 
-def test_default_classes_keep_local_mini_resolvable():
-    """Tier 2: #1454 — an operator who opts IN to local-mini (builtin classes
-    intact, which include local-mini) is NOT degraded: local-mini resolves
+def test_default_classes_keep_standard_resolvable():
+    """Tier 2: #1454 — an operator who opts IN to a builtin class (registry
+    intact, which includes 'standard') is NOT degraded: 'standard' resolves
     normally.
 
     Since the semantic-search-opt-in fix (2026), ``ReynConfig()`` defaults
-    ``embedding_class`` to None (off) rather than "local-mini" — so this
+    ``embedding_class`` to None (off) rather than a truthy default — so this
     test explicitly opts in via ``ActionRetrievalConfig(embedding_class=...)``
     rather than relying on the zero-config default, to isolate the
     reconciliation behavior (builtin classes registry membership) from the
-    separate opt-in-off default-value concern.
+    separate opt-in-off default-value concern. (#3128 removed the
+    sentence-transformers-backed 'local-mini' / 'local-e5' builtin classes
+    this test previously opted into; 'standard' — litellm/openai-backed,
+    unaffected by that removal — exercises the same reconciliation path.)
     """
-    cfg = ReynConfig(action_retrieval=ActionRetrievalConfig(embedding_class="local-mini"))
-    assert cfg.action_retrieval.embedding_class == "local-mini"
+    cfg = ReynConfig(action_retrieval=ActionRetrievalConfig(embedding_class="standard"))
+    assert cfg.action_retrieval.embedding_class == "standard"
     _reconcile_embedding_class(cfg)
-    assert cfg.action_retrieval.embedding_class == "local-mini"
+    assert cfg.action_retrieval.embedding_class == "standard"
 
 
 def test_zero_config_default_is_off_and_reconciliation_is_noop():
