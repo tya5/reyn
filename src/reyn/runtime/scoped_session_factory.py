@@ -140,6 +140,7 @@ def build_scoped_chat_session(
             excluded_categories=excluded_categories,
             contextual_permission=contextual_permission,
             available_skills=factory_config.available_skills,  # #2548 PR-A
+            skill_collisions=factory_config.skill_collisions,  # #3100 Axis 4
         ),
         task_wiring=TaskWiring(
             task_backend=task_backend,  # #1953 slice R

@@ -76,6 +76,76 @@ carve-out scoped to the package's `skills/` and `pipelines/` directories, so
 they read cleanly in a non-interactive run without an operator to approve
 anything.
 
+## Operator-explicit invocation: the `:skill` namespace (#3100)
+
+The model reads a skill on its own when it judges the task matches the L1
+menu / `skill_list` description (above). An **operator** can also invoke a
+skill explicitly by typing `:name [trailing args]` at the chat prompt — a
+namespace **separate from** `/` slash commands (`reyn.interfaces.slash`),
+deliberately: a slash command is OS-executed Python; a skill is always
+model-instructions the LLM follows (Axis 2 below). Splitting them onto their
+own prefixes makes "is this a skill or a built-in?" a syntactic, closed-type
+distinction rather than a runtime name-precedence lookup — the root cause
+class of Claude Code issue #13586 (an undocumented `/` shadow between a
+skill and a built-in command).
+
+`:skill` still reuses the exact mechanism above — reading `SKILL.md` (skill-
+load token expansion included) IS the invocation, no `skill__<name>` op
+exists for it either (`reyn.interfaces.skill_invoke.resolve_skill_body`
+calls the same `read_builtin_body_bytes` / `load_skill_body` primitives the
+ordinary file-read op's skill-load pass uses).
+
+**Stacking.** `:a :b <trailing>` invokes both skills in ONE turn — one LLM
+wake loads both `SKILL.md` bodies into context, capped at 6 stacked names
+(Claude Code's own limit). Expansion stops at the first token that isn't
+`:name`-shaped; everything after that (including a further `:something` once
+the cap or a non-`:` token is hit) is trailing text, not another stacked
+skill.
+
+**Parameters.** `$ARGUMENTS` (the whole trailing text) / `$0`/`$1`/... (a
+shell-style-quoted positional split of the trailing text) / `$name`
+(frontmatter `arguments:` named positions) / `\$` escapes a literal `$`. The
+trailing text is dual-purpose (Claude Code convention): it fills any
+placeholders AND is always appended to the composed message as additional
+instructions, even when the skill body has no placeholder at all. Two new
+`SKILL.md` frontmatter keys support this: `arguments` (a list of `{name,
+description}`, positional) and `argument-hint` (a display string, currently
+parsed but not yet surfaced anywhere the operator sees before typing — no
+consumer wired yet). `disable-model-invocation` (Claude Code's "user-
+invocable only" flag) is **not yet read** by this module — enforcing it
+would mean reading every registered skill's frontmatter at prompt-build
+time, which conflicts with `on_demand`'s "costs nothing until read"
+invariant above; it needs its own caching design and stays open.
+
+**Collision — LOUD, never silent.** The `:` namespace structurally avoids a
+skill-vs-built-in shadow, but a same-NAME collision across `skills.entries`
+config tiers can still happen (`~/.reyn/config.yaml` vs `reyn.yaml` vs a
+`skill_management__install_*`-written `.reyn/config/skills.yaml`).
+`reyn.config.loader._merge` tags each tier while merging and records any
+name that appears under two different tier labels into
+`config.skills["_collisions"]`; the LAST tier still wins (unchanged
+resolution), but `:name` invocation of a collided name fires BOTH a
+`skill_invoke_collision` audit-event and an operator-visible outbox warning
+naming the tiers involved — never a silent shadow.
+
+**Unknown name.** `:typo` never falls through as a no-op — it errors with a
+closest-match suggestion (prefix + fuzzy match, same algorithm as an unknown
+`/command`) and a pointer to `:list`. A bare `:` or `:list` lists every
+`:`-invocable skill (same `menu` + `on_demand` surface `skill_list` returns
+— `hidden` reaches no surface, including this one).
+
+**No new permission gate.** `:name` resolves against the operator's OWN
+registered `skills.entries` — a set already declared in config or installed
+through a permission-gated `skill_management__install_*` call. Reading that
+entry's `SKILL.md` for the operator grants no capability beyond what the
+operator already put there themselves (there is no LLM choosing the path),
+so `:skill` does not add a `require_file_read` gate around the read.
+
+Implementation: `reyn.interfaces.skill_invoke` (the parser / substitution /
+collision-lookup helpers, pure functions) and
+`Session._maybe_handle_skill_invoke` (the dispatch point in
+`_handle_user_message`, mirroring `_maybe_handle_slash`'s shape).
+
 ## Skill-load variable expansion
 
 Reading a `SKILL.md` body is not a byte-identical file read: the `file` read
