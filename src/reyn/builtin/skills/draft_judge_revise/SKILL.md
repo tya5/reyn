@@ -22,7 +22,7 @@ judge. Do not oversell it as one.
 1. **Draft.** Produce the artifact as you normally would (write the summary,
    the section, the email).
 2. **Self-review via a schema-validated agent step.** Run a small pipeline
-   (via `run_pipeline_inline`, see the worked example below) whose one step
+   (via `pipeline__run_inline`, see the worked example below) whose one step
    is an `agent:` step with `schema:` set to a small schema you declare
    (e.g. `{score: number, reason: string}`). The `schema:` **constrains the
    agent's generation and validates the parsed result** -- the OS's actual
@@ -41,7 +41,7 @@ judge. Do not oversell it as one.
 
 **Worked example** -- a self-review pipeline definition scoring a drafted
 paragraph (this exact YAML is CI-verified: it parses via the real pipeline
-parser and passes the real `run_pipeline_inline` static-analysis gate --
+parser and passes the real `pipeline__run_inline` static-analysis gate --
 schema ref resolves, no nested launch, agent-step identity unset):
 
 ```yaml
@@ -64,7 +64,7 @@ fields:
 Launch it with:
 
 ```
-run_pipeline_inline(
+pipeline__run_inline(
   definition="<the two documents above>",
   input={draft: "Reyn is an agent OS: it makes every LLM-driven action typed, permissioned, audited, and recoverable by construction."},
 )
