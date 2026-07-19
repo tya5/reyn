@@ -56,9 +56,16 @@ the L1 menu / ``skill_list`` while keeping it `:`-reachable) requires reading
 every registered skill's frontmatter at prompt-build time, which conflicts
 with the "on_demand costs nothing until read" design invariant
 (``docs/concepts/tools-integrations/skills.md``) — it needs its own caching
-design, not a bolt-on here. ``arguments`` and ``argument-hint`` (both fully
-wired: substitution + TUI hint respectively) were the two items the design
-doc treated as settled.
+design, not a bolt-on here. ``arguments`` is fully wired (it drives the
+``$name`` substitution in :func:`substitute_arguments`). ``argument-hint``
+is **parsed only** (:func:`read_skill_frontmatter_meta` reads it into
+:class:`SkillFrontmatterMeta`) but **not yet consumer-wired** — the TUI `:`
+completion (:func:`skill_invoke_completions`) surfaces each candidate's
+``description``, NOT its ``argument_hint``, and no other surface reads it.
+Displaying ``argument_hint`` as a TUI hint (the way the `/`-command picker
+shows a ``usage`` line) is an **open gap**, tracked the same way as
+``disable-model-invocation`` above — parsed so a SKILL.md author can already
+declare it, wired to a consumer in a follow-up.
 """
 from __future__ import annotations
 
