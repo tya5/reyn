@@ -4,7 +4,10 @@ object (single source of truth) — the only construction path since
 and removed the 9 duplicate flat identity kwargs (``agent_name`` /
 ``agent_role`` / ``model`` / ``permission_resolver`` / ``workspace_base_dir``
 / ``workspace_state_dir`` / ``sandbox_config`` / ``sandbox_backend`` /
-``environment_backend``).
+``environment_backend``). The #3133 P0-follow-up folded a 10th identity
+field, ``agent_id``, into ``Agent`` the same way (closing the FP-0016
+Component E gap where ``Agent`` lacked the field Session's fallback
+comment already named ``agent.id``).
 
 Production construction (``scoped_session_factory.py``) builds an ``Agent``
 from the identity-owned inputs and passes it as ``agent=`` alone (no
@@ -40,6 +43,9 @@ _AGENT_FIELD_FROM_KWARG = {
     "sandbox_config": "sandbox_config",
     "sandbox_backend": "sandbox_backend",
     "environment_backend": "environment_backend",
+    # #3133 P0-follow-up: agent_id folded into Agent (identity SSoT) — no
+    # longer a separate Session param.
+    "agent_id": "agent_id",
 }
 
 

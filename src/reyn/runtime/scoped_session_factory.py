@@ -92,7 +92,7 @@ def build_scoped_chat_session(
     # #3133 Priority-0 step-2: the 9 identity fields are POPPED from ``base``
     # (not just read) so Session — whose flat identity params were removed —
     # receives ``agent=`` exactly once, never a duplicate flat projection.
-    agent = Agent(
+    _agent_kwargs: dict[str, Any] = dict(
         agent_name=base.pop("agent_name"),
         role=base.pop("agent_role", ""),
         model=base.pop("model", "standard"),
@@ -103,6 +103,12 @@ def build_scoped_chat_session(
         sandbox_backend=sandbox_backend,
         environment_backend=environment_backend,
     )
+    # #3133 P0-follow-up: agent_id folds into Agent (identity SSoT) instead of
+    # a separate Session param — None means "let Agent's own default_factory
+    # (_default_agent_id) apply", matching the pre-fold fallback behaviour.
+    if agent_id is not None:
+        _agent_kwargs["agent_id"] = agent_id
+    agent = Agent(**_agent_kwargs)
     # #1953 slice 7: construct the OS TaskWaker for this session at the single
     # factory chokepoint (every frontend builds sessions here). It closes over the
     # AgentRegistry + this agent's name to resolve + wake sibling sessions on a
@@ -129,7 +135,6 @@ def build_scoped_chat_session(
     )
     return Session(
         agent=agent,
-        agent_id=agent_id,
         router_max_iterations=router_max_iterations,
         non_interactive=non_interactive,
         eager_embedding_build=eager_embedding_build,
