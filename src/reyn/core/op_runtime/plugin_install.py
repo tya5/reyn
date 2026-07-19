@@ -44,13 +44,21 @@ Pipeline (one-shot, no sub-phases):
    baked into the copied files, matching §3.4's "resolved once at copy
    time, inside the per-plugin copy dir" rule.
 7. **Materialise deps** (§3.11): when the copied plugin carries a
-   ``requirements.txt`` at its root, gate ``require_http_get`` for the
-   package index host, then ``uv venv`` + ``uv pip install`` into
-   ``<plugin_root>/.venv`` — network fetch happens HERE, at install time,
-   never at spawn. When the mcp capability's ``.mcp.json`` declares
-   ``command: "python"`` / ``"python3"``, the registered spawn command is
-   rewritten to the materialised venv's interpreter — spawn is
-   network-free by construction (the general form of #3060).
+   ``requirements.txt`` at its root, the pypi.org dep-fetch approval is
+   **derived from the install's own gate-1 write-approval** (#3048 —
+   ``session_approve_host("pypi.org", ...)`` scoped to exactly that host,
+   never a blanket http.get grant, so a separate interactive prompt is
+   never raised for it), then ``require_http_get`` is still called (config
+   deny / sandbox network-veto keep applying on top of the derive), then
+   ``uv venv`` + ``uv pip install`` into ``<plugin_root>/.venv`` — network
+   fetch happens HERE, at install time, never at spawn. Without the
+   derive, a codeact/headless dispatch (a bus wired but nothing answers
+   it) awaits that prompt indefinitely and gets guillotined by the
+   caller's compute-budget timeout. When the mcp capability's
+   ``.mcp.json`` declares ``command: "python"`` / ``"python3"``, the
+   registered spawn command is rewritten to the materialised venv's
+   interpreter — spawn is network-free by construction (the general form
+   of #3060).
 8. **Register**: for each capability the manifest declares, call the
    SAME existing register verbs — ``skill_install.handle`` /
    ``pipeline_install.handle`` for skills/pipelines (each op carries
@@ -728,6 +736,32 @@ async def handle(op: PluginInstallIROp, ctx: OpContext) -> dict:
     requirements = plugin_root / "requirements.txt"
     if requirements.is_file():
         if ctx.permission_resolver is not None:
+            # #3048: derive the pypi.org dep-fetch approval from the
+            # install's OWN write-approval (gate 1, just above) instead of
+            # raising a SEPARATE interactive http.get prompt here. Gate 1
+            # already required (and received) explicit operator/config
+            # consent for THIS install; materialising the plugin's declared
+            # deps from the standard package index is intrinsic to
+            # "install this plugin", not a distinct capability the operator
+            # is separately asked about. Without this, a codeact/headless
+            # dispatch (a bus is wired but nothing answers it) awaits this
+            # prompt indefinitely and gets guillotined by the caller's
+            # compute-budget timeout — #3048's confirmed root cause.
+            #
+            # SECURITY (confused-deputy guard): the derived grant is scoped
+            # to EXACTLY "pypi.org" — the fixed index ``uv pip install``
+            # resolves against regardless of what the plugin's
+            # requirements.txt names — never a blanket http.get grant. A
+            # plugin's install approval must not silently authorise
+            # fetching from an arbitrary host; the config-deny and
+            # sandbox-network-veto tiers inside require_http_get (checked
+            # BEFORE the persisted-approval tier this derive feeds) still
+            # apply on top of the derive, so an operator/config-level
+            # "http.get.pypi.org: deny" or a network-disabled sandbox
+            # policy still blocks materialisation.
+            ctx.permission_resolver.session_approve_host(
+                "pypi.org", ctx.actor, kind="http.get",
+            )
             sandbox = _sandbox_policy_from_ctx(ctx)
             await ctx.permission_resolver.require_http_get(
                 ctx.permission_decl, "pypi.org", ctx.intervention_bus, ctx.actor,
