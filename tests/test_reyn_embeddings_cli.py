@@ -14,7 +14,7 @@ Pins the operator-facing CLI surface:
   5. ``reyn embeddings clear`` removes the action index directory;
      an absent directory is reported as skipped.
 
-#3128 (PR-C) removed reyn's in-process sentence-transformers backend:
+#3128 (PR-C) removed reyn's in-process local-model embedding backend:
 ``backend`` is now always ``"litellm"`` (all ``embedding.classes``
 route through litellm — see ``src/reyn/config/embedding.py``) and
 ``clear`` no longer also wipes a downloaded-model cache dir. The
@@ -281,7 +281,7 @@ def test_clear_removes_index_dir(
 ) -> None:
     """Tier 2: clear removes the action index cache directory.
 
-    #3128 removed the in-process sentence-transformers backend, so
+    #3128 removed the in-process local-model embedding backend, so
     ``clear`` no longer also wipes a downloaded-model cache dir — the
     SQLite action index is the only on-disk state it manages.
     """

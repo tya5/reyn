@@ -127,7 +127,7 @@ def test_class_set_but_index_not_ready_fires_hint() -> None:
     rs = RouterCallerState(
         action_embedding_index=_NotReadyIndex(),
         embedding_provider=_FakeProvider(),
-        embedding_model_class="local-mini",
+        embedding_model_class="standard",
     )
     result = _run(LIST_ACTIONS.handler({"category": ["file"]}, _ctx(rs)))
     assert "hint" in result
@@ -137,13 +137,13 @@ def test_class_set_but_index_object_missing_fires_hint() -> None:
     """Tier 2: embedding_model_class set but action_embedding_index is None.
 
     Edge case: operator set the config but RouterLoop hasn't constructed
-    the index yet (= very early in session boot). Hint fires; the LLM
-    relays "install local-embed" which is harmless extra info.
+    the index yet (= very early in session boot). Hint fires regardless;
+    the LLM relays the install/config hint, which is harmless extra info.
     """
     rs = RouterCallerState(
         action_embedding_index=None,
         embedding_provider=_FakeProvider(),
-        embedding_model_class="local-mini",
+        embedding_model_class="standard",
     )
     result = _run(LIST_ACTIONS.handler({"category": ["file"]}, _ctx(rs)))
     assert "hint" in result
@@ -161,7 +161,7 @@ def test_ready_index_suppresses_hint() -> None:
     rs = RouterCallerState(
         action_embedding_index=_ReadyIndex(),
         embedding_provider=_FakeProvider(),
-        embedding_model_class="local-mini",
+        embedding_model_class="standard",
     )
     result = _run(LIST_ACTIONS.handler({"category": ["file"]}, _ctx(rs)))
     assert "hint" not in result
@@ -221,7 +221,7 @@ def test_items_count_when_hint_absent_matches_when_present() -> None:
     rs_ready = RouterCallerState(
         action_embedding_index=_ReadyIndex(),
         embedding_provider=_FakeProvider(),
-        embedding_model_class="local-mini",
+        embedding_model_class="standard",
     )
     rs_unready = RouterCallerState()
     r_ready = _run(LIST_ACTIONS.handler({"category": ["file"]}, _ctx(rs_ready)))

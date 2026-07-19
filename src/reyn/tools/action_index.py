@@ -74,8 +74,9 @@ Concurrency:
   - Cross-process coordination uses the shared advisory build lock
     (``reyn.data.index.build_lock.try_acquire_build_lock``) — a live
     holder means "another process is mid-build", so this call falls back
-    to whatever's on disk instead of duplicating the embed-API cost /
-    duplicate sentence-transformers model load.
+    to whatever's on disk instead of duplicating the embed-API cost of a
+    concurrent rebuild (#3128: embeddings are litellm API calls, not an
+    in-process model load).
 
 Catalog coverage (FP-0057 Phase 2b re-check): today's catalog covers
 primitive tools, MCP tools, and pipelines. There is no separate per-skill

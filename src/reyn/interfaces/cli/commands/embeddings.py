@@ -11,7 +11,7 @@ machinery that backs ``search_actions``:
   clear    wipe the cache directory entirely (= SQLite index cache
            + build lock)
 
-#3128 removed reyn's in-process sentence-transformers backend — reyn
+#3128 removed reyn's in-process local-model embedding backend — reyn
 depends on litellm exclusively for embeddings now, so this command no
 longer manages a downloaded-model cache. It still manages the SQLite
 action-index cache (``.reyn/cache/index/actions/``), which is shared
@@ -326,7 +326,7 @@ def run_clear(args: argparse.Namespace) -> None:
     unified ``.reyn/cache/index/actions/`` since FP-0057 Phase 0).
     Useful for "the cache is corrupted" or "I want to reclaim disk".
 
-    #3128 removed the in-process sentence-transformers backend, so
+    #3128 removed the in-process local-model embedding backend, so
     this no longer also wipes a downloaded-model cache — the SQLite
     action index is the only on-disk state this command manages.
     """

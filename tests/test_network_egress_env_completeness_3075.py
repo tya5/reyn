@@ -17,7 +17,8 @@ egress classes, by transport:
   registry (``reyn.mcp.registry``). Both go through the DRY
   ``reyn._ssrf_pin.ssrf_aware_urllib_opener``.
 * **third-party libs reyn does not own the client for** — ddgs (web_search),
-  huggingface_hub (local-embed download, via ``requests``), fastmcp
+  huggingface_hub (faster-whisper transcription model download, via
+  ``requests``), fastmcp
   (remote-MCP transport, via ``httpx``). These conform by the lib's own
   ``trust_env``-style default; the witness tests below RED if a lib ships a
   transport that stops honouring the env (the exact litellm-``aiohttp_trust_env``
@@ -290,7 +291,8 @@ def test_ddgs_backend_uses_standard_env_proxy_resolver() -> None:
 
 
 def test_huggingface_hub_session_trusts_env() -> None:
-    """Tier 2: degradation witness — huggingface_hub (local-embed download) uses a
+    """Tier 2: degradation witness — huggingface_hub (faster-whisper transcription
+    model download) uses a
     requests Session with trust_env=True, so it honours HTTP(S)_PROXY /
     REQUESTS_CA_BUNDLE. RED if a future HF release ships trust_env=False (the
     litellm-aiohttp_trust_env degradation, in another lib)."""

@@ -13,7 +13,7 @@ per-source convention (``<workspace_root>/.reyn/cache/index/actions/``).
   2. **Cross-process advisory lock**: when the unified cache dir's
      ``.build.lock`` carries a live PID, a concurrent ``build()`` skips
      the embed call (= no duplicate API cost / duplicate
-     sentence-transformers model load). The lock file marks holder PID +
+     embed-API cost). The lock file marks holder PID +
      timestamp atomically.
   3. **Stale-lock reaping**: a ``.build.lock`` whose recorded PID is
      dead is taken over (= no permanent deadlock after a crash).
@@ -117,13 +117,13 @@ def test_same_catalog_different_class_triggers_rebuild(
     assert provider.embed_calls == ["openai/text-embedding-3-small"]
 
     # Same catalog, different class — must re-embed even though hash matches.
-    _run(idx.build(_items(), ctx, "sentence-transformers/all-MiniLM-L6-v2"))
+    _run(idx.build(_items(), ctx, "openai/text-embedding-3-large"))
     assert provider.embed_calls == [
         "openai/text-embedding-3-small",
-        "sentence-transformers/all-MiniLM-L6-v2",
+        "openai/text-embedding-3-large",
     ]
     # Internal class tracker reflects the latest build.
-    assert idx.model_class == "sentence-transformers/all-MiniLM-L6-v2"
+    assert idx.model_class == "openai/text-embedding-3-large"
 
 
 def test_same_catalog_same_class_remains_idempotent(
@@ -170,8 +170,8 @@ def test_disk_load_rejects_model_class_mismatch(
     provider_b = _FakeProvider()
     ctx_b = _ctx_for(provider_b, monkeypatch)
     idx_b = ActionEmbeddingIndex(workspace_root=tmp_path)
-    _run(idx_b.build(_items(), ctx_b, "sentence-transformers/all-MiniLM-L6-v2"))
-    assert provider_b.embed_calls == ["sentence-transformers/all-MiniLM-L6-v2"]
+    _run(idx_b.build(_items(), ctx_b, "openai/text-embedding-3-large"))
+    assert provider_b.embed_calls == ["openai/text-embedding-3-large"]
 
 
 def test_disk_load_accepts_matching_class_and_catalog(

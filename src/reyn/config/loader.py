@@ -311,10 +311,12 @@ def _reconcile_embedding_class(cfg: "ReynConfig") -> None:
     """#1454 (c)+(d): a class-typed field is closed-world.
 
     ``action_retrieval.embedding_class`` names an entry in
-    ``embedding.classes``. If it names a class with no such entry — the
-    builtin ``local-mini`` default when the user REPLACED ``embedding.classes``
-    (config.py: user classes override the builtin registry), or a typo — the
-    alias can never resolve. Degrade semantic ``search_actions`` to off (None)
+    ``embedding.classes``. If it names a class with no such entry — e.g. the
+    user set ``embedding_class`` to a built-in class name (``light`` /
+    ``standard`` / ``strong``) and then REPLACED ``embedding.classes``
+    (config.py: user classes override the builtin registry) without keeping
+    that name, or a typo — the alias can never resolve. Degrade semantic
+    ``search_actions`` to off (None)
     with one decision-enabling log, rather than letting the dangling alias
     reach the embedding backend where it surfaces as a misleading "model not
     found" naming the alias (the owner-reported HF-blocked-company failure).
