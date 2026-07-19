@@ -64,12 +64,53 @@ def test_syscall_allowlist_includes_baseline() -> None:
 
 
 def test_syscall_allowlist_no_network_by_default() -> None:
-    """Tier 2: network syscalls absent when policy.network is False (default)."""
+    """Tier 2: egress-capable network syscalls absent when policy.network is
+    False (default). `socket`/`bind` are deliberately excluded from this
+    assertion — #3060 made them unconditional (see
+    test_syscall_allowlist_socket_and_bind_always_allowed below); neither one
+    alone can move a byte, so their presence here does not weaken the
+    network=False guarantee this test protects."""
     from reyn.security.sandbox.backends.seccomp import _build_syscall_allowlist
 
     result = _build_syscall_allowlist(SandboxPolicy())
-    assert "socket" not in result
     assert "connect" not in result
+    assert "sendto" not in result
+    assert "sendmsg" not in result
+    assert "accept" not in result
+    assert "listen" not in result
+
+
+def test_syscall_allowlist_socket_and_bind_always_allowed() -> None:
+    """Tier 2: `socket`/`bind` are allowed regardless of policy.network (#3060)
+    — a benign, loopback-only import-time IPv6 probe (urllib3) used to be
+    refused as collateral damage of the network gate even though it never
+    dials out."""
+    from reyn.security.sandbox.backends.seccomp import _build_syscall_allowlist
+
+    off = _build_syscall_allowlist(SandboxPolicy(network=False))
+    assert "socket" in off
+    assert "bind" in off
+
+    on = _build_syscall_allowlist(SandboxPolicy(network=True))
+    assert "socket" in on
+    assert "bind" in on
+
+
+def test_network_always_allowed_set_is_exactly_socket_and_bind() -> None:
+    """Tier 2: vacuity guard — the unconditional always-allowed network set is
+    EXACTLY {"socket", "bind"} (#3060), not a superset that smuggled in an
+    egress-capable syscall (`connect`, `sendto`, …) alongside the intended
+    surgical fix. `_NETWORK_SYSCALLS` (the remaining, still-gated set) must not
+    duplicate either name — `_build_syscall_allowlist` extends the allowlist
+    with both lists independently, so an accidental overlap would not be
+    caught by `in` membership checks alone."""
+    from reyn.security.sandbox.backends.seccomp import (
+        _NETWORK_ALWAYS_ALLOWED,
+        _NETWORK_SYSCALLS,
+    )
+
+    assert set(_NETWORK_ALWAYS_ALLOWED) == {"socket", "bind"}
+    assert set(_NETWORK_ALWAYS_ALLOWED).isdisjoint(_NETWORK_SYSCALLS)
 
 
 def test_syscall_allowlist_network_when_enabled() -> None:
@@ -225,11 +266,16 @@ def test_syscall_allowlist_includes_async_runtime_and_durability_primitives() ->
             "the server cannot start or do local I/O (#3059)"
         )
 
-    # …but they must NOT smuggle in network reach — the network syscalls stay
-    # gated on policy.network (socketpair is AF_UNIX-only at the kernel, so it is
-    # not one of them).
-    assert "socket" not in result, (
-        "socket must stay network-gated — adding the async-runtime local-fd "
+    # …but they must NOT smuggle in EGRESS-capable network reach — the
+    # syscalls that actually move bytes to/from a peer stay gated on
+    # policy.network (socketpair is AF_UNIX-only at the kernel, so it is not
+    # one of them). `socket` itself IS present here even with policy.network
+    # False — that is #3060's deliberate, unconditional exception (see
+    # test_syscall_allowlist_socket_and_bind_always_allowed), not a leak from
+    # this async-runtime primitives set; `connect` is the syscall that would
+    # actually reopen #3030 and must stay absent.
+    assert "connect" not in result, (
+        "connect must stay network-gated — adding the async-runtime local-fd "
         "primitives must not reopen #3030"
     )
 

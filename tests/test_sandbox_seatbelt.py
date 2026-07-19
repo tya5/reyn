@@ -103,6 +103,22 @@ def test_sbpl_profile_network_allow():
     assert "(allow network*)" not in profile_deny
 
 
+def test_sbpl_profile_loopback_bind_always_allowed():
+    """Tier 2: a localhost-only `network-bind` is emitted regardless of
+    policy.network (#3060) — the Seatbelt mirror of seccomp's `socket`/`bind`
+    exception. Neither `network-outbound` nor `network-inbound` is implied by
+    this rule alone; those stay carried by the policy.network-gated
+    `(allow network*)` block above."""
+    expected = '(allow network-bind (local ip "localhost:*"))'
+
+    profile_off = _build_sbpl_profile(SandboxPolicy(network=False))
+    assert expected in profile_off
+    assert "(allow network*)" not in profile_off
+
+    profile_on = _build_sbpl_profile(SandboxPolicy(network=True))
+    assert expected in profile_on
+
+
 # ─── 3. _sbpl_quote ──────────────────────────────────────────────────────────
 
 
@@ -147,6 +163,83 @@ async def test_seatbelt_timeout_returns_minus_one():
     )
     result = await backend.run(["/bin/sleep", "5"], policy)
     assert result.returncode == -1
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="sandbox-exec is macOS-only")
+@pytest.mark.asyncio
+async def test_seatbelt_allows_loopback_bind_but_denies_connect_when_network_false():
+    """Tier 2: #3060 — under network=False the Seatbelt sandbox still allows a
+    loopback bind (the shape urllib3's import-time IPv6-support probe uses:
+    `socket()` then `bind(("::1", 0))`, never a `connect()`) but continues to
+    refuse an actual outbound connect() — the real egress claim."""
+    backend = SeatbeltBackend()
+    if not backend.available():
+        pytest.skip("sandbox-exec not available on this machine")
+
+    policy = SandboxPolicy(network=False, timeout_seconds=10)
+    code = (
+        "import socket\n"
+        "s = socket.socket(socket.AF_INET6, socket.SOCK_STREAM)\n"
+        "s.bind(('::1', 0))\n"
+        "print('BIND_OK')\n"
+        "try:\n"
+        "    c = socket.socket(socket.AF_INET, socket.SOCK_STREAM)\n"
+        "    c.connect(('93.184.216.34', 80))\n"
+        "    print('CONNECT_SUCCEEDED')\n"
+        "except PermissionError:\n"
+        "    print('CONNECT_DENIED')\n"
+    )
+    result = await backend.run([sys.executable, "-c", code], policy)
+    assert b"BIND_OK" in result.stdout, (
+        f"loopback bind must succeed under network=False (#3060); "
+        f"stdout={result.stdout!r} stderr={result.stderr!r}"
+    )
+    assert b"CONNECT_DENIED" in result.stdout, (
+        f"outbound connect() must stay refused under network=False; "
+        f"stdout={result.stdout!r} stderr={result.stderr!r}"
+    )
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="sandbox-exec is macOS-only")
+@pytest.mark.asyncio
+async def test_seatbelt_allows_socketpair_sendto_but_denies_addressed_sendto_when_network_false():
+    """Tier 2: #3060 case-(b) — the Seatbelt counterpart of the seccomp
+    NULL-addr rule. Under network=False a connected AF_UNIX socketpair
+    send/recv (the async event-loop self-pipe) SUCCEEDS while an ADDRESSED UDP
+    ``sendto`` (real egress) stays DENIED.
+
+    Seatbelt needs NO code change for this (unlike seccomp's explicit
+    ``sendto arg4==0`` rule): SBPL's ``(allow network*)`` gate governs NETWORK
+    sockets, and an AF_UNIX socketpair is not one — so the self-pipe already
+    works while ``network-outbound`` on an AF_INET datagram stays refused. This
+    test PINS that property so a future SBPL tightening cannot silently break
+    the async runtime, and proves the egress form is still denied."""
+    backend = SeatbeltBackend()
+    if not backend.available():
+        pytest.skip("sandbox-exec not available on this machine")
+
+    policy = SandboxPolicy(network=False, timeout_seconds=10)
+    code = (
+        "import socket\n"
+        "a, b = socket.socketpair(socket.AF_UNIX, socket.SOCK_DGRAM)\n"
+        "a.send(b'ping')\n"
+        "print('SOCKETPAIR_OK', b.recv(4))\n"
+        "try:\n"
+        "    u = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)\n"
+        "    u.sendto(b'x', ('93.184.216.34', 53))\n"
+        "    print('ADDRESSED_SENDTO_SUCCEEDED')\n"
+        "except (PermissionError, OSError):\n"
+        "    print('ADDRESSED_SENDTO_DENIED')\n"
+    )
+    result = await backend.run([sys.executable, "-c", code], policy)
+    assert b"SOCKETPAIR_OK" in result.stdout, (
+        f"connected socketpair send/recv (async self-pipe) must succeed under "
+        f"network=False (#3060); stdout={result.stdout!r} stderr={result.stderr!r}"
+    )
+    assert b"ADDRESSED_SENDTO_DENIED" in result.stdout, (
+        f"addressed UDP sendto (real egress) must stay denied under network=False; "
+        f"stdout={result.stdout!r} stderr={result.stderr!r}"
+    )
 
 
 # ─── 5. Protocol conformance ─────────────────────────────────────────────────

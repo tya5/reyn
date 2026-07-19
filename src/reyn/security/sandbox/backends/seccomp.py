@@ -43,19 +43,28 @@ completeness witness had not surfaced:
     cache lock in `uvx markitdown-mcp`) — see the "Durability + advisory
     file-locking" block.
 Both are witnessed by the x86_64 deny-gate job, not an aarch64 host whose green
-does not speak for the enforce arch. The representative-server completeness
-probes run at `network=True` (the server's own network needs met, so the only
-variable vs baseline is the syscall filter): a FastMCP/uvx server issues
-network-family syscalls during init, which `network=False` now CORRECTLY denies
-(that is #3030's fix, not a gap), so a `network=False` server run witnesses the
-network gate, not allowlist completeness — the latter is a `network=True`
-question, the former is covered precisely by the dedicated socket/io_uring deny
-probes.
+does not speak for the enforce arch. The representative-server allowlist-
+completeness probes run at `network=True` (the server's own network needs met, so
+the only variable vs baseline is the syscall filter). A `network=False` run is a
+separate question — the network GATE, not allowlist completeness — and since
+#3060 (option A) a FastMCP/uvx server initializes cleanly under `network=False`:
+`socket`/`bind` are ALWAYS allowed (`_NETWORK_ALWAYS_ALLOWED`, so the benign
+urllib3 import-time IPv6-support probe no longer dies as collateral), and the
+builtin RAG servers are launched with FastMCP telemetry/update-check disabled so
+no `connect()` is even attempted. What `network=False` still denies is real
+egress — `connect`/`sendto`/`sendmsg` — covered precisely by the dedicated
+connect/sendto/io_uring deny probes (NOT a `socket()`-create probe: `socket` is
+now allowed, so it can no longer witness the gate).
 
 - aarch64 Linux (Ubuntu 24.04, kernel 6.8, glibc 2.39): live-validated —
   the filter loads and ordinary workloads (echo / ls / cat / python file
-  read+write, mkdir / remove / rename / rmtree) run under it, while fork,
-  ptrace and socket are refused.
+  read+write, mkdir / remove / rename / rmtree) run under it, while fork
+  and ptrace are refused. Under #3060 `socket`/`bind` are allowed
+  unconditionally (neither moves a byte on its own) and the egress deny
+  falls on `connect`/`sendto` instead; that socket→connect shift is
+  witnessed on x86_64 by `scripts/sandbox_seccomp_x86_64_live_smoke.py`'s
+  socket+bind-survive / connect+sendto-refused probes, not re-run on this
+  aarch64 host.
 - x86_64 Linux: NOT validated. The maintainer dev environment is macOS/arm64
   and x86_64 is reachable there only under Rosetta emulation, where
   `seccomp_load()` fails with ECANCELED — an artifact of installing an
@@ -204,7 +213,9 @@ _BASELINE: list[str] = [
     # gate is `_NETWORK_SYSCALLS`, still gated on `policy.network`):
     #   - socketpair: a connected pair in ONE address family, local only. On
     #     Linux only AF_UNIX is supported (AF_INET/AF_INET6 -> EOPNOTSUPP), so it
-    #     cannot create a network socket — `socket`/`connect` stay network-gated.
+    #     cannot create a network socket — and `connect` stays network-gated
+    #     regardless (under #3060 `socket`/`bind` are allowed unconditionally,
+    #     but neither moves a byte; socketpair adds no egress path).
     #   - eventfd/eventfd2: a counter object fd for wakeups; no I/O target but
     #     itself. (glibc's eventfd() issues the eventfd2 syscall; both named so
     #     libseccomp resolves whichever the running libc uses.)
@@ -233,8 +244,12 @@ _BASELINE: list[str] = [
     #     (SQLITE_IOERR) creating a fresh db — SQLite's unix VFS fsync/fdatasync
     #     on the first commit was refused (fcntl locking is already baseline, so
     #     the remaining durability syscall is the gap). Network-INDEPENDENT: it
-    #     failed at network=True too, which is what distinguishes it from the
-    #     FastMCP-startup-network failures below.
+    #     failed at network=True too, which is what distinguishes it from a
+    #     network-GATED failure — one that appears only when `network=False`
+    #     denies an egress syscall (`connect`/`sendto`, see `_NETWORK_SYSCALLS`
+    #     below). (Pre-#3060 a `socket()`-create under `network=False` was such
+    #     a failure; option A now always-allows `socket`/`bind`, so the gate
+    #     bites only on real egress.)
     #   - `uvx markitdown-mcp` (uv, Rust): "failed to lock
     #     `~/.cache/uv/.lock`: Operation not permitted" — uv `flock`s its cache.
     # Each is an fd/durability primitive with no network reach:
@@ -294,9 +309,48 @@ _EXCLUDED_UNGOVERNABLE: list[str] = [
     "truncate",
 ]
 
-# Syscalls added when policy.network is True.
+# Always allowed, regardless of `policy.network` (#3060). `socket()` and
+# `bind()` alone cannot reach the network: `socket()` only allocates a file
+# descriptor for an address family, and a LOCALHOST-only `bind()` merely
+# claims a local address on it — neither one transmits or receives a byte.
+# The reyn seccomp filter is a default-deny ALLOWLIST (every syscall not
+# named here stays refused), so widening this pair does not open a new
+# egress surface — it only stops mis-attributing two benign, local-only
+# primitives to the network gate.
+#
+# This closes a false-positive class measured live: urllib3's import-time
+# IPv6 probe (`urllib3/util/connection.py:137`, reached transitively via
+# fastmcp -> requests -> urllib3) calls `socket.socket()` then
+# `sock.bind(("::1", 0))` to detect IPv6 support — a loopback bind, never a
+# `connect()` — and used to die with EPERM under `network: false` even
+# though it never touches the network. Root-caused and confirmed benign
+# before this fix (see issue #3060): the probe's `bind` target is always
+# `("::1", 0)` or `("", 0)`, never resolved to a remote address, and no
+# `connect()` call follows it.
+#
+# `connect`/`sendto`/`sendmsg`/`sendmmsg`/`accept`/`accept4`/`listen`/
+# `recvfrom`/`recvmsg`/`getsockname`/`getpeername`/`setsockopt`/
+# `getsockopt`/`shutdown` are the syscalls that actually move bytes to/from
+# a peer or accept a peer connection — those stay gated on `policy.network`
+# below, in `_NETWORK_SYSCALLS`. A network-off sandbox can still create and
+# locally bind a socket, but cannot dial out or accept an inbound peer.
+#
+# ONE further exception is added at filter-build time, not here: under
+# `network=False`, `sendto`/`recvfrom` are allowed WHEN THEIR ADDRESS POINTER
+# IS NULL (the async runtime's connected-socketpair self-pipe) — the ADDRESSED
+# form (real UDP egress) stays denied. That NULL-address gate lives in
+# `_add_null_addr_socketpair_rules` (it is an arg-conditional rule, not a plain
+# name), so `sendto`/`recvfrom` remain in `_NETWORK_SYSCALLS` for their
+# unconditional (addressed) allow when `network=True`.
+_NETWORK_ALWAYS_ALLOWED: list[str] = ["socket", "bind"]
+
+# Syscalls added when policy.network is True. `socket`/`bind` are
+# deliberately NOT listed here — they are unconditional, see
+# `_NETWORK_ALWAYS_ALLOWED` above. `sendto`/`recvfrom` are here for their
+# addressed form under `network=True`; their NULL-address form is separately
+# allowed even under `network=False` (see `_add_null_addr_socketpair_rules`).
 _NETWORK_SYSCALLS: list[str] = [
-    "socket", "connect", "accept", "accept4", "bind", "listen",
+    "connect", "accept", "accept4", "listen",
     "sendto", "recvfrom", "sendmsg", "recvmsg",
     "getsockname", "getpeername", "setsockopt", "getsockopt", "shutdown",
 ]
@@ -445,8 +499,59 @@ def load_seccomp_filter(policy: SandboxPolicy) -> None:
     for syscall_name in _build_syscall_allowlist(policy):
         f.add_rule(pyseccomp.ALLOW, syscall_name)
 
+    if not policy.network:
+        _add_null_addr_socketpair_rules(f, pyseccomp)
+
     # Irrevocable — issues prctl(PR_SET_SECCOMP) in the child process.
     f.load()
+
+
+# Argument index of the peer-address pointer for the two datagram syscalls whose
+# NULL-address form is the async runtime's socketpair self-pipe (#3060). Verified
+# against the man pages:
+#   sendto(fd, buf, len, flags, dest_addr, addrlen)  -> arg 4 = dest_addr
+#   recvfrom(fd, buf, len, flags, src_addr, addrlen) -> arg 4 = src_addr
+_SOCKET_ADDR_ARG_INDEX = 4
+
+
+def _add_null_addr_socketpair_rules(f: object, pyseccomp: object) -> None:
+    """Allow ``sendto``/``recvfrom`` ONLY when their peer-address pointer is NULL
+    — under ``network=False``, where those syscalls are otherwise EPERM-denied.
+
+    Why this is required, and why it is safe (#3060). Every stdio MCP server runs
+    on an async runtime, and CPython's asyncio event loop wakes itself with a
+    *connected* AF_UNIX socketpair self-pipe: the writer end issues
+    ``send()``/``recv()``, which glibc lowers to the ``sendto``/``recvfrom``
+    SYSCALLS with a NULL address pointer (a connected socket needs no address).
+    With ``network=False`` denying ``sendto``/``recvfrom`` outright, that wakeup
+    was refused, the loop could not run, and the server sent 0 bytes — measured
+    directly (client-side raw-handshake capture: server produced no output; and a
+    functional SCMP_ACT_LOG run confirmed allowing these lets the chunker /
+    vector-store reach serving).
+
+    The NULL-address condition is what keeps this from reopening egress: a NULL
+    ``dest_addr``/``src_addr`` can only send to / receive from the socket's
+    *already-connected* peer (here, the loop's own socketpair partner), never a
+    caller-supplied network address. An ADDRESSED ``sendto`` — the real UDP
+    egress path, ``sendto(fd, buf, len, flags, &sockaddr_in, ...)`` — has a
+    non-NULL arg 4, does not match this rule, and falls through to the
+    default-deny EPERM. And AF_INET remains unreachable regardless because
+    ``connect`` stays fully denied (a datagram socket can egress via an addressed
+    ``sendto`` alone, which is exactly the case this NULL gate refuses).
+
+    ``connect``/``sendmsg``/``recvmsg``/``sendmmsg``/``recvmmsg`` are deliberately
+    NOT given a NULL-address exception: their address lives inside a ``msghdr``
+    (``msg_name``) that seccomp cannot dereference, so there is no arg-value test
+    that distinguishes a connected send from an addressed one — allowing them
+    would be unconditional, so they stay denied. If a future runtime needs one of
+    them for its self-pipe, that is a harder case to escalate, not a syscall to
+    open blind.
+    """
+    arg_null = pyseccomp.Arg(  # type: ignore[attr-defined]
+        _SOCKET_ADDR_ARG_INDEX, pyseccomp.EQ, 0  # type: ignore[attr-defined]
+    )
+    for syscall_name in ("sendto", "recvfrom"):
+        f.add_rule(pyseccomp.ALLOW, syscall_name, arg_null)  # type: ignore[attr-defined]
 
 
 def _build_syscall_allowlist(policy: SandboxPolicy) -> list[str]:
@@ -480,6 +585,10 @@ def _build_syscall_allowlist(policy: SandboxPolicy) -> list[str]:
         A list of syscall name strings.
     """
     allowed: list[str] = list(_BASELINE)
+    # `socket`/`bind` are always allowed, independent of `policy.network`
+    # (#3060) — see `_NETWORK_ALWAYS_ALLOWED`'s docstring for why neither one
+    # can reach the network on its own.
+    allowed.extend(_NETWORK_ALWAYS_ALLOWED)
 
     if policy.network:
         allowed.extend(_NETWORK_SYSCALLS)
