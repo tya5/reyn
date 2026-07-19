@@ -2,7 +2,7 @@
 
 `reyn chat` ships with two ways for the LLM to discover what it can do: a fast **`list_actions`** browser (= category-prefix enumeration, always available) and a **`search_actions`** semantic search (= natural-language queries against an embedding index of every action). This guide walks through enabling the semantic path.
 
-> **TL;DR**: `search_actions` is **off by default** (semantic search is opt-in project-wide). Run `pip install 'reyn[local-embed]'` AND set `action_retrieval.embedding_class: local-mini` in `reyn.yaml` to enable it with no credentials. If you'd rather use OpenAI's embedding API (slightly higher quality, no local download), set `action_retrieval.embedding_class: standard` in `reyn.yaml` after `reyn secret set OPENAI_API_KEY`.
+> **TL;DR**: `search_actions` is **off by default** (semantic search is opt-in project-wide). If you already have an embedding API key, `reyn secret set OPENAI_API_KEY` then set `action_retrieval.embedding_class: standard` in `reyn.yaml` — no proxy, no extra install. If you'd rather run a local model with no API key, put it behind a **litellm proxy** and point reyn at it (see [Case B](#case-b-no-embedding-api-contract-litellm-proxy-a-local-model) below).
 
 ## When you'd want it
 
@@ -11,112 +11,135 @@
 - **Without it**: the LLM has to guess which category your intent belongs to (`file` / `mcp` / `memory_operation` / …) and run `list_actions(category=[...])` to enumerate. For natural-language asks like _"find an action that converts PDF to text"_ the LLM may also try and refuse if it doesn't immediately spot a match.
 - **With it**: the LLM runs `search_actions(query="PDF to text")` and gets a top-K relevance-ranked list across every category. It can then `describe_action` or `invoke_action` directly.
 
-`action_retrieval.embedding_class` defaults to `null` (off) — semantic search is opt-in, so both an explicit `reyn.yaml` setting AND (for the local path) the `local-embed` extras are required. With no class configured, `search_actions` is gated **out** of the LLM's tool list (see [visibility gate](../../concepts/tools-integrations/universal-catalog.md#what-stays-out-of-phase-1)) — silently, with no startup warning, since nothing is attempted. If you configure an ST-backed class but the extras are absent, Session gracefully treats this as "no class configured" the same way, and `list_actions` surfaces the hidden-state hint pointing back at this guide.
+`action_retrieval.embedding_class` defaults to `null` (off) — semantic search is opt-in, so an explicit `reyn.yaml` setting is required. With no class configured, `search_actions` is gated **out** of the LLM's tool list (see [visibility gate](../../concepts/tools-integrations/universal-catalog.md#what-stays-out-of-phase-1)) — silently, with no startup warning, since nothing is attempted.
 
-## Path A — local sentence-transformers (recommended for first-time users)
+## Reyn depends on litellm exclusively for embeddings
 
-```bash
-pip install 'reyn[local-embed]'
-```
+Reyn has **no in-process embedding backend**. Every embedding call — action retrieval, `semantic_search`, the builtin RAG plugin — routes through `litellm`: straight to the provider's own API, or through a **litellm proxy** if the env var `LITELLM_API_BASE` is set (the same variable `call_llm` reads — one proxy serves both chat and embeddings). Built-in classes: `light` / `standard` → `openai/text-embedding-3-small`, `strong` → `openai/text-embedding-3-large`.
 
-Then opt in explicitly in `reyn.yaml` (the default is `null` / off):
+There are exactly two setups, and which one you want depends on whether you already have an embedding API contract.
 
-```yaml
-action_retrieval:
-  embedding_class: local-mini
-```
+### Pre-flight: confirm the endpoint actually answers (do this before opting in)
 
-The `local-embed` extras install `sentence-transformers` + `torch`; `local-mini` (= `all-MiniLM-L6-v2`, 22 MB, 384-dim, English) is the smallest bundled model. Once both the extras and the `reyn.yaml` setting are in place, the wiring activates on the next session.
-
-The first time `reyn chat` reaches `search_actions`, the model downloads (~5–10 s on a typical connection) and the embedding index builds. The TUI Memory tab shows a `⟳ loading…` row during the download and a `✓ loaded · all-MiniLM-L6-v2 · 384d` row when done; subsequent sessions warm-start from the local cache in <1 s.
-
-### What you get
-
-- **Zero credentials** — no API key required. Everything runs locally.
-- **Zero per-query cost** — the `local-mini` model embeds queries in ~30–80 ms on a typical laptop CPU.
-- **Offline-capable** — once the model is cached, semantic search works without network access.
-- **`reyn embeddings status`** to inspect the cache state at any time:
+One curl, before you spend anything on an embedding call. This check is **transport-independent by construction**: reyn always sends embedding requests to an OpenAI-compatible `/embeddings` endpoint at whatever `LITELLM_API_BASE` names — a litellm proxy, a direct embedding API, or a local server all look the same from reyn's side, so the same one-liner verifies any of them:
 
 ```bash
-$ reyn embeddings status
-NAME        BACKEND                MODEL                                  ACTIONS  LAST_BUILT
-local-mini  sentence-transformers  sentence-transformers/all-MiniLM-L6-v2     87  2026-05-27T19:02:00+00:00
+curl -s "${LITELLM_API_BASE:-<your-endpoint>}/embeddings" \
+  -H "Authorization: Bearer ${OPENAI_API_KEY:-dummy}" \
+  -H "Content-Type: application/json" \
+  -d '{"model": "<the model name your endpoint expects>", "input": "hello"}' \
+  | jq '.data[0].embedding | length'
 ```
 
-### Multilingual content
+Replace `<your-endpoint>` / the model name / the key with your actual values — this is a shape to adapt, not a literal command. **Healthy**: prints a positive integer (the embedding dimension, e.g. `1536`) — `data[0].embedding` came back as a non-empty float array. Typical failure signatures:
 
-If your prompts include Japanese / Chinese / European languages, swap to `local-e5` (= `multilingual-e5-small`, 118 MB, 50 languages, better cross-lingual recall):
+- **401** — wrong or missing API key.
+- **404 / "model not found"** — that model name isn't registered at this endpoint (proxy `model_list` mismatch, or a wrong direct-API model string).
+- **400, unsupported param** — *only relevant when routing through a proxy* (see Case B): the proxy is missing `litellm_settings.drop_params: true` (#1616).
+- **connection refused** — nothing is listening at that endpoint, or `LITELLM_API_BASE` points at the wrong address.
 
-```yaml
-# reyn.yaml
-action_retrieval:
-  embedding_class: local-e5
-```
+## Case A — you have an embedding API key — no proxy needed
 
-After the swap, `reyn embeddings rebuild` drops the old cache so the next session re-embeds with the new model.
-
-## Path B — OpenAI embeddings (slightly higher quality)
-
-If you'd rather pay per query for marginally better recall (= the OpenAI text-embedding-3-small model scores ~5 pp higher on MTEB than `multilingual-e5-small`):
+This is the shortest path, and it does **not** go through a proxy at all:
 
 ```bash
 reyn secret set OPENAI_API_KEY
 # enter your sk-... key when prompted
 ```
 
-Then in `reyn.yaml`:
+Then opt in explicitly in `reyn.yaml` (the default is `null` / off):
 
 ```yaml
 action_retrieval:
   embedding_class: standard   # = openai/text-embedding-3-small
 ```
 
-No `pip` install needed; the LiteLLM client is already a base dependency. The HTTP round-trip adds ~150–300 ms per query versus the local path; embedding cost is ~$0.00002 per chat session (= negligible).
+With `LITELLM_API_BASE` unset, reyn's litellm client calls the provider's API **directly**, so `standard` works with **no proxy and no `drop_params` setting** — the client already passes `drop_params=True` on every call, which is only a no-op when a proxy sits in between (see Case B). Run the pre-flight curl above against the provider's own endpoint (e.g. `https://api.openai.com/v1`) to confirm, then start a chat session — `search_actions` builds its index eagerly on the next cold start.
 
-## GPU acceleration (optional)
+If your organization already routes LLM traffic through a shared litellm proxy, you're effectively in the Case B situation below (proxy in the path) even though you have a key — the proxy's `drop_params` note applies to you too.
 
-If you have a CUDA / Apple-Silicon GPU and want sentence-transformers to use it:
+## Case B — no embedding API contract → litellm proxy + a local model
 
-```bash
-export REYN_EMBED_DEVICE=mps    # macOS Apple Silicon
-export REYN_EMBED_DEVICE=cuda   # NVIDIA GPU
-```
+No key, and you don't want one — or you want an offline/air-gapped setup: run a local embedding model behind a litellm proxy. The proxy is what turns that local model into the OpenAI-compatible endpoint reyn already expects; reyn itself never talks to the local server directly. This is also how `search_actions` works fully offline once the local model is cached — no Hugging Face reach from reyn at any point, since reyn only ever talks to the proxy.
 
-Default is `cpu`. The encode latency drops to ~5–15 ms per query on `mps`, which is enough of a step-change to be perceptible in long chat sessions. Invalid values warn and fall back to `cpu` rather than failing.
-
-## Offline / air-gapped networks
-
-`local-mini` / `local-e5` download from Hugging Face on first use. On a corporate or firewalled network where Hugging Face is unreachable, the first `reyn chat` session that reaches `search_actions` still tries the real network — it eventually fails gracefully (see below), but only after paying a connect-timeout, which can feel like a hang.
-
-**What you'll see**: a `reyn.runtime.router_loop` WARNING log (and an `action_index_build_failed` audit-event) naming the cause and your options — `search_actions` stays hidden for the rest of that session (no crash, no silent-empty index; `list_actions` still works normally).
-
-**If you already know you're offline**, skip the network attempt entirely and fail fast instead by setting the HuggingFace-standard offline flag (the same variable air-gapped operators already use across the HF ecosystem — Reyn respects it rather than inventing its own knob):
+**Step 1 — start a local embedding server.** Ollama is the lightest setup (openai-compatible embeddings out of the box); reference commands below, **verify on your own machine, versions/ports may differ**:
 
 ```bash
-export HF_HUB_OFFLINE=1     # (or the equivalent TRANSFORMERS_OFFLINE=1)
+ollama pull nomic-embed-text
+ollama serve   # if not already running as a background service
+curl http://localhost:11434/api/embeddings -d '{"model": "nomic-embed-text", "prompt": "hello"}'
 ```
 
-With this set, an uncached model fails immediately (no connect-timeout wait) with a message pointing at your options. To actually *use* `local-mini` / `local-e5` on an air-gapped machine:
+(Alternatives, one line each: HuggingFace `text-embeddings-inference`, or `infinity` — both also expose an OpenAI-compatible embeddings endpoint.)
 
-1. On a **connected** machine, run `pip install 'reyn[local-embed]'` and trigger one `search_actions` call (or `reyn embeddings status` after a chat session) so the model downloads into `<cache_root>/sentence-transformers/` (default `~/.cache/reyn/sentence-transformers/`; see `REYN_CACHE_DIR` / `XDG_CACHE_HOME` above for overrides).
-2. Copy that `sentence-transformers/` directory to the same cache location on the air-gapped machine.
-3. Set `HF_HUB_OFFLINE=1` on the air-gapped machine — the model now loads from the copied cache with no network attempt.
+**Step 2 — register it in the litellm proxy's `config.yaml`.** Syntax confirmed against litellm's own docs (https://docs.litellm.ai/docs/proxy/embedding, https://docs.litellm.ai/docs/proxy/configs):
 
-If you'd rather not manage a model cache at all, the escape hatch is the same as [Path B](#path-b--openai-embeddings-slightly-higher-quality) above — an API-backed class works over your normal HTTPS egress instead of Hugging Face. Reyn never switches to this automatically; it's an explicit `reyn.yaml` edit (`action_retrieval.embedding_class: standard`), never a silent fallback.
+```yaml
+model_list:
+  - model_name: text-embedding-3-small   # see the naming rule below
+    litellm_params:
+      model: ollama/nomic-embed-text
+      api_base: http://localhost:11434
+
+litellm_settings:
+  drop_params: true   # required -- see the 400 failure signature above (#1616)
+```
+
+Restart the proxy after editing.
+
+**Step 3 — point reyn at the proxy:**
+
+```bash
+export LITELLM_API_BASE=http://localhost:4000   # your proxy's address
+```
+
+**Naming rule (read before choosing a model name):** when `LITELLM_API_BASE` is set, reyn strips the resolved model string's leading `provider/` segment before sending it to the proxy — `openai/foo` arrives at the proxy as plain `foo`. So the proxy's `model_list[].model_name` must equal **everything after the first `/`** of whichever reyn-side model string you use:
+
+- **(a) Simplest — no `reyn.yaml` edit at all.** Keep the built-in `standard` class (`openai/text-embedding-3-small`) and register the proxy's `model_name` as `text-embedding-3-small` (as in Step 2 above) — the local model now answers under reyn's default class name:
+  ```yaml
+  action_retrieval:
+    embedding_class: standard
+  ```
+- **(b) Or add an explicit class**, e.g. in `reyn.yaml`:
+  ```yaml
+  embedding:
+    classes:
+      local:
+        model: openai/nomic-embed-text
+  action_retrieval:
+    embedding_class: local
+  ```
+  Here the proxy's `model_name` must be `nomic-embed-text` (everything after `openai/`).
+
+**Step 4 — confirm it end to end.** Re-run the pre-flight curl above first (cheapest check), then start a chat session and confirm `search_actions` appears in the tool list (or check `reyn embeddings status`, below). A non-empty index (`ACTIONS > 0`) is the real signal.
+
+### Choosing a local model (Case B) — pick once, it's expensive to change
+
+Swapping the embedding model later means every embedding it produced (the action index, and any RAG source using the same class) is invalidated and needs re-embedding — decide with these axes before you commit:
+
+- **Language.** English-only usage → a small English-only model is enough. Japanese, Chinese, or mixed-language prompts → use a multilingual model; an English-only model's cross-lingual recall is poor.
+- **Size vs. recall.** A smaller model embeds faster and costs less compute per query; a larger model trades that for better recall. As a reference point (measured, not vendor-claimed): `all-MiniLM-L6-v2` (22 MB, 384-dim, English-only, fastest) vs. `multilingual-e5-small` (118 MB, 50 languages, better cross-lingual recall) vs. OpenAI's `text-embedding-3-small` API (~5 pp higher MTEB than `multilingual-e5-small`, at API cost). These numbers describe the *models themselves* — served locally through Ollama/TEI/infinity behind your proxy, or as OpenAI's own API in Case A — not a reyn-specific backend.
+- **Server ecosystem.** Serving via Ollama (Step 1 above), the easiest openai-compatible option is `nomic-embed-text`. Serving via HuggingFace `text-embeddings-inference` or `infinity` instead, the `bge-*` / `e5-*` families are common choices there. Verify the exact size/dimension/language numbers on the model's own card.
+
+In short: **English usage, want it fast → a small English model (`nomic-embed-text` is a reasonable Ollama default). Japanese/multilingual → a multilingual model. Want the best recall and already have an API key → skip Case B, use Case A instead.**
 
 ## How Reyn tells you when it's not configured
 
-If you skip both Path A and Path B and still ask the LLM to "find an action for …", the response from `list_actions` carries a structured **hint** field listing the install / config paths above. The LLM relays the hint to you so the install is self-discoverable mid-chat — no need to memorise this guide. The hint disappears the moment `search_actions` becomes available.
+If you skip both Case A and Case B and still ask the LLM to "find an action for …", the response from `list_actions` carries a structured **hint** field pointing at this guide. The LLM relays the hint to you so the install is self-discoverable mid-chat — no need to memorise this guide. The hint disappears the moment `search_actions` becomes available.
 
 ## Troubleshooting
 
-**`search_actions` doesn't appear in the LLM's tool list** — the embedding index hasn't finished building yet (= cold start, ~5–10 s) OR the configured class points at a backend whose extras aren't installed. Check `reyn embeddings status` — a configured class with `ACTIONS = 0` and `LAST_BUILT = (never)` means the build hasn't completed.
+**`search_actions` doesn't appear in the LLM's tool list** — either `action_retrieval.embedding_class` is still `null`, or the index hasn't finished building yet (= cold start, a handful of seconds). Check `reyn embeddings status` — a configured class with `ACTIONS = 0` and `LAST_BUILT = (never)` means the build hasn't completed:
 
-**"failed to load \<model>" in TUI / events** — partial cache state. Run `reyn embeddings clear` to wipe and start fresh; the next chat session re-downloads cleanly.
+```bash
+$ reyn embeddings status
+NAME        BACKEND  MODEL                                LAST_BUILT
+standard    litellm  openai/text-embedding-3-small        2026-07-19T12:00:00+00:00
+```
 
-**Corporate/firewalled network, HF download times out or fails** — see [§ Offline / air-gapped networks](#offline--air-gapped-networks) above; set the standard `HF_HUB_OFFLINE=1` once you know you're offline to fail fast instead of waiting on the connect timeout every session.
+**The pre-flight curl fails** — see the failure signatures under [§ Pre-flight](#pre-flight-confirm-the-endpoint-actually-answers-do-this-before-opting-in) above: 401 (bad key), 404 (model name / proxy `model_list` mismatch), 400 unsupported-param (missing proxy `drop_params: true`, #1616), connection refused (nothing listening / wrong `LITELLM_API_BASE`).
 
-**Swapping classes returns stale results** — Reyn's cache stores one `model_class` at a time. Class swaps trigger automatic re-embedding on the next session, but you can force it eagerly with `reyn embeddings rebuild`.
+**Swapping classes returns stale results** — Reyn's action index stores one embedding class at a time. Class swaps trigger automatic re-embedding on the next session, but you can force it eagerly with `reyn embeddings rebuild`.
 
 **Old `mcp.server` / `agent.peer` category mentioned by the LLM** — the LLM's training data may pre-date a Reyn collapse refactor. `list_actions(category=["mcp.server"])` post-Reyn-0.4 returns an [explicit error with a legacy → current mapping](../../concepts/tools-integrations/universal-catalog.md#category-validation--legacy-redirect) so the LLM self-corrects in a single retry.
 
@@ -125,3 +148,4 @@ If you skip both Path A and Path B and still ask the LLM to "find an action for 
 - [`reyn embeddings` CLI reference](../../reference/cli/embeddings.md) — status / rebuild / clear
 - [Concepts: universal catalog](../../concepts/tools-integrations/universal-catalog.md) — how `list_actions` / `search_actions` fit together
 - [Concepts: RAG](../../concepts/data-retrieval/rag.md#embedding-configuration) — the underlying `embedding.classes` config map (shared with document recall)
+- [Build and query a RAG corpus skill](https://github.com/tya5/reyn/blob/main/src/reyn/builtin/plugins/rag/skills/build_and_query_rag_corpus/SKILL.md) — the same litellm-proxy embedding setup (Case A/B), written for the builtin RAG plugin; this guide mirrors it for `search_actions`

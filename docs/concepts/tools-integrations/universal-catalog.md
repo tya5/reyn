@@ -427,48 +427,41 @@ action_retrieval:
   universal_wrappers_enabled: false
 ```
 
-## `embedding_class` default + graceful degrade
+## `embedding_class` default + opt-in
 
 **FP-0043 Phase 4** defaulted `ActionRetrievalConfig.embedding_class` to
-`"local-mini"` (= `sentence-transformers/all-MiniLM-L6-v2`), making
-`search_actions` automatically available for any fresh installation
-that ran `pip install 'reyn[local-embed]'` — no `reyn.yaml` edits
-required. The **semantic-search-opt-in fix** reverted this: a truthy
-default made reyn attempt a Hugging Face model download at chat
-startup even on zero-config / offline installs, surfacing as a
-startup warning when the download failed — contradicting the
-project's standing principle that semantic search is opt-in.
+`"local-mini"` (= a since-removed in-process `sentence-transformers`
+backend, see below), making `search_actions` automatically available
+for any fresh installation that had the (then-required) local-embed
+extras installed — no `reyn.yaml` edits required. The
+**semantic-search-opt-in fix** reverted this: a truthy default made
+reyn attempt a Hugging Face model download at chat startup even on
+zero-config / offline installs, surfacing as a startup warning when
+the download failed — contradicting the project's standing principle
+that semantic search is opt-in.
 
 `ActionRetrievalConfig.embedding_class` now defaults to `None` (off).
 With no class configured, no embedding index build is attempted at
 all — `search_actions` is simply absent from `tools=` per the §D14
 gate below, silently (there is nothing to fail or warn about).
 Operators opt in explicitly via `action_retrieval.embedding_class:
-local-mini` (local model, needs the `reyn[local-embed]` extras) or
-`standard` (API-backed, no local download) in `reyn.yaml` — see
+standard` (= or `light` / `strong`, all OpenAI-backed, no local
+install) or a custom `embedding.classes` entry pointing at any
+litellm-routable model (including a local model served behind an
+operator-run litellm proxy) in `reyn.yaml` — see
 [Guide: enable semantic search](../../guide/for-users/enable-semantic-search.md).
 
-When an operator opts into an ST-backed class but the `local-embed`
-extras are NOT installed, `Session.__init__`
-detects the missing import via a cheap `importlib.util.find_spec`
-probe and silently treats the configured class as if it were `None`:
-no `ActionEmbeddingIndex` is built, `search_actions` stays hidden by
-the §D14 gate, and `list_actions` carries the hidden-state hint
-pointing operators at the install command (= self-discoverable
-mid-chat — see [Guide: enable semantic search](../../guide/for-users/enable-semantic-search.md)).
-
-The probe lives in `src/reyn/runtime/session.py` as
-`_embedding_class_needs_missing_extras(class_name, embedding_config)`
-and only returns `True` when:
-
-1. The class's `model` string starts with `sentence-transformers/`,
-2. `sentence_transformers` is **not** importable, AND
-3. The configured class exists in `embedding.classes`.
-
-Operators who prefer OpenAI-backed embeddings can override with
-`action_retrieval.embedding_class: standard` (= or `light` / `strong`)
-in `reyn.yaml`; setting it to `null` opts out of `search_actions`
-entirely.
+**#3128 removed reyn's in-process `sentence-transformers` backend**
+(`local-mini` / `local-e5`, the `reyn[local-embed]` extras, and the
+`Session.__init__` missing-extras probe that used to degrade an
+ST-backed class with absent extras to `None`). Reyn depends on litellm
+exclusively for embeddings now — every configured class, built-in or
+custom, resolves the same way, so there is no separate "extras missing"
+degrade path to document; a class that names an unreachable endpoint
+simply fails the embed call the same way any other litellm call would,
+surfaced through the normal error path rather than a silent `None`
+degrade. Setting `embedding_class` to `null` opts out of
+`search_actions` entirely.
 
 ## What stays out of Phase 1
 
@@ -483,11 +476,13 @@ deferred:
   backs the handler; visibility is gated by §D14 (= tool appears only
   once the index has built ≥1 vector). When the gate fails, the
   `list_actions` response carries a structured **hidden-state hint**
-  pointing operators at `pip install 'reyn[local-embed]'` /
-  `reyn embeddings status` so the install path is self-discoverable
+  pointing operators at [Guide: enable semantic
+  search](../../guide/for-users/enable-semantic-search.md) /
+  `reyn embeddings status` so the config path is self-discoverable
   mid-chat. Off by default (opt-in only, per the semantic-search-opt-in
-  fix); once opted in, the local backend and the OpenAI-backed
-  classes (`light` / `standard` / `strong`) are equally usable. See
+  fix); once opted in, the OpenAI-backed classes (`light` / `standard`
+  / `strong`) and any operator-defined litellm-routable class are
+  equally usable. See
   [Guide: enable semantic search](../../guide/for-users/enable-semantic-search.md)
   and the [`reyn embeddings`](../../reference/cli/embeddings.md) CLI for
   the operator surface.

@@ -158,7 +158,7 @@ Embedding cost is linear in to-embed chunk count (after the add/update dedup —
 
 ## Embedding configuration
 
-The embedding model and batching behaviour are configured under `embedding:` in `reyn.yaml`. Five built-in classes ship by default — three OpenAI-backed and two sentence-transformers-backed (= local; activated by the `local-embed` extras, see [§Local embedding backend](#local-embedding-backend-fp-0043) below):
+The embedding model and batching behaviour are configured under `embedding:` in `reyn.yaml`. Three built-in classes ship by default, all OpenAI-backed:
 
 ```yaml
 embedding:
@@ -167,8 +167,6 @@ embedding:
     light:      openai/text-embedding-3-small
     standard:   openai/text-embedding-3-small
     strong:     openai/text-embedding-3-large
-    local-mini: sentence-transformers/all-MiniLM-L6-v2
-    local-e5:   sentence-transformers/intfloat/multilingual-e5-small
   batch_size: 100
   max_retries: 3
   timeout: 60.0
@@ -179,23 +177,22 @@ embedding:
 
 **It is not a cost control.** `timeout` bounds waiting, not sending: the OpenAI SDK client retries beneath it, so one attempt can put up to 3 requests on the wire and `max_retries: 3` up to 9 — all 9 measured delivered in ~7.6s under the default 60.0s bound, which never engages. Lowering `timeout` does not reduce what the provider computes. See [reyn.yaml § `embedding` fields](../../reference/config/reyn-yaml.md#embedding-fields) and [#3047](https://github.com/tya5/reyn/issues/3047).
 
-Dispatch is **provider-prefix-based**: classes whose `model` string starts with `sentence-transformers/` route to the local backend; everything else (`openai/`, future LiteLLM-routable providers) routes through LiteLLM. Existing OpenAI-backed callers are byte-identical to pre-FP-0043; the routing wrapper passes them through transparently.
+Reyn depends on litellm **exclusively** for embeddings — there is no in-process model backend (#3128 removed the sentence-transformers-backed `local-mini` / `local-e5` classes that shipped under FP-0043). Every class's `model` string is a LiteLLM-routable name; dispatch goes straight through LiteLLM to the provider's own API, or through a **litellm proxy** when the `LITELLM_API_BASE` env var is set (the same variable `call_llm` reads).
 
 The OpenAI API key is read from `~/.reyn/secrets.env` via `${OPENAI_API_KEY}` — no literal value in `reyn.yaml`. After setting the key with `reyn secret set OPENAI_API_KEY`, indexing with `standard` / `light` / `strong` works out of the box with no further configuration.
 
-### Local embedding backend (FP-0043)
+### Local and offline embedding models
 
-`local-mini` and `local-e5` use [sentence-transformers](https://www.sbert.net/) to embed locally (= no API, no credentials, no per-query cost). They are gated behind an `extras` install so the base `reyn` package stays small:
+Reyn ships no in-process local-embedding backend. An operator who wants a local model (no API key, or an offline/air-gapped setup) runs it behind a **litellm proxy** and points reyn at it — the proxy is what turns a local server (Ollama / HuggingFace `text-embeddings-inference` / `infinity`) into the OpenAI-compatible endpoint reyn already expects; reyn itself never talks to the local server directly. Add an entry under `embedding.classes` pointing at the proxied model, e.g.:
 
-```bash
-pip install 'reyn[local-embed]'
+```yaml
+embedding:
+  classes:
+    local:
+      model: openai/nomic-embed-text   # name after LITELLM_API_BASE strips the provider/ prefix
 ```
 
-This pulls `sentence-transformers >= 2.7` and `torch >= 2.0`. The model itself downloads on first use (~22 MB for `local-mini`, ~118 MB for `local-e5`) and caches under `~/.cache/reyn/sentence-transformers/` (overridable via `REYN_CACHE_DIR` / `XDG_CACHE_HOME`).
-
-Device selection is `cpu` by default; opt into GPU acceleration via the `REYN_EMBED_DEVICE` env var (`mps` for Apple Silicon, `cuda` for NVIDIA). Invalid values warn and fall back to `cpu`.
-
-On an air-gapped / firewalled network where Hugging Face is unreachable, set the HuggingFace-standard `HF_HUB_OFFLINE=1` (or `TRANSFORMERS_OFFLINE=1`) (FP-0057 Phase 4) — reyn respects the ecosystem-standard offline flag (rather than a reyn-native knob) and passes `local_files_only=True` explicitly, so an uncached model then fails fast and deterministically instead of hanging on a connect timeout. This is always an explicit operator opt-in; reyn never infers offline-ness or silently falls back to an API-backed embedding class. See [Guide § Offline / air-gapped networks](../../guide/for-users/enable-semantic-search.md#offline--air-gapped-networks) for the full preload-and-copy-cache walkthrough.
+then `export LITELLM_API_BASE=http://localhost:4000` (your proxy's address) before starting reyn. Full setup walkthrough (server choice, proxy `config.yaml`, the `provider/` name-stripping rule, pre-flight verification) lives in [Guide: enable semantic search § Case B](../../guide/for-users/enable-semantic-search.md#case-b-no-embedding-api-contract-litellm-proxy-a-local-model) — written for `search_actions` but the same mechanism serves `index_update`/`semantic_search`.
 
 For chat-side action retrieval specifically (= `search_actions`), see [Guide: enable semantic search](../../guide/for-users/enable-semantic-search.md) and the [`reyn embeddings`](../../reference/cli/embeddings.md) CLI for cache management.
 
@@ -215,7 +212,7 @@ For chat-side action retrieval specifically (= `search_actions`), see [Guide: en
 
 **Landed post-1.0:**
 
-- Local embedding models via sentence-transformers (FP-0043) — see [§Local embedding backend](#local-embedding-backend-fp-0043). The chat-side `search_actions` surface is the first consumer; the same `local-mini` / `local-e5` classes are reachable from `embedding.default_class` for document indexing too.
+- **FP-0043** added the local-embedding path for chat-side action retrieval (`search_actions`). It originally shipped as an in-process `sentence-transformers` backend; **#3128 removed that in-process backend** — reyn depends on litellm exclusively for embeddings now, and "local" is reached, if wanted, via an operator-run litellm proxy fronting a local model server — see [§Local and offline embedding models](#local-and-offline-embedding-models).
 - **FP-0057 Phase 2a/2b**: `recall` renamed `semantic_search`; the safe-mode ingestion entry point is now `index_update()` (`reyn.api.safe.index_update`) — an incremental/delta-reconcile call (add/update/remove/skip against the source's current index), replacing the retired `embed_and_index()` (`reyn.api.safe.embed_index`, clean-break, no shim). This also closes the "no incremental indexing" gap below — reconcile detects deleted/changed source files by content_hash, no separate rebuild mode needed for ordinary file changes.
 
 **Deferred to Phase 2 (post-1.1):**
@@ -232,7 +229,7 @@ For chat-side action retrieval specifically (= `search_actions`), see [Guide: en
 - **Memory layer is unchanged in Phase 1.** Session memory still uses inline system-prompt expansion. The `semantic_search` tool and memory are independent systems in this release.
 - **No advanced retrieval.** Phase 1 uses cosine similarity only — no reranking, HyDE, or contextual retrieval.
 - **Sensitive data.** reyn does not redact sensitive content before indexing. Do not index secrets, credentials, or PII unless you understand the implications. A redaction policy is planned for Phase 2.
-- **Embedding requires either an API key OR local-embed extras.** OpenAI-backed classes (`light` / `standard` / `strong`) need `OPENAI_API_KEY`; local classes (`local-mini` / `local-e5`) need `pip install 'reyn[local-embed]'` and a one-time model download. See [§Embedding configuration](#embedding-configuration). A fully credential-free, zero-extras `semantic_search` path is not yet available.
+- **Embedding requires either an API key OR a self-run litellm proxy.** The built-in classes (`light` / `standard` / `strong`) need `OPENAI_API_KEY`; a fully credential-free path needs an operator to stand up a local embedding server behind a litellm proxy and add an `embedding.classes` entry pointing at it (see [§Local and offline embedding models](#local-and-offline-embedding-models)). See [§Embedding configuration](#embedding-configuration).
 
 ## Operational Intelligence — `semantic_search` on events
 

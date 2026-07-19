@@ -1,6 +1,16 @@
 # ADR-0033: RAG-extensible OS — `embed` / `index_*` / `recall` ops + `index_docs` stdlib + `IndexBackend` protocol
 
 **Status**: Accepted (2026-05-10) — Phase 1 implementation landed
+
+> **Superseding note (#3128, 2026-07)**: this decision record's Phase 2 mention
+> of a local `sentence-transformers` embedding plugin describes a plan that
+> *was* implemented (FP-0043) and has since been **removed** — #3128 deleted
+> reyn's in-process sentence-transformers backend; reyn now depends on litellm
+> exclusively for embeddings, and a local model is reached (if desired) via an
+> operator-run litellm proxy instead. The history below is left as-written (a
+> decision record, not a living doc); see
+> [Concepts: RAG — Local and offline embedding models](../../concepts/data-retrieval/rag.md#local-and-offline-embedding-models)
+> for the current mechanism.
 **Track**: Architecture — RAG infrastructure (= 1.0 release narrative core)
 **Implementation commits**: `d2db332` (foundational) → `1e6f153` (Wave 2b CLI/Tools); 12 commits total, 2073 → 2204 passed (+131 net new tests). Full chain: schemas + registry → IndexBackend (sqlite) + EmbeddingProvider (LiteLLM) + SourceManifest + embedding config → 5 op handlers + permission gate → router Indexed sources section + empty state hint → index_docs stdlib skill + chunkers + cost preflight → recall/drop_source ToolDefinition + reyn source CLI → user-facing docs (concepts/rag + reference/cli/source).
 
