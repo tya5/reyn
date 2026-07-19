@@ -75,7 +75,7 @@ Two kinds of position appear in config, and they follow opposite rules. The same
 - **Class position** (a *reference* to a class): `model`, per-agent / per-phase / per-op model overrides, `embedding_class`. These are **closed-world** — the value must name a class that exists in `models:` / `embedding.classes:` (or a built-in tier: `light` / `standard` / `strong`). A value that is not a known class is **not** silently treated as a literal model:
   - operator config (`model:` in reyn.yaml) keeps a backward-compatible literal passthrough (you may put `openai/gpt-4o` directly);
   - a **skill/op-supplied** model (`op.model`) that is not a known class is **rejected** and falls back to the runtime model (one warning), so a skill- or LLM-authored string cannot bypass the proxy config — the proxy config is the single source of truth for model selection.
-- **Name position** (the *definition* of a model): the `model:` value inside a `models:` / `embedding.classes:` entry. A name should be `provider/model` (e.g. `openai/gpt-4o`, `sentence-transformers/all-MiniLM-L6-v2`). A bare name with no `/` is accepted (some LiteLLM strings are bare) but **warns** at load — add the prefix if resolution misroutes.
+- **Name position** (the *definition* of a model): the `model:` value inside a `models:` / `embedding.classes:` entry. A name should be `provider/model` (e.g. `openai/gpt-4o`, `openai/nomic-embed-text` for a local model served behind a litellm proxy). A bare name with no `/` is accepted (some LiteLLM strings are bare) but **warns** at load — add the prefix if resolution misroutes.
 
 In one line: **a `_class` / tier position takes a class name (closed-world); a `model` position takes `provider/model` (validated). No position accepts both.**
 
@@ -812,7 +812,7 @@ Universal catalog visibility + retrieval settings.  Scheme *selection* is genera
 ```yaml
 action_retrieval:
   universal_wrappers_enabled: true    # default; set false to opt out
-  # embedding_class: local-mini       # default is null (off); uncomment to opt in
+  # embedding_class: standard         # default is null (off); uncomment to opt in
   hot_list_n: 0                       # 0 = off (default); set e.g. 10 to opt in
   mode: default                       # default | minimal | performance
 ```
@@ -822,7 +822,7 @@ action_retrieval:
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `universal_wrappers_enabled` | bool | `true` | For a layer whose `tool_use` scheme resolves to `universal-category`, `true` (default) exposes only the 4 universal wrappers (`list_actions`, `search_actions`, `describe_action`, `invoke_action`) plus hot-list direct aliases in that layer's `tools=`.  Legacy per-kind tools (`invoke_skill`, `call_mcp_tool`, etc.) are no longer surfaced to the LLM on that layer but remain available as wrapper backing handlers.  `search_actions` is gated separately by `embedding_class`.  Set `false` to disable the wrapper surface entirely for that layer (= legacy tools become the only addressing path again).  Does not affect a layer whose scheme is `enumerate-all` (the `chat` layer's own default) — that scheme never consults this flag. |
-| `embedding_class` | string \| null | `null` | Name of an entry in [`embedding.classes`](../../concepts/data-retrieval/rag.md) to use for action-retrieval semantic search. **Default `null` (off) — semantic `search_actions` is opt-in.** When `null` or empty, `search_actions` is excluded from `tools=` even when wrappers are enabled, and no embedding index build is attempted (silent — nothing to fail or warn about). To opt in, set it explicitly to `local-mini` (= `sentence-transformers/all-MiniLM-L6-v2`; local, needs the `reyn[local-embed]` extras and a one-time Hugging Face model download) or `standard` (= OpenAI-backed, needs `OPENAI_API_KEY`, no local download). Setting this also enables eager embedding build on cold-start sessions to avoid first-turn hallucinations. **Graceful degrade**: if the chosen class points at a `sentence-transformers/` model but the `local-embed` extras aren't installed, reyn silently treats this as `null` and `list_actions` surfaces the install command to the LLM. |
+| `embedding_class` | string \| null | `null` | Name of an entry in [`embedding.classes`](../../concepts/data-retrieval/rag.md) to use for action-retrieval semantic search. **Default `null` (off) — semantic `search_actions` is opt-in.** When `null` or empty, `search_actions` is excluded from `tools=` even when wrappers are enabled, and no embedding index build is attempted (silent — nothing to fail or warn about). To opt in, set it explicitly to `standard` (= or `light` / `strong`; OpenAI-backed, needs `OPENAI_API_KEY`, no local install) or a custom `embedding.classes` entry naming any litellm-routable model — including a local model served behind an operator-run litellm proxy (#3128 removed reyn's in-process sentence-transformers backend; reyn depends on litellm exclusively for embeddings now — see [Guide: enable semantic search](../../guide/for-users/enable-semantic-search.md)). Setting this also enables eager embedding build on cold-start sessions to avoid first-turn hallucinations. |
 | `hot_list_n` | int | `0` | Hot-list projection size for top-N `freq+recency` direct aliases. `0` (default) disables hot-list entirely — `list_actions` is the canonical discovery path. Set to `10` or higher to opt in; the seed, usage tracker, and alias-builder remain fully operative. |
 | `mode` | string | `"default"` | Operational mode label: `"minimal"` (max cache stability, no hot list) / `"default"` (balanced) / `"performance"` (large hot list).  Free-form string; callers layer semantics on top. |
 | `hot_list_seed` | list \| string | `"default"` | Seed for the hot-list projection. `"default"` uses the built-in freq+recency seeding; a list of qualified action names (e.g. `["mcp__call_tool"]`) pins those as the initial hot list before usage stats accumulate. |
@@ -832,16 +832,21 @@ action_retrieval:
 `search_actions` is off by default (`embedding_class: null`) — semantic search is opt-in project-wide. To turn it on:
 
 ```yaml
-# reyn.yaml — local model (needs `pip install 'reyn[local-embed]'`; downloads
-# ~22 MB from Hugging Face on first use)
+# reyn.yaml — API-backed, no local install (needs OPENAI_API_KEY)
 action_retrieval:
-  embedding_class: local-mini
+  embedding_class: standard
 ```
 
 ```yaml
-# reyn.yaml — API-backed, no local download (needs OPENAI_API_KEY)
+# reyn.yaml — local model behind a self-run litellm proxy (no API key);
+# export LITELLM_API_BASE before starting reyn — see the Guide for the
+# proxy config.yaml + naming rule
+embedding:
+  classes:
+    local:
+      model: openai/nomic-embed-text
 action_retrieval:
-  embedding_class: standard
+  embedding_class: local
 ```
 
 See [Guide: enable semantic search](../../guide/for-users/enable-semantic-search.md) for the full walkthrough, including offline/air-gapped guidance.
@@ -1535,10 +1540,8 @@ Built-in classes (active when `classes:` is empty or absent):
 | `light` | `openai/text-embedding-3-small` | Needs `OPENAI_API_KEY`. |
 | `standard` | `openai/text-embedding-3-small` | Needs `OPENAI_API_KEY`. |
 | `strong` | `openai/text-embedding-3-large` | Needs `OPENAI_API_KEY`. |
-| `local-mini` | `sentence-transformers/all-MiniLM-L6-v2` | Requires `pip install 'reyn[local-embed]'`; without the extras, instantiating raises at first `embed()` call (the `search_actions` visibility gate degrades to hidden gracefully). |
-| `local-e5` | `sentence-transformers/intfloat/multilingual-e5-small` | Same `local-embed` extras requirement; multilingual model (better recall on non-English corpora). |
 
-See [Concepts: RAG — local embedding backend](../../concepts/data-retrieval/rag.md#local-embedding-backend-fp-0043) for cache locations and trade-offs.
+All three built-in classes are OpenAI-backed via litellm. There is no in-process local backend (#3128 removed the `local-mini` / `local-e5` sentence-transformers classes and the `reyn[local-embed]` extras) — an operator who wants a local/offline model adds a custom `embedding.classes` entry naming a model served behind an operator-run litellm proxy. See [Concepts: RAG — Local and offline embedding models](../../concepts/data-retrieval/rag.md#local-and-offline-embedding-models) for the setup.
 
 ## `chat` block
 

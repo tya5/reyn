@@ -70,7 +70,7 @@ config には2種類の位置があり、逆のルールに従います。同じ
 - **クラス位置**（クラスへの *参照*）：`model`、per-agent / per-phase / per-op のモデル上書き、`embedding_class`。これらは **closed-world** — 値は `models:` / `embedding.classes:` に存在するクラス（または組み込み tier: `light` / `standard` / `strong`）を指さなければなりません。既知クラスでない値は、リテラルモデルとして黙って素通しされません：
   - オペレータ config（reyn.yaml の `model:`）は後方互換のリテラル素通しを維持（`openai/gpt-4o` を直接書ける）；
   - **skill/op 由来**のモデル（`op.model`）が既知クラスでない場合は **reject** され、runtime モデルにフォールバック（警告1件）します。これにより skill・LLM 由来の文字列が proxy config を迂回できません — モデル選択の単一の真実源は proxy config です。
-- **名前位置**（モデルの *定義*）：`models:` / `embedding.classes:` エントリ内の `model:` 値。名前は `provider/model`（例：`openai/gpt-4o`、`sentence-transformers/all-MiniLM-L6-v2`）であるべきです。`/` のない bare 名は許容されます（一部の LiteLLM 文字列は bare）が、ロード時に **警告** します — 解決が誤ルートする場合は prefix を追加してください。
+- **名前位置**（モデルの *定義*）：`models:` / `embedding.classes:` エントリ内の `model:` 値。名前は `provider/model`（例：`openai/gpt-4o`、litellm proxy 背後のローカルモデルなら `openai/nomic-embed-text`）であるべきです。`/` のない bare 名は許容されます（一部の LiteLLM 文字列は bare）が、ロード時に **警告** します — 解決が誤ルートする場合は prefix を追加してください。
 
 一言で：**`_class` / tier 位置はクラス名（closed-world）、`model` 位置は `provider/model`（検証付き）。どちらも受け付ける位置はない。**
 
@@ -365,7 +365,7 @@ sandbox:
 ```yaml
 action_retrieval:
   universal_wrappers_enabled: true    # デフォルト; false でオプトアウト
-  # embedding_class: local-mini       # デフォルトは null (無効); opt-in するにはコメント解除
+  # embedding_class: standard         # デフォルトは null (無効); opt-in するにはコメント解除
   hot_list_n: 0                       # 0 = 無効（デフォルト）; opt-in は例えば 10
   mode: default                       # default | minimal | performance
 ```
@@ -375,7 +375,7 @@ action_retrieval:
 | フィールド | 型 | デフォルト | 説明 |
 |-----|------|---------|-------------|
 | `universal_wrappers_enabled` | bool | `true` | `tool_use` scheme が `universal-category` に解決される layer について、`true`(デフォルト)の時、その layer の `tools=` は 4 universal wrappers (`list_actions` / `search_actions` / `describe_action` / `invoke_action`) + hot list direct aliases のみ。 legacy per-kind tool (`invoke_skill` / `call_mcp_tool` 等) はその layer で LLM に surface されず、 wrapper の backing handler として残存。 `search_actions` は `embedding_class` で別途ゲート。 `false` 設定でその layer の wrapper surface 自体を無効化 (= legacy のみが addressing path)。 scheme が `enumerate-all`(`chat` layer 自身のデフォルト)である layer には影響しない — その scheme はこのフラグを一切参照しない。 |
-| `embedding_class` | string \| null | `null` | action-retrieval の semantic 検索に使用する [`embedding.classes`](../../concepts/data-retrieval/rag.md) のエントリ名。 **デフォルト `null` (無効) — semantic `search_actions` は opt-in。** `null` または空の場合、 wrapper が有効でも `search_actions` は `tools=` から除外され、 embedding index の build も一切試行されない (= silent、失敗も警告も発生しない)。 opt-in するには明示的に `local-mini` (= `sentence-transformers/all-MiniLM-L6-v2`; ローカル、`reyn[local-embed]` extras と初回の Hugging Face モデルダウンロードが必要) または `standard` (= OpenAI backed、ローカルダウンロード不要、`OPENAI_API_KEY` が必要) を設定する。 設定すると cold-start session で eager embedding build を発動し初回ターンの hallucination を回避。 **Graceful degrade**: 選んだクラスが `sentence-transformers/` モデルを指すのに `local-embed` extras 未インストールの場合、 reyn は黙って `null` 扱いとし `list_actions` がインストールコマンドを LLM に surface する。 |
+| `embedding_class` | string \| null | `null` | action-retrieval の semantic 検索に使用する [`embedding.classes`](../../concepts/data-retrieval/rag.md) のエントリ名。 **デフォルト `null` (無効) — semantic `search_actions` は opt-in。** `null` または空の場合、 wrapper が有効でも `search_actions` は `tools=` から除外され、 embedding index の build も一切試行されない (= silent、失敗も警告も発生しない)。 opt-in するには明示的に `standard`（= または `light` / `strong`；OpenAI backed、`OPENAI_API_KEY` が必要、ローカルインストール不要）、または任意の litellm-routable モデルを指す custom `embedding.classes` エントリ（operator が自前で立てた litellm proxy 背後のローカルモデルを含む — #3128 で reyn の in-process sentence-transformers backend は削除済み。reyn は埋め込みを litellm に一元依存。[Guide: enable semantic search](../../guide/for-users/enable-semantic-search.md) 参照）を設定する。 設定すると cold-start session で eager embedding build を発動し初回ターンの hallucination を回避。 |
 | `hot_list_n` | int | `0` | top-N `freq+recency` direct alias のホットリスト投影サイズ。 デフォルト `0` (= 無効) — `list_actions` が正規の discovery path。 opt-in は `10` 以上を設定; seed・usage tracker・alias-builder は完全維持。 |
 | `mode` | string | `"default"` | 運用モードラベル: `"minimal"` (キャッシュ安定性最大、 ホットリストなし) / `"default"` (バランス) / `"performance"` (大規模ホットリスト)。 自由文字列で、 呼び出し側がセマンティクスを上乗せ。 |
 
@@ -384,16 +384,20 @@ action_retrieval:
 `search_actions` はデフォルトで無効 (`embedding_class: null`) — semantic search はプロジェクト全体で opt-in の方針です。有効にするには:
 
 ```yaml
-# reyn.yaml — ローカルモデル (`pip install 'reyn[local-embed]'` が必要;
-# 初回利用時に Hugging Face から ~22 MB ダウンロード)
+# reyn.yaml — API backed、ローカルインストール不要 (`OPENAI_API_KEY` が必要)
 action_retrieval:
-  embedding_class: local-mini
+  embedding_class: standard
 ```
 
 ```yaml
-# reyn.yaml — API backed、ローカルダウンロード不要 (`OPENAI_API_KEY` が必要)
+# reyn.yaml — 自前の litellm proxy 背後のローカルモデル（API キー不要）;
+# reyn 起動前に LITELLM_API_BASE を export — proxy の config.yaml と命名規則はガイド参照
+embedding:
+  classes:
+    local:
+      model: openai/nomic-embed-text
 action_retrieval:
-  embedding_class: standard
+  embedding_class: local
 ```
 
 詳細な手順（オフライン/エアギャップ環境のガイダンスを含む）は [ガイド: semantic search を有効にする](../../guide/for-users/enable-semantic-search.ja.md) を参照。
@@ -903,10 +907,8 @@ embedding:
 | `light` | `openai/text-embedding-3-small` | `OPENAI_API_KEY` が必要。 |
 | `standard` | `openai/text-embedding-3-small` | `OPENAI_API_KEY` が必要。 |
 | `strong` | `openai/text-embedding-3-large` | `OPENAI_API_KEY` が必要。 |
-| `local-mini` | `sentence-transformers/all-MiniLM-L6-v2` | `pip install 'reyn[local-embed]'` が必須。extras が無い場合、初回 `embed()` 呼び出しで raise（`search_actions` の可視化ゲートは hidden へ graceful degrade）。 |
-| `local-e5` | `sentence-transformers/intfloat/multilingual-e5-small` | 同じく `local-embed` extras 必須。多言語モデル（非英語コーパスで recall が向上）。 |
 
-キャッシュロケーション・トレードオフは [Concepts: RAG — local embedding backend](../../concepts/data-retrieval/rag.ja.md#local-embedding-backend-fp-0043) を参照。
+3 つの組み込みクラスはすべて litellm 経由の OpenAI backed です。in-process のローカルバックエンドはありません（#3128 で `local-mini` / `local-e5` sentence-transformers クラスと `reyn[local-embed]` extras を削除済み）— ローカル / オフラインモデルが必要な operator は、自前で立てた litellm proxy 背後のモデルを指す custom `embedding.classes` エントリを追加します。セットアップ手順は [Concepts: RAG — Local and offline embedding models](../../concepts/data-retrieval/rag.md#local-and-offline-embedding-models)（英語）を参照。
 
 ## `chat` ブロック
 

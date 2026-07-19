@@ -52,6 +52,20 @@ Today `SqliteIndexBackend` (doc RAG, `.reyn/cache/index/<source>/`) and `ActionE
 
 ### Default embed = local MiniLM (HF download) — offline/restricted-network is a Reliability concern
 
+> **Superseding note (#3128, 2026-07)**: this section describes the FP-0043 /
+> FP-0057-Phase-4-era state, where `local-mini` (in-process
+> `sentence-transformers`) was the default embedding class. **That default —
+> and the in-process backend itself — no longer exist**: #3128 removed reyn's
+> in-process sentence-transformers backend entirely; the shipped default is
+> now an OpenAI-backed `standard` class routed through litellm, and a
+> local/offline setup is reached via an operator-run litellm proxy instead of
+> an in-process HF download. The paragraph below is left as-written (a
+> proposal snapshot of the state that motivated FP-0057 Phase 4's offline
+> work, which itself landed and was then superseded by #3128's clean-break
+> removal); see
+> [Concepts: RAG — Local and offline embedding models](../../concepts/data-retrieval/rag.md#local-and-offline-embedding-models)
+> for the current mechanism.
+
 The **default** embedding class is `local-mini` = `sentence-transformers/all-MiniLM-L6-v2` (`config/embedding.py:42`, default since FP-0043 Phase 4), used by default for tool-use RAG (`action_retrieval`/`search_actions`). It **downloads ~22MB from HuggingFace lazily on first use**; the model cache lives under the reyn cache root. In a **corporate/firewalled network where HF is blocked**, the load fails and emits `"failed to load … Check network connectivity …"`, and the index build degrades (owner hit this at their company). Escape hatch exists (`action_retrieval.embedding_class: standard` → API embedding), but the DEFAULT triggers the HF download.
 
 **Redesign must make the offline/air-gapped story clean** (Reliability + Product-Think): bundle the model / `HF_HUB_OFFLINE`+`local_files_only` support + a clear message / a clean degrade. Cross-cutting: affects every RAG use-case on the shared embed layer that uses `local-mini`.

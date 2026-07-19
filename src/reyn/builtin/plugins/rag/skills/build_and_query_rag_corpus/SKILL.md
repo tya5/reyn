@@ -74,14 +74,16 @@ mcp__install_local(name="reyn_markitdown", args=[],
 ## Embedding setup -- confirm before you spend on ingest
 
 `rag_ingest` needs a working embedding provider, or every chunk it embeds is
-wasted spend against a call that was never going to succeed. Unless the
-resolved model carries the `sentence-transformers/` prefix (a separate,
-in-process backend -- see the next section), **every embedding call in reyn
-routes through `litellm`**: straight to the provider's own API, or through a
-**litellm proxy** if the env var `LITELLM_API_BASE` is set (the same variable
-`call_llm` reads -- one proxy serves both). Default classes: `light` /
-`standard` -> `openai/text-embedding-3-small`, `strong` ->
-`openai/text-embedding-3-large`.
+wasted spend against a call that was never going to succeed. Reyn depends on
+litellm exclusively for embeddings -- there is no in-process model backend --
+so **every embedding call in reyn routes through `litellm`**: straight to the
+provider's own API, or through a **litellm proxy** if the env var
+`LITELLM_API_BASE` is set (the same variable `call_llm` reads -- one proxy
+serves both). Default classes: `light` / `standard` ->
+`openai/text-embedding-3-small`, `strong` -> `openai/text-embedding-3-large`.
+A local model (no API key / offline) is reached the same way any other model
+is -- behind a litellm proxy, via Case B below -- not through a separate
+reyn backend.
 
 ### Pre-flight: confirm the endpoint actually answers (do this before `rag_ingest`)
 
@@ -233,19 +235,19 @@ first big ingest, not after:
   multilingual model; an English-only model's cross-lingual recall is
   poor.
 - **Size vs. recall.** A smaller model embeds faster and costs less
-  compute per query; a larger model trades that for better recall.
-  Reyn's *other* local-embedding backend (`sentence-transformers`, used
-  by `search_actions`, not this RAG) documents this exact tradeoff with
-  measured numbers worth reusing as a reference point --
+  compute per query; a larger model trades that for better recall. As a
+  reference point (measured model properties, not vendor-claimed):
   `all-MiniLM-L6-v2` (22 MB, 384-dim, English-only, fastest) vs.
   `multilingual-e5-small` (118 MB, 50 languages, better cross-lingual
   recall) vs. OpenAI's `text-embedding-3-small` API (~5 pp higher MTEB
-  than `multilingual-e5-small`, at API cost) -- see
-  `docs/guide/for-users/enable-semantic-search.md` for the full
-  comparison and the numbers' provenance. Those are a **different
-  mechanism** (in-process, not litellm-proxy-served) but the same three
-  tradeoffs -- language / size / quality -- apply when picking a model to
-  serve through Ollama or another local server for Case B.
+  than `multilingual-e5-small`, at API cost). These describe the *models
+  themselves* -- any of them served locally through Ollama/TEI/infinity
+  behind your proxy for Case B, or `text-embedding-3-small` as OpenAI's
+  own API for Case A -- so the same three tradeoffs (language / size /
+  quality) apply directly to the model you pick. See
+  `docs/guide/for-users/enable-semantic-search.md` § "Choosing a local
+  model (Case B)" for the same comparison walked through for
+  `search_actions`.
 - **Server ecosystem.** Serving via Ollama (Step 1 above), the easiest
   openai-compatible option is `nomic-embed-text`. Serving via HuggingFace
   `text-embeddings-inference` or `infinity` instead, the `bge-*` /
