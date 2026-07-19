@@ -219,7 +219,7 @@ Pass `--token <secret>` (the token `reyn web` printed on launch, or your configu
 
 **A2A / MCP requests 404**
 
-A2A and MCP are off by default (secure-default; see [Choosing which surfaces are hosted](#choosing-which-surfaces-are-hosted---enable----disable) above). Start the server with `--enable a2a` / `--enable mcp`, or set `web.surfaces.a2a.enabled: true` / `web.surfaces.mcp.enabled: true` in `reyn.yaml`.
+A2A and MCP are off by default (secure-default; see [Choosing which surfaces are hosted](#choosing-which-surfaces-are-hosted-enable-disable) above). Start the server with `--enable a2a` / `--enable mcp`, or set `web.surfaces.a2a.enabled: true` / `web.surfaces.mcp.enabled: true` in `reyn.yaml`.
 
 ---
 
