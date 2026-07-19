@@ -113,9 +113,11 @@ _ARM_DESCRIPTION = {
     "write": "a write outside write_paths is REFUSED (Landlock's filesystem boundary)",
     "spawn": "a fork under allow_subprocess=False is REFUSED (the seccomp filter loaded)",
     "network": (
-        "a socket() create under network=False, allow_subprocess=True is REFUSED "
+        "a connect() under network=False, allow_subprocess=True is REFUSED "
         "(#3030: the seccomp filter used to be skipped entirely in this exact "
-        "condition — the stdio-MCP default — dropping the network gate with it)"
+        "condition — the stdio-MCP default — dropping the network gate with it. "
+        "#3060 moved socket()/bind() to the always-allowed set, so the witness "
+        "moved from socket() creation to connect())"
     ),
 }
 

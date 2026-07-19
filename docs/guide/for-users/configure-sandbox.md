@@ -118,7 +118,7 @@ on macOS.
 | Field | Enforcement |
 |---|---|
 | `write_paths` | Enforced |
-| `network` | Enforced |
+| `network` | Enforced. A loopback-only `network-bind` (`localhost:*`) is always allowed regardless of `network`, mirroring Landlock's `socket`/`bind` exception above ([#3060](https://github.com/tya5/reyn/issues/3060)) — `network-outbound`/`network-inbound` stay gated on `network`. |
 | `read_deny_paths` | **Enforced** — SBPL deny-after-allow |
 | `allow_subprocess` | **Enforced** — denies `process-fork` when off; the target's own exec still works via `process-exec*` |
 | `timeout_seconds` | Enforced |
@@ -130,7 +130,7 @@ Uses the Linux Landlock LSM with path-beneath allowlist rules.
 | Field | Enforcement |
 |---|---|
 | `write_paths` | Enforced — path-beneath write rules |
-| `network` | **Enforced, unconditionally** ([#3030](https://github.com/tya5/reyn/issues/3030) fixed). Landlock itself never restricts network on any kernel: the pinned `landlock` package exposes no network-rule API, so the deny is carried entirely by a seccomp-BPF default-deny **allowlist** — every syscall not named (including `socket`/`connect` when `network: false`, and unconditionally io_uring's `io_uring_setup`/`io_uring_enter`, which a syscall-name denylist cannot express) is refused. This filter used to be skipped ENTIRELY whenever `allow_subprocess: true` — the stdio MCP default — which silently dropped the network gate along with it; it now loads unconditionally, so `network: false` is enforced regardless of `allow_subprocess`. |
+| `network` | **Enforced, unconditionally** ([#3030](https://github.com/tya5/reyn/issues/3030) fixed). Landlock itself never restricts network on any kernel: the pinned `landlock` package exposes no network-rule API, so the deny is carried entirely by a seccomp-BPF default-deny **allowlist** — every syscall not named (including `connect`/`sendto`/`sendmsg`/`accept`/`listen` when `network: false`, and unconditionally io_uring's `io_uring_setup`/`io_uring_enter`, which a syscall-name denylist cannot express) is refused. This filter used to be skipped ENTIRELY whenever `allow_subprocess: true` — the stdio MCP default — which silently dropped the network gate along with it; it now loads unconditionally, so `network: false` is enforced regardless of `allow_subprocess`. `socket`/`bind` are the two exceptions, always allowed regardless of `network` ([#3060](https://github.com/tya5/reyn/issues/3060)): neither one alone transmits or receives a byte, and a benign import-time IPv6-support probe in a common HTTP-client dependency (`bind`s to `::1` on port 0 and never `connect`s) used to be refused as collateral damage. Dialing an actual peer still requires `connect`, which stays gated. |
 | `read_deny_paths` | **Not enforced** — Landlock is allowlist-only and cannot carve a subpath out of an allowed parent. The network gate (see the `network` row) is the compensating exfiltration control, and — since #3030 — applies regardless of `allow_subprocess`. Do not rely on this platform to contain a process that can read a secret; network denial only stops it leaving. |
 | `allow_subprocess` | **Enforced** — seccomp-BPF refuses `fork`/`clone`. Landlock is not selected unless the self-test witnesses this deny on your host, so this is a checked claim rather than a hope that `pyseccomp` is installed and loading |
 | `timeout_seconds` | Enforced |

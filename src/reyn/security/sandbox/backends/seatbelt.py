@@ -140,6 +140,25 @@ def _build_sbpl_profile(policy: SandboxPolicy) -> str:
             lines.append(f"(deny file-read* (subpath {_sbpl_quote(resolved)}))")
             lines.append(f"(deny file-write* (subpath {_sbpl_quote(resolved)}))")
 
+    # Always-allowed loopback bind (#3060), independent of `policy.network`.
+    # `network-bind` scoped to `localhost:*` lets a process claim a LOCAL
+    # address (IPv4 127.0.0.1 / IPv6 ::1) on any port, but grants neither
+    # `network-outbound` (dialing a remote peer) nor `network-inbound`
+    # (accepting one) nor an unscoped `network-bind` to a non-loopback
+    # address — so a network-off sandbox still cannot reach the network.
+    # This closes a false-positive class measured live: urllib3's
+    # import-time IPv6-support probe (`urllib3/util/connection.py:137`,
+    # reached transitively via fastmcp -> requests -> urllib3) calls
+    # `socket.socket()` then `sock.bind(("::1", 0))` — a loopback bind,
+    # never a `connect()` — and used to abort the sandboxed process with a
+    # permission error under `network: false` even though it never touches
+    # the network. Root-caused and confirmed benign before this fix (see
+    # issue #3060). Mirrors seccomp's `_NETWORK_ALWAYS_ALLOWED` (socket +
+    # bind) — `network-bind` is Seatbelt's `bind(2)` equivalent.
+    lines.append("")
+    lines.append("; — always-allowed loopback bind (the network gate stays the egress guard) —")
+    lines.append('(allow network-bind (local ip "localhost:*"))')
+
     # Network.
     if policy.network:
         lines.append("")

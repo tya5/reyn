@@ -371,8 +371,8 @@ def probe_subprocess_enforcement(backend: "SandboxBackend") -> str | None:
 
 
 def probe_network_enforcement(backend: "SandboxBackend") -> str | None:
-    """Witness whether *backend* actually denies outbound-socket creation under
-    ``network=False`` (#3030).
+    """Witness whether *backend* actually denies outbound ``connect()`` under
+    ``network=False`` (#3030, updated for #3060).
 
     Returns ``None`` when the deny fired, else an operator-readable reason.
     Uncached, and — unlike :func:`probe_enforcement` /
@@ -382,12 +382,31 @@ def probe_network_enforcement(backend: "SandboxBackend") -> str | None:
     (``scripts/sandbox_landlock_deny_gate.py``'s ``network`` deny arm) and by
     ``tests/test_sandbox_seccomp_network_3030.py``.
 
-    The oracle is ``socket.socket()`` succeeding or raising, marked via a file
-    (same idiom as :func:`probe_subprocess_enforcement`) rather than a live
-    connect: the seccomp filter refuses the ``socket`` syscall itself, before any
-    address is even resolved, so no outbound connectivity is needed to witness
-    the deny — and none is risked on a network-restricted host running this
-    probe.
+    **Why ``connect()``, not ``socket()`` (#3060).** This probe originally
+    witnessed the deny at ``socket()`` creation. #3060 moved ``socket``/
+    ``bind`` to the seccomp/Seatbelt allowlist's ALWAYS-allowed set — a
+    surgical fix for urllib3's benign, loopback-only IPv6-support probe
+    (``socket()`` then ``bind(("::1", 0))``, never a ``connect()``) that used
+    to be refused as collateral damage of the network gate. ``socket()``
+    succeeding is therefore no longer evidence of anything: the actual
+    egress claim now lives at ``connect()`` (dialing a remote peer), which
+    stays gated on ``policy.network``.
+
+    The oracle is still a marker FILE, not a live outbound connection —
+    flaky on a network-restricted host running this probe. This module's OWN
+    process (never the sandboxed subprocess) opens a loopback TCP listener
+    before either launch, so the sandboxed script under test performs
+    EXACTLY ONE network syscall — ``connect()`` — with no ``bind``/``listen``
+    of its own to confound the result: ``listen`` stays gated on
+    ``policy.network`` (unlike ``bind``, it is not in the #3060
+    always-allowed set), so a script that both binds and connects inside the
+    sandboxed policy would fail at ``listen()`` under ``network=False`` and
+    the marker's absence would prove the wrong claim. An
+    ``EPERM``/``PermissionError`` on the sandboxed script's ``connect()``
+    call is therefore unambiguously the seccomp/Seatbelt deny firing on that
+    syscall itself, not a routing or reachability failure of some
+    third-party address, and not a same-process ``listen()`` denial leaking
+    into the result.
 
     **``allow_subprocess=True`` throughout — deliberately, unlike the write
     probe's isolation choice.** #3030 is specifically the discovery that
@@ -400,14 +419,15 @@ def probe_network_enforcement(backend: "SandboxBackend") -> str | None:
     Three launches, same shape as :func:`probe_subprocess_enforcement` and for
     the same reason — two different lies are available:
 
-    1. ``network=True`` + a socket create must SUCCEED (positive control) — else
-       the probe cannot observe a working socket() through this wrap at all.
+    1. ``network=True`` + a loopback ``connect()`` must SUCCEED (positive
+       control) — else the probe cannot observe a working ``connect()``
+       through this wrap at all.
     2. ``network=False`` + a NON-networking command must still run — else a
        filter that is dead wholesale under this policy (exactly #3030's shape:
        the whole filter skipped, not "network off, everything else on") is
        indistinguishable from one that denies only sockets.
-    3. Only then the deny: ``network=False`` + a socket create must NOT
-       succeed.
+    3. Only then the deny: ``network=False`` + the loopback ``connect()``
+       must NOT succeed.
     """
     touch = shutil.which("touch")
     if touch is None:
@@ -417,8 +437,18 @@ def probe_network_enforcement(backend: "SandboxBackend") -> str | None:
             "unwitnessed, not confirmed"
         )
 
+    import socket as _socket_mod
+
     granted = Path(tempfile.mkdtemp(prefix="reyn-sandbox-selftest-net-")).resolve()
+    # The listener lives in THIS (unsandboxed) process for the probe's whole
+    # lifetime, never inside the wrapped/sandboxed subprocess — see the
+    # docstring's "exactly one network syscall" note.
+    listener = _socket_mod.socket(_socket_mod.AF_INET, _socket_mod.SOCK_STREAM)
     try:
+        listener.bind(("127.0.0.1", 0))
+        listener.listen(5)
+        loopback_port = listener.getsockname()[1]
+
         def _policy(network: bool) -> SandboxPolicy:
             return SandboxPolicy(
                 write_paths=[str(granted)],
@@ -428,25 +458,30 @@ def probe_network_enforcement(backend: "SandboxBackend") -> str | None:
                 timeout_seconds=_PROBE_TIMEOUT_SECONDS,
             )
 
-        def _socket_argv(marker: Path) -> list[str]:
+        def _connect_argv(marker: Path) -> list[str]:
+            # The ONLY network syscall this sandboxed script issues is
+            # `connect()` — the listener already exists in the probe's own
+            # process, so there is no `bind`/`listen` here to confound which
+            # syscall a deny is attributable to.
             code = (
                 "import socket\n"
-                "s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)\n"
+                "c = socket.socket(socket.AF_INET, socket.SOCK_STREAM)\n"
+                f"c.connect(('127.0.0.1', {loopback_port}))\n"
                 f"open({str(marker)!r}, 'w').close()\n"
             )
             return [sys.executable, "-c", code]
 
         # 1. Positive control.
-        control = granted / "control-socket"
-        created, detail = _attempt_create(backend, _policy(True), control, _socket_argv(control))
+        control = granted / "control-connect"
+        created, detail = _attempt_create(backend, _policy(True), control, _connect_argv(control))
         if not created:
             return (
                 f"the network-enforcement probe could not establish a positive "
-                f"control: creating a socket — permitted here by network=True — "
-                f"did not produce {control} ({detail}). The probe cannot observe "
-                f"a socket through this backend at all, so a missing marker "
-                f"under network=False would prove nothing; treating enforcement "
-                f"as unwitnessed"
+                f"control: connecting to the probe's own loopback listener — "
+                f"permitted here by network=True — did not produce {control} "
+                f"({detail}). The probe cannot observe a connect() through "
+                f"this backend at all, so a missing marker under network=False "
+                f"would prove nothing; treating enforcement as unwitnessed"
             )
 
         # 2. The deny policy must still be able to run a command at all.
@@ -458,26 +493,28 @@ def probe_network_enforcement(backend: "SandboxBackend") -> str | None:
                 f"could not run even a NON-networking command: {alive} — a path "
                 f"this policy GRANTS — was not written ({detail}). Something in "
                 f"this policy's wrap is failing wholesale rather than denying "
-                f"sockets specifically, so a denied socket cannot be attributed "
-                f"to the network gate; treating enforcement as unwitnessed"
+                f"connect() specifically, so a denied connect() cannot be "
+                f"attributed to the network gate; treating enforcement as "
+                f"unwitnessed"
             )
 
         # 3. The deny — the actual claim under test.
-        escaped = granted / "escaped-socket"
+        escaped = granted / "escaped-connect"
         created, detail = _attempt_create(
-            backend, _policy(False), escaped, _socket_argv(escaped)
+            backend, _policy(False), escaped, _connect_argv(escaped)
         )
         if created:
             return (
-                f"no network deny fired: creating a socket wrote {escaped} even "
-                f"though the policy set network=False ({detail}). The backend "
-                f"reports network as enforced while sandboxed code can still "
-                f"open outbound sockets — the exact #3030 condition "
-                f"(allow_subprocess=True skipped the whole syscall filter, "
-                f"network gate included)"
+                f"no network deny fired: connecting to the probe's loopback "
+                f"listener wrote {escaped} even though the policy set "
+                f"network=False ({detail}). The backend reports network as "
+                f"enforced while sandboxed code can still dial a peer — the "
+                f"exact #3030 condition (allow_subprocess=True skipped the "
+                f"whole syscall filter, network gate included)"
             )
         return None
     finally:
+        listener.close()
         shutil.rmtree(granted, ignore_errors=True)
 
 

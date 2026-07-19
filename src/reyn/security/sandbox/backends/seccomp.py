@@ -294,9 +294,38 @@ _EXCLUDED_UNGOVERNABLE: list[str] = [
     "truncate",
 ]
 
-# Syscalls added when policy.network is True.
+# Always allowed, regardless of `policy.network` (#3060). `socket()` and
+# `bind()` alone cannot reach the network: `socket()` only allocates a file
+# descriptor for an address family, and a LOCALHOST-only `bind()` merely
+# claims a local address on it — neither one transmits or receives a byte.
+# The reyn seccomp filter is a default-deny ALLOWLIST (every syscall not
+# named here stays refused), so widening this pair does not open a new
+# egress surface — it only stops mis-attributing two benign, local-only
+# primitives to the network gate.
+#
+# This closes a false-positive class measured live: urllib3's import-time
+# IPv6 probe (`urllib3/util/connection.py:137`, reached transitively via
+# fastmcp -> requests -> urllib3) calls `socket.socket()` then
+# `sock.bind(("::1", 0))` to detect IPv6 support — a loopback bind, never a
+# `connect()` — and used to die with EPERM under `network: false` even
+# though it never touches the network. Root-caused and confirmed benign
+# before this fix (see issue #3060): the probe's `bind` target is always
+# `("::1", 0)` or `("", 0)`, never resolved to a remote address, and no
+# `connect()` call follows it.
+#
+# `connect`/`sendto`/`sendmsg`/`sendmmsg`/`accept`/`accept4`/`listen`/
+# `recvfrom`/`recvmsg`/`getsockname`/`getpeername`/`setsockopt`/
+# `getsockopt`/`shutdown` are the syscalls that actually move bytes to/from
+# a peer or accept a peer connection — those stay gated on `policy.network`
+# below, in `_NETWORK_SYSCALLS`. A network-off sandbox can still create and
+# locally bind a socket, but cannot dial out or accept an inbound peer.
+_NETWORK_ALWAYS_ALLOWED: list[str] = ["socket", "bind"]
+
+# Syscalls added when policy.network is True. `socket`/`bind` are
+# deliberately NOT listed here — they are unconditional, see
+# `_NETWORK_ALWAYS_ALLOWED` above.
 _NETWORK_SYSCALLS: list[str] = [
-    "socket", "connect", "accept", "accept4", "bind", "listen",
+    "connect", "accept", "accept4", "listen",
     "sendto", "recvfrom", "sendmsg", "recvmsg",
     "getsockname", "getpeername", "setsockopt", "getsockopt", "shutdown",
 ]
@@ -480,6 +509,10 @@ def _build_syscall_allowlist(policy: SandboxPolicy) -> list[str]:
         A list of syscall name strings.
     """
     allowed: list[str] = list(_BASELINE)
+    # `socket`/`bind` are always allowed, independent of `policy.network`
+    # (#3060) — see `_NETWORK_ALWAYS_ALLOWED`'s docstring for why neither one
+    # can reach the network on its own.
+    allowed.extend(_NETWORK_ALWAYS_ALLOWED)
 
     if policy.network:
         allowed.extend(_NETWORK_SYSCALLS)
