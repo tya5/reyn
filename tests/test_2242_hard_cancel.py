@@ -264,3 +264,174 @@ async def test_hard_cancel_prior_append_survives_wal_truncation(tmp_path):
     )
 
     await state_log2.aclose()
+
+
+def _install_hanging_run_turn_swallowing_cancel(
+    session: Session,
+) -> tuple[asyncio.Event, asyncio.Event]:
+    """Like ``_install_hanging_run_turn`` but the turn body CATCHES the
+    CancelledError and returns normally (does not re-raise). Models a turn
+    whose internal code suppresses the cancel and completes in the same tick
+    it lands — so ``await self._turn_owner_task`` returns NORMALLY and
+    ``run_one_iteration``'s ``except CancelledError`` block never runs. This is
+    the exact shape that leaves ``_turn_cancel_self_initiated`` un-reset unless
+    the reset lives in an unconditional ``finally`` (Finding 1)."""
+    call_started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def _swallowing_run_turn(user_text: str, chain_id: str) -> None:
+        call_started.set()
+        try:
+            await release.wait()
+        except asyncio.CancelledError:
+            return  # swallow: complete normally instead of propagating
+
+    session._loop_driver.run_turn = _swallowing_run_turn  # type: ignore[method-assign]
+    return call_started, release
+
+
+@pytest.mark.asyncio
+async def test_external_cancel_of_driver_task_propagates(tmp_path):
+    """Tier 2: #2242 Finding 2 — an EXTERNAL cancellation of the task running
+    ``run_one_iteration`` (i.e. NOT via ``cancel_inflight()``, so
+    ``_turn_cancel_self_initiated`` stays False) must PROPAGATE, not be
+    swallowed.
+
+    This is the FP-0013 §ADR-A path: the MCP/A2A request-handler task pumps
+    ``run_one_iteration`` directly and lives inside an anyio task group; an
+    anyio scope teardown cancels that handler task, and the cancellation must
+    reach it (structured concurrency requires the cancelled task to actually
+    end). #2242 only swallows OUR OWN ``cancel_inflight()`` cancel; anything
+    else re-raises. Plain asyncio reproduces this — cancelling the driver task
+    directly is exactly what an outer scope teardown does.
+
+    STRIP-RED: dropping the ``if self._turn_cancel_self_initiated: ... else:
+    raise`` discrimination (swallowing ALL CancelledError) makes the driver
+    task complete normally instead of ending cancelled — ``pytest.raises``
+    then sees no exception (RED)."""
+    wal = tmp_path / "state.wal"
+    snapshot_path = tmp_path / "snapshot.json"
+    session, state_log = _make_session(wal, snapshot_path)
+
+    call_started, release = _install_hanging_run_turn(session)
+    await session._put_inbox("user", {"text": "hello", "chain_id": "c-external"})
+    turn_task = asyncio.create_task(session.run_one_iteration())
+    await asyncio.wait_for(call_started.wait(), timeout=5)
+
+    # External cancel: cancel the driver task DIRECTLY (an outer scope teardown),
+    # NOT through cancel_inflight() — so this is NOT self-initiated.
+    turn_task.cancel()
+
+    with pytest.raises(asyncio.CancelledError):
+        await turn_task
+
+    # sanity: the hung reply never landed (the turn was torn down, not completed).
+    assert not any(m.content == _LANDED_REPLY for m in session.history)
+    release.set()  # release the (now-dead) coroutine's gate for clean teardown
+    await state_log.aclose()
+
+
+@pytest.mark.asyncio
+async def test_self_initiated_flag_does_not_leak_to_next_turn(tmp_path):
+    """Tier 2: #2242 Finding 1 — the ``_turn_cancel_self_initiated`` flag must
+    NOT leak past the turn that set it.
+
+    Turn 1: ``cancel_inflight()`` sets the flag True, but the turn body CATCHES
+    the CancelledError and returns normally — so ``await self._turn_owner_task``
+    returns normally and ``run_one_iteration``'s ``except`` block (which is
+    where a per-branch reset would live) never runs. Turn 2 is then cancelled
+    EXTERNALLY (not via ``cancel_inflight()``); its cancellation must PROPAGATE.
+
+    If the flag leaked True from turn 1 (reset only on the swallow branch),
+    turn 2's external cancel would be mis-read as self-initiated and swallowed
+    — the driver task would complete normally instead of ending cancelled,
+    breaking the FP-0013 external-cancel contract.
+
+    STRIP-RED: moving the ``_turn_cancel_self_initiated = False`` reset back out
+    of the unconditional ``finally`` and onto the swallow branch leaks the flag
+    → turn 2's external cancel is swallowed → ``pytest.raises`` sees no
+    exception (RED). Reproduced live during review."""
+    wal = tmp_path / "state.wal"
+    snapshot_path = tmp_path / "snapshot.json"
+    session, state_log = _make_session(wal, snapshot_path)
+
+    # ── Turn 1: self-initiated cancel that the body swallows (flag set, but the
+    #    except-block reset path is NOT exercised). ────────────────────────────
+    started1, release1 = _install_hanging_run_turn_swallowing_cancel(session)
+    await session._put_inbox("user", {"text": "one", "chain_id": "c-leak-1"})
+    turn1 = asyncio.create_task(session.run_one_iteration())
+    await asyncio.wait_for(started1.wait(), timeout=5)
+    await session.cancel_inflight()  # sets _turn_cancel_self_initiated True
+    # Body swallows the cancel → run_one_iteration returns True normally.
+    completed1 = await asyncio.wait_for(turn1, timeout=5)
+    assert completed1 is True
+
+    # ── Turn 2: EXTERNAL cancel — must propagate (flag must have been reset). ──
+    started2, release2 = _install_hanging_run_turn(session)
+    await session._put_inbox("user", {"text": "two", "chain_id": "c-leak-2"})
+    turn2 = asyncio.create_task(session.run_one_iteration())
+    await asyncio.wait_for(started2.wait(), timeout=5)
+    turn2.cancel()  # external — NOT via cancel_inflight()
+
+    with pytest.raises(asyncio.CancelledError):
+        await turn2
+
+    release1.set()
+    release2.set()
+    await state_log.aclose()
+
+
+@pytest.mark.asyncio
+async def test_await_quiescent_join_is_load_bearing_on_cancel(tmp_path):
+    """Tier 2: #2242 Finding 3 — the ``await self.await_quiescent()`` call on
+    the hard-cancel path is load-bearing: it settles a tracked fire-and-forget
+    WAL-append task so no straggler outlives the reported-idle turn.
+
+    A tracked task that awaits indefinitely (the canonical shape —
+    ``_dispatch_intervention`` awaits the user-answer future indefinitely, per
+    ``_track_wal_task``'s docstring) is registered before the turn. On the
+    cancel path ``await_quiescent()`` cancels + joins it, so it is SETTLED
+    (``done()``) by the time ``run_one_iteration`` returns. We witness this via
+    the PUBLIC ``asyncio.Task`` surface of a handle the TEST holds (``.done()``),
+    not any session-private state.
+
+    STRIP-RED: removing ``await self.await_quiescent()`` from the cancel branch
+    leaves the tracked task still pending (awaiting ``never``) when
+    ``run_one_iteration`` returns → ``prior_task.done()`` is False → RED. The
+    straggler would then be free to land a WAL append after the session is
+    reported idle — the contamination ``await_quiescent`` exists to prevent."""
+    wal = tmp_path / "state.wal"
+    snapshot_path = tmp_path / "snapshot.json"
+    session, state_log = _make_session(wal, snapshot_path)
+
+    never = asyncio.Event()  # never set → the task settles ONLY via cancellation
+
+    async def _indefinite_prior_wal_task() -> None:
+        await never.wait()
+
+    # Register through the real convention seam (a tracked fire-and-forget
+    # WAL-append task); hold the handle so we can witness settling publicly.
+    prior_task = session._track_wal_task(asyncio.ensure_future(_indefinite_prior_wal_task()))
+    try:
+        call_started, release = _install_hanging_run_turn(session)
+        await session._put_inbox("user", {"text": "hello", "chain_id": "c-quiescent"})
+        turn_task = asyncio.create_task(session.run_one_iteration())
+        await asyncio.wait_for(call_started.wait(), timeout=5)
+        await session.cancel_inflight()
+        release.set()
+        completed = await asyncio.wait_for(turn_task, timeout=5)
+        assert completed is True
+
+        # The join happened: the tracked straggler is settled (cancelled+joined)
+        # before run_one_iteration returned — no un-joined WAL-append task
+        # outlives the idle turn.
+        assert prior_task.done(), (
+            "await_quiescent() on the cancel path must settle the tracked "
+            "fire-and-forget WAL task before run_one_iteration returns — a "
+            "still-pending straggler could append after the session is idle"
+        )
+    finally:
+        if not prior_task.done():
+            prior_task.cancel()
+        never.set()
+        await state_log.aclose()

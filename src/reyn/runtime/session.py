@@ -5133,8 +5133,20 @@ class Session:
                         # run_one_iteration directly, FP-0013 §ADR-A). Preserve
                         # the pre-#2242 behaviour: let it propagate.
                         raise
-                    self._turn_cancel_self_initiated = False
             finally:
+                # #2242 Finding 1: reset the self-initiated flag UNCONDITIONALLY
+                # here (not only on the swallow branch). If cancel_inflight() set
+                # it True but the CancelledError was never actually delivered to
+                # this turn — e.g. the turn body completed (or caught+suppressed
+                # the cancel) in the same tick before it landed, so `await
+                # self._turn_owner_task` returned normally and the `except` above
+                # never ran — a per-branch reset would leave the flag stuck True.
+                # It would then mis-classify the NEXT turn's EXTERNAL cancel as
+                # self-initiated and wrongly swallow it, violating the FP-0013
+                # external-cancel-re-raise contract. A finally clears it on every
+                # path (normal return, swallowed cancel, re-raised external
+                # cancel) so the flag never outlives the turn that set it.
+                self._turn_cancel_self_initiated = False
                 self._turn_owner_task = None
                 self._turn_idle.set()
                 # Symmetric turn-end lifecycle event. turn_completed fires only on
