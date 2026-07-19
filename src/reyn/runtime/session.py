@@ -963,45 +963,6 @@ class _InterventionBundle:
 
 
 @dataclass(frozen=True)
-class _MemoryBundle:
-    """#3082 Family 8b: ``memory`` (``MemoryService``, the memory-persistence
-    adapter that absorbs memory path resolution + remember / forget /
-    read_body). Per the architect's #3082 Family 8 DAG correction, this is
-    one of three mutually-independent leftover leaves (8a
-    ``inter_agent_messaging``, 8b ``memory`` here, 8c
-    ``mcp_connection_service``) that straddle the router-host WAIST (Family
-    6a) on both sides — they cannot be gathered into one builder, so each
-    gets its own no-move, single-component builder. Single-field bundle
-    (mirrors Family 4's ``_CostBundle`` / Family 6a's ``_RouterWaistBundle``
-    / Family 8a's ``_InterAgentMessagingBundle`` — one unconditional
-    component, no intra-family DAG); kept as a bundle rather than a bare
-    return for pipeline-pattern consistency with every other Family builder.
-
-    ``memory`` is PRE-WAIST: ``_build_router_waist`` (Family 6a) reads
-    ``self._memory`` eagerly (``memory=self._memory``) when it builds
-    ``RouterHostAdapter``. This is the inverse direction of Family 7's
-    F8→F7 ``chains`` dependency (there, a LATER family read an EARLIER
-    one's post-waist output; here, waist-builder Family 6a reads THIS
-    pre-waist family's output) — so ``self._memory`` MUST be assigned
-    before the waist builder call, not after. The builder call stays at
-    its ORIGINAL position (unmoved), which sits well before
-    ``_build_router_waist`` runs, satisfying this ordering constraint. All
-    of ``memory``'s own args are themselves already eager on ``self`` by
-    this point — Family 1's ``self._chat_events`` (``events=``) plus the
-    ``file_write`` / ``file_read`` / ``file_delete`` /
-    ``file_regenerate_index`` bound methods and the ``workspace_dir``
-    property — so there is no deferred lambda and no intra-family
-    local-vs-self split (a single independent leaf, like 8a).
-
-    Pure output→input value object: :meth:`Session._build_memory_bundle` is
-    a byte-identical extraction of the construction that used to run inline
-    in ``Session.__init__`` — same object, same keyword args, same
-    (unmoved) position."""
-
-    memory: "MemoryService"
-
-
-@dataclass(frozen=True)
 class _MCPConnectionBundle:
     """#3082 Family 8c (mcp_connection_service, the FINAL family — landing
     this bundle completes #3082's Session.__init__ God-constructor
@@ -1417,8 +1378,7 @@ class Session:
         )
 
         # Memory persistence adapter, byte-identical extraction, pre-waist position (#3082 Family 8b, see session-construction.md#family-8b-memory)
-        _memory_bundle = self._build_memory_bundle()
-        self._memory = _memory_bundle.memory
+        self._memory = self._build_memory()
 
         # One-shot command-UI request (e.g. /rewind checkpoint picker); None = nothing pending, dict carries {"kind", ...} (F4)
         self._pending_command_ui: dict | None = None
@@ -4191,7 +4151,7 @@ class Session:
         )
         return inter_agent_messaging
 
-    def _build_memory_bundle(self) -> "_MemoryBundle":
+    def _build_memory(self) -> "MemoryService":
         """#3082 Family 8b: build ``memory``. Byte-identical extraction of the
         construction that used to run inline in ``__init__`` — same object,
         same keyword args, same (unmoved) position.
@@ -4203,15 +4163,16 @@ class Session:
         construction time (``self._file_write`` / ``self._file_read`` /
         ``self._file_delete`` / ``self._file_regenerate_index`` /
         ``self.workspace_dir``). No deferred lambda, no intra-family
-        local-vs-self split — see :class:`_MemoryBundle`'s docstring for the
-        full provenance.
+        local-vs-self split.
 
         ★ PRE-WAIST placement: this builder's call site (in ``__init__``)
         MUST stay before ``_build_router_waist`` runs (Family 6a), which
         reads ``self._memory`` eagerly when constructing
         ``RouterHostAdapter``. Moving this call after the waist builder
         call would leave ``self._memory`` unassigned when the waist builder
-        reads it, raising ``AttributeError``."""
+        reads it, raising ``AttributeError``. Returns the ``MemoryService``
+        instance directly (#3121 step4 removed the single-field
+        ``_MemoryBundle`` wrapper)."""
         memory = MemoryService(
             agent_workspace_dir=self.workspace_dir,
             events=self._chat_events,
@@ -4220,7 +4181,7 @@ class Session:
             file_delete=self._file_delete,
             file_regenerate_index=self._file_regenerate_index,
         )
-        return _MemoryBundle(memory=memory)
+        return memory
 
     def _build_mcp_connection_service(self) -> "_MCPConnectionBundle":
         """#3082 Family 8c (mcp_connection_service, the FINAL family): build

@@ -267,7 +267,7 @@ kept verbatim.
 
 ## Family 8b — Memory
 
-`_build_memory_bundle` constructs the memory persistence adapter (PR-refactor-session-1
+`_build_memory` constructs the memory persistence adapter (PR-refactor-session-1
 wave 3 PR2 — absorbs memory path resolution + remember/forget/read_body; PR3
 `RouterHostAdapter` holds a direct reference, session delegates via the adapter's
 `memory_path`/`memory_dir`). Byte-identical, same args as the inline construction it
