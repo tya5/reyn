@@ -30,21 +30,16 @@ class EmbeddingClassSpec:
 #: Applied when the section is absent or ``classes:`` is empty.
 #: Satisfies the "pip install + OPENAI_API_KEY = works" requirement.
 #:
-#: FP-0043: ``local-mini`` and ``local-e5`` ship in the registry but only
-#: function when ``pip install 'reyn[local-embed]'`` (= sentence-transformers
-#: + torch extras) has been performed. Without the extras, instantiating
-#: those classes raises ImportError at first ``embed()`` call; the
-#: ``search_actions`` visibility gate falls back to "hidden" gracefully.
+#: All classes route through litellm — reyn depends on litellm exclusively
+#: for embeddings, no in-process model backend (#3128 removed the
+#: sentence-transformers-backed ``local-mini`` / ``local-e5`` classes that
+#: shipped under FP-0043; operators who want a local model reach it via a
+#: litellm-fronted proxy and an operator-defined ``embedding.classes`` entry
+#: instead).
 _DEFAULT_EMBEDDING_CLASSES: dict[str, EmbeddingClassSpec] = {
     "light":     EmbeddingClassSpec(model="openai/text-embedding-3-small"),
     "standard":  EmbeddingClassSpec(model="openai/text-embedding-3-small"),
     "strong":    EmbeddingClassSpec(model="openai/text-embedding-3-large"),
-    "local-mini": EmbeddingClassSpec(
-        model="sentence-transformers/all-MiniLM-L6-v2",
-    ),
-    "local-e5":  EmbeddingClassSpec(
-        model="sentence-transformers/intfloat/multilingual-e5-small",
-    ),
 }
 
 
@@ -320,11 +315,13 @@ class ActionRetrievalConfig:
 
             Operators who want semantic ``search_actions`` set
             ``action_retrieval.embedding_class`` explicitly in
-            reyn.yaml: ``local-mini`` for the local
-            ``sentence-transformers/all-MiniLM-L6-v2`` model (needs
-            the ``reyn[local-embed]`` extras and a one-time HF
-            download), or ``standard`` (= or ``light`` / ``strong``)
-            for an API-backed class that needs no local download.
+            reyn.yaml: ``standard`` (= or ``light`` / ``strong``) for
+            the built-in OpenAI-backed classes, or a custom entry
+            under ``embedding.classes`` pointing at any litellm-
+            routable model (including a local model served behind a
+            litellm-fronted proxy — #3128 removed the in-process
+            sentence-transformers backend; reyn depends on litellm
+            exclusively for embeddings).
 
         hot_list_n:
             Hot list size for top-N freq+recency projection (§D2).

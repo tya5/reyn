@@ -640,9 +640,9 @@ class EmbedIROp(BaseModel):
     """Raw embedding primitive — batch text -> vectors (FP-0057 Phase 1).
 
     Batch-granular (list in -> list out); the `EmbeddingProvider` handles
-    internal batching (`embedding.batch_size` config, default 100) and the
-    local-sentence-transformers / API-class split — this op owns none of
-    that, it is a thin typed envelope over the existing provider.
+    internal batching (`embedding.batch_size` config, default 100) — this
+    op owns none of that, it is a thin typed envelope over the existing
+    provider.
 
     Default-ALLOW (compute op, cost = the embedding API/compute, not a
     workspace write); individually name-gateable via `contextual_gate`.

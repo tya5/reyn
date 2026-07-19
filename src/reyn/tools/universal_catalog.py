@@ -756,12 +756,11 @@ def _validate_category_filter(
 
 _HIDDEN_STATE_HINT: Final[str] = (
     "Semantic action search (`search_actions`) is currently unavailable "
-    "in this session. To enable it, run ONE of:\n"
-    "  - `pip install 'reyn[local-embed]'` — local sentence-transformers "
-    "model, no credentials, ~22MB one-time download (recommended for "
-    "first-time users)\n"
-    "  - add to reyn.yaml: `action_retrieval:\\n  embedding_class: standard`"
-    " — uses OpenAI embeddings, requires `OPENAI_API_KEY`\n"
+    "in this session. To enable it, add to reyn.yaml: "
+    "`action_retrieval:\\n  embedding_class: standard` — uses OpenAI "
+    "embeddings, requires `OPENAI_API_KEY` (or point `embedding_class` at "
+    "another `embedding.classes` entry, e.g. a litellm-fronted proxy for a "
+    "local model).\n"
     "Until enabled, use `list_actions(category=[...])` to browse the "
     "catalog by category and `describe_action(action_name=...)` to inspect "
     "a specific action."

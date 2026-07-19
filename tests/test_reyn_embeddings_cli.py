@@ -126,8 +126,8 @@ def test_status_rows_include_every_configured_class(
     monkeypatch.chdir(tmp_path)
     rows = _collect_status_rows(tmp_path)
     names = {r.name for r in rows}
-    # Defaults from FP-0043 Phase 2 (= local-mini + local-e5 added).
-    for expected in ("light", "standard", "strong", "local-mini", "local-e5"):
+    # Built-in defaults (#3128: all litellm-routed, no local ST classes).
+    for expected in ("light", "standard", "strong"):
         assert expected in names, (
             f"class {expected!r} missing from status rows; got {names}"
         )
@@ -146,13 +146,13 @@ def test_status_rows_attribute_count_to_on_disk_class_only(
     index_dir = _unified_index_dir(tmp_path)
     _write_index_db(
         index_dir,
-        class_name="local-mini",
+        class_name="light",
         vectors={"file__read": [0.1, 0.2], "web__search": [0.3, 0.4]},
     )
     rows = _collect_status_rows(tmp_path)
     by_name = {r.name: r for r in rows}
-    assert by_name["local-mini"].indexed_actions == 2
-    assert by_name["local-mini"].last_built != "(never)"
+    assert by_name["light"].indexed_actions == 2
+    assert by_name["light"].last_built != "(never)"
     # Other classes get zeros — not the foreign class's count.
     assert by_name["standard"].indexed_actions == 0
     assert by_name["standard"].last_built == "(never)"
@@ -242,7 +242,7 @@ def test_rebuild_unknown_class_name_rejects(
     """Tier 2: rebuild with a name not in reyn.yaml classes exits non-zero.
 
     Catches typos and prevents silent no-op confusion (= "I rebuilt
-    'lcal-mini' (= typo of local-mini) and nothing changed").
+    'standrad' (= typo of standard) and nothing changed").
     """
     monkeypatch.chdir(tmp_path)
     with pytest.raises(SystemExit) as excinfo:
@@ -264,10 +264,10 @@ def test_rebuild_known_class_name_notes_shared_cache(
     """
     monkeypatch.chdir(tmp_path)
     index_dir = _unified_index_dir(tmp_path)
-    _write_index_db(index_dir, "local-mini", {"file__read": [0.1, 0.2]})
-    run_rebuild(Namespace(name="local-mini"))
+    _write_index_db(index_dir, "standard", {"file__read": [0.1, 0.2]})
+    run_rebuild(Namespace(name="standard"))
     out = capsys.readouterr().out
-    assert "local-mini" in out
+    assert "standard" in out
     assert "shared across classes" in out
 
 

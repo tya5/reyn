@@ -327,9 +327,9 @@ class OpContext:
 
     # FP-0057 #2856 Part A: the TUI model-download status sink for the `embed`
     # op's provider resolution. Carries ONLY the event_sink CALLABLE
-    # (``(kind, text, meta) -> None``, precedent: sentence_transformers_provider's
-    # ``EventSink``) — NOT a provider instance, so provider lifecycle/construction
-    # stays owned by the embed op handler (which still does its own redaction-egress
+    # (``(kind, text, meta) -> None``) — NOT a provider instance, so provider
+    # lifecycle/construction stays owned by the embed op handler (which still
+    # does its own redaction-egress
     # scan before calling it). This is the seam that lets ``ActionEmbeddingIndex``
     # route tool-use embeds through the shared `embed` op (inheriting the redaction
     # seam) while preserving the session's TUI download-status rows, instead of

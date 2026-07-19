@@ -407,36 +407,33 @@ class TestEstimateIndexingCost:
 # ---------------------------------------------------------------------------
 
 class TestProviderRegistry:
-    def test_get_provider_returns_routing_wrapper_by_default(self):
-        """Tier 2: get_provider() returns the routing wrapper by default.
+    def test_get_provider_returns_litellm_provider_by_default(self):
+        """Tier 2: get_provider() returns LiteLLMEmbeddingProvider by default.
 
-        FP-0043: the historical ``"litellm"`` name now maps to
-        ``RoutingEmbeddingProvider`` which dispatches by model prefix
-        between the LiteLLM backend and the sentence-transformers
-        backend. The wrapper preserves byte-identical LiteLLM-backed
-        behaviour for openai/* and other LiteLLM-routable models.
+        #3128: reyn depends on litellm exclusively for embeddings — the
+        prior ``RoutingEmbeddingProvider`` prefix-dispatch wrapper (FP-0043,
+        routing between LiteLLM and an in-process sentence-transformers
+        backend) was collapsed away; ``"litellm"`` now maps directly to
+        ``LiteLLMEmbeddingProvider``.
         """
-        from reyn.data.embedding.router_provider import RoutingEmbeddingProvider
         provider = get_provider()
-        assert isinstance(provider, RoutingEmbeddingProvider)
+        assert isinstance(provider, LiteLLMEmbeddingProvider)
 
     def test_get_litellm_only_returns_bare_litellm_provider(self):
-        """Tier 2: ``"litellm-only"`` opts out of routing for tests / direct use."""
+        """Tier 2: ``"litellm-only"`` is an alias for the same concrete class."""
         provider = get_provider("litellm-only")
         assert isinstance(provider, LiteLLMEmbeddingProvider)
 
-    def test_get_provider_with_config_constructs_routing_wrapper(self):
-        """Tier 2: get_provider("litellm", config=...) constructs the wrapper.
+    def test_get_provider_with_config_constructs_litellm_provider(self):
+        """Tier 2: get_provider("litellm", config=...) constructs the provider.
 
-        Config forwarding to the underlying backends is verified
-        indirectly by the provider-specific tests (estimate_tokens
-        honours tokenizer, batch processing honours batch_size) so we
-        don't assert on private state here.
+        Config forwarding is verified indirectly by the provider-specific
+        tests (estimate_tokens honours tokenizer, batch processing honours
+        batch_size) so we don't assert on private state here.
         """
-        from reyn.data.embedding.router_provider import RoutingEmbeddingProvider
         config = {"batch_size": 50}
         provider = get_provider("litellm", config=config)
-        assert isinstance(provider, RoutingEmbeddingProvider)
+        assert isinstance(provider, LiteLLMEmbeddingProvider)
 
     def test_register_and_get_custom_provider(self):
         """Tier 2: register_provider + get_provider roundtrip with custom impl."""

@@ -170,18 +170,6 @@ def test_ready_index_suppresses_hint() -> None:
 # ── 4. Hint content invariants ──────────────────────────────────────────────
 
 
-def test_hint_references_local_embed_extras() -> None:
-    """Tier 2: hint string mentions the canonical extras name.
-
-    Pinned so a future rename of the extras (= ``local-embed`` → ?)
-    surfaces here rather than silently breaking the onboarding path.
-    """
-    rs = RouterCallerState()
-    result = _run(LIST_ACTIONS.handler({"category": ["file"]}, _ctx(rs)))
-    hint = result["hint"]
-    assert "reyn[local-embed]" in hint
-
-
 def test_hint_references_openai_config_path() -> None:
     """Tier 2: hint string mentions the OpenAI-via-reyn.yaml alternative.
 
