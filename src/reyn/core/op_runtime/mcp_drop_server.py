@@ -221,7 +221,7 @@ async def handle(
         # same as op_runtime/file.py — was missing here (permission-only gap).
         await ctx.permission_resolver.require_file_write(
             ctx.permission_decl, str(config_path), ctx.actor,
-            sandbox_policy=_sandbox_policy_from_ctx(ctx),
+            sandbox_policy=_sandbox_policy_from_ctx(ctx), bus=ctx.intervention_bus,
         )
 
     # ── 3. Capture env keys before mutation ────────────────────────────
