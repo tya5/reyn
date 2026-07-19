@@ -54,9 +54,10 @@ Pipeline (one-shot, no sub-phases):
 8. **Register**: for each capability the manifest declares, call the
    SAME existing register verbs — ``skill_install.handle`` /
    ``pipeline_install.handle`` for skills/pipelines (each op carries
-   ``plugin_id=<name>``, §3.7's additive provenance field), and a direct
-   ``.reyn/config/mcp.yaml`` write (mirrors ``mcp__install_local``'s shape,
-   probe-then-commit) for the optional root ``.mcp.json``.
+   ``plugin_id=<name>``, §3.7's additive provenance field), and a
+   ``require_file_write``-gated (#3088) direct ``.reyn/config/mcp.yaml``
+   write (mirrors ``mcp__install_local``'s shape, probe-then-commit) for
+   the optional root ``.mcp.json``.
 9. **Complete**: delete the ``_install_state.json`` marker (absence =
    completed — the state step 0's reconcile checks) and emit
    ``plugin_install_completed``.
@@ -506,7 +507,9 @@ async def _register_mcp(
     into ``.reyn/config/mcp.yaml`` — mirrors ``mcp__install_local``'s shape
     (probe-then-commit on a live per-session reloader; deferred write
     otherwise), tagged with ``plugin_id`` (§3.7) so ``plugin_uninstall`` can
-    find these entries again."""
+    find these entries again. The write is gated by ``require_file_write``
+    on the mcp.yaml path (#3088), mirroring the sibling skill/pipeline
+    register steps' own config-write gates."""
     mcp_json = plugin_root / ".mcp.json"
     entries = _build_mcp_entries(mcp_json, venv_python)
     if not entries:
@@ -517,6 +520,22 @@ async def _register_mcp(
     from reyn.runtime.hot_reload import dispatch_install_reload, is_pure_addition
 
     config_path = _mcp_config_path(project_root)
+
+    # ── Permission gate — mcp.yaml write (#3088). The sibling capability
+    # registers in the same step (skills → _skill_install_handle, pipelines →
+    # _pipeline_install_handle) each gate their own config write via
+    # ``require_file_write``; this mcp register wrote ``.reyn/config/mcp.yaml``
+    # directly without one, an asymmetric ungated write on the registration
+    # axis (distinct from the global-copy write gate on ``~/.reyn/plugins/``
+    # above, which authorizes writing plugin CODE, not the mcp registration).
+    # Mirrors skill_install.py:522 / pipeline_install.py:395's shape exactly.
+    if ctx.permission_resolver is not None:
+        sandbox = _sandbox_policy_from_ctx(ctx)
+        await ctx.permission_resolver.require_file_write(
+            ctx.permission_decl, str(config_path), ctx.actor,
+            sandbox_policy=sandbox, bus=ctx.intervention_bus,
+        )
+
     data = _read_yaml(config_path)
     servers = data.setdefault("mcp", {}).setdefault("servers", {})
 

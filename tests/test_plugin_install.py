@@ -8,6 +8,10 @@ Tests:
   2. enforcement (real PermissionResolver, no approval): the global-copy
      write is denied — demonstrates the gate is load-bearing, not decorative
      (CLAUDE.md: gate strip-falsify, real resolver not None).
+  2b. #3088: the mcp register's OWN require_file_write gate on mcp.yaml
+     (distinct from the global-copy gate) — denied without approval for that
+     path (nothing written), approved → registered + mcp_server_installed
+     audit event fires.
   3. reconcile: a plugin dir left with an _install_state.json marker AND a
      mid-register registry entry (a simulated crash between register and
      completion) is rolled back — BOTH the registry entry and the copy — by
@@ -61,11 +65,15 @@ class _StubWorkspace:
 
 
 class _Events:
-    """Minimal real-callable event log stub — passes emit calls through without side effects."""
+    """Minimal real-callable event log stub — records emitted calls (for
+    audit-event witnessing) without any other side effect."""
     subscribers: list = []
 
-    def emit(self, *_a, **_k) -> None:
-        pass
+    def __init__(self) -> None:
+        self.calls: list[tuple] = []
+
+    def emit(self, *args, **kwargs) -> None:
+        self.calls.append((args, kwargs))
 
 
 class _FakeBus:
@@ -129,6 +137,7 @@ def _make_ctx(
     tmp_path: Path,
     *,
     approve_plugins_root: bool = True,
+    approve_mcp_yaml: bool = True,
     interactive: bool = False,
     bus: object | None = None,
     approve_all_http: bool = False,
@@ -138,6 +147,14 @@ def _make_ctx(
     (recursive) + the three registry config files — the granted-path
     baseline every non-enforcement test needs. The enforcement test passes
     False to demonstrate the gate actually denies without it.
+
+    ``approve_mcp_yaml`` (default True, independent of ``approve_plugins_root``)
+    controls whether ``.reyn/config/mcp.yaml`` specifically is session-approved
+    — the mcp register's OWN require_file_write gate (#3088), distinct from the
+    global-copy write gate on ``~/.reyn/plugins/``. A test demonstrating THAT
+    gate is load-bearing passes False here while leaving
+    ``approve_plugins_root`` True (the copy proceeds; the mcp registration
+    write is what gets denied).
 
     ``approve_all_http`` session-approves the http.get wildcard host — this is
     the FETCH axis (git clone / pypi reachability). The run-code trust gate is
@@ -152,10 +169,14 @@ def _make_ctx(
     )
     if approve_plugins_root:
         resolver.session_approve_path(str(plugins_root()), "test", "file.write", recursive=True)
-        for cfg in ("mcp.yaml", "pipelines.yaml", "skills.yaml"):
+        for cfg in ("pipelines.yaml", "skills.yaml"):
             resolver.session_approve_path(
                 str(project_root / ".reyn" / "config" / cfg), "test", "file.write",
             )
+    if approve_mcp_yaml:
+        resolver.session_approve_path(
+            str(project_root / ".reyn" / "config" / "mcp.yaml"), "test", "file.write",
+        )
     if approve_all_http:
         # http.get is EXACT-host-matched at the gate (a "*" session approval
         # does not cover a specific host), so approve the concrete host the
@@ -249,6 +270,87 @@ async def test_plugin_install_denied_without_write_approval(tmp_path, monkeypatc
 
     assert not (plugins_root() / "unapproved-plugin").exists(), (
         "plugin copy was written despite a denied permission gate"
+    )
+
+
+# ── Test 2b: mcp register's OWN write gate (#3088) ────────────────────────────
+
+
+def _make_mcp_plugin_source(base: Path, name: str = "mcpplugin") -> Path:
+    """A minimal local plugin dir: manifest + one mcp capability (no
+    requirements.txt — offline, no ``uv`` dependency)."""
+    plugin_dir = base / name
+    (plugin_dir / ".reyn-plugin").mkdir(parents=True, exist_ok=True)
+    (plugin_dir / ".reyn-plugin" / "plugin.json").write_text(
+        json.dumps({
+            "name": name, "version": "0.1.0", "description": "mcp test plugin",
+            "capabilities": [{"kind": "mcp"}],
+        }),
+        encoding="utf-8",
+    )
+    (plugin_dir / ".mcp.json").write_text(
+        json.dumps({"mcpServers": {"srv": {"command": "python", "args": ["-m", "srv"]}}}),
+        encoding="utf-8",
+    )
+    return plugin_dir
+
+
+@pytest.mark.asyncio
+async def test_register_mcp_denied_without_mcp_yaml_write_approval(tmp_path, monkeypatch):
+    """Tier 2: security-critical gate — #3088. ``_register_mcp`` writes
+    ``.reyn/config/mcp.yaml`` via its OWN ``require_file_write`` gate, DISTINCT
+    from the global-copy write gate on ``~/.reyn/plugins/`` (which IS approved
+    here). Without a grant for mcp.yaml specifically, a real PermissionResolver
+    denies the mcp registration write. RED if plugin_install writes mcp.yaml
+    despite no approval for that path — the exact asymmetric ungated write
+    #3088 reports (sibling skill/pipeline registers already gated their own
+    config write; mcp's register did not)."""
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    source = _make_mcp_plugin_source(tmp_path / "src")
+    ctx = _make_ctx(tmp_path, approve_plugins_root=True, approve_mcp_yaml=False)
+
+    op = PluginInstallIROp(kind="plugin_install", source={"kind": "local", "path": str(source)})
+    with pytest.raises(PermissionError):
+        await install_handle(op, ctx)
+
+    mcp_yaml = ctx.workspace.base_dir / ".reyn" / "config" / "mcp.yaml"
+    assert not mcp_yaml.exists(), (
+        "mcp.yaml was written despite a denied permission gate on that path"
+    )
+    # The global copy DID proceed (that gate was granted) — demonstrating the
+    # mcp.yaml denial is this OP's own gate, not a knock-on of the copy gate.
+    assert (plugins_root() / "mcpplugin").is_dir()
+
+
+@pytest.mark.asyncio
+async def test_register_mcp_gate_allows_and_emits_audit_event(tmp_path, monkeypatch):
+    """Tier 2: with mcp.yaml write approved, the register proceeds — the entry
+    lands in mcp.yaml (tagged plugin_id) AND the ``mcp_server_installed`` audit
+    event fires through ``ctx.events``. Complements the denial test above:
+    together they show the new gate blocks when unapproved and does not
+    regress the approved (existing-behavior) path."""
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    source = _make_mcp_plugin_source(tmp_path / "src")
+    ctx = _make_ctx(tmp_path)  # approve_mcp_yaml defaults True
+
+    op = PluginInstallIROp(kind="plugin_install", source={"kind": "local", "path": str(source)})
+    result = await install_handle(op, ctx)
+
+    assert result["status"] == "installed", f"install failed: {result}"
+
+    mcp_yaml = ctx.workspace.base_dir / ".reyn" / "config" / "mcp.yaml"
+    servers = yaml.safe_load(mcp_yaml.read_text(encoding="utf-8"))["mcp"]["servers"]
+    assert servers["srv"]["plugin_id"] == "mcpplugin"
+
+    audit_event_names = [call[0][0] for call in ctx.events.calls if call[0]]
+    assert "mcp_server_installed" in audit_event_names, (
+        "mcp registration succeeded but emitted no mcp_server_installed audit event"
     )
 
 
