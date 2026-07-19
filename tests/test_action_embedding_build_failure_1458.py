@@ -208,7 +208,7 @@ def test_helper_unsupported_param_points_to_proxy_drop_params() -> None:
 def test_helper_generic_failure_keeps_config_guidance() -> None:
     """Tier 2: #1616 — a non-param failure (e.g. network/credentials) still
     returns the generic embedding-provider-failure guidance (regression pin
-    for the #1458 branch; #3128 removed the sentence-transformers-specific
+    for the #1458 branch; #3128 removed the in-process-local-model-specific
     HF-download branch since litellm is now the sole embedding backend)."""
     from reyn.runtime.router_loop import _action_index_build_failure_warning
 

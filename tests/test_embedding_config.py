@@ -329,9 +329,8 @@ class TestEmbeddingConfigValidation:
         """Tier 2: classes: {} or absent causes default classes to be used.
 
         All built-in default classes route through litellm (#3128 removed
-        the sentence-transformers-backed ``local-mini`` / ``local-e5``
-        classes). Pinned here so a future addition doesn't silently drop
-        one.
+        the in-process local-model builtin classes). Pinned here so a
+        future addition doesn't silently drop one.
         """
         raw = {"classes": {}}
         cfg = _build_embedding_config(raw)

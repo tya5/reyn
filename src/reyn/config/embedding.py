@@ -32,8 +32,8 @@ class EmbeddingClassSpec:
 #:
 #: All classes route through litellm — reyn depends on litellm exclusively
 #: for embeddings, no in-process model backend (#3128 removed the
-#: sentence-transformers-backed ``local-mini`` / ``local-e5`` classes that
-#: shipped under FP-0043; operators who want a local model reach it via a
+#: in-process local-model-backed builtin classes that shipped under
+#: FP-0043; operators who want a local model reach it via a
 #: litellm-fronted proxy and an operator-defined ``embedding.classes`` entry
 #: instead).
 _DEFAULT_EMBEDDING_CLASSES: dict[str, EmbeddingClassSpec] = {
@@ -304,8 +304,8 @@ class ActionRetrievalConfig:
             ``None`` (= off). ``search_actions`` is a semantic-search
             feature and the project's standing principle is that
             semantic search is opt-in, never on by default — a
-            default of ``"local-mini"`` (FP-0043 Phase 4 through
-            2026) made reyn attempt a Hugging Face model download at
+            default of a built-in local-model class (FP-0043 Phase 4
+            through 2026) made reyn attempt a Hugging Face model download at
             startup even for zero-config / offline installs, which
             surfaced as a startup warning when the download failed.
             Defaulting to ``None`` makes the off-path silent: no
@@ -320,7 +320,7 @@ class ActionRetrievalConfig:
             under ``embedding.classes`` pointing at any litellm-
             routable model (including a local model served behind a
             litellm-fronted proxy — #3128 removed the in-process
-            sentence-transformers backend; reyn depends on litellm
+            local-model embedding backend; reyn depends on litellm
             exclusively for embeddings).
 
         hot_list_n:

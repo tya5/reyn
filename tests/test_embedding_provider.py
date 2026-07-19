@@ -412,8 +412,8 @@ class TestProviderRegistry:
 
         #3128: reyn depends on litellm exclusively for embeddings — the
         prior ``RoutingEmbeddingProvider`` prefix-dispatch wrapper (FP-0043,
-        routing between LiteLLM and an in-process sentence-transformers
-        backend) was collapsed away; ``"litellm"`` now maps directly to
+        routing between LiteLLM and an in-process local-model backend)
+        was collapsed away; ``"litellm"`` now maps directly to
         ``LiteLLMEmbeddingProvider``.
         """
         provider = get_provider()

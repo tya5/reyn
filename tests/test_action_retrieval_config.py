@@ -39,11 +39,12 @@ def test_default_action_retrieval_config_is_on() -> None:
 
     PR-3b-iv flipped universal_wrappers_enabled from False to True.
     FP-0034 Phase 6 removed hide_legacy_tools (wrapper-only is the sole path).
-    FP-0043 Phase 4 flipped embedding_class default from None to "local-mini";
-    the semantic-search-opt-in fix (2026) flipped it back to None — a
-    default of "local-mini" attempted a Hugging Face model download at
-    startup even for zero-config / offline installs, contradicting the
-    project's semantic_search-is-opt-in principle. search_actions is now
+    FP-0043 Phase 4 flipped embedding_class default from None to a
+    built-in local-model class name (removed by #3128); the
+    semantic-search-opt-in fix (2026) flipped it back to None — that
+    prior default attempted a model download at startup even for
+    zero-config / offline installs, contradicting the project's
+    semantic_search-is-opt-in principle. search_actions is now
     off (silently — no build is attempted) until an operator explicitly
     sets ``action_retrieval.embedding_class`` in reyn.yaml.
     """
@@ -286,17 +287,18 @@ def test_fresh_config_null_embedding_class_gates_search_actions_silently(
     "Semantic search_actions" warning anywhere in the load path.
 
     This is the crux of the semantic-search-opt-in fix: the old default
-    ("local-mini") made reyn attempt an index build at chat startup that
-    failed offline, surfacing a "Semantic search_actions disabled … index
-    build failed …" warning even for operators who never asked for
-    semantic search. The fix makes the off-path load-bearing-silent: with
-    no class configured there is nothing to build and nothing to fail, so
+    (a built-in local-model class name, removed by #3128) made reyn
+    attempt an index build at chat startup that failed offline, surfacing
+    a "Semantic search_actions disabled … index build failed …" warning
+    even for operators who never asked for semantic search. The fix
+    makes the off-path load-bearing-silent: with no class configured
+    there is nothing to build and nothing to fail, so
     ``_reconcile_embedding_class`` (the only warning source at config-load
     time — see ``config/loader.py``) must take its early-return branch
     (``if not ec or ec in cfg.embedding.classes: return``) without logging.
 
-    FALSIFY: if the default reverts to a truthy value (e.g. "local-mini")
-    without ``embedding.classes`` containing that class in this test's
+    FALSIFY: if the default reverts to a truthy value (e.g. a dangling
+    class name) without ``embedding.classes`` containing that class in this test's
     fixture, ``_reconcile_embedding_class`` follows its non-early-return
     branch and DOES log a "Semantic search_actions disabled: …" warning —
     this test would then fail on the ``caplog`` assertion, proving the

@@ -437,7 +437,7 @@ def test_is_search_available_membership_belt_and_suspenders() -> None:
     """Tier 2: #1454 (b) — when the known class names are supplied, a class
     NOT among them returns False (closed-world enforced at the visibility
     boundary too, not just at config-load reconciliation)."""
-    classes = {"standard", "local-mini"}
+    classes = {"standard", "custom-alias"}
     # member → available
     assert is_search_available(
         action_retrieval_embedding_class="standard",

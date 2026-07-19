@@ -9,7 +9,7 @@ Provider registry pattern:
     (``openai/*`` and any other litellm-routable model string).
   - Operators can register additional providers via register_provider().
 
-History: FP-0043 Phase 2 added a local sentence-transformers backend behind
+History: FP-0043 Phase 2 added a local in-process embedding-model backend behind
 a ``RoutingEmbeddingProvider`` prefix-dispatch wrapper. #3128 removed the
 in-process backend (reyn depends on litellm exclusively; local embedding
 models are reached, if desired, via a litellm-fronted proxy) — the wrapper

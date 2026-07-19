@@ -1,8 +1,8 @@
 """Tier 2: #1454 (c)+(d) — dangling embedding_class reconciliation.
 
 A class-typed field is closed-world: ``action_retrieval.embedding_class`` must
-name an entry in ``embedding.classes``. When it doesn't — the builtin
-``local-mini`` default surviving after the user REPLACED ``embedding.classes``
+name an entry in ``embedding.classes``. When it doesn't — a pre-#3128 builtin
+local-model default surviving after the user REPLACED ``embedding.classes``
 (the owner-reported HF-blocked-company case), or a typo — the alias can never
 resolve. ``_reconcile_embedding_class`` degrades semantic search to off (None)
 rather than letting the dangling alias reach the embedding backend (where it
@@ -29,13 +29,13 @@ def _cfg(*, embedding_class: str | None, classes: dict) -> ReynConfig:
 
 
 def test_dangling_default_class_degrades_to_none():
-    """Tier 2: #1454 — the builtin 'local-mini' default with NO entry in
+    """Tier 2: #1454 — a builtin default class name with NO entry in
     user-replaced embedding.classes degrades to None (search off), not error."""
     cfg = _cfg(
-        embedding_class="local-mini",  # the un-overridden default
+        embedding_class="dangling-class",  # stands in for an un-overridden default
         classes={"company-proxy": EmbeddingClassSpec(model="openai/internal")},
     )
-    assert cfg.action_retrieval.embedding_class == "local-mini"
+    assert cfg.action_retrieval.embedding_class == "dangling-class"
     _reconcile_embedding_class(cfg)
     assert cfg.action_retrieval.embedding_class is None
 
@@ -79,9 +79,9 @@ def test_default_classes_keep_standard_resolvable():
     rather than relying on the zero-config default, to isolate the
     reconciliation behavior (builtin classes registry membership) from the
     separate opt-in-off default-value concern. (#3128 removed the
-    sentence-transformers-backed 'local-mini' / 'local-e5' builtin classes
-    this test previously opted into; 'standard' — litellm/openai-backed,
-    unaffected by that removal — exercises the same reconciliation path.)
+    in-process local-model builtin classes this test previously opted
+    into; 'standard' — litellm/openai-backed, unaffected by that
+    removal — exercises the same reconciliation path.)
     """
     cfg = ReynConfig(action_retrieval=ActionRetrievalConfig(embedding_class="standard"))
     assert cfg.action_retrieval.embedding_class == "standard"
