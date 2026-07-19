@@ -8,8 +8,15 @@ machinery that backs ``search_actions``:
   rebuild  force a rebuild of the action index on next chat session
            start (= removes the SQLite cache so the next ``build()``
            call re-embeds)
-  clear    wipe the cache directory entirely (= SQLite index, build
-           lock, downloaded sentence-transformers model cache)
+  clear    wipe the cache directory entirely (= SQLite index cache
+           + build lock)
+
+#3128 removed reyn's in-process sentence-transformers backend — reyn
+depends on litellm exclusively for embeddings now, so this command no
+longer manages a downloaded-model cache. It still manages the SQLite
+action-index cache (``.reyn/cache/index/actions/``), which is shared
+substrate with the litellm-fronted embedding path (and any other
+``IndexBackend`` source), not ST-specific.
 
 The shape mirrors ``reyn mcp list`` (= header + aligned rows) per the
 tui-coder + lead-coder consolidated O4 decision in FP-0043. ``--json``
@@ -25,7 +32,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import shutil
 import sqlite3
 from dataclasses import dataclass
@@ -44,10 +50,10 @@ class ClassRow:
     """One row in the ``status`` output."""
 
     name: str
-    backend: str          # "litellm" / "sentence-transformers"
+    backend: str          # always "litellm" (#3128: litellm-exclusive)
     model: str            # resolved model string (= class.model)
     cache_path: str       # filesystem path or "(memory only)"
-    size_mb: float        # cached SQLite + model bytes, 0.0 when absent
+    size_mb: float        # cached SQLite index bytes, 0.0 when absent
     indexed_actions: int  # vectors row count, 0 when absent / unreadable
     last_built: str       # ISO timestamp or "(never)"
 
@@ -67,25 +73,6 @@ def _resolve_action_index_dir(project_root: Path) -> Path:
     the absence is a clean state.
     """
     return cache_dir_for_source(project_root, DEFAULT_ACTION_SOURCE)
-
-
-def _resolve_st_cache_dir() -> Path:
-    """Return the sentence-transformers model cache dir.
-
-    Honours the same precedence the runtime backend uses:
-      REYN_CACHE_DIR > XDG_CACHE_HOME > ~/.cache/reyn/
-    See ``src/reyn/data/embedding/sentence_transformers_provider.py``
-    for the canonical implementation; we duplicate the resolution
-    here (rather than importing it) to avoid a transitive
-    ``sentence_transformers`` import the CLI doesn't need.
-    """
-    if v := os.environ.get("REYN_CACHE_DIR"):
-        root = Path(v).expanduser()
-    elif v := os.environ.get("XDG_CACHE_HOME"):
-        root = Path(v).expanduser() / "reyn"
-    else:
-        root = Path.home() / ".cache" / "reyn"
-    return root / "sentence-transformers"
 
 
 def _get_project_root() -> Path:
@@ -145,13 +132,6 @@ def _read_index_state(index_dir: Path) -> tuple[int, str]:
     return n, last_built
 
 
-def _backend_for_model(model: str) -> str:
-    """Return ``litellm`` or ``sentence-transformers`` based on prefix."""
-    if model.startswith("sentence-transformers/"):
-        return "sentence-transformers"
-    return "litellm"
-
-
 def _collect_status_rows(project_root: Path) -> list[ClassRow]:
     """Build one ``ClassRow`` per configured embedding class.
 
@@ -190,22 +170,15 @@ def _collect_status_rows(project_root: Path) -> list[ClassRow]:
         except (sqlite3.DatabaseError, OSError):
             pass
 
-    st_cache_dir = _resolve_st_cache_dir()
-    st_cache_size = _dir_size_mb(st_cache_dir)
     index_size = _dir_size_mb(index_dir)
 
     rows: list[ClassRow] = []
     for class_name, spec in sorted(classes.items()):
-        backend = _backend_for_model(spec.model)
-        # The cache_path column shows where each backend's persistent
-        # state lives: the action index SQLite for all classes, plus
-        # the HF model cache for sentence-transformers entries.
-        if backend == "sentence-transformers":
-            cache_path = str(st_cache_dir)
-            size_mb = st_cache_size + index_size
-        else:
-            cache_path = str(index_dir)
-            size_mb = index_size
+        # All classes route through litellm (#3128: no in-process ST
+        # backend), so cache_path / size_mb are always the shared
+        # action-index SQLite.
+        cache_path = str(index_dir)
+        size_mb = index_size
 
         # Only the class that the on-disk meta currently records gets
         # the indexed_actions / last_built numbers; others get the
@@ -220,7 +193,7 @@ def _collect_status_rows(project_root: Path) -> list[ClassRow]:
 
         rows.append(ClassRow(
             name=class_name,
-            backend=backend,
+            backend="litellm",
             model=spec.model,
             cache_path=cache_path,
             size_mb=size_mb,
@@ -347,29 +320,29 @@ def run_rebuild(args: argparse.Namespace) -> None:
 
 
 def run_clear(args: argparse.Namespace) -> None:
-    """``reyn embeddings clear`` — wipe action index + sentence-transformers cache.
+    """``reyn embeddings clear`` — wipe the action index cache.
 
     Aggressive: removes the entire action-index cache directory (the
-    unified ``.reyn/cache/index/actions/`` since FP-0057 Phase 0)
-    AND the sentence-transformers HF model cache resolved per the
-    REYN_CACHE_DIR / XDG_CACHE_HOME precedence. Useful for "the cache
-    is corrupted" or "I want to switch backends and reclaim disk".
+    unified ``.reyn/cache/index/actions/`` since FP-0057 Phase 0).
+    Useful for "the cache is corrupted" or "I want to reclaim disk".
+
+    #3128 removed the in-process sentence-transformers backend, so
+    this no longer also wipes a downloaded-model cache — the SQLite
+    action index is the only on-disk state this command manages.
     """
     project_root = _get_project_root()
     index_dir = _resolve_action_index_dir(project_root)
-    st_cache_dir = _resolve_st_cache_dir()
 
     removed_bytes_mb = 0.0
-    for target in (index_dir, st_cache_dir):
-        if target.exists():
-            removed_bytes_mb += _dir_size_mb(target)
-            try:
-                shutil.rmtree(target)
-                print(f"removed {target}")
-            except OSError as exc:
-                print(f"warning: could not remove {target}: {exc}")
-        else:
-            print(f"skip {target} (= absent)")
+    if index_dir.exists():
+        removed_bytes_mb += _dir_size_mb(index_dir)
+        try:
+            shutil.rmtree(index_dir)
+            print(f"removed {index_dir}")
+        except OSError as exc:
+            print(f"warning: could not remove {index_dir}: {exc}")
+    else:
+        print(f"skip {index_dir} (= absent)")
 
     if removed_bytes_mb > 0:
         print(f"freed ~{removed_bytes_mb:.2f} MB")
@@ -434,11 +407,10 @@ def register(sub: Any) -> None:
     # clear
     clear = inner.add_parser(
         "clear",
-        help="Wipe the action index and the local model cache directory",
+        help="Wipe the action index cache directory",
         description=(
-            "Remove .reyn/cache/index/actions/ AND the sentence-transformers "
-            "model cache directory. Aggressive: useful for cache "
-            "corruption or backend swap reclamation."
+            "Remove .reyn/cache/index/actions/. Aggressive: useful for "
+            "cache corruption or reclaiming disk."
         ),
     )
     clear.set_defaults(func=run_clear)
