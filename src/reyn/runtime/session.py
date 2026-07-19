@@ -11,7 +11,6 @@ import logging
 import re
 import time
 import uuid
-from collections import OrderedDict
 from typing import Any, Awaitable, Callable, Literal
 
 logger = logging.getLogger(__name__)
@@ -92,6 +91,7 @@ from reyn.runtime.session_params import (
     ReactivityConfig,
     TaskWiring,
 )
+from reyn.runtime.spawn_tracker import SpawnTracker
 from reyn.security.permissions.permissions import PermissionResolver
 from reyn.services.compaction.engine import CompactionEngine
 from reyn.task.subscription import SubscriptionWriter
@@ -108,11 +108,8 @@ from reyn.user_intervention import (
 # (logged, never silently looped).
 _QUIESCE_MAX_ROUNDS = 50
 
-# #2103 S1bc-exec: cap on the in-flight spawned-task correlation record (sid → task).
-# Each entry is evicted when its result routes back; this cap bounds the pathological
-# case where results never arrive (spawned crash / lost reply) so the map can't grow
-# unbounded. Holds only pending spawns whose result hasn't returned.
-_MAX_SPAWNED_TASKS = 256
+# #2103 S1bc-exec: cap on the in-flight spawned-task correlation record (sid → task) —
+# moved to spawn_tracker.py's _MAX_SPAWNED_TASKS (#3133 P3 Extract Class).
 
 # Localized user-facing messages for the router retry-exhausted fallback (F8).
 # Keys are BCP-47-style language codes matching config `output_language`.
@@ -1040,10 +1037,10 @@ class Session:
         self._current_task_id: "str | None" = None
         # OS-authoritative provenance classification of the current turn, stamps entry["provenance"] (proposal 0060 Phase1 A7, see session-construction.md#safety-limits-interactive-mode)
         self._current_turn_origin: str = "auto_improvement"
-        # Spawned EPHEMERAL session auto-vanish state, set post-construction by the registry (#2103, see session-construction.md#safety-limits-interactive-mode)
+        # Spawned EPHEMERAL flag, set post-construction by the registry (#2103, see session-construction.md#safety-limits-interactive-mode).
+        # The vanish-scheduling state (_vanish_scheduled / _vanish_task) is owned by
+        # SpawnTracker, constructed below (see #3133 P3 Extract Class, spawn_tracker.py).
         self._ephemeral: bool = False
-        self._vanish_scheduled: bool = False
-        self._vanish_task: "asyncio.Task | None" = None
         # Lazily-resolved minimal _untrusted ContextualPermission cache (#1827 S4b context-auto)
         self._untrusted_contextual_cache = None
         # excluded_categories (#1667) + the visibility override (#2285) are owned by
@@ -1247,8 +1244,6 @@ class Session:
         # Publish as the process-wide active reloader so the hooks-write LLM-op can request_reload (#2073 S3, see session-construction.md#family-3-hook-event-reactivity)
         from reyn.runtime.hot_reload import set_active_hot_reloader
         set_active_hot_reloader(self._hot_reloader)
-        # sid -> trusted original-task record for spawned sessions, so a compromised sub-session can't forge task framing (#2103 S1bc-exec, see session-construction.md#capability-permission-visibility)
-        self._spawned_tasks: "OrderedDict[str, str]" = OrderedDict()
         # Detached by default; AgentRegistry.attach() flips this on to stop background display noise
         self.is_attached: bool = False
 
@@ -1306,6 +1301,23 @@ class Session:
         self._intervention_handler = _intervention_bundle.intervention_handler
         self._intervention_coordinator = _intervention_bundle.intervention_coordinator
         self._chain_timeout_glue = _intervention_bundle.chain_timeout_glue
+
+        # Owns the spawned-task correlation record + ephemeral auto-vanish scheduling
+        # state (#2103, see #3133 P3 Extract Class); Session holds one reference +
+        # delegates via thin forwarders, does not re-own the state (see spawn_tracker.py).
+        # session_id / ephemeral are read through LIVE providers -- both are reassigned
+        # post-construction by the registry (spawn-time re-key / ephemeral-spawn flip),
+        # so a value snapshot copied here would go stale (same hazard CapabilityVisibility,
+        # constructed below, documents for its own session_id_provider).
+        self._spawn_tracker = SpawnTracker(
+            registry=self._registry,
+            journal=self._journal,
+            chains=self._chains,
+            inbox=self.inbox,
+            agent_name=self.agent_name,
+            session_id_provider=lambda: self._session_id,
+            ephemeral_provider=lambda: self._ephemeral,
+        )
 
         # Delegation tracking for RouterLoop runs; None outside a run, cleared after each (F2)
         self._router_loop_delegations: list[dict] | None = None
@@ -1973,13 +1985,9 @@ class Session:
         return task
 
     def attach_anchor_store(self, anchor_store) -> None:
-        """Attach the shared per-checkpoint anchor store (#1547).
-
-        The registry injects its single ``AnchorStore`` so the journal's
-        ``cut_generation`` records the rewind-timeline preview text against the
-        same boundary seq the registry's ``list_rewind_points`` surfaces.
-        """
-        self._journal.set_anchor_store(anchor_store)
+        """Attach the shared per-checkpoint anchor store (#1547). Thin forwarder — see
+        ``SpawnTracker.attach_anchor_store`` for the full rationale (#3133 P3 Extract Class)."""
+        self._spawn_tracker.attach_anchor_store(anchor_store)
 
     def apply_per_session_narrowing(
         self, contextual_permission: "object | None", excluded_categories,
@@ -2840,24 +2848,17 @@ class Session:
         })
 
     # ── #2103 S1bc-exec: spawned-task correlation record (bounded) ──────────────
+    # Owned by SpawnTracker (#3133 P3 Extract Class); Session forwards.
 
     def record_spawned_task(self, sid: str, task: str) -> None:
-        """Record a session-I-spawned's ``sid → task`` BEFORE submitting it, so when its
-        result routes back the header renders ``task=<my OWN request>`` from this TRUSTED
-        record (not the spawned session's echo). Bounded: evicted on result arrival;
-        ``_MAX_SPAWNED_TASKS`` cap evicts oldest so a never-arriving result can't grow it."""
-        self._spawned_tasks[sid] = task
-        self._spawned_tasks.move_to_end(sid)
-        while len(self._spawned_tasks) > _MAX_SPAWNED_TASKS:
-            self._spawned_tasks.popitem(last=False)  # evict oldest in-flight
+        """Record a session-I-spawned's ``sid → task`` BEFORE submitting it. Thin
+        forwarder — see ``SpawnTracker.record_spawned_task`` for the full rationale."""
+        self._spawn_tracker.record_spawned_task(sid, task)
 
     def lookup_and_evict_spawned_task(self, sid: "str | None") -> "str | None":
-        """The TRUSTED task for a spawned ``sid``, or None (not one I spawned / already
-        consumed). Evict-on-read — a result is consumed once; a spoofed/unknown sid → None
-        → the caller renders the safe ``kind=agent`` fallback (still fenced)."""
-        if not sid:
-            return None
-        return self._spawned_tasks.pop(sid, None)
+        """The TRUSTED task for a spawned ``sid``, or None. Thin forwarder — see
+        ``SpawnTracker.lookup_and_evict_spawned_task`` for the full rationale."""
+        return self._spawn_tracker.lookup_and_evict_spawned_task(sid)
 
     async def shutdown(self) -> None:
         # `shutdown` is a control signal, not recovery state — skip WAL/snapshot.
@@ -5170,38 +5171,13 @@ class Session:
             await self._handle_hook_message(payload)
 
     def _maybe_schedule_ephemeral_vanish(self) -> None:
-        """#2103: an ephemeral spawned session auto-vanishes once its task is done —
-        the turn completed and no further trigger is queued (the inbox is drained, so
-        the run-loop is about to idle-block). Schedules a DETACHED teardown via the
-        registry's ``remove_session`` seam (the SAME teardown the rewind as-of-cut drop
-        uses): it quiesces + closes the per-session Task backend, cancels this idle
-        run-loop, drops the session, emits ``session_vanished``, and purges the dir.
-        Detached (not awaited here) because ``remove_session`` cancels THIS run-loop
-        task — running it inline would cancel the caller. Idempotent (the
-        ``_vanish_scheduled`` guard). The main session + persistent spawns are never
-        ``_ephemeral`` → unaffected.
-
-        "Task done" = the inbox is drained AND there is no AWAITED work whose resume
-        arrives OUTSIDE the now-empty inbox: a pending delegation chain (an
-        ``agent_response`` is still coming — ``self._chains``) or a live task-as-request
-        execution (``self._current_task_id``). Without these guards a spawned ephemeral
-        session that DELEGATES + awaits a response has a transiently-empty inbox
-        mid-await → it would vanish (dir purged + ``session_vanished``) before the
-        response lands = silent + destructive. A spawned session CAN reach delegate +
-        await (it has the full ChainManager + send_to_agent wiring), so the guard is
-        load-bearing, not theoretical."""
-        if (not self._ephemeral or self._vanish_scheduled
-                or self._registry is None or not self.inbox.empty()):
-            return
-        # awaited-work guard (delegate-then-await / live §16 task): the resume arrives
-        # outside the now-empty inbox, so emptiness alone is not "done".
-        if self._current_task_id is not None or self._chains.all_chain_ids():
-            return
-        self._vanish_scheduled = True
-        # Keep a strong ref (self._vanish_task) so the task is not GC'd before it runs
-        # (it self-cancels this run-loop, so it is otherwise unreferenced).
-        self._vanish_task = asyncio.create_task(
-            self._registry.remove_session(self.agent_name, self._session_id)
+        """#2103: schedule the ephemeral auto-vanish teardown once this session's turn
+        is idle-done. Thin forwarder — see ``SpawnTracker._maybe_schedule_ephemeral_vanish``
+        for the full rationale (#3133 P3 Extract Class). ``current_task_id`` is per-turn
+        mutable (reassigned every turn by ``_stamp_execution_context``), so it is threaded
+        as a call-time argument rather than baked into the tracker's construction."""
+        self._spawn_tracker._maybe_schedule_ephemeral_vanish(
+            current_task_id=self._current_task_id,
         )
 
     def _stamp_execution_context(self, kind: str, payload: dict) -> None:
