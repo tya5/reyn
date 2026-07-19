@@ -56,18 +56,13 @@ def make_session(tmp_path: Path, *, t_max: int = 1_000_000) -> Session:
         use_chars4_estimate=True,  # deterministic: chars // 4
         section_caps_spec_tokens=0,  # keeps B_M positive for small T_max values
     )
-    # Built explicitly (rather than left for Session's agent=None fallback)
-    # so this helper also exercises the Agent-SSoT construction path (#3133
-    # Priority-0 step-1) -- agent_name/agent_role are still passed flat too,
-    # matching production's scoped_session_factory.py double-pass shape (see
-    # tests/_support/agent_session.py module docstring for why).
+    # Agent is the sole identity SSoT (#3133 Priority-0 step-2 removed the
+    # flat identity kwargs Session used to also accept alongside ``agent=``).
     agent = Agent(agent_name="default", role="")
     # Monkeypatch covers the engine's compute_budgets() call at Session init.
     with synthetic_t_max(t_max):
         return Session(
             agent=agent,
-            agent_name="default",
-            agent_role="",
             output_language="en",
             budget_tracker=bt,
             state_log=state_log,

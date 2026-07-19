@@ -88,14 +88,15 @@ def build_scoped_chat_session(
     # scoped env/sandbox/workspace params + the name/model/resolver/role that flow
     # via ``**base``). Session reads all identity fields through this object
     # (delegating properties). This is the prerequisite seam for N Sessions sharing
-    # one Agent (a later stage); behaviour here is byte-identical. The identity
-    # params still flow through (for Session's direct/test fallback) — pruning
-    # them is a later-stage cleanup once sharing is wired.
+    # one Agent (a later stage); behaviour here is byte-identical.
+    # #3133 Priority-0 step-2: the 9 identity fields are POPPED from ``base``
+    # (not just read) so Session — whose flat identity params were removed —
+    # receives ``agent=`` exactly once, never a duplicate flat projection.
     agent = Agent(
-        agent_name=base["agent_name"],
-        role=base.get("agent_role", ""),
-        model=base.get("model", "standard"),
-        permission_resolver=base.get("permission_resolver"),
+        agent_name=base.pop("agent_name"),
+        role=base.pop("agent_role", ""),
+        model=base.pop("model", "standard"),
+        permission_resolver=base.pop("permission_resolver", None),
         workspace_base_dir=workspace_base_dir,
         workspace_state_dir=workspace_state_dir,
         sandbox_config=factory_config.sandbox_config,
@@ -111,7 +112,7 @@ def build_scoped_chat_session(
     task_waker = None
     if _registry is not None:
         from reyn.runtime.services.task_wake import TaskWaker  # noqa: PLC0415
-        task_waker = TaskWaker(_registry, base["agent_name"])
+        task_waker = TaskWaker(_registry, agent.agent_name)
     # #3121 step1: group the scoped capability / task / presentation / reactivity
     # params into their cohesive parameter objects at this single construction
     # chokepoint. ``intervention_bridge`` and the ``hooks_config``/
@@ -128,10 +129,6 @@ def build_scoped_chat_session(
     )
     return Session(
         agent=agent,
-        environment_backend=environment_backend,
-        sandbox_backend=sandbox_backend,
-        workspace_base_dir=workspace_base_dir,
-        workspace_state_dir=workspace_state_dir,
         agent_id=agent_id,
         router_max_iterations=router_max_iterations,
         non_interactive=non_interactive,
@@ -153,7 +150,6 @@ def build_scoped_chat_session(
             presentation_consumer=presentation_consumer,  # #2708 P1: present-sink consumer (.sink deferred to Session init)
             intervention_bridge=intervention_bridge,
         ),
-        sandbox_config=factory_config.sandbox_config,
         multimodal_config=factory_config.multimodal_config,
         action_retrieval_config=factory_config.action_retrieval_config,
         embedding_config=factory_config.embedding_config,

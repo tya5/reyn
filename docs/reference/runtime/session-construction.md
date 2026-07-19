@@ -15,13 +15,18 @@ decomposition (identity, capability/visibility, multimodal, safety, misc lifecyc
 
 ## Identity (the `Agent` value object) — FP-0043 Stage 2
 
-`self._agent` is either the caller-supplied `Agent` value object, or (when `agent=None`,
-the direct/test-construction path) built from the flat identity params
-(`agent_name`/`model`/`permission_resolver`/`workspace_base_dir`/`workspace_state_dir`/
-`sandbox_config`/`sandbox_backend`/`environment_backend`/`agent_role`). In production,
-`build_scoped_chat_session` is the single chokepoint that assembles the real `Agent` and
-passes it in; the fallback exists purely so tests / other direct construction sites don't
-need to build one by hand — it is byte-identical to the pre-FP-0043 direct-attribute shape.
+`agent: Agent` is a **required** `__init__` param — the sole source of identity
+(#3133 Priority-0 step-2). There is no `agent=None` fallback and no duplicate flat
+identity params (`agent_name`/`model`/`permission_resolver`/`workspace_base_dir`/
+`workspace_state_dir`/`sandbox_config`/`sandbox_backend`/`environment_backend`/
+`agent_role`) on `Session.__init__` — they were removed together with the
+`Agent(...)` fallback construction they fed, so `agent_name != agent.agent_name`
+is no longer constructible. In production, `build_scoped_chat_session` is the
+single chokepoint that assembles the real `Agent` and passes it in as `agent=`.
+Tests build an `Agent` explicitly too — `tests/_support/agent_session.py`'s
+`make_session` helper (and the compaction helper in `tests/_support/session.py`)
+do this for every test call site, so no test constructs `Session` with the old
+flat identity kwargs either.
 
 `agent_name`/`model`/`_perm`/workspace dirs/`environment_backend`/`sandbox_config`/
 `sandbox_backend`/`workspace_dir`/`agent_role` are then read-only `@property` delegations
