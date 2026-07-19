@@ -42,7 +42,12 @@ What this file pins instead, directly against the shipped plugin files:
      looped 24x on the nearest-spelled wrong one
      (`pipeline__run_inline`) and never recovered. Names are EXTRACTED
      from the skill's code fences, never restated, for the same
-     never-goes-red reason as (3).
+     never-goes-red reason as (3). #3092 generalized THIS pin to every
+     builtin SKILL.md (`tests/test_builtin_skill_tool_name_drift_3092.py`)
+     after finding the exact same drift shape on two skills the RAG-only
+     scope here could not see; the extraction/lookup logic below is now
+     SHARED with that gate via `tests/_support/builtin_skill_tool_names.py`
+     so the two checks cannot silently diverge.
 
 No mocks: the real `PluginManifest`, the real skill/pipeline files, the real
 `build_pipeline_registry`, the real `catalog_entries`.
@@ -57,8 +62,10 @@ import yaml
 
 from reyn.data.pipelines.registry import build_pipeline_registry
 from reyn.plugins.manifest import load_plugin_manifest
-from reyn.tools.types import RouterCallerState, ToolContext
-from reyn.tools.universal_catalog import catalog_entries
+from tests._support.builtin_skill_tool_names import (
+    qualified_tool_names_referenced,
+    real_catalog_tool_names,
+)
 
 _REPO_ROOT = Path(__file__).parent.parent
 _PLUGIN_DIR = _REPO_ROOT / "src" / "reyn" / "builtin" / "plugins" / "rag"
@@ -66,31 +73,6 @@ _SKILL_NAME = "build_and_query_rag_corpus"
 _SKILL_PATH = _PLUGIN_DIR / "skills" / _SKILL_NAME / "SKILL.md"
 _INGEST_PATH = _PLUGIN_DIR / "pipelines" / "rag_ingest.yaml"
 _QUERY_PATH = _PLUGIN_DIR / "pipelines" / "rag_query.yaml"
-
-
-class _FakeEvents:
-    """Real ToolContext requires an events sink; a no-op recorder is not a
-    faked COLLABORATOR under test (nothing here asserts on events) — same
-    shape as ``tests/test_catalog_entries_1593.py``'s fixture."""
-
-    def emit(self, *args, **kwargs) -> None:
-        pass
-
-
-def _real_catalog_tool_names() -> "set[str]":
-    """The REAL qualified tool names an enumerate-all LLM turn is sent —
-    ``catalog_entries(ctx)`` is single-source for every ``mcp__`` /
-    ``pipeline__`` / ``plugin_management__`` / ... name (#3026: every
-    category, including the two this skill drives, is now a STATIC
-    operation category enumerated from
-    ``universal_dispatch._OPERATION_RULES`` — no operator-state ctx needed
-    to produce the NAMES, only to gate availability)."""
-    ctx = ToolContext(
-        events=_FakeEvents(), permission_resolver=None, workspace=None,
-        caller_kind="router",
-        router_state=RouterCallerState(host=None, mcp_servers=None),
-    )
-    return {entry["name"] for entry in catalog_entries(ctx)}
 
 
 def _skill_body() -> str:
@@ -215,25 +197,14 @@ def test_every_doc_path_the_skill_points_at_exists() -> None:
 def _qualified_tool_names_referenced_by_the_skill() -> "set[str]":
     """Extract every qualified (`category__verb`) tool-call name from the
     skill's code fences — `plugin_management__install(...)`,
-    `mcp__install_local(...)`, `pipeline__run(...)`. Extracted, never
-    restated, for the same reason as `_pipeline_names_referenced_by_the_skill`:
-    a hardcoded list here would drift with the prose it claims to guard and
-    stay green through the exact bug (#3090) this test exists to catch.
-
-    REACH LIMIT (do not read this gate's green as "no drift anywhere"): it
-    matches only the CALL shape `verb(` — a tool name mentioned in prose
-    WITHOUT parens is invisible to it. That is a deliberate precision/reach
-    trade, not an oversight: a bare `plugin_install` in prose can equally be a
-    legitimate reference to the internal op-kind / module of that name
-    (`op_runtime/plugin_install.py`), so flagging every bare mention would
-    false-positive on non-drift. The residue is caught by review reading the
-    LLM-facing prose (#3091 review found a bare `plugin_install` on SKILL.md's
-    "Materialisation failed" line that this gate could not see). Widening the
-    gate to bare mentions is NOT the fix — it would trade this clean signal for
-    a noisy one."""
-    return set(re.findall(
-        r"\b([a-zA-Z][a-zA-Z0-9_]*__[a-zA-Z][a-zA-Z0-9_]*)\(", _skill_body(),
-    ))
+    `mcp__install_local(...)`, `pipeline__run(...)`. Delegates to the SHARED
+    extractor (`tests/_support/builtin_skill_tool_names.py`) the #3092
+    generalized gate also uses, so this skill's own check and the
+    all-builtin-skills check can never silently diverge. See that module's
+    docstring for the REACH LIMIT (CALL-shape only, bare mentions invisible
+    by design — #3091 review found a bare `plugin_install` this gate cannot
+    see; widening to bare mentions is NOT the fix)."""
+    return qualified_tool_names_referenced(_skill_body())
 
 
 def test_every_tool_name_the_skill_calls_exists_in_the_real_catalog() -> None:
@@ -252,7 +223,7 @@ def test_every_tool_name_the_skill_calls_exists_in_the_real_catalog() -> None:
     referenced = _qualified_tool_names_referenced_by_the_skill()
     assert referenced, "fixture invariant: the skill must call qualified tools"
 
-    real_names = _real_catalog_tool_names()
+    real_names = real_catalog_tool_names()
     missing = sorted(n for n in referenced if n not in real_names)
     assert not missing, (
         f"SKILL.md calls tool name(s) that do not exist in the real "
@@ -272,6 +243,6 @@ def test_tool_name_catalog_check_is_not_vacuous() -> None:
     referenced = _qualified_tool_names_referenced_by_the_skill() | {
         "run_pipeline__ghost",
     }
-    real_names = _real_catalog_tool_names()
+    real_names = real_catalog_tool_names()
     missing = sorted(n for n in referenced if n not in real_names)
     assert missing == ["run_pipeline__ghost"]

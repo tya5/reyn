@@ -125,7 +125,7 @@ fields:
 ```
 
 This ships as the builtin pipeline `flagship.research_and_report` (inert --
-invoke by name: `run_pipeline(name="flagship.research_and_report",
+invoke by name: `pipeline__run(name="flagship.research_and_report",
 input={"query": "..."})`, not copy-pasted inline).
 
 ## Hooks -- reactive input, made visible
