@@ -69,6 +69,13 @@ dev = [
     "mypy",
     "pytest-asyncio>=0.23",
     "pre-commit>=3",
+    "markdown>=3.6",  # #3126: doc-anchor CI gate imports the canonical
+                       # markdown.extensions.toc.slugify_unicode/unique
+                       # functions directly — the same slugify mkdocs' `toc`
+                       # extension (docs extra) uses at build time. A pure-
+                       # python leaf dep, listed here (not `docs`) so `pytest`
+                       # (installed via this extra in CI) has it without
+                       # pulling the mkdocs-material/i18n toolchain.
 ]
 fetch = [
     "trafilatura>=1.8",       # higher-quality HTML extraction for web__fetch (issue #355)
