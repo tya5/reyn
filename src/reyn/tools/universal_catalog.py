@@ -806,9 +806,10 @@ def _should_inject_hidden_state_hint(rs: Any) -> bool:
 
     Brief false-positives during the background index build (= rs is
     present but idx.is_ready() returns False yet) are acceptable —
-    the hint is informational, not blocking; the LLM may surface
-    "install local-embed" once during boot, then stop on subsequent
-    turns once the index becomes ready.
+    the hint is informational, not blocking; the LLM may surface the
+    enable-hint (= configure ``action_retrieval.embedding_class`` in
+    reyn.yaml) once during boot, then stop on subsequent turns once
+    the index becomes ready.
     """
     if rs is None:
         return False
