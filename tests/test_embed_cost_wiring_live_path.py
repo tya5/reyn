@@ -46,6 +46,7 @@ from reyn.data.embedding.provider import EmbedBatchResult
 from reyn.runtime.budget.budget import BudgetTracker, CostConfig
 from reyn.runtime.session import Session
 from reyn.tools.types import ToolContext, build_resource_caller_state
+from tests._support.agent_session import make_session
 
 # A real litellm embedding-mode model, so the recorded figure is a real
 # `litellm.model_cost` lookup rather than a fabricated rate.
@@ -74,7 +75,7 @@ class _RealModelFakeProvider:
 def _session(tmp_path: Path, tracker: BudgetTracker) -> Session:
     agent_dir = tmp_path / ".reyn" / "agents" / "embedder"
     agent_dir.mkdir(parents=True, exist_ok=True)
-    return Session(
+    return make_session(
         agent_name="embedder",
         agent_role="r",
         output_language="en",
@@ -188,7 +189,7 @@ async def test_live_embed_tool_reaches_project_scope_via_registry(
     def factory(profile: AgentProfile):
         agent_dir = tmp_path / ".reyn" / "agents" / profile.name
         agent_dir.mkdir(parents=True, exist_ok=True)
-        return Session(
+        return make_session(
             agent_name=profile.name,
             agent_role=profile.role,
             output_language="en",

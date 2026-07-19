@@ -29,10 +29,11 @@ from reyn.interfaces.transport.frames import DisplayFrame
 from reyn.runtime.outbox import OutboxMessage
 from reyn.runtime.session import Session
 from reyn.user_intervention import UserIntervention
+from tests._support.agent_session import make_session
 
 
 def _make_session(tmp_path: Path) -> Session:
-    session = Session(
+    session = make_session(
         agent_name="alpha",
         state_log=StateLog(tmp_path / "state.wal"),
         snapshot_path=tmp_path / "alpha_snapshot.json",

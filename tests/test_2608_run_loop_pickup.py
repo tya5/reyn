@@ -39,6 +39,7 @@ from reyn.llm.llm import LLMToolCallResult
 from reyn.llm.pricing import TokenUsage
 from reyn.runtime.session import Session
 from reyn.runtime.session_params import ReactivityConfig
+from tests._support.agent_session import make_session
 
 _EMPTY_USAGE = TokenUsage(prompt_tokens=5, completion_tokens=3)
 
@@ -74,7 +75,7 @@ async def _wait_for(predicate, *, attempts: int = 200, delay: float = 0.02) -> N
 
 
 def _make_session(tmp_path: Path, *, hooks_config: list) -> Session:
-    return Session(
+    return make_session(
         agent_name="test-agent",
         state_log=StateLog(tmp_path / "state.wal"),
         snapshot_path=tmp_path / "snap.json",

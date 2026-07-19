@@ -28,6 +28,7 @@ from reyn.interfaces.inline.intervention_region import (
 )
 from reyn.runtime.session import Session
 from reyn.user_intervention import InterventionChoice, UserIntervention
+from tests._support.agent_session import make_session
 
 
 def _iv(choices: list[tuple[str, str]]):
@@ -98,7 +99,7 @@ async def test_answer_oldest_intervention_choice_delivers_authoritatively(
     """Tier 2: the region's choice-id seam resolves the head intervention with
     the chosen id (authoritative — no text/hotkey match needed)."""
     monkeypatch.chdir(tmp_path)
-    session = Session(
+    session = make_session(
         agent_name="alpha",
         state_log=StateLog(tmp_path / "state.wal"),
         snapshot_path=tmp_path / "alpha_snapshot.json",
@@ -180,7 +181,7 @@ async def test_answer_oldest_intervention_text_delivers_free_text(
     never resolved and ``asyncio.wait_for`` times out.
     """
     monkeypatch.chdir(tmp_path)
-    session = Session(
+    session = make_session(
         agent_name="alpha",
         state_log=StateLog(tmp_path / "state.wal"),
         snapshot_path=tmp_path / "alpha_snapshot.json",

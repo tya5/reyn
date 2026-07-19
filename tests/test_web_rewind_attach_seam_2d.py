@@ -23,6 +23,7 @@ from reyn.core.events.state_log import StateLog
 from reyn.runtime.profile import AgentProfile
 from reyn.runtime.registry import AgentRegistry
 from reyn.runtime.session import Session
+from tests._support.agent_session import make_session
 
 
 class _FakeTurnDriver:
@@ -54,7 +55,7 @@ async def test_web_path_session_checkout_restores_runtime(tmp_path) -> None:
 
     def _factory(profile: AgentProfile) -> Session:
         snap = tmp_path / ".reyn" / "agents" / profile.name / "state" / "snapshot.json"
-        return Session(agent_name=profile.name, state_log=state_log, snapshot_path=snap)
+        return make_session(agent_name=profile.name, state_log=state_log, snapshot_path=snap)
 
     reg = AgentRegistry(project_root=tmp_path, session_factory=_factory, state_log=state_log)
     AgentProfile.new("alpha", role="").save(tmp_path / ".reyn" / "agents" / "alpha")
@@ -85,7 +86,7 @@ async def test_web_path_session_records_anchor_for_picker(tmp_path) -> None:
 
     def _factory(profile: AgentProfile) -> Session:
         snap = tmp_path / ".reyn" / "agents" / profile.name / "state" / "snapshot.json"
-        return Session(agent_name=profile.name, state_log=state_log, snapshot_path=snap)
+        return make_session(agent_name=profile.name, state_log=state_log, snapshot_path=snap)
 
     reg = AgentRegistry(project_root=tmp_path, session_factory=_factory, state_log=state_log)
     AgentProfile.new("alpha", role="").save(tmp_path / ".reyn" / "agents" / "alpha")

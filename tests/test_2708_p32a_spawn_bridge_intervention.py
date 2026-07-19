@@ -42,6 +42,7 @@ from reyn.runtime.registry import AgentRegistry  # noqa: E402
 from reyn.runtime.session import DEFAULT_CHAT_CHANNEL_ID, Session  # noqa: E402
 from reyn.runtime.session_api import run_pipeline_attached, start_pipeline_run  # noqa: E402
 from reyn.runtime.session_params import PresentationWiring
+from tests._support.agent_session import make_session
 
 _QUESTION = "REYN2708P32A which branch?"
 _ANSWER = "REYN2708P32A-the-blue-branch"
@@ -55,7 +56,7 @@ def _agent_registry(tmp_path: Path, state_log: "StateLog") -> AgentRegistry:
     holder: dict = {}
 
     def _factory(profile, *, presentation_consumer=None, intervention_bridge=None) -> Session:
-        return Session(
+        return make_session(
             agent_name=profile.name, state_log=state_log,
             registry=holder.get("reg"), non_interactive=True,
             presentation_wiring=PresentationWiring(presentation_consumer=presentation_consumer, intervention_bridge=intervention_bridge),

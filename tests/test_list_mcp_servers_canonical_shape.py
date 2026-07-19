@@ -30,6 +30,7 @@ from reyn.runtime.router_loop import RouterLoop
 from reyn.runtime.session import Session
 from reyn.tools import get_default_registry
 from reyn.tools.scheme import ExecutionResult
+from tests._support.agent_session import make_session
 
 
 def _session(tmp_path: Path) -> Session:
@@ -41,7 +42,7 @@ def _session(tmp_path: Path) -> Session:
         encoding="utf-8",
     )
     config = load_config(cwd=tmp_path)
-    return Session(
+    return make_session(
         agent_name="alice",
         state_log=StateLog(tmp_path / "state.wal"),
         snapshot_path=tmp_path / "snap.json",

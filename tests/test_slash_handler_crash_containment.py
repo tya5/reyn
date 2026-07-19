@@ -14,10 +14,11 @@ import pytest
 
 from reyn.core.events.state_log import StateLog
 from reyn.runtime.session import Session
+from tests._support.agent_session import make_session
 
 
 def _make_session(tmp_path: Path) -> Session:
-    return Session(
+    return make_session(
         agent_name="alpha",
         state_log=StateLog(tmp_path / "state.wal"),
         snapshot_path=tmp_path / "alpha_snapshot.json",

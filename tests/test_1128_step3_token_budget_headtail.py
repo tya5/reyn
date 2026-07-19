@@ -28,6 +28,7 @@ from pathlib import Path
 import pytest
 
 import reyn.llm.model_budget as _mb
+from tests._support.agent_session import make_session
 
 
 def _now() -> str:
@@ -119,7 +120,7 @@ def _make_session_with_t_max(tmp_path: Path, t_max: int):
     original = _mb.get_max_input_tokens
     _mb.get_max_input_tokens = lambda model, **kw: t_max  # type: ignore[assignment]
     try:
-        session = Session(
+        session = make_session(
             agent_name="default",
             agent_role="",
             output_language="en",

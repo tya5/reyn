@@ -64,6 +64,7 @@ from reyn.runtime.cron.routing import dispatch_cron_fired
 from reyn.runtime.session import Session
 from reyn.runtime.webhook_routing import dispatch_webhook_received
 from reyn.task import InMemoryTaskBackend
+from tests._support.agent_session import make_session
 
 _EMPTY_USAGE = TokenUsage(prompt_tokens=5, completion_tokens=3)
 
@@ -106,7 +107,7 @@ async def _wait_for(predicate, *, attempts: int = 200, delay: float = 0.02) -> N
 
 
 def _make_session(tmp_path: Path) -> Session:
-    return Session(
+    return make_session(
         agent_name="sync-gate-agent",
         state_log=StateLog(tmp_path / "state.wal"),
         snapshot_path=tmp_path / "snap.json",

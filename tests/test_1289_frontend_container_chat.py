@@ -20,6 +20,7 @@ from reyn.core.events.state_log import StateLog
 from reyn.environment.host_backend import HostBackend
 from reyn.interfaces.cli.env_backend import build_environment_backend, register_env_backend_args
 from reyn.runtime.session import Session
+from tests._support.agent_session import make_session
 
 
 def test_register_env_backend_args_surface() -> None:
@@ -69,7 +70,7 @@ def test_frontend_contract_same_instance_reaches_both_seams(tmp_path: Path) -> N
     object. This is the #1200 single-shared-sandbox invariant the activation must
     uphold (a frontend wiring different instances = reject)."""
     one = HostBackend()  # stands in for a built DockerEnvironmentBackend
-    session = Session(
+    session = make_session(
         agent_name="b",
         state_log=StateLog(tmp_path / "state.wal"),
         snapshot_path=tmp_path / "snap.json",

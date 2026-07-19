@@ -43,6 +43,7 @@ from reyn.runtime.session_buses import (
 )
 from reyn.runtime.session_params import PresentationWiring
 from reyn.user_intervention import UserIntervention
+from tests._support.agent_session import make_session
 
 
 def _recording_registry(tmp_path: Path, state_log: "StateLog") -> "tuple[AgentRegistry, list]":
@@ -53,7 +54,7 @@ def _recording_registry(tmp_path: Path, state_log: "StateLog") -> "tuple[AgentRe
     holder: dict = {}
 
     def _factory(profile, *, presentation_consumer=None, intervention_bridge=None) -> Session:
-        s = Session(
+        s = make_session(
             agent_name=profile.name, state_log=state_log, registry=holder.get("reg"),
             non_interactive=True, presentation_wiring=PresentationWiring(presentation_consumer=presentation_consumer, intervention_bridge=intervention_bridge),
         )

@@ -33,6 +33,7 @@ from reyn.config.chat import _build_render_template_config
 from reyn.config.loader import load_config
 from reyn.core.op_runtime.render_template import handle
 from reyn.runtime.session import Session
+from tests._support.agent_session import make_session
 
 
 class _RenderOp:
@@ -80,7 +81,7 @@ def test_operator_yaml_bounds_cap_the_op_through_a_real_session(tmp_path: Path) 
     # The production shape: the frontend factories pass `config.render_template`
     # into the Session (registry_bootstrap / chat.py). A real Session resolves it
     # into the bounds it threads into every router OpContext builder.
-    session = Session(agent_name="t", render_template_config=cfg.render_template)
+    session = make_session(agent_name="t", render_template_config=cfg.render_template)
 
     # Builder 1 — Session._make_router_op_context (file/MCP twin).
     r_session = _run_op_via(session._make_router_op_context)
@@ -110,7 +111,7 @@ def test_default_config_leaves_normal_render_uncapped_through_a_real_session(
     assert default_cfg.max_output_chars == 256_000
     assert default_cfg.wall_clock_seconds == 5.0
 
-    session = Session(agent_name="t", render_template_config=default_cfg)
+    session = make_session(agent_name="t", render_template_config=default_cfg)
 
     for builder in (
         session._make_router_op_context,

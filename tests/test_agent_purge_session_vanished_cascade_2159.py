@@ -21,6 +21,7 @@ from reyn.core.events.state_log import StateLog
 from reyn.runtime.profile import AgentProfile
 from reyn.runtime.registry import AgentRegistry
 from reyn.runtime.session import Session
+from tests._support.agent_session import make_session
 
 
 def _make_registry(tmp_path: Path) -> tuple[AgentRegistry, StateLog]:
@@ -38,7 +39,7 @@ def _make_registry(tmp_path: Path) -> tuple[AgentRegistry, StateLog]:
         snapshot_path = (
             tmp_path / ".reyn" / "agents" / profile.name / "state" / "snapshot.json"
         )
-        s = Session(
+        s = make_session(
             agent_name=profile.name, state_log=state_log, registry=holder.get("reg"),
             snapshot_path=snapshot_path,
         )

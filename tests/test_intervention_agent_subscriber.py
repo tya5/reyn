@@ -40,6 +40,7 @@ from reyn.user_intervention import (
     RequestBus,
     UserIntervention,
 )
+from tests._support.agent_session import make_session
 
 # ── 1. Session.handle_intervention exists and is the canonical
 #      Agent-layer entry point ────────────────────────────────────────────
@@ -91,7 +92,7 @@ def test_agent_request_bus_satisfies_request_bus_protocol() -> None:
     RequestBus Protocol — OS callers typed against ``bus: RequestBus``
     accept it directly.
     """
-    session = Session(agent_name="t")
+    session = make_session(agent_name="t")
     bus = AgentRequestBus(session)
     assert isinstance(bus, RequestBus)
 
@@ -101,7 +102,7 @@ def test_agent_request_bus_also_satisfies_legacy_intervention_bus_alias() -> Non
     ``InterventionBus`` name still accept an AgentRequestBus because
     ``InterventionBus`` is an alias of ``RequestBus`` (Phase 2 invariant).
     """
-    session = Session(agent_name="t")
+    session = make_session(agent_name="t")
     bus = AgentRequestBus(session)
     assert isinstance(bus, InterventionBus)
 
@@ -121,7 +122,7 @@ def test_as_request_bus_returns_agent_request_bus() -> None:
     bound to this session (= the canonical way for OS callers to get a
     RequestBus-typed reference without importing AgentRequestBus directly).
     """
-    session = Session(agent_name="t")
+    session = make_session(agent_name="t")
     bus = session.as_request_bus()
     assert isinstance(bus, AgentRequestBus)
     assert isinstance(bus, RequestBus)
@@ -134,7 +135,7 @@ def test_as_request_bus_returns_fresh_adapter_each_call() -> None:
     The adapters are equivalent (all forward to the same session.handle_intervention)
     but distinct objects so OS callers can safely hold their own.
     """
-    session = Session(agent_name="t")
+    session = make_session(agent_name="t")
     bus1 = session.as_request_bus()
     bus2 = session.as_request_bus()
     assert bus1 is not bus2
@@ -158,7 +159,7 @@ def test_agent_request_bus_request_reaches_session_handle_intervention(
     The test asserts the short-circuit IS observed via the new entry
     point — proving the wiring is complete.
     """
-    session = Session(agent_name="t")
+    session = make_session(agent_name="t")
     # Deliberately no register_intervention_listener — Phase 1 guard
     # short-circuits the dispatch, returning empty answer.
     bus = session.as_request_bus()
@@ -182,7 +183,7 @@ def test_agent_request_bus_request_with_registered_listener_round_trip(
     the same dispatch path used pre-Phase-3 keeps working when invoked
     through the new RequestBus surface.
     """
-    session = Session(agent_name="t")
+    session = make_session(agent_name="t")
     session.register_intervention_listener("test")
 
     bus = session.as_request_bus()
@@ -222,7 +223,7 @@ def test_session_interventions_attribute_path_is_stable_in_phase3() -> None:
     """
     from reyn.runtime.services.intervention_registry import InterventionRegistry
 
-    session = Session(agent_name="t")
+    session = make_session(agent_name="t")
     assert hasattr(session, "_interventions")
     assert isinstance(session.interventions, InterventionRegistry)
     # The registry is still enforcing the Phase 1 subscriber guard.

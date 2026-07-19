@@ -76,6 +76,7 @@ from reyn.runtime.fs_watcher import FsWatcher
 from reyn.runtime.hot_reload import HotReloader, get_active_hot_reloader
 from reyn.runtime.session import Session, _HookEventBundle
 from reyn.runtime.session_params import ReactivityConfig
+from tests._support.agent_session import make_session
 
 _TIMEOUT = 2.0  # bounds every await so a broken wiring fails RED, never hangs
 
@@ -87,7 +88,7 @@ def _make_session(
     hooks_config: "list | None" = None,
     composers_config: "list | None" = None,
 ) -> Session:
-    return Session(
+    return make_session(
         agent_name=name,
         state_log=StateLog(tmp_path / f"{name}.wal"),
         snapshot_path=tmp_path / f"{name}.json",

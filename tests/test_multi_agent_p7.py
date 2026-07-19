@@ -41,6 +41,7 @@ from reyn.runtime.registry import AgentRegistry
 from reyn.runtime.services.chain_manager import ChainManager
 from reyn.runtime.session import Session
 from reyn.runtime.topology import Topology
+from tests._support.agent_session import make_session
 
 # ---------------------------------------------------------------------------
 # Helpers shared across tests
@@ -61,7 +62,7 @@ def _make_registry_with_agents(
     def factory(profile: AgentProfile) -> Session:
         agent_dir = tmp_path / ".reyn" / "agents" / profile.name
         agent_dir.mkdir(parents=True, exist_ok=True)
-        return Session(
+        return make_session(
             agent_name=profile.name,
             state_log=state_log,
             snapshot_path=agent_dir / "state" / "snapshot.json",

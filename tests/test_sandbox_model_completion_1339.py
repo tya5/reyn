@@ -22,6 +22,7 @@ from reyn.security.sandbox.policy import (  # noqa: E402
     DEFAULT_SANDBOX_NETWORK,
     resolve_sandbox_policy,
 )
+from tests._support.agent_session import make_session
 
 # ── (C) single-source resolver ────────────────────────────────────────────────
 
@@ -128,7 +129,7 @@ def test_chat_session_factory_resolves_concrete_policy(tmp_path):
     from reyn.core.events.state_log import StateLog
     from reyn.runtime.session import Session
 
-    session = Session(
+    session = make_session(
         agent_name="b",
         state_log=StateLog(tmp_path / "state.wal"),
         snapshot_path=tmp_path / "snap.json",

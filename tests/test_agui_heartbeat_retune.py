@@ -45,6 +45,7 @@ from reyn.interfaces.web.auth import AuthContext
 from reyn.runtime.session import Session
 from reyn.runtime.session_buses import NO_SURFACE_REFUSAL_REASON
 from reyn.user_intervention import UserIntervention
+from tests._support.agent_session import make_session
 
 # ── (d) the load-bearing ordering invariant, on the actual shipped constants ──
 
@@ -175,7 +176,7 @@ def test_bad_retune_with_zero_margin_false_positives_a_live_client() -> None:
 
 
 def _make_session(tmp_path: Path) -> Session:
-    return Session(
+    return make_session(
         agent_name="alpha",
         state_log=StateLog(tmp_path / "state.wal"),
         snapshot_path=tmp_path / "alpha_snapshot.json",

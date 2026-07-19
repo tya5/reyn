@@ -21,6 +21,7 @@ from __future__ import annotations
 
 from reyn.runtime.services.router_loop_driver import RouterLoopDriver
 from reyn.runtime.session import Session
+from tests._support.agent_session import make_session
 
 # ---------------------------------------------------------------------------
 # FakeDriver — plain class implementing ExecutionDriver (NO MagicMock / patch)
@@ -71,7 +72,7 @@ def test_injected_driver_is_used_and_cancel_delegates(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
 
     fake = FakeDriver()
-    session = Session(
+    session = make_session(
         agent_name="test_agent",
         loop_driver=fake,
     )
@@ -115,7 +116,7 @@ def test_injected_driver_session_has_required_attrs(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
 
     fake = FakeDriver()
-    session = Session(
+    session = make_session(
         agent_name="test_agent",
         loop_driver=fake,
     )
@@ -154,7 +155,7 @@ def test_default_session_builds_router_loop_driver(tmp_path, monkeypatch):
     """
     monkeypatch.chdir(tmp_path)
 
-    session = Session(agent_name="test_agent")
+    session = make_session(agent_name="test_agent")
 
     # Extract to local var; assert on local — no ._attr in assert expression.
     driver = session._loop_driver  # noqa: SIM118 — seam-test assignment

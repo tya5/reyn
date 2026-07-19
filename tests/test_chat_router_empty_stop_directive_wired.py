@@ -33,6 +33,7 @@ from reyn.llm.pricing import TokenUsage
 from reyn.runtime import router_loop as rl
 from reyn.runtime.router_loop import EMPTY_STOP_RETRY_DIRECTIVE
 from reyn.runtime.session import Session
+from tests._support.agent_session import make_session
 
 _EMPTY_USAGE = TokenUsage(prompt_tokens=10, completion_tokens=5)
 
@@ -60,7 +61,7 @@ class _ScriptedLLM:
 
 
 def _make_session(tmp_path: Path) -> Session:
-    return Session(agent_name="test_agent_b44")
+    return make_session(agent_name="test_agent_b44")
 
 
 # ---------------------------------------------------------------------------

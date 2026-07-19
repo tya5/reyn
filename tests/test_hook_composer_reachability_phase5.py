@@ -55,6 +55,7 @@ from reyn.hooks.loader import HookConfigError, load_hooks
 from reyn.hooks.schema_registry import build_hook_payload
 from reyn.runtime.session import Session
 from reyn.runtime.session_params import ReactivityConfig
+from tests._support.agent_session import make_session
 
 _POLL_TIMEOUT = 3.0
 _POLL_INTERVAL = 0.01
@@ -83,7 +84,7 @@ def _make_session(
         if cap is not None
         else SafetyConfig()
     )
-    return Session(
+    return make_session(
         agent_name="composer-reachability-agent",
         state_log=StateLog(tmp_path / "state.wal"),
         snapshot_path=tmp_path / "snap.json",

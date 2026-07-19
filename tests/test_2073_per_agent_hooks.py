@@ -26,6 +26,7 @@ from reyn.config.loader import load_hot_reload_config, load_per_agent_hooks
 from reyn.core.events.state_log import StateLog
 from reyn.runtime.session import Session
 from reyn.runtime.session_params import ReactivityConfig
+from tests._support.agent_session import make_session
 
 _AGENT = "pa-agent"
 _HOOK = "hooks:\n  - on: turn_end\n    template_push:\n      message: {msg}\n      wake: true\n"
@@ -33,7 +34,7 @@ _STARTUP = [{"on": "turn_end", "template_push": {"message": "startup", "wake": T
 
 
 def _make_session(tmp_path: Path, *, hooks_config=None) -> Session:
-    return Session(
+    return make_session(
         agent_name=_AGENT,
         state_log=StateLog(tmp_path / "s.wal"),
         snapshot_path=tmp_path / "snap.json",

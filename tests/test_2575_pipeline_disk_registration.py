@@ -73,6 +73,7 @@ from reyn.llm.pricing import TokenUsage
 from reyn.runtime.registry import AgentRegistry
 from reyn.runtime.session import Session
 from reyn.runtime.session_params import PresentationWiring
+from tests._support.agent_session import make_session
 
 # ── helpers ──────────────────────────────────────────────────────────────────
 
@@ -389,7 +390,7 @@ def test_session_adopts_passed_pipeline_registry(tmp_path: Path) -> None:
     loaded = PipelineRegistry()
     loaded.register("hello", Pipeline(steps=[TransformStep(value="1", output="o")], name="hello"))
 
-    session = Session(
+    session = make_session(
         agent_name="a", state_log=StateLog(tmp_path / "wal.jsonl"),
         pipeline_registry=loaded,
     )
@@ -403,7 +404,7 @@ def test_session_without_registry_owns_empty_one(tmp_path: Path) -> None:
     own empty PipelineRegistry — byte-identical to pre-#2575."""
     from reyn.runtime.session import Session
 
-    session = Session(agent_name="a", state_log=StateLog(tmp_path / "wal.jsonl"))
+    session = make_session(agent_name="a", state_log=StateLog(tmp_path / "wal.jsonl"))
 
     assert isinstance(session.pipeline_registry, PipelineRegistry)
     assert session.pipeline_registry.names() == ()
@@ -622,7 +623,7 @@ async def test_disk_loaded_pipeline_invokable_through_full_live_loop(
 
     def _factory(profile, *, presentation_consumer=None, intervention_bridge=None) -> Session:
         # #2708 P3.1: accept + forward the attached driver spawn's present-sink override.
-        return Session(
+        return make_session(
             agent_name=profile.name, state_log=state_log,
             registry=holder.get("reg"), non_interactive=True,
             chat_tool_use_scheme="universal-category",

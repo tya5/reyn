@@ -34,6 +34,7 @@ from reyn.runtime.session import Session
 from reyn.runtime.session_params import PresentationWiring
 from reyn.schemas.models import ALL_OP_KINDS, PresentIROp
 from reyn.security.permissions.permissions import PermissionDecl, PermissionResolver
+from tests._support.agent_session import make_session
 
 # A named template (operator config) whose value is a blueprint — the same
 # declarative component tree an inline blueprint is.
@@ -354,7 +355,7 @@ def _make_session(tmp_path: Path) -> Session:
     if not (tmp_path / "reyn.yaml").exists():
         (tmp_path / "reyn.yaml").write_text("model: standard\n", encoding="utf-8")
     cfg = load_config(tmp_path)
-    return Session(
+    return make_session(
         agent_name="prc-test",
         state_log=StateLog(tmp_path / "state.wal"),
         snapshot_path=tmp_path / "snap.json",

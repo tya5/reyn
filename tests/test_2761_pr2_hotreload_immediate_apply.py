@@ -46,6 +46,7 @@ from reyn.runtime.hot_reload import (
 from reyn.runtime.session import Session
 from reyn.runtime.session_params import CapabilityScope
 from reyn.security.permissions.permissions import PermissionDecl
+from tests._support.agent_session import make_session
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -77,7 +78,7 @@ def _make_session(tmp_path: Path, *, agent_name: str = "pr2-agent") -> Session:
     cfg = load_config()
     available_skills = build_skill_registry(cfg.skills) or None
     pipeline_registry = build_pipeline_registry(cfg.pipelines, tmp_path)
-    return Session(
+    return make_session(
         agent_name=agent_name,
         state_log=StateLog(tmp_path / "state.wal"),
         snapshot_path=tmp_path / "snap.json",

@@ -78,6 +78,7 @@ from reyn.schemas.models import EmitHookEventIROp
 from reyn.security.permissions.permissions import PermissionDecl
 from reyn.tools.emit_hook_event import EMIT_HOOK_EVENT
 from reyn.tools.types import RouterCallerState, ToolContext
+from tests._support.agent_session import make_session
 
 _POLL_TIMEOUT = 3.0
 _POLL_INTERVAL = 0.01
@@ -341,7 +342,7 @@ def _make_session(
         loop=LoopConfig(max_hook_driven_turns=cap),
         on_limit=OnLimitConfig(mode="unattended"),  # deny deterministically, no bus
     )
-    return Session(
+    return make_session(
         agent_name="emit-hook-event-agent",
         session_id="emit-sess",
         state_log=StateLog(tmp_path / "state.wal"),

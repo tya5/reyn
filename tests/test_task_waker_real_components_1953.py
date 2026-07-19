@@ -34,6 +34,7 @@ from reyn.runtime.services.task_wake import (
 )
 from reyn.runtime.session import Session
 from reyn.task import TaskState
+from tests._support.agent_session import make_session
 
 
 def _make_registry(tmp_path: Path) -> AgentRegistry:
@@ -41,7 +42,7 @@ def _make_registry(tmp_path: Path) -> AgentRegistry:
     state_log = StateLog(tmp_path / "wal.jsonl")
 
     def _factory(profile: AgentProfile) -> Session:
-        s = Session(agent_name=profile.name, state_log=state_log)
+        s = make_session(agent_name=profile.name, state_log=state_log)
         s.register_intervention_listener("test")
         return s
 

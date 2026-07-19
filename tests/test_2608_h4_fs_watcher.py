@@ -41,6 +41,7 @@ from reyn.hooks.matcher import matches
 from reyn.hooks.schema import ALLOWED_HOOK_POINTS
 from reyn.runtime.fs_watcher import FsWatcher
 from reyn.runtime.session_params import ReactivityConfig
+from tests._support.agent_session import make_session
 
 watchdog = pytest.importorskip("watchdog", reason="fs-watch extra ('pip install reyn[fs-watch]') not installed")
 
@@ -349,7 +350,7 @@ async def test_session_owned_watcher_fires_configured_hook_into_inbox(tmp_path):
             "template_push": {"message": "changed: {{ path }} ({{ event_type }})"},
         },
     ]
-    session = Session(
+    session = make_session(
         agent_name="test-agent",
         state_log=StateLog(tmp_path / "state.wal"),
         snapshot_path=tmp_path / "snap.json",

@@ -40,6 +40,8 @@ from pathlib import Path
 
 import pytest
 
+from tests._support.agent_session import make_session
+
 # ---------------------------------------------------------------------------
 # Path setup: ensure tests can import from src/
 # ---------------------------------------------------------------------------
@@ -208,7 +210,7 @@ def _build_registry_for_test(tmp_path: Path):
     def factory(profile: AgentProfile) -> Session:
         agent_dir = tmp_path / ".reyn" / "agents" / profile.name
         agent_dir.mkdir(parents=True, exist_ok=True)
-        return Session(
+        return make_session(
             agent_name=profile.name,
             agent_role=profile.role,
             output_language="en",

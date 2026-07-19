@@ -19,10 +19,11 @@ from reyn.core.events.state_log import StateLog
 from reyn.runtime.session import Session
 from reyn.security.permissions.effective import tool_contextually_denied
 from reyn.user_intervention import UserIntervention
+from tests._support.agent_session import make_session
 
 
 def _session(tmp_path: Path) -> Session:
-    s = Session(
+    s = make_session(
         agent_name="alpha",
         state_log=StateLog(tmp_path / "state.wal"),
         snapshot_path=tmp_path / "snap.json",

@@ -56,6 +56,7 @@ from reyn.core.events.state_log import StateLog
 from reyn.runtime.chat_message import ChatMessage
 from reyn.runtime.session import Session
 from reyn.user_intervention import InterventionAnswer
+from tests._support.agent_session import make_session
 
 AGENT = "hard-cancel-agent"
 _LANDED_REPLY = "SHOULD-NOT-LAND-IF-HARD-CANCELLED"
@@ -67,7 +68,7 @@ def _now() -> str:
 
 def _make_session(wal: Path, snapshot_path: Path) -> tuple[Session, StateLog]:
     state_log = StateLog(wal)
-    session = Session(agent_name=AGENT, state_log=state_log, snapshot_path=snapshot_path)
+    session = make_session(agent_name=AGENT, state_log=state_log, snapshot_path=snapshot_path)
     return session, state_log
 
 

@@ -59,6 +59,7 @@ from reyn.runtime.session_params import PresentationWiring
 from reyn.schemas.models import PresentIROp
 from reyn.security.permissions.permissions import PermissionDecl, PermissionResolver
 from reyn.user_intervention import UserIntervention
+from tests._support.agent_session import make_session
 
 
 class _ScriptedReply:
@@ -86,7 +87,7 @@ def _recording_registry(tmp_path: Path, state_log: "StateLog") -> "tuple[AgentRe
     scripted = _ScriptedReply()
 
     def _factory(profile, *, presentation_consumer=None, intervention_bridge=None) -> Session:
-        s = Session(
+        s = make_session(
             agent_name=profile.name, state_log=state_log, registry=holder.get("reg"),
             non_interactive=True, presentation_wiring=PresentationWiring(presentation_consumer=presentation_consumer, intervention_bridge=intervention_bridge),
         )

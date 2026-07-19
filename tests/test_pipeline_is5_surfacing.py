@@ -49,6 +49,7 @@ from reyn.llm.pricing import TokenUsage
 from reyn.runtime.registry import AgentRegistry
 from reyn.runtime.session import Session
 from reyn.runtime.session_params import PresentationWiring
+from tests._support.agent_session import make_session
 
 
 def _registry_backed_session(tmp_path: Path):
@@ -66,7 +67,7 @@ def _registry_backed_session(tmp_path: Path):
 
     def _factory(profile, *, presentation_consumer=None, intervention_bridge=None) -> Session:
         # #2708 P3.1: accept + forward the attached driver spawn's present-sink override.
-        return Session(
+        return make_session(
             agent_name=profile.name, state_log=state_log,
             registry=holder.get("reg"), non_interactive=True,
             chat_tool_use_scheme="universal-category",
@@ -280,7 +281,7 @@ def test_session_pipeline_registry_is_real_instance_not_none(tmp_path: Path) -> 
     ``adapter.get_pipeline_registry() is session.pipeline_registry``, the
     exact accessor RouterLoop._build_router_caller_state reads in
     production."""
-    session = Session(agent_name="test_agent", state_log=StateLog(tmp_path / "wal.jsonl"))
+    session = make_session(agent_name="test_agent", state_log=StateLog(tmp_path / "wal.jsonl"))
 
     assert isinstance(session.pipeline_registry, PipelineRegistry)
     assert session.router_host.get_pipeline_registry() is session.pipeline_registry
@@ -291,7 +292,7 @@ def test_session_agent_registry_threaded_to_adapter_accessor(tmp_path: Path) -> 
     exposed on the adapter via the SAME public accessor pattern IS-5 adds for
     pipelines, so RouterLoop can read it without reaching into a private
     attribute."""
-    session = Session(agent_name="test_agent", state_log=StateLog(tmp_path / "wal.jsonl"))
+    session = make_session(agent_name="test_agent", state_log=StateLog(tmp_path / "wal.jsonl"))
 
     assert session.router_host.get_agent_registry() is session.agent_registry
 

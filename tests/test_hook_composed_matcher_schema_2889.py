@@ -52,6 +52,7 @@ from reyn.hooks.loader import HookConfigError, load_hooks
 from reyn.hooks.schema_registry import HookSchemaError
 from reyn.runtime.session import Session
 from reyn.runtime.session_params import ReactivityConfig
+from tests._support.agent_session import make_session
 
 _DEPLOY_APPROVED_SCHEMAS: "dict[str, frozenset[str]]" = {
     "composed:deploy_approved": frozenset({"inputs", "correlation_key"}),
@@ -221,7 +222,7 @@ def test_session_boot_fails_loud_on_typo_composed_matcher(tmp_path: Path) -> Non
         },
     ]
     with pytest.raises(HookConfigError, match="correlation_ky"):
-        Session(
+        make_session(
             agent_name="composed-matcher-2889-agent",
             state_log=StateLog(tmp_path / "state.wal"),
             snapshot_path=tmp_path / "snap.json",
@@ -240,7 +241,7 @@ def test_session_boot_loads_clean_with_valid_composed_matcher(tmp_path: Path) ->
             "matcher": {"correlation_key": "abc"},
         },
     ]
-    Session(
+    make_session(
         agent_name="composed-matcher-2889-agent-ok",
         state_log=StateLog(tmp_path / "state.wal"),
         snapshot_path=tmp_path / "snap.json",
@@ -254,7 +255,7 @@ def test_session_boot_fails_loud_on_dangling_composed_subscription(tmp_path: Pat
     reaching production construction, not just the loader in isolation)."""
     hooks_config = [{"on": "composed:no_such_producer", "template_push": {"message": "x"}}]
     with pytest.raises(HookConfigError, match="no configured composer"):
-        Session(
+        make_session(
             agent_name="composed-dangling-2889-agent",
             state_log=StateLog(tmp_path / "state.wal"),
             snapshot_path=tmp_path / "snap.json",

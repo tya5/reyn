@@ -55,6 +55,7 @@ from reyn.hooks.registry import HookRegistry
 from reyn.hooks.schema import HookDef, PushBlock
 from reyn.runtime.session import Session
 from reyn.runtime.session_params import ReactivityConfig
+from tests._support.agent_session import make_session
 
 # ---------------------------------------------------------------------------
 # Recording seam (mirrors test_hook_dispatcher_1800_5b.py's _Recorder)
@@ -313,7 +314,7 @@ async def test_bus_only_subscriber_observes_event_with_zero_sync_hooks():
 
 
 def _make_session(tmp_path: Path, *, name: str) -> Session:
-    return Session(
+    return make_session(
         agent_name="test-agent",
         state_log=StateLog(tmp_path / f"{name}.wal"),
         snapshot_path=tmp_path / f"{name}.json",

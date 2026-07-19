@@ -34,6 +34,7 @@ from reyn.mcp.server import build_server
 from reyn.runtime.profile import AgentProfile
 from reyn.runtime.registry import AgentRegistry
 from reyn.runtime.session import Session
+from tests._support.agent_session import make_session
 
 
 def _build_registry_with_agent(tmp_path: Path, agent_name: str) -> AgentRegistry:
@@ -43,7 +44,7 @@ def _build_registry_with_agent(tmp_path: Path, agent_name: str) -> AgentRegistry
     def factory(profile: AgentProfile) -> Session:
         agent_dir = tmp_path / ".reyn" / "agents" / profile.name
         agent_dir.mkdir(parents=True, exist_ok=True)
-        return Session(
+        return make_session(
             agent_name=profile.name,
             agent_role=profile.role,
             output_language="en",

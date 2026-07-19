@@ -30,6 +30,7 @@ from reyn.core.events.agent_snapshot import AgentSnapshot
 from reyn.core.events.state_log import StateLog
 from reyn.runtime.services.snapshot_journal import SnapshotJournal
 from reyn.runtime.session import Session
+from tests._support.agent_session import make_session
 
 AGENT = "valve-agent"
 
@@ -40,7 +41,7 @@ def _make_session(wal: Path, snapshot_path: Path, *, cap: int = 100) -> tuple[Se
         on_limit=OnLimitConfig(mode="unattended"),
     )
     state_log = StateLog(wal)
-    session = Session(
+    session = make_session(
         agent_name=AGENT, state_log=state_log, snapshot_path=snapshot_path, safety=safety,
     )
     return session, state_log

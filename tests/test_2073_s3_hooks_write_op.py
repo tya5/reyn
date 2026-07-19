@@ -25,6 +25,7 @@ from reyn.runtime.hot_reload import HotReloader, set_active_hot_reloader
 from reyn.runtime.session import Session
 from reyn.tools.hooks import HOOKS_ADD, _handle_hooks_add
 from reyn.tools.types import ToolContext
+from tests._support.agent_session import make_session
 
 
 @pytest.fixture(autouse=True)
@@ -173,7 +174,7 @@ async def test_e2e_agent_adds_hook_applies_at_boundary(tmp_path: Path, monkeypat
     replace_registry); the newly-added hook then FIRES (observed via the inbox)."""
     monkeypatch.chdir(tmp_path)
     # Session construction registers itself as the active reloader (#2073 S3).
-    session = Session(
+    session = make_session(
         agent_name="s3-agent",
         state_log=StateLog(tmp_path / "s.wal"),
         snapshot_path=tmp_path / "snap.json",

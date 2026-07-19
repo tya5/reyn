@@ -36,6 +36,7 @@ from reyn.runtime.chat_message import ChatMessage
 from reyn.runtime.session import Session
 from reyn.runtime.usage_shim import _RouterUsageShim
 from reyn.services.compaction.engine import retry_loop
+from tests._support.agent_session import make_session
 
 
 def _now() -> str:
@@ -72,7 +73,7 @@ def _make_session(tmp_path: Path, *, t_max: int = 1_000_000) -> Session:
     original = _mb.get_max_input_tokens
     _mb.get_max_input_tokens = lambda model, **kw: t_max  # type: ignore[assignment]  # noqa: E501
     try:
-        session = Session(
+        session = make_session(
             agent_name="default",
             agent_role="",
             output_language="en",

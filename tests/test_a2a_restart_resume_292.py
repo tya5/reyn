@@ -63,13 +63,14 @@ from reyn.user_intervention import (
     InterventionChoice,
     UserIntervention,
 )
+from tests._support.agent_session import make_session
 
 # ── helpers ────────────────────────────────────────────────────────────
 
 
 def _make_session(tmp_path: Path, *, agent_name: str = "demo") -> Session:
     """Build a Session redirected to ``tmp_path``."""
-    session = Session(
+    session = make_session(
         agent_name=agent_name,
         state_log=StateLog(tmp_path / "state.wal"),
         snapshot_path=tmp_path / f"{agent_name}_snapshot.json",

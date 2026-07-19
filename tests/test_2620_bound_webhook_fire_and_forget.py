@@ -29,6 +29,7 @@ from reyn.core.events.state_log import StateLog
 from reyn.hooks import external_fire
 from reyn.runtime.session import Session
 from reyn.runtime.session_params import ReactivityConfig
+from tests._support.agent_session import make_session
 
 
 def _make_session(tmp_path: Path) -> Session:
@@ -36,7 +37,7 @@ def _make_session(tmp_path: Path) -> Session:
         {"on": "webhook_received", "template_push": {"message": "hit from {{ sender }}"}},
     ]
     state_log = StateLog(tmp_path / ".reyn" / "wal.jsonl")
-    return Session(agent_name="bound_test_agent", state_log=state_log, reactivity=ReactivityConfig(hooks_config=hooks_config))
+    return make_session(agent_name="bound_test_agent", state_log=state_log, reactivity=ReactivityConfig(hooks_config=hooks_config))
 
 
 async def _wait_for(predicate, *, attempts: int = 100, delay: float = 0.02) -> None:

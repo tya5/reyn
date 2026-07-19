@@ -35,6 +35,7 @@ from reyn.core.events.state_log import StateLog
 from reyn.llm.llm import LLMToolCallResult
 from reyn.llm.pricing import TokenUsage
 from reyn.runtime.session import Session
+from tests._support.agent_session import make_session
 
 # ---------------------------------------------------------------------------
 # Shared helpers
@@ -55,7 +56,7 @@ def _text_result(text: str = "ok") -> LLMToolCallResult:
 
 def _make_session(tmp_path: Path, *, agent_name: str = "test_agent") -> Session:
     """Build a minimal Session with WAL + snapshot path."""
-    return Session(
+    return make_session(
         agent_name=agent_name,
         state_log=StateLog(tmp_path / "state.wal"),
         snapshot_path=tmp_path / f"{agent_name}_snapshot.json",

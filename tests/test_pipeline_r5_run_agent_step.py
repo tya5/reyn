@@ -49,6 +49,7 @@ from reyn.runtime.session_api import (
     spawn_ephemeral_session,
 )
 from reyn.runtime.session_params import PresentationWiring
+from tests._support.agent_session import make_session
 
 # ── real-callable LLM stub (Tier 2c: LLM is incidental) ─────────────────────
 
@@ -95,7 +96,7 @@ def _registry(tmp_path: Path, scripted: "_ScriptedAgentReply | None") -> AgentRe
     resolver = ModelResolver({"standard": "gemini/gemini-2.5-flash-lite"})
 
     def _factory(profile, *, presentation_consumer=None, intervention_bridge=None) -> Session:
-        s = Session(
+        s = make_session(
             agent_name=profile.name, state_log=state_log,
             registry=holder.get("reg"), non_interactive=True,
             presentation_wiring=PresentationWiring(presentation_consumer=presentation_consumer, intervention_bridge=intervention_bridge),

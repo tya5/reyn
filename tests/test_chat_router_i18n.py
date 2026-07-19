@@ -24,6 +24,7 @@ from reyn.runtime.session import (
     _ROUTER_RETRY_EXHAUSTED_MSG,
     Session,
 )
+from tests._support.agent_session import make_session
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -42,7 +43,7 @@ def _make_session(
     """
     from reyn.config import LoopConfig, SafetyConfig
     safety = SafetyConfig(loop=LoopConfig(max_router_calls_per_turn=cap))
-    return Session(
+    return make_session(
         agent_name="test_agent",
         output_language=output_language,
         budget_tracker=BudgetTracker(CostConfig()),

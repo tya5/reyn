@@ -45,6 +45,7 @@ from reyn.user_intervention import (  # noqa: E402
     InterventionAnswer,
     UserIntervention,
 )
+from tests._support.agent_session import make_session
 
 # ── 1. A2AInterventionBus.channel_id ──────────────────────────────────
 
@@ -139,7 +140,7 @@ def test_send_to_agent_impl_registers_a2a_channel_id_as_listener(
     def factory(profile: AgentProfile) -> Session:
         agent_dir = tmp_path / ".reyn" / "agents" / profile.name
         agent_dir.mkdir(parents=True, exist_ok=True)
-        return Session(
+        return make_session(
             agent_name=profile.name,
             agent_role=profile.role,
             output_language="en",
@@ -235,7 +236,7 @@ def test_send_to_agent_impl_skips_listener_when_override_has_no_channel_id(
     def factory(profile: AgentProfile) -> Session:
         agent_dir = tmp_path / ".reyn" / "agents" / profile.name
         agent_dir.mkdir(parents=True, exist_ok=True)
-        return Session(
+        return make_session(
             agent_name=profile.name,
             agent_role=profile.role,
             output_language="en",
@@ -294,7 +295,7 @@ def test_send_to_agent_impl_without_override_does_not_register_listener(
     def factory(profile: AgentProfile) -> Session:
         agent_dir = tmp_path / ".reyn" / "agents" / profile.name
         agent_dir.mkdir(parents=True, exist_ok=True)
-        return Session(
+        return make_session(
             agent_name=profile.name,
             agent_role=profile.role,
             output_language="en",

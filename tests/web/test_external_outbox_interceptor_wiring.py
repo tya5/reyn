@@ -59,10 +59,11 @@ from reyn.runtime.external_routing import (
 from reyn.runtime.outbox import OutboxMessage
 from reyn.runtime.session import Session
 from reyn.runtime.transport import ExternalRef
+from tests._support.agent_session import make_session
 
 
 def _make_session(tmp_path: Path) -> Session:
-    return Session(
+    return make_session(
         agent_name="alpha",
         state_log=StateLog(tmp_path / "alpha.wal"),
         snapshot_path=tmp_path / "alpha_snapshot.json",

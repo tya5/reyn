@@ -25,6 +25,7 @@ from reyn.hooks.registry import HookRegistry
 from reyn.hooks.schema import HookDef, PushBlock
 from reyn.runtime.session import Session
 from reyn.runtime.session_params import ReactivityConfig
+from tests._support.agent_session import make_session
 
 # ---------------------------------------------------------------------------
 # Recording async callables — real instances (not mocks) for the injected seams
@@ -171,7 +172,7 @@ async def test_empty_registry_dispatch_is_noop():
 
 
 def _make_session(tmp_path: Path, *, hooks_config=None) -> Session:
-    return Session(
+    return make_session(
         agent_name="test-agent",
         state_log=StateLog(tmp_path / "state.wal"),
         snapshot_path=tmp_path / "snap.json",

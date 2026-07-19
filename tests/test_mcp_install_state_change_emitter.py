@@ -39,10 +39,11 @@ from reyn.runtime.session import (
     ChatMessage,
     Session,
 )
+from tests._support.agent_session import make_session
 
 
 def _make_session(tmp_path: Path, *, agent_name: str = "alpha") -> Session:
-    return Session(
+    return make_session(
         agent_name=agent_name,
         state_log=StateLog(tmp_path / f"{agent_name}.wal"),
         snapshot_path=tmp_path / f"{agent_name}_snapshot.json",

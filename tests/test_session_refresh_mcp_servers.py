@@ -31,6 +31,7 @@ import pytest
 from reyn.core.events.state_log import StateLog
 from reyn.runtime.services.mcp_cache_file import cache_file_path, write_cache
 from reyn.runtime.session import Session
+from tests._support.agent_session import make_session
 
 # ---------------------------------------------------------------------------
 # Minimal Session factory
@@ -50,7 +51,7 @@ def _make_session(
     this so the session's default state_dir (``cwd / .reyn / state``)
     resolves inside tmp_path.
     """
-    return Session(
+    return make_session(
         agent_name=agent_name,
         mcp_servers=mcp_servers,
         state_log=StateLog(tmp_path / "state.wal"),

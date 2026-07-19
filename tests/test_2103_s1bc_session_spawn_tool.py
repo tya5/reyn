@@ -21,13 +21,14 @@ from reyn.runtime.registry import AgentRegistry
 from reyn.runtime.session import Session
 from reyn.tools.session_spawn import SESSION_SPAWN, _handle
 from reyn.tools.types import RouterCallerState, ToolContext
+from tests._support.agent_session import make_session
 
 
 def _registry(tmp_path: Path) -> AgentRegistry:
     state_log = StateLog(tmp_path / ".reyn" / "wal.jsonl")
 
     def _factory(profile: AgentProfile) -> Session:
-        return Session(agent_name=profile.name, state_log=state_log)
+        return make_session(agent_name=profile.name, state_log=state_log)
 
     reg = AgentRegistry(project_root=tmp_path, session_factory=_factory, state_log=state_log)
     reg.create("worker")

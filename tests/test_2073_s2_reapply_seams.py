@@ -18,6 +18,7 @@ from reyn.core.events.events import EventLog
 from reyn.core.events.state_log import StateLog
 from reyn.runtime.hot_reload import HotReloader, validate_in_set
 from reyn.runtime.session import Session
+from tests._support.agent_session import make_session
 
 # ── validate-before-apply (the structural IN-set check) ─────────────────────
 
@@ -79,7 +80,7 @@ async def test_bad_in_set_is_rejected_no_seam_runs(tmp_path: Path) -> None:
 
 
 def _make_session(tmp_path: Path, *, agent_name: str = "test-agent") -> Session:
-    return Session(
+    return make_session(
         agent_name=agent_name,
         state_log=StateLog(tmp_path / "s.wal"),
         snapshot_path=tmp_path / "snap.json",

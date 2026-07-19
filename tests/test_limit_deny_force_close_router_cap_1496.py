@@ -30,6 +30,7 @@ from reyn.runtime.budget.budget import BudgetTracker, CostConfig
 from reyn.runtime.errors import RouterCapExceeded
 from reyn.runtime.outbox import OutboxMessage
 from reyn.runtime.session import Session
+from tests._support.agent_session import make_session
 from tests._support.router_loop import ScriptedLLM as _ScriptedLLM
 from tests._support.router_loop import text_result
 
@@ -38,7 +39,7 @@ _USAGE = TokenUsage(prompt_tokens=10, completion_tokens=5)
 
 def _make_session(tmp_path: Path, cap: int = 3) -> Session:
     safety = SafetyConfig(loop=LoopConfig(max_router_calls_per_turn=cap))
-    return Session(
+    return make_session(
         agent_name="test_cap_agent",
         budget_tracker=BudgetTracker(CostConfig()),
         safety=safety,

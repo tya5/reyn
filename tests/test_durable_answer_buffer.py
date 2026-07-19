@@ -31,6 +31,7 @@ from reyn.core.events.state_log import StateLog
 from reyn.runtime.services.snapshot_journal import SnapshotJournal
 from reyn.runtime.session import Session
 from reyn.user_intervention import InterventionAnswer
+from tests._support.agent_session import make_session
 
 # ---------------------------------------------------------------------------
 # AgentSnapshot apply / serialize round-trip
@@ -193,7 +194,7 @@ def _make_session(tmp_path: Path, agent_name: str = "alpha") -> Session:
     """issue #254 Phase 1: register a placeholder listener so the registry's
     ``enforce_listener_presence=True`` short-circuit does not fire.
     """
-    session = Session(
+    session = make_session(
         agent_name=agent_name,
         state_log=StateLog(tmp_path / "state.wal"),
         snapshot_path=tmp_path / f"{agent_name}_snapshot.json",

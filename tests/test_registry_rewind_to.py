@@ -19,6 +19,7 @@ from reyn.core.events.state_log import StateLog
 from reyn.runtime.profile import AgentProfile
 from reyn.runtime.registry import AgentRegistry
 from reyn.runtime.session import Session
+from tests._support.agent_session import make_session
 
 
 def _no_factory(_profile):
@@ -167,7 +168,7 @@ async def test_rewind_to_drives_loaded_session_to_as_of_n_zero_residue(tmp_path)
     reg = _make_registry(tmp_path)
     _seed_agent(tmp_path, "alpha")
     log = reg.state_log
-    session = Session(
+    session = make_session(
         agent_name="alpha", state_log=log,
         snapshot_path=_snap_path(tmp_path, "alpha"),
     )

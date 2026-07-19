@@ -42,6 +42,7 @@ from reyn.runtime.session_api import _build_agent_step_narrowing, spawn_ephemera
 from reyn.runtime.session_params import PresentationWiring
 from reyn.runtime.spawn_routing import AuditOnlyNoSurface, BridgeToParent
 from reyn.security.permissions.permissions import PermissionDecl, PermissionResolver
+from tests._support.agent_session import make_session
 
 _SERVER = "reyn3049_probe_server"
 _TOOL = "reyn3049_probe_tool"
@@ -53,7 +54,7 @@ def _registry(tmp_path: Path, state_log: "StateLog") -> AgentRegistry:
     holder: dict = {}
 
     def _factory(profile, *, presentation_consumer=None, intervention_bridge=None) -> Session:
-        return Session(
+        return make_session(
             agent_name=profile.name, state_log=state_log, registry=holder.get("reg"),
             non_interactive=True, presentation_wiring=PresentationWiring(presentation_consumer=presentation_consumer, intervention_bridge=intervention_bridge),
         )

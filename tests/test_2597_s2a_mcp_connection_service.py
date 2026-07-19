@@ -18,6 +18,7 @@ import pytest
 from reyn.mcp.client import MCPError
 from reyn.mcp.connection_service import MCPConnectionService
 from reyn.mcp.pool import MCPClientPool
+from tests._support.agent_session import make_session
 
 _SUPPORT_DIR = Path(__file__).parent / "_support"
 _ECHO_SERVER = _SUPPORT_DIR / "mcp_fastmcp_echo_server.py"
@@ -154,7 +155,7 @@ async def test_ephemeral_session_never_populates_connection_service():
     asserts on the service's public ``held_servers()`` surface, not private state."""
     from reyn.runtime.session import Session
 
-    session = Session(agent_name="s2a-ephemeral-test", mcp_servers={"srv": _CFG})
+    session = make_session(agent_name="s2a-ephemeral-test", mcp_servers={"srv": _CFG})
     session._ephemeral = True  # the registry sets this post-construction on an ephemeral spawn
     try:
         result = await session._mcp_call_tool("srv", "echo", {"text": "eph"})
@@ -173,7 +174,7 @@ async def test_non_ephemeral_session_holds_connection_across_calls():
     (the S2a value: no re-handshake on a 2nd tool call within the session)."""
     from reyn.runtime.session import Session
 
-    session = Session(agent_name="s2a-persistent-test", mcp_servers={"srv": _CFG})
+    session = make_session(agent_name="s2a-persistent-test", mcp_servers={"srv": _CFG})
     try:
         r1 = await session._mcp_call_tool("srv", "pid", {})
         assert session.mcp_held_servers() == ["srv"]
@@ -213,7 +214,7 @@ async def test_remove_session_teardown_closes_held_connections(tmp_path: Path):
     holder: dict = {}
 
     def _factory(profile, *, presentation_consumer=None, intervention_bridge=None) -> Session:
-        return Session(agent_name=profile.name, mcp_servers={"srv": _CFG}, registry=holder.get("reg"))
+        return make_session(agent_name=profile.name, mcp_servers={"srv": _CFG}, registry=holder.get("reg"))
 
     registry = AgentRegistry(project_root=tmp_path, session_factory=_factory)
     holder["reg"] = registry

@@ -26,6 +26,7 @@ from reyn.services.turn_budget import (
     build_default_turn_budget_engine,
     try_build_default_turn_budget_engine,
 )
+from tests._support.agent_session import make_session
 from tests._support.router_host_adapter import make_adapter as _make_adapter
 
 # ── adapter property ─────────────────────────────────────────────────────────
@@ -67,7 +68,7 @@ def test_chat_session_activates_turn_budget_via_resolved_model(tmp_path: Path) -
     exposes a non-None, asserted reserve. Exercises the session wiring (resolve
     self.model + build_default_turn_budget_engine + pass to the adapter), via the
     public ``session.router_host`` surface."""
-    session = Session(
+    session = make_session(
         agent_name="f1",
         state_log=StateLog(tmp_path / "state.wal"),
         snapshot_path=tmp_path / "snap.json",
@@ -108,7 +109,7 @@ def test_chat_session_on_small_model_constructs_without_force_close(
     monkeypatch.setattr(
         "reyn.llm.model_budget.get_max_input_tokens", lambda model, **kw: 2800
     )
-    session = Session(
+    session = make_session(
         agent_name="f1-small",
         state_log=StateLog(tmp_path / "state.wal"),
         snapshot_path=tmp_path / "snap.json",

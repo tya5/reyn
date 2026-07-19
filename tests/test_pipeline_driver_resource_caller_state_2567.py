@@ -51,6 +51,7 @@ from reyn.runtime.session import Session
 from reyn.runtime.session_params import PresentationWiring
 from reyn.tools.pipeline_verbs import PipelineExecutionError
 from reyn.tools.types import build_resource_caller_state
+from tests._support.agent_session import make_session
 
 # ---------------------------------------------------------------------------
 # 1. Equivalence: build_resource_caller_state(host) vs
@@ -172,7 +173,7 @@ def _worker_registry(tmp_path: Path, state_log: "StateLog") -> AgentRegistry:
     holder: dict = {}
 
     def _factory(profile, *, presentation_consumer=None, intervention_bridge=None) -> Session:
-        return Session(
+        return make_session(
             presentation_wiring=PresentationWiring(presentation_consumer=presentation_consumer, intervention_bridge=intervention_bridge),
             agent_name=profile.name, state_log=state_log,
             registry=holder.get("reg"), non_interactive=True,

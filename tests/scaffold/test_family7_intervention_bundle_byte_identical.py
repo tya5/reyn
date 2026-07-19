@@ -74,12 +74,13 @@ from reyn.runtime.services.intervention_coordinator import InterventionCoordinat
 from reyn.runtime.services.intervention_handler import InterventionHandler
 from reyn.runtime.services.intervention_registry import InterventionRegistry
 from reyn.runtime.session import Session, _InterventionBundle
+from tests._support.agent_session import make_session
 
 
 @pytest.fixture
 def session(tmp_path, monkeypatch) -> Session:
     monkeypatch.chdir(tmp_path)
-    return Session(agent_name="family7-intervention-test")
+    return make_session(agent_name="family7-intervention-test")
 
 
 class TestFamily7InterventionBundleByteIdentical:

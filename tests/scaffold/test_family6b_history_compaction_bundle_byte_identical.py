@@ -60,12 +60,13 @@ from reyn.runtime.services.compaction_controller import CompactionController
 from reyn.runtime.services.context_budget_advisor import ContextBudgetAdvisor
 from reyn.runtime.services.router_history_buffer import RouterHistoryBuffer
 from reyn.runtime.session import Session, _HistoryCompactionBundle
+from tests._support.agent_session import make_session
 
 
 @pytest.fixture
 def session(tmp_path, monkeypatch) -> Session:
     monkeypatch.chdir(tmp_path)
-    return Session(agent_name="family6b-history-compaction-test")
+    return make_session(agent_name="family6b-history-compaction-test")
 
 
 class TestFamily6bHistoryCompactionBundleByteIdentical:

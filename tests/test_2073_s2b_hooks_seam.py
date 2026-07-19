@@ -22,6 +22,7 @@ from reyn.hooks.loader import load_hooks
 from reyn.runtime.hot_reload import validate_in_set
 from reyn.runtime.session import Session
 from reyn.runtime.session_params import ReactivityConfig
+from tests._support.agent_session import make_session
 
 _HOOK = "hooks:\n  - on: turn_end\n    template_push:\n      message: {msg}\n      wake: true\n"
 
@@ -76,7 +77,7 @@ async def test_replace_registry_swaps_live() -> None:
 
 
 def _make_session(tmp_path: Path, *, hooks_config=None) -> Session:
-    return Session(
+    return make_session(
         agent_name="s2b-agent",
         state_log=StateLog(tmp_path / "s.wal"),
         snapshot_path=tmp_path / "snap.json",

@@ -39,6 +39,7 @@ from reyn.runtime.errors import RouterCapExceeded
 from reyn.runtime.services.chain_manager import ChainManager
 from reyn.runtime.services.inter_agent_messaging import InterAgentMessaging
 from reyn.runtime.session import Session
+from tests._support.agent_session import make_session
 from tests._support.router_loop import FakeEventLog
 
 _EMPTY_USAGE = TokenUsage(prompt_tokens=10, completion_tokens=5)
@@ -181,7 +182,7 @@ async def test_a2a_router_cap_wrapup_produces_limit_stopped_meta() -> None:
     Uses the _llm_caller test seam to inject a scripted LLM without touching
     the real LiteLLM stack.
     """
-    session = Session(agent_name="a2a-wrapup-test")
+    session = make_session(agent_name="a2a-wrapup-test")
     scripted = _ScriptedWrapupLLM("Turn ended at limit — here is a summary.")
     exc = RouterCapExceeded(count=3, cap=3, last_reason="a2a chain")
 
@@ -229,7 +230,7 @@ async def test_a2a_handle_agent_response_cap_hit_delivers_wrapup_e2e(
         loop=LoopConfig(max_router_calls_per_turn=1),
         on_limit=OnLimitConfig(mode="unattended"),
     )
-    session = Session(agent_name="a2a-e2e-test", safety=safety)
+    session = make_session(agent_name="a2a-e2e-test", safety=safety)
 
     # Scripted LLM: call 0 = router loop text reply; call 1 = wrap-up text.
     class _SequencedLLM:

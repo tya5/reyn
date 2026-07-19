@@ -20,6 +20,7 @@ import pytest
 from reyn.core.events.state_log import StateLog
 from reyn.runtime.cron import CronJob, CronScheduler, set_active_scheduler
 from reyn.runtime.session import Session
+from tests._support.agent_session import make_session
 
 
 @pytest.fixture(autouse=True)
@@ -29,7 +30,7 @@ def _reset_active_scheduler():
 
 
 def _make_session(tmp_path: Path) -> Session:
-    return Session(
+    return make_session(
         agent_name="s4-agent",
         state_log=StateLog(tmp_path / "s.wal"),
         snapshot_path=tmp_path / "snap.json",

@@ -18,6 +18,7 @@ from pathlib import Path
 
 from reyn.environment.container_backend import DockerEnvironmentBackend
 from reyn.runtime.session import Session
+from tests._support.agent_session import make_session
 
 
 def test_live_op_context_roots_on_container_repo(tmp_path) -> None:
@@ -26,7 +27,7 @@ def test_live_op_context_roots_on_container_repo(tmp_path) -> None:
     the container repo (/testbed) over the docker backend — so file__read/grep/glob/
     edit resolve in-container, not on the host reyn cwd."""
     backend = DockerEnvironmentBackend(container="c1", repo_dir="/testbed")
-    s = Session(
+    s = make_session(
         agent_name="t", environment_backend=backend,
         workspace_base_dir=Path("/testbed"), workspace_state_dir=tmp_path,
     )
@@ -45,7 +46,7 @@ def test_live_op_context_host_default_unchanged() -> None:
     """Tier 2: no env-backend / base_dir (host backend / interactive chat) → the live
     factory keeps the host cwd default (the fix only takes effect under a container
     base_dir)."""
-    s = Session(agent_name="t")
+    s = make_session(agent_name="t")
     ctx = s._router_host.make_router_op_context()
     assert ctx.workspace.base_dir == Path.cwd()
 
@@ -62,7 +63,7 @@ def test_live_op_context_threads_exec_sandbox_backend(tmp_path) -> None:
     passed it; this is the same live-vs-legacy seam gap as #1410/#1411 (3rd instance).
     """
     backend = DockerEnvironmentBackend(container="c1", repo_dir="/testbed")
-    s = Session(
+    s = make_session(
         agent_name="t", environment_backend=backend, sandbox_backend=backend,
         workspace_base_dir=Path("/testbed"), workspace_state_dir=tmp_path,
     )
@@ -76,6 +77,6 @@ def test_live_op_context_threads_exec_sandbox_backend(tmp_path) -> None:
 def test_live_op_context_no_sandbox_backend_default_unchanged() -> None:
     """Tier 2: no sandbox_backend → ctx.sandbox_backend is None → ``sandboxed_exec``
     falls back to the host default backend (host / interactive behavior unchanged)."""
-    s = Session(agent_name="t")
+    s = make_session(agent_name="t")
     ctx = s._router_host.make_router_op_context()
     assert ctx.sandbox_backend is None

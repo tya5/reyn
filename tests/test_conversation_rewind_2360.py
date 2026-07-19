@@ -27,10 +27,11 @@ from reyn.core.events.snapshot_generations import checkout
 from reyn.core.events.state_log import StateLog
 from reyn.runtime.chat_message import ChatMessage
 from reyn.runtime.session import Session
+from tests._support.agent_session import make_session
 
 
 def _session(tmp_path: Path, name: str, state_log: StateLog) -> Session:
-    s = Session(
+    s = make_session(
         agent_name=name, state_log=state_log,
         snapshot_path=tmp_path / f"{name}_snapshot.json",
     )

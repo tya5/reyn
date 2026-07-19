@@ -13,6 +13,7 @@ from pathlib import Path
 from reyn.llm.llm import LLMToolCallResult
 from reyn.llm.pricing import TokenUsage
 from reyn.runtime.session import Session, _PendingChain
+from tests._support.agent_session import make_session
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -51,7 +52,7 @@ def _tool_result(calls: list[dict]) -> LLMToolCallResult:
 
 
 def _make_session(tmp_path: Path) -> Session:
-    return Session(
+    return make_session(
         agent_name="test_agent",
         chat_tool_use_scheme="universal-category",  # #1657: suite uses universal-category stub shape
     )
@@ -179,7 +180,7 @@ def test_delegate_registers_pending_chain(tmp_path, monkeypatch):
     target_session = _StubSession()
     registry = _StubAgentRegistry(target_session)
 
-    session = Session(
+    session = make_session(
         agent_name="test_agent",
         registry=registry,
         chat_tool_use_scheme="universal-category",  # #1657
@@ -264,7 +265,7 @@ def test_resolve_model_uses_resolver(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     from reyn.llm.model_resolver import ModelResolver
     resolver = ModelResolver({"router": "openai/gpt-4o-mini"})
-    session = Session(agent_name="test_agent", resolver=resolver)
+    session = make_session(agent_name="test_agent", resolver=resolver)
 
     assert session.router_host.resolve_model("router") == "openai/gpt-4o-mini"
     assert session.router_host.resolve_model("unknown") == "unknown"  # pass-through
