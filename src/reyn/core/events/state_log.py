@@ -658,14 +658,79 @@ class StateLog:
                 "min_kept_seq": min_kept, "max_kept_seq": max_kept}
 
     def _scan_max_seq(self) -> int:
-        """Initialize the counter from the highest seq present in the WAL.
+        """Initialize the counter from the highest seq present in the WAL — cold-start
+        recovery of the seq watermark, BLOCKING, before the event loop starts (#2946 Item 1).
 
-        Read the whole file once at construction. Cheap for typical sizes
-        (millions of small lines = ~hundreds of MB), which we're nowhere
-        near. WAL truncation is OOS for PR21.
+        Tries a **tail read** first: appends are seq-monotonic in file order (each
+        ``_wal_write_job`` increments the counter and appends immediately — the file is
+        never written out of seq order), and ``_do_truncate`` preserves that ordering
+        (a single forward streaming pass over survivors, in their original relative
+        order) while ALWAYS keeping the highest seq present (its ``effective_floor``
+        never drops it — see ``_do_truncate``'s watermark comment) — so the last
+        well-formed entry in the file is always the max seq, whether or not
+        ``always_keep_kinds`` entries (e.g. a ``rewind`` reset-record) also survive
+        below the truncation floor elsewhere in the file. Reading backward from EOF in
+        a growing window (skip a possibly-torn trailing line from a prior crash, same
+        tolerance as ``iter_from``) therefore reaches that entry in O(tail), not
+        O(WAL) — the win for a long-running session's cold start.
+
+        Falls back to the full O(WAL) scan (``_full_scan_max_seq``, the original
+        PR21 implementation) whenever the tail read cannot establish a definite
+        answer from disk (an ``OSError`` mid-read — e.g. a concurrent external
+        rewrite of the file) or reports "empty/no valid entries", since that is
+        indistinguishable from "genuinely empty" without walking the rest of the
+        file. The two paths MUST return identical values for every file — this is a
+        behavior-preserving optimization of the same reconstruction, not a new
+        derivation.
         """
         if not self._path.is_file():
             return 0
+        tail_max = self._tail_scan_max_seq()
+        if tail_max is not None:
+            return tail_max
+        return self._full_scan_max_seq()
+
+    def _tail_scan_max_seq(self, chunk_size: int = 65536) -> "int | None":
+        """Read the WAL backward from EOF, in a doubling window, for the last
+        well-formed ``seq``-bearing entry. Returns ``None`` (triggering the
+        ``_full_scan_max_seq`` fallback) on any I/O error, or once the ENTIRE file has
+        been read this way without finding a single valid entry — that case is cheap
+        to detect (no cost beyond what a full scan would already pay) but is left to
+        the full scan to resolve so there is exactly one code path that decides
+        "the WAL has no usable seq at all" (`0`)."""
+        try:
+            size = self._path.stat().st_size
+        except OSError:
+            return None
+        if size == 0:
+            return 0
+        try:
+            with self._path.open("rb") as f:
+                read_size = min(chunk_size, size)
+                while True:
+                    f.seek(-read_size, os.SEEK_END)
+                    data = f.read(read_size)
+                    read_whole_file = read_size >= size
+                    lines = data.split(b"\n")
+                    # The window may start mid-line unless it spans the whole file —
+                    # drop that leading fragment so we never mis-parse a partial line
+                    # as a (wrong) valid entry.
+                    usable = lines if read_whole_file else lines[1:]
+                    for raw in reversed(usable):
+                        entry = _parse_wal_line(raw)
+                        if entry is not None:
+                            return entry["seq"]
+                    if read_whole_file:
+                        return None
+                    read_size = min(read_size * 2, size)
+        except OSError:
+            return None
+
+    def _full_scan_max_seq(self) -> int:
+        """The original PR21 scan: read every line, json.loads it, and take the
+        max ``seq`` seen. O(WAL) — the fallback ``_tail_scan_max_seq`` exists to avoid
+        paying on cold start; kept here verbatim as the source of truth its result
+        must match."""
         max_seq = 0
         try:
             with self._path.open("r", encoding="utf-8") as f:
