@@ -7,16 +7,21 @@ Pins the operator-facing CLI surface:
      size_mb / indexed_actions / last_built).
   2. ``--json`` emits a JSON list matching the table column names so
      downstream scripts can aggregate without parsing the table.
-  3. Backend column is derived from the ``model`` prefix (= "litellm"
-     for non-prefixed / "sentence-transformers" for the ``sentence-
-     transformers/`` prefix).
-  4. ``reyn embeddings rebuild`` drops the on-disk action index SQLite
+  3. ``reyn embeddings rebuild`` drops the on-disk action index SQLite
      + the build-lock marker; a missing index reports "nothing to
      rebuild" without erroring.
-  5. ``reyn embeddings rebuild <name>`` rejects unknown class names.
-  6. ``reyn embeddings clear`` removes the action index directory AND
-     the sentence-transformers cache directory; absent paths are
-     reported as skipped.
+  4. ``reyn embeddings rebuild <name>`` rejects unknown class names.
+  5. ``reyn embeddings clear`` removes the action index directory;
+     an absent directory is reported as skipped.
+
+#3128 (PR-C) removed reyn's in-process sentence-transformers backend:
+``backend`` is now always ``"litellm"`` (all ``embedding.classes``
+route through litellm — see ``src/reyn/config/embedding.py``) and
+``clear`` no longer also wipes a downloaded-model cache dir. The
+SQLite action-index cache this command manages is shared substrate
+with the litellm-fronted embedding path (and any other
+``IndexBackend`` source), not ST-specific, so its status/rebuild/clear
+management is retained unchanged.
 
 FP-0057 Phase 0 (#2843): the action index now rides the unified
 ``IndexBackend`` (``chunks``/``meta`` schema, ``.reyn/cache/index/actions/``)
@@ -41,7 +46,6 @@ import numpy as np
 import pytest
 
 from reyn.interfaces.cli.commands.embeddings import (
-    _backend_for_model,
     _collect_status_rows,
     run_clear,
     run_rebuild,
@@ -103,17 +107,15 @@ def _write_index_db(
 # ── 1. backend resolution ─────────────────────────────────────────────────────
 
 
-def test_backend_for_litellm_prefix() -> None:
-    """Tier 2: non-prefixed model string → litellm backend."""
-    assert _backend_for_model("openai/text-embedding-3-small") == "litellm"
-
-
-def test_backend_for_sentence_transformers_prefix() -> None:
-    """Tier 2: ``sentence-transformers/`` prefix → sentence-transformers backend."""
-    assert (
-        _backend_for_model("sentence-transformers/all-MiniLM-L6-v2")
-        == "sentence-transformers"
-    )
+def test_status_rows_backend_is_always_litellm(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    """Tier 2: every row's backend is "litellm" (#3128: litellm-exclusive)."""
+    monkeypatch.chdir(tmp_path)
+    rows = _collect_status_rows(tmp_path)
+    assert rows
+    for row in rows:
+        assert row.backend == "litellm"
 
 
 # ── 2. status row collection ────────────────────────────────────────────────
@@ -274,40 +276,32 @@ def test_rebuild_known_class_name_notes_shared_cache(
 # ── 5. clear ────────────────────────────────────────────────────────────────
 
 
-def test_clear_removes_index_dir_and_st_cache_dir(
+def test_clear_removes_index_dir(
     tmp_path: Path, monkeypatch, capsys,
 ) -> None:
-    """Tier 2: clear removes BOTH the action index dir AND the ST model cache.
+    """Tier 2: clear removes the action index cache directory.
 
-    Both directories are explicitly cleared; absent paths are reported
-    as skipped (= no crash on a clean install).
+    #3128 removed the in-process sentence-transformers backend, so
+    ``clear`` no longer also wipes a downloaded-model cache dir — the
+    SQLite action index is the only on-disk state it manages.
     """
-    # Override the ST cache so it's under tmp_path and we can verify removal
-    # without touching the developer's real ~/.cache.
-    monkeypatch.setenv("REYN_CACHE_DIR", str(tmp_path / "reyn-cache"))
     monkeypatch.chdir(tmp_path)
     index_dir = _unified_index_dir(tmp_path)
     _write_index_db(index_dir, "standard", {"file__read": [0.1, 0.2]})
-    st_cache = tmp_path / "reyn-cache" / "sentence-transformers"
-    st_cache.mkdir(parents=True)
-    (st_cache / "model.bin").write_bytes(b"\x00" * 1024)
 
     run_clear(Namespace())
     out = capsys.readouterr().out
 
     assert not index_dir.exists(), "index dir should have been removed"
-    assert not st_cache.exists(), "ST cache dir should have been removed"
     assert "removed" in out
     assert "freed" in out
 
 
-def test_clear_on_absent_paths_reports_skip(
+def test_clear_on_absent_path_reports_skip(
     tmp_path: Path, monkeypatch, capsys,
 ) -> None:
     """Tier 2: clear on a clean project skips gracefully without error."""
-    monkeypatch.setenv("REYN_CACHE_DIR", str(tmp_path / "reyn-cache-empty"))
     monkeypatch.chdir(tmp_path)
     run_clear(Namespace())
     out = capsys.readouterr().out
-    # Both targets absent → two skip lines, no failure.
-    assert out.count("skip") >= 2
+    assert "skip" in out
