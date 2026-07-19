@@ -437,17 +437,25 @@ async def test_chunker_server_reaches_serving_under_network_false(
     nothing here.
 
     ⚠ DIAGNOSTIC (temporary, #3060 case-(b) probe — revert once the true cause is
-    confirmed): this run is instrumented to make the FAILURE self-explaining in
-    the CI log, DECISIVELY distinguishing (i) server sent 0 bytes / (ii) non-JSON
-    stdout pollution / (iii) truncated framing / (iv) valid-JSON protocol error.
-    It (1) arms a server-side ``faulthandler`` dump (``REYN_CHUNKER_DIAG_DUMP_AFTER``)
-    that NAMES the blocked frame if the server hangs, and (2) arms MCPClient's
-    CLIENT-SIDE raw-handshake capture (``REYN_MCP_DIAG_CAPTURE_HANDSHAKE``, set in
-    the test process env) — on init failure it re-spawns the same sandboxed
-    command, writes a raw ``initialize``, and reads the raw stdout bytes from
-    OUTSIDE the sandbox (no ``os.dup2``, so it cannot be a seccomp artifact the
-    way the removed in-server fd tee was). The env-wiring fix did not clear the
-    Linux-CI hang, so the next step is to MEASURE, not guess."""
+    confirmed): the client-side capture already showed the server sends 0 bytes
+    (client wrote the ``initialize`` request), i.e. the async stdio runtime never
+    pumps under ``network=False``. The leading mechanism: CPython asyncio's
+    self-pipe wakeup uses ``sendto``/``recvfrom`` on an AF_UNIX socketpair
+    (connected socket ⇒ address pointer NULL), which the network gate refuses, so
+    the event loop cannot wake. To derive the real fix's allow-set from PRIMARY
+    DATA rather than a guess, this run switches the network-gated syscalls to
+    ``SCMP_ACT_LOG`` (log+allow) INSIDE THIS chunker's seccomp filter only (via
+    ``REYN_SECCOMP_DIAG_LOG_NETWORK`` in the server spawn env): if the server now
+    reaches serving, those syscalls WERE the blocker (functional confirmation),
+    and the CI job's ``dmesg`` step NAMES which actually fired.
+
+    Also kept: a server-side ``faulthandler`` dump (``REYN_CHUNKER_DIAG_DUMP_AFTER``)
+    and MCPClient's CLIENT-SIDE raw-handshake capture
+    (``REYN_MCP_DIAG_CAPTURE_HANDSHAKE``, set in the test process env) which, on
+    any residual init failure, re-spawns the same sandboxed command and reads the
+    raw stdout bytes from OUTSIDE the sandbox — so if the hypothesis is wrong
+    (server still sends 0 bytes even with the network syscalls allowed) that is
+    surfaced too. MEASURE, don't guess."""
     pytest.importorskip("chonkie", reason="builtin-rag extra not installed")
     from reyn.mcp.client import MCPClient
 
@@ -467,19 +475,26 @@ async def test_chunker_server_reaches_serving_under_network_false(
         # banner-time update check (a real httpx.get to pypi.org) so no
         # outbound connect() is attempted that network=False would refuse.
         # DIAGNOSTIC (server-side, env-gated, no-op in production):
-        # REYN_CHUNKER_DIAG_DUMP_AFTER arms a faulthandler delayed-traceback dump
-        # in the SERVER — if it hangs, the blocked frame lands in its stderr. 8s
-        # is short enough to fire within the client-side raw-handshake probe's
-        # read window (below), so the server-side frame and the client-side raw
-        # bytes are captured together.
+        #  - REYN_CHUNKER_DIAG_DUMP_AFTER arms a faulthandler delayed-traceback
+        #    dump in the SERVER — if it hangs, the blocked frame lands in its
+        #    stderr. 8s is short enough to fire within the client-side probe's
+        #    read window, so server-side frame + client-side raw bytes coincide.
+        #  - REYN_SECCOMP_DIAG_LOG_NETWORK switches the network-gated syscalls
+        #    (connect/sendto/recvfrom/…) from ERRNO(EPERM) deny to SCMP_ACT_LOG
+        #    (log+allow) INSIDE THIS CHUNKER's seccomp filter only (it rides the
+        #    server spawn env → the shim's load_seccomp_filter). If the server
+        #    now reaches serving, those syscalls WERE the blocker (functional
+        #    confirmation of the asyncio self-pipe hypothesis); the kernel audit
+        #    log (dumped by the CI job's dmesg step) then NAMES which fired.
         # (The earlier REYN_CHUNKER_DIAG_TEE_STDOUT fd-level tee was REMOVED: its
         # os.dup2(_, 1) is seccomp-denied under network=False and CRASHED the
-        # server, contaminating the observation. stdout is now observed from the
-        # CLIENT side — see REYN_MCP_DIAG_CAPTURE_HANDSHAKE below.)
+        # server. stdout is observed from the CLIENT side instead — see
+        # REYN_MCP_DIAG_CAPTURE_HANDSHAKE below.)
         "env": {
             "FASTMCP_SHOW_SERVER_BANNER": "false",
             "FASTMCP_CHECK_FOR_UPDATES": "off",
             "REYN_CHUNKER_DIAG_DUMP_AFTER": "8",
+            "REYN_SECCOMP_DIAG_LOG_NETWORK": "1",
         },
     }
     # DIAGNOSTIC (client-side, sandbox-FREE): set in THIS (test) process's env,

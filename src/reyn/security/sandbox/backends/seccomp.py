@@ -489,6 +489,45 @@ def load_seccomp_filter(policy: SandboxPolicy) -> None:
     for syscall_name in _build_syscall_allowlist(policy):
         f.add_rule(pyseccomp.ALLOW, syscall_name)
 
+    # DIAGNOSTIC (temporary, #3060 case-(b) probe — env-gated, no-op in
+    # production): when REYN_SECCOMP_DIAG_LOG_NETWORK is set AND this policy
+    # would otherwise DENY the network-gated syscalls (network=False), switch
+    # those syscalls from the default ERRNO(EPERM) refusal to SCMP_ACT_LOG
+    # (kernel logs the syscall AND allows it). Two things this measures, from
+    # PRIMARY DATA rather than a guess:
+    #   (a) functional — if the server now reaches serving, these syscalls WERE
+    #       the blocker (the hypothesis: CPython asyncio's self-pipe wakeup uses
+    #       sendto/recvfrom on an AF_UNIX socketpair, refused by the network
+    #       gate, so the event loop cannot wake and the stdio pump never runs);
+    #   (b) named — the kernel seccomp audit log (dmesg / journalctl -k, gated
+    #       on /proc/sys/kernel/seccomp/actions_logged including "log") records
+    #       exactly WHICH network syscall fired, so the real fix's allow-set is
+    #       derived from what actually ran, not assumed.
+    # This is strictly a WIDENING of the diagnostic run only: it never tightens,
+    # and when the env var is unset the filter is byte-for-byte the production
+    # default-deny. The real fix (allow sendto/recvfrom only when the address
+    # pointer is NULL — i.e. a connected socket) will REPLACE this once the
+    # audit log names the set.
+    import os  # noqa: PLC0415 — diagnostic-only, keep production import surface clean
+
+    if os.environ.get("REYN_SECCOMP_DIAG_LOG_NETWORK") and not policy.network:
+        log_action = getattr(pyseccomp, "LOG", None)
+        if log_action is None:  # pragma: no cover - libseccomp too old for SCMP_ACT_LOG
+            _logger.warning(
+                "REYN_SECCOMP_DIAG_LOG_NETWORK set but pyseccomp lacks LOG "
+                "(SCMP_ACT_LOG); falling back to ALLOW — the server may reach "
+                "serving (functional check) but the kernel will NOT name the "
+                "firing syscalls"
+            )
+            log_action = pyseccomp.ALLOW
+        for syscall_name in _NETWORK_SYSCALLS:
+            try:
+                f.add_rule(log_action, syscall_name)
+            except Exception:  # noqa: BLE001 — skip a name this arch can't resolve
+                _logger.debug(
+                    "seccomp diag: could not add LOG rule for %r", syscall_name
+                )
+
     # Irrevocable — issues prctl(PR_SET_SECCOMP) in the child process.
     f.load()
 
