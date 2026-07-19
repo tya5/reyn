@@ -961,7 +961,6 @@ class Session:
         # reyn.yaml llm.router.* ambient ContextVar (#1829 S3b)
         router_config: "RouterConfig | None" = None,
         retry_config: "object | None" = None,  # #1835: reyn.yaml llm.retry.* timing config
-        agent_id: str | None = None,
         router_max_iterations: int = 5,  # #187: per-message tool-call budget for the MAIN chat loop (interactive=5; one-shot autonomous SWE sets higher)
         non_interactive: bool = False,  # #1439 Fix #1: run-once (piped, no TTY) — no user to ask, so the SP directs proceed-with-assumption instead of clarifying
         # Conversation session id WAL entries are recorded under, default "main" (FP-0043 Stage 5)
@@ -1083,11 +1082,10 @@ class Session:
         self._chat_tool_use_scheme = chat_tool_use_scheme  # #1593 PR-2, passed to RouterLoopDriver below
         # RouterLoop awaits the embedding index build synchronously on turn 1 when True (B25-S5-1 fix, see session-construction.md#family-5-retrieval)
         self._eager_embedding_build = eager_embedding_build
-        # Falls back to a default identifier when the factory doesn't supply agent.id (FP-0016 Component E)
-        if agent_id is None:
-            from reyn.config import _default_agent_id
-            agent_id = _default_agent_id()
-        self._agent_id: str = agent_id
+        # agent_id is now owned by Agent (identity SSoT) — see the `agent_id`
+        # property below. FP-0016 Component E's gap (Agent lacked the field,
+        # so Session carried a separate param + `_default_agent_id()`
+        # fallback) is closed (#3133 P0-follow-up).
         # Sender of the most-recently-dispatched inbox item, for sender-transition state_change entries (FP-0041 #489 PR-A)
         self._last_sender: str | None = None
         # Reply-to attribution captured from an inbound payload's reply_to (FP-0041 #489 PR-D2)
@@ -1514,6 +1512,10 @@ class Session:
     @property
     def agent_name(self) -> str:
         return self._agent.agent_name
+
+    @property
+    def agent_id(self) -> str:
+        return self._agent.agent_id
 
     @property
     def model(self) -> str:
@@ -3050,7 +3052,7 @@ class Session:
         ``__init__`` — same objects, same construction order, same args.
         Reads only attributes ``__init__`` has already set by this point
         (``self.outbox`` / ``self.agent_name`` / ``self.events_dir`` /
-        ``self._events_config`` / ``self._agent_id``); takes
+        ``self._events_config`` / ``self._agent.agent_id``); takes
         ``observability_config`` explicitly since it is an ``__init__``
         parameter, not a ``self`` attribute.
 
@@ -3078,7 +3080,7 @@ class Session:
         )
         chat_events = EventLog(
             subscribers=[event_store],
-            agent_id=self._agent_id,  # FP-0016 E: auto-inject agent_id into every event
+            agent_id=self._agent.agent_id,  # FP-0016 E: auto-inject agent_id into every event
         )
         otel_exporter = None
         try:
@@ -6762,7 +6764,7 @@ class Session:
                 if getattr(self, "_sandbox_config", None) is not None
                 else None
             ),
-            agent_id=self._agent_id,
+            agent_id=self._agent.agent_id,
             # #2708 P1: this builder serves file/MCP ops (_file_op / MCP), which no
             # `present` op reaches — so the present sink is EXPLICITLY None (the required
             # kwarg forces the decision, no silent omission). The visible present path is
@@ -6953,11 +6955,11 @@ class Session:
         # connection open for a sub-second-lived session is pure churn.
         gateway = (
             MCPGateway(
-                pool=self._mcp_connection_service, agent_id=self._agent_id,
+                pool=self._mcp_connection_service, agent_id=self._agent.agent_id,
                 cancel_event=self._loop_driver.cancel_event,
             )
             if not self._ephemeral
-            else MCPGateway(agent_id=self._agent_id, cancel_event=self._loop_driver.cancel_event)
+            else MCPGateway(agent_id=self._agent.agent_id, cancel_event=self._loop_driver.cancel_event)
         )
         try:
             return await gateway.list_tools(server, expanded)
@@ -6995,11 +6997,11 @@ class Session:
 
         gateway = (
             MCPGateway(
-                pool=self._mcp_connection_service, agent_id=self._agent_id,
+                pool=self._mcp_connection_service, agent_id=self._agent.agent_id,
                 cancel_event=self._loop_driver.cancel_event,
             )
             if not self._ephemeral
-            else MCPGateway(agent_id=self._agent_id, cancel_event=self._loop_driver.cancel_event)
+            else MCPGateway(agent_id=self._agent.agent_id, cancel_event=self._loop_driver.cancel_event)
         )
         try:
             resources = await gateway.list_resources(server, expanded)
@@ -7038,11 +7040,11 @@ class Session:
 
         gateway = (
             MCPGateway(
-                pool=self._mcp_connection_service, agent_id=self._agent_id,
+                pool=self._mcp_connection_service, agent_id=self._agent.agent_id,
                 cancel_event=self._loop_driver.cancel_event,
             )
             if not self._ephemeral
-            else MCPGateway(agent_id=self._agent_id, cancel_event=self._loop_driver.cancel_event)
+            else MCPGateway(agent_id=self._agent.agent_id, cancel_event=self._loop_driver.cancel_event)
         )
         try:
             return await gateway.list_resource_templates(server, expanded)
@@ -7177,11 +7179,11 @@ class Session:
 
         gateway = (
             MCPGateway(
-                pool=self._mcp_connection_service, agent_id=self._agent_id,
+                pool=self._mcp_connection_service, agent_id=self._agent.agent_id,
                 cancel_event=self._loop_driver.cancel_event,
             )
             if not self._ephemeral
-            else MCPGateway(agent_id=self._agent_id, cancel_event=self._loop_driver.cancel_event)
+            else MCPGateway(agent_id=self._agent.agent_id, cancel_event=self._loop_driver.cancel_event)
         )
         try:
             prompts = await gateway.list_prompts(server, expanded)

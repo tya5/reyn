@@ -24,9 +24,11 @@ agent-scoped). Conceptually the agent owns the profile; the wiring waits.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
+
+from reyn.config.infra import _default_agent_id
 
 if TYPE_CHECKING:
     from reyn.security.permissions.permissions import PermissionResolver
@@ -42,6 +44,12 @@ class Agent:
     agent_name: str
     role: str = ""
     model: str = "standard"
+    # ``reyn.yaml`` ``agent.id`` — the audit-event / X-Reyn-Agent-Id identifier
+    # (#3133 P0-follow-up: folded in from Session's former standalone
+    # ``agent_id`` param + ``_default_agent_id()`` fallback; identity SSoT now
+    # owns its own default instead of Session constructing it on Agent's
+    # behalf). Immutable — never reassigned post-construction (verified).
+    agent_id: str = field(default_factory=_default_agent_id)
 
     # Authority + scoping.
     permission_resolver: "PermissionResolver | None" = None
