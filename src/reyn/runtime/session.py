@@ -745,25 +745,6 @@ class _HookEventBundle:
 
 
 @dataclass(frozen=True)
-class _CostBundle:
-    """#3082 Family 4: the cost/budget gateway — ``budget`` (``BudgetGateway``,
-    the per-session budget adapter that absorbs total_usage / total_cost_usd /
-    router-cap state). Single-field bundle for now (the simplest family — one
-    unconditional component, no intra-family DAG); kept as a bundle rather
-    than a bare return for pipeline-pattern consistency with Families 1-3, and
-    so it can grow without a call-site signature change if a future PR adds a
-    sibling cost component. Pure output→input value object:
-    :meth:`Session._build_cost_bundle` is a byte-identical extraction of the
-    construction that used to run inline in ``Session.__init__`` — same
-    object, same args. This family CONSUMES Family 1's ``chat_events``
-    (``BudgetGateway`` reads it eagerly at construction, ``events=``), so the
-    builder takes it as an explicit input rather than reading ``self.``
-    directly (same pattern as Family 3's ``hot_reloader``)."""
-
-    budget: "BudgetGateway"
-
-
-@dataclass(frozen=True)
 class _RetrievalBundle:
     """#3082 Family 5: the retrieval spine — the embedding block
     (``embedding_provider`` / ``embedding_event_sink`` / ``embedding_model_class``
@@ -800,50 +781,6 @@ class _RetrievalBundle:
     embedding_model_class: "str | None"
     action_embedding_index: "object | None"
     action_usage_tracker: "object | None"
-
-
-@dataclass(frozen=True)
-class _RouterWaistBundle:
-    """#3082 Family 6a: the router-host WAIST — ``router_host``
-    (``RouterHostAdapter``, the concrete ``RouterLoopHost`` implementation
-    that aggregates ~40 already-constructed Session sub-components —
-    Families 1-5's outputs (``chat_events`` / ``journal`` / ``hot_reloader``
-    / ``hook_dispatcher`` / ``hook_bus`` / ``budget``) plus the many
-    params/early attrs set earlier in ``__init__`` (``task_backend`` /
-    ``permission_resolver`` / ``resolver`` / ``registry`` /
-    ``pipeline_registry`` / ``presentation_registry`` / ``file_*`` /
-    ``mcp_*`` / ``memory`` / …) — into a single object most later families
-    read through. Single-field bundle (mirrors ``_CostBundle``'s
-    one-unconditional-component shape) so it can grow without a call-site
-    signature change.
-
-    Pure output→input value object: :meth:`Session._build_router_waist` is
-    a byte-identical extraction of the construction that used to run inline
-    in ``Session.__init__`` at its ORIGINAL position (line ~1726, no-move —
-    every one of the ~40 deps is already set on ``self`` by that point) —
-    same object, same construction order, same ~40 args. Because
-    parameterizing ~40 explicit builder args is impractical (and Families
-    3-5 already establish the instance-method-reads-``self`` precedent for
-    eager sibling dependencies), this builder takes NO explicit params: it
-    reads every dependency as ``self._X`` / ``self.X`` directly, exactly as
-    the inline construction did.
-
-    ★ Three of the ~40 args are DEFERRED lambdas, NOT eager values —
-    ``live_session_id_fn`` / ``current_task_id_fn`` / ``turn_origin_fn``
-    resolve per-turn / post-construction Session state (``_current_task_id``
-    and ``_current_turn_origin`` are not even SET until the first turn
-    runs — eager-reading them here would raise ``AttributeError``, and even
-    where the attribute already exists at construction time,
-    e.g. ``_session_id``, the value can change afterward for spawned
-    sessions). These three (plus the bound method
-    ``record_spawned_task`` and the two tracker lambdas
-    ``delegation_tracker`` / ``agent_replies_tracker``, already
-    lambdas pre-extraction) are kept byte-identical, still closing over
-    ``self`` and resolved at CALL time — eager-izing any of them would
-    freeze a per-turn value at construction (the Family 3/5 deferred/eager
-    pitfall this builder must not repeat)."""
-
-    router_host: "RouterHostAdapter"
 
 
 @dataclass(frozen=True)
@@ -1023,138 +960,6 @@ class _InterventionBundle:
     intervention_handler: "InterventionHandler"
     intervention_coordinator: "InterventionCoordinator"
     chain_timeout_glue: "ChainTimeoutGlue"
-
-
-@dataclass(frozen=True)
-class _InterAgentMessagingBundle:
-    """#3082 Family 8a: ``inter_agent_messaging`` (``InterAgentMessaging``,
-    the agent-to-agent messaging service — depth-guarded request/response
-    dispatch, inbox handlers, multi-hop chain relay resolution). Per the
-    architect's ★ Family 8 DAG correction, the originally-planned "Family 8
-    = memory → inter_agent_messaging + mcp_connection_service" grouping does
-    not hold: the residual five leftover components (mcp_connection_service,
-    render_template_bounds, task_subscription_writer, memory,
-    inter_agent_messaging) are mutually independent, scattered, and straddle
-    the router-host WAIST (Family 6a) on BOTH sides — they cannot be
-    gathered into one builder. render_template_bounds (a 2-arg config) and
-    task_subscription_writer (a 1-line ternary) stay inline (trivial, not
-    worth a builder). The three substantial leaves — inter_agent_messaging
-    (8a, this one), memory (8b), mcp_connection_service (8c) — each get
-    their own no-move, single-component builder, landing in separate PRs.
-
-    Single-field bundle (mirrors Family 4's ``_CostBundle`` and Family 6a's
-    ``_RouterWaistBundle`` — one unconditional component, no intra-family
-    DAG); kept as a bundle rather than a bare return for pipeline-pattern
-    consistency with every other Family builder.
-
-    ``inter_agent_messaging`` is POST-WAIST: it reads Family 7's ``chains``
-    (``chain_manager=self._chains``) and Family 1's ``chat_events``
-    (``event_log=self._chat_events``) EAGERLY, plus a long tail of Session
-    bound methods (``self._put_outbox`` / ``self._a2a_send_request`` /
-    ``self._on_chain_timeout_fire`` / etc.) — all already set on ``self`` by
-    the time this builder runs (its call site sits at the construction's
-    ORIGINAL position, right after Family 7's ``_build_intervention_bundle``
-    returns). A handful of args are DEFERRED ``lambda``s that close over
-    ``self`` and resolve at CALL time, long after ``__init__`` returns —
-    these read per-turn / post-construction state
-    (``self._router_loop_delegations`` / ``self._router_loop_agent_replies``
-    / ``self._session_id``) that has no stable value yet at construction
-    time, so eager-izing them would either read a stale/None snapshot or
-    (for the setter lambdas) be impossible to express eagerly at all. This
-    is a SINGLE independent component (unlike Family 6b/7's multi-component
-    families), so there is no intra-family local-vs-self split — every
-    reference here is either an eager ``self._X`` (cross-family / config,
-    already resolved) or a deferred ``self.*`` bound method / ``lambda:
-    self.*`` closure (kept verbatim, never eager-ized).
-
-    Pure output→input value object:
-    :meth:`Session._build_inter_agent_messaging_bundle` is a byte-identical
-    extraction of the construction that used to run inline in
-    ``Session.__init__`` — same object, same 22 keyword args, same
-    construction order, same (unmoved) position."""
-
-    inter_agent_messaging: "InterAgentMessaging"
-
-
-@dataclass(frozen=True)
-class _MemoryBundle:
-    """#3082 Family 8b: ``memory`` (``MemoryService``, the memory-persistence
-    adapter that absorbs memory path resolution + remember / forget /
-    read_body). Per the architect's #3082 Family 8 DAG correction, this is
-    one of three mutually-independent leftover leaves (8a
-    ``inter_agent_messaging``, 8b ``memory`` here, 8c
-    ``mcp_connection_service``) that straddle the router-host WAIST (Family
-    6a) on both sides — they cannot be gathered into one builder, so each
-    gets its own no-move, single-component builder. Single-field bundle
-    (mirrors Family 4's ``_CostBundle`` / Family 6a's ``_RouterWaistBundle``
-    / Family 8a's ``_InterAgentMessagingBundle`` — one unconditional
-    component, no intra-family DAG); kept as a bundle rather than a bare
-    return for pipeline-pattern consistency with every other Family builder.
-
-    ``memory`` is PRE-WAIST: ``_build_router_waist`` (Family 6a) reads
-    ``self._memory`` eagerly (``memory=self._memory``) when it builds
-    ``RouterHostAdapter``. This is the inverse direction of Family 7's
-    F8→F7 ``chains`` dependency (there, a LATER family read an EARLIER
-    one's post-waist output; here, waist-builder Family 6a reads THIS
-    pre-waist family's output) — so ``self._memory`` MUST be assigned
-    before the waist builder call, not after. The builder call stays at
-    its ORIGINAL position (unmoved), which sits well before
-    ``_build_router_waist`` runs, satisfying this ordering constraint. All
-    of ``memory``'s own args are themselves already eager on ``self`` by
-    this point — Family 1's ``self._chat_events`` (``events=``) plus the
-    ``file_write`` / ``file_read`` / ``file_delete`` /
-    ``file_regenerate_index`` bound methods and the ``workspace_dir``
-    property — so there is no deferred lambda and no intra-family
-    local-vs-self split (a single independent leaf, like 8a).
-
-    Pure output→input value object: :meth:`Session._build_memory_bundle` is
-    a byte-identical extraction of the construction that used to run inline
-    in ``Session.__init__`` — same object, same keyword args, same
-    (unmoved) position."""
-
-    memory: "MemoryService"
-
-
-@dataclass(frozen=True)
-class _MCPConnectionBundle:
-    """#3082 Family 8c (mcp_connection_service, the FINAL family — landing
-    this bundle completes #3082's Session.__init__ God-constructor
-    decomposition): ``mcp_connection_service`` (``MCPConnectionService``,
-    the per-session held-open MCP connection service — see the residual-
-    five DAG-correction note on :class:`_InterAgentMessagingBundle`'s
-    docstring: mcp_connection_service, render_template_bounds,
-    task_subscription_writer, memory (8b), inter_agent_messaging (8a) are
-    mutually independent leaves that could not be gathered into one
-    builder; the two trivial ones stay inline, the three substantial ones
-    each got their own no-move single-component builder). Single-field
-    bundle (mirrors Family 4/6a/8a's shape); kept as a bundle rather than a
-    bare return for pipeline-pattern consistency with every other Family
-    builder.
-
-    ★★ This family's crux (the sharpest deferred-resolution case in all of
-    F8 — 4 refs, vs Family 5's 2): ``mcp_connection_service`` is
-    constructed EARLY (original inline position ~:1511), but FOUR of its
-    six keyword args are ``lambda`` closures over ``self`` that resolve
-    ``self._chat_events`` (Family 1) / ``self._router_host`` (Family 6a) /
-    ``self._hook_dispatcher`` (Family 3) / ``self._interventions`` (Family
-    7) at CALL time — none of those four attributes exist yet at this
-    builder's call site. Eager-izing ANY of the four (the Family 3/4
-    pattern, correct THERE because those builders run after their
-    dependencies exist) would raise ``AttributeError`` at construction
-    time here, since this builder runs before all four. Only
-    ``elicitation_bus=self.as_request_bus()`` (needs only ``self``, always
-    resolvable) and ``agent_name=self.agent_name`` (property backed by
-    ``self._agent``, set much earlier in ``__init__``) are eager — both
-    already available at this position. Builder is an instance method
-    precisely so the four lambdas keep capturing ``self``, exactly as they
-    did inline.
-
-    Pure output→input value object: :meth:`Session._build_mcp_connection_service`
-    is a byte-identical extraction of the construction that used to run
-    inline in ``Session.__init__`` — same object, same 6 keyword args, same
-    (unmoved) position."""
-
-    mcp_connection_service: "MCPConnectionService"
 
 
 class Session:
@@ -1351,8 +1156,7 @@ class Session:
         self._action_usage_tracker = _retrieval_bundle.action_usage_tracker
         self._mcp_servers = mcp_servers
         # mcp_connection_service; 4 lambdas deferred-resolve sibling deps at call time (#3082 Family 8c, see session-construction.md#family-8c-mcp-connection-service)
-        _mcp_connection_bundle = self._build_mcp_connection_service()
-        self._mcp_connection_service = _mcp_connection_bundle.mcp_connection_service
+        self._mcp_connection_service = self._build_mcp_connection_service()
         # Resolve fs_watch: as a builder input; FsWatcher itself is built in _build_hook_event_bundle (#2608 H4 / #3082 Family 3, see session-construction.md#family-3-hook-event-reactivity)
         from reyn.config.infra import FsWatchConfig
         _fs_watch_cfg = (
@@ -1526,14 +1330,12 @@ class Session:
         )
 
         # Budget adapter, byte-identical extraction, simplest of the #3082 families (Family 4, see session-construction.md#family-4-cost-budget)
-        _cost_bundle = self._build_cost_bundle(
+        self._budget = self._build_budget(
             budget_tracker, self._chat_events, self.agent_name, _router_cap,
         )
-        self._budget = _cost_bundle.budget
 
         # Memory persistence adapter, byte-identical extraction, pre-waist position (#3082 Family 8b, see session-construction.md#family-8b-memory)
-        _memory_bundle = self._build_memory_bundle()
-        self._memory = _memory_bundle.memory
+        self._memory = self._build_memory()
 
         # One-shot command-UI request (e.g. /rewind checkpoint picker); None = nothing pending, dict carries {"kind", ...} (F4)
         self._pending_command_ui: dict | None = None
@@ -1557,8 +1359,7 @@ class Session:
         # CapabilityVisibility, which owns the LIVE composed value, does not exist yet -- it needs
         # router_host, which THIS call builds -- so this one eager pre-waist consumer is threaded
         # the local var explicitly rather than reading a not-yet-constructed self._capability_visibility).
-        _router_waist_bundle = self._build_router_waist(contextual_permission=contextual_permission)
-        self._router_host = _router_waist_bundle.router_host
+        self._router_host = self._build_router_waist(contextual_permission=contextual_permission)
 
         # Owns the per-session capability/skill visibility override + the envelope-composed
         # contextual_permission/excluded_categories it derives (#2285, see #3121 step3 Extract Class);
@@ -1604,8 +1405,7 @@ class Session:
         self._budget_advisor = _history_compaction_bundle.budget_advisor
 
         # InterAgentMessaging: agent-to-agent messaging service, hybrid design (FP-0019 Wave 2 part 2); byte-identical extraction, post-waist (#3082 Family 8a, see session-construction.md#family-8a-inter-agent-messaging)
-        _inter_agent_messaging_bundle = self._build_inter_agent_messaging_bundle()
-        self._inter_agent_messaging = _inter_agent_messaging_bundle.inter_agent_messaging
+        self._inter_agent_messaging = self._build_inter_agent_messaging()
 
         # RouterLoopDriver owns the per-turn loop orchestration (session.py refactor PR-3, see session-construction.md#misc-lifecycle-wiring)
         from reyn.runtime.services.router_loop_driver import RouterLoopDriver
@@ -3535,13 +3335,13 @@ class Session:
 
     # ── #3082 Family 4: cost/budget bundle builder ──
 
-    def _build_cost_bundle(
+    def _build_budget(
         self,
         budget_tracker: "BudgetTracker | None",
         chat_events: "EventLog",
         agent_name: str,
         router_cap: int,
-    ) -> "_CostBundle":
+    ) -> "BudgetGateway":
         """#3082 Family 4: build the cost/budget gateway — ``budget``
         (``BudgetGateway``, the per-session budget adapter). The simplest
         family: a single unconditional component, no intra-family DAG, no
@@ -3567,14 +3367,15 @@ class Session:
 
         PR-refactor-session-1 wave 3 PR1: per-session budget adapter.
         Absorbs total_usage / total_cost_usd / router-cap state that
-        previously lived as scattered attributes on Session."""
-        budget = BudgetGateway(
+        previously lived as scattered attributes on Session. (#3121 step4:
+        returns the ``BudgetGateway`` directly — the prior single-field
+        wrapper dataclass was ceremony, see #3082 anti-pattern #2.)"""
+        return BudgetGateway(
             budget_tracker=budget_tracker,
             events=chat_events,
             agent_name=agent_name,
             default_router_cap=router_cap,
         )
-        return _CostBundle(budget=budget)
 
     def _build_retrieval_bundle(
         self,
@@ -3750,7 +3551,7 @@ class Session:
             action_usage_tracker=action_usage_tracker,
         )
 
-    def _build_router_waist(self, *, contextual_permission: "object | None" = None) -> "_RouterWaistBundle":
+    def _build_router_waist(self, *, contextual_permission: "object | None" = None) -> "RouterHostAdapter":
         """#3082 Family 6a: build the router-host WAIST — ``router_host``
         (``RouterHostAdapter``, the concrete ``RouterLoopHost`` implementation
         that aggregates ~40 already-constructed Session sub-components).
@@ -4022,7 +3823,7 @@ class Session:
             # checks it via getattr at each iteration boundary.
             turn_cancel_fn=self._is_turn_cancel_requested,
         )
-        return _RouterWaistBundle(router_host=router_host)
+        return router_host
 
     def _build_history_compaction_bundle(
         self, merge_action_usage: "Callable[[list[ChatMessage]], None]",
@@ -4255,7 +4056,7 @@ class Session:
             chain_timeout_glue=chain_timeout_glue,
         )
 
-    def _build_inter_agent_messaging_bundle(self) -> "_InterAgentMessagingBundle":
+    def _build_inter_agent_messaging(self) -> "InterAgentMessaging":
         """#3082 Family 8a: build ``inter_agent_messaging``. Byte-identical
         extraction of the construction that used to run inline in
         ``__init__`` — same object, same 22 keyword args, same construction
@@ -4274,8 +4075,8 @@ class Session:
         / ``session_id_fn`` all resolve per-turn / post-construction state at
         CALL time, not at builder-call time). No intra-family local-vs-self
         split applies — there is nothing else in this family to be local
-        against. See :class:`_InterAgentMessagingBundle`'s docstring for the
-        full eager-vs-deferred provenance per arg."""
+        against. Returns the ``InterAgentMessaging`` instance directly
+        (#3121 step4 removed the prior single-field wrapper dataclass)."""
         inter_agent_messaging = InterAgentMessaging(
             event_log=self._chat_events,
             chain_manager=self._chains,
@@ -4304,9 +4105,9 @@ class Session:
             session_id_fn=lambda: self._session_id,
             lookup_spawned_task=self.lookup_and_evict_spawned_task,
         )
-        return _InterAgentMessagingBundle(inter_agent_messaging=inter_agent_messaging)
+        return inter_agent_messaging
 
-    def _build_memory_bundle(self) -> "_MemoryBundle":
+    def _build_memory(self) -> "MemoryService":
         """#3082 Family 8b: build ``memory``. Byte-identical extraction of the
         construction that used to run inline in ``__init__`` — same object,
         same keyword args, same (unmoved) position.
@@ -4318,15 +4119,16 @@ class Session:
         construction time (``self._file_write`` / ``self._file_read`` /
         ``self._file_delete`` / ``self._file_regenerate_index`` /
         ``self.workspace_dir``). No deferred lambda, no intra-family
-        local-vs-self split — see :class:`_MemoryBundle`'s docstring for the
-        full provenance.
+        local-vs-self split.
 
         ★ PRE-WAIST placement: this builder's call site (in ``__init__``)
         MUST stay before ``_build_router_waist`` runs (Family 6a), which
         reads ``self._memory`` eagerly when constructing
         ``RouterHostAdapter``. Moving this call after the waist builder
         call would leave ``self._memory`` unassigned when the waist builder
-        reads it, raising ``AttributeError``."""
+        reads it, raising ``AttributeError``. Returns the ``MemoryService``
+        instance directly (#3121 step4 removed the prior single-field
+        wrapper dataclass)."""
         memory = MemoryService(
             agent_workspace_dir=self.workspace_dir,
             events=self._chat_events,
@@ -4335,9 +4137,9 @@ class Session:
             file_delete=self._file_delete,
             file_regenerate_index=self._file_regenerate_index,
         )
-        return _MemoryBundle(memory=memory)
+        return memory
 
-    def _build_mcp_connection_service(self) -> "_MCPConnectionBundle":
+    def _build_mcp_connection_service(self) -> "MCPConnectionService":
         """#3082 Family 8c (mcp_connection_service, the FINAL family): build
         the session-owned held-open MCP connection service. Byte-identical
         extraction of the construction that used to run inline in
@@ -4347,20 +4149,22 @@ class Session:
         Family 6a / ``_build_router_waist``, and Family 7 /
         ``_build_intervention_bundle`` all run).
 
-        ★★ This family's crux (see :class:`_MCPConnectionBundle`'s
-        docstring for the full DAG-correction context): FOUR of the six
-        keyword args below are ``lambda`` closures that resolve
-        ``self._chat_events`` / ``self._router_host`` /
-        ``self._hook_dispatcher`` / ``self._interventions`` at CALL time —
-        none of those four attributes exist yet at this builder's call
-        site. Eager-izing ANY of them (the Family 3/4 pattern, wrong HERE)
-        would raise ``AttributeError`` the moment this builder runs, since
-        it runs before all four are constructed. This builder is an
-        instance method precisely so the four lambdas keep capturing
-        ``self`` — kept verbatim, never eager-ized. Only
-        ``elicitation_bus``/``agent_name`` are eager (both already
-        resolvable at this position — see their inline comments below,
-        reproduced verbatim from the original construction)."""
+        ★★ This family's crux (the sharpest deferred-resolution case in all
+        of F8 — 4 refs, vs Family 5's 2): FOUR of the six keyword args below
+        are ``lambda`` closures that resolve ``self._chat_events`` /
+        ``self._router_host`` / ``self._hook_dispatcher`` /
+        ``self._interventions`` at CALL time — none of those four
+        attributes exist yet at this builder's call site. Eager-izing ANY
+        of them (the Family 3/4 pattern, wrong HERE) would raise
+        ``AttributeError`` the moment this builder runs, since it runs
+        before all four are constructed. This builder is an instance
+        method precisely so the four lambdas keep capturing ``self`` —
+        kept verbatim, never eager-ized. Only ``elicitation_bus``/
+        ``agent_name`` are eager (both already resolvable at this position
+        — see their inline comments below, reproduced verbatim from the
+        original construction). Returns the ``MCPConnectionService``
+        instance directly (#3121 step4 removed the prior single-field
+        wrapper dataclass)."""
         # #2597 S2a: the session-owned held-open MCP connection service (Option C —
         # one persistent MCPClient per server, reused across chat turns/tasks for
         # this session's whole lifetime). Constructed unconditionally (cheap — an
@@ -4404,7 +4208,7 @@ class Session:
             elicitation_gate=lambda: self._interventions.has_active_listener(),
             agent_name=self.agent_name,
         )
-        return _MCPConnectionBundle(mcp_connection_service=mcp_connection_service)
+        return mcp_connection_service
 
     # ── #2073 S2: config hot-reload reapply seams (registered on the HotReloader) ──
 

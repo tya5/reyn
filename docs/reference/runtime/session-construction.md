@@ -157,9 +157,10 @@ Hooks specifically use S2b; validate-before-apply applies too.
 
 ## Family 4 — Cost / budget
 
-`_build_cost_bundle` constructs the budget adapter — a byte-identical extraction, the
+`_build_budget` constructs the budget adapter — a byte-identical extraction, the
 simplest of the `#3082` families (no reordering). It runs here (unchanged position) because
-it *consumes* Family 1's `chat_events`, read EAGERLY (`events=`).
+it *consumes* Family 1's `chat_events`, read EAGERLY (`events=`). It returns the
+`BudgetGateway` directly (`#3121` step4 removed the prior single-field wrapper dataclass).
 
 Two other cost-adjacent construction points stay inline:
 - `_cost_warn_config` (#2230): the resolved `cost_warn:` config so the high-cost-model
@@ -254,7 +255,7 @@ nothing pending; a dict carries `{"kind", ...}`.
 
 ## Family 8a — Inter-agent messaging
 
-`_build_inter_agent_messaging_bundle` constructs `InterAgentMessaging` (FP-0019 Wave 2 part
+`_build_inter_agent_messaging` constructs `InterAgentMessaging` (FP-0019 Wave 2 part
 2 — agent-to-agent messaging service, extracting `_send_to_agent`/`_send_agent_response`/
 `_handle_agent_request`/`_handle_agent_response`/`_resolve_pending_chain` from `Session`;
 hybrid design (案 C): `InterAgentMessaging` owns agent-side logic, transport-side routing is
@@ -266,7 +267,7 @@ kept verbatim.
 
 ## Family 8b — Memory
 
-`_build_memory_bundle` constructs the memory persistence adapter (PR-refactor-session-1
+`_build_memory` constructs the memory persistence adapter (PR-refactor-session-1
 wave 3 PR2 — absorbs memory path resolution + remember/forget/read_body; PR3
 `RouterHostAdapter` holds a direct reference, session delegates via the adapter's
 `memory_path`/`memory_dir`). Byte-identical, same args as the inline construction it
