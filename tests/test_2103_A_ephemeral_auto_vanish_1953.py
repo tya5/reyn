@@ -70,7 +70,7 @@ async def test_ephemeral_spawn_auto_vanishes_persistent_survives(tmp_path):
     eph._maybe_schedule_ephemeral_vanish()
     per._maybe_schedule_ephemeral_vanish()
     # await the ephemeral teardown; the persistent session scheduled nothing.
-    vanish = eph._vanish_task
+    vanish = eph._spawn_tracker._vanish_task
     if vanish is not None:
         await vanish
 
@@ -100,8 +100,8 @@ async def test_ephemeral_does_not_vanish_while_awaiting_delegation(tmp_path):
     # drain any (erroneously) scheduled teardown so the assertion reflects the true
     # outcome — without this a stripped guard would schedule a DETACHED vanish that
     # hasn't run yet at the assert, hiding the regression.
-    if eph._vanish_task is not None:
-        await eph._vanish_task
+    if eph._spawn_tracker._vanish_task is not None:
+        await eph._spawn_tracker._vanish_task
 
     # the guard held: NOT vanished mid-await (public surface).
     assert sid in reg.session_ids("alice")
@@ -120,7 +120,7 @@ async def test_ephemeral_vanish_scheduled_once(tmp_path):
 
     eph._maybe_schedule_ephemeral_vanish()
     eph._maybe_schedule_ephemeral_vanish()  # second post-turn check — must not re-schedule
-    vanish = eph._vanish_task
+    vanish = eph._spawn_tracker._vanish_task
     if vanish is not None:
         await vanish
 

@@ -255,7 +255,7 @@ async def test_gone_spawner_sid_drops_does_not_fallback_to_main(tmp_path, caplog
 async def test_spawned_tasks_record_is_bounded(tmp_path):
     """Tier 2: S1bc-exec — the trusted spawned-task record is bounded (evict-oldest past
     the cap) so never-arriving results can't grow it unbounded."""
-    from reyn.runtime.session import _MAX_SPAWNED_TASKS
+    from reyn.runtime.spawn_tracker import _MAX_SPAWNED_TASKS
     reg = _registry(tmp_path)
     main = reg.get_or_load("worker")
     # record cap+10 → the oldest 10 (indices 0..9) overflow + are evicted; indices

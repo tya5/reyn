@@ -273,7 +273,7 @@ async def test_run_agent_step_ephemeral_session_vanishes(tmp_path: Path) -> None
     (spawned_sid,) = [sid for sid in reg.session_ids("worker") if sid != "main"]
     spawned = reg._peek_session("worker", spawned_sid)  # noqa: SLF001 — test-bridge, precedent above
     if spawned is not None:
-        vanish_task = spawned._vanish_task  # noqa: SLF001 — test-bridge, precedent above
+        vanish_task = spawned._spawn_tracker._vanish_task  # noqa: SLF001 — test-bridge, precedent above
         if vanish_task is not None:
             await vanish_task
 
