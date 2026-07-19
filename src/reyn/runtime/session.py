@@ -962,48 +962,6 @@ class _InterventionBundle:
     chain_timeout_glue: "ChainTimeoutGlue"
 
 
-@dataclass(frozen=True)
-class _MCPConnectionBundle:
-    """#3082 Family 8c (mcp_connection_service, the FINAL family — landing
-    this bundle completes #3082's Session.__init__ God-constructor
-    decomposition): ``mcp_connection_service`` (``MCPConnectionService``,
-    the per-session held-open MCP connection service — see the residual-
-    five DAG-correction note on :class:`_InterAgentMessagingBundle`'s
-    docstring: mcp_connection_service, render_template_bounds,
-    task_subscription_writer, memory (8b), inter_agent_messaging (8a) are
-    mutually independent leaves that could not be gathered into one
-    builder; the two trivial ones stay inline, the three substantial ones
-    each got their own no-move single-component builder). Single-field
-    bundle (mirrors Family 4/6a/8a's shape); kept as a bundle rather than a
-    bare return for pipeline-pattern consistency with every other Family
-    builder.
-
-    ★★ This family's crux (the sharpest deferred-resolution case in all of
-    F8 — 4 refs, vs Family 5's 2): ``mcp_connection_service`` is
-    constructed EARLY (original inline position ~:1511), but FOUR of its
-    six keyword args are ``lambda`` closures over ``self`` that resolve
-    ``self._chat_events`` (Family 1) / ``self._router_host`` (Family 6a) /
-    ``self._hook_dispatcher`` (Family 3) / ``self._interventions`` (Family
-    7) at CALL time — none of those four attributes exist yet at this
-    builder's call site. Eager-izing ANY of the four (the Family 3/4
-    pattern, correct THERE because those builders run after their
-    dependencies exist) would raise ``AttributeError`` at construction
-    time here, since this builder runs before all four. Only
-    ``elicitation_bus=self.as_request_bus()`` (needs only ``self``, always
-    resolvable) and ``agent_name=self.agent_name`` (property backed by
-    ``self._agent``, set much earlier in ``__init__``) are eager — both
-    already available at this position. Builder is an instance method
-    precisely so the four lambdas keep capturing ``self``, exactly as they
-    did inline.
-
-    Pure output→input value object: :meth:`Session._build_mcp_connection_service`
-    is a byte-identical extraction of the construction that used to run
-    inline in ``Session.__init__`` — same object, same 6 keyword args, same
-    (unmoved) position."""
-
-    mcp_connection_service: "MCPConnectionService"
-
-
 class Session:
     def __init__(
         self,
@@ -1198,8 +1156,7 @@ class Session:
         self._action_usage_tracker = _retrieval_bundle.action_usage_tracker
         self._mcp_servers = mcp_servers
         # mcp_connection_service; 4 lambdas deferred-resolve sibling deps at call time (#3082 Family 8c, see session-construction.md#family-8c-mcp-connection-service)
-        _mcp_connection_bundle = self._build_mcp_connection_service()
-        self._mcp_connection_service = _mcp_connection_bundle.mcp_connection_service
+        self._mcp_connection_service = self._build_mcp_connection_service()
         # Resolve fs_watch: as a builder input; FsWatcher itself is built in _build_hook_event_bundle (#2608 H4 / #3082 Family 3, see session-construction.md#family-3-hook-event-reactivity)
         from reyn.config.infra import FsWatchConfig
         _fs_watch_cfg = (
@@ -3411,8 +3368,8 @@ class Session:
         PR-refactor-session-1 wave 3 PR1: per-session budget adapter.
         Absorbs total_usage / total_cost_usd / router-cap state that
         previously lived as scattered attributes on Session. (#3121 step4:
-        returns the ``BudgetGateway`` directly — the single-field
-        ``_CostBundle`` wrapper was ceremony, see #3082 anti-pattern #2.)"""
+        returns the ``BudgetGateway`` directly — the prior single-field
+        wrapper dataclass was ceremony, see #3082 anti-pattern #2.)"""
         return BudgetGateway(
             budget_tracker=budget_tracker,
             events=chat_events,
@@ -4119,8 +4076,7 @@ class Session:
         CALL time, not at builder-call time). No intra-family local-vs-self
         split applies — there is nothing else in this family to be local
         against. Returns the ``InterAgentMessaging`` instance directly
-        (#3121 step4 removed the single-field ``_InterAgentMessagingBundle``
-        wrapper)."""
+        (#3121 step4 removed the prior single-field wrapper dataclass)."""
         inter_agent_messaging = InterAgentMessaging(
             event_log=self._chat_events,
             chain_manager=self._chains,
@@ -4171,8 +4127,8 @@ class Session:
         ``RouterHostAdapter``. Moving this call after the waist builder
         call would leave ``self._memory`` unassigned when the waist builder
         reads it, raising ``AttributeError``. Returns the ``MemoryService``
-        instance directly (#3121 step4 removed the single-field
-        ``_MemoryBundle`` wrapper)."""
+        instance directly (#3121 step4 removed the prior single-field
+        wrapper dataclass)."""
         memory = MemoryService(
             agent_workspace_dir=self.workspace_dir,
             events=self._chat_events,
@@ -4183,7 +4139,7 @@ class Session:
         )
         return memory
 
-    def _build_mcp_connection_service(self) -> "_MCPConnectionBundle":
+    def _build_mcp_connection_service(self) -> "MCPConnectionService":
         """#3082 Family 8c (mcp_connection_service, the FINAL family): build
         the session-owned held-open MCP connection service. Byte-identical
         extraction of the construction that used to run inline in
@@ -4193,20 +4149,22 @@ class Session:
         Family 6a / ``_build_router_waist``, and Family 7 /
         ``_build_intervention_bundle`` all run).
 
-        ★★ This family's crux (see :class:`_MCPConnectionBundle`'s
-        docstring for the full DAG-correction context): FOUR of the six
-        keyword args below are ``lambda`` closures that resolve
-        ``self._chat_events`` / ``self._router_host`` /
-        ``self._hook_dispatcher`` / ``self._interventions`` at CALL time —
-        none of those four attributes exist yet at this builder's call
-        site. Eager-izing ANY of them (the Family 3/4 pattern, wrong HERE)
-        would raise ``AttributeError`` the moment this builder runs, since
-        it runs before all four are constructed. This builder is an
-        instance method precisely so the four lambdas keep capturing
-        ``self`` — kept verbatim, never eager-ized. Only
-        ``elicitation_bus``/``agent_name`` are eager (both already
-        resolvable at this position — see their inline comments below,
-        reproduced verbatim from the original construction)."""
+        ★★ This family's crux (the sharpest deferred-resolution case in all
+        of F8 — 4 refs, vs Family 5's 2): FOUR of the six keyword args below
+        are ``lambda`` closures that resolve ``self._chat_events`` /
+        ``self._router_host`` / ``self._hook_dispatcher`` /
+        ``self._interventions`` at CALL time — none of those four
+        attributes exist yet at this builder's call site. Eager-izing ANY
+        of them (the Family 3/4 pattern, wrong HERE) would raise
+        ``AttributeError`` the moment this builder runs, since it runs
+        before all four are constructed. This builder is an instance
+        method precisely so the four lambdas keep capturing ``self`` —
+        kept verbatim, never eager-ized. Only ``elicitation_bus``/
+        ``agent_name`` are eager (both already resolvable at this position
+        — see their inline comments below, reproduced verbatim from the
+        original construction). Returns the ``MCPConnectionService``
+        instance directly (#3121 step4 removed the prior single-field
+        wrapper dataclass)."""
         # #2597 S2a: the session-owned held-open MCP connection service (Option C —
         # one persistent MCPClient per server, reused across chat turns/tasks for
         # this session's whole lifetime). Constructed unconditionally (cheap — an
@@ -4250,7 +4208,7 @@ class Session:
             elicitation_gate=lambda: self._interventions.has_active_listener(),
             agent_name=self.agent_name,
         )
-        return _MCPConnectionBundle(mcp_connection_service=mcp_connection_service)
+        return mcp_connection_service
 
     # ── #2073 S2: config hot-reload reapply seams (registered on the HotReloader) ──
 
