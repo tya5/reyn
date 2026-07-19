@@ -2,7 +2,7 @@
 
 `reyn chat` には、LLM が実行可能なことを発見するための 2 つの手段が同梱されています: 高速な **`list_actions`** ブラウザ（= カテゴリ接頭辞による列挙、常時利用可能）と、**`search_actions`** セマンティック検索（= 全アクションの埋め込みインデックスに対する自然言語クエリ）です。本ガイドではセマンティックな経路を有効にする手順を説明します。
 
-> **TL;DR**: `search_actions` は **デフォルトで無効**（semantic search はプロジェクト全体で opt-in の方針）。すでに埋め込み API キーがある場合は `reyn secret set OPENAI_API_KEY` のあと `reyn.yaml` で `action_retrieval.embedding_class: standard` を設定するだけ — proxy も追加インストールも不要です。API キーなしでローカルモデルを使いたい場合は **litellm proxy** の背後にモデルを立て、reyn からそこを指してください（後述の [経路 B](#b-api-litellm-proxy) を参照）。
+> **TL;DR**: `search_actions` は **デフォルトで無効**（semantic search はプロジェクト全体で opt-in の方針）。すでに埋め込み API キーがある場合は `reyn secret set OPENAI_API_KEY` のあと `reyn.yaml` で `action_retrieval.embedding_class: standard` を設定するだけ — proxy も追加インストールも不要です。API キーなしでローカルモデルを使いたい場合は **litellm proxy** の背後にモデルを立て、reyn からそこを指してください（後述の [経路 B](#経路-b-埋め込み-api-契約なし-litellm-proxy-ローカルモデル) を参照）。
 
 ## どんなときに欲しくなるか
 
@@ -141,7 +141,7 @@ standard  litellm  openai/text-embedding-3-small   .reyn/cache/index/actions    
 strong    litellm  openai/text-embedding-3-large   .reyn/cache/index/actions      0.31        0  (never)
 ```
 
-**Pre-flight curl が失敗する** — 上記 [§ Pre-flight](#pre-flight-opt-in) の失敗パターンを参照してください: 401（キー誤り）、404（モデル名 / proxy `model_list` 不一致）、400 unsupported-param（proxy の `drop_params: true` 未設定、#1616）、connection refused（何も listen していない / `LITELLM_API_BASE` が誤り）。
+**Pre-flight curl が失敗する** — 上記 [§ Pre-flight](#pre-flight-エンドポイントが実際に応答するか確認するopt-in-の前に行う) の失敗パターンを参照してください: 401（キー誤り）、404（モデル名 / proxy `model_list` 不一致）、400 unsupported-param（proxy の `drop_params: true` 未設定、#1616）、connection refused（何も listen していない / `LITELLM_API_BASE` が誤り）。
 
 **クラスを切り替えても古い結果が返る** — Reyn のアクションインデックスは一度に 1 つの埋め込みクラスを保持します。クラスの切り替えは次セッションで自動的に再埋め込みをトリガーしますが、`reyn embeddings rebuild` で先行して強制できます。
 

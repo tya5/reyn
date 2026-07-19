@@ -110,7 +110,7 @@ hooks:
 - **`template_push`** — 設定の Jinja2 テンプレートから組み立てるプッシュ指示。
 - **`shell_exec`** — 純粋な副作用として実行するサンドボックスコマンド（出力は無視）。
 - **`shell_push`** — **stdout が JSON プッシュ指示**であるサンドボックスコマンド。`template_push` と同じ経路でプッシュされます（違いは指示のソースのみ: キャプチャした stdout か Jinja2 レンダーか）。
-- **`pipeline_launch`** — 発火イベントのテンプレート変数からレンダリングした input で、登録済みの [pipeline](pipelines.ja.md) を起動します。詳細は下記の [Pipeline launch](#pipeline-pipeline_launch) を参照。
+- **`pipeline_launch`** — 発火イベントのテンプレート変数からレンダリングした input で、登録済みの [pipeline](pipelines.ja.md) を起動します。詳細は下記の [Pipeline launch](#pipeline-起動pipeline_launch) を参照。
 
 ## 4 つのケイパビリティ
 
@@ -122,11 +122,11 @@ hooks:
 
 ### E — 自己継続（`wake: true` のプッシュ）
 
-C と同じですが、`wake: true` フラグがランループに新しいターンを即座に開くよう指示します。これがフックの差別化ケイパビリティです: `turn_end` フックは人間の入力なしにエージェントを再起動できます。[ループバルブ](#_6) で制限されます。`template_push` または `shell_push` が `wake: true` のときに生成されます。
+C と同じですが、`wake: true` フラグがランループに新しいターンを即座に開くよう指示します。これがフックの差別化ケイパビリティです: `turn_end` フックは人間の入力なしにエージェントを再起動できます。[ループバルブ](#ループバルブ) で制限されます。`template_push` または `shell_push` が `wake: true` のときに生成されます。
 
 ### F — 外部副作用（`shell_exec`）
 
-サンドボックス内でコマンドを実行します。reyn は JSON イベントをコマンドの stdin に書き込み、stdout と stderr は**無視**します。外部状態の更新（ログエントリの書き込み・メトリクスの発信・Webhook へのポスト）に使います。安全モデルは [サンドボックス](#_7) を参照してください。
+サンドボックス内でコマンドを実行します。reyn は JSON イベントをコマンドの stdin に書き込み、stdout と stderr は**無視**します。外部状態の更新（ログエントリの書き込み・メトリクスの発信・Webhook へのポスト）に使います。安全モデルは [サンドボックス](#サンドボックス) を参照してください。
 
 ### 計算されたプッシュ（`shell_push`）
 
