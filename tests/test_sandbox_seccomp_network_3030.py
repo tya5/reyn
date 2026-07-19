@@ -463,15 +463,23 @@ async def test_chunker_server_reaches_serving_under_network_false(
         # Exactly the vars the shipped .mcp.json sets — suppress FastMCP's
         # banner-time update check (a real httpx.get to pypi.org) so no
         # outbound connect() is attempted that network=False would refuse.
-        # DIAGNOSTIC: REYN_CHUNKER_DIAG_DUMP_AFTER arms a faulthandler
-        # delayed-traceback dump in the server (env-gated no-op in production).
-        # 20s < the client's 60s init timeout, so if the server hangs the
-        # all-thread stack lands in its stderr BEFORE the client gives up, and
-        # the failure path below folds that stderr into the assertion message.
+        # DIAGNOSTIC (both env-gated, no-ops in production):
+        #  - REYN_CHUNKER_DIAG_DUMP_AFTER arms a faulthandler delayed-traceback
+        #    dump in the server. 20s < the client's 60s init timeout, so if the
+        #    server hangs the all-thread stack lands in its stderr BEFORE the
+        #    client gives up.
+        #  - REYN_CHUNKER_DIAG_TEE_STDOUT mirrors everything the server writes to
+        #    stdout onto stderr with a `[DIAG-STDOUT]` marker (fd 1 stays
+        #    verbatim), revealing whether network=False pollutes the JSON-RPC
+        #    stdout channel (banner / misrouted warning) — the leading
+        #    hypothesis for why the MCP initialize handshake fails.
+        # The failure path below folds the server stderr (carrying both) into
+        # the assertion message so it reaches the CI log.
         "env": {
             "FASTMCP_SHOW_SERVER_BANNER": "false",
             "FASTMCP_CHECK_FOR_UPDATES": "off",
             "REYN_CHUNKER_DIAG_DUMP_AFTER": "20",
+            "REYN_CHUNKER_DIAG_TEE_STDOUT": "1",
         },
     }
     # Create-then-enter so ``client`` is bound even if ``__aenter__`` (init)
