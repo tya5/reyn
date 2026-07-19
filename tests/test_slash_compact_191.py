@@ -26,6 +26,7 @@ from reyn.interfaces.slash import REGISTRY
 from reyn.runtime.budget.budget import BudgetTracker, CostConfig
 from reyn.runtime.chat_message import ChatMessage
 from reyn.runtime.session import Session
+from tests._support.agent_session import make_session
 
 # Compaction summary the engine's litellm call returns; new_turn_seqs lists the
 # candidate turn seqs (head=2/tail=2 over 8 turns → candidates 3..6).
@@ -59,7 +60,7 @@ def _make_session(tmp_path) -> Session:
     original = _mb.get_max_input_tokens
     _mb.get_max_input_tokens = lambda model, **kw: 2800  # type: ignore[assignment]
     try:
-        session = Session(
+        session = make_session(
             agent_name="default",
             budget_tracker=BudgetTracker(CostConfig()),
             state_log=StateLog(tmp_path / ".reyn" / "state" / "wal.jsonl"),

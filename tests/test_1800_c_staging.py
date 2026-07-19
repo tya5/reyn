@@ -38,6 +38,7 @@ from reyn.core.events.state_log import StateLog
 from reyn.llm.llm import LLMToolCallResult
 from reyn.llm.pricing import TokenUsage
 from reyn.runtime.session import Session
+from tests._support.agent_session import make_session
 
 # ---------------------------------------------------------------------------
 # Shared helpers
@@ -58,7 +59,7 @@ def _text_result(text: str = "ok") -> LLMToolCallResult:
 
 def _make_session(tmp_path: Path, *, agent_name: str = "test_agent") -> Session:
     """Build a minimal Session with WAL + snapshot path."""
-    return Session(
+    return make_session(
         agent_name=agent_name,
         state_log=StateLog(tmp_path / "state.wal"),
         snapshot_path=tmp_path / f"{agent_name}_snapshot.json",
@@ -277,7 +278,7 @@ async def test_c_staging_persist_and_restore(tmp_path) -> None:
     # Build a minimal snapshot with the staged entry.
     restored_snap = AgentSnapshot.load(session.agent_name, session._snapshot_path)
     # Call restore_state on a new session (same agent_name, same snapshot_path).
-    session4 = Session(
+    session4 = make_session(
         agent_name=session.agent_name,
         state_log=StateLog(tmp_path / "state2.wal"),
         snapshot_path=session._snapshot_path,
@@ -428,7 +429,7 @@ async def test_c_staging_durable_during_drain_wait(tmp_path) -> None:
 
     # Simulate restore: a fresh Session restores from the snapshot.
     # restore_state must recover the staged entry in _next_turn_context.
-    session2 = Session(
+    session2 = make_session(
         agent_name=session.agent_name,
         state_log=StateLog(tmp_path / "state2.wal"),
         snapshot_path=session._snapshot_path,

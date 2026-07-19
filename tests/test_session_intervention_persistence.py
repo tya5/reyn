@@ -29,6 +29,7 @@ from reyn.user_intervention import (
     InterventionChoice,
     UserIntervention,
 )
+from tests._support.agent_session import make_session
 
 # ---------------------------------------------------------------------------
 # Helpers (mirror tests/test_session_invariants.py pattern)
@@ -43,7 +44,7 @@ def _make_session(tmp_path: Path, *, agent_name: str = "alpha") -> Session:
     tests dispatch interventions and verify WAL persistence, treating the
     test itself as the listener that will resolve via ``deliver_answer``.
     """
-    session = Session(
+    session = make_session(
         agent_name=agent_name,
         state_log=StateLog(tmp_path / "state.wal"),
         snapshot_path=tmp_path / f"{agent_name}_snapshot.json",

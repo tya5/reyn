@@ -34,6 +34,7 @@ from reyn.runtime.registry import AgentRegistry
 from reyn.runtime.services.task_wake import WAKE_REQUESTER_KIND, TaskWaker
 from reyn.runtime.session import Session
 from reyn.task import InMemoryTaskBackend, Task, TaskRequesterKind, TaskState
+from tests._support.agent_session import make_session
 from tests._support.router_host_adapter import make_adapter
 
 
@@ -41,7 +42,7 @@ def _make_registry(tmp_path: Path) -> AgentRegistry:
     state_log = StateLog(tmp_path / "wal.jsonl")
 
     def _factory(profile: AgentProfile) -> Session:
-        s = Session(agent_name=profile.name, state_log=state_log)
+        s = make_session(agent_name=profile.name, state_log=state_log)
         s.register_intervention_listener("test")
         return s
 

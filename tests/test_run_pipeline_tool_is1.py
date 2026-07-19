@@ -39,6 +39,7 @@ from reyn.runtime.session_params import PresentationWiring
 from reyn.security.permissions.permissions import PermissionResolver
 from reyn.tools.pipeline_verbs import _handle_run_pipeline
 from reyn.tools.types import RouterCallerState, ToolContext
+from tests._support.agent_session import make_session
 
 
 class _ScriptedAgentReply:
@@ -66,7 +67,7 @@ def _agent_registry(
 
     def _factory(profile, *, presentation_consumer=None, intervention_bridge=None) -> Session:
         # #2708 P3.1: accept + forward the attached driver spawn's present-sink override.
-        s = Session(
+        s = make_session(
             agent_name=profile.name, state_log=state_log,
             registry=holder.get("reg"), non_interactive=True,
             presentation_wiring=PresentationWiring(presentation_consumer=presentation_consumer, intervention_bridge=intervention_bridge),

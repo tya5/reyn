@@ -48,12 +48,13 @@ from reyn.core.events.snapshot_generations import SnapshotGenerationStore
 from reyn.core.events.state_log import StateLog
 from reyn.runtime.services.snapshot_journal import SnapshotJournal
 from reyn.runtime.session import Session, _RecoveryBundle
+from tests._support.agent_session import make_session
 
 
 @pytest.fixture
 def session(tmp_path, monkeypatch) -> Session:
     monkeypatch.chdir(tmp_path)
-    return Session(agent_name="family2-recovery-bundle-test")
+    return make_session(agent_name="family2-recovery-bundle-test")
 
 
 class TestFamily2RecoveryBundleByteIdentical:
@@ -73,7 +74,7 @@ class TestFamily2RecoveryBundleByteIdentical:
         state_log = StateLog(tmp_path / "direct-builder.wal")
         # Session() itself isn't needed to invoke the (instance) builder method
         # directly — construct a minimal session only to obtain a bound method.
-        s = Session(agent_name="family2-direct-builder-test")
+        s = make_session(agent_name="family2-direct-builder-test")
         bundle = s._build_recovery_bundle(
             "family2-direct-builder-test",
             tmp_path / "direct-snapshot.json",
@@ -101,7 +102,7 @@ class TestFamily2RecoveryBundleByteIdentical:
         precondition ("No-op when no generation store / WAL is configured")."""
         monkeypatch.chdir(tmp_path)
         state_log = StateLog(tmp_path / "cut-generation.wal")
-        session = Session(agent_name="family2-cut-generation-test", state_log=state_log)
+        session = make_session(agent_name="family2-cut-generation-test", state_log=state_log)
         before = session._generation_store.seqs()
         await session.journal.append_inbox(kind="test", payload={"x": 1})
         await session.journal.cut_generation(anchor="probe")
@@ -120,7 +121,7 @@ class TestFamily2RecoveryBundleByteIdentical:
         ``journal._state_log`` identity."""
         monkeypatch.chdir(tmp_path)
         state_log = StateLog(tmp_path / "wiring.wal")
-        s = Session(agent_name="family2-state-log-wiring-test", state_log=state_log)
+        s = make_session(agent_name="family2-state-log-wiring-test", state_log=state_log)
         before = state_log.current_seq
         await s.journal.append_inbox(kind="test", payload={"y": 2})
         await state_log.flush()
@@ -138,7 +139,7 @@ class TestFamily2RecoveryBundleByteIdentical:
         peek."""
         monkeypatch.chdir(tmp_path)
         snap_path = tmp_path / "custom" / "snapshot.json"
-        s = Session(agent_name="family2-snapshot-path-test", snapshot_path=snap_path)
+        s = make_session(agent_name="family2-snapshot-path-test", snapshot_path=snap_path)
         await s.journal.save()
         assert snap_path.exists()
 
@@ -147,7 +148,7 @@ class TestFamily2RecoveryBundleByteIdentical:
         inputs reach the journal's in-memory snapshot, proven via the
         journal's own public ``snapshot`` property."""
         monkeypatch.chdir(tmp_path)
-        s = Session(
+        s = make_session(
             agent_name="family2-passthrough-test",
             session_id="family2-custom-sid",
         )
@@ -168,7 +169,7 @@ class TestFamily2RecoveryBundleByteIdentical:
         would pass against any store regardless of wiring (non-vacuous)."""
         monkeypatch.chdir(tmp_path)
         state_log = StateLog(tmp_path / "strip-falsify.wal")
-        session = Session(agent_name="family2-strip-falsify-test", state_log=state_log)
+        session = make_session(agent_name="family2-strip-falsify-test", state_log=state_log)
         fresh_store = SnapshotGenerationStore(
             "family2-strip-falsify", session._snapshot_path.parent / "fresh-generations",
         )

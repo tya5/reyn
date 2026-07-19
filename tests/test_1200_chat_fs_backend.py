@@ -17,10 +17,11 @@ from pathlib import Path
 from reyn.core.events.state_log import StateLog
 from reyn.environment.host_backend import HostBackend
 from reyn.runtime.session import Session
+from tests._support.agent_session import make_session
 
 
 def _session(tmp_path: Path, *, environment_backend=None, sandbox_backend=None) -> Session:
-    return Session(
+    return make_session(
         agent_name="b",
         state_log=StateLog(tmp_path / "state.wal"),
         snapshot_path=tmp_path / "snap.json",

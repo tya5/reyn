@@ -39,6 +39,7 @@ from reyn.runtime.budget.budget import BudgetTracker, CostConfig  # noqa: E402
 from reyn.runtime.profile import AgentProfile  # noqa: E402
 from reyn.runtime.registry import AgentRegistry  # noqa: E402
 from reyn.runtime.session import Session  # noqa: E402
+from tests._support.agent_session import make_session
 
 _EMPTY_USAGE = TokenUsage(prompt_tokens=10, completion_tokens=5)
 
@@ -60,7 +61,7 @@ def _build_registry(tmp_path: Path, agents: list[tuple[str, str]]) -> AgentRegis
         agent_dir = tmp_path / ".reyn" / "agents" / profile.name
         agent_dir.mkdir(parents=True, exist_ok=True)
         bt = BudgetTracker(CostConfig())
-        return Session(
+        return make_session(
             agent_name=profile.name,
             agent_role=profile.role,
             output_language="en",

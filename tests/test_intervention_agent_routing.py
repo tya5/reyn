@@ -31,6 +31,7 @@ import pytest
 from reyn.runtime.session import Session
 from reyn.runtime.session_buses import AgentRequestBus
 from reyn.user_intervention import InterventionAnswer, UserIntervention
+from tests._support.agent_session import make_session
 
 # ── 1. Hook methods exist with the canonical signatures ────────────────
 
@@ -61,7 +62,7 @@ def test_default_hooks_return_none() -> None:
     """Tier 2: default implementations return None — Phase 4 ships pure
     scaffold, no kind-specific policies enabled out-of-the-box.
     """
-    session = Session(agent_name="t")
+    session = make_session(agent_name="t")
     iv = UserIntervention(kind="ask_user", prompt="Q?")
 
     async def _check_self_answer() -> InterventionAnswer | None:
@@ -83,7 +84,7 @@ def test_default_routing_fires_user_channel_branch(tmp_path: Path) -> None:
     to verify the branch was actually taken (= the answer's emptiness
     is observable only if dispatch was reached).
     """
-    session = Session(agent_name="t")
+    session = make_session(agent_name="t")
     iv = UserIntervention(kind="ask_user", prompt="Q?")
 
     answer = asyncio.run(session.handle_intervention(iv))
@@ -97,7 +98,7 @@ def test_default_routing_emits_user_channel_event(tmp_path: Path) -> None:
     ``route="user_channel"`` so observers (= TUI events tab, debug
     traces, future routing-policy analysis) can see the decision.
     """
-    session = Session(agent_name="t")
+    session = make_session(agent_name="t")
     iv = UserIntervention(kind="ask_user", prompt="Q?")
 
     asyncio.run(session.handle_intervention(iv))

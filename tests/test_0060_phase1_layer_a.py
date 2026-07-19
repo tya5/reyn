@@ -61,6 +61,7 @@ from reyn.core.present import PresentBlueprintError, validate_blueprint
 from reyn.runtime.session import Session
 from reyn.schemas.models import PresentationInstallIROp
 from reyn.security.permissions.permissions import PermissionDecl, PermissionResolver
+from tests._support.agent_session import make_session
 from tests._support.router_host_adapter import make_adapter
 
 # ── shared stubs (real API surface, no mocks) ─────────────────────────────────
@@ -172,7 +173,7 @@ def test_turn_origin_maps_every_known_kind_and_fails_safe_on_unmapped(tmp_path):
     (test_2107_B15_preserve_self_continuation_1953.py). FALSIFY: if an unmapped
     kind fell through to "user_directed", this test goes RED (a Phase-4-gate
     bypass — 0060 SS2.7)."""
-    s = Session(agent_name="alice", state_log=StateLog(tmp_path / "wal.jsonl"))
+    s = make_session(agent_name="alice", state_log=StateLog(tmp_path / "wal.jsonl"))
     adapter = make_adapter(
         agent_name="alice", turn_origin_fn=lambda: s._current_turn_origin,
     )
@@ -287,7 +288,7 @@ async def test_hook_turn_through_real_tool_path_stamps_auto_improvement(tmp_path
     from reyn.tools.presentation_management_verbs import PRESENTATION_INSTALL
     from reyn.tools.types import RouterCallerState, ToolContext
 
-    s = Session(agent_name="alice", state_log=StateLog(tmp_path / "wal.jsonl"))
+    s = make_session(agent_name="alice", state_log=StateLog(tmp_path / "wal.jsonl"))
     # a REAL autonomous turn: a hook self-continuation (NOT a user turn).
     s._stamp_execution_context("hook", {"text": "autonomous continuation"})
 

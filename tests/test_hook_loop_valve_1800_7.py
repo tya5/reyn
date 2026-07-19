@@ -24,6 +24,7 @@ import pytest
 from reyn.config.chat import LoopConfig, OnLimitConfig, SafetyConfig
 from reyn.core.events.state_log import StateLog
 from reyn.runtime.session import Session
+from tests._support.agent_session import make_session
 
 
 def _make_session(tmp_path: Path, *, cap: int) -> Session:
@@ -31,7 +32,7 @@ def _make_session(tmp_path: Path, *, cap: int) -> Session:
         loop=LoopConfig(max_hook_driven_turns=cap),
         on_limit=OnLimitConfig(mode="unattended"),   # deny deterministically, no bus
     )
-    return Session(
+    return make_session(
         agent_name="valve-agent",
         state_log=StateLog(tmp_path / "state.wal"),
         snapshot_path=tmp_path / "snap.json",

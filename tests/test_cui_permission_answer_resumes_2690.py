@@ -50,6 +50,7 @@ from reyn.llm.llm import LLMToolCallResult
 from reyn.llm.pricing import TokenUsage
 from reyn.runtime.session import DEFAULT_CHAT_CHANNEL_ID, Session
 from reyn.security.permissions.permissions import PermissionResolver
+from tests._support.agent_session import make_session
 
 _USAGE = TokenUsage(prompt_tokens=5, completion_tokens=3)
 
@@ -106,7 +107,7 @@ async def _poll(pred, *, attempts: int = 150, delay: float = 0.02) -> bool:
 
 def _make_session(project_root: Path, *, wal: Path, snap: Path) -> Session:
     perm = PermissionResolver({}, project_root=project_root, interactive=True)
-    session = Session(
+    session = make_session(
         agent_name="test-agent",
         permission_resolver=perm,
         state_log=StateLog(wal),

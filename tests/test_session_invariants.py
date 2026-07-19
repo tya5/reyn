@@ -43,6 +43,7 @@ from reyn.user_intervention import (
     InterventionChoice,
     UserIntervention,
 )
+from tests._support.agent_session import make_session
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -149,7 +150,7 @@ def _make_session(
     if on_limit is not None:
         safety_kwargs["on_limit"] = on_limit
     safety = SafetyConfig(**safety_kwargs)
-    session = Session(
+    session = make_session(
         agent_name=agent_name,
         state_log=StateLog(tmp_path / "state.wal"),
         safety=safety,
@@ -225,7 +226,7 @@ async def test_chain_register_emits_wal_event(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
 
     registry = _FakeRegistry()
-    peer_session = Session(agent_name="peer_agent")
+    peer_session = make_session(agent_name="peer_agent")
     registry.register("peer_agent", peer_session)
 
     session = _make_session(tmp_path, registry=registry,
@@ -285,7 +286,7 @@ async def test_chain_resolve_clears_snapshot_and_emits_resolve(tmp_path, monkeyp
     monkeypatch.chdir(tmp_path)
 
     # Peer session: receives agent_request from us, we feed agent_response back.
-    peer_session = Session(agent_name="peer_agent")
+    peer_session = make_session(agent_name="peer_agent")
     registry = _FakeRegistry()
     registry.register("peer_agent", peer_session)
 
@@ -353,7 +354,7 @@ async def test_chain_timeout_fires_upstream_error_and_emits_event(tmp_path, monk
     monkeypatch.chdir(tmp_path)
 
     # upstream_session receives the error agent_response.
-    upstream_session = Session(agent_name="upstream_agent")
+    upstream_session = make_session(agent_name="upstream_agent")
     upstream_received: list[dict] = []
 
     async def _fake_submit_agent_response(*, from_agent, response, depth, chain_id, responder_sid=None):
@@ -368,7 +369,7 @@ async def test_chain_timeout_fires_upstream_error_and_emits_event(tmp_path, monk
     registry = _FakeRegistry()
     registry.register("upstream_agent", upstream_session)
     # Also add a peer so delegation succeeds.
-    peer_session = Session(agent_name="slow_peer")
+    peer_session = make_session(agent_name="slow_peer")
     registry.register("slow_peer", peer_session)
 
     # Short timeout so it fires fast. Use unattended mode so the chain
@@ -889,7 +890,7 @@ async def test_agent_request_empty_router_reply_sends_marker_upstream(
     """
     monkeypatch.chdir(tmp_path)
 
-    upstream_session = Session(agent_name="origin_agent")
+    upstream_session = make_session(agent_name="origin_agent")
     upstream_received: list[dict] = []
 
     async def _fake_submit_agent_response(*, from_agent, response, depth, chain_id, responder_sid=None):
@@ -955,7 +956,7 @@ async def test_agent_request_router_cap_exhausted_sends_marker_upstream(
     """
     monkeypatch.chdir(tmp_path)
 
-    upstream_session = Session(agent_name="origin_agent")
+    upstream_session = make_session(agent_name="origin_agent")
     upstream_received: list[dict] = []
 
     async def _fake_submit_agent_response(*, from_agent, response, depth, chain_id, responder_sid=None):
@@ -1090,7 +1091,7 @@ async def test_peer_no_reply_marker_forwarded_upstream_in_pending_chain(
     from reyn.runtime.session import _no_reply_marker
 
     # Set up upstream origin agent to capture the forwarded response.
-    origin_session = Session(agent_name="origin_agent")
+    origin_session = make_session(agent_name="origin_agent")
     upstream_received: list[dict] = []
 
     async def _fake_submit_agent_response(*, from_agent, response, depth, chain_id, responder_sid=None):

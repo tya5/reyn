@@ -47,6 +47,7 @@ from reyn.runtime.session import Session
 from reyn.security.permissions.permissions import PermissionDecl
 from reyn.tools.mcp_verbs import _handle_mcp_install_local
 from reyn.tools.types import RouterCallerState, ToolContext
+from tests._support.agent_session import make_session
 
 _PID_SERVER = Path(__file__).parent / "_support" / "mcp_tools_only_pid_server.py"
 _STDIO = {"command": sys.executable, "args": [str(_PID_SERVER)]}
@@ -100,7 +101,7 @@ def _Ctx(root: Path, rs: "RouterCallerState | None") -> ToolContext:
 
 def _session(tmp: Path) -> Session:
     (tmp / "reyn.yaml").write_text("model: standard\n", encoding="utf-8")
-    return Session(
+    return make_session(
         agent_name="mcp-pr3",
         state_log=StateLog(tmp / "s.wal"),
         snapshot_path=tmp / "snap.json",

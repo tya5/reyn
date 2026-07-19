@@ -52,6 +52,7 @@ from reyn.runtime.services.task_wake import (
 from reyn.runtime.session import Session
 from reyn.task import InMemoryTaskBackend, SqliteTaskBackend, Task, TaskRequesterKind, TaskState
 from reyn.task.subscription import SubscriptionRegistry
+from tests._support.agent_session import make_session
 from tests._support.task_subscription import SubscriptionBackend
 
 
@@ -60,7 +61,7 @@ def _make_registry(tmp_path: Path) -> AgentRegistry:
     state_log = StateLog(tmp_path / "wal.jsonl")
 
     def _factory(profile: AgentProfile) -> Session:
-        s = Session(agent_name=profile.name, state_log=state_log)
+        s = make_session(agent_name=profile.name, state_log=state_log)
         s.register_intervention_listener("test")
         return s
 
@@ -178,7 +179,7 @@ async def test_execution_context_threads_through_real_opctx_builder(tmp_path):
     state. Falsified by a builder that drops the field (the unit-green/live-broken L3
     failure that cost 3 misses in #2134)."""
     state_log = StateLog(tmp_path / "wal.jsonl")
-    s = Session(agent_name="alice", state_log=state_log)
+    s = make_session(agent_name="alice", state_log=state_log)
 
     # execute-wake (task_ready) stamps → the real builder threads it onto the ctx.
     s._stamp_execution_context(WAKE_READY_KIND, {"meta": {"task_id": "T-exec"}})

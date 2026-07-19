@@ -130,6 +130,7 @@ pytest.importorskip(
 )
 
 import reyn.builtin as _builtin_pkg  # noqa: E402
+from tests._support.agent_session import make_session
 
 _RAG_PLUGIN_DIR = Path(_builtin_pkg.__file__).resolve().parent / "plugins" / "rag"
 
@@ -463,7 +464,7 @@ def _build_registry(tmp_path: Path, project_root: Path):
     holder: dict = {}
 
     def _factory(profile, *, presentation_consumer=None, intervention_bridge=None) -> Session:
-        return Session(
+        return make_session(
             agent_name=profile.name, state_log=state_log,
             registry=holder.get("reg"), non_interactive=True,
             # #3121 step1 folded presentation_consumer / intervention_bridge into

@@ -22,6 +22,7 @@ from pathlib import Path
 import pytest
 
 from reyn.mcp.client import MCPClient
+from tests._support.agent_session import make_session
 
 _SUPPORT_DIR = Path(__file__).parent / "_support"
 _ECHO_SERVER = _SUPPORT_DIR / "mcp_fastmcp_echo_server.py"
@@ -40,7 +41,7 @@ async def test_shutdown_closes_main_session_held_mcp_connections(tmp_path: Path)
     from reyn.runtime.session import Session
 
     def _factory(profile, *, presentation_consumer=None, intervention_bridge=None) -> Session:
-        return Session(agent_name=profile.name, mcp_servers={"srv": _CFG})
+        return make_session(agent_name=profile.name, mcp_servers={"srv": _CFG})
 
     registry = AgentRegistry(project_root=tmp_path, session_factory=_factory)
     registry.create("owner")

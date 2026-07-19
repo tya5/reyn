@@ -25,6 +25,7 @@ from reyn.llm.model_resolver import ModelResolver
 from reyn.runtime.chat_message import ChatMessage
 from reyn.runtime.services import MemoryService, RouterHostAdapter
 from reyn.runtime.session import Session
+from tests._support.agent_session import make_session
 
 _REASONING = "REYN_1652_THOUGHTS: 17*23 = 391."
 
@@ -150,7 +151,7 @@ def test_continuity_section_surfaces_via_host():
 
 
 def _session(reasoning_config, tmp_path):
-    return Session(
+    return make_session(
         agent_name="t",
         state_log=StateLog(tmp_path / "wal.jsonl"),
         snapshot_path=tmp_path / "snap.json",

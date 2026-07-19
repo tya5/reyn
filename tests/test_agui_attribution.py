@@ -19,10 +19,11 @@ from _async_wait import wait_until  # noqa: E402 — shared #1751 test wait help
 from reyn.core.events.state_log import StateLog
 from reyn.runtime.session import Session
 from reyn.user_intervention import UserIntervention
+from tests._support.agent_session import make_session
 
 
 def _make_session(tmp_path: Path) -> Session:
-    session = Session(
+    session = make_session(
         agent_name="alpha",
         state_log=StateLog(tmp_path / "state.wal"),
         snapshot_path=tmp_path / "alpha_snapshot.json",

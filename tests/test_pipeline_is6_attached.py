@@ -72,6 +72,7 @@ from reyn.runtime.session_api import run_pipeline_attached, start_pipeline_run
 from reyn.runtime.session_params import PresentationWiring
 from reyn.tools.pipeline_verbs import _make_tool_dispatch
 from reyn.tools.types import ToolContext
+from tests._support.agent_session import make_session
 
 
 class _ScriptedAgentReply:
@@ -100,7 +101,7 @@ def _agent_registry(
     def _factory(profile, *, presentation_consumer=None, intervention_bridge=None) -> Session:
         # #2708 P3.1: the attached driver spawn threads a present-sink override through the
         # factory; accept + forward it (None = Session's default self-bound consumer).
-        s = Session(
+        s = make_session(
             agent_name=profile.name, state_log=state_log,
             registry=holder.get("reg"), non_interactive=True,
             presentation_wiring=PresentationWiring(presentation_consumer=presentation_consumer, intervention_bridge=intervention_bridge),

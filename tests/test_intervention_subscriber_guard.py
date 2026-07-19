@@ -37,6 +37,7 @@ from reyn.runtime.budget.budget import BudgetTracker, CostConfig
 from reyn.runtime.services.intervention_registry import InterventionRegistry
 from reyn.runtime.session import Session
 from reyn.user_intervention import InterventionAnswer, UserIntervention
+from tests._support.agent_session import make_session
 
 # ── 1. Default (legacy) — no enforcement ────────────────────────────────
 
@@ -220,7 +221,7 @@ def test_chat_session_constructs_registry_in_enforced_mode(tmp_path: Path) -> No
     AND starts with zero listeners (= test / headless contexts get the
     short-circuit by default).
     """
-    session = Session(agent_name="test_agent")
+    session = make_session(agent_name="test_agent")
     # Internal attribute access is acceptable here because we are pinning
     # the wiring invariant the entry-point relies on. The public surface
     # ``register_intervention_listener`` is what callers use.
@@ -232,7 +233,7 @@ def test_chat_session_register_intervention_listener_round_trip() -> None:
     """Tier 2: Session's public register / unregister thin wrappers
     update the registry's listener set.
     """
-    session = Session(agent_name="test_agent")
+    session = make_session(agent_name="test_agent")
 
     session.register_intervention_listener("tui")
     assert session.interventions.has_active_listener() is True
@@ -263,7 +264,7 @@ def test_safety_limit_under_interactive_no_timeout_no_listener_no_hang(
         loop=LoopConfig(max_router_calls_per_turn=3),
         on_limit=OnLimitConfig(mode="interactive", ask_timeout_seconds=0.0),
     )
-    session = Session(
+    session = make_session(
         agent_name="test_agent",
         output_language="ja",
         budget_tracker=BudgetTracker(CostConfig()),

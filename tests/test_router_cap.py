@@ -30,6 +30,7 @@ from reyn.config import LoopConfig, SafetyConfig
 from reyn.runtime.budget.budget import BudgetTracker, CostConfig
 from reyn.runtime.errors import RouterCapExceeded
 from reyn.runtime.session import Session
+from tests._support.agent_session import make_session
 
 
 def _run(coro):
@@ -46,7 +47,7 @@ def _make_session(
     The caller is responsible for chdir-ing into `tmp_path`.
     """
     safety = SafetyConfig(loop=LoopConfig(max_router_calls_per_turn=cap))
-    return Session(
+    return make_session(
         agent_name="test_agent",
         budget_tracker=BudgetTracker(CostConfig()),
         safety=safety,

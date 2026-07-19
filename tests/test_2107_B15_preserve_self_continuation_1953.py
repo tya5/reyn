@@ -32,6 +32,7 @@ from reyn.hooks.dispatcher import HOOK_INBOX_KIND
 from reyn.runtime.services.task_wake import WAKE_READY_KIND
 from reyn.runtime.session import Session
 from reyn.task import InMemoryTaskBackend, TaskRequesterKind
+from tests._support.agent_session import make_session
 from tests._support.router_host_adapter import make_adapter
 
 
@@ -41,7 +42,7 @@ def _create_op(name, *, deps=None):
 
 
 def _session(tmp_path: Path) -> Session:
-    return Session(agent_name="alice", state_log=StateLog(tmp_path / "wal.jsonl"))
+    return make_session(agent_name="alice", state_log=StateLog(tmp_path / "wal.jsonl"))
 
 
 @pytest.fixture(autouse=True)

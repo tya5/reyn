@@ -21,6 +21,7 @@ from reyn.core.events.state_log import StateLog
 from reyn.runtime.registry import _count_inflight_disposition
 from reyn.runtime.session import Session
 from reyn.runtime.session_params import ReactivityConfig
+from tests._support.agent_session import make_session
 
 
 @pytest.mark.asyncio
@@ -45,7 +46,7 @@ async def test_inflight_disposition_counts_cancelled_vs_finished():
 
 
 def _make_session(tmp_path: Path) -> Session:
-    return Session(
+    return make_session(
         agent_name="t",
         state_log=StateLog(tmp_path / "state.wal"),
         snapshot_path=tmp_path / "snap.json",

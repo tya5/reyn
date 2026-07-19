@@ -28,6 +28,7 @@ from reyn.core.events.state_log import StateLog
 from reyn.mcp.connection_service import MCPConnectionService
 from reyn.runtime.session import Session
 from reyn.runtime.session_params import ReactivityConfig
+from tests._support.agent_session import make_session
 
 _SUPPORT_DIR = Path(__file__).parent / "_support"
 _SUBSCRIBABLE_SERVER = _SUPPORT_DIR / "mcp_subscribable_resources_server.py"
@@ -49,7 +50,7 @@ async def _wait_for(predicate, *, attempts: int = 100, delay: float = 0.02) -> N
 
 
 def _make_session(tmp_path: Path, *, hooks_config=None) -> Session:
-    return Session(
+    return make_session(
         agent_name="test-agent",
         state_log=StateLog(tmp_path / "state.wal"),
         snapshot_path=tmp_path / "snap.json",

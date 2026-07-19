@@ -42,6 +42,7 @@ from reyn.runtime.registry import AgentRegistry
 from reyn.runtime.services.pipeline_executor_driver import PipelineExecutorDriver
 from reyn.runtime.session import Session
 from reyn.runtime.session_params import PresentationWiring
+from tests._support.agent_session import make_session
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -61,7 +62,7 @@ def _make_session(tmp_path: Path, *, agent_name: str = "test-agent") -> Session:
     from reyn.data.pipelines.registry import build_pipeline_registry
     cfg = load_config(tmp_path)
     registry = build_pipeline_registry(cfg.pipelines, tmp_path)
-    return Session(
+    return make_session(
         agent_name=agent_name,
         state_log=StateLog(tmp_path / "state.wal"),
         snapshot_path=tmp_path / "snap.json",
@@ -164,7 +165,7 @@ async def test_hotreload_changes_pipeline_description_on_live_registry(
 async def test_hotreload_seam_registered(tmp_path: Path) -> None:
     """Tier 2: the Session registers the pipelines seam on the HotReloader."""
     (tmp_path / "reyn.yaml").write_text("model: standard\n", encoding="utf-8")
-    session = Session(
+    session = make_session(
         agent_name="a", state_log=StateLog(tmp_path / "s.wal"),
         snapshot_path=tmp_path / "snap.json",
     )
@@ -267,7 +268,7 @@ def _worker_registry(tmp_path: Path, state_log: StateLog, pipeline_registry: Pip
     holder: dict = {}
 
     def _factory(profile, *, presentation_consumer=None, intervention_bridge=None) -> Session:
-        return Session(
+        return make_session(
             presentation_wiring=PresentationWiring(presentation_consumer=presentation_consumer, intervention_bridge=intervention_bridge),
             agent_name=profile.name, state_log=state_log,
             registry=holder.get("reg"), non_interactive=True,

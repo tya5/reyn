@@ -24,10 +24,11 @@ from reyn.security.permissions.effective import (
     ContextualPermission,
     tool_contextually_denied,
 )
+from tests._support.agent_session import make_session
 
 
 def _session(tmp_path: Path, *, contextual=None) -> Session:
-    s = Session(
+    s = make_session(
         agent_name="alpha",
         state_log=StateLog(tmp_path / "state.wal"),
         snapshot_path=tmp_path / "snap.json",

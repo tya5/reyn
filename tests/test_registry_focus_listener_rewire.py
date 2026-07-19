@@ -20,13 +20,14 @@ from reyn.runtime.budget.budget import BudgetTracker, CostConfig
 from reyn.runtime.profile import AgentProfile
 from reyn.runtime.registry import AgentRegistry
 from reyn.runtime.session import DEFAULT_CHAT_CHANNEL_ID, Session
+from tests._support.agent_session import make_session
 
 
 def _registry(tmp_path) -> AgentRegistry:
     def factory(profile: AgentProfile) -> Session:
         agent_dir = tmp_path / ".reyn" / "agents" / profile.name
         agent_dir.mkdir(parents=True, exist_ok=True)
-        return Session(
+        return make_session(
             agent_name=profile.name,
             agent_role=profile.role,
             output_language="en",

@@ -38,6 +38,7 @@ from reyn.core.events.state_log import StateLog
 from reyn.runtime.chat_message import ChatMessage
 from reyn.runtime.session import Session
 from reyn.security.permissions.permissions import PermissionResolver
+from tests._support.agent_session import make_session
 
 
 def _make_session(
@@ -46,7 +47,7 @@ def _make_session(
     """Build a Session redirected to ``tmp_path`` with a shared
     PermissionResolver injected.
     """
-    return Session(
+    return make_session(
         agent_name=agent_name,
         state_log=StateLog(tmp_path / f"{agent_name}.wal"),
         snapshot_path=tmp_path / f"{agent_name}_snapshot.json",
@@ -211,7 +212,7 @@ def test_session_with_no_resolver_works_unchanged(tmp_path):
     PermissionResolver (= CLI / test stubs). No callback registered,
     no crash on shutdown. Backward compat path.
     """
-    session = Session(
+    session = make_session(
         agent_name="loner",
         state_log=StateLog(tmp_path / "loner.wal"),
         snapshot_path=tmp_path / "loner_snapshot.json",

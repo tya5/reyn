@@ -18,10 +18,11 @@ from reyn.core.events.agent_snapshot import AgentSnapshot
 from reyn.core.events.state_log import StateLog
 from reyn.runtime.session import Session
 from reyn.user_intervention import InterventionAnswer, UserIntervention
+from tests._support.agent_session import make_session
 
 
 def _session(tmp_path: Path, log: StateLog, *, agent: str = "alpha") -> Session:
-    session = Session(
+    session = make_session(
         agent_name=agent, state_log=log, snapshot_path=tmp_path / "snap.json",
     )
     session.register_intervention_listener("test")

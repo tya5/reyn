@@ -25,6 +25,7 @@ import pytest
 from reyn.core.events.agent_snapshot import AgentSnapshot
 from reyn.core.events.state_log import StateLog
 from reyn.runtime.session import Session
+from tests._support.agent_session import make_session
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -38,7 +39,7 @@ def _make_session(tmp_path: Path, *, agent_name: str = "alpha") -> Session:
     ``enforce_listener_presence=True`` short-circuit does not fire — these
     tests exercise restore + answer paths, acting as their own listener.
     """
-    session = Session(
+    session = make_session(
         agent_name=agent_name,
         state_log=StateLog(tmp_path / "state.wal"),
         snapshot_path=tmp_path / f"{agent_name}_snapshot.json",
@@ -102,7 +103,7 @@ async def test_registry_restore_all_includes_outstanding_interventions(tmp_path,
     # session_factory: minimal Session with WAL persistence enabled,
     # consistent with how the chat REPL builds them in production.
     def _factory(profile: AgentProfile):
-        s = Session(agent_name=profile.name, state_log=state_log)
+        s = make_session(agent_name=profile.name, state_log=state_log)
         s.register_intervention_listener("test")
         return s
     registry = AgentRegistry(

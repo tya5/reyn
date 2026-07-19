@@ -30,6 +30,7 @@ from reyn.interfaces.slash.model import model_cmd
 from reyn.llm.model_resolver import ModelResolver
 from reyn.runtime.outbox import OutboxMessage
 from reyn.runtime.session import Session
+from tests._support.agent_session import make_session
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -37,7 +38,7 @@ from reyn.runtime.session import Session
 
 def _make_session(tmp_path: Path, *, model: str = "standard") -> Session:
     """Minimal real Session with WAL."""
-    return Session(
+    return make_session(
         agent_name="test_agent",
         model=model,
         state_log=StateLog(tmp_path / "state.wal"),

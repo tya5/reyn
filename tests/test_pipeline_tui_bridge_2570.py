@@ -41,6 +41,7 @@ from reyn.runtime.session import Session
 from reyn.runtime.session_api import run_pipeline_attached
 from reyn.runtime.session_params import PresentationWiring
 from reyn.schemas.models import Event
+from tests._support.agent_session import make_session
 
 
 def _drain(q: asyncio.Queue) -> list[Any]:
@@ -56,7 +57,7 @@ def _agent_registry(tmp_path: Path, state_log: "StateLog") -> AgentRegistry:
 
     def _factory(profile, *, presentation_consumer=None, intervention_bridge=None) -> Session:
         # #2708 P3.1: accept + forward the attached driver spawn's present-sink override.
-        return Session(
+        return make_session(
             agent_name=profile.name, state_log=state_log,
             registry=holder.get("reg"), non_interactive=True,
             presentation_wiring=PresentationWiring(presentation_consumer=presentation_consumer, intervention_bridge=intervention_bridge),

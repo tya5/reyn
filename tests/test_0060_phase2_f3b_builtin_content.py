@@ -66,6 +66,7 @@ from reyn.prompt.router_frame import (
     render_mechanism_routing_frame,
 )
 from reyn.runtime.session_params import PresentationWiring
+from tests._support.agent_session import make_session
 
 _REPO_ROOT = Path(__file__).parent.parent
 _CHEAT_SHEET_PATH = Path(BUILTIN_SKILLS["reyn_cheat_sheet"]["path"])
@@ -197,7 +198,7 @@ def _agent_registry(tmp_path: Path, state_log, scripted: "_ScriptedAgentReply"):
     resolver = ModelResolver({"standard": "gemini/gemini-2.5-flash-lite"})
 
     def _factory(profile, *, presentation_consumer=None, intervention_bridge=None) -> Session:
-        s = Session(
+        s = make_session(
             presentation_wiring=PresentationWiring(presentation_consumer=presentation_consumer, intervention_bridge=intervention_bridge),
             agent_name=profile.name, state_log=state_log,
             registry=holder.get("reg"), non_interactive=True,

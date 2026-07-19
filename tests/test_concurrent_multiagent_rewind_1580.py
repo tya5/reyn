@@ -28,6 +28,7 @@ from reyn.core.events.state_log import StateLog
 from reyn.runtime.profile import AgentProfile
 from reyn.runtime.registry import AgentRegistry
 from reyn.runtime.session import Session
+from tests._support.agent_session import make_session
 
 
 class _FakeTurnDriver:
@@ -60,7 +61,7 @@ def _two_agent_registry(tmp_path: Path):
 
     def _factory(profile: AgentProfile) -> Session:
         snap = tmp_path / ".reyn" / "agents" / profile.name / "state" / "snapshot.json"
-        return Session(agent_name=profile.name, state_log=state_log, snapshot_path=snap)
+        return make_session(agent_name=profile.name, state_log=state_log, snapshot_path=snap)
 
     reg = AgentRegistry(project_root=tmp_path, session_factory=_factory, state_log=state_log)
     for name in ("alpha", "beta"):

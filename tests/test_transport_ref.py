@@ -28,6 +28,7 @@ from reyn.runtime.transport import (
     TransportRef,
     TuiRef,
 )
+from tests._support.agent_session import make_session
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -36,7 +37,7 @@ from reyn.runtime.transport import (
 
 def _make_session(tmp_path: Path, *, agent_name: str = "test_agent") -> Session:
     """Build a minimal Session wired to tmp_path."""
-    return Session(
+    return make_session(
         agent_name=agent_name,
         state_log=StateLog(tmp_path / "state.wal"),
         snapshot_path=tmp_path / f"{agent_name}_snapshot.json",
@@ -432,7 +433,7 @@ async def test_a2a_endpoint_uses_message_bus(tmp_path, monkeypatch):
         agent_dir = tmp_path / ".reyn" / "agents" / profile.name
         agent_dir.mkdir(parents=True, exist_ok=True)
         bt = BudgetTracker(CostConfig())
-        return Session(
+        return make_session(
             agent_name=profile.name,
             agent_role=profile.role,
             output_language="en",

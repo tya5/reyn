@@ -18,6 +18,7 @@ from reyn.llm.llm import LLMToolCallResult
 from reyn.llm.pricing import TokenUsage, estimate_cost
 from reyn.runtime.router_loop import RouterLoop
 from reyn.runtime.session import Session
+from tests._support.agent_session import make_session
 
 # ---------------------------------------------------------------------------
 # Helpers shared with existing router tests
@@ -150,7 +151,7 @@ def test_router_loop_total_usage_propagates_to_session(tmp_path, monkeypatch):
     TokenUsage and _run_router_loop credits it to Session._total_usage.
     """
     monkeypatch.chdir(tmp_path)
-    session = Session(agent_name="test_agent")
+    session = make_session(agent_name="test_agent")
 
     async def _stub_call_llm_tools(**kwargs):
         return _text_result("こんにちは")

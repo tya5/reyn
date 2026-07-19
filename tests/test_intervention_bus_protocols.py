@@ -47,6 +47,7 @@ from reyn.user_intervention import (
     UserChannel,
     UserIntervention,
 )
+from tests._support.agent_session import make_session
 
 # ── 1. Protocol definitions ────────────────────────────────────────────
 
@@ -99,7 +100,7 @@ def test_stdin_intervention_bus_satisfies_both_protocols() -> None:
 
 def test_chat_intervention_bus_satisfies_both_protocols(tmp_path: Path) -> None:
     """Tier 2: ``ChatInterventionBus`` satisfies both Protocols."""
-    session = Session(agent_name="t")
+    session = make_session(agent_name="t")
     bus = ChatInterventionBus(session, run_id="r1", actor="demo")
     assert isinstance(bus, RequestBus)
     assert isinstance(bus, UserChannel)

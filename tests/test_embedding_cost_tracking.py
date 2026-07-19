@@ -36,6 +36,7 @@ from reyn.runtime.budget.budget import BudgetTracker, CostConfig
 from reyn.runtime.profile import AgentProfile
 from reyn.runtime.registry import AgentRegistry
 from reyn.runtime.services.budget_gateway import BudgetGateway
+from tests._support.agent_session import make_session
 
 _MODEL_A = "text-embedding-3-small"
 _MODEL_B = "text-embedding-3-large"
@@ -179,7 +180,7 @@ def _registry(tmp_path, tracker: "BudgetTracker | None" = None) -> AgentRegistry
     def factory(profile: AgentProfile):
         agent_dir = tmp_path / ".reyn" / "agents" / profile.name
         agent_dir.mkdir(parents=True, exist_ok=True)
-        return Session(
+        return make_session(
             agent_name=profile.name,
             agent_role=profile.role,
             output_language="en",

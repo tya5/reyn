@@ -14,6 +14,7 @@ from pathlib import Path
 
 from reyn.core.events.state_log import StateLog
 from reyn.runtime.session import DEFAULT_CHAT_CHANNEL_ID, Session
+from tests._support.agent_session import make_session
 
 
 def test_chat_session_auto_refuses_until_repl_listener_is_registered(
@@ -21,7 +22,7 @@ def test_chat_session_auto_refuses_until_repl_listener_is_registered(
 ) -> None:
     """Tier 2: a chat session enforces listener presence (no listener → auto-
     refuse); registering the REPL's channel id makes interventions surface."""
-    session = Session(
+    session = make_session(
         agent_name="default", state_log=StateLog(tmp_path / "wal.jsonl")
     )
     # Production config: fail-closed when nothing is listening.

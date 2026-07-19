@@ -38,6 +38,7 @@ from reyn.runtime.budget.budget import BudgetTracker, CostConfig
 from reyn.runtime.profile import PROFILE_FILENAME, AgentProfile
 from reyn.runtime.registry import AgentRegistry
 from reyn.runtime.session import Session
+from tests._support.agent_session import make_session
 
 # ---------------------------------------------------------------------------
 # Shared helpers
@@ -71,7 +72,7 @@ def _make_registry(tmp_path: Path, *, agent_name: str = "default") -> AgentRegis
         agent_dir = tmp_path / ".reyn" / "agents" / profile.name
         agent_dir.mkdir(parents=True, exist_ok=True)
         bt = BudgetTracker(CostConfig())
-        session = Session(
+        session = make_session(
             agent_name=profile.name,
             agent_role=profile.role,
             output_language="en",

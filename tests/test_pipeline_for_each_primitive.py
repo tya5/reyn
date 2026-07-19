@@ -65,6 +65,7 @@ from reyn.llm.pricing import TokenUsage
 from reyn.runtime.registry import AgentRegistry
 from reyn.runtime.session import Session
 from reyn.runtime.session_params import PresentationWiring
+from tests._support.agent_session import make_session
 
 # ── happy path: concurrent isolated items, ordered collect, N2 out ───────────
 
@@ -588,7 +589,7 @@ def _agent_registry(tmp_path: Path, state_log: StateLog, scripted: _ScriptedAgen
     holder: dict = {}
 
     def _factory(profile, *, presentation_consumer=None, intervention_bridge=None) -> Session:
-        s = Session(
+        s = make_session(
             presentation_wiring=PresentationWiring(presentation_consumer=presentation_consumer, intervention_bridge=intervention_bridge),
             agent_name=profile.name, state_log=state_log,
             registry=holder.get("reg"), non_interactive=True,

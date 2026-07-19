@@ -16,6 +16,7 @@ from reyn.runtime.budget.budget import BudgetTracker, CostConfig
 from reyn.runtime.profile import AgentProfile
 from reyn.runtime.registry import _DEFAULT_SID, AgentRegistry
 from reyn.runtime.session import Session
+from tests._support.agent_session import make_session
 
 
 def _registry(tmp_path, tracker: "BudgetTracker | None" = None):
@@ -26,7 +27,7 @@ def _registry(tmp_path, tracker: "BudgetTracker | None" = None):
     def factory(profile: AgentProfile):
         agent_dir = tmp_path / ".reyn" / "agents" / profile.name
         agent_dir.mkdir(parents=True, exist_ok=True)
-        return Session(
+        return make_session(
             agent_name=profile.name,
             agent_role=profile.role,
             output_language="en",

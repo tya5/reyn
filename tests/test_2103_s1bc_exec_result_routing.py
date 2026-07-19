@@ -29,6 +29,7 @@ from reyn.runtime.profile import AgentProfile
 from reyn.runtime.registry import AgentRegistry
 from reyn.runtime.session import Session
 from reyn.runtime.session_params import PresentationWiring
+from tests._support.agent_session import make_session
 
 
 def _registry(tmp_path: Path) -> AgentRegistry:
@@ -39,7 +40,7 @@ def _registry(tmp_path: Path) -> AgentRegistry:
         # wire the registry back-reference (= what production frontends pass) so the
         # A2A response callback (_a2a_send_response) can route — without it the
         # response is silently dropped (registry is None).
-        return Session(
+        return make_session(
             agent_name=profile.name, state_log=state_log, registry=holder.get("reg"),
             presentation_wiring=PresentationWiring(presentation_consumer=presentation_consumer, intervention_bridge=intervention_bridge),         )
 

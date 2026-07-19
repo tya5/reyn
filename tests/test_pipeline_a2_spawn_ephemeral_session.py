@@ -22,13 +22,14 @@ from reyn.runtime.registry import AgentRegistry
 from reyn.runtime.session import Session
 from reyn.runtime.session_api import spawn_ephemeral_session
 from reyn.runtime.session_params import PresentationWiring
+from tests._support.agent_session import make_session
 
 
 def _registry(tmp_path: Path) -> AgentRegistry:
     state_log = StateLog(tmp_path / ".reyn" / "wal.jsonl")
 
     def _factory(profile, *, presentation_consumer=None, intervention_bridge=None) -> Session:
-        return Session(
+        return make_session(
             agent_name=profile.name, state_log=state_log,
             presentation_wiring=PresentationWiring(presentation_consumer=presentation_consumer, intervention_bridge=intervention_bridge),
         )

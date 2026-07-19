@@ -49,6 +49,7 @@ from reyn.user_intervention import (
     InterventionAnswer,
     UserIntervention,
 )
+from tests._support.agent_session import make_session
 
 # ── 1. UserIntervention origin_channel_id field ───────────────────────
 
@@ -211,7 +212,7 @@ def test_handle_intervention_with_no_origin_uses_existing_path() -> None:
     dispatch short-circuits to empty answer; we verify the path
     reached the short-circuit rather than the stall queue.
     """
-    session = Session(agent_name="test")
+    session = make_session(agent_name="test")
     iv = UserIntervention(kind="ask_user", prompt="Q?")
     # No origin_channel_id, no listener.
 
@@ -226,7 +227,7 @@ def test_handle_intervention_with_registered_origin_uses_dispatch_path() -> None
     """Tier 2: when origin_channel_id is registered as a listener,
     the dispatch path runs (= origin alive → not stalled).
     """
-    session = Session(agent_name="test")
+    session = make_session(agent_name="test")
     session.register_intervention_listener("tui:session-a")
 
     async def _drive() -> tuple[InterventionAnswer, str]:
@@ -261,7 +262,7 @@ def test_handle_intervention_with_closed_origin_parks_in_stalled_queue() -> None
       - handle_intervention is awaiting (= doesn't return until
         future resolves via discard / claim)
     """
-    session = Session(agent_name="test")
+    session = make_session(agent_name="test")
     # Register a different listener — origin won't match.
     session.register_intervention_listener("tui:current-session")
 
@@ -292,7 +293,7 @@ def test_handle_intervention_emits_user_channel_stalled_route_event() -> None:
     ``intervention_routed{route="user_channel_stalled"}`` is emitted,
     distinct from the regular ``"user_channel"`` route event.
     """
-    session = Session(agent_name="test")
+    session = make_session(agent_name="test")
     session.register_intervention_listener("tui:current")
 
     async def _drive() -> None:
@@ -326,7 +327,7 @@ def test_list_stalled_interventions_returns_pending_op_views() -> None:
     """Tier 2: list_stalled_interventions returns a list of
     PendingOpView with the documented field shape.
     """
-    session = Session(agent_name="test")
+    session = make_session(agent_name="test")
     session.register_intervention_listener("tui:current")
 
     async def _drive() -> list[PendingOpView]:
@@ -360,7 +361,7 @@ def test_discard_pending_intervention_emits_audit_event_on_success() -> None:
     ``pending_intervention_discarded`` audit event for the P6 audit
     trail when the iv was actually discarded.
     """
-    session = Session(agent_name="test")
+    session = make_session(agent_name="test")
     session.register_intervention_listener("tui:current")
 
     async def _drive() -> None:
@@ -392,7 +393,7 @@ def test_discard_pending_intervention_returns_false_for_unknown_id() -> None:
     """Tier 2: discard on unknown id is safe + returns False without
     raising or emitting an event.
     """
-    session = Session(agent_name="test")
+    session = make_session(agent_name="test")
 
     async def _drive() -> bool:
         return await session.discard_pending_intervention("nonexistent")
@@ -412,7 +413,7 @@ def test_claim_pending_intervention_rebinds_origin_and_returns_view() -> None:
         rebound iv; we deliver an answer via the new channel to
         complete the lifecycle cleanly
     """
-    session = Session(agent_name="test")
+    session = make_session(agent_name="test")
     session.register_intervention_listener("tui:current")
     session.register_intervention_listener("tui:claimer")
 
@@ -446,7 +447,7 @@ def test_claim_pending_intervention_rebinds_origin_and_returns_view() -> None:
 
 def test_claim_pending_intervention_returns_none_for_unknown_id() -> None:
     """Tier 2: claim on unknown id returns None, no exception."""
-    session = Session(agent_name="test")
+    session = make_session(agent_name="test")
 
     async def _drive() -> "PendingOpView | None":
         return await session.claim_pending_intervention(

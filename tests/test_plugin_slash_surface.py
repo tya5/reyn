@@ -38,6 +38,7 @@ from reyn.interfaces.slash import plugin as plugin_slash
 from reyn.runtime.outbox import OutboxMessage
 from reyn.runtime.session import Session
 from reyn.security.permissions.permissions import PermissionResolver
+from tests._support.agent_session import make_session
 
 # ── shared fixtures ─────────────────────────────────────────────────────────
 
@@ -88,7 +89,7 @@ def _make_session(
     path for real requires the operator-equivalent explicit
     ``sandbox.policy.write_paths`` grant, supplied here."""
     (tmp_path / "reyn.yaml").write_text("model: standard\n", encoding="utf-8")
-    session = Session(
+    session = make_session(
         agent_name=agent_name,
         state_log=StateLog(tmp_path / "state.wal"),
         snapshot_path=tmp_path / "snap.json",

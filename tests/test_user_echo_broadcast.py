@@ -56,6 +56,7 @@ from reyn.runtime.services.intervention_registry import InterventionRegistry
 from reyn.runtime.services.snapshot_journal import SnapshotJournal
 from reyn.runtime.session import Session
 from reyn.user_intervention import InterventionChoice, UserIntervention
+from tests._support.agent_session import make_session
 
 # ---------------------------------------------------------------------------
 # Helpers — Session (Part A)
@@ -65,7 +66,7 @@ from reyn.user_intervention import InterventionChoice, UserIntervention
 def _make_session(tmp_path: Path, *, agent_name: str = "test_agent") -> Session:
     """Minimal real Session — no router/registry needed for the outbox-only
     invariants exercised here."""
-    session = Session(
+    session = make_session(
         agent_name=agent_name,
         state_log=StateLog(tmp_path / "state.wal"),
         safety=SafetyConfig(timeout=TimeoutConfig(chain_seconds=60.0)),

@@ -35,6 +35,7 @@ pytest.importorskip("httpx", reason="httpx not installed (needed by TestClient)"
 
 
 from reyn.interfaces.web.run_registry import RunRegistry  # noqa: E402
+from tests._support.agent_session import make_session
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -251,7 +252,7 @@ def test_agent_card_shows_streaming_and_push_notifications_true(tmp_path) -> Non
         agent_dir = tmp_path / ".reyn" / "agents" / profile.name
         agent_dir.mkdir(parents=True, exist_ok=True)
         bt = BudgetTracker(CostConfig())
-        return Session(
+        return make_session(
             agent_name=profile.name,
             agent_role=profile.role,
             output_language="en",
@@ -324,7 +325,7 @@ def test_answer_injection_delivers_to_pending_intervention(tmp_path) -> None:
         agent_dir = tmp_path / ".reyn" / "agents" / profile.name
         agent_dir.mkdir(parents=True, exist_ok=True)
         bt = BudgetTracker(CostConfig())
-        return Session(
+        return make_session(
             agent_name=profile.name,
             agent_role=profile.role,
             output_language="en",
@@ -443,7 +444,7 @@ def test_answer_injection_returns_answered_false_for_unknown_task(tmp_path) -> N
         agent_dir = tmp_path / ".reyn" / "agents" / profile.name
         agent_dir.mkdir(parents=True, exist_ok=True)
         bt = BudgetTracker(CostConfig())
-        return Session(
+        return make_session(
             agent_name=profile.name,
             agent_role=profile.role,
             output_language="en",

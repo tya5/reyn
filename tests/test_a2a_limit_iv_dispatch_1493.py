@@ -32,6 +32,7 @@ from reyn.interfaces.web.a2a_intervention import A2AInterventionBus
 from reyn.interfaces.web.run_registry import RunRegistry
 from reyn.runtime.session import Session
 from reyn.user_intervention import InterventionAnswer, UserIntervention
+from tests._support.agent_session import make_session
 
 
 def _make_bus_and_registry(
@@ -145,5 +146,5 @@ def test_a2a_session_on_limit_threads_from_safety_config() -> None:
     The deps.py seam is inspection-trivial (one `safety=config.safety` kwarg).
     """
     safety = SafetyConfig(on_limit=OnLimitConfig(mode="interactive"))
-    session = Session(agent_name="a2a-regression-test", safety=safety)
+    session = make_session(agent_name="a2a-regression-test", safety=safety)
     assert session.on_limit.mode == "interactive"

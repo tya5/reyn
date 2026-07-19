@@ -33,6 +33,7 @@ from reyn.runtime.profile import AgentProfile
 from reyn.runtime.registry import AgentRegistry
 from reyn.runtime.services.snapshot_journal import SnapshotJournal
 from reyn.runtime.session import Session
+from tests._support.agent_session import make_session
 
 # ---------------------------------------------------------------------------
 # A.1 — in-memory-immediate (op visible BEFORE durable)
@@ -83,7 +84,7 @@ def _make_registry(tmp_path: Path, wal: Path) -> tuple[AgentRegistry, StateLog]:
     state_log = StateLog(wal)
 
     def _factory(profile: AgentProfile) -> Session:
-        s = Session(agent_name=profile.name, state_log=state_log)
+        s = make_session(agent_name=profile.name, state_log=state_log)
         s.register_intervention_listener("test")  # satisfy the listener-presence guard
         return s
 
@@ -226,7 +227,7 @@ async def test_durability_failure_fail_stops_and_surfaces(tmp_path):
 
     worker = DurabilityWorker(max_write_attempts=1)  # fail-fast: no slow backoff in the test
     log = StateLog(tmp_path / "wal.jsonl", worker=worker)
-    session = Session(agent_name="alpha", state_log=log)
+    session = make_session(agent_name="alpha", state_log=log)
     try:
         assert not log.durability_failed, "health-signal clear before any failure"
 

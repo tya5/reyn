@@ -39,6 +39,7 @@ from reyn.runtime.registry import AgentRegistry
 from reyn.runtime.session import Session
 from reyn.runtime.session_api import run_agent_step
 from reyn.runtime.session_params import PresentationWiring
+from tests._support.agent_session import make_session
 
 _REVIEW_SCHEMA = {
     "fields": {
@@ -92,7 +93,7 @@ def _registry(
     })
 
     def _factory(profile, *, presentation_consumer=None, intervention_bridge=None) -> Session:
-        s = Session(
+        s = make_session(
             agent_name=profile.name, state_log=state_log,
             registry=holder.get("reg"), non_interactive=True,
             presentation_wiring=PresentationWiring(presentation_consumer=presentation_consumer, intervention_bridge=intervention_bridge),

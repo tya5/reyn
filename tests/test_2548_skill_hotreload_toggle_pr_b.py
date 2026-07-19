@@ -29,6 +29,7 @@ from reyn.core.events.state_log import StateLog
 from reyn.data.skills.registry import SkillEntry
 from reyn.runtime.session import Session
 from reyn.runtime.session_params import CapabilityScope
+from tests._support.agent_session import make_session
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -46,7 +47,7 @@ def _make_session(tmp_path: Path, *, agent_name: str = "test-agent") -> Session:
     from reyn.data.skills.registry import build_skill_registry
     cfg = load_config()
     available_skills = build_skill_registry(cfg.skills) or None
-    return Session(
+    return make_session(
         agent_name=agent_name,
         state_log=StateLog(tmp_path / "state.wal"),
         snapshot_path=tmp_path / "snap.json",
@@ -158,7 +159,7 @@ async def test_hotreload_noop_when_skills_unchanged(
 async def test_hotreload_seam_registered(tmp_path: Path) -> None:
     """Tier 2: the Session registers the skills seam on the HotReloader."""
     (tmp_path / "reyn.yaml").write_text("model: standard\n", encoding="utf-8")
-    session = Session(
+    session = make_session(
         agent_name="a", state_log=StateLog(tmp_path / "s.wal"),
         snapshot_path=tmp_path / "snap.json",
     )
@@ -173,7 +174,7 @@ async def test_hotreload_seam_registered(tmp_path: Path) -> None:
 def test_toggle_disable_skill_removes_from_live_list(tmp_path: Path) -> None:
     """Tier 2: set_capability_visible("skill", name, False) removes the skill from
     get_available_skills() immediately (live next turn — no restart needed)."""
-    session = Session(
+    session = make_session(
         agent_name="a", state_log=StateLog(tmp_path / "s.wal"),
         snapshot_path=tmp_path / "snap.json",
         capability_scope=CapabilityScope(available_skills=[
@@ -196,7 +197,7 @@ def test_toggle_disable_skill_removes_from_live_list(tmp_path: Path) -> None:
 def test_toggle_reenable_skill_restores_to_live_list(tmp_path: Path) -> None:
     """Tier 2: set_capability_visible("skill", name, True) restores the skill to
     get_available_skills() — toggle-ON reverses a prior toggle-OFF."""
-    session = Session(
+    session = make_session(
         agent_name="a", state_log=StateLog(tmp_path / "s.wal"),
         snapshot_path=tmp_path / "snap.json",
         capability_scope=CapabilityScope(available_skills=[
@@ -216,7 +217,7 @@ def test_toggle_reenable_skill_restores_to_live_list(tmp_path: Path) -> None:
 def test_toggle_disable_unregistered_skill_is_noop(tmp_path: Path) -> None:
     """Tier 2: disabling a skill name not in the registered set is a no-op — the
     restrict-only invariant: toggle can only hide within the registered set."""
-    session = Session(
+    session = make_session(
         agent_name="a", state_log=StateLog(tmp_path / "s.wal"),
         snapshot_path=tmp_path / "snap.json",
         capability_scope=CapabilityScope(available_skills=[
@@ -234,7 +235,7 @@ def test_toggle_disable_unregistered_skill_is_noop(tmp_path: Path) -> None:
 
 def test_toggle_unknown_kind_raises(tmp_path: Path) -> None:
     """Tier 2: set_capability_visible with an unknown kind raises ValueError."""
-    session = Session(
+    session = make_session(
         agent_name="a", state_log=StateLog(tmp_path / "s.wal"),
         snapshot_path=tmp_path / "snap.json",
     )
@@ -244,7 +245,7 @@ def test_toggle_unknown_kind_raises(tmp_path: Path) -> None:
 
 def test_capability_visibility_state_includes_skill_kind(tmp_path: Path) -> None:
     """Tier 2: capability_visibility_state() reports skill kind in authorized + hidden."""
-    session = Session(
+    session = make_session(
         agent_name="a", state_log=StateLog(tmp_path / "s.wal"),
         snapshot_path=tmp_path / "snap.json",
         capability_scope=CapabilityScope(available_skills=[
@@ -274,7 +275,7 @@ def test_skill_toggle_persists_to_visibility_yaml(tmp_path: Path) -> None:
     """Tier 2: set_capability_visible("skill", ...) persists the disabled name to
     visibility.yaml in the per-session state dir."""
     snap = tmp_path / "snap.json"
-    session = Session(
+    session = make_session(
         agent_name="a", state_log=StateLog(tmp_path / "s.wal"),
         snapshot_path=snap,
         capability_scope=CapabilityScope(available_skills=[
@@ -298,7 +299,7 @@ def test_skill_toggle_restored_by_load_persisted_toggles(tmp_path: Path) -> None
     get_available_skills() after restore, exactly as after the original toggle."""
     snap = tmp_path / "snap.json"
     # Session A: disable the skill and persist.
-    session_a = Session(
+    session_a = make_session(
         agent_name="a", state_log=StateLog(tmp_path / "s_a.wal"),
         snapshot_path=snap,
         capability_scope=CapabilityScope(available_skills=[
@@ -309,7 +310,7 @@ def test_skill_toggle_restored_by_load_persisted_toggles(tmp_path: Path) -> None
     session_a.set_capability_visible("skill", "deploy", False)
 
     # Session B: same state dir, same available_skills — simulate a restart.
-    session_b = Session(
+    session_b = make_session(
         agent_name="a", state_log=StateLog(tmp_path / "s_b.wal"),
         snapshot_path=snap,
         capability_scope=CapabilityScope(available_skills=[
@@ -335,7 +336,7 @@ def test_skill_toggle_persist_clears_when_reenabled(tmp_path: Path) -> None:
     """Tier 2: re-enabling a skill removes the name from visibility.yaml (or removes
     the file when no overrides remain) — the stored state matches the current toggle."""
     snap = tmp_path / "snap.json"
-    session = Session(
+    session = make_session(
         agent_name="a", state_log=StateLog(tmp_path / "s.wal"),
         snapshot_path=snap,
         capability_scope=CapabilityScope(available_skills=[

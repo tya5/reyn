@@ -20,13 +20,14 @@ from reyn.runtime.mcp_routing import mcp_session_id, resolve_mcp_session
 from reyn.runtime.profile import AgentProfile
 from reyn.runtime.registry import AgentRegistry
 from reyn.runtime.session import Session
+from tests._support.agent_session import make_session
 
 
 def _make_registry(tmp_path: Path) -> AgentRegistry:
     state_log = StateLog(tmp_path / ".reyn" / "wal.jsonl")
 
     def _factory(profile: AgentProfile) -> Session:
-        s = Session(agent_name=profile.name, state_log=state_log)
+        s = make_session(agent_name=profile.name, state_log=state_log)
         s.register_intervention_listener("test")
         return s
 

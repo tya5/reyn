@@ -28,6 +28,7 @@ from reyn.core.events.state_log import StateLog
 from reyn.runtime.profile import AgentProfile
 from reyn.runtime.registry import AgentRegistry
 from reyn.runtime.session import Session
+from tests._support.agent_session import make_session
 
 
 class _FakeTurnDriver:
@@ -76,7 +77,7 @@ async def test_live_fork_checkout_back_follows_lineage_runtime(tmp_path):
     AgentProfile.new("alpha", role="").save(tmp_path / ".reyn" / "agents" / "alpha")
     snap_path = tmp_path / ".reyn" / "agents" / "alpha" / "state" / "snapshot.json"
 
-    session = Session(agent_name="alpha", state_log=state_log, snapshot_path=snap_path)
+    session = make_session(agent_name="alpha", state_log=state_log, snapshot_path=snap_path)
     session.register_intervention_listener("test")
     session.attach_anchor_store(reg.anchor_store)
     reg._sessions["alpha"] = {"main": session}

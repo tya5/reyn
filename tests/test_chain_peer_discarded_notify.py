@@ -27,6 +27,7 @@ from reyn.core.events.state_log import StateLog
 from reyn.runtime.profile import AgentProfile
 from reyn.runtime.registry import AgentRegistry
 from reyn.runtime.session import Session
+from tests._support.agent_session import make_session
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -50,7 +51,7 @@ def _make_registry_with_two_agents(
         # state dir so they don't collide.
         agent_dir = tmp_path / ".reyn" / "agents" / profile.name
         agent_dir.mkdir(parents=True, exist_ok=True)
-        return Session(
+        return make_session(
             agent_name=profile.name,
             state_log=state_log,
             snapshot_path=agent_dir / "state" / "snapshot.json",

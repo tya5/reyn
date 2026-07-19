@@ -52,6 +52,7 @@ from reyn.runtime.registry import AgentRegistry
 from reyn.runtime.session import Session
 from reyn.runtime.session_params import PresentationWiring
 from reyn.runtime.spawn_routing import ReviewedNA
+from tests._support.agent_session import make_session
 
 
 def _make_registry(tmp_path: Path) -> AgentRegistry:
@@ -64,7 +65,7 @@ def _make_registry(tmp_path: Path) -> AgentRegistry:
     holder: dict = {}
 
     def _factory(profile: AgentProfile, *, presentation_consumer=None, intervention_bridge=None) -> Session:
-        s = Session(
+        s = make_session(
             agent_name=profile.name, state_log=state_log,
             registry=holder.get("reg"), non_interactive=True,
             presentation_wiring=PresentationWiring(presentation_consumer=presentation_consumer, intervention_bridge=intervention_bridge),
@@ -88,7 +89,7 @@ async def test_vacuity_guard_registered_seams_nonempty(tmp_path: Path, monkeypat
     trivially, uselessly green)."""
     monkeypatch.chdir(tmp_path)
     (tmp_path / "reyn.yaml").write_text("model: standard\n", encoding="utf-8")
-    session = Session(
+    session = make_session(
         agent_name="a", state_log=StateLog(tmp_path / "s.wal"),
         snapshot_path=tmp_path / "snap.json",
     )
@@ -111,7 +112,7 @@ async def test_refresh_config_projections_covers_every_registered_seam_except_cr
     marker list that a future addition could silently miss."""
     monkeypatch.chdir(tmp_path)
     (tmp_path / "reyn.yaml").write_text("model: standard\n", encoding="utf-8")
-    session = Session(
+    session = make_session(
         agent_name="a", state_log=StateLog(tmp_path / "s.wal"),
         snapshot_path=tmp_path / "snap.json",
     )
@@ -152,7 +153,7 @@ async def test_cron_excluded_from_family_gate(tmp_path: Path, monkeypatch) -> No
     reason."""
     monkeypatch.chdir(tmp_path)
     (tmp_path / "reyn.yaml").write_text("model: standard\n", encoding="utf-8")
-    session = Session(
+    session = make_session(
         agent_name="a", state_log=StateLog(tmp_path / "s.wal"),
         snapshot_path=tmp_path / "snap.json",
     )

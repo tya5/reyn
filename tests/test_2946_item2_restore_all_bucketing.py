@@ -34,6 +34,7 @@ from reyn.core.events.state_log import StateLog
 from reyn.runtime.profile import AgentProfile
 from reyn.runtime.registry import AgentRegistry
 from reyn.runtime.session import Session
+from tests._support.agent_session import make_session
 
 AGENT = "alpha"
 
@@ -45,7 +46,7 @@ def _make_registry(tmp_path: Path, wal: Path) -> AgentRegistry:
     state_log = StateLog(wal)
 
     def _factory(profile: AgentProfile) -> Session:
-        s = Session(agent_name=profile.name, state_log=state_log)
+        s = make_session(agent_name=profile.name, state_log=state_log)
         s.register_intervention_listener("test")
         return s
 

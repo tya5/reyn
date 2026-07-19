@@ -47,6 +47,7 @@ from reyn.runtime.registry import AgentRegistry
 from reyn.runtime.session import Session
 from reyn.runtime.session_api import run_pipeline_attached
 from reyn.runtime.session_params import PresentationWiring
+from tests._support.agent_session import make_session
 
 # A distinctive token carried in the PRESENTED data. Its purpose is to prove the
 # render reached the PARENT surface — it is NOT part of the present op's compact
@@ -80,7 +81,7 @@ def _agent_registry(tmp_path: Path, state_log: "StateLog") -> AgentRegistry:
         # SpawnBridgePresentationConsumer through the factory; accept + forward it so the
         # driver's present renders to the PARENT's outbox by construction (None on the
         # non-driver caller session = Session's default self-bound outbox consumer).
-        return Session(
+        return make_session(
             agent_name=profile.name, state_log=state_log,
             registry=holder.get("reg"), non_interactive=True,
             presentation_wiring=PresentationWiring(presentation_consumer=presentation_consumer, intervention_bridge=intervention_bridge),
