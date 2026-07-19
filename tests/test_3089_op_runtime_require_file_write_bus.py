@@ -47,6 +47,17 @@ per-entry, #3037):
     upstream tool wrapper built it — the require_file_write call itself does
     not care who built its ctx, only what is ON it).
 
+Registry-completeness (architect co-vet, #3089): all 18 ``require_file_write``
+callers were enumerated FROM THE REGISTRY (not the issue's curated 4). 6 omit
+``bus=``: the 4 fixed here + 2 legitimately EXEMPT —
+``tools/cron.py::_gate`` and ``tools/hooks.py::_gate``. Both
+``session_approve_path`` the exact write path IMMEDIATELY before the gate AND
+pass no ``sandbox_policy``, so ``EffectivePermission`` returns early
+(AgentLayer._approved → True; SandboxLayer ⊤) and the JIT-ask branch is
+unreachable — threading ``bus=`` there would be dead code. Section 5 below
+witnesses that exempt condition at the real resolver (+ falsifies its premise),
+so the audit is 6/6 registry-complete, not a curated subset.
+
 Real ``PermissionResolver`` + a real-``RequestBus``-compatible Fake that
 pre-answers a scripted choice (mirrors ``test_config_write_jit_bus_3086.py``'s
 ``_FakeBus`` / ``test_require_file_jit_ask_1505.py``) — no mocks.
@@ -381,7 +392,84 @@ async def test_mcp_install_config_write_bus_denies_after_prompt(tmp_path, monkey
     assert "mcp.yaml" in ask.prompt or "mcp.yaml" in ask.detail
 
 
-# ── 5. strip-falsify — the defect class in isolation ───────────────────────
+# ── 5. registry-completeness: the 2 EXEMPT sites (cron / hooks) ─────────────
+#
+# architect co-vet enumerated ALL 18 require_file_write callers from the
+# registry (not the issue's curated 4): 6 omit bus=, of which 4 are the fixes
+# above and 2 are legitimately EXEMPT — ``tools/cron.py::_gate`` and
+# ``tools/hooks.py::_gate``. Both call ``session_approve_path(path, actor,
+# "file.write")`` IMMEDIATELY before ``require_file_write`` AND pass no
+# sandbox_policy. The pre-approval makes AgentLayer._approved True (→
+# EffectivePermission returns early) and the absent sandbox_policy leaves
+# SandboxLayer ⊤ (no veto) — so the JIT-ask branch (``if bus is not None``) is
+# UNREACHABLE. Threading bus= there would be dead code. This test witnesses
+# that exempt condition at the real resolver (the exact call shape both _gate
+# helpers use), so "bus= unnecessary" is a verified mechanism, not an assertion.
+
+
+@pytest.mark.asyncio
+async def test_exempt_session_approved_path_never_reaches_jit_ask(tmp_path):
+    """Tier 2: #3089 registry-completeness — the cron/hooks exempt condition.
+
+    Reproduces ``tools/cron.py::_gate`` / ``tools/hooks.py::_gate``'s exact
+    call shape (session_approve_path THEN require_file_write, no sandbox_policy)
+    against a recovery-core config path. Even with a bus that WOULD approve
+    threaded through, the JIT prompt NEVER fires — the pre-approval short-
+    circuits before the ask branch. This is why bus= is unnecessary (exempt)
+    at those two sites: there is no reachable ask for a bus to answer."""
+    project_root = tmp_path / "proj"
+    project_root.mkdir(parents=True, exist_ok=True)
+    # A recovery-core config path (same carve-out class as cron.yaml/hooks.yaml)
+    # — outside the default write zone, so ONLY the session-approval grants it.
+    config_path = str(project_root / ".reyn" / "config" / "cron.yaml")
+
+    resolver = PermissionResolver(
+        config_permissions={}, project_root=project_root, interactive=True,
+    )
+    decl = PermissionDecl(file_write=[{"path": config_path, "scope": "just_path"}])
+    bus_that_would_approve = _FakeBus(YES)
+
+    # Exact _gate shape: pre-approve, then gate WITH a bus but WITHOUT sandbox_policy.
+    resolver.session_approve_path(config_path, "cron", "file.write")
+    await resolver.require_file_write(
+        decl, config_path, "cron", bus=bus_that_would_approve,
+    )
+
+    # The pre-approval short-circuited EffectivePermission — the JIT-ask branch
+    # was never reached, so the bus was never consulted. This is the exempt
+    # invariant: no reachable ask ⇒ bus= is dead ⇒ omitting it is correct.
+    assert not bus_that_would_approve.asks, (
+        "a session-approved path must pass WITHOUT reaching the JIT-ask branch; "
+        "if a prompt fired, the cron/hooks exempt rationale would be false"
+    )
+
+
+@pytest.mark.asyncio
+async def test_exempt_falsify_without_preapproval_the_ask_would_fire(tmp_path):
+    """Tier 2: #3089 — falsify the exempt claim's premise: REMOVE the
+    session_approve_path (the only thing that makes cron/hooks exempt) and the
+    SAME recovery-core write DOES reach the JIT-ask (bus consulted). This
+    proves the exemption rests specifically on the pre-approval, not on the
+    path happening to be granted some other way — so the two exempt sites are
+    exempt BECAUSE of their session_approve_path, nothing incidental."""
+    project_root = tmp_path / "proj"
+    project_root.mkdir(parents=True, exist_ok=True)
+    config_path = str(project_root / ".reyn" / "config" / "cron.yaml")
+
+    resolver = PermissionResolver(
+        config_permissions={}, project_root=project_root, interactive=True,
+    )
+    decl = PermissionDecl(file_write=[{"path": config_path, "scope": "just_path"}])
+    bus = _FakeBus(YES)
+
+    # NO session_approve_path — the recovery-core carve-out path is now ungranted.
+    await resolver.require_file_write(decl, config_path, "cron", bus=bus)
+
+    (ask,) = bus.asks  # the ask DID fire — pre-approval was the exempting factor
+    assert "cron.yaml" in ask.prompt or "cron.yaml" in ask.detail
+
+
+# ── 6. strip-falsify — the defect class in isolation ───────────────────────
 
 
 @pytest.mark.asyncio
