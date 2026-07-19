@@ -25,8 +25,19 @@ Tests:
   6. network-free spawn (§3.11): a plugin with a requirements.txt + an mcp
      capability materialises a per-plugin venv at install time; the registered
      mcp spawn command points at that venv's interpreter (no spawn-time fetch).
-  7. pypi dep-fetch gate: the dep-materialisation network fetch is gated by
-     require_http_get(pypi.org) — approved → materialises; stripped → denied.
+  7. pypi dep-fetch gate (#3048): the dep-fetch approval for pypi.org is
+     DERIVED from the install's own gate-1 write-approval (not a separate
+     interactive prompt) — config-tier deny still blocks it; gate-1 itself
+     being denied still blocks it (execution never reaches the derive).
+  8. #3048 seal: require_http_get(host) with a bus wired but unanswered
+     awaits indefinitely (confirmed root cause of the codeact-30s-budget
+     kill — a never-answered prompt, not a slow download or exhaustion).
+  9. #3048 fix, load-bearing: a full plugin_install with only gate-1
+     approved + an unanswering bus completes without hanging and WITHOUT
+     raising a separate pypi.org prompt (strip the derive → this times out).
+  10. #3048 security witness: the derive is scoped to EXACTLY pypi.org —
+     an unrelated host (evil.com) is still gated (not a blanket http.get
+     grant — confused-deputy guard).
 
 Real PermissionResolver + OpContext + a real RequestBus-compatible Fake
 (scriptable answers) throughout (no mocks). HOME is monkeypatched per-test so
@@ -34,6 +45,7 @@ Real PermissionResolver + OpContext + a real RequestBus-compatible Fake
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import subprocess
 from pathlib import Path
@@ -90,6 +102,26 @@ class _FakeBus:
         return InterventionAnswer(text=self._choice, choice_id=self._choice)
 
 
+class _NeverAnswersBus:
+    """Real RequestBus-compatible Fake whose ``request`` coroutine never
+    resolves (#3048): models the codeact/headless dispatch scenario where a
+    bus IS wired (so ``require_http_get`` takes the ``await self._approve``
+    branch, not the ``bus is None`` fast-fail) but nobody is listening to
+    answer the intervention — the confirmed root cause of the indefinite
+    await that the caller's compute-budget timeout then guillotines. This is
+    a real, minimal implementation of the ``RequestBus`` protocol (not a
+    mock/patch): its ``request`` genuinely never completes, exactly like an
+    unattended bus in production."""
+
+    def __init__(self) -> None:
+        self.asks: list[UserIntervention] = []
+
+    async def request(self, iv: UserIntervention) -> InterventionAnswer:
+        self.asks.append(iv)
+        await asyncio.Event().wait()  # never set — never returns
+        raise AssertionError("unreachable: the wait() above never resolves")
+
+
 def _make_git_plugin_repo(base: Path, name: str = "gitplugin") -> Path:
     """A real local git repo containing a minimal plugin (skills capability),
     usable as a file:// {kind:git} source."""
@@ -141,6 +173,7 @@ def _make_ctx(
     interactive: bool = False,
     bus: object | None = None,
     approve_all_http: bool = False,
+    config_permissions: dict | None = None,
 ) -> OpContext:
     """Build a real OpContext with a PermissionResolver. When
     ``approve_plugins_root`` is True, session-approves ~/.reyn/plugins/
@@ -160,12 +193,17 @@ def _make_ctx(
     the FETCH axis (git clone / pypi reachability). The run-code trust gate is
     a SEPARATE axis, so approving this must NOT let a {kind:git} install run
     without the run-code prompt (test 5 asserts exactly that). ``interactive``
-    + ``bus`` drive the run-code trust prompt (which never persists)."""
+    + ``bus`` drive the run-code trust prompt (which never persists).
+
+    ``config_permissions`` (default None → ``{}``) is passed straight to the
+    ``PermissionResolver`` — used by the #3048 config-deny witness test to
+    prove config-tier ``deny`` still wins over the derived pypi.org grant."""
     project_root = tmp_path / "proj"
     project_root.mkdir(parents=True, exist_ok=True)
 
     resolver = PermissionResolver(
-        config_permissions={}, project_root=project_root, interactive=interactive,
+        config_permissions=config_permissions or {},
+        project_root=project_root, interactive=interactive,
     )
     if approve_plugins_root:
         resolver.session_approve_path(str(plugins_root()), "test", "file.write", recursive=True)
@@ -615,17 +653,29 @@ async def test_materialise_deps_rewrites_mcp_spawn_to_venv_interpreter(tmp_path,
 
 
 # ── Test 7: pypi dep-fetch gate (require_http_get on the package index) ───────
+#
+# #3048: the dep-fetch approval for pypi.org is now DERIVED from the
+# install's own gate-1 write-approval (session_approve_host, scoped to
+# exactly "pypi.org") instead of requiring an INDEPENDENT interactive
+# http.get prompt. A plugin's install approval alone is therefore now
+# sufficient for materialise-deps to proceed — the config-deny and
+# sandbox-network-veto tiers (checked BEFORE the persisted-approval tier
+# the derive feeds, inside require_http_get) are the only things that can
+# still block it. The two tests below replace the pre-#3048
+# "http.get independently deniable while write-approved" test (that
+# behaviour was the confused-deputy-adjacent bug: a SEPARATE, unanswerable
+# prompt that hung the whole install under codeact's 30s budget).
 
 
 @pytest.mark.asyncio
-async def test_dep_materialise_denied_when_pypi_http_get_stripped(tmp_path, monkeypatch):
-    """Tier 2: the dep-materialisation network fetch is gated by
-    require_http_get(pypi.org). Strip that grant (non-interactive, http.get NOT
-    approved) → a plugin carrying a requirements.txt is denied BEFORE any uv
-    fetch, and no venv is created. RED if materialise fetches without the gate.
-
-    Note: plugins_root() IS approved here (so the copy succeeds and we reach the
-    materialise step), isolating the pypi gate as the sole denier."""
+async def test_dep_materialise_denied_when_config_denies_pypi_host(tmp_path, monkeypatch):
+    """Tier 2: #3048 — the #3048 derive does NOT bypass a config-tier deny.
+    ``http.get.pypi.org: deny`` still blocks dep-materialisation even though
+    the install's gate-1 write is approved (plugins_root approved, so the
+    copy proceeds and we reach the materialise step) — config-deny is
+    checked BEFORE the persisted-approval tier the derive feeds inside
+    ``require_http_get``, so it still wins. RED if the derive silently
+    overrides an explicit operator/config denial."""
     home = tmp_path / "home"
     home.mkdir()
     monkeypatch.setenv("HOME", str(home))
@@ -638,17 +688,43 @@ async def test_dep_materialise_denied_when_pypi_http_get_stripped(tmp_path, monk
     )
     (src / "requirements.txt").write_text("somepkg==1.0\n", encoding="utf-8")
 
-    # plugins_root approved (copy allowed) but http.get NOT approved + non-interactive.
-    ctx = _make_ctx(tmp_path, approve_plugins_root=True, approve_all_http=False, interactive=False)
+    ctx = _make_ctx(
+        tmp_path, approve_plugins_root=True, approve_all_http=False, interactive=False,
+        config_permissions={"http.get.pypi.org": "deny"},
+    )
 
     op = PluginInstallIROp(kind="plugin_install", source={"kind": "local", "path": str(src)})
-    # The pypi require_http_get gate raises PermissionError (propagated by the
-    # handler, same as every other gate — execute_op turns it into status=denied
-    # in production). The venv must NOT have been created (no fetch ran).
     with pytest.raises(PermissionError):
         await install_handle(op, ctx)
     venv = plugins_root() / "needsdeps" / ".venv"
-    assert not venv.exists(), "a venv/fetch happened despite the pypi http.get gate being stripped"
+    assert not venv.exists(), "a venv/fetch happened despite config http.get.pypi.org: deny"
+
+
+@pytest.mark.asyncio
+async def test_derive_does_not_bypass_install_gate1_denial(tmp_path, monkeypatch):
+    """Tier 2: #3048 — the derive is fed by gate 1 SUCCEEDING; if gate 1
+    itself is denied (plugins_root NOT approved), execution never reaches
+    the derive/materialise step at all, and no venv is created. RED if the
+    derive were (incorrectly) hoisted above/independent of gate 1."""
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    src = tmp_path / "src" / "needsdeps3"
+    (src / ".reyn-plugin").mkdir(parents=True)
+    (src / ".reyn-plugin" / "plugin.json").write_text(
+        json.dumps({"name": "needsdeps3", "version": "0.1.0", "capabilities": []}),
+        encoding="utf-8",
+    )
+    (src / "requirements.txt").write_text("somepkg==1.0\n", encoding="utf-8")
+
+    ctx = _make_ctx(tmp_path, approve_plugins_root=False, approve_mcp_yaml=False, interactive=False)
+
+    op = PluginInstallIROp(kind="plugin_install", source={"kind": "local", "path": str(src)})
+    with pytest.raises(PermissionError):
+        await install_handle(op, ctx)
+    venv = plugins_root() / "needsdeps3" / ".venv"
+    assert not venv.exists(), "materialise ran despite gate 1 (install write) being denied"
 
 
 @pytest.mark.skipif(not _uv_available(), reason="uv not on PATH")
@@ -675,3 +751,124 @@ async def test_dep_materialise_proceeds_when_pypi_http_get_approved(tmp_path, mo
 
     assert result["status"] == "installed", f"approved-pypi materialise failed: {result}"
     assert (plugins_root() / "okdeps" / ".venv" / "bin" / "python").exists()
+
+
+# ── #3048 seal: require_http_get awaits indefinitely when a bus is wired ──────
+# but nothing answers it (the confirmed root cause — NOT budget exhaustion,
+# NOT a slow download: a permission prompt raised into a bus with no
+# responder). Live-confirms the mechanism BEFORE trusting the fix below to
+# actually close it.
+
+
+@pytest.mark.asyncio
+async def test_require_http_get_awaits_indefinitely_when_unanswered(tmp_path):
+    """Tier 1: #3048 seal — require_http_get(host) with a bus PRESENT (not
+    None, so the fast-fail ``bus is None`` branch is NOT taken) and the host
+    NOT approved awaits the intervention response with no internal timeout.
+    Real PermissionResolver + a real RequestBus implementation
+    (``_NeverAnswersBus``) whose ``request`` coroutine genuinely never
+    resolves (the codeact/headless scenario: a bus is wired but no
+    responder is listening). Confirms the ④-a dogfood witness's structural
+    diagnosis (30s codeact kill on a never-answered prompt, not a slow
+    download) — the caller's own ``asyncio.wait_for`` bound is what
+    terminates this test, not anything inside ``require_http_get`` itself.
+
+    ``interactive=True`` mirrors the real dispatch (``sys.stdin.isatty()``
+    at an interactive terminal — the chat session IS interactive; nobody
+    just happens to answer this particular prompt, e.g. an
+    auto-driving/dogfood loop). With ``interactive=False`` (a genuinely
+    headless dispatch), ``_approve`` fast-denies instead — that path is
+    NOT #3048's mechanism and is covered by the other gate tests."""
+    resolver = PermissionResolver(config_permissions={}, project_root=tmp_path, interactive=True)
+    decl = PermissionDecl(http_get=[{"host": "pypi.org"}])
+    bus = _NeverAnswersBus()
+
+    with pytest.raises(asyncio.TimeoutError):
+        await asyncio.wait_for(
+            resolver.require_http_get(decl, "pypi.org", bus, "test"), timeout=0.2,
+        )
+    assert bus.asks, "no intervention request was raised — require_http_get did not reach the prompt path"
+    assert bus.asks[0].kind == "permission.generic", (
+        f"unexpected intervention kind {bus.asks[0].kind!r}: not the http.get permission prompt"
+    )
+
+
+# ── #3048 fix: install-grant derives the pypi.org dep-fetch approval ──────────
+
+
+@pytest.mark.skipif(not _uv_available(), reason="uv not on PATH")
+@pytest.mark.asyncio
+async def test_plugin_install_derives_pypi_grant_no_indefinite_await(tmp_path, monkeypatch):
+    """Tier 2: #3048 fix, load-bearing. Only the install's gate-1 write is
+    approved (mirrors what an operator/codeact dispatch that approved
+    "install this plugin" actually consented to) — pypi.org is
+    deliberately NOT independently pre-approved. A ``_NeverAnswersBus`` is
+    wired (the codeact/headless scenario that hung indefinitely pre-fix,
+    same mechanism the seal test above confirms). Bounded with
+    ``asyncio.wait_for`` well under a materialise-only budget: GREEN
+    (completes, no hang) with the derive in plugin_install.py's step 7;
+    RED (times out — falls into the seal test's await) if that derive is
+    removed and require_http_get falls back to prompting the
+    never-answering bus directly. Also asserts the bus received ZERO
+    intervention requests — the derive must suppress the prompt outright,
+    not merely answer it faster.
+
+    ``interactive=True`` — same rationale as the seal test above: it
+    mirrors the real interactive-terminal dispatch that #3048 hung
+    (``sys.stdin.isatty()`` True, nobody happens to answer this specific
+    prompt), which is exactly the branch where a stripped derive would
+    hang rather than fast-deny."""
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    src = tmp_path / "src" / "needsdeps4"
+    (src / ".reyn-plugin").mkdir(parents=True)
+    (src / ".reyn-plugin" / "plugin.json").write_text(
+        json.dumps({"name": "needsdeps4", "version": "0.1.0", "capabilities": []}),
+        encoding="utf-8",
+    )
+    (src / "requirements.txt").write_text("", encoding="utf-8")
+
+    bus = _NeverAnswersBus()
+    ctx = _make_ctx(
+        tmp_path, approve_plugins_root=True, approve_all_http=False,
+        interactive=True, bus=bus,
+    )
+
+    op = PluginInstallIROp(kind="plugin_install", source={"kind": "local", "path": str(src)})
+    result = await asyncio.wait_for(install_handle(op, ctx), timeout=30.0)
+
+    assert result["status"] == "installed", f"install failed/denied: {result}"
+    assert (plugins_root() / "needsdeps4" / ".venv" / "bin" / "python").exists()
+    assert not bus.asks, (
+        "a separate pypi.org intervention prompt was raised — the derive did "
+        "not suppress it (this is exactly the prompt that hangs under "
+        "codeact's 30s compute budget when nobody answers it)"
+    )
+
+
+# ── #3048 security witness: the derive is host-scoped, not blanket http.get ───
+
+
+@pytest.mark.asyncio
+async def test_derived_pypi_grant_is_host_scoped_not_blanket(tmp_path):
+    """Tier 1: #3048 security witness — confused-deputy guard. The derive
+    plugin_install.py performs (``session_approve_host("pypi.org", ...,
+    kind="http.get")``) covers EXACTLY pypi.org — the fixed index
+    ``uv pip install`` resolves against — never http.get generally.
+    Approving pypi.org must NOT silently authorise a fetch from an
+    unrelated host. Uses ONLY the public PermissionResolver surface
+    (``session_approve_host`` / ``require_http_get``), real instances
+    throughout, no private-state assertions."""
+    resolver = PermissionResolver(config_permissions={}, project_root=tmp_path, interactive=False)
+    resolver.session_approve_host("pypi.org", "test", kind="http.get")
+
+    decl = PermissionDecl(http_get=[{"host": "*"}])
+    # pypi.org: covered by the derive — resolves with no bus/prompt at all.
+    await resolver.require_http_get(decl, "pypi.org", None, "test")
+    # evil.com: NOT covered by the derive — falls through to the interactive
+    # prompt path, which fast-fails (bus=None) rather than silently passing.
+    # This is the exact evidence the derive is not a blanket http.get grant.
+    with pytest.raises(PermissionError, match="requires an interactive prompt"):
+        await resolver.require_http_get(decl, "evil.com", None, "test")
