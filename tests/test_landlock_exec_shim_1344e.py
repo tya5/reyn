@@ -90,9 +90,16 @@ def test_policy_json_roundtrips_all_fields():
         read_deny_paths=["~/.ssh"],
         allow_subprocess=True,
         env_passthrough=["PATH", "HOME"],
+        # Non-default env_explicit: the shim reconstructs the policy from this
+        # JSON and injects env_explicit at execvpe, so a lossy round-trip here
+        # would silently drop the operator's server env (#3060 follow-up).
+        env_explicit={"FASTMCP_SHOW_SERVER_BANNER": "false"},
         timeout_seconds=42,
     )
-    assert _policy_from_json(_policy_to_json(pol)) == pol
+    round_tripped = _policy_from_json(_policy_to_json(pol))
+    assert round_tripped == pol
+    # Witness the non-default value specifically (not just structural equality).
+    assert round_tripped.env_explicit == {"FASTMCP_SHOW_SERVER_BANNER": "false"}
 
 
 def test_parse_args_recovers_policy_and_target():

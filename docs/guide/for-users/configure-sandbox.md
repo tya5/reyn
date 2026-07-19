@@ -93,7 +93,8 @@ restriction: op-level fields govern, and the SandboxLayer is unrestricted.
 | `read_deny_paths` | list of paths | `[]` | Sensitive paths to deny from the broad read surface (defense-in-depth). Enforced only on backends that support deny-after-allow (Seatbelt); not enforceable on Landlock. |
 | `read_paths` | list of paths | `[]` | Legacy — formerly the strict read allowlist. Reads are broad by default; this field now documents intended read targets only. |
 | `allow_subprocess` | bool | `false` | Allow child-process spawning. Enforced on Linux (seccomp) and macOS (Seatbelt). |
-| `env_passthrough` | list of strings | `[]` | Env vars passed through to the process. `PATH` is always passed. |
+| `env_passthrough` | list of strings | `[]` | Host env-var **names** forwarded to the process (a name the host lacks forwards nothing). `PATH` is always passed. |
+| `env_explicit` | map of string→string | `{}` | Operator-declared key→value env pairs injected into the process, independent of the host env (an MCP server's `.mcp.json` `env` block populates this). Carries the value, so a var declared only on the server — e.g. `FASTMCP_SHOW_SERVER_BANNER=false` — reaches the child even though the host env has no such var. |
 | `timeout_seconds` | int | `60` | Wall-clock limit; process is killed on expiry. |
 
 ### Scoping model

@@ -352,6 +352,44 @@ def test_sandbox_child_env_still_honours_explicit_passthrough(
     assert env.get("MY_CUSTOM_VAR") == "keep-me"
 
 
+def test_sandbox_child_env_includes_explicit_env_absent_from_host(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Tier 2: #3060 follow-up — ``env_explicit`` (operator-declared key→value
+    pairs) reaches the child EVEN WHEN the var is absent from the host
+    ``os.environ``. ``env_passthrough`` forwards a var BY NAME and can only
+    forward what the host already has, so a server-declared
+    ``FASTMCP_SHOW_SERVER_BANNER=false`` (never present in the host env) could
+    not ride passthrough — it rides ``env_explicit`` instead."""
+    monkeypatch.delenv("FASTMCP_SHOW_SERVER_BANNER", raising=False)
+    from reyn.security.sandbox.policy import SandboxPolicy, resolve_passthrough_env
+
+    # Absent from host, present only in the server declaration → still forwarded.
+    policy = SandboxPolicy(
+        env_explicit={"FASTMCP_SHOW_SERVER_BANNER": "false",
+                      "FASTMCP_CHECK_FOR_UPDATES": "off"}
+    )
+    env = resolve_passthrough_env(policy)
+    assert env.get("FASTMCP_SHOW_SERVER_BANNER") == "false"
+    assert env.get("FASTMCP_CHECK_FOR_UPDATES") == "off"
+
+
+def test_sandbox_child_env_explicit_wins_over_same_named_passthrough(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Tier 2: #3060 follow-up — an ``env_explicit`` value is authoritative over
+    a same-named host var that would otherwise ride ``env_passthrough`` (the
+    operator's explicit declaration is the intended value)."""
+    monkeypatch.setenv("SHARED_KEY", "from-host")
+    from reyn.security.sandbox.policy import SandboxPolicy, resolve_passthrough_env
+
+    policy = SandboxPolicy(
+        env_passthrough=["SHARED_KEY"], env_explicit={"SHARED_KEY": "from-declaration"}
+    )
+    env = resolve_passthrough_env(policy)
+    assert env.get("SHARED_KEY") == "from-declaration"
+
+
 def test_noop_backend_and_seatbelt_and_landlock_share_the_chokepoint() -> None:
     """Tier 2: structural — all three sandbox backends call
     resolve_passthrough_env (not a hand-duplicated env_passthrough loop each),

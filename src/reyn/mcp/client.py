@@ -1436,6 +1436,20 @@ class MCPClient:
             extra = [str(p) for p in declared]
         else:
             extra = _default_runtime_write_paths(self._config.get("command") or "")
+        # The server's OWN declared env (``.mcp.json`` ``env`` block) rides the
+        # typed policy as ``env_explicit`` (#3060 follow-up), so the sandbox
+        # spawn path forwards operator-declared vars DETERMINISTICALLY at the
+        # exec boundary rather than depending on the transport layer to inherit
+        # them. Symmetric with the non-sandbox spawn path, which already passes
+        # ``env`` straight to the subprocess (see ``_open_stdio``). Only the
+        # operator-authored declaration flows here — never an ``os.environ``
+        # dump — so no new host-env leak is created.
+        declared_env = self._config.get("env")
+        env_explicit = (
+            {str(k): str(v) for k, v in declared_env.items()}
+            if isinstance(declared_env, dict)
+            else {}
+        )
         return SandboxPolicy(
             network=bool(self._config.get("network", DEFAULT_SANDBOX_NETWORK)),
             allow_subprocess=bool(self._config.get("subprocess", True)),
@@ -1443,6 +1457,7 @@ class MCPClient:
             # backend (expand_policy_path) — NOT here, so every backend applies
             # one shared contract instead of each caller pre-expanding (#2976).
             write_paths=[cwd, *extra],
+            env_explicit=env_explicit,
         )
 
     def _sandbox_wrap_stdio(self, command: str, args: list[str]) -> "tuple[str, list[str]]":

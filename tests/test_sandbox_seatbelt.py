@@ -200,6 +200,32 @@ async def test_seatbelt_allows_loopback_bind_but_denies_connect_when_network_fal
     )
 
 
+@pytest.mark.skipif(sys.platform != "darwin", reason="sandbox-exec is macOS-only")
+@pytest.mark.asyncio
+async def test_seatbelt_forwards_env_explicit_to_child(monkeypatch):
+    """Tier 2: #3060 follow-up — a real Seatbelt-sandboxed child receives
+    ``policy.env_explicit`` in its environment even when the var is absent from
+    the host ``os.environ`` (the exact shape of a server-declared
+    ``FASTMCP_SHOW_SERVER_BANNER=false`` that name-only ``env_passthrough`` could
+    not forward). Real ``SeatbeltBackend.run`` + real ``resolve_passthrough_env``
+    — no fakes, seccomp-independent, so it witnesses the env-merge wiring on
+    darwin where the Linux-CI purpose test cannot run."""
+    backend = SeatbeltBackend()
+    if not backend.available():
+        pytest.skip("sandbox-exec not available on this machine")
+
+    monkeypatch.delenv("REYN_EXPLICIT_PROBE", raising=False)
+    policy = SandboxPolicy(
+        env_explicit={"REYN_EXPLICIT_PROBE": "reached"}, timeout_seconds=10
+    )
+    code = "import os; print('CHILD_ENV=' + os.environ.get('REYN_EXPLICIT_PROBE', '<MISSING>'))"
+    result = await backend.run([sys.executable, "-c", code], policy)
+    assert b"CHILD_ENV=reached" in result.stdout, (
+        f"env_explicit must reach the sandboxed child even when absent from the "
+        f"host env (#3060); stdout={result.stdout!r} stderr={result.stderr!r}"
+    )
+
+
 # ─── 5. Protocol conformance ─────────────────────────────────────────────────
 
 
