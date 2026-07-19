@@ -30,7 +30,6 @@ from reyn.config import (  # noqa: F401
     RenderTemplateConfig,
     RouterConfig,
     SafetyConfig,
-    SandboxConfig,
 )
 from reyn.core.events.agent_snapshot import AgentSnapshot
 from reyn.core.events.anchor_store import truncate_anchor as _truncate_anchor
@@ -925,18 +924,21 @@ class _InterventionBundle:
 class Session:
     def __init__(
         self,
-        agent_name: str,
-        model: str = "standard",
+        # Identity value object (single source of truth; FP-0043, see
+        # session-construction.md#identity-the-agent-value-object-fp-0043-stage-2).
+        # Required — #3133 Priority-0 step-2 removed the 9 flat identity params
+        # (agent_name / agent_role / model / permission_resolver /
+        # workspace_base_dir / workspace_state_dir / sandbox_config /
+        # sandbox_backend / environment_backend) and the fallback construction
+        # path they fed, so agent_name != agent.agent_name is no longer
+        # constructible.
+        agent: "Agent",
         resolver: ModelResolver | None = None,
-        permission_resolver: PermissionResolver | None = None,
-        # Identity value object; None -> built from the identity params below (FP-0043, see session-construction.md#identity-the-agent-value-object-fp-0043-stage-2)
-        agent: "Agent | None" = None,
         safety: "SafetyConfig | None" = None,
         mcp_servers: dict | None = None,
         output_language: str | None = None,
         prompt_cache_enabled: bool = True,
         project_context: str = "",
-        agent_role: str = "",
         compaction_config: "CompactionConfig | None" = None,
         reasoning_config: "ReasoningConfig | None" = None,  # #1652 chat.reasoning
         registry: "AgentRegistry | None" = None,
@@ -951,13 +953,6 @@ class Session:
         state_log: StateLog | None = None,
         budget_tracker: BudgetTracker | None = None,
         snapshot_path: "Path | None" = None,
-        sandbox_config: "SandboxConfig | None" = None,
-        # Agent EnvironmentBackend INSTANCE for the chat FS seam (#1200 PR-F1, see session-construction.md#identity-the-agent-value-object-fp-0043-stage-2)
-        environment_backend: "EnvironmentBackend | None" = None,
-        workspace_base_dir: "Path | None" = None,  # #187: chat OpContext FS root — the container repo root (e.g. /testbed) when env-backend routes the repo into a container; None → host cwd
-        workspace_state_dir: "Path | None" = None,  # #187: host-side OS state dir, decoupled from a container base_dir (survives container death)
-        # Agent SandboxBackend INSTANCE for the chat exec seam (#1200 PR-F2, see session-construction.md#identity-the-agent-value-object-fp-0043-stage-2)
-        sandbox_backend: "SandboxBackend | None" = None,
         multimodal_config: "MultimodalConfig | None" = None,
         action_retrieval_config: "ActionRetrievalConfig | None" = None,
         # Chat-layer tool-use scheme name, threaded to RouterLoop (#1593 PR-2, default per #1657)
@@ -1010,18 +1005,10 @@ class Session:
         presentation_registry = presentation_wiring.presentation_registry
         presentation_consumer = presentation_wiring.presentation_consumer
         intervention_bridge = presentation_wiring.intervention_bridge
-        # Identity cluster owned by Agent; test-construction falls back to identity params (FP-0043, see session-construction.md#identity-the-agent-value-object-fp-0043-stage-2)
-        self._agent = agent if agent is not None else Agent(
-            agent_name=agent_name,
-            role=agent_role,
-            model=model,
-            permission_resolver=permission_resolver,
-            workspace_base_dir=workspace_base_dir,
-            workspace_state_dir=workspace_state_dir,
-            sandbox_config=sandbox_config,
-            sandbox_backend=sandbox_backend,
-            environment_backend=environment_backend,
-        )
+        # Identity cluster owned by Agent — single source of truth, no fallback
+        # construction (#3133 Priority-0 step-2; the 9 flat identity params +
+        # the None-fallback Agent(...) build were removed here).
+        self._agent = agent
         self._resolver = resolver or ModelResolver({})
         # Per-session runtime model override set by /model <class>; None -> Agent identity default, in-memory only
         self._model_override: str | None = None
@@ -1079,7 +1066,7 @@ class Session:
                 ),
                 project_root=Path.cwd(),
                 # path-refs carry resource_uri/source_agent for cross-host dispatch (#385 β sub-task 1)
-                agent_name=agent_name,
+                agent_name=self.agent_name,
                 # path-refs carry a url when this instance is HTTP-reachable (#385 β sub-task 3b)
                 base_url=multimodal_config.base_url,
             )
@@ -1107,7 +1094,7 @@ class Session:
         self._outbox_interceptor: Any = None
         # Embedding block + action_usage_tracker, byte-identical extraction, unmoved (#3082 Family 5, see session-construction.md#family-5-retrieval)
         _retrieval_bundle = self._build_retrieval_bundle(
-            self._action_retrieval, embedding_config, agent_name,
+            self._action_retrieval, embedding_config, self.agent_name,
         )
         self._action_embedding_index = _retrieval_bundle.action_embedding_index
         self._embedding_provider = _retrieval_bundle.embedding_provider

@@ -28,6 +28,7 @@ from pathlib import Path
 
 import pytest
 
+from reyn.runtime.agent import Agent
 from reyn.runtime.session import Session
 from reyn.runtime.session_buses import AgentRequestBus
 from reyn.user_intervention import InterventionAnswer, UserIntervention
@@ -130,7 +131,7 @@ def test_self_answer_branch_returns_directly_without_dispatch() -> None:
     handler returns it immediately without invoking
     ``_dispatch_intervention`` — the user surface is never touched.
     """
-    session = _SelfAnsweringSession(agent_name="t")
+    session = _SelfAnsweringSession(agent=Agent(agent_name="t"))
     iv = UserIntervention(kind="permission.shell", prompt="Run ls?")
 
     answer = asyncio.run(session.handle_intervention(iv))
@@ -145,7 +146,7 @@ def test_self_answer_branch_emits_self_answer_event() -> None:
     """Tier 2: the self_answer branch emits ``intervention_routed`` with
     ``route="self_answer"``.
     """
-    session = _SelfAnsweringSession(agent_name="t")
+    session = _SelfAnsweringSession(agent=Agent(agent_name="t"))
     iv = UserIntervention(kind="permission.shell", prompt="Run ls?")
 
     asyncio.run(session.handle_intervention(iv))
@@ -185,8 +186,8 @@ def test_parent_delegate_branch_forwards_to_parent() -> None:
     child.handle_intervention → parent.handle_intervention →
     parent._try_self_answer.
     """
-    parent = _SelfAnsweringSession(agent_name="parent")
-    child = _DelegatingSession(agent_name="child")
+    parent = _SelfAnsweringSession(agent=Agent(agent_name="parent"))
+    child = _DelegatingSession(agent=Agent(agent_name="child"))
     child.set_parent(parent)
 
     iv = UserIntervention(kind="ask_user", prompt="Q?")
@@ -203,8 +204,8 @@ def test_parent_delegate_branch_emits_parent_delegate_event() -> None:
     forwarding. The parent's own routing decision generates a separate
     event on the parent's chat_events log.
     """
-    parent = _SelfAnsweringSession(agent_name="parent")
-    child = _DelegatingSession(agent_name="child")
+    parent = _SelfAnsweringSession(agent=Agent(agent_name="parent"))
+    child = _DelegatingSession(agent=Agent(agent_name="child"))
     child.set_parent(parent)
 
     iv = UserIntervention(kind="ask_user", prompt="Q?")
@@ -245,8 +246,8 @@ def test_self_answer_takes_precedence_over_parent_delegate() -> None:
     This encodes "the agent has its own will" per the Reyn peer-to-peer
     design (issue #254 design discussion log).
     """
-    parent = _SelfAnsweringSession(agent_name="parent")
-    child = _SelfAndParentSession(agent_name="child")
+    parent = _SelfAnsweringSession(agent=Agent(agent_name="parent"))
+    child = _SelfAndParentSession(agent=Agent(agent_name="child"))
     child.set_parent(parent)
 
     iv = UserIntervention(kind="ask_user", prompt="Q?")
@@ -273,7 +274,7 @@ def test_self_answer_visible_through_request_bus_adapter() -> None:
     the self_answer policy fire — the adapter is fully transparent to
     the routing decision happening behind it.
     """
-    session = _SelfAnsweringSession(agent_name="t")
+    session = _SelfAnsweringSession(agent=Agent(agent_name="t"))
     bus = session.as_request_bus()
     assert isinstance(bus, AgentRequestBus)
 
