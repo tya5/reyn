@@ -177,79 +177,15 @@ def _maybe_arm_diagnostic_traceback_dump() -> None:
     faulthandler.dump_traceback_later(after_seconds, file=sys.stderr, exit=False)
 
 
-def _maybe_arm_diagnostic_stdout_tee() -> None:
-    """DIAGNOSTIC (temporary, #3060 case-(b) stdout-pollution probe): env-gated.
-
-    When ``REYN_CHUNKER_DIAG_TEE_STDOUT`` is truthy, install an **fd-level** tee
-    on stdout (fd 1): everything written to fd 1 is passed through VERBATIM to
-    the real stdout (JSON-RPC framing untouched) AND mirrored to stderr (fd 2)
-    with a ``[DIAG-STDOUT]`` marker (``repr`` so control bytes stay visible on
-    one line, greppable in the CI log). This reveals whether a ``network:false``
-    run pollutes the JSON-RPC stdout channel (a banner, a warning misrouted to
-    stdout, …) — the leading hypothesis for why the client's MCP initialize
-    handshake fails even though the server reaches ``run_forever``.
-
-    Why fd-level, not a ``sys.stdout`` wrapper: the MCP stdio server writes
-    JSON-RPC through ``TextIOWrapper(sys.stdout.buffer)`` (mcp
-    ``server/stdio.py``) — i.e. it targets the fd behind ``sys.stdout.buffer``,
-    NOT the ``sys.stdout`` object. A ``sys.stdout`` replacement is therefore
-    structurally blind to the channel (verified on darwin: 0 captured lines
-    during a healthy serve). Teeing fd 1 itself captures every write to the
-    channel — ``sys.stdout``, ``sys.stdout.buffer``, and a raw ``os.write(1,…)``
-    alike.
-
-    Mechanism: ``dup`` the real stdout aside, ``dup2`` a pipe's write end onto
-    fd 1, and a daemon thread pumps the pipe → real stdout (verbatim) + a
-    stderr mirror. Completely inert when the env var is unset: production's
-    "stdout carries JSON-RPC only" contract and this module's "no network at
-    import/call time" contract are byte-for-byte unchanged (no dup, no pipe, no
-    thread).
-    """
-    import os  # noqa: PLC0415 — diagnostic-only, keep production import surface clean
-    import sys  # noqa: PLC0415
-    import threading  # noqa: PLC0415
-
-    if not os.environ.get("REYN_CHUNKER_DIAG_TEE_STDOUT"):
-        return
-
-    # Flush any Python-level buffered stdout so nothing pre-armed is reordered.
-    try:
-        sys.stdout.flush()
-    except Exception:  # noqa: BLE001
-        pass
-
-    saved_stdout_fd = os.dup(1)  # the REAL stdout (terminal / captured tempfile)
-    read_fd, write_fd = os.pipe()
-    os.dup2(write_fd, 1)  # fd 1 (and thus sys.stdout.buffer's fileno) → the pipe
-    os.close(write_fd)  # keep only the dup'd fd 1 as the pipe's write end
-
-    def _pump() -> None:
-        # Read fd 1's byte stream; forward VERBATIM to the real stdout FIRST
-        # (JSON-RPC must be byte-exact and in order), then mirror to stderr.
-        try:
-            while True:
-                chunk = os.read(read_fd, 65536)
-                if not chunk:  # EOF: fd 1 closed at server exit
-                    break
-                os.write(saved_stdout_fd, chunk)  # pass through, never corrupt
-                try:
-                    os.write(2, b"[DIAG-STDOUT] " + repr(chunk).encode() + b"\n")
-                except Exception:  # noqa: BLE001 — mirror is best-effort
-                    pass
-        except Exception:  # noqa: BLE001 — a diagnostic must never crash serving
-            pass
-
-    threading.Thread(
-        target=_pump, name="reyn-diag-stdout-fd-tee", daemon=True
-    ).start()
-
-
 def main() -> None:
-    # DIAGNOSTIC probes (both env-gated, both no-ops in production). The stdout
-    # tee is armed FIRST — before FastMCP is imported/constructed in
-    # build_server() — so a banner or early print emitted during construction or
-    # run() is captured.
-    _maybe_arm_diagnostic_stdout_tee()
+    # DIAGNOSTIC probe (env-gated, no-op in production): a faulthandler delayed
+    # traceback dump that names a blocked frame if the server hangs. NOTE: an
+    # earlier fd-level stdout tee (REYN_CHUNKER_DIAG_TEE_STDOUT) was REMOVED — its
+    # os.dup2(_, 1) is refused by the seccomp filter under network=False and
+    # CRASHED the server, contaminating the very observation it was meant to make
+    # (the true failure is server-healthy + handshake-incomplete). stdout is now
+    # observed from the CLIENT side (sandbox-free) instead; see
+    # reyn.mcp.client's REYN_MCP_DIAG_CAPTURE_HANDSHAKE probe.
     _maybe_arm_diagnostic_traceback_dump()
     build_server().run()
 

@@ -438,13 +438,16 @@ async def test_chunker_server_reaches_serving_under_network_false(
 
     ⚠ DIAGNOSTIC (temporary, #3060 case-(b) probe — revert once the true cause is
     confirmed): this run is instrumented to make the FAILURE self-explaining in
-    the CI log. It (1) arms ``REYN_CHUNKER_DIAG_DUMP_AFTER`` so the server dumps
-    every thread's Python stack to stderr if it hangs, and (2) on any init
-    failure/timeout surfaces the server's stderr tail (which then NAMES the
-    blocked frame — e.g. ``socket.getaddrinfo`` / an httpx or opentelemetry
-    startup call) into the assertion message, rather than letting it vanish into
-    the FastMCP stderr tempfile. The env-wiring fix did not clear the Linux-CI
-    hang, so the next step is to MEASURE the true blocking call, not guess."""
+    the CI log, DECISIVELY distinguishing (i) server sent 0 bytes / (ii) non-JSON
+    stdout pollution / (iii) truncated framing / (iv) valid-JSON protocol error.
+    It (1) arms a server-side ``faulthandler`` dump (``REYN_CHUNKER_DIAG_DUMP_AFTER``)
+    that NAMES the blocked frame if the server hangs, and (2) arms MCPClient's
+    CLIENT-SIDE raw-handshake capture (``REYN_MCP_DIAG_CAPTURE_HANDSHAKE``, set in
+    the test process env) — on init failure it re-spawns the same sandboxed
+    command, writes a raw ``initialize``, and reads the raw stdout bytes from
+    OUTSIDE the sandbox (no ``os.dup2``, so it cannot be a seccomp artifact the
+    way the removed in-server fd tee was). The env-wiring fix did not clear the
+    Linux-CI hang, so the next step is to MEASURE, not guess."""
     pytest.importorskip("chonkie", reason="builtin-rag extra not installed")
     from reyn.mcp.client import MCPClient
 
@@ -463,25 +466,30 @@ async def test_chunker_server_reaches_serving_under_network_false(
         # Exactly the vars the shipped .mcp.json sets — suppress FastMCP's
         # banner-time update check (a real httpx.get to pypi.org) so no
         # outbound connect() is attempted that network=False would refuse.
-        # DIAGNOSTIC (both env-gated, no-ops in production):
-        #  - REYN_CHUNKER_DIAG_DUMP_AFTER arms a faulthandler delayed-traceback
-        #    dump in the server. 20s < the client's 60s init timeout, so if the
-        #    server hangs the all-thread stack lands in its stderr BEFORE the
-        #    client gives up.
-        #  - REYN_CHUNKER_DIAG_TEE_STDOUT mirrors everything the server writes to
-        #    stdout onto stderr with a `[DIAG-STDOUT]` marker (fd 1 stays
-        #    verbatim), revealing whether network=False pollutes the JSON-RPC
-        #    stdout channel (banner / misrouted warning) — the leading
-        #    hypothesis for why the MCP initialize handshake fails.
-        # The failure path below folds the server stderr (carrying both) into
-        # the assertion message so it reaches the CI log.
+        # DIAGNOSTIC (server-side, env-gated, no-op in production):
+        # REYN_CHUNKER_DIAG_DUMP_AFTER arms a faulthandler delayed-traceback dump
+        # in the SERVER — if it hangs, the blocked frame lands in its stderr. 8s
+        # is short enough to fire within the client-side raw-handshake probe's
+        # read window (below), so the server-side frame and the client-side raw
+        # bytes are captured together.
+        # (The earlier REYN_CHUNKER_DIAG_TEE_STDOUT fd-level tee was REMOVED: its
+        # os.dup2(_, 1) is seccomp-denied under network=False and CRASHED the
+        # server, contaminating the observation. stdout is now observed from the
+        # CLIENT side — see REYN_MCP_DIAG_CAPTURE_HANDSHAKE below.)
         "env": {
             "FASTMCP_SHOW_SERVER_BANNER": "false",
             "FASTMCP_CHECK_FOR_UPDATES": "off",
-            "REYN_CHUNKER_DIAG_DUMP_AFTER": "20",
-            "REYN_CHUNKER_DIAG_TEE_STDOUT": "1",
+            "REYN_CHUNKER_DIAG_DUMP_AFTER": "8",
         },
     }
+    # DIAGNOSTIC (client-side, sandbox-FREE): set in THIS (test) process's env,
+    # NOT the server spawn env — it gates MCPClient's own init-failure path to
+    # run a raw-handshake capture (re-spawn the same sandboxed command, write a
+    # raw JSON-RPC `initialize`, read raw stdout) and fold the result into the
+    # MCPError. This observes the byte stream from OUTSIDE the sandbox, so it
+    # cannot be an artifact of a seccomp-denied syscall the way the in-server
+    # fd tee was.
+    monkeypatch.setenv("REYN_MCP_DIAG_CAPTURE_HANDSHAKE", "1")
     # Create-then-enter so ``client`` is bound even if ``__aenter__`` (init)
     # raises — needed to read the stderr tail on the failure path.
     client = MCPClient(cfg)
@@ -507,17 +515,18 @@ async def test_chunker_server_reaches_serving_under_network_false(
     except AssertionError:
         raise
     except Exception as exc:  # noqa: BLE001 — DIAGNOSTIC: surface the true cause
-        # The production MCPError already embeds the subprocess stderr tail; with
-        # the diag env armed that tail contains the faulthandler all-thread dump
-        # naming the blocked frame. read_stderr_tail() is a best-effort second
-        # source (empty once the capture is closed on the init-failure path).
+        # The production MCPError already embeds the subprocess stderr tail AND,
+        # with REYN_MCP_DIAG_CAPTURE_HANDSHAKE set, the client-side raw-handshake
+        # capture (bytes written to stdin + raw bytes received from stdout, or
+        # "0 bytes received"). That decisively names case (i)/(ii)/(iii)/(iv).
         tail = client.read_stderr_tail()
         pytest.fail(
             "DIAGNOSTIC (#3060 case-(b)): chunker did not reach serving under "
-            "network=False. The exception message below already carries the "
-            "subprocess stderr tail (with the faulthandler all-thread dump when "
-            "the server hung); the blocked frame there is the true cause to "
-            f"root-cause.\n--- exception ---\n{type(exc).__name__}: {exc}\n"
+            "network=False. The exception message below carries the client-side "
+            "raw-handshake capture (stdin bytes written + raw stdout bytes "
+            "received) and the server stderr tail (faulthandler frame if it "
+            "hung) — read those to name the failure class.\n"
+            f"--- exception ---\n{type(exc).__name__}: {exc}\n"
             f"--- read_stderr_tail() (best-effort, may be empty) ---\n{tail}"
         )
 
