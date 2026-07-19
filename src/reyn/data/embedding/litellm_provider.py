@@ -331,10 +331,18 @@ class LiteLLMEmbeddingProvider:
         # Aggregate in order
         all_vectors: list[list[float]] = []
         total_tokens = 0
+        # #3047 (c): fold the per-batch retry-loop counts up the SAME way
+        # ``total_tokens`` is folded — no new aggregation machinery. Each
+        # per-batch result carries these because it went through the retry loop;
+        # ``.get(..., 0)`` stays defensive in case a future batch path omits them.
+        total_attempts = 0
+        successful_batches = 0
         canonical_model = resolved_model
         for r in results:
             all_vectors.extend(r["vectors"])
             total_tokens += r["total_tokens"]
+            total_attempts += r.get("attempts", 0)
+            successful_batches += r.get("successful_batches", 0)
             if r["model"]:
                 canonical_model = r["model"]
 
@@ -342,6 +350,8 @@ class LiteLLMEmbeddingProvider:
             vectors=all_vectors,
             model=canonical_model,
             total_tokens=total_tokens,
+            attempts=total_attempts,
+            successful_batches=successful_batches,
         )
 
     async def _embed_batch_with_retry(
@@ -413,7 +423,19 @@ class LiteLLMEmbeddingProvider:
                     drop_params=True,
                     **extra,
                 )
-                return self._parse_response(response, resolved_model)
+                result = self._parse_response(response, resolved_model)
+                # #3047 (c) — observation-only. Stamp this batch's retry-loop
+                # altitude onto the result: ``attempt`` is 0-indexed, so the
+                # (attempt+1)-th pass through the loop is the one that returned.
+                # This is reyn's OWN retry count, not a raw wire count — equal to
+                # delivered requests only while #3054's ``max_retries=0`` keeps
+                # the SDK's internal retry at 0. ``_parse_response`` stays
+                # attempt-agnostic (it only knows the response). Emitting the
+                # audit-event is the op layer's job (P7: this provider never
+                # imports op_runtime/ctx); the provider only returns the data.
+                result["attempts"] = attempt + 1
+                result["successful_batches"] = 1
+                return result
             except Exception as exc:
                 last_exc = exc
                 logger.warning(

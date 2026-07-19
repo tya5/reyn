@@ -171,6 +171,27 @@ async def handle(op: EmbedIROp, ctx: OpContext) -> dict:
     model_used = result.get("model", op.embedding_model)
     total_tokens = result.get("total_tokens", 0)
 
+    # ── #3047 (c): delivered-attempt observation (P6 audit-event, NO cost) ─
+    # The cost tracker below records only the ONE returned response's tokens,
+    # so a call that retried N times before succeeding reports 1-of-N delivered
+    # requests silently. This audit-event makes the retry overhead VISIBLE
+    # without pricing it (owner GO: observation-only, candidate (c)). It is
+    # purely a P6 signal — it does NOT touch `record_embedding` / the cost
+    # aggregate, so it cannot double-count (that is the whole point of (c)).
+    # Read defensively: `attempts` is `NotRequired` on EmbedBatchResult, so a
+    # loopless provider (test stubs) omits it and we simply do not emit — an
+    # absent key means "provider has no retry concept", never a fabricated 1.
+    # Emitted on the SUCCESS path only; the all-attempts-failed batch path
+    # raises and surfaces via `control_ir_failed`, a separate loud surface.
+    attempts = result.get("attempts")
+    if attempts is not None:
+        ctx.events.emit(
+            "embed_attempts",
+            model=model_used,
+            attempts=attempts,
+            successful_batches=result.get("successful_batches", 0),
+        )
+
     # ── FP-0063 PC: independent embedding-cost tracking (X2b/X4/X2c) ───────
     from reyn.llm.pricing import estimate_embedding_cost
     cost_usd, _pricing_snapshot = estimate_embedding_cost(model_used, total_tokens)

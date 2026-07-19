@@ -11,7 +11,7 @@ EmbedBatchResult carries the minimal data the OS and op-handlers need:
 """
 from __future__ import annotations
 
-from typing import Protocol, TypedDict, runtime_checkable
+from typing import NotRequired, Protocol, TypedDict, runtime_checkable
 
 
 class EmbedBatchResult(TypedDict):
@@ -20,6 +20,22 @@ class EmbedBatchResult(TypedDict):
     vectors: list[list[float]]  # shape: [batch_size, dim]
     model: str                  # canonical model name returned by API
     total_tokens: int           # for cost tracking
+    # #3047 (c) — observation-only retry-overhead signal, NOT a cost figure.
+    # ``attempts`` = how many times reyn's OWN ``_embed_batch_with_retry`` loop
+    # reached ``_aembedding_bounded`` (summed across internal batches); it is
+    # reyn's retry-loop altitude, NOT a raw "wire request" count — the two are
+    # equal only while #3054's ``max_retries=0`` keeps litellm's SDK-internal
+    # retry at 0. ``successful_batches`` = how many internal batches returned a
+    # response (each contributing to ``total_tokens``); the operator's
+    # retry-overhead is ``attempts - successful_batches``. Both are
+    # ``NotRequired`` on purpose: only a provider with a retry loop can populate
+    # them, so a loopless test/stub provider omits them rather than fabricating
+    # ``attempts=1`` (which would conflate "no retry concept" with "1 attempt" —
+    # the #2944 requirement-1 anti-pattern, unready != empty). The ``embed`` op
+    # reads them defensively (``result.get("attempts")``) and emits the
+    # ``embed_attempts`` audit-event only when present.
+    attempts: NotRequired[int]
+    successful_batches: NotRequired[int]
 
 
 @runtime_checkable
