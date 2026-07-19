@@ -43,19 +43,28 @@ completeness witness had not surfaced:
     cache lock in `uvx markitdown-mcp`) — see the "Durability + advisory
     file-locking" block.
 Both are witnessed by the x86_64 deny-gate job, not an aarch64 host whose green
-does not speak for the enforce arch. The representative-server completeness
-probes run at `network=True` (the server's own network needs met, so the only
-variable vs baseline is the syscall filter): a FastMCP/uvx server issues
-network-family syscalls during init, which `network=False` now CORRECTLY denies
-(that is #3030's fix, not a gap), so a `network=False` server run witnesses the
-network gate, not allowlist completeness — the latter is a `network=True`
-question, the former is covered precisely by the dedicated socket/io_uring deny
-probes.
+does not speak for the enforce arch. The representative-server allowlist-
+completeness probes run at `network=True` (the server's own network needs met, so
+the only variable vs baseline is the syscall filter). A `network=False` run is a
+separate question — the network GATE, not allowlist completeness — and since
+#3060 (option A) a FastMCP/uvx server initializes cleanly under `network=False`:
+`socket`/`bind` are ALWAYS allowed (`_NETWORK_ALWAYS_ALLOWED`, so the benign
+urllib3 import-time IPv6-support probe no longer dies as collateral), and the
+builtin RAG servers are launched with FastMCP telemetry/update-check disabled so
+no `connect()` is even attempted. What `network=False` still denies is real
+egress — `connect`/`sendto`/`sendmsg` — covered precisely by the dedicated
+connect/sendto/io_uring deny probes (NOT a `socket()`-create probe: `socket` is
+now allowed, so it can no longer witness the gate).
 
 - aarch64 Linux (Ubuntu 24.04, kernel 6.8, glibc 2.39): live-validated —
   the filter loads and ordinary workloads (echo / ls / cat / python file
-  read+write, mkdir / remove / rename / rmtree) run under it, while fork,
-  ptrace and socket are refused.
+  read+write, mkdir / remove / rename / rmtree) run under it, while fork
+  and ptrace are refused. Under #3060 `socket`/`bind` are allowed
+  unconditionally (neither moves a byte on its own) and the egress deny
+  falls on `connect`/`sendto` instead; that socket→connect shift is
+  witnessed on x86_64 by `scripts/sandbox_seccomp_x86_64_live_smoke.py`'s
+  socket+bind-survive / connect+sendto-refused probes, not re-run on this
+  aarch64 host.
 - x86_64 Linux: NOT validated. The maintainer dev environment is macOS/arm64
   and x86_64 is reachable there only under Rosetta emulation, where
   `seccomp_load()` fails with ECANCELED — an artifact of installing an
@@ -204,7 +213,9 @@ _BASELINE: list[str] = [
     # gate is `_NETWORK_SYSCALLS`, still gated on `policy.network`):
     #   - socketpair: a connected pair in ONE address family, local only. On
     #     Linux only AF_UNIX is supported (AF_INET/AF_INET6 -> EOPNOTSUPP), so it
-    #     cannot create a network socket — `socket`/`connect` stay network-gated.
+    #     cannot create a network socket — and `connect` stays network-gated
+    #     regardless (under #3060 `socket`/`bind` are allowed unconditionally,
+    #     but neither moves a byte; socketpair adds no egress path).
     #   - eventfd/eventfd2: a counter object fd for wakeups; no I/O target but
     #     itself. (glibc's eventfd() issues the eventfd2 syscall; both named so
     #     libseccomp resolves whichever the running libc uses.)
@@ -233,8 +244,12 @@ _BASELINE: list[str] = [
     #     (SQLITE_IOERR) creating a fresh db — SQLite's unix VFS fsync/fdatasync
     #     on the first commit was refused (fcntl locking is already baseline, so
     #     the remaining durability syscall is the gap). Network-INDEPENDENT: it
-    #     failed at network=True too, which is what distinguishes it from the
-    #     FastMCP-startup-network failures below.
+    #     failed at network=True too, which is what distinguishes it from a
+    #     network-GATED failure — one that appears only when `network=False`
+    #     denies an egress syscall (`connect`/`sendto`, see `_NETWORK_SYSCALLS`
+    #     below). (Pre-#3060 a `socket()`-create under `network=False` was such
+    #     a failure; option A now always-allows `socket`/`bind`, so the gate
+    #     bites only on real egress.)
     #   - `uvx markitdown-mcp` (uv, Rust): "failed to lock
     #     `~/.cache/uv/.lock`: Operation not permitted" — uv `flock`s its cache.
     # Each is an fd/durability primitive with no network reach:

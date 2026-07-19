@@ -326,22 +326,33 @@ def _patch_landlock_backend(monkeypatch: pytest.MonkeyPatch) -> None:
 @requires_landlock
 # ── why network=True (not parametrized over network=False) ───────────────────
 #
-# Measured (#3059 co-vet, deny-gate x86_64): a FastMCP-based stdio server issues
-# a network-family syscall (`socket`/`connect`) during its init handshake, so
-# under `network=False` the seccomp filter now CORRECTLY denies it and the server
-# cannot initialize (Connection closed) — chunker/vector-store init succeeded at
-# network=True and failed at network=False, a network-flag-correlated result. That
-# denial is #3030's fix working, NOT an allowlist gap (an allowlist gap is
-# network-flag-INDEPENDENT — it fails at network=True too, which is exactly how
-# the sqlite `disk I/O error` / uv `flock` gaps were told apart from this).
+# Historical measurement (#3059 co-vet, deny-gate x86_64, PRE-#3060 filter): a
+# FastMCP-based stdio server issued a network-family syscall during its init
+# handshake, so under `network=False` the seccomp filter denied it and the
+# server could not initialize (Connection closed) — chunker/vector-store init
+# succeeded at network=True and failed at network=False, a network-flag-
+# correlated result attributed at the time to `socket`/`connect`.
 #
-# So these completeness probes run at network=True: the server's own network
-# needs are met, leaving the unconditional syscall filter as the ONLY variable
-# vs baseline — the clean "#2962 recurrence: does the filter break a server that
-# would otherwise work?" witness. The network=False security behavior (a socket
-# is refused) is witnessed precisely, and without this init-network confound, by
-# `test_shim_denies_outbound_socket_*` + the io_uring probe + the deny-gate
-# `network` arm above.
+# #3060 (option A) supersedes that network=False behavior for these two servers:
+# `socket`/`bind` are now ALWAYS allowed (`_NETWORK_ALWAYS_ALLOWED` — the benign
+# urllib3 import-time IPv6-support probe no longer dies as collateral), and the
+# builtin RAG servers are launched with FastMCP telemetry/update-check disabled
+# (their `.mcp.json` sets `FASTMCP_SHOW_SERVER_BANNER=false`/
+# `FASTMCP_CHECK_FOR_UPDATES=off`), so the phone-home `connect()` is not
+# attempted. Per the #3060 architect firm the chunker/vector-store therefore now
+# init cleanly under network=False as well.
+#
+# These completeness probes nonetheless still run at network=True, for two
+# reasons that survive #3060: (1) `uvx markitdown-mcp` GENUINELY fetches its
+# package over the network, so that server needs network=True regardless;
+# running all three uniformly at network=True keeps them comparable and (2)
+# isolates the "#2962 recurrence: does the unconditional filter break a server
+# that would otherwise work?" allowlist-completeness question from any network
+# behavior — the syscall filter stays the ONLY variable vs baseline. The
+# network=False EGRESS deny (a `connect()` is refused, `socket()`/`bind()` are
+# not) is witnessed precisely, without this init confound, by
+# `test_shim_denies_outbound_connect_*` + `test_shim_allows_socket_and_bind_*`
+# + the io_uring probe + the deny-gate `network` arm above.
 
 
 @pytest.mark.asyncio
