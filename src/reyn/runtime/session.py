@@ -1213,6 +1213,18 @@ class Session:
         self._turn_idle = asyncio.Event()
         self._turn_idle.set()
         self._turn_owner_task: "asyncio.Task | None" = None  # lets await_quiescent skip its wait when called re-entrantly from the owning task
+        # #2242: True only for the window between cancel_inflight() calling
+        # `_turn_owner_task.cancel()` and run_one_iteration observing the
+        # resulting CancelledError. Distinguishes OUR OWN hard-cancel (swallowed,
+        # so the run-loop / driver task survives) from an externally-cancelled
+        # driver task (e.g. an anyio scope teardown cancelling the MCP/A2A
+        # request-handler task that is pumping run_one_iteration directly, FP-0013
+        # §ADR-A) — in the external case `await self._turn_owner_task` ALSO
+        # raises CancelledError (asyncio propagates an awaiting task's cancel into
+        # whatever Task/Future it is suspended on), but that cancellation must be
+        # RE-RAISED, not swallowed, so the driver's own cancellation completes
+        # normally instead of silently surviving a cancel that was never ours.
+        self._turn_cancel_self_initiated: bool = False
         # Joinable handle for fire-and-forget WAL-append tasks so await_quiescent can join them too (ADR-0038 Stage 1c coverage, see session-construction.md#family-2-recovery-wal-journal)
         self._inflight_wal_tasks: set[asyncio.Task] = set()
         # Kept directly (not only via journal) so ops launched from this session can emit step events into the same WAL
@@ -1867,16 +1879,32 @@ class Session:
             bind(self, self._router_host)
 
     async def cancel_inflight(self) -> str:
-        """#1468: cancel all in-flight work — running turn + tasks/plans.
+        """#1468/#2242: cancel all in-flight work — running turn + tasks/plans.
 
         Single seam called by both TUI (local mode) and WS handler (remote
         mode). Returns a human-readable summary string.
 
-        V1 boundary: sets the cooperative cancellation flag so the turn's
-        run_loop breaks at the next tool-iteration boundary. A slow tool
+        #1468 cooperative layer: sets the cooperative cancellation flag so the
+        turn's run_loop breaks at the next tool-iteration boundary. A slow tool
         already in flight completes before the cancel takes effect (subprocess
         kill is a follow-up scope). Any spawned tasks are cancelled immediately
         via asyncio task cancellation (existing behaviour, preserved here).
+
+        #2242 hard layer: ALSO cancels ``_turn_owner_task`` directly (the
+        per-turn sub-task ``run_one_iteration`` spawns to run ``_run_turn_body``
+        — see that method). This is what actually stops a mid-flight LLM call:
+        the cooperative flag above is only checked at the top of each router-loop
+        iteration (BEFORE the next LLM call), so it cannot interrupt one already
+        in flight; a direct ``Task.cancel()`` injects ``CancelledError`` at
+        whatever await point the task is currently suspended on — for a
+        generating turn, that is the ``litellm.acompletion`` await itself, so
+        the underlying HTTP request aborts and the spinner stops immediately
+        instead of waiting out the response. ``_turn_cancel_self_initiated`` is
+        set first so ``run_one_iteration`` can tell this cancellation apart from
+        an externally-cancelled driver task and swallow only this one (see that
+        flag's docstring). ``Task.cancel()`` returns False (no-op, flag left
+        unset) when the task is already done, so a cancel racing turn completion
+        never mis-tags a later, unrelated cancellation.
 
         #2588: after cancelling this session's own turn, forward the cancel to
         every registered cancel-forward target (see ``register_cancel_forward``).
@@ -1886,6 +1914,8 @@ class Session:
         duration of a sync attached run so a Ctrl-C here reaches the driver.
         """
         self._loop_driver.request_cancel()
+        if self._turn_owner_task is not None and self._turn_owner_task.cancel():
+            self._turn_cancel_self_initiated = True
         for forward in list(self._cancel_forward_targets):
             forward()
         return "✗ cancelled turn"
@@ -5068,38 +5098,55 @@ class Session:
         )
         # ADR-0038 Stage 1c: busy until this turn settles (its WAL appends done).
         self._turn_idle.clear()
-        self._turn_owner_task = asyncio.current_task()
+        # #2242: the turn body now runs as its OWN per-turn sub-task (not inline
+        # on this driver task) — this is what makes hard-cancel possible.
+        # cancel_inflight() can call `_turn_owner_task.cancel()` directly, which
+        # injects CancelledError at whatever await point the sub-task is
+        # currently suspended on (mid-generation: the litellm.acompletion await
+        # inside RouterLoop), aborting the in-flight HTTP request immediately —
+        # unlike the pre-#2242 inline design, where the turn body ran on THIS
+        # (the driver's own) task and only the cooperative flag (checked at the
+        # top of each router-loop iteration, never during an LLM call) could ask
+        # it to stop.
+        self._turn_owner_task = asyncio.create_task(self._run_turn_body(kind, payload))
+        _cancelled = False
         try:
             try:
-                if kind == "user":
-                    await self._handle_user_message(
-                        payload.get("text", ""),
-                        chain_id=payload.get("chain_id") or _new_chain_id(),
-                    )
-                elif kind == "agent_request":
-                    await self._handle_agent_request(payload)
-                elif kind == "agent_response":
-                    await self._handle_agent_response(payload)
-                elif kind == "pipeline_result":
-                    # IS-2: an async pipeline driver-session posted its terminal
-                    # result here (the agent_response mirror — but chainless: the
-                    # launch returned immediately, so this is a fresh turn, routed
-                    # exactly like a task wake).
-                    await self._handle_pipeline_result(payload)
-                elif kind in ("task_ready", "task_dependency_aborted"):
-                    # #1953 slice 7: the TaskWaker delivered a dep-graph disposition
-                    # (a dependent became ready, or a parent must decide recovery). Both
-                    # surface as an OS-originated message so the LLM acts via ordinary
-                    # task ops (P7 — no decision vocabulary).
-                    await self._handle_task_wake(payload)
-                elif kind == "hook":  # HOOK_INBOX_KIND (#1800 slice 5b)
-                    # E (wake=true) lifecycle-hook push delivered as a turn trigger:
-                    # a system-role [hook:name] message + one router turn (self-
-                    # continuation). The attribution + wake binding ride in the
-                    # payload (race-free; the slice-7 valve can count hook-driven
-                    # turns, and the audit trail attributes the turn to the hook).
-                    await self._handle_hook_message(payload)
+                try:
+                    await self._turn_owner_task
+                except asyncio.CancelledError:
+                    if self._turn_cancel_self_initiated:
+                        # #2242 WAL-invariant 1: CancelledError unwound the
+                        # turn-body task straight out of whatever await it was
+                        # suspended on (mid-generation: the LLM await) — every
+                        # statement AFTER that await (parsing the response,
+                        # appending it to history, any further tool iteration)
+                        # never executes, so the cancelled turn's result is
+                        # never appended. Swallow here (do NOT re-raise) so the
+                        # driver task — and thus the agent — survives to serve
+                        # the next turn; only the per-turn sub-task was cancelled.
+                        _cancelled = True
+                    else:
+                        # Not our own cancel_inflight() call — this driver task
+                        # itself was cancelled from outside (e.g. an anyio scope
+                        # teardown for the MCP/A2A request-handler task pumping
+                        # run_one_iteration directly, FP-0013 §ADR-A). Preserve
+                        # the pre-#2242 behaviour: let it propagate.
+                        raise
             finally:
+                # #2242 Finding 1: reset the self-initiated flag UNCONDITIONALLY
+                # here (not only on the swallow branch). If cancel_inflight() set
+                # it True but the CancelledError was never actually delivered to
+                # this turn — e.g. the turn body completed (or caught+suppressed
+                # the cancel) in the same tick before it landed, so `await
+                # self._turn_owner_task` returned normally and the `except` above
+                # never ran — a per-branch reset would leave the flag stuck True.
+                # It would then mis-classify the NEXT turn's EXTERNAL cancel as
+                # self-initiated and wrongly swallow it, violating the FP-0013
+                # external-cancel-re-raise contract. A finally clears it on every
+                # path (normal return, swallowed cancel, re-raised external
+                # cancel) so the flag never outlives the turn that set it.
+                self._turn_cancel_self_initiated = False
                 self._turn_owner_task = None
                 self._turn_idle.set()
                 # Symmetric turn-end lifecycle event. turn_completed fires only on
@@ -5110,6 +5157,21 @@ class Session:
                 self._chat_events.emit(
                     "turn_settled", kind=kind, chain_id=payload.get("chain_id"),
                 )
+            if _cancelled:
+                # #2242 WAL-invariant 2: a hard-cancel does not touch any
+                # ALREADY-SPAWNED fire-and-forget WAL-append task (e.g. an
+                # intervention-dispatch task tracked via `_track_wal_task` before
+                # the cancelled turn's LLM await was reached) — cancelling
+                # `_turn_owner_task` cancels only that one sub-task, never a
+                # sibling task. `_turn_idle` is already `.set()` above (this turn
+                # is done), so `await_quiescent()`'s re-entrancy check
+                # (`current_task() is not self._turn_owner_task`, and
+                # `_turn_owner_task` is already None) takes the `_turn_idle.wait()`
+                # branch and returns immediately (already set) — it does not
+                # self-deadlock; it exists here purely to JOIN any such stragglers
+                # before this method returns, so they cannot land after the
+                # session is reported idle.
+                await self.await_quiescent()
         finally:
             # 0062: an outer finally so an ephemeral agent-step session still gets
             # scheduled to vanish even when the turn body raises past the inner
@@ -5123,6 +5185,46 @@ class Session:
             # here rather than shipped as a new leak.
             self._maybe_schedule_ephemeral_vanish()
         return True
+
+    async def _run_turn_body(self, kind: str, payload: dict) -> None:
+        """#2242: the per-kind turn dispatch, run as ``run_one_iteration``'s
+        per-turn cancellable sub-task (``self._turn_owner_task``).
+
+        Byte-identical dispatch to the pre-#2242 inline body (extracted, not
+        rewritten) — a NORMAL (non-cancelled) turn behaves exactly as before;
+        the only change is WHICH task executes it, so ``cancel_inflight()`` can
+        target this task directly with ``asyncio.Task.cancel()`` instead of
+        relying solely on the cooperative flag ``RouterLoopDriver`` polls at
+        each iteration boundary (too coarse to interrupt a mid-flight LLM
+        call — see ``cancel_inflight``'s docstring)."""
+        if kind == "user":
+            await self._handle_user_message(
+                payload.get("text", ""),
+                chain_id=payload.get("chain_id") or _new_chain_id(),
+            )
+        elif kind == "agent_request":
+            await self._handle_agent_request(payload)
+        elif kind == "agent_response":
+            await self._handle_agent_response(payload)
+        elif kind == "pipeline_result":
+            # IS-2: an async pipeline driver-session posted its terminal
+            # result here (the agent_response mirror — but chainless: the
+            # launch returned immediately, so this is a fresh turn, routed
+            # exactly like a task wake).
+            await self._handle_pipeline_result(payload)
+        elif kind in ("task_ready", "task_dependency_aborted"):
+            # #1953 slice 7: the TaskWaker delivered a dep-graph disposition
+            # (a dependent became ready, or a parent must decide recovery). Both
+            # surface as an OS-originated message so the LLM acts via ordinary
+            # task ops (P7 — no decision vocabulary).
+            await self._handle_task_wake(payload)
+        elif kind == "hook":  # HOOK_INBOX_KIND (#1800 slice 5b)
+            # E (wake=true) lifecycle-hook push delivered as a turn trigger:
+            # a system-role [hook:name] message + one router turn (self-
+            # continuation). The attribution + wake binding ride in the
+            # payload (race-free; the slice-7 valve can count hook-driven
+            # turns, and the audit trail attributes the turn to the hook).
+            await self._handle_hook_message(payload)
 
     def _maybe_schedule_ephemeral_vanish(self) -> None:
         """#2103: an ephemeral spawned session auto-vanishes once its task is done —
