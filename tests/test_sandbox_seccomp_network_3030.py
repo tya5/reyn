@@ -434,7 +434,17 @@ async def test_chunker_server_reaches_serving_under_network_false(
     Real chunker + real seccomp shim via the real ``MCPClient`` seam, no fakes;
     Linux-CI-gated (``@requires_landlock``), so it SKIPS on darwin/without
     Landlock exactly like the sibling probes — a green run on a dev box witnesses
-    nothing here."""
+    nothing here.
+
+    ⚠ DIAGNOSTIC (temporary, #3060 case-(b) probe — revert once the true cause is
+    confirmed): this run is instrumented to make the FAILURE self-explaining in
+    the CI log. It (1) arms ``REYN_CHUNKER_DIAG_DUMP_AFTER`` so the server dumps
+    every thread's Python stack to stderr if it hangs, and (2) on any init
+    failure/timeout surfaces the server's stderr tail (which then NAMES the
+    blocked frame — e.g. ``socket.getaddrinfo`` / an httpx or opentelemetry
+    startup call) into the assertion message, rather than letting it vanish into
+    the FastMCP stderr tempfile. The env-wiring fix did not clear the Linux-CI
+    hang, so the next step is to MEASURE the true blocking call, not guess."""
     pytest.importorskip("chonkie", reason="builtin-rag extra not installed")
     from reyn.mcp.client import MCPClient
 
@@ -453,28 +463,54 @@ async def test_chunker_server_reaches_serving_under_network_false(
         # Exactly the vars the shipped .mcp.json sets — suppress FastMCP's
         # banner-time update check (a real httpx.get to pypi.org) so no
         # outbound connect() is attempted that network=False would refuse.
+        # DIAGNOSTIC: REYN_CHUNKER_DIAG_DUMP_AFTER arms a faulthandler
+        # delayed-traceback dump in the server (env-gated no-op in production).
+        # 20s < the client's 60s init timeout, so if the server hangs the
+        # all-thread stack lands in its stderr BEFORE the client gives up, and
+        # the failure path below folds that stderr into the assertion message.
         "env": {
             "FASTMCP_SHOW_SERVER_BANNER": "false",
             "FASTMCP_CHECK_FOR_UPDATES": "off",
+            "REYN_CHUNKER_DIAG_DUMP_AFTER": "20",
         },
     }
-    async with MCPClient(cfg) as client:
-        # Reaching list_tools() at all means the server survived initialize()
-        # under network=False — it did not die on a refused network syscall.
-        tools = await client.list_tools()
-        assert any(t.get("name") == "chunk" for t in tools), (
-            f"reyn-rag-chunker did not reach serving under network=False — it "
-            f"advertised no 'chunk' tool, so the server failed to initialize "
-            f"under the exact config #3060 is meant to make work; tools={tools!r}"
-        )
-        # And it can actually do its job (local chonkie processing, no network).
-        result = await client.call_tool(
-            "chunk", {"text": "hello world " * 50, "size": 20}
-        )
-        assert not result.get("isError"), (
-            f"reyn-rag-chunker reached serving but its real 'chunk' call FAILED "
-            f"under network=False — #3060's purpose (the chunker actually works "
-            f"with network off) is not met: {result!r}"
+    # Create-then-enter so ``client`` is bound even if ``__aenter__`` (init)
+    # raises — needed to read the stderr tail on the failure path.
+    client = MCPClient(cfg)
+    try:
+        async with client:
+            # Reaching list_tools() at all means the server survived initialize()
+            # under network=False — it did not die on a refused network syscall.
+            tools = await client.list_tools()
+            assert any(t.get("name") == "chunk" for t in tools), (
+                f"reyn-rag-chunker did not reach serving under network=False — it "
+                f"advertised no 'chunk' tool, so the server failed to initialize "
+                f"under the exact config #3060 is meant to make work; tools={tools!r}"
+            )
+            # And it can actually do its job (local chonkie processing, no net).
+            result = await client.call_tool(
+                "chunk", {"text": "hello world " * 50, "size": 20}
+            )
+            assert not result.get("isError"), (
+                f"reyn-rag-chunker reached serving but its real 'chunk' call FAILED "
+                f"under network=False — #3060's purpose (the chunker actually works "
+                f"with network off) is not met: {result!r}"
+            )
+    except AssertionError:
+        raise
+    except Exception as exc:  # noqa: BLE001 — DIAGNOSTIC: surface the true cause
+        # The production MCPError already embeds the subprocess stderr tail; with
+        # the diag env armed that tail contains the faulthandler all-thread dump
+        # naming the blocked frame. read_stderr_tail() is a best-effort second
+        # source (empty once the capture is closed on the init-failure path).
+        tail = client.read_stderr_tail()
+        pytest.fail(
+            "DIAGNOSTIC (#3060 case-(b)): chunker did not reach serving under "
+            "network=False. The exception message below already carries the "
+            "subprocess stderr tail (with the faulthandler all-thread dump when "
+            "the server hung); the blocked frame there is the true cause to "
+            f"root-cause.\n--- exception ---\n{type(exc).__name__}: {exc}\n"
+            f"--- read_stderr_tail() (best-effort, may be empty) ---\n{tail}"
         )
 
 

@@ -142,7 +142,43 @@ def build_server() -> Any:
     return mcp
 
 
+def _maybe_arm_diagnostic_traceback_dump() -> None:
+    """DIAGNOSTIC (temporary, #3060 case-(b) probe): env-gated only.
+
+    When ``REYN_CHUNKER_DIAG_DUMP_AFTER`` is set to a float number of seconds,
+    arm ``faulthandler.dump_traceback_later`` so that if this server hangs
+    during ``initialize()`` (e.g. a blocking network syscall under a
+    ``network:false`` sandbox — glibc ``getaddrinfo``/DNS, an httpx/opentelemetry
+    startup call, …), the FULL Python stack of EVERY thread is dumped to
+    ``stderr`` after that delay, NAMING the exact frame that is blocked. The
+    witness test forwards that stderr into the CI log.
+
+    ``exit=False`` so the dump is observational — the process keeps running and
+    the normal timeout/teardown still applies. Completely inert when the env var
+    is unset or unparseable: production behaviour (including this module's
+    "no network at import/call time" contract) is byte-for-byte unchanged, since
+    ``faulthandler`` does no I/O beyond writing to the already-open ``stderr``
+    fd on the timer.
+    """
+    import os  # noqa: PLC0415 — diagnostic-only, keep production import surface clean
+    import sys  # noqa: PLC0415
+
+    raw = os.environ.get("REYN_CHUNKER_DIAG_DUMP_AFTER")
+    if not raw:
+        return
+    try:
+        after_seconds = float(raw)
+    except ValueError:
+        return
+    if after_seconds <= 0:
+        return
+    import faulthandler  # noqa: PLC0415 — stdlib, no network, diagnostic-gated
+
+    faulthandler.dump_traceback_later(after_seconds, file=sys.stderr, exit=False)
+
+
 def main() -> None:
+    _maybe_arm_diagnostic_traceback_dump()
     build_server().run()
 
 
