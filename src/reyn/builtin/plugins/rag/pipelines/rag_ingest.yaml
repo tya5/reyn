@@ -96,7 +96,23 @@
 # `all_discovered_files_skipped`, true when EVERY discovered file was
 # skipped (0 chunks indexed this run despite `status: ok`), so a caller
 # does not have to re-derive that special case from files_scanned ==
-# files_skipped itself)
+# files_skipped itself -- plus #3010 cause-3's `files_ingested`
+# (`[{source_path, chunks_produced, preview}, ...]`), one entry per file that
+# WAS indexed: `chunks_produced` is the count this file contributed (before
+# dedup -- see _ingest_chunk_file) and `preview` is its first chunk's text
+# VERBATIM (chunk_size already bounds its length -- no truncation, and R1 has
+# no string-slice to do one anyway). This is NOT a detector: mojibake (a
+# converter mis-detecting a file's charset, e.g. Shift-JIS decoded as UTF-8)
+# produces text that is non-empty, not the literal "None", and chunks to
+# ≥1 -- i.e. it passes every gate above by construction, because garbled
+# bytes are semantically indistinguishable from legitimate content (no
+# gate can tell them apart without a false-positive rate on real prose).
+# `files_ingested` does not try; it makes every ingested file's content
+# VISIBLE so an operator can see garbling directly in `preview` and act
+# (re-ingest / fix the encoding / exclude the file) -- reyn reports, the
+# operator judges. `files_scanned == count(skipped_files) +
+# count(files_ingested)` always: every discovered file lands in exactly
+# one of the two lists, so none can leave the corpus's outcome silently)
 # or `_blocked`'s X1 pre-flight failure message (cause + concrete remedy
 # per unreachable server -- mirrors #2932's `require_mcp` decision-enabling
 # error, never a bare transport exception).
@@ -430,6 +446,22 @@ steps:
                                                  est_tokens: c.est_tokens})
       output: items
 
+  # #3010 cause-3 (mojibake): this file's first chunk's text, VERBATIM --
+  # the visibility lever for garbled content that passes every gate above
+  # (non-empty, not "None", ≥1 chunk -- mojibake is semantically
+  # indistinguishable from legitimate prose, so it cannot be GATED, only
+  # SHOWN; see the note at this pipeline's Output header). `find` rather
+  # than an index (R1 has no `get(list, int)` -- `get`'s path is
+  # Mapping-only, see expr.py's `_resolve_path_safe`): the chunker stamps
+  # each chunk's own 0-based `chunk_index` (#2972), so `chunk_index == 0`
+  # IS "the first chunk" without R1 needing list indexing at all. `get(...,
+  # 'text', '')` covers the (already-reported-elsewhere) zero-chunk case,
+  # where `find` returns null and this value is simply unused by the
+  # summary (filtered out via `skipped_reason != ""` below).
+  - transform:
+      value: "get(find(ctx.items, i -> i.chunk_index == 0), 'text', '')"
+      output: preview
+
   # ---- #3010, the SILENT-ZERO gate: a file that yielded no chunks ----
   # The `meta.empty` gate above catches an empty conversion only when the
   # converter says so. It cannot when the converter's MCP server returns
@@ -456,7 +488,7 @@ steps:
   - transform:
       value: >-
         {source_path: ctx.source_path, items: ctx.items,
-         skipped_reason: ctx.zero_chunk_reason}
+         skipped_reason: ctx.zero_chunk_reason, preview: ctx.preview}
       output: outcome
 ---
 pipeline: _ingest_skipped_file
@@ -668,6 +700,22 @@ steps:
             o -> {source_path: o.source_path, reason: o.skipped_reason})
       output: skipped_files
 
+  # #3010 cause-3 -- the files that WERE ingested, NAMED with enough to spot
+  # mojibake: `chunks_produced` (this file's own contribution, before the C5
+  # dedup diff below -- a re-ingest of an unchanged file still shows its true
+  # chunk count here, not 0) and `preview` (the first chunk's text, verbatim
+  # -- see _ingest_chunk_file's `preview` step for why `find` on
+  # `chunk_index == 0` rather than an index). Exactly the complement of
+  # `skipped_files` above (`skipped_reason == ""` here vs `!= ""` there), so
+  # `files_scanned == count(skipped_files) + count(files_ingested)` holds by
+  # construction -- every discovered file lands in exactly one of the two.
+  - transform:
+      value: >-
+        map(filter(ctx.per_file_outcomes, o -> o.skipped_reason == ""),
+            o -> {source_path: o.source_path, chunks_produced: count(o.items),
+                  preview: o.preview})
+      output: files_ingested
+
   # #3102 -- the STRUCTURAL zero-yield gate. `skipped_files` (above) already
   # names every individual file and why it was skipped, but a caller has to
   # compute `files_scanned == files_skipped` itself to notice the SPECIAL
@@ -767,6 +815,7 @@ steps:
         {files_scanned: count(ctx.files),
          files_skipped: count(ctx.skipped_files),
          skipped_files: ctx.skipped_files,
+         files_ingested: ctx.files_ingested,
          all_discovered_files_skipped: ctx.all_discovered_files_skipped,
          chunks_upserted: ctx.upsert_outcome.upserted,
          chunks_removed: ctx.delete_result.structured.deleted,

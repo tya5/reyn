@@ -63,6 +63,13 @@ Coverage:
      unreachable server; (c) a failed query embed (a real provider error)
      surfaces its own cause at the embed step, not an opaque "field ...
      absent" crash two steps downstream.
+  8. #3010 cause-3 (mojibake): a charset-mismatched conversion cannot be
+     gated (semantically indistinguishable from real content) but IS made
+     VISIBLE -- every ingested file is named in ``files_ingested`` with its
+     ``chunks_produced`` and a verbatim first-chunk ``preview``, and the
+     completeness invariant ``files_scanned == files_skipped +
+     len(files_ingested)`` holds, so no discovered file can vanish from
+     both lists.
 """
 from __future__ import annotations
 
@@ -503,6 +510,86 @@ def test_the_none_filter_is_opt_out(
         "with the filter off, 'None' is ordinary content and must be indexed"
     )
     assert summary["files_skipped"] == 0
+
+
+def test_ingest_reports_mojibake_via_files_ingested_preview(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture,
+) -> None:
+    """Tier 2c: #3010 cause-3 -- a charset-mismatched (mojibake) conversion is
+    NOT detectable/skippable (garbled bytes are semantically indistinguishable
+    from legitimate content -- no gate can tell them apart without dropping
+    real prose too, the same structural reason the "None" filter above is
+    opt-out rather than a silent drop) but MUST be VISIBLE, so an operator
+    reading the summary can spot it and act.
+
+    ``mojibake.txt`` below is a REAL charset-mismatch artifact -- genuine
+    Japanese text, Shift-JIS-encoded, then decoded as Latin-1 (each SJIS byte
+    maps 1:1 onto a Latin-1 codepoint), the textbook garbling a decoder
+    mismatch produces, deterministic and reproducible without a real
+    markitdown/network dependency. It is non-empty, is not the literal
+    "None", and converts+chunks cleanly -- it passes every existing #3010
+    gate (isError / meta.empty / the "None" filter / the zero-chunk gate)
+    by construction, which is exactly what makes it cause-3 and not a repeat
+    of causes 1/2.
+
+    Witness: ``mojibake.txt`` IS ingested (same as any real document -- this
+    pipeline does not and must not skip it) and appears in ``files_ingested``
+    with its true ``chunks_produced`` and a ``preview`` carrying the garbled
+    text VERBATIM -- an operator reading the summary sees the garbling
+    directly, where before #3010 cause-3 it was invisible (a clean
+    ``chunks_upserted`` count, no per-file signal at all).
+
+    Completeness invariant: every discovered file lands in EXACTLY ONE of
+    ``skipped_files`` / ``files_ingested`` -- ``files_scanned ==
+    files_skipped + len(files_ingested)`` -- so a file can never vanish from
+    both lists (the same silent-loss shape #3010's causes 1/2 already guard,
+    now pinned as an invariant rather than re-derived per-cause).
+    """
+    monkeypatch.chdir(tmp_path)
+    project_root = _write_project(tmp_path)
+    docs_dir = project_root / "docs"
+    docs_dir.mkdir()
+    good_text = "Bananas are a good source of potassium."
+    (docs_dir / "good.txt").write_text(good_text, encoding="utf-8")
+    original = "これはテスト文書です。バナナについて説明します。"
+    mojibake_text = original.encode("shift_jis").decode("latin-1")
+    (docs_dir / "mojibake.txt").write_text(mojibake_text, encoding="utf-8")
+
+    summary = _run_ingest(project_root, capsys)["named_stores"]["result"]
+
+    # completeness invariant (vacuity guard: neither list can silently drop a file).
+    assert summary["files_scanned"] == summary["files_skipped"] + len(summary["files_ingested"]), (
+        "every discovered file must land in exactly one of skipped_files / files_ingested"
+    )
+    assert summary["skipped_files"] == [], (
+        "mojibake passes every existing skip gate -- it must not be (mis-)classified as skipped"
+    )
+
+    ingested_by_name = {Path(f["source_path"]).name: f for f in summary["files_ingested"]}
+    assert set(ingested_by_name) == {"good.txt", "mojibake.txt"}, (
+        "mojibake.txt must be INGESTED (not silently dropped nor silently indexed with no trace) -- "
+        f"got {sorted(ingested_by_name)}"
+    )
+
+    mojibake_entry = ingested_by_name["mojibake.txt"]
+    assert mojibake_entry["chunks_produced"] >= 1
+    assert mojibake_entry["preview"] == mojibake_text, (
+        "preview must carry the file's actual (garbled) first-chunk text VERBATIM -- this short "
+        "document fits in one chunk, so the preview is the whole garbled document, letting an "
+        f"operator see the mojibake directly; got {mojibake_entry['preview']!r}"
+    )
+
+    good_entry = ingested_by_name["good.txt"]
+    assert good_entry["chunks_produced"] >= 1
+    assert good_entry["preview"] == good_text, "a normal document's preview is its own real content"
+
+    # both files WERE actually indexed (real DB check -- a summary-only assertion could pass
+    # vacuously if files_ingested drifted from what was truly upserted).
+    from reyn.builtin.plugins.rag.scripts.vector_store_server import SqliteVecStore
+
+    with SqliteVecStore(str(project_root / "rag.sqlite")) as store:
+        indexed = {Path(r["metadata"]["source_path"]).name for r in store.list_metadata()}
+    assert indexed == {"good.txt", "mojibake.txt"}
 
 
 def test_upserted_chunk_embedding_model_is_the_resolved_model_not_the_alias(
