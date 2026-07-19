@@ -420,9 +420,19 @@ async def handle(
         # same as op_runtime/file.py — was missing here, so the write/http gates
         # ran permission-only (SandboxLayer ⊤). None → ⊤ (unchanged).
         _sandbox = _sandbox_policy_from_ctx(ctx)
+        # #3089: thread ctx.intervention_bus through the write gate too — mirrors
+        # the require_http_get call right below in this SAME function, which
+        # already threads ctx.intervention_bus unconditionally (line ~435).
+        # Without this, a narrowed sandbox_policy that puts config_path OUTSIDE
+        # write_paths hard-denies with no prompt even when a real bus is sitting
+        # on ctx (the CLI ``mcp install --source`` entry point already
+        # constructs an OpContext with a real StdinInterventionBus —
+        # interfaces/cli/commands/mcp.py — so a future sandbox-narrowing fix
+        # there would silently regain the pre-#1505 hard-deny-only behavior
+        # without this).
         await ctx.permission_resolver.require_file_write(
             ctx.permission_decl, str(config_path), ctx.actor,
-            sandbox_policy=_sandbox,
+            sandbox_policy=_sandbox, bus=ctx.intervention_bus,
         )
         # Registry fetch happened via RegistryClient above — gate the
         # host symmetrically so the OS exercises its own permission

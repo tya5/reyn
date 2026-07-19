@@ -60,7 +60,7 @@ async def handle(
         sources_yaml = workspace_root / ".reyn" / "config" / "index" / "sources.yaml"
         await ctx.permission_resolver.require_file_write(
             ctx.permission_decl, str(sources_yaml), ctx.actor,
-            sandbox_policy=sandbox_policy,
+            sandbox_policy=sandbox_policy, bus=ctx.intervention_bus,
         )
         # #1199 S3.4 Part1: gate the actual deletion target — the source dir —
         # not just the manifest, so the destructive drop respects the phase
@@ -69,7 +69,7 @@ async def handle(
         source_dir = workspace_root / ".reyn" / "cache" / "index" / op.source
         await ctx.permission_resolver.require_file_write(
             ctx.permission_decl, str(source_dir), ctx.actor,
-            sandbox_policy=sandbox_policy,
+            sandbox_policy=sandbox_policy, bus=ctx.intervention_bus,
         )
 
     # #2856 Part B: forward the cap into the backend — `drop` now self-gates

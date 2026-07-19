@@ -200,6 +200,11 @@ async def _gate(ctx: ToolContext, job_name: str) -> None:
     ctx.permission_resolver.session_approve_path(
         cron_yaml_path, "cron", "file.write",
     )
+    # bus= not threaded: the session_approve_path above pre-approves this exact
+    # path (AgentLayer._approved → True) and no sandbox_policy is passed
+    # (SandboxLayer ⊤, no veto), so require_file_write's EffectivePermission
+    # returns early — the JIT-ask branch (`if bus is not None`) is unreachable
+    # here. Exempt, not an oversight (#3089 registry audit, 1 of 2 exempt sites).
     await ctx.permission_resolver.require_file_write(decl, cron_yaml_path, "cron")
 
 

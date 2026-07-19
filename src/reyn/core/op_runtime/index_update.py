@@ -111,12 +111,12 @@ async def handle(op: IndexUpdateIROp, ctx: OpContext) -> dict:
         db_path = cache_dir_for_source(workspace_root, op.source) / "index.db"
         await ctx.permission_resolver.require_file_write(
             ctx.permission_decl, str(db_path), ctx.actor,
-            sandbox_policy=sandbox_policy,
+            sandbox_policy=sandbox_policy, bus=ctx.intervention_bus,
         )
         sources_yaml = sources_manifest_path(workspace_root)
         await ctx.permission_resolver.require_file_write(
             ctx.permission_decl, str(sources_yaml), ctx.actor,
-            sandbox_policy=sandbox_policy,
+            sandbox_policy=sandbox_policy, bus=ctx.intervention_bus,
         )
 
     # #2856 Part B: forward the cap into the backend — its own self-gate on

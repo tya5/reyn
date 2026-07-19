@@ -137,6 +137,11 @@ async def _gate(ctx: ToolContext) -> None:
     hooks_yaml_path = str(_hooks_yaml_path(ctx))
     decl = PermissionDecl(file_write=[{"path": hooks_yaml_path, "scope": "just_path"}])
     ctx.permission_resolver.session_approve_path(hooks_yaml_path, "hooks", "file.write")
+    # bus= not threaded: the session_approve_path above pre-approves this exact
+    # path (AgentLayer._approved → True) and no sandbox_policy is passed
+    # (SandboxLayer ⊤, no veto), so require_file_write's EffectivePermission
+    # returns early — the JIT-ask branch (`if bus is not None`) is unreachable
+    # here. Exempt, not an oversight (#3089 registry audit, 2 of 2 exempt sites).
     await ctx.permission_resolver.require_file_write(decl, hooks_yaml_path, "hooks")
 
 
