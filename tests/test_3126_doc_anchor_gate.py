@@ -210,11 +210,16 @@ def test_code_comment_anchor_resolves(
     resolves to a real heading slug of the doc it names — not a hand-typed
     guess (#3039 / #3124 recurrence)."""
     candidates = [p for p in _MD_FILES if p.name == Path(doc_name).name]
-    assert len(candidates) == 1, (
-        f"{py_path}:{lineno} references {doc_name!r} — expected exactly one "
-        f"docs/**/{Path(doc_name).name} match, found {len(candidates)}: {candidates}"
+    assert candidates, (
+        f"{py_path}:{lineno} references {doc_name!r} — no docs/**/"
+        f"{Path(doc_name).name} match found"
     )
-    slugs = _slugs_for(candidates[0])
+    resolved_doc, *ambiguous_rest = candidates
+    assert not ambiguous_rest, (
+        f"{py_path}:{lineno} references {doc_name!r} ambiguously — multiple "
+        f"docs/**/{Path(doc_name).name} matches: {candidates}"
+    )
+    slugs = _slugs_for(resolved_doc)
     assert anchor in slugs, (
         f"{py_path}:{lineno} cites anchor {anchor!r} in {doc_name!r}, which has "
         f"no such heading slug. Real slugs: {sorted(slugs)}"
