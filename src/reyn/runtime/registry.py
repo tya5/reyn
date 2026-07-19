@@ -322,8 +322,13 @@ class AgentRegistry:
         # PR12: topology declarations under `.reyn/topologies/<name>.yaml`.
         # Bad files become warnings rather than startup errors so a hand-edited
         # yaml doesn't lock the user out of `reyn chat`.
-        self._topologies: dict[str, Topology] = {}
-        self._reload_topologies()
+        # #2946 Item 4: lazy — ``None`` means "not yet loaded from disk". The
+        # glob + per-file YAML parse only runs on first access (the
+        # ``_topologies`` property below), not at construction, so a
+        # `reyn chat` cold-start that never touches topologies pays nothing.
+        # ★ behavior change: a malformed topology yaml's warning now surfaces
+        # at first topology access instead of at Registry construction time.
+        self._topologies_raw: dict[str, Topology] | None = None
 
     @property
     def state_log(self) -> StateLog | None:
@@ -3443,22 +3448,35 @@ class AgentRegistry:
 
     # ── topology ────────────────────────────────────────────────────────────────
 
+    @property
+    def _topologies(self) -> dict[str, Topology]:
+        """#2946 Item 4: lazy-loaded topology map — the blocking glob + per-file
+        YAML parse (``_reload_topologies``) only runs on first access, not at
+        Registry construction. ``_topologies_raw`` is ``None`` until then.
+        Every reader/writer below goes through this property (mutating the
+        returned dict in place, e.g. ``self._topologies[name] = topo``), so
+        the lazy-load is transparent to all existing call sites."""
+        if self._topologies_raw is None:
+            self._reload_topologies()
+        assert self._topologies_raw is not None
+        return self._topologies_raw
+
     def _reload_topologies(self) -> None:
-        self._topologies = {}
-        if not self._topology_dir.is_dir():
-            return
-        for path in sorted(self._topology_dir.glob("*.yaml")):
-            try:
-                topo = Topology.load(path)
-            except Exception as e:
-                # Hand-edited / outdated yaml — surface but don't crash.
-                import sys
-                print(
-                    f"warning: skipping malformed topology {path.name}: {e}",
-                    file=sys.stderr,
-                )
-                continue
-            self._topologies[topo.name] = topo
+        topologies: dict[str, Topology] = {}
+        if self._topology_dir.is_dir():
+            for path in sorted(self._topology_dir.glob("*.yaml")):
+                try:
+                    topo = Topology.load(path)
+                except Exception as e:
+                    # Hand-edited / outdated yaml — surface but don't crash.
+                    import sys
+                    print(
+                        f"warning: skipping malformed topology {path.name}: {e}",
+                        file=sys.stderr,
+                    )
+                    continue
+                topologies[topo.name] = topo
+        self._topologies_raw = topologies
 
     def _affiliated_agents(self) -> set[str]:
         """Names of agents that belong to at least one user-declared topology."""
