@@ -1,19 +1,26 @@
-"""Tier 2 tests — Router system prompt "Indexed sources" section (ADR-0033 UX gap fix A).
+"""Tier 1/2 tests — Router system prompt and the (removed) "Indexed sources" wiring.
 
-Verifies that SourceManifest.format_for_prompt() output is correctly injected
-into the router system prompt, including the empty-state getting-started hint
-and section ordering guarantees.
+Two orthogonal things live here:
 
-Phase 6 cleanup note: build_system_prompt() in the wrapper-only path no longer
-injects indexed_sources_section into the SP (discovery goes through
-list_actions(category=['rag_corpus']) at runtime). Tests that verified SP
-injection are removed. SourceManifest.format_for_prompt() output correctness
-tests remain (they test the manifest, not the SP).
+- ``SourceManifest.format_for_prompt()`` output correctness (Tier 2): the
+  manifest renders the empty-state getting-started hint and lists sources with
+  chunk counts. This is manifest behaviour, independent of the SP.
+
+- The absence of any "## Indexed sources" section in the wrapper-only SP, plus
+  the absence of the ``indexed_sources_section`` parameter on
+  ``build_system_prompt`` (Tier 1 contract). B23-PRE-1 dropped the section from
+  the wrapper-only path; #3025 then removed the vestigial parameter and the
+  per-turn ``SourceManifest.format_for_prompt()`` prefetch that fed it (the
+  rendered string was accepted and discarded every turn). Corpus discovery is
+  the ``list_rag_sources`` verb (#3026), not the SP.
 """
 from __future__ import annotations
 
+import inspect
+
 import pytest
 
+import reyn.runtime.router_system_prompt as router_system_prompt
 from reyn.data.index.source_manifest import SourceEntry, SourceManifest
 from reyn.runtime.router_system_prompt import build_system_prompt
 from reyn.tools.schemes._universal_sp import build_universal_tool_use_slots
@@ -48,8 +55,8 @@ def _default_slots() -> "dict[str, str]":
     )
 
 
-def _minimal_prompt(indexed_sources_section: str | None = None) -> str:
-    """Build a minimal system prompt with the given indexed_sources_section.
+def _minimal_prompt() -> str:
+    """Build a minimal wrapper-only system prompt.
 
     #1627 Stage 4: tool_use_sp slot-map required for tool-use SP content.
     """
@@ -58,7 +65,6 @@ def _minimal_prompt(indexed_sources_section: str | None = None) -> str:
         agent_role="general assistant",
         available_agents=[],
         memory_index=_SYNTHETIC_MEMORY,
-        indexed_sources_section=indexed_sources_section,
         tool_use_sp=_default_slots(),
     )
 
@@ -78,16 +84,19 @@ class TestEmptyStateHint:
         assert "reyn run index_docs" in rendered
 
     @pytest.mark.asyncio
-    async def test_empty_manifest_hint_not_in_sp(self, tmp_path):
-        """Tier 2: In wrapper-only path, indexed_sources_section is not injected into SP.
+    async def test_manifest_hint_text_absent_from_wrapper_sp(self, tmp_path):
+        """Tier 2: the manifest's rendered section does not appear in the wrapper-only SP.
 
-        Phase 6 cleanup: SP injection removed; discovery via list_actions at runtime.
+        #3025: the SP has no "## Indexed sources" section, and even the distinctive
+        empty-state hint text the manifest renders is absent from the SP — corpus
+        discovery is the list_rag_sources verb (#3026), never the prompt.
         """
         manifest = SourceManifest(tmp_path)
         section = await manifest.format_for_prompt()
-        prompt = _minimal_prompt(indexed_sources_section=section)
-        # The section text is NOT injected in wrapper-only path
+        assert "No indexed sources yet" in section  # sanity: manifest DID render it
+        prompt = _minimal_prompt()
         assert "## Indexed sources" not in prompt
+        assert "No indexed sources yet" not in prompt
 
 
 class TestSourcesInPrompt:
@@ -132,22 +141,41 @@ class TestSourcesInPrompt:
         assert "## Indexed sources (2 available)" in section
 
 
-class TestBackwardCompat:
-    def test_section_absent_when_none(self):
-        """Tier 2: indexed_sources_section=None means no Indexed sources block in prompt."""
-        prompt = _minimal_prompt(indexed_sources_section=None)
+class TestNoIndexedSourcesSection:
+    def test_section_absent_from_wrapper_sp(self):
+        """Tier 2: the wrapper-only SP has no ## Indexed sources block."""
+        prompt = _minimal_prompt()
         assert "## Indexed sources" not in prompt
 
-    def test_no_section_by_default(self):
-        """Tier 2: build_system_prompt omits Indexed sources when parameter not passed."""
+    def test_no_section_with_empty_memory(self):
+        """Tier 2: build_system_prompt omits Indexed sources regardless of memory state."""
         prompt = build_system_prompt(
             agent_name="chat",
             agent_role="assistant",
             available_agents=[],
             memory_index=_EMPTY_MEMORY,
-            # indexed_sources_section not passed — default is None
         )
         assert "## Indexed sources" not in prompt
+
+
+class TestDeadParamAndHelperRemoved:
+    """Tier 1 (Contract): the discarded indexed_sources_section wiring is gone.
+
+    #3025 removed the parameter build_system_prompt accepted-and-discarded, the
+    per-turn SourceManifest.format_for_prompt() prefetch that fed it, and the
+    caller-less _render_memory helper. These contract assertions go RED if any
+    of that dead wiring is reintroduced (a re-added parameter would once again
+    let a caller pay to build a section nothing renders).
+    """
+
+    def test_build_system_prompt_has_no_indexed_sources_param(self):
+        """Tier 1: build_system_prompt exposes no indexed_sources_section parameter."""
+        params = inspect.signature(build_system_prompt).parameters
+        assert "indexed_sources_section" not in params
+
+    def test_render_memory_helper_removed(self):
+        """Tier 1: the caller-less _render_memory helper no longer exists."""
+        assert not hasattr(router_system_prompt, "_render_memory")
 
 
 class TestDeterministicOrder:
@@ -212,7 +240,7 @@ class TestVocabDisambiguationB17S53:
         B17-S5-3 fix: wrapper-only SP uses invoke_action routing vocabulary
         (no intent-axis labels). 'Recall — read persisted facts' must be absent.
         """
-        prompt = _minimal_prompt(indexed_sources_section=None)
+        prompt = _minimal_prompt()
         # Old intent label must NOT be present
         assert "Recall — read persisted facts" not in prompt
         # Also the corrected label form should not be present (intent axis removed)
@@ -220,6 +248,6 @@ class TestVocabDisambiguationB17S53:
 
     def test_sp_uses_invoke_action_routing(self):
         """Tier 2: Wrapper-only SP routes all actions through invoke_action."""
-        prompt = _minimal_prompt(indexed_sources_section=None)
+        prompt = _minimal_prompt()
         assert "invoke_action" in prompt
         assert "ROUTING RULE (ABSOLUTE)" in prompt

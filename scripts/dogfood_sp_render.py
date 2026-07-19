@@ -23,9 +23,8 @@ Usage:
     python scripts/dogfood_sp_render.py --skill code_review=review_code --skill skill_builder=build
     python scripts/dogfood_sp_render.py --agent-peer planner=plan_and_decompose
 
-    # With MCP servers and indexed sources:
+    # With MCP servers:
     python scripts/dogfood_sp_render.py --mcp-servers brave=search_the_web
-    python scripts/dogfood_sp_render.py --indexed-sources meetings --indexed-sources docs
 
     # With file scope:
     python scripts/dogfood_sp_render.py --file-scope read=/workspace write=/workspace/out
@@ -104,23 +103,12 @@ def _parse_file_scope(raw_list: list[str]) -> dict[str, list[str]]:
     return result if (result["read"] or result["write"]) else None  # type: ignore[return-value]
 
 
-def _parse_indexed_sources(names: list[str]) -> str | None:
-    """Build a minimal indexed_sources_section string from a list of source names."""
-    if not names:
-        return None
-    lines = ["## Indexed sources"]
-    for name in names:
-        lines.append(f"- {name}")
-    return "\n".join(lines)
-
-
 def _build_sp(args: argparse.Namespace) -> str:
     """Construct the system prompt from parsed CLI args."""
     skills = [_parse_kv(s, "skill") for s in (args.skill or [])]
     agents = [_parse_kv(a, "agent_peer") for a in (args.agent_peer or [])]
     mcp_servers = [_parse_kv(m, "mcp-servers") for m in (args.mcp_servers or [])] or None
     file_permissions = _parse_file_scope(args.file_scope or [])
-    indexed_sources_section = _parse_indexed_sources(args.indexed_sources or [])
 
     memory_index: dict = {"status": "not_found", "content": ""}
 
@@ -134,7 +122,6 @@ def _build_sp(args: argparse.Namespace) -> str:
         mcp_servers=mcp_servers,
         output_language=args.output_language,
         project_context=args.project_context or "",
-        indexed_sources_section=indexed_sources_section,
         universal_wrappers_enabled=args.universal_wrappers_enabled,
     )
 
@@ -258,15 +245,6 @@ def _build_parser() -> argparse.ArgumentParser:
         help=(
             "MCP server in name=description form. "
             "Repeatable (e.g. --mcp-servers brave=search_the_web)."
-        ),
-    )
-    parser.add_argument(
-        "--indexed-sources",
-        action="append",
-        metavar="NAME",
-        help=(
-            "Indexed source name (plain string). "
-            "Repeatable (e.g. --indexed-sources meetings --indexed-sources docs)."
         ),
     )
     parser.add_argument(

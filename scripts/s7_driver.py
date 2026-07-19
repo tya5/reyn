@@ -181,7 +181,6 @@ os.chdir('{WORKSPACE}')
 from pathlib import Path
 from reyn.runtime.router_system_prompt import build_system_prompt
 from reyn.runtime.session import _merge_memory_indexes
-from reyn.data.index.source_manifest import get_source_manifest
 
 async def main():
     # Build memory index the same way ChatSession does
@@ -193,18 +192,15 @@ async def main():
         agent_name='{AGENT_NAME}',
     )
 
-    # Build indexed sources section (should be 0 available — no sources.yaml in workspace)
-    manifest = get_source_manifest(Path.cwd())
-    indexed_sources = await manifest.format_for_prompt()
-
-    # Build system prompt
+    # Build system prompt. #3025: build_system_prompt no longer accepts an
+    # indexed_sources_section — the "## Indexed sources" SP section was never
+    # rendered in the wrapper-only path and its per-turn prefetch was removed.
     sp = build_system_prompt(
         agent_name='{AGENT_NAME}',
         agent_role='dogfood test assistant',
         available_skills=[],
         available_agents=[],
         memory_index=memory_index,
-        indexed_sources_section=indexed_sources,
     )
     print('=== SYSTEM_PROMPT_START ===')
     print(sp)

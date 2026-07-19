@@ -373,7 +373,6 @@ def _sp_base_kwargs() -> dict:
         "mcp_servers": None,
         "output_language": None,
         "project_context": "",
-        "indexed_sources_section": None,
     }
 
 

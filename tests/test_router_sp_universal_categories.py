@@ -32,7 +32,6 @@ _BASE_KWARGS = {
     "mcp_servers": None,
     "output_language": None,
     "project_context": "",
-    "indexed_sources_section": None,
 }
 
 

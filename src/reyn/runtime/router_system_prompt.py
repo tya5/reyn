@@ -45,7 +45,6 @@ def build_system_prompt(
     web_fetch_allowed: bool = True,  # FP-0022: always-on; parameter kept for backward compat
     output_language: str | None = None,
     project_context: str = "",
-    indexed_sources_section: str | None = None,
     cwd: str | None = None,
     tool_use_sp: "str | dict[str, str] | None" = None,  # #1627 Stage 4: scheme-owned slot-map (or str back-compat shim); None → {} (bare OS frame, no tool-use SP)
     context_size_signal: str | None = None,  # #272/#1128 — pre-rendered, appended LAST
@@ -88,10 +87,6 @@ def build_system_prompt(
             When None (= user did not configure output_language), no
             language directive is emitted — the LLM picks the reply
             language based on the user's input naturally.
-        indexed_sources_section: pre-rendered "## Indexed sources ..."
-            markdown string from ``SourceManifest.format_for_prompt()``.
-            When provided, injected verbatim after the Memory section.
-            When None (default), no Indexed sources section is emitted.
         cwd: current working directory the agent is running from. When
             provided, an ## Environment section tells the LLM to treat
             unqualified references like "this repo" / "this code" /
@@ -231,7 +226,7 @@ def build_system_prompt(
 
     # ==========================================================================
     # DYNAMIC — varies per session / configuration
-    # Sections 6–13: project_context, Memory, Indexed sources,
+    # Sections 6–13: project_context, Memory,
     # + dynamic Behaviour conditionals (output_language).
     # ==========================================================================
 
@@ -264,9 +259,14 @@ def build_system_prompt(
     # wrapper-only path. Memory discovery goes through
     # list_actions(category=['memory_entry']) at runtime.
 
-    # ── 10. Indexed sources (ADR-0033 UX gap fix A) ──────────────────────────
-    # B23-PRE-1 SP role-separation: ## Indexed sources omitted in wrapper-only
-    # path — list_actions(category=['rag_corpus']) discovers at runtime.
+    # ── 10. Indexed sources ──────────────────────────────────────────────────
+    # No ## Indexed sources section is rendered. B23-PRE-1 dropped it from the
+    # wrapper-only path; #3025 then removed the vestigial ``indexed_sources_
+    # section`` parameter and the per-turn ``SourceManifest.format_for_prompt()``
+    # prefetch that fed it (the rendered string was accepted and discarded).
+    # Corpus discovery is the ``list_rag_sources`` verb (#3026) — one tool
+    # regardless of corpus count — not a per-corpus SP list that would scale
+    # with the operator's corpora.
 
     # ── 11. Files ────────────────────────────────────────────────────────────
     # B23-PRE-1 SP role-separation: ## Files section omitted in wrapper-only
@@ -277,9 +277,8 @@ def build_system_prompt(
     # only path — list_actions(category=['mcp.server','mcp.tool']) discovers.
 
     # ── 13. Dynamic Behaviour conditionals ───────────────────────────────────
-    # These vary per session config (output_language) or per-request state
-    # (indexed_sources_section). They are Behaviour addenda that cannot live
-    # in the static prefix above.
+    # These vary per session config (output_language). They are Behaviour
+    # addenda that cannot live in the static prefix above.
 
     # Explicit language instruction (only when the user configured one):
     # a concrete language tag is stronger than "match the user's language"
@@ -416,59 +415,4 @@ def _render_files(file_permissions: dict | None) -> list[str]:
         lines.append(f"read scope:  {', '.join(read_paths)}")
     if write_paths:
         lines.append(f"write scope: {', '.join(write_paths)}")
-    return lines
-
-
-_ENTRY_FULL_RE = re.compile(
-    r"^\s*-\s*\[([^\]]+)\]\(([^)]+)\.md\)\s*[—–-]+\s*(.+)$"
-)
-
-
-def _parse_memory_entries(
-    content: str,
-) -> dict[str, list[tuple[str, str, str]]]:
-    """Return {layer: [(slug, name, description), ...]} from merged memory
-    index text. Layers are "shared" and "agent"."""
-    shared: list[tuple[str, str, str]] = []
-    agent: list[tuple[str, str, str]] = []
-    current: list[tuple[str, str, str]] | None = None
-
-    for line in content.splitlines():
-        h = _SECTION_HEADER_RE.match(line.strip())
-        if h:
-            current = shared if h.group("layer") == "shared" else agent
-            continue
-        if current is None:
-            continue
-        m = _ENTRY_FULL_RE.match(line)
-        if m:
-            name, slug, desc = m.group(1), m.group(2), m.group(3).strip()
-            current.append((slug, name, desc))
-    return {"shared": shared, "agent": agent}
-
-
-def _render_memory(memory_index: dict) -> list[str]:
-    """Return lines for the memory section.
-
-    Inline all entries with their descriptions so the LLM can answer
-    recall queries directly without round-tripping through list_memory.
-    Memory is bounded per agent (~tens of entries typically) so linear
-    rendering is acceptable. read_memory_body remains available for cases
-    where the description is too vague to answer from.
-    """
-    if memory_index.get("status") != "ok":
-        return ["shared: (no entries)", "agent: (no entries)"]
-
-    content = memory_index.get("content", "")
-    entries = _parse_memory_entries(content)
-
-    lines: list[str] = []
-    for layer in ("shared", "agent"):
-        layer_entries = entries.get(layer, [])
-        if not layer_entries:
-            lines.append(f"{layer}: (no entries)")
-            continue
-        lines.append(f"{layer}:")
-        for slug, _name, desc in layer_entries:
-            lines.append(f"  - {slug}: {desc}")
     return lines
