@@ -182,6 +182,29 @@ def _run_child_preexec_probe(workdir: str, ruleset: object | None) -> None:
     except Exception as exc:  # noqa: BLE001
         _record("callsite1 survive: socket()+bind() loopback", False, f"raised {exc!r}")
 
+    # NULL-addr sendto/recvfrom on a connected AF_UNIX socketpair must SURVIVE
+    # under network=False (#3060 case-b): this is the async event loop's self-pipe
+    # wakeup (send()/recv() lower to sendto/recvfrom with arg4==NULL). It is the
+    # SURVIVE half of the pair whose DEFEND half is the addressed-sendto probe
+    # below — together they witness the NULL-address gate is neither too tight
+    # (self-pipe works) nor too loose (addressed egress denied).
+    socketpair_code = (
+        "import socket\n"
+        "a, b = socket.socketpair()\n"
+        "a.send(b'ping')\n"
+        "assert b.recv(4) == b'ping'\n"
+        "print('socketpair-ok')\n"
+    )
+    try:
+        proc = _popen([sys.executable, "-c", socketpair_code])
+        _record(
+            "callsite1 survive: NULL-addr socketpair sendto/recvfrom (#3060 self-pipe)",
+            proc.returncode == 0 and b"socketpair-ok" in proc.stdout,
+            f"rc={proc.returncode} stdout={proc.stdout!r} stderr={proc.stderr[:200]!r}",
+        )
+    except Exception as exc:  # noqa: BLE001
+        _record("callsite1 survive: NULL-addr socketpair sendto/recvfrom", False, f"raised {exc!r}")
+
     # python: file read+write, mkdir/remove/rename/rmtree — driven inline so it
     # is the real _child_preexec-wrapped python process doing the syscalls.
     py_workload = f"""

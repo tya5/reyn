@@ -28,18 +28,7 @@ Fields:
         allowlist-only backends (Landlock), which rely on the network gate.
         Defaults to OS-level credential locations; ``~`` is expanded.
     allow_subprocess: whether the process may spawn children
-    env_passthrough: env-var NAMES to forward from the host ``os.environ`` to
-        the sandboxed process (a name absent from ``os.environ`` forwards
-        nothing). This is the "expose an existing host var" knob.
-    env_explicit: operator-declared key→value env pairs to INJECT into the
-        sandboxed process, independent of ``os.environ`` (an MCP server's
-        ``.mcp.json`` ``env`` block is the canonical source). Distinct from
-        ``env_passthrough``: passthrough forwards a host var BY NAME (and drops
-        it silently when the host does not have it); ``env_explicit`` carries
-        the value itself, so a var that exists only in the server declaration
-        (e.g. ``FASTMCP_SHOW_SERVER_BANNER=false``) is forwarded rather than
-        dropped. Only operator-authored declarations flow here — never an
-        indiscriminate ``os.environ`` dump — so it opens no new host-env leak.
+    env_passthrough: env-var names that pass through to the sandboxed process
     timeout_seconds: wall-clock cap (enforced by the backend)
     max_output_bytes: per-stream cap (bytes) on captured stdout/stderr — output
         beyond it is drained-and-discarded (the ``truncated`` flag is set) so a
@@ -113,28 +102,13 @@ def resolve_passthrough_env(policy: "SandboxPolicy") -> dict[str, str]:
     credentials — the CA bundle *file* was already broad-read-floor
     readable; only the env var pointing at it was missing before #3075).
 
-    ``policy.env_explicit`` (operator-declared key→value pairs, e.g. an MCP
-    server's ``.mcp.json`` ``env`` block) is merged in LAST, so an explicit
-    declaration is authoritative over a same-named host passthrough. Unlike the
-    passthrough set — which forwards a host var BY NAME and silently drops it
-    when ``os.environ`` lacks it — ``env_explicit`` carries the value, so a var
-    that exists ONLY in the server declaration reaches the child rather than
-    being dropped (#3060 follow-up: ``FASTMCP_SHOW_SERVER_BANNER=false`` /
-    ``FASTMCP_CHECK_FOR_UPDATES=off`` are declared by the builtin RAG server and
-    are not present in the host env, so the name-only passthrough could never
-    forward them). Still additive-only and still no indiscriminate ``os.environ``
-    dump — only operator-authored declarations flow here.
-
     PATH fallback is applied by each backend after calling this (preserves the
     existing "PATH always available" behaviour independent of this set).
     """
     from reyn._network import STANDARD_NETWORK_ENV_NAMES
 
     names = set(policy.env_passthrough) | set(STANDARD_NETWORK_ENV_NAMES)
-    env = {name: os.environ[name] for name in names if name in os.environ}
-    # Explicit operator declarations win over a same-named host passthrough.
-    env.update(policy.env_explicit)
-    return env
+    return {name: os.environ[name] for name in names if name in os.environ}
 
 
 @dataclass
@@ -149,7 +123,6 @@ class SandboxPolicy:
     )
     allow_subprocess: bool = False
     env_passthrough: list[str] = field(default_factory=list)
-    env_explicit: dict[str, str] = field(default_factory=dict)
     timeout_seconds: int = 60
     max_output_bytes: int = MAX_SUBPROCESS_OUTPUT_BYTES
 

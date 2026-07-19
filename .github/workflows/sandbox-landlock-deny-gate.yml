@@ -80,21 +80,6 @@ jobs:
       - name: Shim enforcement tests (supplementary — the gate above is the gate)
         run: python -m pytest tests/test_landlock_exec_shim_1344e.py -v -rs --timeout=120
 
-      # DIAGNOSTIC (temporary, #3060 case-(b) — remove with the diagnostic
-      # commit once the firing syscalls are named): the chunker's network=False
-      # witness switches its network-gated syscalls to SCMP_ACT_LOG
-      # (REYN_SECCOMP_DIAG_LOG_NETWORK, scoped to that one server via its spawn
-      # env). SCMP_ACT_LOG only reaches the kernel audit log when
-      # /proc/sys/kernel/seccomp/actions_logged includes "log", so enable it
-      # here (passwordless sudo on the runner), and clear the kernel ring buffer
-      # so the post-run dump below is attributable to THIS run only.
-      - name: Enable seccomp SCMP_ACT_LOG auditing (#3060 diag, temporary)
-        run: |
-          echo "actions_logged before: $(cat /proc/sys/kernel/seccomp/actions_logged || echo '?')"
-          echo 'log' | sudo tee /proc/sys/kernel/seccomp/actions_logged || true
-          echo "actions_logged after:  $(cat /proc/sys/kernel/seccomp/actions_logged || echo '?')"
-          sudo dmesg -C || true
-
       # #3030: the network-deny falsification (the exact allow_subprocess=True
       # condition that used to leak network), the io_uring completeness probe
       # (bounded-by-construction — the exact gap a syscall-name denylist would
@@ -107,18 +92,3 @@ jobs:
       # visible rather than silently absorbed into a pass count.
       - name: Network-gate + io_uring + representative-MCP-server tests (#3030)
         run: python -m pytest tests/test_sandbox_seccomp_network_3030.py -v -rs --timeout=180
-
-      # DIAGNOSTIC (temporary, #3060 case-(b) — remove with the diagnostic
-      # commit): dump the kernel seccomp audit log. With the step above enabling
-      # `log` and the chunker's network syscalls set to SCMP_ACT_LOG, each
-      # network syscall the server actually issued under network=False appears
-      # here as `seccomp: ... syscall=<nr>`, so the real fix's allow-set is
-      # derived from what fired, not assumed. `if: always()` so it runs even if
-      # the test step above failed (a residual failure is itself data).
-      - name: Dump seccomp audit log (#3060 diag, temporary)
-        if: always()
-        run: |
-          echo "=== dmesg (seccomp entries) ==="
-          sudo dmesg | grep -i seccomp || echo "(no seccomp entries in dmesg)"
-          echo "=== journalctl -k (seccomp entries, fallback) ==="
-          sudo journalctl -k --no-pager 2>/dev/null | grep -i seccomp | tail -50 || echo "(journalctl unavailable or no entries)"

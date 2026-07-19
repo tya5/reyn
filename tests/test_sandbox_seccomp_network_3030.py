@@ -233,6 +233,99 @@ def test_shim_allows_socket_and_bind_when_network_false(tmp_path: Path) -> None:
     )
 
 
+# ── #3060 case-(b): the async self-pipe. NULL-addr sendto/recvfrom SURVIVE, ────
+# ── an ADDRESSED sendto stays DENIED. The two must be witnessed separately. ────
+
+
+@requires_landlock
+def test_shim_allows_null_addr_socketpair_sendto_recvfrom_when_network_false(
+    tmp_path: Path,
+) -> None:
+    """Tier 2c: #3060 case-(b) POSITIVE witness — ``sendto``/``recvfrom`` with a
+    NULL address pointer SUCCEED under ``network=False``.
+
+    This is the mechanism every stdio MCP server needs: CPython's asyncio event
+    loop wakes itself through a *connected* AF_UNIX socketpair self-pipe, whose
+    ``send()``/``recv()`` lower to the ``sendto``/``recvfrom`` SYSCALLS with a
+    NULL addr (a connected socket carries no address). Denying them wholesale —
+    the pre-#3060-fix state — left the loop unable to pump, so the server
+    completed ``run_forever`` but produced 0 bytes and the client's MCP
+    ``initialize`` handshake timed out (measured via the client-side
+    raw-handshake capture). Allowing the NULL-addr form restores the wakeup.
+    """
+    granted = tmp_path / "granted"
+    granted.mkdir()
+    policy = SandboxPolicy(
+        write_paths=[str(granted)],
+        read_deny_paths=[],
+        network=False,
+        allow_subprocess=True,
+    )
+    marker = granted / "socketpair-ok"
+    code = (
+        "import socket\n"
+        # Default AF_UNIX SOCK_STREAM, connected — exactly asyncio's self-pipe.
+        "a, b = socket.socketpair()\n"
+        # send() -> sendto(fd, buf, len, flags, NULL, 0)  (arg4 == 0)
+        "a.send(b'ping')\n"
+        # recv() -> recvfrom(fd, buf, len, flags, NULL, NULL)  (arg4 == 0)
+        "assert b.recv(4) == b'ping'\n"
+        f"open({str(marker)!r}, 'w').close()\n"
+    )
+    proc = _shim_run(policy, [sys.executable, "-c", code])
+    assert marker.exists(), (
+        f"NULL-addr socketpair sendto/recvfrom must SUCCEED under network=False "
+        f"(the async event-loop self-pipe #3060 fixes) — rc={proc.returncode}, "
+        f"stderr={proc.stderr[:400]!r}"
+    )
+
+
+@requires_landlock
+def test_shim_denies_addressed_sendto_when_network_false(tmp_path: Path) -> None:
+    """Tier 2c: #3060 case-(b) NEGATIVE witness (egress-safety — the load-bearing
+    one) — an ADDRESSED ``sendto`` (real UDP egress,
+    ``sendto(fd, buf, len, flags, &sockaddr_in, addrlen)``) stays EPERM-DENIED
+    under ``network=False``.
+
+    Why this must be witnessed SEPARATELY from the socketpair positive above: the
+    chunker-boot and socketpair witnesses only ever exercise the NULL-addr form,
+    so a mis-implementation that allowed ``sendto`` UNCONDITIONALLY (dropping the
+    ``arg4 == 0`` condition) would pass every one of them while silently
+    reopening UDP egress — a datagram socket can exfiltrate with a single
+    addressed ``sendto``, no ``connect`` required. Only this probe proves the
+    NULL-address exception did not become an unconditional hole.
+
+    Marker-file oracle (not a live packet): the seccomp filter refuses the
+    ``sendto`` syscall on a non-NULL arg 4 before anything leaves the host, so no
+    outbound connectivity — flaky on a network-restricted runner — is needed.
+    Strip-falsify: drop the ``arg4 == 0`` condition (allow ``sendto``
+    unconditionally) and this test goes RED (the marker is created); restore it
+    and it is GREEN.
+    """
+    granted = tmp_path / "granted"
+    granted.mkdir()
+    policy = SandboxPolicy(
+        write_paths=[str(granted)],
+        read_deny_paths=[],
+        network=False,
+        allow_subprocess=True,
+    )
+    marker = granted / "addressed-sendto-happened"
+    code = (
+        "import socket\n"
+        "s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)\n"
+        # Addressed -> non-NULL arg 4 -> must fall through to default-deny EPERM.
+        "s.sendto(b'x', ('93.184.216.34', 53))\n"
+        f"open({str(marker)!r}, 'w').close()\n"
+    )
+    proc = _shim_run(policy, [sys.executable, "-c", code])
+    assert not marker.exists(), (
+        f"addressed sendto (real UDP egress) MUST stay denied under "
+        f"network=False — the NULL-addr sendto/recvfrom exception must NOT open "
+        f"the addressed form (rc={proc.returncode}, stderr={proc.stderr[:400]!r})"
+    )
+
+
 # ── io_uring: unconditional, bounded-by-construction (the denylist's own gap) ─
 
 
@@ -434,28 +527,7 @@ async def test_chunker_server_reaches_serving_under_network_false(
     Real chunker + real seccomp shim via the real ``MCPClient`` seam, no fakes;
     Linux-CI-gated (``@requires_landlock``), so it SKIPS on darwin/without
     Landlock exactly like the sibling probes — a green run on a dev box witnesses
-    nothing here.
-
-    ⚠ DIAGNOSTIC (temporary, #3060 case-(b) probe — revert once the true cause is
-    confirmed): the client-side capture already showed the server sends 0 bytes
-    (client wrote the ``initialize`` request), i.e. the async stdio runtime never
-    pumps under ``network=False``. The leading mechanism: CPython asyncio's
-    self-pipe wakeup uses ``sendto``/``recvfrom`` on an AF_UNIX socketpair
-    (connected socket ⇒ address pointer NULL), which the network gate refuses, so
-    the event loop cannot wake. To derive the real fix's allow-set from PRIMARY
-    DATA rather than a guess, this run switches the network-gated syscalls to
-    ``SCMP_ACT_LOG`` (log+allow) INSIDE THIS chunker's seccomp filter only (via
-    ``REYN_SECCOMP_DIAG_LOG_NETWORK`` in the server spawn env): if the server now
-    reaches serving, those syscalls WERE the blocker (functional confirmation),
-    and the CI job's ``dmesg`` step NAMES which actually fired.
-
-    Also kept: a server-side ``faulthandler`` dump (``REYN_CHUNKER_DIAG_DUMP_AFTER``)
-    and MCPClient's CLIENT-SIDE raw-handshake capture
-    (``REYN_MCP_DIAG_CAPTURE_HANDSHAKE``, set in the test process env) which, on
-    any residual init failure, re-spawns the same sandboxed command and reads the
-    raw stdout bytes from OUTSIDE the sandbox — so if the hypothesis is wrong
-    (server still sends 0 bytes even with the network syscalls allowed) that is
-    surfaced too. MEASURE, don't guess."""
+    nothing here."""
     pytest.importorskip("chonkie", reason="builtin-rag extra not installed")
     from reyn.mcp.client import MCPClient
 
@@ -474,75 +546,28 @@ async def test_chunker_server_reaches_serving_under_network_false(
         # Exactly the vars the shipped .mcp.json sets — suppress FastMCP's
         # banner-time update check (a real httpx.get to pypi.org) so no
         # outbound connect() is attempted that network=False would refuse.
-        # DIAGNOSTIC (server-side, env-gated, no-op in production):
-        #  - REYN_CHUNKER_DIAG_DUMP_AFTER arms a faulthandler delayed-traceback
-        #    dump in the SERVER — if it hangs, the blocked frame lands in its
-        #    stderr. 8s is short enough to fire within the client-side probe's
-        #    read window, so server-side frame + client-side raw bytes coincide.
-        #  - REYN_SECCOMP_DIAG_LOG_NETWORK switches the network-gated syscalls
-        #    (connect/sendto/recvfrom/…) from ERRNO(EPERM) deny to SCMP_ACT_LOG
-        #    (log+allow) INSIDE THIS CHUNKER's seccomp filter only (it rides the
-        #    server spawn env → the shim's load_seccomp_filter). If the server
-        #    now reaches serving, those syscalls WERE the blocker (functional
-        #    confirmation of the asyncio self-pipe hypothesis); the kernel audit
-        #    log (dumped by the CI job's dmesg step) then NAMES which fired.
-        # (The earlier REYN_CHUNKER_DIAG_TEE_STDOUT fd-level tee was REMOVED: its
-        # os.dup2(_, 1) is seccomp-denied under network=False and CRASHED the
-        # server. stdout is observed from the CLIENT side instead — see
-        # REYN_MCP_DIAG_CAPTURE_HANDSHAKE below.)
         "env": {
             "FASTMCP_SHOW_SERVER_BANNER": "false",
             "FASTMCP_CHECK_FOR_UPDATES": "off",
-            "REYN_CHUNKER_DIAG_DUMP_AFTER": "8",
-            "REYN_SECCOMP_DIAG_LOG_NETWORK": "1",
         },
     }
-    # DIAGNOSTIC (client-side, sandbox-FREE): set in THIS (test) process's env,
-    # NOT the server spawn env — it gates MCPClient's own init-failure path to
-    # run a raw-handshake capture (re-spawn the same sandboxed command, write a
-    # raw JSON-RPC `initialize`, read raw stdout) and fold the result into the
-    # MCPError. This observes the byte stream from OUTSIDE the sandbox, so it
-    # cannot be an artifact of a seccomp-denied syscall the way the in-server
-    # fd tee was.
-    monkeypatch.setenv("REYN_MCP_DIAG_CAPTURE_HANDSHAKE", "1")
-    # Create-then-enter so ``client`` is bound even if ``__aenter__`` (init)
-    # raises — needed to read the stderr tail on the failure path.
-    client = MCPClient(cfg)
-    try:
-        async with client:
-            # Reaching list_tools() at all means the server survived initialize()
-            # under network=False — it did not die on a refused network syscall.
-            tools = await client.list_tools()
-            assert any(t.get("name") == "chunk" for t in tools), (
-                f"reyn-rag-chunker did not reach serving under network=False — it "
-                f"advertised no 'chunk' tool, so the server failed to initialize "
-                f"under the exact config #3060 is meant to make work; tools={tools!r}"
-            )
-            # And it can actually do its job (local chonkie processing, no net).
-            result = await client.call_tool(
-                "chunk", {"text": "hello world " * 50, "size": 20}
-            )
-            assert not result.get("isError"), (
-                f"reyn-rag-chunker reached serving but its real 'chunk' call FAILED "
-                f"under network=False — #3060's purpose (the chunker actually works "
-                f"with network off) is not met: {result!r}"
-            )
-    except AssertionError:
-        raise
-    except Exception as exc:  # noqa: BLE001 — DIAGNOSTIC: surface the true cause
-        # The production MCPError already embeds the subprocess stderr tail AND,
-        # with REYN_MCP_DIAG_CAPTURE_HANDSHAKE set, the client-side raw-handshake
-        # capture (bytes written to stdin + raw bytes received from stdout, or
-        # "0 bytes received"). That decisively names case (i)/(ii)/(iii)/(iv).
-        tail = client.read_stderr_tail()
-        pytest.fail(
-            "DIAGNOSTIC (#3060 case-(b)): chunker did not reach serving under "
-            "network=False. The exception message below carries the client-side "
-            "raw-handshake capture (stdin bytes written + raw stdout bytes "
-            "received) and the server stderr tail (faulthandler frame if it "
-            "hung) — read those to name the failure class.\n"
-            f"--- exception ---\n{type(exc).__name__}: {exc}\n"
-            f"--- read_stderr_tail() (best-effort, may be empty) ---\n{tail}"
+    async with MCPClient(cfg) as client:
+        # Reaching list_tools() at all means the server survived initialize()
+        # under network=False — it did not die on a refused network syscall.
+        tools = await client.list_tools()
+        assert any(t.get("name") == "chunk" for t in tools), (
+            f"reyn-rag-chunker did not reach serving under network=False — it "
+            f"advertised no 'chunk' tool, so the server failed to initialize "
+            f"under the exact config #3060 is meant to make work; tools={tools!r}"
+        )
+        # And it can actually do its job (local chonkie processing, no network).
+        result = await client.call_tool(
+            "chunk", {"text": "hello world " * 50, "size": 20}
+        )
+        assert not result.get("isError"), (
+            f"reyn-rag-chunker reached serving but its real 'chunk' call FAILED "
+            f"under network=False — #3060's purpose (the chunker actually works "
+            f"with network off) is not met: {result!r}"
         )
 
 

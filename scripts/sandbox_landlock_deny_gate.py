@@ -113,11 +113,15 @@ _ARM_DESCRIPTION = {
     "write": "a write outside write_paths is REFUSED (Landlock's filesystem boundary)",
     "spawn": "a fork under allow_subprocess=False is REFUSED (the seccomp filter loaded)",
     "network": (
-        "a connect() under network=False, allow_subprocess=True is REFUSED "
+        "under network=False, allow_subprocess=True: connect() is REFUSED, a "
+        "connected-socketpair self-pipe (NULL-addr sendto/recvfrom) SURVIVES, "
+        "and an ADDRESSED sendto (real UDP egress) is REFUSED "
         "(#3030: the seccomp filter used to be skipped entirely in this exact "
         "condition — the stdio-MCP default — dropping the network gate with it. "
-        "#3060 moved socket()/bind() to the always-allowed set, so the witness "
-        "moved from socket() creation to connect())"
+        "#3060 moved socket()/bind() to the always-allowed set and added a "
+        "NULL-address-only sendto/recvfrom allowance for the async self-pipe, so "
+        "the probe now witnesses connect-deny + self-pipe-survive + "
+        "addressed-sendto-deny)"
     ),
 }
 

@@ -334,11 +334,21 @@ _EXCLUDED_UNGOVERNABLE: list[str] = [
 # a peer or accept a peer connection — those stay gated on `policy.network`
 # below, in `_NETWORK_SYSCALLS`. A network-off sandbox can still create and
 # locally bind a socket, but cannot dial out or accept an inbound peer.
+#
+# ONE further exception is added at filter-build time, not here: under
+# `network=False`, `sendto`/`recvfrom` are allowed WHEN THEIR ADDRESS POINTER
+# IS NULL (the async runtime's connected-socketpair self-pipe) — the ADDRESSED
+# form (real UDP egress) stays denied. That NULL-address gate lives in
+# `_add_null_addr_socketpair_rules` (it is an arg-conditional rule, not a plain
+# name), so `sendto`/`recvfrom` remain in `_NETWORK_SYSCALLS` for their
+# unconditional (addressed) allow when `network=True`.
 _NETWORK_ALWAYS_ALLOWED: list[str] = ["socket", "bind"]
 
 # Syscalls added when policy.network is True. `socket`/`bind` are
 # deliberately NOT listed here — they are unconditional, see
-# `_NETWORK_ALWAYS_ALLOWED` above.
+# `_NETWORK_ALWAYS_ALLOWED` above. `sendto`/`recvfrom` are here for their
+# addressed form under `network=True`; their NULL-address form is separately
+# allowed even under `network=False` (see `_add_null_addr_socketpair_rules`).
 _NETWORK_SYSCALLS: list[str] = [
     "connect", "accept", "accept4", "listen",
     "sendto", "recvfrom", "sendmsg", "recvmsg",
@@ -489,47 +499,59 @@ def load_seccomp_filter(policy: SandboxPolicy) -> None:
     for syscall_name in _build_syscall_allowlist(policy):
         f.add_rule(pyseccomp.ALLOW, syscall_name)
 
-    # DIAGNOSTIC (temporary, #3060 case-(b) probe — env-gated, no-op in
-    # production): when REYN_SECCOMP_DIAG_LOG_NETWORK is set AND this policy
-    # would otherwise DENY the network-gated syscalls (network=False), switch
-    # those syscalls from the default ERRNO(EPERM) refusal to SCMP_ACT_LOG
-    # (kernel logs the syscall AND allows it). Two things this measures, from
-    # PRIMARY DATA rather than a guess:
-    #   (a) functional — if the server now reaches serving, these syscalls WERE
-    #       the blocker (the hypothesis: CPython asyncio's self-pipe wakeup uses
-    #       sendto/recvfrom on an AF_UNIX socketpair, refused by the network
-    #       gate, so the event loop cannot wake and the stdio pump never runs);
-    #   (b) named — the kernel seccomp audit log (dmesg / journalctl -k, gated
-    #       on /proc/sys/kernel/seccomp/actions_logged including "log") records
-    #       exactly WHICH network syscall fired, so the real fix's allow-set is
-    #       derived from what actually ran, not assumed.
-    # This is strictly a WIDENING of the diagnostic run only: it never tightens,
-    # and when the env var is unset the filter is byte-for-byte the production
-    # default-deny. The real fix (allow sendto/recvfrom only when the address
-    # pointer is NULL — i.e. a connected socket) will REPLACE this once the
-    # audit log names the set.
-    import os  # noqa: PLC0415 — diagnostic-only, keep production import surface clean
-
-    if os.environ.get("REYN_SECCOMP_DIAG_LOG_NETWORK") and not policy.network:
-        log_action = getattr(pyseccomp, "LOG", None)
-        if log_action is None:  # pragma: no cover - libseccomp too old for SCMP_ACT_LOG
-            _logger.warning(
-                "REYN_SECCOMP_DIAG_LOG_NETWORK set but pyseccomp lacks LOG "
-                "(SCMP_ACT_LOG); falling back to ALLOW — the server may reach "
-                "serving (functional check) but the kernel will NOT name the "
-                "firing syscalls"
-            )
-            log_action = pyseccomp.ALLOW
-        for syscall_name in _NETWORK_SYSCALLS:
-            try:
-                f.add_rule(log_action, syscall_name)
-            except Exception:  # noqa: BLE001 — skip a name this arch can't resolve
-                _logger.debug(
-                    "seccomp diag: could not add LOG rule for %r", syscall_name
-                )
+    if not policy.network:
+        _add_null_addr_socketpair_rules(f, pyseccomp)
 
     # Irrevocable — issues prctl(PR_SET_SECCOMP) in the child process.
     f.load()
+
+
+# Argument index of the peer-address pointer for the two datagram syscalls whose
+# NULL-address form is the async runtime's socketpair self-pipe (#3060). Verified
+# against the man pages:
+#   sendto(fd, buf, len, flags, dest_addr, addrlen)  -> arg 4 = dest_addr
+#   recvfrom(fd, buf, len, flags, src_addr, addrlen) -> arg 4 = src_addr
+_SOCKET_ADDR_ARG_INDEX = 4
+
+
+def _add_null_addr_socketpair_rules(f: object, pyseccomp: object) -> None:
+    """Allow ``sendto``/``recvfrom`` ONLY when their peer-address pointer is NULL
+    — under ``network=False``, where those syscalls are otherwise EPERM-denied.
+
+    Why this is required, and why it is safe (#3060). Every stdio MCP server runs
+    on an async runtime, and CPython's asyncio event loop wakes itself with a
+    *connected* AF_UNIX socketpair self-pipe: the writer end issues
+    ``send()``/``recv()``, which glibc lowers to the ``sendto``/``recvfrom``
+    SYSCALLS with a NULL address pointer (a connected socket needs no address).
+    With ``network=False`` denying ``sendto``/``recvfrom`` outright, that wakeup
+    was refused, the loop could not run, and the server sent 0 bytes — measured
+    directly (client-side raw-handshake capture: server produced no output; and a
+    functional SCMP_ACT_LOG run confirmed allowing these lets the chunker /
+    vector-store reach serving).
+
+    The NULL-address condition is what keeps this from reopening egress: a NULL
+    ``dest_addr``/``src_addr`` can only send to / receive from the socket's
+    *already-connected* peer (here, the loop's own socketpair partner), never a
+    caller-supplied network address. An ADDRESSED ``sendto`` — the real UDP
+    egress path, ``sendto(fd, buf, len, flags, &sockaddr_in, ...)`` — has a
+    non-NULL arg 4, does not match this rule, and falls through to the
+    default-deny EPERM. And AF_INET remains unreachable regardless because
+    ``connect`` stays fully denied (a datagram socket can egress via an addressed
+    ``sendto`` alone, which is exactly the case this NULL gate refuses).
+
+    ``connect``/``sendmsg``/``recvmsg``/``sendmmsg``/``recvmmsg`` are deliberately
+    NOT given a NULL-address exception: their address lives inside a ``msghdr``
+    (``msg_name``) that seccomp cannot dereference, so there is no arg-value test
+    that distinguishes a connected send from an addressed one — allowing them
+    would be unconditional, so they stay denied. If a future runtime needs one of
+    them for its self-pipe, that is a harder case to escalate, not a syscall to
+    open blind.
+    """
+    arg_null = pyseccomp.Arg(  # type: ignore[attr-defined]
+        _SOCKET_ADDR_ARG_INDEX, pyseccomp.EQ, 0  # type: ignore[attr-defined]
+    )
+    for syscall_name in ("sendto", "recvfrom"):
+        f.add_rule(pyseccomp.ALLOW, syscall_name, arg_null)  # type: ignore[attr-defined]
 
 
 def _build_syscall_allowlist(policy: SandboxPolicy) -> list[str]:

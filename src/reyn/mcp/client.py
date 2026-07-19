@@ -840,14 +840,6 @@ class MCPClient:
         except Exception as exc:
             tail = self.read_stderr_tail()
             self.close_stderr_capture()
-            # DIAGNOSTIC (temporary, #3060 case-(b)): env-gated raw-handshake
-            # capture. Runs BEFORE the hint block so its result can be folded
-            # into the MCPError below. Sandbox-free (see the method docstring).
-            diag = ""
-            if self._type == "stdio" and os.environ.get(
-                "REYN_MCP_DIAG_CAPTURE_HANDSHAKE"
-            ):
-                diag = self._diagnostic_capture_raw_handshake()
             # #1344/#1339-D migration hint: a sandboxed stdio server defaults to
             # the single-source network posture (DEFAULT_SANDBOX_NETWORK); the
             # operator isolates a server with `network: false`. If a server was
@@ -894,7 +886,7 @@ class MCPClient:
                     ),
                     server=self._server_name or "<server-name>",
                 )
-            if tail or diag:
+            if tail:
                 # #2976: the hint goes BEFORE the stderr dump, not after it. The
                 # message is later summarised by pool.describe_fault(limit=600),
                 # which truncates from the END — a trailing hint is therefore the
@@ -903,11 +895,9 @@ class MCPClient:
                 # is how this was found: the hint reached uvx's short error and
                 # was silently cut from npx's long one). The actionable knob
                 # outranks the tail of a log the operator can re-read.
-                stderr_block = (
-                    f"\n--- subprocess stderr (tail) ---\n{tail}" if tail else ""
-                )
                 raise MCPError(
-                    f"MCP initialize failed: {exc}{hint}{diag}{stderr_block}"
+                    f"MCP initialize failed: {exc}{hint}\n"
+                    f"--- subprocess stderr (tail) ---\n{tail}"
                 ) from exc
             raise MCPError(f"MCP initialize failed: {exc}{hint}") from exc
 
@@ -935,154 +925,6 @@ class MCPClient:
         else:
             self._negotiated_version = None
             self._server_capabilities = None
-
-    def _diagnostic_capture_raw_handshake(self) -> str:
-        """DIAGNOSTIC (temporary, #3060 case-(b)): capture the raw MCP-handshake
-        byte exchange from the CLIENT side, and return a human-readable report to
-        fold into the ``MCPError``. Env-gated by the caller
-        (``REYN_MCP_DIAG_CAPTURE_HANDSHAKE``); returns ``""`` on any internal
-        failure so a diagnostic can never mask the real init error.
-
-        Why this shape, and why not a transparent in-place tee: the raw stdio
-        bytes of the real handshake live inside ``mcp.client.stdio.stdio_client``
-        (its private ``stdout_reader``/``stdin_writer`` closures over the anyio
-        subprocess streams) — FastMCP's transport only ever hands MCPClient the
-        already-PARSED ``SessionMessage`` streams, so there is no transparent
-        tee point in this abstraction without monkeypatching third-party
-        internals. Instead this RE-SPAWNS the same sandboxed command and performs
-        a minimal raw ``initialize`` exchange itself: it writes a raw JSON-RPC
-        ``initialize`` line to the child's stdin and reads the child's raw stdout
-        bytes — all from OUTSIDE the sandbox (the reading process is not
-        sandboxed and issues no ``os.dup2``, so unlike the removed in-server fd
-        tee it cannot be a seccomp artifact). The child reproduces the failing
-        condition deterministically (same wrap, same ``network``/``env``).
-
-        The report decisively separates the four failure classes:
-          (i)   0 bytes received  → the server sent nothing (hung / no response);
-                                     cross-check the server stderr faulthandler
-                                     frame for where it blocked.
-          (ii)  non-JSON bytes    → stdout pollution broke JSON-RPC framing.
-          (iii) truncated line    → a framing/partial-write problem.
-          (iv)  valid JSON-RPC    → a protocol-level error, not a byte problem.
-        """
-        import json  # noqa: PLC0415 — diagnostic-only
-        import subprocess  # noqa: PLC0415
-        import threading  # noqa: PLC0415
-
-        try:
-            from mcp.client.stdio import get_default_environment  # noqa: PLC0415
-        except Exception:  # noqa: BLE001
-            get_default_environment = dict  # type: ignore[assignment]
-
-        command = self._config.get("command")
-        args = list(self._config.get("args") or [])
-        if not command:
-            return ""
-        try:
-            wrapped_cmd, wrapped_args = self._sandbox_wrap_stdio(command, args)
-        except Exception as exc:  # noqa: BLE001
-            return f"\n--- raw-handshake probe (skipped: wrap failed: {exc!r}) ---"
-
-        cfg_env = self._config.get("env")
-        env = dict(get_default_environment())
-        if isinstance(cfg_env, dict):
-            env.update({str(k): str(v) for k, v in cfg_env.items()})
-
-        # A minimal, valid JSON-RPC `initialize` request (the first line any MCP
-        # server must answer). Kept independent of fastmcp/mcp internals.
-        init_req = (
-            json.dumps(
-                {
-                    "jsonrpc": "2.0",
-                    "id": 1,
-                    "method": "initialize",
-                    "params": {
-                        "protocolVersion": "2025-06-18",
-                        "capabilities": {},
-                        "clientInfo": {"name": "reyn-diag", "version": "0"},
-                    },
-                }
-            )
-            + "\n"
-        ).encode("utf-8")
-
-        _READ_TIMEOUT_SECONDS = 15.0
-        _MAX_CAPTURE_BYTES = 4096
-        chunks: list[bytes] = []
-        proc: subprocess.Popen | None = None
-        cleanup = self._sandbox_cleanup
-        self._sandbox_cleanup = None  # this probe owns the wrap's cleanup now
-        try:
-            proc = subprocess.Popen(  # noqa: S603
-                [wrapped_cmd, *wrapped_args],
-                stdin=subprocess.PIPE,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                env=env,
-                cwd=self._config.get("cwd"),
-            )
-            written = 0
-            try:
-                assert proc.stdin is not None
-                proc.stdin.write(init_req)
-                proc.stdin.flush()
-                written = len(init_req)
-            except Exception:  # noqa: BLE001 — a broken pipe is itself a signal
-                written = -1
-
-            def _read_raw() -> None:
-                try:
-                    assert proc is not None and proc.stdout is not None
-                    fd = proc.stdout.fileno()
-                    while sum(len(c) for c in chunks) < _MAX_CAPTURE_BYTES:
-                        b = os.read(fd, 4096)  # partial-friendly (not read-until-full)
-                        if not b:
-                            break
-                        chunks.append(b)
-                except Exception:  # noqa: BLE001
-                    pass
-
-            reader = threading.Thread(target=_read_raw, daemon=True)
-            reader.start()
-            reader.join(timeout=_READ_TIMEOUT_SECONDS)
-
-            data = b"".join(chunks)[:_MAX_CAPTURE_BYTES]
-            # Server stderr: read whatever is buffered without blocking on exit.
-            proc.kill()
-            try:
-                _o, err = proc.communicate(timeout=5)
-            except Exception:  # noqa: BLE001
-                err = b""
-
-            if not data:
-                recv = "0 bytes received (server sent nothing on stdout)"
-            else:
-                # repr for eyeball JSON-vs-not; hex for exact bytes.
-                recv = (
-                    f"{len(data)} bytes received\n    repr={data!r}\n"
-                    f"    hex={data.hex()}"
-                )
-            err_tail = err[-800:].decode("utf-8", errors="replace") if err else ""
-            return (
-                "\n--- raw-handshake probe (client-side, sandbox-free) ---\n"
-                f"  stdin initialize write: "
-                f"{'FAILED (broken pipe)' if written < 0 else f'{written} bytes'}\n"
-                f"  stdout: {recv}\n"
-                f"  server stderr (tail):\n{err_tail}"
-            )
-        except Exception as exc:  # noqa: BLE001 — never let the probe mask init error
-            return f"\n--- raw-handshake probe (skipped: {exc!r}) ---"
-        finally:
-            if proc is not None and proc.poll() is None:
-                try:
-                    proc.kill()
-                except Exception:  # noqa: BLE001
-                    pass
-            if cleanup is not None:
-                try:
-                    cleanup()
-                except Exception:  # noqa: BLE001
-                    pass
 
     async def __aenter__(self) -> "MCPClient":
         """#a359: structured lifecycle. ``initialize()`` here + ``close()`` in ``__aexit__`` run in
@@ -1594,20 +1436,6 @@ class MCPClient:
             extra = [str(p) for p in declared]
         else:
             extra = _default_runtime_write_paths(self._config.get("command") or "")
-        # The server's OWN declared env (``.mcp.json`` ``env`` block) rides the
-        # typed policy as ``env_explicit`` (#3060 follow-up), so the sandbox
-        # spawn path forwards operator-declared vars DETERMINISTICALLY at the
-        # exec boundary rather than depending on the transport layer to inherit
-        # them. Symmetric with the non-sandbox spawn path, which already passes
-        # ``env`` straight to the subprocess (see ``_open_stdio``). Only the
-        # operator-authored declaration flows here — never an ``os.environ``
-        # dump — so no new host-env leak is created.
-        declared_env = self._config.get("env")
-        env_explicit = (
-            {str(k): str(v) for k, v in declared_env.items()}
-            if isinstance(declared_env, dict)
-            else {}
-        )
         return SandboxPolicy(
             network=bool(self._config.get("network", DEFAULT_SANDBOX_NETWORK)),
             allow_subprocess=bool(self._config.get("subprocess", True)),
@@ -1615,7 +1443,6 @@ class MCPClient:
             # backend (expand_policy_path) — NOT here, so every backend applies
             # one shared contract instead of each caller pre-expanding (#2976).
             write_paths=[cwd, *extra],
-            env_explicit=env_explicit,
         )
 
     def _sandbox_wrap_stdio(self, command: str, args: list[str]) -> "tuple[str, list[str]]":

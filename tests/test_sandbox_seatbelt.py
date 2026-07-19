@@ -202,27 +202,43 @@ async def test_seatbelt_allows_loopback_bind_but_denies_connect_when_network_fal
 
 @pytest.mark.skipif(sys.platform != "darwin", reason="sandbox-exec is macOS-only")
 @pytest.mark.asyncio
-async def test_seatbelt_forwards_env_explicit_to_child(monkeypatch):
-    """Tier 2: #3060 follow-up — a real Seatbelt-sandboxed child receives
-    ``policy.env_explicit`` in its environment even when the var is absent from
-    the host ``os.environ`` (the exact shape of a server-declared
-    ``FASTMCP_SHOW_SERVER_BANNER=false`` that name-only ``env_passthrough`` could
-    not forward). Real ``SeatbeltBackend.run`` + real ``resolve_passthrough_env``
-    — no fakes, seccomp-independent, so it witnesses the env-merge wiring on
-    darwin where the Linux-CI purpose test cannot run."""
+async def test_seatbelt_allows_socketpair_sendto_but_denies_addressed_sendto_when_network_false():
+    """Tier 2: #3060 case-(b) — the Seatbelt counterpart of the seccomp
+    NULL-addr rule. Under network=False a connected AF_UNIX socketpair
+    send/recv (the async event-loop self-pipe) SUCCEEDS while an ADDRESSED UDP
+    ``sendto`` (real egress) stays DENIED.
+
+    Seatbelt needs NO code change for this (unlike seccomp's explicit
+    ``sendto arg4==0`` rule): SBPL's ``(allow network*)`` gate governs NETWORK
+    sockets, and an AF_UNIX socketpair is not one — so the self-pipe already
+    works while ``network-outbound`` on an AF_INET datagram stays refused. This
+    test PINS that property so a future SBPL tightening cannot silently break
+    the async runtime, and proves the egress form is still denied."""
     backend = SeatbeltBackend()
     if not backend.available():
         pytest.skip("sandbox-exec not available on this machine")
 
-    monkeypatch.delenv("REYN_EXPLICIT_PROBE", raising=False)
-    policy = SandboxPolicy(
-        env_explicit={"REYN_EXPLICIT_PROBE": "reached"}, timeout_seconds=10
+    policy = SandboxPolicy(network=False, timeout_seconds=10)
+    code = (
+        "import socket\n"
+        "a, b = socket.socketpair(socket.AF_UNIX, socket.SOCK_DGRAM)\n"
+        "a.send(b'ping')\n"
+        "print('SOCKETPAIR_OK', b.recv(4))\n"
+        "try:\n"
+        "    u = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)\n"
+        "    u.sendto(b'x', ('93.184.216.34', 53))\n"
+        "    print('ADDRESSED_SENDTO_SUCCEEDED')\n"
+        "except (PermissionError, OSError):\n"
+        "    print('ADDRESSED_SENDTO_DENIED')\n"
     )
-    code = "import os; print('CHILD_ENV=' + os.environ.get('REYN_EXPLICIT_PROBE', '<MISSING>'))"
     result = await backend.run([sys.executable, "-c", code], policy)
-    assert b"CHILD_ENV=reached" in result.stdout, (
-        f"env_explicit must reach the sandboxed child even when absent from the "
-        f"host env (#3060); stdout={result.stdout!r} stderr={result.stderr!r}"
+    assert b"SOCKETPAIR_OK" in result.stdout, (
+        f"connected socketpair send/recv (async self-pipe) must succeed under "
+        f"network=False (#3060); stdout={result.stdout!r} stderr={result.stderr!r}"
+    )
+    assert b"ADDRESSED_SENDTO_DENIED" in result.stdout, (
+        f"addressed UDP sendto (real egress) must stay denied under network=False; "
+        f"stdout={result.stdout!r} stderr={result.stderr!r}"
     )
 
 

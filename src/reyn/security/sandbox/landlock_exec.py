@@ -185,28 +185,16 @@ def _apply_landlock(policy: SandboxPolicy) -> None:
 def main(argv: list[str] | None = None) -> int:
     """Entry point: parse argv, apply Landlock to self, exec the target.
 
-    Returns a non-zero code only on failure; on success ``os.execvpe`` replaces
-    the process and never returns.
-
-    The target env is ``os.environ`` (inherited from the shim launch) with
-    ``policy.env_explicit`` layered ON TOP (#3060 follow-up). The shim relies on
-    inheriting the env its launcher set — but an operator-declared server env
-    (an MCP server's ``.mcp.json`` ``env`` block) must reach the target
-    DETERMINISTICALLY, not only when the transport happens to forward it. So the
-    policy carries those pairs (they round-trip through ``--policy``) and the
-    shim injects them here, at the exec boundary it fully controls. ``execvpe``
-    over ``execvp``: an empty ``env_explicit`` yields ``{**os.environ}`` — the
-    exact pre-existing inherited-env behaviour, so this is a no-op when no server
-    env is declared and never drops an inherited var (os.environ is the base)."""
+    Returns a non-zero code only on failure; on success ``os.execvp`` replaces
+    the process and never returns."""
     policy, command, args = _parse_args(sys.argv[1:] if argv is None else argv)
     try:
         _apply_landlock(policy)
     except RuntimeError as exc:
         print(str(exc), file=sys.stderr)  # noqa: T201
         return 2
-    target_env = {**os.environ, **policy.env_explicit}
-    os.execvpe(command, [command, *args], target_env)
-    return 127  # unreachable on success (execvpe replaces the process)
+    os.execvp(command, [command, *args])
+    return 127  # unreachable on success (execvp replaces the process)
 
 
 if __name__ == "__main__":  # pragma: no cover — exercised as a subprocess

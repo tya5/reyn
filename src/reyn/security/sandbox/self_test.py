@@ -512,6 +512,56 @@ def probe_network_enforcement(backend: "SandboxBackend") -> str | None:
                 f"exact #3030 condition (allow_subprocess=True skipped the "
                 f"whole syscall filter, network gate included)"
             )
+
+        # 4. #3060 case-(b): the async-runtime self-pipe must SURVIVE. A
+        #    connected AF_UNIX socketpair send/recv (sendto/recvfrom with a NULL
+        #    address) must work under network=False — otherwise every stdio MCP
+        #    server's event loop cannot wake and it serves 0 bytes. This arm
+        #    fails the backend if the NULL-addr allowance is missing/too tight.
+        selfpipe = granted / "selfpipe-ok"
+        selfpipe_code = (
+            "import socket\n"
+            "a, b = socket.socketpair()\n"
+            "a.send(b'ping')\n"
+            "assert b.recv(4) == b'ping'\n"
+            f"open({str(selfpipe)!r}, 'w').close()\n"
+        )
+        created, detail = _attempt_create(
+            backend, _policy(False), selfpipe, [sys.executable, "-c", selfpipe_code]
+        )
+        if not created:
+            return (
+                f"the async-runtime self-pipe is broken under network=False: a "
+                f"connected socketpair send/recv (NULL-addr sendto/recvfrom) did "
+                f"not produce {selfpipe} ({detail}). The network gate is denying "
+                f"the event loop's own wakeup — every stdio MCP server would "
+                f"serve 0 bytes (#3060 case-b). The NULL-address sendto/recvfrom "
+                f"allowance is missing or too tight"
+            )
+
+        # 5. #3060 case-(b) egress-safety: an ADDRESSED sendto (real UDP egress)
+        #    must STAY denied. The NULL-addr allowance above must not have become
+        #    unconditional — a datagram socket can exfiltrate with one addressed
+        #    sendto and no connect(), so this is the independent proof the
+        #    exception did not reopen egress.
+        escaped_udp = granted / "escaped-addressed-sendto"
+        addressed_code = (
+            "import socket\n"
+            "s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)\n"
+            "s.sendto(b'x', ('127.0.0.1', 9))\n"
+            f"open({str(escaped_udp)!r}, 'w').close()\n"
+        )
+        created, detail = _attempt_create(
+            backend, _policy(False), escaped_udp, [sys.executable, "-c", addressed_code]
+        )
+        if created:
+            return (
+                f"no egress deny fired: an ADDRESSED sendto wrote {escaped_udp} "
+                f"even though the policy set network=False ({detail}). The "
+                f"NULL-address sendto/recvfrom exception (#3060) has become "
+                f"UNCONDITIONAL — sandboxed code can exfiltrate via a single "
+                f"addressed UDP sendto with no connect()"
+            )
         return None
     finally:
         listener.close()
