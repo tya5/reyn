@@ -406,6 +406,80 @@ async def test_chunker_server_starts_and_responds_under_seccomp_allowlist(
 
 @requires_landlock
 @pytest.mark.asyncio
+async def test_chunker_server_reaches_serving_under_network_false(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    """Tier 2c: #3060 reachable-for-purpose witness — the real chunker FastMCP
+    server INITIALIZES AND SERVES under ``network=False`` (the whole point of
+    #3060), not merely "socket/bind are allowed at the syscall level".
+
+    The syscall-level probes (``test_shim_allows_socket_and_bind_*``) prove the
+    allow-set exists; this proves the allow-set is SUFFICIENT for the actual
+    purpose — a real chonkie-backed FastMCP stdio server, launched with the two
+    telemetry/update-check env vars the plugin's ``.mcp.json`` sets
+    (``FASTMCP_SHOW_SERVER_BANNER=false`` / ``FASTMCP_CHECK_FOR_UPDATES=off``,
+    which suppress FastMCP's banner-time phone-home ``connect()`` to PyPI),
+    reaches serving (advertises + answers its ``chunk`` tool) rather than dying
+    in ``initialize()``. Mechanism-exists ≠ reachable-for-purpose; this closes
+    that gap.
+
+    Contrast the sibling completeness probe above, which runs at
+    ``network=True`` to isolate the allowlist-completeness question from network
+    behavior (see the "why network=True" note). This one deliberately fixes
+    ``network=False`` because THAT is the config #3060 makes work — and pins the
+    telemetry env exactly as the shipped ``.mcp.json`` does, so a regression that
+    dropped either env var (re-enabling the PyPI ``connect()`` that
+    ``network=False`` refuses) would fail here.
+
+    Real chunker + real seccomp shim via the real ``MCPClient`` seam, no fakes;
+    Linux-CI-gated (``@requires_landlock``), so it SKIPS on darwin/without
+    Landlock exactly like the sibling probes — a green run on a dev box witnesses
+    nothing here."""
+    pytest.importorskip("chonkie", reason="builtin-rag extra not installed")
+    from reyn.mcp.client import MCPClient
+
+    _patch_landlock_backend(monkeypatch)
+    script = _rag_plugin_script("chunker_server.py")
+    if not script.exists():  # pragma: no cover - packaging regression only
+        pytest.skip(f"builtin rag plugin chunker script not found at {script}")
+
+    cfg = {
+        "type": "stdio",
+        "command": sys.executable,
+        "args": [str(script)],
+        "network": False,  # the exact config #3060 makes work for the chunker
+        "subprocess": True,  # the stdio-MCP default
+        "cwd": str(tmp_path),
+        # Exactly the vars the shipped .mcp.json sets — suppress FastMCP's
+        # banner-time update check (a real httpx.get to pypi.org) so no
+        # outbound connect() is attempted that network=False would refuse.
+        "env": {
+            "FASTMCP_SHOW_SERVER_BANNER": "false",
+            "FASTMCP_CHECK_FOR_UPDATES": "off",
+        },
+    }
+    async with MCPClient(cfg) as client:
+        # Reaching list_tools() at all means the server survived initialize()
+        # under network=False — it did not die on a refused network syscall.
+        tools = await client.list_tools()
+        assert any(t.get("name") == "chunk" for t in tools), (
+            f"reyn-rag-chunker did not reach serving under network=False — it "
+            f"advertised no 'chunk' tool, so the server failed to initialize "
+            f"under the exact config #3060 is meant to make work; tools={tools!r}"
+        )
+        # And it can actually do its job (local chonkie processing, no network).
+        result = await client.call_tool(
+            "chunk", {"text": "hello world " * 50, "size": 20}
+        )
+        assert not result.get("isError"), (
+            f"reyn-rag-chunker reached serving but its real 'chunk' call FAILED "
+            f"under network=False — #3060's purpose (the chunker actually works "
+            f"with network off) is not met: {result!r}"
+        )
+
+
+@requires_landlock
+@pytest.mark.asyncio
 async def test_vector_store_server_starts_and_responds_under_seccomp_allowlist(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
 ) -> None:
