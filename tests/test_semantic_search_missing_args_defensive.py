@@ -132,11 +132,12 @@ async def test_recall_error_message_names_the_source_discovery_verb():
     missing arg.
 
     #3026 changed WHERE that pointer points, not whether there is one. The message
-    used to name the 'Indexed sources' system-prompt section; that section is not
-    rendered (the SP builder accepts an ``indexed_sources_section`` argument and
-    discards it — see #3025), so the message was directing the model to something
-    that was never in its context. It now names ``list_rag_sources``, the verb
-    #3026 added to enumerate the corpora. Pinning the referent keeps the
-    educational pointer honest if someone edits the wording."""
+    used to name the 'Indexed sources' system-prompt section; that section was
+    never rendered in the wrapper-only path (the SP builder accepted-and-discarded
+    an ``indexed_sources_section`` argument, since removed — see #3025), so the
+    message was directing the model to something that was never in its context. It
+    now names ``list_rag_sources``, the verb #3026 added to enumerate the corpora.
+    Pinning the referent keeps the educational pointer honest if someone edits the
+    wording."""
     result = await _handle_semantic_search({"query": "x"}, _make_ctx())
     assert "list_rag_sources" in result["error_message"]

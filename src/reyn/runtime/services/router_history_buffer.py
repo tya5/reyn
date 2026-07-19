@@ -464,12 +464,6 @@ class RouterHistoryBuffer:
         :class:`~reyn.services.compaction.engine.CompactionEngine`
         so that T_SP is measured dynamically — operator-editable REYN.md and
         action catalog changes are reflected before each pre-frame budget check.
-
-        Note: ``indexed_sources_section`` is omitted (= None) because this
-        method is synchronous and cannot await ``get_source_manifest()``.
-        The omission means T_SP is slightly under-counted, which is conservative
-        (= compaction triggers slightly more often than strictly necessary).
-        The error is small relative to the total context window.
         """
         from reyn.runtime.router_system_prompt import build_system_prompt
         from reyn.tools.schemes._discovery import tier_wants_discovery_mandate
@@ -502,7 +496,6 @@ class RouterHistoryBuffer:
             web_fetch_allowed=rh.get_web_fetch_allowed(),
             output_language=rh.output_language,
             project_context=rh.get_project_context(),
-            indexed_sources_section=None,
             tool_use_sp=tool_use_sp,
             # #1652: include the prior-reasoning continuity section so the T_SP
             # estimate (and the override/budget SP path) accounts for it. Host-

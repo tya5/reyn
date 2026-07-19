@@ -18,8 +18,10 @@ the discovery verb that replaced the ``rag_corpus__<name>`` catalog
 category when #3026 collapsed the per-resource action surface, so
 ``semantic_search``'s ``sources`` argument stays answerable without one
 action per corpus in ``tools=``. Its text (and ``semantic_search``'s, which
-used to point at an "Indexed sources" system-prompt section that is no
-longer rendered — see #3025) names it explicitly, because a required
+used to point at an "Indexed sources" system-prompt section that was never
+rendered in the wrapper-only path — the vestigial ``indexed_sources_section``
+parameter and its per-turn prefetch were removed in #3025) names it
+explicitly, because a required
 closed-set argument with no stated way to enumerate it is the same
 reachability gap #2971 closed for skills.
 """

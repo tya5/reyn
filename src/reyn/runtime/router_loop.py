@@ -10,11 +10,9 @@ import asyncio
 import functools
 import json
 import os
-from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 from reyn.core.dispatch import DispatchContext, dispatch_tool
-from reyn.data.index.source_manifest import get_source_manifest
 from reyn.llm.llm import call_llm_tools
 from reyn.llm.pricing import TokenUsage
 from reyn.prompt.loop_control import (
@@ -1506,13 +1504,16 @@ class RouterLoop:
         if self._system_prompt_override is not None:
             system_prompt = self._system_prompt_override
         else:
-            # ADR-0033: pre-fetch indexed sources before building the
-            # (sync) system prompt. format_for_prompt() reads the mem
-            # cache (fast path when manifest already loaded) and returns
-            # the rendered section including the empty-state hint.
-            indexed_sources = await get_source_manifest(
-                Path.cwd()
-            ).format_for_prompt()
+            # #3025: the router no longer pre-fetches SourceManifest.
+            # format_for_prompt() here. The "## Indexed sources" SP section it
+            # rendered was accepted by build_system_prompt as
+            # ``indexed_sources_section`` and then discarded — the wrapper-only
+            # SP has not injected it since B23-PRE-1, so every turn paid a
+            # SourceManifest.get_all() (sources.yaml read + parse) to build a
+            # string nothing read. Corpus discovery is the ``list_rag_sources``
+            # verb (#3026), not the SP, so the prefetch + dead parameter are
+            # removed rather than revived (reviving it would re-introduce the
+            # per-corpus, operator-scaling SP cost #3026 removed).
             system_prompt = build_system_prompt(
                 agent_name=host.agent_name,
                 agent_role=host.agent_role,
@@ -1523,7 +1524,6 @@ class RouterLoop:
                 web_fetch_allowed=host.get_web_fetch_allowed(),
                 output_language=host.output_language,
                 project_context=host.get_project_context(),
-                indexed_sources_section=indexed_sources,
                 cwd=_cwd_str,
                 # #1627 Stage 4: scheme-owned slot-map (all 4 schemes populate
                 # tool_use_sp via build_universal_tool_use_slots or their own

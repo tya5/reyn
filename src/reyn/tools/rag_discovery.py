@@ -15,13 +15,15 @@ back as a VERB whose result carries the names, exactly one tool regardless of
 corpus count — the same shape #2971 used for ``skill_management__list`` and
 #879 used for ``mcp__list_tools``.
 
-**Why not the system prompt.** ``semantic_search``'s ``sources`` description has
-long pointed at an "Indexed sources" SP section, and ``build_system_prompt``
-still accepts an ``indexed_sources_section`` argument — but that section has not
-been rendered for some time (the parameter is accepted and discarded; see
-#3025). Reviving it would put a per-corpus list in every turn's prompt: the same
-operator-scaling cost this PR is removing, just moved from ``tools=`` into the
-SP. A verb is paid for only when the model actually asks.
+**Why not the system prompt.** ``semantic_search``'s ``sources`` description
+once pointed at an "Indexed sources" SP section, and ``build_system_prompt``
+used to accept an ``indexed_sources_section`` argument — but that section had
+not been rendered since B23-PRE-1, so the argument was accepted and discarded
+while the router still paid a per-turn ``SourceManifest.format_for_prompt()``
+to build it (#3025 removed both the parameter and that prefetch). Reviving it
+would put a per-corpus list in every turn's prompt: the same operator-scaling
+cost this PR is removing, just moved from ``tools=`` into the SP. A verb is
+paid for only when the model actually asks.
 
 Read-only, and no permission gate: it returns the operator's own corpus
 declarations from the snapshot the router already built for this session —
