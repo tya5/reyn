@@ -35,10 +35,10 @@ The operative test is therefore four properties, not human presence:
 |---|---|
 | **Permissioned** | the activation is granted by the operator (install + grant), not self-assumed |
 | **Bounded** | a stable unit, not unbounded growth; runaway wakes hit `safety.loop.max_hook_driven_turns` |
-| **Auditable** | the trigger leaves a P6 trace (`hook_push_fired`) and the resulting turn leaves the ordinary turn trail |
+| **Auditable** | a hook-driven push leaves a P6 trace (`hook_push_fired`) and any woken turn leaves the ordinary turn trail. *Measured caveat*: a bare cron job's fire itself emits **no dedicated P6 event** (`src/reyn/runtime/cron/` has no emit) — the trail starts at the hook push / the woken turn |
 | **Killable** | stopping the reyn process stops all of it |
 
-**`cron` is the standing precedent that this shape is already accepted**: an operator approves a job per-job at registration, the scheduler then resolves-or-spawns that job's own persistent session and boots its run-loop **with nobody watching**, the firing is audit-evented, and the whole thing exists only while the reyn process does. This proposal asks for the same shape for push-driven sources — it does not introduce a new class of autonomy.
+**`cron` is the standing precedent that this shape is already accepted**: an operator approves a job per-job at registration, the scheduler then resolves-or-spawns that job's own persistent session and boots its run-loop **with nobody watching**, a hook-driven push is audit-evented and the woken turn leaves the ordinary trail, and the whole thing exists only while the reyn process does. This proposal asks for the same shape for push-driven sources — it does not introduce a new class of autonomy.
 
 ## 2. Grounding — what reyn already has (verified on `origin/main`)
 
@@ -103,6 +103,8 @@ Extend by the same discriminator — **who authored the content that runs**:
 | Allow the `pipeline_launch` action | **Add** | It launches a **registered** pipeline — content is operator-installed; the LLM chooses only which and when. Also the only path for returning a result outward. |
 | Allow `shell_exec` / `shell_push` | **Keep restricted** | The LLM would *author the command string* — that hands over content authority, a different class from the two above. |
 
+**Storage — an LLM-registered external-event hook is session-scoped and ephemeral.** `hooks_add` today persists to the workspace runtime layer (`.reyn/config/hooks.yaml`), hot-reloaded into **every** session. That is correct for the six lifecycle points it currently accepts, but for external event points it would contradict the scoping rule below (the reaction must be visible only to the registering session) and would let a hook **outlive the session whose activations its guard references** — a dangling scope. Ruling: `hooks_add` registrations on external event points go into the registering session's own per-session registry (the bus/registry are already per-session — `src/reyn/hooks/bus.py`) and **die with the session; `hooks.yaml` is never written**. Lifecycle-point registrations keep today's persistent semantics unchanged.
+
 **URI scope for an LLM-registered external-event hook**: it may target only the event surface of a plugin **this session activated**, and the reaction is visible only in that session. A session must not be able to attach itself to another plugin's or another session's signals. (Same shape as 0059's tiering of the `on:` vocabulary.)
 
 ### 4.4 Stopping — converge to the crash residue
@@ -125,7 +127,7 @@ This is a general inbox property, not a hook feature — every no-wake producer 
 
 Three surfaces, one activation unit behind them. Each follows the existing idiom of its surface rather than inventing a shape: CLI = argparse sub-parser + `set_defaults(func=...)` (`src/reyn/interfaces/cli/commands/cron.py`); slash = the `@slash(name, summary=...)` decorator (`src/reyn/interfaces/slash/`); LLM = a typed IR op (`kind: Literal[...]` on a pydantic model, `src/reyn/schemas/models.py`) surfaced as a catalog verb.
 
-**Naming is deliberately shared across all three** — the same noun (`reactive`) and the same two verbs (`activate` / `deactivate`) — so an operator reading an audit trail sees one concept regardless of which surface triggered it.
+**Naming is deliberately shared across all three** — the same noun and the same two verbs (`activate` / `deactivate`) — so an operator reading an audit trail sees one concept regardless of which surface triggered it. **The noun is provisional**: this section writes `reactive`; the recommended final name is **`reactions`** (a plural artifact noun, matching the existing capability names `mcp` / `pipelines` / `skills` and honestly predicting the file's content: trigger + action), pending the owner's pick. Whichever noun is chosen propagates to all five derived names in one sweep — capability `kind`, the `<plugin_root>/<noun>/` directory, the two IR ops, the CLI/slash command, and the permission axis.
 
 ### 5.1 Plugin interface — what a plugin declares
 
@@ -143,6 +145,7 @@ Each declared file is one **activation definition**:
 # <plugin_root>/reactive/<name>.yaml
 name: streamlit_ui            # activation id, unique within the plugin
 server: streamlit             # the .mcp.json server this activation holds
+exclusive: true               # server owns an exclusive resource (a port, one UI)
 subscribe:                    # URIs subscribed on activate, dropped on deactivate
   - "app://status"
 composers:                    # optional — same schema as the workspace `composers:`
@@ -158,7 +161,9 @@ hooks:                        # same schema as the workspace `hooks:`
 
 Rules:
 
-- **A plugin may only name its own `server:`** and may only subscribe/match URIs on that server. This is the containment 0064 deferred; it is what makes plugin-shipped hooks safe to install without a per-hook review.
+- **A plugin may only name its own `server:`** and may only subscribe/match URIs on that server. This is the containment 0064 deferred; it is what makes plugin-shipped hooks safe to install without a per-hook review. Enforced **at plugin load** (a definition naming a foreign server is rejected — enforce-at-load, 0059's posture) **and re-checked at activate**.
+- **`exclusive: true` fails closed on a second session.** stdio transport spawns **one server subprocess per holding session**, so a server owning an exclusive resource (a bound port, a single UI — the Streamlit first consumer is exactly this) cannot be held twice: the second `activate` fails with an error **naming the holding session**, instead of a silent port clash or a half-broken duplicate. Non-exclusive servers (stateless, e.g. the RAG pair) multi-activate freely.
+- **Activation is not access control.** The plugin's server is registered into `mcp.yaml` at install, and its *tools* remain callable from any session under the ordinary MCP permission gates whether or not an activation is live. The containment above bounds **reactions** (what may subscribe and fire), not tool access.
 - **`shell_exec` / `shell_push` in a plugin-shipped hook requires an explicit grant at install time**, surfaced as its own approval line — same reasoning as §4.3: the plugin, not the operator, authored the command string.
 - Registration is plugin-attributed so `plugin_uninstall` removes the definitions exactly like the existing three registries.
 - **Declaring an activation does not activate it.** Shipping ≠ running; activation is always one of §5.2 / §5.3.
@@ -184,6 +189,8 @@ Rules:
 
 `/reactive off` works on an activation the LLM started — the operator is the higher authority (§4.4 rule 1 applies to whoever stops it).
 
+**`auto` semantics** (the deactivation lattice, stated so it need not be discovered later): `auto` is an operator-surface action and therefore **requires no grant** — the grant of §5.2/§5.3 gates only the LLM op. `auto` applies **at session start only**: a mid-session deactivate (either `/reactive off` or the LLM op) sticks for the remainder of that session, and auto re-applies at the next session start. No mid-session tug-of-war, no livelock.
+
 ### 5.3 LLM interface
 
 Two ops, permission-gated on a single new axis (`require_reactive_activate`), scoped per activation id:
@@ -201,6 +208,8 @@ class ReactiveDeactivateIROp(BaseModel):
 Semantics:
 
 - **Fails closed without an operator grant** (§5.2). The LLM cannot self-grant; this is the "operator authors content and availability, LLM decides timing" split of §4.2 made mechanical.
+- **The grant lives in the permission layer, not a new registry** — the same shape as `require_cron_register` (a permission axis + per-item operator approval), persisted with the agent's permissions. No new config file is invented for grants.
+- The LLM may deactivate **any** activation live in its session, including an auto-started one; per §5.2's `auto` semantics the deactivation sticks for that session only.
 - **Activate is all-or-nothing** — hold + subscribe + install, or none of it (§4.4 rule 1 in the forward direction).
 - **Idempotent** both ways (§4.4 rule 3).
 - Both emit an audit event carrying the activation id and the deciding surface, so a trail shows *who* started it, not merely that hooks fired.
@@ -216,14 +225,31 @@ Semantics:
 | LLM | Grant itself; activate an ungranted activation; register a hook on another plugin's event surface; author a `shell_exec` hook |
 | Operator | *(no restriction — the operator is the authority both other surfaces derive from)* |
 
-## 6. Consequences
+## 6. Implementation notes — build by isomorphism, not invention
+
+- **Activation lifecycle ≅ plugin install/uninstall.** Attributed registration + idempotent teardown + converge-to-a-known-state is the shape `plugin_install` already implements (step-tracked progression; attributed removal in `plugin_uninstall`). Reuse that shape — do not grow a parallel lifecycle machine.
+- **One hooks/composers schema, three carriers.** The workspace `hooks:` config, the per-agent layer, and the activation definition carry the **same** schema and must flow through the **same** loader/validation path (`load_hooks`). A second parser is how carriers drift apart.
+- **Grant ≅ cron's per-job approval** (§5.3): one existing permission-axis pattern, reused — not a new grant store.
+
+## 7. Verification obligations (for the implementing PRs)
+
+Per repo discipline (ADR-0039 D8 carried a reachability + fail-close assert per phase; `docs/deep-dives/contributing/verification-hazards.md`):
+
+- **All-or-nothing witness** (§5.3): force a mid-activation failure (e.g. the subscribe step fails) → assert **nothing** is left installed — no hook in the registry, no held connection.
+- **Grant fail-close negative witness**: witness the **deny side** — an ungranted `*_activate` op is refused. A granted happy-path test alone cannot prove the gate exists.
+- **Exclusivity witness** (§5.1): with an `exclusive: true` activation held by session A, session B's activate fails closed with the error naming A.
+- **Session-scope witness for ephemeral hooks** (§4.3): register an external-event hook via `hooks_add`, end the session → the hook is gone **and `hooks.yaml` is byte-untouched**.
+- **Escalation-through-valve witness** (§4.5): an `escalate_after` promotion flows through the ordinary wake path such that `max_hook_driven_turns` counts it — remove the valve interaction and the bound test must flip RED.
+- **Minimal-strip discipline**: every strip-falsify names the **single** property it breaks (a broad revert that breaks several mechanisms at once proves nothing about any of them).
+
+## 8. Consequences
 
 - An external orchestrator becomes installable-and-it-works, which is the precondition #2839 needs before the internal task system can go.
 - Activation becomes an auditable event with a single decider, instead of an emergent property of "someone happened to call a tool".
 - The volatile-activation ruling (§4.4) means **a reactive plugin is not automatically running after a restart**. That is a deliberate trade: predictability and one recovery story, at the cost of a re-activation step. The operator pattern hides this; the LLM pattern does not.
 - `hooks_add` becomes more capable, and the `shell_exec` line becomes the explicit boundary of LLM hook authorship rather than an accident of what was implemented first.
 
-## 7. Rejected alternatives
+## 9. Rejected alternatives
 
 - **Make connection + subscription durable so activation survives a crash.** Rejected: it creates a second durability story next to the WAL, and the external world is out of recovery scope by ruling. §4.4 converges downward instead.
 - **A per-session hook config layer keyed by session id.** Rejected: session ids are runtime-generated and re-keyable, so the file layer has no author. The connection lifetime already provides per-session scoping for free.
