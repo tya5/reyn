@@ -35,6 +35,10 @@ _REAL_CALLER_PATHS_TO_LEGACY_ENCODING = {
     "config/presentations.yaml": "config__presentations.yaml",
     "config/pipelines.yaml": "config__pipelines.yaml",
     "config/index/sources.yaml": "config__index__sources.yaml",
+    # _scope_to_path returns a scope-independent ".reyn/mcp.yaml" (since #470), so the rel-path
+    # seen by _encode on that call path is the bare "mcp.yaml" (no "config/" prefix) — a
+    # distinct real caller path from "config/mcp.yaml" above and worth pinning on its own.
+    "mcp.yaml": "mcp.yaml",
 }
 
 
@@ -80,6 +84,17 @@ def test_truncate_falsify_underscore_collision_pair_survives_and_stays_distinct(
     path_b = "agents/my/agent/hooks.yaml"
     content_a = {"hooks": [{"name": "a-hook"}]}
     content_b = {"hooks": [{"name": "b-hook"}]}
+
+    # Self-naming guard, BEFORE any record() call: under the OLD direct '/' -> '__' map these
+    # two paths collide to the same safe-rel filename (both flatten to
+    # "config__agents__my__agent__hooks.yaml") — that collision, not WAL truncation, is the
+    # actual failure mode this test protects against. If this assert ever fails, the real bug
+    # is an encoding collision, not a truncation regression.
+    assert _encode(path_a) != _encode(path_b), (
+        f"{path_a!r} and {path_b!r} must encode to distinct safe-rel filenames; under the "
+        "old direct '/' -> '__' map they collided to the same filename — that is exactly the "
+        "property this test exists to guard"
+    )
 
     async def scenario() -> "tuple[int, int]":
         log, store = _make_log_and_store(tmp_path)

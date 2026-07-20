@@ -37,6 +37,7 @@ ReynTUIApp_*.svg
 .vscode/
 .idea/
 .claude/
+.serena/
 site/
 tmp/
 
