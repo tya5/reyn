@@ -214,6 +214,53 @@ Use `pypdf` for form-field operations...
 
 There is no dedicated "run this skill" primitive at any layer — a skill is discovered via L1, loaded via L2, and its assets are just files. The model decides relevance from the L1 description; the OS does not gate *which* skill the model may read, only *which paths* it may read (the standard permission model — reading inside the project root is a default; outside requires the usual declaration + approval).
 
+## Splitting a large skill: front-matter `references:` (#3162)
+
+`SKILL.md`'s body is read via the ordinary `file__read` op, so it is subject
+to that op's inline-read cap — the model-unresolved default floor is
+`MAX_CONTROL_IR_RESULT_INLINE_BYTES` (`src/reyn/core/context_builder.py`,
+currently 8,192 chars). A body at or above that floor is silently truncated
+whenever no model (or a small-window model) resolves at read time — the
+worst kind of failure, because the same file behaves differently depending
+on an orthogonal runtime variable. When a skill genuinely cannot shrink
+below the floor without losing its value as a single-topic index (splitting
+it by sub-topic would destroy the thing that makes it useful — see #3162),
+it can split into an **L2 router + L3 references** instead:
+
+```markdown
+---
+name: reyn_cheat_sheet
+description: ...
+references:
+  - hooks-and-events.md
+  - pipelines-and-present.md
+---
+```
+
+- `references:` is an **optional** front-matter key — a skill that omits it
+  stays today's single-`SKILL.md` shape, ungated by the mechanism below.
+- Each entry is a bare filename resolved against a `references/`
+  subdirectory sibling to `SKILL.md` (`skills/<name>/references/<file>.md`).
+- The router (`SKILL.md` itself) should stay small enough to let the model
+  decide *whether* it needs to go deeper, and *which* reference to read,
+  without having read the references yet — name each reference file for the
+  question it answers.
+- Each reference is read the same way as `SKILL.md` (ordinary `file__read`),
+  so it is subject to the **same** default inline cap.
+
+References are declared in YAML front-matter rather than linked from
+Markdown prose specifically so the checks below stay structural (a prose
+Markdown-link parser breaks silently on notation drift): every declared
+reference must exist under `references/`, every file under `references/`
+must be declared (bidirectional — no orphans), every declared reference
+must be reachable through the same wheel-safe body-read routing as
+`SKILL.md`, and every reference must itself be strictly under the default
+inline cap. All four are enforced by
+`tests/test_skill_references_gate_3162.py` for every shipped skill
+(builtin registry + plugin skills-on-disk), the same registry-plus-disk-walk
+enumeration `test_skill_md_default_inline_cap_gate.py` and
+`test_builtin_registry_disk_parity.py` use.
+
 ## Hot-reload
 
 Edits to `.reyn/config/skills.yaml` take effect at the next turn boundary via the `"skills"` reload seam — no session restart needed. Editing `reyn.yaml` / `reyn.local.yaml` directly follows the same general config hot-reload path as other sections; see [Concepts: Config hot-reload](../runtime/config-hot-reload.md).
