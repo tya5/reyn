@@ -75,7 +75,7 @@ The recurring failure when designing here is **proposing a mechanism that exists
 
 ### 4.1 One activation unit, three entry points
 
-A **reactive activation** is the triple *{hold this server, subscribe these URIs, install these hooks}* — activated together, torn down together, **scoped to a session**. This single unit closes G1, G3 and the scoping question at once: hooks are live exactly while the plugin is active in that session, so no new session-id bookkeeping is invented (the connection lifetime already *is* per-session).
+An **automation** is the triple *{hold this server, subscribe these URIs, install these hooks}* — activated together, torn down together, **scoped to a session**. This single unit closes G1, G3 and the scoping question at once: hooks are live exactly while the plugin is active in that session, so no new session-id bookkeeping is invented (the connection lifetime already *is* per-session).
 
 **Scope of the unit — only for sources that require a held connection.** Of the four external event points, only `mcp_resource_updated` originates from a connection the session must hold and subscribe on. `file_changed` is an in-process watcher; `cron_fired` and `webhook_received` arrive **out-of-process** and resolve their target session themselves (`src/reyn/hooks/ingress.py`). Those three need **no activation unit at all — a hook alone is sufficient**, and for `cron` the operator pattern is already fully available today via the `reyn cron` CLI. This proposal's §4.1 therefore applies to MCP-push orchestration; §4.3 and §4.5 apply to all four.
 
@@ -127,22 +127,22 @@ This is a general inbox property, not a hook feature — every no-wake producer 
 
 Three surfaces, one activation unit behind them. Each follows the existing idiom of its surface rather than inventing a shape: CLI = argparse sub-parser + `set_defaults(func=...)` (`src/reyn/interfaces/cli/commands/cron.py`); slash = the `@slash(name, summary=...)` decorator (`src/reyn/interfaces/slash/`); LLM = a typed IR op (`kind: Literal[...]` on a pydantic model, `src/reyn/schemas/models.py`) surfaced as a catalog verb.
 
-**Naming is deliberately shared across all three** — the same noun and the same two verbs (`activate` / `deactivate`) — so an operator reading an audit trail sees one concept regardless of which surface triggered it. **The noun is provisional**: this section writes `reactive`; the recommended final name is **`reactions`** (a plural artifact noun, matching the existing capability names `mcp` / `pipelines` / `skills` and honestly predicting the file's content: trigger + action), pending the owner's pick. Whichever noun is chosen propagates to all five derived names in one sweep — capability `kind`, the `<plugin_root>/<noun>/` directory, the two IR ops, the CLI/slash command, and the permission axis.
+**Naming is deliberately shared across all three** — the noun **`automations`** and the two verbs `activate` / `deactivate` — so an operator reading an audit trail sees one concept regardless of which surface triggered it. The noun was chosen against two rejected candidates on measured grounds: **`triggers`** collides with reyn's existing internal vocabulary (`hook_trigger`, 27+ occurrences in `src/reyn/hooks/`), and **`reactions`** collides externally with the emoji-reaction sense the word now carries in Slack/GitHub/Discord. `automations` is unclaimed as an identifier (its only occurrences repo-wide are prose), reads unambiguously in both English and Japanese (自動化), and matches the real-world analogue closest to this unit — Home Assistant's `automations`, which likewise bundles trigger + condition + action.
 
 ### 5.1 Plugin interface — what a plugin declares
 
 A fourth capability variant, mirroring the existing three (discriminated union, `entries` empty = discover by layout convention):
 
 ```python
-class PluginReactiveCapability(BaseModel):
-    kind: Literal["reactive"] = "reactive"
-    entries: tuple[str, ...] = ()      # empty = discover reactive/*.yaml
+class PluginAutomationsCapability(BaseModel):
+    kind: Literal["automations"] = "automations"
+    entries: tuple[str, ...] = ()      # empty = discover automations/*.yaml
 ```
 
 Each declared file is one **activation definition**:
 
 ```yaml
-# <plugin_root>/reactive/<name>.yaml
+# <plugin_root>/automations/<name>.yaml
 name: streamlit_ui            # activation id, unique within the plugin
 server: streamlit             # the .mcp.json server this activation holds
 exclusive: true               # server owns an exclusive resource (a port, one UI)
@@ -174,34 +174,34 @@ Rules:
 
 | Command | Effect |
 |---|---|
-| `reyn reactive list` | Every declared activation, its plugin, and whether it is granted / auto-start |
-| `reyn reactive grant <plugin>/<name> [--agent <a>]` | Permit LLM activation. **Without a grant, §5.3 fails closed.** |
-| `reyn reactive revoke <plugin>/<name>` | Withdraw the grant; deactivates it wherever it is live |
-| `reyn reactive auto <plugin>/<name> --on\|--off [--agent <a>]` | Activate automatically in every session of that agent |
+| `reyn automation list` | Every declared activation, its plugin, and whether it is granted / auto-start |
+| `reyn automation grant <plugin>/<name> [--agent <a>]` | Permit LLM activation. **Without a grant, §5.3 fails closed.** |
+| `reyn automation revoke <plugin>/<name>` | Withdraw the grant; deactivates it wherever it is live |
+| `reyn automation autostart <plugin>/<name> --on\|--off [--agent <a>]` | Start automatically in every session of that agent |
 
-**slash — this session, now.** `/reactive` follows the `@slash` idiom:
+**slash — this session, now.** `/automation` follows the `@slash` idiom:
 
 | Command | Effect |
 |---|---|
-| `/reactive` | What is active in THIS session, and what is available to activate |
-| `/reactive on <plugin>/<name>` | Activate here |
-| `/reactive off <plugin>/<name>` | Deactivate here |
+| `/automation` | What is active in THIS session, and what is available to activate |
+| `/automation on <plugin>/<name>` | Activate here |
+| `/automation off <plugin>/<name>` | Deactivate here |
 
-`/reactive off` works on an activation the LLM started — the operator is the higher authority (§4.4 rule 1 applies to whoever stops it).
+`/automation off` works on an activation the LLM started — the operator is the higher authority (§4.4 rule 1 applies to whoever stops it).
 
-**`auto` semantics** (the deactivation lattice, stated so it need not be discovered later): `auto` is an operator-surface action and therefore **requires no grant** — the grant of §5.2/§5.3 gates only the LLM op. `auto` applies **at session start only**: a mid-session deactivate (either `/reactive off` or the LLM op) sticks for the remainder of that session, and auto re-applies at the next session start. No mid-session tug-of-war, no livelock.
+**`autostart` semantics** (the deactivation lattice, stated so it need not be discovered later): `autostart` is an operator-surface action and therefore **requires no grant** — the grant of §5.2/§5.3 gates only the LLM op. `autostart` applies **at session start only**: a mid-session deactivate (either `/automation off` or the LLM op) sticks for the remainder of that session, and autostart re-applies at the next session start. No mid-session tug-of-war, no livelock.
 
 ### 5.3 LLM interface
 
-Two ops, permission-gated on a single new axis (`require_reactive_activate`), scoped per activation id:
+Two ops, permission-gated on a single new axis (`require_automation_activate`), scoped per activation id:
 
 ```python
-class ReactiveActivateIROp(BaseModel):
-    kind: Literal["reactive_activate"]
+class AutomationActivateIROp(BaseModel):
+    kind: Literal["automation_activate"]
     activation: str      # "<plugin>/<name>"
 
-class ReactiveDeactivateIROp(BaseModel):
-    kind: Literal["reactive_deactivate"]
+class AutomationDeactivateIROp(BaseModel):
+    kind: Literal["automation_deactivate"]
     activation: str
 ```
 
@@ -209,7 +209,7 @@ Semantics:
 
 - **Fails closed without an operator grant** (§5.2). The LLM cannot self-grant; this is the "operator authors content and availability, LLM decides timing" split of §4.2 made mechanical.
 - **The grant lives in the permission layer, not a new registry** — the same shape as `require_cron_register` (a permission axis + per-item operator approval), persisted with the agent's permissions. No new config file is invented for grants.
-- The LLM may deactivate **any** activation live in its session, including an auto-started one; per §5.2's `auto` semantics the deactivation sticks for that session only.
+- The LLM may deactivate **any** activation live in its session, including an autostart-ed one; per §5.2's `autostart` semantics the deactivation sticks for that session only.
 - **Activate is all-or-nothing** — hold + subscribe + install, or none of it (§4.4 rule 1 in the forward direction).
 - **Idempotent** both ways (§4.4 rule 3).
 - Both emit an audit event carrying the activation id and the deciding surface, so a trail shows *who* started it, not merely that hooks fired.
