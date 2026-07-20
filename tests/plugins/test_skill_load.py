@@ -436,6 +436,57 @@ def test_file_read_op_dotdot_path_judged_by_resolved_target(tmp_path, monkeypatc
     assert any(e.data["provenance"] == "config_entry" for e in skill_load_events)
 
 
+def test_file_read_op_resolves_path_exactly_once_per_read(tmp_path, monkeypatch):
+    """Tier 2: (security, #3196 co-vet round 2 — TOCTOU) `file.handle`
+    resolves `op.path` EXACTLY ONCE per `read` and reuses that single
+    result for the permission gate, the builtin/plugin provenance check,
+    the ACTUAL byte read, and the skill-load provenance decision + expansion.
+
+    An earlier revision of this PR resolved the path separately for the
+    trust decision (skill-load provenance) and for the actual read,
+    leaving a window where a symlinked `SKILL.md` swapped BETWEEN the two
+    resolves could make "decided trusted" and "bytes actually read" refer
+    to two DIFFERENT files. Proving "resolved exactly once" structurally
+    is the closure the co-vet asked for when a live swap-mid-await
+    reproduction isn't constructible (there is no `await` between the
+    resolve and the read for a test to interleave into).
+
+    Spies on `reyn.core.op_runtime.file._resolve_for_gate` (the ONE
+    function that ever calls `.resolve()` for this op) and asserts it is
+    called exactly once for a real, real-instance `SKILL.md` read."""
+    import reyn.core.op_runtime.file as file_module
+
+    project_root = tmp_path / "project-root-real"
+    skill_dir = project_root / "skills" / "greeter"
+    skill_dir.mkdir(parents=True)
+    skill_path = skill_dir / "SKILL.md"
+    skill_path.write_text(_SENTINEL_BODY, encoding="utf-8")
+    rel_path = str(skill_path.relative_to(project_root))
+    entry = SkillEntry(name="greeter", description="d", path=rel_path)
+    ctx, events = _make_ctx(project_root, available_skills=[entry])
+
+    calls: list[str] = []
+    real_resolve_for_gate = file_module._resolve_for_gate
+
+    def _counting_resolve_for_gate(ctx_arg, path_str):
+        calls.append(path_str)
+        return real_resolve_for_gate(ctx_arg, path_str)
+
+    monkeypatch.setattr(file_module, "_resolve_for_gate", _counting_resolve_for_gate)
+
+    result = _run(handle(FileIROp(kind="file", op="read", path=rel_path), ctx))
+
+    assert result["status"] == "ok", result
+    assert len(calls) == 1, (
+        f"expected `op.path` to be resolved exactly ONCE for this read, got "
+        f"{len(calls)} resolve call(s): {calls!r} -- a second, independent "
+        f"resolve reopens the TOCTOU window between the trust decision and "
+        f"the actual byte read"
+    )
+    skill_load_events = [e for e in events.all() if e.type == "skill_body_loaded"]
+    assert any(e.data["provenance"] == "config_entry" for e in skill_load_events)
+
+
 def test_file_read_op_does_not_expand_non_skill_md_file(tmp_path):
     """Tier 2: (falsify) the SAME token text in a differently-named file is
     returned VERBATIM -- proves expansion is keyed on the SKILL.md filename,

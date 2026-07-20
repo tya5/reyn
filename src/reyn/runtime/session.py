@@ -3743,6 +3743,15 @@ class Session:
             ),
             action_retrieval_config=self._action_retrieval,
             available_skills=self._available_skills,  # #2548 PR-A
+            # #3196 co-vet round 2: a LIVE read of the BASE registered-skill
+            # set (this same field, `Session._available_skills` — never
+            # mutated by visibility toggling, unlike the copy
+            # RouterHostAdapter's own `_available_skills` becomes once
+            # `reapply_skill_visibility` filters it). `make_router_op_context`
+            # uses this for the `file` op's skill-load provenance gate — a
+            # trust decision that must not depend on the UX visibility
+            # filter.
+            base_available_skills_fn=lambda: self._available_skills,
             # FP-0034 Phase 2: sandbox backend for exec D14 visibility gate.
             # #1417: gate on the INJECTED backend's real capability, not the
             # reyn.yaml config STRING. The exec capability comes from the
@@ -6828,7 +6837,15 @@ class Session:
             render_template_bounds=self._render_template_bounds,  # #2679: operator bounds (both router op-ctx builders complete-by-construction)
             embedding_event_sink=self._embedding_event_sink,  # FP-0057 #2856 Part A: TUI model-download status sink for the embed op
             budget_gateway=self._budget,  # FP-0063 PC: embedding-cost recording entry point (enumerate ALL op-ctx builders; the load-bearing one for `embed` is RouterHostAdapter's)
-            available_skills=self._available_skills,  # #3196: config-registered-entry provenance class for the file op's skill-load gate (enumerate ALL op-ctx builders)
+            # #3196 co-vet round 2: this IS the BASE registered set already
+            # (never mutated by visibility filtering — that only ever
+            # touches `self._router_host._available_skills`, RouterHostAdapter's
+            # OWN copy). Deliberately NOT run through any visibility filter
+            # here either — the config-registered-entry provenance class is
+            # a TRUST decision, and visibility is a UX menu concern that
+            # must never gate it (see RouterHostAdapter.make_router_op_context's
+            # matching comment for the other builder).
+            available_skills=self._available_skills,
         )
 
     def _make_router_intervention_bus(self):

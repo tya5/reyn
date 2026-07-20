@@ -245,7 +245,29 @@ class RouterHostAdapter:
         # Session builds it via build_skill_registry(config.skills) and passes
         # it in; RouterLoop reads it via get_available_skills() to render the
         # ## Skills block. None → no skills (byte-identical to no-skills config).
+        # NOTE (#3196 co-vet round 2): this field is later MUTATED in place
+        # by ``CapabilityVisibility.reapply_skill_visibility`` to the
+        # per-session VISIBILITY-FILTERED view (a UX menu concern — which
+        # skills the operator chose to hide from `## Skills` / `skill_list`).
+        # It is therefore the wrong source for a TRUST decision. See
+        # ``base_available_skills_fn`` below, which is what
+        # ``make_router_op_context`` uses for the `file` op's skill-load
+        # provenance gate instead.
         available_skills: Any = None,
+        # #3196 co-vet round 2: a LIVE callback returning the BASE
+        # registered-skill set (config `skills.entries`, before the
+        # per-session visibility filter above is ever applied) — Session
+        # wires ``lambda: self._available_skills`` (its own base field,
+        # never mutated by visibility toggling). `make_router_op_context`
+        # threads THIS (not the mutable `self._available_skills` field
+        # above) into `OpContext.available_skills`, so the `file` op's
+        # skill-load provenance gate answers the SAME "is this a
+        # config-registered skill" question regardless of whether the
+        # operator has hidden it from the menu — visibility is a UX
+        # concern; it must never gate a trust decision. None (test
+        # construction) falls back to `self._available_skills` at call
+        # time, preserving prior behavior for callers that don't wire it.
+        base_available_skills_fn: "Callable[[], Any] | None" = None,
         # B25-S5-1: when True, RouterLoop awaits the action embedding index
         # build synchronously on the first turn before computing the D14
         # search_actions visibility gate. Off by default (= lazy bg build).
@@ -433,6 +455,11 @@ class RouterHostAdapter:
         self._budget_gateway = budget_gateway
         # #2548 PR-A: enabled skill registry snapshot for the ## Skills block.
         self._available_skills = available_skills
+        # #3196 co-vet round 2: live base-set callback (see the constructor
+        # param's docstring) — the source `make_router_op_context` uses for
+        # `OpContext.available_skills`, deliberately NOT `self._available_skills`
+        # above once visibility filtering starts mutating it.
+        self._base_available_skills_fn = base_available_skills_fn
         # FP-0034 Phase 2
         self._sandbox_backend = sandbox_backend
         self._sandbox_backend_instance = sandbox_backend_instance
@@ -2143,10 +2170,19 @@ class RouterHostAdapter:
             # factory, so this is the load-bearing wiring for embedding-cost
             # recording (all three scopes fan out from the gateway).
             budget_gateway=self._budget_gateway,
-            # #3196: this adapter's OWN registered-skill snapshot (see
-            # `get_available_skills` above) → the config-registered-entry
-            # provenance class for the `file` op's skill-load gate.
-            available_skills=self._available_skills,
+            # #3196 co-vet round 2: the BASE registered-skill set, NOT
+            # `self._available_skills` (that field is the per-session
+            # VISIBILITY-FILTERED view, mutated in place by
+            # `CapabilityVisibility.reapply_skill_visibility` — a UX menu
+            # concern). The `file` op's skill-load provenance gate is a
+            # TRUST decision ("is this a config-registered skill body at
+            # all") and must not depend on whether the operator hid the
+            # skill from the menu — visibility must never gate trust.
+            available_skills=(
+                self._base_available_skills_fn()
+                if self._base_available_skills_fn is not None
+                else self._available_skills
+            ),
         )
 
     def _set_cancel_event(self, event: asyncio.Event) -> None:

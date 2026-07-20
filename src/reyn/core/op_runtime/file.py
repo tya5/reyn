@@ -274,14 +274,36 @@ async def handle(op: FileIROp, ctx: OpContext) -> dict:
     # package membership / `plugin_install.is_registered_plugin_root`), so a
     # non-None result here already IS a trusted provenance, not merely a
     # permission-bypass signal.
+    # co-vet TOCTOU close (#3196 review round 2): resolve `op.path` EXACTLY
+    # ONCE for a `read`, into `_resolved_read_path` — a canonical,
+    # symlink-free absolute path — and reuse THIS SAME string for every
+    # later decision AND for the actual byte read below (the permission
+    # gate, builtin/plugin detection, the skill-load provenance check, and
+    # `load_skill_body`'s `skill_path`). Resolving separately at each site
+    # (as an earlier revision of this PR did for the skill-load check) left
+    # a gap: an attacker could swap a symlinked `SKILL.md`'s target BETWEEN
+    # an earlier resolve (used to decide trust) and a later, independent
+    # resolve (used to actually read bytes) — "trusted" content and
+    # "read" content could then come from two DIFFERENT files. Once
+    # resolved here, the original (possibly attacker-mutable) symlink is
+    # already dereferenced out of the string; every later
+    # `Path(...).resolve()` call on it (including `read_builtin_body_bytes`/
+    # `read_plugin_body_bytes`/`Workspace._resolve_read`'s own internal
+    # re-derivation) re-confirms the SAME already-canonical target, not a
+    # fresh dereference of the original path — a later swap of the original
+    # symlink can no longer split the decision from the read. Do not
+    # reintroduce a second `_resolve_for_gate(ctx, op.path)` call anywhere
+    # below this point for the `read` op; thread `_resolved_read_path`
+    # instead.
+    _resolved_read_path: "str | None" = _resolve_for_gate(ctx, op.path) if op.op == "read" else None
     _builtin_bytes: "bytes | None" = None
     _skill_body_provenance: "str | None" = None
-    if op.op == "read":
-        _builtin_bytes = read_builtin_body_bytes(op.path)
+    if _resolved_read_path is not None:
+        _builtin_bytes = read_builtin_body_bytes(_resolved_read_path)
         if _builtin_bytes is not None:
             _skill_body_provenance = "builtin"
         else:
-            _builtin_bytes = read_plugin_body_bytes(op.path)
+            _builtin_bytes = read_plugin_body_bytes(_resolved_read_path)
             if _builtin_bytes is not None:
                 _skill_body_provenance = "plugin"
 
@@ -311,8 +333,13 @@ async def handle(op: FileIROp, ctx: OpContext) -> dict:
             # for a builtin body read (#2913, above) — that content is
             # code-shipped and non-editable, the same trust tier as the
             # source code the operator already has repo/package access to.
+            # `op.op == "read"` reuses `_resolved_read_path` (the single
+            # resolve, TOCTOU note above); glob/grep/stat have no such
+            # precomputed value and resolve here as before.
             await ctx.permission_resolver.require_file_read(
-                ctx.permission_decl, _resolve_for_gate(ctx, op.path), ctx.actor,
+                ctx.permission_decl,
+                _resolved_read_path if op.op == "read" else _resolve_for_gate(ctx, op.path),
+                ctx.actor,
                 sandbox_policy=_sandbox, bus=ctx.intervention_bus,
             )
 
@@ -372,7 +399,11 @@ async def handle(op: FileIROp, ctx: OpContext) -> dict:
         if _builtin_bytes is not None:
             raw_bytes, found = _builtin_bytes, True
         else:
-            raw_bytes, found = ctx.workspace.read_file_bytes(op.path)
+            # Reuse `_resolved_read_path` (the single resolve, TOCTOU note
+            # above) rather than `op.path` — the bytes actually read must
+            # come from the SAME canonical target the skill-load provenance
+            # check below judges, not a fresh, independently-resolved lookup.
+            raw_bytes, found = ctx.workspace.read_file_bytes(_resolved_read_path)
         if not found:
             suggestions = _nearby_files(ctx.workspace, op.path)
             ctx.events.emit("tool_executed", op="read_file", path=op.path, found=False)
@@ -413,20 +444,22 @@ async def handle(op: FileIROp, ctx: OpContext) -> dict:
         # dynamic param that must be resolved fresh on every load, never
         # baked (§3.4).
         if is_skill_body_path(op.path):
-            _resolved_skill_path = _resolve_for_gate(ctx, op.path)
             # #3196: filename match is necessary but NOT sufficient — also
             # require a resolved (symlink/`..`-collapsed) provenance class.
             # `_skill_body_provenance` may already be "builtin"/"plugin" from
             # the bypass check above; otherwise check the config-registered-
-            # entry class (the ONLY class that check hasn't already ruled on).
+            # entry class (the ONLY class that check hasn't already ruled
+            # on). Judged against `_resolved_read_path` — the SAME single
+            # resolve the bytes above were actually read from (TOCTOU note
+            # at the top of `handle`) — never a fresh, independent resolve.
             if _skill_body_provenance is None and _config_registered_skill_body_provenance(
-                ctx, _resolved_skill_path,
+                ctx, _resolved_read_path,
             ):
                 _skill_body_provenance = "config_entry"
             if _skill_body_provenance is not None:
                 content, _env_tokens_expanded = load_skill_body(
                     content,
-                    skill_path=_resolved_skill_path,
+                    skill_path=_resolved_read_path,
                     project_dir=ctx.workspace.base_dir,
                     alias_claude=True,
                 )
