@@ -1,7 +1,7 @@
 {
   "name": "rag",
   "version": "0.1.0",
-  "description": "Builtin turnkey user RAG (ADR 0064 P5): chunker + vector-store MCP servers, ingest/query pipelines, and the build_and_query_rag_corpus skill. External sqlite store the operator names and owns (FP-0057 C2) -- distinct from reyn's own semantic_search index.",
+  "description": "Builtin turnkey user RAG (ADR 0064 P5): chunker + vector-store MCP servers, ingest/query pipelines, and its RAG skills (routing/install, embedding-provider setup, the ingest/query workflow, and corpus internals). External sqlite store the operator names and owns (FP-0057 C2) -- distinct from reyn's own semantic_search index.",
   "capabilities": [
     {"kind": "mcp"},
     {"kind": "pipelines"},
