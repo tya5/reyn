@@ -1,6 +1,10 @@
 # ADR-0039: N thin CUI clients × one single-writer server — UI-path unification, four-surface separation
 
-**Status**: Proposed (owner BUILD decision obtained; phased P0–P6).
+**Status**: Accepted — **implemented**. Every phase P0–P6 landed 2026-07-11 and the
+build tracker ([#2805](https://github.com/tya5/reyn/issues/2805)) is closed: P0 #2806,
+P1 #2811 (+ #2837), P2 #2812, P3 #2815 (+ #2838), P4 #2817, P5 #2818, P6 #2819 /
+#2823 / #2826 / #2829. The one part of D8 NOT built is P6's *A2UI catalog
+formalization* half (see that bullet); the protocol-consolidation half shipped.
 **Track**: Runtime interaction model — the concretization of ADR-0018's deferral
 ("multi-process inside one workspace is not a goal; cross-process / cross-Reyn
 is a future layer's job") and a successor seam to ADR-0001 (single-process WAL
@@ -256,9 +260,20 @@ Near-term unnecessary → late phase.
 - **P4 — reyn `Custom` extension profile.** Rich payload on `Custom`;
   ignore-unknown conformance test; single-writer-by-construction assert
   (client owns no workspace/tool).
-- **P5 (future) — OTEL exporter.** Per D7.
-- **P6 (future) — A2UI catalog formalization + protocol consolidation** (fold
-  the existing web UI onto AG-UI; retire the ad-hoc ws JSON).
+- **P5 — OTEL exporter.** Per D7. **Landed** (#2818): P6 audit-event → OTLP
+  span/metric/log, fail-open downstream.
+- **P6 — A2UI catalog formalization + protocol consolidation** (fold the
+  existing web UI onto AG-UI; retire the ad-hoc ws JSON). **The consolidation
+  half landed**: reasoning-frame → standard AG-UI `Reasoning*` mapping (#2819),
+  single-drain broadcast hub for `session.outbox` (#2823), openui browser
+  migrated to AG-UI SSE with ws/chat retired (#2826), closed `OutboxMessage`
+  kind vocabulary + browser-decode drift tripwire (#2829). **The A2UI catalog
+  formalization half is NOT built** and remains future: render-node vocabulary
+  still rides `Custom` (per D-note above), and the present layer stays
+  *reyn-native but structurally isomorphic to A2UI* — proposal 0054 "option C"
+  explicitly defers the wire-level A2UI / MCP-Apps adapters, and
+  `spec/openui/schemas/reyn-ui-v1` records "A2UI: not used". Do not read this
+  ADR as evidence that reyn speaks A2UI on the wire; it speaks **AG-UI**.
 
 ---
 
