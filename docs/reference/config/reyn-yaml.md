@@ -683,17 +683,56 @@ composers:
       - { kind: mcp:approval-server:approved }
     policy: { capacity: 10, overflow: reject, ttl: 5m }
     emit: { kind: composed:deploy_approved }
+
+  - name: job_overdue
+    op: deadline
+    on: mcp_resource_updated
+    matcher: { uri: "orch://job/*/started" }
+    until:
+      on: mcp_resource_updated
+      matcher: { uri: "orch://job/*/done" }
+    correlate_by: job_id
+    ttl: 1800
 ```
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | `name` | string | _required_ | The composer's identifier — also the correlation-key namespace and the `composer_fired`/`composer_dropped` P6 event's `composer` field. |
-| `op` | string | _required_ | One of `all` (every input arrives, per key), `any` (first matching input, stateless), `seq` (inputs' kinds arrive in the configured order), `window` (fires `ttl` seconds after the first matching event, with everything buffered), `debounce` (fires `ttl` seconds after the last matching event with no newer one in between), `correlate_by` (like `all`, keyed by a payload field), `count` (fires once `count` matching events arrive, per key). |
-| `inputs` | list[map] | _required_ | Each entry: `kind` (a hook-event kind — a builtin `builtin:lifecycle:*`/`builtin:external:*` kind, or any other kind observed on the bus) + optional `match` (a payload field→pattern filter, same semantics as a hook's `matcher`). `source` is NOT settable — every bus event carries `source="builtin"` (kind + payload already encode the source type/instance); naming any other `source` value is a load-time error. |
-| `policy` | map | `{capacity: 10, overflow: drop_oldest, ttl: 5m}` | `capacity` (max concurrent pending correlation keys), `overflow` (`drop_oldest`/`drop_newest`/`reject` — no publisher-blocking backpressure), `ttl` (seconds, or a `<N><unit>` string with unit `s`/`m`/`h`; an incomplete `all`/`seq`/`correlate_by`/`count` pending record older than `ttl` is evicted — for `window`/`debounce`, `ttl` IS the fire timer). |
-| `correlate_by` | string | _none_ | Required when `op: correlate_by` — the payload field read as the correlation key (instead of one global bucket). |
+| `op` | string | _required_ | One of `all` (every input arrives, per key), `any` (first matching input, stateless), `seq` (inputs' kinds arrive in the configured order), `window` (fires `ttl` seconds after the first matching event, with everything buffered), `debounce` (fires `ttl` seconds after the last matching event with no newer one in between), `correlate_by` (like `all`, keyed by a payload field), `count` (fires once `count` matching events arrive, per key), `deadline` (issue #3166 — fires when its `until` pattern does NOT arrive within `ttl` of its `on` pattern, per key; see below). |
+| `inputs` | list[map] | _required_ (all ops except `deadline`) | Each entry: `kind` (a hook-event kind — a builtin `builtin:lifecycle:*`/`builtin:external:*` kind, or any other kind observed on the bus) + optional `match` (a payload field→pattern filter, same semantics as a hook's `matcher`). `source` is NOT settable — every bus event carries `source="builtin"` (kind + payload already encode the source type/instance); naming any other `source` value is a load-time error. |
+| `on` / `matcher` | string / map | _required for `op: deadline`_ | `deadline`'s arm pattern, in place of `inputs` — `on` is the kind, `matcher` the optional payload filter (same shape as `inputs[].kind`/`match`). |
+| `until` | map | _required for `op: deadline`_ | The disarm pattern — `{on, matcher}`, same shape as the top-level `on`/`matcher`. If `until` does not arrive for a given key within `ttl` of `on` arming that key, the composer fires; if it arrives first, the key is silently disarmed and never fires. |
+| `policy` | map | `{capacity: 10, overflow: drop_oldest, ttl: 5m}` | `capacity` (max concurrent pending correlation keys), `overflow` (`drop_oldest`/`drop_newest`/`reject` — no publisher-blocking backpressure; also bounds a `deadline` arm-storm), `ttl` (seconds, or a `<N><unit>` string with unit `s`/`m`/`h`; an incomplete `all`/`seq`/`correlate_by`/`count` pending record older than `ttl` is evicted — for `window`/`debounce`, `ttl` IS the fire timer, and for `deadline`, `ttl` is the deadline itself). For `deadline` only, `ttl` may also be given at the top level (as in the example above) instead of nested under `policy:`. |
+| `correlate_by` | string | _none_ | The payload field read as the correlation key (instead of one global bucket). Required when `op: correlate_by`; optional but typical for `op: deadline` (e.g. keying a dead-man monitor by `job_id` so N jobs are watched independently). |
 | `count` | integer | _none_ | Required when `op: count` — the threshold of matching events before firing. |
-| `emit.kind` | string | _required_ | The composed event's kind — MUST start with `composed:` (namespace-enforced at load time; collides otherwise with the P6 audit-event surface). |
+| `emit.kind` | string | _required_ (defaults to `composed:<name>` for `op: deadline` if omitted) | The composed event's kind — MUST start with `composed:` (namespace-enforced at load time; collides otherwise with the P6 audit-event surface). |
+
+**`deadline` — the dead-man op.** Every other op fires because something
+*happened*; `deadline` is the only one that fires because something did
+**not** happen within its `ttl` (a heartbeat that stopped, an approval that
+never came, a job that never finished). A `deadline` fire is not itself an
+error signal — it means "the thing I was waiting for is missing", and its
+composed payload always carries `armed_at` (when the key armed),
+`ttl`, and `awaited` (the `until` pattern that did not arrive) so an
+operator can see *why* it fired without re-deriving it from raw hook-events.
+Internally `deadline` is not new machinery: it reuses the exact same per-key
+`PendingStore` + TTL sweep + `QueuePolicy` + `correlate_by` every other op
+uses — the only change is that the sweep FIRES an expired pending record
+instead of silently discarding it.
+
+**`deadline`'s reliability posture is stricter than every other op's.** The
+"best-effort, not a recovery feature" paragraph below still applies (v1's
+`PendingStore` is in-memory and crash-non-durable), but for `deadline` a
+crash does not just drop one buffered notification — it drops the dead-man
+monitor itself, at the same time as (and likely for the same reason as)
+whatever it was watching. `load_composers` therefore emits a `UserWarning`
+for every `deadline` composer at load time, unconditionally: **do not treat
+a v1 `deadline` composer as a durable dead-man switch.** A `WalBackedPendingStore`
+implementing the same `PendingStore` protocol (subject to CLAUDE.md's
+recovery-feature PR gate — a truncate-falsify test — the day it lands) is
+the tracked follow-on; a cheaper intermediate step is re-arming `deadline`
+composers at session boot from a durable source of truth (e.g. a job
+registry) rather than WAL-backing the whole Composer pending state.
 
 **Reliability posture: best-effort, not a recovery feature.** A Composer's
 in-flight correlation state is held in memory only and is lost on a process
