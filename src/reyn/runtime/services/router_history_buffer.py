@@ -331,7 +331,7 @@ class RouterHistoryBuffer:
         remains Reyn-internal and is filtered out.
         """
         from reyn.services.compaction.engine import (
-            estimate_tokens_for_turn,
+            estimate_tokens_for_any_turn,
             trim_head,
             trim_tail,
         )
@@ -390,16 +390,21 @@ class RouterHistoryBuffer:
         # UP FRONT, then measure/trim/select on THAT — the canonical quantity
         # (see ``_serialise_turn``'s docstring). Before PR-B this elide-
         # threshold total summed the pre-serialise ChatMessage instances
-        # (via the now-removed ``estimate_tokens_for_any_turn`` adapter),
-        # while ContextBudgetAdvisor measured this method's returned (post-
-        # serialise) wire dicts — two different quantities for the same
-        # conversation. Serialising once here and reusing the result for
-        # both the total-check AND the final return also avoids a double
+        # (via ``estimate_tokens_for_any_turn``'s ChatMessage-adapting
+        # branch), while ContextBudgetAdvisor measured this method's
+        # returned (post-serialise) wire dicts — two different quantities
+        # for the same conversation. Both now go through
+        # ``estimate_tokens_for_any_turn`` on the SAME wire dicts (the dict
+        # branch is still needed here, not a direct
+        # ``estimate_tokens_for_turn`` call — a wire dict's ``tool_calls``
+        # is a separate top-level key, see that function's docstring).
+        # Serialising once here and reusing the result for both the
+        # total-check AND the final return also avoids a double
         # ``_serialise_turn`` call on the surviving subset.
         wire_turns = [self._serialise_turn(m) for m in turns]
 
         total = sum(
-            estimate_tokens_for_turn(wt, self._model, use_chars4=use_chars4)
+            estimate_tokens_for_any_turn(wt, self._model, use_chars4=use_chars4)
             for wt in wire_turns
         )
 
@@ -450,7 +455,7 @@ class RouterHistoryBuffer:
         and retry_loop's shrink can still trim ``head``.
         """
         from reyn.services.compaction.engine import (
-            estimate_tokens_for_turn,
+            estimate_tokens_for_any_turn,
             trim_head,
             trim_tail,
         )
@@ -470,7 +475,7 @@ class RouterHistoryBuffer:
         wire_turns = [self._serialise_turn(m) for m in turns]
 
         total = sum(
-            estimate_tokens_for_turn(wt, self._model, use_chars4=use_chars4)
+            estimate_tokens_for_any_turn(wt, self._model, use_chars4=use_chars4)
             for wt in wire_turns
         )
 

@@ -101,9 +101,9 @@ class ContextBudgetAdvisor:
     def _incremental_history_tokens(self) -> int:
         """Estimated token count of the full router-view history (#2940).
 
-        #2957 PR-B: sums ``estimate_tokens_for_turn`` PER TURN (dict-aware:
-        fixed cost per image part, ``tool_calls`` folded in) rather than
-        ``estimate_tokens(json.dumps(whole_or_delta_slice))`` (pre-PR-B).
+        #2957 PR-B: sums ``estimate_tokens_for_any_turn`` PER TURN (dict-aware:
+        fixed cost per image part, top-level ``tool_calls`` folded in) rather
+        than ``estimate_tokens(json.dumps(whole_or_delta_slice))`` (pre-PR-B).
         The history this reads is ``build_history``'s own returned wire
         dicts (see this class's docstring) — the SAME canonical quantity
         RouterHistoryBuffer's elide-threshold check now measures (see
@@ -113,8 +113,14 @@ class ContextBudgetAdvisor:
         side (post PR-A) counted a fixed ``_IMAGE_FIXED_TOKEN_COST`` per
         image part — the two sides disagreed by orders of magnitude on any
         image-bearing conversation even when measuring the identical wire
-        dicts. Per-turn ``estimate_tokens_for_turn`` closes that gap (same
-        function, same fixed-cost branch, both sides).
+        dicts. ``estimate_tokens_for_any_turn`` (not the dict-only
+        ``estimate_tokens_for_turn`` directly) is required here because a
+        wire dict's ``tool_calls`` lives in a SEPARATE top-level key
+        (``_serialise_turn``'s real litellm wire shape), not inside
+        ``"content"`` — ``estimate_tokens_for_turn`` only reads
+        ``"content"``, so calling it directly would silently re-drop
+        ``tool_calls`` (the same class of gap PR-A fixed for ChatMessage
+        input, reappearing one call shape later).
 
         Incremental: only the slice of history NEWER than the last call is
         estimated; on a cache hit (no new messages since the last call)
@@ -142,7 +148,7 @@ class ContextBudgetAdvisor:
         """
         import json as _json
 
-        from reyn.services.compaction.engine import estimate_tokens_for_turn
+        from reyn.services.compaction.engine import estimate_tokens_for_any_turn
 
         use_chars4 = getattr(self._compaction, "use_chars4_estimate", False)
         cache = self._history_token_cache
@@ -170,7 +176,7 @@ class ContextBudgetAdvisor:
                 or not prefix_unchanged
             ):
                 tokens = sum(
-                    estimate_tokens_for_turn(m, self._model, use_chars4=use_chars4)
+                    estimate_tokens_for_any_turn(m, self._model, use_chars4=use_chars4)
                     for m in history
                 )
             elif cached_len == n:
@@ -180,7 +186,7 @@ class ContextBudgetAdvisor:
                 # for the unchanged prefix carries forward unchanged.
                 delta = history[cached_len:]
                 tokens = int(cache["tokens"]) + sum(
-                    estimate_tokens_for_turn(m, self._model, use_chars4=use_chars4)
+                    estimate_tokens_for_any_turn(m, self._model, use_chars4=use_chars4)
                     for m in delta
                 )
             new_boundary = _json.dumps(history[-1], ensure_ascii=False) if n > 0 else None
