@@ -237,47 +237,86 @@ def estimate_tokens_for_any_turn(
     *,
     use_chars4: bool = False,
 ) -> int:
-    """#2957 PR-A thin call-site adapter — NOT part of ``estimate_tokens_for_turn``.
+    """#2957 PR-A/PR-B: the general canonical accounting entrypoint for a
+    turn in EITHER shape — a live ``ChatMessage`` OR an already-serialised
+    litellm wire dict (``_serialise_turn``'s output). NOT part of
+    ``estimate_tokens_for_turn`` (kept dict-only + byte-unchanged by design
+    — its ``turn.get("content")`` shape mirrors the compactor's dict turns).
 
-    ``estimate_tokens_for_turn`` stays dict-only by design (its ``turn.get(...)``
-    shape mirrors the compactor's dict turns and the post-``_serialise_turn``
-    wire dicts ``retry_loop`` counts). But ``trim_head``/``trim_tail`` (via
-    ``_trim_groups`` below) and the elide-threshold sum in
-    ``RouterHistoryBuffer.build_history`` / ``decompose_history_for_retry`` are
-    called with *live* ``ChatMessage`` instances, which are not dicts —
-    ``isinstance(turn, dict)`` was False, so every such turn silently fell to
-    ``estimate_tokens_for_turn``'s ``content is None`` fallback branch,
-    undercounting images (``_IMAGE_FIXED_TOKEN_COST`` never applied) and
-    ignoring ``tool_calls`` entirely.
+    Two independent gaps this adapter closes, both because
+    ``estimate_tokens_for_turn`` only ever looks at a dict's ``"content"``
+    key:
 
-    This adapter builds the dict shape ``estimate_tokens_for_turn`` expects
-    WITHOUT running ``_serialise_turn``'s path-ref -> base64 materialisation
-    (doing that would defeat the point of the fixed image cost, which exists
-    precisely so counting never has to touch image bytes). ``tool_calls`` is
-    folded in as extra content parts of an unrecognised ``type`` so the
-    existing "unknown part type -> JSON-repr" branch counts them, rather than
-    adding a new branch inside ``estimate_tokens_for_turn`` itself.
+    - **ChatMessage input** (PR-A): ``isinstance(turn, dict)`` is False for a
+      live ``ChatMessage``, so every such turn used to fall through to
+      ``estimate_tokens_for_turn``'s ``content is None`` fallback branch —
+      undercounting images (``_IMAGE_FIXED_TOKEN_COST`` never applied) and
+      ignoring ``tool_calls`` entirely.
+    - **wire-dict input with top-level tool_calls** (PR-B, discovered while
+      unifying the elide/advisor accounting): ``_serialise_turn`` puts
+      ``tool_calls`` in a SEPARATE top-level wire-dict key (matching the
+      real litellm request shape — see that method), not inside
+      ``"content"``. A wire dict is a dict, so PR-A's original
+      ``isinstance(turn, dict): return estimate_tokens_for_turn(turn, ...)``
+      passthrough silently re-dropped ``tool_calls`` for exactly the wire
+      dicts PR-B's unification now measures directly — the same class of
+      undercount PR-A fixed for ChatMessage input, reappearing one call
+      shape later. Both branches below fold ``tool_calls`` into extra
+      content parts identically (of an unrecognised ``type``, so the
+      existing "unknown part type -> JSON-repr" branch in
+      ``estimate_tokens_for_turn`` counts them) WITHOUT running
+      ``_serialise_turn``'s path-ref -> base64 materialisation (doing that
+      would defeat the point of the fixed image cost, which exists
+      precisely so counting never has to touch image bytes).
 
-    Removable in PR-B: once the elide and advisor paths both measure the same
-    post-``_serialise_turn`` wire dict, every call site converges on plain
-    dicts and this adapter (and its call sites) can be deleted.
+    A dict WITHOUT a ``"content"`` key (the compactor-input shape —
+    ``{"text": ..., "seq": ..., ...}``, ``estimate_tokens_for_turn``'s own
+    "text" fallback branch) passes through UNCHANGED even if it happens to
+    carry a ``"tool_calls"`` sibling key — folding would silently discard
+    its ``"text"`` payload. Only a dict WITH a ``"content"`` key (a genuine
+    wire dict) gets the fold.
+
+    Used by every canonical-accounting call site: ``RouterHistoryBuffer.
+    build_history`` / ``decompose_history_for_retry`` (wire dicts, post
+    PR-B), ``ContextBudgetAdvisor._incremental_history_tokens`` (the same
+    wire dicts, via ``build_history``), and ``trim_head``/``trim_tail`` (via
+    ``_trim_groups`` below — dict turns from the router path, live
+    ``ChatMessage`` turns from ``CompactionController._select_candidates``,
+    which needs each turn's ``ChatMessage.seq`` to survive identity-based
+    filtering against ``prev_cover`` and so cannot convert to wire dicts).
+    NOT removable — it is the shared dispatcher every caller measuring
+    "what does the provider actually see" goes through, regardless of which
+    of the two live shapes (ChatMessage / wire dict) it holds.
     """
     if isinstance(turn, dict):
-        return estimate_tokens_for_turn(turn, model, use_chars4=use_chars4)
-
-    content = getattr(turn, "content", None)
-    tool_calls = getattr(turn, "tool_calls", None)
-    if tool_calls:
-        parts = list(content) if isinstance(content, list) else (
-            [{"type": "text", "text": content}] if content else []
-        )
-        parts = parts + [
-            {"type": "tool_call", "tool_call": tc} for tc in tool_calls
-        ]
-        adapted: dict = {"content": parts}
+        # Only a genuine litellm WIRE dict (``_serialise_turn``'s output,
+        # which always sets a "content" key — see that method) gets the
+        # tool_calls fold below. A dict WITHOUT a "content" key is the
+        # compactor-input shape (``{"text": ..., "seq": ..., ...}`` —
+        # ``estimate_tokens_for_turn``'s own "text" fallback branch), which
+        # may carry "tool_calls" as an unrelated sibling metadata field —
+        # folding would silently discard its "text" payload. Passthrough
+        # unchanged for that shape, exactly PR-A's original dict contract.
+        if "content" not in turn:
+            return estimate_tokens_for_turn(turn, model, use_chars4=use_chars4)
+        content = turn.get("content")
+        tool_calls = turn.get("tool_calls")
     else:
-        adapted = {"content": content}
-    return estimate_tokens_for_turn(adapted, model, use_chars4=use_chars4)
+        content = getattr(turn, "content", None)
+        tool_calls = getattr(turn, "tool_calls", None)
+
+    if not tool_calls:
+        if isinstance(turn, dict):
+            return estimate_tokens_for_turn(turn, model, use_chars4=use_chars4)
+        return estimate_tokens_for_turn({"content": content}, model, use_chars4=use_chars4)
+
+    parts = list(content) if isinstance(content, list) else (
+        [{"type": "text", "text": content}] if content else []
+    )
+    parts = parts + [
+        {"type": "tool_call", "tool_call": tc} for tc in tool_calls
+    ]
+    return estimate_tokens_for_turn({"content": parts}, model, use_chars4=use_chars4)
 
 
 # ---------------------------------------------------------------------------
@@ -667,9 +706,12 @@ def _trim_groups(groups: "list[list]", max_tokens: int, model: str, use_chars4: 
     kept: list[list] = []
     total = 0
     for group in groups:
-        # #2957 PR-A: turns here are ChatMessage instances in every real
-        # caller (RouterHistoryBuffer, CompactionController) — use the
-        # type-adapting wrapper, not estimate_tokens_for_turn directly.
+        # #2957 PR-A/PR-B: dispatches to estimate_tokens_for_turn for dict
+        # turns (RouterHistoryBuffer's wire dicts, post PR-B) and adapts
+        # live ChatMessage instances (CompactionController's candidate
+        # selection, which still needs ChatMessage.seq downstream — see
+        # estimate_tokens_for_any_turn's docstring for why that call site
+        # cannot convert to wire dicts).
         g_tokens = sum(
             estimate_tokens_for_any_turn(t, model, use_chars4=use_chars4) for t in group
         )
