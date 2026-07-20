@@ -26,26 +26,39 @@ _GEN_RE = re.compile(r"^(?P<rel>.+)@(?P<seq>\d+)\.yaml$")
 def _encode(rel_path: str) -> str:
     """`config/mcp.yaml` → `config__mcp.yaml` (path-segment-safe single filename).
 
-    #2352: the encoding maps ``/`` → ``__`` and is injective ONLY for paths with NO ``__``
-    in any segment — ``_decode`` reverses EVERY ``__`` to ``/``, so ``_decode(_encode("a__b/c"))``
-    would yield ``"a/b/c"`` ≠ the original. Config-registry rel_paths are ``__``-free by
-    construction (``.reyn``-relative config file names like ``config/mcp.yaml``), so this
-    enforces that invariant LOUD rather than silently colliding two distinct paths onto one
-    ``<safe-rel>@<seq>.yaml`` generation file — which would return the wrong generation on
-    config-rewind / time-travel (a durability keying corruption). Raising (not asserting) so
-    ``-O`` cannot strip the guard. Existing generation file names are unchanged (no migration):
-    every real path stays ``__``-free, so its encoding is byte-identical to before.
+    #2993: the previous encoding mapped ``/`` → ``__`` directly and RAISED when the
+    rel_path already contained ``__`` (#2352 guard) — a defense that assumed every real
+    caller passes a fixed literal path with no ``__`` in it. That assumption broke for
+    agent-scoped config paths like ``agents/<name>/hooks.yaml`` where ``<name>`` is
+    LLM/operator-chosen and validated only by ``_AGENT_NAME_RE`` (which permits ``__``,
+    e.g. ``my__agent``) — the guard then raised AFTER the ``.yaml`` write had already
+    landed, leaving the config mutated with no recovery generation recorded (a silent
+    recovery hole, not merely a rejected write).
+
+    The fix is a proper escape-then-map scheme, injective over ANY string with no
+    assumption about the input alphabet (no regex, no allow-list): first ``%`` → ``%25``,
+    then ``_`` → ``%5F`` (escaping ``%`` first so the escape sequences themselves can never
+    be misread as user content — standard percent-escaping order), and only THEN
+    ``/`` → ``__`` (now safe: no lone ``_`` survives to be confused with the separator).
+    ``_decode`` reverses in the exact opposite order. Existing generation file names are
+    unchanged (no migration): every real caller path is ``_``/``%``-free, so the escape
+    step is a no-op and the encoding stays byte-identical to before.
     """
-    if "__" in rel_path:
-        raise ValueError(
-            f"config-generation rel_path must not contain '__' (it collides with the '/' → '__' "
-            f"encoding and would round-trip wrong): {rel_path!r}"
-        )
-    return rel_path.replace("/", "__")
+    escaped = rel_path.replace("%", "%25").replace("_", "%5F")
+    return escaped.replace("/", "__")
 
 
 def _decode(safe_rel: str) -> str:
-    return safe_rel.replace("__", "/")
+    """Exact inverse of ``_encode`` — reverse the three substitutions in reverse order:
+    ``__`` → ``/``, then ``%5F`` → ``_``, then ``%25`` → ``%``. This order is load-bearing:
+    reversing ``__`` first can only ever re-form a genuine ``/`` (no lone ``_`` character
+    survives after encode, since every literal ``_`` was escaped to ``%5F`` before the
+    ``/`` → ``__`` step ran), and un-escaping ``%5F``/``%25`` last means those literal
+    substrings from the ORIGINAL path (if any) are restored only after all structural
+    markers are gone — so a decode never mistakes original content for a marker."""
+    unslashed = safe_rel.replace("__", "/")
+    unescaped_underscore = unslashed.replace("%5F", "_")
+    return unescaped_underscore.replace("%25", "%")
 
 
 class ConfigGenerationStore:

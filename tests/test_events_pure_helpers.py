@@ -67,16 +67,52 @@ def test_encode_decode_roundtrip_nested() -> None:
     assert _decode(_encode(path)) == path
 
 
-def test_encode_rejects_double_underscore_in_path() -> None:
-    """Tier 2: #2352 — _encode RAISES on a rel_path containing '__'. The encoding maps '/' → '__'
-    and is injective ONLY for '__'-free paths, so a segment with '__' would silently collide two
-    distinct config paths onto one generation file (wrong generation on config-rewind = a
-    durability keying corruption). The guard enforces the '__'-free invariant loud. RED before the
-    guard: _encode('a__b/c.yaml') silently returned 'a__b__c.yaml' → _decode → 'a/b/c.yaml' ≠ the
-    original. Real config-registry paths stay '__'-free, so existing generation file names are
-    unchanged (no migration)."""
-    with pytest.raises(ValueError, match="must not contain '__'"):
-        _encode("a__b/c.yaml")
+def test_encode_decode_roundtrips_path_with_double_underscore() -> None:
+    """Tier 2: #2993 — a rel_path containing '__' now round-trips correctly instead of the
+    #2352 guard raising. The #2352 guard assumed every real caller passes a fixed literal
+    path with no '__' in it; that assumption broke for agent-scoped paths like
+    'agents/<name>/hooks.yaml' where '<name>' may legally contain '__' (_AGENT_NAME_RE
+    permits it), so the guard raised AFTER the .yaml write had already landed (a recovery
+    hole, not a rejected write). The new encoding escapes '_' → '%5F' (and '%' → '%25')
+    BEFORE mapping '/' → '__', so '__' in the original content never collides with the
+    '/' separator marker."""
+    original = "a__b/c.yaml"
+    assert _decode(_encode(original)) == original
+
+
+_INJECTIVE_ROUNDTRIP_CASES = [
+    "config/mcp.yaml",
+    "a__b/c.yaml",
+    "a/b/c",
+    "agents/my__agent/hooks.yaml",
+    "agents/my_agent/hooks.yaml",
+    "a%b/c.yaml",
+    "a%5Fb/c.yaml",
+    "a%25b/c.yaml",
+    "a_b__c/d.yaml",
+    "%__%5F__%25",
+    "___",
+    "____",
+    "/",
+    "",
+    "a/b__c/d_e%f",
+]
+
+
+@pytest.mark.parametrize("original", _INJECTIVE_ROUNDTRIP_CASES)
+def test_encode_decode_injective_roundtrip(original: str) -> None:
+    """Tier 2: #2993 — _decode(_encode(x)) == x for ANY string, including combinations of
+    '_', '__', '%', '%5F', '%25', and '/' — no assumption about the input alphabet (the
+    escape-then-map scheme is injective by construction, unlike the old direct '/' → '__'
+    map which only round-tripped '__'-free paths)."""
+    assert _decode(_encode(original)) == original
+
+
+def test_encode_distinguishes_former_collision_pair() -> None:
+    """Tier 2: #2993 non-vacuous witness — under the OLD encoding, 'a__b/c' and 'a/b/c' both
+    mapped to the same safe-rel 'a__b__c' (a real collision: two distinct config paths would
+    share one generation file). Under the new encoding they must map to DIFFERENT safe-rels."""
+    assert _encode("a__b/c") != _encode("a/b/c")
 
 
 # ---------------------------------------------------------------------------
