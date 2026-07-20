@@ -150,10 +150,29 @@ collision-lookup helpers, pure functions) and
 
 Reading a `SKILL.md` body is not a byte-identical file read: the `file` read
 op (`reyn.core.op_runtime.file.handle`) routes the SAME request through a
-skill-load pass (`reyn.plugins.skill_load`, ADR 0064 §3.5) whenever the
-resolved path's filename is exactly `SKILL.md`. This is still the ordinary
-read op — no dedicated "invoke skill" verb exists (see below) — the pass
-just does one more thing to the content before returning it.
+skill-load pass (`reyn.plugins.skill_load`, ADR 0064 §3.5) when the resolved
+path's filename is exactly `SKILL.md` **and** that resolved path falls into a
+registered provenance class. This is still the ordinary read op — no
+dedicated "invoke skill" verb exists (see below) — the pass just does one
+more thing to the content before returning it.
+
+**Provenance gate (#3196).** The filename check alone is NOT the trust
+boundary — a file literally named `SKILL.md` anywhere under the project root
+(planted by a cloned third-party repo, a scraped page, anything already
+default-readable under the permission model's "read anywhere under the
+project root" default) used to have its `${env:VAR_NAME}` tokens expanded to
+real secret values on an ordinary read, regardless of registration. The
+resolved (symlink/`..`-collapsed) path must ALSO match one of exactly three
+registered provenance classes, enumerated from the same registries every
+other skill surface uses — never a hand-curated path list:
+
+1. **builtin** — `reyn.builtin.registry`'s `BUILTIN_SKILLS`, via `read_builtin_body_bytes`.
+2. **registered plugin body** — a completed-install `~/.reyn/plugins/<name>/skills/**`, via `read_plugin_body_bytes` (`plugin_install.is_registered_plugin_root`).
+3. **config-registered entry** — a `skills.entries` declaration (`build_skill_registry`), matched against the session's live registered-skill snapshot.
+
+A `SKILL.md` that resolves to none of the three is read byte-identical —
+no expansion, no `skill_body_loaded` audit-event (an ordinary,
+unremarkable read).
 
 Three token kinds expand, in order:
 

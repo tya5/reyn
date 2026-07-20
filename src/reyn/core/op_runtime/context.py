@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     import asyncio
-    from collections.abc import Awaitable, Callable
+    from collections.abc import Awaitable, Callable, Sequence
 
     from reyn.config import MultimodalConfig, SandboxConfig, WebConfig
     from reyn.core.events.events import EventLog
@@ -337,6 +337,18 @@ class OpContext:
     # None = no TUI-observable download status (tests / non-chat construction) —
     # the provider falls back to its own no-op default.
     embedding_event_sink: "Callable[[str, str, dict], None] | None" = None
+
+    # #3196: the SAME registered-skill-entry SSoT `:skill` invocation resolves
+    # against (Session/RouterHostAdapter's `_available_skills`, built by
+    # `reyn.data.skills.registry.build_skill_registry` from config) — threaded
+    # here so `file.handle`'s skill-load provenance gate can recognize a
+    # config-registered skill body as trusted WITHOUT hand-listing a curated
+    # path set of its own (the registry stays the single enumeration source).
+    # None (test / phase-fallback construction) → the config-entry provenance
+    # class is simply unavailable there; builtin/plugin provenance still work
+    # via their own package/registry-backed readers, and everything else
+    # correctly fails closed (raw pass-through, no expansion).
+    available_skills: "Sequence[object] | None" = None
 
 
 def sandbox_policy_from_ctx(ctx: "OpContext") -> "SandboxPolicy | None":

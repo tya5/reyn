@@ -268,9 +268,16 @@ def resolve_skill_body(path: str, *, project_dir: Path) -> str:
             p = project_dir / p
         content = p.read_text(encoding="utf-8")
 
-    return load_skill_body(
+    # #3196: `load_skill_body` now returns `(body, env_tokens_expanded)` so
+    # `file.handle`'s audit-event can report an expansion count without ever
+    # logging a value. The `:` invoke path's own trust boundary is the
+    # already-registered `entry` this body resolved from (never an arbitrary
+    # path) — its own `skill_invoke_body_loaded` audit-event (session.py) does
+    # not need the count, so it is discarded here.
+    body, _env_tokens_expanded = load_skill_body(
         content, skill_path=path, project_dir=project_dir, alias_claude=True,
     )
+    return body
 
 
 # ── discovery / errors (Axis 5, Axis 6) ─────────────────────────────────────

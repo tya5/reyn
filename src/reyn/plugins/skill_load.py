@@ -91,21 +91,46 @@ SKILL_BODY_FILENAME = "SKILL.md"
 _ENV_TOKEN_RE = re.compile(r"\$\{env:(\w+)\}")
 
 
-def _expand_env_tokens(text: str) -> str:
+def _expand_env_tokens(text: str) -> "tuple[str, int]":
     """Expand ``${env:VAR}`` from ``os.environ`` — unset leaves the token
-    untouched (never blanks skill-body prose; see module docstring)."""
+    untouched (never blanks skill-body prose; see module docstring).
+
+    Returns ``(expanded_text, count)`` — *count* is how many tokens were
+    ACTUALLY substituted (env var was set), NOT how many ``${env:...}``-shaped
+    tokens appear in the text. #3196: the caller (``load_skill_body`` →
+    ``file.handle``) surfaces this count on the ``skill_body_loaded``
+    audit-event so a replay can see HOW MANY secrets entered context without
+    ever recording their values.
+    """
+    count = 0
 
     def _replace(m: re.Match) -> str:
+        nonlocal count
         value = os.environ.get(m.group(1))
-        return value if value is not None else m.group(0)
+        if value is None:
+            return m.group(0)
+        count += 1
+        return value
 
-    return _ENV_TOKEN_RE.sub(_replace, text)
+    return _ENV_TOKEN_RE.sub(_replace, text), count
 
 
 def is_skill_body_path(path: "str | Path") -> bool:
-    """True when *path*'s filename is the standard SKILL.md body filename —
-    the one signal ``file.handle`` uses to route a read through skill-load
-    expansion rather than a raw pass-through."""
+    """True when *path*'s filename is the standard SKILL.md body filename.
+
+    #3196: this is NECESSARY but NOT SUFFICIENT for routing a read through
+    skill-load expansion — filename alone used to be the whole gate (the
+    vulnerability), letting an attacker-planted, unregistered ``SKILL.md``
+    anywhere under the project root have its ``${env:VAR}`` tokens expanded
+    to real secret values on an ORDINARY read. ``file.handle`` now ALSO
+    requires the resolved path to fall into a registered provenance class
+    (builtin / registered-plugin-body / config-registered skill entry —
+    see ``file._skill_body_provenance``) before calling
+    :func:`load_skill_body`. This predicate stays filename-only because it
+    still answers its own narrow question correctly (is this file shaped
+    like a skill body); it is simply no longer used alone as the trust
+    gate.
+    """
     return Path(path).name == SKILL_BODY_FILENAME
 
 
@@ -132,14 +157,19 @@ def load_skill_body(
     skill_path: "str | Path",
     project_dir: Path,
     alias_claude: bool = False,
-) -> str:
+) -> "tuple[str, int]":
     """Expand invocation-time ``${REYN_*}``/``${CLAUDE_*}``/``${env:...}``
     tokens in a decoded SKILL.md body (§3.5's "skill-load verb").
 
     ``content`` is the ALREADY-DECODED text of the file at *skill_path* (the
     caller — ``file.handle`` — has already run the decode ladder; this
-    function does no I/O of its own and never re-reads the file). Returns the
-    expanded body; the caller returns it verbatim as the read op's `content`.
+    function does no I/O of its own and never re-reads the file).
+
+    Returns ``(expanded_body, env_tokens_expanded)`` — the caller returns
+    *expanded_body* verbatim as the read op's `content`; *env_tokens_expanded*
+    (#3196) is the COUNT of ``${env:VAR}`` tokens actually substituted (never
+    the values), meant for the caller's audit-event, NOT for display to the
+    model.
 
     ``alias_claude`` should be ``True`` only when *skill_path* is known to be
     a Claude-authored SKILL.md (ADR §3.6's ingestion-boundary rule, mirroring
