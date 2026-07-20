@@ -1,10 +1,6 @@
 ---
 name: reactive_orchestration_plugins
 description: How to build something that REACTS to an external system (an orchestrator, a watcher, a UI, any MCP server that pushes) -- which reyn mechanism already answers each requirement, and the anti-pattern list of things people re-invent. Read this BEFORE designing any external-event-driven plugin, server-push handling, wake/notification behaviour, or browser UI integration. Companion to reyn_cheat_sheet (which covers choosing between skill/pipeline/mcp/hook/present in general).
-references:
-  - incoming-events-coalescing-and-wake.md
-  - returning-results-and-elicitation.md
-  - scope-plugin-surface-and-vocabulary.md
 ---
 
 # Reactive / orchestration plugins
@@ -32,26 +28,30 @@ the code wins and this file is the bug.
 | A wire protocol for a browser UI | **AG-UI** |
 | A crash-recovery story for external state | Nothing -- **out of scope by ruling** |
 
-## Where to read more
+## Additional resources
 
-Each reference below is self-contained; open only the one(s) your design
-question maps to.
+These files live next to this one, under `references/`. `skill_list` gives
+you this file's absolute path -- resolve each link below against that same
+directory and read it with the ordinary file read op when your question
+maps to it; do not read all three unconditionally.
 
-- **`incoming-events-coalescing-and-wake.md`** -- how a server-pushed
-  notification reaches a hook (`mcp_resource_updated`), how to namespace
-  distinct signals on the URI without new event kinds, how to coalesce a
-  flapping/bursty source with the Composer, and how to choose wake=true
-  (interrupt now) vs wake=false (ride-along). Read this when you are
-  wiring the *inbound* side of a reactive plugin.
-- **`returning-results-and-elicitation.md`** -- how to send a conclusion
-  back out via `pipeline_launch` + a `shell` step (no callback convention
-  needed), and how to ask the human a question via MCP elicitation
-  (vs. sampling). Read this when your design needs a write-back leg or a
-  human-in-the-loop question.
-- **`scope-plugin-surface-and-vocabulary.md`** -- hook config scope
-  (workspace vs per-agent, and why a workspace-level hook fires in every
-  session), what a plugin manifest may actually ship, the AG-UI vs A2UI
-  vocabulary split, three constraints that repeatedly surprise authors
-  (progress is not a hook, a webhook body never reaches your matcher,
-  nothing detects absence), and the skill-body size ceiling itself. Read
-  this for plugin-packaging, config-scope, or UI-protocol questions.
+- [incoming-events-coalescing-and-wake.md](references/incoming-events-coalescing-and-wake.md)
+  -- how a server-pushed notification reaches a hook
+  (`mcp_resource_updated`), how to namespace distinct signals on the URI
+  without new event kinds, how to coalesce a flapping/bursty source with
+  the Composer, and how to choose wake=true (interrupt now) vs wake=false
+  (ride-along). Read this when you are wiring the *inbound* side of a
+  reactive plugin.
+- [returning-results-and-elicitation.md](references/returning-results-and-elicitation.md)
+  -- how to send a conclusion back out via `pipeline_launch` + a `shell`
+  step (no callback convention needed), and how to ask the human a
+  question via MCP elicitation (vs. sampling). Read this when your design
+  needs a write-back leg or a human-in-the-loop question.
+- [scope-plugin-surface-and-vocabulary.md](references/scope-plugin-surface-and-vocabulary.md)
+  -- hook config scope (workspace vs per-agent, and why a workspace-level
+  hook fires in every session), what a plugin manifest may actually ship,
+  the AG-UI vs A2UI vocabulary split, three constraints that repeatedly
+  surprise authors (progress is not a hook, a webhook body never reaches
+  your matcher, nothing detects absence), and the skill-body size ceiling
+  itself. Read this for plugin-packaging, config-scope, or UI-protocol
+  questions.
