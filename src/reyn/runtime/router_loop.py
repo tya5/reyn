@@ -3589,7 +3589,20 @@ class RouterLoop:
         if name == "read_file":
             if isinstance(result, dict):
                 if "content" in result:
-                    return result["content"]
+                    content = result["content"]
+                    # #3191: this branch flattens to a bare string BEFORE `to_canonical`
+                    # ever runs (same choke point #2998/#3190 already found for
+                    # list_directory/glob), so the op_runtime read handler's
+                    # `status == "truncated"` signal — and the `note` it carries — would
+                    # otherwise be silently dropped here. Only set when the op layer
+                    # actually truncated (never unconditionally — mirrors the #2998
+                    # list_directory fix below). Reuse the op layer's own `note` rather
+                    # than re-deriving a summary: it is already decision-enabling (chars
+                    # shown of total, plus the on-disk path + offset to resume from) —
+                    # see op_runtime/file.py's `read` handler.
+                    if result.get("status") == "truncated" and result.get("note"):
+                        content = f"{content}\n\n... {result['note']}"
+                    return content
                 return json.dumps(result)
             return result
         if name == "list_directory":
