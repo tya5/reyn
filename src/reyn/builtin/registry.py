@@ -128,6 +128,25 @@ BUILTIN_SKILLS: "dict[str, dict[str, Any]]" = {
         "enabled": True,
         "visibility": VISIBILITY_ON_DEMAND,
     },
+    "reactive_orchestration_plugins": {
+        # Kept verbatim-identical to the SKILL.md front-matter description so
+        # the two never drift apart (there is no gate comparing them).
+        "description": (
+            "How to build something that REACTS to an external system (an "
+            "orchestrator, a watcher, a UI, any MCP server that pushes) -- "
+            "which reyn mechanism already answers each requirement, and the "
+            "anti-pattern list of things people re-invent. Read this BEFORE "
+            "designing any external-event-driven plugin, server-push "
+            "handling, wake/notification behaviour, or browser UI "
+            "integration. Companion to reyn_cheat_sheet (which covers "
+            "choosing between skill/pipeline/mcp/hook/present in general)."
+        ),
+        "path": str(
+            _BUILTIN_DIR / "skills" / "reactive_orchestration_plugins" / "SKILL.md"
+        ),
+        "enabled": True,
+        "visibility": VISIBILITY_ON_DEMAND,
+    },
     # FP-0063's `build_and_query_rag_corpus` skill (+ the `rag_ingest`/
     # `rag_query` pipelines it documents) moved OUT of this always-on
     # builtin registry under ADR 0064 P5 ("builtin RAG becomes the first
