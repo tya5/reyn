@@ -241,11 +241,10 @@ def estimate_tokens_for_any_turn(
 
     ``estimate_tokens_for_turn`` stays dict-only by design (its ``turn.get(...)``
     shape mirrors the compactor's dict turns and the post-``_serialise_turn``
-    wire dicts ``retry_loop`` counts). But ``trim_head``/``trim_tail`` (via
-    ``_trim_groups`` below) and the elide-threshold sum in
-    ``RouterHistoryBuffer.build_history`` / ``decompose_history_for_retry`` are
-    called with *live* ``ChatMessage`` instances, which are not dicts —
-    ``isinstance(turn, dict)`` was False, so every such turn silently fell to
+    wire dicts ``retry_loop`` counts). ``trim_head``/``trim_tail`` (via
+    ``_trim_groups`` below) can be called with *live* ``ChatMessage``
+    instances, which are not dicts — ``isinstance(turn, dict)`` is False, so
+    without this adapter every such turn would silently fall to
     ``estimate_tokens_for_turn``'s ``content is None`` fallback branch,
     undercounting images (``_IMAGE_FIXED_TOKEN_COST`` never applied) and
     ignoring ``tool_calls`` entirely.
@@ -258,9 +257,25 @@ def estimate_tokens_for_any_turn(
     existing "unknown part type -> JSON-repr" branch counts them, rather than
     adding a new branch inside ``estimate_tokens_for_turn`` itself.
 
-    Removable in PR-B: once the elide and advisor paths both measure the same
-    post-``_serialise_turn`` wire dict, every call site converges on plain
-    dicts and this adapter (and its call sites) can be deleted.
+    #2957 PR-B status: ``RouterHistoryBuffer.build_history`` /
+    ``decompose_history_for_retry`` (the elide side of the PR-A/PR-B
+    circularity) no longer call this — they now serialise every candidate
+    turn to its wire-dict shape UP FRONT and call
+    ``estimate_tokens_for_turn`` directly on the wire dicts (the same
+    quantity ``ContextBudgetAdvisor`` measures), which is what closed the
+    elide-vs-advisor mismatch. This adapter is NOT fully removable, though:
+    ``CompactionController._select_candidates`` still calls ``trim_head`` /
+    ``trim_tail`` with live ``ChatMessage`` instances (dispatching here via
+    ``_trim_groups``) because candidate selection needs each turn's
+    ``ChatMessage.seq`` to survive identity-based filtering against
+    ``prev_cover`` — a wire dict has no ``seq`` field, so converting that
+    call site to wire dicts would break the candidate-selection contract.
+    That is a distinct concern from the elide/advisor accounting this PR
+    unifies (compaction-candidate selection vs. context-window budgeting),
+    so it stays out of scope for #2957 PR-B; this adapter remains the
+    dispatcher ``_trim_groups`` uses for that one remaining ChatMessage
+    call site (dict turns still pass straight through to
+    ``estimate_tokens_for_turn`` unchanged).
     """
     if isinstance(turn, dict):
         return estimate_tokens_for_turn(turn, model, use_chars4=use_chars4)
@@ -667,9 +682,12 @@ def _trim_groups(groups: "list[list]", max_tokens: int, model: str, use_chars4: 
     kept: list[list] = []
     total = 0
     for group in groups:
-        # #2957 PR-A: turns here are ChatMessage instances in every real
-        # caller (RouterHistoryBuffer, CompactionController) — use the
-        # type-adapting wrapper, not estimate_tokens_for_turn directly.
+        # #2957 PR-A/PR-B: dispatches to estimate_tokens_for_turn for dict
+        # turns (RouterHistoryBuffer's wire dicts, post PR-B) and adapts
+        # live ChatMessage instances (CompactionController's candidate
+        # selection, which still needs ChatMessage.seq downstream — see
+        # estimate_tokens_for_any_turn's docstring for why that call site
+        # cannot convert to wire dicts).
         g_tokens = sum(
             estimate_tokens_for_any_turn(t, model, use_chars4=use_chars4) for t in group
         )

@@ -132,6 +132,29 @@ def _materialise_path_ref_content(
     return materialised
 
 
+def resolve_effective_trigger_and_budgets(
+    compaction_controller: Any, model: str, events: Any,
+) -> "tuple[int, int, int]":
+    """Return ``(effective_trigger, head_budget, tail_budget)`` — #2957 PR-B
+    single SSoT for this lookup.
+
+    Before PR-B, :class:`RouterHistoryBuffer` (``_resolve_budgets``) and
+    :class:`~reyn.runtime.services.context_budget_advisor.ContextBudgetAdvisor`
+    (``_get_effective_trigger``) each reimplemented the identical
+    ``compaction_controller._engine.budgets`` lookup + ``get_max_input_tokens``
+    fallback independently — a duplication that could silently drift (one
+    site's fallback changing without the other). Both now delegate here.
+    """
+    engine = getattr(compaction_controller, "_engine", None) if compaction_controller is not None else None
+    budgets = getattr(engine, "budgets", None)
+    if budgets is not None:
+        return budgets.effective_trigger, budgets.head_budget, budgets.tail_budget
+    from reyn.llm.model_budget import get_max_input_tokens
+    effective_trigger = get_max_input_tokens(model, events=events)
+    fallback = effective_trigger // 4
+    return effective_trigger, fallback, fallback
+
+
 # ── RouterHistoryBuffer ───────────────────────────────────────────────────────
 
 
@@ -201,6 +224,19 @@ class RouterHistoryBuffer:
     def _serialise_turn(self, m: Any) -> dict:
         """Serialise one ChatMessage into a litellm-compatible wire dict.
 
+        #2957 PR-B: this method's output is the CANONICAL quantity for token
+        accounting — it is what actually reaches the provider. Both the
+        elide-threshold check in :meth:`build_history` /
+        :meth:`decompose_history_for_retry` and
+        :class:`~reyn.runtime.services.context_budget_advisor.ContextBudgetAdvisor`
+        (which measures ``build_history``'s own returned wire dicts) now
+        estimate tokens over THIS output, closing a prior circularity where
+        the elide side measured serialise-INPUT (raw ChatMessage, pre-image-
+        materialisation) while the advisor measured serialise-OUTPUT (the
+        elided wire dicts) — two different quantities for the same
+        conversation. Do not reintroduce a second "what does the provider
+        see" quantity; measure this method's return value.
+
         Path-ref content parts (= ``{"type":"image","path":...}``) are
         materialised to data URLs at this boundary so storage stays light
         and the LLM sees the inline form it expects. Shared by
@@ -256,16 +292,16 @@ class RouterHistoryBuffer:
         return messages
 
     def _resolve_budgets(self) -> tuple[int, int, int]:
-        """Return (effective_trigger, head_budget, tail_budget)."""
-        controller = self._compaction_controller
-        engine = getattr(controller, "_engine", None) if controller is not None else None
-        budgets = getattr(engine, "budgets", None)
-        if budgets is not None:
-            return budgets.effective_trigger, budgets.head_budget, budgets.tail_budget
-        from reyn.llm.model_budget import get_max_input_tokens
-        effective_trigger = get_max_input_tokens(self._model, events=self._events)
-        fallback = effective_trigger // 4
-        return effective_trigger, fallback, fallback
+        """Return (effective_trigger, head_budget, tail_budget).
+
+        #2957 PR-B: delegates to the module-level
+        ``resolve_effective_trigger_and_budgets`` — single SSoT shared with
+        ``ContextBudgetAdvisor._get_effective_trigger`` (previously each
+        reimplemented this lookup independently).
+        """
+        return resolve_effective_trigger_and_budgets(
+            self._compaction_controller, self._model, self._events,
+        )
 
     # ── Public API ────────────────────────────────────────────────────────────
 
@@ -295,7 +331,7 @@ class RouterHistoryBuffer:
         remains Reyn-internal and is filtered out.
         """
         from reyn.services.compaction.engine import (
-            estimate_tokens_for_any_turn,
+            estimate_tokens_for_turn,
             trim_head,
             trim_tail,
         )
@@ -350,20 +386,30 @@ class RouterHistoryBuffer:
         effective_trigger, head_budget, tail_budget = self._resolve_budgets()
         use_chars4 = getattr(self._compaction, "use_chars4_estimate", False)
 
-        # #2957 PR-A: ``turns`` are ChatMessage instances — use the
-        # type-adapting wrapper (estimate_tokens_for_turn stays dict-only).
+        # #2957 PR-B: serialise ALL candidate turns to their wire-dict shape
+        # UP FRONT, then measure/trim/select on THAT — the canonical quantity
+        # (see ``_serialise_turn``'s docstring). Before PR-B this elide-
+        # threshold total summed the pre-serialise ChatMessage instances
+        # (via the now-removed ``estimate_tokens_for_any_turn`` adapter),
+        # while ContextBudgetAdvisor measured this method's returned (post-
+        # serialise) wire dicts — two different quantities for the same
+        # conversation. Serialising once here and reusing the result for
+        # both the total-check AND the final return also avoids a double
+        # ``_serialise_turn`` call on the surviving subset.
+        wire_turns = [self._serialise_turn(m) for m in turns]
+
         total = sum(
-            estimate_tokens_for_any_turn(m, self._model, use_chars4=use_chars4)
-            for m in turns
+            estimate_tokens_for_turn(wt, self._model, use_chars4=use_chars4)
+            for wt in wire_turns
         )
 
         if total <= effective_trigger:
             # Window-utilization: full raw conversation fits — no elide.
-            selected = turns
+            selected = wire_turns
         else:
             # Elide the middle: head + optional summary bridge + tail.
-            head = trim_head(turns, head_budget, self._model, use_chars4=use_chars4)
-            tail = trim_tail(turns, tail_budget, self._model, use_chars4=use_chars4)
+            head = trim_head(wire_turns, head_budget, self._model, use_chars4=use_chars4)
+            tail = trim_tail(wire_turns, tail_budget, self._model, use_chars4=use_chars4)
             # Overlap guard: dedupe by identity so no turn appears twice.
             head_ids = {id(t) for t in head}
             tail_deduped = [t for t in tail if id(t) not in head_ids]
@@ -374,23 +420,18 @@ class RouterHistoryBuffer:
                     else json.dumps(summary.content, ensure_ascii=False)
                 )
                 from reyn.runtime.chat_message import ChatMessage
-                bridge = [ChatMessage(
+                bridge_msg = ChatMessage(
                     role="assistant",
                     content=f"[summary of earlier conversation]\n{summary_text}",
                     ts=summary.ts,
-                )]
-                selected = head + bridge + tail_deduped
+                )
+                selected = head + [self._serialise_turn(bridge_msg)] + tail_deduped
             else:
                 selected = head + tail_deduped
 
-        # E-full (#383) pass-through: ChatMessage IS the wire shape, so the
-        # builder just serialises each entry into a litellm-compatible
-        # message dict. Path-ref content parts (= ``{"type":"image","path":...}``)
-        # are materialised to data URLs **at this boundary** so storage
-        # stays light and the LLM sees the inline form it expects.
-        return self._bound_wire_reasoning(
-            [self._serialise_turn(m) for m in selected]
-        )
+        # ``selected`` is already the wire-dict shape (serialised above) —
+        # no second serialise pass needed.
+        return self._bound_wire_reasoning(selected)
 
     def decompose_history_for_retry(
         self,
@@ -409,7 +450,7 @@ class RouterHistoryBuffer:
         and retry_loop's shrink can still trim ``head``.
         """
         from reyn.services.compaction.engine import (
-            estimate_tokens_for_any_turn,
+            estimate_tokens_for_turn,
             trim_head,
             trim_tail,
         )
@@ -424,26 +465,28 @@ class RouterHistoryBuffer:
         effective_trigger, head_budget, tail_budget = self._resolve_budgets()
         use_chars4 = getattr(self._compaction, "use_chars4_estimate", False)
 
-        # #2957 PR-A: ``turns`` are ChatMessage instances — use the
-        # type-adapting wrapper (estimate_tokens_for_turn stays dict-only).
+        # #2957 PR-B: serialise once up front — same canonical-quantity
+        # rationale as build_history (see ``_serialise_turn``'s docstring).
+        wire_turns = [self._serialise_turn(m) for m in turns]
+
         total = sum(
-            estimate_tokens_for_any_turn(m, self._model, use_chars4=use_chars4)
-            for m in turns
+            estimate_tokens_for_turn(wt, self._model, use_chars4=use_chars4)
+            for wt in wire_turns
         )
 
         if total <= effective_trigger:
             # Everything fits — no elide; retry_loop can still trim head.
-            head_msgs = turns
-            raw_middle_msgs: list = []
-            tail_msgs: list = []
+            head = wire_turns
+            raw_middle: list = []
+            tail: list = []
         else:
-            head_msgs = trim_head(turns, head_budget, self._model, use_chars4=use_chars4)
-            tail_msgs = trim_tail(turns, tail_budget, self._model, use_chars4=use_chars4)
+            head = trim_head(wire_turns, head_budget, self._model, use_chars4=use_chars4)
+            tail = trim_tail(wire_turns, tail_budget, self._model, use_chars4=use_chars4)
             # raw_middle = turns strictly between head and tail (by identity).
-            head_id_set = {id(t) for t in head_msgs}
-            tail_id_set = {id(t) for t in tail_msgs}
-            raw_middle_msgs = [
-                t for t in turns
+            head_id_set = {id(t) for t in head}
+            tail_id_set = {id(t) for t in tail}
+            raw_middle = [
+                t for t in wire_turns
                 if id(t) not in head_id_set and id(t) not in tail_id_set
             ]
 
@@ -453,9 +496,6 @@ class RouterHistoryBuffer:
             structured = (summary_msg.meta or {}).get("structured")
             if isinstance(structured, dict):
                 summary_dict = structured
-        head = [self._serialise_turn(m) for m in head_msgs]
-        raw_middle = [self._serialise_turn(m) for m in raw_middle_msgs]
-        tail = [self._serialise_turn(m) for m in tail_msgs]
         # #1652/②: bound native reasoning across the ordered carriers (the strip
         # is in-place, so the shared dicts in head/raw_middle/tail are bounded).
         self._bound_wire_reasoning(head + raw_middle + tail)

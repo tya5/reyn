@@ -84,21 +84,41 @@ class ContextBudgetAdvisor:
     # ── Internal helpers ─────────────────────────────────────────────────────
 
     def _get_effective_trigger(self) -> int:
-        """Derive effective_trigger from engine budgets or fallback."""
-        controller = self._compaction_controller
-        engine = getattr(controller, "_engine", None) if controller is not None else None
-        budgets = getattr(engine, "budgets", None)
-        if budgets is not None:
-            return budgets.effective_trigger
-        from reyn.llm.model_budget import get_max_input_tokens
-        return get_max_input_tokens(self._model, events=self._events)
+        """Derive effective_trigger from engine budgets or fallback.
+
+        #2957 PR-B: delegates to
+        ``reyn.runtime.services.router_history_buffer.resolve_effective_trigger_and_budgets``
+        — single SSoT shared with ``RouterHistoryBuffer._resolve_budgets``
+        (previously each reimplemented this lookup independently).
+        """
+        from reyn.runtime.services.router_history_buffer import (
+            resolve_effective_trigger_and_budgets,
+        )
+        return resolve_effective_trigger_and_budgets(
+            self._compaction_controller, self._model, self._events,
+        )[0]
 
     def _incremental_history_tokens(self) -> int:
         """Estimated token count of the full router-view history (#2940).
 
+        #2957 PR-B: sums ``estimate_tokens_for_turn`` PER TURN (dict-aware:
+        fixed cost per image part, ``tool_calls`` folded in) rather than
+        ``estimate_tokens(json.dumps(whole_or_delta_slice))`` (pre-PR-B).
+        The history this reads is ``build_history``'s own returned wire
+        dicts (see this class's docstring) — the SAME canonical quantity
+        RouterHistoryBuffer's elide-threshold check now measures (see
+        ``RouterHistoryBuffer._serialise_turn``'s docstring). Before PR-B,
+        json.dumps-ing a wire dict counted an inlined image's FULL base64
+        payload as text (huge, proportional token count) while the elide
+        side (post PR-A) counted a fixed ``_IMAGE_FIXED_TOKEN_COST`` per
+        image part — the two sides disagreed by orders of magnitude on any
+        image-bearing conversation even when measuring the identical wire
+        dicts. Per-turn ``estimate_tokens_for_turn`` closes that gap (same
+        function, same fixed-cost branch, both sides).
+
         Incremental: only the slice of history NEWER than the last call is
-        json.dumps'd + estimated; on a cache hit (no new messages since the
-        last call) THIS function's own dump+estimate work is O(1).
+        estimated; on a cache hit (no new messages since the last call)
+        THIS function's own estimate work is O(1).
 
         That O(1) is scoped to the dump+estimate ONLY — it is NOT the cost of
         calling this. ``self._history_fn()`` is invoked before the cache is
@@ -122,7 +142,7 @@ class ContextBudgetAdvisor:
         """
         import json as _json
 
-        from reyn.services.compaction.engine import estimate_tokens
+        from reyn.services.compaction.engine import estimate_tokens_for_turn
 
         use_chars4 = getattr(self._compaction, "use_chars4_estimate", False)
         cache = self._history_token_cache
@@ -134,7 +154,9 @@ class ContextBudgetAdvisor:
             # the cached prefix (index cached_len - 1). If it no longer
             # matches the message currently at that index, the prefix isn't
             # append-only-stable and the cache cannot be trusted, even at an
-            # unchanged or grown length.
+            # unchanged or grown length. (json.dumps here is purely an
+            # identity fingerprint for the boundary check — NOT the token
+            # measure itself, which is estimate_tokens_for_turn below.)
             boundary = (
                 _json.dumps(history[cached_len - 1], ensure_ascii=False)
                 if 0 < cached_len <= n
@@ -147,20 +169,20 @@ class ContextBudgetAdvisor:
                 or cache["use_chars4"] != use_chars4
                 or not prefix_unchanged
             ):
-                combined = _json.dumps(history, ensure_ascii=False)
-                tokens = estimate_tokens(combined, self._model, use_chars4=use_chars4)
+                tokens = sum(
+                    estimate_tokens_for_turn(m, self._model, use_chars4=use_chars4)
+                    for m in history
+                )
             elif cached_len == n:
                 return int(cache["tokens"])
             else:
-                # Dump each new message individually and join with the same
-                # comma separator json.dumps(list) would use BETWEEN elements
-                # (not wrapped in its own "[...]") — an array-slice dump would
-                # otherwise add a spurious pair of bracket tokens on every
-                # single call, drifting the cumulative estimate upward as the
-                # history grows across many dropdown-open/pre-frame checks.
+                # Only the NEW tail slice needs estimating — the cached total
+                # for the unchanged prefix carries forward unchanged.
                 delta = history[cached_len:]
-                combined = ",".join(_json.dumps(m, ensure_ascii=False) for m in delta)
-                tokens = int(cache["tokens"]) + estimate_tokens(combined, self._model, use_chars4=use_chars4)
+                tokens = int(cache["tokens"]) + sum(
+                    estimate_tokens_for_turn(m, self._model, use_chars4=use_chars4)
+                    for m in delta
+                )
             new_boundary = _json.dumps(history[-1], ensure_ascii=False) if n > 0 else None
             cache.update(
                 len=n, tokens=tokens, model=self._model, use_chars4=use_chars4, boundary=new_boundary,
