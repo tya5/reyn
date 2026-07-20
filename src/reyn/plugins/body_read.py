@@ -24,13 +24,26 @@ proves nothing about operator consent. The bypass here is instead keyed off
 :func:`reyn.core.op_runtime.plugin_install.is_registered_plugin_root`: TRUE
 only for a plugin root that reached ``plugin_install``'s step 9 completion
 (source-resolve → manifest-validate → operator-permission-gated copy →
-capability-register all succeeded) — the SAME "operator approved this at
-install time" boundary ``read_builtin_body_bytes`` gets for free from
-``importlib.resources`` only ever resolving to content the PACKAGE itself
-ships (nothing an agent can plant there at runtime). This module gets the
-equivalent guarantee from the install registry instead of a package
-manifest, because a plugin, unlike a builtin, is not shipped inside reyn's
-own wheel.
+capability-register all succeeded).
+
+**This is NOT the same strength as the builtin case, and that gap is
+deliberate, not overlooked.** ``read_builtin_body_bytes``'s guarantee comes
+from the PACKAGE ITSELF — ``importlib.resources`` only ever resolves to
+content the wheel ships, so nothing reachable at runtime can plant a fake
+entry there. This module's guarantee instead comes from a FILE on disk (the
+completion sidecar, ``.reyn-plugin/_source_kind.json``) — and anyone who can
+write under ``~/.reyn/plugins/`` at all (the SAME write capability
+``plugin_install``'s own gate 1 requires) can plant a forged sidecar
+alongside a hand-placed ``SKILL.md``, exactly as they could forge the marker
+itself. So this is weaker than the builtin boundary, by construction — the
+reason it is still acceptable: an attacker with that write capability
+already has direct write access to ``~/.reyn/plugins/<name>/skills/**``
+itself, i.e. they could just edit an ALREADY-registered plugin's ``SKILL.md``
+body directly and reach the exact same LLM-visible outcome without forging
+anything. Forging the sidecar grants no capability beyond what that same
+attacker already had — this bypass does not widen the attack surface, but it
+should not be described as builtin-equivalent, and no future change should
+assume it is.
 
 **Scope (least-privilege, mirrors ``_BODY_READ_DIRS``).** Only
 ``skills/**`` and ``pipelines/**`` under a REGISTERED plugin root bypass the
