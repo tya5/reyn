@@ -406,11 +406,26 @@ class BudgetCheckpoint:
     anchor_byte_offset: int
     anchor_line_len: int
     anchor_line_sha256: str
+    # #2945 follow-up (co-vet finding): whether THIS checkpoint's totals were
+    # produced by floor-merging a previous checkpoint into a re-scan (i.e.
+    # the ledger was found truncated/missing/replaced when this checkpoint
+    # was written) — and why. Surfaced to the operator via `/budget` (never
+    # silent — "bound fired but nobody can tell" is the failure mode this
+    # closes). ``floor_reason`` is one of "truncated" / "missing" /
+    # "replaced", or ``None`` when no floor was applied.
+    floor_applied: bool = False
+    floor_reason: str | None = None
 
     def _content_payload(self) -> dict:
         """The counted-values subset covered by ``content_sha256`` — everything
         EXCEPT the anchor (which pins the checkpoint to the ledger, not to
-        itself) and the hash field itself. Sorted keys for a stable digest."""
+        itself) and the hash field itself. Sorted keys for a stable digest.
+
+        ``floor_applied``/``floor_reason`` are included here (not just
+        stored alongside) so tampering with them — e.g. hiding that a floor
+        was applied — is caught by the same ``content_sha256`` check as
+        tampering with the counted totals themselves.
+        """
         return {
             "agent_tokens": dict(sorted(self.agent_tokens.items())),
             "agent_cost_usd": dict(sorted(self.agent_cost_usd.items())),
@@ -420,6 +435,8 @@ class BudgetCheckpoint:
             "month_key": self.month_key,
             "monthly_tokens": self.monthly_tokens,
             "monthly_cost_usd": self.monthly_cost_usd,
+            "floor_applied": self.floor_applied,
+            "floor_reason": self.floor_reason,
         }
 
     def content_sha256(self) -> str:
@@ -469,6 +486,10 @@ class BudgetCheckpoint:
                 anchor_byte_offset=int(anchor["byte_offset"]),
                 anchor_line_len=int(anchor["line_len"]),
                 anchor_line_sha256=str(anchor["line_sha256"]),
+                floor_applied=bool(data.get("floor_applied", False)),
+                floor_reason=(
+                    str(data["floor_reason"]) if data.get("floor_reason") is not None else None
+                ),
             )
         except (KeyError, TypeError, ValueError):
             return None
@@ -513,22 +534,33 @@ def verify_anchor(checkpoint: BudgetCheckpoint, ledger_path: Path) -> tuple[str,
     - ``"valid"`` — the ledger still contains, byte-for-byte, the line the
       checkpoint was anchored to. Fast tail-only path.
     - ``"truncated"`` — the CURRENT ledger is shorter than the anchor's byte
-      offset (including "ledger file missing entirely", size 0). This is a
-      genuine data-loss signal: the ledger no longer contains everything the
-      checkpoint saw. Per P3 (ambiguity -> over-count-safe), the caller MUST
-      treat the checkpoint's own (content-hash-verified) totals as a FLOOR
-      merged into the re-scan result — discarding them here would silently
-      UNDER-count exactly the durable spend this checkpoint recorded (the
-      failure mode this whole mechanism exists to prevent).
+      offset (including "ledger file missing entirely", size 0).
     - ``"invalid"`` — the ledger is the SAME SIZE OR LARGER but its content at
       the anchor position no longer matches (or the anchor itself is
       malformed). Ledger is append-only, so byte-identical growth can never
       produce this — it means the file was replaced/rewritten (rotation,
-      tamper), not merely truncated. The checkpoint's totals are NOT used as
-      a floor here: a replaced ledger may describe entirely different agents/
-      history, and blending its stale numbers in would leak a stale total
-      into an unrelated new history (see the ledger-replacement test) — the
-      full re-scan of the CURRENT ledger is the only trustworthy answer.
+      tamper), not merely truncated.
+
+    #2945 follow-up (co-vet firm): BOTH non-``"valid"`` statuses get the
+    checkpoint's totals merged in as a per-agent FLOOR by the caller — never
+    just discarded. The governing question is not "over-count vs
+    under-count" (an earlier version of this design floored "truncated" but
+    not "invalid", reasoning from that framing) but **"which operation is
+    allowed to LOWER a cap counter"**: only an explicit operator action
+    (archiving/deleting BOTH the ledger and the checkpoint together — see
+    ``docs/reference/config/budget.md``) may lower it. Every IMPLICIT path —
+    truncation, deletion, or replacement of the ledger alone — must be
+    non-decreasing, because:
+      - over-count is observable (the operator can see and act on it) and
+        has an explicit remedy (delete both files).
+      - under-count is silent — the cap simply stops enforcing and nobody
+        notices until spend has already run away.
+    The asymmetry, not "which is more surprising," is why both statuses
+    floor. (A ``"replaced"`` ledger CAN still leak a stale total from an
+    unrelated history this way — accepted as a known limitation; a stronger
+    fix would identify the ledger by more than size/position, e.g. an
+    embedded ledger-identity token, which is tracked as separate follow-up
+    work, not in scope here.)
     """
     if not ledger_path.is_file():
         return ("truncated", 0)
@@ -564,10 +596,17 @@ def write_checkpoint(
     month_key: tuple[str, str] | None,
     monthly_tokens: int,
     monthly_cost_usd: float,
+    floor_applied: bool = False,
+    floor_reason: str | None = None,
 ) -> None:
     """Write a fresh checkpoint anchored to the ledger's CURRENT end.
 
     No-op if the ledger is empty/missing (nothing to anchor to yet).
+
+    ``floor_applied``/``floor_reason`` record whether THIS write followed a
+    floor-merge (the ledger was found truncated/missing/replaced during the
+    hydrate that produced these totals) — surfaced to the operator via
+    ``BudgetTracker.snapshot()`` / `/budget` so a floor is never silent.
 
     P2 write order (durability): the ledger itself is already fsync'd per
     append by ``BudgetLedger._write_record`` — by construction this always
@@ -592,6 +631,8 @@ def write_checkpoint(
         anchor_byte_offset=size,
         anchor_line_len=len(line_bytes),
         anchor_line_sha256=hashlib.sha256(line_bytes).hexdigest(),
+        floor_applied=floor_applied,
+        floor_reason=floor_reason,
     )
     checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
     tmp = checkpoint_path.with_suffix(checkpoint_path.suffix + ".tmp")
@@ -670,6 +711,12 @@ class BudgetTracker:
         # #2945: compacted checkpoint path, derived in hydrate() from the
         # ledger path. None until hydrate() runs (mirrors self._ledger).
         self._checkpoint_path: Path | None = None
+        # #2945 (co-vet firm): whether the MOST RECENT hydrate() had to
+        # floor-merge a checkpoint (ledger found truncated/missing/replaced)
+        # + why — surfaced via snapshot() -> `/budget` so a floor is never
+        # silent. False/None until hydrate() runs.
+        self._floor_applied: bool = False
+        self._floor_reason: str | None = None
         # R-D8: auto-save state path + throttle. None path = no auto-save.
         self._state_path: Path | None = None
         self._save_throttle_secs: float = 1.0
@@ -713,28 +760,31 @@ class BudgetTracker:
         bounding the cost to activity since the last checkpoint refresh
         instead of the ledger's lifetime.
 
-        Three fallback classes, each resolved per P3 (ambiguity ->
-        over-count-safe, never under-count):
+        Two fallback classes, both resolved by the SAME rule (co-vet firm):
+        ``per_agent_tokens``/``per_agent_cost_usd`` may only be LOWERED by an
+        explicit operator action (archiving/deleting both the ledger and the
+        checkpoint together); every implicit path (truncation, deletion, or
+        replacement of the ledger alone) is non-decreasing.
           - missing/corrupt/tampered checkpoint (parse failure, or its own
             ``content_sha256`` no longer matches) -> full re-scan of the
-            ledger, no floor (nothing trustworthy survives to floor with).
+            ledger, no floor (nothing trustworthy survives to floor with —
+            there is no explicit-operator-action signal here either way, so
+            this is simply "no checkpoint exists").
           - ``"truncated"`` (current ledger shorter than the anchor, INCLUDING
-            deleted entirely) -> full re-scan of the surviving ledger, then
-            the checkpoint's per-agent totals are merged in as a per-agent
-            FLOOR (``max()``, never lower). This is the critical case: a
-            crash/rotation that shortens or removes the ledger must never
-            silently reset a cap-critical per-agent counter just because its
-            source records are no longer present — the checkpoint is the
-            surviving witness. NOTE: this means archiving/deleting ONLY the
-            ledger file no longer resets per-agent totals while a checkpoint
-            still exists (see ``docs/reference/config/budget.md``).
-          - ``"invalid"`` (current ledger is the SAME SIZE OR LARGER but its
-            content at the anchor position no longer matches — a genuine
-            truncation can never produce this since the ledger is
-            append-only, so this means the file was replaced/rewritten) ->
-            full re-scan only, NO floor. The checkpoint's stale totals must
-            not leak into what may be an entirely different, unrelated
-            ledger history.
+            deleted entirely) or ``"invalid"`` (ledger same size or larger but
+            its content no longer matches — replaced/rewritten, since a
+            genuine truncation can never produce this on an append-only
+            ledger) -> full re-scan of the current ledger, then the
+            checkpoint's per-agent totals are merged in as a per-agent FLOOR
+            (``max()``, never lower). NOTE: this means archiving/deleting
+            ONLY the ledger file no longer resets per-agent totals while a
+            checkpoint still exists (see ``docs/reference/config/budget.md``)
+            — deliberate: the reset UX is "archive BOTH files together".
+
+        Whenever a floor was applied, the fact and the reason
+        (``"truncated"``/``"missing"``/``"replaced"``) are recorded on
+        ``self`` (surfaced via ``snapshot()`` -> `/budget`) AND written into
+        the fresh checkpoint below — a floor firing must never be silent.
 
         A fresh checkpoint is written at the end of every hydrate call
         regardless of which path was taken, so the checkpoint self-heals and
@@ -782,11 +832,9 @@ class BudgetTracker:
             records = self._ledger.iter_records_from(checkpoint.anchor_byte_offset)
         else:
             # No verifiable fast path — full re-scan of the CURRENT ledger.
-            # If status == "truncated", the checkpoint's own totals are
-            # merged in as a floor AFTER this scan (below) — see P3 note on
-            # ``verify_anchor``. If status == "invalid" or checkpoint is
-            # None, no floor is applied (see ``verify_anchor`` docstring for
-            # why an "invalid"/replaced ledger must NOT be floored).
+            # If status is "truncated" or "invalid", the checkpoint's own
+            # totals are merged in as a floor AFTER this scan (below) — see
+            # ``verify_anchor``'s docstring for why both statuses floor.
             records = self._ledger.iter_records()
 
         for record in records:
@@ -823,22 +871,29 @@ class BudgetTracker:
                 monthly_tokens += tokens
                 monthly_cost += cost
 
-        # #2945 P3: a TRUNCATED ledger (or one deleted entirely) must never
-        # cause the per-agent lifetime aggregate to drop below what a
-        # content-hash-verified checkpoint already durably recorded — that
-        # would silently reset a cap-critical counter (exactly the failure
-        # this mechanism exists to prevent). Merge the checkpoint's totals in
-        # as a per-agent FLOOR (max, never overwrite-down) on top of whatever
-        # the re-scan of the current (shortened) ledger found. Deliberately
-        # NOT applied when status == "invalid" (ledger replaced/rewritten,
-        # not merely truncated) — see ``verify_anchor``'s docstring.
-        if checkpoint is not None and status == "truncated":
+        # #2945 (co-vet firm): only an EXPLICIT operator action may lower a
+        # cap-critical per-agent counter — every implicit path (truncation,
+        # deletion, or replacement of the ledger alone) is non-decreasing.
+        # Merge the checkpoint's totals in as a per-agent FLOOR (max, never
+        # overwrite-down) on top of whatever the re-scan of the current
+        # ledger found, for BOTH "truncated" and "invalid" — see
+        # ``verify_anchor``'s docstring for the reasoning.
+        self._floor_applied = False
+        self._floor_reason = None
+        if checkpoint is not None and status in ("truncated", "invalid"):
             for agent, tok in checkpoint.agent_tokens.items():
                 if tok > agent_tokens.get(agent, 0):
                     agent_tokens[agent] = tok
             for agent, cost in checkpoint.agent_cost_usd.items():
                 if cost > agent_cost.get(agent, 0.0):
                     agent_cost[agent] = cost
+            self._floor_applied = True
+            if status == "invalid":
+                self._floor_reason = "replaced"
+            elif not ledger_path.is_file():
+                self._floor_reason = "missing"
+            else:
+                self._floor_reason = "truncated"
 
         self._daily_tokens = daily_tokens
         self._daily_cost_usd = daily_cost
@@ -875,6 +930,8 @@ class BudgetTracker:
                 month_key=self._month_key,
                 monthly_tokens=self._monthly_tokens,
                 monthly_cost_usd=self._monthly_cost_usd,
+                floor_applied=self._floor_applied,
+                floor_reason=self._floor_reason,
             )
         except OSError as e:
             import logging
@@ -1235,6 +1292,13 @@ class BudgetTracker:
             "monthly_cost_usd": round(self._monthly_cost_usd, 6),
             "day_key": self._day_key[1] if self._day_key else None,
             "month_key": self._month_key[1] if self._month_key else None,
+            # #2945 (co-vet firm): whether the most recent hydrate() had to
+            # floor-merge a checkpoint into a re-scan (ledger found
+            # truncated/missing/replaced) + why. Never silent — `/budget`
+            # renders this so an operator can tell a high per-agent total is
+            # a deliberately-preserved floor, not a mystery.
+            "budget_floor_applied": self._floor_applied,
+            "budget_floor_reason": self._floor_reason,
         }
 
     # ── internals ───────────────────────────────────────────────────────
@@ -1569,10 +1633,38 @@ def format_cost_line(snapshot: dict, agent: str) -> str:
     return f"{agent}: {tokens:,} tokens, ${cost:.4f}  (this session)"
 
 
+_FLOOR_REASON_LABEL = {
+    "truncated": "the budget ledger was found shorter than expected (truncated)",
+    "missing": "the budget ledger was missing at startup",
+    "replaced": "the budget ledger's content no longer matched what was recorded (replaced)",
+}
+
+
 def format_budget_full(snapshot: dict, attached: str | None) -> str:
     """`/budget` full breakdown across all dimensions."""
     cfg: CostConfig = snapshot["config"]
     lines: list[str] = ["Usage (process invocation):", ""]
+
+    # #2945 (co-vet firm): a floor-merge must never be silent. If the most
+    # recent startup had to preserve per-agent totals from a checkpoint
+    # because the ledger was found truncated/missing/replaced, say so up
+    # front — an operator staring at a higher-than-expected per-agent total
+    # must be able to answer "was this intended?" from this output, not a
+    # doc sentence.
+    if snapshot.get("budget_floor_applied"):
+        reason = snapshot.get("budget_floor_reason")
+        detail = _FLOOR_REASON_LABEL.get(reason, reason or "unknown reason")
+        lines.append(
+            f"  ⚠ per-agent totals below were preserved from a checkpoint at "
+            f"startup: {detail}."
+        )
+        lines.append(
+            "    This is intentional (a cap-critical counter never silently "
+            "under-counts). To reset per-agent spend, archive BOTH "
+            "`.reyn/state/budget_ledger.jsonl` AND "
+            "`.reyn/cache/budget_checkpoint.json` while stopped."
+        )
+        lines.append("")
 
     # PR25: Today / Month sections (shown first if any persistent data)
     day_label = snapshot.get("day_key")

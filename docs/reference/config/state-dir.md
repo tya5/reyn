@@ -64,13 +64,15 @@ Because the ledger is never rotated, `hydrate` does not re-parse it in full on
 every startup (#2945) — it reads a compacted per-agent checkpoint (see
 `state/../cache/budget_checkpoint.json` below) and only re-parses the tail
 written since that checkpoint's anchor. If the checkpoint is missing or
-corrupt, `hydrate` falls back to a full re-scan. If the ledger was truncated
-below the checkpoint's anchor (including deleted entirely), the checkpoint's
-per-agent totals are merged in as a **floor** on top of that re-scan — never
-silently discarded — so a truncated/lost ledger can never under-count a
-cap-critical per-agent total. A ledger that is instead *replaced* with
-different content of the same size or larger (content mismatch without
-shrinking) is NOT floored — only its full re-scan is trusted.
+corrupt, `hydrate` falls back to a full re-scan (nothing trustworthy to floor
+with). If the ledger was found truncated below the checkpoint's anchor
+(including deleted entirely) OR *replaced* with different content of the
+same size or larger (content mismatch without shrinking), the checkpoint's
+per-agent totals are merged in as a **floor** on top of the re-scan — never
+silently discarded. Only an explicit operator action (archiving both files —
+see `cache/budget_checkpoint.json` below) may lower a per-agent cap counter;
+every implicit path is non-decreasing. `/budget` surfaces the fact and reason
+whenever a floor fired — it is never silent.
 
 ### `state/budget_state.json`
 

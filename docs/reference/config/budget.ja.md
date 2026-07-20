@@ -194,7 +194,11 @@ budget カウンターは fsync-per-append の `.reyn/state/budget_ledger.jsonl`
 
 **起動コストは有界です。ledger 全体の再パースではありません（#2945）。** ledger はローテーションされないため、「起動のたびに ledger 全体を再パースする」素朴な hydrate は ledger が育つほど遅くなり続けます。代わりに `hydrate` は圧縮済みのチェックポイント（`.reyn/cache/budget_checkpoint.json` — ledger 上の正確なバイト位置にアンカーされた per-agent 生涯合計のサマリ）を読み、そのアンカー以降に追記された ledger の tail だけを再パースします。チェックポイントは自動的に更新され（`budget_state.json` と同じ throttle）、常に削除して安全です。ledger がすでに durable に保持している事実以外は何も持たないため、欠損・破損・改竄、あるいは ledger がアンカーより前まで truncate されていた場合、`hydrate` は透過的に ledger 全体の再スキャンにフォールバックします（遅くなりますが、cap が黙って under-count されることはありません）。daily / monthly 合計はチェックポイント対象外です — 期間境界で自己修復するため、圧縮が必要なのは per-agent の生涯合計だけです。
 
-**truncation は checkpoint を経由しても under-count を起こしません（P3）。** ledger が checkpoint の anchor より短い場合（truncate、または ledger 自体が削除・アーカイブされた場合を含む）、`hydrate` は checkpoint を単純に捨てて残った部分だけを再スキャンするのではありません — それでは checkpoint がすでに durable に記録していた per-agent の履歴が黙って失われ、意図せず cap-critical なカウンターがリセットされてしまいます。代わりに、checkpoint の per-agent 合計を **下限（floor）** として、生き残った ledger の再スキャン結果にマージします。一方、ledger が**同サイズ以上の別内容に置き換えられた**場合（ファイルは縮んでいないが境界行の内容が一致しない）は扱いが異なります — その checkpoint は floor として信頼されません（新しい内容が無関係の履歴を表している可能性があるため）。新しい ledger の全体再スキャンのみが使われます。詳細は [reference/runtime/reyn-dir-layout.md](../runtime/reyn-dir-layout.md) の `.reyn/cache/budget_checkpoint.json` の項目を参照してください。
+**per-agent cap カウンターを下げてよいのは明示的な operator 操作だけです。** ledger が truncate された・削除された・**同サイズ以上の別内容に置き換えられた**（境界行の内容が一致しない）のいずれであっても、それは暗黙の経路であり非減少です — `hydrate` は checkpoint を単純に捨てて残った ledger だけを再スキャンするのではなく、checkpoint の per-agent 合計を **下限（floor）** として再スキャン結果にマージします。判断基準は「over-count か under-count か」ではなく「どの操作がカウンターを下げてよいか」です: over-count は observable で明示的な救済手段（両ファイルのアーカイブ、下記参照）がありますが、under-count は silent で救済がありません — そのため truncation 系・置き換え系のどちらも floor されます。明示的な救済手段は `budget_ledger.jsonl` **と** `budget_checkpoint.json` を**両方**アーカイブすることです（下記参照）。
+
+**floor が発動した事実は決して silent ではありません。** 直近の起動で per-agent 合計をこの方法で保持した場合、`/budget` が理由（`truncated` / `missing` / `replaced`）を明記した `⚠` 行を表示します。想定より高い数値を見た operator が「意図されたものか」を判断できるようにするためです。
+
+詳細は [reference/runtime/reyn-dir-layout.md](../runtime/reyn-dir-layout.md) の `.reyn/cache/budget_checkpoint.json` の項目を参照してください（置き換えられた ledger からは無関係な履歴の古い合計が floor 経由で漏れうるという既知の制限があります — ledger を size/position 以上の identity で識別する強化は別 issue の follow-up として扱い、本 PR の対象外です）。
 
 ## Per-agent cap の復旧セマンティクス
 

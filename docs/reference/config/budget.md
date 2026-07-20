@@ -247,22 +247,34 @@ under-count). Daily / monthly totals are not checkpointed — they self-heal
 at their period boundary, so only the lifetime per-agent aggregate needed
 the compaction.
 
-**Truncation never under-counts the per-agent total, even across a
-checkpoint (P3).** If the ledger is shorter than the checkpoint's anchor
-(truncated, or deleted/archived entirely), `hydrate` does not simply discard
-the checkpoint and re-scan whatever remains — that would silently drop the
-per-agent history the checkpoint had already durably recorded, resetting a
-cap-critical counter without anyone asking for it. Instead the
-checkpoint's per-agent totals are merged in as a **floor** (never lower than
-what the checkpoint recorded) on top of the re-scan of the surviving
-ledger. A checkpoint whose ledger is instead **replaced** with different
-content of the same size or larger (its boundary-line content no longer
-matches, even though the file didn't shrink) is treated differently — that
-checkpoint is NOT trusted as a floor, since the new content may describe an
-entirely unrelated history; only a full re-scan of the new ledger is used.
+**Only an explicit operator action may lower a per-agent cap counter.**
+Every implicit path — the ledger found truncated, deleted entirely, or
+wholesale replaced with different content (same size or larger, but its
+boundary content no longer matches what the checkpoint saw) — is
+non-decreasing: `hydrate` never simply discards the checkpoint and re-scans
+whatever ledger remains. Instead the checkpoint's per-agent totals are
+merged in as a **floor** (never lower than what the checkpoint recorded) on
+top of the re-scan. The governing question is not "over-count vs
+under-count" but which operation is allowed to lower the counter at all:
+over-count is observable and has an explicit remedy (archive both files, see
+below); under-count is silent and has none — so both truncation-class events
+AND replacement-class events floor. The one explicit remedy is archiving
+**both** `budget_ledger.jsonl` **and** `budget_checkpoint.json` together (see
+below).
+
+**A floor firing is never silent.** `/budget` shows a `⚠` line naming the
+reason (`truncated` / `missing` / `replaced`) whenever the most recent
+startup had to preserve a per-agent total this way, so an operator seeing a
+higher-than-expected number can tell it was deliberately preserved rather
+than wondering if it's a bug.
+
 See the `.reyn/cache/budget_checkpoint.json` entry in
 [reference/runtime/reyn-dir-layout.md](../runtime/reyn-dir-layout.md) for
-the full anchor-classification rationale.
+the full anchor-classification rationale. (A replaced ledger can still leak
+a stale total from an unrelated history via this floor — a known, accepted
+limitation; identifying the ledger by more than size/position, e.g. an
+embedded identity token, is tracked as separate follow-up work, not in scope
+here.)
 
 ## Per-agent cap recovery semantics
 

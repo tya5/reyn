@@ -12,12 +12,28 @@ back to a full ledger re-scan (P3, over-count-safe).
 Covers the CLAUDE.md recovery-feature PR gate's 4-arm truncate-falsify
 requirement:
   A. main: set X, truncate the ledger past X's own records, reconstruct, X survives.
-  B. anchor tampering (ledger-side byte/hash mismatch, and separately the
-     checkpoint's own counted-value content hash) -> full re-scan fallback.
+  B. anchor tampering — ledger-side (replaced with same-size-or-larger
+     unrelated content, "invalid" status) and checkpoint-side (its own
+     content_sha256 tampered) — each handled differently: a replaced
+     ledger still FLOORS (governing rule below), a tampered checkpoint's
+     own content cannot be trusted at all (no floor, full re-scan).
   C. partial/corrupt checkpoint write -> full re-scan fallback.
   D. checkpoint deleted entirely -> full re-scan fallback (still reconstructs).
 Plus a parity check (checkpoint-fast-path vs checkpoint-absent-full-scan
 agree on totals for the same ledger).
+
+Co-vet firm (governing rule for WHICH statuses floor): only an EXPLICIT
+operator action (archiving/deleting BOTH the ledger and the checkpoint
+together) may LOWER a per-agent cap counter. Every IMPLICIT path —
+truncation, deletion, or replacement of the ledger alone — is
+non-decreasing. This is why status "invalid" (replaced) floors just like
+"truncated": over-count is observable and has an explicit remedy;
+under-count is silent and has none. Additional witnesses below cover: the
+floor firing is never silent (surfaced through `/budget`'s actual rendered
+output, not just the checkpoint file) and the explicit-operator-action reset
+path genuinely does lower the counters (the "can be lowered explicitly"
+side of the invariant — without this witness, an implementation that could
+NEVER be lowered at all would also pass every other test here).
 """
 from __future__ import annotations
 
@@ -31,6 +47,7 @@ from reyn.runtime.budget.budget import (
     CostConfig,
     CostLimitConfig,
     _default_checkpoint_path,
+    format_budget_full,
 )
 
 
@@ -216,21 +233,26 @@ def test_arm_A_truncate_destroys_X_source_records_checkpoint_floor_survives(tmp_
     )
 
 
-def test_arm_B_ledger_replaced_same_or_larger_size_falls_back(tmp_path):
-    """Tier 2a: arm B (ledger-side) — the ledger file is wholesale REPLACED
-    (e.g. an operator manually archives/rotates it and a fresh one begins)
-    with unrelated content that is the SAME SIZE OR LARGER than the stale
-    checkpoint's anchor offset. A byte-size-only check (``size >= offset``)
-    would wrongly accept the stale checkpoint and misinterpret the new
-    file's bytes as "the tail since last checkpoint" — leaking the old
-    agent's stale total and/or mis-parsing the new agent's records. The
-    boundary-line content hash must catch the mismatch and fall back to a
-    full re-scan of the NEW ledger only.
+def test_arm_B_ledger_replaced_same_or_larger_size_still_floors(tmp_path):
+    """Tier 2a: arm B (ledger-side, "invalid" status) — the ledger file is
+    wholesale REPLACED with unrelated content that is the SAME SIZE OR
+    LARGER than the stale checkpoint's anchor offset. The boundary-line
+    content hash correctly classifies this as ``"invalid"`` (not
+    ``"valid"`` — a byte-size-only check would wrongly accept it and
+    mis-parse the new file's bytes as "the tail since last checkpoint").
+
+    Per the co-vet firm (#2945 follow-up): only an EXPLICIT operator action
+    (archiving both the ledger AND the checkpoint) may lower a per-agent
+    cap counter. A replaced ledger is an IMPLICIT path, so the stale
+    ``alpha`` total is floored in here too, exactly like a truncation — it
+    is not reset just because the ledger's content changed underneath it.
 
     FALSIFICATION (verified out-of-band with the hash check short-circuited
-    to always-pass): this test goes RED — the stale ``alpha`` total (40)
-    leaks into the snapshot even though the ledger no longer contains any
-    ``alpha`` record at all.
+    to always-pass): the FAST tail-only path would incorrectly activate and
+    mis-parse the new ledger's bytes from the stale anchor offset, corrupting
+    ``beta``'s total (rather than just failing to floor ``alpha``) — the hash
+    check remains required for correctness of the fast path, independent of
+    the floor question.
     """
     ledger_path = tmp_path / ".reyn" / "state" / "budget_ledger.jsonl"
     state_path = tmp_path / ".reyn" / "state" / "budget_state.json"
@@ -253,12 +275,16 @@ def test_arm_B_ledger_replaced_same_or_larger_size_falls_back(tmp_path):
 
     bt2 = BudgetTracker(_cfg())
     bt2.hydrate(ledger_path)
-    snap = bt2.snapshot()["agent_tokens"]
-    assert snap.get("alpha", 0) == 0, (
-        "the stale checkpoint's 'alpha' total must not leak once the ledger "
-        "it was anchored to has been replaced"
+    snap = bt2.snapshot()
+    assert snap["agent_tokens"].get("alpha", 0) == 40, (
+        "an implicit ledger replacement must NOT lower alpha's per-agent "
+        "total — only an explicit operator action (archiving both files) may"
     )
-    assert snap.get("beta", 0) == 30
+    assert snap["agent_tokens"].get("beta", 0) == 30, (
+        "the new ledger's own records must still be counted correctly"
+    )
+    assert snap["budget_floor_applied"] is True
+    assert snap["budget_floor_reason"] == "replaced"
 
 
 def test_arm_B_tampered_checkpoint_content_falls_back_to_full_scan(tmp_path):
@@ -368,6 +394,78 @@ def test_checkpoint_write_failure_does_not_block_startup(tmp_path):
         assert bt2.snapshot()["agent_tokens"]["alpha"] == 10
     finally:
         cache_dir.chmod(0o700)  # restore so tmp_path cleanup can remove it
+
+
+def test_floor_applied_is_visible_in_the_actual_budget_output(tmp_path):
+    """Tier 2a: a floor firing must never be silent. Asserts against the
+    ACTUAL operator-facing surface — ``format_budget_full()``, what `/budget`
+    renders — not merely that the fact was recorded somewhere internal
+    (checkpoint file / snapshot dict). Today's session repeatedly found
+    "recorded in metadata but never reaches the consumer" bugs; this test
+    is written specifically to not repeat that pattern.
+    """
+    ledger_path = tmp_path / ".reyn" / "state" / "budget_ledger.jsonl"
+    state_path = tmp_path / ".reyn" / "state" / "budget_state.json"
+    bt = _record_calls(ledger_path, state_path, n=3, tokens_each=10)  # alpha=30
+    del bt
+
+    # Truncate the ledger to 0 bytes (a "missing tail" truncation) so the
+    # next hydrate must floor.
+    with ledger_path.open("r+b") as f:
+        f.truncate(0)
+
+    bt2 = BudgetTracker(_cfg())
+    bt2.hydrate(ledger_path)
+    snap = bt2.snapshot()
+    assert snap["agent_tokens"]["alpha"] == 30, "sanity: the floor must have fired"
+
+    rendered = format_budget_full(snap, attached="alpha")
+    assert "checkpoint" in rendered.lower(), (
+        "the rendered /budget output must mention the checkpoint/floor "
+        "explanation — the operator reads THIS text, not the snapshot dict "
+        "or the checkpoint file directly"
+    )
+    assert "truncated" in rendered.lower(), (
+        "the rendered output must include the SPECIFIC reason, not just a "
+        "generic 'something happened'"
+    )
+
+
+def test_explicit_operator_reset_actually_lowers_the_counter(tmp_path):
+    """Tier 2a: the "explicit operator action" side of the governing rule —
+    archiving/deleting BOTH the ledger and the checkpoint together must
+    actually reset the per-agent total to 0 (not merely "not increase").
+
+    Without this witness, an implementation that floors unconditionally and
+    NEVER lets the counter go down under any circumstance would also pass
+    every other test in this file — this is the test that would catch that
+    (a cap counter that can truly never be reset is its own kind of bug: an
+    operator with a legitimate reason to reset spend has no way to do it).
+    """
+    ledger_path = tmp_path / ".reyn" / "state" / "budget_ledger.jsonl"
+    state_path = tmp_path / ".reyn" / "state" / "budget_state.json"
+    bt = _record_calls(ledger_path, state_path, n=3, tokens_each=10)  # alpha=30
+    del bt
+
+    checkpoint_path = _default_checkpoint_path(ledger_path)
+    assert ledger_path.is_file() and checkpoint_path.is_file()
+
+    # The explicit, documented reset action: archive/delete BOTH files while
+    # stopped (docs/reference/config/budget.md).
+    ledger_path.unlink()
+    checkpoint_path.unlink()
+
+    bt2 = BudgetTracker(_cfg())
+    bt2.hydrate(ledger_path)
+    snap = bt2.snapshot()
+    assert snap["agent_tokens"].get("alpha", 0) == 0, (
+        "deleting BOTH files together is the explicit operator reset path — "
+        "the per-agent total must actually drop to 0, not be floored forever"
+    )
+    assert snap["budget_floor_applied"] is False, (
+        "no floor should be reported either — there was nothing left to "
+        "floor with"
+    )
 
 
 if __name__ == "__main__":
