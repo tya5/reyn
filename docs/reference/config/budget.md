@@ -225,13 +225,27 @@ Legacy note: a pre-existing ledger may also contain skill-spawn records
 removed. They are no longer written; hydrate skips them on read.
 
 Records are fsync'd on append. On startup, Reyn re-aggregates from the ledger:
-today's and this month's daily / monthly totals (period-filtered), the
-and the cumulative per-agent token + USD totals. The
-ledger is the cap-critical source of truth; `.reyn/state/budget_state.json` is
-a throttled best-effort cache layered on top (it can lag the ledger by up to a
-second, so the ledger value always wins on recovery). The ledger is
-append-only and grows at roughly a few MB per month; it can be manually
-archived if needed (stop the process first, or wait for the period rollover).
+today's and this month's daily / monthly totals (period-filtered), and the
+cumulative per-agent token + USD totals. The ledger is the cap-critical
+source of truth; `.reyn/state/budget_state.json` is a throttled best-effort
+cache layered on top (it can lag the ledger by up to a second, so the ledger
+value always wins on recovery). The ledger is append-only and grows at
+roughly a few MB per month; it can be manually archived if needed (stop the
+process first, or wait for the period rollover).
+
+**Startup is bounded, not a lifetime re-parse (#2945).** Because the ledger is
+never rotated, a naive "re-parse the whole ledger on every startup" hydrate
+would grow slower forever as the ledger grows. Instead `hydrate` reads a
+compacted checkpoint (`.reyn/cache/budget_checkpoint.json` — a per-agent
+lifetime-total summary anchored to an exact byte position in the ledger) and
+only re-parses the ledger *tail* written after that anchor. The checkpoint is
+refreshed automatically (same throttle as `budget_state.json`) and is always
+safe to delete: it holds no fact the ledger doesn't already durably hold, so
+if it is missing, corrupted, tampered, or the ledger has been truncated below
+its anchor, `hydrate` transparently falls back to a full ledger re-scan
+(slower, but the cap can never silently under-count). Daily / monthly totals
+are not checkpointed — they self-heal at their period boundary, so only the
+lifetime per-agent aggregate needed the compaction.
 
 ## Per-agent cap recovery semantics
 

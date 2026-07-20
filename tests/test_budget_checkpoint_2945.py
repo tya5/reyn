@@ -1,0 +1,257 @@
+"""Tier 2a: #2945 — ``BudgetTracker.hydrate`` must not re-parse the whole,
+monotonically-growing ``budget_ledger.jsonl`` on every startup (a blocking
+startup-path bug, not a "make it faster" optimization).
+
+The fix compacts per-agent lifetime totals into a ``BudgetCheckpoint`` file
+anchored to an exact ledger byte position; ``hydrate`` re-parses only the
+tail after that anchor when it verifies. The core invariant under test: the
+checkpoint must always be safe to delete/tamper/corrupt WITHOUT losing or
+under-counting any durable spend — any ambiguity about its validity falls
+back to a full ledger re-scan (P3, over-count-safe).
+
+Covers the CLAUDE.md recovery-feature PR gate's 4-arm truncate-falsify
+requirement:
+  A. main: set X, truncate the ledger past X's own records, reconstruct, X survives.
+  B. anchor tampering (ledger-side byte/hash mismatch, and separately the
+     checkpoint's own counted-value content hash) -> full re-scan fallback.
+  C. partial/corrupt checkpoint write -> full re-scan fallback.
+  D. checkpoint deleted entirely -> full re-scan fallback (still reconstructs).
+Plus a parity check (checkpoint-fast-path vs checkpoint-absent-full-scan
+agree on totals for the same ledger).
+"""
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+from reyn.llm.pricing import TokenUsage
+from reyn.runtime.budget.budget import (
+    BudgetLedger,
+    BudgetTracker,
+    CostConfig,
+    CostLimitConfig,
+    _default_checkpoint_path,
+)
+
+
+def _cfg() -> CostConfig:
+    return CostConfig(per_agent_tokens=CostLimitConfig(hard_limit=100_000))
+
+
+def _record_calls(ledger_path: Path, state_path: Path, n: int, tokens_each: int = 10) -> BudgetTracker:
+    """Hydrate a tracker against *ledger_path* and record *n* LLM calls for
+    agent "alpha", refreshing the checkpoint on every call (throttle=0)."""
+    bt = BudgetTracker(_cfg())
+    bt.hydrate(ledger_path)
+    bt.set_state_path(state_path, throttle_secs=0.0)
+    for _ in range(n):
+        bt.record_llm(
+            model="gpt-4", agent="alpha",
+            usage=TokenUsage(tokens_each // 2, tokens_each // 2),
+        )
+    return bt
+
+
+def test_checkpoint_created_after_hydrate(tmp_path):
+    """Tier 2a: hydrate() leaves a checkpoint file behind (deletable-by-design
+    cache artifact) so the NEXT hydrate is bounded, not just the ledger scan."""
+    ledger_path = tmp_path / ".reyn" / "state" / "budget_ledger.jsonl"
+    state_path = tmp_path / ".reyn" / "state" / "budget_state.json"
+    _record_calls(ledger_path, state_path, n=3)
+
+    checkpoint_path = _default_checkpoint_path(ledger_path)
+    assert checkpoint_path.is_file(), "hydrate must leave a compacted checkpoint behind"
+    data = json.loads(checkpoint_path.read_text(encoding="utf-8"))
+    assert data["agent_tokens"]["alpha"] == 30
+    assert "anchor" in data and "line_sha256" in data["anchor"]
+
+
+def test_parity_checkpoint_fastpath_vs_full_scan(tmp_path):
+    """Tier 2a: hydrating WITH a valid checkpoint (fast tail-only path) and
+    hydrating with the checkpoint deleted (full re-scan path) against the
+    SAME ledger produce IDENTICAL totals — the compaction must not change the
+    reconstructed value, only the amount of ledger it re-reads."""
+    ledger_path = tmp_path / ".reyn" / "state" / "budget_ledger.jsonl"
+    state_path = tmp_path / ".reyn" / "state" / "budget_state.json"
+    _record_calls(ledger_path, state_path, n=7, tokens_each=12)
+
+    checkpoint_path = _default_checkpoint_path(ledger_path)
+    assert checkpoint_path.is_file()
+
+    # Fast path: checkpoint present and valid.
+    bt_fast = BudgetTracker(_cfg())
+    bt_fast.hydrate(ledger_path)
+    snap_fast = bt_fast.snapshot()
+
+    # Full-scan path: same ledger, checkpoint removed first (arm D shape).
+    checkpoint_path.unlink()
+    bt_full = BudgetTracker(_cfg())
+    bt_full.hydrate(ledger_path)
+    snap_full = bt_full.snapshot()
+
+    assert snap_fast["agent_tokens"] == snap_full["agent_tokens"]
+    assert snap_fast["agent_cost_usd"] == snap_full["agent_cost_usd"]
+    assert snap_fast["daily_tokens"] == snap_full["daily_tokens"]
+    assert snap_fast["monthly_tokens"] == snap_full["monthly_tokens"]
+
+
+def test_arm_A_truncate_past_source_records_X_survives(tmp_path):
+    """Tier 2a: arm A (main) — set X via records 1-3, checkpoint anchors past
+    them; MORE records (4-6) are appended and checkpointed too; then the
+    ledger is truncated back down to exactly past record 3's bytes (records
+    4-6 are destroyed — simulating truncation/data loss after X was set).
+    Reconstructing from the truncated ledger must still recover X, because
+    the checkpoint's anchor no longer verifies (points past the now-missing
+    tail) and hydrate falls back to a full re-scan of the surviving prefix.
+    """
+    ledger_path = tmp_path / ".reyn" / "state" / "budget_ledger.jsonl"
+    state_path = tmp_path / ".reyn" / "state" / "budget_state.json"
+
+    bt = _record_calls(ledger_path, state_path, n=3, tokens_each=10)  # X = 30
+    x_expected = bt.snapshot()["agent_tokens"]["alpha"]
+    assert x_expected == 30
+    truncate_to = ledger_path.stat().st_size  # boundary right after X's records
+
+    # More activity happens (and gets checkpointed), then is catastrophically
+    # lost — truncate the ledger back to the byte offset captured above.
+    for _ in range(3):
+        bt.record_llm(model="gpt-4", agent="alpha", usage=TokenUsage(5, 5))
+    assert bt.snapshot()["agent_tokens"]["alpha"] == 60
+    del bt
+
+    with ledger_path.open("r+b") as f:
+        f.truncate(truncate_to)
+
+    bt2 = BudgetTracker(_cfg())
+    bt2.hydrate(ledger_path)
+    assert bt2.snapshot()["agent_tokens"]["alpha"] == x_expected, (
+        "X's own records survived the truncation and must still reconstruct, "
+        "even though the checkpoint's anchor now points past missing data"
+    )
+
+
+def test_arm_B_ledger_replaced_same_or_larger_size_falls_back(tmp_path):
+    """Tier 2a: arm B (ledger-side) — the ledger file is wholesale REPLACED
+    (e.g. an operator manually archives/rotates it and a fresh one begins)
+    with unrelated content that is the SAME SIZE OR LARGER than the stale
+    checkpoint's anchor offset. A byte-size-only check (``size >= offset``)
+    would wrongly accept the stale checkpoint and misinterpret the new
+    file's bytes as "the tail since last checkpoint" — leaking the old
+    agent's stale total and/or mis-parsing the new agent's records. The
+    boundary-line content hash must catch the mismatch and fall back to a
+    full re-scan of the NEW ledger only.
+
+    FALSIFICATION (verified out-of-band with the hash check short-circuited
+    to always-pass): this test goes RED — the stale ``alpha`` total (40)
+    leaks into the snapshot even though the ledger no longer contains any
+    ``alpha`` record at all.
+    """
+    ledger_path = tmp_path / ".reyn" / "state" / "budget_ledger.jsonl"
+    state_path = tmp_path / ".reyn" / "state" / "budget_state.json"
+    _record_calls(ledger_path, state_path, n=4, tokens_each=10)  # alpha=40
+
+    checkpoint_path = _default_checkpoint_path(ledger_path)
+    old_offset = json.loads(checkpoint_path.read_text(encoding="utf-8"))["anchor"]["byte_offset"]
+
+    # Wholesale replacement: unrelated agent, padded so the new file is AT
+    # LEAST as large as the stale anchor's byte offset (defeats a
+    # size-only check) while its actual bytes differ from what the
+    # checkpoint's anchor pins.
+    ts = BudgetLedger._now_iso()
+    pad = "p" * (old_offset + 16)
+    rec1 = {"ts": ts, "agent": "beta", "model": "gpt-4", "tokens": 15, "cost_usd": 0.001, "pad": pad}
+    rec2 = {"ts": ts, "agent": "beta", "model": "gpt-4", "tokens": 15, "cost_usd": 0.001}
+    new_content = json.dumps(rec1) + "\n" + json.dumps(rec2) + "\n"
+    ledger_path.write_text(new_content, encoding="utf-8")
+    assert ledger_path.stat().st_size >= old_offset, "replacement must be >= the stale anchor offset"
+
+    bt2 = BudgetTracker(_cfg())
+    bt2.hydrate(ledger_path)
+    snap = bt2.snapshot()["agent_tokens"]
+    assert snap.get("alpha", 0) == 0, (
+        "the stale checkpoint's 'alpha' total must not leak once the ledger "
+        "it was anchored to has been replaced"
+    )
+    assert snap.get("beta", 0) == 30
+
+
+def test_arm_B_tampered_checkpoint_content_falls_back_to_full_scan(tmp_path):
+    """Tier 2a: arm B (content variant) — the ledger-side anchor only proves
+    the checkpoint is pinned to an unmodified ledger position — it says
+    nothing about whether the checkpoint's OWN counted values were hand-
+    edited afterward. A direct edit to ``agent_tokens`` (anchor left intact)
+    must be caught by ``content_sha256`` and fall back to a full re-scan."""
+    ledger_path = tmp_path / ".reyn" / "state" / "budget_ledger.jsonl"
+    state_path = tmp_path / ".reyn" / "state" / "budget_state.json"
+    _record_calls(ledger_path, state_path, n=4, tokens_each=10)  # 40 tokens
+
+    checkpoint_path = _default_checkpoint_path(ledger_path)
+    data = json.loads(checkpoint_path.read_text(encoding="utf-8"))
+    applied = 0
+    if data["agent_tokens"]["alpha"] != 999_999:
+        data["agent_tokens"]["alpha"] = 999_999  # tamper: inflate the stored total
+        applied += 1
+    assert applied == 1, "tamper must actually change the stored agent_tokens value"
+    checkpoint_path.write_text(json.dumps(data), encoding="utf-8")
+
+    bt2 = BudgetTracker(_cfg())
+    bt2.hydrate(ledger_path)
+    assert bt2.snapshot()["agent_tokens"]["alpha"] == 40, (
+        "a checkpoint with tampered counted values (anchor otherwise intact) "
+        "must not be trusted; full re-scan must still recover the correct total"
+    )
+
+
+def test_arm_C_partial_checkpoint_write_falls_back_to_full_scan(tmp_path):
+    """Tier 2a: arm C — a checkpoint file truncated mid-write (simulating a
+    crash during the checkpoint's own write) is unparseable JSON — hydrate
+    must treat it as absent and fall back to a full re-scan, not raise or
+    silently under-count."""
+    ledger_path = tmp_path / ".reyn" / "state" / "budget_ledger.jsonl"
+    state_path = tmp_path / ".reyn" / "state" / "budget_state.json"
+    _record_calls(ledger_path, state_path, n=5, tokens_each=10)  # 50 tokens
+
+    checkpoint_path = _default_checkpoint_path(ledger_path)
+    raw = checkpoint_path.read_text(encoding="utf-8")
+    applied = 0
+    truncated = raw[: len(raw) // 2]
+    try:
+        json.loads(truncated)
+    except json.JSONDecodeError:
+        checkpoint_path.write_text(truncated, encoding="utf-8")  # partial write
+        applied += 1
+    assert applied == 1, (
+        "the partial-write strip must actually produce unparseable JSON "
+        "(behavioral check, not a length pin)"
+    )
+
+    bt2 = BudgetTracker(_cfg())
+    bt2.hydrate(ledger_path)  # must not raise on unparseable JSON
+    assert bt2.snapshot()["agent_tokens"]["alpha"] == 50
+
+
+def test_arm_D_checkpoint_deleted_reconstructs_fully(tmp_path):
+    """Tier 2a: arm D (strongest witness) — deleting the checkpoint entirely
+    must be a no-op for correctness — the checkpoint carries no fact the
+    ledger doesn't already durably hold. hydrate falls back to a full
+    ledger re-scan and reconstructs the exact same total."""
+    ledger_path = tmp_path / ".reyn" / "state" / "budget_ledger.jsonl"
+    state_path = tmp_path / ".reyn" / "state" / "budget_state.json"
+    bt = _record_calls(ledger_path, state_path, n=6, tokens_each=10)  # 60 tokens
+    expected = bt.snapshot()["agent_tokens"]["alpha"]
+
+    checkpoint_path = _default_checkpoint_path(ledger_path)
+    assert checkpoint_path.is_file()
+    checkpoint_path.unlink()  # "it is always safe to delete" — the design's core invariant
+    assert not checkpoint_path.is_file()
+
+    bt2 = BudgetTracker(_cfg())
+    bt2.hydrate(ledger_path)
+    assert bt2.snapshot()["agent_tokens"]["alpha"] == expected
+
+
+if __name__ == "__main__":
+    import sys
+
+    import pytest as _pytest
+    sys.exit(_pytest.main([__file__, "-v"]))

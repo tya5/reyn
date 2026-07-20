@@ -58,11 +58,26 @@ Skill version snapshots written by `skill_improver`. Each `v<N>.md` is a timesta
 
 ### `state/budget_ledger.jsonl`
 
-Durable, append-only budget record log (fsync per append). Holds one record per LLM call (token + USD usage) and one record per run spawn (`kind: "spawn"`). On startup Reyn re-aggregates the daily / monthly totals (auto-reset at midnight / the 1st of the month), the cumulative per-agent token + USD totals, and the per-chain spawn counts — so every budget cap survives a process restart or crash. This is the cap-critical source of truth. Inspect with `/budget` in `reyn chat`. Not affected by `/budget reset` (which only clears in-memory counters).
+Durable, append-only budget record log (fsync per append). Holds one record per LLM call (token + USD usage). Legacy per-chain skill-spawn records (`kind: "spawn"`) may still be present in an old ledger but are no longer written and are skipped on read. On startup Reyn re-aggregates the daily / monthly totals (auto-reset at midnight / the 1st of the month) and the cumulative per-agent token + USD totals — so every budget cap survives a process restart or crash. This is the cap-critical source of truth. Inspect with `/budget` in `reyn chat`. Not affected by `/budget reset` (which only clears in-memory counters).
+
+Because the ledger is never rotated, `hydrate` does not re-parse it in full on
+every startup (#2945) — it reads a compacted per-agent checkpoint (see
+`state/../cache/budget_checkpoint.json` below) and only re-parses the tail
+written since that checkpoint's anchor, falling back to a full re-scan if the
+checkpoint is missing, corrupt, or the ledger was truncated below it.
 
 ### `state/budget_state.json`
 
 A throttled, best-effort snapshot of the in-memory budget counters, written on a short interval as a convenience cache on top of the ledger. It can lag the ledger by up to a second, so on recovery the ledger value always wins. Safe to delete; the ledger is the authoritative store.
+
+### `cache/budget_checkpoint.json`
+
+A compacted, point-in-time summary of `budget_ledger.jsonl`'s per-agent
+lifetime totals, anchored to an exact byte position in the ledger (#2945).
+Refreshed automatically alongside `budget_state.json`. Always safe to delete
+— it holds no fact the ledger doesn't already durably hold; `hydrate` falls
+back to a full ledger re-scan if it is absent, corrupted, tampered, or stale
+relative to a truncated ledger.
 
 ### `memory/`
 

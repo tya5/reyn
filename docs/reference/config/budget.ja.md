@@ -192,6 +192,8 @@ budget カウンターは fsync-per-append の `.reyn/state/budget_ledger.jsonl`
 
 レコードは追記のみ（append-only）で fsync されます。起動時に Reyn は ledger から次を再集計します：本日・今月の daily / monthly 合計（期間フィルタ済み）、累積の per-agent token + USD 合計。ledger が cap の信頼源（source of truth）であり、`.reyn/state/budget_state.json` はその上に重ねた throttle 付きベストエフォートのキャッシュです（ledger に対して最大 1 秒遅れることがあるため、復旧時は ledger の値が常に優先されます）。ファイルは月数 MB 程度ずつ増加します。手動でアーカイブする場合はプロセスを停止してから行うか、期間ロールオーバーを待ってください。
 
+**起動コストは有界です。ledger 全体の再パースではありません（#2945）。** ledger はローテーションされないため、「起動のたびに ledger 全体を再パースする」素朴な hydrate は ledger が育つほど遅くなり続けます。代わりに `hydrate` は圧縮済みのチェックポイント（`.reyn/cache/budget_checkpoint.json` — ledger 上の正確なバイト位置にアンカーされた per-agent 生涯合計のサマリ）を読み、そのアンカー以降に追記された ledger の tail だけを再パースします。チェックポイントは自動的に更新され（`budget_state.json` と同じ throttle）、常に削除して安全です。ledger がすでに durable に保持している事実以外は何も持たないため、欠損・破損・改竄、あるいは ledger がアンカーより前まで truncate されていた場合、`hydrate` は透過的に ledger 全体の再スキャンにフォールバックします（遅くなりますが、cap が黙って under-count されることはありません）。daily / monthly 合計はチェックポイント対象外です — 期間境界で自己修復するため、圧縮が必要なのは per-agent の生涯合計だけです。
+
 ## Per-agent cap の復旧セマンティクス
 
 `per_agent_tokens`・`per_agent_cost_usd` は
