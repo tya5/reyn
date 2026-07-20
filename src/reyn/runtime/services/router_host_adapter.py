@@ -65,8 +65,6 @@ class RouterHostAdapter:
         Async callback ``(path: str, content: str) -> dict``.
     file_delete:
         Async callback ``(path: str) -> dict``.
-    file_list_directory:
-        Async callback ``(path: str) -> dict``.
     file_regenerate_index:
         Async callback ``(*, path, output_path, entry_template, header) -> dict``.
     mcp_list_servers:
@@ -132,7 +130,6 @@ class RouterHostAdapter:
         file_read: Callable[..., Awaitable[dict]],
         file_write: Callable[..., Awaitable[dict]],
         file_delete: Callable[..., Awaitable[dict]],
-        file_list_directory: Callable[..., Awaitable[dict]],
         file_regenerate_index: Callable[..., Awaitable[dict]],
         # MCP op callbacks
         mcp_list_servers: Callable[..., Awaitable[list]],
@@ -403,7 +400,6 @@ class RouterHostAdapter:
         self._file_read_cb = file_read
         self._file_write_cb = file_write
         self._file_delete_cb = file_delete
-        self._file_list_directory_cb = file_list_directory
         self._file_regenerate_index_cb = file_regenerate_index
         # MCP callbacks
         self._mcp_list_servers_cb = mcp_list_servers
@@ -1505,12 +1501,6 @@ class RouterHostAdapter:
 
     async def file_delete(self, path: str) -> dict:
         return await self._file_delete_cb(path)
-
-    async def file_list_directory(self, path: str) -> list[dict]:
-        result = await self._file_list_directory_cb(path)
-        if isinstance(result, dict):
-            return result.get("entries", [result])
-        return result
 
     async def file_regenerate_index(self, path: str, output_path: str,
                                      entry_template: str, header: str) -> dict:

@@ -241,7 +241,7 @@ def test_chatsession_satisfies_host_protocol(tmp_path, monkeypatch):
         "get_memory_index", "get_file_permissions", "get_mcp_servers",
         "memory_path", "memory_dir",
         "send_to_agent", "put_outbox",
-        "file_read", "file_write", "file_delete", "file_list_directory",
+        "file_read", "file_write", "file_delete",
         "file_regenerate_index",
         "mcp_list_servers", "mcp_list_tools", "mcp_call_tool",
         "resolve_model",

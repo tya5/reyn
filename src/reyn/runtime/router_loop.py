@@ -705,8 +705,6 @@ class RouterLoopHost(RouterLoopCore, Protocol):
 
     async def file_delete(self, path: str) -> dict: ...
 
-    async def file_list_directory(self, path: str) -> list[dict]: ...
-
     async def file_regenerate_index(self, path: str, output_path: str,
                                      entry_template: str, header: str) -> dict: ...
 
@@ -3556,10 +3554,13 @@ class RouterLoop:
         File handlers in ``src/reyn/tools/file.py`` return raw op_runtime
         dict envelopes (e.g. ``{"kind": "file", "op": "read", "status":
         "ok", "content": "..."}``) but the legacy router path
-        (RouterHostAdapter.file_read / file_list_directory) extracted
-        ``content`` / ``entries`` before returning so the LLM saw a
-        bare string / list. This helper applies the same extraction so
-        registry dispatch is LLM-visible-identical to the prior path.
+        (RouterHostAdapter.file_read) extracted ``content`` before
+        returning so the LLM saw a bare string. This helper applies the
+        same extraction so registry dispatch is LLM-visible-identical to
+        the prior path. (``file_list_directory`` was a sibling legacy
+        adapter method with the same shape — #3193 removed it: it had zero
+        call sites, list_directory has always flowed through this
+        registry/``tools/file.py`` path, not the adapter.)
 
         ``list_mcp_servers`` / ``list_mcp_tools`` deliberately do NOT get this
         treatment (removed — owner-reported bug): unwrapping their

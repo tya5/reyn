@@ -51,9 +51,6 @@ from tests._support.router_host_adapter import (
     null_file_delete as _null_file_delete,
 )
 from tests._support.router_host_adapter import (
-    null_file_list as _null_file_list,
-)
-from tests._support.router_host_adapter import (
     null_file_read as _null_file_read,
 )
 from tests._support.router_host_adapter import (
@@ -184,7 +181,6 @@ def test_delegation_tracker_appended_on_send_to_agent(tmp_path):
         file_read=_null_file_read,
         file_write=_null_file_write,
         file_delete=_null_file_delete,
-        file_list_directory=_null_file_list,
         file_regenerate_index=_null_file_regen,
         mcp_list_servers=_null_mcp_list_servers,
         mcp_list_tools=_null_mcp_list_tools,
@@ -257,7 +253,6 @@ def test_adapter_exposes_permission_resolver_property(tmp_path):
         file_read=_null_file_read,
         file_write=_null_file_write,
         file_delete=_null_file_delete,
-        file_list_directory=_null_file_list,
         file_regenerate_index=_null_file_regen,
         mcp_list_servers=_null_mcp_list_servers,
         mcp_list_tools=_null_mcp_list_tools,
@@ -317,7 +312,6 @@ def test_make_router_op_context_wires_intervention_bus(tmp_path):
         file_read=_null_file_read,
         file_write=_null_file_write,
         file_delete=_null_file_delete,
-        file_list_directory=_null_file_list,
         file_regenerate_index=_null_file_regen,
         mcp_list_servers=_null_mcp_list_servers,
         mcp_list_tools=_null_mcp_list_tools,
@@ -376,7 +370,6 @@ def test_make_router_op_context_no_factory_leaves_bus_none(tmp_path):
         file_read=_null_file_read,
         file_write=_null_file_write,
         file_delete=_null_file_delete,
-        file_list_directory=_null_file_list,
         file_regenerate_index=_null_file_regen,
         mcp_list_servers=_null_mcp_list_servers,
         mcp_list_tools=_null_mcp_list_tools,

@@ -13,8 +13,10 @@ router and phase gates allowed; phase-side dispatch unchanged in M3.
 Important: FileIROp uses `op` (not `action`) as the discriminator field.
 The `list_directory` router tool maps to `op="glob"` with a synthesised
 glob pattern (`<path>/*`) — there is no `list_directory` op in FileIROp.
-This is consistent with session.py `_file_list_directory` which also
-delegates to the glob op internally.
+(#3193: session.py previously had a sibling `_file_list_directory` wrapper
+delegating to the same glob op, but it had zero live callers — the
+RouterHostAdapter method it fed was never invoked, since list_directory
+has always flowed through this registry path instead — and was deleted.)
 """
 from __future__ import annotations
 
@@ -247,9 +249,10 @@ async def _handle_list(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
     """Adapter for list_directory — delegates to op_runtime file handler.
 
     FileIROp has no `list_directory` op variant; directory listing is
-    implemented via op="glob" with a synthesised `<path>/*` pattern.
-    This matches the router session._file_list_directory implementation
-    exactly (= single canonical approach, no divergence).
+    implemented via op="glob" with a synthesised `<path>/*` pattern —
+    this is the single canonical implementation (#3193: a sibling
+    session.py `_file_list_directory` wrapper that duplicated this same
+    glob-delegation was dead code and has been removed).
 
     Path normalisation: map "" / "/" / "./" to "." so the LLM's typical
     "list files here" intent resolves to cwd rather than filesystem root.
@@ -277,7 +280,7 @@ async def _handle_list(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
     legacy_ctx = _build_legacy_op_context(ctx)
     result = await execute_op(op, legacy_ctx)
 
-    # Normalise to {path, entries} shape (= same as session._file_list_directory).
+    # Normalise to {path, entries} shape — the canonical list_directory result shape.
     # Preserve op="glob" + status + matches so file_to_canonical's glob branch
     # fires (#2695: dropping op made the mapper fall through to "None: ok",
     # silently losing the listing). entries is the caller-ergonomic alias;
