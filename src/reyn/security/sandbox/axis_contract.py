@@ -274,28 +274,77 @@ _NETWORK_CONTRACT = AxisContract(
     },
 )
 
+def _write_deny_probe(backend: "SandboxBackend") -> "str | None":
+    """Deny leg for the write axis — reuses
+    :func:`self_test.probe_enforcement` (#2983 stage 1), the ORIGINAL deny
+    probe this whole contract generalises, rather than a new implementation
+    (architect firm: reuse, do not reimplement)."""
+    from .self_test import probe_enforcement
+
+    return probe_enforcement(backend)
+
+
+def _spawn_deny_probe(backend: "SandboxBackend") -> "str | None":
+    """Deny leg for the spawn axis — reuses
+    :func:`self_test.probe_subprocess_enforcement` (#2983 stage 2), the same
+    probe :func:`self_test.enforcement_self_test` calls in production.
+    Reused, not reimplemented (architect firm)."""
+    from .self_test import probe_subprocess_enforcement
+
+    return probe_subprocess_enforcement(backend)
+
+
 _WRITE_CONTRACT = AxisContract(
     name="write",
-    deny_probe=NOT_MIGRATED,
-    exceptions=NOT_MIGRATED,
-    workload_test_id=NOT_MIGRATED,
-    witness_strength=NOT_MIGRATED,
+    deny_probe=_write_deny_probe,
+    # Explicitly empty: write has no deliberate hole analogous to network's
+    # NULL-addr socketpair allowance. Every write outside write_paths is
+    # denied with no carve-out — stated here as a decision, not an omission
+    # (AxisContract.exceptions has no default, so a forgotten value is a
+    # TypeError, not a silent "none").
+    exceptions=(),
+    workload_test_id=(
+        "tests/test_sandbox_axis_contract_2983.py::"
+        "test_write_workload_grant_write_succeeds"
+    ),
+    witness_strength={
+        # The write boundary is Landlock's file rules on Linux and Seatbelt's
+        # SBPL on macOS — both real, executed denies via probe_enforcement's
+        # wrap_command() launch (see test_seatbelt_fires_a_real_deny_on_macos
+        # for the macOS side), unlike network's PROFILE_TEXT gap.
+        "landlock": WitnessStrength.BEHAVIORAL,
+        "seatbelt": WitnessStrength.BEHAVIORAL,
+    },
 )
 
 _SPAWN_CONTRACT = AxisContract(
     name="spawn",
-    deny_probe=NOT_MIGRATED,
-    exceptions=NOT_MIGRATED,
-    workload_test_id=NOT_MIGRATED,
-    witness_strength=NOT_MIGRATED,
+    deny_probe=_spawn_deny_probe,
+    # Explicitly empty: spawn has no deliberate hole either — every fork
+    # under allow_subprocess=False is denied with no carve-out. Stated here,
+    # not left implicit (same reasoning as the write axis above).
+    exceptions=(),
+    workload_test_id=(
+        "tests/test_sandbox_axis_contract_2983.py::"
+        "test_spawn_workload_permitted_child_process_launches"
+    ),
+    witness_strength={
+        # self_test.py attributes this axis to "seccomp-BPF on Linux and
+        # (deny process-fork) on macOS" — both real, executed denies via
+        # probe_subprocess_enforcement's wrap_command() launch (see
+        # test_seatbelt_fires_a_real_subprocess_deny_on_macos for the macOS
+        # side).
+        "seccomp": WitnessStrength.BEHAVIORAL,
+        "seatbelt": WitnessStrength.BEHAVIORAL,
+    },
 )
 
-#: Every sandbox axis this contract knows about — migrated or not. #2983
-#: migrates axes incrementally, starting with ``network`` (the only axis with
-#: all three legs' worth of existing, real evidence: deny = #3030, boundary =
-#: #3060, workload = #3060's chunker-serving probe). ``write`` and ``spawn``
-#: are registered with every leg EXPLICITLY :data:`NOT_MIGRATED` rather than
-#: omitted, so a future axis added here without stating its legs fails to
+#: Every sandbox axis this contract knows about — all three now migrated.
+#: #2983 migrated them incrementally: ``network`` first (deny = #3030,
+#: boundary = #3060, workload = #3060's chunker-serving probe), then
+#: ``write``/``spawn`` in this PR, reusing stage-1's own
+#: ``probe_enforcement``/``probe_subprocess_enforcement`` as their deny legs.
+#: A future axis added here without stating all four fields fails to
 #: construct (TypeError) instead of silently joining this tuple as if
 #: migrated.
 #:
@@ -314,5 +363,10 @@ AXIS_REGISTRY: "tuple[AxisContract, ...]" = (
 #: (``is_migrated``). A constant, not a derived count, so the conformance
 #: test can name what SHOULD be true and fail loudly if the registry drifts
 #: from it in either direction (an axis silently un-migrated, or a new axis
-#: migrated without updating this expectation).
-_EXPECTED_MIGRATED_AXES: "frozenset[str]" = frozenset({"network"})
+#: migrated without updating this expectation). Now equal to every axis name
+#: in AXIS_REGISTRY — deliberately NOT derived from the registry itself (e.g.
+#: ``{a.name for a in AXIS_REGISTRY}``), because that derivation would read
+#: as green the moment ANY subset of axes is migrated (a vacuous pass on a
+#: registry of only-unmigrated axes too) rather than asserting the concrete
+#: claim "all three named axes are migrated".
+_EXPECTED_MIGRATED_AXES: "frozenset[str]" = frozenset({"write", "spawn", "network"})
