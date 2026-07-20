@@ -1,14 +1,9 @@
----
-name: rag_ingest_and_query_workflow
-description: How to actually call the installed `rag_ingest` / `rag_query` pipelines -- exact parameter names, absolute-vs-cwd-relative path rules, and the one embedding_model mismatch that silently ruins a corpus. Read this once `build_and_query_rag_corpus` and `configure_rag_embedding_provider` have you installed and ready to ingest or query.
----
+## Run the RAG ingest/query workflow
 
-# Run the RAG ingest/query workflow
-
-Companion to `build_and_query_rag_corpus` (routing + install) and
-`configure_rag_embedding_provider` (embedding setup) -- read those first if
+Companion to the router SKILL.md (routing + install) and
+`configure-embedding-provider.md` (embedding setup) -- read those first if
 you haven't installed the `rag` plugin or confirmed an embedding provider
-yet. This skill covers the two actual pipeline calls.
+yet. This file covers the two actual pipeline calls.
 
 Both steps below run through `pipeline__run` -- the launch verb for a
 **REGISTERED** pipeline, invoked by the name it was installed under
@@ -37,7 +32,7 @@ Returns a summary: `files_scanned` / `chunks_upserted` / `chunks_removed` /
 `cost_usd` / `priced` / `estimated_tokens_saved_by_dedup`. **`cost_usd: null`
 with `priced: false` means the model could not be priced -- report it as
 "unknown", never as free.** (Ingest is incremental and cheap to re-run --
-see `rag_corpus_internals`.)
+see `corpus-internals-schema-tuning-and-backend-swap.md`.)
 
 **2. Query** -- the same `db` the ingest wrote. **The parameter name is
 EXACTLY `db`** -- not `db_path` (the raw vector-store MCP tool's own arg
@@ -66,9 +61,9 @@ Returns `[{id, distance, metadata}, ...]`, **nearest first**. `metadata`
 carries `source_path` / `chunk_index` / `content_hash` / `embedding_model`.
 **It does not carry the chunk text** -- the store has no column for it. To
 quote a hit, read `metadata.source_path` with the ordinary file read op.
-(Full schema: `rag_corpus_internals`.)
+(Full schema: `corpus-internals-schema-tuning-and-backend-swap.md`.)
 
-## ⚠️ One sqlite file = one embedding model
+### One sqlite file = one embedding model
 
 `embedding_model` defaults to `"standard"` on **both** pipelines. If you pass
 it to one, **pass the same value to the other** -- a mismatch changes the
@@ -76,7 +71,8 @@ vector space, and the query either raises `VectorDimensionMismatchError` or,
 at the same dimension, returns **quietly meaningless neighbours**. Different
 model -> different sqlite file: to re-embed, ingest into a **new**
 `output_db`; pointing a new model at the old file corrupts it. (Enforcing
-mechanism, full schema, tuning knobs, and backend swap: `rag_corpus_internals`.)
+mechanism, full schema, tuning knobs, and backend swap:
+`corpus-internals-schema-tuning-and-backend-swap.md`.)
 
 Full setup + backend-swap guide: `docs/guide/for-users/build-a-rag-corpus.md`.
 Config to copy: `docs/cookbook/configs/with-builtin-rag-mcp.yaml`.
