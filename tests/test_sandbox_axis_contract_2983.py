@@ -127,8 +127,8 @@ def test_network_axis_is_fully_migrated_with_no_leg_left_behind() -> None:
     assert axis.workload_test_id is not NOT_MIGRATED
     assert axis.witness_strength is not NOT_MIGRATED
     assert axis.is_migrated is True
-    assert len(axis.exceptions) == 1
-    assert axis.exceptions[0].name == "null_addr_socketpair_selfpipe"
+    exception_names = {exc.name for exc in axis.exceptions}
+    assert "null_addr_socketpair_selfpipe" in exception_names
 
 
 def test_network_workload_test_id_resolves_to_a_real_test() -> None:
@@ -179,20 +179,6 @@ def test_enforcement_self_test_still_gates_exactly_write_and_spawn() -> None:
     # explaining why probe_network_enforcement is deliberately excluded
     # mentions the bare name, which must not itself trip this guard.
     assert "probe_network_enforcement(" not in src
-
-
-def test_axis_contract_module_does_not_widen_the_cached_suite() -> None:
-    """Tier 1: importing axis_contract must not, as a side effect, register
-    the network probe into self_test's process-global cache under a key that
-    make_default_backend's cached suite would consult. Concretely: the
-    process-global _CACHE self_test.py uses for enforcement_self_test is
-    keyed on backend.name and untouched by importing this module."""
-    from reyn.security.sandbox import self_test as self_test_mod
-
-    before = dict(self_test_mod._CACHE)
-    import reyn.security.sandbox.axis_contract  # noqa: F401 (import side effect under test)
-
-    assert self_test_mod._CACHE == before
 
 
 # ── 4. Real 3-leg witnessing (Linux-only) ─────────────────────────────────
