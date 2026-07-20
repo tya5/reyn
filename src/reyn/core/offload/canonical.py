@@ -613,9 +613,18 @@ def _file_signal_meta(result: dict) -> "dict[str, Any]":
     """High-signal meta for a ``file`` op result: ``op`` + ``status`` (a ``truncated`` read tells the
     LLM there is more; a ``not_found`` tells it to retry another path) + ``path`` (which file). Transport
     noise beyond these is dropped, per the module's high-signal-only rule. ``isError`` is added on the
-    error path by the caller."""
+    error path by the caller.
+
+    ``truncated`` / ``total_count`` / ``returned_count`` (#2998) — the ``glob`` op's silent-cap signal:
+    set by the op_runtime handler only when the ``max_results`` cap actually discarded matches (never
+    unconditionally — an always-present key would make the signal meaningless), so a consumer downstream
+    of ``to_canonical`` (pipeline ``tool:`` step, CodeAct) can tell a capped listing from a complete one
+    and knows the fix (pass a larger ``max_results``). The interactive router chat path for
+    ``list_directory`` bypasses ``to_canonical`` entirely (see ``router_loop._normalise_router_tool_
+    result``, which flattens to a bare list before this ever runs) and carries the same fields through
+    its own append-a-note branch instead."""
     meta: dict[str, Any] = {}
-    for key in ("op", "status", "path"):
+    for key in ("op", "status", "path", "truncated", "total_count", "returned_count"):
         value = result.get(key)
         if value is not None:
             meta[key] = value

@@ -97,7 +97,7 @@ Each is a distinct op kind with its own schema; there is no `op` sub-field.
 | `write_file` | `file.write` | Creates or overwrites; parent dirs created as needed. |
 | `edit_file` | `file.write` | `old_string` must be unique unless `replace_all: true`. |
 | `delete_file` | `file.write` | |
-| `glob_files` | `file.read` | `path` defaults to `.`. |
+| `glob_files` | `file.read` | `path` defaults to `.`. `max_results` defaults to 50 (unchanged). When it discards matches, the result additionally carries `truncated: true`, `total_count`, and `returned_count` (#2998) — the chat router's `list_directory` alias (fine-grained `glob_files` under a synthesized `<path>/*` pattern) surfaces the same fact as a trailing note instead of the frontmatter meta path this result rides. |
 | `grep_files` | `file.read` | `glob` filters which files are searched. |
 
 Permission scopes are configured per-op kind. See `reference/config/permissions.md`.
