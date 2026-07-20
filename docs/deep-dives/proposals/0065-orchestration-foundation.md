@@ -52,7 +52,7 @@ The recurring failure when designing here is **proposing a mechanism that exists
 | Interrupt vs ride-along | wake (inbox push) / no-wake (next-turn staging) / shell / `pipeline_launch` | `src/reyn/hooks/dispatcher.py` |
 | Runaway bounding | `safety.loop.max_hook_driven_turns` | `src/reyn/config/chat.py` |
 | Hot hook changes | live registry swap, reapplied at the turn boundary | `HookDispatcher.replace_registry` |
-| Returning a result outward | `pipeline_launch` renders `input_template` against the event's template vars, runs async, result returns on this session's inbox; a `shell` step is the write-back leg | `src/reyn/hooks/dispatcher.py`, `src/reyn/core/pipeline/parser.py` |
+| Returning a result outward | `pipeline_launch` renders `input_template` against the event's template vars, runs async, result returns on this session's inbox (`src/reyn/hooks/dispatcher.py`) — and the launched pipeline's `shell` step is the write-back leg (`src/reyn/core/pipeline/parser.py`, which defines the `transform`/`tool`/`shell` step set) | see inline |
 | Asking the human | MCP elicitation, per connection, with timeout + listener check | `src/reyn/mcp/connection_service.py` |
 | Tearing a subscription down | `unsubscribe_mcp_resource` op | `src/reyn/tools/mcp.py` |
 | Scoping | workspace `hooks:` + per-agent `.reyn/agents/<name>/hooks.yaml`; bus/registry are per-session | `load_per_agent_hooks`, `src/reyn/hooks/bus.py` |
