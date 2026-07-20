@@ -407,6 +407,18 @@ class RouterHistoryBuffer:
             estimate_tokens_for_any_turn(wt, self._model, use_chars4=use_chars4)
             for wt in wire_turns
         )
+        # #2957 PR-B (co-vet follow-up): emit the elide side's own internal
+        # total as a public P6 audit-event — the ONLY way a test (or an
+        # operator inspecting `reyn events`) can observe what THIS method
+        # actually counted, as opposed to re-deriving a reference number
+        # from its returned wire dicts (which cannot detect a regression in
+        # THIS computation itself). None-safe: many test/estimation-path
+        # callers construct this buffer with events=None.
+        if self._events is not None:
+            self._events.emit(
+                "history_elide_total_computed",
+                total=total, effective_trigger=effective_trigger,
+            )
 
         if total <= effective_trigger:
             # Window-utilization: full raw conversation fits — no elide.

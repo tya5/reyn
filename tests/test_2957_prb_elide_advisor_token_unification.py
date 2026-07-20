@@ -54,7 +54,10 @@ _MODEL = "gpt-3.5-turbo"
 def _make_pair(history: list[ChatMessage], *, media_store=None, use_chars4: bool = True):
     """Real RouterHistoryBuffer + real ContextBudgetAdvisor wired exactly as
     production wires them (ContextBudgetAdvisor.history_fn = build_history —
-    see that class's own module docstring)."""
+    see that class's own module docstring). Returns (buf, advisor, events) —
+    the shared EventLog is exposed so a caller can observe build_history's
+    own internal ``history_elide_total_computed`` audit-event (see
+    ``test_elide_total_advisor_and_reference_three_way_agree`` below)."""
     cfg = CompactionConfig(use_chars4_estimate=use_chars4)
     events = EventLog()
     buf = RouterHistoryBuffer(
@@ -76,7 +79,7 @@ def _make_pair(history: list[ChatMessage], *, media_store=None, use_chars4: bool
         events=events,
         history_fn=buf.build_history,
     )
-    return buf, advisor
+    return buf, advisor, events
 
 
 def _canonical_reference_tokens(wire_turns: list[dict], use_chars4: bool) -> int:
@@ -115,7 +118,7 @@ def test_image_bearing_conversation_elide_and_advisor_agree():
         ),
         ChatMessage(role="assistant", content="ok", seq=3),
     ]
-    buf, advisor = _make_pair(history)
+    buf, advisor, _events = _make_pair(history)
 
     wire = buf.build_history()
     assert len(wire) == len(history), "sanity: small conversation must not elide"
@@ -160,7 +163,7 @@ def test_tool_calls_bearing_conversation_elide_and_advisor_agree():
         ),
         ChatMessage(role="tool", content="result", tool_call_id="t1", name="big_tool", seq=3),
     ]
-    buf, advisor = _make_pair(history)
+    buf, advisor, _events = _make_pair(history)
 
     wire = buf.build_history()
     advisor_tokens = advisor._incremental_history_tokens()
@@ -199,7 +202,7 @@ def test_post_elide_advisor_matches_canonical_recompute_of_the_elided_output(mon
         )
 
     history = [_big_image(i) for i in range(1, 9)]
-    buf, advisor = _make_pair(history)
+    buf, advisor, _events = _make_pair(history)
 
     wire = buf.build_history()
     assert len(wire) < len(history), "test premise: this conversation must actually elide"
@@ -236,7 +239,7 @@ def test_pathref_and_materialised_image_count_identically(tmp_path):
     history_pathref = [
         ChatMessage(role="user", content=[{"type": "text", "text": "look"}, pathref_block], seq=1),
     ]
-    buf_pathref, advisor_pathref = _make_pair(history_pathref, media_store=store)
+    buf_pathref, advisor_pathref, _events_pathref = _make_pair(history_pathref, media_store=store)
     wire_pathref = buf_pathref.build_history()
     assert wire_pathref[0]["content"][1]["type"] == "image_url", (
         "sanity: build_history's real _serialise_turn must have materialised it"
@@ -247,11 +250,87 @@ def test_pathref_and_materialised_image_count_identically(tmp_path):
     history_inline = [
         ChatMessage(role="user", content=[{"type": "text", "text": "look"}, materialised_block], seq=1),
     ]
-    buf_inline, advisor_inline = _make_pair(history_inline, media_store=None)
+    buf_inline, advisor_inline, _events_inline = _make_pair(history_inline, media_store=None)
     wire_inline = buf_inline.build_history()
     tokens_inline = advisor_inline._incremental_history_tokens()
 
     assert tokens_pathref == tokens_inline, (
         f"path-ref ({tokens_pathref}) and already-materialised ({tokens_inline}) "
         f"forms of the identical image must count identically"
+    )
+
+
+# ---------------------------------------------------------------------------
+# 5. Co-vet follow-up — observe elide's OWN internal total, not just a
+#    test-side reference recomputed from its returned wire dicts
+# ---------------------------------------------------------------------------
+
+
+def test_elide_total_advisor_and_reference_three_way_agree():
+    """Tier 2: witness 5 — closes a gap in witnesses 1-4: those compare
+    ``advisor_tokens == _canonical_reference_tokens(wire)``, which is a
+    comparison between the advisor and a TEST-SIDE reference recomputed
+    from build_history's returned wire dicts — it never observes what
+    ``build_history`` itself counted internally to make its elide/no-elide
+    decision.
+
+    Content choice matters here, not just the observation point: an
+    image_url/tool_calls fixture (witnesses 1-2's content) turns out NOT to
+    discriminate a reverted elide-side total, because
+    ``estimate_tokens_for_any_turn`` already produces the IDENTICAL number
+    for a raw ``ChatMessage`` and its serialised wire dict in that case (by
+    design — that's what makes the adapter correct for both shapes). This
+    test instead uses an UNRESOLVABLE path-ref image
+    (``{"type": "image", "path": <nonexistent file>}``): the raw
+    ``ChatMessage`` counts a full ``_IMAGE_FIXED_TOKEN_COST`` "phantom"
+    image that will NEVER reach the provider, while ``_serialise_turn``
+    DROPS the unresolvable block entirely (see
+    ``_materialise_path_ref_content`` / ``_read_pathref_image`` — a missing
+    file returns ``None`` and the content part is omitted) — so the wire
+    dict genuinely has fewer tokens than the raw ChatMessage. This is a
+    real, content-driven divergence between serialise-INPUT and
+    serialise-OUTPUT counting, not just an architectural symmetry — exactly
+    the class of case #2957 PR-B's "measure the canonical wire quantity"
+    design decision is FOR.
+
+    ``build_history`` emits its internal total as a public P6 audit-event
+    (``history_elide_total_computed`` — see that method) precisely so this
+    is observable without touching private state (CLAUDE.md: no private-
+    state assertions). This test asserts the 3-way agreement: elide's own
+    emitted total == advisor's measurement == the canonical reference.
+    """
+    history = [
+        ChatMessage(
+            role="user",
+            content=[
+                {"type": "text", "text": "look"},
+                {"type": "image", "path": "/nonexistent/2957-prb-witness/does-not-exist.png",
+                 "mime_type": "image/png"},
+            ],
+            seq=1,
+        ),
+    ]
+    buf, advisor, events = _make_pair(history, media_store=None)
+
+    wire = buf.build_history()
+    assert wire[0]["content"] == [{"type": "text", "text": "look"}], (
+        "test premise: the unresolvable path-ref block must be DROPPED at "
+        "serialise time, so the wire dict is strictly smaller than the raw "
+        "ChatMessage's content"
+    )
+
+    elide_events = [e for e in events.all() if e.type == "history_elide_total_computed"]
+    assert elide_events, (
+        "build_history must emit its internal elide-threshold total as a "
+        "public audit-event — without this, elide's own accounting is "
+        "unobservable from outside private state"
+    )
+    elide_total = elide_events[-1].data["total"]
+
+    advisor_tokens = advisor._incremental_history_tokens()
+    reference = _canonical_reference_tokens(wire, use_chars4=True)
+
+    assert elide_total == advisor_tokens == reference, (
+        f"3-way mismatch: elide's own total={elide_total}, "
+        f"advisor={advisor_tokens}, reference={reference}"
     )
