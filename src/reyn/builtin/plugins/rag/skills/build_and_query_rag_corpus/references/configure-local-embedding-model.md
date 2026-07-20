@@ -1,12 +1,7 @@
----
-name: configure_rag_local_embedding_model
-description: Run a local embedding model behind a litellm proxy for RAG ingest/query when you have no embedding API key (Case B) -- start the local server, register it in the proxy config, point reyn at the proxy, and pick which local model to use. Read this when `configure_rag_embedding_provider`'s Case A (API key) doesn't apply, or when you need to choose a local embedding model.
----
+## Configure a local RAG embedding model (Case B)
 
-# Configure a local RAG embedding model (Case B)
-
-Companion to `configure_rag_embedding_provider` (which covers the pre-flight
-check and Case A, the API-key path). This skill is Case B: no embedding API
+Companion to `configure-embedding-provider.md` (which covers the pre-flight
+check and Case A, the API-key path). This file is Case B: no embedding API
 key, so a local embedding model runs behind a litellm proxy -- the proxy is
 what turns that local model into the OpenAI-compatible endpoint reyn
 expects; reyn itself never talks to the local server directly.
@@ -63,21 +58,22 @@ string you use:
   `nomic-embed-text` (everything after `openai/`), and you'd pass
   `embedding_model: "local"` to `rag_ingest.ingest` / `rag_query.query`.
 
-**Step 4 -- confirm it end to end.** Re-run `configure_rag_embedding_provider`'s
+**Step 4 -- confirm it end to end.** Re-run `configure-embedding-provider.md`'s
 pre-flight curl first (cheapest check). Then run a real ingest + query (see
-`build_and_query_rag_corpus`): a non-empty `[{id, distance, metadata}, ...]`
+`run-ingest-and-query-workflow.md`): a non-empty `[{id, distance, metadata}, ...]`
 list is the real signal -- `chunks_upserted > 0` on the ingest response
 alone does not prove the vectors are meaningful. An empty query result with
 a populated db usually means a naming mismatch (Step 3 above); `rag_ingest`
 returning "blocked" means a server, not the embedding endpoint, is
-unreachable -- see `build_and_query_rag_corpus`'s "Prerequisites".
+unreachable -- see the router SKILL.md's "Prerequisites".
 
-## Choosing a local model -- pick once, it's expensive to change
+### Choosing a local model -- pick once, it's expensive to change
 
 **"One sqlite file = one embedding model" makes this choice sticky** --
 swapping later means a full re-ingest into a *new* `output_db`, not an
-in-place update (see `rag_corpus_internals` for the `dim`-based mechanism
-enforcing this). Decide with these axes before your first big ingest:
+in-place update (see `corpus-internals-schema-tuning-and-backend-swap.md`
+for the `dim`-based mechanism enforcing this). Decide with these axes before
+your first big ingest:
 
 - **Language.** English-only corpus -> a small English-only model is
   enough. Japanese, Chinese, or mixed-language -> use a multilingual
@@ -88,7 +84,7 @@ enforcing this). Decide with these axes before your first big ingest:
   English-only, fastest) vs. `multilingual-e5-small` (118 MB, 50 languages,
   better cross-lingual recall) vs. OpenAI's `text-embedding-3-small` API
   (~5 pp higher MTEB, at API cost) -- same tradeoffs whether served locally
-  (this skill) or as an API (`configure_rag_embedding_provider`'s Case A).
+  (this file) or as an API (`configure-embedding-provider.md`'s Case A).
   See `docs/guide/for-users/enable-semantic-search.md` § "Choosing a local
   model (Case B)" (same comparison, for `search_actions`).
 - **Server ecosystem.** Via Ollama, `nomic-embed-text` is the easiest
@@ -100,4 +96,4 @@ enforcing this). Decide with these axes before your first big ingest:
 In short: **fast English corpus -> a small English model
 (`nomic-embed-text` is a reasonable Ollama default). Japanese/multilingual
 -> a multilingual model. Best recall + already have an API key -> skip
-this skill, use `configure_rag_embedding_provider`'s Case A instead.**
+this file, use `configure-embedding-provider.md`'s Case A instead.**

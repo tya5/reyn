@@ -36,7 +36,7 @@ plugin_management__install(source={"kind": "builtin", "name": "rag"})
 mcp__install_local(name="reyn_markitdown", command="uvx", args=["markitdown-mcp"])
 ```
 
-One `plugin_management__install` call registers **both MCP servers, both pipelines, and its RAG skills** together — no `permissions:` block to add, because a configured server is granted when the pipeline runs it. **Refuse and nothing is written.**
+One `plugin_management__install` call registers **both MCP servers, both pipelines, and its RAG skill** together — no `permissions:` block to add, because a configured server is granted when the pipeline runs it. **Refuse and nothing is written.**
 
 Each server is **probed before its registration is committed**: if a command does not start on your machine, that server is skipped rather than leaving a half-configured entry.
 
@@ -55,7 +55,7 @@ Each server is **probed before its registration is committed**: if a command doe
 
 ## Use it
 
-In `reyn chat`, just ask — *"ingest the documents in /abs/path/to/docs into a searchable store, then tell me what they say about X"*. Reyn reads its `build_and_query_rag_corpus` skill (routing to its companions as needed) and drives both pipelines.
+In `reyn chat`, just ask — *"ingest the documents in /abs/path/to/docs into a searchable store, then tell me what they say about X"*. Reyn reads its `build_and_query_rag_corpus` skill (reading a bundled reference as needed) and drives both pipelines.
 
 To run them yourself, outside a chat session:
 

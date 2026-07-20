@@ -1,8 +1,8 @@
 # ADR 0064 P5 -- builtin user RAG, now shipped as the `rag` PLUGIN
 # (src/reyn/builtin/plugins/rag/): two MCP servers (chunker/vector-store) +
-# two pipelines (rag_ingest.ingest / rag_query.query) + its RAG skills
-# (build_and_query_rag_corpus + companions, #3162 part 1), installed
-# together in one call.
+# two pipelines (rag_ingest.ingest / rag_query.query) + its RAG skill
+# (build_and_query_rag_corpus, a single skill with bundled references --
+# #3162), installed together in one call.
 # Originally authored under FP-0063 (P2 MCP layer / P3 pipelines / P4 skill).
 #
 # This file is a REFERENCE, not something you copy into reyn.yaml -- unlike
@@ -99,15 +99,16 @@
 # `write_paths` is not something `plugin_management__install`/`mcp__install_local` can
 # set -- it is a hand-edit to the registered entry.
 #
-# The RAG skills (installed alongside the plugin's other capabilities --
-# `build_and_query_rag_corpus` for routing/install, plus companions for
-# embedding setup, the ingest/query workflow, and corpus internals; #3162
-# part 1) carry the "when/how" these two one-line pipeline descriptions
-# cannot: which of reyn's two RAGs to reach for, the ingest->query order,
-# and the C4 rule that one sqlite file holds ONE embedding model (pass the
-# same `embedding_model` to both pipelines -- a mismatch either raises
-# VectorDimensionMismatchError or, at the same dimension, returns quietly
-# meaningless neighbours). Each ships `visibility: on_demand` -- the model
+# The RAG skill (installed alongside the plugin's other capabilities --
+# `build_and_query_rag_corpus`, routing/install in its router SKILL.md, with
+# embedding setup / the ingest-query workflow / corpus internals bundled as
+# `references/` files, #3162) carries the "when/how" these two one-line
+# pipeline descriptions cannot: which of reyn's two RAGs to reach for, the
+# ingest->query order, and the C4 rule that one sqlite file holds ONE
+# embedding model (pass the same `embedding_model` to both pipelines -- a
+# mismatch either raises VectorDimensionMismatchError or, at the same
+# dimension, returns quietly meaningless neighbours). It ships
+# `visibility: on_demand` -- the model
 # finds it via `skill_list` and reads its body, no config needed.
 # Operator-facing walkthrough: docs/guide/for-users/build-a-rag-corpus.md.
 #

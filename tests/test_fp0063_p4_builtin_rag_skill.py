@@ -1,20 +1,30 @@
-"""Tier 2: OS invariant — the `rag_ingest_and_query_workflow` skill, the
-"how to actually call the two pipelines" surface, shipped as part of the
-builtin `rag` plugin (ADR 0064 P5, `src/reyn/builtin/plugins/rag/skills/`;
-originally authored under FP-0063 P4,
+"""Tier 2: OS invariant — the `build_and_query_rag_corpus` skill, the RAG
+plugin's routing + "how to actually call the two pipelines" surface, shipped
+as part of the builtin `rag` plugin (ADR 0064 P5,
+`src/reyn/builtin/plugins/rag/skills/`; originally authored under FP-0063 P4,
 docs/deep-dives/proposals/0063-builtin-turnkey-user-rag.md).
 
 #3162 part 1 split the original single `build_and_query_rag_corpus` skill
 (21_837 bytes -- 266% of the default 8_192-char `read_file` inline cap,
 already silently truncated in practice for any caller without a
-large-window model resolved) into five smaller skills: routing + install
-stays in `build_and_query_rag_corpus`; the two `pipeline__run` calls this
-file pins moved to `rag_ingest_and_query_workflow` (this file's new
-target); embedding setup moved to `configure_rag_embedding_provider` /
-`configure_rag_local_embedding_model`; schema/tuning/backend-swap moved to
-`rag_corpus_internals`. This file's target and docstring were updated in
-the same PR to track that move (`tests/test_skill_md_default_inline_cap_gate.py`
-is the new structural gate keeping any future skill under the cap).
+large-window model resolved) into five smaller sibling skills. A later pass
+of #3162 folded those five back into the STANDARD Agent Skills shape (one
+skill directory = `SKILL.md` router + bundled `references/*.md` — the five
+sibling skills were never the standard form): routing + install stays in
+`SKILL.md` itself; the two `pipeline__run` calls this file pins moved to
+`references/run-ingest-and-query-workflow.md`; embedding setup moved to
+`references/configure-embedding-provider.md` /
+`references/configure-local-embedding-model.md`; schema/tuning/backend-swap
+moved to `references/corpus-internals-schema-tuning-and-backend-swap.md`.
+This file's target and docstring were updated in the same PR to track that
+move — `_skill_body()` below now concatenates `SKILL.md` with every bundled
+`references/*.md` file, so the extraction-based checks (pipeline names, doc
+paths, tool names) keep pinning the SAME prose regardless of which file
+within the one skill directory it physically lives in
+(`tests/test_skill_md_default_inline_cap_gate.py` is the structural gate
+keeping every file under the cap;
+`tests/test_skill_references_gate_3162.py` gates the reference-link
+mechanism itself).
 
 Under ADR 0064 the skill is no longer a standing `BUILTIN_SKILLS` entry —
 it is registered only once `plugin_install(source={"kind": "builtin",
@@ -81,14 +91,26 @@ from tests._support.builtin_skill_tool_names import (
 
 _REPO_ROOT = Path(__file__).parent.parent
 _PLUGIN_DIR = _REPO_ROOT / "src" / "reyn" / "builtin" / "plugins" / "rag"
-_SKILL_NAME = "rag_ingest_and_query_workflow"
-_SKILL_PATH = _PLUGIN_DIR / "skills" / _SKILL_NAME / "SKILL.md"
+_SKILL_NAME = "build_and_query_rag_corpus"
+_SKILL_DIR = _PLUGIN_DIR / "skills" / _SKILL_NAME
+_SKILL_PATH = _SKILL_DIR / "SKILL.md"
 _INGEST_PATH = _PLUGIN_DIR / "pipelines" / "rag_ingest.yaml"
 _QUERY_PATH = _PLUGIN_DIR / "pipelines" / "rag_query.yaml"
 
 
 def _skill_body() -> str:
-    return _SKILL_PATH.read_text(encoding="utf-8")
+    """`SKILL.md` concatenated with every bundled `references/*.md` file —
+    post-consolidation (#3162), the prose this file's extraction-based
+    checks pin (pipeline names, doc paths, tool names) is spread across the
+    router and its references rather than confined to one file, so the
+    checks must see the whole skill directory to keep pinning the same
+    content they pinned before the five-skill split was folded back in."""
+    parts = [_SKILL_PATH.read_text(encoding="utf-8")]
+    references_dir = _SKILL_DIR / "references"
+    if references_dir.is_dir():
+        for path in sorted(references_dir.glob("*.md")):
+            parts.append(path.read_text(encoding="utf-8"))
+    return "\n".join(parts)
 
 
 # ---------------------------------------------------------------------------
@@ -98,7 +120,7 @@ def _skill_body() -> str:
 
 def test_rag_plugin_manifest_declares_skills_capability_and_the_skill_exists() -> None:
     """Tier 2: the plugin manifest declares a `skills` capability, and the
-    `rag_ingest_and_query_workflow` SKILL.md really exists at the layout
+    `build_and_query_rag_corpus` SKILL.md really exists at the layout
     `plugin_install`'s discovery convention expects."""
     manifest = load_plugin_manifest(_PLUGIN_DIR)
     assert "skills" in manifest.capability_kinds
@@ -113,8 +135,12 @@ def test_rag_plugin_manifest_declares_skills_capability_and_the_skill_exists() -
 def test_rag_skill_frontmatter_is_well_formed_and_name_matches_dirname() -> None:
     """Tier 2: the SKILL.md frontmatter is valid YAML with `name`/`description`,
     and `name` matches its own directory name (the discovery-by-dirname key
-    `plugin_install`'s empty-entries convention uses)."""
-    match = re.match(r"^---\n(.*?)\n---\n", _skill_body(), re.DOTALL)
+    `plugin_install`'s empty-entries convention uses). Checked against
+    `SKILL.md` alone (not `_skill_body()`'s references-concatenated form) —
+    only `SKILL.md` carries frontmatter; a bundled `references/*.md` file is
+    a plain leaf with none (see `test_skill_references_gate_3162.py`)."""
+    skill_md_only = _SKILL_PATH.read_text(encoding="utf-8")
+    match = re.match(r"^---\n(.*?)\n---\n", skill_md_only, re.DOTALL)
     assert match is not None, "SKILL.md must open with a YAML frontmatter block"
     frontmatter = yaml.safe_load(match.group(1))
 
