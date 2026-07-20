@@ -36,6 +36,7 @@ from reyn.core.events.event_store import EventStore
 from reyn.core.events.events import EventLog
 from reyn.core.events.snapshot_generations import SnapshotGenerationStore
 from reyn.core.events.state_log import StateLog
+from reyn.core.op_runtime.status_classify import classify_op_status
 from reyn.core.pipeline.registry import PipelineNotFoundError, PipelineRegistry
 from reyn.hooks.dispatcher import HOOK_INBOX_KIND
 from reyn.hooks.schema_registry import build_hook_payload
@@ -916,6 +917,49 @@ class _InterventionBundle:
     intervention_handler: "InterventionHandler"
     intervention_coordinator: "InterventionCoordinator"
     chain_timeout_glue: "ChainTimeoutGlue"
+
+
+# #3193: signal fields a file op result may carry ALONGSIDE its content when
+# the op is incomplete-but-not-a-failure (a truncated read, a max_results-
+# capped glob). Every `Session._file_*` wrapper forwards whichever of these
+# are present, untouched, instead of the pre-#3193 behavior of collapsing
+# any non-"ok" status into a content-discarding `{"error": ...}`.
+_FILE_OP_SIGNAL_KEYS = (
+    "truncated", "note", "next_offset", "next_char_offset",
+    "shown_lines", "total_lines", "total_chars",
+    "total_count", "returned_count",
+)
+
+
+def _forward_file_signal_fields(dest: dict, result: dict, *, outcome: str) -> None:
+    """Copy any #3193 signal fields present on *result* onto *dest*, and — for
+    ``outcome == "unknown"`` (a status `classify_op_status` does not
+    recognize) — tag the output so the unrecognized status is OBSERVABLE
+    rather than silently treated as either a clean success or a failure.
+    See `reyn.core.op_runtime.status_classify` module docstring for the
+    full policy rationale.
+
+    ``outcome == "partial"`` always sets ``dest["truncated"] = True``
+    regardless of which internal key the op_runtime handler used to signal
+    it — the ``read`` op marks it via ``status == "truncated"`` (+ a
+    private ``_truncated`` key), while ``glob`` keeps ``status == "ok"``
+    and adds a sibling public ``truncated`` key. Wrapper callers get ONE
+    consistent externally-visible field either way.
+    """
+    if outcome == "partial":
+        dest["truncated"] = True
+    for key in _FILE_OP_SIGNAL_KEYS:
+        if key in result:
+            dest[key] = result[key]
+    if outcome == "unknown":
+        status = result.get("status")
+        dest["_unknown_op_status"] = status
+        logger.warning(
+            "file op result carried unrecognized status %r (kind=%r op=%r) — "
+            "forwarding content best-effort; add this status to "
+            "reyn.core.op_runtime.status_classify (#3193)",
+            status, result.get("kind"), result.get("op"),
+        )
 
 
 class Session:
@@ -3668,7 +3712,6 @@ class Session:
             file_read=self._file_read,
             file_write=self._file_write,
             file_delete=self._file_delete,
-            file_list_directory=self._file_list_directory,
             file_regenerate_index=self._file_regenerate_index,
             mcp_list_servers=self._mcp_list_servers,
             mcp_list_tools=self._mcp_list_tools,
@@ -6847,11 +6890,18 @@ class Session:
     async def _file_read(self, path: str) -> dict:
         """Read a file through op_runtime.
 
-        Returns: {"path": path, "content": <text>} or {"error": ...}.
+        Returns ``{"path": path, "content": <text>}`` — plus, when the read
+        was truncated, the signal fields (``truncated``, ``note``,
+        ``next_offset``, ...) forwarded UNTOUCHED (#3193: a truncated read
+        still has real content and must not be reported as a failure) — or
+        ``{"error": ...}`` only for a genuine failure status.
         """
         result = await self._file_op({"kind": "file", "op": "read", "path": path})
-        if result.get("status") == "ok":
-            return {"path": path, "content": result.get("content", "")}
+        outcome = classify_op_status(result.get("status"))
+        if outcome in ("success", "partial", "unknown"):
+            out = {"path": path, "content": result.get("content", "")}
+            _forward_file_signal_fields(out, result, outcome=outcome)
+            return out
         if result.get("status") == "not_found":
             return {"error": f"file not found: {path}"}
         return {"error": result.get("error", "read failed")}
@@ -6862,8 +6912,11 @@ class Session:
         Returns: {"path": path, "written": True} or {"error": ...}.
         """
         result = await self._file_op({"kind": "file", "op": "write", "path": path, "content": content})
-        if result.get("status") == "ok":
-            return {"path": path, "written": True}
+        outcome = classify_op_status(result.get("status"))
+        if outcome in ("success", "partial", "unknown"):
+            out = {"path": path, "written": True}
+            _forward_file_signal_fields(out, result, outcome=outcome)
+            return out
         return {"error": result.get("error", "write failed")}
 
     async def _file_delete(self, path: str) -> dict:
@@ -6872,32 +6925,12 @@ class Session:
         Returns: {"path": path, "deleted": bool} or {"error": ...}.
         """
         result = await self._file_op({"kind": "file", "op": "delete", "path": path})
-        if result.get("status") == "ok":
-            return {"path": path, "deleted": result.get("deleted", True)}
+        outcome = classify_op_status(result.get("status"))
+        if outcome in ("success", "partial", "unknown"):
+            out = {"path": path, "deleted": result.get("deleted", True)}
+            _forward_file_signal_fields(out, result, outcome=outcome)
+            return out
         return {"error": result.get("error", "delete failed")}
-
-    async def _file_list_directory(self, path: str) -> dict:
-        """List directory contents through op_runtime (glob).
-
-        Returns: {"path": path, "entries": [...]} or {"error": ...}.
-
-        Path normalisation: the LLM frequently sends ``"/"`` or ``""`` when
-        it really means "the project root I'm allowed to read". A literal
-        ``"/"`` resolves to the filesystem root, which is outside the
-        permission scope and triggers a misleading "no read permission"
-        error. Map both to ``"."`` (= cwd) so the typical "list files
-        here" intent works on a fresh project without requiring path
-        education.
-        """
-        normalised = path
-        if normalised in ("", "/", "./"):
-            normalised = "."
-        result = await self._file_op(
-            {"kind": "file", "op": "glob", "path": f"{normalised.rstrip('/')}/*"}
-        )
-        if result.get("status") == "ok":
-            return {"path": normalised, "entries": result.get("matches", [])}
-        return {"error": result.get("error", "list_directory failed")}
 
     async def _file_regenerate_index(
         self, *, path: str, output_path: str, entry_template: str, header: str,
@@ -6913,12 +6946,15 @@ class Session:
             "entry_template": entry_template,
             "header": header,
         })
-        if result.get("status") == "ok":
-            return {
+        outcome = classify_op_status(result.get("status"))
+        if outcome in ("success", "partial", "unknown"):
+            out = {
                 "path": path,
                 "output_path": output_path,
                 "entries": result.get("entries", 0),
             }
+            _forward_file_signal_fields(out, result, outcome=outcome)
+            return out
         return {"error": result.get("error", "regenerate_index failed")}
 
     async def _mcp_list_servers(self) -> list[dict]:

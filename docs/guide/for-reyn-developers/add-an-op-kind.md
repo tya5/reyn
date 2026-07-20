@@ -145,6 +145,24 @@ Handler conventions:
   explicit handling produces cleaner events.
 - Never import domain-specific modules or reference domain-specific strings
   (P7 — the OS must remain domain-agnostic).
+- **If your handler returns any `"status"` literal beyond plain `"ok"` /
+  `"error"`** (e.g. a partial-success status like `read`'s `"truncated"`, or
+  a domain-specific terminal state like `"installed"`/`"needs_secrets"`),
+  add it to the matching table in
+  `src/reyn/core/op_runtime/status_classify.py`
+  (`KNOWN_SUCCESS_STATUSES` / `KNOWN_PARTIAL_STATUSES` /
+  `KNOWN_FAILURE_STATUSES`) **in the same PR** (#3193). This is CI-enforced,
+  not just a convention: `tests/test_3193_op_status_classifier_coverage.py`
+  AST-walks every `op_runtime/*.py` handler for literal `"status": "..."`
+  dict entries and fails if any of them is missing from
+  `status_classify.py`'s known-status tables — a new status you forget to
+  classify there goes RED at PR time, not silently. The reason this gate
+  exists: any caller consuming your handler's result through the shared
+  classifier (`classify_op_status`) — e.g. `Session._file_*` — treats an
+  unrecognized status as `"unknown"` rather than silently failing or
+  silently succeeding, but that safety net is meant to catch genuinely
+  unanticipated statuses, not become the default path for every new one you
+  add on purpose.
 
 Then add the import to `src/reyn/core/op_runtime/__init__.py` so the module
 self-registers at startup:

@@ -44,10 +44,6 @@ async def _null_file_delete(path: str) -> dict:
     return {"path": path, "deleted": True}
 
 
-async def _null_file_list(path: str) -> dict:
-    return {"path": path, "entries": []}
-
-
 async def _null_file_regen(*, path, output_path, entry_template, header) -> dict:
     return {"path": path, "output_path": output_path, "entries": 0}
 
@@ -142,7 +138,6 @@ def _make_adapter(
         file_read=_null_file_read,
         file_write=_null_file_write,
         file_delete=_null_file_delete,
-        file_list_directory=_null_file_list,
         file_regenerate_index=_null_file_regen,
         mcp_list_servers=_null_mcp_list_servers,
         mcp_list_tools=probe,
@@ -565,7 +560,6 @@ async def test_session_handle_user_message_calls_yaml_watch_before_reload(
         file_read=_null_file_read,
         file_write=_null_file_write,
         file_delete=_null_file_delete,
-        file_list_directory=_null_file_list,
         file_regenerate_index=_null_file_regen,
         mcp_list_servers=_null_mcp_list_servers,
         mcp_list_tools=probe,
