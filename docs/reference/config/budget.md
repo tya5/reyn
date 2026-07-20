@@ -241,11 +241,28 @@ lifetime-total summary anchored to an exact byte position in the ledger) and
 only re-parses the ledger *tail* written after that anchor. The checkpoint is
 refreshed automatically (same throttle as `budget_state.json`) and is always
 safe to delete: it holds no fact the ledger doesn't already durably hold, so
-if it is missing, corrupted, tampered, or the ledger has been truncated below
-its anchor, `hydrate` transparently falls back to a full ledger re-scan
-(slower, but the cap can never silently under-count). Daily / monthly totals
-are not checkpointed — they self-heal at their period boundary, so only the
-lifetime per-agent aggregate needed the compaction.
+if it is missing, corrupted, or tampered, `hydrate` transparently falls back
+to a full ledger re-scan (slower, but the cap can never silently
+under-count). Daily / monthly totals are not checkpointed — they self-heal
+at their period boundary, so only the lifetime per-agent aggregate needed
+the compaction.
+
+**Truncation never under-counts the per-agent total, even across a
+checkpoint (P3).** If the ledger is shorter than the checkpoint's anchor
+(truncated, or deleted/archived entirely), `hydrate` does not simply discard
+the checkpoint and re-scan whatever remains — that would silently drop the
+per-agent history the checkpoint had already durably recorded, resetting a
+cap-critical counter without anyone asking for it. Instead the
+checkpoint's per-agent totals are merged in as a **floor** (never lower than
+what the checkpoint recorded) on top of the re-scan of the surviving
+ledger. A checkpoint whose ledger is instead **replaced** with different
+content of the same size or larger (its boundary-line content no longer
+matches, even though the file didn't shrink) is treated differently — that
+checkpoint is NOT trusted as a floor, since the new content may describe an
+entirely unrelated history; only a full re-scan of the new ledger is used.
+See the `.reyn/cache/budget_checkpoint.json` entry in
+[reference/runtime/reyn-dir-layout.md](../runtime/reyn-dir-layout.md) for
+the full anchor-classification rationale.
 
 ## Per-agent cap recovery semantics
 
@@ -255,7 +272,12 @@ crash and restart unchanged.
 
 **They do not reset per-conversation.** The counters accumulate continuously
 and are only cleared explicitly by `/budget reset` (in-memory clear) or by
-archiving the ledger file.
+archiving **both** `.reyn/state/budget_ledger.jsonl` **and**
+`.reyn/cache/budget_checkpoint.json` while the process is stopped (#2945:
+archiving the ledger alone is no longer sufficient — the checkpoint's
+per-agent totals survive as a floor precisely so an accidentally-truncated
+ledger can never silently under-count; removing only the ledger is treated
+the same way as a truncation, not as an intentional reset).
 
 Contrast with daily / monthly caps, which auto-reset at their period boundary
 (midnight or 1st of month, local time) regardless of process restarts or

@@ -367,9 +367,21 @@ def _parse_iso_ts(ts_str: str) -> float:
 # Core invariant (do not weaken): the checkpoint must always be safe to
 # delete. It carries no fact the ledger does not already durably hold — it is
 # a *rebuildable* cache of a prefix-sum over the ledger, never the sole
-# holder of truth. Any ambiguity about whether a checkpoint is trustworthy
-# (missing, corrupt, partial-write, tampered/truncated-below anchor) falls
-# back to a full ledger re-scan (slow but never under-counts — P3).
+# holder of truth.
+#
+# P3 (ambiguity -> over-count-safe, never under-count) resolves differently
+# depending on WHY the checkpoint is untrustworthy — see ``hydrate``'s
+# docstring for the full 3-way breakdown (missing/corrupt checkpoint vs.
+# ledger "truncated" vs. ledger "invalid"/replaced). The one that matters
+# most: a checkpoint that is itself still internally consistent
+# (``content_sha256`` verifies) but whose ledger has been TRUNCATED below its
+# anchor (or deleted outright) is NOT discarded — its per-agent totals are
+# merged in as a floor. Silently falling back to "just re-scan whatever
+# ledger remains" for that case would re-introduce the exact staleness this
+# whole mechanism exists to prevent: a lost/truncated ledger would silently
+# reset a cap-critical per-agent counter. A ledger that is instead REPLACED
+# (same size or larger, content mismatch) is the one case that gets NO
+# floor — see ``verify_anchor``.
 
 
 @dataclass
@@ -493,37 +505,51 @@ def load_checkpoint_or_none(checkpoint_path: Path) -> BudgetCheckpoint | None:
     return BudgetCheckpoint.from_dict(data)
 
 
-def verify_anchor(checkpoint: BudgetCheckpoint, ledger_path: Path) -> int | None:
+def verify_anchor(checkpoint: BudgetCheckpoint, ledger_path: Path) -> tuple[str, int]:
     """Verify the checkpoint's anchor against the CURRENT ledger file.
 
-    Returns the current ledger size if the anchor is valid (i.e. the ledger
-    still contains, byte-for-byte, the line the checkpoint was anchored to),
-    else ``None`` (P3: fall back to a full re-scan). Covers:
+    Returns ``(status, current_size)`` where ``status`` is one of:
 
-    - the ledger having been truncated below the anchor (arm A/B — data loss
-      or tampering below the covered prefix)
-    - the anchor line no longer matching (arm B — tampered/corrupted anchor;
-      the ledger is append-only so a byte-identical prefix can only change via
-      truncation-then-rewrite)
+    - ``"valid"`` — the ledger still contains, byte-for-byte, the line the
+      checkpoint was anchored to. Fast tail-only path.
+    - ``"truncated"`` — the CURRENT ledger is shorter than the anchor's byte
+      offset (including "ledger file missing entirely", size 0). This is a
+      genuine data-loss signal: the ledger no longer contains everything the
+      checkpoint saw. Per P3 (ambiguity -> over-count-safe), the caller MUST
+      treat the checkpoint's own (content-hash-verified) totals as a FLOOR
+      merged into the re-scan result — discarding them here would silently
+      UNDER-count exactly the durable spend this checkpoint recorded (the
+      failure mode this whole mechanism exists to prevent).
+    - ``"invalid"`` — the ledger is the SAME SIZE OR LARGER but its content at
+      the anchor position no longer matches (or the anchor itself is
+      malformed). Ledger is append-only, so byte-identical growth can never
+      produce this — it means the file was replaced/rewritten (rotation,
+      tamper), not merely truncated. The checkpoint's totals are NOT used as
+      a floor here: a replaced ledger may describe entirely different agents/
+      history, and blending its stale numbers in would leak a stale total
+      into an unrelated new history (see the ledger-replacement test) — the
+      full re-scan of the CURRENT ledger is the only trustworthy answer.
     """
     if not ledger_path.is_file():
-        return None
+        return ("truncated", 0)
     size = ledger_path.stat().st_size
     offset = checkpoint.anchor_byte_offset
     line_len = checkpoint.anchor_line_len
-    if size < offset or offset - line_len < 0 or line_len <= 0:
-        return None
+    if line_len <= 0 or offset < line_len:
+        return ("invalid", size)  # malformed anchor — not a truncation signal
+    if size < offset:
+        return ("truncated", size)
     try:
         with ledger_path.open("rb") as f:
             f.seek(offset - line_len)
             buf = f.read(line_len)
     except OSError:
-        return None
+        return ("invalid", size)
     if len(buf) != line_len:
-        return None
+        return ("invalid", size)
     if hashlib.sha256(buf).hexdigest() != checkpoint.anchor_line_sha256:
-        return None
-    return size
+        return ("invalid", size)
+    return ("valid", size)
 
 
 def write_checkpoint(
@@ -682,15 +708,41 @@ class BudgetTracker:
         ledger on every startup is a blocking-startup-path bug. A compacted
         ``BudgetCheckpoint`` (see module docstring section above) carries the
         per-agent totals as of an exact ledger byte position (the anchor); if
-        that anchor still verifies against the current ledger, only the TAIL
-        after it is re-parsed here — bounding the cost to activity since the
-        last checkpoint refresh instead of the ledger's lifetime. Any
-        ambiguity about the checkpoint's validity (missing, corrupt,
-        tampered, or the ledger truncated below the anchor) falls back to a
-        full re-scan of the whole ledger — slower, but never under-counts
-        (P3). A fresh checkpoint is written at the end of every hydrate call
+        that anchor still verifies against the current ledger (``verify_anchor``
+        returns ``"valid"``), only the TAIL after it is re-parsed here —
+        bounding the cost to activity since the last checkpoint refresh
+        instead of the ledger's lifetime.
+
+        Three fallback classes, each resolved per P3 (ambiguity ->
+        over-count-safe, never under-count):
+          - missing/corrupt/tampered checkpoint (parse failure, or its own
+            ``content_sha256`` no longer matches) -> full re-scan of the
+            ledger, no floor (nothing trustworthy survives to floor with).
+          - ``"truncated"`` (current ledger shorter than the anchor, INCLUDING
+            deleted entirely) -> full re-scan of the surviving ledger, then
+            the checkpoint's per-agent totals are merged in as a per-agent
+            FLOOR (``max()``, never lower). This is the critical case: a
+            crash/rotation that shortens or removes the ledger must never
+            silently reset a cap-critical per-agent counter just because its
+            source records are no longer present — the checkpoint is the
+            surviving witness. NOTE: this means archiving/deleting ONLY the
+            ledger file no longer resets per-agent totals while a checkpoint
+            still exists (see ``docs/reference/config/budget.md``).
+          - ``"invalid"`` (current ledger is the SAME SIZE OR LARGER but its
+            content at the anchor position no longer matches — a genuine
+            truncation can never produce this since the ledger is
+            append-only, so this means the file was replaced/rewritten) ->
+            full re-scan only, NO floor. The checkpoint's stale totals must
+            not leak into what may be an entirely different, unrelated
+            ledger history.
+
+        A fresh checkpoint is written at the end of every hydrate call
         regardless of which path was taken, so the checkpoint self-heals and
-        the *next* hydrate is bounded even after a fallback.
+        the *next* hydrate is bounded even after a fallback. That write is
+        best-effort: the checkpoint is DERIVED/cache
+        (``docs/reference/runtime/reyn-dir-layout.md``), so a write failure
+        (read-only cache dir, disk full) is logged and swallowed rather than
+        propagated — it must never block startup.
         """
         self._ledger = BudgetLedger(ledger_path)
         self._checkpoint_path = checkpoint_path or _default_checkpoint_path(ledger_path)
@@ -699,7 +751,7 @@ class BudgetTracker:
         month_key = _period_key(now, "month")
 
         checkpoint = load_checkpoint_or_none(self._checkpoint_path)
-        tail_start: int | None = None
+        status: str | None = None
         agent_tokens: dict[str, int] = defaultdict(int)
         agent_cost: dict[str, float] = defaultdict(float)
         daily_tokens = 0
@@ -708,9 +760,9 @@ class BudgetTracker:
         monthly_cost = 0.0
 
         if checkpoint is not None:
-            tail_start = verify_anchor(checkpoint, ledger_path)
+            status, _ = verify_anchor(checkpoint, ledger_path)
 
-        if tail_start is not None:
+        if checkpoint is not None and status == "valid":
             # Fast path: seed from the verified checkpoint, only re-parse the
             # tail written since its anchor.
             for agent, tok in checkpoint.agent_tokens.items():
@@ -729,8 +781,12 @@ class BudgetTracker:
                 monthly_cost = checkpoint.monthly_cost_usd
             records = self._ledger.iter_records_from(checkpoint.anchor_byte_offset)
         else:
-            # P3: no verifiable checkpoint — full re-scan is the only
-            # over-count-safe option.
+            # No verifiable fast path — full re-scan of the CURRENT ledger.
+            # If status == "truncated", the checkpoint's own totals are
+            # merged in as a floor AFTER this scan (below) — see P3 note on
+            # ``verify_anchor``. If status == "invalid" or checkpoint is
+            # None, no floor is applied (see ``verify_anchor`` docstring for
+            # why an "invalid"/replaced ledger must NOT be floored).
             records = self._ledger.iter_records()
 
         for record in records:
@@ -767,6 +823,23 @@ class BudgetTracker:
                 monthly_tokens += tokens
                 monthly_cost += cost
 
+        # #2945 P3: a TRUNCATED ledger (or one deleted entirely) must never
+        # cause the per-agent lifetime aggregate to drop below what a
+        # content-hash-verified checkpoint already durably recorded — that
+        # would silently reset a cap-critical counter (exactly the failure
+        # this mechanism exists to prevent). Merge the checkpoint's totals in
+        # as a per-agent FLOOR (max, never overwrite-down) on top of whatever
+        # the re-scan of the current (shortened) ledger found. Deliberately
+        # NOT applied when status == "invalid" (ledger replaced/rewritten,
+        # not merely truncated) — see ``verify_anchor``'s docstring.
+        if checkpoint is not None and status == "truncated":
+            for agent, tok in checkpoint.agent_tokens.items():
+                if tok > agent_tokens.get(agent, 0):
+                    agent_tokens[agent] = tok
+            for agent, cost in checkpoint.agent_cost_usd.items():
+                if cost > agent_cost.get(agent, 0.0):
+                    agent_cost[agent] = cost
+
         self._daily_tokens = daily_tokens
         self._daily_cost_usd = daily_cost
         self._monthly_tokens = monthly_tokens
@@ -782,18 +855,34 @@ class BudgetTracker:
         # NEXT hydrate (even with zero interim record_llm calls) is bounded
         # too — the checkpoint is always safe to (re)write from confirmed
         # in-memory totals, and safe to lose (next hydrate falls back).
-        write_checkpoint(
-            self._checkpoint_path,
-            ledger_path,
-            agent_tokens=dict(self._agent_tokens),
-            agent_cost_usd=dict(self._agent_cost_usd),
-            day_key=self._day_key,
-            daily_tokens=self._daily_tokens,
-            daily_cost_usd=self._daily_cost_usd,
-            month_key=self._month_key,
-            monthly_tokens=self._monthly_tokens,
-            monthly_cost_usd=self._monthly_cost_usd,
-        )
+        #
+        # The checkpoint is DERIVED/cache (docs/reference/runtime/
+        # reyn-dir-layout.md): a write failure here (read-only cache dir,
+        # disk full, permissions) must never block startup — swallow and
+        # log, same posture as ``_maybe_auto_save``'s save_state failure
+        # handling below. The in-memory counters (already correct from the
+        # scan above) are unaffected; only the NEXT hydrate loses the fast
+        # path and falls back to a full re-scan again.
+        try:
+            write_checkpoint(
+                self._checkpoint_path,
+                ledger_path,
+                agent_tokens=dict(self._agent_tokens),
+                agent_cost_usd=dict(self._agent_cost_usd),
+                day_key=self._day_key,
+                daily_tokens=self._daily_tokens,
+                daily_cost_usd=self._daily_cost_usd,
+                month_key=self._month_key,
+                monthly_tokens=self._monthly_tokens,
+                monthly_cost_usd=self._monthly_cost_usd,
+            )
+        except OSError as e:
+            import logging
+            logging.getLogger(__name__).warning(
+                "BudgetTracker.hydrate: failed to write checkpoint to %s: %s "
+                "(startup continues; next hydrate falls back to a full re-scan)",
+                self._checkpoint_path, e,
+            )
 
     # ── pre-call checks ─────────────────────────────────────────────────
 

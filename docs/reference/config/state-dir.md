@@ -63,8 +63,14 @@ Durable, append-only budget record log (fsync per append). Holds one record per 
 Because the ledger is never rotated, `hydrate` does not re-parse it in full on
 every startup (#2945) — it reads a compacted per-agent checkpoint (see
 `state/../cache/budget_checkpoint.json` below) and only re-parses the tail
-written since that checkpoint's anchor, falling back to a full re-scan if the
-checkpoint is missing, corrupt, or the ledger was truncated below it.
+written since that checkpoint's anchor. If the checkpoint is missing or
+corrupt, `hydrate` falls back to a full re-scan. If the ledger was truncated
+below the checkpoint's anchor (including deleted entirely), the checkpoint's
+per-agent totals are merged in as a **floor** on top of that re-scan — never
+silently discarded — so a truncated/lost ledger can never under-count a
+cap-critical per-agent total. A ledger that is instead *replaced* with
+different content of the same size or larger (content mismatch without
+shrinking) is NOT floored — only its full re-scan is trusted.
 
 ### `state/budget_state.json`
 
@@ -74,10 +80,17 @@ A throttled, best-effort snapshot of the in-memory budget counters, written on a
 
 A compacted, point-in-time summary of `budget_ledger.jsonl`'s per-agent
 lifetime totals, anchored to an exact byte position in the ledger (#2945).
-Refreshed automatically alongside `budget_state.json`. Always safe to delete
-— it holds no fact the ledger doesn't already durably hold; `hydrate` falls
-back to a full ledger re-scan if it is absent, corrupted, tampered, or stale
-relative to a truncated ledger.
+Refreshed automatically alongside `budget_state.json`. A write failure here
+(read-only directory, disk full) is logged and swallowed — it never blocks
+startup, since this file is DERIVED/cache and can always be rebuilt from the
+ledger.
+
+Safe to delete for correctness (`hydrate` reconstructs from the ledger, at
+the cost of a full re-scan) but **not** equivalent to "reset the per-agent
+cap": deleting/archiving *only* the ledger while this checkpoint still
+exists does NOT reset the per-agent totals — they survive as a floor (see
+`state/budget_ledger.jsonl` above). To actually reset per-agent spend,
+archive both files together while the process is stopped.
 
 ### `memory/`
 

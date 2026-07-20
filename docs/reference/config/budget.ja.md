@@ -194,6 +194,8 @@ budget カウンターは fsync-per-append の `.reyn/state/budget_ledger.jsonl`
 
 **起動コストは有界です。ledger 全体の再パースではありません（#2945）。** ledger はローテーションされないため、「起動のたびに ledger 全体を再パースする」素朴な hydrate は ledger が育つほど遅くなり続けます。代わりに `hydrate` は圧縮済みのチェックポイント（`.reyn/cache/budget_checkpoint.json` — ledger 上の正確なバイト位置にアンカーされた per-agent 生涯合計のサマリ）を読み、そのアンカー以降に追記された ledger の tail だけを再パースします。チェックポイントは自動的に更新され（`budget_state.json` と同じ throttle）、常に削除して安全です。ledger がすでに durable に保持している事実以外は何も持たないため、欠損・破損・改竄、あるいは ledger がアンカーより前まで truncate されていた場合、`hydrate` は透過的に ledger 全体の再スキャンにフォールバックします（遅くなりますが、cap が黙って under-count されることはありません）。daily / monthly 合計はチェックポイント対象外です — 期間境界で自己修復するため、圧縮が必要なのは per-agent の生涯合計だけです。
 
+**truncation は checkpoint を経由しても under-count を起こしません（P3）。** ledger が checkpoint の anchor より短い場合（truncate、または ledger 自体が削除・アーカイブされた場合を含む）、`hydrate` は checkpoint を単純に捨てて残った部分だけを再スキャンするのではありません — それでは checkpoint がすでに durable に記録していた per-agent の履歴が黙って失われ、意図せず cap-critical なカウンターがリセットされてしまいます。代わりに、checkpoint の per-agent 合計を **下限（floor）** として、生き残った ledger の再スキャン結果にマージします。一方、ledger が**同サイズ以上の別内容に置き換えられた**場合（ファイルは縮んでいないが境界行の内容が一致しない）は扱いが異なります — その checkpoint は floor として信頼されません（新しい内容が無関係の履歴を表している可能性があるため）。新しい ledger の全体再スキャンのみが使われます。詳細は [reference/runtime/reyn-dir-layout.md](../runtime/reyn-dir-layout.md) の `.reyn/cache/budget_checkpoint.json` の項目を参照してください。
+
 ## Per-agent cap の復旧セマンティクス
 
 `per_agent_tokens`・`per_agent_cost_usd` は
@@ -201,8 +203,12 @@ budget カウンターは fsync-per-append の `.reyn/state/budget_ledger.jsonl`
 クラッシュや再起動をまたいでも値が失われません。
 
 **会話（conversation）ごとにリセットされるわけではありません。** カウンターは継続的に
-累積され、`/budget reset`（in-memory クリア）または ledger ファイルのアーカイブによって
-のみクリアされます。
+累積され、`/budget reset`（in-memory クリア）、または `.reyn/state/budget_ledger.jsonl`
+**と** `.reyn/cache/budget_checkpoint.json` の**両方**をプロセス停止中にアーカイブする
+ことによってのみクリアされます（#2945: ledger だけをアーカイブしても、もはや十分ではありません —
+checkpoint の per-agent 合計が floor として生き残るのは、まさに誤って truncate された
+ledger が黙って under-count しないようにするためであり、ledger だけを取り除く操作は
+意図的なリセットではなく truncation と同じ扱いになります）。
 
 daily / monthly cap との対比：こちらは期間境界（ローカル時刻の深夜または月初 1 日）で
 自動リセットされます。プロセスの再起動・クラッシュにかかわらず、境界を越えれば必ずリセットされます。

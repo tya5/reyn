@@ -66,6 +66,52 @@ def test_checkpoint_created_after_hydrate(tmp_path):
     assert "anchor" in data and "line_sha256" in data["anchor"]
 
 
+def test_fast_path_ignores_ledger_corruption_before_the_anchor(tmp_path):
+    """Tier 2a: proves the checkpoint's TAIL-ONLY fast path is genuinely
+    exercised — not merely that hydrate() "produces the right answer via
+    some fallback". Corrupts EVERY ledger byte strictly BEFORE the verified
+    anchor (breaking JSON parsing for all of alpha's real records) while
+    leaving the anchor's own boundary line untouched, so the anchor still
+    verifies as "valid".
+
+    If the fast tail-only path is live, those corrupted bytes are never
+    re-read and the correct (checkpoint-seeded) total comes back unharmed.
+    If the checkpoint/fast-path mechanism were removed entirely (hydrate
+    always fully re-scanning from byte 0 regardless of any checkpoint), this
+    corruption would silently swallow the corrupted records (broken JSON
+    lines are skipped, per ``iter_records``) and the recovered total would
+    come back wrong (fewer tokens than were really spent).
+
+    This closes a gap the other arm tests cannot: arm B/C/D each assert
+    "hydrate falls back to a correct full re-scan when the checkpoint is
+    untrustworthy" — an invariant that would ALSO hold if the checkpoint
+    feature did not exist at all (verified by disabling the fast path AND
+    the truncation floor together: those tests stay green). This test is
+    the one that actually requires the fast path to exist.
+    """
+    ledger_path = tmp_path / ".reyn" / "state" / "budget_ledger.jsonl"
+    state_path = tmp_path / ".reyn" / "state" / "budget_state.json"
+    _record_calls(ledger_path, state_path, n=5, tokens_each=10)  # 50 tokens
+
+    checkpoint_path = _default_checkpoint_path(ledger_path)
+    anchor = json.loads(checkpoint_path.read_text(encoding="utf-8"))["anchor"]
+    offset, line_len = anchor["byte_offset"], anchor["line_len"]
+    prefix_end = offset - line_len
+    assert prefix_end > 0, "need a non-empty prefix strictly before the anchor to corrupt"
+
+    with ledger_path.open("r+b") as f:
+        f.seek(0)
+        f.write(b"~" * prefix_end)  # garbage: every prior line fails JSON parsing
+
+    bt2 = BudgetTracker(_cfg())
+    bt2.hydrate(ledger_path)
+    assert bt2.snapshot()["agent_tokens"]["alpha"] == 50, (
+        "the fast path must never re-read bytes before the verified anchor; "
+        "if the checkpoint mechanism were absent (always full re-scan from "
+        "byte 0), this corrupted prefix would silently lose those tokens"
+    )
+
+
 def test_parity_checkpoint_fastpath_vs_full_scan(tmp_path):
     """Tier 2a: hydrating WITH a valid checkpoint (fast tail-only path) and
     hydrating with the checkpoint deleted (full re-scan path) against the
@@ -95,38 +141,78 @@ def test_parity_checkpoint_fastpath_vs_full_scan(tmp_path):
     assert snap_fast["monthly_tokens"] == snap_full["monthly_tokens"]
 
 
-def test_arm_A_truncate_past_source_records_X_survives(tmp_path):
-    """Tier 2a: arm A (main) — set X via records 1-3, checkpoint anchors past
-    them; MORE records (4-6) are appended and checkpointed too; then the
-    ledger is truncated back down to exactly past record 3's bytes (records
-    4-6 are destroyed — simulating truncation/data loss after X was set).
-    Reconstructing from the truncated ledger must still recover X, because
-    the checkpoint's anchor no longer verifies (points past the now-missing
-    tail) and hydrate falls back to a full re-scan of the surviving prefix.
+def test_arm_A_truncate_destroys_X_source_records_checkpoint_floor_survives(tmp_path):
+    """Tier 2a: arm A (main, corrected per co-vet finding on the PR) — X's OWN
+    contributing ledger records are destroyed by truncation (not merely
+    records written AFTER X), and X still survives ONLY because the
+    checkpoint's (content-hash-verified) total is used as a floor.
+
+    The CLAUDE.md recovery-feature gate's definition is "truncate past X's
+    SOURCE events -> X survives". An earlier version of this test truncated
+    AFTER X's records (leaving them intact in the ledger) — that is
+    trivially true even with NO checkpoint at all (a plain ledger re-scan
+    would recover X unaided), so it never actually exercised this PR's fix.
+    This version truncates the ledger down to a point BEFORE alpha's records
+    exist at all, so a bare ledger re-scan of the survivor would see alpha=0
+    — the only way X (30) can still come back is the checkpoint's own
+    all-time total, kept as a floor because ``verify_anchor`` classifies a
+    shortened ledger as "truncated" (never "invalid") and #2945's fix merges
+    the checkpoint in via max() rather than discarding it (P3: ambiguity
+    from truncation must resolve to over-count, never under-count).
+
+    FALSIFICATION (verified out-of-band with the truncation floor-merge
+    removed): this test goes RED at 0 == 30 — the truncated ledger has no
+    alpha records left and nothing recovers X.
     """
     ledger_path = tmp_path / ".reyn" / "state" / "budget_ledger.jsonl"
     state_path = tmp_path / ".reyn" / "state" / "budget_state.json"
 
-    bt = _record_calls(ledger_path, state_path, n=3, tokens_each=10)  # X = 30
-    x_expected = bt.snapshot()["agent_tokens"]["alpha"]
-    assert x_expected == 30
-    truncate_to = ledger_path.stat().st_size  # boundary right after X's records
+    # A different agent's activity comes FIRST so there is a non-empty
+    # ledger prefix to truncate down to that contains NONE of alpha's
+    # records.
+    bt = BudgetTracker(_cfg())
+    bt.hydrate(ledger_path)
+    bt.set_state_path(state_path, throttle_secs=0.0)
+    bt.record_llm(model="gpt-4", agent="prelude", usage=TokenUsage(3, 3))
+    truncate_to = ledger_path.stat().st_size  # boundary BEFORE any alpha record
 
-    # More activity happens (and gets checkpointed), then is catastrophically
-    # lost — truncate the ledger back to the byte offset captured above.
+    # Now X = 30 for alpha, checkpointed on every call (throttle=0).
     for _ in range(3):
         bt.record_llm(model="gpt-4", agent="alpha", usage=TokenUsage(5, 5))
-    assert bt.snapshot()["agent_tokens"]["alpha"] == 60
+    x_expected = bt.snapshot()["agent_tokens"]["alpha"]
+    assert x_expected == 30
     del bt
 
+    # Destroy X's own source records: truncate back to BEFORE any of them.
     with ledger_path.open("r+b") as f:
         f.truncate(truncate_to)
 
+    # Sanity: the surviving ledger genuinely has no alpha record left — a
+    # bare re-scan (no checkpoint at all) could not recover X. Checked by
+    # temporarily moving the checkpoint aside (NOT deleting it — the real
+    # recovery step below still needs it) and restoring it afterward.
+    checkpoint_path = _default_checkpoint_path(ledger_path)
+    checkpoint_bytes = checkpoint_path.read_bytes()
+    checkpoint_path.unlink()
+    bt_bare = BudgetTracker(_cfg())
+    bt_bare.hydrate(ledger_path)
+    assert bt_bare.snapshot()["agent_tokens"].get("alpha", 0) == 0, (
+        "sanity check: the truncated ledger must contain NO alpha record — "
+        "otherwise this test doesn't actually require the checkpoint floor"
+    )
+    # bt_bare.hydrate() just wrote its OWN fresh (correct-for-the-truncated-
+    # ledger, alpha-less) checkpoint over the path — restore the original
+    # pre-truncation checkpoint so the real recovery step below has it.
+    checkpoint_path.write_bytes(checkpoint_bytes)
+
+    # Real recovery: WITH the (still-valid, content-hash-verified) checkpoint
+    # from before truncation, X must survive via the floor merge.
     bt2 = BudgetTracker(_cfg())
     bt2.hydrate(ledger_path)
     assert bt2.snapshot()["agent_tokens"]["alpha"] == x_expected, (
-        "X's own records survived the truncation and must still reconstruct, "
-        "even though the checkpoint's anchor now points past missing data"
+        "X's own source records were destroyed by truncation; only the "
+        "checkpoint's floor-merged total can recover X — a bare re-scan "
+        "would see 0"
     )
 
 
@@ -248,6 +334,40 @@ def test_arm_D_checkpoint_deleted_reconstructs_fully(tmp_path):
     bt2 = BudgetTracker(_cfg())
     bt2.hydrate(ledger_path)
     assert bt2.snapshot()["agent_tokens"]["alpha"] == expected
+
+
+def test_checkpoint_write_failure_does_not_block_startup(tmp_path):
+    """Tier 2a: the checkpoint is DERIVED/cache
+    (docs/reference/runtime/reyn-dir-layout.md) — a cache write failure must
+    never make the application unable to start. Makes ``.reyn/cache/``
+    read-only (simulating a permissions problem) BEFORE any checkpoint has
+    ever been written, so ``hydrate`` cannot create the checkpoint file at
+    all; it must still return the correct totals (via full re-scan) rather
+    than raise.
+
+    FALSIFICATION (verified out-of-band with the checkpoint-write try/except
+    removed): this test goes RED with an unhandled ``PermissionError``
+    propagating out of ``hydrate``.
+    """
+    ledger_path = tmp_path / ".reyn" / "state" / "budget_ledger.jsonl"
+    state_path = tmp_path / ".reyn" / "state" / "budget_state.json"
+    cache_dir = _default_checkpoint_path(ledger_path).parent
+
+    ledger_path.parent.mkdir(parents=True, exist_ok=True)
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    cache_dir.chmod(0o500)  # read + execute only, no write
+    try:
+        bt = BudgetTracker(_cfg())
+        bt.hydrate(ledger_path)  # must not raise even though it can't write a checkpoint
+        bt.set_state_path(state_path, throttle_secs=0.0)
+        bt.record_llm(model="gpt-4", agent="alpha", usage=TokenUsage(5, 5))  # must not raise either
+        assert bt.snapshot()["agent_tokens"]["alpha"] == 10
+
+        bt2 = BudgetTracker(_cfg())
+        bt2.hydrate(ledger_path)  # still no checkpoint was ever written; full re-scan must work
+        assert bt2.snapshot()["agent_tokens"]["alpha"] == 10
+    finally:
+        cache_dir.chmod(0o700)  # restore so tmp_path cleanup can remove it
 
 
 if __name__ == "__main__":

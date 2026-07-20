@@ -61,7 +61,13 @@ Everything else is excluded, by one of four reasons:
 │                           anchored to a byte position in
 │                           `state/budget_ledger.jsonl` — fully
 │                           reconstructable from the ledger by re-scanning,
-│                           safe to delete at any time
+│                           safe to delete at any time (a write failure is
+│                           logged and swallowed, never blocks startup).
+│                           NOTE: its per-agent totals act as a FLOOR when
+│                           the ledger is found truncated/missing below the
+│                           anchor — deleting/archiving the ledger ALONE
+│                           does not reset per-agent spend while this file
+│                           still exists; see reference/config/budget.md
 └── topologies/             RECOVERY-CORE — agent topologies (reconstructed from topology_* WAL)
 ```
 
