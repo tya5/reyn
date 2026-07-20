@@ -1,0 +1,137 @@
+# 0065 — Orchestration foundation (オーケストレーション基盤整備): external-event plugins as a first-class unit
+
+- **Status**: Proposed (awaiting owner review)
+- **Date**: 2026-07-20
+- **Arc**: picks up the piece [0064 §Deferred](0064-plugin-model.md) named and did not decide — *"agents/hooks (incl. event composition) plugin containment"* — and is the **receiver for [#2839](https://github.com/tya5/reyn/issues/2839)** (abolish the internal task system in favour of MCP-external orchestration).
+- **Deferred (named, not decided here)**: multi-file skill bodies ([#3162](https://github.com/tya5/reyn/issues/3162)); time-triggered activation (the `cron` surface already exists and is not extended here); cross-session event observation (0059 §keeps this out of v1).
+
+> Design contract: every "reyn already has X" claim in §2 is verified against `origin/main` at the cited path. Claims about *current behaviour* are deliberately anchored to locations rather than restated, because a restated mechanism goes stale and then misleads — this proposal exists partly because a stale `Status:` header in ADR-0039 caused its own author to design around a subsystem that was already built.
+
+## 1. Context — what we are actually building
+
+#2839 replaces reyn's internal task system with **MCP-external orchestration**. That decision moves the orchestrator *out* of reyn, which makes a question load-bearing that was previously cosmetic: **what does reyn core owe an external orchestrator so that it can be a plugin?**
+
+The concrete driver used to find the gaps was a dynamic-UI plugin (a Streamlit app the agent edits, which reports breakage back so the agent can fix it). That is the **first consumer, not the motivation** — every gap below is a property of "something outside pushes, reyn reacts", not of Streamlit.
+
+The loop a reactive plugin needs:
+
+```
+external system changes
+  → server pushes a notification
+  → reyn turns it into a hook event
+  → an action runs (context staged / a turn woken / a pipeline launched)
+  → a result travels back out
+```
+
+### 1.1 Why autonomous reaction is in-bounds
+
+Everything here causes agent turns to run **when no human is present** — that is the point of a reactive plugin, and it needs saying explicitly because it is easy to mis-read as a constitutional problem.
+
+It is not. "Agency is bounded **by construction**" is bounded by *typed, permissioned, auditable, rewindable ops* — the tagline names **spawn** and **orchestrate** as things agents legitimately do. Bounded does **not** mean "a human is watching". Reading it that way would forbid the self-driving behaviour reyn exists to provide.
+
+The operative test is therefore four properties, not human presence:
+
+| Property | Mechanism |
+|---|---|
+| **Permissioned** | the activation is granted by the operator (install + grant), not self-assumed |
+| **Bounded** | a stable unit, not unbounded growth; runaway wakes hit `safety.loop.max_hook_driven_turns` |
+| **Auditable** | the trigger leaves a P6 trace (`hook_push_fired`) and the resulting turn leaves the ordinary turn trail |
+| **Killable** | stopping the reyn process stops all of it |
+
+**`cron` is the standing precedent that this shape is already accepted**: an operator approves a job per-job at registration, the scheduler then resolves-or-spawns that job's own persistent session and boots its run-loop **with nobody watching**, the firing is audit-evented, and the whole thing exists only while the reyn process does. This proposal asks for the same shape for push-driven sources — it does not introduce a new class of autonomy.
+
+## 2. Grounding — what reyn already has (verified on `origin/main`)
+
+The recurring failure when designing here is **proposing a mechanism that exists**. This section is the anti-reinvention list.
+
+| Need | Already provided | Location |
+|---|---|---|
+| Server→client push | `notifications/resources/updated` becomes the `mcp_resource_updated` hook event | `src/reyn/mcp/message_handler.py`, subscribe in `src/reyn/mcp/client.py` |
+| Many distinct signals | **The URI is the namespace** — `matcher` glob-matches `uri` | `src/reyn/hooks/matcher.py` |
+| Burst / flap suppression | Composer `window` / `debounce`, consumed as `composed:<name>` | `src/reyn/hooks/composer.py` |
+| Interrupt vs ride-along | wake (inbox push) / no-wake (next-turn staging) / shell / `pipeline_launch` | `src/reyn/hooks/dispatcher.py` |
+| Runaway bounding | `safety.loop.max_hook_driven_turns` | `src/reyn/config/chat.py` |
+| Hot hook changes | live registry swap, reapplied at the turn boundary | `HookDispatcher.replace_registry` |
+| Returning a result outward | `pipeline_launch` renders `input_template` against the event's template vars, runs async, result returns on this session's inbox; a `shell` step is the write-back leg | `src/reyn/hooks/dispatcher.py`, `src/reyn/core/pipeline/parser.py` |
+| Asking the human | MCP elicitation, per connection, with timeout + listener check | `src/reyn/mcp/connection_service.py` |
+| Tearing a subscription down | `unsubscribe_mcp_resource` op | `src/reyn/tools/mcp.py` |
+| Scoping | workspace `hooks:` + per-agent `.reyn/agents/<name>/hooks.yaml`; bus/registry are per-session | `load_per_agent_hooks`, `src/reyn/hooks/bus.py` |
+
+**Consequences of this table** (things this proposal therefore does *not* add): no new event kind per signal; no server-side debounce; no callback/correlation convention; no crash-recovery story for external state (out of scope **by standing ruling** — the external world is not a reyn recovery source).
+
+## 3. The gaps (measured)
+
+**G1 — Activation is incoherent across three parts.** A reactive loop needs a held connection, a live subscription, and an installed hook. Today each has a *different* decider and timeline: the connection is **lazy** (opens when something calls a tool — `src/reyn/mcp/connection_service.py`), the subscription is **imperative** (an op the agent must call), and the hooks come from **config** (hot-reloaded at the turn boundary). There is no single "this orchestration is now running", and therefore no way to be *partially* correct — connected but unsubscribed, or hooked with nothing pushing.
+
+**G2 — The LLM cannot register the hook this design needs.** `hooks_add` accepts only six lifecycle points (`turn_start`, `turn_end`, `session_start`, `session_end`, `task_start`, `task_end`) and only builds a `template_push` action (`src/reyn/tools/hooks.py`). `mcp_resource_updated` is **not** in that set and `pipeline_launch` is **not** constructible. So the "the agent decides to start an orchestration" pattern is structurally impossible today, even though the agent *can* already open the connection and subscribe.
+
+**G3 — A plugin cannot ship its reactive wiring.** The capability union is `mcp` / `pipelines` / `skills` (`src/reyn/plugins/manifest.py`) and install registers into exactly those three registries (`src/reyn/core/op_runtime/plugin_install.py`). A plugin whose entire value is "react to my events" cannot deliver that value by being installed.
+
+**G4 — Durability is asymmetric.** Hooks persist (a config file); the connection and subscription are volatile. After a crash the residue is *hooks that fire on nothing*.
+
+**G5 — A no-wake staging can starve.** Next-turn ride-along is the correct default when a human is in the loop, but if no next turn ever comes it is never consumed. It must not be the only path for something that must be acted on.
+
+## 4. Decision
+
+### 4.1 One activation unit, three entry points
+
+A **reactive activation** is the triple *{hold this server, subscribe these URIs, install these hooks}* — activated together, torn down together, **scoped to a session**. This single unit closes G1, G3 and the scoping question at once: hooks are live exactly while the plugin is active in that session, so no new session-id bookkeeping is invented (the connection lifetime already *is* per-session).
+
+**Scope of the unit — only for sources that require a held connection.** Of the four external event points, only `mcp_resource_updated` originates from a connection the session must hold and subscribe on. `file_changed` is an in-process watcher; `cron_fired` and `webhook_received` arrive **out-of-process** and resolve their target session themselves (`src/reyn/hooks/ingress.py`). Those three need **no activation unit at all — a hook alone is sufficient**, and for `cron` the operator pattern is already fully available today via the `reyn cron` CLI. This proposal's §4.1 therefore applies to MCP-push orchestration; §4.3 and §4.5 apply to all four.
+
+Three ways to trigger it, by layer:
+
+| Entry point | Surface | Role |
+|---|---|---|
+| **CLI** | `reyn <cmd>` (precedent: `plugin`, `mcp`, `cron`) | Workspace/agent layer: *may* be used here; always-on declaration |
+| **slash** | `/<cmd>` (precedent: `/agent`, `/budget`) | This session, now — matches the session-scoped lifetime |
+| **LLM op** | a typed op | On demand, **within the operator's grant** |
+
+### 4.2 Authority split — content vs timing
+
+**The operator authors what runs; the LLM decides when it is live.** The hook bodies, pipelines and subscribed URIs come from the plugin definition, reviewed when the operator installs it. The LLM only activates and deactivates.
+
+This is what makes LLM-triggered activation safe without loosening `hooks_add`'s existing restrictions: the agent is not authoring a hook, it is switching on an operator-approved one.
+
+### 4.3 `hooks_add` extension (G2)
+
+Extend by the same discriminator — **who authored the content that runs**:
+
+| Change | Decision | Rationale |
+|---|---|---|
+| Add **all four** external event points (`mcp_resource_updated`, `file_changed`, `cron_fired`, `webhook_received`) to the allowed `on:` set | **Add** | The single reason the LLM pattern cannot exist today. Runaways are bounded by the existing loop valve; no-wake pushes are benign. **`cron_fired` needs no carve-out**: registering a hook does not create a schedule — the schedule is created by `cron__register`, which is already gated by the `cron_register` permission key **and** a per-job operator approval prompt. Reacting to an approved job grants no new authority. |
+| Allow the `pipeline_launch` action | **Add** | It launches a **registered** pipeline — content is operator-installed; the LLM chooses only which and when. Also the only path for returning a result outward. |
+| Allow `shell_exec` / `shell_push` | **Keep restricted** | The LLM would *author the command string* — that hands over content authority, a different class from the two above. |
+
+**URI scope for an LLM-registered external-event hook**: it may target only the event surface of a plugin **this session activated**, and the reaction is visible only in that session. A session must not be able to attach itself to another plugin's or another session's signals. (Same shape as 0059's tiering of the `on:` vocabulary.)
+
+### 4.4 Stopping — converge to the crash residue
+
+Stop tears down all three parts. Three rules:
+
+1. **No partial stop.** A left-over subscription costs pushes nobody handles; a left-over hook accumulates as a dead entry.
+2. **Stop leaves the same state a crash leaves.** This is the rule that fixes G4: rather than making the connection/subscription durable, the activation is defined as **volatile** — after a restart a session begins **inactive**. The operator pattern re-declares itself from config; the LLM pattern re-decides. Stop-path and failure-path then produce one state, and one test covers both.
+3. **Idempotent.** Stopping twice, or stopping something never started, is a no-op, not an error.
+
+In-flight work at stop time (a Composer buffer, a running pipeline, an armed escalation) is **discarded** — consistent with the Composer's existing best-effort posture rather than inventing a second durability story.
+
+### 4.5 Inbox `escalate_after` (G5) — independent
+
+An inbox entry queued **without** a wake may carry an `escalate_after`; on expiry it is promoted to a waking delivery through the **existing** wake path, so the existing loop valve counts and bounds it. Opt-in per producer (never a global default — "nobody asked, so it does not matter" is the correct semantics for most no-wake pushes). Escalation emits an audit event: a silent escalation is worse than none. Best-effort across a crash, matching §4.4.
+
+This is a general inbox property, not a hook feature — every no-wake producer benefits. It is separable from §4.1–4.4 and can land independently.
+
+## 5. Consequences
+
+- An external orchestrator becomes installable-and-it-works, which is the precondition #2839 needs before the internal task system can go.
+- Activation becomes an auditable event with a single decider, instead of an emergent property of "someone happened to call a tool".
+- The volatile-activation ruling (§4.4) means **a reactive plugin is not automatically running after a restart**. That is a deliberate trade: predictability and one recovery story, at the cost of a re-activation step. The operator pattern hides this; the LLM pattern does not.
+- `hooks_add` becomes more capable, and the `shell_exec` line becomes the explicit boundary of LLM hook authorship rather than an accident of what was implemented first.
+
+## 6. Rejected alternatives
+
+- **Make connection + subscription durable so activation survives a crash.** Rejected: it creates a second durability story next to the WAL, and the external world is out of recovery scope by ruling. §4.4 converges downward instead.
+- **A per-session hook config layer keyed by session id.** Rejected: session ids are runtime-generated and re-keyable, so the file layer has no author. The connection lifetime already provides per-session scoping for free.
+- **A correlation/callback mechanism for returning results.** Rejected: `pipeline_launch` + `input_template` + a `shell` step already closes the loop, with the correlation id carried in the URI.
+- **Let `hooks_add` register `shell_exec`.** Rejected per §4.3.
+- **Extend `reyn_cheat_sheet` with the authoring guidance.** Rejected: it is at ~98.7% of the default read cap (#3162). The guidance ships as the sibling skill `reactive_orchestration_plugins`.
