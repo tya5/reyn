@@ -114,6 +114,45 @@ def test_load_composers_rejects_bad_config(bad_entry, expect_substr):
         load_composers([bad_entry])
 
 
+def test_load_composers_parses_deadline_config():
+    """Tier 1: `deadline`'s standalone `on`/`matcher` + `until` YAML shape
+    (issue #3166 — distinct from every other op's `inputs: [{kind, match}]`
+    list) parses into a ComposerDef with a 1-element inputs tuple, an
+    until_input, the top-level `ttl` folded into policy.ttl_seconds, and a
+    default `composed:<name>` emit kind when `emit:` is omitted. Also
+    asserts the load-time crash-non-durability UserWarning (CLAUDE.md: never
+    ship a silent dead-man switch) is emitted."""
+    raw = [
+        {
+            "name": "job_overdue",
+            "op": "deadline",
+            "on": "mcp_resource_updated",
+            "matcher": {"uri": "orch://job/*/started"},
+            "until": {"on": "mcp_resource_updated", "matcher": {"uri": "orch://job/*/done"}},
+            "correlate_by": "job_id",
+            "ttl": 1800,
+        }
+    ]
+    with pytest.warns(UserWarning, match="crash-non-durable"):
+        (d,) = load_composers(raw)
+    assert d.op is ComposerOp.DEADLINE
+    (arm_input,) = d.inputs  # deadline's `on` builds a single-element inputs tuple
+    assert arm_input.kind == "mcp_resource_updated"
+    assert d.until_input is not None
+    assert d.until_input.kind == "mcp_resource_updated"
+    assert d.correlate_by == "job_id"
+    assert d.policy.ttl_seconds == 1800.0
+    assert d.emit_kind == "composed:job_overdue"
+
+
+def test_load_composers_deadline_requires_until():
+    """Tier 1: op=deadline without an `until` block fails loud at load time
+    (never a runtime surprise)."""
+    raw = [{"name": "x", "op": "deadline", "on": "a"}]
+    with pytest.raises(ComposerConfigError, match="until"):
+        load_composers(raw)
+
+
 def test_load_composers_rejects_cycle():
     """Tier 1: a composer feeding on another composer's composed kind, which
     in turn feeds back on the first, is a load-time fail-loud cycle (§5
@@ -318,6 +357,119 @@ def test_op_debounce_fires_after_quiet_period():
     composer.sweep(now=t0 + 16)
     fired = sub.get_nowait()
     assert fired.payload["inputs"][-1]["path"] == "/b"
+
+
+def test_op_deadline_fires_when_until_never_arrives():
+    """Tier 2: `deadline`'s reversal of the sweep (issue #3166) — the pending
+    record FIRES (not discards) when `until` never arrives within ttl. The
+    payload carries armed_at/ttl/awaited so an operator can see WHY it fired
+    (firing here means something did NOT happen, not an error)."""
+    bus = HookBus()
+    d = ComposerDef(
+        name="job_overdue", op=ComposerOp.DEADLINE,
+        inputs=(_input("orch:job_started"),),
+        until_input=_input("orch:job_done"),
+        emit_kind="composed:job_overdue",
+        policy=ComposerPolicy(ttl_seconds=10.0),
+    )
+    store = InMemoryPendingStore()
+    composer = Composer(d, bus=bus, pending_store=store)
+    sub = bus.subscribe()
+    t0 = 1000.0
+    composer.handle_event(HookEvent(kind="orch:job_started", payload={"job_id": "j1"}))
+    store.get("job_overdue", "__default__").created_at = t0
+    composer.sweep(now=t0 + 5)  # inside the deadline — no fire yet
+    _assert_no_event(sub)
+    composer.sweep(now=t0 + 11)  # ttl elapsed, until never arrived — fires
+    fired = sub.get_nowait()
+    assert fired.kind == "composed:job_overdue"
+    assert fired.payload["armed_at"] == t0
+    assert fired.payload["ttl"] == 10.0
+    assert fired.payload["awaited"]["kind"] == "orch:job_done"
+    assert store.get("job_overdue", "__default__") is None  # pending consumed, not left dangling
+
+
+def test_op_deadline_does_not_fire_when_disarmed_in_time():
+    """Tier 2: (★★ negative witness — the load-bearing one) `until` arriving
+    WITHIN ttl disarms the key and it does NOT fire. An always-fires
+    implementation would pass every other deadline test in this file, so
+    this is the test that actually distinguishes `deadline` from a bare
+    ttl-eviction relabel."""
+    bus = HookBus()
+    d = ComposerDef(
+        name="job_overdue", op=ComposerOp.DEADLINE,
+        inputs=(_input("orch:job_started"),),
+        until_input=_input("orch:job_done"),
+        emit_kind="composed:job_overdue",
+        policy=ComposerPolicy(ttl_seconds=10.0),
+    )
+    store = InMemoryPendingStore()
+    composer = Composer(d, bus=bus, pending_store=store)
+    sub = bus.subscribe()
+    t0 = 1000.0
+    composer.handle_event(HookEvent(kind="orch:job_started", payload={"job_id": "j1"}))
+    store.get("job_overdue", "__default__").created_at = t0
+    composer.handle_event(HookEvent(kind="orch:job_done", payload={"job_id": "j1"}))
+    assert store.get("job_overdue", "__default__") is None  # disarmed immediately
+    composer.sweep(now=t0 + 11)  # well past ttl — but already disarmed
+    _assert_no_event(sub)
+
+
+def test_op_deadline_key_separation_only_undisarmed_key_fires():
+    """Tier 2: two independent `correlate_by=job_id` keys — disarming only
+    j1 means only j2 (never disarmed) fires at ttl; j1 stays silent."""
+    bus = HookBus()
+    d = ComposerDef(
+        name="job_overdue", op=ComposerOp.DEADLINE,
+        inputs=(_input("orch:job_started"),),
+        until_input=_input("orch:job_done"),
+        emit_kind="composed:job_overdue", correlate_by="job_id",
+        policy=ComposerPolicy(ttl_seconds=10.0),
+    )
+    store = InMemoryPendingStore()
+    composer = Composer(d, bus=bus, pending_store=store)
+    sub = bus.subscribe()
+    t0 = 1000.0
+    composer.handle_event(HookEvent(kind="orch:job_started", payload={"job_id": "j1"}))
+    composer.handle_event(HookEvent(kind="orch:job_started", payload={"job_id": "j2"}))
+    store.get("job_overdue", "j1").created_at = t0
+    store.get("job_overdue", "j2").created_at = t0
+    composer.handle_event(HookEvent(kind="orch:job_done", payload={"job_id": "j1"}))  # only j1 disarmed
+    composer.sweep(now=t0 + 11)
+    fired = sub.get_nowait()
+    assert fired.payload["correlation_key"] == "j2"
+    _assert_no_event(sub)  # j1 never fires — nothing further on the bus
+
+
+def test_op_deadline_armed_state_is_lost_on_crash_v1_pin():
+    """Tier 2: (crash witness) pins v1's InMemoryPendingStore posture — a
+    'crash' (process restart => fresh store, the only PendingStore v1 has)
+    silently drops an armed deadline's state. This is the documented,
+    owner-ratified v1 behavior (module docstring invariant #1, proposal §5
+    Q-reyn-1: 'best-effort now, WAL-backed later'), not a bug — this test
+    records the fact as an observed behavior so a future WAL-backed
+    PendingStore's arrival is a visible, deliberate behavior change."""
+    bus = HookBus()
+    d = ComposerDef(
+        name="job_overdue", op=ComposerOp.DEADLINE,
+        inputs=(_input("orch:job_started"),),
+        until_input=_input("orch:job_done"),
+        emit_kind="composed:job_overdue",
+        policy=ComposerPolicy(ttl_seconds=10.0),
+    )
+    store = InMemoryPendingStore()
+    composer = Composer(d, bus=bus, pending_store=store)
+    t0 = 1000.0
+    composer.handle_event(HookEvent(kind="orch:job_started", payload={"job_id": "j1"}))
+    store.get("job_overdue", "__default__").created_at = t0
+    # Simulate a process crash: a fresh Composer over a fresh
+    # InMemoryPendingStore — the armed state above does NOT carry over.
+    crashed_store = InMemoryPendingStore()
+    recovered = Composer(d, bus=bus, pending_store=crashed_store)
+    sub = bus.subscribe()
+    recovered.sweep(now=t0 + 11)
+    _assert_no_event(sub)  # the dead-man monitor never fires — its armed state is gone
+    assert crashed_store.keys("job_overdue") == []
 
 
 # ---------------------------------------------------------------------------

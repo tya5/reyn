@@ -10,7 +10,7 @@ WAL-events (CLAUDE.md's 3-event rule) and never constructs/replaces
 ``HookDispatcher`` — it is a Bus-only reactivity layer built entirely on top
 of the Phase 4a Bus.
 
-Ops (§5, all seven implemented)
+Ops (§5's seven, plus ``deadline`` — issue #3166)
 --------------------------------
 ``all``          — fires once every one of N distinct inputs has arrived
                    (per correlation key).
@@ -30,6 +30,25 @@ Ops (§5, all seven implemented)
                    correlation run concurrently, keyed by e.g. a request id).
 ``count``        — fires once ``threshold`` matching events have arrived
                    (per key); the count then resets for that key.
+``deadline``     — issue #3166. The dead-man op: the ONLY op that fires
+                   because something did NOT happen. Arms on its ``on``
+                   pattern (per key, via the same ``correlate_by`` key
+                   extraction every other op uses); if its ``until`` pattern
+                   has not arrived for that same key by ``ttl`` seconds after
+                   arming, it fires — read as "the deadline for X was
+                   missed", NOT as an error. This is a reversal, not a new
+                   mechanism: every op already discards its pending record on
+                   TTL expiry (see :meth:`Composer.sweep`); ``deadline`` is
+                   the same per-key pending + TTL sweep with the discard
+                   branch replaced by a fire. It reuses ``PendingStore``,
+                   ``QueuePolicy`` (arm-storm bound), and ``correlate_by`` key
+                   extraction unchanged — no new machinery. **Crash-non-
+                   durable in v1** (:class:`InMemoryPendingStore`, see
+                   invariant #1): armed state is lost on a process crash,
+                   which for a dead-man monitor also means the thing it was
+                   watching may be gone too. :func:`load_composers` emits a
+                   ``UserWarning`` at load time for every ``deadline``
+                   composer so this is never a silent posture.
 
 Source-seam degeneracy (architect-ratified, proposal §5/§3.2)
 ----------------------------------------------------------------
@@ -98,6 +117,7 @@ import asyncio
 import contextlib
 import logging
 import time
+import warnings
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Callable, Protocol
@@ -132,6 +152,7 @@ class ComposerOp(str, Enum):
     DEBOUNCE = "debounce"
     CORRELATE_BY = "correlate_by"
     COUNT = "count"
+    DEADLINE = "deadline"
 
 
 class QueuePolicy(str, Enum):
@@ -222,6 +243,8 @@ class ComposerDef:
     policy: ComposerPolicy = field(default_factory=ComposerPolicy)
     correlate_by: "str | None" = None
     threshold: "int | None" = None
+    until_input: "ComposerInput | None" = None
+    """``deadline`` only — the disarm pattern (issue #3166's ``until``)."""
 
 
 # ---------------------------------------------------------------------------
@@ -367,8 +390,16 @@ class Composer:
             record.events.pop(0)
             self._audit("composer_dropped", correlation_key=key, reason="per_key_event_cap")
 
-    def _emit_composed(self, key: str, events: "list[HookEvent]") -> None:
-        payload = {"inputs": [e.payload for e in events], "correlation_key": key}
+    def _emit_composed(
+        self,
+        key: str,
+        events: "list[HookEvent]",
+        *,
+        extra_payload: "dict[str, Any] | None" = None,
+    ) -> None:
+        payload: "dict[str, Any]" = {"inputs": [e.payload for e in events], "correlation_key": key}
+        if extra_payload:
+            payload.update(extra_payload)
         composed = HookEvent(kind=self._def.emit_kind, payload=payload, source="builtin")
         self._bus.publish(composed)  # invariant #5 — Bus-only, never dispatcher.dispatch
         self._audit("composer_fired", correlation_key=key)
@@ -443,10 +474,36 @@ class Composer:
         else:
             self._store.put(self._def.name, key, record)
 
+    def _handle_deadline_event(self, event: HookEvent) -> None:
+        """``deadline`` (issue #3166): arm on ``inputs[0]`` (the ``on``
+        pattern), disarm on ``until_input`` — both per ``correlate_by`` key.
+        Firing itself is time-driven (see :meth:`sweep`); this only manages
+        the armed/disarmed pending record, reusing the same
+        ``_admit_new_key`` QueuePolicy bound every other op uses for its
+        arm-storm."""
+        until_input = self._def.until_input
+        assert until_input is not None  # enforced at parse time (op=deadline requires `until`)
+        key = self._correlation_key(event)
+        if until_input.matches(event):
+            if self._store.get(self._def.name, key) is not None:
+                self._store.delete(self._def.name, key)  # disarmed in time — no fire
+            return
+        arm_input = self._def.inputs[0]
+        if not arm_input.matches(event):
+            return
+        if self._store.get(self._def.name, key) is not None:
+            return  # already armed for this key — the first arm's clock stands
+        if not self._admit_new_key(key):
+            return
+        self._store.put(self._def.name, key, PendingRecord(events=[event]))
+
     def handle_event(self, event: HookEvent) -> None:
         """Feed one bus-observed ``HookEvent`` through this composer's op.
         Public (not just internal) so a test can drive a composer directly,
         without depending on the background subscription task's scheduling."""
+        if self._def.op is ComposerOp.DEADLINE:
+            self._handle_deadline_event(event)
+            return
         indices = self._matched_input_indices(event)
         if not indices:
             return
@@ -484,6 +541,23 @@ class Composer:
                 if now - record.last_at >= ttl:
                     self._store.delete(self._def.name, key)
                     self._emit_composed(key, record.events)
+            elif self._def.op is ComposerOp.DEADLINE:
+                # The reversal (issue #3166): every other branch here DISCARDS
+                # an expired pending record; deadline FIRES instead — the
+                # ``until`` pattern never arrived for this key within ttl.
+                if now - record.created_at >= ttl:
+                    self._store.delete(self._def.name, key)
+                    until_input = self._def.until_input
+                    awaited = (
+                        {"kind": until_input.kind, "match": until_input.pattern.payload}
+                        if until_input is not None
+                        else None
+                    )
+                    self._emit_composed(
+                        key,
+                        record.events,
+                        extra_payload={"armed_at": record.created_at, "ttl": ttl, "awaited": awaited},
+                    )
             else:  # ALL / SEQ / CORRELATE_BY / COUNT — ttl is an incomplete-pending evict
                 if now - record.created_at >= ttl:
                     self._store.delete(self._def.name, key)
@@ -551,32 +625,47 @@ def start_composers(
 # ---------------------------------------------------------------------------
 
 
-def _parse_input(raw: object, composer_name: str, index: int) -> ComposerInput:
-    if not isinstance(raw, dict):
-        raise ComposerConfigError(
-            f"composers[{composer_name}].inputs[{index}] must be a mapping, got {type(raw).__name__!r}."
-        )
-    kind = raw.get("kind")
+def _parse_event_pattern(
+    kind: object, match: object, source: object, context: str, *, field_name: str = "kind"
+) -> ComposerInput:
+    """Shared kind/match/source validation behind both ``inputs[i]`` entries
+    and ``deadline``'s standalone ``on``/``until`` fields (issue #3166) — one
+    validation path, two config shapes."""
     if not isinstance(kind, str) or not kind.strip():
-        raise ComposerConfigError(f"composers[{composer_name}].inputs[{index}].kind is required.")
-    match = raw.get("match")
+        raise ComposerConfigError(f"{context}.{field_name} is required.")
     if match is not None and not isinstance(match, dict):
-        raise ComposerConfigError(
-            f"composers[{composer_name}].inputs[{index}].match must be a mapping."
-        )
-    source = raw.get("source")
+        raise ComposerConfigError(f"{context}.match must be a mapping.")
     if source is not None and source != "builtin":
         # Source-seam degeneracy (module docstring): the Bus never carries
         # anything but "builtin" — a Composer author naming any other source
         # value would silently never match. Fail-loud instead (Phase-3
         # typo-resistance parallel).
         raise ComposerConfigError(
-            f"composers[{composer_name}].inputs[{index}].source={source!r} can never match — "
+            f"{context}.source={source!r} can never match — "
             "the HookBus only ever carries source=\"builtin\" (kind + payload already encode the "
             "source instance; see reyn.hooks.event_pattern.EventPattern.source). Omit `source` "
             "and correlate on a payload field instead."
         )
     return ComposerInput(kind=kind, pattern=EventPattern(kind=kind, payload=match))
+
+
+def _parse_input(raw: object, composer_name: str, index: int) -> ComposerInput:
+    if not isinstance(raw, dict):
+        raise ComposerConfigError(
+            f"composers[{composer_name}].inputs[{index}] must be a mapping, got {type(raw).__name__!r}."
+        )
+    context = f"composers[{composer_name}].inputs[{index}]"
+    return _parse_event_pattern(raw.get("kind"), raw.get("match"), raw.get("source"), context)
+
+
+def _parse_deadline_pattern(raw: object, composer_name: str, context: str) -> ComposerInput:
+    """Parse a ``{on, matcher}``-shaped standalone pattern — ``deadline``'s
+    top-level arm (``on``/``matcher``) or its ``until`` block (issue
+    #3166's YAML shape, distinct from the ``inputs: [{kind, match}]`` list
+    every other op uses)."""
+    if not isinstance(raw, dict):
+        raise ComposerConfigError(f"{context} must be a mapping, got {type(raw).__name__!r}.")
+    return _parse_event_pattern(raw.get("on"), raw.get("matcher"), raw.get("source"), context, field_name="on")
 
 
 def _parse_policy(raw: object, composer_name: str) -> ComposerPolicy:
@@ -623,20 +712,37 @@ def _parse_one(raw: object, index: int) -> ComposerDef:
         raise ComposerConfigError(
             f"composers[{name}].op={op_raw!r} — must be one of {[o.value for o in ComposerOp]}."
         ) from None
-    raw_inputs = raw.get("inputs")
-    if not isinstance(raw_inputs, list) or not raw_inputs:
-        raise ComposerConfigError(f"composers[{name}].inputs must be a non-empty list.")
-    inputs = tuple(_parse_input(inp, name, i) for i, inp in enumerate(raw_inputs))
+    until_input: "ComposerInput | None" = None
+    if op is ComposerOp.DEADLINE:
+        # deadline's YAML shape (issue #3166) is standalone `on`/`matcher` +
+        # `until: {on, matcher}` — NOT the `inputs: [{kind, match}]` list
+        # every other op uses.
+        inputs = (_parse_deadline_pattern(raw, name, f"composers[{name}]"),)
+        until_raw = raw.get("until")
+        if until_raw is None:
+            raise ComposerConfigError(f"composers[{name}].op=deadline requires an `until` mapping.")
+        until_input = _parse_deadline_pattern(until_raw, name, f"composers[{name}].until")
+    else:
+        raw_inputs = raw.get("inputs")
+        if not isinstance(raw_inputs, list) or not raw_inputs:
+            raise ComposerConfigError(f"composers[{name}].inputs must be a non-empty list.")
+        inputs = tuple(_parse_input(inp, name, i) for i, inp in enumerate(raw_inputs))
     emit_raw = raw.get("emit")
-    if not isinstance(emit_raw, dict) or not isinstance(emit_raw.get("kind"), str):
-        raise ComposerConfigError(f"composers[{name}].emit.kind is required.")
-    emit_kind = emit_raw["kind"]
-    if not emit_kind.startswith(COMPOSED_KIND_PREFIX):
-        raise ComposerConfigError(
-            f"composers[{name}].emit.kind={emit_kind!r} must start with {COMPOSED_KIND_PREFIX!r} "
-            "(bare `emit`/non-namespaced kinds collide with the P6 audit-event surface — "
-            "CLAUDE.md's 3-event naming rule)."
-        )
+    if emit_raw is None and op is ComposerOp.DEADLINE:
+        # deadline's example config (issue #3166) omits `emit:` — default to
+        # the same `composed:<name>` convention every other op requires
+        # explicitly.
+        emit_kind = f"{COMPOSED_KIND_PREFIX}{name}"
+    else:
+        if not isinstance(emit_raw, dict) or not isinstance(emit_raw.get("kind"), str):
+            raise ComposerConfigError(f"composers[{name}].emit.kind is required.")
+        emit_kind = emit_raw["kind"]
+        if not emit_kind.startswith(COMPOSED_KIND_PREFIX):
+            raise ComposerConfigError(
+                f"composers[{name}].emit.kind={emit_kind!r} must start with {COMPOSED_KIND_PREFIX!r} "
+                "(bare `emit`/non-namespaced kinds collide with the P6 audit-event surface — "
+                "CLAUDE.md's 3-event naming rule)."
+            )
     correlate_by = raw.get("correlate_by")
     if correlate_by is not None and not isinstance(correlate_by, str):
         raise ComposerConfigError(f"composers[{name}].correlate_by must be a string field name.")
@@ -649,7 +755,15 @@ def _parse_one(raw: object, index: int) -> ComposerDef:
         raise ComposerConfigError(f"composers[{name}].op=count requires `count` (the threshold).")
     if op is ComposerOp.SEQ and len(inputs) < 2:
         raise ComposerConfigError(f"composers[{name}].op=seq requires at least 2 inputs.")
-    policy = _parse_policy(raw.get("policy"), name)
+    policy_raw = raw.get("policy")
+    if op is ComposerOp.DEADLINE and raw.get("ttl") is not None:
+        # deadline's example config (issue #3166) puts `ttl` at the top
+        # level, not nested under `policy:` — fold it in unless `policy.ttl`
+        # was ALSO given explicitly (policy.ttl wins).
+        policy_dict = dict(policy_raw) if isinstance(policy_raw, dict) else {}
+        policy_dict.setdefault("ttl", raw["ttl"])
+        policy_raw = policy_dict
+    policy = _parse_policy(policy_raw, name)
     if op is ComposerOp.COUNT and threshold is not None and threshold > policy.max_events_per_key:
         # #2890 F7: max_events_per_key drop-oldest-caps the SAME events list
         # `count` reads len() off of — a threshold above the cap could never
@@ -659,10 +773,29 @@ def _parse_one(raw: object, index: int) -> ComposerDef:
             f"composers[{name}].count={threshold} exceeds policy.max_events_per_key="
             f"{policy.max_events_per_key} — count could never reach its threshold."
         )
+    if op is ComposerOp.DEADLINE:
+        # CLAUDE.md's recovery discipline: never ship a silent dead-man
+        # switch. InMemoryPendingStore (v1's only PendingStore) is crash-
+        # non-durable by design (module docstring invariant #1) — for a
+        # deadline composer that means the monitor itself vanishes on a
+        # crash, possibly alongside the thing it was watching. Warn loudly
+        # at load time, every time (existing `warnings.warn` mechanism —
+        # see reyn.security.secrets.loader/interpolation for the same
+        # UserWarning idiom elsewhere in the codebase; no new mechanism).
+        warnings.warn(
+            f"composers[{name}]: op=deadline uses InMemoryPendingStore, which is "
+            "crash-non-durable by design — a process crash silently drops this dead-man "
+            "monitor's armed state with no reconstruction (proposal §5 Q-reyn-1, "
+            "owner-ratified best-effort-now posture). Do not rely on this composer to "
+            "survive a crash until a WAL-backed PendingStore lands (follow-on to #3166).",
+            UserWarning,
+            stacklevel=3,
+        )
     return ComposerDef(
         name=name, op=op, inputs=inputs, emit_kind=emit_kind,
         policy=policy,
         correlate_by=correlate_by, threshold=threshold,
+        until_input=until_input,
     )
 
 

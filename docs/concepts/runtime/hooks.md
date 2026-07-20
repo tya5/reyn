@@ -150,11 +150,19 @@ composers:
 - `inputs[].source`, if present, must be omitted or `"builtin"` — anything
   else is a load-time error (the Bus only ever carries `source="builtin"`;
   correlate on a payload field instead).
-- The 7 `op` values: `all` (every input arrived), `any` (first arrival,
+- The 8 `op` values: `all` (every input arrived), `any` (first arrival,
   stateless), `seq` (inputs' kinds arrive in the declared order), `window`
   (fire after `ttl` from the FIRST match, with everything buffered),
   `debounce` (fire `ttl` after the LAST match with no newer one), `correlate_by`
-  (like `all`, keyed by a payload field), `count` (N matching events per key).
+  (like `all`, keyed by a payload field), `count` (N matching events per key),
+  `deadline` (issue #3166 — fire when its `until` pattern does NOT arrive
+  within `ttl` of its `on` pattern, per key; see [reyn-yaml § `composers`
+  block](../../reference/config/reyn-yaml.md#composers-block) for its
+  distinct `on`/`matcher`/`until` shape and its stricter — load-time-warned,
+  crash-non-durable — reliability posture). Unlike the other 7 ops, which all
+  compose things that DID happen, `deadline` is the only one that fires on
+  absence — read a `deadline` fire as "X was expected but never arrived",
+  never as an error in itself.
 - **`inputs` arity**: `seq` requires **at least 2** inputs (a load-time
   error otherwise) — every other op accepts a **single** input, including
   `all`/`any` (both fire immediately on that one input's first arrival) and
@@ -629,7 +637,7 @@ top of it, a **Composer** that correlates multiple events into one derived
 
 A **Composer** watches the Bus, buffers matching events per its configured
 op, and — once the op's condition is met — publishes ONE new event with
-`kind = "composed:<name>"` back to the same Bus. Seven ops:
+`kind = "composed:<name>"` back to the same Bus. Eight ops:
 
 | Op | Fires when |
 |---|---|
@@ -640,6 +648,7 @@ op, and — once the op's condition is met — publishes ONE new event with
 | `debounce` | `ttl` seconds have elapsed since the LAST matching event with no newer one in between |
 | `correlate_by` | like `all`, but keyed by a payload field (e.g. a request id) instead of one global bucket |
 | `count` | `threshold` matching events have arrived (per key) |
+| `deadline` | its `until` pattern has NOT arrived within `ttl` of its `on` pattern arming (per key) — issue #3166, the only op that fires on absence, not occurrence |
 
 ```yaml
 composers:
