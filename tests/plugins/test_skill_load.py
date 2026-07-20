@@ -477,11 +477,13 @@ def test_file_read_op_resolves_path_exactly_once_per_read(tmp_path, monkeypatch)
     result = _run(handle(FileIROp(kind="file", op="read", path=rel_path), ctx))
 
     assert result["status"] == "ok", result
-    assert len(calls) == 1, (
-        f"expected `op.path` to be resolved exactly ONCE for this read, got "
-        f"{len(calls)} resolve call(s): {calls!r} -- a second, independent "
-        f"resolve reopens the TOCTOU window between the trust decision and "
-        f"the actual byte read"
+    # Behavioral, not a bare count: the recorded call list must be EXACTLY
+    # one call, resolving `rel_path` -- a second (even identical-looking)
+    # call would mean a second, independent resolve, reopening the TOCTOU
+    # window between the trust decision and the actual byte read.
+    assert calls == [rel_path], (
+        f"expected `op.path` to be resolved exactly ONCE (for {rel_path!r}) "
+        f"for this read, got these resolve call(s): {calls!r}"
     )
     skill_load_events = [e for e in events.all() if e.type == "skill_body_loaded"]
     assert any(e.data["provenance"] == "config_entry" for e in skill_load_events)
