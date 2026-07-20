@@ -1,11 +1,11 @@
 """Tier 1/2: skill-load invocation-time variable expansion (ADR 0064 §3.5,
-plugin-model P4, #3070).
+plugin-model P4, #3070) + the #3196 provenance gate on that expansion.
 
 Pins (real instances throughout — no mocks):
 
   1. ``load_skill_body`` expands ``${REYN_PLUGIN_ROOT}``/``${REYN_SKILL_DIR}``/
-     ``${REYN_PROJECT_DIR}`` to real, DISTINCT non-default filesystem paths
-     (Tier 1, ``reyn.plugins.skill_load``).
+     ``${REYN_PROJECT_DIR}`` to real, DISTINCT non-default filesystem paths,
+     and returns ``(body, env_tokens_expanded)`` (Tier 1, ``reyn.plugins.skill_load``).
   2. ``resolve_plugin_root`` walks up from a skill dir to a real
      ``.reyn-plugin/plugin.json`` written to disk, and returns a DIFFERENT
      value than ``skill_dir`` when one exists — falls back to ``skill_dir``
@@ -17,12 +17,20 @@ Pins (real instances throughout — no mocks):
      ``${SOME_VAR}`` (no ``env:`` prefix) is left untouched even when
      ``SOME_VAR`` IS set — proving the namespaced syntax doesn't fall back
      to ``expand_env``'s bare-``${VAR}`` behaviour.
-  5. Integration (Tier 2): the real ``file`` read op (``file.handle``) routes
-     a ``SKILL.md``-named file through skill-load expansion end to end, and
-     emits a ``skill_body_loaded`` audit-event (read via ``EventLog.all()``,
-     the public surface — never private state). A same-content, differently-
-     named file is NOT expanded (falsify: proves the routing is keyed on the
-     ``SKILL.md`` filename, not "any file that happens to contain tokens").
+  5. #3196 provenance gate (Tier 2b, OS invariant — security): the real
+     ``file`` read op (``file.handle``) expands a ``SKILL.md``-named file
+     ONLY when its resolved path ALSO falls into a registered provenance
+     class (config-registered entry here; builtin/plugin are covered by
+     ``test_reactive_orchestration_plugins_references_reachable_3162.py`` /
+     the plugin_install integration test below). An UNREGISTERED
+     ``SKILL.md`` — project root, nested subdir, deep-nested, an
+     unregistered would-be plugin root — is read byte-identical, with NO
+     ``skill_body_loaded`` event, in every placement (negative witness,
+     multiple). A symlink / ``..``-relative path is judged on its
+     RESOLVED target, not its literal text (closes the judged-face /
+     read-face mismatch the firm design calls out). The audit-event
+     carries ``provenance`` + ``env_tokens_expanded`` but never the
+     expanded VALUE.
 """
 from __future__ import annotations
 
@@ -36,6 +44,7 @@ import pytest
 from reyn.core.events.events import EventLog
 from reyn.core.op_runtime.context import OpContext
 from reyn.core.op_runtime.file import handle
+from reyn.data.skills.registry import SkillEntry
 from reyn.data.workspace.workspace import Workspace
 from reyn.plugins.skill_load import (
     is_skill_body_path,
@@ -114,13 +123,14 @@ def test_load_skill_body_expands_reyn_tokens_to_distinct_real_paths(tmp_path):
         "project=${REYN_PROJECT_DIR}"
     )
 
-    expanded = load_skill_body(content, skill_path=skill_path, project_dir=project_dir)
+    expanded, env_count = load_skill_body(content, skill_path=skill_path, project_dir=project_dir)
 
     assert f"root={plugin_dir.resolve()}" in expanded
     assert f"skill={skill_dir.resolve()}" in expanded
     assert f"project={project_dir.resolve()}" in expanded
     # all three resolve to genuinely distinct values -- no collapse (§3.4/§3.6)
     assert len({str(plugin_dir.resolve()), str(skill_dir.resolve()), str(project_dir.resolve())}) == 3
+    assert env_count == 0  # no ${env:...} tokens in this content
 
 
 def test_load_skill_body_claude_alias_matches_reyn_token_value(tmp_path):
@@ -133,7 +143,7 @@ def test_load_skill_body_claude_alias_matches_reyn_token_value(tmp_path):
     project_dir.mkdir()
 
     content = "${CLAUDE_SKILL_DIR}|${REYN_SKILL_DIR}"
-    expanded = load_skill_body(
+    expanded, _env_count = load_skill_body(
         content, skill_path=skill_path, project_dir=project_dir, alias_claude=True,
     )
 
@@ -150,7 +160,7 @@ def test_load_skill_body_claude_alias_off_leaves_token_untouched(tmp_path):
     project_dir = tmp_path / "some-project"
     project_dir.mkdir()
 
-    expanded = load_skill_body(
+    expanded, _env_count = load_skill_body(
         "${CLAUDE_SKILL_DIR}", skill_path=skill_path, project_dir=project_dir,
         alias_claude=False,
     )
@@ -169,12 +179,13 @@ def test_load_skill_body_expands_env_token_from_real_environ(tmp_path, monkeypat
     project_dir = tmp_path / "some-project"
     project_dir.mkdir()
 
-    expanded = load_skill_body(
+    expanded, env_count = load_skill_body(
         "value=${env:REYN_SKILL_LOAD_TEST_TOKEN}",
         skill_path=skill_path, project_dir=project_dir,
     )
 
     assert expanded == "value=quetzal-9182"
+    assert env_count == 1
 
 
 def test_load_skill_body_unset_env_token_left_untouched(tmp_path, monkeypatch):
@@ -186,12 +197,13 @@ def test_load_skill_body_unset_env_token_left_untouched(tmp_path, monkeypatch):
     project_dir = tmp_path / "some-project"
     project_dir.mkdir()
 
-    expanded = load_skill_body(
+    expanded, env_count = load_skill_body(
         "${env:REYN_SKILL_LOAD_TEST_UNSET_TOKEN}",
         skill_path=skill_path, project_dir=project_dir,
     )
 
     assert expanded == "${env:REYN_SKILL_LOAD_TEST_UNSET_TOKEN}"
+    assert env_count == 0
 
 
 def test_load_skill_body_bare_var_not_expanded_even_when_set(tmp_path, monkeypatch):
@@ -206,17 +218,27 @@ def test_load_skill_body_bare_var_not_expanded_even_when_set(tmp_path, monkeypat
     project_dir = tmp_path / "some-project"
     project_dir.mkdir()
 
-    expanded = load_skill_body(
+    expanded, env_count = load_skill_body(
         "example: ${SOME_VAR}", skill_path=skill_path, project_dir=project_dir,
     )
 
     assert expanded == "example: ${SOME_VAR}"
     assert "should-not-appear" not in expanded
+    assert env_count == 0
 
 
-# ── Integration: the real file read op ───────────────────────────────────────
+# ── Integration: the real file read op + the #3196 provenance gate ──────────
 
-def _make_ctx(project_root: Path) -> tuple[OpContext, EventLog]:
+# A synthetic, harmless sentinel -- NEVER a real credential (per the
+# standing "never inspect a real secret value" discipline). Proves the
+# value reaches `content` on a TRUSTED read and never reaches it (or an
+# audit-event) on an UNTRUSTED one.
+_SENTINEL_ENV_VAR = "REYN_SKILL_LOAD_GATE_TEST_SENTINEL"
+_SENTINEL_ENV_VALUE = "FAKE_SECRET_VALUE_3196"
+_SENTINEL_BODY = f"---\nname: probe\n---\nsecret=${{env:{_SENTINEL_ENV_VAR}}}\n"
+
+
+def _make_ctx(project_root: Path, *, available_skills=None) -> tuple[OpContext, EventLog]:
     events = EventLog()
     ws = Workspace(events=events, base_dir=project_root)
     resolver = PermissionResolver(
@@ -228,34 +250,254 @@ def _make_ctx(project_root: Path) -> tuple[OpContext, EventLog]:
         permission_decl=PermissionDecl(),
         permission_resolver=resolver,
         actor="test_skill_load",
+        available_skills=available_skills,
     )
     return ctx, events
 
 
-def test_file_read_op_expands_skill_md_body_end_to_end(tmp_path):
-    """Tier 2: OS invariant -- the real `file` read op expands a SKILL.md
-    body's ${REYN_PROJECT_DIR} token to the REAL project root, and emits a
-    skill_body_loaded audit-event (read via the public EventLog.all())."""
+def _assert_not_expanded(result: dict, events: EventLog, monkeypatch) -> None:
+    """Shared negative-witness assertion: the RAW token survives (never
+    blanked, never resolved), and no skill_body_loaded event fires."""
+    monkeypatch.setenv(_SENTINEL_ENV_VAR, _SENTINEL_ENV_VALUE)
+    assert result["status"] == "ok", result
+    assert f"secret=${{env:{_SENTINEL_ENV_VAR}}}" in result["content"], (
+        "unregistered SKILL.md must be read byte-identical -- token must "
+        "survive UNEXPANDED"
+    )
+    assert _SENTINEL_ENV_VALUE not in result["content"]
+    assert not [e for e in events.all() if e.type == "skill_body_loaded"]
+
+
+@pytest.mark.parametrize(
+    "rel_dir",
+    [
+        "",  # project root itself
+        "some/subdir",  # one level nested
+        "a/b/c/deeply/nested/dir",  # deep nesting
+    ],
+)
+def test_file_read_op_does_not_expand_unregistered_skill_md(tmp_path, monkeypatch, rel_dir):
+    """Tier 2: (security, #3196; falsify, multiple placements) an
+    UNREGISTERED `SKILL.md` -- no config entry, not builtin, not a
+    registered plugin body -- is read byte-identical regardless of WHERE
+    under the project root it sits. This is the exact confused-deputy
+    reproduction: filename alone must no longer be sufficient."""
+    monkeypatch.setenv(_SENTINEL_ENV_VAR, _SENTINEL_ENV_VALUE)
+    project_root = tmp_path / "project-root-real"
+    skill_dir = (project_root / rel_dir) if rel_dir else project_root
+    skill_dir.mkdir(parents=True)
+    skill_path = skill_dir / "SKILL.md"
+    skill_path.write_text(_SENTINEL_BODY, encoding="utf-8")
+    rel_path = str(skill_path.relative_to(project_root))
+    ctx, events = _make_ctx(project_root)  # available_skills=None -- nothing registered
+
+    result = _run(handle(FileIROp(kind="file", op="read", path=rel_path), ctx))
+
+    _assert_not_expanded(result, events, monkeypatch)
+
+
+def test_file_read_op_does_not_expand_unregistered_plugin_root(tmp_path, monkeypatch):
+    """Tier 2: (security, #3196; falsify) a `SKILL.md` sitting under a
+    would-be plugin directory that was NEVER completed through
+    `plugin_install` (no `.reyn-plugin/_source_kind.json` completion
+    sidecar) is NOT treated as plugin-provenance -- `read_plugin_body_bytes`
+    itself already gates on `is_registered_plugin_root`, this proves that
+    holds end-to-end through the `file` op too."""
+    monkeypatch.setenv(_SENTINEL_ENV_VAR, _SENTINEL_ENV_VALUE)
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    fake_plugin_dir = home / ".reyn" / "plugins" / "not-really-installed"
+    (fake_plugin_dir / "skills" / "x").mkdir(parents=True)
+    (fake_plugin_dir / ".reyn-plugin").mkdir()
+    (fake_plugin_dir / ".reyn-plugin" / "plugin.json").write_text(
+        json.dumps({"name": "not-really-installed", "version": "1.0.0"}),
+        encoding="utf-8",
+    )  # a hand-placed marker, no completion sidecar -- must NOT count
+    skill_path = fake_plugin_dir / "skills" / "x" / "SKILL.md"
+    skill_path.write_text(_SENTINEL_BODY, encoding="utf-8")
+
     project_root = tmp_path / "project-root-real"
     project_root.mkdir()
+    events = EventLog()
+    resolver = PermissionResolver(
+        config_permissions={}, project_root=project_root, interactive=False,
+    )
+    # Grant read on the fake plugin dir itself -- this test's subject is the
+    # PROVENANCE check (unregistered -> no expansion), not the separate
+    # read-zone gate a registered plugin body would also bypass.
+    resolver.session_approve_path(str(fake_plugin_dir), "test_skill_load", "file.read", recursive=True)
+    ws = Workspace(
+        events=events, base_dir=project_root,
+        permission_resolver=resolver, actor="test_skill_load",
+    )
+    ctx = OpContext(
+        workspace=ws,
+        events=events,
+        permission_decl=PermissionDecl(),
+        permission_resolver=resolver,
+        actor="test_skill_load",
+    )
+
+    result = _run(handle(FileIROp(kind="file", op="read", path=str(skill_path)), ctx))
+
+    _assert_not_expanded(result, events, monkeypatch)
+
+
+def test_file_read_op_expands_config_registered_skill_md(tmp_path, monkeypatch):
+    """Tier 2: (security, #3196 positive/regression witness) a
+    `SKILL.md` DECLARED via `skills.entries` (mirrored here as a
+    `SkillEntry` on `ctx.available_skills`, the SAME registry `:skill`
+    invocation resolves against) still expands exactly as before --
+    proving the gate closes the hole WITHOUT breaking the registered
+    case. Also pins the `skill_body_loaded` event's `provenance` +
+    `env_tokens_expanded` fields, and that NEITHER the event NOR anything
+    else carries the expanded secret VALUE outside `content` itself."""
+    monkeypatch.setenv(_SENTINEL_ENV_VAR, _SENTINEL_ENV_VALUE)
+    project_root = tmp_path / "project-root-real"
     skill_dir = project_root / "skills" / "greeter"
     skill_dir.mkdir(parents=True)
     skill_path = skill_dir / "SKILL.md"
-    skill_path.write_text(
-        "---\nname: greeter\n---\nProject: ${REYN_PROJECT_DIR}\n", encoding="utf-8",
-    )
+    skill_path.write_text(_SENTINEL_BODY, encoding="utf-8")
     rel_path = str(skill_path.relative_to(project_root))
-    ctx, events = _make_ctx(project_root)
+    entry = SkillEntry(name="greeter", description="d", path=rel_path)
+    ctx, events = _make_ctx(project_root, available_skills=[entry])
 
     result = _run(handle(FileIROp(kind="file", op="read", path=rel_path), ctx))
 
     assert result["status"] == "ok", result
-    assert f"Project: {project_root.resolve()}" in result["content"]
-    assert "${REYN_PROJECT_DIR}" not in result["content"]
+    assert f"secret={_SENTINEL_ENV_VALUE}" in result["content"]
 
     skill_load_events = [e for e in events.all() if e.type == "skill_body_loaded"]
     assert skill_load_events, "expected a skill_body_loaded audit-event to be emitted"
-    assert any(e.data["path"] == rel_path for e in skill_load_events)
+    event = next(e for e in skill_load_events if e.data["path"] == rel_path)
+    assert event.data["provenance"] == "config_entry"
+    assert event.data["env_tokens_expanded"] == 1
+    # The value must NEVER appear in the audit-event -- an audit-event is
+    # not a second secret-storage location (#3196 firm design).
+    assert _SENTINEL_ENV_VALUE not in json.dumps(event.data)
+
+
+def test_file_read_op_symlink_judged_by_resolved_target_not_literal_path(tmp_path, monkeypatch):
+    """Tier 2: (security, #3196) the judged face and the read face must be
+    the SAME resolved path (firm design point 2). A symlink named
+    `SKILL.md` living OUTSIDE any registered location, but pointing AT a
+    real registered skill's body file, is still recognized as trusted --
+    proving the gate resolves the path before comparing, rather than
+    comparing `op.path`'s own (unregistered) location."""
+    monkeypatch.setenv(_SENTINEL_ENV_VAR, _SENTINEL_ENV_VALUE)
+    project_root = tmp_path / "project-root-real"
+    real_skill_dir = project_root / "skills" / "greeter"
+    real_skill_dir.mkdir(parents=True)
+    real_skill_path = real_skill_dir / "SKILL.md"
+    real_skill_path.write_text(_SENTINEL_BODY, encoding="utf-8")
+    rel_real_path = str(real_skill_path.relative_to(project_root))
+    entry = SkillEntry(name="greeter", description="d", path=rel_real_path)
+
+    # An UNREGISTERED location, elsewhere under the project root, whose
+    # SKILL.md is a symlink to the REGISTERED body above.
+    unregistered_dir = project_root / "unregistered" / "elsewhere"
+    unregistered_dir.mkdir(parents=True)
+    symlink_path = unregistered_dir / "SKILL.md"
+    symlink_path.symlink_to(real_skill_path)
+    rel_symlink_path = str(symlink_path.relative_to(project_root))
+
+    ctx, events = _make_ctx(project_root, available_skills=[entry])
+
+    result = _run(handle(FileIROp(kind="file", op="read", path=rel_symlink_path), ctx))
+
+    assert result["status"] == "ok", result
+    assert f"secret={_SENTINEL_ENV_VALUE}" in result["content"]
+    skill_load_events = [e for e in events.all() if e.type == "skill_body_loaded"]
+    assert any(e.data["provenance"] == "config_entry" for e in skill_load_events)
+
+
+def test_file_read_op_dotdot_path_judged_by_resolved_target(tmp_path, monkeypatch):
+    """Tier 2: (security, #3196) a `..`-relative `op.path` that resolves to
+    a REGISTERED body still expands -- proves comparison happens on the
+    `.resolve()`d path, not the literal (un-normalized) path string."""
+    monkeypatch.setenv(_SENTINEL_ENV_VAR, _SENTINEL_ENV_VALUE)
+    project_root = tmp_path / "project-root-real"
+    skill_dir = project_root / "skills" / "greeter"
+    skill_dir.mkdir(parents=True)
+    skill_path = skill_dir / "SKILL.md"
+    skill_path.write_text(_SENTINEL_BODY, encoding="utf-8")
+    rel_path = str(skill_path.relative_to(project_root))
+    entry = SkillEntry(name="greeter", description="d", path=rel_path)
+    ctx, events = _make_ctx(project_root, available_skills=[entry])
+
+    dotdot_path = "skills/other-skill-name/../greeter/SKILL.md"
+
+    result = _run(handle(FileIROp(kind="file", op="read", path=dotdot_path), ctx))
+
+    assert result["status"] == "ok", result
+    assert f"secret={_SENTINEL_ENV_VALUE}" in result["content"]
+    skill_load_events = [e for e in events.all() if e.type == "skill_body_loaded"]
+    assert any(e.data["provenance"] == "config_entry" for e in skill_load_events)
+
+
+def test_file_read_op_resolves_path_exactly_once_per_read(tmp_path, monkeypatch):
+    """Tier 2: (security, #3196 co-vet round 2 — decision/content split)
+    `file.handle` resolves `op.path` EXACTLY ONCE per `read` and reuses that
+    single result for the permission gate, the builtin/plugin provenance
+    check, the ACTUAL byte read, and the skill-load provenance decision +
+    expansion.
+
+    An earlier revision of this PR resolved the path separately for the
+    trust decision (skill-load provenance) and for the actual read,
+    leaving a window where a symlinked `SKILL.md` swapped BETWEEN the two
+    resolves could make "decided trusted" and "bytes actually read" refer
+    to two DIFFERENT files. Proving "resolved exactly once" structurally
+    is the closure available when a live swap-mid-await reproduction isn't
+    constructible (there is no `await` between the resolve and the read
+    for a test to interleave into).
+
+    Scope, precisely: this closes the in-process SPLIT between the trust
+    decision and the content read (both now come from the SAME resolved
+    string). It does NOT close a true concurrent-OS-process race between
+    the `resolve()` syscall and the later read syscall — that residual
+    gap is a `resolve()`-then-`open()` TOCTOU inherent to path-based I/O in
+    general, unclosed by this test or the code it pins (would need an
+    atomic open-by-fd + fstat pattern instead).
+
+    Spies on `reyn.core.op_runtime.file._resolve_for_gate` (the ONE
+    function that ever calls `.resolve()` for this op) and asserts it is
+    called exactly once for a real, real-instance `SKILL.md` read."""
+    import reyn.core.op_runtime.file as file_module
+
+    project_root = tmp_path / "project-root-real"
+    skill_dir = project_root / "skills" / "greeter"
+    skill_dir.mkdir(parents=True)
+    skill_path = skill_dir / "SKILL.md"
+    skill_path.write_text(_SENTINEL_BODY, encoding="utf-8")
+    rel_path = str(skill_path.relative_to(project_root))
+    entry = SkillEntry(name="greeter", description="d", path=rel_path)
+    ctx, events = _make_ctx(project_root, available_skills=[entry])
+
+    calls: list[str] = []
+    real_resolve_for_gate = file_module._resolve_for_gate
+
+    def _counting_resolve_for_gate(ctx_arg, path_str):
+        calls.append(path_str)
+        return real_resolve_for_gate(ctx_arg, path_str)
+
+    monkeypatch.setattr(file_module, "_resolve_for_gate", _counting_resolve_for_gate)
+
+    result = _run(handle(FileIROp(kind="file", op="read", path=rel_path), ctx))
+
+    assert result["status"] == "ok", result
+    # Behavioral, not a bare count: the recorded call list must be EXACTLY
+    # one call, resolving `rel_path` -- a second (even identical-looking)
+    # call would mean a second, independent resolve, reopening the window
+    # where the trust decision and the actual byte read could split apart
+    # within this process (see the docstring's Scope note for what this
+    # does NOT close -- a true cross-process race at the syscall level).
+    assert calls == [rel_path], (
+        f"expected `op.path` to be resolved exactly ONCE (for {rel_path!r}) "
+        f"for this read, got these resolve call(s): {calls!r}"
+    )
+    skill_load_events = [e for e in events.all() if e.type == "skill_body_loaded"]
+    assert any(e.data["provenance"] == "config_entry" for e in skill_load_events)
 
 
 def test_file_read_op_does_not_expand_non_skill_md_file(tmp_path):
@@ -367,4 +609,8 @@ def test_plugin_install_bakes_plugin_root_skill_load_resolves_the_rest(tmp_path,
     assert f"skill={skill_path.parent.resolve()}" in content
     assert f"project={project_root.resolve()}" in content
     assert "${REYN_SKILL_DIR}" not in content
+    # #3196: a REGISTERED (install-completed) plugin body's provenance is
+    # reported as "plugin" -- positive witness for that provenance class.
+    plugin_events = [e for e in events.all() if e.type == "skill_body_loaded"]
+    assert any(e.data.get("provenance") == "plugin" for e in plugin_events)
     assert "${REYN_PROJECT_DIR}" not in content
