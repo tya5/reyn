@@ -214,9 +214,9 @@ Use `pypdf` for form-field operations...
 
 There is no dedicated "run this skill" primitive at any layer — a skill is discovered via L1, loaded via L2, and its assets are just files. The model decides relevance from the L1 description; the OS does not gate *which* skill the model may read, only *which paths* it may read (the standard permission model — reading inside the project root is a default; outside requires the usual declaration + approval).
 
-**Builtin/plugin body reads bypass the read-zone gate; everything else doesn't.** A builtin skill/pipeline's `path` (`reyn.builtin.registry`'s `BUILTIN_SKILLS`/`BUILTIN_PIPELINES` entries) and an installed plugin's `skills/**`/`pipelines/**` content (`~/.reyn/plugins/<name>/`, ADR 0064 §3.3) both resolve OUTSIDE `project_root` in every deploy — the standard out-of-root gate would hard-deny them non-interactively, with no operator present to approve. `reyn.builtin.docs.read_builtin_body_bytes` (#2913/#2914) and `reyn.plugins.body_read.read_plugin_body_bytes` (owner ruling + architect firm) short-circuit that gate for exactly this content — both `file__read` (any L2/L3 path under `skills/`/`pipelines/`) and `:name` skill-invoke (`reyn.interfaces.skill_invoke.resolve_skill_body`) route through them. The plugin bypass is gated on **install-registration**, not on the presence of a `.reyn-plugin/` marker: a plugin only qualifies once `plugin_install` has completed (source-resolve → manifest-validate → operator-permission-gated global copy → capability-register all succeeded — `reyn.core.op_runtime.plugin_install.is_registered_plugin_root`), so a hand-placed marker under `~/.reyn/plugins/` can never forge the bypass. `~/.reyn/plugins/.staging/` (pre-approval git-clone staging content) and anything outside `skills/`/`pipelines/` (`scripts/`, `requirements.txt`, `.mcp.json`) are explicitly excluded — least-privilege, mirroring the builtin bypass's own package-body-dir scoping. Enable/disable state never gates this: it is a project-local "use it or don't" toggle over content already approved once, globally, at install time.
+**Builtin/plugin body reads bypass the read-zone gate; everything else doesn't.** A builtin skill/pipeline's `path` (`reyn.builtin.registry`'s `BUILTIN_SKILLS`/`BUILTIN_PIPELINES` entries) and an installed plugin's `skills/**`/`pipelines/**` content (`~/.reyn/plugins/<name>/`, ADR 0064 §3.3) both resolve OUTSIDE `project_root` in every deploy — the standard out-of-root gate would hard-deny them non-interactively, with no operator present to approve. `reyn.builtin.docs.read_builtin_body_bytes` (#2913/#2914) and `reyn.plugins.body_read.read_plugin_body_bytes` (owner ruling + architect firm) short-circuit that gate for exactly this content — both `file__read` (any L2/L3 path under `skills/`/`pipelines/`, including the `${CLAUDE_SKILL_DIR}`-referenced L3 files described just below) and `:name` skill-invoke (`reyn.interfaces.skill_invoke.resolve_skill_body`) route through them. The plugin bypass is gated on **install-registration**, not on the presence of a `.reyn-plugin/` marker: a plugin only qualifies once `plugin_install` has completed (source-resolve → manifest-validate → operator-permission-gated global copy → capability-register all succeeded — `reyn.core.op_runtime.plugin_install.is_registered_plugin_root`), so a hand-placed marker under `~/.reyn/plugins/` can never forge the bypass. `~/.reyn/plugins/.staging/` (pre-approval git-clone staging content) and anything outside `skills/`/`pipelines/` (`scripts/`, `requirements.txt`, `.mcp.json`) are explicitly excluded — least-privilege, mirroring the builtin bypass's own package-body-dir scoping. Enable/disable state never gates this: it is a project-local "use it or don't" toggle over content already approved once, globally, at install time.
 
-## Splitting a large skill: front-matter `references:` (#3162)
+## Splitting a large skill: `${CLAUDE_SKILL_DIR}` references (#3162)
 
 `SKILL.md`'s body is read via the ordinary `file__read` op, so it is subject
 to that op's inline-read cap — the model-unresolved default floor is
@@ -227,41 +227,55 @@ worst kind of failure, because the same file behaves differently depending
 on an orthogonal runtime variable. When a skill genuinely cannot shrink
 below the floor without losing its value as a single-topic index (splitting
 it by sub-topic would destroy the thing that makes it useful — see #3162),
-it can split into an **L2 router + L3 references** instead:
+it can split into an **L2 router + L3 bundled references** instead, using
+the standard Agent Skills mechanism for referencing a bundled file: a
+Markdown link in the `SKILL.md` body whose target is
+`${CLAUDE_SKILL_DIR}/references/<file>.md` (`CLAUDE_SKILL_DIR` is reyn's
+alias for `REYN_SKILL_DIR`, `src/reyn/plugins/tokens.py`):
 
 ```markdown
 ---
 name: reyn_cheat_sheet
 description: ...
-references:
-  - hooks-and-events.md
-  - pipelines-and-present.md
 ---
+
+Deeper detail on hooks and MCP:
+[hooks-and-events.md](${CLAUDE_SKILL_DIR}/references/hooks-and-events.md)
 ```
 
-- `references:` is an **optional** front-matter key — a skill that omits it
-  stays today's single-`SKILL.md` shape, ungated by the mechanism below.
-- Each entry is a bare filename resolved against a `references/`
-  subdirectory sibling to `SKILL.md` (`skills/<name>/references/<file>.md`).
+- A bare relative path (e.g. `references/foo.md`) does **not** work here —
+  reyn's `file__read` op resolves a non-absolute path against the
+  **workspace root**, not the skill's own directory
+  (`src/reyn/core/op_runtime/file.py`), so it would silently miss the
+  skill's own `references/` folder. `${CLAUDE_SKILL_DIR}` is an
+  invocation-time token expanded only in `SKILL.md` itself (never in a
+  bundled file — `src/reyn/plugins/skill_load.py`), so the expanded link
+  resolves to an absolute path regardless of the workspace the skill is
+  read from.
 - The router (`SKILL.md` itself) should stay small enough to let the model
   decide *whether* it needs to go deeper, and *which* reference to read,
   without having read the references yet — name each reference file for the
-  question it answers.
+  question it answers, and keep the one-line "when to read this" note next
+  to each link.
 - Each reference is read the same way as `SKILL.md` (ordinary `file__read`),
   so it is subject to the **same** default inline cap.
 
-References are declared in YAML front-matter rather than linked from
-Markdown prose specifically so the checks below stay structural (a prose
-Markdown-link parser breaks silently on notation drift): every declared
-reference must exist under `references/`, every file under `references/`
-must be declared (bidirectional — no orphans), every declared reference
-must be reachable through the same wheel-safe body-read routing as
-`SKILL.md`, and every reference must itself be strictly under the default
-inline cap. All four are enforced by
-`tests/test_skill_references_gate_3162.py` for every shipped skill
-(builtin registry + plugin skills-on-disk), the same registry-plus-disk-walk
+`tests/test_skill_references_gate_3162.py` gates, for every shipped skill
+(builtin registry + plugin skills-on-disk, the same registry-plus-disk-walk
 enumeration `test_skill_md_default_inline_cap_gate.py` and
-`test_builtin_registry_disk_parity.py` use.
+`test_builtin_registry_disk_parity.py` use): every `${CLAUDE_SKILL_DIR}`- or
+`${REYN_SKILL_DIR}`-prefixed link in a `SKILL.md` body resolves to a real
+file under the skill's directory; the `references/` directory's file set
+and the set of such links pointing into it match exactly in both directions
+(no orphan file, no dangling link); every `.md` file under a skill's
+directory is strictly under the default inline cap; and no file under a
+skill's `references/` directory itself contains a `${CLAUDE_SKILL_DIR}`-/
+`${REYN_SKILL_DIR}`-prefixed Markdown link pointing at another file. That
+last check enforces a one-level-deep invariant: L1 (menu) -> L2 (router,
+`SKILL.md`) -> L3 (reference) is the whole chain, and an L3 file is always a
+leaf — a link from inside a reference to yet another file would be
+unreachable anyway (only `SKILL.md` gets token expansion), so an
+L3-to-L3 link is always a bug, not a valid deeper level.
 
 ## Hot-reload
 
