@@ -1,5 +1,5 @@
 ---
-status: draft (2026-07-13)
+status: done — landed same day (2026-07-13, commit `1bb8a2a0`, PR #2934)
 owner-intent: ratified direction (owner GO 2026-07-13) — 2-layer structured output (ephemeral session → agent step) + agent-step model-class option; unsupported model errors, no silent degrade
 ---
 

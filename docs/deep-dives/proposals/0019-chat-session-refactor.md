@@ -1,6 +1,6 @@
 # FP-0019: ChatSession Responsibility Separation — Extracting Services from session.py
 
-**Status**: partially-landed — Wave 1+2 part 1+3 complete (CompactionController + SkillRunner + InterventionHandler + AutoResumeHandler extracted, 2026-05-13/14); Wave 2 part 2 (A2AHandler) proposed (next wave)
+**Status**: done — Wave 1+2 part 1+3 complete (CompactionController + SkillRunner + InterventionHandler + AutoResumeHandler extracted, 2026-05-13/14); Wave 2 part 2 (A2AHandler extraction, PR `a792d133`) also landed — later renamed `InterAgentMessaging` (#2188)
 **Proposed**: 2026-05-11
 **Author**: Research session (eager-shaw-389d9d)
 

@@ -1,5 +1,5 @@
 ---
-status: draft (2026-07-13)
+status: done — all 3 tracked PRs merged (PR-1 #2923, PR-2 #2924, PR-3 #2925)
 supersedes: 0060 §D5b (the build-time docs mirror mechanism)
 preserves: 0060 F1 production-reachability invariant (upgraded, not removed)
 ---

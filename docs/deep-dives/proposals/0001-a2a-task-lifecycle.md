@@ -1,6 +1,6 @@
 # FP-0001: A2A task lifecycle — ask_user / push notification support
 
-**Status**: proposed
+**Status**: superseded by [ADR-0034](../decisions/0034-a2a-task-lifecycle.md) — Accepted + Implemented
 **Proposed**: 2026-05-09
 **Author**: Research session (eager-shaw-389d9d)
 

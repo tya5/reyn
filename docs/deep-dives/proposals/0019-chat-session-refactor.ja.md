@@ -1,6 +1,6 @@
 # FP-0019: ChatSession 責務分離 — session.py からのサービス抽出
 
-**Status**: partially-landed — Wave 1+2 part 1+3 complete (CompactionController + SkillRunner + InterventionHandler + AutoResumeHandler extracted, 2026-05-13/14); Wave 2 part 2 (A2AHandler) proposed (次 wave)
+**Status**: done — Wave 1+2 part 1+3 complete (CompactionController + SkillRunner + InterventionHandler + AutoResumeHandler extracted, 2026-05-13/14); Wave 2 part 2(A2AHandler 抽出、PR `a792d133`)も着地 — 後に `InterAgentMessaging` へ改名(#2188)
 **Proposed**: 2026-05-11
 **Author**: Research session (eager-shaw-389d9d)
 

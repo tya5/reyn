@@ -1,6 +1,6 @@
 # FP-0049: Skill-execution consolidation into `reyn.skill` (#1794)
 
-**Status**: proposed (seam map — design-review only, no cut)
+**Status**: cut, landed — issue #1794 closed; S1 (#1836), S2 (#1839), S3 (#1840), S4 (#1841) all merged, moving skill_search/SkillRuntime/skill_runner/run_skill into `reyn.skill`
 **Proposed**: 2026-06-19
 **Author**: e2e-coder session (#1794)
 **Gate**: owner-decided (2026-06-18); C-series settle was the precondition. Per

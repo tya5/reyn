@@ -1,6 +1,6 @@
 # FP-0009: Operational Intelligence — Indexing Event Logs with RAG
 
-**Status**: **Components A + C + D landed** 2026-05-15; B proposed (= FP-0001 waiting)
+**Status**: **Components A + C + D landed** 2026-05-15; B still proposed — its stated blocker (FP-0001 A2A task lifecycle) landed 2026-05-16 (ADR-0034), but Component B (periodic cron index update) itself has not been implemented
 **Proposed**: 2026-05-10
 **Author**: Research session (eager-shaw-389d9d)
 

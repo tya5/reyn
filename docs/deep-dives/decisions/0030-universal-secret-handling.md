@@ -1,6 +1,6 @@
 # ADR-0030: Universal secret handling — `${VAR}` everywhere + `~/.reyn/secrets.env` + `reyn secret` CLI
 
-**Status**: Proposed (2026-05-09)
+**Status**: Accepted + Implemented (2026-05-09, commit `0fdbe1a6`) — `~/.reyn/secrets.env`, `${VAR}` interpolation, and `reyn secret set/list/clear/rotate` all shipped.
 **Track**: Architecture — Reyn-wide secret infrastructure (= MCP / LLM / web / audit / future agents で共有)
 
 ---

@@ -1,7 +1,8 @@
 # ADR-0038: User-facing time-travel — global consistent-cut rewind + PITR snapshot generations
 
-**Status**: **Accepted** (2026-06-13) — owner final ack obtained + lead-coder
-sign-off; **impl gate OPEN** (Phase 1 may start). Authored design-first for issue
+**Status**: **Accepted + Implemented** (2026-06-13) — Phase 1 and Phase 2 (2a/2b/2c/2d)
+are production (see `docs/feature-map.md` § Time-Travel / Rewind); concurrent-live-fork
+is owner-rejected out-of-scope. Authored design-first for issue
 #1533; flow-trace verified by docs-maintainer (5/5 seams); ADR + plan reviewed and
 signed off by lead-coder.
 **Track**: Core state-model — successor seam to ADR-0001 (WAL+snapshot),

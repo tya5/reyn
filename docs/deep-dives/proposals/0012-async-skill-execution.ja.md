@@ -1,6 +1,6 @@
 # FP-0012: スキル/エージェント/プランの非同期実行 — 長時間タスクのノンブロッキング化
 
-**Status**: proposed
+**Status**: **LANDED 2026-05-10**（Component A+B+C+D+E を単一 commit で実装; chat-mode の invoke_skill は非ブロッキングに、plan-mode は逐次実行のため blocking のまま）
 **Proposed**: 2026-05-10
 **Author**: Research session (eager-shaw-389d9d)
 

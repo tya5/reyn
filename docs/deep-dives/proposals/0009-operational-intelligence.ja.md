@@ -1,6 +1,6 @@
 # FP-0009: Operational Intelligence — イベントログの RAG インデックス化
 
-**Status**: **Components A + C + D 着地** 2026-05-15; B proposed (= FP-0001 待ち)
+**Status**: **Components A + C + D 着地** 2026-05-15; B は proposed のまま — 前提としていた FP-0001 A2A task lifecycle は 2026-05-16 に着地済み(ADR-0034)だが、Component B(cron 定期 index 更新)自体は未実装
 **Proposed**: 2026-05-10
 **Author**: Research session (eager-shaw-389d9d)
 

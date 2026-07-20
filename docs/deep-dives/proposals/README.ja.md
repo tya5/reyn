@@ -112,7 +112,7 @@ SMALL / MEDIUM / LARGE（根拠付き）。
 | [0054](0054-present-layer.md) | Present layer — LLM トークン往復無しの user-facing 表示 | done(IMPLEMENTED 2026-07-08, v1 display-only) | LARGE |
 | [0055](0055-render-template-op-and-present-defaults.md) | `render_template` op + present defaults | done(IMPLEMENTED 2026-07-09) | SMALL |
 | [0056](0056-canonical-coverage-enforcement.md) | Canonical-mapping coverage enforcement | done(IMPLEMENTED 2026-07-09) | SMALL |
-| [0057](0057-rag-retrieval-redesign.md) | RAG / Retrieval 再設計 | owner-validated; 実装着手は GO 待ち | LARGE |
-| [0058](0058-web-surface-modularity.md) | Web surface modularity + Chainlit retire | owner-ratified; 複数 phase landed(#2837 auth-layer、#2850 chainlit retire) | LARGE |
+| [0057](0057-rag-retrieval-redesign.md) | RAG / Retrieval 再設計 | owner-validated; Phase 1/2a/2b/4 landed(#2846/#2848/#2851/#2854); near-term deferred scope は設計上未着手 | LARGE |
+| [0058](0058-web-surface-modularity.md) | Web surface modularity + Chainlit retire | owner-ratified; Phase 1-4 landed(#2837/#2849/#2850)、Phase 5(任意 refactor fold)は未着手 | LARGE |
 | [0059](0059-hook-event-redesign.md) | Hook-Event Redesign(Event Bus / reactivity substrate) | owner-ratified; Phase 1-5 landed(#2871–#2885) | LARGE |
-| [0060](0060-llm-wielding-foundation.md) | LLM-Wielding Foundation — agent が構築したものを実際に使うための基盤 | accepted(owner GO); Addendum A/B landed、C review 中 | LARGE |
+| [0060](0060-llm-wielding-foundation.md) | LLM-Wielding Foundation — agent が構築したものを実際に使うための基盤 | closed(2026-07-13); floor + show 済み、Addendum A/B/C 確定、enhancement/loop layer は owner により de-scope | LARGE |

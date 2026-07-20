@@ -1,6 +1,6 @@
 # FP-0045: Session C6 — first method-cluster seam (owner-gated)
 
-**Status**: proposed (design-review only — no cut)
+**Status**: cut, landed — owner-approved via this doc (#1798), implemented in PR #1804 (refactor(C6): collapse 6 Session forwarders)
 **Proposed**: 2026-06-19
 **Author**: e2e-coder session (#1792 / FP-0044 C-series)
 **Gate**: owner-gated. This doc exists to choose the first `Session`

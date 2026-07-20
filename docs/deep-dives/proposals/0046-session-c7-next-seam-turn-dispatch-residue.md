@@ -1,6 +1,6 @@
 # FP-0046: Session C7 — next seam (turn-dispatch residue) + remaining-cluster roadmap
 
-**Status**: proposed (design-review only — no cut)
+**Status**: cut, landed — owner-approved C7-first via this doc (#1806), implemented in PR #1809 (refactor(C7): collapse 3 Session forwarders to RouterLoopDriver)
 **Proposed**: 2026-06-19
 **Author**: e2e-coder session (#1792 / FP-0044 C-series, Stage-2)
 **Gate**: owner-gated. Picks the next `Session` method-cluster cut after C6

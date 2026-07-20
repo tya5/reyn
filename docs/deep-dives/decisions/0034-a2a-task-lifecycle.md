@@ -1,6 +1,6 @@
 # ADR-0034: A2A task lifecycle (FP-0001)
 
-**Status**: Accepted (2026-05-16) — implementation lands in this PR series
+**Status**: Accepted + Implemented (2026-05-16) — task lifecycle shipped (see #866 "task lifecycle is shipped" doc refresh + the Gap 3-5 PR chain)
 **Track**: A2A protocol — async task support + ask_user round-trip
 
 ## Context

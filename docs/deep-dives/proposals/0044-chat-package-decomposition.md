@@ -1,6 +1,6 @@
 # FP-0044: `reyn.chat` decomposition — runtime namespace + cluster split + god-file seams
 
-**Status**: proposed
+**Status**: partially-landed — item 1 (rename `reyn.chat` → `reyn.runtime`) and item 2 (cluster split, C2-C8 seams, #1792 series PRs #1793-#1815+) landed; `session.py`/`router_loop.py` god-files remain large (see 0045-0049 seam-map follow-ons); full decomposition not complete
 **Proposed**: 2026-06-19
 **Author**: e2e-coder session (#312)
 

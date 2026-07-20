@@ -116,7 +116,7 @@ Links to related ADRs, PRs, and docs.
 | [0054](0054-present-layer.md) | Present layer — user-facing presentation without an LLM token round-trip | done (IMPLEMENTED 2026-07-08, v1 display-only) | LARGE |
 | [0055](0055-render-template-op-and-present-defaults.md) | `render_template` op + present defaults | done (IMPLEMENTED 2026-07-09) | SMALL |
 | [0056](0056-canonical-coverage-enforcement.md) | Canonical-mapping coverage enforcement | done (IMPLEMENTED 2026-07-09) | SMALL |
-| [0057](0057-rag-retrieval-redesign.md) | RAG / Retrieval redesign | owner-validated; implementation dispatch awaits GO | LARGE |
-| [0058](0058-web-surface-modularity.md) | Web surface modularity + Chainlit retire | owner-ratified; multiple phases landed (#2837 auth-layer, #2850 chainlit retire) | LARGE |
+| [0057](0057-rag-retrieval-redesign.md) | RAG / Retrieval redesign | owner-validated; Phases 1/2a/2b/4 landed (#2846/#2848/#2851/#2854); near-term-deferred scope unbuilt by design | LARGE |
+| [0058](0058-web-surface-modularity.md) | Web surface modularity + Chainlit retire | owner-ratified; Phases 1-4 landed (#2837/#2849/#2850), Phase 5 (optional refactor fold) open | LARGE |
 | [0059](0059-hook-event-redesign.md) | Hook-Event Redesign (Event Bus / reactivity substrate) | owner-ratified; Phases 1-5 landed (#2871–#2885) | LARGE |
-| [0060](0060-llm-wielding-foundation.md) | LLM-Wielding Foundation — making the agent actually use what it can build | accepted (owner GO); Addenda A/B landed, C in review | LARGE |
+| [0060](0060-llm-wielding-foundation.md) | LLM-Wielding Foundation — making the agent actually use what it can build | closed (2026-07-13); floor + show delivered, Addenda A/B/C settled, enhancement/loop layers de-scoped by owner | LARGE |
