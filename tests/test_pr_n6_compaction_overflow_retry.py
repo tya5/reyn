@@ -343,7 +343,7 @@ def test_assert_static_bounds_zero_component_sum_raises() -> None:
         B_M=5000, main_M_room=10000, effective_trigger=5000,
     )
     with pytest.raises(AssertionError):
-        assert_static_bounds(cfg, budgets)
+        assert_static_bounds(cfg, budgets, "test-model")
 
 
 def test_assert_static_bounds_negative_component_weight_raises() -> None:
@@ -356,7 +356,7 @@ def test_assert_static_bounds_negative_component_weight_raises() -> None:
         B_M=5000, main_M_room=8000, effective_trigger=5000,
     )
     with pytest.raises(AssertionError):
-        assert_static_bounds(cfg, budgets)
+        assert_static_bounds(cfg, budgets, "test-model")
 
 
 def test_assert_static_bounds_zero_section_sum_raises() -> None:
@@ -369,7 +369,7 @@ def test_assert_static_bounds_zero_section_sum_raises() -> None:
         B_M=5000, main_M_room=7000, effective_trigger=5000,
     )
     with pytest.raises(AssertionError):
-        assert_static_bounds(cfg, budgets)
+        assert_static_bounds(cfg, budgets, "test-model")
 
 
 # ---------------------------------------------------------------------------
