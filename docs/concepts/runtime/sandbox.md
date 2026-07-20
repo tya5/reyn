@@ -61,6 +61,27 @@ Each probe establishes a **positive control** before its deny: an action the pol
 
 A third probe, `probe_network_enforcement` (#3030), witnesses the network gate the same way (a `connect()` to a loopback listener the probe's own process opens, attempted under `network: false`, with the same positive-control / non-networking-control / deny shape) but is deliberately kept OUT of the cached, production-gating suite above — folding a third axis into every backend resolution on every host is a wider blast radius than this fix needed, so it stays a directly-callable, CI-only probe (`scripts/sandbox_landlock_deny_gate.py`'s `network` deny arm) rather than part of `enforcement_self_test`. It witnesses `connect()`, not `socket()`-create: `socket`/`bind` are always allowed regardless of `network` (#3060 — [configure-sandbox.md](../../guide/for-users/configure-sandbox.md) documents the exception and why), so `socket()` succeeding no longer distinguishes an enforcing backend from a broken one. #3060 also extended it with two more arms: a connected-socketpair self-pipe (NULL-address `sendto`/`recvfrom` — the async event loop's own wakeup) must SURVIVE, while an ADDRESSED `sendto` (real UDP egress) must stay DENIED — so the NULL-address allowance is proven neither too tight (the runtime pumps) nor too loose (egress refused).
 
+### The axis contract — 1 bit → 3-tuple, and why production stays 1 bit (#2983)
+
+The self-test above checks one bit per axis: did a deny fire. #3060's two extra `probe_network_enforcement` arms (the NULL-address self-pipe survival, the addressed-`sendto` deny) showed that one bit is not the whole claim for an axis that carries a deliberate exception, and #3060's `test_chunker_server_reaches_serving_under_network_false` showed a failure mode ("every syscall probe is green, the server still hangs") that "did a deny fire" is structurally blind to. `reyn.security.sandbox.axis_contract` generalises those two witness classes into a per-axis contract of **three independent legs**:
+
+1. **deny** — the axis's core deny actually fires (what the self-test above already checks).
+2. **boundary** — each declared exception (`AxisException`, e.g. network's NULL-addr `sendto`/`recvfrom` allowance) has its own probe proving it did not reopen the axis.
+3. **workload** — the real workload the axis exists to gate reaches its intended state under the restriction (reachable-for-purpose, not merely "no syscall was refused unexpectedly").
+
+`AxisException.boundary_probe` and `AxisContract.exceptions` have **no default value** — omitting either at construction is a `TypeError`, not a silently-empty exception or a forgotten leg. An axis not yet migrated onto the contract states `NOT_MIGRATED` explicitly on all four fields rather than being absent, and a CI test asserts the exact set of currently-migrated axis names, so a partially-migrated or silently-regressed axis cannot read as "done."
+
+**This contract is deliberately NOT wired into `enforcement_self_test`.** That function is the production gate every real backend resolution calls; its blast radius is every sandboxed op on every host, and `probe_network_enforcement` is kept out of it for exactly that reason (a probe bug there would silently fall every op back to `NoopBackend`, not just fail to witness one axis). Widening that same gate to run all three legs for every axis would widen the blast radius of a probe bug in any future leg to the same degree. So the two layers stay split:
+
+| Layer | What runs | Blast radius |
+|---|---|---|
+| **production gate** (`enforcement_self_test`) | deny leg only, write + spawn axes only — unchanged by the axis contract | every sandboxed op, every host |
+| **CI conformance** (`tests/test_sandbox_axis_contract_2983.py`, Linux-only, gated like `sandbox_landlock_deny_gate.py`) | all three legs, for every migrated axis, against a real backend | CI only |
+
+This is not a new pattern — `scripts/sandbox_landlock_deny_gate.py` (#2983 stage 3) already runs real deny arms as a CI-only gate, never a production one. The axis contract generalises that split into a typed per-axis registry instead of a fixed arm list. As of this PR, `network` is the only migrated axis (it is the only one with all three legs' worth of existing evidence: deny = #3030, boundary = #3060, workload = #3060's chunker-serving probe, reused rather than reimplemented); `write` and `spawn` remain `NOT_MIGRATED` pending a follow-up.
+
+The registry also records `witness_strength` per backend — network's deny leg is `BEHAVIORAL` (a real `connect()` attempt) on seccomp but only `PROFILE_TEXT` (SBPL text inspection, no real deny attempted) on Seatbelt. That asymmetry is not new, but it was previously unwritten; the axis contract makes it a recorded decision rather than an unnoticed gap. Adding real behavioral witnessing to Seatbelt is out of scope for this PR (a separate issue) — mixing a security-contract change with a witness-strength feature addition would dilute review of both.
+
 **macOS 26.3+ and `SeatbeltBackend`**: `sandbox-exec` remains shipped in macOS 26.3. An SBPL profile that includes `(import "bsd.sb")` and `(allow process-exec*)` is sufficient for the backend to function. See the FP-0017 post-dogfood fix landing notes (commit `b477508`) for details.
 
 ## `reyn.yaml` configuration
