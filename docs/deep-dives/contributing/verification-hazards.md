@@ -139,6 +139,54 @@ site) needs its interactive elements (anchors, mermaid diagrams) verified
 against *each* surface that reads it — a passing build for one says nothing
 about the other.
 
+## 9. Input-surface blindness: gate every surface the real mechanism reads
+
+`scripts/check_pr_closing_intent.py` gated the PR **body** against GitHub's
+parsed `closingIssuesReferences` — and passed cleanly for PR #3187 (body
+correctly said `part of #1909`, `closingIssuesReferences` was empty, checked
+and confirmed green before merge). It still auto-closed #1909 on merge: an
+intermediate commit's message carried a stray `Closes #1909` left over from
+an earlier draft, and GitHub's default squash-merge commit message is the
+*concatenation* of all commit messages — a second input surface the gate
+never looked at. The green result on the body surface said nothing about
+the commit-message surface, because the check's target was narrower than
+the real mechanism (GitHub's closing-keyword parser) it was standing in for.
+
+This is the sibling of §8 (renderer-specificity) one layer earlier: §8 is
+about a single *artifact* read by two renderers; this is about a single
+*mechanism* (GitHub closing an issue on merge) that reads from two
+*sources* (PR body, PR commit messages) that a human only edits one of by
+habit. A gate that checks the source you *think of* first — the PR body,
+because that's where the author writes prose — can be fully green while the
+mechanism resolves from a source nobody re-checked.
+
+★ Even the extended (body + commit-message) gate has a residual limit worth
+naming explicitly, because the failure mode this section describes is
+exactly the one a sloppy reading of the fix would repeat: **this gate
+detects a state that CAN still leak a close — it does not, and structurally
+cannot, guarantee the close won't happen.** The squash-merge commit message
+is only finalized at merge time, and the human merging can hand-edit it —
+removing a keyword the gate flagged, or just as easily *adding* one it never
+saw. ∴ a green run of this gate means "no leftover closing keyword was
+found in the PR-time input surfaces" — it does NOT mean "this PR will not
+close the issue." Reading gate-green as close-proof is the exact misreading
+that caused the original incident (`closingIssuesReferences` == 0 was read
+as "close is prevented," and the issue closed anyway); the fix must not
+invite the same misreading one layer up.
+
+**Apply**: before trusting a gate as covering "does X happen", enumerate
+every input surface the *real* downstream mechanism actually reads (not
+just the one your fix touches) and confirm the gate reads all of them. A
+fix that only reruns the check when the touched surface changes (e.g. this
+gate previously re-ran only on `edited` — a body-only event) is itself a
+symptom: the trigger set silently encodes an assumption about which surface
+matters. ★ A pre-merge gate is never itself the observation of the
+merge-time outcome — after merging a PR this gate touched, check the
+target issue's actual `state` (e.g. `gh issue view <N> --json state`)
+rather than treating the gate's earlier green run as the final word; that
+issue-state read is the only thing that actually observes what happened at
+merge time.
+
 ## See also
 
 - [Testing policy](testing.md) — Tier model, Mock vs Fake, decision flow.
