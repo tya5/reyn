@@ -114,7 +114,7 @@ async def test_external_tool_result_meta_carries_taint_marker(tmp_path, monkeypa
 
 @pytest.mark.asyncio
 async def test_baseline_without_taint_remember_shared_succeeds(tmp_path, monkeypatch):
-    """Tier 3 control: with NO external content ever in context,
+    """Tier 3: control — with NO external content ever in context,
     ``remember_shared`` (a tool the ``_untrusted`` floor denies) succeeds
     normally. This is the control the negative witness below is measured
     against — proves the later denial is CAUSED by narrowing, not by some
