@@ -1,6 +1,6 @@
 # FP-0052 — High-cost model pre-confirmation (#1830)
 
-**Status**: draft  
+**Status**: partially-landed — S1-S3 warn-only landed (#1861: `model_cost_rate` utility + `CostWarnConfig` + `/model`/session-start + conv-pane marker); issue #1830 closed (owner: warn-only is shippable core). S4 blocking confirmation gate deferred to #1867 (unified `RequestBus`/intervention framework, not bespoke block).  
 **Author**: tui-coder  
 **Issue**: #1830  
 **Scope**: `llm/` utility + config + `/model` slash integration + session startup + TUI surface

@@ -1,6 +1,6 @@
 # FP-0048: Gateway outbound — self-contained inbound+outbound plugins
 
-**Status**: proposed (design-review only — no implementation)
+**Status**: implemented — PR #1825 (feat(1805): gateway outbound — self-contained inbound+outbound plugins)
 **Proposed**: 2026-06-19
 **Author**: e2e-coder session (#1805)
 **Gate**: feature, not a pure move. Lead review → (if the commitment is large)

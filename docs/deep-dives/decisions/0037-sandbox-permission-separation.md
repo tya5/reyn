@@ -1,6 +1,6 @@
 # ADR-0037: Sandbox / permission separation — agent-level containment unification
 
-**Status**: **Accepted (2026-06-05) — agent-level re-level in progress (#1326).**
+**Status**: **Accepted + Implemented (2026-06-05) — agent-level re-level complete (#1326, PR #1330 + #1333 merged).**
 Sandbox policy unifies at agent level; per-phase `default_sandbox_policy` is retired.
 
 ## Context

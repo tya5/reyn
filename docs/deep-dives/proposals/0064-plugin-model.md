@@ -1,6 +1,6 @@
 # 0064 — Plugin model for reyn (author → test → promote reusable capabilities)
 
-- **Status**: Proposed (awaiting owner review)
+- **Status**: Accepted + Implemented — owner GO'd, all 5 phases (P1 manifest/token-expansion, P2 install machinery, P3 slash+CLI surfaces, P4 skill-load tool, P5 RAG plugin) landed and checked off in umbrella issue #3066 (CLOSED)
 - **Date**: 2026-07-18
 - **Arc**: grew out of the RAG turnkey arc (#2955)
 - **Deferred (named, not decided here)**: agents/hooks (incl. event composition) plugin containment; hosting arbitrary third-party plugins; multi-version cache resolution; the end-user promote/install UX surface.

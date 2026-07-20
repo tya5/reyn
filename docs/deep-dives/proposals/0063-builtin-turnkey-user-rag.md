@@ -1,6 +1,6 @@
 # FP-0063 — Builtin turnkey user RAG (builtin mcp + skill + pipeline)
 
-**[lead-coder]** — Owner-designed in consultation (2026-07-15); captured for architect co-vet + phasing. This is the arc FP-0057 named and deferred as **"task #66 (builtin mcp)"**. **Design steered by owner; implementation dispatch awaits owner GO.**
+**[lead-coder]** — Owner-designed in consultation (2026-07-15); captured for architect co-vet + phasing. This is the arc FP-0057 named and deferred as **"task #66 (builtin mcp)"**. **Design steered by owner; landed** — PC (#2949), P2 (#2952), P3 (#2966), P4 (#3008) all merged, then folded into the builtin-RAG-as-first-plugin arc (ADR 0064 P5, #3078), with an arc-level reachable-for-purpose witness test (#3122).
 
 ## Motivation / current state
 

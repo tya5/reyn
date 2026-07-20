@@ -1,6 +1,6 @@
 # Proposal 0058 — Web Surface Modularity (+ Chainlit Retire)
 
-**Status:** OWNER-RATIFIED; implementation spec for dispatch. **Origin:** owner-designed, architect-formalized, 2026-07-11.
+**Status:** OWNER-RATIFIED; **Phase 1-4 landed** — Phase 1 auth-gate (#2837), Phase 2 SurfaceSpec registry + secure-default A2A/MCP-OFF folding Phase 3 (#2849), Phase 4 chainlit clean-break retire (#2850). **Phase 5 (optional refactor fold) remains open**, not dispatched. **Origin:** owner-designed, architect-formalized, 2026-07-11.
 **Scope:** the `reyn web` FastAPI gateway's HTTP surfaces. **Auth model:** single-user/single-token now; multi-user identity = future (out of scope).
 
 ## Owner ratification (2026-07-11) — decisions LOCKED

@@ -1,7 +1,9 @@
 # FP-0043: Agent / Session / SkillRuntime restructure
 
-**[lead-coder]** — owner-directed design (2026-06-17). Status: **proposed** (design;
-SkillRuntime rename in progress, the rest staged & gated). FP number provisional —
+**[lead-coder]** — owner-directed design (2026-06-17). Status: **partially-landed** (design;
+stage 1 SkillRuntime rename landed, PR #1724; the Agent/Session identity-split
+restructure continues in later stages, e.g. #3133/#3154 (Agent identity SSoT,
+2026-07-20) — remaining stages still in progress). FP number provisional —
 docs-maintainer to confirm/renumber.
 
 ## Motivation — the naming layer-mismatch

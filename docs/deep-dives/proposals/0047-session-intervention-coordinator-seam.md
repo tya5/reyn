@@ -1,6 +1,6 @@
 # FP-0047: Session intervention-coordination seam — the first state-ownership move
 
-**Status**: proposed (design-review only — no cut)
+**Status**: cut, landed — owner-approved via this doc (#1813), implemented in PR #1815 (refactor(C8): extract InterventionCoordinator from Session)
 **Proposed**: 2026-06-19
 **Author**: e2e-coder session (#1792 / FP-0044 C-series, Stage-2)
 **Gate**: owner-gated. This is the **first** C-series cut that moves *state* (not
