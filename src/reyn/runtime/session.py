@@ -6828,6 +6828,7 @@ class Session:
             render_template_bounds=self._render_template_bounds,  # #2679: operator bounds (both router op-ctx builders complete-by-construction)
             embedding_event_sink=self._embedding_event_sink,  # FP-0057 #2856 Part A: TUI model-download status sink for the embed op
             budget_gateway=self._budget,  # FP-0063 PC: embedding-cost recording entry point (enumerate ALL op-ctx builders; the load-bearing one for `embed` is RouterHostAdapter's)
+            available_skills=self._available_skills,  # #3196: config-registered-entry provenance class for the file op's skill-load gate (enumerate ALL op-ctx builders)
         )
 
     def _make_router_intervention_bus(self):

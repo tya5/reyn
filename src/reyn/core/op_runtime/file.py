@@ -177,6 +177,47 @@ def _read_inline_cap(ctx: OpContext) -> int:
     return control_ir_inline_cap(model_str, events=ctx.events, phase=ctx.actor)
 
 
+def _config_registered_skill_body_provenance(ctx: OpContext, resolved_path: str) -> bool:
+    """True when *resolved_path* — an ALREADY `_resolve_for_gate`d absolute
+    path — matches a config-registered skill entry's body path (#3196's
+    third provenance class, alongside builtin/registered-plugin below).
+
+    Enumerated from ``ctx.available_skills`` — the SAME registered-skill
+    snapshot ``:skill`` invocation resolves against (``Session``/
+    ``RouterHostAdapter``'s ``_available_skills``, built by
+    ``reyn.data.skills.registry.build_skill_registry`` from config), never a
+    hand-curated path list of this module's own (a second, drifting
+    enumeration would just relocate the same "curated subset diverges from
+    the registry" bug #3194 fixed elsewhere). Each entry's ``path`` is
+    resolved the SAME way ``reyn.interfaces.skill_invoke.resolve_skill_body``
+    resolves it (project-root-relative or absolute, then ``.resolve()`` —
+    the same symlink/``..``-collapsing call ``_resolve_for_gate`` already
+    made on *resolved_path*), so a symlinked or ``../``-relative entry still
+    compares equal to its real target instead of by literal string.
+    ``ctx.available_skills`` is ``None`` in test/phase-fallback construction
+    (see ``OpContext.available_skills``'s docstring) — this simply returns
+    ``False`` there, failing CLOSED (no expansion), never open.
+    """
+    entries = getattr(ctx, "available_skills", None)
+    if not entries:
+        return False
+    ws = getattr(ctx, "workspace", None)
+    base_dir = ws.base_dir if ws is not None else Path.cwd()
+    for entry in entries:
+        entry_path = getattr(entry, "path", None)
+        if not entry_path:
+            continue
+        p = Path(entry_path).expanduser()
+        if not p.is_absolute():
+            p = base_dir / p
+        try:
+            if str(p.resolve()) == resolved_path:
+                return True
+        except OSError:
+            continue
+    return False
+
+
 def _resolve_for_gate(ctx: OpContext, path_str: str) -> str:
     """Resolve a file-op path against the workspace base_dir so the permission
     gate checks the SAME absolute target the op will actually read/write.
@@ -221,11 +262,28 @@ async def handle(op: FileIROp, ctx: OpContext) -> dict:
     # (`plugin_install.is_registered_plugin_root`), never on a hand-placed
     # `.reyn-plugin/` marker alone. See `reyn.plugins.body_read` for the
     # full rationale.
+    # #3196: the resolved provenance class of a skill body being read —
+    # "builtin" / "plugin" / "config_entry" / None (untrusted). This is now
+    # the trust gate for skill-load `${env:...}` expansion below, REPLACING
+    # the pre-#3196 filename-only check (`is_skill_body_path` alone let ANY
+    # file literally named `SKILL.md` anywhere under the project root have
+    # its `${env:VAR}` tokens expanded to real secret values on an ordinary
+    # read — a confused-deputy: a trivially attacker-controlled filename
+    # gated a trust-sensitive substitution). `read_builtin_body_bytes` /
+    # `read_plugin_body_bytes` already gate on real registration (importlib
+    # package membership / `plugin_install.is_registered_plugin_root`), so a
+    # non-None result here already IS a trusted provenance, not merely a
+    # permission-bypass signal.
     _builtin_bytes: "bytes | None" = None
+    _skill_body_provenance: "str | None" = None
     if op.op == "read":
         _builtin_bytes = read_builtin_body_bytes(op.path)
-        if _builtin_bytes is None:
+        if _builtin_bytes is not None:
+            _skill_body_provenance = "builtin"
+        else:
             _builtin_bytes = read_plugin_body_bytes(op.path)
+            if _builtin_bytes is not None:
+                _skill_body_provenance = "plugin"
 
     # Permission check (single point for both frontends). For
     # `regenerate_index` the file actually written is `output_path`, not
@@ -355,13 +413,35 @@ async def handle(op: FileIROp, ctx: OpContext) -> dict:
         # dynamic param that must be resolved fresh on every load, never
         # baked (§3.4).
         if is_skill_body_path(op.path):
-            content = load_skill_body(
-                content,
-                skill_path=_resolve_for_gate(ctx, op.path),
-                project_dir=ctx.workspace.base_dir,
-                alias_claude=True,
-            )
-            ctx.events.emit("skill_body_loaded", path=op.path)
+            _resolved_skill_path = _resolve_for_gate(ctx, op.path)
+            # #3196: filename match is necessary but NOT sufficient — also
+            # require a resolved (symlink/`..`-collapsed) provenance class.
+            # `_skill_body_provenance` may already be "builtin"/"plugin" from
+            # the bypass check above; otherwise check the config-registered-
+            # entry class (the ONLY class that check hasn't already ruled on).
+            if _skill_body_provenance is None and _config_registered_skill_body_provenance(
+                ctx, _resolved_skill_path,
+            ):
+                _skill_body_provenance = "config_entry"
+            if _skill_body_provenance is not None:
+                content, _env_tokens_expanded = load_skill_body(
+                    content,
+                    skill_path=_resolved_skill_path,
+                    project_dir=ctx.workspace.base_dir,
+                    alias_claude=True,
+                )
+                # NEVER include the expanded values here — an audit-event is
+                # not a second secret-storage location (#3196 firm design).
+                ctx.events.emit(
+                    "skill_body_loaded",
+                    path=op.path,
+                    provenance=_skill_body_provenance,
+                    env_tokens_expanded=_env_tokens_expanded,
+                )
+            # else: unregistered SKILL.md (#3196) — an ordinary, unremarkable
+            # read. `content` stays byte-identical to disk; no expansion, no
+            # skill_body_loaded event (the downstream `tool_executed` event
+            # below still fires as for any other read).
         # #2335: read MODE. An explicit LINE window (offset/limit given, no char_offset) is honored
         # VERBATIM — the LLM's line-based read contract, byte-identical — AS LONG AS its slice fits
         # the inline cap. Otherwise (an unbounded read, a char_offset mid-line RESUME, OR an explicit

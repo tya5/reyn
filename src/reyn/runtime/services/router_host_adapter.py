@@ -2143,6 +2143,10 @@ class RouterHostAdapter:
             # factory, so this is the load-bearing wiring for embedding-cost
             # recording (all three scopes fan out from the gateway).
             budget_gateway=self._budget_gateway,
+            # #3196: this adapter's OWN registered-skill snapshot (see
+            # `get_available_skills` above) → the config-registered-entry
+            # provenance class for the `file` op's skill-load gate.
+            available_skills=self._available_skills,
         )
 
     def _set_cancel_event(self, event: asyncio.Event) -> None:
