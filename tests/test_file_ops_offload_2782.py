@@ -210,13 +210,16 @@ def test_glob_files_runs_off_the_main_thread(tmp_path, monkeypatch):
 
     events = EventLog()
     ws = Workspace(events=events)
-    orig = ws.glob_files
+    # #2998: the op_runtime glob handler now calls `glob_files_with_total`
+    # (not `glob_files`) so it can also report the pre-cap match total —
+    # same to_thread-wrapped call site, different Workspace method.
+    orig = ws.glob_files_with_total
 
     def _spy(*args, **kwargs):
         seen_thread["ident"] = threading.current_thread().ident
         return orig(*args, **kwargs)
 
-    ws.glob_files = _spy
+    ws.glob_files_with_total = _spy
     ctx = ToolContext(
         events=events, permission_resolver=_resolver(tmp_path), workspace=ws,
         caller_kind="router", router_state=RouterCallerState(),
