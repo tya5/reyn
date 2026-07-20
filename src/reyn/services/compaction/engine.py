@@ -476,9 +476,15 @@ class CompactionBudgetSelfConsistencyError(Exception):
     stripped by -O; raise instead so the guard cannot vanish"). If this
     invariant is violated, ``effective_trigger`` (or ``B_M``) would flow
     downstream as a non-positive number; in particular the elide decision
-    ``total <= effective_trigger`` would always be true against a negative
-    ``effective_trigger``, so compaction would fire on every turn instead
-    of failing fast here.
+    ``total <= effective_trigger`` (``router_history_buffer.py``) is always
+    FALSE against a non-positive ``effective_trigger`` (``total`` is a sum
+    of non-negative token counts), so the elide/compact branch would be
+    taken on every turn instead of failing fast here.
+
+    Note: ``B_M <= 0`` has no standalone -O witness and cannot have one —
+    ``effective_trigger = min(main_M_room, B_M)``, so ``B_M <= 0`` implies
+    ``effective_trigger <= 0`` always (containment by construction via
+    ``min``, not a witness gap; see the comment at the ``B_M`` raise site).
 
     Attributes
     ----------
@@ -529,6 +535,15 @@ def assert_static_bounds(
         f"{[k for k, v in sw.items() if v < 0]}"
     )
     if budgets.B_M <= 0:
+        # #3027 co-vet: this branch has no standalone -O witness, and cannot
+        # have one — effective_trigger = min(main_M_room, B_M), so
+        # B_M <= 0 ⇒ effective_trigger = min(main_M_room, B_M) <= B_M <= 0
+        # always. Any budget config that trips THIS branch necessarily also
+        # trips the effective_trigger branch below, so the effective_trigger
+        # -O witness (tests/test_3027_budget_guard_survives_optimize.py)
+        # already exercises the same "raise survives -O" property for this
+        # branch too. This is containment by construction (via `min`), not a
+        # witness gap — do not add a same-shaped standalone B_M-only -O test.
         from reyn.llm.model_budget import get_max_input_tokens
         T_max = get_max_input_tokens(model)
         raise CompactionBudgetSelfConsistencyError(
