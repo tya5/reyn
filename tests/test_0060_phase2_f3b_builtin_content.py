@@ -74,7 +74,19 @@ _FLAGSHIP_PIPELINE_PATH = Path(BUILTIN_PIPELINES["flagship"]["path"])
 
 
 def _cheat_sheet_body() -> str:
-    return _CHEAT_SHEET_PATH.read_text(encoding="utf-8")
+    """The cheat sheet's full content -- the L2 router (SKILL.md) PLUS every
+    L3 `references/*.md` file it declares (#3162 part 2: the worked
+    pipeline/hook examples and the five curated-axes markers moved out of
+    SKILL.md into references/ to fit the inline-read cap; this helper reads
+    the same aggregate content a model reaches by following the router, so
+    the D5a executable-example and axes-coverage checks below still see the
+    real shipped text)."""
+    router_text = _CHEAT_SHEET_PATH.read_text(encoding="utf-8")
+    references_dir = _CHEAT_SHEET_PATH.parent / "references"
+    reference_texts = [
+        p.read_text(encoding="utf-8") for p in sorted(references_dir.glob("*.md"))
+    ]
+    return "\n\n".join([router_text, *reference_texts])
 
 
 def _extract_fenced_block(text: str, lang: str) -> str:
