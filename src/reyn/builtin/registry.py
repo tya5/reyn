@@ -118,11 +118,12 @@ BUILTIN_SKILLS: "dict[str, dict[str, Any]]" = {
     },
     "draft_judge_revise": {
         "description": (
-            "Draft an artifact, self-review it against your own checklist "
+            'Draft an artifact, self-review it against your own checklist '
             "via a schema-validated agent step, and revise on failure -- the "
-            "standard Evaluation-gated workflow for any 'produce then check "
-            "quality' task (a summary, a doc section, an email). Read this "
-            "before handing off a self-authored artifact you have not gated."
+            'standard Evaluation-gated workflow for any "produce then check '
+            "quality\" task (a summary, a doc section, an email, a report "
+            "paragraph). Read this before handing off a self-authored "
+            "artifact you have not gated."
         ),
         "path": str(_BUILTIN_DIR / "skills" / "draft_judge_revise" / "SKILL.md"),
         "enabled": True,
