@@ -244,18 +244,22 @@ def substitute_arguments(
 def resolve_skill_body(path: str, *, project_dir: Path) -> str:
     """Read + skill-load-expand a SKILL.md body.
 
-    Reuses the SAME two primitives the ordinary ``file`` read op's
-    skill-load pass uses (``reyn.core.op_runtime.file.handle``,
-    #3070/ADR-0064 §3.5) — ``read_builtin_body_bytes`` for a builtin-
-    provenance path, a plain filesystem read otherwise, then
-    ``load_skill_body`` for ``${REYN_*}``/``${CLAUDE_*}``/``${env:...}``
-    token expansion. This is deliberately NOT a second read mechanism —
-    #2971's "reading is the invocation" holds for `:` too.
+    Reuses the SAME primitives the ordinary ``file`` read op's skill-load
+    pass uses (``reyn.core.op_runtime.file.handle``, #3070/ADR-0064 §3.5) —
+    ``read_builtin_body_bytes`` for a builtin-provenance path,
+    ``read_plugin_body_bytes`` for a registered-plugin-provenance path, a
+    plain filesystem read otherwise, then ``load_skill_body`` for
+    ``${REYN_*}``/``${CLAUDE_*}``/``${env:...}`` token expansion. This is
+    deliberately NOT a second read mechanism — #2971's "reading is the
+    invocation" holds for `:` too.
     """
     from reyn.builtin.docs import read_builtin_body_bytes
+    from reyn.plugins.body_read import read_plugin_body_bytes
     from reyn.plugins.skill_load import load_skill_body
 
     raw_bytes = read_builtin_body_bytes(path)
+    if raw_bytes is None:
+        raw_bytes = read_plugin_body_bytes(path)
     if raw_bytes is not None:
         content = raw_bytes.decode("utf-8", errors="replace")
     else:

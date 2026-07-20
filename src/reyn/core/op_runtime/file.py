@@ -9,6 +9,7 @@ from typing import Any, Literal
 
 from reyn.builtin.docs import read_builtin_body_bytes
 from reyn.data.workspace.text_codec import decode_text_or_none, encode_text
+from reyn.plugins.body_read import read_plugin_body_bytes
 from reyn.plugins.skill_load import is_skill_body_path, load_skill_body
 from reyn.schemas.models import FileIROp
 
@@ -211,9 +212,20 @@ async def handle(op: FileIROp, ctx: OpContext) -> dict:
     # directory (= it IS builtin-provenance content — nothing else lives
     # there); every operator (non-builtin) path gets None and falls through
     # to the unmodified `_in_default_read_zone` gate below, unchanged.
-    _builtin_bytes: "bytes | None" = (
-        read_builtin_body_bytes(op.path) if op.op == "read" else None
-    )
+    #
+    # (plugin-body parity, owner+architect firm) a REGISTERED plugin's
+    # `skills/**`/`pipelines/**` body resolves outside `project_root` too
+    # (`~/.reyn/plugins/`, a per-operator global cache) and had no
+    # equivalent short-circuit — `read_plugin_body_bytes` closes that
+    # asymmetry, gated on install-registration
+    # (`plugin_install.is_registered_plugin_root`), never on a hand-placed
+    # `.reyn-plugin/` marker alone. See `reyn.plugins.body_read` for the
+    # full rationale.
+    _builtin_bytes: "bytes | None" = None
+    if op.op == "read":
+        _builtin_bytes = read_builtin_body_bytes(op.path)
+        if _builtin_bytes is None:
+            _builtin_bytes = read_plugin_body_bytes(op.path)
 
     # Permission check (single point for both frontends). For
     # `regenerate_index` the file actually written is `output_path`, not

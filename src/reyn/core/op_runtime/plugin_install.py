@@ -869,6 +869,36 @@ def _read_completed_kind(plugin_root: Path) -> "str | None":
     return kind if isinstance(kind, str) else None
 
 
+def is_registered_plugin_root(plugin_root: Path) -> bool:
+    """True iff *plugin_root* (``~/.reyn/plugins/<name>/``) is a COMPLETED
+    install — the single source of truth other modules (e.g.
+    ``reyn.plugins.body_read``, #3162-adjacent) consult to decide whether a
+    plugin's shipped content is operator-approved, install-time-trusted
+    content vs. an unreviewed on-disk directory.
+
+    "Registered" means what step 9 of ``handle`` above means by it: the
+    completion sidecar (:func:`_read_completed_kind` — written ONLY at step 9,
+    after source-resolve → manifest-validate → permission-gated copy →
+    capability-register all succeeded) is present, AND no
+    ``_install_state.json`` in-progress marker is still sitting there (a
+    crashed/interrupted partial — step 0's ``reconcile_plugin_installs``
+    rolls these back on the next ``plugin_install`` call, but a caller
+    querying in the window before that reconcile runs must not treat the
+    stale partial as trustworthy).
+
+    Deliberately NOT keyed off ``skills.yaml``/``pipelines.yaml`` enablement:
+    enable/disable is a project-local "use it or don't" toggle over content
+    that was already approved once, at install time, into the GLOBAL
+    ``~/.reyn/plugins/`` copy (§3.3) — it is not a re-review of the content
+    itself, so it must not gate whether that content counts as trusted.
+    """
+    if not plugin_root.is_dir():
+        return False
+    if _install_state_path(plugin_root).exists():
+        return False
+    return _read_completed_kind(plugin_root) is not None
+
+
 from reyn.core.offload.canonical import STRUCTURED_PASSTHROUGH  # noqa: E402
 
 register("plugin_install", handle, canonical=STRUCTURED_PASSTHROUGH)
