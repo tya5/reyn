@@ -66,7 +66,19 @@ def _read_op(path: str) -> FileIROp:
 def _make_plugin_source(base: Path, name: str = "myplugin") -> Path:
     """A minimal local plugin dir: manifest + a skills capability whose skill
     dir ALSO carries an L3 bundled reference file, plus non-body content
-    (``scripts/``, ``requirements.txt``) that must stay gated post-install."""
+    (``scripts/``) that must stay gated post-install.
+
+    Deliberately carries NO ``requirements.txt``: `plugin_install`'s step 7
+    (`_materialise_deps`) shells out to the real `uv` binary whenever the
+    copied plugin has one, which a CI runner may not have installed (the
+    fixture must not depend on `uv` being present just to prove witness 4's
+    "install completed" — that would make the REAL-install witness flaky on
+    dependency-materialisation infrastructure it has nothing to do with).
+    Witness 1 needs a `requirements.txt` on disk under the registered root
+    ONLY to prove it stays gated post-install; it writes one directly into
+    the fixture's already-completed `plugin_root` (see that test) instead of
+    routing it through install.
+    """
     plugin_dir = base / name
     (plugin_dir / ".reyn-plugin").mkdir(parents=True, exist_ok=True)
     (plugin_dir / ".reyn-plugin" / "plugin.json").write_text(
@@ -87,7 +99,6 @@ def _make_plugin_source(base: Path, name: str = "myplugin") -> Path:
     )
     (plugin_dir / "scripts").mkdir(parents=True, exist_ok=True)
     (plugin_dir / "scripts" / "setup.py").write_text("print('not a body')\n", encoding="utf-8")
-    (plugin_dir / "requirements.txt").write_text("requests\n", encoding="utf-8")
     return plugin_dir
 
 
@@ -152,7 +163,18 @@ def registered_plugin_root(tmp_path, monkeypatch) -> Path:
 
 def test_witness1_non_body_dirs_stay_gated_under_registered_root(registered_plugin_root, tmp_path):
     """Tier 2: Witness 1: scripts/ and requirements.txt under a REGISTERED plugin
-    root are NOT bypassed — least-privilege scoping to skills/+pipelines/."""
+    root are NOT bypassed — least-privilege scoping to skills/+pipelines/.
+
+    `requirements.txt` is written directly into the already-installed
+    `registered_plugin_root` here (post-install, NOT via the source dir the
+    `plugin_install` fixture copies) — see `_make_plugin_source`'s
+    docstring: routing it through install would shell out to `uv`, which a
+    CI runner may not have. This only affects HOW the file lands on disk;
+    the read-gating assertion below exercises the real
+    `read_plugin_body_bytes` / `file_handle` path against a genuinely
+    registered root either way."""
+    (registered_plugin_root / "requirements.txt").write_text("requests\n", encoding="utf-8")
+
     unrelated_root = tmp_path / "unrelated"
     unrelated_root.mkdir()
     ctx = _read_ctx(unrelated_root)
