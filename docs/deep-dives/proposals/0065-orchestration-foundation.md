@@ -121,14 +121,109 @@ An inbox entry queued **without** a wake may carry an `escalate_after`; on expir
 
 This is a general inbox property, not a hook feature — every no-wake producer benefits. It is separable from §4.1–4.4 and can land independently.
 
-## 5. Consequences
+## 5. Interfaces
+
+Three surfaces, one activation unit behind them. Each follows the existing idiom of its surface rather than inventing a shape: CLI = argparse sub-parser + `set_defaults(func=...)` (`src/reyn/interfaces/cli/commands/cron.py`); slash = the `@slash(name, summary=...)` decorator (`src/reyn/interfaces/slash/`); LLM = a typed IR op (`kind: Literal[...]` on a pydantic model, `src/reyn/schemas/models.py`) surfaced as a catalog verb.
+
+**Naming is deliberately shared across all three** — the same noun (`reactive`) and the same two verbs (`activate` / `deactivate`) — so an operator reading an audit trail sees one concept regardless of which surface triggered it.
+
+### 5.1 Plugin interface — what a plugin declares
+
+A fourth capability variant, mirroring the existing three (discriminated union, `entries` empty = discover by layout convention):
+
+```python
+class PluginReactiveCapability(BaseModel):
+    kind: Literal["reactive"] = "reactive"
+    entries: tuple[str, ...] = ()      # empty = discover reactive/*.yaml
+```
+
+Each declared file is one **activation definition**:
+
+```yaml
+# <plugin_root>/reactive/<name>.yaml
+name: streamlit_ui            # activation id, unique within the plugin
+server: streamlit             # the .mcp.json server this activation holds
+subscribe:                    # URIs subscribed on activate, dropped on deactivate
+  - "app://status"
+composers:                    # optional — same schema as the workspace `composers:`
+  - name: app_settled
+    op: debounce
+    ttl: 3
+    on: mcp_resource_updated
+    matcher: {server: streamlit, uri: "app://status"}
+hooks:                        # same schema as the workspace `hooks:`
+  - on: composed:app_settled
+    template_push: {message: "...", wake: false}
+```
+
+Rules:
+
+- **A plugin may only name its own `server:`** and may only subscribe/match URIs on that server. This is the containment 0064 deferred; it is what makes plugin-shipped hooks safe to install without a per-hook review.
+- **`shell_exec` / `shell_push` in a plugin-shipped hook requires an explicit grant at install time**, surfaced as its own approval line — same reasoning as §4.3: the plugin, not the operator, authored the command string.
+- Registration is plugin-attributed so `plugin_uninstall` removes the definitions exactly like the existing three registries.
+- **Declaring an activation does not activate it.** Shipping ≠ running; activation is always one of §5.2 / §5.3.
+
+### 5.2 User interface — CLI (durable) and slash (this session)
+
+**CLI — workspace/agent layer, durable.** New sub-parser group under the existing plugin command family:
+
+| Command | Effect |
+|---|---|
+| `reyn reactive list` | Every declared activation, its plugin, and whether it is granted / auto-start |
+| `reyn reactive grant <plugin>/<name> [--agent <a>]` | Permit LLM activation. **Without a grant, §5.3 fails closed.** |
+| `reyn reactive revoke <plugin>/<name>` | Withdraw the grant; deactivates it wherever it is live |
+| `reyn reactive auto <plugin>/<name> --on\|--off [--agent <a>]` | Activate automatically in every session of that agent |
+
+**slash — this session, now.** `/reactive` follows the `@slash` idiom:
+
+| Command | Effect |
+|---|---|
+| `/reactive` | What is active in THIS session, and what is available to activate |
+| `/reactive on <plugin>/<name>` | Activate here |
+| `/reactive off <plugin>/<name>` | Deactivate here |
+
+`/reactive off` works on an activation the LLM started — the operator is the higher authority (§4.4 rule 1 applies to whoever stops it).
+
+### 5.3 LLM interface
+
+Two ops, permission-gated on a single new axis (`require_reactive_activate`), scoped per activation id:
+
+```python
+class ReactiveActivateIROp(BaseModel):
+    kind: Literal["reactive_activate"]
+    activation: str      # "<plugin>/<name>"
+
+class ReactiveDeactivateIROp(BaseModel):
+    kind: Literal["reactive_deactivate"]
+    activation: str
+```
+
+Semantics:
+
+- **Fails closed without an operator grant** (§5.2). The LLM cannot self-grant; this is the "operator authors content and availability, LLM decides timing" split of §4.2 made mechanical.
+- **Activate is all-or-nothing** — hold + subscribe + install, or none of it (§4.4 rule 1 in the forward direction).
+- **Idempotent** both ways (§4.4 rule 3).
+- Both emit an audit event carrying the activation id and the deciding surface, so a trail shows *who* started it, not merely that hooks fired.
+- Deactivate is implicit at session end — activation is session-scoped and volatile (§4.4 rule 2).
+
+**`hooks_add` is not extended for plugin activations.** The extension in §4.3 remains for hooks the LLM registers *directly*; a plugin's hooks arrive via activation, already authored. The two paths stay distinct so the `shell_exec` boundary is enforced in one place per path.
+
+### 5.4 What each surface may NOT do
+
+| Surface | Cannot |
+|---|---|
+| Plugin | Name another plugin's server; subscribe outside its own server; ship a `shell_exec` hook without an install-time grant |
+| LLM | Grant itself; activate an ungranted activation; register a hook on another plugin's event surface; author a `shell_exec` hook |
+| Operator | *(no restriction — the operator is the authority both other surfaces derive from)* |
+
+## 6. Consequences
 
 - An external orchestrator becomes installable-and-it-works, which is the precondition #2839 needs before the internal task system can go.
 - Activation becomes an auditable event with a single decider, instead of an emergent property of "someone happened to call a tool".
 - The volatile-activation ruling (§4.4) means **a reactive plugin is not automatically running after a restart**. That is a deliberate trade: predictability and one recovery story, at the cost of a re-activation step. The operator pattern hides this; the LLM pattern does not.
 - `hooks_add` becomes more capable, and the `shell_exec` line becomes the explicit boundary of LLM hook authorship rather than an accident of what was implemented first.
 
-## 6. Rejected alternatives
+## 7. Rejected alternatives
 
 - **Make connection + subscription durable so activation survives a crash.** Rejected: it creates a second durability story next to the WAL, and the external world is out of recovery scope by ruling. §4.4 converges downward instead.
 - **A per-session hook config layer keyed by session id.** Rejected: session ids are runtime-generated and re-keyable, so the file layer has no author. The connection lifetime already provides per-session scoping for free.
