@@ -231,6 +231,55 @@ def estimate_tokens_for_turn(
     return estimate_tokens(json.dumps(content), model, use_chars4=use_chars4)
 
 
+def estimate_tokens_for_any_turn(
+    turn: Any,
+    model: str,
+    *,
+    use_chars4: bool = False,
+) -> int:
+    """#2957 PR-A thin call-site adapter — NOT part of ``estimate_tokens_for_turn``.
+
+    ``estimate_tokens_for_turn`` stays dict-only by design (its ``turn.get(...)``
+    shape mirrors the compactor's dict turns and the post-``_serialise_turn``
+    wire dicts ``retry_loop`` counts). But ``trim_head``/``trim_tail`` (via
+    ``_trim_groups`` below) and the elide-threshold sum in
+    ``RouterHistoryBuffer.build_history`` / ``decompose_history_for_retry`` are
+    called with *live* ``ChatMessage`` instances, which are not dicts —
+    ``isinstance(turn, dict)`` was False, so every such turn silently fell to
+    ``estimate_tokens_for_turn``'s ``content is None`` fallback branch,
+    undercounting images (``_IMAGE_FIXED_TOKEN_COST`` never applied) and
+    ignoring ``tool_calls`` entirely.
+
+    This adapter builds the dict shape ``estimate_tokens_for_turn`` expects
+    WITHOUT running ``_serialise_turn``'s path-ref -> base64 materialisation
+    (doing that would defeat the point of the fixed image cost, which exists
+    precisely so counting never has to touch image bytes). ``tool_calls`` is
+    folded in as extra content parts of an unrecognised ``type`` so the
+    existing "unknown part type -> JSON-repr" branch counts them, rather than
+    adding a new branch inside ``estimate_tokens_for_turn`` itself.
+
+    Removable in PR-B: once the elide and advisor paths both measure the same
+    post-``_serialise_turn`` wire dict, every call site converges on plain
+    dicts and this adapter (and its call sites) can be deleted.
+    """
+    if isinstance(turn, dict):
+        return estimate_tokens_for_turn(turn, model, use_chars4=use_chars4)
+
+    content = getattr(turn, "content", None)
+    tool_calls = getattr(turn, "tool_calls", None)
+    if tool_calls:
+        parts = list(content) if isinstance(content, list) else (
+            [{"type": "text", "text": content}] if content else []
+        )
+        parts = parts + [
+            {"type": "tool_call", "tool_call": tc} for tc in tool_calls
+        ]
+        adapted: dict = {"content": parts}
+    else:
+        adapted = {"content": content}
+    return estimate_tokens_for_turn(adapted, model, use_chars4=use_chars4)
+
+
 # ---------------------------------------------------------------------------
 # Dataclasses (replace the YAML artifact schemas)
 # ---------------------------------------------------------------------------
@@ -618,7 +667,12 @@ def _trim_groups(groups: "list[list]", max_tokens: int, model: str, use_chars4: 
     kept: list[list] = []
     total = 0
     for group in groups:
-        g_tokens = sum(estimate_tokens_for_turn(t, model, use_chars4=use_chars4) for t in group)
+        # #2957 PR-A: turns here are ChatMessage instances in every real
+        # caller (RouterHistoryBuffer, CompactionController) — use the
+        # type-adapting wrapper, not estimate_tokens_for_turn directly.
+        g_tokens = sum(
+            estimate_tokens_for_any_turn(t, model, use_chars4=use_chars4) for t in group
+        )
         if kept and total + g_tokens > max_tokens:
             break  # adding this whole group would exceed budget — stop (never split it)
         if g_tokens > max_tokens:
