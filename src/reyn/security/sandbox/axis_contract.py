@@ -108,6 +108,38 @@ class WitnessStrength(Enum):
     explicitly OUT of this PR's scope (a separate issue): this field's job
     here is only to make the current asymmetry a recorded decision instead
     of an unnoticed gap.
+
+    **This asymmetry is intentional, not an oversight (#3178 owner
+    ruling).** ``PROFILE_TEXT`` proves the SBPL string reyn generated says
+    what it should; it does NOT prove ``sandbox-exec`` actually interpreted
+    that string the way reyn expects. ``BEHAVIORAL`` and ``PROFILE_TEXT`` are
+    not equivalent evidence.
+
+    Why the gap is accepted rather than closed: on Seatbelt, reyn hands a
+    declaration to the OS's own sandbox mechanism and gets out of the way —
+    almost no reyn code sits between the declaration and its enforcement. On
+    seccomp, reyn builds and loads the BPF filter itself (see the network
+    axis's ``NULL_ADDR`` exception above), so there is far more reyn-authored
+    surface that can be wrong, which is exactly what makes behavioral
+    witnessing worth its cost there. Spending the stronger, more expensive
+    leg where reyn's own code is most exposed is a defensible allocation of
+    verification effort, not corner-cutting.
+
+    The limit is real, though, and text inspection alone can miss it: #3060
+    found that whether ``(allow network-bind (local ip "localhost:*"))``
+    covers IPv6 ``::1`` could not be determined by reading the SBPL string —
+    it required checking actual behavior on darwin hardware. "The profile
+    text says the right thing" is not "the OS enforced the right thing"; it
+    is a cost/benefit call, not a claim of equivalence.
+
+    Review condition: this repo's CI (``.github/workflows/*.yml``) has no
+    macOS runner as of #3178, so adding a Seatbelt behavioral test today
+    would only ever run — and pass by skipping — on a runner that does not
+    exist; it would look green without witnessing anything. Once a macOS CI
+    runner exists, revisit giving Seatbelt a ``BEHAVIORAL`` leg (tracked as a
+    separate issue, out of #3178's scope). Until then, a developer with
+    local Mac hardware can still verify behaviorally by hand — the ``::1``
+    question above was resolved exactly that way, not by CI.
     """
 
     BEHAVIORAL = "behavioral"
