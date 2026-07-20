@@ -476,11 +476,19 @@ async def handle(op: FileIROp, ctx: OpContext) -> dict:
         # loop thread (called after the `await`, not inside the threaded call) —
         # EventStore.write ultimately does an `asyncio.Queue.put_nowait`, which is
         # NOT thread-safe if called from a to_thread worker thread.
-        matches = await asyncio.to_thread(
-            ctx.workspace.glob_files, op.path, max_results=op.max_results, absolute=op.absolute
+        #
+        # #2998: `glob_files_with_total` (not the plain `glob_files`) — both
+        # branches of the shared walk already build the full match list before
+        # slicing to `max_results`, so the pre-cap total is free (no second glob
+        # pass) and lets the result signal a silent truncation instead of a
+        # caller-forgot-max_results 51st-file loss.
+        glob_result = await asyncio.to_thread(
+            ctx.workspace.glob_files_with_total,
+            op.path, max_results=op.max_results, absolute=op.absolute,
         )
+        matches = glob_result.matches
         ctx.events.emit("tool_executed", op="glob_files", path=op.path, match_count=len(matches))
-        return {
+        result: dict = {
             "kind": "file",
             "op": "glob",
             "pattern": op.path,
@@ -488,6 +496,14 @@ async def handle(op: FileIROp, ctx: OpContext) -> dict:
             "matches": matches,
             "count": len(matches),
         }
+        if glob_result.total > len(matches):
+            # Decision-enabling (#2998): not just "cut" but how many of how many,
+            # and the fix (pass a larger max_results) — mirrors read op's
+            # truncated + next_offset re-read hint.
+            result["truncated"] = True
+            result["total_count"] = glob_result.total
+            result["returned_count"] = len(matches)
+        return result
 
     if op.op == "delete":
         # #2782: same per-path lock as edit/write — otherwise a concurrent

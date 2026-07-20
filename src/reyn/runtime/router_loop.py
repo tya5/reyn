@@ -3594,7 +3594,24 @@ class RouterLoop:
             return result
         if name == "list_directory":
             if isinstance(result, dict):
-                return result.get("entries", [result])
+                entries = result.get("entries", [result])
+                # #2998: this branch flattens to a bare list BEFORE `to_canonical`
+                # ever runs (see the caller above), so a truncation the op_runtime
+                # glob handler recorded in `result["truncated"]` would otherwise be
+                # silently dropped here — the "signal loaded onto meta but nobody
+                # reads it" failure mode. Append it as a plain-text trailing entry
+                # (decision-enabling: how many of how many, and the fix) rather
+                # than changing `entries`' element type.
+                if result.get("truncated") and isinstance(entries, list):
+                    entries = [
+                        *entries,
+                        (
+                            f"... truncated: {result.get('returned_count')} of "
+                            f"{result.get('total_count')} entries shown — pass a "
+                            "larger max_results to list_directory to see the rest."
+                        ),
+                    ]
+                return entries
             return result
         return result
 

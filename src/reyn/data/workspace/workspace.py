@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -10,6 +11,20 @@ from reyn.environment.host_backend import HostBackend
 if TYPE_CHECKING:
     from reyn.environment.backend import EnvironmentBackend, GrepResult
     from reyn.security.permissions.permissions import PermissionResolver
+
+
+@dataclass
+class GlobFilesResult:
+    """Result of :meth:`Workspace.glob_files_with_total` (#2998).
+
+    ``matches`` is the ``max_results``-capped list (identical to what
+    :meth:`Workspace.glob_files` returns for the same args); ``total`` is the
+    PRE-CAP match count, so a caller can tell ``total > len(matches)`` — the
+    cap actually discarded matches — from ``total == len(matches)`` — nothing
+    was cut."""
+
+    matches: list[str]
+    total: int
 
 
 class Workspace:
@@ -243,7 +258,32 @@ class Workspace:
         absolute path itself (R1 pipelines have no abspath/cwd primitive to
         do that with). The absolute-pattern branch already returns absolute
         paths unconditionally, so this flag is a no-op there.
+
+        Callers that must know whether this cap actually discarded matches
+        (#2998 — a silent 50-cap otherwise reads as "this is everything")
+        use :meth:`glob_files_with_total` instead, which shares this exact
+        walk + permission logic via :meth:`_glob_files_uncapped` and returns
+        the pre-cap total alongside the capped list.
         """
+        return self._glob_files_uncapped(pattern, absolute=absolute)[:max_results]
+
+    def glob_files_with_total(
+        self, pattern: str, max_results: int = 50, *, absolute: bool = False
+    ) -> "GlobFilesResult":
+        """Like :meth:`glob_files`, but also reports the PRE-CAP total match count
+        (#2998). Both branches of the shared walk already build the full match list
+        before slicing to ``max_results``, so ``len(...)`` before the slice is free —
+        no extra glob pass. Callers that must signal a silent truncation to their
+        consumer (the ``glob`` / ``list_directory`` file ops) use this instead of
+        :meth:`glob_files`.
+        """
+        all_matches = self._glob_files_uncapped(pattern, absolute=absolute)
+        return GlobFilesResult(matches=all_matches[:max_results], total=len(all_matches))
+
+    def _glob_files_uncapped(self, pattern: str, *, absolute: bool = False) -> list[str]:
+        """Shared walk + permission-gate logic behind :meth:`glob_files` /
+        :meth:`glob_files_with_total` (#2998 extraction) — returns the FULL,
+        un-capped match list; callers slice to their own ``max_results``."""
         p = Path(pattern)
         if p.is_absolute():
             resolved_root = p
@@ -284,10 +324,10 @@ class Workspace:
             # stays host-side (same split as read_file), repo globs hit the repo
             # backend. (glob_files permits state_dir roots above.)
             files = sorted(str(m) for m in self._read_backend_for(resolved_root).glob(pattern))
-            return files[:max_results]
+            return files
 
         # Relative-path branch: backend is already files-only (#1375 D10);
-        # relativize and cap. base_dir is never under state_dir, so this routes to
+        # relativize. base_dir is never under state_dir, so this routes to
         # the repo backend (the #1390 L3 seam, uniformly applied).
         ws_matches = sorted(
             self._read_backend_for(self.base_dir).glob(pattern, root=self.base_dir)
@@ -296,9 +336,9 @@ class Workspace:
             # backend.glob(root=self.base_dir) already returns paths rooted
             # at base_dir (Path.glob(root / pattern) is absolute when root
             # is) — no relativize/re-resolve needed, just pass them through.
-            return [str(m) for m in ws_matches[:max_results]]
+            return [str(m) for m in ws_matches]
         result = []
-        for m in ws_matches[:max_results]:
+        for m in ws_matches:
             try:
                 result.append(str(m.relative_to(self.base_dir)))
             except ValueError:

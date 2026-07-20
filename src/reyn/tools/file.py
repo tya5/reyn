@@ -256,8 +256,10 @@ async def _handle_list(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
 
     `max_results` is forwarded to FileIROp.max_results (default 50) for the
     same reason as _handle_glob below: list_directory synthesises an
-    internal glob op, so it shares FileIROp's 50-match cap and the same
-    silent-truncation hole when a directory holds more than 50 entries.
+    internal glob op, so it shares FileIROp's 50-match cap. That cap is no
+    longer a SILENT hole (#2998): when it discards matches, `truncated` is
+    forwarded onto this adapter's own result (see below) alongside
+    `total_count`/`returned_count`.
     """
     from reyn.core.op_runtime import execute_op
     from reyn.schemas.models import FileIROp
@@ -282,13 +284,22 @@ async def _handle_list(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
     # matches is the field the canonical glob branch renders.
     if result.get("status") == "ok":
         matches = result.get("matches", [])
-        return {
+        out: dict = {
             "op": "glob",
             "status": "ok",
             "path": path,
             "entries": matches,
             "matches": matches,
         }
+        # #2998: forward the glob op's truncation signal — this adapter only
+        # ever hand-picks fields off `result`, so a field not explicitly
+        # copied here is silently dropped even though the op_runtime handler
+        # set it (the exact silent-loss shape this fix targets).
+        if result.get("truncated"):
+            out["truncated"] = True
+            out["total_count"] = result.get("total_count")
+            out["returned_count"] = result.get("returned_count")
+        return out
     # #3095: preserve `status` on the error branch too (op_runtime's own
     # denied/error result always carries one). Dropping it here made this
     # adapter's error shape `{"error": ...}` — no `status` key at all — an
@@ -343,8 +354,14 @@ async def _handle_glob(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
     every glob_files call was hard-capped at 50 matches with no error or
     warning (found via a real pipeline run: 60 files on disk, step passed
     max_results=1000, got exactly 50 back). Callers ingesting a whole
-    directory (e.g. RAG folder-indexing) must pass max_results explicitly
-    when more than 50 matches are expected.
+    directory (e.g. RAG folder-indexing) should still pass max_results
+    explicitly when more than 50 matches are expected — the default stays
+    50 by design — but forgetting to is no longer silent (#2998): the
+    op_runtime glob handler now sets `truncated`/`total_count`/
+    `returned_count` on the result whenever the cap actually discarded
+    matches, which `file_to_canonical` surfaces to the LLM as frontmatter
+    meta (and `list_directory`'s router-chat path appends as a trailing
+    note — see `_normalise_router_tool_result` in router_loop.py).
 
     `absolute` (#3102) is forwarded to `FileIROp.absolute` — opt-in, default
     False (unchanged project-relative return for every existing caller). A
@@ -376,13 +393,22 @@ async def _handle_glob(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
     # (#2695: dropping op made the mapper fall through to "None: ok", silently
     # losing every match). pattern/matches/count stay as the ergonomic fields.
     if result.get("status") == "ok":
-        return {
+        out: dict = {
             "op": "glob",
             "status": "ok",
             "pattern": combined,
             "matches": result.get("matches", []),
             "count": result.get("count", 0),
         }
+        # #2998: forward the op_runtime glob handler's truncation signal — this
+        # adapter, like `_handle_list` above, only ever hand-picks fields off
+        # `result`, so a field not explicitly copied here is silently dropped
+        # even though the handler set it.
+        if result.get("truncated"):
+            out["truncated"] = True
+            out["total_count"] = result.get("total_count")
+            out["returned_count"] = result.get("returned_count")
+        return out
     # #3095: preserve `status` on the error branch (see the matching comment
     # in `_handle_list` above — same adapter-level bug, same fix). Without
     # it, a glob_files failure (e.g. a permission-denied source directory)

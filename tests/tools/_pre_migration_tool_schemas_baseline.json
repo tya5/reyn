@@ -470,7 +470,7 @@
             "type": "boolean"
           },
           "max_results": {
-            "description": "Maximum number of matching paths to return. Defaults to 50 — raise this explicitly when enumerating a directory that may hold more entries than that (e.g. bulk ingestion), otherwise matches beyond the cap are silently dropped.",
+            "description": "Maximum number of matching paths to return. Defaults to 50 — raise this explicitly when enumerating a directory that may hold more entries than that (e.g. bulk ingestion). If the cap does discard matches, the result flags it (`truncated` with the total/returned counts) rather than silently dropping them.",
             "type": "integer"
           },
           "path": {
@@ -717,7 +717,7 @@
       "parameters": {
         "properties": {
           "max_results": {
-            "description": "Maximum number of directory entries to return. Defaults to 50 — raise this explicitly for directories that may hold more entries than that, otherwise entries beyond the cap are silently dropped.",
+            "description": "Maximum number of directory entries to return. Defaults to 50 — raise this explicitly for directories that may hold more entries than that. If the cap does discard entries, the listing ends with a trailing note stating how many of how many were shown rather than silently dropping them.",
             "type": "integer"
           },
           "path": {

@@ -318,14 +318,16 @@ PARAMS: dict[str, dict[str, ParamDescription]] = {
             text=(
                 "Maximum number of matching paths to return. Defaults to 50 — "
                 "raise this explicitly when enumerating a directory that may "
-                "hold more entries than that (e.g. bulk ingestion), otherwise "
-                "matches beyond the cap are silently dropped."
+                "hold more entries than that (e.g. bulk ingestion). If the cap "
+                "does discard matches, the result flags it (`truncated` with "
+                "the total/returned counts) rather than silently dropping them."
             ),
             ja=(
                 "返す一致パス件数の上限。デフォルト 50 — それを超える件数が"
                 "見込まれるディレクトリを列挙する場合（一括取り込み等）は"
-                "明示的に引き上げること。さもないと上限を超えた一致は"
-                "黙って切り捨てられる。"
+                "明示的に引き上げること。上限で一致が切り捨てられた場合は"
+                "黙って消えるのではなく、結果に `truncated`（total/returned"
+                "件数つき）が立つ。"
             ),
         ),
         "absolute": ParamDescription(
@@ -351,13 +353,16 @@ PARAMS: dict[str, dict[str, ParamDescription]] = {
             text=(
                 "Maximum number of directory entries to return. Defaults to "
                 "50 — raise this explicitly for directories that may hold "
-                "more entries than that, otherwise entries beyond the cap "
-                "are silently dropped."
+                "more entries than that. If the cap does discard entries, "
+                "the listing ends with a trailing note stating how many of "
+                "how many were shown rather than silently dropping them."
             ),
             ja=(
                 "返すディレクトリエントリ件数の上限。デフォルト 50 — それを"
                 "超える件数が見込まれるディレクトリでは明示的に引き上げる"
-                "こと。さもないと上限を超えたエントリは黙って切り捨てられる。"
+                "こと。上限でエントリが切り捨てられた場合は、黙って消える"
+                "のではなく、一覧の末尾に「何件中何件を表示したか」の注記"
+                "が付く。"
             ),
         ),
     },
