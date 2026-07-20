@@ -142,7 +142,19 @@ async def test_next_turn_dispatch_denied_negative_witness(tmp_path, monkeypatch)
     (denied by the built-in ``_untrusted`` floor). Without the meta-propagation
     fix this call SUCCEEDS (see the control test above); with it, it is
     rejected with ``tool_excluded`` — the operation that would otherwise have
-    gone through is actually blocked, not just "profile has an attribute"."""
+    gone through is actually blocked, not just "profile has an attribute".
+
+    **Scope note (what this does NOT verify):** this pins the TURN boundary
+    (``RouterLoopDriver.run_turn`` constructs a fresh ``RouterLoop`` per
+    ``_handle_user_message`` call and resolves ``contextual_for_turn_fn()``
+    once at that construction — see its ``#1827 S4b: per-turn effective
+    contextual`` comment). It does **not** exercise — and does not claim
+    coverage of — narrowing WITHIN a single turn's multi-round tool loop
+    (list_memory and a would-be-denied call in the SAME ``_handle_user_message``
+    call): verified empirically that a same-turn later round is NOT narrowed,
+    because ``RouterLoop._contextual_permission`` is fixed once per
+    construction and is not re-derived per iteration. That intra-turn gap is
+    tracked as a separate follow-up issue, not closed by this PR."""
     monkeypatch.chdir(tmp_path)
     session = _make(tmp_path)
     monkeypatch.setattr(
@@ -169,7 +181,13 @@ async def test_self_clears_after_tainted_entry_compacted_out(tmp_path, monkeypat
     ``test_context_auto_1827_s4b.py`` uses for the S4 seam), a THIRD turn's
     ``remember_shared`` call succeeds again — narrowing is until-compaction
     scope, not a permanent lock, for the tool-result seam same as the answer
-    seam."""
+    seam.
+
+    **Scope note**: like the negative/timing witness above, the taint→deny and
+    deny→clear transitions this pins are both observed at TURN boundaries
+    (separate ``_handle_user_message`` calls), not within one turn's
+    multi-round tool loop. Does not verify intra-turn self-clear (out of
+    scope — see the negative-witness test's scope note)."""
     monkeypatch.chdir(tmp_path)
     session = _make(tmp_path)
     monkeypatch.setattr(
