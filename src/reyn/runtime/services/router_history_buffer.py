@@ -295,7 +295,7 @@ class RouterHistoryBuffer:
         remains Reyn-internal and is filtered out.
         """
         from reyn.services.compaction.engine import (
-            estimate_tokens_for_turn,
+            estimate_tokens_for_any_turn,
             trim_head,
             trim_tail,
         )
@@ -350,8 +350,10 @@ class RouterHistoryBuffer:
         effective_trigger, head_budget, tail_budget = self._resolve_budgets()
         use_chars4 = getattr(self._compaction, "use_chars4_estimate", False)
 
+        # #2957 PR-A: ``turns`` are ChatMessage instances — use the
+        # type-adapting wrapper (estimate_tokens_for_turn stays dict-only).
         total = sum(
-            estimate_tokens_for_turn(m, self._model, use_chars4=use_chars4)
+            estimate_tokens_for_any_turn(m, self._model, use_chars4=use_chars4)
             for m in turns
         )
 
@@ -407,7 +409,7 @@ class RouterHistoryBuffer:
         and retry_loop's shrink can still trim ``head``.
         """
         from reyn.services.compaction.engine import (
-            estimate_tokens_for_turn,
+            estimate_tokens_for_any_turn,
             trim_head,
             trim_tail,
         )
@@ -422,8 +424,10 @@ class RouterHistoryBuffer:
         effective_trigger, head_budget, tail_budget = self._resolve_budgets()
         use_chars4 = getattr(self._compaction, "use_chars4_estimate", False)
 
+        # #2957 PR-A: ``turns`` are ChatMessage instances — use the
+        # type-adapting wrapper (estimate_tokens_for_turn stays dict-only).
         total = sum(
-            estimate_tokens_for_turn(m, self._model, use_chars4=use_chars4)
+            estimate_tokens_for_any_turn(m, self._model, use_chars4=use_chars4)
             for m in turns
         )
 

@@ -13,10 +13,10 @@ and the render/append callables are stubs (the existing harness pattern). No moc
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass, field
 
 from reyn.config import CompactionConfig
 from reyn.core.events.events import EventLog
+from reyn.runtime.chat_message import ChatMessage
 from reyn.runtime.services.compaction_controller import CompactionController
 from reyn.services.compaction.engine import (
     ChatSummary,
@@ -31,15 +31,6 @@ _STUB_BUDGETS = ComputedBudgets(
 )
 
 
-@dataclass
-class _FakeMessage:
-    role: str
-    text: str
-    ts: str = "2026-01-01T00:00:00+00:00"
-    seq: int = 0
-    meta: dict = field(default_factory=dict)
-
-
 class _SucceedingEngine(CompactionEngine):
     def __init__(self) -> None:
         self._model = ""
@@ -50,7 +41,7 @@ class _SucceedingEngine(CompactionEngine):
         return ChatSummary(topic_arc="STUB_ARC", covers_through_seq=0)
 
 
-def _make_controller(history: list[_FakeMessage]) -> tuple[CompactionController, list]:
+def _make_controller(history: list[ChatMessage]) -> tuple[CompactionController, list]:
     ctrl = CompactionController(
         event_log=EventLog(),
         config=CompactionConfig(use_chars4_estimate=True),
@@ -58,17 +49,21 @@ def _make_controller(history: list[_FakeMessage]) -> tuple[CompactionController,
         latest_summary=lambda: None,
         compaction_engine=_SucceedingEngine(),
         history_appender=history.append,
-        make_summary_message=lambda rendered, structured, covers: _FakeMessage(
-            role="summary", text=rendered, seq=0,
+        make_summary_message=lambda rendered, structured, covers: ChatMessage(
+            role="summary", content=rendered, seq=0,
         ),
         render_summary=lambda s: str(s),
     )
     return ctrl, history
 
 
-def _history(n: int) -> list[_FakeMessage]:
+def _history(n: int) -> list[ChatMessage]:
+    # #2957 PR-A: real ChatMessage — see test_compaction_controller_invariants.py
+    # for why the prior hand-rolled substitute (stray ``text`` field, no
+    # ``content``) only produced "large turns" via the now-fixed
+    # estimate_tokens_for_turn/ChatMessage type-mismatch bug.
     return [
-        _FakeMessage(role="user" if i % 2 == 1 else "assistant", text="x" * 200, seq=i)
+        ChatMessage(role="user" if i % 2 == 1 else "assistant", content="x" * 200, seq=i)
         for i in range(1, n + 1)
     ]
 

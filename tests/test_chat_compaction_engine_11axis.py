@@ -32,7 +32,7 @@ Policy compliance:
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 import pytest
 
@@ -512,25 +512,6 @@ def test_new_msg_exceeds_budget_is_exception_subclass() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Shared ChatMessage substitute for controller tests
-# ---------------------------------------------------------------------------
-
-
-@dataclass
-class _FakeMessage:
-    """Minimal ChatMessage substitute for controller tests."""
-    role: str
-    text: str
-    ts: str = "2026-01-01T00:00:00+00:00"
-    seq: int = 0
-    meta: dict = field(default_factory=dict)
-    content: str | list = ""
-    tool_calls: list | None = None
-    tool_call_id: str | None = None
-    name: str | None = None
-
-
-# ---------------------------------------------------------------------------
 # Axis 10: use_chars4_estimate opt-out
 # ---------------------------------------------------------------------------
 
@@ -791,6 +772,7 @@ def test_force_compact_now_single_pass_no_race_recovery() -> None:
     floor. Verified via the public surface — compact() is invoked once and no
     race-unrecovered event is emitted.
     """
+    from reyn.runtime.chat_message import ChatMessage
     from reyn.runtime.services.compaction_controller import CompactionController
 
     events = EventLog()
@@ -798,10 +780,16 @@ def test_force_compact_now_single_pass_no_race_recovery() -> None:
 
     # 600 large turns — stays well "over budget"; pre-#1128 this drove a 2nd
     # pass + a race-unrecovered raise. Post-PR-c it is a single pass.
-    def _big_history() -> list[_FakeMessage]:
+    # #2957 PR-A: real ChatMessage (not a hand-rolled substitute) — the prior
+    # substitute stored the turn text under a stray ``text`` field with
+    # ``content`` defaulted to "", which only produced "large turns" via the
+    # now-fixed estimate_tokens_for_turn/ChatMessage type-mismatch bug's
+    # getattr(turn, "text", "") fallback. Real ChatMessage has no such
+    # field — content IS the text.
+    def _big_history() -> list[ChatMessage]:
         return [
-            _FakeMessage(role="user" if i % 2 == 0 else "assistant",
-                         text="a" * 400, seq=i + 1)
+            ChatMessage(role="user" if i % 2 == 0 else "assistant",
+                        content="a" * 400, seq=i + 1)
             for i in range(600)
         ]
 
@@ -812,8 +800,8 @@ def test_force_compact_now_single_pass_no_race_recovery() -> None:
         latest_summary=lambda: None,
         compaction_engine=engine,
         history_appender=lambda m: None,
-        make_summary_message=lambda rendered, structured, covers: _FakeMessage(
-            role="summary", text=rendered, seq=0,
+        make_summary_message=lambda rendered, structured, covers: ChatMessage(
+            role="summary", content=rendered, seq=0,
             meta={"structured": structured, "covers_through_seq": covers},
         ),
         render_summary=lambda s: str(s),

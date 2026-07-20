@@ -18,12 +18,12 @@ expose synthetic ``budgets``.
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass, field
 
 import pytest  # noqa: F401 — used implicitly by pytest discovery
 
 from reyn.config import CompactionConfig
 from reyn.core.events.events import EventLog
+from reyn.runtime.chat_message import ChatMessage
 from reyn.runtime.services.compaction_controller import CompactionController
 from reyn.services.compaction.engine import (
     ChatSummary,
@@ -39,16 +39,6 @@ _STUB_BUDGETS = ComputedBudgets(
     tail_budget=50, new_msg_budget=10_000,
     B_M=80_000, main_M_room=65_000, effective_trigger=65_000,
 )
-
-
-@dataclass
-class _FakeMessage:
-    """Minimal ChatMessage substitute for controller tests."""
-    role: str
-    text: str
-    ts: str = "2026-01-01T00:00:00+00:00"
-    seq: int = 0
-    meta: dict = field(default_factory=dict)
 
 
 class _AbortingEngine(CompactionEngine):
@@ -78,9 +68,9 @@ class _SucceedingEngine(CompactionEngine):
 
 def _make_controller(
     *,
-    history: list[_FakeMessage],
+    history: list[ChatMessage],
     engine: CompactionEngine,
-) -> tuple[CompactionController, EventLog, list[_FakeMessage]]:
+) -> tuple[CompactionController, EventLog, list[ChatMessage]]:
     """Return a (controller, events, history) triple ready for testing."""
     events = EventLog()
 
@@ -97,8 +87,8 @@ def _make_controller(
         latest_summary=_latest_summary,
         compaction_engine=engine,
         history_appender=history.append,
-        make_summary_message=lambda rendered, structured, covers: _FakeMessage(
-            role="summary", text=rendered, seq=0,
+        make_summary_message=lambda rendered, structured, covers: ChatMessage(
+            role="summary", content=rendered, seq=0,
             meta={"structured": structured, "covers_through_seq": covers},
         ),
         render_summary=lambda s: str(s),
@@ -106,9 +96,15 @@ def _make_controller(
     return ctrl, events, history
 
 
-def _history(n: int) -> list[_FakeMessage]:
+def _history(n: int) -> list[ChatMessage]:
+    # #2957 PR-A: real ChatMessage (not a hand-rolled substitute) — a prior
+    # substitute stored the turn text under a stray ``text`` field with no
+    # ``content`` attribute at all, which only produced "large turns" via
+    # the now-fixed estimate_tokens_for_turn/ChatMessage type-mismatch bug's
+    # getattr(turn, "content", None) -> None fallback. Real ChatMessage has
+    # no such field — content IS the text, and .text is derived from it.
     return [
-        _FakeMessage(role="user" if i % 2 == 1 else "assistant", text="x" * 200, seq=i)
+        ChatMessage(role="user" if i % 2 == 1 else "assistant", content="x" * 200, seq=i)
         for i in range(1, n + 1)
     ]
 
