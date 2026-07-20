@@ -30,24 +30,24 @@ the code wins and this file is the bug.
 
 ## Additional resources
 
-These files live next to this one, under `references/`. `skill_list` gives
-you this file's absolute path -- resolve each link below against that same
-directory and read it with the ordinary file read op when your question
-maps to it; do not read all three unconditionally.
+These files live next to this one, under `references/`. `${CLAUDE_SKILL_DIR}`
+expands to this file's own directory when SKILL.md is loaded -- read a link
+below with the ordinary file read op when your question maps to it; do not
+read all three unconditionally.
 
-- [incoming-events-coalescing-and-wake.md](references/incoming-events-coalescing-and-wake.md)
+- [incoming-events-coalescing-and-wake.md](${CLAUDE_SKILL_DIR}/references/incoming-events-coalescing-and-wake.md)
   -- how a server-pushed notification reaches a hook
   (`mcp_resource_updated`), how to namespace distinct signals on the URI
   without new event kinds, how to coalesce a flapping/bursty source with
   the Composer, and how to choose wake=true (interrupt now) vs wake=false
   (ride-along). Read this when you are wiring the *inbound* side of a
   reactive plugin.
-- [returning-results-and-elicitation.md](references/returning-results-and-elicitation.md)
+- [returning-results-and-elicitation.md](${CLAUDE_SKILL_DIR}/references/returning-results-and-elicitation.md)
   -- how to send a conclusion back out via `pipeline_launch` + a `shell`
   step (no callback convention needed), and how to ask the human a
   question via MCP elicitation (vs. sampling). Read this when your design
   needs a write-back leg or a human-in-the-loop question.
-- [scope-plugin-surface-and-vocabulary.md](references/scope-plugin-surface-and-vocabulary.md)
+- [scope-plugin-surface-and-vocabulary.md](${CLAUDE_SKILL_DIR}/references/scope-plugin-surface-and-vocabulary.md)
   -- hook config scope (workspace vs per-agent, and why a workspace-level
   hook fires in every session), what a plugin manifest may actually ship,
   the AG-UI vs A2UI vocabulary split, three constraints that repeatedly
