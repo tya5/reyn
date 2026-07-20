@@ -162,14 +162,28 @@ class MemoryService:
     async def read_body(self, *, layer: str, slug: str) -> dict:
         """Read a memory body file's contents.
 
-        Returns ``{"layer": layer, "slug": slug, "content": <text>}``
-        or ``{"error": <reason>}`` if not found.
+        Returns ``{"layer": layer, "slug": slug, "content": <text>}`` —
+        plus, when the underlying read was truncated, whichever #3193
+        signal fields ``_file_read`` forwarded (``truncated``, ``note``,
+        ``next_offset``, ...), copied through untouched — or
+        ``{"error": <reason>}`` if not found.
+
+        #3193: this used to hand-pick only ``content`` off the ``_file_read``
+        result, which silently dropped any truncation signal even after
+        ``_file_read`` itself started forwarding it — a large memory body
+        would read back with content cut short and NO indication anything
+        was cut. Forward every extra key ``_file_read`` returns (beyond the
+        ones this method already names) instead of re-curating a subset.
         """
         body_path = self.memory_path(layer, slug)
         result = await self._file_read(body_path)
         if "error" in result:
             return {"error": result["error"]}
-        return {"layer": layer, "slug": slug, "content": result["content"]}
+        out = {"layer": layer, "slug": slug, "content": result["content"]}
+        for key, value in result.items():
+            if key not in ("path", "content"):
+                out[key] = value
+        return out
 
 
 __all__ = ["MemoryService"]
