@@ -1,8 +1,20 @@
-"""Tier 2: OS invariant — the `build_and_query_rag_corpus` skill, the
-"when/how to run the two pipelines" surface, now shipped as part of the
+"""Tier 2: OS invariant — the `rag_ingest_and_query_workflow` skill, the
+"how to actually call the two pipelines" surface, shipped as part of the
 builtin `rag` plugin (ADR 0064 P5, `src/reyn/builtin/plugins/rag/skills/`;
 originally authored under FP-0063 P4,
 docs/deep-dives/proposals/0063-builtin-turnkey-user-rag.md).
+
+#3162 part 1 split the original single `build_and_query_rag_corpus` skill
+(21_837 bytes -- 266% of the default 8_192-char `read_file` inline cap,
+already silently truncated in practice for any caller without a
+large-window model resolved) into five smaller skills: routing + install
+stays in `build_and_query_rag_corpus`; the two `pipeline__run` calls this
+file pins moved to `rag_ingest_and_query_workflow` (this file's new
+target); embedding setup moved to `configure_rag_embedding_provider` /
+`configure_rag_local_embedding_model`; schema/tuning/backend-swap moved to
+`rag_corpus_internals`. This file's target and docstring were updated in
+the same PR to track that move (`tests/test_skill_md_default_inline_cap_gate.py`
+is the new structural gate keeping any future skill under the cap).
 
 Under ADR 0064 the skill is no longer a standing `BUILTIN_SKILLS` entry —
 it is registered only once `plugin_install(source={"kind": "builtin",
@@ -69,7 +81,7 @@ from tests._support.builtin_skill_tool_names import (
 
 _REPO_ROOT = Path(__file__).parent.parent
 _PLUGIN_DIR = _REPO_ROOT / "src" / "reyn" / "builtin" / "plugins" / "rag"
-_SKILL_NAME = "build_and_query_rag_corpus"
+_SKILL_NAME = "rag_ingest_and_query_workflow"
 _SKILL_PATH = _PLUGIN_DIR / "skills" / _SKILL_NAME / "SKILL.md"
 _INGEST_PATH = _PLUGIN_DIR / "pipelines" / "rag_ingest.yaml"
 _QUERY_PATH = _PLUGIN_DIR / "pipelines" / "rag_query.yaml"
@@ -86,7 +98,7 @@ def _skill_body() -> str:
 
 def test_rag_plugin_manifest_declares_skills_capability_and_the_skill_exists() -> None:
     """Tier 2: the plugin manifest declares a `skills` capability, and the
-    `build_and_query_rag_corpus` SKILL.md really exists at the layout
+    `rag_ingest_and_query_workflow` SKILL.md really exists at the layout
     `plugin_install`'s discovery convention expects."""
     manifest = load_plugin_manifest(_PLUGIN_DIR)
     assert "skills" in manifest.capability_kinds

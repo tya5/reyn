@@ -152,4 +152,4 @@ strong    litellm  openai/text-embedding-3-large   .reyn/cache/index/actions    
 - [`reyn embeddings` CLI リファレンス](../../reference/cli/embeddings.md) — status / rebuild / clear
 - [コンセプト: universal catalog](../../concepts/tools-integrations/universal-catalog.md) — `list_actions` / `search_actions` がどう組み合わさるか
 - [コンセプト: RAG](../../concepts/data-retrieval/rag.md#embedding-configuration) — 基盤となる `embedding.classes` 設定マップ（ドキュメント検索と共有）
-- [Build and query a RAG corpus skill](https://github.com/tya5/reyn/blob/main/src/reyn/builtin/plugins/rag/skills/build_and_query_rag_corpus/SKILL.md) — builtin RAG プラグイン向けに書かれた同じ litellm-proxy 埋め込みセットアップ（経路 A/B）。本ガイドは `search_actions` 向けにこれをミラーしています。
+- [Configure the RAG embedding provider skill](https://github.com/tya5/reyn/blob/main/src/reyn/builtin/plugins/rag/skills/configure_rag_embedding_provider/SKILL.md)（+ [ローカルモデル用の companion](https://github.com/tya5/reyn/blob/main/src/reyn/builtin/plugins/rag/skills/configure_rag_local_embedding_model/SKILL.md)） — builtin RAG プラグイン向けに書かれた同じ litellm-proxy 埋め込みセットアップ（経路 A/B）。本ガイドは `search_actions` 向けにこれをミラーしています。
