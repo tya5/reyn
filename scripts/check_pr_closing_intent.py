@@ -8,7 +8,7 @@ still open) actually resolved for #N. This script detects contradictions —
 it never infers intent beyond what the body's declaring phrases literally
 say.
 
-Three checks, all facets of the same invariant:
+Four checks, all facets of the same invariant:
 
   1. **false negative** — body declares closing intent (``Closes #N`` /
      ``Fixes #N`` / ``Resolves #N``, in any casing, even inside backticks)
@@ -28,6 +28,30 @@ Three checks, all facets of the same invariant:
      sentence). This is the hole a closing-keyword-only check (1+2) misses:
      both checks 1 and 2 presuppose the author wrote *some* declaring
      phrase; an author who writes neither slips through both.
+  4. **commit-message declaration** — a PR *commit message* (not the PR
+     body) contains a closing declaration for #N, but the PR body does NOT
+     also declare closing intent for #N. Real incident: PR #3187's body was
+     correctly ``part of #1909`` and ``closingIssuesReferences`` was empty
+     (checks 1-3 above all PASS) — but an intermediate commit's message
+     still carried ``Closes #1909`` from an earlier draft. GitHub's default
+     squash-merge commit message is the *concatenation* of the PR's commit
+     messages, so that stray ``Closes #1909`` line survived into the squash
+     commit body (merge commit ``d9b4c3a0``, line 19) and GitHub auto-closed
+     #1909 on merge — despite the PR body being clean and
+     ``closingIssuesReferences`` showing nothing.
+
+     Why scanning individual commit messages (rather than trying to predict
+     the eventual squash message) is sufficient: at CI time, while the PR is
+     still open, the *final* squash-commit message does not exist yet — a
+     human merging the PR can still hand-edit GitHub's proposed squash body.
+     But GitHub's proposed default is deterministically the concatenation of
+     the already-known commit messages, so if a closing keyword sits in ANY
+     commit message, it WILL appear in the default squash body unless a
+     human edits it out by hand. This check flags that "may still be
+     silently carried forward" state; it does not (and structurally cannot,
+     before merge) know whether a human will hand-edit it away. That is by
+     design, not a gap: the check's job is to catch the state that CAN leak
+     a close, not to certify that a human removed it.
 
 Declaring-phrase vocabulary — three forms, all checked against the parser:
 
@@ -84,6 +108,23 @@ from the body before matching rather than skipping fenced code spans.
 anything. What GitHub actually parsed there is the bare ``close #2827``
 substring inside the prose "auto-close #2827" — i.e. #3003 is the
 bare-prose-keyword case, which is what check 3 covers.)
+
+Check 4's escape hatch reuses the exact same ``<!-- closing-check:
+discussing #N -->`` marker vocabulary — no new syntax — but scoped to the
+SAME text blob as the existing per-issue scoping principle above, extended
+one level: the PR body is one blob, and each commit message is its own
+separate blob. A commit message that itself contains both a closing keyword
+(e.g. explaining ``Closes #N`` as worked example text, exactly as this
+script's own commit messages must avoid doing) AND the discussing marker
+naming N *within that same commit message* is exempt for that commit. A
+marker living in the PR body does NOT exempt a closing keyword sitting in a
+commit message — they are different blobs — which is deliberate: it is
+precisely what keeps check 4 catching the #3187 shape, where the body
+carries an unrelated ``discussing #1909`` marker (added for its own body-
+text reasons) while a commit message independently carries the real
+``Closes #1909`` leak. Letting the body's marker blanket-exempt commit
+content would silently defeat check 4 on exactly the incident it exists to
+catch.
 
 The parsing logic (``find_closing_declarations`` / ``find_nonclosing_declarations``
 / ``check_contradictions``) is pure — no network, no subprocess — so it is
@@ -190,12 +231,20 @@ class Finding:
     message: str
 
 
-def check_contradictions(body: str, closing_refs: list[int]) -> list[Finding]:
+def check_contradictions(
+    body: str,
+    closing_refs: list[int],
+    commit_messages: list[str] | None = None,
+) -> list[Finding]:
     """Pure contradiction detector — no network, no inference of intent.
 
     ``body`` is the raw PR body text. ``closing_refs`` is the list of issue
     numbers GitHub's parser (``closingIssuesReferences``) actually resolved
-    as closing targets for this PR.
+    as closing targets for this PR. ``commit_messages`` is the list of full
+    commit-message texts (headline + body) for every commit on the PR — used
+    only by check 4 (see module docstring); defaults to none, so callers
+    that only have body/closing_refs (e.g. the existing test suite) are
+    unaffected.
     """
     closing_declared = find_closing_declarations(body)
     nonclosing_declared = find_nonclosing_declarations(body)
@@ -286,6 +335,46 @@ def check_contradictions(body: str, closing_refs: list[int]) -> list[Finding]:
             )
         )
 
+    # Check 4 (commit-message declaration): a commit message declares
+    # closing intent for #N that the PR body does NOT also declare. See
+    # module docstring for why this is checked independently of
+    # closing_refs (GitHub's default squash-merge body concatenates commit
+    # messages, so this leaks even when closingIssuesReferences is empty).
+    #
+    # Exemption is scoped per commit message (its own text blob), not to
+    # the PR body's discussing markers — see module docstring "Check 4's
+    # escape hatch" section for why a body-wide exemption would silently
+    # defeat this check on the #3187 shape it exists to catch.
+    commit_closing_declared: set[int] = set()
+    for msg in commit_messages or []:
+        commit_closing_declared |= find_closing_declarations(msg) - find_discussing_declarations(msg)
+
+    for n in sorted(commit_closing_declared - closing_declared):
+        findings.append(
+            Finding(
+                check=4,
+                issue=n,
+                message=(
+                    f"a commit message on this PR declares closing intent "
+                    f"for #{n} (Closes/Fixes/Resolves) but the PR BODY does "
+                    f"not also declare closing intent for #{n}. GitHub's "
+                    "default squash-merge commit message concatenates all "
+                    "commit messages, so this keyword will be carried into "
+                    f"the merge commit and can auto-close #{n} on merge "
+                    "regardless of what the PR body says or what "
+                    "closingIssuesReferences currently shows (real "
+                    "incident: PR #3187 / issue #1909, merge commit "
+                    f"d9b4c3a0). If closing #{n} is intended, also write "
+                    f"'Closes #{n}' in the PR body. If not, rewrite or "
+                    f"squash away the offending commit message, or if the "
+                    f"commit message only *discusses* #{n} rather than "
+                    "declaring intent, add "
+                    f"<!-- closing-check: discussing #{n} --> to that SAME "
+                    "commit message."
+                ),
+            )
+        )
+
     return findings
 
 
@@ -294,8 +383,29 @@ def check_contradictions(body: str, closing_refs: list[int]) -> list[Finding]:
 # ---------------------------------------------------------------------------
 
 
-def fetch_pr_data(pr_number: int) -> tuple[str, list[int]]:
-    """Fetch (body, closing_issue_numbers) for an open PR via ``gh pr view``."""
+def _commit_message_text(commit: dict) -> str:
+    """Reconstruct a full commit-message text from a ``gh``-shaped commit dict.
+
+    ``gh pr view --json commits`` returns each commit as
+    ``{"messageHeadline": ..., "messageBody": ..., ...}`` — the same split
+    ``git log`` uses. Joined back with a blank line the same way ``git``
+    itself displays/concatenates a commit message, so the reconstructed
+    text matches what a human (or GitHub's squash-message builder) actually
+    sees.
+    """
+    headline = commit.get("messageHeadline") or ""
+    msg_body = commit.get("messageBody") or ""
+    return f"{headline}\n\n{msg_body}" if msg_body else headline
+
+
+def fetch_pr_data(pr_number: int) -> tuple[str, list[int], list[str]]:
+    """Fetch (body, closing_issue_numbers, commit_messages) for an open PR.
+
+    Uses ``gh pr view``. ``commit_messages`` is one full message string
+    (headline + body) per commit currently on the PR — see check 4 in the
+    module docstring for why these are scanned independently of
+    ``closingIssuesReferences``.
+    """
     result = subprocess.run(
         [
             "gh",
@@ -303,7 +413,7 @@ def fetch_pr_data(pr_number: int) -> tuple[str, list[int]]:
             "view",
             str(pr_number),
             "--json",
-            "closingIssuesReferences,body",
+            "closingIssuesReferences,body,commits",
         ],
         capture_output=True,
         text=True,
@@ -312,7 +422,8 @@ def fetch_pr_data(pr_number: int) -> tuple[str, list[int]]:
     data = json.loads(result.stdout)
     body = data.get("body") or ""
     closing_refs = [ref["number"] for ref in data.get("closingIssuesReferences") or []]
-    return body, closing_refs
+    commit_messages = [_commit_message_text(c) for c in data.get("commits") or []]
+    return body, closing_refs, commit_messages
 
 
 # ---------------------------------------------------------------------------
@@ -338,10 +449,12 @@ def build_parser() -> argparse.ArgumentParser:
         "--fixture",
         metavar="PATH",
         help=(
-            "Path to a JSON fixture file with keys 'body' (str) and "
-            "'closingIssuesReferences' (list of {'number': N} or plain ints) "
-            "— same shape as `gh pr view --json closingIssuesReferences,body`. "
-            "Lets this check run offline / in tests without hitting GitHub."
+            "Path to a JSON fixture file with keys 'body' (str), "
+            "'closingIssuesReferences' (list of {'number': N} or plain ints), "
+            "and optionally 'commits' (list of {'messageHeadline':, "
+            "'messageBody':} or plain strings) — same shape as "
+            "`gh pr view --json closingIssuesReferences,body,commits`. Lets "
+            "this check run offline / in tests without hitting GitHub."
         ),
     )
     return parser
@@ -359,13 +472,25 @@ def _closing_refs_from_fixture(raw: object) -> list[int]:
     return out
 
 
+def _commit_messages_from_fixture(raw: object) -> list[str]:
+    if not raw:
+        return []
+    out: list[str] = []
+    for item in raw:  # type: ignore[union-attr]
+        if isinstance(item, dict):
+            out.append(_commit_message_text(item))
+        else:
+            out.append(str(item))
+    return out
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
 
     if args.pr is not None:
         try:
-            body, closing_refs = fetch_pr_data(args.pr)
+            body, closing_refs, commit_messages = fetch_pr_data(args.pr)
         except subprocess.CalledProcessError as exc:
             print(f"gh pr view failed: {exc.stderr}", file=sys.stderr)
             return 2
@@ -376,9 +501,10 @@ def main(argv: list[str] | None = None) -> int:
         raw = json.loads(Path(args.fixture).read_text(encoding="utf-8"))
         body = raw.get("body") or ""
         closing_refs = _closing_refs_from_fixture(raw.get("closingIssuesReferences"))
+        commit_messages = _commit_messages_from_fixture(raw.get("commits"))
         source = args.fixture
 
-    findings = check_contradictions(body, closing_refs)
+    findings = check_contradictions(body, closing_refs, commit_messages)
 
     if not findings:
         print(f"OK — no closing-intent contradictions found ({source}).")

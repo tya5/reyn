@@ -5,11 +5,22 @@ name: PR closing-intent check
 # own closing-issue parser (`closingIssuesReferences`) actually resolved
 # for #N — all *before* merge, while the PR is still open.
 #
+# #3187/#1909 follow-up: a 4th check additionally scans every commit
+# message on the PR for a closing declaration the PR body does NOT also
+# make — GitHub's default squash-merge commit message concatenates all
+# commit messages, so a stray closing keyword left in an intermediate
+# commit (from an earlier draft) can auto-close an issue on merge even
+# though the PR body is clean and closingIssuesReferences is empty. See
+# scripts/check_pr_closing_intent.py's module docstring (check 4) for the
+# real incident and design rationale.
+#
 # A dedicated workflow (not folded into test.yml's bare `pull_request:`
 # trigger) because this check must also re-run on `edited` — an author
 # who edits the body after opening (e.g. adds/removes a `Closes #N`) needs
 # the gate to re-evaluate, and `edited` is not one of the default
-# pull_request event types.
+# pull_request event types. `synchronize` (new commits pushed) also
+# re-runs the commit-message scan (check 4) against the updated commit
+# set.
 on:
   pull_request:
     types: [opened, edited, synchronize, reopened]

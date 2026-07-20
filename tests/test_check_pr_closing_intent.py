@@ -2,11 +2,12 @@
 
 Pins the invariant issue #3007 ratified: the intent a PR body *declares*
 about issue #N must match the closing behavior GitHub's own parser
-(``closingIssuesReferences``) actually resolved for #N. The three checks
-(false negative / false positive / undeclared) are pure facets of that one
+(``closingIssuesReferences``) actually resolved for #N, PLUS (check 4,
+added to close the #3187/#1909 gap) the closing behavior a commit message
+independently declares. The four checks are pure facets of that one
 invariant, and ``check_contradictions`` is a pure function over
-``(body, closing_refs)`` — no network, no subprocess — so this is a Tier 1
-contract test against known inputs/outputs.
+``(body, closing_refs, commit_messages)`` — no network, no subprocess — so
+this is a Tier 1 contract test against known inputs/outputs.
 
 Public surface only (no MagicMock, no private-state asserts): each case
 calls ``check_contradictions`` and asserts on the returned ``Finding``
@@ -183,3 +184,124 @@ def test_find_closing_declarations_strips_backticks():
 def test_find_nonclosing_declarations_matches_toward():
     """Tier 1: "toward #N" is recognized as a non-closing declaration."""
     assert m.find_nonclosing_declarations("toward #42") == {42}
+
+
+# ---------------------------------------------------------------------------
+# Check 4: commit-message closing declarations (real PR #3187 / #1909 shape).
+#
+# Real data, verbatim from `gh pr view 3187 --json body,commits,
+# closingIssuesReferences` at the time this gate was written (not
+# hand-invented fixtures — see testing.ja.md's Mock-vs-Fake guidance to
+# prefer real data shapes). The PR body excerpt below is a real substring
+# (author-declared "part of #1909" plus a real, pre-existing "discussing
+# #1909" marker the author had added for unrelated reasons); the commit
+# message is the real second commit's messageHeadline/messageBody, whose
+# ``Closes #1909`` line is exactly what leaked into squash-merge commit
+# ``d9b4c3a0`` and auto-closed #1909 despite the clean body and empty
+# ``closingIssuesReferences``.
+# ---------------------------------------------------------------------------
+
+_PR3187_BODY_EXCERPT = (
+    "**[per-PR-coder]** — part of #1909\n"
+    "<!-- closing-check: discussing #1909 -->\n\n"
+    "## Scope: turn-boundary narrowing only\n"
+    "This PR eliminates the multi-turn attack surface for issue 1909."
+)
+
+_PR3187_COMMIT_WITH_LEAK = (
+    "fix(1909): propagate external-source taint from tool-results into his…\n"
+    "\n"
+    "router_loop.py's feedback() already tagged returns_external_content tool\n"
+    "results with _external_source (FP-0050/#1822 S2) and already extracted the\n"
+    "tag, but discarded the local variable instead of threading it into the\n"
+    "persisted history-entry meta.\n"
+    "\n"
+    "Closes #1909"
+)
+
+
+def test_check4_fires_on_real_3187_shape_commit_leak_body_says_part_of():
+    """Tier 1: real reproduction — PR #3187's actual body + commit text.
+
+    Body correctly declares ``part of #1909`` (checks 1-3 all PASS, as they
+    did live: closingIssuesReferences was empty when checked before merge).
+    But a commit message independently carries ``Closes #1909`` — exactly
+    what caused #1909 to auto-close on squash-merge (merge commit
+    d9b4c3a0) despite the clean body. Check 4 must be the only thing that
+    catches this: checks 1-3 stay silent (asserted explicitly) because
+    ``closing_refs=[]`` is what the live PR actually showed pre-merge.
+    """
+    findings = m.check_contradictions(
+        _PR3187_BODY_EXCERPT,
+        closing_refs=[],
+        commit_messages=[_PR3187_COMMIT_WITH_LEAK],
+    )
+    assert _checks(findings) == [(4, 1909)]
+
+
+def test_check4_does_not_fire_when_body_also_declares_closing():
+    """Tier 1: normal/intentional path — body agrees with the commit.
+
+    If the body ALSO writes ``Closes #N``, the commit-message declaration is
+    not a contradiction (both sides intend the close), so check 4 must stay
+    silent.
+    """
+    findings = m.check_contradictions(
+        "Closes #1909",
+        closing_refs=[1909],
+        commit_messages=[_PR3187_COMMIT_WITH_LEAK],
+    )
+    assert findings == []
+
+
+def test_check4_escape_hatch_works_when_marker_is_in_the_same_commit_message():
+    """Tier 1: escape hatch fires — same vocabulary, scoped to the SAME blob.
+
+    A commit message that both quotes ``Closes #N`` (e.g. explaining this
+    very gate, as this script's own commit messages must avoid doing
+    literally) and carries the discussing marker for N *within that same
+    commit message* is exempt for that commit.
+    """
+    commit_msg = (
+        "docs: explain the closing-intent gate\n\n"
+        "This gate flags a bare `Closes #555` left in a commit message.\n"
+        "<!-- closing-check: discussing #555 -->"
+    )
+    findings = m.check_contradictions(
+        "part of #555",
+        closing_refs=[],
+        commit_messages=[commit_msg],
+    )
+    assert findings == []
+
+
+def test_check4_escape_hatch_does_not_exempt_across_blobs_body_marker_ignored():
+    """Tier 1: a marker in the PR BODY must NOT exempt a commit-message leak.
+
+    This is the real #3187 shape reproduced precisely (see
+    ``test_check4_fires_on_real_3187_shape_commit_leak_body_says_part_of``
+    above): the body's ``discussing #1909`` marker exists for its own
+    reasons and does not reach into a *different* text blob (a commit
+    message) to suppress a genuine leak there. A body-wide/cross-blob
+    exemption would silently defeat check 4 on exactly this real incident —
+    the same "escape hatch must not exempt too much" property the existing
+    per-issue marker design already protects for check 1
+    (``test_discussing_marker_does_not_exempt_a_genuine_declaration``).
+    """
+    findings = m.check_contradictions(
+        "part of #1909\n<!-- closing-check: discussing #1909 -->",
+        closing_refs=[],
+        commit_messages=[_PR3187_COMMIT_WITH_LEAK],
+    )
+    assert _checks(findings) == [(4, 1909)]
+
+
+def test_check4_silent_when_no_commit_messages_supplied():
+    """Tier 1: backward compatibility — omitting commit_messages is a no-op.
+
+    Every pre-existing call site/test in this file calls
+    ``check_contradictions(body, closing_refs)`` with no third argument;
+    check 4 must never fire from an absent commit-message list.
+    """
+    findings = m.check_contradictions("part of #1909", closing_refs=[])
+    assert findings == []

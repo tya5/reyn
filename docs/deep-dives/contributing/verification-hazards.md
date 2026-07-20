@@ -139,6 +139,35 @@ site) needs its interactive elements (anchors, mermaid diagrams) verified
 against *each* surface that reads it — a passing build for one says nothing
 about the other.
 
+## 9. Input-surface blindness: gate every surface the real mechanism reads
+
+`scripts/check_pr_closing_intent.py` gated the PR **body** against GitHub's
+parsed `closingIssuesReferences` — and passed cleanly for PR #3187 (body
+correctly said `part of #1909`, `closingIssuesReferences` was empty, checked
+and confirmed green before merge). It still auto-closed #1909 on merge: an
+intermediate commit's message carried a stray `Closes #1909` left over from
+an earlier draft, and GitHub's default squash-merge commit message is the
+*concatenation* of all commit messages — a second input surface the gate
+never looked at. The green result on the body surface said nothing about
+the commit-message surface, because the check's target was narrower than
+the real mechanism (GitHub's closing-keyword parser) it was standing in for.
+
+This is the sibling of §8 (renderer-specificity) one layer earlier: §8 is
+about a single *artifact* read by two renderers; this is about a single
+*mechanism* (GitHub closing an issue on merge) that reads from two
+*sources* (PR body, PR commit messages) that a human only edits one of by
+habit. A gate that checks the source you *think of* first — the PR body,
+because that's where the author writes prose — can be fully green while the
+mechanism resolves from a source nobody re-checked.
+
+**Apply**: before trusting a gate as covering "does X happen", enumerate
+every input surface the *real* downstream mechanism actually reads (not
+just the one your fix touches) and confirm the gate reads all of them. A
+fix that only reruns the check when the touched surface changes (e.g. this
+gate previously re-ran only on `edited` — a body-only event) is itself a
+symptom: the trigger set silently encodes an assumption about which surface
+matters.
+
 ## See also
 
 - [Testing policy](testing.md) — Tier model, Mock vs Fake, decision flow.
