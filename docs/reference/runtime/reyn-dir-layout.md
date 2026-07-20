@@ -25,7 +25,7 @@ Everything else is excluded, by one of four reasons:
 | **recovery-core** | captured + restored (reconstructed) | `state/`, `config/` |
 | **persist** (knowledge / decisions) | survives rewind — never reverted | `memory/`, `approvals.yaml` |
 | **audit** (write-only record) | kept as a record, never restored | `events/`, `traces/`, `logs/`, `audit-trail/`, `tool-results/`, `media/` |
-| **cache** (derived) | rebuilt after restore | `cache/` (`index/` — includes the `actions` source since FP-0057 Phase 0 — `registry-cache/`, `*_cursor`) |
+| **cache** (derived) | rebuilt after restore | `cache/` (`index/` — includes the `actions` source since FP-0057 Phase 0 — `registry-cache/`, `*_cursor`, `budget_checkpoint.json`) |
 | **outside** (operator/user-owned) | not Reyn-managed for time-travel | `reyn.yaml`, `secrets.env`, `oauth_tokens.json`, `capability_profiles/` |
 
 ## Canonical layout
@@ -56,7 +56,22 @@ Everything else is excluded, by one of four reasons:
 │   │                       FP-0057 Phase 0 (was the separate action_index/
 │   │                       implementation pre-consolidation; clean-break,
 │   │                       no migration — see `reyn.tools.action_index`)
-│   └── registry-cache/     mcp registry cache
+│   ├── registry-cache/     mcp registry cache
+│   └── budget_checkpoint.json  compacted per-agent budget totals (#2945),
+│                           anchored to a byte position in
+│                           `state/budget_ledger.jsonl` — fully
+│                           reconstructable from the ledger by re-scanning,
+│                           safe to delete at any time (a write failure is
+│                           logged and swallowed, never blocks startup).
+│                           NOTE: its per-agent totals act as a FLOOR
+│                           whenever the ledger is found truncated,
+│                           missing, or REPLACED (same size or larger but
+│                           content mismatch) below/at the anchor — only an
+│                           explicit operator action (archiving/deleting
+│                           BOTH this file and the ledger together) resets
+│                           per-agent spend; `/budget` surfaces the floor
+│                           fact + reason whenever it fires. See
+│                           reference/config/budget.md
 └── topologies/             RECOVERY-CORE — agent topologies (reconstructed from topology_* WAL)
 ```
 
