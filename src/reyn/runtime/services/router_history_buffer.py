@@ -413,10 +413,16 @@ class RouterHistoryBuffer:
         # actually counted, as opposed to re-deriving a reference number
         # from its returned wire dicts (which cannot detect a regression in
         # THIS computation itself). None-safe: many test/estimation-path
-        # callers construct this buffer with events=None.
+        # callers construct this buffer with events=None. ``total`` /
+        # ``effective_trigger`` are the elide/no-elide decision's own inputs
+        # — no conversation content — matching the 0059 §5 audit-payload
+        # discipline. See the ``elide_evaluated`` witness in
+        # ``tests/test_2957_prb_elide_advisor_token_unification.py`` for why
+        # exercising this requires an UNRESOLVABLE path-ref image fixture,
+        # not an ordinary inline one.
         if self._events is not None:
             self._events.emit(
-                "history_elide_total_computed",
+                "elide_evaluated",
                 total=total, effective_trigger=effective_trigger,
             )
 

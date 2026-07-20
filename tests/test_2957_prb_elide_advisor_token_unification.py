@@ -56,7 +56,7 @@ def _make_pair(history: list[ChatMessage], *, media_store=None, use_chars4: bool
     production wires them (ContextBudgetAdvisor.history_fn = build_history —
     see that class's own module docstring). Returns (buf, advisor, events) —
     the shared EventLog is exposed so a caller can observe build_history's
-    own internal ``history_elide_total_computed`` audit-event (see
+    own internal ``elide_evaluated`` audit-event (see
     ``test_elide_total_advisor_and_reference_three_way_agree`` below)."""
     cfg = CompactionConfig(use_chars4_estimate=use_chars4)
     events = EventLog()
@@ -294,10 +294,29 @@ def test_elide_total_advisor_and_reference_three_way_agree():
     design decision is FOR.
 
     ``build_history`` emits its internal total as a public P6 audit-event
-    (``history_elide_total_computed`` — see that method) precisely so this
+    (``elide_evaluated`` — see that method) precisely so this
     is observable without touching private state (CLAUDE.md: no private-
     state assertions). This test asserts the 3-way agreement: elide's own
     emitted total == advisor's measurement == the canonical reference.
+
+    ★ DO NOT "clean up" this fixture to an ordinary resolvable image. An
+    unresolvable path-ref is the ONLY content shape this witness has found
+    that discriminates a reverted elide-side total (confirmed by
+    strip-falsify — reverting build_history's total to measure raw
+    ChatMessage input turns this RED with the fixture above; with a plain
+    resolvable image_url/tool_calls fixture instead, strip-falsify stays
+    GREEN — the removal path this fixture exercises is never even reached,
+    making the witness vacuous). This is worth the co-vet finding on WHY
+    it matters beyond "the test happens to need it": an unresolvable media
+    reference (deleted file, GC'd media dir, workspace move, branch
+    switch) is MORE likely the longer a conversation runs, is silently
+    dropped by ``_materialise_path_ref_content`` (no error, no event of
+    its own), and the wrong-direction failure mode is the dangerous one —
+    counting a phantom image inflates the elide total, which means
+    OVER-eliding: real, still-relevant history gets dropped that didn't
+    need to be. Swapping this fixture for a resolvable image would make
+    the test pass for the wrong reason (never exercising the drop path at
+    all) while looking, to a future reader, like an equivalent test.
     """
     history = [
         ChatMessage(
@@ -319,7 +338,7 @@ def test_elide_total_advisor_and_reference_three_way_agree():
         "ChatMessage's content"
     )
 
-    elide_events = [e for e in events.all() if e.type == "history_elide_total_computed"]
+    elide_events = [e for e in events.all() if e.type == "elide_evaluated"]
     assert elide_events, (
         "build_history must emit its internal elide-threshold total as a "
         "public audit-event — without this, elide's own accounting is "
