@@ -274,27 +274,38 @@ async def handle(op: FileIROp, ctx: OpContext) -> dict:
     # package membership / `plugin_install.is_registered_plugin_root`), so a
     # non-None result here already IS a trusted provenance, not merely a
     # permission-bypass signal.
-    # co-vet TOCTOU close (#3196 review round 2): resolve `op.path` EXACTLY
-    # ONCE for a `read`, into `_resolved_read_path` — a canonical,
-    # symlink-free absolute path — and reuse THIS SAME string for every
-    # later decision AND for the actual byte read below (the permission
-    # gate, builtin/plugin detection, the skill-load provenance check, and
+    # co-vet round 2 (#3196): resolve `op.path` EXACTLY ONCE for a `read`,
+    # into `_resolved_read_path`, and reuse THIS SAME string for every later
+    # decision AND for the actual byte read below (the permission gate,
+    # builtin/plugin detection, the skill-load provenance check, and
     # `load_skill_body`'s `skill_path`). Resolving separately at each site
     # (as an earlier revision of this PR did for the skill-load check) left
     # a gap: an attacker could swap a symlinked `SKILL.md`'s target BETWEEN
     # an earlier resolve (used to decide trust) and a later, independent
-    # resolve (used to actually read bytes) — "trusted" content and
-    # "read" content could then come from two DIFFERENT files. Once
-    # resolved here, the original (possibly attacker-mutable) symlink is
-    # already dereferenced out of the string; every later
-    # `Path(...).resolve()` call on it (including `read_builtin_body_bytes`/
-    # `read_plugin_body_bytes`/`Workspace._resolve_read`'s own internal
-    # re-derivation) re-confirms the SAME already-canonical target, not a
-    # fresh dereference of the original path — a later swap of the original
-    # symlink can no longer split the decision from the read. Do not
-    # reintroduce a second `_resolve_for_gate(ctx, op.path)` call anywhere
-    # below this point for the `read` op; thread `_resolved_read_path`
-    # instead.
+    # resolve (used to actually read bytes) — "trusted" content and "read"
+    # content could then come from two DIFFERENT files.
+    #
+    # Scope, precisely (do not overstate this in either direction):
+    #   CLOSED: the decision/content SPLIT within this process — every
+    #     later `Path(...).resolve()` call on `_resolved_read_path`
+    #     (including `read_builtin_body_bytes`/`read_plugin_body_bytes`/
+    #     `Workspace._resolve_read`'s own internal re-derivation) operates
+    #     on the SAME string this function already dereferenced, so no
+    #     in-process interleaving between the trust decision and the read
+    #     can substitute a different symlink target for one but not the
+    #     other (there is no `await` between them for another task in this
+    #     process to run in).
+    #   NOT CLOSED: `resolve()` and the later `open()`-equivalent read call
+    #     are still SEPARATE syscalls. A concurrent OS-level process (not
+    #     this one) can still swap the underlying file between the two —
+    #     the resolved path string is not a guarantee that the byte read
+    #     later comes from the same inode `resolve()` observed. Closing
+    #     that fully needs an atomic open-by-fd + fstat pattern, which this
+    #     change does not add.
+    #
+    # Do not reintroduce a second `_resolve_for_gate(ctx, op.path)` call
+    # anywhere below this point for the `read` op; thread
+    # `_resolved_read_path` instead.
     _resolved_read_path: "str | None" = _resolve_for_gate(ctx, op.path) if op.op == "read" else None
     _builtin_bytes: "bytes | None" = None
     _skill_body_provenance: "str | None" = None

@@ -437,19 +437,28 @@ def test_file_read_op_dotdot_path_judged_by_resolved_target(tmp_path, monkeypatc
 
 
 def test_file_read_op_resolves_path_exactly_once_per_read(tmp_path, monkeypatch):
-    """Tier 2: (security, #3196 co-vet round 2 — TOCTOU) `file.handle`
-    resolves `op.path` EXACTLY ONCE per `read` and reuses that single
-    result for the permission gate, the builtin/plugin provenance check,
-    the ACTUAL byte read, and the skill-load provenance decision + expansion.
+    """Tier 2: (security, #3196 co-vet round 2 — decision/content split)
+    `file.handle` resolves `op.path` EXACTLY ONCE per `read` and reuses that
+    single result for the permission gate, the builtin/plugin provenance
+    check, the ACTUAL byte read, and the skill-load provenance decision +
+    expansion.
 
     An earlier revision of this PR resolved the path separately for the
     trust decision (skill-load provenance) and for the actual read,
     leaving a window where a symlinked `SKILL.md` swapped BETWEEN the two
     resolves could make "decided trusted" and "bytes actually read" refer
     to two DIFFERENT files. Proving "resolved exactly once" structurally
-    is the closure the co-vet asked for when a live swap-mid-await
-    reproduction isn't constructible (there is no `await` between the
-    resolve and the read for a test to interleave into).
+    is the closure available when a live swap-mid-await reproduction isn't
+    constructible (there is no `await` between the resolve and the read
+    for a test to interleave into).
+
+    Scope, precisely: this closes the in-process SPLIT between the trust
+    decision and the content read (both now come from the SAME resolved
+    string). It does NOT close a true concurrent-OS-process race between
+    the `resolve()` syscall and the later read syscall — that residual
+    gap is a `resolve()`-then-`open()` TOCTOU inherent to path-based I/O in
+    general, unclosed by this test or the code it pins (would need an
+    atomic open-by-fd + fstat pattern instead).
 
     Spies on `reyn.core.op_runtime.file._resolve_for_gate` (the ONE
     function that ever calls `.resolve()` for this op) and asserts it is
@@ -479,8 +488,10 @@ def test_file_read_op_resolves_path_exactly_once_per_read(tmp_path, monkeypatch)
     assert result["status"] == "ok", result
     # Behavioral, not a bare count: the recorded call list must be EXACTLY
     # one call, resolving `rel_path` -- a second (even identical-looking)
-    # call would mean a second, independent resolve, reopening the TOCTOU
-    # window between the trust decision and the actual byte read.
+    # call would mean a second, independent resolve, reopening the window
+    # where the trust decision and the actual byte read could split apart
+    # within this process (see the docstring's Scope note for what this
+    # does NOT close -- a true cross-process race at the syscall level).
     assert calls == [rel_path], (
         f"expected `op.path` to be resolved exactly ONCE (for {rel_path!r}) "
         f"for this read, got these resolve call(s): {calls!r}"
