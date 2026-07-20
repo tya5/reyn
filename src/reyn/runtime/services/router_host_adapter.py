@@ -1489,11 +1489,38 @@ class RouterHostAdapter:
     # --- File ops ---
 
     async def file_read(self, path: str) -> str:
-        """Returns content string or JSON error."""
+        """Returns content string (with a trailing note appended when the
+        underlying read was truncated or carried an unrecognized op status)
+        or a JSON error.
+
+        #3193 co-vet finding: this method flattens the ``_file_read_cb``
+        dict to a bare string — the SAME choke point ``read_file``'s
+        registry-dispatch sibling (``RouterLoop._normalise_router_tool_result``,
+        ``name == "read_file"``) already had to fix for the identical reason
+        (#3191/#3192): flattening to a string BEFORE the caller sees the dict
+        silently drops any sibling key (``truncated``/``note``/
+        ``_unknown_op_status``) unless this method explicitly re-attaches it.
+        The #3193 classifier fix made ``_file_read_cb`` start forwarding
+        those keys — this adapter was the one place still discarding them on
+        the way to the LLM (verified: two of ``_file_read``'s live
+        consumers, ``MemoryService.read_body`` and this method — the router
+        chat path predating the #2782/#3082 registry-dispatch migration —
+        forward the dict onward; only this one collapsed it to a bare
+        string without re-attaching the signal).
+        """
         import json
         res = await self._file_read_cb(path)
         if "content" in res:
-            return res["content"]
+            content = res["content"]
+            if res.get("truncated") and res.get("note"):
+                content = f"{content}\n\n... {res['note']}"
+            elif "_unknown_op_status" in res:
+                content = (
+                    f"{content}\n\n... note: this read returned an unrecognized "
+                    f"op status ({res['_unknown_op_status']!r}) — content may be "
+                    f"incomplete; re-read to confirm if in doubt."
+                )
+            return content
         return json.dumps(res)
 
     async def file_write(self, path: str, content: str) -> dict:

@@ -88,6 +88,51 @@ async def test_file_read_not_found_still_reports_error(
 
 
 @pytest.mark.asyncio
+async def test_router_host_adapter_file_read_string_carries_truncation_note(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Tier 2: co-vet finding — `RouterHostAdapter.file_read` (the legacy
+    router-chat path predating the #2782/#3082 registry-dispatch migration)
+    is the SECOND `Session._file_read` consumer, and it flattens the dict to
+    a bare string for the LLM. Asserting only on the wrapper's own dict (as
+    the first round of #3193 tests did) cannot catch this: the dict was
+    correct, but the adapter discarded `note`/`truncated` on the way to a
+    plain string, so the LLM never saw the signal at all — "loaded onto the
+    dict but nobody reads it downstream" (co-vet: the same failure mode
+    #2998/#3190/#3192 already found for list_directory/read_file's
+    registry-dispatch sibling). This test asserts on the actual string the
+    LLM receives, mirroring the #3192 witness shape."""
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "big.txt").write_text(_LINE * _LINE_COUNT, encoding="utf-8")
+
+    session = make_session(agent_name="test-agent-3193-adapter-read")
+    llm_visible = await session.router_host.file_read("big.txt")
+
+    assert isinstance(llm_visible, str)
+    assert _LINE.strip() in llm_visible, "content must still reach the LLM"
+    assert "truncated" in llm_visible, (
+        "the truncation note must reach the LLM-visible string, not just "
+        "the wrapper's internal dict"
+    )
+    assert "on disk at" in llm_visible  # part of the op_runtime `note` text
+
+
+@pytest.mark.asyncio
+async def test_router_host_adapter_file_read_string_no_spurious_note_on_success(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Tier 2: regression guard — a plain successful read's LLM-visible
+    string is exactly the file content, no note appended."""
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "small.txt").write_text("hello world\n", encoding="utf-8")
+
+    session = make_session(agent_name="test-agent-3193-adapter-read-small")
+    llm_visible = await session.router_host.file_read("small.txt")
+
+    assert llm_visible == "hello world\n"
+
+
+@pytest.mark.asyncio
 async def test_memory_read_body_forwards_truncation_signal(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
