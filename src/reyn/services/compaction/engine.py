@@ -465,12 +465,49 @@ def compute_budgets(
     )
 
 
-def assert_static_bounds(cfg: "CompactionConfig", budgets: ComputedBudgets) -> None:
-    """Assert invariants on the computed budgets.
+class CompactionBudgetSelfConsistencyError(Exception):
+    """Raised when a computed budget violates a required self-consistency
+    invariant (``B_M > 0`` or ``effective_trigger > 0``).
+
+    ``assert`` is deliberately NOT used for these two checks: CPython
+    strips every ``assert`` statement under ``-O`` / ``PYTHONOPTIMIZE=1``,
+    so an assert-based guard here would silently vanish in an optimized
+    production run — the same failure class #2352 named ("assert is
+    stripped by -O; raise instead so the guard cannot vanish"). If this
+    invariant is violated, ``effective_trigger`` (or ``B_M``) would flow
+    downstream as a non-positive number; in particular the elide decision
+    ``total <= effective_trigger`` would always be true against a negative
+    ``effective_trigger``, so compaction would fire on every turn instead
+    of failing fast here.
+
+    Attributes
+    ----------
+    field:
+        Which computed budget violated its invariant (``"B_M"`` or
+        ``"effective_trigger"``).
+    value:
+        The computed (non-positive) value.
+    """
+
+    def __init__(self, field: str, value: int, detail: str) -> None:
+        self.field = field
+        self.value = value
+        super().__init__(detail)
+
+
+def assert_static_bounds(
+    cfg: "CompactionConfig", budgets: ComputedBudgets, model: str
+) -> None:
+    """Validate invariants on the computed budgets.
 
     PR-N6: validates component_weights / section_weights (sum > 0, all >= 0).
     Called at CompactionEngine.__init__ time so a misconfigured
     reyn.yaml fails fast at process start, not at first compaction.
+
+    #3027: the two self-consistency checks below (``B_M`` / ``effective_trigger``
+    positivity) raise ``CompactionBudgetSelfConsistencyError`` instead of using
+    ``assert``, because ``assert`` is removed entirely under ``python -O`` —
+    see the class docstring.
     """
     # PR-N6 weight-based assertions (replaces the ratio_sum <= 1.0 check).
     cw = cfg.component_weights
@@ -491,14 +528,35 @@ def assert_static_bounds(cfg: "CompactionConfig", budgets: ComputedBudgets) -> N
         f"CompactionConfig.section_weights has negative values: "
         f"{[k for k, v in sw.items() if v < 0]}"
     )
-    assert budgets.B_M > 0, (
-        f"B_M = {budgets.B_M} — compaction call self-bound violated "
-        f"(try adjusting component_weights or using a larger model)"
-    )
-    assert budgets.effective_trigger > 0, (
-        f"effective_trigger = {budgets.effective_trigger} — "
-        f"model context too small for chosen component_weights"
-    )
+    if budgets.B_M <= 0:
+        from reyn.llm.model_budget import get_max_input_tokens
+        T_max = get_max_input_tokens(model)
+        raise CompactionBudgetSelfConsistencyError(
+            "B_M",
+            budgets.B_M,
+            f"B_M = {budgets.B_M} — compaction call self-bound violated. "
+            f"model={model!r} context window T_max={T_max} tokens; "
+            f"component_weights={dict(cw)}; body_budget={budgets.body_budget} "
+            f"tokens. component_weights (especially the body/summary weight) "
+            f"are too large for this model's context — reduce component_weights "
+            f"or use a model with a larger context window."
+        )
+    if budgets.effective_trigger <= 0:
+        from reyn.llm.model_budget import get_max_input_tokens
+        T_max = get_max_input_tokens(model)
+        raise CompactionBudgetSelfConsistencyError(
+            "effective_trigger",
+            budgets.effective_trigger,
+            f"effective_trigger = {budgets.effective_trigger} — model context "
+            f"too small for chosen component_weights. model={model!r} context "
+            f"window T_max={T_max} tokens; component_weights={dict(cw)}; "
+            f"main_M_room={budgets.main_M_room}, B_M={budgets.B_M} "
+            f"(effective_trigger = min(main_M_room, B_M)). The system prompt "
+            f"(and/or component_weights, especially the SP-adjacent weights) "
+            f"is too large relative to this model's context — reduce the "
+            f"system prompt / component_weights, or use a model with a "
+            f"larger context window."
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -917,7 +975,7 @@ class CompactionEngine:
             self._budgets = compute_budgets(
                 self._cfg, self._model, T_SP=T_SP, T_comp_SP=self._T_comp_SP
             )
-            assert_static_bounds(self._cfg, self._budgets)
+            assert_static_bounds(self._cfg, self._budgets, self._model)
 
     def recompute_budgets(self) -> None:
         """Re-measure T_SP from the provider and recompute budgets.
@@ -935,7 +993,7 @@ class CompactionEngine:
         self._budgets = compute_budgets(
             self._cfg, self._model, T_SP=T_SP, T_comp_SP=self._T_comp_SP
         )
-        assert_static_bounds(self._cfg, self._budgets)
+        assert_static_bounds(self._cfg, self._budgets, self._model)
 
     @property
     def budgets(self) -> ComputedBudgets:
@@ -1471,6 +1529,7 @@ __all__ = [
     "ChatSummary",
     "ChatSummaryRaw",
     "ComputedBudgets",
+    "CompactionBudgetSelfConsistencyError",
     "CompactionOverflowError",
     "ContextOverflowError",
     "HistoryChunkToCompact",

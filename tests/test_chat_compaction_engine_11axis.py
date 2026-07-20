@@ -40,6 +40,7 @@ from reyn.config import CompactionConfig
 from reyn.core.events.events import EventLog
 from reyn.services.compaction.engine import (
     ChatSummary,
+    CompactionBudgetSelfConsistencyError,
     CompactionEngine,
     ComputedBudgets,
     HistoryChunkToCompact,
@@ -190,7 +191,7 @@ def test_assert_static_bounds_zero_weight_sum_raises() -> None:
         B_M=5000, main_M_room=10000, effective_trigger=5000,
     )
     with pytest.raises(AssertionError):
-        assert_static_bounds(cfg, budgets)
+        assert_static_bounds(cfg, budgets, "test-model")
 
 
 def test_assert_static_bounds_negative_weight_raises() -> None:
@@ -205,11 +206,16 @@ def test_assert_static_bounds_negative_weight_raises() -> None:
         B_M=5000, main_M_room=8000, effective_trigger=5000,
     )
     with pytest.raises(AssertionError):
-        assert_static_bounds(cfg, budgets)
+        assert_static_bounds(cfg, budgets, "test-model")
 
 
 def test_assert_static_bounds_B_M_zero_raises() -> None:
-    """Tier 2: assert_static_bounds raises AssertionError when B_M ≤ 0."""
+    """Tier 2: assert_static_bounds raises CompactionBudgetSelfConsistencyError when B_M ≤ 0.
+
+    #3027: this self-consistency guard must survive ``python -O`` (see
+    test_3027_budget_guard_survives_optimize.py for the -O witness), so it
+    raises an explicit exception instead of using ``assert``.
+    """
     cfg = _make_cfg()
     budgets = ComputedBudgets(
         main_pool=10_000, head_budget=1000, body_budget=500,
@@ -217,12 +223,17 @@ def test_assert_static_bounds_B_M_zero_raises() -> None:
         B_M=0,  # violation
         main_M_room=8000, effective_trigger=0,
     )
-    with pytest.raises(AssertionError, match="B_M"):
-        assert_static_bounds(cfg, budgets)
+    with pytest.raises(CompactionBudgetSelfConsistencyError, match="B_M"):
+        assert_static_bounds(cfg, budgets, "test-model")
 
 
 def test_assert_static_bounds_effective_trigger_zero_raises() -> None:
-    """Tier 2: assert_static_bounds raises AssertionError when effective_trigger ≤ 0."""
+    """Tier 2: assert_static_bounds raises CompactionBudgetSelfConsistencyError when effective_trigger ≤ 0.
+
+    #3027: this self-consistency guard must survive ``python -O`` (see
+    test_3027_budget_guard_survives_optimize.py for the -O witness), so it
+    raises an explicit exception instead of using ``assert``.
+    """
     cfg = _make_cfg()
     budgets = ComputedBudgets(
         main_pool=10_000, head_budget=1000, body_budget=500,
@@ -230,8 +241,30 @@ def test_assert_static_bounds_effective_trigger_zero_raises() -> None:
         B_M=5000, main_M_room=5000,
         effective_trigger=0,  # violation
     )
-    with pytest.raises(AssertionError, match="effective_trigger"):
-        assert_static_bounds(cfg, budgets)
+    with pytest.raises(CompactionBudgetSelfConsistencyError, match="effective_trigger"):
+        assert_static_bounds(cfg, budgets, "test-model")
+
+
+def test_assert_static_bounds_effective_trigger_zero_message_has_numbers() -> None:
+    """Tier 2: the effective_trigger guard's message is decision-enabling — it
+    must carry the concrete numbers (T_max, component_weights, main_M_room,
+    B_M), not just the field name, so a reader can act on the failure (#3027).
+    """
+    cfg = _make_cfg()
+    budgets = ComputedBudgets(
+        main_pool=10_000, head_budget=1000, body_budget=500,
+        tail_budget=1000, new_msg_budget=500,
+        B_M=5000, main_M_room=5000,
+        effective_trigger=-42,  # violation, distinctive value
+    )
+    with pytest.raises(CompactionBudgetSelfConsistencyError) as exc_info:
+        assert_static_bounds(cfg, budgets, "test-model")
+    msg = str(exc_info.value)
+    assert "-42" in msg, msg
+    assert "T_max=" in msg, msg
+    assert "component_weights=" in msg, msg
+    assert "main_M_room=5000" in msg, msg
+    assert "B_M=5000" in msg, msg
 
 
 def test_assert_static_bounds_passes_valid_config() -> None:
@@ -242,7 +275,7 @@ def test_assert_static_bounds_passes_valid_config() -> None:
         tail_budget=15000, new_msg_budget=10000,
         B_M=50000, main_M_room=65000, effective_trigger=50000,
     )
-    assert_static_bounds(cfg, budgets)  # must not raise
+    assert_static_bounds(cfg, budgets, "test-model")  # must not raise
 
 
 # ---------------------------------------------------------------------------

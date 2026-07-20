@@ -124,6 +124,20 @@ chat:
 Weights are sum-arbitrary — any positive integers work; Reyn normalises them at
 startup. Larger values give more token budget to that component.
 
+**Self-consistency guard:** budgets (head/tail/new_msg/body — and, derived
+from them, `B_M` and the compaction trigger `effective_trigger`) are computed
+against the *selected model's* context window, not a fixed number. If
+`component_weights` reserve too much of the window (in particular a large
+`body`/summary weight, or a large system prompt eating into the same pool)
+for a small-context model, `effective_trigger` or `B_M` can be computed as
+non-positive. `CompactionEngine` fails fast at construction time in that case
+(`CompactionBudgetSelfConsistencyError`, raised — not asserted, so the guard
+survives `python -O`) rather than silently letting compaction fire on every
+turn. The error message reports the model's context window, the resolved
+`component_weights`, and the computed budgets, so the fix is to reduce
+`component_weights` (or use a model with a larger context window) — never to
+clamp the computed value.
+
 **Removed keys:** `head_size`, `tail_size`, `trigger_total_tokens`, and
 `min_compact_batch` are no longer recognised. If present in `reyn.yaml`, Reyn
 emits a `DeprecationWarning` and ignores them. Remove these keys from your

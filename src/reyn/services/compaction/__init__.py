@@ -2,6 +2,7 @@
 from reyn.services.compaction.engine import (
     ChatSummary,
     ChatSummaryRaw,
+    CompactionBudgetSelfConsistencyError,
     CompactionEngine,
     CompactionOverflowError,
     ComputedBudgets,
@@ -27,6 +28,7 @@ __all__ = [
     "ChatSummary",
     "ChatSummaryRaw",
     "ComputedBudgets",
+    "CompactionBudgetSelfConsistencyError",
     "CompactionOverflowError",
     "ContextOverflowError",
     "HistoryChunkToCompact",
