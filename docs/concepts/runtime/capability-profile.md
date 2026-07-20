@@ -97,7 +97,13 @@ active context — no explicit binding needed:
 `.reyn/capability_profiles/_untrusted.yaml`)
 
 **Trigger:** any history/context entry whose meta carries `external_source=true`
-(stamped by the content-fence seam at ingest).
+(stamped by the content-fence seam at ingest). Two seams stamp it today: an
+external peer's `ask_user` answer (A2A / webhook), and the result of any tool
+declaring `returns_external_content` (e.g. web fetch) — both land in
+`self.history` meta, and the narrowing check (`metas_have_untrusted`) live-scans
+`self.history` on every turn rather than caching the verdict, so the very next
+dispatch after an external tool-result lands is already narrowed, and the
+narrowing self-clears once that entry compacts out of context.
 
 **Built-in deny-set:** memory writes/deletes, re-delegation, sandboxed
 execution, MCP install. Untrusted content can be read and reasoned about, but

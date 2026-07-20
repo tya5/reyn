@@ -193,9 +193,10 @@ def compose_resolved(
 # is live in the agent's active context, the agent is also CAPABILITY-narrowed —
 # so even a partial prompt-injection has no dangerous tools to reach. This is
 # **seam-agnostic**: any untrusted-content seam stamps ``UNTRUSTED_META_KEY`` on
-# its history/context entry meta (the external peer answer in S4 v1; external
-# tool-results in the #1909 follow-up), and the tainted-derivation is marker-
-# driven, not seam-specific.
+# its history/context entry meta — the external peer answer (S4 v1,
+# ``intervention_handler.py``) and external tool-results (#1909,
+# ``router_loop.py``'s ``feedback()``, tagged by ``returns_external_content``) both
+# do — and the tainted-derivation is marker-driven, not seam-specific.
 
 # The marker key a seam stamps on a history-entry meta to mark untrusted content.
 UNTRUSTED_META_KEY: "str" = "external_source"

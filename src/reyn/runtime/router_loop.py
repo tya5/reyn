@@ -3090,11 +3090,24 @@ class RouterLoop:
                 "content": content_str,
             })
             # E-full PR-E (#383): persist the tool response (capped form).
+            # #1909: carry the ``external_source`` taint (already extracted above,
+            # FP-0050/#1822 S2) into the persisted history-entry meta — the SAME
+            # convention the S4 external-peer-answer seam uses
+            # (intervention_handler.py, ``UNTRUSTED_META_KEY`` in
+            # capability_profile.py). ``_effective_contextual_for_turn`` live-scans
+            # ``self.history`` meta every turn (not cached), so once this lands the
+            # NEXT dispatch is already capability-narrowed — no separate re-narrowing
+            # step is needed intra-turn.
+            _tool_meta: "dict[str, object]" = {
+                "chain_id": self.chain_id, "source": "router_tool_turn",
+            }
+            if external_source:
+                _tool_meta["external_source"] = True
             if _append_entry is not None:
                 _append_entry(
                     role="tool",
                     content=content_str,
-                    meta={"chain_id": self.chain_id, "source": "router_tool_turn"},
+                    meta=_tool_meta,
                     tool_call_id=tc["id"],
                     name=tc.get("function", {}).get("name"),
                 )
