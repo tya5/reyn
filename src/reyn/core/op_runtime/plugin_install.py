@@ -399,30 +399,21 @@ def _bake_plugin_root_only(path: Path, plugin_root: Path) -> None:
 
 
 def _venv_interpreter_path(venv_dir: Path) -> Path:
-    """Discover ``venv_dir``'s Python interpreter by checking which of the
-    two known ``uv venv`` / stdlib-``venv`` layouts actually exists on disk
-    — POSIX's ``<venv>/bin/python`` or Windows's (incl. git-bash, which
+    """FALLBACK ONLY (secondary) — see ``_resolve_venv_interpreter`` for the
+    primary mechanism. Discover ``venv_dir``'s Python interpreter by
+    checking which of the two known PEP 405 venv layouts actually exists on
+    disk — POSIX's ``<venv>/bin/python`` or Windows's (incl. git-bash, which
     still runs a Windows-layout venv) ``<venv>/Scripts/python.exe`` — rather
-    than *constructing* the path from ``os.name``/``sys.platform``.
-
-    Discovery over construction is deliberate: if a future ``uv``/stdlib
-    ``venv`` release changes the layout, or the two ever diverge, an
-    existence check keeps working where an OS-constant branch would go
-    stale silently. A hardcoded ``bin/python`` construction is exactly
-    #3202 symptom 1's bug — a real path on Linux/macOS CI, absent on
-    Windows, so ``uv pip install --python <that path>`` and MCP spawn both
-    fail there even though ``uv venv`` itself succeeded.
+    than *constructing* the path from ``os.name``/``sys.platform``. This is
+    a real fallback, not a guess: it is standard per PEP 405 / CPython's
+    ``Lib/venv/__init__.py`` ``binname`` branch, but it is still a
+    hardcoded pair of candidate strings, so ``_resolve_venv_interpreter``
+    only reaches it when the authoritative ``sys.executable`` query fails.
 
     Raises ``FileNotFoundError`` if NEITHER layout exists — that is not a
     layout question but evidence ``uv venv`` did not actually materialise an
     interpreter (should have already been caught by its exit code; this is
     the decision-enabling explicit failure, not a silent None).
-
-    This is the ONE place that resolves the interpreter path — both the MCP
-    spawn command rewrite (which must name a real executable to exec) and
-    the install step's ``--python`` argument (historically) keyed off it.
-    Keeping it singular means the next call site never re-invents the POSIX
-    assumption.
     """
     windows_python = venv_dir / "Scripts" / "python.exe"
     posix_python = venv_dir / "bin" / "python"
@@ -435,6 +426,72 @@ def _venv_interpreter_path(venv_dir: Path) -> Path:
         f"(checked {windows_python!s} and {posix_python!s}) — "
         "uv venv may not have actually materialised an interpreter"
     )
+
+
+async def _resolve_venv_interpreter(
+    venv_dir: Path, backend, policy, plugin_root: Path,
+) -> "tuple[Path | None, str | None]":
+    """Resolve ``venv_dir``'s ACTUAL Python interpreter authoritatively — by
+    asking the venv's OWN python for ``sys.executable`` — instead of
+    constructing or guessing a path. Fixes #3202 symptom 1 (a hardcoded
+    ``bin/python`` is absent on Windows, so ``uv pip install --python <that
+    path>`` and MCP spawn both failed there even though ``uv venv`` itself
+    succeeded).
+
+    PRIMARY (authority query): ``uv run --python <venv_dir> python -c
+    "import sys; print(sys.executable)"``. Ground (uv 0.11.15, this repo's
+    own uv, checked directly — not assumed):
+      - ``uv python find --python <venv_dir>`` does NOT exist as a flag in
+        this uv version (``error: unexpected argument '--python' found``)
+        — ruled out.
+      - A bare ``uv python find`` (with or without ``VIRTUAL_ENV`` set) is
+        ambient DISCOVERY, not a query scoped to a specific venv — it can
+        silently return a DIFFERENT (e.g. system) interpreter — ruled out.
+      - ``uv run --python <dir> python -c "..."`` is the one form
+        confirmed to run INSIDE the just-created venv and print that
+        venv's real ``sys.executable`` (verified: the printed path
+        `exists()` and is directly executable). It also runs with no
+        network activity once the venv exists (`UV_OFFLINE=1` reproduces
+        identical output), so scoping it inside this already
+        network-scoped install step adds no new exposure.
+
+    The query runs EXACTLY ONCE, here, at install time. The absolute path
+    it returns is frozen and handed to BOTH this module's own
+    ``uv pip install --python <path>`` call and the MCP spawn command
+    rewrite (``_build_mcp_entries``). Spawn itself NEVER re-invokes uv — it
+    execs the frozen absolute path directly — preserving #3060's
+    spawn-is-network-free property (a ``uv run`` AT SPAWN TIME would let uv
+    resolve/fetch then, which is exactly what #3060 forbids; resolving
+    once at install time and freezing the result is what keeps spawn
+    itself uv-free).
+
+    FALLBACK (secondary, only if the primary above fails for any reason —
+    sandbox denial, a uv version without ``run``, etc.): ``_venv_interpreter_path``'s
+    on-disk layout discovery. The ordering matters: primary is authority
+    (asks the interpreter itself, so it always names something real and
+    tracks whatever layout uv/venv actually produced); fallback is a
+    standard-but-hardcoded pair of candidate strings, used ONLY when
+    authority is unavailable — do not swap this order.
+    """
+    try:
+        query_result = await backend.run(
+            ["uv", "run", "--python", str(venv_dir), "python", "-c",
+             "import sys; print(sys.executable)"],
+            policy, cwd=str(plugin_root),
+        )
+    except Exception:  # noqa: BLE001 — fall through to discovery below
+        query_result = None
+    if query_result is not None and query_result.returncode == 0:
+        candidate = query_result.stdout.decode("utf-8", errors="replace").strip()
+        if candidate:
+            candidate_path = Path(candidate)
+            if candidate_path.exists():
+                return candidate_path, None
+    # Authority query did not produce a usable path — fall back to discovery.
+    try:
+        return _venv_interpreter_path(venv_dir), None
+    except FileNotFoundError as exc:
+        return None, str(exc)
 
 
 async def _materialise_deps(
@@ -487,19 +544,21 @@ async def _materialise_deps(
         detail = venv_result.stderr.decode("utf-8", errors="replace").strip()
         return None, f"uv venv failed (exit {venv_result.returncode}): {detail}"
 
-    # Pass the venv ROOT (not a hand-built interpreter path) to `--python`.
-    # uv's own request-format grammar documents `<install-dir>` as a
-    # supported form (`uv help python`: "a specific system Python
-    # interpreter can often be requested with ... <install-dir> e.g.
-    # `/some/environment/`") and resolves the correct per-OS interpreter
-    # inside it — so install no longer needs to know POSIX vs. Windows
-    # layout at all. Verified locally: `uv pip install --python <venv_dir>`
-    # (root) installs into that venv exactly like `--python <venv_dir>/bin/python`
-    # does on POSIX.
+    # Resolve the ACTUAL interpreter authoritatively (see
+    # ``_resolve_venv_interpreter``'s docstring for the ground + rationale)
+    # — this is the ONE place the venv/OS layout is figured out, before
+    # either `uv pip install --python` below or the MCP spawn rewrite use
+    # the result.
+    venv_python, resolve_err = await _resolve_venv_interpreter(
+        venv_dir, backend, policy, plugin_root,
+    )
+    if venv_python is None:
+        return None, resolve_err
+
     try:
         install_result = await backend.run(
             ["uv", "pip", "install", "--cache-dir", str(cache_dir),
-             "--python", str(venv_dir), "-r", str(requirements)],
+             "--python", str(venv_python), "-r", str(requirements)],
             policy,
             cwd=str(plugin_root),
         )
@@ -508,13 +567,6 @@ async def _materialise_deps(
     if install_result.returncode != 0:
         detail = install_result.stderr.decode("utf-8", errors="replace").strip()
         return None, f"uv pip install failed (exit {install_result.returncode}): {detail}"
-    # The MCP spawn rewrite (`_build_mcp_entries`) DOES need a real,
-    # executable interpreter path (it becomes the subprocess `command`) —
-    # that's where the discovery helper is unavoidable.
-    try:
-        venv_python = _venv_interpreter_path(venv_dir)
-    except FileNotFoundError as exc:
-        return None, str(exc)
     return venv_python, None
 
 
