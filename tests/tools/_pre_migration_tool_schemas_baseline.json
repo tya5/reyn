@@ -1200,6 +1200,17 @@
     },
     "type": "function"
   },
+  "plugin_management__list": {
+    "function": {
+      "description": "List every builtin plugin reyn ships and can install. Call this FIRST whenever the user wants something reyn does not appear to support yet -- e.g. searching/retrieving over their own documents -- before concluding it isn't possible: a matching builtin plugin may exist but simply not be installed yet. Returns each plugin's name, description, capabilities (any subset of mcp/pipelines/skills), and the exact call to install it: plugin_management__install(source={'kind': 'builtin', 'name': '<name>'}). For example, if 'rag' is listed, install it with plugin_management__install(source={'kind': 'builtin', 'name': 'rag'}).",
+      "name": "plugin_management__list",
+      "parameters": {
+        "properties": {},
+        "type": "object"
+      }
+    },
+    "type": "function"
+  },
   "plugin_management__uninstall": {
     "function": {
       "description": "Uninstall a plugin previously installed via plugin_install. Removes every project config entry (mcp / pipelines / skills) the plugin registered, then removes its ~/.reyn/plugins/<name>/ code copy. Pass the plugin's install name (the 'name' plugin_install returned, or the manifest name when no override was given).",

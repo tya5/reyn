@@ -371,6 +371,11 @@ _OPERATION_RULES: Final[dict[str, tuple[str, Callable[[str, Mapping[str, Any]], 
     # dispatchable-but-catalog-invisible" bug class as #2589/#2621/#2032.
     "plugin_management__install":   ("plugin_management__install",   _passthrough_args),
     "plugin_management__uninstall": ("plugin_management__uninstall", _passthrough_args),
+    # #3202 symptom 3: discovery verb, added in the SAME PR as its
+    # registration (src/reyn/tools/__init__.py) -- not a follow-up, so this
+    # entry never repeats the #3083/#2589/#2621/#2032 "registered but
+    # catalog-invisible" bug class noted above.
+    "plugin_management__list":      ("plugin_management__list",      _passthrough_args),
 
     # pipeline category (IS-1: sync + REGISTERED-only run_pipeline;
     # IS-2: async launch in a crash-recoverable driver-session;

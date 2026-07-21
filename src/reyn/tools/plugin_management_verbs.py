@@ -185,10 +185,37 @@ async def _handle_plugin_uninstall(
     return {"status": "ok", "data": result}
 
 
+# ── plugin_management__list (#3202 symptom 3) ────────────────────────────────
+
+_PLUGIN_LIST_DESCRIPTION = _plugin_management_descriptions.plugin_list.text
+
+# No parameters -- mirrors skill_list (#2971): the result is the whole
+# BUILTIN_PLUGINS-advertised set, nothing here for the caller to filter by.
+_PLUGIN_LIST_PARAMETERS: dict[str, Any] = {
+    "type": "object",
+    "properties": {},
+}
+
+
+async def _handle_plugin_list(
+    args: Mapping[str, Any], ctx: ToolContext,
+) -> ToolResult:
+    """Discovery verb -- read-only, no Control IR op (mirrors skill_list:
+    a pure enumeration has no side effect to gate). Delegates to
+    ``reyn.builtin.discovery.list_builtin_plugins``, which reads
+    ``BUILTIN_PLUGINS`` (the allowlist -- which names to advertise) and each
+    name's own ``.reyn-plugin/plugin.json`` manifest (description +
+    capabilities), never a copy of either baked into this handler."""
+    from reyn.builtin.discovery import list_builtin_plugins
+
+    return {"plugins": list_builtin_plugins()}
+
+
 # ── ToolDefinitions ───────────────────────────────────────────────────────────
 
 from reyn.core.offload.canonical import (  # noqa: E402
     plugin_install_verb_to_canonical,
+    plugin_list_to_canonical,
     plugin_uninstall_verb_to_canonical,
 )
 
@@ -225,4 +252,21 @@ PLUGIN_UNINSTALL = ToolDefinition(
     doc_ref=_PLUGIN_DOC_REF,
 )
 
-__all__ = ["PLUGIN_INSTALL", "PLUGIN_UNINSTALL"]
+PLUGIN_LIST = ToolDefinition(
+    canonical=plugin_list_to_canonical,
+    name="plugin_management__list",
+    description=_PLUGIN_LIST_DESCRIPTION,
+    parameters=_PLUGIN_LIST_PARAMETERS,
+    gates=ToolGates(router="allow", phase="allow"),
+    handler=_handle_plugin_list,
+    category="discovery",
+    purity="read_only",
+    # Unlike skill_list/pipeline_list (which can surface operator/third-party
+    # text registered via a {kind:"local"/"git"} install), this verb ONLY
+    # enumerates BUILTIN_PLUGINS -- reyn's own shipped plugin directories and
+    # their own reyn-authored manifests. There is no local/git plugin listing
+    # here, so no third-party text ever flows through this handler.
+    doc_ref=_PLUGIN_DOC_REF,
+)
+
+__all__ = ["PLUGIN_INSTALL", "PLUGIN_LIST", "PLUGIN_UNINSTALL"]

@@ -1485,6 +1485,25 @@ def pipeline_list_to_canonical(result: dict) -> CanonicalToolResult:
     return _records_to_canonical(text, pipelines)
 
 
+def plugin_list_to_canonical(result: dict) -> CanonicalToolResult:
+    """``plugin_management__list`` result -> canonical (#3202 symptom 3).
+    ``plugins`` entries carry ``{name, description, capabilities}`` -- the
+    discovery view of every builtin plugin advertised by ``BUILTIN_PLUGINS``
+    and readable from its own manifest.
+
+    ``name`` rides in the records because it is the field the model acts on:
+    it is passed straight back as
+    ``plugin_management__install(source={"kind": "builtin", "name": ...})``,
+    so it must survive offload. The summary only needs to say what is on
+    offer.
+    """
+    plugins = result.get("plugins") or []
+    n = len(plugins)
+    preview = _bounded_join(plugins, "name")
+    text = f"{n} builtin plugin{'s' if n != 1 else ''}" + (f": {preview}" if preview else "") + "."
+    return _records_to_canonical(text, plugins)
+
+
 def list_rag_sources_to_canonical(result: dict) -> CanonicalToolResult:
     """``list_rag_sources`` result -> canonical (#3026). ``sources`` entries carry
     ``{name, description, backend, chunk_count}`` — the discovery view of every
