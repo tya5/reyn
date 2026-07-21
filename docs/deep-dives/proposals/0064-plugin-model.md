@@ -67,7 +67,7 @@ The primary flow, and where each existing mechanism plugs in:
    - pipeline: run it **inline** (`run_pipeline_inline`) or as a local `pipelines.yaml` entry.
 3. **Promote (make reusable)** — package the working capability into a plugin: **copy → `~/.reyn/plugins/<name>/`, expand `${REYN_*}`, materialise its runtime deps (§3.11), then call the existing `mcp_install` / `pipeline install` / `skill install` verbs** to register whatever the plugin contains. Now it is reusable across sessions/projects. This *is* `plugin install`, sourced from local work.
 
-> **Dep-fetch happens at install, never at spawn.** `uv run --with <deps>` fetches over the network; if that fetch is deferred to spawn, a `network:false` server can never start (the general form of #3060). So **install materialises a per-plugin env** (e.g. `uv venv` + install `<deps>` into `~/.reyn/plugins/<name>/.venv`, network available at install time) and the registered spawn command points at that ready env's interpreter — **spawn is network-free**. Detail in §3.11.
+> **Dep-fetch happens at install, never at spawn.** Fetching `<deps>` over the network at spawn time would mean a `network:false` server can never start (the general form of #3060). So **install materialises a per-plugin env** (`python -m venv` + `pip install <deps>` into `~/.reyn/plugins/<name>/.venv`, network available at install time — see §3.11a for why `pip`, not `uv`) and the registered spawn command points at that ready env's interpreter — **spawn is network-free**. Detail in §3.11.
 
 Installing a **pre-existing** third-party plugin bundle is the same copy+expand+register mechanism from a different source.
 
@@ -201,6 +201,20 @@ Install/uninstall mutate durable state (a global copy + a materialised env + pro
 - **Audit-events (P6)**: each install/uninstall emits audit-events — at minimum `plugin_install_started` / `_copied` / `_deps_materialised` / `_registered` / `_completed` (and the uninstall inverses) — so `reyn events` can reconstruct what landed and when.
 - **Atomicity / reconcile**: the steps (copy → materialise deps → register) are not a single atomic write, so a crash mid-install can leave a **partial** plugin — copied but unregistered, or registered pointing at a half-materialised env. Install therefore needs a **reconcile** on next start: detect a `~/.reyn/plugins/<name>/` whose `_completed` event is absent (or whose registry entries/​env are inconsistent) and either finish or roll it back, so no half-installed plugin is left that is neither usable nor cleanly removable. Uninstall is ordered **drop-registry-first, then remove-copy** so an interrupted uninstall never leaves a live registry entry pointing at a deleted copy.
 - **Not WAL-derived**: the `~/.reyn/plugins/` copies and the materialised env are **files**, not WAL-event-derived state, so the recovery-feature truncate-falsify gate (CLAUDE.md) does not apply to them; the reconcile above is a filesystem/registry consistency check, and the registry entries themselves ride the existing config-load path. (Called out explicitly so the distinction is on record.)
+
+### 3.11a Update 2026-07-21 — materialise moved from `uv` to stdlib `venv` + `pip` (#3202)
+
+The original §3.11 design used `uv venv` + `uv pip install` for materialise, **with no rationale recorded anywhere for choosing `uv` over the stdlib alternative** — that absence is the actual root cause of #3202: `uv venv`'s POSIX-only venv-layout assumption (`<venv>/bin/python`, hardcoded in `plugin_install.py`) broke on Windows/git-bash, and because nobody had written down *why* `uv` was load-bearing here, nobody had grounds to question whether dropping it was safe when the bug surfaced.
+
+**Recorded now, so the next person doesn't have to reconstruct it from a bug report**:
+
+- **No lockfile was ever used** — materialise reads a plain `requirements.txt`, never a `uv.lock`. `uv`'s headline advantage (fast, reproducible, lockfile-pinned resolution) was never actually exercised by this call site.
+- **Isolation is achieved by `python -m venv` alone** — the property this ADR actually needs (a per-plugin env, no reyn-env pollution) does not require `uv` specifically; the stdlib `venv` module (+ `pip`, bundled with every CPython) provides the same isolation.
+- **reyn's own runtime already guarantees a working CPython** — `sys.executable` is always present or reyn itself couldn't be running. `uv`, by contrast, is an EXTRA binary an operator can lack (the reported failure: Windows/git-bash without `uv` on `PATH`, producing a confusing `run 'uv venv' to create environment` error for a tool reyn itself never asked the operator to install).
+- **Ground before switching** (not assumed): a real `pip install` of the `rag` plugin's actual `requirements.txt` (including `sqlite-vec`, wheel-only, no sdist — the dependency most likely to need a resolver's special handling) resolved and installed cleanly with plain `pip`, no `uv`-specific behaviour lost.
+- **Interpreter-path resolution** (the Windows-layout bug itself, #3202 symptom 1) is now a dedicated stdlib-`sysconfig`-based resolver (`_venv_interpreter_path` in `plugin_install.py`) — computed via `sysconfig.get_paths(scheme="venv", ...)`, which resolves the OS-appropriate layout internally (no hardcoded `bin`/`Scripts` branch at the call site), with an on-disk existence-check as a pathological-case fallback.
+
+This is an **addendum, not a rewrite** of §3.2/§3.11's prose above — read those together with this note for the current mechanism.
 
 ## 4. Consequences
 
