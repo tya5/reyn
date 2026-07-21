@@ -50,7 +50,9 @@ Pipeline (one-shot, no sub-phases):
    never a blanket http.get grant, so a separate interactive prompt is
    never raised for it), then ``require_http_get`` is still called (config
    deny / sandbox network-veto keep applying on top of the derive), then
-   ``uv venv`` + ``uv pip install`` into ``<plugin_root>/.venv`` — network
+   ``<sys.executable> -m venv`` + ``<venv_python> -m pip install`` into
+   ``<plugin_root>/.venv`` (#3202 symptom 2 — no ``uv`` dependency; reyn's
+   own interpreter + the stdlib ``venv``/``pip`` it ships with) — network
    fetch happens HERE, at install time, never at spawn. Without the
    derive, a codeact/headless dispatch (a bus wired but nothing answers
    it) awaits that prompt indefinitely and gets guillotined by the
@@ -84,7 +86,10 @@ call.
 from __future__ import annotations
 
 import json
+import os
 import shutil
+import sys
+import sysconfig
 from pathlib import Path
 from uuid import uuid4
 
@@ -398,22 +403,21 @@ def _bake_plugin_root_only(path: Path, plugin_root: Path) -> None:
         path.write_text(expanded, encoding="utf-8")
 
 
-def _venv_interpreter_path(venv_dir: Path) -> Path:
-    """FALLBACK ONLY (secondary) — see ``_resolve_venv_interpreter`` for the
+def _venv_interpreter_path_discover(venv_dir: Path) -> Path:
+    """FALLBACK ONLY (secondary) — see ``_venv_interpreter_path`` for the
     primary mechanism. Discover ``venv_dir``'s Python interpreter by
-    checking which of the two known PEP 405 venv layouts actually exists on
-    disk — POSIX's ``<venv>/bin/python`` or Windows's (incl. git-bash, which
+    checking which of the two PEP 405 venv layouts actually exists on disk
+    — POSIX's ``<venv>/bin/python`` or Windows's (incl. git-bash, which
     still runs a Windows-layout venv) ``<venv>/Scripts/python.exe`` — rather
     than *constructing* the path from ``os.name``/``sys.platform``. This is
-    a real fallback, not a guess: it is standard per PEP 405 / CPython's
-    ``Lib/venv/__init__.py`` ``binname`` branch, but it is still a
-    hardcoded pair of candidate strings, so ``_resolve_venv_interpreter``
-    only reaches it when the authoritative ``sys.executable`` query fails.
+    only reached if the primary ``sysconfig``-based computation somehow
+    fails (should not happen in practice — this is the pathological-failure
+    safety net, not the normal path).
 
     Raises ``FileNotFoundError`` if NEITHER layout exists — that is not a
-    layout question but evidence ``uv venv`` did not actually materialise an
-    interpreter (should have already been caught by its exit code; this is
-    the decision-enabling explicit failure, not a silent None).
+    layout question but evidence venv creation did not actually materialise
+    an interpreter (should have already been caught by its exit code; this
+    is the decision-enabling explicit failure, not a silent None).
     """
     windows_python = venv_dir / "Scripts" / "python.exe"
     posix_python = venv_dir / "bin" / "python"
@@ -424,102 +428,118 @@ def _venv_interpreter_path(venv_dir: Path) -> Path:
     raise FileNotFoundError(
         f"no venv interpreter found under {venv_dir!s} "
         f"(checked {windows_python!s} and {posix_python!s}) — "
-        "uv venv may not have actually materialised an interpreter"
+        "venv creation may not have actually materialised an interpreter"
     )
 
 
-async def _resolve_venv_interpreter(
-    venv_dir: Path, backend, policy, plugin_root: Path,
-) -> "tuple[Path | None, str | None]":
-    """Resolve ``venv_dir``'s ACTUAL Python interpreter authoritatively — by
-    asking the venv's OWN python for ``sys.executable`` — instead of
-    constructing or guessing a path. Fixes #3202 symptom 1 (a hardcoded
-    ``bin/python`` is absent on Windows, so ``uv pip install --python <that
-    path>`` and MCP spawn both failed there even though ``uv venv`` itself
-    succeeded).
+def _venv_interpreter_path(venv_dir: Path) -> Path:
+    """Resolve ``venv_dir``'s Python interpreter path using the stdlib
+    ``sysconfig`` module's ``"venv"`` install scheme — no hardcoded
+    ``bin``/``Scripts`` branch, no subprocess, no third-party tool (uv or
+    otherwise). #3202 symptom 1 was a hardcoded ``<venv>/bin/python``
+    construction: a real path on Linux/macOS CI, absent on Windows (there
+    it's ``<venv>/Scripts/python.exe``), so ``uv pip install --python <that
+    path>`` and MCP spawn both failed there even though venv creation
+    itself succeeded.
 
-    PRIMARY (authority query): ``uv run --python <venv_dir> python -c
-    "import sys; print(sys.executable)"``. Ground (uv 0.11.15, this repo's
-    own uv, checked directly — not assumed):
-      - ``uv python find --python <venv_dir>`` does NOT exist as a flag in
-        this uv version (``error: unexpected argument '--python' found``)
-        — ruled out.
-      - A bare ``uv python find`` (with or without ``VIRTUAL_ENV`` set) is
-        ambient DISCOVERY, not a query scoped to a specific venv — it can
-        silently return a DIFFERENT (e.g. system) interpreter — ruled out.
-      - ``uv run --python <dir> python -c "..."`` is the one form
-        confirmed to run INSIDE the just-created venv and print that
-        venv's real ``sys.executable`` (verified: the printed path
-        `exists()` and is directly executable). It also runs with no
-        network activity once the venv exists (`UV_OFFLINE=1` reproduces
-        identical output), so scoping it inside this already
-        network-scoped install step adds no new exposure.
+    Ground (checked directly on this machine's CPython, not assumed):
+    ``sysconfig.get_paths(scheme="venv", vars={"base": <venv_dir>,
+    "platbase": <venv_dir>})["scripts"]`` returns the venv's script/bin
+    directory for THE CURRENT INTERPRETER'S OS — the ``"venv"`` scheme name
+    is itself resolved by ``sysconfig`` internally to the OS-appropriate
+    scheme (``posix_venv`` gives ``{base}/bin``; ``nt_venv`` gives
+    ``{base}/Scripts``) at *sysconfig import time*, i.e. it already encodes
+    the platform branch so this call site never has to. The interpreter
+    filename is ``"python" + sysconfig.get_config_var("EXE")`` (``EXE`` is
+    ``""`` on POSIX, ``".exe"`` on Windows) — verified against a real
+    ``python -m venv``-created venv: the computed path exists and matches
+    the actual interpreter file on disk.
 
-    The query runs EXACTLY ONCE, here, at install time. The absolute path
-    it returns is frozen and handed to BOTH this module's own
-    ``uv pip install --python <path>`` call and the MCP spawn command
-    rewrite (``_build_mcp_entries``). Spawn itself NEVER re-invokes uv — it
-    execs the frozen absolute path directly — preserving #3060's
-    spawn-is-network-free property (a ``uv run`` AT SPAWN TIME would let uv
-    resolve/fetch then, which is exactly what #3060 forbids; resolving
-    once at install time and freezing the result is what keeps spawn
-    itself uv-free).
+    ``_materialise_deps`` creates the venv with ``<reyn's own python> -m
+    venv`` (the stdlib ``venv`` module, not a third-party tool with its own
+    possibly-different layout), so this computation targets exactly the
+    layout that module produces — not a guess about what SOME tool might
+    have done.
 
-    FALLBACK (secondary, only if the primary above fails for any reason —
-    sandbox denial, a uv version without ``run``, etc.): ``_venv_interpreter_path``'s
-    on-disk layout discovery. The ordering matters: primary is authority
-    (asks the interpreter itself, so it always names something real and
-    tracks whatever layout uv/venv actually produced); fallback is a
-    standard-but-hardcoded pair of candidate strings, used ONLY when
-    authority is unavailable — do not swap this order.
+    Falls back to ``_venv_interpreter_path_discover``'s on-disk existence
+    check only if this computation's result does not actually exist (a
+    pathological case — e.g. a ``sysconfig`` customisation on some
+    distro) — a decision-enabling last resort, not the main path.
+
+    This is the ONE place that resolves the interpreter path — both the MCP
+    spawn command rewrite (which must name a real executable to exec) and
+    the install step's ``pip install`` invocation (this module) key off it.
+    Keeping it singular means the next call site never re-invents the POSIX
+    assumption.
     """
-    try:
-        query_result = await backend.run(
-            ["uv", "run", "--python", str(venv_dir), "python", "-c",
-             "import sys; print(sys.executable)"],
-            policy, cwd=str(plugin_root),
-        )
-    except Exception:  # noqa: BLE001 — fall through to discovery below
-        query_result = None
-    if query_result is not None and query_result.returncode == 0:
-        candidate = query_result.stdout.decode("utf-8", errors="replace").strip()
-        if candidate:
-            candidate_path = Path(candidate)
-            if candidate_path.exists():
-                return candidate_path, None
-    # Authority query did not produce a usable path — fall back to discovery.
-    try:
-        return _venv_interpreter_path(venv_dir), None
-    except FileNotFoundError as exc:
-        return None, str(exc)
+    scripts_dir = Path(
+        sysconfig.get_paths(
+            scheme="venv", vars={"base": str(venv_dir), "platbase": str(venv_dir)},
+        )["scripts"],
+    )
+    exe_suffix = sysconfig.get_config_var("EXE") or ""
+    computed = scripts_dir / f"python{exe_suffix}"
+    if computed.exists():
+        return computed
+    # sysconfig computed a path that isn't actually there — pathological;
+    # fall back to on-disk discovery before giving up.
+    return _venv_interpreter_path_discover(venv_dir)
 
 
 async def _materialise_deps(
     plugin_root: Path, requirements: Path, ctx: OpContext,
 ) -> "tuple[Path | None, str | None]":
-    """``uv venv`` + ``uv pip install -r requirements.txt`` into
-    ``<plugin_root>/.venv`` (§3.11) — routed through the sandbox abstraction
-    (mirrors ``skill_install._shallow_clone``'s rationale: an agent-reachable
-    subprocess launch must never bypass ``reyn.security.sandbox``).
+    """``<sys.executable> -m venv`` + ``<venv_python> -m pip install -r
+    requirements.txt`` into ``<plugin_root>/.venv`` (§3.11) — routed through
+    the sandbox abstraction (mirrors ``skill_install._shallow_clone``'s
+    rationale: an agent-reachable subprocess launch must never bypass
+    ``reyn.security.sandbox``).
+
+    Uses the stdlib ``venv`` module (via reyn's OWN interpreter,
+    ``sys.executable`` — guaranteed present, no external tool dependency)
+    and ``pip`` (bundled with every CPython venv) rather than ``uv`` —
+    #3202 symptom 2. ``uv`` was never load-bearing here: no lockfile is
+    used (plain ``requirements.txt``), reyn's own runtime already requires
+    a working CPython, and an operator missing ``uv`` on ``PATH`` (the
+    reported failure mode — Windows/git-bash environments where ``uv`` is
+    an extra, easy-to-miss install) got a confusing "run 'uv venv'" error
+    for a tool reyn itself never asked them to install. Ground before this
+    change: `<probe>/.venv/bin/python -m pip install sqlite-vec>=0.1.9
+    apsw>=3.51 chonkie>=1.7 fastmcp>=2.0` (the plugin's actual
+    ``requirements.txt``) resolves and installs cleanly with plain pip,
+    including ``sqlite-vec`` (wheel-only, no sdist — the one dependency
+    most likely to need a resolver's special handling; it did not).
 
     Returns ``(venv_python, None)`` on success (the venv's interpreter path,
     for the mcp-registration step to point spawn at), or ``(None, error)`` on
     failure. Network is scoped to THIS install-time step only; the venv
     itself carries no network policy of its own — that governs SPAWN, which
-    this step never touches.
+    this step never touches (unchanged from the ``uv``-based version:
+    spawn execs the frozen absolute interpreter path directly, #3060).
     """
     from reyn.security.sandbox import SandboxPolicy, get_default_backend
 
     backend = ctx.sandbox_backend or get_default_backend(ctx.sandbox_config)
     venv_dir = plugin_root / ".venv"
-    # uv's default cache dir is ``~/.cache/uv`` — OUTSIDE the sandbox
-    # write_paths (which are scoped tight to plugin_root), so under an enforcing
-    # backend (Seatbelt/Landlock) uv's cache write is denied and materialise
-    # fails with "Operation not permitted". Point the cache INSIDE plugin_root
-    # (within write_paths) via ``--cache-dir`` — a CLI arg, so no os.environ
-    # mutation and no broad ~/.cache grant. This is a real correctness fix, not
-    # a test artifact: the default-cache write would fail under a real sandbox.
-    cache_dir = plugin_root / ".uv-cache"
+    # pip's default cache dir is OUTSIDE the sandbox write_paths (scoped
+    # tight to plugin_root), so under an enforcing backend (Seatbelt/
+    # Landlock) pip's default cache write is denied and materialise fails
+    # with "Operation not permitted" — same reasoning that applied to uv's
+    # cache-dir before this change. Point the cache INSIDE plugin_root (within
+    # write_paths) via ``--cache-dir`` — a CLI arg, so no os.environ mutation
+    # and no broad ambient-cache grant.
+    cache_dir = plugin_root / ".pip-cache"
+    # pip additionally unpacks wheels into `tempfile.mkdtemp()` (Python's
+    # tempfile module, which consults `TMPDIR`/`TEMP`/`TMP` before falling
+    # back to system `/tmp`) during install — a WRITE that, unlike the cache
+    # dir above, is not steerable via a pip CLI flag. Left at its default,
+    # that write lands OUTSIDE `write_paths` (system `/tmp`, not
+    # plugin_root), so an enforcing backend denies it exactly like the
+    # cache-dir issue this comment already documents. Give it its own
+    # dedicated dir INSIDE plugin_root and point `TMPDIR` there (narrowly
+    # scoped, not a broad ambient-`/tmp` grant).
+    tmp_dir = plugin_root / ".pip-tmp"
+    tmp_dir.mkdir(parents=True, exist_ok=True)
     policy = SandboxPolicy(
         network=True,
         write_paths=[str(plugin_root)],
@@ -530,44 +550,76 @@ async def _materialise_deps(
             "HTTPS_PROXY", "HTTP_PROXY", "NO_PROXY",
             "https_proxy", "http_proxy", "no_proxy",
             "SSL_CERT_FILE", "SSL_CERT_DIR",
-            "UV_INDEX_URL", "UV_EXTRA_INDEX_URL", "PIP_INDEX_URL",
+            "PIP_INDEX_URL",
+            "TMPDIR",
         ],
     )
+    # `env_passthrough` only copies EXISTING os.environ values through to the
+    # sandboxed child (see `resolve_passthrough_env`) — there is no
+    # backend.run() parameter to inject a NEW env value, so scoping TMPDIR to
+    # this install requires briefly setting it in THIS process's environ,
+    # restored in `finally`. This mutates process-global state for the
+    # duration of the two subprocess calls below; concurrent
+    # `_materialise_deps` calls for a DIFFERENT plugin in the SAME process
+    # would race on this value (a pre-existing class of risk this module
+    # already carries — e.g. `plugins_root()`'s HOME-relative resolution
+    # makes the same single-flight-per-process assumption).
+    previous_tmpdir = os.environ.get("TMPDIR")
+    os.environ["TMPDIR"] = str(tmp_dir)
     try:
-        venv_result = await backend.run(
-            ["uv", "venv", "--cache-dir", str(cache_dir), str(venv_dir)],
-            policy, cwd=str(plugin_root),
-        )
-    except Exception as exc:  # noqa: BLE001 — surface as a materialise error, not a crash
-        return None, f"uv venv error: {exc}"
-    if venv_result.returncode != 0:
-        detail = venv_result.stderr.decode("utf-8", errors="replace").strip()
-        return None, f"uv venv failed (exit {venv_result.returncode}): {detail}"
+        try:
+            venv_result = await backend.run(
+                [sys.executable, "-m", "venv", str(venv_dir)],
+                policy, cwd=str(plugin_root),
+            )
+        except Exception as exc:  # noqa: BLE001 — surface as a materialise error, not a crash
+            return None, f"venv creation error: {exc}"
+        if venv_result.returncode != 0:
+            detail = venv_result.stderr.decode("utf-8", errors="replace").strip()
+            # `python -m venv` needs `ensurepip`, which some distros (Debian/
+            # Ubuntu's bare `python3`) split into a separate `python3-venv`
+            # package — the one narrow case this pip-based materialise trades
+            # in for dropping the `uv` dependency (#3202 symptom 2). CPython's
+            # own venv module already names the missing package in its stderr
+            # ("ensurepip is not available ... apt install python3.X-venv"),
+            # so surface a decision-enabling hint on top of the raw detail
+            # rather than leaving the operator to parse a stack trace.
+            if "ensurepip" in detail.lower():
+                return None, (
+                    f"venv creation failed (exit {venv_result.returncode}): {detail}\n"
+                    "Hint: this Python may be missing ensurepip. On Debian/"
+                    "Ubuntu, install the matching venv package (e.g. "
+                    "`apt install python3-venv`) and retry."
+                )
+            return None, f"venv creation failed (exit {venv_result.returncode}): {detail}"
 
-    # Resolve the ACTUAL interpreter authoritatively (see
-    # ``_resolve_venv_interpreter``'s docstring for the ground + rationale)
-    # — this is the ONE place the venv/OS layout is figured out, before
-    # either `uv pip install --python` below or the MCP spawn rewrite use
-    # the result.
-    venv_python, resolve_err = await _resolve_venv_interpreter(
-        venv_dir, backend, policy, plugin_root,
-    )
-    if venv_python is None:
-        return None, resolve_err
+        # Discover the ACTUAL interpreter (see ``_venv_interpreter_path``'s
+        # docstring) — this is the ONE place the venv/OS layout is figured
+        # out, before either the pip install below or the MCP spawn rewrite
+        # use the result.
+        try:
+            venv_python = _venv_interpreter_path(venv_dir)
+        except FileNotFoundError as exc:
+            return None, str(exc)
 
-    try:
-        install_result = await backend.run(
-            ["uv", "pip", "install", "--cache-dir", str(cache_dir),
-             "--python", str(venv_python), "-r", str(requirements)],
-            policy,
-            cwd=str(plugin_root),
-        )
-    except Exception as exc:  # noqa: BLE001
-        return None, f"uv pip install error: {exc}"
-    if install_result.returncode != 0:
-        detail = install_result.stderr.decode("utf-8", errors="replace").strip()
-        return None, f"uv pip install failed (exit {install_result.returncode}): {detail}"
-    return venv_python, None
+        try:
+            install_result = await backend.run(
+                [str(venv_python), "-m", "pip", "install",
+                 "--cache-dir", str(cache_dir), "-r", str(requirements)],
+                policy,
+                cwd=str(plugin_root),
+            )
+        except Exception as exc:  # noqa: BLE001
+            return None, f"pip install error: {exc}"
+        if install_result.returncode != 0:
+            detail = install_result.stderr.decode("utf-8", errors="replace").strip()
+            return None, f"pip install failed (exit {install_result.returncode}): {detail}"
+        return venv_python, None
+    finally:
+        if previous_tmpdir is None:
+            os.environ.pop("TMPDIR", None)
+        else:
+            os.environ["TMPDIR"] = previous_tmpdir
 
 
 def _mcp_config_path(project_root: Path) -> Path:

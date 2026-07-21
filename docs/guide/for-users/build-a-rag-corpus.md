@@ -31,7 +31,7 @@ Read what you are enabling before you do:
 
 **Ask Reyn to install the plugin.** You do not have to hand-edit YAML, and there is no extra `pip install` step: dependencies (chonkie/apsw/sqlite-vec) are materialised automatically into a **dedicated per-plugin environment**, never Reyn's own. In `reyn chat`, ask it to ingest a folder: it installs the `rag` plugin, **asking your permission before it writes** anything —
 
-> **`uv` is required.** Plugin install materialises the per-plugin environment with `uv venv` + `uv pip install`; without `uv` on your `PATH`, install fails. **Do not manually create a venv for this plugin** (e.g. running your own `uv venv`/`python -m venv` under the plugin's install directory) — `plugin_management__install` creates and manages its own isolated venv automatically, and a hand-made one there only risks colliding with it, not helping it.
+> **No extra tools to install.** Plugin install materialises the per-plugin environment with `python -m venv` + `pip` — both bundled with the Python reyn itself runs on, so there is nothing extra to have on your `PATH`. **Do not manually create a venv for this plugin** (e.g. running your own `python -m venv` under the plugin's install directory) — `plugin_management__install` creates and manages its own isolated venv automatically, and a hand-made one there only risks colliding with it, not helping it.
 
 ```
 plugin_management__install(source={"kind": "builtin", "name": "rag"})

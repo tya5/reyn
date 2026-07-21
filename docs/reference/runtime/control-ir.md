@@ -891,9 +891,12 @@ Permission gates (§3.10 — composed from EXISTING gates, no new bool axis; the
    without an explicit approval / JIT ask — no new gate needed.
 2. **Dependency materialisation** (`requirements.txt` present) —
    `require_http_get` for the package-index host (`pypi.org`) before running
-   `uv venv` + `uv pip install` into `<plugin_root>/.venv`. Install-time only;
-   the resulting venv's interpreter is what a `command: "python"` mcp entry's
-   spawn is rewritten to point at — **spawn itself stays network-free**.
+   `<sys.executable> -m venv` + `<venv_python> -m pip install` into
+   `<plugin_root>/.venv` (#3202 — no `uv` dependency; see ADR 0064 §3.11a for
+   why). Install-time only; the resulting venv's interpreter — resolved via
+   stdlib `sysconfig`'s `"venv"` scheme, not a hardcoded POSIX path — is what
+   a `command: "python"` mcp entry's spawn is rewritten to point at —
+   **spawn itself stays network-free**.
 3. **`{kind: "git"}` run-code trust** — a DEDICATED
    `require_plugin_git_run_code_trust` gate, checked BEFORE the fetch. This is
    the RCE trust boundary and is deliberately SEPARATE from `require_http_get`
