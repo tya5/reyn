@@ -644,7 +644,7 @@ async def test_materialise_deps_rewrites_mcp_spawn_to_venv_interpreter(tmp_path,
 
     assert result["status"] == "installed", f"install failed: {result}"
 
-    venv_python = plugins_root() / "venvplugin" / ".venv" / "bin" / "python"
+    venv_python = _venv_interpreter_path(plugins_root() / "venvplugin" / ".venv")
     assert venv_python.exists(), "per-plugin venv interpreter was not materialised at install time"
 
     mcp_yaml = ctx.workspace.base_dir / ".reyn" / "config" / "mcp.yaml"
@@ -951,7 +951,7 @@ async def test_dep_materialise_proceeds_when_pypi_http_get_approved(tmp_path, mo
     result = await install_handle(op, ctx)
 
     assert result["status"] == "installed", f"approved-pypi materialise failed: {result}"
-    assert (plugins_root() / "okdeps" / ".venv" / "bin" / "python").exists()
+    assert _venv_interpreter_path(plugins_root() / "okdeps" / ".venv").exists()
 
 
 @pytest.mark.asyncio
@@ -993,7 +993,7 @@ async def test_materialise_succeeds_with_uv_stripped_from_path(tmp_path, monkeyp
     result = await install_handle(op, ctx)
 
     assert result["status"] == "installed", f"materialise failed without uv on PATH: {result}"
-    venv_python = plugins_root() / "nouvdeps" / ".venv" / "bin" / "python"
+    venv_python = _venv_interpreter_path(plugins_root() / "nouvdeps" / ".venv")
     assert venv_python.exists()
     site_packages = subprocess.run(
         [str(venv_python), "-c", "import six; print(six.__file__)"],
@@ -1090,7 +1090,7 @@ async def test_plugin_install_derives_pypi_grant_no_indefinite_await(tmp_path, m
     result = await asyncio.wait_for(install_handle(op, ctx), timeout=30.0)
 
     assert result["status"] == "installed", f"install failed/denied: {result}"
-    assert (plugins_root() / "needsdeps4" / ".venv" / "bin" / "python").exists()
+    assert _venv_interpreter_path(plugins_root() / "needsdeps4" / ".venv").exists()
     assert not bus.asks, (
         "a separate pypi.org intervention prompt was raised — the derive did "
         "not suppress it (this is exactly the prompt that hangs under "

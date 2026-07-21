@@ -83,8 +83,9 @@ sandbox's ``builtin-rag`` extra already provides apsw/chonkie/sqlite_vec, and
 the copy's ``.mcp.json`` points its two REAL servers -- chunker + vector-store
 -- at ``sys.executable`` with ``PYTHONPATH`` pinned to this checkout, mirroring
 ``test_fp0063_p3_rag_pipelines.py``'s ``_server_env()`` precedent) --
-so ``plugin_install``'s dependency-materialisation step (real ``uv``, real
-network) never triggers at all, and the ``require_http_get("pypi.org")``
+so ``plugin_install``'s dependency-materialisation step (real ``python -m
+venv`` + real ``pip install``, real network) never triggers at all, and the
+``require_http_get("pypi.org")``
 permission gate it would need is never reached. The THIRD server
 (markitdown) is the SAME disclosed real-FastMCP-stub substitution p3 uses
 (the real ``markitdown-mcp`` PyPI package is not installed here). Only the
@@ -220,9 +221,10 @@ def _prepare_local_plugin_copy(tmp_path: Path) -> Path:
     """Copy the real ``rag`` plugin tree into ``tmp_path``, then:
 
     - DROP ``requirements.txt`` entirely, so ``plugin_install``'s dependency
-      materialisation step (real ``uv venv`` + real network fetch) never
-      triggers -- this sandbox's ``builtin-rag`` extra already satisfies
-      apsw/chonkie/sqlite_vec ambient-side, and this is a LOCAL install, not
+      materialisation step (real ``python -m venv`` + ``pip install`` + real
+      network fetch) never triggers -- this sandbox's ``builtin-rag`` extra
+      already satisfies apsw/chonkie/sqlite_vec ambient-side, and this is a
+      LOCAL install, not
       the builtin fast-path, so the copy is what gets network-audited.
     - Rewrite ``.mcp.json``: the plugin's own two REAL servers (chunker,
       vector-store -- the ONLY two it declares; markitdown is deliberately
