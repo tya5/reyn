@@ -31,6 +31,8 @@ Read what you are enabling before you do:
 
 **Ask Reyn to install the plugin.** You do not have to hand-edit YAML, and there is no extra `pip install` step: dependencies (chonkie/apsw/sqlite-vec) are materialised automatically into a **dedicated per-plugin environment**, never Reyn's own. In `reyn chat`, ask it to ingest a folder: it installs the `rag` plugin, **asking your permission before it writes** anything —
 
+> **`uv` is required.** Plugin install materialises the per-plugin environment with `uv venv` + `uv pip install`; without `uv` on your `PATH`, install fails. **Do not manually create a venv for this plugin** (e.g. running your own `uv venv`/`python -m venv` under the plugin's install directory) — `plugin_management__install` creates and manages its own isolated venv automatically, and a hand-made one there only risks colliding with it, not helping it.
+
 ```
 plugin_management__install(source={"kind": "builtin", "name": "rag"})
 mcp__install_local(name="reyn_markitdown", command="uvx", args=["markitdown-mcp"])
@@ -51,7 +53,7 @@ Each server is **probed before its registration is committed**: if a command doe
 >
 > then use `command: /home/you/.reyn-markitdown/bin/markitdown-mcp` with `args: []`. Reyn starts whatever `command` names, as-is, so an absolute path to a script whose environment actually has the package is the reliable form.
 
-**Why does the registered `reyn_chunker`/`reyn_vector_store` command look like an absolute path to a `.venv/bin/python`, not `python`?** `plugin_management__install` rewrites it for you at install time, to the materialised per-plugin venv's own interpreter — so spawning it never depends on your ambient `PATH`'s `python3`, which is a *different* interpreter under `pipx install reyn`, a non-activated venv, or a `PATH` with another python first. You never need to write this by hand; see [`cookbook/configs/with-builtin-rag-mcp.yaml`](../../cookbook/configs/with-builtin-rag-mcp.yaml) if you want to read what the registered entry looks like.
+**Why does the registered `reyn_chunker`/`reyn_vector_store` command look like an absolute path to a venv interpreter (`.venv/bin/python` on macOS/Linux, `.venv\Scripts\python.exe` on Windows), not `python`?** `plugin_management__install` rewrites it for you at install time, to the materialised per-plugin venv's own interpreter — so spawning it never depends on your ambient `PATH`'s `python3`, which is a *different* interpreter under `pipx install reyn`, a non-activated venv, or a `PATH` with another python first. You never need to write this by hand; see [`cookbook/configs/with-builtin-rag-mcp.yaml`](../../cookbook/configs/with-builtin-rag-mcp.yaml) if you want to read what the registered entry looks like.
 
 ## Use it
 

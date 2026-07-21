@@ -398,6 +398,45 @@ def _bake_plugin_root_only(path: Path, plugin_root: Path) -> None:
         path.write_text(expanded, encoding="utf-8")
 
 
+def _venv_interpreter_path(venv_dir: Path) -> Path:
+    """Discover ``venv_dir``'s Python interpreter by checking which of the
+    two known ``uv venv`` / stdlib-``venv`` layouts actually exists on disk
+    — POSIX's ``<venv>/bin/python`` or Windows's (incl. git-bash, which
+    still runs a Windows-layout venv) ``<venv>/Scripts/python.exe`` — rather
+    than *constructing* the path from ``os.name``/``sys.platform``.
+
+    Discovery over construction is deliberate: if a future ``uv``/stdlib
+    ``venv`` release changes the layout, or the two ever diverge, an
+    existence check keeps working where an OS-constant branch would go
+    stale silently. A hardcoded ``bin/python`` construction is exactly
+    #3202 symptom 1's bug — a real path on Linux/macOS CI, absent on
+    Windows, so ``uv pip install --python <that path>`` and MCP spawn both
+    fail there even though ``uv venv`` itself succeeded.
+
+    Raises ``FileNotFoundError`` if NEITHER layout exists — that is not a
+    layout question but evidence ``uv venv`` did not actually materialise an
+    interpreter (should have already been caught by its exit code; this is
+    the decision-enabling explicit failure, not a silent None).
+
+    This is the ONE place that resolves the interpreter path — both the MCP
+    spawn command rewrite (which must name a real executable to exec) and
+    the install step's ``--python`` argument (historically) keyed off it.
+    Keeping it singular means the next call site never re-invents the POSIX
+    assumption.
+    """
+    windows_python = venv_dir / "Scripts" / "python.exe"
+    posix_python = venv_dir / "bin" / "python"
+    if windows_python.exists():
+        return windows_python
+    if posix_python.exists():
+        return posix_python
+    raise FileNotFoundError(
+        f"no venv interpreter found under {venv_dir!s} "
+        f"(checked {windows_python!s} and {posix_python!s}) — "
+        "uv venv may not have actually materialised an interpreter"
+    )
+
+
 async def _materialise_deps(
     plugin_root: Path, requirements: Path, ctx: OpContext,
 ) -> "tuple[Path | None, str | None]":
@@ -448,11 +487,19 @@ async def _materialise_deps(
         detail = venv_result.stderr.decode("utf-8", errors="replace").strip()
         return None, f"uv venv failed (exit {venv_result.returncode}): {detail}"
 
-    venv_python = venv_dir / "bin" / "python"
+    # Pass the venv ROOT (not a hand-built interpreter path) to `--python`.
+    # uv's own request-format grammar documents `<install-dir>` as a
+    # supported form (`uv help python`: "a specific system Python
+    # interpreter can often be requested with ... <install-dir> e.g.
+    # `/some/environment/`") and resolves the correct per-OS interpreter
+    # inside it — so install no longer needs to know POSIX vs. Windows
+    # layout at all. Verified locally: `uv pip install --python <venv_dir>`
+    # (root) installs into that venv exactly like `--python <venv_dir>/bin/python`
+    # does on POSIX.
     try:
         install_result = await backend.run(
             ["uv", "pip", "install", "--cache-dir", str(cache_dir),
-             "--python", str(venv_python), "-r", str(requirements)],
+             "--python", str(venv_dir), "-r", str(requirements)],
             policy,
             cwd=str(plugin_root),
         )
@@ -461,6 +508,13 @@ async def _materialise_deps(
     if install_result.returncode != 0:
         detail = install_result.stderr.decode("utf-8", errors="replace").strip()
         return None, f"uv pip install failed (exit {install_result.returncode}): {detail}"
+    # The MCP spawn rewrite (`_build_mcp_entries`) DOES need a real,
+    # executable interpreter path (it becomes the subprocess `command`) —
+    # that's where the discovery helper is unavoidable.
+    try:
+        venv_python = _venv_interpreter_path(venv_dir)
+    except FileNotFoundError as exc:
+        return None, str(exc)
     return venv_python, None
 
 

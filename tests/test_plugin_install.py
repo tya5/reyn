@@ -55,6 +55,8 @@ import yaml
 
 from reyn.core.op_runtime.context import OpContext
 from reyn.core.op_runtime.plugin_install import (
+    _build_mcp_entries,
+    _venv_interpreter_path,
     _write_install_state,
     plugins_root,
     reconcile_plugin_installs,
@@ -650,6 +652,79 @@ async def test_materialise_deps_rewrites_mcp_spawn_to_venv_interpreter(tmp_path,
         "(spawn would not be network-free)"
     )
     assert servers["srv"]["plugin_id"] == "venvplugin"
+
+
+# ── Test 6b: interpreter discovery across venv layouts (#3202 symptom 1) ──────
+#
+# `_venv_interpreter_path` DISCOVERS the interpreter by checking which of the
+# two known `uv venv` layouts exists on disk, rather than constructing the
+# path from `os.name` — so these witnesses build the REAL file layout on disk
+# (a Windows-shaped venv can be reproduced on any host by just creating the
+# `Scripts/python.exe` file) instead of monkeypatching `os.name`/`sys.platform`.
+
+
+def test_venv_interpreter_path_discovers_posix_layout(tmp_path):
+    """Tier 1: given a venv dir with ONLY the POSIX layout
+    (`<venv>/bin/python`) present on disk, `_venv_interpreter_path` returns
+    that file. RED if it returns a Windows-shaped path or raises."""
+    venv_dir = tmp_path / ".venv"
+    posix_python = venv_dir / "bin" / "python"
+    posix_python.parent.mkdir(parents=True)
+    posix_python.write_bytes(b"")
+
+    assert _venv_interpreter_path(venv_dir) == posix_python
+
+
+def test_venv_interpreter_path_discovers_windows_layout(tmp_path):
+    """Tier 1: given a venv dir with ONLY the Windows layout
+    (`<venv>/Scripts/python.exe`) present on disk — reproducing a real
+    `uv venv` run on Windows without needing a Windows host — the discovery
+    helper returns THAT file, not the POSIX `bin/python` construction that
+    caused #3202 symptom 1 (`uv pip install failed` / spawn broken on
+    Windows despite `uv venv` having succeeded)."""
+    venv_dir = tmp_path / ".venv"
+    windows_python = venv_dir / "Scripts" / "python.exe"
+    windows_python.parent.mkdir(parents=True)
+    windows_python.write_bytes(b"")
+
+    assert _venv_interpreter_path(venv_dir) == windows_python
+
+
+def test_venv_interpreter_path_raises_when_neither_layout_exists(tmp_path):
+    """Tier 1: an empty/nonexistent venv dir (neither layout materialised —
+    evidence `uv venv` did not actually produce an interpreter) raises
+    `FileNotFoundError` explicitly rather than silently returning a
+    nonexistent path for the caller to fail on later without context."""
+    venv_dir = tmp_path / ".venv"
+    venv_dir.mkdir()
+
+    with pytest.raises(FileNotFoundError):
+        _venv_interpreter_path(venv_dir)
+
+
+def test_build_mcp_entries_rewrites_to_windows_style_interpreter():
+    """Tier 1: `_build_mcp_entries` rewrites a bare `python` command to
+    WHATEVER `venv_python` path it is given — including a Windows-shaped
+    (`Scripts/python.exe`) path from `_venv_interpreter_path`'s discovery —
+    confirming the spawn side consumes the discovered path unchanged (the
+    same resolver serves both install and spawn, per the single-helper
+    aggregation)."""
+    windows_python = Path("C:/plugins/srv/.venv/Scripts/python.exe")
+    mcp_json = {
+        "mcpServers": {"srv": {"command": "python", "args": ["-m", "srv"]}},
+    }
+    import tempfile
+    with tempfile.NamedTemporaryFile(
+        mode="w", suffix=".json", delete=False,
+    ) as fh:
+        json.dump(mcp_json, fh)
+        mcp_json_path = Path(fh.name)
+    try:
+        entries = _build_mcp_entries(mcp_json_path, windows_python)
+    finally:
+        mcp_json_path.unlink()
+
+    assert entries["srv"]["command"] == str(windows_python)
 
 
 # ── Test 7: pypi dep-fetch gate (require_http_get on the package index) ───────
