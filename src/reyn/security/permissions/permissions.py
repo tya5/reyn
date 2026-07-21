@@ -216,6 +216,15 @@ class PermissionDecl:
     # for ``~/.reyn/secrets.env`` writes. Each entry is a key name
     # (env var name).
     secret_write: list[str] = field(default_factory=list)
+    # #3198: per-name allowlist for ``${env:VAR}`` skill-load expansion
+    # (``reyn.plugins.skill_load``) — the READ-side counterpart of
+    # ``secret_write``'s WRITE-side allowlist, same shape (a specific name,
+    # or the ``"*"`` wildcard). Deny-by-default: an empty/unset list means
+    # NO ``${env:VAR}`` token expands (the token is left in the output
+    # unexpanded, never blanked) — installing a plugin/skill does not by
+    # itself grant it the process's environment. Declared via
+    # ``permissions: env.expand: [NAME, ...]`` in reyn.yaml.
+    env_expand: list[str] = field(default_factory=list)
     # #571 collapse arc Phase 5 NOTE: the four former bool axes —
     # ``mcp_install`` / ``mcp_drop_server`` / ``cron_register`` /
     # ``index_drop`` — have been removed. Each was redundant with the
@@ -346,7 +355,36 @@ class PermissionDecl:
             # on a removed ``mode: unsafe`` declaration.
             http_get=cls._parse_host_list(d.get("http.get")),
             secret_write=cls._parse_secret_key_list(d.get("secret.write")),
+            env_expand=cls._parse_secret_key_list(d.get("env.expand")),
         )
+
+
+def env_expand_allowed(decl: PermissionDecl, name: str) -> bool:
+    """True iff *name* may be ``${env:name}``-expanded (#3198) — a specific
+    declared name OR the ``"*"`` wildcard, faithful to ``secret_write``'s
+    shape. Deny-by-default: an empty/unset ``decl.env_expand`` permits
+    nothing.
+
+    A free function (not a ``PermissionResolver`` method) because the
+    decision needs only the static ``PermissionDecl`` — no approvals-file
+    I/O, no sandbox/profile layer applies to this axis (see
+    ``effective.SandboxLayer``/``ProfileLayer``, both ⊤ for
+    ``ENV_EXPAND``) — so a caller with only a decl in hand (e.g.
+    ``reyn.plugins.skill_load``, which must not construct a throwaway
+    ``PermissionResolver`` per skill-body read) can call this directly.
+    Routed through the SAME unified ``EffectivePermission`` model as every
+    other axis so there is exactly one implementation of the membership
+    rule (``PermissionResolver.is_env_expand_allowed`` delegates here).
+    """
+    from reyn.security.permissions.effective import (
+        AgentLayer,
+        CapabilityAxis,
+        EffectivePermission,
+    )
+
+    return EffectivePermission([AgentLayer(decl)]).allows(
+        CapabilityAxis.ENV_EXPAND, name,
+    )
 
 
 class PermissionResolver:
@@ -1195,6 +1233,24 @@ class PermissionResolver:
             f"    secret.write:\n"
             f"      - '*'\n"
         )
+
+    def is_env_expand_allowed(self, decl: PermissionDecl, name: str) -> bool:
+        """True iff ``${env:name}`` may be expanded from ``os.environ`` for
+        this actor's declared permissions (#3198).
+
+        NON-raising by design (unlike ``require_secret_write``): the caller
+        (``reyn.plugins.skill_load``) treats a denial as "leave the token
+        unexpanded", not a hard error — a skill body routinely mixes
+        several ``${env:...}`` tokens, only some of which may be declared,
+        and the read op must still succeed for the rest of the file.
+
+        Thin wrapper over the module-level :func:`env_expand_allowed` (which
+        needs only a ``PermissionDecl``, not a live resolver instance —
+        ``reyn.plugins.skill_load`` calls that directly to avoid
+        constructing a throwaway ``PermissionResolver``, whose ``__init__``
+        does real ``.reyn/approvals.yaml`` I/O, on every skill-body read).
+        """
+        return env_expand_allowed(decl, name)
 
     def is_read_allowed(self, path: str, actor: str = "") -> bool:
         """Check if reading `path` is allowed.

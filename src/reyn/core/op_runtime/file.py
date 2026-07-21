@@ -468,19 +468,28 @@ async def handle(op: FileIROp, ctx: OpContext) -> dict:
             ):
                 _skill_body_provenance = "config_entry"
             if _skill_body_provenance is not None:
-                content, _env_tokens_expanded = load_skill_body(
+                content, _env_names_expanded, _env_names_denied = load_skill_body(
                     content,
                     skill_path=_resolved_read_path,
                     project_dir=ctx.workspace.base_dir,
                     alias_claude=True,
+                    # #3198: the allowlist gate on WHAT a body that already
+                    # cleared the #3196 provenance gate may read from
+                    # os.environ. ctx.permission_decl is a required
+                    # (non-Optional) OpContext field — always present.
+                    permission_decl=ctx.permission_decl,
                 )
-                # NEVER include the expanded values here — an audit-event is
-                # not a second secret-storage location (#3196 firm design).
+                # NEVER include the expanded/denied VALUES here — an
+                # audit-event is not a second secret-storage location (#3196
+                # firm design, extended by #3198 to the denial side too).
                 ctx.events.emit(
                     "skill_body_loaded",
                     path=op.path,
                     provenance=_skill_body_provenance,
-                    env_tokens_expanded=_env_tokens_expanded,
+                    env_tokens_expanded=len(_env_names_expanded),
+                    env_names_expanded=list(_env_names_expanded),
+                    env_tokens_denied=len(_env_names_denied),
+                    env_names_denied=list(_env_names_denied),
                 )
             # else: unregistered SKILL.md (#3196) — an ordinary, unremarkable
             # read. `content` stays byte-identical to disk; no expansion, no

@@ -70,15 +70,41 @@ untouched, NOT blanked, so an author's stray ``${env:...}``-shaped prose
 degrades to "unexpanded token" rather than "silently deleted text"); it does
 NOT call ``reyn.security.secrets.interpolation.expand_env`` (that remains
 scoped to mcp spawn config, its own established call site, ADR-0030).
+
+**#3198: ``${env:VAR}`` expansion is gated by a deny-by-default allowlist —
+NOT a bare filename-triggered ``os.environ`` read.** #3196/#3199 gated WHICH
+SKILL.md bodies get expanded at all (provenance: builtin / registered-plugin /
+config-registered entry). This closes the ORTHOGONAL question of WHAT a
+body that clears that gate may read: without this, a REGISTERED skill could
+still write ``${env:GITHUB_TOKEN}`` in its own prose and have it expanded
+into the LLM's context on an ordinary read — installing a plugin would be
+equivalent to handing it every credential in the process environment.
+``load_skill_body``/``_expand_env_tokens`` now take a ``permission_decl``
+(``reyn.security.permissions.permissions.PermissionDecl``); a name is
+substituted only when ``PermissionResolver.is_env_expand_allowed`` (or the
+equivalent direct ``EffectivePermission`` check) says so — reusing the SAME
+axis-of-permission model ``secret_write`` already established for the
+write-side, per the "no reinventing existing functionality" rule, rather
+than a bespoke allowlist config surface. A denied token is left in the
+output UNEXPANDED (never blanked, mirroring the existing unset-var
+behavior) — "not on the allowlist" and "not set in the environment" both
+degrade to the same harmless "stray unexpanded token" shape, never a hard
+read failure. ``permission_decl`` defaults to ``None`` (treated as an EMPTY
+decl, i.e. nothing declared) so any caller that forgets to thread a real
+decl fails CLOSED, not open.
 """
 from __future__ import annotations
 
 import os
 import re
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from reyn.plugins.manifest import manifest_path_for
 from reyn.plugins.tokens import PluginTokenContext, expand_reyn_tokens
+
+if TYPE_CHECKING:
+    from reyn.security.permissions.permissions import PermissionDecl
 
 # The one filename this module routes through skill-load expansion instead
 # of a byte-identical read (agentskills.io convention, ADR §3.6). Matched on
@@ -91,28 +117,54 @@ SKILL_BODY_FILENAME = "SKILL.md"
 _ENV_TOKEN_RE = re.compile(r"\$\{env:(\w+)\}")
 
 
-def _expand_env_tokens(text: str) -> "tuple[str, int]":
-    """Expand ``${env:VAR}`` from ``os.environ`` — unset leaves the token
-    untouched (never blanks skill-body prose; see module docstring).
+def _expand_env_tokens(
+    text: str, permission_decl: "PermissionDecl | None",
+) -> "tuple[str, list[str], list[str]]":
+    """Expand ``${env:VAR}`` from ``os.environ`` — gated by *permission_decl*'s
+    ``env_expand`` allowlist (#3198, deny-by-default), unset OR undeclared
+    both leave the token untouched (never blanks skill-body prose; see
+    module docstring).
 
-    Returns ``(expanded_text, count)`` — *count* is how many tokens were
-    ACTUALLY substituted (env var was set), NOT how many ``${env:...}``-shaped
-    tokens appear in the text. #3196: the caller (``load_skill_body`` →
-    ``file.handle``) surfaces this count on the ``skill_body_loaded``
-    audit-event so a replay can see HOW MANY secrets entered context without
-    ever recording their values.
+    Returns ``(expanded_text, expanded_names, denied_names)``:
+
+    - *expanded_names* — the ``VAR`` name of every token ACTUALLY
+      substituted (env var was set AND allowlisted). May contain
+      duplicates if the same name is referenced more than once — the count
+      the caller's audit-event wants is "how many substitutions happened",
+      not "how many distinct names".
+    - *denied_names* — the ``VAR`` name of every ``${env:VAR}``-shaped token
+      that was REJECTED by the allowlist (left unexpanded). The allowlist
+      check runs BEFORE the ``os.environ`` lookup, so a name that is both
+      UNSET *and* not allowlisted still counts as denied here (an empty
+      allowlist denies every name regardless of whether it happens to be
+      set — that is the deny-by-default property #3198 exists to
+      guarantee). Only a name that IS allowlisted but simply unset is
+      excluded from *denied_names* (nothing was refused; there was nothing
+      to grant or refuse — see the unset-but-allowlisted test).
+
+    NEVER returns a value — only names, per #3198's audit-event mandate (a
+    denial log or an expansion count must not become a second place a
+    secret's value could leak).
     """
-    count = 0
+    from reyn.security.permissions.permissions import PermissionDecl, env_expand_allowed
+
+    decl = permission_decl if permission_decl is not None else PermissionDecl()
+    expanded_names: list[str] = []
+    denied_names: list[str] = []
 
     def _replace(m: re.Match) -> str:
-        nonlocal count
-        value = os.environ.get(m.group(1))
+        name = m.group(1)
+        if not env_expand_allowed(decl, name):
+            denied_names.append(name)
+            return m.group(0)
+        value = os.environ.get(name)
         if value is None:
             return m.group(0)
-        count += 1
+        expanded_names.append(name)
         return value
 
-    return _ENV_TOKEN_RE.sub(_replace, text), count
+    expanded = _ENV_TOKEN_RE.sub(_replace, text)
+    return expanded, expanded_names, denied_names
 
 
 def is_skill_body_path(path: "str | Path") -> bool:
@@ -157,7 +209,8 @@ def load_skill_body(
     skill_path: "str | Path",
     project_dir: Path,
     alias_claude: bool = False,
-) -> "tuple[str, int]":
+    permission_decl: "PermissionDecl | None" = None,
+) -> "tuple[str, list[str], list[str]]":
     """Expand invocation-time ``${REYN_*}``/``${CLAUDE_*}``/``${env:...}``
     tokens in a decoded SKILL.md body (§3.5's "skill-load verb").
 
@@ -165,16 +218,24 @@ def load_skill_body(
     caller — ``file.handle`` — has already run the decode ladder; this
     function does no I/O of its own and never re-reads the file).
 
-    Returns ``(expanded_body, env_tokens_expanded)`` — the caller returns
-    *expanded_body* verbatim as the read op's `content`; *env_tokens_expanded*
-    (#3196) is the COUNT of ``${env:VAR}`` tokens actually substituted (never
-    the values), meant for the caller's audit-event, NOT for display to the
-    model.
+    Returns ``(expanded_body, env_names_expanded, env_names_denied)`` — the
+    caller returns *expanded_body* verbatim as the read op's `content`;
+    the two name lists (#3198, superseding #3196's bare int count) are for
+    the caller's audit-event ONLY (names + counts via ``len()``, NEVER the
+    values) — never for display to the model.
 
     ``alias_claude`` should be ``True`` only when *skill_path* is known to be
     a Claude-authored SKILL.md (ADR §3.6's ingestion-boundary rule, mirroring
     ``expand_reyn_tokens``'s own parameter) — the caller decides that, this
     function just threads it through.
+
+    ``permission_decl`` (#3198) gates ``${env:VAR}`` expansion specifically —
+    ``None`` (the default) is treated as an EMPTY ``PermissionDecl``, i.e.
+    NOTHING is allowlisted, so a caller that forgets to thread a real decl
+    fails CLOSED (no env expansion at all), never open. Location tokens
+    (``${REYN_*}``/``${CLAUDE_*}``, via ``expand_reyn_tokens`` above) are
+    UNAFFECTED by this gate — they carry no credential, only positional
+    metadata (ADR §3.4).
     """
     skill_dir = Path(skill_path).resolve().parent
     token_ctx = PluginTokenContext(
@@ -183,7 +244,7 @@ def load_skill_body(
         skill_dir=skill_dir,
     )
     expanded = expand_reyn_tokens(content, token_ctx, alias_claude=alias_claude)
-    return _expand_env_tokens(expanded)
+    return _expand_env_tokens(expanded, permission_decl)
 
 
 __all__ = [
