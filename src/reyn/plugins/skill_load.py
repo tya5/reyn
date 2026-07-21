@@ -133,10 +133,14 @@ def _expand_env_tokens(
       the caller's audit-event wants is "how many substitutions happened",
       not "how many distinct names".
     - *denied_names* — the ``VAR`` name of every ``${env:VAR}``-shaped token
-      that was REJECTED by the allowlist (left unexpanded). Distinct from
-      "token present but env var unset" — that case is silently left alone
-      exactly as before #3198, not counted as a denial (nothing was denied;
-      there was nothing to grant or refuse).
+      that was REJECTED by the allowlist (left unexpanded). The allowlist
+      check runs BEFORE the ``os.environ`` lookup, so a name that is both
+      UNSET *and* not allowlisted still counts as denied here (an empty
+      allowlist denies every name regardless of whether it happens to be
+      set — that is the deny-by-default property #3198 exists to
+      guarantee). Only a name that IS allowlisted but simply unset is
+      excluded from *denied_names* (nothing was refused; there was nothing
+      to grant or refuse — see the unset-but-allowlisted test).
 
     NEVER returns a value — only names, per #3198's audit-event mandate (a
     denial log or an expansion count must not become a second place a

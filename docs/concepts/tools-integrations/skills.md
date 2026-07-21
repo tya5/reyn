@@ -197,8 +197,20 @@ surface rather than inventing a new one:
 permissions:
   env.expand:
     - LANG        # a specific name — only this exact var expands
-    - "*"         # or the wildcard — any name expands (mirrors secret.write's shape)
 ```
+
+**Do not use the `"*"` wildcard here.** `env.expand`'s `"*"` LOOKS like
+`secret.write`'s `"*"` but its risk is NOT the same: `secret.write: ["*"]`
+is safe-ish because the actual write still goes through a per-value
+OPERATOR PROMPT at execution time (the prompt is the real gate; the
+wildcard just says "the key set isn't known until runtime"). `env.expand`
+has **no such prompt, no backstop of any kind** — `env.expand: ["*"]`
+unconditionally expands **every** `${env:VAR}` a skill body writes,
+straight into the LLM's plain-text context, with no operator confirmation
+at read time. This is exactly the credential-exposure path #3198 exists to
+close: an operator who reads "mirrors `secret.write`'s shape" and infers
+"about as safe as `secret.write`'s wildcard" would be wrong. **Enumerate
+the specific names a skill actually needs instead.**
 
 The `skill_body_loaded` audit-event reports the gate's outcome by **name and
 count only, never by value**: `env_tokens_expanded`/`env_names_expanded`
