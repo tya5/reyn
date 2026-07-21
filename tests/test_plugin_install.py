@@ -47,7 +47,9 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -55,6 +57,9 @@ import yaml
 
 from reyn.core.op_runtime.context import OpContext
 from reyn.core.op_runtime.plugin_install import (
+    _build_mcp_entries,
+    _venv_interpreter_path,
+    _venv_interpreter_path_discover,
     _write_install_state,
     plugins_root,
     reconcile_plugin_installs,
@@ -316,7 +321,7 @@ async def test_plugin_install_denied_without_write_approval(tmp_path, monkeypatc
 
 def _make_mcp_plugin_source(base: Path, name: str = "mcpplugin") -> Path:
     """A minimal local plugin dir: manifest + one mcp capability (no
-    requirements.txt — offline, no ``uv`` dependency)."""
+    requirements.txt — offline, no materialise step at all)."""
     plugin_dir = base / name
     (plugin_dir / ".reyn-plugin").mkdir(parents=True, exist_ok=True)
     (plugin_dir / ".reyn-plugin" / "plugin.json").write_text(
@@ -598,25 +603,24 @@ def test_run_code_trust_choices_offer_no_persist_option():
 
 
 # ── Test 6: network-free spawn (materialise → venv interpreter, §3.11) ────────
+#
+# #3202 symptom 2: materialise no longer depends on `uv` — `<sys.executable>
+# -m venv` + `<venv_python> -m pip install` (both bundled with reyn's own
+# CPython), so these tests are NOT gated on a `uv` binary being on PATH.
 
 
-def _uv_available() -> bool:
-    import shutil as _sh
-    return _sh.which("uv") is not None
-
-
-@pytest.mark.skipif(not _uv_available(), reason="uv not on PATH")
 @pytest.mark.asyncio
 async def test_materialise_deps_rewrites_mcp_spawn_to_venv_interpreter(tmp_path, monkeypatch):
     """Tier 2: §3.11 headline property — a plugin with a requirements.txt + an
     mcp capability (command: python) materialises a per-plugin venv at INSTALL
     time, and the registered mcp spawn command is rewritten to that venv's
-    interpreter — so spawn needs no network (no `uv run --with` at spawn).
+    interpreter — so spawn needs no network (spawn execs the frozen absolute
+    interpreter path directly; it never re-invokes pip).
 
-    Uses an EMPTY requirements.txt so `uv venv` + `uv pip install -r` run fully
-    offline (no package fetch) yet still exercise the real materialise +
-    command-rewrite path. RED if the registered command stays 'python' (spawn
-    would then depend on ambient env / fetch)."""
+    Uses an EMPTY requirements.txt so `<sys.executable> -m venv` + `<venv_python>
+    -m pip install -r` run fully offline (no package fetch) yet still exercise
+    the real materialise + command-rewrite path. RED if the registered command
+    stays 'python' (spawn would then depend on ambient env / fetch)."""
     home = tmp_path / "home"
     home.mkdir()
     monkeypatch.setenv("HOME", str(home))
@@ -650,6 +654,204 @@ async def test_materialise_deps_rewrites_mcp_spawn_to_venv_interpreter(tmp_path,
         "(spawn would not be network-free)"
     )
     assert servers["srv"]["plugin_id"] == "venvplugin"
+
+
+# ── Test 6b: interpreter resolution across venv layouts (#3202 symptom 1) ────
+#
+# `_venv_interpreter_path` resolves the interpreter via stdlib `sysconfig`'s
+# "venv" install scheme (no hardcoded bin/Scripts branch, no subprocess).
+# `_venv_interpreter_path_discover` is its on-disk-existence FALLBACK, used
+# only if the sysconfig computation's result doesn't actually exist — these
+# witnesses build the REAL file layout on disk (a Windows-shaped venv can be
+# reproduced on any host by just creating the `Scripts/python.exe` file)
+# instead of monkeypatching `os.name`/`sys.platform`.
+
+
+def test_venv_interpreter_path_resolves_real_venv_via_sysconfig(tmp_path):
+    """Tier 1: `_venv_interpreter_path` against a REAL `python -m venv`
+    (this repo's own interpreter, no network) returns a path that actually
+    exists and is executable — the sysconfig-computed primary mechanism,
+    not the discovery fallback, since sysconfig has no reason to fail here.
+    RED if sysconfig computes a nonexistent path for a real venv."""
+    venv_dir = tmp_path / ".venv"
+    subprocess.run(
+        [sys.executable, "-m", "venv", str(venv_dir)],
+        check=True, capture_output=True,
+    )
+
+    resolved = _venv_interpreter_path(venv_dir)
+
+    assert resolved.exists(), f"sysconfig-resolved interpreter does not exist: {resolved}"
+    probe = subprocess.run(
+        [str(resolved), "-c", "print('alive')"], capture_output=True, text=True,
+    )
+    assert probe.returncode == 0 and "alive" in probe.stdout
+
+
+def test_venv_interpreter_path_discover_finds_posix_layout(tmp_path):
+    """Tier 1: given a venv dir with ONLY the POSIX layout
+    (`<venv>/bin/python`) present on disk, the fallback discovery helper
+    returns that file. RED if it returns a Windows-shaped path or raises."""
+    venv_dir = tmp_path / ".venv"
+    posix_python = venv_dir / "bin" / "python"
+    posix_python.parent.mkdir(parents=True)
+    posix_python.write_bytes(b"")
+
+    assert _venv_interpreter_path_discover(venv_dir) == posix_python
+
+
+def test_venv_interpreter_path_discover_finds_windows_layout(tmp_path):
+    """Tier 1: given a venv dir with ONLY the Windows layout
+    (`<venv>/Scripts/python.exe`) present on disk — reproducing a real
+    Windows venv without needing a Windows host — the fallback discovery
+    helper returns THAT file, not the POSIX `bin/python` construction that
+    caused #3202 symptom 1."""
+    venv_dir = tmp_path / ".venv"
+    windows_python = venv_dir / "Scripts" / "python.exe"
+    windows_python.parent.mkdir(parents=True)
+    windows_python.write_bytes(b"")
+
+    assert _venv_interpreter_path_discover(venv_dir) == windows_python
+
+
+def test_venv_interpreter_path_discover_raises_when_neither_layout_exists(tmp_path):
+    """Tier 1: an empty/nonexistent venv dir (neither layout materialised —
+    evidence venv creation did not actually produce an interpreter) raises
+    `FileNotFoundError` explicitly rather than silently returning a
+    nonexistent path for the caller to fail on later without context."""
+    venv_dir = tmp_path / ".venv"
+    venv_dir.mkdir()
+
+    with pytest.raises(FileNotFoundError):
+        _venv_interpreter_path_discover(venv_dir)
+
+
+def test_venv_interpreter_path_falls_back_to_discovery_when_sysconfig_path_absent(
+    tmp_path,
+):
+    """Tier 1: axis-4-adjacent — if the sysconfig-computed path does NOT
+    exist on disk (the pathological case the fallback exists for), and only
+    a DIFFERENT layout's file is actually present, `_venv_interpreter_path`
+    still returns a real, existing interpreter via the discovery fallback
+    rather than the (nonexistent) sysconfig-computed one. Reproduces the
+    fallback path deterministically by placing ONLY the Windows layout on
+    disk — sysconfig on this (non-Windows) test runner computes the POSIX
+    path, which will not exist, forcing the fallback branch."""
+    venv_dir = tmp_path / ".venv"
+    windows_python = venv_dir / "Scripts" / "python.exe"
+    windows_python.parent.mkdir(parents=True)
+    windows_python.write_bytes(b"")
+
+    resolved = _venv_interpreter_path(venv_dir)
+
+    assert resolved == windows_python, (
+        "expected the discovery fallback to find the Windows-layout file "
+        "when sysconfig's own computed path does not exist"
+    )
+
+
+def test_build_mcp_entries_rewrites_to_windows_style_interpreter():
+    """Tier 1: `_build_mcp_entries` rewrites a bare `python` command to
+    WHATEVER `venv_python` path it is given — including a Windows-shaped
+    (`Scripts/python.exe`) path — confirming the spawn side consumes the
+    resolved path unchanged (the same resolver serves both install and
+    spawn, per the single-helper aggregation)."""
+    windows_python = Path("C:/plugins/srv/.venv/Scripts/python.exe")
+    mcp_json = {
+        "mcpServers": {"srv": {"command": "python", "args": ["-m", "srv"]}},
+    }
+    import tempfile
+    with tempfile.NamedTemporaryFile(
+        mode="w", suffix=".json", delete=False,
+    ) as fh:
+        json.dump(mcp_json, fh)
+        mcp_json_path = Path(fh.name)
+    try:
+        entries = _build_mcp_entries(mcp_json_path, windows_python)
+    finally:
+        mcp_json_path.unlink()
+
+    assert entries["srv"]["command"] == str(windows_python)
+
+
+# ── Test 6c: TMPDIR containment under a REAL enforcing sandbox backend ────────
+# (#3202 symptom 2 pip-materialise). Honest finding (measured directly, not
+# assumed): `_materialise_deps` already passes `cwd=str(plugin_root)` to every
+# `backend.run()` call, and CPython's own `tempfile._get_default_tempdir()`
+# candidate list ends with `os.getcwd()` as a last resort BEFORE raising — so
+# with our actual call shape, a `tempfile.mkdtemp()`-based write (verified
+# directly: a real `pip install six` under Seatbelt with `write_paths=
+# [plugin_root]`, `cwd=plugin_root`, and NO TMPDIR override) already succeeds
+# via that built-in cwd fallback, landing inside `plugin_root`. The TMPDIR
+# redirect this fix adds is still kept as explicit, observable containment
+# (a future refactor that drops the `cwd=` argument, or a pip/tempfile
+# version that narrows its fallback chain, would silently lose the cwd
+# safety net) — but it is NOT provable as "removing it flips this to RED" in
+# the CURRENT call shape, and this test says so rather than asserting a
+# denial that direct measurement showed does not occur here. What IS
+# verified below: with TMPDIR explicitly set (mirroring `_materialise_deps`),
+# the temp write lands inside the designated dir, not system `/tmp`.
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="sandbox-exec is macOS-only")
+def test_tmpdir_redirect_contains_temp_write_under_plugin_root(tmp_path):
+    """Tier 2: with `_materialise_deps`'s TMPDIR redirect applied (env var
+    pointed at a dir inside `plugin_root`), a `tempfile.mkdtemp()`-based
+    write under a REAL Seatbelt backend (`write_paths=[plugin_root]`) lands
+    inside the designated `.pip-tmp` dir — confirming the redirect actually
+    takes effect (the env value is honoured), not merely that SOME fallback
+    happens to succeed."""
+    import asyncio as _asyncio
+
+    from reyn.security.sandbox.backends.seatbelt import SeatbeltBackend
+    from reyn.security.sandbox.policy import SandboxPolicy
+
+    backend = SeatbeltBackend()
+    if not backend.available():
+        pytest.skip("sandbox-exec unavailable on this host")
+
+    plugin_root = tmp_path / "plugin"
+    plugin_root.mkdir()
+    tmp_dir = plugin_root / ".pip-tmp"
+    tmp_dir.mkdir()
+    policy_with_tmpdir = SandboxPolicy(
+        network=False,
+        write_paths=[str(plugin_root)],
+        allow_subprocess=True,
+        timeout_seconds=30,
+        env_passthrough=["TMPDIR"],
+    )
+    probe_code = (
+        "import tempfile, os; "
+        "d = tempfile.mkdtemp(); "
+        "open(os.path.join(d, 'probe'), 'w').write('x'); "
+        "print(d)"
+    )
+
+    previous_tmpdir = os.environ.get("TMPDIR")
+    os.environ["TMPDIR"] = str(tmp_dir)
+    try:
+        result = _asyncio.run(
+            backend.run(
+                [sys.executable, "-c", probe_code],
+                policy_with_tmpdir, cwd=str(plugin_root),
+            ),
+        )
+    finally:
+        if previous_tmpdir is None:
+            os.environ.pop("TMPDIR", None)
+        else:
+            os.environ["TMPDIR"] = previous_tmpdir
+
+    assert result.returncode == 0, (
+        f"expected the TMPDIR-redirected write to succeed: "
+        f"stderr={result.stderr.decode('utf-8', errors='replace')}"
+    )
+    used_dir = result.stdout.decode("utf-8", errors="replace").strip()
+    assert used_dir.startswith(str(tmp_dir)), (
+        f"expected tempfile.mkdtemp() to land inside the redirected TMPDIR "
+        f"({tmp_dir}), got {used_dir!r} — the env var redirect did not take effect"
+    )
 
 
 # ── Test 7: pypi dep-fetch gate (require_http_get on the package index) ───────
@@ -727,7 +929,6 @@ async def test_derive_does_not_bypass_install_gate1_denial(tmp_path, monkeypatch
     assert not venv.exists(), "materialise ran despite gate 1 (install write) being denied"
 
 
-@pytest.mark.skipif(not _uv_available(), reason="uv not on PATH")
 @pytest.mark.asyncio
 async def test_dep_materialise_proceeds_when_pypi_http_get_approved(tmp_path, monkeypatch):
     """Tier 2: with the pypi http.get grant present, dep-materialisation
@@ -751,6 +952,56 @@ async def test_dep_materialise_proceeds_when_pypi_http_get_approved(tmp_path, mo
 
     assert result["status"] == "installed", f"approved-pypi materialise failed: {result}"
     assert (plugins_root() / "okdeps" / ".venv" / "bin" / "python").exists()
+
+
+@pytest.mark.asyncio
+async def test_materialise_succeeds_with_uv_stripped_from_path(tmp_path, monkeypatch):
+    """Tier 2: #3202 symptom 2 direct witness. With EVERY PATH entry that
+    could resolve a `uv` binary removed (verified: `shutil.which("uv")`
+    returns None under the stripped PATH), a REAL dep-materialise — a tiny
+    real PyPI package (`six`, pure Python, no build step) via a real network
+    fetch — still succeeds. `_materialise_deps` no longer names `uv`
+    anywhere, so its absence must be a non-event; RED if materialise still
+    somehow depended on it."""
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    import shutil as _shutil
+    real_path = os.environ.get("PATH", "")
+    stripped_entries = [
+        entry for entry in real_path.split(os.pathsep)
+        if not (Path(entry) / "uv").exists() and not (Path(entry) / "uv.exe").exists()
+    ]
+    stripped_path = os.pathsep.join(stripped_entries)
+    monkeypatch.setenv("PATH", stripped_path)
+    assert _shutil.which("uv") is None, (
+        "test setup bug: `uv` is still resolvable on the stripped PATH — "
+        "this witness would not actually exercise a uv-less environment"
+    )
+
+    src = tmp_path / "src" / "nouvdeps"
+    (src / ".reyn-plugin").mkdir(parents=True)
+    (src / ".reyn-plugin" / "plugin.json").write_text(
+        json.dumps({"name": "nouvdeps", "version": "0.1.0", "capabilities": []}),
+        encoding="utf-8",
+    )
+    (src / "requirements.txt").write_text("six\n", encoding="utf-8")
+
+    ctx = _make_ctx(tmp_path, approve_plugins_root=True, approve_all_http=True)
+    op = PluginInstallIROp(kind="plugin_install", source={"kind": "local", "path": str(src)})
+    result = await install_handle(op, ctx)
+
+    assert result["status"] == "installed", f"materialise failed without uv on PATH: {result}"
+    venv_python = plugins_root() / "nouvdeps" / ".venv" / "bin" / "python"
+    assert venv_python.exists()
+    site_packages = subprocess.run(
+        [str(venv_python), "-c", "import six; print(six.__file__)"],
+        capture_output=True, text=True,
+    )
+    assert site_packages.returncode == 0 and "six" in site_packages.stdout, (
+        f"real dependency (six) was not actually installed/importable: {site_packages}"
+    )
 
 
 # ── #3048 seal: require_http_get awaits indefinitely when a bus is wired ──────
@@ -796,7 +1047,6 @@ async def test_require_http_get_awaits_indefinitely_when_unanswered(tmp_path):
 # ── #3048 fix: install-grant derives the pypi.org dep-fetch approval ──────────
 
 
-@pytest.mark.skipif(not _uv_available(), reason="uv not on PATH")
 @pytest.mark.asyncio
 async def test_plugin_install_derives_pypi_grant_no_indefinite_await(tmp_path, monkeypatch):
     """Tier 2: #3048 fix, load-bearing. Only the install's gate-1 write is
@@ -856,7 +1106,7 @@ async def test_derived_pypi_grant_is_host_scoped_not_blanket(tmp_path):
     """Tier 1: #3048 security witness — confused-deputy guard. The derive
     plugin_install.py performs (``session_approve_host("pypi.org", ...,
     kind="http.get")``) covers EXACTLY pypi.org — the fixed index
-    ``uv pip install`` resolves against — never http.get generally.
+    ``pip install`` resolves against — never http.get generally.
     Approving pypi.org must NOT silently authorise a fetch from an
     unrelated host. Uses ONLY the public PermissionResolver surface
     (``session_approve_host`` / ``require_http_get``), real instances
