@@ -174,6 +174,39 @@ A `SKILL.md` that resolves to none of the three is read byte-identical —
 no expansion, no `skill_body_loaded` audit-event (an ordinary,
 unremarkable read).
 
+**`${env:VAR}` allowlist gate (#3198) — orthogonal to the provenance gate
+above.** The provenance gate (#3196) answers "is this SKILL.md trustworthy
+at all"; it does NOT answer "what may a trustworthy body read". Without a
+further gate, a REGISTERED skill (one that passes provenance) could still
+write `${env:GITHUB_TOKEN}` in its own prose and have it expanded into the
+LLM's context on an ordinary read — installing a plugin would be
+equivalent to handing it every credential in the process environment.
+`${env:VAR_NAME}` therefore additionally requires `VAR_NAME` to be
+declared on the caller's `PermissionDecl.env_expand` allowlist
+(`reyn.security.permissions.permissions`) — **deny-by-default**: an
+empty/unset allowlist expands nothing. A denied token (like an unset one)
+is left **unexpanded, never blanked** — the two cases collapse to the
+same harmless "stray literal token" shape, never a hard read failure.
+
+Declare the allowlist in `reyn.yaml` (or `reyn.local.yaml`) under the same
+`permissions:` block every other capability axis uses (`file.read`,
+`http.get`, `secret.write`, …) — reusing the existing permission-consent
+surface rather than inventing a new one:
+
+```yaml
+permissions:
+  env.expand:
+    - LANG        # a specific name — only this exact var expands
+    - "*"         # or the wildcard — any name expands (mirrors secret.write's shape)
+```
+
+The `skill_body_loaded` audit-event reports the gate's outcome by **name and
+count only, never by value**: `env_tokens_expanded`/`env_names_expanded`
+(substituted) and `env_tokens_denied`/`env_names_denied` (rejected by the
+allowlist) — an audit-event is not a second place a secret's value could
+leak. Location tokens (`${REYN_*}`/`${CLAUDE_*}` below) carry no credential
+and are unaffected by this gate.
+
 Three token kinds expand, in order:
 
 | Token | Source | Resolved |
@@ -182,7 +215,7 @@ Three token kinds expand, in order:
 | `${REYN_SKILL_DIR}` | the skill's own containing directory | every load |
 | `${REYN_PROJECT_DIR}` | the current session's workspace root | every load, freshly |
 | `${CLAUDE_PLUGIN_ROOT}` / `${CLAUDE_SKILL_DIR}` / `${CLAUDE_PROJECT_DIR}` | alias of the three `${REYN_*}` tokens above (ADR §3.6) — `SKILL.md` is a shared open standard (agentskills.io), so this alias is always active for a skill-load, not gated behind a separate provenance check | every load |
-| `${env:VAR_NAME}` | `os.environ` — namespaced (`env:` prefix), deliberately NOT the bare `${VAR}` syntax mcp spawn config uses, so a literal `${VAR}`-shaped code example in a skill body's prose is never mistaken for a token; an unset `${env:VAR_NAME}` is left untouched rather than blanked | every load, freshly |
+| `${env:VAR_NAME}` | `os.environ` — namespaced (`env:` prefix), deliberately NOT the bare `${VAR}` syntax mcp spawn config uses, so a literal `${VAR}`-shaped code example in a skill body's prose is never mistaken for a token; **only when `VAR_NAME` is declared on `permissions.env.expand` (#3198, deny-by-default — see above)**; an unset OR undeclared `${env:VAR_NAME}` is left untouched rather than blanked | every load, freshly |
 
 `${REYN_PLUGIN_ROOT}`/`${REYN_SKILL_DIR}` are, per the ADR, "stable location"
 values meant to be baked once at plugin-install copy time (`plugin_install`,

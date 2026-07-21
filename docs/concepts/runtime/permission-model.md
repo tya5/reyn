@@ -48,7 +48,7 @@ An actor that legitimately needs to write a *still-protected* path must declare 
 
 ### Layer 2: declared capability
 
-An actor that needs something outside the defaults is declared in `reyn.yaml`'s `permissions:` block (`PermissionDecl`, built from `permissions.file.write` / `file.read` / `mcp` / `tool` / `http.get` / `secret.write` lists). Declaring a path doesn't itself grant access — it just makes the runtime aware the actor may need it. The prompt fires just-in-time, at the point the path is actually accessed (not at startup):
+An actor that needs something outside the defaults is declared in `reyn.yaml`'s `permissions:` block (`PermissionDecl`, built from `permissions.file.write` / `file.read` / `mcp` / `tool` / `http.get` / `secret.write` / `env.expand` lists). Declaring a path doesn't itself grant access — it just makes the runtime aware the actor may need it. The prompt fires just-in-time, at the point the path is actually accessed (not at startup):
 
 ```
 [approval] chat_router/file.write needs:
@@ -269,6 +269,7 @@ Each side-effect kind has a corresponding declarable axis. The axis vocabulary i
 | `file.write` | `list[{path, scope}]` | per-path | `require_file_write()` | covers write / edit / delete. Default zone = `.reyn/`. Outside zone: JIT ask (bus≠None) or deny (bus=None). `file.write: deny` blocks even `.reyn/`. Mirrors `http.get` pattern. |
 | `http.get` | `list[{host}]` | per-host | `require_http_get()` | specific host = startup prompt + silent runtime; `"*"` wildcard = per-host runtime prompt. Covers both `reyn.api.safe.http.*` (workflow-internal, specific only) and `web_fetch` (LLM-driven, accepts wildcard) |
 | `secret.write` | `list[<key>]` | per-key | `require_secret_write()` | per-key for `~/.reyn/secrets.env`; `"*"` wildcard for runtime-determined keys (= the per-value prompt is the actual gate) |
+| `env.expand` | `list[<name>]` | per-name | `is_env_expand_allowed()` | #3198: read-side counterpart of `secret.write` — gates `${env:VAR}` skill-load expansion (`reyn.plugins.skill_load`). A DISTINCT `CapabilityAxis.ENV_EXPAND`, not `CapabilityAxis.ENV` (that one gates `SandboxPolicy.env_passthrough` — which names pass THROUGH to a sandboxed subprocess — a different capability from reading a name INTO the LLM's context). Deny-by-default: empty/unset expands nothing. `"*"` wildcard for any name. NON-raising (unlike most `require_*` gates) — a denied name leaves its `${env:VAR}` token unexpanded in the read result rather than failing the whole read. |
 | `mcp` | `list[str]` | per-server | implicit at MCP call | per-server-name allowlist |
 | `python` | `list[{module, function, mode, timeout}]` | per-step | `require_python_step()` | mode ∈ {`safe`, `unsafe`} |
 | `tool` | `list[str]` | per-tool | `require_tool()` | named-tool allowlist |

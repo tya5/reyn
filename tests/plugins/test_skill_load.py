@@ -1,22 +1,27 @@
 """Tier 1/2: skill-load invocation-time variable expansion (ADR 0064 §3.5,
-plugin-model P4, #3070) + the #3196 provenance gate on that expansion.
+plugin-model P4, #3070) + the #3196 provenance gate + the #3198 env-var
+allowlist gate on that expansion.
 
 Pins (real instances throughout — no mocks):
 
   1. ``load_skill_body`` expands ``${REYN_PLUGIN_ROOT}``/``${REYN_SKILL_DIR}``/
      ``${REYN_PROJECT_DIR}`` to real, DISTINCT non-default filesystem paths,
-     and returns ``(body, env_tokens_expanded)`` (Tier 1, ``reyn.plugins.skill_load``).
+     and returns ``(body, env_names_expanded, env_names_denied)`` (Tier 1,
+     ``reyn.plugins.skill_load``).
   2. ``resolve_plugin_root`` walks up from a skill dir to a real
      ``.reyn-plugin/plugin.json`` written to disk, and returns a DIFFERENT
      value than ``skill_dir`` when one exists — falls back to ``skill_dir``
      itself when none does (no collapse in either direction).
   3. ``${CLAUDE_*}`` aliases expand to the SAME value as their canonical
      ``${REYN_*}`` counterpart (§3.6), reusing P1's ``PluginTokenContext``.
-  4. ``${env:VAR}`` expands from a real (non-default) ``os.environ`` value;
-     an UNSET ``${env:VAR}`` is left untouched (not blanked); a bare
-     ``${SOME_VAR}`` (no ``env:`` prefix) is left untouched even when
-     ``SOME_VAR`` IS set — proving the namespaced syntax doesn't fall back
-     to ``expand_env``'s bare-``${VAR}`` behaviour.
+     These are LOCATION tokens, unaffected by the #3198 allowlist gate.
+  4. ``${env:VAR}`` expands from a real (non-default) ``os.environ`` value
+     ONLY when the name is on the caller's ``permission_decl.env_expand``
+     allowlist (#3198, deny-by-default — an OMITTED ``permission_decl``
+     denies everything); an UNSET (but allowlisted) ``${env:VAR}`` is left
+     untouched (not blanked); a bare ``${SOME_VAR}`` (no ``env:`` prefix) is
+     left untouched even when ``SOME_VAR`` IS set — proving the namespaced
+     syntax doesn't fall back to ``expand_env``'s bare-``${VAR}`` behaviour.
   5. #3196 provenance gate (Tier 2b, OS invariant — security): the real
      ``file`` read op (``file.handle``) expands a ``SKILL.md``-named file
      ONLY when its resolved path ALSO falls into a registered provenance
@@ -29,8 +34,16 @@ Pins (real instances throughout — no mocks):
      multiple). A symlink / ``..``-relative path is judged on its
      RESOLVED target, not its literal text (closes the judged-face /
      read-face mismatch the firm design calls out). The audit-event
-     carries ``provenance`` + ``env_tokens_expanded`` but never the
-     expanded VALUE.
+     carries ``provenance`` + ``env_tokens_expanded``/``env_names_expanded``/
+     ``env_tokens_denied``/``env_names_denied`` but never the expanded VALUE.
+  6. #3198 env-var allowlist gate (Tier 2b, OS invariant — security): even
+     a REGISTERED (provenance-trusted) SKILL.md's ``${env:VAR}`` does NOT
+     expand unless ``VAR`` is declared on ``ctx.permission_decl.env_expand``
+     — deny-by-default (empty/omitted decl), selective (only the declared
+     name expands, an undeclared one in the SAME body stays a literal
+     token, never blanked), wildcard ``"*"`` opt-in, and an axis-4 strip
+     witness (killing the allowlist check restores unconditional
+     expansion, RED-ing the deny-by-default test).
 """
 from __future__ import annotations
 
@@ -123,14 +136,19 @@ def test_load_skill_body_expands_reyn_tokens_to_distinct_real_paths(tmp_path):
         "project=${REYN_PROJECT_DIR}"
     )
 
-    expanded, env_count = load_skill_body(content, skill_path=skill_path, project_dir=project_dir)
+    expanded, env_expanded, env_denied = load_skill_body(
+        content, skill_path=skill_path, project_dir=project_dir,
+    )
 
     assert f"root={plugin_dir.resolve()}" in expanded
     assert f"skill={skill_dir.resolve()}" in expanded
     assert f"project={project_dir.resolve()}" in expanded
     # all three resolve to genuinely distinct values -- no collapse (§3.4/§3.6)
     assert len({str(plugin_dir.resolve()), str(skill_dir.resolve()), str(project_dir.resolve())}) == 3
-    assert env_count == 0  # no ${env:...} tokens in this content
+    # no ${env:...} tokens in this content -- location tokens are unaffected
+    # by the #3198 allowlist gate regardless of permission_decl (omitted here).
+    assert env_expanded == []
+    assert env_denied == []
 
 
 def test_load_skill_body_claude_alias_matches_reyn_token_value(tmp_path):
@@ -143,7 +161,7 @@ def test_load_skill_body_claude_alias_matches_reyn_token_value(tmp_path):
     project_dir.mkdir()
 
     content = "${CLAUDE_SKILL_DIR}|${REYN_SKILL_DIR}"
-    expanded, _env_count = load_skill_body(
+    expanded, _env_expanded, _env_denied = load_skill_body(
         content, skill_path=skill_path, project_dir=project_dir, alias_claude=True,
     )
 
@@ -160,7 +178,7 @@ def test_load_skill_body_claude_alias_off_leaves_token_untouched(tmp_path):
     project_dir = tmp_path / "some-project"
     project_dir.mkdir()
 
-    expanded, _env_count = load_skill_body(
+    expanded, _env_expanded, _env_denied = load_skill_body(
         "${CLAUDE_SKILL_DIR}", skill_path=skill_path, project_dir=project_dir,
         alias_claude=False,
     )
@@ -168,10 +186,11 @@ def test_load_skill_body_claude_alias_off_leaves_token_untouched(tmp_path):
     assert expanded == "${CLAUDE_SKILL_DIR}"
 
 
-# ── load_skill_body: ${env:VAR} ──────────────────────────────────────────────
+# ── load_skill_body: ${env:VAR} + the #3198 allowlist gate ───────────────────
 
-def test_load_skill_body_expands_env_token_from_real_environ(tmp_path, monkeypatch):
-    """Tier 1: ${env:VAR} expands from a real, non-default os.environ value."""
+def test_load_skill_body_expands_env_token_when_allowlisted(tmp_path, monkeypatch):
+    """Tier 1: ${env:VAR} expands from a real, non-default os.environ value
+    WHEN the name is declared on permission_decl.env_expand (#3198)."""
     monkeypatch.setenv("REYN_SKILL_LOAD_TEST_TOKEN", "quetzal-9182")
     skill_dir = tmp_path / "standalone-skill"
     skill_dir.mkdir()
@@ -179,17 +198,114 @@ def test_load_skill_body_expands_env_token_from_real_environ(tmp_path, monkeypat
     project_dir = tmp_path / "some-project"
     project_dir.mkdir()
 
-    expanded, env_count = load_skill_body(
+    expanded, env_expanded, env_denied = load_skill_body(
         "value=${env:REYN_SKILL_LOAD_TEST_TOKEN}",
         skill_path=skill_path, project_dir=project_dir,
+        permission_decl=PermissionDecl(env_expand=["REYN_SKILL_LOAD_TEST_TOKEN"]),
     )
 
     assert expanded == "value=quetzal-9182"
-    assert env_count == 1
+    assert env_expanded == ["REYN_SKILL_LOAD_TEST_TOKEN"]
+    assert env_denied == []
 
 
-def test_load_skill_body_unset_env_token_left_untouched(tmp_path, monkeypatch):
-    """Tier 1: an UNSET ${env:VAR} is left as a literal token, never blanked."""
+def test_load_skill_body_env_token_denied_by_default_empty_allowlist(tmp_path, monkeypatch):
+    """Tier 2: (security, #3198 core witness) with NO permission_decl passed
+    (the deny-by-default path every existing/future caller gets for free),
+    a SET ${env:VAR} is NOT expanded -- the real environ value never reaches
+    the output, and the token survives verbatim (never blanked)."""
+    monkeypatch.setenv("REYN_SKILL_LOAD_TEST_TOKEN", "quetzal-9182")
+    skill_dir = tmp_path / "standalone-skill"
+    skill_dir.mkdir()
+    skill_path = skill_dir / "SKILL.md"
+    project_dir = tmp_path / "some-project"
+    project_dir.mkdir()
+
+    expanded, env_expanded, env_denied = load_skill_body(
+        "value=${env:REYN_SKILL_LOAD_TEST_TOKEN}",
+        skill_path=skill_path, project_dir=project_dir,
+        # permission_decl omitted entirely -- the default-deny path.
+    )
+
+    assert expanded == "value=${env:REYN_SKILL_LOAD_TEST_TOKEN}"
+    assert "quetzal-9182" not in expanded
+    assert env_expanded == []
+    assert env_denied == ["REYN_SKILL_LOAD_TEST_TOKEN"]
+
+
+@pytest.mark.parametrize(
+    "var_name", ["REYN_SKILL_LOAD_TEST_TOKEN", "SOME_OTHER_CREDENTIAL_NAME"],
+)
+def test_load_skill_body_env_token_denied_by_default_multiple_names(tmp_path, monkeypatch, var_name):
+    """Tier 2: (security, #3198) the default-empty-allowlist denial holds for
+    MULTIPLE distinct variable names, not just one hand-picked example."""
+    monkeypatch.setenv(var_name, "should-never-appear")
+    skill_dir = tmp_path / "standalone-skill"
+    skill_dir.mkdir()
+    skill_path = skill_dir / "SKILL.md"
+    project_dir = tmp_path / "some-project"
+    project_dir.mkdir()
+
+    expanded, env_expanded, _env_denied = load_skill_body(
+        f"value=${{env:{var_name}}}", skill_path=skill_path, project_dir=project_dir,
+    )
+
+    assert expanded == f"value=${{env:{var_name}}}"
+    assert "should-never-appear" not in expanded
+    assert env_expanded == []
+
+
+def test_load_skill_body_env_allowlist_is_selective(tmp_path, monkeypatch):
+    """Tier 2: (security, #3198 selective witness) a body with TWO
+    ${env:VAR} tokens, only ONE of which is allowlisted -- the allowlisted
+    one expands, the other stays a literal unexpanded token (never blanked
+    to empty string). Proves the gate is neither "block everything" nor
+    "allow everything"."""
+    monkeypatch.setenv("REYN_SKILL_LOAD_ALLOWED_VAR", "allowed-value-777")
+    monkeypatch.setenv("REYN_SKILL_LOAD_DENIED_VAR", "denied-value-888")
+    skill_dir = tmp_path / "standalone-skill"
+    skill_dir.mkdir()
+    skill_path = skill_dir / "SKILL.md"
+    project_dir = tmp_path / "some-project"
+    project_dir.mkdir()
+
+    expanded, env_expanded, env_denied = load_skill_body(
+        "a=${env:REYN_SKILL_LOAD_ALLOWED_VAR} b=${env:REYN_SKILL_LOAD_DENIED_VAR}",
+        skill_path=skill_path, project_dir=project_dir,
+        permission_decl=PermissionDecl(env_expand=["REYN_SKILL_LOAD_ALLOWED_VAR"]),
+    )
+
+    assert expanded == "a=allowed-value-777 b=${env:REYN_SKILL_LOAD_DENIED_VAR}"
+    assert "denied-value-888" not in expanded
+    assert env_expanded == ["REYN_SKILL_LOAD_ALLOWED_VAR"]
+    assert env_denied == ["REYN_SKILL_LOAD_DENIED_VAR"]
+
+
+def test_load_skill_body_env_allowlist_wildcard_expands_any_name(tmp_path, monkeypatch):
+    """Tier 1: the "*" wildcard (mirroring secret_write's shape) allows ANY
+    declared-at-runtime name, not just an explicitly-named one."""
+    monkeypatch.setenv("REYN_SKILL_LOAD_WILDCARD_VAR", "wildcard-value-555")
+    skill_dir = tmp_path / "standalone-skill"
+    skill_dir.mkdir()
+    skill_path = skill_dir / "SKILL.md"
+    project_dir = tmp_path / "some-project"
+    project_dir.mkdir()
+
+    expanded, env_expanded, env_denied = load_skill_body(
+        "v=${env:REYN_SKILL_LOAD_WILDCARD_VAR}",
+        skill_path=skill_path, project_dir=project_dir,
+        permission_decl=PermissionDecl(env_expand=["*"]),
+    )
+
+    assert expanded == "v=wildcard-value-555"
+    assert env_expanded == ["REYN_SKILL_LOAD_WILDCARD_VAR"]
+    assert env_denied == []
+
+
+def test_load_skill_body_unset_allowlisted_env_token_left_untouched(tmp_path, monkeypatch):
+    """Tier 1: an UNSET ${env:VAR} is left as a literal token, never blanked
+    -- even when the name IS allowlisted (unset vs. undeclared are BOTH
+    "leave alone", but only "undeclared" counts as a denial)."""
     monkeypatch.delenv("REYN_SKILL_LOAD_TEST_UNSET_TOKEN", raising=False)
     skill_dir = tmp_path / "standalone-skill"
     skill_dir.mkdir()
@@ -197,20 +313,23 @@ def test_load_skill_body_unset_env_token_left_untouched(tmp_path, monkeypatch):
     project_dir = tmp_path / "some-project"
     project_dir.mkdir()
 
-    expanded, env_count = load_skill_body(
+    expanded, env_expanded, env_denied = load_skill_body(
         "${env:REYN_SKILL_LOAD_TEST_UNSET_TOKEN}",
         skill_path=skill_path, project_dir=project_dir,
+        permission_decl=PermissionDecl(env_expand=["REYN_SKILL_LOAD_TEST_UNSET_TOKEN"]),
     )
 
     assert expanded == "${env:REYN_SKILL_LOAD_TEST_UNSET_TOKEN}"
-    assert env_count == 0
+    assert env_expanded == []
+    assert env_denied == []  # allowlisted, just unset -- not a denial
 
 
 def test_load_skill_body_bare_var_not_expanded_even_when_set(tmp_path, monkeypatch):
     """Tier 1: a bare ${VAR} (no env: prefix) is left untouched even though
     the same-named env var IS set -- proves skill-load does NOT fall back to
     expand_env's bare-${VAR} syntax (collision-avoidance is the whole point,
-    see module docstring)."""
+    see module docstring). Unaffected by the #3198 allowlist -- there is no
+    ${env:...} token here for the gate to even see."""
     monkeypatch.setenv("SOME_VAR", "should-not-appear")
     skill_dir = tmp_path / "standalone-skill"
     skill_dir.mkdir()
@@ -218,13 +337,15 @@ def test_load_skill_body_bare_var_not_expanded_even_when_set(tmp_path, monkeypat
     project_dir = tmp_path / "some-project"
     project_dir.mkdir()
 
-    expanded, env_count = load_skill_body(
+    expanded, env_expanded, env_denied = load_skill_body(
         "example: ${SOME_VAR}", skill_path=skill_path, project_dir=project_dir,
+        permission_decl=PermissionDecl(env_expand=["*"]),
     )
 
     assert expanded == "example: ${SOME_VAR}"
     assert "should-not-appear" not in expanded
-    assert env_count == 0
+    assert env_expanded == []
+    assert env_denied == []
 
 
 # ── Integration: the real file read op + the #3196 provenance gate ──────────
@@ -238,7 +359,15 @@ _SENTINEL_ENV_VALUE = "FAKE_SECRET_VALUE_3196"
 _SENTINEL_BODY = f"---\nname: probe\n---\nsecret=${{env:{_SENTINEL_ENV_VAR}}}\n"
 
 
-def _make_ctx(project_root: Path, *, available_skills=None) -> tuple[OpContext, EventLog]:
+def _make_ctx(
+    project_root: Path, *, available_skills=None, env_expand=(_SENTINEL_ENV_VAR,),
+) -> tuple[OpContext, EventLog]:
+    """``env_expand`` defaults to allowlisting the SENTINEL var only -- these
+    #3196-provenance-focused tests want to isolate "is this path trusted at
+    all" from the #3198 allowlist question, so the allowlist is deliberately
+    pre-granted for the ONE name they reference. Pass ``env_expand=()`` (or
+    a different set) explicitly for a test whose subject IS the allowlist
+    gate itself (see the dedicated #3198 tests below)."""
     events = EventLog()
     ws = Workspace(events=events, base_dir=project_root)
     resolver = PermissionResolver(
@@ -247,7 +376,7 @@ def _make_ctx(project_root: Path, *, available_skills=None) -> tuple[OpContext, 
     ctx = OpContext(
         workspace=ws,
         events=events,
-        permission_decl=PermissionDecl(),
+        permission_decl=PermissionDecl(env_expand=list(env_expand)),
         permission_resolver=resolver,
         actor="test_skill_load",
         available_skills=available_skills,
@@ -345,14 +474,17 @@ def test_file_read_op_does_not_expand_unregistered_plugin_root(tmp_path, monkeyp
 
 
 def test_file_read_op_expands_config_registered_skill_md(tmp_path, monkeypatch):
-    """Tier 2: (security, #3196 positive/regression witness) a
-    `SKILL.md` DECLARED via `skills.entries` (mirrored here as a
-    `SkillEntry` on `ctx.available_skills`, the SAME registry `:skill`
-    invocation resolves against) still expands exactly as before --
-    proving the gate closes the hole WITHOUT breaking the registered
-    case. Also pins the `skill_body_loaded` event's `provenance` +
-    `env_tokens_expanded` fields, and that NEITHER the event NOR anything
-    else carries the expanded secret VALUE outside `content` itself."""
+    """Tier 2: (security, #3196 positive/regression witness, #3198 allowlist
+    positive witness) a `SKILL.md` DECLARED via `skills.entries` (mirrored
+    here as a `SkillEntry` on `ctx.available_skills`, the SAME registry
+    `:skill` invocation resolves against), whose `${env:VAR}` name IS on
+    `ctx.permission_decl.env_expand` (`_make_ctx`'s default grant), still
+    expands exactly as before -- proving BOTH gates close their respective
+    holes WITHOUT breaking the registered+allowlisted case. Also pins the
+    `skill_body_loaded` event's `provenance` / `env_tokens_expanded` /
+    `env_names_expanded` / `env_tokens_denied` / `env_names_denied` fields,
+    and that NEITHER the event NOR anything else carries the expanded
+    secret VALUE outside `content` itself."""
     monkeypatch.setenv(_SENTINEL_ENV_VAR, _SENTINEL_ENV_VALUE)
     project_root = tmp_path / "project-root-real"
     skill_dir = project_root / "skills" / "greeter"
@@ -373,8 +505,46 @@ def test_file_read_op_expands_config_registered_skill_md(tmp_path, monkeypatch):
     event = next(e for e in skill_load_events if e.data["path"] == rel_path)
     assert event.data["provenance"] == "config_entry"
     assert event.data["env_tokens_expanded"] == 1
-    # The value must NEVER appear in the audit-event -- an audit-event is
-    # not a second secret-storage location (#3196 firm design).
+    assert event.data["env_names_expanded"] == [_SENTINEL_ENV_VAR]
+    assert event.data["env_tokens_denied"] == 0
+    assert event.data["env_names_denied"] == []
+    # The value must NEVER appear in the audit-event (names + counts only,
+    # per #3198's firm design extending #3196's "no second secret-storage
+    # location" rule to the denial side too).
+    assert _SENTINEL_ENV_VALUE not in json.dumps(event.data)
+
+
+def test_file_read_op_config_registered_skill_md_env_denied_by_default(tmp_path, monkeypatch):
+    """Tier 2: (security, #3198 core witness) a REGISTERED skill body (clears
+    the #3196 provenance gate) does NOT get its ${env:VAR} expanded when
+    `ctx.permission_decl.env_expand` is empty (the real production default
+    -- `_make_ctx`'s own grant is overridden to `()` here specifically to
+    prove the deny-by-default case at the file.handle integration level,
+    not just the unit level). The token survives verbatim; the audit-event
+    reports the denial by NAME + count, never the value."""
+    monkeypatch.setenv(_SENTINEL_ENV_VAR, _SENTINEL_ENV_VALUE)
+    project_root = tmp_path / "project-root-real"
+    skill_dir = project_root / "skills" / "greeter"
+    skill_dir.mkdir(parents=True)
+    skill_path = skill_dir / "SKILL.md"
+    skill_path.write_text(_SENTINEL_BODY, encoding="utf-8")
+    rel_path = str(skill_path.relative_to(project_root))
+    entry = SkillEntry(name="greeter", description="d", path=rel_path)
+    ctx, events = _make_ctx(project_root, available_skills=[entry], env_expand=())
+
+    result = _run(handle(FileIROp(kind="file", op="read", path=rel_path), ctx))
+
+    assert result["status"] == "ok", result
+    assert f"secret=${{env:{_SENTINEL_ENV_VAR}}}" in result["content"]
+    assert _SENTINEL_ENV_VALUE not in result["content"]
+
+    skill_load_events = [e for e in events.all() if e.type == "skill_body_loaded"]
+    event = next(e for e in skill_load_events if e.data["path"] == rel_path)
+    assert event.data["provenance"] == "config_entry"  # provenance gate still passed
+    assert event.data["env_tokens_expanded"] == 0
+    assert event.data["env_names_expanded"] == []
+    assert event.data["env_tokens_denied"] == 1
+    assert event.data["env_names_denied"] == [_SENTINEL_ENV_VAR]
     assert _SENTINEL_ENV_VALUE not in json.dumps(event.data)
 
 

@@ -22,15 +22,22 @@ skill-load pass does (``reyn.plugins.skill_load.load_skill_body``,
 this module only supplies the trailing-args substitution the ordinary read
 op has no reason to know about.
 
-**No new permission gate.** `:skillname` names come from the operator's OWN
-registered ``skills.entries`` — a set the operator already declared in
-config or installed through a permission-gated ``skill_management__install_*``
-call. Resolving `:name` to that entry's path and reading it grants no
-capability beyond what the operator already put there themselves; there is
-no LLM in the loop deciding which file to read. This mirrors the "operator
-typing a path in their own terminal needs no gate" reasoning the file-read
-op's ``_in_default_read_zone`` carve-out already encodes for project-local
-reads.
+**No new permission gate on WHICH file is read.** `:skillname` names come
+from the operator's OWN registered ``skills.entries`` — a set the operator
+already declared in config or installed through a permission-gated
+``skill_management__install_*`` call. Resolving `:name` to that entry's
+path and reading it grants no capability beyond what the operator already
+put there themselves; there is no LLM in the loop deciding which file to
+read. This mirrors the "operator typing a path in their own terminal needs
+no gate" reasoning the file-read op's ``_in_default_read_zone`` carve-out
+already encodes for project-local reads.
+
+**#3198: the body's ``${env:VAR}`` substitution IS gated, though — same as
+the ordinary file-read path.** The paragraph above is about "may this path
+be read", not "what may the read content expand to". ``resolve_skill_body``
+forwards its own ``permission_decl`` to ``load_skill_body`` (the SAME
+deny-by-default ``env_expand`` allowlist ``file.handle`` applies) — an
+operator-registered `:name` is not itself a credential grant.
 
 **Axis 1 — parameter passing (Claude-Code-standard, owner-ratified).**
 ``$ARGUMENTS`` (the whole trailing raw text) / ``$0``/``$1``/... (shell-style
@@ -80,6 +87,7 @@ from reyn.core.frontmatter import split_frontmatter
 
 if TYPE_CHECKING:
     from reyn.data.skills.registry import SkillEntry
+    from reyn.security.permissions.permissions import PermissionDecl
 
 # Claude Code's own stacking cap (architect-firm design, "standard v2.1.199+
 # compliant"). Not operator-configurable — a fixed ceiling keeps `:a :b :c
@@ -241,7 +249,9 @@ def substitute_arguments(
 # ── body resolution (reuses the existing file-read-skill mechanism) ────────
 
 
-def resolve_skill_body(path: str, *, project_dir: Path) -> str:
+def resolve_skill_body(
+    path: str, *, project_dir: Path, permission_decl: "PermissionDecl | None" = None,
+) -> str:
     """Read + skill-load-expand a SKILL.md body.
 
     Reuses the SAME primitives the ordinary ``file`` read op's skill-load
@@ -252,6 +262,13 @@ def resolve_skill_body(path: str, *, project_dir: Path) -> str:
     ``${REYN_*}``/``${CLAUDE_*}``/``${env:...}`` token expansion. This is
     deliberately NOT a second read mechanism — #2971's "reading is the
     invocation" holds for `:` too.
+
+    ``permission_decl`` (#3198) is forwarded to ``load_skill_body`` verbatim
+    — the SAME allowlist gate ``file.handle``'s read path applies (this is
+    the `:` explicit-invoke path's own separate call site, so the gate must
+    be threaded here too, not inherited for free). ``None`` (the default)
+    fails CLOSED (no ``${env:...}`` expansion), exactly as ``load_skill_body``
+    documents.
     """
     from reyn.builtin.docs import read_builtin_body_bytes
     from reyn.plugins.body_read import read_plugin_body_bytes
@@ -268,14 +285,19 @@ def resolve_skill_body(path: str, *, project_dir: Path) -> str:
             p = project_dir / p
         content = p.read_text(encoding="utf-8")
 
-    # #3196: `load_skill_body` now returns `(body, env_tokens_expanded)` so
-    # `file.handle`'s audit-event can report an expansion count without ever
-    # logging a value. The `:` invoke path's own trust boundary is the
-    # already-registered `entry` this body resolved from (never an arbitrary
-    # path) — its own `skill_invoke_body_loaded` audit-event (session.py) does
-    # not need the count, so it is discarded here.
-    body, _env_tokens_expanded = load_skill_body(
-        content, skill_path=path, project_dir=project_dir, alias_claude=True,
+    # #3196/#3198: `load_skill_body` now returns
+    # `(body, env_names_expanded, env_names_denied)` so `file.handle`'s
+    # audit-event can report names+counts without ever logging a value. The
+    # `:` invoke path's own trust boundary is the already-registered `entry`
+    # this body resolved from (never an arbitrary path) — its own
+    # `skill_invoke_body_loaded` audit-event (session.py) does not need
+    # either list, so both are discarded here.
+    body, _env_names_expanded, _env_names_denied = load_skill_body(
+        content,
+        skill_path=path,
+        project_dir=project_dir,
+        alias_claude=True,
+        permission_decl=permission_decl,
     )
     return body
 

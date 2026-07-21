@@ -6677,10 +6677,23 @@ class Session:
             resolved.append(entry)
 
         project_dir = self._hot_reload_project_root()
+        # #3198: the `:` invoke path's own PermissionDecl for the
+        # ``${env:VAR}`` allowlist gate — built straight from the operator's
+        # raw `config.permissions` dict (self._perm._config, the SAME source
+        # `_get_file_permissions_for_router` reads elsewhere on Session),
+        # NOT the wildcarded router-op-context decl (that decl's
+        # http_get/secret_write wildcards rely on a separate runtime prompt
+        # env_expand does not have — see router_op_context.py's comment).
+        from reyn.security.permissions.permissions import PermissionDecl
+        skill_env_decl = PermissionDecl.from_dict(
+            self._perm._config if self._perm is not None else None,
+        )
         parts: list[str] = []
         for entry in resolved:
             try:
-                body = resolve_skill_body(entry.path, project_dir=project_dir)
+                body = resolve_skill_body(
+                    entry.path, project_dir=project_dir, permission_decl=skill_env_decl,
+                )
             except (OSError, UnicodeDecodeError) as exc:
                 await self._put_outbox(OutboxMessage(
                     kind="error",

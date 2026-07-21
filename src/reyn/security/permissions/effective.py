@@ -58,6 +58,14 @@ class CapabilityAxis(Enum):
     # PYTHON axis removed — require_python had zero production callers; the
     # preprocessor step dispatch never routed through PermissionResolver.
     ENV = "env"
+    # #3198: skill-load ``${env:VAR}`` expansion allowlist — DISTINCT from
+    # ``ENV`` above (that axis gates which env-var NAMES pass THROUGH to a
+    # sandboxed subprocess via ``SandboxPolicy.env_passthrough``; this axis
+    # gates whether a SKILL.md body may read a name FROM os.environ into
+    # the LLM's context at all). Same vocabulary, deliberately different
+    # capability — conflating them would let a subprocess env-passthrough
+    # declaration silently double as a credential-exposure grant.
+    ENV_EXPAND = "env_expand"
     # #1199 S3.1b-2c: the per-actor tool allowlist (decl.tool) — a distinct
     # capability axis (gated by require_tool) not in the original 9; added here
     # for the require_tool cutover.
@@ -162,6 +170,14 @@ class AgentLayer:
         if axis is CapabilityAxis.TOOL:
             # #1199 S3.1b-2c: the per-actor tool allowlist (require_tool).
             return value in d.tool
+        if axis is CapabilityAxis.ENV_EXPAND:
+            # #3198: faithful to secret_write's shape — a specific declared
+            # name OR the "*" wildcard. Deny-by-default: an empty/unset
+            # decl.env_expand denies every name (⊥ for this axis, NOT ⊤ —
+            # this is the one axis where an undeclared decl must NOT fall
+            # through to "unconstrained", since that would restore the
+            # pre-#3198 unconditional os.environ read).
+            return value in d.env_expand or "*" in d.env_expand or self._approved(axis, value)
         # ENV / SUBPROCESS / PYTHON(removed) / SKILL(removed): the decl does not constrain → ⊤.
         # (#1352-L3: the shell-permission SUBPROCESS gate was retired with the
         # shell op; subprocess is now bounded by SandboxLayer.allow_subprocess

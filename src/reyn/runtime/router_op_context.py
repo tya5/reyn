@@ -103,6 +103,21 @@ def build_router_op_context(
     file_write = list(file_write) + [
         {"path": p, "scope": "just_path"} for p in _CANONICAL_WRITE_PATHS
     ]
+    # #3198: unlike http_get/secret_write above (both wildcarded here because
+    # THEIR runtime gate is a separate per-value operator prompt), env_expand
+    # has NO such runtime prompt — the allowlist IS the whole gate, so it must
+    # read the OPERATOR'S actual reyn.yaml declaration, never a wildcard
+    # default. Read straight off `permission_resolver._config` (the raw
+    # `config.permissions` dict), the SAME idiom both hosts already use for
+    # `file.read`/`file.write` (`_get_file_permissions_for_router`) — centralized
+    # here instead of duplicated in Session AND RouterHostAdapter since this is
+    # the one place both already funnel through.
+    _raw_perm_config = getattr(permission_resolver, "_config", None) or {}
+    env_expand = (
+        PermissionDecl._parse_secret_key_list(_raw_perm_config.get("env.expand"))
+        if isinstance(_raw_perm_config, dict)
+        else []
+    )
     decl = PermissionDecl(
         file_read=file_read,
         file_write=file_write,
@@ -116,6 +131,8 @@ def build_router_op_context(
         ],
         # #571 Phase 6: wildcard secret.write (operator per-value prompt is the gate).
         secret_write=["*"],
+        # #3198: deny-by-default — empty unless reyn.yaml declares `permissions.env.expand`.
+        env_expand=env_expand,
     )
     # Session-approve the canonical OS mutation paths so require_file_write passes
     # silently for LLM-emitted ops. Skipped when no resolver (ad-hoc test ctx).
