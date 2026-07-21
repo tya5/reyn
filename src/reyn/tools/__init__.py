@@ -107,7 +107,7 @@ def get_default_registry() -> ToolRegistry:
         RUN_PIPELINE_INLINE,
         RUN_PIPELINE_INLINE_ASYNC,
     )
-    from reyn.tools.plugin_management_verbs import PLUGIN_INSTALL, PLUGIN_UNINSTALL
+    from reyn.tools.plugin_management_verbs import PLUGIN_INSTALL, PLUGIN_LIST, PLUGIN_UNINSTALL
     from reyn.tools.present import PRESENT
     from reyn.tools.presentation_management_verbs import PRESENTATION_INSTALL
     from reyn.tools.rag_discovery import LIST_RAG_SOURCES
@@ -287,6 +287,10 @@ def get_default_registry() -> ToolRegistry:
     # require_http_get (git fetch / dep materialisation)).
     registry.register(PLUGIN_INSTALL)
     registry.register(PLUGIN_UNINSTALL)
+    # #3202 symptom 3: plugin discovery verb -- read-only enumeration of
+    # BUILTIN_PLUGINS x each manifest, reachable from the ordinary tool-call
+    # flow (not an install-error message).
+    registry.register(PLUGIN_LIST)
     # IS-1 (pipeline v0.9 R6): run_pipeline — sync launch of a REGISTERED
     # pipeline. Router+phase allow. IS-5: surfaced to the live LLM catalog
     # via the ``pipeline`` universal-catalog category enumerator (lists

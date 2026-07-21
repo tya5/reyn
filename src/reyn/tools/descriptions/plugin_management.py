@@ -68,9 +68,42 @@ plugin_uninstall = ToolDescription(
     ),
 )
 
+plugin_list = ToolDescription(
+    tool_name="plugin_management__list",
+    surfaced="router + phase (gates.router=allow, gates.phase=allow)",
+    purpose=(
+        "Discover which builtin plugins reyn ships and can install (#3202) "
+        "-- the normal-flow answer to 'what can I install', not something "
+        "you should have to hit an install error to learn."
+    ),
+    text=(
+        "List every builtin plugin reyn ships and can install. Call this "
+        "FIRST whenever the user wants something reyn does not appear to "
+        "support yet -- e.g. searching/retrieving over their own documents "
+        "-- before concluding it isn't possible: a matching builtin plugin "
+        "may exist but simply not be installed yet. Returns each plugin's "
+        "name, description, capabilities (any subset of mcp/pipelines/"
+        "skills), and the exact call to install it: "
+        "plugin_management__install(source={'kind': 'builtin', 'name': "
+        "'<name>'}). For example, if 'rag' is listed, install it with "
+        "plugin_management__install(source={'kind': 'builtin', 'name': "
+        "'rag'})."
+    ),
+    ja=(
+        "reyn が同梱し install 可能な builtin プラグインを一覧する。ユーザ"
+        "が今できなそうなことを望んだら(自分の文書を検索/取得したい等)、"
+        "「できない」と結論する前にまずこれを呼ぶこと -- 対応する builtin "
+        "プラグインが存在するが未 install なだけかもしれない。各プラグイン"
+        "の名前・description・capabilities に加え、install する具体的な"
+        "呼び出し(plugin_management__install(source={'kind':'builtin', "
+        "'name':'<name>'}))を返す。"
+    ),
+)
+
 ALL: dict[str, ToolDescription] = {
     "plugin_management__install": plugin_install,
     "plugin_management__uninstall": plugin_uninstall,
+    "plugin_management__list": plugin_list,
 }
 
 PARAMS: dict[str, dict[str, ParamDescription]] = {

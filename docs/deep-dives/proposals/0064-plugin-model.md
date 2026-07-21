@@ -140,6 +140,47 @@ The typed `kind` discriminator (§3.8) carries across every surface (CLI subcomm
 
 Implementation **mirrors how existing ops (e.g. mcp install / `reyn` CLI subcommands / slash commands) are already exposed across tool·slash·CLI** — grounded against those precedents, not a new surface pattern (grep them at impl time).
 
+### 3.9a Discovery — `plugin_management__list` (#3202 symptom 3)
+
+`plugin_install`'s `source={kind:"builtin", name:"rag"}` shape requires the
+caller to already know the name `"rag"` — but until this addition, nothing
+enumerated which builtin plugin names exist. The only path by which an LLM
+could learn `"rag"` existed was a `rag_ingest`/`rag_query` pipeline call
+failing at run time with an error message naming it — discover-by-failure,
+a chicken-and-egg gap the manifest's own `description` + `capabilities`
+(already complete, ADR §3.1) did nothing to close because nothing read them
+before an install attempt.
+
+The fix layers on top of the existing `.reyn-plugin/plugin.json` manifest
+rather than duplicating it:
+
+- **Registry** (`reyn.builtin.registry.BUILTIN_PLUGINS`, `src/reyn/builtin/registry.py`)
+  — an explicit-dict **allowlist** of which `src/reyn/builtin/plugins/<name>/`
+  directories are advertised (`{"rag": {"enabled": True}}`). No directory
+  auto-scan — mirrors `BUILTIN_SKILLS`/`BUILTIN_PIPELINES`'s discipline and
+  the #3196 rule that a directory appearing on disk must never itself
+  advertise a capability. A CI gate
+  (`tests/test_builtin_plugins_registry_disk_parity.py`) enforces two-way
+  parity between this dict and the real `src/reyn/builtin/plugins/*`
+  directories, so a new builtin plugin shipped without a registry entry
+  fails CI instead of shipping silently undiscoverable.
+- **`reyn.builtin.discovery.list_builtin_plugins()`** — reads the registry
+  (which names to advertise) and DERIVES each one's `description` +
+  `capabilities` live from its own manifest, rather than copying that text
+  into the registry (copying would create the redundant-projection drift
+  class #3164 hit for a different value — the registry answers "which", the
+  manifest answers "what").
+- **`plugin_management__list` LLM tool** (`src/reyn/tools/plugin_management_verbs.py`)
+  — a read-only discovery verb with no Control IR op (mirrors `skill_list`,
+  #2971: a pure enumeration has no side effect to gate). Reachable from the
+  ordinary tool-call flow — an LLM can call it directly to answer "what can
+  I install" without ever hitting an install error first.
+
+`semantic_search`-based capability discovery (finding `"rag"` from a query
+like "I want to search my PDFs" without already knowing its name) is a
+separate, retrieval-lens follow-on — tracked outside this PR's scope; see
+the PR body for the concrete decision.
+
 ### 3.10 Security & permission (the capability surface of install)
 
 Install is the plugin model's one place that touches new capability surfaces — it must pass the Security lens explicitly, not by omission.

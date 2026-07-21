@@ -637,6 +637,10 @@ _ROUTE_CONTRACT_SAMPLES: list[tuple[str, dict[str, Any]]] = [
     ("plugin_management__install",
      {"source": {"kind": "builtin", "name": "rag"}}),
     ("plugin_management__uninstall", {"name": "rag"}),
+    # plugin_management category (#3202 symptom 3) — list takes no args
+    # (mirrors skill_management__list above: the result is the whole
+    # BUILTIN_PLUGINS-advertised set, nothing here for the caller to filter by).
+    ("plugin_management__list", {}),
 ]
 
 

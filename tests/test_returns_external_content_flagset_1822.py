@@ -126,6 +126,13 @@ _NOT_EXTERNAL = {
     # removed / copy_removed) — same "status ACK, not content" rationale as
     # mcp_drop_server.
     "plugin_management__install", "plugin_management__uninstall",
+    # #3202 symptom 3: plugin_management__list ONLY enumerates BUILTIN_PLUGINS
+    # -- reyn's own shipped plugin directories and their own reyn-authored
+    # .reyn-plugin/plugin.json manifests. Unlike skill_list/pipeline_list
+    # (which can surface operator/third-party text registered via a
+    # {kind:"local"/"git"} install), there is no local/git listing here, so
+    # no third-party text ever flows through this handler.
+    "plugin_management__list",
     "cron_register", "cron_unregister", "cron_enable", "cron_disable",
     # #2073 S3: hooks_add writes .reyn/hooks.yaml + schedules a reload — returns a
     # status dict (on / added / reload_scheduled / path), not external content.
