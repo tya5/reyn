@@ -58,11 +58,41 @@ Skill version snapshots written by `skill_improver`. Each `v<N>.md` is a timesta
 
 ### `state/budget_ledger.jsonl`
 
-Durable, append-only budget record log (fsync per append). Holds one record per LLM call (token + USD usage) and one record per run spawn (`kind: "spawn"`). On startup Reyn re-aggregates the daily / monthly totals (auto-reset at midnight / the 1st of the month), the cumulative per-agent token + USD totals, and the per-chain spawn counts — so every budget cap survives a process restart or crash. This is the cap-critical source of truth. Inspect with `/budget` in `reyn chat`. Not affected by `/budget reset` (which only clears in-memory counters).
+Durable, append-only budget record log (fsync per append). Holds one record per LLM call (token + USD usage). Legacy per-chain skill-spawn records (`kind: "spawn"`) may still be present in an old ledger but are no longer written and are skipped on read. On startup Reyn re-aggregates the daily / monthly totals (auto-reset at midnight / the 1st of the month) and the cumulative per-agent token + USD totals — so every budget cap survives a process restart or crash. This is the cap-critical source of truth. Inspect with `/budget` in `reyn chat`. Not affected by `/budget reset` (which only clears in-memory counters).
+
+Because the ledger is never rotated, `hydrate` does not re-parse it in full on
+every startup (#2945) — it reads a compacted per-agent checkpoint (see
+`state/../cache/budget_checkpoint.json` below) and only re-parses the tail
+written since that checkpoint's anchor. If the checkpoint is missing or
+corrupt, `hydrate` falls back to a full re-scan (nothing trustworthy to floor
+with). If the ledger was found truncated below the checkpoint's anchor
+(including deleted entirely) OR *replaced* with different content of the
+same size or larger (content mismatch without shrinking), the checkpoint's
+per-agent totals are merged in as a **floor** on top of the re-scan — never
+silently discarded. Only an explicit operator action (archiving both files —
+see `cache/budget_checkpoint.json` below) may lower a per-agent cap counter;
+every implicit path is non-decreasing. `/budget` surfaces the fact and reason
+whenever a floor fired — it is never silent.
 
 ### `state/budget_state.json`
 
 A throttled, best-effort snapshot of the in-memory budget counters, written on a short interval as a convenience cache on top of the ledger. It can lag the ledger by up to a second, so on recovery the ledger value always wins. Safe to delete; the ledger is the authoritative store.
+
+### `cache/budget_checkpoint.json`
+
+A compacted, point-in-time summary of `budget_ledger.jsonl`'s per-agent
+lifetime totals, anchored to an exact byte position in the ledger (#2945).
+Refreshed automatically alongside `budget_state.json`. A write failure here
+(read-only directory, disk full) is logged and swallowed — it never blocks
+startup, since this file is DERIVED/cache and can always be rebuilt from the
+ledger.
+
+Safe to delete for correctness (`hydrate` reconstructs from the ledger, at
+the cost of a full re-scan) but **not** equivalent to "reset the per-agent
+cap": deleting/archiving *only* the ledger while this checkpoint still
+exists does NOT reset the per-agent totals — they survive as a floor (see
+`state/budget_ledger.jsonl` above). To actually reset per-agent spend,
+archive both files together while the process is stopped.
 
 ### `memory/`
 

@@ -20,6 +20,7 @@ are not tied to any specific domain.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import time
@@ -253,6 +254,61 @@ class BudgetLedger:
                     continue
                 yield entry
 
+    def iter_records_from(self, byte_offset: int):
+        """Yield parsed record dicts starting at *byte_offset* (the tail since
+        the last checkpoint anchor). Same broken-line tolerance as
+        ``iter_records``. Used by ``BudgetTracker.hydrate`` to bound the
+        re-parse cost to activity since the last checkpoint instead of the
+        whole (lifetime, monotonically-growing) ledger — see #2945."""
+        if not self._path.is_file():
+            return
+        with self._path.open("rb") as f:
+            f.seek(byte_offset)
+            for raw_line in f:
+                line = raw_line.decode("utf-8", errors="replace").strip()
+                if not line:
+                    continue
+                try:
+                    entry = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if not isinstance(entry, dict):
+                    continue
+                yield entry
+
+    def tail_boundary(self, chunk_size: int = 8192) -> tuple[int, bytes] | None:
+        """Return ``(file_size, last_line_bytes)`` for the ledger's current end,
+        or ``None`` if the ledger is empty/missing.
+
+        ``last_line_bytes`` is the raw bytes of the final record line
+        (including its trailing newline) ending exactly at ``file_size``. Used
+        as the checkpoint anchor's content pin (#2945 P1) — cheap (bounded by
+        line length, not ledger size) since every append is fsync'd with a
+        trailing newline, so the file reliably ends on a line boundary.
+        """
+        if not self._path.is_file():
+            return None
+        size = self._path.stat().st_size
+        if size == 0:
+            return None
+        read_size = min(chunk_size, size)
+        with self._path.open("rb") as f:
+            f.seek(size - read_size)
+            buf = f.read(read_size)
+        # The buffer should end with the append's trailing "\n". Find the
+        # newline immediately before it to isolate the last complete line.
+        search_end = len(buf) - 1 if buf.endswith(b"\n") else len(buf)
+        idx = buf.rfind(b"\n", 0, search_end)
+        if idx == -1:
+            if read_size < size:
+                # Pathological: a single line longer than chunk_size. Grow the
+                # window rather than mis-frame the anchor.
+                return self.tail_boundary(chunk_size=chunk_size * 4)
+            line_bytes = buf
+        else:
+            line_bytes = buf[idx + 1:]
+        return (size, line_bytes)
+
 
 # ── ISO-8601 timestamp parser ───────────────────────────────────────────────
 
@@ -295,6 +351,308 @@ def _parse_iso_ts(ts_str: str) -> float:
     tz = timezone(offset)
     dt = dt_naive.replace(tzinfo=tz)
     return dt.timestamp()
+
+
+# ── compacted checkpoint (#2945) ─────────────────────────────────────────────
+#
+# ``hydrate`` re-parsing the whole (monotonically-growing, never-rotated)
+# ledger on every startup is a blocking-startup-path bug, not a "make it
+# faster" optimization: the per-agent lifetime aggregate is the only
+# unbounded dimension (daily/monthly self-heal at their period boundary), so
+# ``BudgetCheckpoint`` compacts *only* per-agent totals + the current
+# daily/monthly-so-far totals into a small file, anchored to an exact ledger
+# byte position. ``hydrate`` then only re-parses the ledger TAIL after that
+# anchor.
+#
+# Core invariant (do not weaken): the checkpoint must always be safe to
+# delete. It carries no fact the ledger does not already durably hold — it is
+# a *rebuildable* cache of a prefix-sum over the ledger, never the sole
+# holder of truth.
+#
+# P3 (ambiguity -> over-count-safe, never under-count) resolves differently
+# depending on WHY the checkpoint is untrustworthy — see ``hydrate``'s
+# docstring for the full 3-way breakdown (missing/corrupt checkpoint vs.
+# ledger "truncated" vs. ledger "invalid"/replaced). The one that matters
+# most: a checkpoint that is itself still internally consistent
+# (``content_sha256`` verifies) but whose ledger has been TRUNCATED below its
+# anchor (or deleted outright) is NOT discarded — its per-agent totals are
+# merged in as a floor. Silently falling back to "just re-scan whatever
+# ledger remains" for that case would re-introduce the exact staleness this
+# whole mechanism exists to prevent: a lost/truncated ledger would silently
+# reset a cap-critical per-agent counter. A ledger that is instead REPLACED
+# (same size or larger, content mismatch) is the one case that gets NO
+# floor — see ``verify_anchor``.
+
+
+@dataclass
+class BudgetCheckpoint:
+    """A compacted, point-in-time summary of ``budget_ledger.jsonl``.
+
+    Lives at ``.reyn/cache/budget_checkpoint.json`` (DERIVED/cache — see
+    ``docs/reference/runtime/reyn-dir-layout.md``): fully reconstructable from
+    the ledger, so it is not write-gated recovery-core and may be deleted at
+    any time with no data loss (the next ``hydrate`` falls back to a full
+    ledger scan and rewrites it).
+    """
+
+    agent_tokens: dict[str, int]
+    agent_cost_usd: dict[str, float]
+    day_key: str | None
+    daily_tokens: int
+    daily_cost_usd: float
+    month_key: str | None
+    monthly_tokens: int
+    monthly_cost_usd: float
+    anchor_byte_offset: int
+    anchor_line_len: int
+    anchor_line_sha256: str
+    # #2945 follow-up (co-vet finding): whether THIS checkpoint's totals were
+    # produced by floor-merging a previous checkpoint into a re-scan (i.e.
+    # the ledger was found truncated/missing/replaced when this checkpoint
+    # was written) — and why. Surfaced to the operator via `/budget` (never
+    # silent — "bound fired but nobody can tell" is the failure mode this
+    # closes). ``floor_reason`` is one of "truncated" / "missing" /
+    # "replaced", or ``None`` when no floor was applied.
+    floor_applied: bool = False
+    floor_reason: str | None = None
+
+    def _content_payload(self) -> dict:
+        """The counted-values subset covered by ``content_sha256`` — everything
+        EXCEPT the anchor (which pins the checkpoint to the ledger, not to
+        itself) and the hash field itself. Sorted keys for a stable digest.
+
+        ``floor_applied``/``floor_reason`` are included here (not just
+        stored alongside) so tampering with them — e.g. hiding that a floor
+        was applied — is caught by the same ``content_sha256`` check as
+        tampering with the counted totals themselves.
+        """
+        return {
+            "agent_tokens": dict(sorted(self.agent_tokens.items())),
+            "agent_cost_usd": dict(sorted(self.agent_cost_usd.items())),
+            "day_key": self.day_key,
+            "daily_tokens": self.daily_tokens,
+            "daily_cost_usd": self.daily_cost_usd,
+            "month_key": self.month_key,
+            "monthly_tokens": self.monthly_tokens,
+            "monthly_cost_usd": self.monthly_cost_usd,
+            "floor_applied": self.floor_applied,
+            "floor_reason": self.floor_reason,
+        }
+
+    def content_sha256(self) -> str:
+        canonical = json.dumps(self._content_payload(), sort_keys=True, ensure_ascii=False)
+        return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+    def to_dict(self) -> dict:
+        payload = self._content_payload()
+        payload["version"] = 1
+        # #2945 P3 hardening: the ledger-side anchor only proves the
+        # checkpoint is pinned to an unmodified/untruncated ledger position —
+        # it says nothing about whether the checkpoint's OWN counted values
+        # were hand-edited/corrupted afterward. content_sha256 covers that
+        # independently (a direct edit to agent_tokens etc. changes the
+        # digest without touching the ledger at all).
+        payload["content_sha256"] = self.content_sha256()
+        payload["anchor"] = {
+            "byte_offset": self.anchor_byte_offset,
+            "line_len": self.anchor_line_len,
+            "line_sha256": self.anchor_line_sha256,
+        }
+        return payload
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "BudgetCheckpoint | None":
+        """Parse *data*; return ``None`` on ANY shape mismatch OR a
+        ``content_sha256`` mismatch (P3: ambiguous/tampered checkpoint content
+        must fall back to a full ledger re-scan, never guess)."""
+        try:
+            if not isinstance(data, dict) or data.get("version") != 1:
+                return None
+            anchor = data["anchor"]
+            agent_tokens = {str(k): int(v) for k, v in dict(data["agent_tokens"]).items()}
+            agent_cost_usd = {
+                str(k): float(v) for k, v in dict(data["agent_cost_usd"]).items()
+            }
+            expected_content_hash = str(data["content_sha256"])
+            checkpoint = cls(
+                agent_tokens=agent_tokens,
+                agent_cost_usd=agent_cost_usd,
+                day_key=data.get("day_key"),
+                daily_tokens=int(data["daily_tokens"]),
+                daily_cost_usd=float(data["daily_cost_usd"]),
+                month_key=data.get("month_key"),
+                monthly_tokens=int(data["monthly_tokens"]),
+                monthly_cost_usd=float(data["monthly_cost_usd"]),
+                anchor_byte_offset=int(anchor["byte_offset"]),
+                anchor_line_len=int(anchor["line_len"]),
+                anchor_line_sha256=str(anchor["line_sha256"]),
+                floor_applied=bool(data.get("floor_applied", False)),
+                floor_reason=(
+                    str(data["floor_reason"]) if data.get("floor_reason") is not None else None
+                ),
+            )
+        except (KeyError, TypeError, ValueError):
+            return None
+        if checkpoint.content_sha256() != expected_content_hash:
+            return None
+        return checkpoint
+
+
+def _default_checkpoint_path(ledger_path: Path) -> Path:
+    """``.reyn/state/budget_ledger.jsonl`` → ``.reyn/cache/budget_checkpoint.json``.
+
+    Derived rather than threaded through every caller: the checkpoint is an
+    implementation detail of ``hydrate``'s bounded re-scan, always a fixed
+    sibling of the ledger under the project's ``.reyn/`` tree (see
+    ``docs/reference/runtime/reyn-dir-layout.md``).
+    """
+    reyn_dir = ledger_path.parent.parent
+    return reyn_dir / "cache" / "budget_checkpoint.json"
+
+
+def load_checkpoint_or_none(checkpoint_path: Path) -> BudgetCheckpoint | None:
+    """Read + parse the checkpoint; ``None`` on any missing/corrupt/partial
+    shape (P3: caller must fall back to a full ledger re-scan)."""
+    if not checkpoint_path.is_file():
+        return None
+    try:
+        raw = checkpoint_path.read_text(encoding="utf-8")
+    except OSError:
+        return None
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError:
+        return None
+    return BudgetCheckpoint.from_dict(data)
+
+
+def verify_anchor(checkpoint: BudgetCheckpoint, ledger_path: Path) -> tuple[str, int]:
+    """Verify the checkpoint's anchor against the CURRENT ledger file.
+
+    Returns ``(status, current_size)`` where ``status`` is one of:
+
+    - ``"valid"`` — the ledger still contains, byte-for-byte, the line the
+      checkpoint was anchored to. Fast tail-only path.
+    - ``"truncated"`` — the CURRENT ledger is shorter than the anchor's byte
+      offset (including "ledger file missing entirely", size 0).
+    - ``"invalid"`` — the ledger is the SAME SIZE OR LARGER but its content at
+      the anchor position no longer matches (or the anchor itself is
+      malformed). Ledger is append-only, so byte-identical growth can never
+      produce this — it means the file was replaced/rewritten (rotation,
+      tamper), not merely truncated.
+
+    #2945 follow-up (co-vet firm): BOTH non-``"valid"`` statuses get the
+    checkpoint's totals merged in as a per-agent FLOOR by the caller — never
+    just discarded. The governing question is not "over-count vs
+    under-count" (an earlier version of this design floored "truncated" but
+    not "invalid", reasoning from that framing) but **"which operation is
+    allowed to LOWER a cap counter"**: only an explicit operator action
+    (archiving/deleting BOTH the ledger and the checkpoint together — see
+    ``docs/reference/config/budget.md``) may lower it. Every IMPLICIT path —
+    truncation, deletion, or replacement of the ledger alone — must be
+    non-decreasing, because:
+      - over-count is observable (the operator can see and act on it) and
+        has an explicit remedy (delete both files).
+      - under-count is silent — the cap simply stops enforcing and nobody
+        notices until spend has already run away.
+    The asymmetry, not "which is more surprising," is why both statuses
+    floor. (A ``"replaced"`` ledger CAN still leak a stale total from an
+    unrelated history this way — accepted as a known limitation; a stronger
+    fix would identify the ledger by more than size/position, e.g. an
+    embedded ledger-identity token, which is tracked as separate follow-up
+    work, not in scope here.)
+    """
+    if not ledger_path.is_file():
+        return ("truncated", 0)
+    size = ledger_path.stat().st_size
+    offset = checkpoint.anchor_byte_offset
+    line_len = checkpoint.anchor_line_len
+    if line_len <= 0 or offset < line_len:
+        return ("invalid", size)  # malformed anchor — not a truncation signal
+    if size < offset:
+        return ("truncated", size)
+    try:
+        with ledger_path.open("rb") as f:
+            f.seek(offset - line_len)
+            buf = f.read(line_len)
+    except OSError:
+        return ("invalid", size)
+    if len(buf) != line_len:
+        return ("invalid", size)
+    if hashlib.sha256(buf).hexdigest() != checkpoint.anchor_line_sha256:
+        return ("invalid", size)
+    return ("valid", size)
+
+
+def write_checkpoint(
+    checkpoint_path: Path,
+    ledger_path: Path,
+    *,
+    agent_tokens: dict[str, int],
+    agent_cost_usd: dict[str, float],
+    day_key: tuple[str, str] | None,
+    daily_tokens: int,
+    daily_cost_usd: float,
+    month_key: tuple[str, str] | None,
+    monthly_tokens: int,
+    monthly_cost_usd: float,
+    floor_applied: bool = False,
+    floor_reason: str | None = None,
+) -> None:
+    """Write a fresh checkpoint anchored to the ledger's CURRENT end.
+
+    No-op if the ledger is empty/missing (nothing to anchor to yet).
+
+    ``floor_applied``/``floor_reason`` record whether THIS write followed a
+    floor-merge (the ledger was found truncated/missing/replaced during the
+    hydrate that produced these totals) — surfaced to the operator via
+    ``BudgetTracker.snapshot()`` / `/budget` so a floor is never silent.
+
+    P2 write order (durability): the ledger itself is already fsync'd per
+    append by ``BudgetLedger._write_record`` — by construction this always
+    runs *after* that, never before — then: write a temp file → fsync temp →
+    atomic rename → fsync the containing directory (so the rename survives a
+    crash immediately after).
+    """
+    ledger = BudgetLedger(ledger_path)
+    boundary = ledger.tail_boundary()
+    if boundary is None:
+        return
+    size, line_bytes = boundary
+    checkpoint = BudgetCheckpoint(
+        agent_tokens=dict(agent_tokens),
+        agent_cost_usd=dict(agent_cost_usd),
+        day_key=day_key[1] if day_key else None,
+        daily_tokens=daily_tokens,
+        daily_cost_usd=daily_cost_usd,
+        month_key=month_key[1] if month_key else None,
+        monthly_tokens=monthly_tokens,
+        monthly_cost_usd=monthly_cost_usd,
+        anchor_byte_offset=size,
+        anchor_line_len=len(line_bytes),
+        anchor_line_sha256=hashlib.sha256(line_bytes).hexdigest(),
+        floor_applied=floor_applied,
+        floor_reason=floor_reason,
+    )
+    checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = checkpoint_path.with_suffix(checkpoint_path.suffix + ".tmp")
+    payload = json.dumps(checkpoint.to_dict(), ensure_ascii=False, indent=2)
+    with tmp.open("w", encoding="utf-8") as f:
+        f.write(payload)
+        f.flush()
+        os.fsync(f.fileno())
+    tmp.replace(checkpoint_path)
+    try:
+        dir_fd = os.open(str(checkpoint_path.parent), os.O_RDONLY)
+        try:
+            os.fsync(dir_fd)
+        finally:
+            os.close(dir_fd)
+    except OSError:
+        # Directory fsync is a best-effort durability step for the rename's
+        # metadata; the atomic rename above already leaves either the old or
+        # new file intact on a crash, so a failure here is not data loss.
+        pass
 
 
 # ── tracker ─────────────────────────────────────────────────────────────────
@@ -350,6 +708,15 @@ class BudgetTracker:
         self._day_key: tuple[str, str] | None = None    # ("day", "2026-05-02")
         self._month_key: tuple[str, str] | None = None  # ("month", "2026-05")
         self._ledger: BudgetLedger | None = None
+        # #2945: compacted checkpoint path, derived in hydrate() from the
+        # ledger path. None until hydrate() runs (mirrors self._ledger).
+        self._checkpoint_path: Path | None = None
+        # #2945 (co-vet firm): whether the MOST RECENT hydrate() had to
+        # floor-merge a checkpoint (ledger found truncated/missing/replaced)
+        # + why — surfaced via snapshot() -> `/budget` so a floor is never
+        # silent. False/None until hydrate() runs.
+        self._floor_applied: bool = False
+        self._floor_reason: str | None = None
         # R-D8: auto-save state path + throttle. None path = no auto-save.
         self._state_path: Path | None = None
         self._save_throttle_secs: float = 1.0
@@ -365,7 +732,7 @@ class BudgetTracker:
 
     # ── PR25: persistent ledger hydration ───────────────────────────────
 
-    def hydrate(self, ledger_path: Path) -> None:
+    def hydrate(self, ledger_path: Path, *, checkpoint_path: Path | None = None) -> None:
         """Reconstruct durable counters from the persistent ledger.
 
         Call once at startup after constructing the tracker. No-op if the
@@ -383,20 +750,94 @@ class BudgetTracker:
         Because every counted increment is fsync'd to the ledger *before* the
         throttled save runs, the ledger is always at least as complete — so
         ledger hydration is the authoritative restore for cap enforcement.
+
+        #2945: re-parsing the WHOLE (monotonically-growing, never-rotated)
+        ledger on every startup is a blocking-startup-path bug. A compacted
+        ``BudgetCheckpoint`` (see module docstring section above) carries the
+        per-agent totals as of an exact ledger byte position (the anchor); if
+        that anchor still verifies against the current ledger (``verify_anchor``
+        returns ``"valid"``), only the TAIL after it is re-parsed here —
+        bounding the cost to activity since the last checkpoint refresh
+        instead of the ledger's lifetime.
+
+        Two fallback classes, both resolved by the SAME rule (co-vet firm):
+        ``per_agent_tokens``/``per_agent_cost_usd`` may only be LOWERED by an
+        explicit operator action (archiving/deleting both the ledger and the
+        checkpoint together); every implicit path (truncation, deletion, or
+        replacement of the ledger alone) is non-decreasing.
+          - missing/corrupt/tampered checkpoint (parse failure, or its own
+            ``content_sha256`` no longer matches) -> full re-scan of the
+            ledger, no floor (nothing trustworthy survives to floor with —
+            there is no explicit-operator-action signal here either way, so
+            this is simply "no checkpoint exists").
+          - ``"truncated"`` (current ledger shorter than the anchor, INCLUDING
+            deleted entirely) or ``"invalid"`` (ledger same size or larger but
+            its content no longer matches — replaced/rewritten, since a
+            genuine truncation can never produce this on an append-only
+            ledger) -> full re-scan of the current ledger, then the
+            checkpoint's per-agent totals are merged in as a per-agent FLOOR
+            (``max()``, never lower). NOTE: this means archiving/deleting
+            ONLY the ledger file no longer resets per-agent totals while a
+            checkpoint still exists (see ``docs/reference/config/budget.md``)
+            — deliberate: the reset UX is "archive BOTH files together".
+
+        Whenever a floor was applied, the fact and the reason
+        (``"truncated"``/``"missing"``/``"replaced"``) are recorded on
+        ``self`` (surfaced via ``snapshot()`` -> `/budget`) AND written into
+        the fresh checkpoint below — a floor firing must never be silent.
+
+        A fresh checkpoint is written at the end of every hydrate call
+        regardless of which path was taken, so the checkpoint self-heals and
+        the *next* hydrate is bounded even after a fallback. That write is
+        best-effort: the checkpoint is DERIVED/cache
+        (``docs/reference/runtime/reyn-dir-layout.md``), so a write failure
+        (read-only cache dir, disk full) is logged and swallowed rather than
+        propagated — it must never block startup.
         """
         self._ledger = BudgetLedger(ledger_path)
+        self._checkpoint_path = checkpoint_path or _default_checkpoint_path(ledger_path)
         now = time.time()
         day_key = _period_key(now, "day")
         month_key = _period_key(now, "month")
 
+        checkpoint = load_checkpoint_or_none(self._checkpoint_path)
+        status: str | None = None
+        agent_tokens: dict[str, int] = defaultdict(int)
+        agent_cost: dict[str, float] = defaultdict(float)
         daily_tokens = 0
         daily_cost = 0.0
         monthly_tokens = 0
         monthly_cost = 0.0
-        agent_tokens: dict[str, int] = defaultdict(int)
-        agent_cost: dict[str, float] = defaultdict(float)
 
-        for record in self._ledger.iter_records():
+        if checkpoint is not None:
+            status, _ = verify_anchor(checkpoint, ledger_path)
+
+        if checkpoint is not None and status == "valid":
+            # Fast path: seed from the verified checkpoint, only re-parse the
+            # tail written since its anchor.
+            for agent, tok in checkpoint.agent_tokens.items():
+                agent_tokens[agent] += tok
+            for agent, cost in checkpoint.agent_cost_usd.items():
+                agent_cost[agent] += cost
+            # Period baselines only carry over if still the SAME period —
+            # otherwise the checkpoint's stale period total must not leak
+            # into the new period (self-healing at the boundary, same
+            # semantics _roll_period_if_needed already relies on elsewhere).
+            if checkpoint.day_key == day_key[1]:
+                daily_tokens = checkpoint.daily_tokens
+                daily_cost = checkpoint.daily_cost_usd
+            if checkpoint.month_key == month_key[1]:
+                monthly_tokens = checkpoint.monthly_tokens
+                monthly_cost = checkpoint.monthly_cost_usd
+            records = self._ledger.iter_records_from(checkpoint.anchor_byte_offset)
+        else:
+            # No verifiable fast path — full re-scan of the CURRENT ledger.
+            # If status is "truncated" or "invalid", the checkpoint's own
+            # totals are merged in as a floor AFTER this scan (below) — see
+            # ``verify_anchor``'s docstring for why both statuses floor.
+            records = self._ledger.iter_records()
+
+        for record in records:
             ts_str = record.get("ts")
             if not isinstance(ts_str, str):
                 continue
@@ -430,6 +871,30 @@ class BudgetTracker:
                 monthly_tokens += tokens
                 monthly_cost += cost
 
+        # #2945 (co-vet firm): only an EXPLICIT operator action may lower a
+        # cap-critical per-agent counter — every implicit path (truncation,
+        # deletion, or replacement of the ledger alone) is non-decreasing.
+        # Merge the checkpoint's totals in as a per-agent FLOOR (max, never
+        # overwrite-down) on top of whatever the re-scan of the current
+        # ledger found, for BOTH "truncated" and "invalid" — see
+        # ``verify_anchor``'s docstring for the reasoning.
+        self._floor_applied = False
+        self._floor_reason = None
+        if checkpoint is not None and status in ("truncated", "invalid"):
+            for agent, tok in checkpoint.agent_tokens.items():
+                if tok > agent_tokens.get(agent, 0):
+                    agent_tokens[agent] = tok
+            for agent, cost in checkpoint.agent_cost_usd.items():
+                if cost > agent_cost.get(agent, 0.0):
+                    agent_cost[agent] = cost
+            self._floor_applied = True
+            if status == "invalid":
+                self._floor_reason = "replaced"
+            elif not ledger_path.is_file():
+                self._floor_reason = "missing"
+            else:
+                self._floor_reason = "truncated"
+
         self._daily_tokens = daily_tokens
         self._daily_cost_usd = daily_cost
         self._monthly_tokens = monthly_tokens
@@ -440,6 +905,41 @@ class BudgetTracker:
         # keeps its increment semantics.
         self._agent_tokens = agent_tokens
         self._agent_cost_usd = agent_cost
+
+        # #2945: refresh the checkpoint to the ledger's current end so the
+        # NEXT hydrate (even with zero interim record_llm calls) is bounded
+        # too — the checkpoint is always safe to (re)write from confirmed
+        # in-memory totals, and safe to lose (next hydrate falls back).
+        #
+        # The checkpoint is DERIVED/cache (docs/reference/runtime/
+        # reyn-dir-layout.md): a write failure here (read-only cache dir,
+        # disk full, permissions) must never block startup — swallow and
+        # log, same posture as ``_maybe_auto_save``'s save_state failure
+        # handling below. The in-memory counters (already correct from the
+        # scan above) are unaffected; only the NEXT hydrate loses the fast
+        # path and falls back to a full re-scan again.
+        try:
+            write_checkpoint(
+                self._checkpoint_path,
+                ledger_path,
+                agent_tokens=dict(self._agent_tokens),
+                agent_cost_usd=dict(self._agent_cost_usd),
+                day_key=self._day_key,
+                daily_tokens=self._daily_tokens,
+                daily_cost_usd=self._daily_cost_usd,
+                month_key=self._month_key,
+                monthly_tokens=self._monthly_tokens,
+                monthly_cost_usd=self._monthly_cost_usd,
+                floor_applied=self._floor_applied,
+                floor_reason=self._floor_reason,
+            )
+        except OSError as e:
+            import logging
+            logging.getLogger(__name__).warning(
+                "BudgetTracker.hydrate: failed to write checkpoint to %s: %s "
+                "(startup continues; next hydrate falls back to a full re-scan)",
+                self._checkpoint_path, e,
+            )
 
     # ── pre-call checks ─────────────────────────────────────────────────
 
@@ -655,6 +1155,25 @@ class BudgetTracker:
             return
         try:
             self.save_state(self._state_path)
+            # #2945: refresh the compacted checkpoint on the same throttle
+            # cadence so a long-running session's next restart still only
+            # re-parses a small tail, not everything since the last full
+            # hydrate. Best-effort — a checkpoint miss here just means the
+            # next hydrate falls back to a full re-scan (P3), never
+            # under-counts.
+            if self._ledger is not None and self._checkpoint_path is not None:
+                write_checkpoint(
+                    self._checkpoint_path,
+                    self._ledger.path,
+                    agent_tokens=dict(self._agent_tokens),
+                    agent_cost_usd=dict(self._agent_cost_usd),
+                    day_key=self._day_key,
+                    daily_tokens=self._daily_tokens,
+                    daily_cost_usd=self._daily_cost_usd,
+                    month_key=self._month_key,
+                    monthly_tokens=self._monthly_tokens,
+                    monthly_cost_usd=self._monthly_cost_usd,
+                )
             self._last_save_monotonic = now
         except Exception as e:  # noqa: BLE001 — never fail record on save failure
             import logging
@@ -773,6 +1292,13 @@ class BudgetTracker:
             "monthly_cost_usd": round(self._monthly_cost_usd, 6),
             "day_key": self._day_key[1] if self._day_key else None,
             "month_key": self._month_key[1] if self._month_key else None,
+            # #2945 (co-vet firm): whether the most recent hydrate() had to
+            # floor-merge a checkpoint into a re-scan (ledger found
+            # truncated/missing/replaced) + why. Never silent — `/budget`
+            # renders this so an operator can tell a high per-agent total is
+            # a deliberately-preserved floor, not a mystery.
+            "budget_floor_applied": self._floor_applied,
+            "budget_floor_reason": self._floor_reason,
         }
 
     # ── internals ───────────────────────────────────────────────────────
@@ -1107,10 +1633,38 @@ def format_cost_line(snapshot: dict, agent: str) -> str:
     return f"{agent}: {tokens:,} tokens, ${cost:.4f}  (this session)"
 
 
+_FLOOR_REASON_LABEL = {
+    "truncated": "the budget ledger was found shorter than expected (truncated)",
+    "missing": "the budget ledger was missing at startup",
+    "replaced": "the budget ledger's content no longer matched what was recorded (replaced)",
+}
+
+
 def format_budget_full(snapshot: dict, attached: str | None) -> str:
     """`/budget` full breakdown across all dimensions."""
     cfg: CostConfig = snapshot["config"]
     lines: list[str] = ["Usage (process invocation):", ""]
+
+    # #2945 (co-vet firm): a floor-merge must never be silent. If the most
+    # recent startup had to preserve per-agent totals from a checkpoint
+    # because the ledger was found truncated/missing/replaced, say so up
+    # front — an operator staring at a higher-than-expected per-agent total
+    # must be able to answer "was this intended?" from this output, not a
+    # doc sentence.
+    if snapshot.get("budget_floor_applied"):
+        reason = snapshot.get("budget_floor_reason")
+        detail = _FLOOR_REASON_LABEL.get(reason, reason or "unknown reason")
+        lines.append(
+            f"  ⚠ per-agent totals below were preserved from a checkpoint at "
+            f"startup: {detail}."
+        )
+        lines.append(
+            "    This is intentional (a cap-critical counter never silently "
+            "under-counts). To reset per-agent spend, archive BOTH "
+            "`.reyn/state/budget_ledger.jsonl` AND "
+            "`.reyn/cache/budget_checkpoint.json` while stopped."
+        )
+        lines.append("")
 
     # PR25: Today / Month sections (shown first if any persistent data)
     day_label = snapshot.get("day_key")

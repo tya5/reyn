@@ -70,6 +70,8 @@ def build_budget_tracker(
     ``hydrate=True`` (``reyn chat``'s existing behavior, byte-identical) reads
     the ledger/state files under ``<project_root>/.reyn/state/`` so cap
     enforcement survives a crash + restart across a *multi-turn* session.
+    ``BudgetTracker.hydrate`` (#2945) bounds this to a compacted checkpoint +
+    ledger tail rather than a full lifetime re-parse — see its docstring.
     ``hydrate=False`` skips that (a one-shot, single-invocation caller like
     ``reyn pipe run`` has no persistent multi-turn budget to resume — each
     invocation starts a fresh, unlimited-unless-configured tracker)."""
