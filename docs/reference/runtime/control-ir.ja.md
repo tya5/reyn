@@ -167,7 +167,7 @@ bindings_dropped:
 - `network`（省略可、デフォルト `false`）— アウトバウンドネットワークを許可。
 - `read_paths`（省略可）— プロセスが読み取り可能なファイルシステムパス（glob パターン可）。
 - `write_paths`（省略可）— プロセスが書き込み可能なファイルシステムパス。
-- `allow_subprocess`（省略可、デフォルト `false`）— 子プロセス生成の許可。
+- `allow_subprocess`（省略可、デフォルト `true`）— 子プロセス生成の許可。
 - `env_passthrough`（省略可）— 引き渡す環境変数名（それ以外は除去）。
 - `timeout_seconds`（省略可、デフォルト `60`）— ウォールクロック上限。
 

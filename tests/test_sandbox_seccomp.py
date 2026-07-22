@@ -167,6 +167,42 @@ def test_syscall_allowlist_no_process_creation_when_explicitly_disabled() -> Non
         )
 
 
+def test_syscall_allowlist_includes_dup2_dup3_when_subprocess_allowed() -> None:
+    """Tier 2: dup2/dup3 present alongside fork/clone when allow_subprocess=True
+    (#3207 co-vet). fork/vfork/clone/clone3 alone only let a sandboxed process
+    spawn a bare grandchild; the realistic subprocess+pipe-capture shape
+    (`subprocess.run([...], capture_output=True)` run FROM INSIDE an
+    already-sandboxed process — the filter is irrevocable and survives
+    fork+exec, so the grandchild inherits it too) additionally needs dup2/dup3
+    to redirect the grandchild's stdout/stderr onto the parent's pipe fds.
+    Without them a real fork+pipe subprocess dies with "cannot duplicate fd —
+    Operation not permitted" — fork succeeds, capture does not: a half-granted
+    capability, not a fully-denied or fully-granted one."""
+    from reyn.security.sandbox.backends.seccomp import _build_syscall_allowlist
+
+    result = _build_syscall_allowlist(SandboxPolicy(allow_subprocess=True))
+    for name in ("dup2", "dup3"):
+        assert name in result, (
+            f"{name!r} must be present when allow_subprocess=True — without it "
+            "subprocess+pipe output capture dies with EPERM even though fork "
+            "itself succeeds (#3207)"
+        )
+
+
+def test_syscall_allowlist_excludes_dup2_dup3_when_subprocess_disabled() -> None:
+    """Tier 2: the opt-out leg for dup2/dup3 — absent when allow_subprocess=False,
+    same as fork/vfork/clone/clone3 (#3207 co-vet, mirrors
+    test_syscall_allowlist_no_process_creation_when_explicitly_disabled)."""
+    from reyn.security.sandbox.backends.seccomp import _build_syscall_allowlist
+
+    result = _build_syscall_allowlist(SandboxPolicy(allow_subprocess=False))
+    for name in ("dup2", "dup3"):
+        assert name not in result, (
+            f"{name!r} must be denied when allow_subprocess is explicitly set "
+            "to False — it is part of the subprocess capability, not baseline"
+        )
+
+
 def test_syscall_allowlist_always_permits_exec_of_the_sandboxed_target() -> None:
     """Tier 2: execve/execveat are allowed even when allow_subprocess is False.
 

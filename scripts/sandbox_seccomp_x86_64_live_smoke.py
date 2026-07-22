@@ -128,7 +128,12 @@ def _run_child_preexec_probe(workdir: str, ruleset: object | None) -> None:
     from reyn.security.sandbox.backends.landlock import _child_preexec
     from reyn.security.sandbox.policy import SandboxPolicy
 
-    policy = SandboxPolicy(write_paths=[workdir])
+    # allow_subprocess=False explicitly (#3202: the dataclass default flipped to
+    # True — a UX-blocking axis is opt-in-restricted, not deny-by-default). This
+    # probe's own "defend (must be refused): subprocess spawn / os.fork" arms
+    # below are specifically about the OPT-OUT leg, so they must not silently
+    # start passing-by-accident once the default itself grants subprocess.
+    policy = SandboxPolicy(write_paths=[workdir], allow_subprocess=False)
 
     def _popen(argv: list[str], **kw: object) -> subprocess.CompletedProcess:
         return subprocess.run(
@@ -230,6 +235,46 @@ print("workload-ok")
         )
     except Exception as exc:  # noqa: BLE001
         _record("callsite1 survive: python file workload", False, f"raised {exc!r}")
+
+    # Nested subprocess+pipe capture under allow_subprocess=True (#3207 co-vet).
+    # fork/vfork/clone/clone3 alone only let a SANDBOXED process spawn a bare
+    # grandchild — the realistic shape (an MCP server itself running
+    # `subprocess.run([...], capture_output=True)`, i.e. `ls | wc`-style output
+    # capture) additionally needs dup2/dup3 to redirect the grandchild's
+    # stdout/stderr onto the parent's pipe fds, which CPython issues AFTER the
+    # inner fork and BEFORE the inner execve — i.e. under the already-loaded
+    # filter, since it is irrevocable and survives fork+exec. A separate policy
+    # (allow_subprocess=True) drives this probe: the `policy` object above is
+    # deliberately allow_subprocess=False for the deny arms further down.
+    subprocess_pipe_policy = SandboxPolicy(write_paths=[workdir], allow_subprocess=True)
+
+    def _popen_subprocess_allowed(argv: list[str]) -> subprocess.CompletedProcess:
+        return subprocess.run(
+            argv,
+            preexec_fn=lambda: _child_preexec(ruleset, subprocess_pipe_policy),  # noqa: PLC0415
+            capture_output=True,
+            timeout=10,
+        )
+
+    nested_pipe_code = (
+        "import subprocess\n"
+        "r = subprocess.run(['sh', '-c', 'ls / | wc -l'], capture_output=True, timeout=10)\n"
+        "assert r.returncode == 0, (r.returncode, r.stdout, r.stderr)\n"
+        "assert int(r.stdout.strip()) > 0, r.stdout\n"
+        "print('nested-pipe-ok')\n"
+    )
+    try:
+        proc = _popen_subprocess_allowed([sys.executable, "-c", nested_pipe_code])
+        _record(
+            "callsite1 survive: nested subprocess+pipe capture under "
+            "allow_subprocess=True (dup2/dup3, #3207)",
+            proc.returncode == 0 and b"nested-pipe-ok" in proc.stdout,
+            f"rc={proc.returncode} stdout={proc.stdout!r} stderr={proc.stderr[:300]!r}",
+        )
+    except Exception as exc:  # noqa: BLE001
+        _record(
+            "callsite1 survive: nested subprocess+pipe capture", False, f"raised {exc!r}"
+        )
 
     # chmod / truncate — must be refused (EPERM), matching #2975's own
     # falsification (_EXCLUDED_UNGOVERNABLE).
@@ -357,7 +402,9 @@ import sys
 sys.path.insert(0, {os.getcwd()!r})
 from reyn.security.sandbox.landlock_exec import _apply_seccomp
 from reyn.security.sandbox.policy import SandboxPolicy
-_apply_seccomp(SandboxPolicy(write_paths=[{workdir!r}]))
+# allow_subprocess=False explicitly (#3202 default flip) — this probe's
+# "defend (must be refused): subprocess spawn" arm below is the opt-out leg.
+_apply_seccomp(SandboxPolicy(write_paths=[{workdir!r}], allow_subprocess=False))
 {code_after_apply}
 """
         return subprocess.run(
@@ -476,7 +523,10 @@ def _validate_denial_classification(workdir: str) -> None:
     from reyn.security.sandbox.denial import DENIAL_FORK, classify_denial
     from reyn.security.sandbox.policy import SandboxPolicy
 
-    policy = SandboxPolicy(write_paths=[workdir])
+    # allow_subprocess=False explicitly (#3202 default flip): this probe's whole
+    # point is that a REFUSED fork classifies as DENIAL_FORK, so the fork must
+    # actually be denied here rather than accidentally allowed by the default.
+    policy = SandboxPolicy(write_paths=[workdir], allow_subprocess=False)
     shapes = {
         "ls / | wc -l": "ls / | wc -l",
         "ls /; echo done": "ls /; echo done",

@@ -180,10 +180,15 @@ _BASELINE: list[str] = [
     # also restores parity with macOS Seatbelt, whose `(deny process-fork)`
     # blocks fork while leaving pipe() alone.
     #
-    # dup/dup2/dup3 were measured alongside and changed nothing, so they are not
-    # added. Remaining known gap: dash prints "Cannot fork", which denial.py's
-    # regex does not match — a pre-existing limit of that regex, not of this
-    # filter (dash's fork is correctly refused either way).
+    # dup/dup2/dup3 were measured alongside THIS specific probe (a shell
+    # denied at fork(), never reaching a pipe-fd redirect) and changed
+    # nothing there, so they were left out of the baseline. That is a
+    # narrower claim than "subprocess+pipe never needs dup2" — see
+    # `_SUBPROCESS_SYSCALLS` below for the shape that does need it (#3207
+    # co-vet). Remaining known gap: dash prints "Cannot fork", which
+    # denial.py's regex does not match — a pre-existing limit of that
+    # regex, not of this filter (dash's fork is correctly refused either
+    # way).
     "pipe", "pipe2",
     # CPython's own post-preexec_fn child code (live-validated, #2962).
     # LandlockBackend loads the filter from a preexec_fn, so the syscalls
@@ -363,8 +368,28 @@ _NETWORK_SYSCALLS: list[str] = [
 # all route through clone(), so with allow_subprocess=False a target that spawns
 # THREADS is killed too, not just one that spawns processes. That is inherent to
 # gating clone and is unchanged by #2962 — flagged, not silently decided.
+#
+# dup2/dup3 (#3207 co-vet, #3202 follow-up). fork/vfork/clone/clone3 let a
+# SANDBOXED process spawn a grandchild, but that alone only half-works for the
+# realistic case: `subprocess.run(["sh", "-c", "ls | wc -l"], capture_output=True)`
+# run FROM INSIDE an already-sandboxed process (the seccomp filter is
+# irrevocable and survives fork+exec, so the grandchild inherits it too).
+# CPython's `_posixsubprocess.fork_exec` redirects the grandchild's
+# stdin/stdout/stderr onto the parent's pipe fds via dup2 — AFTER the inner
+# fork, BEFORE the inner execve — so under a loaded filter that dup2 needs to
+# be in the allowlist or the grandchild dies with "cannot duplicate fd —
+# Operation not permitted" before it ever reaches the shell it was asked to
+# run. Measured: fork alone (no dup2) leaves `allow_subprocess=True` able to
+# spawn a bare child but unable to capture its output through a pipe — a
+# subprocess capability that is half-alive, not fully denied and not fully
+# granted. dup3 is dup2's variant with an added flags arg (glibc may route
+# either way depending on version); both are gated here, not in `_BASELINE`,
+# because — like fork/clone — they are part of the SUBPROCESS capability, not
+# a baseline single-process primitive: a target that never spawns a child
+# never calls them.
 _SUBPROCESS_SYSCALLS: list[str] = [
     "fork", "vfork", "clone", "clone3",
+    "dup2", "dup3",
 ]
 
 
