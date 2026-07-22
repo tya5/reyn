@@ -35,12 +35,15 @@ from reyn.security.sandbox import noop_backend as _noop_module
 
 
 def test_policy_defaults():
-    """Tier 2: SandboxPolicy() applies safe-default field values."""
+    """Tier 2: SandboxPolicy() default field values (owner decision 2026-07-22,
+    #3202: ``allow_subprocess`` defaults True — a UX-blocking axis is opt-in
+    restricted via explicit ``allow_subprocess=False``, not deny-by-default;
+    the other axes are unaffected and stay tight-by-default)."""
     p = SandboxPolicy()
     assert p.network is False
     assert p.read_paths == []
     assert p.write_paths == []
-    assert p.allow_subprocess is False
+    assert p.allow_subprocess is True
     assert p.env_passthrough == []
     assert p.timeout_seconds == 60
 

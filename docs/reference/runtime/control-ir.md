@@ -369,7 +369,7 @@ Fields:
 - `network` (optional, default `false`) — allow outbound network.
 - `read_paths` (optional) — filesystem paths the process may read (glob patterns OK).
 - `write_paths` (optional) — filesystem paths the process may write.
-- `allow_subprocess` (optional, default `false`) — may spawn children.
+- `allow_subprocess` (optional, default `true`) — may spawn children.
 - `env_passthrough` (optional) — env-var names that pass through (others are stripped).
 - `timeout_seconds` (optional, default `60`) — wall-clock cap.
 - `stdin` (optional, default `None`) — bytes written to the process's stdin, if any (#2593: the pipeline DSL's `shell` step threads the previous step's pipe-data here as JSON).
