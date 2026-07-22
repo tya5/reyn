@@ -123,25 +123,48 @@ def test_syscall_allowlist_network_when_enabled() -> None:
     assert "accept" in result
 
 
-def test_syscall_allowlist_no_process_creation_by_default() -> None:
-    """Tier 2: process-CREATION syscalls absent when allow_subprocess is False (default)."""
+def test_syscall_allowlist_process_creation_allowed_by_default() -> None:
+    """Tier 2: ★ load-bearing — process-CREATION syscalls PRESENT under a bare
+    ``SandboxPolicy()`` (owner decision 2026-07-22, #3202: ``allow_subprocess``
+    defaults to True — a UX-blocking axis is opt-in-restricted, not
+    deny-by-default; #3196-style credential/exfiltration axes are unaffected).
+
+    Reverting the dataclass default back to False turns this RED by hand (the
+    #3202 axis-4 falsify check) — the bare-default allowlist would then lack
+    fork/vfork/clone/clone3, proving this assertion is load-bearing on the
+    field default rather than on an explicit construction argument."""
     from reyn.security.sandbox.backends.seccomp import _build_syscall_allowlist
 
     result = _build_syscall_allowlist(SandboxPolicy())
     for name in ("fork", "vfork", "clone", "clone3"):
-        assert name not in result, (
-            f"Process-creation syscall {name!r} must be denied when "
-            "allow_subprocess is False"
+        assert name in result, (
+            f"Process-creation syscall {name!r} must be present under the "
+            "bare-default SandboxPolicy() (allow_subprocess defaults True, #3202)"
         )
 
 
 def test_syscall_allowlist_process_creation_when_enabled() -> None:
-    """Tier 2: process-creation syscalls present when policy.allow_subprocess is True."""
+    """Tier 2: process-creation syscalls present when policy.allow_subprocess is True
+    (explicit — same outcome as the default, but pinned independently of it)."""
     from reyn.security.sandbox.backends.seccomp import _build_syscall_allowlist
 
     result = _build_syscall_allowlist(SandboxPolicy(allow_subprocess=True))
     assert "fork" in result
     assert "clone" in result
+
+
+def test_syscall_allowlist_no_process_creation_when_explicitly_disabled() -> None:
+    """Tier 2: the opt-out leg — process-CREATION syscalls absent when the operator
+    explicitly sets ``allow_subprocess=False`` (#3202: explicit opt-out still denies;
+    only the OMITTED-field floor changed, not the enforcement of an explicit deny)."""
+    from reyn.security.sandbox.backends.seccomp import _build_syscall_allowlist
+
+    result = _build_syscall_allowlist(SandboxPolicy(allow_subprocess=False))
+    for name in ("fork", "vfork", "clone", "clone3"):
+        assert name not in result, (
+            f"Process-creation syscall {name!r} must be denied when "
+            "allow_subprocess is explicitly set to False"
+        )
 
 
 def test_syscall_allowlist_always_permits_exec_of_the_sandboxed_target() -> None:

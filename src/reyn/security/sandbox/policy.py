@@ -27,7 +27,10 @@ Fields:
         deny-after-allow rule (Seatbelt / SBPL); NOT enforceable on
         allowlist-only backends (Landlock), which rely on the network gate.
         Defaults to OS-level credential locations; ``~`` is expanded.
-    allow_subprocess: whether the process may spawn children
+    allow_subprocess: whether the process may spawn children. Defaults to
+        True (owner decision, 2026-07-22, #3202) — see the field's own
+        docstring comment for rationale; an explicit False at any call site
+        still denies.
     env_passthrough: env-var names that pass through to the sandboxed process
     timeout_seconds: wall-clock cap (enforced by the backend)
     max_output_bytes: per-stream cap (bytes) on captured stdout/stderr — output
@@ -121,7 +124,21 @@ class SandboxPolicy:
     read_deny_paths: list[str] = field(
         default_factory=lambda: list(DEFAULT_SENSITIVE_READ_DENY)
     )
-    allow_subprocess: bool = False
+    # Owner decision (2026-07-22, #3202): default flipped False → True. Owner
+    # policy: a setting that BLOCKS ORDINARY UX must not deny by default —
+    # security for a UX-blocking axis is opt-in (explicit ``allow_subprocess=
+    # False``), not deny-by-default. A corporate-proxy/sandbox host was denying
+    # plugin-install's pip (materialise) under the old False floor, which
+    # refused something the reyn-launching shell itself could always do.
+    # This is DELIBERATELY NOT the same policy as #3196-style credential /
+    # exfiltration axes (read_deny_paths, network) — those stay deny-by-
+    # default because they gate secret exposure, not developer UX; do not
+    # read this flip as license to loosen those. An explicit
+    # ``allow_subprocess=False`` at any call site is unaffected (explicit
+    # writes always win over the floor — #2964). Revisit once plugin install's
+    # responsibility is redesigned to drop its pip/subprocess dependency
+    # entirely (tracked separately from this default flip).
+    allow_subprocess: bool = True
     env_passthrough: list[str] = field(default_factory=list)
     timeout_seconds: int = 60
     max_output_bytes: int = MAX_SUBPROCESS_OUTPUT_BYTES
