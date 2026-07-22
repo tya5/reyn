@@ -124,20 +124,18 @@ class SandboxPolicy:
     read_deny_paths: list[str] = field(
         default_factory=lambda: list(DEFAULT_SENSITIVE_READ_DENY)
     )
-    # Owner decision (2026-07-22, #3202): default flipped False → True. Owner
-    # policy: a setting that BLOCKS ORDINARY UX must not deny by default —
-    # security for a UX-blocking axis is opt-in (explicit ``allow_subprocess=
-    # False``), not deny-by-default. A corporate-proxy/sandbox host was denying
-    # plugin-install's pip (materialise) under the old False floor, which
-    # refused something the reyn-launching shell itself could always do.
-    # This is DELIBERATELY NOT the same policy as #3196-style credential /
-    # exfiltration axes (read_deny_paths, network) — those stay deny-by-
-    # default because they gate secret exposure, not developer UX; do not
-    # read this flip as license to loosen those. An explicit
+    # Owner policy (decided 2026-07-22, #3202): a setting that BLOCKS ORDINARY
+    # UX must not deny by default. Security for a UX-blocking axis (spawning a
+    # child process) is opt-in via an explicit ``allow_subprocess=False``, not
+    # deny-by-default — anything the reyn-launching shell can already do, the
+    # sandbox must not silently refuse (the concrete trigger: a corporate-
+    # proxy/sandbox host denying plugin-install's pip (materialise) under the
+    # old False floor). This is DELIBERATELY NOT the same policy as #3196-style
+    # credential/exfiltration axes (``read_deny_paths``, ``network``) — those
+    # stay deny-by-default because they gate secret exposure, not developer
+    # UX; do not read this flip as license to loosen those. An explicit
     # ``allow_subprocess=False`` at any call site is unaffected (explicit
-    # writes always win over the floor — #2964). Revisit once plugin install's
-    # responsibility is redesigned to drop its pip/subprocess dependency
-    # entirely (tracked separately from this default flip).
+    # writes always win over the floor — #2964).
     allow_subprocess: bool = True
     env_passthrough: list[str] = field(default_factory=list)
     timeout_seconds: int = 60
