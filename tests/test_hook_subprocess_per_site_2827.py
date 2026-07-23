@@ -74,7 +74,7 @@ def _load_one(raw_hook: dict):
 
 def test_subprocess_true_parses_as_operator_will():
     """Tier 1: ``subprocess: true`` on a shell hook parses to True."""
-    hook = _load_one({"on": "turn_end", "shell_exec": "echo hi", "subprocess": True})
+    hook = _load_one({"on": "turn_end", "exec": ["echo", "hi"], "subprocess": True})
     assert hook.subprocess is True
 
 
@@ -82,14 +82,14 @@ def test_subprocess_false_parses_as_explicit_not_omitted():
     """Tier 1: ``subprocess: false`` parses to False — DISTINCT from omitted
     (None). The explicit-vs-omitted distinction is the #2964 principle the knob
     hinges on: a bare bool could not represent it."""
-    hook = _load_one({"on": "turn_end", "shell_exec": "echo hi", "subprocess": False})
+    hook = _load_one({"on": "turn_end", "exec": ["echo", "hi"], "subprocess": False})
     assert hook.subprocess is False
 
 
 def test_subprocess_omitted_is_none_not_false():
     """Tier 1: omitting the key yields None (= keep the floor), NOT False — so
     "operator said nothing" stays distinguishable from "operator said no"."""
-    hook = _load_one({"on": "turn_end", "shell_exec": "echo hi"})
+    hook = _load_one({"on": "turn_end", "exec": ["echo", "hi"]})
     assert hook.subprocess is None
 
 
@@ -109,7 +109,7 @@ def test_subprocess_rejected_when_not_a_boolean():
     """Tier 1: a non-bool ``subprocess:`` is a config error — a truthy string
     like "false" must never be silently coerced into permitting fork."""
     with pytest.raises(HookConfigError, match="subprocess"):
-        load_hooks([{"on": "turn_end", "shell_exec": "echo hi", "subprocess": "false"}])
+        load_hooks([{"on": "turn_end", "exec": ["echo", "hi"], "subprocess": "false"}])
 
 
 # ── policy wiring, driven through the REAL dispatcher (Tier 2) ───────────────
@@ -139,7 +139,7 @@ async def test_operator_subprocess_true_reaches_the_sandbox_policy(monkeypatch):
     backend = _RecordingBackend()
 
     await _dispatch(
-        [{"on": "turn_end", "shell_exec": "echo hi", "subprocess": True}], backend
+        [{"on": "turn_end", "exec": ["echo", "hi"], "subprocess": True}], backend
     )
 
     assert _policy_for(backend, "hi").allow_subprocess is True
@@ -152,7 +152,7 @@ async def test_omitted_subprocess_keeps_the_false_floor(monkeypatch):
     monkeypatch.setenv("REYN_ACCEPT_HOOKS", "1")
     backend = _RecordingBackend()
 
-    await _dispatch([{"on": "turn_end", "shell_exec": "echo hi"}], backend)
+    await _dispatch([{"on": "turn_end", "exec": ["echo", "hi"]}], backend)
 
     policy = _policy_for(backend, "hi")
     assert policy.allow_subprocess is False
@@ -175,9 +175,9 @@ async def test_subprocess_is_per_hook_not_a_global_flip(monkeypatch):
 
     await _dispatch(
         [
-            {"on": "turn_end", "shell_exec": "echo forker", "subprocess": True},
-            {"on": "turn_end", "shell_exec": "echo pure"},           # omitted → floor
-            {"on": "turn_end", "shell_exec": "echo hardened", "subprocess": False},
+            {"on": "turn_end", "exec": ["echo", "forker"], "subprocess": True},
+            {"on": "turn_end", "exec": ["echo", "pure"]},           # omitted → floor
+            {"on": "turn_end", "exec": ["echo", "hardened"], "subprocess": False},
         ],
         backend,
     )
@@ -189,14 +189,14 @@ async def test_subprocess_is_per_hook_not_a_global_flip(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_shell_push_sibling_honours_the_same_knob(monkeypatch):
-    """Tier 2: the fix-class sibling — shell_push gets the knob too. The fork need
-    is a property of the operator's command, not of which scheme consumes its
-    stdout; wiring only shell_exec would leave half the class unfixed."""
+    """Tier 2: the fix-class sibling — exec_capture gets the knob too. The fork
+    need is a property of the operator's command, not of which scheme consumes
+    its stdout; wiring only exec would leave half the class unfixed."""
     monkeypatch.setenv("REYN_ACCEPT_HOOKS", "1")
     backend = _RecordingBackend()
 
     await _dispatch(
-        [{"on": "turn_end", "shell_push": "echo {}", "subprocess": True}], backend
+        [{"on": "turn_end", "exec_capture": ["echo", "{}"], "subprocess": True}], backend
     )
 
     assert _policy_for(backend, "{}").allow_subprocess is True

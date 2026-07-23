@@ -101,7 +101,7 @@ Extend by the same discriminator — **who authored the content that runs**:
 |---|---|---|
 | Add **all four** external event points (`mcp_resource_updated`, `file_changed`, `cron_fired`, `webhook_received`) to the allowed `on:` set | **Add** | The single reason the LLM pattern cannot exist today. Runaways are bounded by the existing loop valve; no-wake pushes are benign. **`cron_fired` needs no carve-out**: registering a hook does not create a schedule — the schedule is created by `cron__register`, which is already gated by the `cron_register` permission key **and** a per-job operator approval prompt. Reacting to an approved job grants no new authority. |
 | Allow the `pipeline_launch` action | **Add** | It launches a **registered** pipeline — content is operator-installed; the LLM chooses only which and when. Also the only path for returning a result outward. |
-| Allow `shell_exec` / `shell_push` | **Keep restricted** | The LLM would *author the command string* — that hands over content authority, a different class from the two above. |
+| Allow `exec` / `exec_capture` (renamed from `shell_exec`/`shell_push` in #3226 Phase 4) | **Keep restricted** | The LLM would *author the argv* — that hands over content authority, a different class from the two above. |
 
 **Storage — an LLM-registered external-event hook is session-scoped and ephemeral.** `hooks_add` today persists to the workspace runtime layer (`.reyn/config/hooks.yaml`), hot-reloaded into **every** session. That is correct for the six lifecycle points it currently accepts, but for external event points it would contradict the scoping rule below (the reaction must be visible only to the registering session) and would let a hook **outlive the session whose activations its guard references** — a dangling scope. Ruling: `hooks_add` registrations on external event points go into the registering session's own per-session registry (the bus/registry are already per-session — `src/reyn/hooks/bus.py`) and **die with the session; `hooks.yaml` is never written**. Lifecycle-point registrations keep today's persistent semantics unchanged.
 
@@ -164,7 +164,7 @@ Rules:
 - **A plugin may only name its own `server:`** and may only subscribe/match URIs on that server. This is the containment 0064 deferred; it is what makes plugin-shipped hooks safe to install without a per-hook review. Enforced **at plugin load** (a definition naming a foreign server is rejected — enforce-at-load, 0059's posture) **and re-checked at activate**.
 - **`exclusive: true` fails closed on a second session.** stdio transport spawns **one server subprocess per holding session**, so a server owning an exclusive resource (a bound port, a single UI — the Streamlit first consumer is exactly this) cannot be held twice: the second `activate` fails with an error **naming the holding session**, instead of a silent port clash or a half-broken duplicate. Non-exclusive servers (stateless, e.g. the RAG pair) multi-activate freely.
 - **Activation is not access control.** The plugin's server is registered into `mcp.yaml` at install, and its *tools* remain callable from any session under the ordinary MCP permission gates whether or not an activation is live. The containment above bounds **reactions** (what may subscribe and fire), not tool access.
-- **`shell_exec` / `shell_push` in a plugin-shipped hook requires an explicit grant at install time**, surfaced as its own approval line — same reasoning as §4.3: the plugin, not the operator, authored the command string.
+- **`exec` / `exec_capture` (renamed from `shell_exec`/`shell_push` in #3226 Phase 4) in a plugin-shipped hook requires an explicit grant at install time**, surfaced as its own approval line — same reasoning as §4.3: the plugin, not the operator, authored the argv.
 - Registration is plugin-attributed so `plugin_uninstall` removes the definitions exactly like the existing three registries.
 - **Declaring an activation does not activate it.** Shipping ≠ running; activation is always one of §5.2 / §5.3.
 
@@ -215,14 +215,14 @@ Semantics:
 - Both emit an audit event carrying the activation id and the deciding surface, so a trail shows *who* started it, not merely that hooks fired.
 - Deactivate is implicit at session end — activation is session-scoped and volatile (§4.4 rule 2).
 
-**`hooks_add` is not extended for plugin activations.** The extension in §4.3 remains for hooks the LLM registers *directly*; a plugin's hooks arrive via activation, already authored. The two paths stay distinct so the `shell_exec` boundary is enforced in one place per path.
+**`hooks_add` is not extended for plugin activations.** The extension in §4.3 remains for hooks the LLM registers *directly*; a plugin's hooks arrive via activation, already authored. The two paths stay distinct so the `exec`/`exec_capture` boundary (renamed from `shell_exec`/`shell_push` in #3226 Phase 4) is enforced in one place per path.
 
 ### 5.4 What each surface may NOT do
 
 | Surface | Cannot |
 |---|---|
-| Plugin | Name another plugin's server; subscribe outside its own server; ship a `shell_exec` hook without an install-time grant |
-| LLM | Grant itself; activate an ungranted activation; register a hook on another plugin's event surface; author a `shell_exec` hook |
+| Plugin | Name another plugin's server; subscribe outside its own server; ship an `exec` hook without an install-time grant |
+| LLM | Grant itself; activate an ungranted activation; register a hook on another plugin's event surface; author an `exec` hook |
 | Operator | *(no restriction — the operator is the authority both other surfaces derive from)* |
 
 ## 6. Implementation notes — build by isomorphism, not invention
@@ -247,12 +247,12 @@ Per repo discipline (ADR-0039 D8 carried a reachability + fail-close assert per 
 - An external orchestrator becomes installable-and-it-works, which is the precondition #2839 needs before the internal task system can go.
 - Activation becomes an auditable event with a single decider, instead of an emergent property of "someone happened to call a tool".
 - The volatile-activation ruling (§4.4) means **a reactive plugin is not automatically running after a restart**. That is a deliberate trade: predictability and one recovery story, at the cost of a re-activation step. The operator pattern hides this; the LLM pattern does not.
-- `hooks_add` becomes more capable, and the `shell_exec` line becomes the explicit boundary of LLM hook authorship rather than an accident of what was implemented first.
+- `hooks_add` becomes more capable, and the `exec`/`exec_capture` line becomes the explicit boundary of LLM hook authorship rather than an accident of what was implemented first.
 
 ## 9. Rejected alternatives
 
 - **Make connection + subscription durable so activation survives a crash.** Rejected: it creates a second durability story next to the WAL, and the external world is out of recovery scope by ruling. §4.4 converges downward instead.
 - **A per-session hook config layer keyed by session id.** Rejected: session ids are runtime-generated and re-keyable, so the file layer has no author. The connection lifetime already provides per-session scoping for free.
 - **A correlation/callback mechanism for returning results.** Rejected: `pipeline_launch` + `input_template` + a `shell` step already closes the loop, with the correlation id carried in the URI.
-- **Let `hooks_add` register `shell_exec`.** Rejected per §4.3.
+- **Let `hooks_add` register `exec`.** Rejected per §4.3.
 - **Extend `reyn_cheat_sheet` with the authoring guidance.** Rejected: it is at ~98.7% of the default read cap (#3162). The guidance ships as the sibling skill `reactive_orchestration_plugins`.

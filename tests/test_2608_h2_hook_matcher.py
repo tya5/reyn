@@ -94,7 +94,7 @@ def test_matcher_dict_round_trips_through_loader() -> None:
 
 def test_matcher_absent_stays_none() -> None:
     """Tier 1: no ``matcher:`` key -> ``HookDef.matcher is None`` (fire-always)."""
-    raw = [{"on": "turn_end", "shell_exec": "echo hi"}]
+    raw = [{"on": "turn_end", "exec": ["echo", "hi"]}]
     registry = load_hooks(raw)
     (hook,) = registry.hooks_for("turn_end")
     assert hook.matcher is None
@@ -104,7 +104,7 @@ def test_matcher_empty_dict_normalises_to_none() -> None:
     """Tier 1: an empty ``matcher: {}`` normalises to ``None`` (same fire-always
     semantics as absent — no functional difference the operator should rely on
     a distinction for)."""
-    raw = [{"on": "turn_end", "shell_exec": "echo hi", "matcher": {}}]
+    raw = [{"on": "turn_end", "exec": ["echo", "hi"], "matcher": {}}]
     registry = load_hooks(raw)
     (hook,) = registry.hooks_for("turn_end")
     assert hook.matcher is None

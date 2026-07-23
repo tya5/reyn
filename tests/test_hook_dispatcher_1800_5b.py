@@ -108,14 +108,14 @@ async def test_push_wake_false_routes_to_staging_C():
 
 @pytest.mark.asyncio
 async def test_shell_routes_to_run_shell_F():
-    """Tier 2: a shell hook (F) invokes run_shell with the command + the event
+    """Tier 2: an exec hook (F) invokes run_shell with the argv + the event
     context (the observable side-effect); no push paths are taken."""
-    hook = HookDef(on="session_start", shell_exec="echo hi")
+    hook = HookDef(on="session_start", exec=("echo", "hi"))
     disp, seams = _dispatcher([hook])
 
     await disp.dispatch("session_start", {"point": "session_start"})
 
-    assert seams["run_shell"].kinds == ["echo hi"]
+    assert seams["run_shell"].kinds == [("echo", "hi")]
     (args, kwargs), = seams["run_shell"].calls
     assert args[1] == {"point": "session_start"}          # event context forwarded
     assert seams["put_inbox"].calls == []
@@ -141,15 +141,15 @@ async def test_throwing_hook_isolated_siblings_proceed():
     dispatch() never propagates the exception (the per-hook isolation property)."""
     raising = _Recorder(raises=RuntimeError("boom"))
     hooks = [
-        HookDef(on="turn_end", shell_exec="first"),    # this one raises
-        HookDef(on="turn_end", shell_exec="second"),   # must still run
+        HookDef(on="turn_end", exec=("first",)),    # this one raises
+        HookDef(on="turn_end", exec=("second",)),   # must still run
     ]
     disp, _seams = _dispatcher(hooks, run_shell=raising)
 
     # must NOT raise out of dispatch()
     await disp.dispatch("turn_end", {})
 
-    assert raising.kinds == ["first", "second"]   # sibling ran after the raise
+    assert raising.kinds == [("first",), ("second",)]   # sibling ran after the raise
 
 
 @pytest.mark.asyncio

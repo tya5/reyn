@@ -1,13 +1,15 @@
-"""Tier 2: #2069 shell_push — a shell command whose stdout is a JSON push-directive.
+"""Tier 2: #2069 exec_capture (renamed from ``shell_push`` in #3226 Phase 4 —
+naming honesty only; the argv-run mechanism is unchanged) — an argv whose
+stdout is a JSON push-directive.
 
-shell_push is the third hook scheme (alongside template_push / shell_exec). Its
-command is run with stdout CAPTURED (vs shell_exec's ignored output), the stdout
+exec_capture is the third hook scheme (alongside template_push / exec). Its
+argv is run with stdout CAPTURED (vs exec's ignored output), the stdout
 is parsed fail-safe into a ResolvedPush, and — if it pushes — it travels the SAME
 C/E dispatch path as template_push. The only difference from template_push is the
 SOURCE of the ResolvedPush: captured stdout JSON here vs a Jinja2 render there.
 
 Two levels, no mocks:
-- The fail-safe PARSE contract (``_parse_shell_push``): the pure stdout→ResolvedPush
+- The fail-safe PARSE contract (``_parse_exec_push``): the pure stdout→ResolvedPush
   function, including the missing/wrong-type/invalid-JSON skip matrix and the
   forward-compat ``session`` carry (only observable at the parse boundary — the
   dispatcher drops it at routing today, uniform with template_push).
@@ -21,7 +23,7 @@ import json
 
 import pytest
 
-from reyn.hooks.dispatcher import HookDispatcher, _parse_shell_push
+from reyn.hooks.dispatcher import HookDispatcher, _parse_exec_push
 from reyn.hooks.registry import HookRegistry
 from reyn.hooks.render import ResolvedPush, render_push
 from reyn.hooks.schema import HookDef, PushBlock
@@ -73,20 +75,20 @@ def _dispatcher(hooks, *, run_shell) -> tuple[HookDispatcher, dict]:
 
 
 # ===========================================================================
-# _parse_shell_push — the fail-safe stdout→ResolvedPush parse contract
+# _parse_exec_push — the fail-safe stdout→ResolvedPush parse contract
 # ===========================================================================
 
 
 def test_parse_valid_directive_yields_resolvedpush() -> None:
     """Tier 2: a valid JSON directive parses to a ResolvedPush with all fields."""
     stdout = json.dumps({"push_when": True, "wake": False, "message": "hi", "session": "s2"})
-    rp = _parse_shell_push(stdout)
+    rp = _parse_exec_push(stdout)
     assert rp == ResolvedPush(message="hi", wake=False, push_when=True, session="s2")
 
 
 def test_parse_session_optional_defaults_none() -> None:
     """Tier 2: session is optional — absent → None (carried forward-compat)."""
-    rp = _parse_shell_push(json.dumps({"push_when": True, "wake": True, "message": "hi"}))
+    rp = _parse_exec_push(json.dumps({"push_when": True, "wake": True, "message": "hi"}))
     assert rp is not None and rp.session is None
 
 
@@ -111,20 +113,20 @@ def test_parse_failsafe_returns_none(stdout) -> None:
     """Tier 2: any parse failure (empty / invalid JSON / non-object / missing or
     wrong-typed required field / bad session) returns None → the dispatcher skips
     the push and the run proceeds. Never raises."""
-    assert _parse_shell_push(stdout) is None
+    assert _parse_exec_push(stdout) is None
 
 
 # ===========================================================================
-# Dispatch behavior — shell_push routes via the shared C/E path
+# Dispatch behavior — exec_capture routes via the shared C/E path
 # ===========================================================================
 
 
 @pytest.mark.asyncio
-async def test_shell_push_wake_true_routes_to_inbox_E() -> None:
-    """Tier 2: shell_push stdout with wake=true → the same E (inbox trigger) path
+async def test_exec_capture_wake_true_routes_to_inbox_E() -> None:
+    """Tier 2: exec_capture stdout with wake=true → the same E (inbox trigger) path
     as template_push, carrying the [hook:name] attribution."""
     stdout = json.dumps({"push_when": True, "wake": True, "message": "go"})
-    hook = HookDef(on="turn_end", name="cont", shell_push="emit.sh")
+    hook = HookDef(on="turn_end", name="cont", exec_capture=("emit.sh",))
     disp, seams = _dispatcher([hook], run_shell=_ReturningShell(stdout))
 
     await disp.dispatch("turn_end", {})
@@ -139,10 +141,10 @@ async def test_shell_push_wake_true_routes_to_inbox_E() -> None:
 
 
 @pytest.mark.asyncio
-async def test_shell_push_wake_false_routes_to_staging_C() -> None:
-    """Tier 2: shell_push stdout with wake=false → the C (next-turn staging) path."""
+async def test_exec_capture_wake_false_routes_to_staging_C() -> None:
+    """Tier 2: exec_capture stdout with wake=false → the C (next-turn staging) path."""
     stdout = json.dumps({"push_when": True, "wake": False, "message": "note"})
-    hook = HookDef(on="turn_start", shell_push="emit.sh")
+    hook = HookDef(on="turn_start", exec_capture=("emit.sh",))
     disp, seams = _dispatcher([hook], run_shell=_ReturningShell(stdout))
 
     await disp.dispatch("turn_start", {})
@@ -156,25 +158,25 @@ async def test_shell_push_wake_false_routes_to_staging_C() -> None:
 
 
 @pytest.mark.asyncio
-async def test_shell_push_captures_stdout() -> None:
-    """Tier 2: the shell_push command is run with capture_stdout=True (vs shell_exec
+async def test_exec_capture_captures_stdout() -> None:
+    """Tier 2: the exec_capture command is run with capture_stdout=True (vs exec
     which ignores output) — the observable difference at the run_shell seam."""
     shell = _ReturningShell(json.dumps({"push_when": True, "wake": True, "message": "x"}))
-    hook = HookDef(on="turn_end", shell_push="emit.sh")
+    hook = HookDef(on="turn_end", exec_capture=("emit.sh",))
     disp, _seams = _dispatcher([hook], run_shell=shell)
 
     await disp.dispatch("turn_end", {})
 
     (args, kwargs), = shell.calls
-    assert args[0] == "emit.sh"                  # the command
+    assert args[0] == ("emit.sh",)                # the argv
     assert kwargs.get("capture_stdout") is True
 
 
 @pytest.mark.asyncio
-async def test_shell_push_run_failure_skips_push() -> None:
+async def test_exec_capture_run_failure_skips_push() -> None:
     """Tier 2: a run-failure (run_shell returns None → exit-non-zero / timeout)
     skips the push — neither inbox nor staging is touched (fail-safe)."""
-    hook = HookDef(on="turn_end", shell_push="emit.sh")
+    hook = HookDef(on="turn_end", exec_capture=("emit.sh",))
     disp, seams = _dispatcher([hook], run_shell=_ReturningShell(None))
 
     await disp.dispatch("turn_end", {})
@@ -184,9 +186,9 @@ async def test_shell_push_run_failure_skips_push() -> None:
 
 
 @pytest.mark.asyncio
-async def test_shell_push_parse_failure_skips_push() -> None:
+async def test_exec_capture_parse_failure_skips_push() -> None:
     """Tier 2: stdout that is not a valid directive (invalid JSON) skips the push."""
-    hook = HookDef(on="turn_end", shell_push="emit.sh")
+    hook = HookDef(on="turn_end", exec_capture=("emit.sh",))
     disp, seams = _dispatcher([hook], run_shell=_ReturningShell("garbage not json"))
 
     await disp.dispatch("turn_end", {})
@@ -196,11 +198,11 @@ async def test_shell_push_parse_failure_skips_push() -> None:
 
 
 @pytest.mark.asyncio
-async def test_shell_push_push_when_false_skips_push() -> None:
+async def test_exec_capture_push_when_false_skips_push() -> None:
     """Tier 2: a directive with push_when=false is the conditional-push guard —
     skipped via the shared _push_resolved gate (same as template_push)."""
     stdout = json.dumps({"push_when": False, "wake": True, "message": "x"})
-    hook = HookDef(on="turn_end", shell_push="emit.sh")
+    hook = HookDef(on="turn_end", exec_capture=("emit.sh",))
     disp, seams = _dispatcher([hook], run_shell=_ReturningShell(stdout))
 
     await disp.dispatch("turn_end", {})
@@ -210,20 +212,20 @@ async def test_shell_push_push_when_false_skips_push() -> None:
 
 
 @pytest.mark.asyncio
-async def test_template_push_and_shell_push_share_identical_push_path() -> None:
-    """Tier 2: uniformity — a template_push and a shell_push that resolve to the
+async def test_template_push_and_exec_capture_share_identical_push_path() -> None:
+    """Tier 2: uniformity — a template_push and a exec_capture that resolve to the
     SAME ResolvedPush produce a BYTE-IDENTICAL inbox payload, proving the C/E path
     is shared and the scheme differs only in the ResolvedPush source."""
     # The directive both schemes resolve to.
     msg, wake = "unify", True
     # template_push: a static PushBlock that renders to it.
     tmpl_hook = HookDef(on="turn_end", name="u", template_push=PushBlock(message=msg, wake=wake))
-    # shell_push: stdout JSON that parses to the same ResolvedPush.
+    # exec_capture: stdout JSON that parses to the same ResolvedPush.
     sp_stdout = json.dumps({"push_when": True, "wake": wake, "message": msg})
-    sp_hook = HookDef(on="turn_end", name="u", shell_push="emit.sh")
+    sp_hook = HookDef(on="turn_end", name="u", exec_capture=("emit.sh",))
 
     # sanity: the two sources yield equal ResolvedPush objects.
-    assert render_push(tmpl_hook.template_push, {}) == _parse_shell_push(sp_stdout)
+    assert render_push(tmpl_hook.template_push, {}) == _parse_exec_push(sp_stdout)
 
     t_disp, t_seams = _dispatcher([tmpl_hook], run_shell=_Recorder())
     s_disp, s_seams = _dispatcher([sp_hook], run_shell=_ReturningShell(sp_stdout))

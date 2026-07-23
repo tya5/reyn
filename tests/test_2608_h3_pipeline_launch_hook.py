@@ -1,7 +1,8 @@
 """Tests for #2608 H3 — the ``pipeline_launch`` hook action.
 
-H3 adds the 4th hook action (alongside ``template_push`` / ``shell_exec`` /
-``shell_push``): a hook can launch a REGISTERED Pipeline with an input built
+H3 adds the 4th hook action (alongside ``template_push`` / ``exec`` /
+``exec_capture`` — #3226 Phase 4 renamed ``shell_exec``/``shell_push``): a
+hook can launch a REGISTERED Pipeline with an input built
 from the event payload, via the async/detached ``start_pipeline_run`` (the
 same call the ``run_pipeline_async`` tool verb makes) — fire-and-continue;
 the pipeline runs in its own recoverable driver-session and its result
@@ -119,8 +120,8 @@ def test_hookdef_pipeline_launch_shape() -> None:
     assert hd.pipeline_launch.name == "digest"
     assert hd.pipeline_launch.input_template == {"n": "{{ event.n }}"}
     assert hd.template_push is None
-    assert hd.shell_exec is None
-    assert hd.shell_push is None
+    assert hd.exec is None
+    assert hd.exec_capture is None
 
 
 def test_load_hooks_pipeline_launch_parses() -> None:
@@ -233,7 +234,7 @@ async def test_pipeline_launch_missing_callable_skips_without_crashing():
     — a ``pipeline_launch`` hook logs + is skipped, siblings still proceed."""
     hooks = [
         HookDef(on="turn_end", pipeline_launch=PipelineLaunchBlock(name="p")),
-        HookDef(on="turn_end", shell_exec="echo sibling"),
+        HookDef(on="turn_end", exec=("echo", "sibling")),
     ]
     disp = HookDispatcher(
         HookRegistry(hooks),
@@ -246,7 +247,7 @@ async def test_pipeline_launch_missing_callable_skips_without_crashing():
     await disp.dispatch("turn_end", {})  # must not raise
 
     (args, _kwargs), = shell_recorder.calls
-    assert args[0] == "echo sibling"
+    assert args[0] == ("echo", "sibling")
 
 
 @pytest.mark.asyncio
@@ -257,7 +258,7 @@ async def test_pipeline_launch_raising_callable_isolated_siblings_proceed():
     raising = _LaunchRecorder(raises=RuntimeError("boom"))
     hooks = [
         HookDef(on="turn_end", pipeline_launch=PipelineLaunchBlock(name="missing")),
-        HookDef(on="turn_end", shell_exec="echo sibling"),
+        HookDef(on="turn_end", exec=("echo", "sibling")),
     ]
     disp, seams = _dispatcher(hooks, launch_pipeline=raising)
 
@@ -265,7 +266,7 @@ async def test_pipeline_launch_raising_callable_isolated_siblings_proceed():
 
     assert raising.calls == [("missing", None)]
     (args, _kwargs), = seams["run_shell"].calls
-    assert args[0] == "echo sibling"
+    assert args[0] == ("echo", "sibling")
 
 
 # ===========================================================================

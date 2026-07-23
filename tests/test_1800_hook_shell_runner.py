@@ -1,17 +1,21 @@
-"""Tests for #1800 slice C / #2069 — shell-hook runner (shell_exec + shell_push).
+"""Tests for #1800 slice C / #2069 — exec-hook runner (exec + exec_capture,
+renamed from ``shell_exec``/``shell_push`` in #3226 Phase 4 — naming honesty
+only; ``run_shell_hook`` always argv-executed with ``shell=False``, never
+``/bin/sh -c <string>``).
 
 Coverage
 --------
-All tests use REAL subprocesses (``python -c`` one-liners) — no mocks of
-collaborators.  The sandbox backend is NoopBackend (always available on every
-platform), which exercises the real backend.run() path without requiring
-platform-specific setup.
+All tests use REAL subprocesses (``python -c`` one-liners, passed as argv —
+#3226 Phase 4 argv-list-only payload) — no mocks of collaborators.  The
+sandbox backend is NoopBackend (always available on every platform), which
+exercises the real backend.run() path without requiring platform-specific
+setup.
 
 Tier 1 — Contract:
   - ``run_shell_hook`` is exported from ``reyn.hooks`` (public API surface).
-  - ``shell_exec`` mode (``capture_stdout=False``, the default): output is NOT
+  - ``exec`` mode (``capture_stdout=False``, the default): output is NOT
     parsed — run_shell_hook returns None (pure side-effect).
-  - ``shell_push`` mode (``capture_stdout=True``, #2069): an exit-0 run returns
+  - ``exec_capture`` mode (``capture_stdout=True``, #2069): an exit-0 run returns
     the decoded stdout; a non-zero exit returns None (fail-safe → skip push).
   - A command that reads stdin receives valid JSON context.
   - A command whose sleep exceeds the timeout → returns None, no crash.
@@ -84,10 +88,10 @@ async def test_output_ignored_returns_none(
         "import json, sys; "
         "sys.stdout.write(json.dumps({'message': 'should be ignored', 'wake': True}))"
     )
-    command = f"{_PY} -c \"{script}\""
+    argv = [_PY, "-c", script]
 
     result = await run_shell_hook(
-        command,
+        argv,
         event_context={"event": "turn_end"},
         timeout_seconds=10,
         sandbox_backend=_noop_backend(),
@@ -99,7 +103,7 @@ async def test_output_ignored_returns_none(
 
 
 # ---------------------------------------------------------------------------
-# Tier 1 — Contract: capture_stdout (shell_push, #2069) returns / fails-safe
+# Tier 1 — Contract: capture_stdout (exec_capture, #2069) returns / fails-safe
 # ---------------------------------------------------------------------------
 
 
@@ -107,8 +111,8 @@ async def test_output_ignored_returns_none(
 async def test_capture_stdout_returns_decoded_stdout(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Tier 1: capture_stdout=True (shell_push) returns the decoded stdout of an
-    exit-0 run — the caller parses it as a JSON push-directive (vs shell_exec,
+    """Tier 1: capture_stdout=True (exec_capture) returns the decoded stdout of an
+    exit-0 run — the caller parses it as a JSON push-directive (vs exec,
     which ignores output and returns None for the SAME command)."""
     from reyn.hooks.shell_runner import run_shell_hook
 
@@ -117,10 +121,10 @@ async def test_capture_stdout_returns_decoded_stdout(
 
     directive = {"push_when": True, "wake": True, "message": "go"}
     script = f"import json,sys; sys.stdout.write(json.dumps({directive!r}))"
-    command = f"{_PY} -c \"{script}\""
+    argv = [_PY, "-c", script]
 
     result = await run_shell_hook(
-        command,
+        argv,
         event_context={"event": "turn_end"},
         timeout_seconds=10,
         sandbox_backend=_noop_backend(),
@@ -146,10 +150,10 @@ async def test_capture_stdout_nonzero_exit_returns_none(
 
     # Writes a directive to stdout then exits non-zero → must NOT be returned.
     script = "import json,sys; sys.stdout.write('{\\\"message\\\": \\\"x\\\"}'); sys.exit(3)"
-    command = f"{_PY} -c \"{script}\""
+    argv = [_PY, "-c", script]
 
     result = await run_shell_hook(
-        command,
+        argv,
         event_context={"event": "turn_end"},
         timeout_seconds=10,
         sandbox_backend=_noop_backend(),
@@ -187,10 +191,10 @@ async def test_json_context_delivered_on_stdin(
         f"open({str(marker)!r}, 'w').write(data.get('event', '')) "
         "if 'event' in data else None"
     )
-    command = f"{_PY} -c \"{script}\""
+    argv = [_PY, "-c", script]
 
     await run_shell_hook(
-        command,
+        argv,
         event_context={"event": "skill_end", "skill": "my-skill"},
         timeout_seconds=10,
         sandbox_backend=_noop_backend(),
@@ -221,10 +225,10 @@ async def test_timeout_returns_none_no_crash(
     monkeypatch.setenv("REYN_ACCEPT_HOOKS", "1")
 
     # sleep for 60 s but timeout is 1 s → times out.
-    command = f"{_PY} -c \"import time; time.sleep(60)\""
+    argv = [_PY, "-c", "import time; time.sleep(60)"]
 
     result = await run_shell_hook(
-        command,
+        argv,
         event_context={"event": "session_end"},
         timeout_seconds=1,
         sandbox_backend=_noop_backend(),
@@ -258,10 +262,10 @@ async def test_nonapproved_command_nontty_refused(
     # Ensure accept flag is NOT set.
     monkeypatch.delenv("REYN_ACCEPT_HOOKS", raising=False)
 
-    command = f"{_PY} -c \"pass\""
+    argv = [_PY, "-c", "pass"]
 
     result = await run_shell_hook(
-        command,
+        argv,
         event_context={"event": "session_start"},
         timeout_seconds=10,
         sandbox_backend=_noop_backend(),
