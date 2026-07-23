@@ -308,6 +308,25 @@ def test_witness6_directory_entry_path_resolves_via_real_skill_invoke_acting_pat
     assert Path(entry_path).is_dir()
     assert not Path(entry_path).is_file()
 
+    # ★ Belt-tightening (architect note): `resolve_skill_body` has TWO
+    # resolution sites — SITE1, the GATED plugin-provenance path
+    # (`read_plugin_body_bytes`, `is_registered_plugin_root`), and, only if
+    # SITE1 returns `None`, SITE2, the UNGATED local-filesystem fallback.
+    # Stripping SITE1's dir->SKILL.md resolution alone would NOT turn the
+    # end-to-end assertion below red, because SITE2's OWN dir->SKILL.md
+    # resolution silently catches the same directory entry — the exact
+    # "green while the gated path regressed" class that produced this whole
+    # `:name` detour. Assert SITE1 resolves this registered-plugin entry ON
+    # ITS OWN, so a regression that silently drops registered-plugin
+    # resolution from the gated site to the ungated fallback is caught here
+    # directly, independent of whatever SITE2 happens to do.
+    assert read_plugin_body_bytes(entry_path) is not None, (
+        "read_plugin_body_bytes (the GATED site) did not resolve the "
+        "registered-plugin directory entry on its own — if resolve_skill_body "
+        "below still passes, it silently fell through to the UNGATED "
+        "local-filesystem fallback instead"
+    )
+
     from reyn.interfaces.skill_invoke import resolve_skill_body
 
     body = resolve_skill_body(entry_path, project_dir=tmp_path / "unrelated")
