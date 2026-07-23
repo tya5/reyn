@@ -77,12 +77,16 @@ always (no changes to check).
 python scripts/cleanup_agent_worktrees.py --force
 ```
 
-Removes all worktrees with dead PIDs (or no lock file). For each candidate:
+Removes all worktrees with dead PIDs — a worktree must be locked with a
+PID that is no longer alive to qualify. For each candidate:
 1. Deletes the `.git/worktrees/<id>/locked` file (if present)
 2. Calls `git worktree remove -f <path>`
 
 Alive-PID worktrees are left untouched. Unlocked worktrees (no lock file) are
-also removed by default — they have no running process protecting them.
+**always kept, never removed** — an unlocked worktree is not proven abandoned
+(it may hold uncommitted subagent work), so the tool deliberately never treats
+"no lock file" as a removal signal. Only dead-PID (stale) worktrees are
+candidates under `--force`.
 
 Example output:
 
@@ -153,7 +157,7 @@ structured output:
 |------|---------|-------------|
 | `--list` | on | List candidates and their status; no changes made |
 | `--dry-run` | off | Simulate removal; print what would happen |
-| `--force` | off | Remove dead-PID and unlocked worktrees |
+| `--force` | off | Remove dead-PID (stale) worktrees only; unlocked worktrees are always kept |
 | `--keep-recent N` | 0 (keep none) | Exempt the N most recently modified worktrees |
 | `--include-alive` | off | Also remove alive-PID worktrees (dangerous) |
 | `--json` | off | Machine-readable JSON output |
@@ -199,9 +203,11 @@ fi
   Do not modify the filter to broaden scope without understanding the safety
   implications.
 - **Recovering from a bad dispatch.** If a subagent produced incorrect results
-  you want to inspect, run `--list` first and confirm the worktree is in the
-  dead/unlocked list before removing it. Use `--keep-recent` to protect
-  recent worktrees during cleanup.
+  you want to inspect, run `--list` first and confirm the worktree is dead
+  (locked, PID no longer alive) before removing it — an unlocked worktree
+  will never be touched by `--force` regardless, so it is always safe to
+  leave in place for inspection. Use `--keep-recent` to protect recent
+  worktrees during cleanup.
 
 ## Safety properties
 
@@ -210,6 +216,11 @@ fi
   alive), the worktree is skipped and logged.
 - **`--dry-run` is always safe.** No filesystem or git operations are
   performed.
+- **Unlocked worktrees are never removal candidates, under any flag.**
+  `build_candidates()` only ever selects from `stale` (or, with
+  `--include-alive`, all `locked`) worktrees — an unlocked worktree has no
+  lock file to check a PID against, so it is never proven abandoned and the
+  tool leaves it alone. There is no flag that reclaims unlocked worktrees.
 - **The script targets only `agent-*` paths under `.claude/worktrees/`.** All
   other worktrees — feature branches, main, etc. — are invisible to it.
 
