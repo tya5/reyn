@@ -134,7 +134,7 @@ error message は区別済み。変更不要。
 OS がそれに従って backend を選択・実行する。Permission gate が事前に走らないため
 wasted call が発生しない設計になっている。
 
-**変更不要**。ただし `describe_action("exec__sandboxed_exec")` のレスポンスに
+**変更不要**。ただし `describe_action("exec__run")` のレスポンスに
 `SandboxPolicy` フィールドの説明を補足すると LLM の policy 選択精度が上がる可能性がある
 (= Phase 2 候補)。
 
@@ -237,7 +237,7 @@ scenarios:
 | P0 | web config-deny 時に `list_actions` から除外 (Pattern D) | SMALL | 新 issue 発行 |
 | P1 | budget SP section (Pattern A, 残量 threshold 以下で表示) | SMALL | FP-0035 Phase 2 候補 |
 | P2 | FP-0036 framework 着地後に dogfood scenario set `permissions.yaml` を authoring | MEDIUM | FP-0036 scenario wave |
-| P3 | `describe_action("exec__sandboxed_exec")` に SandboxPolicy フィールド説明を追加 (Pattern C 強化) | SMALL | FP-0035 Phase 2 候補 |
+| P3 | `describe_action("exec__run")` に SandboxPolicy フィールド説明を追加 (Pattern C 強化) | SMALL | FP-0035 Phase 2 候補 |
 | defer | Pattern A の full file scope disclosure | — | dogfood 結果次第 |
 
 ---
