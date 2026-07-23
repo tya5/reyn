@@ -299,6 +299,14 @@ def _parse_entry(
         if not value:
             raise HookConfigError(f"hooks[{entry_index}].{key} must not be an empty list.")
         for item_index, item in enumerate(value):
+            if isinstance(item, str) and "{{" in item:
+                raise HookConfigError(
+                    f"hooks[{entry_index}].{key}[{item_index}] contains '{{{{' — "
+                    f"exec/exec_capture argv is static config, never Jinja2-rendered "
+                    f"(event data is delivered on stdin as JSON, never interpolated "
+                    f"into argv); remove the template marker or read the value from "
+                    f"stdin in the executed command instead."
+                )
             if not isinstance(item, str) or not item.strip():
                 raise HookConfigError(
                     f"hooks[{entry_index}].{key}[{item_index}] must be a "
