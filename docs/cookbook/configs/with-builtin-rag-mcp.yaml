@@ -6,30 +6,64 @@
 # Originally authored under FP-0063 (P2 MCP layer / P3 pipelines / P4 skill).
 #
 # This file is a REFERENCE, not something you copy into reyn.yaml -- unlike
-# the pre-ADR-0064 shape, there is no "by-hand YAML" option any more: a
-# plugin's capabilities are registered by `plugin_management__install`, not by
-# hand-editing `mcp.servers`/`pipelines.entries`. You do not need to do
-# anything by hand at all: ask reyn to ingest a folder in chat and it installs
-# the plugin itself via `plugin_management__install`, prompting you at the permission
-# gate before it writes anything.
+# the pre-ADR-0064 shape, there is no "by-hand YAML" option for REGISTRATION:
+# a plugin's capabilities are registered by `plugin_management__install`, not
+# by hand-editing `mcp.servers`/`pipelines.entries`. You DO still need one
+# hand step post-registration -- pointing the two builtin servers at your own
+# venv, below (#3209: install is register-only, it never provisions deps).
 #
 # ---------------------------------------------------------------------------
-# Install
+# Install (register-only, #3209) + your own venv
 # ---------------------------------------------------------------------------
 #
 #   plugin_management__install(source={"kind": "builtin", "name": "rag"})
 #
-# One call does everything the old three-server-by-hand block used to
-# require: it copies `src/reyn/builtin/plugins/rag/` to
-# `~/.reyn/plugins/rag/`, materialises its runtime deps
-# (chonkie/apsw/sqlite-vec/fastmcp) into a DEDICATED per-plugin venv (never
-# reyn's own environment -- no `pip install "reyn[builtin-rag]"` needed),
+# This call copies `src/reyn/builtin/plugins/rag/` to `~/.reyn/plugins/rag/`
 # and registers both MCP servers + both pipelines + the skill into your
-# project's `.reyn/config/{mcp,pipelines,skills}.yaml`. The registered
-# server commands point at the materialised venv's own interpreter, so
-# spawning them needs no network and does not depend on your ambient
-# `python3` (works under `pipx install reyn`, a non-activated venv, or any
-# PATH whose `python3` differs from reyn's own).
+# project's `.reyn/config/{mcp,pipelines,skills}.yaml`, using the plugin's
+# own `.mcp.json` `command` value AS-IS -- it does NOT install the plugin's
+# runtime deps (chonkie/apsw/sqlite-vec/fastmcp) for you. That step is
+# skill-driven: the `build_and_query_rag_corpus` skill's body walks the
+# operator/LLM through creating a venv + `pip install -r requirements.txt`
+# (never reyn's own environment -- no `pip install "reyn[builtin-rag]"`
+# needed) and then editing the registered entries below to point `command`
+# at that venv's own interpreter, absolute path.
+#
+# **The venv MUST live INSIDE the project workspace** (e.g. `./.venv-rag` at
+# the project root) -- NEVER under `~/.reyn/...` (home dir). An LLM-driven
+# `sandboxed_exec` call cannot write outside the project's write scope, so a
+# home-dir venv path fails with "Operation not permitted" and the whole flow
+# silently stalls; a home-dir path is also global across every
+# project/session on the machine, so two unrelated projects would race the
+# SAME materialised venv:
+#
+#   python3 -m venv ./.venv-rag
+#   ./.venv-rag/bin/pip install -r ~/.reyn/plugins/rag/requirements.txt
+#
+# Windows: the interpreter is at `Scripts\python.exe`, not `bin/python`:
+#
+#   python -m venv .venv-rag
+#   .venv-rag\Scripts\pip.exe install -r %USERPROFILE%\.reyn\plugins\rag\requirements.txt
+#
+# Then edit `.reyn/config/mcp.yaml`'s two registered entries -- ONLY
+# `command`, never `args` (already the plugin's own absolute script path,
+# written correctly by install -- there is no `-m <module>` form):
+#
+#   mcp:
+#     servers:
+#       reyn_chunker:
+#         command: /abs/path/to/this/project/.venv-rag/bin/python   # Windows: ...\.venv-rag\Scripts\python.exe
+#         # args: unchanged -- already the plugin's own absolute script path
+#       reyn_vector_store:
+#         command: /abs/path/to/this/project/.venv-rag/bin/python   # Windows: ...\.venv-rag\Scripts\python.exe
+#         # args: unchanged -- already the plugin's own absolute script path
+#
+# so spawning them needs no network and does not depend on your ambient
+# `python3` (which is a DIFFERENT interpreter under `pipx install reyn`, a
+# non-activated venv, or any PATH whose `python3` differs from reyn's own).
+# Skip this (or leave the venv incomplete) and either server FAILS FAST with
+# a clear OS-level error at spawn time -- reyn never falls back to fetching
+# the missing dependency at spawn to paper over it (#3060 preserved).
 #
 # The permission gate still fires exactly where you would expect: writing
 # `~/.reyn/plugins/rag/` (outside the workspace) and each MCP server's grant
@@ -45,12 +79,14 @@
 # Do NOT `pip install markitdown-mcp` beside reyn: `command: uvx` fetches it
 # into uvx's OWN isolated environment on first run, which is the point --
 # installing it beside reyn only invites a dependency conflict. Firewalled?
-# Give it its own venv and an absolute path, never reyn's venv:
+# Give it its own venv, ALSO inside the project workspace (same write-scope
+# reasoning as above -- never a home-dir path, never reyn's venv), and an
+# absolute path:
 #
-#   python3 -m venv ~/.reyn-markitdown
-#   ~/.reyn-markitdown/bin/pip install markitdown-mcp
+#   python3 -m venv ./.venv-markitdown
+#   ./.venv-markitdown/bin/pip install markitdown-mcp
 #   mcp__install_local(name="reyn_markitdown", args=[],
-#                      command="/home/you/.reyn-markitdown/bin/markitdown-mcp")
+#                      command="/abs/path/to/this/project/.venv-markitdown/bin/markitdown-mcp")
 #
 # rag_ingest's own step-0 pre-flight (X1) probes each of the three servers
 # for real BEFORE any embedding spend and names the one that failed with a

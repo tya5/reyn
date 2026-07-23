@@ -158,6 +158,35 @@ def test_substitute_arguments_ordering_matches_skill_load_then_splice(tmp_path):
     assert "${REYN_SKILL_DIR} ignore-me" in final
 
 
+def test_resolve_skill_body_accepts_directory_entry_path(tmp_path):
+    """Tier 2: #3210 regression — `skill_install.py`'s `_resolve_skill_md`
+    always registers `skills.entries.<name>.path` as the skill DIRECTORY
+    (`install_path = str(skill_md.parent.resolve())`), never the SKILL.md
+    file itself — true for a plain local/git `skill_install` (this test)
+    exactly as it is for a plugin-driven one (`test_3162_plugin_body_read_
+    parity.py`'s witness 6). `resolve_skill_body` is fed that DIRECTORY
+    path — the same shape `Session._maybe_handle_skill_invoke` passes for
+    every `:name` invocation — not the SKILL.md file, which every OTHER
+    test in this module uses as a shortcut.
+
+    RED before the fix: the bare-filesystem fallback branch did
+    `Path(directory).read_text()` with no directory handling — a directory
+    path raises `IsADirectoryError: [Errno 21] Is a directory`. Manually
+    verified (see PR body): reverting the dir->SKILL.md resolution
+    reproduces exactly that error against this same directory path."""
+    skill_dir = tmp_path / "skills" / "demo2"
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "SKILL.md").write_text(
+        "---\nname: demo2\ndescription: demo2\n---\n\nDemo2 body.\n",
+        encoding="utf-8",
+    )
+
+    # The DIRECTORY, not the file — the exact value skill_install.py's
+    # `install_path` would register.
+    body = resolve_skill_body(str(skill_dir), project_dir=tmp_path)
+    assert "Demo2 body." in body
+
+
 # ── frontmatter extensions (Axis 1) ─────────────────────────────────────────
 
 

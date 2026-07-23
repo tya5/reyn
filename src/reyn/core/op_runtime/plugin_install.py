@@ -1,5 +1,20 @@
 """plugin_install kind handler — promote/install a self-contained plugin
-directory (ADR 0064 §3.2/§3.8/§3.10/§3.11, P2 install machinery).
+directory (ADR 0064 §3.2/§3.8/§3.10, P2 install machinery).
+
+**Register-only** (#3209 — architect-firm redesign, owner GO 2026-07-23):
+plugin install registers a plugin's mcp/pipelines/skills.yaml capability
+entries; it never provisions the plugin's external Python dependencies.
+Dep-fetch was a foreign responsibility (env-provisioning) riding a
+registration op — the entire pre-#3209 ``<sys.executable> -m venv`` +
+``<venv_python> -m pip install`` materialise step, its two interpreter-path
+resolvers, and the ``_deps_materialised`` install-state stage are REMOVED,
+clean-break (no transition shim). External deps are now **skill-driven**:
+the operator/LLM creates their OWN venv (following the plugin's
+``requirements.txt`` + the installing skill's SETUP instructions) and points
+the plugin's ``.mcp.json`` server ``command`` at that venv's python
+interpreter absolute path directly — never a reyn-managed venv. See ADR 0064
+§3.11b for the full rationale and the interpreter-path-resolution history
+(§3.11a) this redesign supersedes.
 
 Reuses P1 (``reyn.plugins.{manifest,tokens,source}``) for the manifest
 schema, ``${REYN_*}`` token expansion, and source-kind precedence, and
@@ -43,53 +58,40 @@ Pipeline (one-shot, no sub-phases):
 6. **Expand ``${REYN_*}`` stable-location tokens** (P1 ``tokens.py``) —
    baked into the copied files, matching §3.4's "resolved once at copy
    time, inside the per-plugin copy dir" rule.
-7. **Materialise deps** (§3.11): when the copied plugin carries a
-   ``requirements.txt`` at its root, the pypi.org dep-fetch approval is
-   **derived from the install's own gate-1 write-approval** (#3048 —
-   ``session_approve_host("pypi.org", ...)`` scoped to exactly that host,
-   never a blanket http.get grant, so a separate interactive prompt is
-   never raised for it), then ``require_http_get`` is still called (config
-   deny / sandbox network-veto keep applying on top of the derive), then
-   ``<sys.executable> -m venv`` + ``<venv_python> -m pip install`` into
-   ``<plugin_root>/.venv`` (#3202 symptom 2 — no ``uv`` dependency; reyn's
-   own interpreter + the stdlib ``venv``/``pip`` it ships with) — network
-   fetch happens HERE, at install time, never at spawn. Without the
-   derive, a codeact/headless dispatch (a bus wired but nothing answers
-   it) awaits that prompt indefinitely and gets guillotined by the
-   caller's compute-budget timeout. When the mcp capability's
-   ``.mcp.json`` declares ``command: "python"`` / ``"python3"``, the
-   registered spawn command is rewritten to the materialised venv's
-   interpreter — spawn is network-free by construction (the general form
-   of #3060).
-8. **Register**: for each capability the manifest declares, call the
+7. **Register**: for each capability the manifest declares, call the
    SAME existing register verbs — ``skill_install.handle`` /
    ``pipeline_install.handle`` for skills/pipelines (each op carries
    ``plugin_id=<name>``, §3.7's additive provenance field), and a
    ``require_file_write``-gated (#3088) direct ``.reyn/config/mcp.yaml``
    write (mirrors ``mcp__install_local``'s shape, probe-then-commit) for
-   the optional root ``.mcp.json``.
-9. **Complete**: delete the ``_install_state.json`` marker (absence =
+   the optional root ``.mcp.json``. A server's ``command`` is registered
+   AS-IS (no venv-interpreter rewrite) — whatever absolute path the
+   plugin's ``.mcp.json`` names (or the operator edits in afterward,
+   post-#3209) is what spawn execs.
+8. **Complete**: delete the ``_install_state.json`` marker (absence =
    completed — the state step 0's reconcile checks) and emit
    ``plugin_install_completed``.
 
-Audit-events emitted (§3.11, at minimum): ``plugin_install_started`` /
-``_copied`` / ``_deps_materialised`` / ``_registered`` / ``_completed``.
+Audit-events emitted (at minimum): ``plugin_install_started`` /
+``_copied`` / ``_registered`` / ``_completed``.
 
-**Not WAL-derived** (§3.11): the ``~/.reyn/plugins/`` copies + the
-materialised venv are FILES, not WAL-event-derived state — the
-CLAUDE.md truncate-falsify recovery gate does not apply to them. The
-reconcile in this module is a filesystem/registry consistency check;
-the registry entries THEMSELVES (mcp/pipelines/skills.yaml) still ride
-the existing config-generation recovery path via the sub-handlers they
-call.
+**Fail-fast, never runtime-fetch** (#3060 by-construction requirement,
+preserved across the #3209 redesign): a server whose ``command`` names an
+incomplete/missing venv fails at MCP spawn with a clear OS-level error
+(e.g. "no such file or directory") — plugin_install never falls back to
+fetching deps at spawn time to paper over that.
+
+**Not WAL-derived** (§3.11): the ``~/.reyn/plugins/`` copies are FILES, not
+WAL-event-derived state — the CLAUDE.md truncate-falsify recovery gate does
+not apply to them. The reconcile in this module is a filesystem/registry
+consistency check; the registry entries THEMSELVES (mcp/pipelines/skills.yaml)
+still ride the existing config-generation recovery path via the
+sub-handlers they call.
 """
 from __future__ import annotations
 
 import json
-import os
 import shutil
-import sys
-import sysconfig
 from pathlib import Path
 from uuid import uuid4
 
@@ -403,239 +405,22 @@ def _bake_plugin_root_only(path: Path, plugin_root: Path) -> None:
         path.write_text(expanded, encoding="utf-8")
 
 
-def _venv_interpreter_path_discover(venv_dir: Path) -> Path:
-    """FALLBACK ONLY (secondary) — see ``_venv_interpreter_path`` for the
-    primary mechanism. Discover ``venv_dir``'s Python interpreter by
-    checking which of the two PEP 405 venv layouts actually exists on disk
-    — POSIX's ``<venv>/bin/python`` or Windows's (incl. git-bash, which
-    still runs a Windows-layout venv) ``<venv>/Scripts/python.exe`` — rather
-    than *constructing* the path from ``os.name``/``sys.platform``. This is
-    only reached if the primary ``sysconfig``-based computation somehow
-    fails (should not happen in practice — this is the pathological-failure
-    safety net, not the normal path).
-
-    Raises ``FileNotFoundError`` if NEITHER layout exists — that is not a
-    layout question but evidence venv creation did not actually materialise
-    an interpreter (should have already been caught by its exit code; this
-    is the decision-enabling explicit failure, not a silent None).
-    """
-    windows_python = venv_dir / "Scripts" / "python.exe"
-    posix_python = venv_dir / "bin" / "python"
-    if windows_python.exists():
-        return windows_python
-    if posix_python.exists():
-        return posix_python
-    raise FileNotFoundError(
-        f"no venv interpreter found under {venv_dir!s} "
-        f"(checked {windows_python!s} and {posix_python!s}) — "
-        "venv creation may not have actually materialised an interpreter"
-    )
-
-
-def _venv_interpreter_path(venv_dir: Path) -> Path:
-    """Resolve ``venv_dir``'s Python interpreter path using the stdlib
-    ``sysconfig`` module's ``"venv"`` install scheme — no hardcoded
-    ``bin``/``Scripts`` branch, no subprocess, no third-party tool (uv or
-    otherwise). #3202 symptom 1 was a hardcoded ``<venv>/bin/python``
-    construction: a real path on Linux/macOS CI, absent on Windows (there
-    it's ``<venv>/Scripts/python.exe``), so ``uv pip install --python <that
-    path>`` and MCP spawn both failed there even though venv creation
-    itself succeeded.
-
-    Ground (checked directly on this machine's CPython, not assumed):
-    ``sysconfig.get_paths(scheme="venv", vars={"base": <venv_dir>,
-    "platbase": <venv_dir>})["scripts"]`` returns the venv's script/bin
-    directory for THE CURRENT INTERPRETER'S OS — the ``"venv"`` scheme name
-    is itself resolved by ``sysconfig`` internally to the OS-appropriate
-    scheme (``posix_venv`` gives ``{base}/bin``; ``nt_venv`` gives
-    ``{base}/Scripts``) at *sysconfig import time*, i.e. it already encodes
-    the platform branch so this call site never has to. The interpreter
-    filename is ``"python" + sysconfig.get_config_var("EXE")`` (``EXE`` is
-    ``""`` on POSIX, ``".exe"`` on Windows) — verified against a real
-    ``python -m venv``-created venv: the computed path exists and matches
-    the actual interpreter file on disk.
-
-    ``_materialise_deps`` creates the venv with ``<reyn's own python> -m
-    venv`` (the stdlib ``venv`` module, not a third-party tool with its own
-    possibly-different layout), so this computation targets exactly the
-    layout that module produces — not a guess about what SOME tool might
-    have done.
-
-    Falls back to ``_venv_interpreter_path_discover``'s on-disk existence
-    check only if this computation's result does not actually exist (a
-    pathological case — e.g. a ``sysconfig`` customisation on some
-    distro) — a decision-enabling last resort, not the main path.
-
-    This is the ONE place that resolves the interpreter path — both the MCP
-    spawn command rewrite (which must name a real executable to exec) and
-    the install step's ``pip install`` invocation (this module) key off it.
-    Keeping it singular means the next call site never re-invents the POSIX
-    assumption.
-    """
-    scripts_dir = Path(
-        sysconfig.get_paths(
-            scheme="venv", vars={"base": str(venv_dir), "platbase": str(venv_dir)},
-        )["scripts"],
-    )
-    exe_suffix = sysconfig.get_config_var("EXE") or ""
-    computed = scripts_dir / f"python{exe_suffix}"
-    if computed.exists():
-        return computed
-    # sysconfig computed a path that isn't actually there — pathological;
-    # fall back to on-disk discovery before giving up.
-    return _venv_interpreter_path_discover(venv_dir)
-
-
-async def _materialise_deps(
-    plugin_root: Path, requirements: Path, ctx: OpContext,
-) -> "tuple[Path | None, str | None]":
-    """``<sys.executable> -m venv`` + ``<venv_python> -m pip install -r
-    requirements.txt`` into ``<plugin_root>/.venv`` (§3.11) — routed through
-    the sandbox abstraction (mirrors ``skill_install._shallow_clone``'s
-    rationale: an agent-reachable subprocess launch must never bypass
-    ``reyn.security.sandbox``).
-
-    Uses the stdlib ``venv`` module (via reyn's OWN interpreter,
-    ``sys.executable`` — guaranteed present, no external tool dependency)
-    and ``pip`` (bundled with every CPython venv) rather than ``uv`` —
-    #3202 symptom 2. ``uv`` was never load-bearing here: no lockfile is
-    used (plain ``requirements.txt``), reyn's own runtime already requires
-    a working CPython, and an operator missing ``uv`` on ``PATH`` (the
-    reported failure mode — Windows/git-bash environments where ``uv`` is
-    an extra, easy-to-miss install) got a confusing "run 'uv venv'" error
-    for a tool reyn itself never asked them to install. Ground before this
-    change: `<probe>/.venv/bin/python -m pip install sqlite-vec>=0.1.9
-    apsw>=3.51 chonkie>=1.7 fastmcp>=2.0` (the plugin's actual
-    ``requirements.txt``) resolves and installs cleanly with plain pip,
-    including ``sqlite-vec`` (wheel-only, no sdist — the one dependency
-    most likely to need a resolver's special handling; it did not).
-
-    Returns ``(venv_python, None)`` on success (the venv's interpreter path,
-    for the mcp-registration step to point spawn at), or ``(None, error)`` on
-    failure. Network is scoped to THIS install-time step only; the venv
-    itself carries no network policy of its own — that governs SPAWN, which
-    this step never touches (unchanged from the ``uv``-based version:
-    spawn execs the frozen absolute interpreter path directly, #3060).
-    """
-    from reyn.security.sandbox import SandboxPolicy, get_default_backend
-
-    backend = ctx.sandbox_backend or get_default_backend(ctx.sandbox_config)
-    venv_dir = plugin_root / ".venv"
-    # pip's default cache dir is OUTSIDE the sandbox write_paths (scoped
-    # tight to plugin_root), so under an enforcing backend (Seatbelt/
-    # Landlock) pip's default cache write is denied and materialise fails
-    # with "Operation not permitted" — same reasoning that applied to uv's
-    # cache-dir before this change. Point the cache INSIDE plugin_root (within
-    # write_paths) via ``--cache-dir`` — a CLI arg, so no os.environ mutation
-    # and no broad ambient-cache grant.
-    cache_dir = plugin_root / ".pip-cache"
-    # pip additionally unpacks wheels into `tempfile.mkdtemp()` (Python's
-    # tempfile module, which consults `TMPDIR`/`TEMP`/`TMP` before falling
-    # back to system `/tmp`) during install — a WRITE that, unlike the cache
-    # dir above, is not steerable via a pip CLI flag. Left at its default,
-    # that write lands OUTSIDE `write_paths` (system `/tmp`, not
-    # plugin_root), so an enforcing backend denies it exactly like the
-    # cache-dir issue this comment already documents. Give it its own
-    # dedicated dir INSIDE plugin_root and point `TMPDIR` there (narrowly
-    # scoped, not a broad ambient-`/tmp` grant).
-    tmp_dir = plugin_root / ".pip-tmp"
-    tmp_dir.mkdir(parents=True, exist_ok=True)
-    policy = SandboxPolicy(
-        network=True,
-        write_paths=[str(plugin_root)],
-        timeout_seconds=300,
-        allow_subprocess=True,
-        env_passthrough=[
-            "HOME", "PATH",
-            "HTTPS_PROXY", "HTTP_PROXY", "NO_PROXY",
-            "https_proxy", "http_proxy", "no_proxy",
-            "SSL_CERT_FILE", "SSL_CERT_DIR",
-            "PIP_INDEX_URL",
-            "TMPDIR",
-        ],
-    )
-    # `env_passthrough` only copies EXISTING os.environ values through to the
-    # sandboxed child (see `resolve_passthrough_env`) — there is no
-    # backend.run() parameter to inject a NEW env value, so scoping TMPDIR to
-    # this install requires briefly setting it in THIS process's environ,
-    # restored in `finally`. This mutates process-global state for the
-    # duration of the two subprocess calls below; concurrent
-    # `_materialise_deps` calls for a DIFFERENT plugin in the SAME process
-    # would race on this value (a pre-existing class of risk this module
-    # already carries — e.g. `plugins_root()`'s HOME-relative resolution
-    # makes the same single-flight-per-process assumption).
-    previous_tmpdir = os.environ.get("TMPDIR")
-    os.environ["TMPDIR"] = str(tmp_dir)
-    try:
-        try:
-            venv_result = await backend.run(
-                [sys.executable, "-m", "venv", str(venv_dir)],
-                policy, cwd=str(plugin_root),
-            )
-        except Exception as exc:  # noqa: BLE001 — surface as a materialise error, not a crash
-            return None, f"venv creation error: {exc}"
-        if venv_result.returncode != 0:
-            detail = venv_result.stderr.decode("utf-8", errors="replace").strip()
-            # `python -m venv` needs `ensurepip`, which some distros (Debian/
-            # Ubuntu's bare `python3`) split into a separate `python3-venv`
-            # package — the one narrow case this pip-based materialise trades
-            # in for dropping the `uv` dependency (#3202 symptom 2). CPython's
-            # own venv module already names the missing package in its stderr
-            # ("ensurepip is not available ... apt install python3.X-venv"),
-            # so surface a decision-enabling hint on top of the raw detail
-            # rather than leaving the operator to parse a stack trace.
-            if "ensurepip" in detail.lower():
-                return None, (
-                    f"venv creation failed (exit {venv_result.returncode}): {detail}\n"
-                    "Hint: this Python may be missing ensurepip. On Debian/"
-                    "Ubuntu, install the matching venv package (e.g. "
-                    "`apt install python3-venv`) and retry."
-                )
-            return None, f"venv creation failed (exit {venv_result.returncode}): {detail}"
-
-        # Discover the ACTUAL interpreter (see ``_venv_interpreter_path``'s
-        # docstring) — this is the ONE place the venv/OS layout is figured
-        # out, before either the pip install below or the MCP spawn rewrite
-        # use the result.
-        try:
-            venv_python = _venv_interpreter_path(venv_dir)
-        except FileNotFoundError as exc:
-            return None, str(exc)
-
-        try:
-            install_result = await backend.run(
-                [str(venv_python), "-m", "pip", "install",
-                 "--cache-dir", str(cache_dir), "-r", str(requirements)],
-                policy,
-                cwd=str(plugin_root),
-            )
-        except Exception as exc:  # noqa: BLE001
-            return None, f"pip install error: {exc}"
-        if install_result.returncode != 0:
-            detail = install_result.stderr.decode("utf-8", errors="replace").strip()
-            return None, f"pip install failed (exit {install_result.returncode}): {detail}"
-        return venv_python, None
-    finally:
-        if previous_tmpdir is None:
-            os.environ.pop("TMPDIR", None)
-        else:
-            os.environ["TMPDIR"] = previous_tmpdir
-
-
 def _mcp_config_path(project_root: Path) -> Path:
     return project_root / ".reyn" / "config" / "mcp.yaml"
 
 
-def _build_mcp_entries(mcp_json: Path, venv_python: "Path | None") -> dict:
+def _build_mcp_entries(mcp_json: Path) -> dict:
     """Parse the plugin's root ``.mcp.json`` (standard shape,
     ``{"mcpServers": {"<name>": {"command", "args", "env"?, "url"?}}}``)
     into reyn's ``mcp.servers.<name>`` entry shape.
 
-    When ``venv_python`` is set and a server's ``command`` is exactly
-    ``"python"``/``"python3"``, the command is rewritten to the
-    materialised venv's interpreter — the spawn-is-network-free swap
-    (§3.11's "the registered spawn command points at that ready env's
-    interpreter")."""
+    ``command`` is registered AS-IS (#3209 — register-only redesign: no
+    venv-interpreter rewrite here any more). A plugin whose server needs a
+    Python env other than the ambient ``python``/``python3`` on ``PATH``
+    names an absolute interpreter path directly in its ``.mcp.json`` (per
+    its skill's SETUP instructions — the operator/LLM creates that venv
+    themselves), or the operator edits the registered entry's ``command``
+    afterward."""
     try:
         raw = json.loads(mcp_json.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
@@ -650,12 +435,9 @@ def _build_mcp_entries(mcp_json: Path, venv_python: "Path | None") -> dict:
         if "url" in spec:
             entry: dict = {"type": spec.get("type", "http"), "url": spec["url"]}
         else:
-            command = str(spec.get("command", ""))
-            if venv_python is not None and command in ("python", "python3"):
-                command = str(venv_python)
             entry = {
                 "type": "stdio",
-                "command": command,
+                "command": str(spec.get("command", "")),
                 "args": [str(a) for a in spec.get("args", [])],
             }
         env = spec.get("env")
@@ -666,7 +448,7 @@ def _build_mcp_entries(mcp_json: Path, venv_python: "Path | None") -> dict:
 
 
 async def _register_mcp(
-    plugin_root: Path, plugin_name: str, venv_python: "Path | None",
+    plugin_root: Path, plugin_name: str,
     ctx: OpContext, project_root: Path,
 ) -> list[str]:
     """Register every server declared in the plugin's root ``.mcp.json``
@@ -677,7 +459,7 @@ async def _register_mcp(
     on the mcp.yaml path (#3088), mirroring the sibling skill/pipeline
     register steps' own config-write gates."""
     mcp_json = plugin_root / ".mcp.json"
-    entries = _build_mcp_entries(mcp_json, venv_python)
+    entries = _build_mcp_entries(mcp_json)
     if not entries:
         return []
 
@@ -889,57 +671,7 @@ async def handle(op: PluginInstallIROp, ctx: OpContext) -> dict:
     token_ctx = PluginTokenContext(plugin_root=plugin_root, project_dir=project_root)
     _expand_plugin_files(plugin_root, token_ctx)
 
-    # ── 7. Materialise deps (§3.11 — install-time network, network-free spawn) ─
-    venv_python: "Path | None" = None
-    requirements = plugin_root / "requirements.txt"
-    if requirements.is_file():
-        if ctx.permission_resolver is not None:
-            # #3048: derive the pypi.org dep-fetch approval from the
-            # install's OWN write-approval (gate 1, just above) instead of
-            # raising a SEPARATE interactive http.get prompt here. Gate 1
-            # already required (and received) explicit operator/config
-            # consent for THIS install; materialising the plugin's declared
-            # deps from the standard package index is intrinsic to
-            # "install this plugin", not a distinct capability the operator
-            # is separately asked about. Without this, a codeact/headless
-            # dispatch (a bus is wired but nothing answers it) awaits this
-            # prompt indefinitely and gets guillotined by the caller's
-            # compute-budget timeout — #3048's confirmed root cause.
-            #
-            # SECURITY (confused-deputy guard): the derived grant is scoped
-            # to EXACTLY "pypi.org" — the fixed index ``uv pip install``
-            # resolves against regardless of what the plugin's
-            # requirements.txt names — never a blanket http.get grant. A
-            # plugin's install approval must not silently authorise
-            # fetching from an arbitrary host; the config-deny and
-            # sandbox-network-veto tiers inside require_http_get (checked
-            # BEFORE the persisted-approval tier this derive feeds) still
-            # apply on top of the derive, so an operator/config-level
-            # "http.get.pypi.org: deny" or a network-disabled sandbox
-            # policy still blocks materialisation.
-            ctx.permission_resolver.session_approve_host(
-                "pypi.org", ctx.actor, kind="http.get",
-            )
-            sandbox = _sandbox_policy_from_ctx(ctx)
-            await ctx.permission_resolver.require_http_get(
-                ctx.permission_decl, "pypi.org", ctx.intervention_bus, ctx.actor,
-                sandbox_policy=sandbox,
-            )
-        venv_python, materialise_err = await _materialise_deps(plugin_root, requirements, ctx)
-        if materialise_err:
-            # Leave the _install_state.json marker in place — the next
-            # plugin_install call's reconcile pass (step 0) rolls this
-            # partial install back.
-            return {
-                "kind": "plugin_install", "status": "error", "name": safe_name,
-                "error": f"dependency materialisation failed: {materialise_err}",
-            }
-    ctx.events.emit(
-        "plugin_install_deps_materialised", name=safe_name,
-        materialised=venv_python is not None,
-    )
-
-    # ── 8. Register capabilities ──────────────────────────────────────────────
+    # ── 7. Register capabilities (#3209: register-only — no dep materialise) ──
     manifest_path = manifest_path_for(plugin_root)
     reloaded_manifest = load_plugin_manifest(plugin_root) if manifest_path.exists() else manifest
     registered: dict[str, list] = {"mcp": [], "pipelines": [], "skills": []}
@@ -947,7 +679,7 @@ async def handle(op: PluginInstallIROp, ctx: OpContext) -> dict:
     for cap in reloaded_manifest.capabilities:
         if cap.kind == "mcp":
             registered["mcp"] = await _register_mcp(
-                plugin_root, safe_name, venv_python, ctx, project_root,
+                plugin_root, safe_name, ctx, project_root,
             )
         elif cap.kind == "pipelines":
             pipelines_dir = plugin_root / "pipelines"
@@ -978,7 +710,7 @@ async def handle(op: PluginInstallIROp, ctx: OpContext) -> dict:
 
     ctx.events.emit("plugin_install_registered", name=safe_name, registered=registered)
 
-    # ── 9. Complete ────────────────────────────────────────────────────────────
+    # ── 8. Complete ────────────────────────────────────────────────────────────
     _clear_install_state(plugin_root)
     _write_completed_kind(plugin_root, source_kind)
     ctx.events.emit("plugin_install_completed", name=safe_name)

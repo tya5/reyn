@@ -750,7 +750,7 @@ def test_rag_plugin_mcp_json_disables_fastmcp_telemetry_env() -> None:
     )
     assert mcp_json.exists(), f"builtin rag plugin .mcp.json not found at {mcp_json}"
 
-    entries = _build_mcp_entries(mcp_json, venv_python=None)
+    entries = _build_mcp_entries(mcp_json)
     assert set(entries) == {"reyn_chunker", "reyn_vector_store"}, (
         f"unexpected server set in .mcp.json: {sorted(entries)}"
     )

@@ -29,24 +29,33 @@ venv, and probes it for:
 4. **#2913 builtin body reads (kept, LIVE, unaffected by 0061)** —
    ``read_builtin_body_bytes`` on a real skill/pipeline body, plus the
    least-privilege negative (an in-package ``.py`` module returns ``None``).
-5. **ADR 0064 P5 builtin ``rag`` PLUGIN install + spawn under a pipx-shaped
-   PATH (STRICT)** — ``plugin_install(source={"kind": "builtin", "name":
-   "rag"})`` against a wheel-only reyn install must copy the plugin,
-   materialise its dependencies into a per-plugin venv (real ``uv``), and
-   register its mcp servers with the spawn command rewritten to that venv's
-   own interpreter; the registered chunker server must then actually start
-   and serve a real tool call when the ambient ``python3`` is NOT reyn's
-   interpreter. This supersedes the retired #2972
-   ``reyn-rag-chunker``/``reyn-rag-vector-store`` console scripts (ADR 0064
-   §4: "no console-scripts ... spawn is network-free by construction") — the
-   plugin's absolute-path-to-materialised-venv spawn command is now what
-   makes the arc work under ``pipx install reyn``, a non-activated venv, or
-   any environment whose ambient ``python3`` differs from reyn's own, and
-   this is the only check in this file that can witness it: every other
-   check runs the wheel through an interpreter that already resolves reyn
-   (``venv_python`` / ``sys.executable``), and a normal pytest job's ambient
-   ``python3`` trivially IS the job's own (reyn-having) interpreter, so
-   "ambient python3 == reyn's interpreter" can never be falsified there.
+5. **ADR 0064 P5 / #3209 builtin ``rag`` PLUGIN install = REGISTER-ONLY
+   (STRICT)** — ``plugin_install(source={"kind": "builtin", "name":
+   "rag"})`` against a wheel-only reyn install must copy + register the
+   plugin ONLY: no per-plugin venv materialised, and the registered mcp
+   servers' spawn ``command`` is exactly what the plugin's own ``.mcp.json``
+   names (register-only, ADR 0064 §3.11b — the pre-#3209 design instead
+   materialised a venv and rewrote the command to point at it; that
+   turnkey-install guarantee was explicitly traded away for skill-driven,
+   user-managed venvs, architect firm point 3). TWO further legs prove the
+   #3060 by-construction trade actually holds under the new contract:
+   - **fail-fast (negative witness)**: spawning the registered command
+     against an interpreter with NONE of the plugin's own deps installed
+     (the operator skipped the skill's venv-setup step) fails immediately
+     with a clear ``ModuleNotFoundError`` — never a hang, never a runtime
+     fetch attempt.
+   - **deps-present (positive witness)**: spawning the SAME registered
+     command against a venv that DOES have the plugin's ``requirements.txt``
+     deps installed (pip-installed here, playing the operator/LLM's
+     skill-driven setup role) actually serves a real tool call — proving the
+     skill-driven path this redesign moved the turnkey guarantee onto really
+     works, not just that install itself completes. This supersedes the
+     retired #2972 ``reyn-rag-chunker``/``reyn-rag-vector-store`` console
+     scripts (ADR 0064 §4: "no console-scripts") and is the only check in
+     this file that spawns the rag plugin's own scripts at all — every other
+     check runs the wheel through an interpreter that already resolves reyn,
+     which the rag scripts (standalone, ``import reyn`` = 0) never needed
+     anyway.
 
 Exits 0 iff every check passes; exits non-zero (with a PASS/FAIL line per
 check) on the first structural failure or any assertion failure. Cleans up
@@ -128,29 +137,32 @@ _PLUGIN_INSTALL_PROBE_SCRIPT = REPO_ROOT / "scripts" / "wheel_plugin_install_pro
 
 
 def _check_builtin_rag_plugin_install(wheel_path: Path, tmp_root: Path) -> bool:
-    """ADR 0064 P5 check: the builtin ``rag`` plugin installs (real
-    ``plugin_install``) and spawns via its own materialised per-plugin venv,
-    in a PATH shaped like a ``pipx install reyn`` environment (ambient
-    ``python3`` is not reyn's interpreter).
+    """ADR 0064 P5 / #3209 check: the builtin ``rag`` plugin (a) installs
+    REGISTER-ONLY (no venv materialised, spawn command registered AS-IS),
+    (b) fails fast with a clear error — no network, no runtime fetch — when
+    the spawn interpreter lacks the plugin's own deps, and (c) actually
+    serves a real tool call once the operator/LLM has created a venv WITH
+    those deps and pointed the registered command at it (the skill-driven
+    setup path #3209 moved this responsibility onto).
 
-    A clean venv WITHOUT reyn (``with_pip=False`` — no wheel, no ``-e``,
-    nothing) is built and its ``bin/`` dir is prepended to the SPAWNED
-    server's ``PATH``, manufacturing "ambient python3 differs from reyn's own
-    interpreter" deterministically. That is why this is the only check here
-    that can witness the property: every other one runs the wheel through an
-    interpreter that already resolves reyn.
+    THREE throwaway venvs:
+      * ``venv-rag-plugin`` — wheel-only reyn install; runs the committed
+        probe (this process needs only reyn + yaml to call ``plugin_install``
+        — fastmcp is a core reyn dep, so the MCP client call below works
+        from here too).
+      * ``venv-no-deps`` — a BARE venv (``with_pip=False``): no fastmcp, no
+        chonkie, nothing. Its interpreter is what the fail-fast leg spawns
+        the registered chunker command against — deterministically
+        reproducing "the operator skipped the skill's venv-setup step".
+      * ``venv-rag-deps`` — a REAL venv with the rag plugin's own
+        ``requirements.txt`` (sqlite-vec/apsw/chonkie/fastmcp) pip-installed
+        into it (real network — this IS the skill-driven setup step,
+        performed here by the harness playing the operator/LLM's role) —
+        what the deps-present leg points the registered command at.
 
-    Needs a SECOND venv with the wheel installed WITHOUT the ``builtin-rag``
-    extra (that extra is dev/test-only now, ADR 0064 P5) — ``plugin_install``
-    itself materialises chonkie/apsw/sqlite-vec/fastmcp into a THIRD,
-    per-plugin venv via real ``uv venv``/``uv pip install`` (needs ``uv`` on
-    PATH and real network — the install-time fetch ADR 0064 §3.11
-    describes; measured ~60s, affordable against the job's 5-minute budget).
-
-    The real ``plugin_install`` call + MCP client call live in the committed
+    The real ``plugin_install`` call + both spawn legs live in the committed
     ``scripts/wheel_plugin_install_probe.py``, run BY THE WHEEL-ONLY venv's
-    interpreter (this process — the CI job python — has neither reyn nor
-    fastmcp). Returns True iff every check inside the probe passed.
+    interpreter. Returns True iff every check inside the probe passed.
     """
     rag_venv = tmp_root / "venv-rag-plugin"
     venv.EnvBuilder(with_pip=True, clear=True).create(str(rag_venv))
@@ -161,16 +173,37 @@ def _check_builtin_rag_plugin_install(wheel_path: Path, tmp_root: Path) -> bool:
     if not rag_python.exists():  # pragma: no cover - Windows layout
         rag_python = rag_bin / "python.exe"
 
-    # No [builtin-rag] extra here — the plugin materialises its OWN deps at
-    # install time; this venv only needs reyn itself (+ yaml, a core dep) to
-    # run the plugin_install op.
+    # No [builtin-rag] extra here — register-only install never provisions
+    # the plugin's own deps (#3209); this venv only needs reyn itself
+    # (+ yaml, a core dep) to run the plugin_install op.
     _run([str(rag_python), "-m", "pip", "install", "--quiet", str(wheel_path)])
 
-    clean_venv = tmp_root / "venv-no-reyn"
-    venv.EnvBuilder(with_pip=False, clear=True).create(str(clean_venv))
-    clean_bin = clean_venv / "bin"
-    if not clean_bin.exists():  # pragma: no cover - Windows layout
-        clean_bin = clean_venv / "Scripts"
+    # A BARE venv — no third-party packages at all — for the fail-fast leg.
+    no_deps_venv = tmp_root / "venv-no-deps"
+    venv.EnvBuilder(with_pip=False, clear=True).create(str(no_deps_venv))
+    no_deps_bin = no_deps_venv / "bin"
+    if not no_deps_bin.exists():  # pragma: no cover - Windows layout
+        no_deps_bin = no_deps_venv / "Scripts"
+
+    # A REAL venv with the plugin's own requirements.txt installed — the
+    # skill-driven setup step (#3209 moved this off plugin_install onto the
+    # operator/LLM), done here by the harness so the deps-present leg has a
+    # ready interpreter to point the registered command at.
+    rag_deps_venv = tmp_root / "venv-rag-deps"
+    venv.EnvBuilder(with_pip=True, clear=True).create(str(rag_deps_venv))
+    rag_deps_bin = rag_deps_venv / "bin"
+    if not rag_deps_bin.exists():  # pragma: no cover - Windows layout
+        rag_deps_bin = rag_deps_venv / "Scripts"
+    rag_deps_python = rag_deps_bin / "python"
+    if not rag_deps_python.exists():  # pragma: no cover - Windows layout
+        rag_deps_python = rag_deps_bin / "python.exe"
+    rag_requirements = (
+        REPO_ROOT / "src" / "reyn" / "builtin" / "plugins" / "rag" / "requirements.txt"
+    )
+    _run([
+        str(rag_deps_python), "-m", "pip", "install", "--quiet",
+        "-r", str(rag_requirements),
+    ])
 
     reyn_home = tmp_root / "reyn-home"
     reyn_home.mkdir(parents=True, exist_ok=True)
@@ -178,7 +211,8 @@ def _check_builtin_rag_plugin_install(wheel_path: Path, tmp_root: Path) -> bool:
     probe_env = {
         **os.environ,
         "REYN_HOME": str(reyn_home),
-        "REYN_CLEAN_BIN": str(clean_bin),
+        "REYN_NO_DEPS_BIN": str(no_deps_bin),
+        "REYN_RAG_DEPS_PYTHON": str(rag_deps_python),
     }
     probe_env.pop("PYTHONPATH", None)
     result = subprocess.run(
@@ -255,19 +289,20 @@ def main() -> int:
             print(f"[FAIL] wheel reachability parity gate FAILED (exit {result.returncode})")
             return 1
 
-        # 7. ADR 0064 P5 check (STRICT). See the module docstring check 5 and
-        # _check_builtin_rag_plugin_install for why THIS is the one check in
-        # the file that can witness ambient-python3-independence.
+        # 7. ADR 0064 P5 / #3209 check (STRICT). See the module docstring
+        # check 5 and _check_builtin_rag_plugin_install's docstring for the
+        # register-only + fail-fast + deps-present three-leg contract.
         if not _check_builtin_rag_plugin_install(wheel_path, tmp_dir):
             print(
-                "[FAIL] ADR 0064 P5 builtin rag plugin install: plugin_install "
-                "did not install + spawn the rag plugin's chunker server under "
-                "a pipx-shaped PATH -- the builtin RAG arc is broken for any "
-                "install whose ambient python3 is not reyn's interpreter."
+                "[FAIL] ADR 0064 P5 / #3209 builtin rag plugin install: the "
+                "register-only install contract, its fail-fast (no-deps) "
+                "leg, or its deps-present (real tool call) leg did not hold "
+                "-- the builtin RAG arc's #3209 redesign is broken."
             )
             return 1
         print(
-            "[PASS] ADR 0064 P5 builtin rag plugin install + spawn under a pipx-shaped PATH"
+            "[PASS] ADR 0064 P5 / #3209 builtin rag plugin install: "
+            "register-only + fail-fast + deps-present all hold"
         )
 
         print("[PASS] wheel reachability parity gate: all checks green")

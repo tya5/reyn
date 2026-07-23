@@ -22,22 +22,20 @@ Tests:
      requires a per-install operator-trust decision that a persistent
      http.get / web.fetch approval does NOT satisfy. Strip it → PermissionError,
      nothing fetched/written. Operator YES → proceeds; operator NO → denied.
-  6. network-free spawn (§3.11): a plugin with a requirements.txt + an mcp
-     capability materialises a per-plugin venv at install time; the registered
-     mcp spawn command points at that venv's interpreter (no spawn-time fetch).
-  7. pypi dep-fetch gate (#3048): the dep-fetch approval for pypi.org is
-     DERIVED from the install's own gate-1 write-approval (not a separate
-     interactive prompt) — config-tier deny still blocks it; gate-1 itself
-     being denied still blocks it (execution never reaches the derive).
-  8. #3048 seal: require_http_get(host) with a bus wired but unanswered
+  6. register-only (#3209): a plugin with an mcp capability registers its
+     ``.mcp.json`` server ``command`` AS-IS — no dep materialise, no venv,
+     no command rewrite. A ``requirements.txt`` at the plugin root is inert
+     data install never reads.
+  7. #3048 seal: require_http_get(host) with a bus wired but unanswered
      awaits indefinitely (confirmed root cause of the codeact-30s-budget
      kill — a never-answered prompt, not a slow download or exhaustion).
-  9. #3048 fix, load-bearing: a full plugin_install with only gate-1
-     approved + an unanswering bus completes without hanging and WITHOUT
-     raising a separate pypi.org prompt (strip the derive → this times out).
-  10. #3048 security witness: the derive is scoped to EXACTLY pypi.org —
-     an unrelated host (evil.com) is still gated (not a blanket http.get
-     grant — confused-deputy guard).
+     Tests the general PermissionResolver mechanism directly (no longer a
+     plugin_install call path since #3209's register-only redesign removed
+     plugin_install's own pypi.org derive caller).
+  8. #3048 security witness: ``session_approve_host`` derives a grant scoped
+     to EXACTLY the named host — an unrelated host (evil.com) is still
+     gated (not a blanket http.get grant — confused-deputy guard). Tests
+     the general PermissionResolver mechanism directly, same reason as #7.
 
 Real PermissionResolver + OpContext + a real RequestBus-compatible Fake
 (scriptable answers) throughout (no mocks). HOME is monkeypatched per-test so
@@ -58,8 +56,6 @@ import yaml
 from reyn.core.op_runtime.context import OpContext
 from reyn.core.op_runtime.plugin_install import (
     _build_mcp_entries,
-    _venv_interpreter_path,
-    _venv_interpreter_path_discover,
     _write_install_state,
     plugins_root,
     reconcile_plugin_installs,
@@ -602,41 +598,34 @@ def test_run_code_trust_choices_offer_no_persist_option():
     assert ALWAYS not in ids and NEVER not in ids, "run-code trust must NOT offer a persist option"
 
 
-# ── Test 6: network-free spawn (materialise → venv interpreter, §3.11) ────────
-#
-# #3202 symptom 2: materialise no longer depends on `uv` — `<sys.executable>
-# -m venv` + `<venv_python> -m pip install` (both bundled with reyn's own
-# CPython), so these tests are NOT gated on a `uv` binary being on PATH.
+# ── Test 6: register-only (#3209) — no materialise, no venv, no rewrite ───────
 
 
 @pytest.mark.asyncio
-async def test_materialise_deps_rewrites_mcp_spawn_to_venv_interpreter(tmp_path, monkeypatch):
-    """Tier 2: §3.11 headline property — a plugin with a requirements.txt + an
-    mcp capability (command: python) materialises a per-plugin venv at INSTALL
-    time, and the registered mcp spawn command is rewritten to that venv's
-    interpreter — so spawn needs no network (spawn execs the frozen absolute
-    interpreter path directly; it never re-invokes pip).
-
-    Uses an EMPTY requirements.txt so `<sys.executable> -m venv` + `<venv_python>
-    -m pip install -r` run fully offline (no package fetch) yet still exercise
-    the real materialise + command-rewrite path. RED if the registered command
-    stays 'python' (spawn would then depend on ambient env / fetch)."""
+async def test_plugin_install_register_only_no_venv_no_rewrite(tmp_path, monkeypatch):
+    """Tier 2: #3209 headline property — a plugin with a requirements.txt AT
+    ITS ROOT + an mcp capability (command: python) is installed WITHOUT any
+    venv/materialise step: no ``.venv`` directory is created under the
+    plugin's global copy, and the registered mcp spawn ``command`` is the
+    plugin's OWN ``.mcp.json`` value, unrewritten. RED if a ``.venv`` appears
+    or the registered command differs from the literal ``.mcp.json`` value
+    — either would mean plugin_install still touches dependency provisioning,
+    which #3209 moved entirely to skill-driven, user-managed venvs."""
     home = tmp_path / "home"
     home.mkdir()
     monkeypatch.setenv("HOME", str(home))
 
-    # Build a plugin: manifest(mcp) + root .mcp.json(command:python) + empty reqs.
-    src = tmp_path / "src" / "venvplugin"
+    src = tmp_path / "src" / "registeronly"
     (src / ".reyn-plugin").mkdir(parents=True)
     (src / ".reyn-plugin" / "plugin.json").write_text(
-        json.dumps({"name": "venvplugin", "version": "0.1.0", "capabilities": [{"kind": "mcp"}]}),
+        json.dumps({"name": "registeronly", "version": "0.1.0", "capabilities": [{"kind": "mcp"}]}),
         encoding="utf-8",
     )
     (src / ".mcp.json").write_text(
         json.dumps({"mcpServers": {"srv": {"command": "python", "args": ["-m", "srv"]}}}),
         encoding="utf-8",
     )
-    (src / "requirements.txt").write_text("", encoding="utf-8")  # empty → offline materialise
+    (src / "requirements.txt").write_text("sqlite-vec>=0.1.9\napsw>=3.51\n", encoding="utf-8")
 
     ctx = _make_ctx(tmp_path, approve_all_http=True)
     op = PluginInstallIROp(kind="plugin_install", source={"kind": "local", "path": str(src)})
@@ -644,121 +633,107 @@ async def test_materialise_deps_rewrites_mcp_spawn_to_venv_interpreter(tmp_path,
 
     assert result["status"] == "installed", f"install failed: {result}"
 
-    venv_python = _venv_interpreter_path(plugins_root() / "venvplugin" / ".venv")
-    assert venv_python.exists(), "per-plugin venv interpreter was not materialised at install time"
+    plugin_root = plugins_root() / "registeronly"
+    assert (plugin_root / "requirements.txt").exists(), "requirements.txt was not copied"
+    assert not (plugin_root / ".venv").exists(), (
+        "a .venv was materialised — plugin_install must be register-only (#3209), "
+        "never provision external dependencies"
+    )
 
     mcp_yaml = ctx.workspace.base_dir / ".reyn" / "config" / "mcp.yaml"
     servers = yaml.safe_load(mcp_yaml.read_text(encoding="utf-8"))["mcp"]["servers"]
-    assert servers["srv"]["command"] == str(venv_python), (
-        "registered mcp spawn command was not rewritten to the venv interpreter "
-        "(spawn would not be network-free)"
+    assert servers["srv"]["command"] == "python", (
+        "registered mcp command was rewritten away from the plugin's own "
+        ".mcp.json value — #3209 register-only means AS-IS registration"
     )
-    assert servers["srv"]["plugin_id"] == "venvplugin"
+    assert servers["srv"]["plugin_id"] == "registeronly"
+
+    # No audit event emitted for a materialise step that no longer exists.
+    audit_event_names = [call[0][0] for call in ctx.events.calls if call[0]]
+    assert "plugin_install_deps_materialised" not in audit_event_names, (
+        "a materialise audit-event fired despite the materialise step being removed (#3209)"
+    )
 
 
-# ── Test 6b: interpreter resolution across venv layouts (#3202 symptom 1) ────
+@pytest.mark.asyncio
+async def test_plugin_install_never_reads_requirements_txt_content(tmp_path, monkeypatch):
+    """Tier 2: #3209 clean-break witness — a requirements.txt with content
+    that would fail a real pip install (a malformed/unresolvable pin) does
+    NOT fail plugin_install: the file is copied verbatim as inert data,
+    never parsed or executed by the install op. RED if plugin_install still
+    attempts to interpret/install it (the exact foreign responsibility
+    #3209 removes)."""
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    src = tmp_path / "src" / "badreqs"
+    (src / ".reyn-plugin").mkdir(parents=True)
+    (src / ".reyn-plugin" / "plugin.json").write_text(
+        json.dumps({"name": "badreqs", "version": "0.1.0", "capabilities": []}),
+        encoding="utf-8",
+    )
+    (src / "requirements.txt").write_text(
+        "this-package-definitely-does-not-exist-anywhere===999.999.999\n", encoding="utf-8",
+    )
+
+    ctx = _make_ctx(tmp_path)
+    op = PluginInstallIROp(kind="plugin_install", source={"kind": "local", "path": str(src)})
+    result = await install_handle(op, ctx)
+
+    assert result["status"] == "installed", (
+        f"install failed on an unresolvable requirements.txt — plugin_install "
+        f"must never attempt to resolve/install it (#3209): {result}"
+    )
+    plugin_root = plugins_root() / "badreqs"
+    assert not (plugin_root / ".venv").exists()
+
+
+# ── Test 6b: fail-fast on a missing/incomplete venv at MCP spawn time ─────────
 #
-# `_venv_interpreter_path` resolves the interpreter via stdlib `sysconfig`'s
-# "venv" install scheme (no hardcoded bin/Scripts branch, no subprocess).
-# `_venv_interpreter_path_discover` is its on-disk-existence FALLBACK, used
-# only if the sysconfig computation's result doesn't actually exist — these
-# witnesses build the REAL file layout on disk (a Windows-shaped venv can be
-# reproduced on any host by just creating the `Scripts/python.exe` file)
-# instead of monkeypatching `os.name`/`sys.platform`.
+# #3060 by-construction requirement, preserved across #3209: a server whose
+# registered command names a venv interpreter that was never created (the
+# operator skipped the skill's venv-setup step) fails at SPAWN with a clear
+# OS-level error — plugin_install/mcp spawn never falls back to a runtime
+# fetch to paper over it.
 
 
-def test_venv_interpreter_path_resolves_real_venv_via_sysconfig(tmp_path):
-    """Tier 1: `_venv_interpreter_path` against a REAL `python -m venv`
-    (this repo's own interpreter, no network) returns a path that actually
-    exists and is executable — the sysconfig-computed primary mechanism,
-    not the discovery fallback, since sysconfig has no reason to fail here.
-    RED if sysconfig computes a nonexistent path for a real venv."""
-    venv_dir = tmp_path / ".venv"
-    subprocess.run(
-        [sys.executable, "-m", "venv", str(venv_dir)],
-        check=True, capture_output=True,
+@pytest.mark.asyncio
+async def test_registered_command_pointing_at_missing_venv_fails_fast_no_fetch(tmp_path):
+    """Tier 2: a plugin's ``.mcp.json`` naming an absolute venv-python path
+    that does not exist on disk is registered AS-IS (register-only, #3209);
+    actually spawning it (via ``probe_mcp_server``, the same probe
+    ``_register_mcp`` itself uses) fails with a clear, non-network error —
+    never a silent hang or an attempted runtime package fetch. RED if the
+    probe raises a network-fetch-shaped error, or hangs, instead of a plain
+    'no such file' / spawn failure."""
+    from reyn.core.op_runtime.mcp_install import probe_mcp_server
+
+    missing_venv_python = tmp_path / "nonexistent-venv" / "bin" / "python"
+    assert not missing_venv_python.exists()
+
+    entry = {
+        "type": "stdio", "command": str(missing_venv_python), "args": ["-m", "srv"],
+    }
+    probe_err = await probe_mcp_server("srv", entry, agent_id=None, cancel_event=None)
+
+    assert probe_err is not None, (
+        "expected a fail-fast probe error for a missing venv interpreter, got success"
     )
-
-    resolved = _venv_interpreter_path(venv_dir)
-
-    assert resolved.exists(), f"sysconfig-resolved interpreter does not exist: {resolved}"
-    probe = subprocess.run(
-        [str(resolved), "-c", "print('alive')"], capture_output=True, text=True,
-    )
-    assert probe.returncode == 0 and "alive" in probe.stdout
-
-
-def test_venv_interpreter_path_discover_finds_posix_layout(tmp_path):
-    """Tier 1: given a venv dir with ONLY the POSIX layout
-    (`<venv>/bin/python`) present on disk, the fallback discovery helper
-    returns that file. RED if it returns a Windows-shaped path or raises."""
-    venv_dir = tmp_path / ".venv"
-    posix_python = venv_dir / "bin" / "python"
-    posix_python.parent.mkdir(parents=True)
-    posix_python.write_bytes(b"")
-
-    assert _venv_interpreter_path_discover(venv_dir) == posix_python
-
-
-def test_venv_interpreter_path_discover_finds_windows_layout(tmp_path):
-    """Tier 1: given a venv dir with ONLY the Windows layout
-    (`<venv>/Scripts/python.exe`) present on disk — reproducing a real
-    Windows venv without needing a Windows host — the fallback discovery
-    helper returns THAT file, not the POSIX `bin/python` construction that
-    caused #3202 symptom 1."""
-    venv_dir = tmp_path / ".venv"
-    windows_python = venv_dir / "Scripts" / "python.exe"
-    windows_python.parent.mkdir(parents=True)
-    windows_python.write_bytes(b"")
-
-    assert _venv_interpreter_path_discover(venv_dir) == windows_python
-
-
-def test_venv_interpreter_path_discover_raises_when_neither_layout_exists(tmp_path):
-    """Tier 1: an empty/nonexistent venv dir (neither layout materialised —
-    evidence venv creation did not actually produce an interpreter) raises
-    `FileNotFoundError` explicitly rather than silently returning a
-    nonexistent path for the caller to fail on later without context."""
-    venv_dir = tmp_path / ".venv"
-    venv_dir.mkdir()
-
-    with pytest.raises(FileNotFoundError):
-        _venv_interpreter_path_discover(venv_dir)
-
-
-def test_venv_interpreter_path_falls_back_to_discovery_when_sysconfig_path_absent(
-    tmp_path,
-):
-    """Tier 1: axis-4-adjacent — if the sysconfig-computed path does NOT
-    exist on disk (the pathological case the fallback exists for), and only
-    a DIFFERENT layout's file is actually present, `_venv_interpreter_path`
-    still returns a real, existing interpreter via the discovery fallback
-    rather than the (nonexistent) sysconfig-computed one. Reproduces the
-    fallback path deterministically by placing ONLY the Windows layout on
-    disk — sysconfig on this (non-Windows) test runner computes the POSIX
-    path, which will not exist, forcing the fallback branch."""
-    venv_dir = tmp_path / ".venv"
-    windows_python = venv_dir / "Scripts" / "python.exe"
-    windows_python.parent.mkdir(parents=True)
-    windows_python.write_bytes(b"")
-
-    resolved = _venv_interpreter_path(venv_dir)
-
-    assert resolved == windows_python, (
-        "expected the discovery fallback to find the Windows-layout file "
-        "when sysconfig's own computed path does not exist"
+    assert "network" not in probe_err.lower() and "fetch" not in probe_err.lower(), (
+        f"probe error suggests a runtime-fetch fallback occurred instead of "
+        f"failing fast on the missing interpreter: {probe_err!r}"
     )
 
 
-def test_build_mcp_entries_rewrites_to_windows_style_interpreter():
-    """Tier 1: `_build_mcp_entries` rewrites a bare `python` command to
-    WHATEVER `venv_python` path it is given — including a Windows-shaped
-    (`Scripts/python.exe`) path — confirming the spawn side consumes the
-    resolved path unchanged (the same resolver serves both install and
-    spawn, per the single-helper aggregation)."""
-    windows_python = Path("C:/plugins/srv/.venv/Scripts/python.exe")
+def test_build_mcp_entries_registers_command_as_is():
+    """Tier 1: `_build_mcp_entries` registers a server's ``command`` value
+    UNCHANGED (#3209 — no venv-interpreter rewrite of any kind, on any
+    platform-shaped path) — confirming the single-argument signature and
+    AS-IS pass-through this redesign left behind."""
+    windows_style_path = "C:/plugins/srv/.venv/Scripts/python.exe"
     mcp_json = {
-        "mcpServers": {"srv": {"command": "python", "args": ["-m", "srv"]}},
+        "mcpServers": {"srv": {"command": windows_style_path, "args": ["-m", "srv"]}},
     }
     import tempfile
     with tempfile.NamedTemporaryFile(
@@ -767,248 +742,19 @@ def test_build_mcp_entries_rewrites_to_windows_style_interpreter():
         json.dump(mcp_json, fh)
         mcp_json_path = Path(fh.name)
     try:
-        entries = _build_mcp_entries(mcp_json_path, windows_python)
+        entries = _build_mcp_entries(mcp_json_path)
     finally:
         mcp_json_path.unlink()
 
-    assert entries["srv"]["command"] == str(windows_python)
+    assert entries["srv"]["command"] == windows_style_path
 
-
-# ── Test 6c: TMPDIR containment under a REAL enforcing sandbox backend ────────
-# (#3202 symptom 2 pip-materialise). Honest finding (measured directly, not
-# assumed): `_materialise_deps` already passes `cwd=str(plugin_root)` to every
-# `backend.run()` call, and CPython's own `tempfile._get_default_tempdir()`
-# candidate list ends with `os.getcwd()` as a last resort BEFORE raising — so
-# with our actual call shape, a `tempfile.mkdtemp()`-based write (verified
-# directly: a real `pip install six` under Seatbelt with `write_paths=
-# [plugin_root]`, `cwd=plugin_root`, and NO TMPDIR override) already succeeds
-# via that built-in cwd fallback, landing inside `plugin_root`. The TMPDIR
-# redirect this fix adds is still kept as explicit, observable containment
-# (a future refactor that drops the `cwd=` argument, or a pip/tempfile
-# version that narrows its fallback chain, would silently lose the cwd
-# safety net) — but it is NOT provable as "removing it flips this to RED" in
-# the CURRENT call shape, and this test says so rather than asserting a
-# denial that direct measurement showed does not occur here. What IS
-# verified below: with TMPDIR explicitly set (mirroring `_materialise_deps`),
-# the temp write lands inside the designated dir, not system `/tmp`.
-
-
-@pytest.mark.skipif(sys.platform != "darwin", reason="sandbox-exec is macOS-only")
-def test_tmpdir_redirect_contains_temp_write_under_plugin_root(tmp_path):
-    """Tier 2: with `_materialise_deps`'s TMPDIR redirect applied (env var
-    pointed at a dir inside `plugin_root`), a `tempfile.mkdtemp()`-based
-    write under a REAL Seatbelt backend (`write_paths=[plugin_root]`) lands
-    inside the designated `.pip-tmp` dir — confirming the redirect actually
-    takes effect (the env value is honoured), not merely that SOME fallback
-    happens to succeed."""
-    import asyncio as _asyncio
-
-    from reyn.security.sandbox.backends.seatbelt import SeatbeltBackend
-    from reyn.security.sandbox.policy import SandboxPolicy
-
-    backend = SeatbeltBackend()
-    if not backend.available():
-        pytest.skip("sandbox-exec unavailable on this host")
-
-    plugin_root = tmp_path / "plugin"
-    plugin_root.mkdir()
-    tmp_dir = plugin_root / ".pip-tmp"
-    tmp_dir.mkdir()
-    policy_with_tmpdir = SandboxPolicy(
-        network=False,
-        write_paths=[str(plugin_root)],
-        allow_subprocess=True,
-        timeout_seconds=30,
-        env_passthrough=["TMPDIR"],
-    )
-    probe_code = (
-        "import tempfile, os; "
-        "d = tempfile.mkdtemp(); "
-        "open(os.path.join(d, 'probe'), 'w').write('x'); "
-        "print(d)"
-    )
-
-    previous_tmpdir = os.environ.get("TMPDIR")
-    os.environ["TMPDIR"] = str(tmp_dir)
-    try:
-        result = _asyncio.run(
-            backend.run(
-                [sys.executable, "-c", probe_code],
-                policy_with_tmpdir, cwd=str(plugin_root),
-            ),
-        )
-    finally:
-        if previous_tmpdir is None:
-            os.environ.pop("TMPDIR", None)
-        else:
-            os.environ["TMPDIR"] = previous_tmpdir
-
-    assert result.returncode == 0, (
-        f"expected the TMPDIR-redirected write to succeed: "
-        f"stderr={result.stderr.decode('utf-8', errors='replace')}"
-    )
-    used_dir = result.stdout.decode("utf-8", errors="replace").strip()
-    assert used_dir.startswith(str(tmp_dir)), (
-        f"expected tempfile.mkdtemp() to land inside the redirected TMPDIR "
-        f"({tmp_dir}), got {used_dir!r} — the env var redirect did not take effect"
-    )
-
-
-# ── Test 7: pypi dep-fetch gate (require_http_get on the package index) ───────
-#
-# #3048: the dep-fetch approval for pypi.org is now DERIVED from the
-# install's own gate-1 write-approval (session_approve_host, scoped to
-# exactly "pypi.org") instead of requiring an INDEPENDENT interactive
-# http.get prompt. A plugin's install approval alone is therefore now
-# sufficient for materialise-deps to proceed — the config-deny and
-# sandbox-network-veto tiers (checked BEFORE the persisted-approval tier
-# the derive feeds, inside require_http_get) are the only things that can
-# still block it. The two tests below replace the pre-#3048
-# "http.get independently deniable while write-approved" test (that
-# behaviour was the confused-deputy-adjacent bug: a SEPARATE, unanswerable
-# prompt that hung the whole install under codeact's 30s budget).
-
-
-@pytest.mark.asyncio
-async def test_dep_materialise_denied_when_config_denies_pypi_host(tmp_path, monkeypatch):
-    """Tier 2: #3048 — the #3048 derive does NOT bypass a config-tier deny.
-    ``http.get.pypi.org: deny`` still blocks dep-materialisation even though
-    the install's gate-1 write is approved (plugins_root approved, so the
-    copy proceeds and we reach the materialise step) — config-deny is
-    checked BEFORE the persisted-approval tier the derive feeds inside
-    ``require_http_get``, so it still wins. RED if the derive silently
-    overrides an explicit operator/config denial."""
-    home = tmp_path / "home"
-    home.mkdir()
-    monkeypatch.setenv("HOME", str(home))
-
-    src = tmp_path / "src" / "needsdeps"
-    (src / ".reyn-plugin").mkdir(parents=True)
-    (src / ".reyn-plugin" / "plugin.json").write_text(
-        json.dumps({"name": "needsdeps", "version": "0.1.0", "capabilities": []}),
-        encoding="utf-8",
-    )
-    (src / "requirements.txt").write_text("somepkg==1.0\n", encoding="utf-8")
-
-    ctx = _make_ctx(
-        tmp_path, approve_plugins_root=True, approve_all_http=False, interactive=False,
-        config_permissions={"http.get.pypi.org": "deny"},
-    )
-
-    op = PluginInstallIROp(kind="plugin_install", source={"kind": "local", "path": str(src)})
-    with pytest.raises(PermissionError):
-        await install_handle(op, ctx)
-    venv = plugins_root() / "needsdeps" / ".venv"
-    assert not venv.exists(), "a venv/fetch happened despite config http.get.pypi.org: deny"
-
-
-@pytest.mark.asyncio
-async def test_derive_does_not_bypass_install_gate1_denial(tmp_path, monkeypatch):
-    """Tier 2: #3048 — the derive is fed by gate 1 SUCCEEDING; if gate 1
-    itself is denied (plugins_root NOT approved), execution never reaches
-    the derive/materialise step at all, and no venv is created. RED if the
-    derive were (incorrectly) hoisted above/independent of gate 1."""
-    home = tmp_path / "home"
-    home.mkdir()
-    monkeypatch.setenv("HOME", str(home))
-
-    src = tmp_path / "src" / "needsdeps3"
-    (src / ".reyn-plugin").mkdir(parents=True)
-    (src / ".reyn-plugin" / "plugin.json").write_text(
-        json.dumps({"name": "needsdeps3", "version": "0.1.0", "capabilities": []}),
-        encoding="utf-8",
-    )
-    (src / "requirements.txt").write_text("somepkg==1.0\n", encoding="utf-8")
-
-    ctx = _make_ctx(tmp_path, approve_plugins_root=False, approve_mcp_yaml=False, interactive=False)
-
-    op = PluginInstallIROp(kind="plugin_install", source={"kind": "local", "path": str(src)})
-    with pytest.raises(PermissionError):
-        await install_handle(op, ctx)
-    venv = plugins_root() / "needsdeps3" / ".venv"
-    assert not venv.exists(), "materialise ran despite gate 1 (install write) being denied"
-
-
-@pytest.mark.asyncio
-async def test_dep_materialise_proceeds_when_pypi_http_get_approved(tmp_path, monkeypatch):
-    """Tier 2: with the pypi http.get grant present, dep-materialisation
-    proceeds (empty requirements.txt → offline). Complements the strip-falsify
-    above: the gate is a real allow/deny point, not an always-deny."""
-    home = tmp_path / "home"
-    home.mkdir()
-    monkeypatch.setenv("HOME", str(home))
-
-    src = tmp_path / "src" / "okdeps"
-    (src / ".reyn-plugin").mkdir(parents=True)
-    (src / ".reyn-plugin" / "plugin.json").write_text(
-        json.dumps({"name": "okdeps", "version": "0.1.0", "capabilities": []}),
-        encoding="utf-8",
-    )
-    (src / "requirements.txt").write_text("", encoding="utf-8")
-
-    ctx = _make_ctx(tmp_path, approve_plugins_root=True, approve_all_http=True)
-    op = PluginInstallIROp(kind="plugin_install", source={"kind": "local", "path": str(src)})
-    result = await install_handle(op, ctx)
-
-    assert result["status"] == "installed", f"approved-pypi materialise failed: {result}"
-    assert _venv_interpreter_path(plugins_root() / "okdeps" / ".venv").exists()
-
-
-@pytest.mark.asyncio
-async def test_materialise_succeeds_with_uv_stripped_from_path(tmp_path, monkeypatch):
-    """Tier 2: #3202 symptom 2 direct witness. With EVERY PATH entry that
-    could resolve a `uv` binary removed (verified: `shutil.which("uv")`
-    returns None under the stripped PATH), a REAL dep-materialise — a tiny
-    real PyPI package (`six`, pure Python, no build step) via a real network
-    fetch — still succeeds. `_materialise_deps` no longer names `uv`
-    anywhere, so its absence must be a non-event; RED if materialise still
-    somehow depended on it."""
-    home = tmp_path / "home"
-    home.mkdir()
-    monkeypatch.setenv("HOME", str(home))
-
-    import shutil as _shutil
-    real_path = os.environ.get("PATH", "")
-    stripped_entries = [
-        entry for entry in real_path.split(os.pathsep)
-        if not (Path(entry) / "uv").exists() and not (Path(entry) / "uv.exe").exists()
-    ]
-    stripped_path = os.pathsep.join(stripped_entries)
-    monkeypatch.setenv("PATH", stripped_path)
-    assert _shutil.which("uv") is None, (
-        "test setup bug: `uv` is still resolvable on the stripped PATH — "
-        "this witness would not actually exercise a uv-less environment"
-    )
-
-    src = tmp_path / "src" / "nouvdeps"
-    (src / ".reyn-plugin").mkdir(parents=True)
-    (src / ".reyn-plugin" / "plugin.json").write_text(
-        json.dumps({"name": "nouvdeps", "version": "0.1.0", "capabilities": []}),
-        encoding="utf-8",
-    )
-    (src / "requirements.txt").write_text("six\n", encoding="utf-8")
-
-    ctx = _make_ctx(tmp_path, approve_plugins_root=True, approve_all_http=True)
-    op = PluginInstallIROp(kind="plugin_install", source={"kind": "local", "path": str(src)})
-    result = await install_handle(op, ctx)
-
-    assert result["status"] == "installed", f"materialise failed without uv on PATH: {result}"
-    venv_python = _venv_interpreter_path(plugins_root() / "nouvdeps" / ".venv")
-    assert venv_python.exists()
-    site_packages = subprocess.run(
-        [str(venv_python), "-c", "import six; print(six.__file__)"],
-        capture_output=True, text=True,
-    )
-    assert site_packages.returncode == 0 and "six" in site_packages.stdout, (
-        f"real dependency (six) was not actually installed/importable: {site_packages}"
-    )
 
 
 # ── #3048 seal: require_http_get awaits indefinitely when a bus is wired ──────
 # but nothing answers it (the confirmed root cause — NOT budget exhaustion,
 # NOT a slow download: a permission prompt raised into a bus with no
-# responder). Live-confirms the mechanism BEFORE trusting the fix below to
-# actually close it.
+# responder). Live-confirms the mechanism the corollary test below relies on
+# (plugin_install now avoids this path entirely — #3209 register-only).
 
 
 @pytest.mark.asyncio
@@ -1044,30 +790,19 @@ async def test_require_http_get_awaits_indefinitely_when_unanswered(tmp_path):
     )
 
 
-# ── #3048 fix: install-grant derives the pypi.org dep-fetch approval ──────────
+# ── #3209: register-only never reaches http.get for deps, no #3048 exposure ──
 
 
 @pytest.mark.asyncio
-async def test_plugin_install_derives_pypi_grant_no_indefinite_await(tmp_path, monkeypatch):
-    """Tier 2: #3048 fix, load-bearing. Only the install's gate-1 write is
-    approved (mirrors what an operator/codeact dispatch that approved
-    "install this plugin" actually consented to) — pypi.org is
-    deliberately NOT independently pre-approved. A ``_NeverAnswersBus`` is
-    wired (the codeact/headless scenario that hung indefinitely pre-fix,
-    same mechanism the seal test above confirms). Bounded with
-    ``asyncio.wait_for`` well under a materialise-only budget: GREEN
-    (completes, no hang) with the derive in plugin_install.py's step 7;
-    RED (times out — falls into the seal test's await) if that derive is
-    removed and require_http_get falls back to prompting the
-    never-answering bus directly. Also asserts the bus received ZERO
-    intervention requests — the derive must suppress the prompt outright,
-    not merely answer it faster.
-
-    ``interactive=True`` — same rationale as the seal test above: it
-    mirrors the real interactive-terminal dispatch that #3048 hung
-    (``sys.stdin.isatty()`` True, nobody happens to answer this specific
-    prompt), which is exactly the branch where a stripped derive would
-    hang rather than fast-deny."""
+async def test_plugin_install_never_hangs_on_pypi_with_unanswering_bus(tmp_path, monkeypatch):
+    """Tier 2: #3209 corollary — since plugin_install no longer performs ANY
+    dep-fetch (the whole materialise step + its pypi.org derive is removed),
+    a plugin with a requirements.txt at its root installs cleanly even with a
+    ``_NeverAnswersBus`` wired (the exact codeact/headless scenario #3048's
+    derive used to need to work around) — because install never reaches for
+    http.get on pypi.org at all any more. Bounded with ``asyncio.wait_for``:
+    RED if this hangs (would mean a dep-fetch path was reintroduced without
+    the derive) or if the bus is asked anything."""
     home = tmp_path / "home"
     home.mkdir()
     monkeypatch.setenv("HOME", str(home))
@@ -1078,7 +813,7 @@ async def test_plugin_install_derives_pypi_grant_no_indefinite_await(tmp_path, m
         json.dumps({"name": "needsdeps4", "version": "0.1.0", "capabilities": []}),
         encoding="utf-8",
     )
-    (src / "requirements.txt").write_text("", encoding="utf-8")
+    (src / "requirements.txt").write_text("somepkg==1.0\n", encoding="utf-8")
 
     bus = _NeverAnswersBus()
     ctx = _make_ctx(
@@ -1087,14 +822,14 @@ async def test_plugin_install_derives_pypi_grant_no_indefinite_await(tmp_path, m
     )
 
     op = PluginInstallIROp(kind="plugin_install", source={"kind": "local", "path": str(src)})
-    result = await asyncio.wait_for(install_handle(op, ctx), timeout=30.0)
+    result = await asyncio.wait_for(install_handle(op, ctx), timeout=10.0)
 
     assert result["status"] == "installed", f"install failed/denied: {result}"
-    assert _venv_interpreter_path(plugins_root() / "needsdeps4" / ".venv").exists()
+    assert not (plugins_root() / "needsdeps4" / ".venv").exists()
     assert not bus.asks, (
-        "a separate pypi.org intervention prompt was raised — the derive did "
-        "not suppress it (this is exactly the prompt that hangs under "
-        "codeact's 30s compute budget when nobody answers it)"
+        "an intervention prompt was raised for a requirements.txt-carrying "
+        "plugin — plugin_install must never touch dep-fetch permissions "
+        "at all any more (#3209 register-only)"
     )
 
 
@@ -1103,14 +838,17 @@ async def test_plugin_install_derives_pypi_grant_no_indefinite_await(tmp_path, m
 
 @pytest.mark.asyncio
 async def test_derived_pypi_grant_is_host_scoped_not_blanket(tmp_path):
-    """Tier 1: #3048 security witness — confused-deputy guard. The derive
-    plugin_install.py performs (``session_approve_host("pypi.org", ...,
-    kind="http.get")``) covers EXACTLY pypi.org — the fixed index
-    ``pip install`` resolves against — never http.get generally.
-    Approving pypi.org must NOT silently authorise a fetch from an
-    unrelated host. Uses ONLY the public PermissionResolver surface
-    (``session_approve_host`` / ``require_http_get``), real instances
-    throughout, no private-state assertions."""
+    """Tier 1: #3048 security witness — confused-deputy guard, on the general
+    PermissionResolver mechanism directly (plugin_install.py itself no
+    longer calls this — #3209's register-only redesign removed its one
+    pypi.org derive call site; the mechanism remains general-purpose
+    PermissionResolver infra another op-author may reuse the same way).
+    ``session_approve_host("pypi.org", ..., kind="http.get")`` covers
+    EXACTLY pypi.org — never http.get generally. Approving pypi.org must
+    NOT silently authorise a fetch from an unrelated host. Uses ONLY the
+    public PermissionResolver surface (``session_approve_host`` /
+    ``require_http_get``), real instances throughout, no private-state
+    assertions."""
     resolver = PermissionResolver(config_permissions={}, project_root=tmp_path, interactive=False)
     resolver.session_approve_host("pypi.org", "test", kind="http.get")
 

@@ -68,16 +68,14 @@ def _make_plugin_source(base: Path, name: str = "myplugin") -> Path:
     dir ALSO carries an L3 bundled reference file, plus non-body content
     (``scripts/``) that must stay gated post-install.
 
-    Deliberately carries NO ``requirements.txt``: `plugin_install`'s step 7
-    (`_materialise_deps`) shells out to the real `uv` binary whenever the
-    copied plugin has one, which a CI runner may not have installed (the
-    fixture must not depend on `uv` being present just to prove witness 4's
-    "install completed" — that would make the REAL-install witness flaky on
-    dependency-materialisation infrastructure it has nothing to do with).
-    Witness 1 needs a `requirements.txt` on disk under the registered root
-    ONLY to prove it stays gated post-install; it writes one directly into
-    the fixture's already-completed `plugin_root` (see that test) instead of
-    routing it through install.
+    Deliberately carries NO ``requirements.txt`` at SOURCE: `plugin_install`
+    is register-only (#3209) and never reads/materialises one regardless, so
+    this omission is no longer load-bearing for install itself — kept
+    anyway so this fixture stays minimal and focused on the body-read gate
+    it exists to test. Witness 1 needs a `requirements.txt` on disk under the
+    registered root ONLY to prove it stays gated post-install; it writes one
+    directly into the fixture's already-completed `plugin_root` (see that
+    test) instead of routing it through install.
     """
     plugin_dir = base / name
     (plugin_dir / ".reyn-plugin").mkdir(parents=True, exist_ok=True)
@@ -274,6 +272,95 @@ def test_witness4_registered_plugin_body_reachable_without_approval(registered_p
     result2 = _run(file_handle(_read_op(str(ref_path)), ctx))
     assert result2["status"] == "ok", result2
     assert "REFERENCE_MARKER_CONTENT" in result2["content"]
+
+
+def test_witness6_directory_entry_path_resolves_via_real_skill_invoke_acting_path(
+    registered_plugin_root, tmp_path,
+):
+    """Tier 2: #3210 live-e2e regression — the REAL `:name` acting path, no
+    file-path shortcut. `skill_install.py`'s `install_path =
+    str(skill_md.parent.resolve())` means `skills.entries.<name>.path` is
+    ALWAYS the skill DIRECTORY, never the SKILL.md file — confirmed here by
+    reading the ACTUAL registered entry out of the real `.reyn/config/
+    skills.yaml` this plugin install wrote (not a hand-typed assumption of
+    what the path 'should' be). `reyn.interfaces.skill_invoke.
+    resolve_skill_body` (the function `Session._maybe_handle_skill_invoke`
+    calls for every `:name` invocation) is fed that EXACT directory path.
+
+    RED before the fix: `resolve_skill_body`'s bare-filesystem fallback did
+    `Path(directory).read_text()` with no directory handling, and
+    `read_plugin_body_bytes` returned `None` for a directory candidate
+    (`candidate.is_file()` was `False`) — both funnelled straight to
+    `IsADirectoryError: [Errno 21] Is a directory`. Manually verified (see
+    PR body): reverting both dir->SKILL.md resolutions reproduces exactly
+    that `IsADirectoryError` against this same real directory path."""
+    import yaml
+
+    skills_yaml = tmp_path / "install_proj" / ".reyn" / "config" / "skills.yaml"
+    data = yaml.safe_load(skills_yaml.read_text(encoding="utf-8"))
+    entry_path = data["skills"]["entries"]["hello"]["path"]
+
+    # Ground truth: the registered path is the DIRECTORY, not the file —
+    # this is the exact value `:hello` would resolve against in a live
+    # session; a test that instead constructed `.../hello/SKILL.md` by hand
+    # would be the file-path shortcut this regression test exists to close.
+    assert entry_path == str(registered_plugin_root / "skills" / "hello")
+    assert Path(entry_path).is_dir()
+    assert not Path(entry_path).is_file()
+
+    # ★ Belt-tightening (architect note): `resolve_skill_body` has TWO
+    # resolution sites — SITE1, the GATED plugin-provenance path
+    # (`read_plugin_body_bytes`, `is_registered_plugin_root`), and, only if
+    # SITE1 returns `None`, SITE2, the UNGATED local-filesystem fallback.
+    # Stripping SITE1's dir->SKILL.md resolution alone would NOT turn the
+    # end-to-end assertion below red, because SITE2's OWN dir->SKILL.md
+    # resolution silently catches the same directory entry — the exact
+    # "green while the gated path regressed" class that produced this whole
+    # `:name` detour. Assert SITE1 resolves this registered-plugin entry ON
+    # ITS OWN, so a regression that silently drops registered-plugin
+    # resolution from the gated site to the ungated fallback is caught here
+    # directly, independent of whatever SITE2 happens to do.
+    assert read_plugin_body_bytes(entry_path) is not None, (
+        "read_plugin_body_bytes (the GATED site) did not resolve the "
+        "registered-plugin directory entry on its own — if resolve_skill_body "
+        "below still passes, it silently fell through to the UNGATED "
+        "local-filesystem fallback instead"
+    )
+
+    from reyn.interfaces.skill_invoke import resolve_skill_body
+
+    body = resolve_skill_body(entry_path, project_dir=tmp_path / "unrelated")
+    assert "says hi" in body, body
+
+
+def test_witness7_directory_entry_still_gated_when_unregistered(tmp_path, monkeypatch):
+    """Tier 2: #3210 security-gate-preserved witness. The dir->SKILL.md
+    resolution added to `read_plugin_body_bytes` runs STRICTLY AFTER
+    `is_registered_plugin_root` (the #3196/#3199 provenance gate) — an
+    unregistered root's directory-shaped path (the exact shape a real
+    `:name` entry would carry, mirroring witness 2 but with a DIRECTORY
+    instead of the SKILL.md file) is still refused. RED if the dir
+    resolution were hoisted ABOVE the provenance check (it is not — this
+    pins that ordering)."""
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    fake_root = plugins_root() / "unregistered"
+    (fake_root / ".reyn-plugin").mkdir(parents=True, exist_ok=True)
+    skill_dir = fake_root / "skills" / "x"
+    skill_dir.mkdir(parents=True, exist_ok=True)
+    (skill_dir / "SKILL.md").write_text("Body.\n", encoding="utf-8")
+
+    # The DIRECTORY path (not the SKILL.md file) — the shape a real
+    # skill_install-registered entry always carries.
+    assert read_plugin_body_bytes(str(skill_dir)) is None
+
+    unrelated_root = tmp_path / "unrelated"
+    unrelated_root.mkdir()
+    ctx = _read_ctx(unrelated_root)
+    with pytest.raises(PermissionError, match="read from"):
+        _run(file_handle(_read_op(str(skill_dir / "SKILL.md")), ctx))
 
 
 def test_falsify_strip_registration_check_flips_witness2_red(tmp_path, monkeypatch):

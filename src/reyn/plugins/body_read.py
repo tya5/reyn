@@ -96,7 +96,11 @@ def read_plugin_body_bytes(path_str: str) -> "bytes | None":
 
     Returns the file's raw bytes when *path_str* resolves to a file INSIDE
     one of a REGISTERED ``~/.reyn/plugins/<name>/`` root's BODY directories
-    (``skills/`` or ``pipelines/`` — see ``_BODY_READ_DIRS``). Returns
+    (``skills/`` or ``pipelines/`` — see ``_BODY_READ_DIRS``). *path_str* MAY
+    also be a skill's DIRECTORY (``skills.entries.<name>.path`` is registered
+    as the directory, not the file — see ``plugin_install.py``), in which
+    case ``<dir>/SKILL.md`` is read instead (mirrors
+    ``skill_install._resolve_skill_md``'s identical convention). Returns
     ``None`` in every other case — not under ``~/.reyn/plugins/`` at all, an
     UNREGISTERED plugin root (never installed, mid-install, or rolled back),
     ``.staging/``, or inside a registered root but outside its body dirs
@@ -146,6 +150,28 @@ def read_plugin_body_bytes(path_str: str) -> "bytes | None":
         return None  # unregistered / mid-install / rolled-back root — never bypasses the gate
 
     try:
+        # `skills.entries.<name>.path` is registered as the SKILL DIRECTORY,
+        # not the SKILL.md file (`plugin_install.py` passes
+        # ``path=str(skill_dir)`` to ``skill_install``, mirroring how a
+        # non-plugin skill install also registers a directory) — `:name`
+        # (``reyn.interfaces.skill_invoke.resolve_skill_body``) resolves
+        # THAT registered path verbatim, so *candidate* here is routinely a
+        # directory, not a file. Append ``SKILL.md`` for that case, mirroring
+        # ``skill_install._resolve_skill_md``'s identical dir → `<dir>/
+        # SKILL.md` convention exactly (the same resolution the non-plugin
+        # skill path already applies) — a plain filesystem read otherwise
+        # raises ``IsADirectoryError`` (`[Errno 21] Is a directory`), which
+        # silently broke every plugin-installed skill's `:name` invocation
+        # (`resolve_skill_body`'s bare ``p.read_text()`` fallback has no
+        # directory handling of its own). This runs AFTER the marker/
+        # provenance gate above, against the SAME already-verified
+        # ``plugin_root`` — appending a literal, non-traversable path
+        # component cannot escape it, so the security boundary is
+        # unaffected. A FILE candidate (the ordinary file-read skill-load
+        # path, and pipeline body entries — always registered as a specific
+        # file, never a directory) is untouched, byte-identical to before.
+        if candidate.is_dir():
+            candidate = candidate / "SKILL.md"
         if not candidate.is_file():
             return None
         return candidate.read_bytes()

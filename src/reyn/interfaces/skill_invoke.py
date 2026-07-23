@@ -280,9 +280,22 @@ def resolve_skill_body(
     if raw_bytes is not None:
         content = raw_bytes.decode("utf-8", errors="replace")
     else:
+        # `skill_install`'s ``skills.entries.<name>.path`` is ALWAYS the
+        # skill DIRECTORY (``install_path = str(skill_md.parent.resolve())``,
+        # `op_runtime/skill_install.py`), never the SKILL.md file itself —
+        # true whether the skill came from a plugin (handled above via
+        # ``read_plugin_body_bytes``) or a plain local/git ``skill_install``
+        # (this branch). Resolve dir → ``<dir>/SKILL.md``, mirroring
+        # ``skill_install._resolve_skill_md``'s identical convention — a bare
+        # ``p.read_text()`` on a directory raises ``IsADirectoryError``
+        # (`[Errno 21] Is a directory`), which silently broke every
+        # directory-registered skill's `:name` invocation. A path that is
+        # already a file (not a directory) is untouched.
         p = Path(path)
         if not p.is_absolute():
             p = project_dir / p
+        if p.is_dir():
+            p = p / "SKILL.md"
         content = p.read_text(encoding="utf-8")
 
     # #3196/#3198: `load_skill_body` now returns

@@ -1,5 +1,11 @@
-# Materialised into a per-plugin venv at `plugin_install` time (ADR 0064
-# §3.11) -- never at spawn, so the registered MCP servers start network-free.
+# Install these into your OWN venv -- `plugin_install` is register-only
+# (ADR 0064 §3.11b, #3209) and never reads or installs this file itself.
+# See the `build_and_query_rag_corpus` skill's SETUP section (or
+# docs/guide/for-users/build-a-rag-corpus.md) for the exact
+# `python -m venv` + `pip install -r requirements.txt` steps, then point
+# the registered `reyn_chunker`/`reyn_vector_store` MCP `command` at that
+# venv's own interpreter (absolute path) so the servers start
+# network-free at spawn.
 #
 #   - sqlite-vec (dual MIT/Apache-2.0): pure-C SQLite extension, no bundled
 #     embedding model -> no HuggingFace-fetch hazard (FP-0057 line 55).
