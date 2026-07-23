@@ -1,12 +1,22 @@
-"""reyn.hooks.shell_runner — execute a shell HookDef command (#1800 slice C).
+"""reyn.hooks.shell_runner — execute an exec/exec_capture HookDef argv (#1800 slice C).
+
+#3226 Phase 4 (naming honesty, NOT security): the ``HookDef`` fields this
+module runs were renamed ``shell_exec``/``shell_push`` → ``exec``/
+``exec_capture`` and their payload from a shell-command STRING to an
+**argv list** (``tuple[str, ...]``). Neither rename changes what this module
+does at runtime — it never ran ``/bin/sh -c <string>``; it always executed a
+tokenized argv with ``shell=False``. The ``shell_`` prefix was a misnomer
+this Phase removes; the module/function names below (``shell_runner.py``,
+``run_shell_hook``) are unchanged (out of Phase-4 scope — only the
+config-facing action names + payload shape were the misnomer).
 
 Contract
 --------
 * **Input to the subprocess**: event + context serialised as JSON → subprocess stdin.
 * **Output from the subprocess**, by mode (``capture_stdout``, #2069):
-  * ``shell_exec`` (``capture_stdout=False``): stdout / stderr are logs only;
+  * ``exec`` (``capture_stdout=False``): stdout / stderr are logs only;
     the runner returns ``None`` (pure side-effect). The OS ignores hook output.
-  * ``shell_push`` (``capture_stdout=True``): on an exit-0 run the decoded
+  * ``exec_capture`` (``capture_stdout=True``): on an exit-0 run the decoded
     **stdout is returned** (the caller parses it as a JSON push-directive);
     stderr stays logs. Any failure returns ``None`` (fail-safe → skip the push).
 * **Timeout** (default 60 s, overridable per-hook via ``timeout_seconds``).
@@ -15,7 +25,7 @@ Contract
 
 Sandbox (CRITICAL)
 ------------------
-The hook command runs through the **same** :mod:`reyn.security.sandbox`
+The hook argv runs through the **same** :mod:`reyn.security.sandbox`
 backend that the ``sandboxed_exec`` op uses::
 
     backend = sandbox_backend or get_default_backend(sandbox_config)
@@ -32,10 +42,16 @@ Allowlist lives at ``~/.reyn/shell-hooks-allowlist.json`` (env-var override:
 ``REYN_SHELL_HOOKS_ALLOWLIST``).  Each entry records:
 
     {
-        "command": "<raw command string>",
+        "command": "<argv, shlex-joined into a display/allowlist-key string>",
         "approved_at": "<ISO-8601>",
         "script_mtime": <float or null>
     }
+
+``command`` here is a DISPLAY/allowlist-key string derived from the argv via
+``shlex.join`` — never re-interpreted as a shell string; execution always
+uses the original argv list, not a re-split of this string (``shlex.join``
+followed by ``shlex.split`` round-trips exactly for the mtime-drift check
+below, which is the only place the joined form is re-split).
 
 Rules:
 
@@ -346,7 +362,7 @@ def _report_unapplied_agent_policy(
 
 
 async def run_shell_hook(
-    command: str,
+    argv: "list[str] | tuple[str, ...]",
     event_context: dict,
     *,
     timeout_seconds: int = 60,
@@ -363,26 +379,29 @@ async def run_shell_hook(
     hook_name: str | None = None,
     emit_event: "Callable[..., Any] | None" = None,
 ) -> str | None:
-    """Run a shell hook command under the sandbox + consent gate.
+    """Run an exec/exec_capture HookDef argv under the sandbox + consent gate.
 
     The hook receives event + context as JSON on stdin.  Two output disciplines,
     selected by ``capture_stdout`` (#2069):
 
-    * ``capture_stdout=False`` (``shell_exec``, the default): output is treated as
+    * ``capture_stdout=False`` (``exec``, the default): output is treated as
       logs only and **never parsed** — the runner is a pure side-effect and
       returns ``None``.
-    * ``capture_stdout=True`` (``shell_push``): on a successful (exit-0) run the
+    * ``capture_stdout=True`` (``exec_capture``): on a successful (exit-0) run the
       decoded **stdout is returned** for the caller to parse as a JSON
-      push-directive.  Any failure (consent refusal, invalid command, non-zero
+      push-directive.  Any failure (consent refusal, invalid argv, non-zero
       exit, timeout, exception) returns ``None`` so the caller skips the push
       (fail-safe).  ``stderr`` is always logs.
 
     Parameters
     ----------
-    command:
-        The raw shell command string from ``HookDef.shell_exec`` /
-        ``HookDef.shell_push``.  Split via ``shlex.split``; executed with
-        ``shell=False`` (no shell injection).
+    argv:
+        The argv list from ``HookDef.exec`` / ``HookDef.exec_capture``
+        (#3226 Phase 4 — a clean break from the pre-Phase-4 shell-command
+        STRING shape). Executed directly with ``shell=False`` — no shell
+        interpretation, no ``shlex.split`` of operator input (the runner
+        never ran ``/bin/sh -c <string>``, even pre-Phase-4; only the
+        payload SHAPE changed, not the execution mechanism).
     event_context:
         Dict serialised as JSON and passed to the subprocess on stdin.
     timeout_seconds:
@@ -420,8 +439,8 @@ async def run_shell_hook(
         file).  Defaults to ``~/.reyn/shell-hooks-allowlist.json`` (or the
         ``REYN_SHELL_HOOKS_ALLOWLIST`` env var).
     capture_stdout:
-        When ``True`` (``shell_push``) return the decoded stdout on a successful
-        run; when ``False`` (``shell_exec``, default) ignore output and return
+        When ``True`` (``exec_capture``) return the decoded stdout on a successful
+        run; when ``False`` (``exec``, default) ignore output and return
         ``None``.
     consent_bus:
         The session ``RequestBus`` (#2095), or ``None``. When set, a
@@ -456,6 +475,17 @@ async def run_shell_hook(
     are logged and the function returns so the agent is never blocked by a
     hook failure.
     """
+    # #3226 Phase 4: argv is already tokenized (the loader validated a
+    # non-empty list of non-empty strings) — no shlex.split of operator
+    # input here. ``command`` is a DISPLAY/allowlist-key string derived via
+    # ``shlex.join``, used only for the consent prompt, the allowlist file,
+    # and logging; it is never re-parsed to decide what runs.
+    argv = list(argv)
+    if not argv:
+        _log.error("shell-hook: empty argv")
+        return
+    command = shlex.join(argv)
+
     resolved_allowlist = allowlist_path if allowlist_path is not None else _allowlist_path()
 
     # --- Consent gate (fail-closed in non-TTY without accept flag) --------
@@ -471,17 +501,6 @@ async def run_shell_hook(
         return
 
     if not approved:
-        return
-
-    # --- Split command (shlex; shell=False enforced by the backend) -------
-    try:
-        argv = shlex.split(command)
-    except ValueError as exc:
-        _log.error("shell-hook: invalid command %r: %s", command, exc)
-        return
-
-    if not argv:
-        _log.error("shell-hook: empty argv after shlex.split(%r)", command)
         return
 
     # --- Resolve sandbox backend ------------------------------------------
@@ -560,14 +579,14 @@ async def run_shell_hook(
                 emit_event(
                     "hook_shell_executed",
                     command=command,
-                    mode=("shell_push" if capture_stdout else "shell_exec"),
+                    mode=("exec_capture" if capture_stdout else "exec"),
                     returncode=result.returncode,
                     denial_class=denial_class,
                 )
             except Exception as exc:  # noqa: BLE001 — telemetry is best-effort
                 _log.debug("shell-hook: emit_event failed for %r: %s", command, exc)
 
-        # stderr is ALWAYS logs. stdout is logs for shell_exec; for shell_push
+        # stderr is ALWAYS logs. stdout is logs for exec; for exec_capture
         # (capture_stdout) it is the JSON push-directive the caller parses — so
         # don't log it as a side-effect line, return it below.
         if not capture_stdout and result.stdout.strip():
@@ -611,8 +630,8 @@ async def run_shell_hook(
                 )
             return None  # fail-safe: a failed command yields no push-directive
 
-        # Success. capture_stdout (shell_push) → return decoded stdout for the
-        # caller to parse; otherwise (shell_exec) output is ignored.
+        # Success. capture_stdout (exec_capture) → return decoded stdout for the
+        # caller to parse; otherwise (exec) output is ignored.
         if capture_stdout:
             return result.stdout.decode("utf-8", errors="replace")
         return None

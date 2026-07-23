@@ -220,7 +220,7 @@ v0.1 の §5 全体(op: All/Any/Seq/Window/Debounce/CorrelateBy/Count、QueuePol
 1. **untrusted payload → template → LLM context(prompt-injection ingress)**: 現 reyn は `webhook_received` の template_vars を routing metadata のみに制限し **生 body を決して渡さない**(token/PII + injection 防衛)。新 `webhook:<provider>:*` event の payload を `template_push` の message に補間できるようにすると、**この防衛を再び開ける**(provider payload は外部者が author する untrusted text — PR title 1 つで `[hook:name]` message 経由の injection が成立)。同様に `llm:<session_id>:*` の payload は LLM-authored ゆえ、cross-session push の template に補間すると **session 間 injection** になる。規律:
    - **matcher / EventPattern / Composer の match には全 payload field を使ってよい**(制御判断であり LLM context に入らない)。
    - **template 補間(message への render)に使えるのは、schema で `context_safe: true` と明示宣言された field のみ**(default false)。builtin schema の現行 vars(server/uri/path/job_name 等)は context_safe。webhook provider schema の本文系 field と `llm:*` payload は default 非-safe — operator が provider schema 定義で明示 opt-in した場合のみ補間可(責任の所在が config に残る)。
-2. **shell argv への template 補間は禁止(v0.1 §9 例 `command: "... {{payload.path}}"` は不採用)**: 現 reyn の規律が正しい — **shell command(argv)は static config 文字列、event データは stdin の JSON でのみ渡す**(`hooks/shell_runner.py`: `backend.run(argv, policy, stdin=json(event_context))`)。argv への payload 補間は command injection そのもの(untrusted な `payload.path` が shell に届く)。この規律を仕様として明文化し、loader が `{{` を含む shell_exec/shell_push を **load-time reject** する。
+2. **shell argv への template 補間は禁止(v0.1 §9 例 `command: "... {{payload.path}}"` は不採用)**: 現 reyn の規律が正しい — **shell command(argv)は static config 文字列、event データは stdin の JSON でのみ渡す**(`hooks/shell_runner.py`: `backend.run(argv, policy, stdin=json(event_context))`)。argv への payload 補間は command injection そのもの(untrusted な `payload.path` が shell に届く)。この規律を仕様として明文化し、loader が `{{` を含む exec/exec_capture(#3226 Phase 4 で shell_exec/shell_push からリネーム — argv-list-only)を **load-time reject** する。
 3. **LLM 自己覚醒 loop(emit_hook_event → Composer → wake:true hook)**: LLM が event を emit → Composer が合成 → wake:true hook が新 turn → その turn で再び emit、という **LLM 経由の循環は §5.5 の静的 DAG 検査では捕まえられない**(閉路が LLM を通るため)。backstop は既存 **loop-valve**(`max_hook_driven_turns` — wake push は全て inbox kind="hook" を通るため、composed/llm 由来の wake も既存 counter が数える。経路の追加実装は不要だが、**この不変条件「全 wake 経路は kind=hook を通る」を Tier-2 test で pin** する)。§11 将来リストの valve-persist(crash 越し保証)がこの経路の増加で更に load-bearing になる。加えて **hooks_add(LLM-op)の autonomy 境界を新 kind に拡張定義**: hooks_add が登録できるのは現行通り template_push のみ、`on:` に指定できる kind は builtin + `composed:*` + 自 session の `llm:*`(他 session の `llm:*`/raw `webhook:*` は operator 層のみ)。
 
    **[#2888 実装補遺 — scoped-v1 `on:` 境界、2026-07-12]**: 上記の `on:` 許可 kind に自 session `llm:*` が含まれるが、**scoped-v1 実装では `on: llm:*` を load-reject する** — `reyn.hooks.loader` は `ALLOWED_HOOK_POINTS`(builtin 点)+ `composed:*` prefix のみ受理し、`llm:*` prefix は非受理。理由: **`llm:*` は hook の直接 `on:` target ではなく、Composer の `inputs[].kind` として hook に到達する経路が正道**(Composer が `llm:*` を購読 → 相関 → `composed:*` を emit → hook が `composed:*` を購読)。∴ 直接の `on: llm:*` は不要で、deny-by-default が safe。**ratified subscribe `on:` set(scoped-v1)= builtin + `composed:*`**。`on: llm:*` の直接開放は将来 arc(#2888 で track)— 開ける場合 `llm:*→hook` が最短の self-wake loop になるが loop-valve が kind=hook で bound する(§9 item 3)、matcher は open-set(composed 同様、schema-external field footgun 注意)。この scoped-v1 ratify は lead 裁定 + owner FYI、architect が proposal owner として canonical に記録(owner override 可)。
@@ -250,7 +250,7 @@ reyn の hook config は **4-layer additive combine**(`runtime/session.py:3707-3
 hooks:
   # 現行の scheme をそのまま保持(regress させない):
   - on: session_start
-    shell_exec: "reyn-env-init.sh"          # F: sandboxed side-effect(consent-gated)
+    exec: ["reyn-env-init.sh"]          # F: sandboxed side-effect(consent-gated; #3226 P4 argv-list-only)
   - on: turn_end
     template_push: { message: "...", wake: true }   # E: self-continuation(loop-valve bounded)
   - on: builtin:external:mcp_resource_updated
@@ -258,7 +258,7 @@ hooks:
     pipeline_launch: { name: reindex_docs, input_template: { uri: "{{ uri }}" } }
   # v0.2 新設(導入する場合):
   - on: composed:deploy_approved            # Composer 出力を購読(※ 下記注記参照)
-    shell_exec: "reyn deploy.sh"
+    exec: ["reyn", "deploy.sh"]
 
 composers:                                   # net-new(§5)
   - name: deploy_approved
@@ -321,7 +321,7 @@ redesign が落としてはならない現行機能(v0.1 の簡略 Action モデ
 
 **検証状況(architect co-vet、Phase 1-3 landed 2026-07-12):** typing / ingress統一 / pattern の 3 phase は dispatch-action・sandbox・consent・WAL・config-combine の各パスを **touch していない**(byte-identical or additive)。∴ 下記のうち Phase 1-3 が直接検証したのは **matcher runtime semantics**(byte-identical delegation + strip-falsify)と **hooks-free byte-identical** の 2 項目のみ。残りは Phase 1-3 で構造的に不変だが未再実行 — Phase 4-5 が該当パスに触れる時点で再確認する(空 box = 未再確認、の意)。
 
-- [ ] 4 scheme: `template_push` / `shell_exec` / `shell_push`(computed push) / `pipeline_launch`
+- [ ] 4 scheme: `template_push` / `exec` / `exec_capture`(computed push) / `pipeline_launch`(#3226 Phase 4 で `shell_exec`/`shell_push` からリネーム)
 - [ ] 4 capability: C(context inject, wake:false) / E(self-continuation, wake:true) / F(shell side-effect) / pipeline-launch
 - [ ] wake flag + run-loop drain(1 turn = 全 wake:false ride-along + 1 wake:true で新 turn)
 - [ ] loop-valve(`max_hook_driven_turns`, human turn で reset, on_limit warn→ask_user→abort)

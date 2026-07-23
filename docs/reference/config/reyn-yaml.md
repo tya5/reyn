@@ -31,7 +31,7 @@ models:
 | `cost` | map | Budget caps and rate limits (per-agent, daily, monthly). See below. |
 | `web` | map | SSL settings for `web_fetch` and MCP registry calls, the gateway auth model, and (`web.surfaces`) which `reyn web` surfaces are mounted. See below. |
 | `sandbox` | map | Sandboxed-exec backend selection, unsupported-platform policy, and the agent-level sandbox policy. See below. |
-| `hooks` | list | Agent-lifecycle hooks — template_push / shell_exec / shell_push hooks at lifecycle points. See below. |
+| `hooks` | list | Agent-lifecycle hooks — template_push / exec / exec_capture hooks at lifecycle points. See below. |
 | `action_retrieval` | map | Universal catalog visibility + retrieval settings. See below. |
 | `embedding` | map | RAG embedding model classes and batch settings. See below. |
 | `chat` | map | Chat-session compaction settings. See below. |
@@ -606,10 +606,15 @@ carries **exactly one** of four mutually-exclusive schemes:
 
 - **`template_push`** — inject an attributed `[hook:<name>]` message from a config
   Jinja2 template.
-- **`shell_exec`** — run an external command as a pure side-effect (output IGNORED).
-- **`shell_push`** — run a command whose **stdout is a JSON push-directive**, pushed
+- **`exec`** — run an argv as a pure side-effect (output IGNORED). Renamed from
+  `shell_exec` in #3226 Phase 4 (naming honesty, not a security change — this
+  scheme never ran `/bin/sh -c <string>`; it always executed a tokenized argv
+  with `shell=False`). Payload is **argv-list-only** (a clean break from the
+  pre-Phase-4 shell-command string — no compat alias).
+- **`exec_capture`** — run an argv whose **stdout is a JSON push-directive**, pushed
   via the same path as `template_push` (the only difference is the directive's
-  source: captured stdout vs a Jinja2 render).
+  source: captured stdout vs a Jinja2 render). Renamed from `shell_push` in
+  #3226 Phase 4, same argv-list-only payload.
 - **`pipeline_launch`** — launch a registered [pipeline](../../concepts/runtime/pipelines.md)
   with input rendered from the event's template vars, async/detached.
 
@@ -625,10 +630,10 @@ hooks:
       wake: false                # false = passive context (C); true = start a turn (E)
       push_when: "true"          # optional Jinja2 → bool; false skips the push
   - on: session_start
-    shell_exec: "echo session-started >> /tmp/reyn-hooks.log"
+    exec: ["touch", "/tmp/reyn-session-started"]   # argv only — no shell redirection (">>")
   - name: dynamic                # stdout decides whether/what/how to push
     on: turn_end
-    shell_push: "scripts/decide-next.sh"   # emits {"push_when":true,"wake":true,"message":"..."}
+    exec_capture: ["scripts/decide-next.sh"]   # emits {"push_when":true,"wake":true,"message":"..."}
   - on: mcp_resource_updated      # external-event point — fired by a subscribed MCP resource
     matcher: {server: "github", uri: "file:///repo/docs/**"}
     pipeline_launch:
@@ -636,10 +641,10 @@ hooks:
       input_template: {uri: "{{ uri }}"}
   - on: cron_fired                # external-event point — a message-based cron job fires
     matcher: {job_name: "backup"}
-    shell_exec: "echo backup ran >> /tmp/reyn-hooks.log"
-  - on: turn_end                  # per-hook sandbox knobs (shell schemes only). The
-    shell_exec: "npm run lint"    # agent-level `sandbox.policy` does NOT reach a hook
-    subprocess: true              # shell — these keys are where a hook's sandbox is set.
+    exec: ["touch", "/tmp/reyn-backup-ran"]
+  - on: turn_end                  # per-hook sandbox knobs (exec schemes only). The
+    exec: ["npm", "run", "lint"]  # agent-level `sandbox.policy` does NOT reach a hook
+    subprocess: true              # exec argv — these keys are where a hook's sandbox is set.
     network: true                 # omit any of them → that axis stays at the hook floor
     write_paths: ["/tmp/lint"]    # (no fork / no network / no writes)
   - on: webhook_received          # external-event point — an inbound webhook resolves to a session
@@ -655,11 +660,11 @@ hooks:
 | `name` | string | _the point_ | Optional operator label surfaced as the `[hook:<name>]` attribution prefix on a push. Absent → defaults to the hook-point (e.g. `[hook:turn_end]`). |
 | `matcher` | map[string,string] | _none_ | Optional filter, evaluated against the firing event's template vars before the hook's action runs. Every named field must match: exact string equality, except `uri`/`path` (shell-style glob via `fnmatch`). Absent/empty → the hook always fires (unaffected for lifecycle hooks, which carry no `server`/`uri`/`path`). **Validated at load** for the 10 builtin hook points: a matcher field name outside that point's builtin schema (e.g. a typo, or a lifecycle point's matcher naming `server`/`uri`) is a `HookConfigError` at config-load time, not a silently-dead matcher. A future/custom point with no builtin schema entry keeps the pre-validation behavior — a field the event doesn't carry never matches at runtime. |
 | `template_push` | map | _none_ | Inbox-push hook from a Jinja2 template (one of the four schemes). `message` (Jinja2 → text), `wake` (bool/Jinja2, default `true`: `true` starts a new turn = self-continuation; `false` rides along with the next turn as passive context), `push_when` (Jinja2 → bool, default `true`; `false` skips), `session` (parsed + carried; naming a different session routes the push to that session's inbox — **cross-session push**; omitted or the current session → the local path). |
-| `shell_exec` | string | _none_ | A shell command run as a pure side-effect (one of the four schemes). Sandbox-gated + consent-allowlisted; stdout/stderr are logs, never parsed. |
-| `shell_push` | string | _none_ | A shell command whose **stdout is a single JSON object** `{"push_when": bool, "wake": bool, "message": str, "session"?: str}` (first three required), pushed via the same path as `template_push`. stdout must be pure JSON (logs → stderr). Sandbox-gated + consent-allowlisted. Any failure (non-zero exit, invalid JSON, missing/wrong-typed field) skips the push (fail-safe). |
-| `subprocess` | bool | `false` (the floor) | **`shell_exec` / `shell_push` only** — may this hook's command spawn child processes? Declaring it on another scheme is a `HookConfigError` (a silently-ignored security field would read as an applied restriction that was never applied), as is a non-bool value. Omitting the key keeps the `false` floor; only an explicit `true`/`false` is your expressed will. Set `true` when the command forks: a bare command that resolves to a version-manager shim (`pyenv`/`asdf`/`mise`) or a spawn-based launcher (`npx`/`uvx`) forks **internally**, so it is denied under the default even though the command itself never forks — the symptom is an opaque `fork: Operation not permitted` (now logged with `denial_class=fork_denied` naming it an environment/config problem). Using an absolute path to the real binary is the alternative. Unlike a stdio [MCP server's `subprocess:`](#mcp-servers) (default `true` — such a server *forks to exist*), a hook's fork need depends on your own command, so there is no safe blanket default: the judgment is per hook. Note the agent's own `hooks_add` tool can only create `template_push` hooks, so `shell_exec`/`shell_push` — and this knob — remain operator-owned. |
-| `network` | bool | `false` (the floor) | **`shell_exec` / `shell_push` only** — may this hook's command reach the network? Same rules as `subprocess` above: declaring it on another scheme or giving it a non-bool value is a `HookConfigError`, and omitting it keeps the `false` floor (only an explicit `true`/`false` is your expressed will). Set `true` for a hook that posts to an API or pulls from a registry. Note that the agent-level [`sandbox.policy`](#sandboxpolicy-sub-keys) does **not** grant this — see the boundary note under that block. |
-| `write_paths` | list[string] | `[]` (the floor) | **`shell_exec` / `shell_push` only** — filesystem paths this hook's command may write (`~` expanded; write implies read). Same rules as `subprocess` above; omitting the key keeps the floor, which grants **no** writes, while an explicit list — including `[]` — is your expressed will. Keep the scope tight: grant the specific directory the hook writes, never `~`. A grant does not defeat the sensitive-read deny-list — the deny wins over an overlapping grant (#2978), exactly as on the op path. Not granted by the agent-level [`sandbox.policy`](#sandboxpolicy-sub-keys) — see the boundary note under that block. |
+| `exec` | list[string] | _none_ | An argv run as a pure side-effect (one of the four schemes; renamed from `shell_exec` in #3226 Phase 4 — argv-list-only, a clean break from the pre-Phase-4 shell-command string). Non-empty list of non-empty strings. Sandbox-gated + consent-allowlisted; stdout/stderr are logs, never parsed. |
+| `exec_capture` | list[string] | _none_ | An argv whose **stdout is a single JSON object** `{"push_when": bool, "wake": bool, "message": str, "session"?: str}` (first three required), pushed via the same path as `template_push`. Renamed from `shell_push` in #3226 Phase 4 — argv-list-only, same clean break as `exec`. stdout must be pure JSON (logs → stderr). Sandbox-gated + consent-allowlisted. Any failure (non-zero exit, invalid JSON, missing/wrong-typed field) skips the push (fail-safe). |
+| `subprocess` | bool | `false` (the floor) | **`exec` / `exec_capture` only** — may this hook's argv spawn child processes? Declaring it on another scheme is a `HookConfigError` (a silently-ignored security field would read as an applied restriction that was never applied), as is a non-bool value. Omitting the key keeps the `false` floor; only an explicit `true`/`false` is your expressed will. Set `true` when the command forks: a bare command that resolves to a version-manager shim (`pyenv`/`asdf`/`mise`) or a spawn-based launcher (`npx`/`uvx`) forks **internally**, so it is denied under the default even though the command itself never forks — the symptom is an opaque `fork: Operation not permitted` (now logged with `denial_class=fork_denied` naming it an environment/config problem). Using an absolute path to the real binary is the alternative. Unlike a stdio [MCP server's `subprocess:`](#mcp-servers) (default `true` — such a server *forks to exist*), a hook's fork need depends on your own command, so there is no safe blanket default: the judgment is per hook. Note the agent's own `hooks_add` tool can only create `template_push` hooks, so `exec`/`exec_capture` (renamed from `shell_exec`/`shell_push` in #3226 Phase 4) — and this knob — remain operator-owned. |
+| `network` | bool | `false` (the floor) | **`exec` / `exec_capture` only** — may this hook's argv reach the network? Same rules as `subprocess` above: declaring it on another scheme or giving it a non-bool value is a `HookConfigError`, and omitting it keeps the `false` floor (only an explicit `true`/`false` is your expressed will). Set `true` for a hook that posts to an API or pulls from a registry. Note that the agent-level [`sandbox.policy`](#sandboxpolicy-sub-keys) does **not** grant this — see the boundary note under that block. |
+| `write_paths` | list[string] | `[]` (the floor) | **`exec` / `exec_capture` only** — filesystem paths this hook's argv may write (`~` expanded; write implies read). Same rules as `subprocess` above; omitting the key keeps the floor, which grants **no** writes, while an explicit list — including `[]` — is your expressed will. Keep the scope tight: grant the specific directory the hook writes, never `~`. A grant does not defeat the sensitive-read deny-list — the deny wins over an overlapping grant (#2978), exactly as on the op path. Not granted by the agent-level [`sandbox.policy`](#sandboxpolicy-sub-keys) — see the boundary note under that block. |
 | `pipeline_launch` | map | _none_ | Launch a registered pipeline (one of the four schemes). `name` (required — the pipeline's registered name; unregistered → warns and skips the launch, the hook point still completes), `input_template` (optional — a `dict`'s string leaves are each Jinja2-rendered against the event's template vars; a plain string is rendered once and its output parsed as a JSON object; omitted → `input=None`). Async/detached: the result arrives later on this session's own inbox as a `pipeline_result` message. |
 
 ## `composers` block

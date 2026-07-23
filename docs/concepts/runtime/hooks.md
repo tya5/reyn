@@ -68,14 +68,18 @@ plus the optional `matcher` (see [below](#matcher-narrowing-which-events-fire-a-
 | `push_when` | str (Jinja2 → bool) | `"true"` | `false` skips the push entirely (conditional push). |
 | `session` | str \| None | `None` (current session) | Routes the push to a *different* session's inbox — [cross-session push](#cross-session-push). |
 
-**`shell_exec`** — a sandboxed side-effect command:
+**`exec`** — a sandboxed side-effect argv (renamed from `shell_exec` in #3226
+Phase 4 — naming honesty, not a security change: this scheme never ran
+`/bin/sh -c <string>`; it always executed a tokenized argv with `shell=False`.
+The rename removes the misleading `shell_` prefix and — a clean break, not a
+compat alias — collapses the payload to **argv-list-only**):
 
 | Field | Type | Default | Meaning |
 |---|---|---|---|
-| `shell_exec` | str (**static** — not Jinja2) | _required_ | The command line. stdout/stderr are ignored; the event is written to the command's stdin as JSON. |
+| `exec` | `list[str]` (**static** — not Jinja2) | _required_ | The argv. Non-empty list of non-empty strings. stdout/stderr are ignored; the event is written to the process's stdin as JSON. |
 
-**`shell_exec` is deliberately NOT templated.** Unlike `message`/`input_template`
-above, the command line is split with `shlex.split` and run as-is — event/context
+**`exec` is deliberately NOT templated.** Unlike `message`/`input_template`
+above, the argv is run as-is, one process-arg per list item — event/context
 data is never interpolated into it. This is an intentional command-injection
 guard, not an oversight: if you need the firing event's data inside the
 command, read it from **stdin**, which always carries the event's payload as
@@ -83,11 +87,18 @@ JSON (e.g. a composed event's `{"inputs": [...], "correlation_key": ...}`) —
 the command must read and parse stdin itself, never expect `{{ ... }}`
 substitution in its own argv.
 
-**`shell_push`** — a sandboxed command whose stdout IS a push directive:
+**Migration from the pre-Phase-4 shell-command string**: `shell_exec: "scripts/cleanup.sh --force"`
+becomes `exec: ["scripts/cleanup.sh", "--force"]` — split the command line into
+one argv entry per token yourself (the runtime no longer does this via
+`shlex.split`).
+
+**`exec_capture`** — a sandboxed argv whose stdout IS a push directive
+(renamed from `shell_push` in #3226 Phase 4 — same naming-honesty rationale
+and argv-list-only payload as `exec` above):
 
 | Field | Type | Default | Meaning |
 |---|---|---|---|
-| `shell_push` | str | _required_ | The command line. stdout must be pure JSON: `{"push_when": bool, "wake": bool, "message": str, "session"?: str}` (first three required). Any failure (non-zero exit, invalid JSON, missing/wrong-typed field) skips the push, fail-safe. |
+| `exec_capture` | `list[str]` | _required_ | The argv. Non-empty list of non-empty strings. stdout must be pure JSON: `{"push_when": bool, "wake": bool, "message": str, "session"?: str}` (first three required). Any failure (non-zero exit, invalid JSON, missing/wrong-typed field) skips the push, fail-safe. |
 
 **`pipeline_launch`** — launch a registered pipeline, async/detached:
 
@@ -310,7 +321,7 @@ operator never intended a hook action to see. Contrast `cron_fired`'s
 Both `cron_fired` and `webhook_received` are **non-blocking relative to their
 ingress**: the cron job's own inbox delivery and the webhook's HTTP response
 never wait on a hook action — dispatch is scheduled as a fire-and-forget
-background task, so a slow hook (e.g. a multi-second `shell_exec`) can never
+background task, so a slow hook (e.g. a multi-second `exec`) can never
 stall the ingress that triggered it.
 
 ## Matcher: narrowing which events fire a hook
@@ -353,10 +364,13 @@ emits a `uri`- or `path`-shaped field gets glob matching for free.
 Each entry carries **exactly one** of four mutually-exclusive schemes:
 
 - **`template_push`** — a push directive built from config Jinja2 templates.
-- **`shell_exec`** — a sandboxed command run as a pure side-effect (output ignored).
-- **`shell_push`** — a sandboxed command whose **stdout is a JSON push-directive**,
+- **`exec`** — a sandboxed argv run as a pure side-effect (output ignored).
+  Renamed from `shell_exec` in #3226 Phase 4 (naming honesty, argv-list-only
+  payload — see [above](#the-4-config-schemes-every-field)).
+- **`exec_capture`** — a sandboxed argv whose **stdout is a JSON push-directive**,
   pushed via the same path as `template_push` (the only difference is the
-  directive's source: captured stdout vs a Jinja2 render).
+  directive's source: captured stdout vs a Jinja2 render). Renamed from
+  `shell_push` in #3226 Phase 4.
 - **`pipeline_launch`** — launch a registered [pipeline](pipelines.md) with
   input rendered from the event's template vars. See
   [Pipeline launch](#pipeline-launch-pipeline_launch) below.
@@ -371,23 +385,23 @@ A passive `[hook:name]` system message is queued into the unified inbox. It
 rides along with the **next** turn — no extra turn is triggered. Use it to
 append read-only context (metrics, timestamps, retrieved facts) that the LLM
 sees in the conversation without being asked to act on it immediately. Produced
-by a `template_push` or a `shell_push` whose directive sets `wake: false`.
+by a `template_push` or an `exec_capture` whose directive sets `wake: false`.
 
 ### E — self-continuation (a push with `wake: true`)
 
 Same as C, but the `wake: true` flag signals the run-loop to open a new turn
 immediately. This is the differentiating capability: a `turn_end` hook can
 restart the agent without any human input. Bounded by the [loop valve](#loop-valve).
-Produced by a `template_push` or a `shell_push` with `wake: true`.
+Produced by a `template_push` or an `exec_capture` with `wake: true`.
 
-### F — external side-effect (`shell_exec`)
+### F — external side-effect (`exec`)
 
 A sandboxed command is executed. Reyn writes a JSON event to the command's
 stdin; its stdout and stderr are **ignored**. Use it to update external
 state — write a log entry, emit a metric, post to a webhook. See
 [Sandbox](#sandbox) for the safety model.
 
-### Computed push (`shell_push`)
+### Computed push (`exec_capture`)
 
 A sandboxed command whose **stdout** is a single JSON object
 `{"push_when": bool, "wake": bool, "message": str, "session"?: str}` (first
@@ -420,7 +434,7 @@ hooks:
   other hook failure.
 - `input_template` — optional. A `dict`'s string leaves (recursively) are
   each Jinja2-rendered against the template vars; a plain string is rendered
-  once and its output parsed as a JSON object (mirroring `shell_push`'s
+  once and its output parsed as a JSON object (mirroring `exec_capture`'s
   "stdout is JSON" contract); omitted, the pipeline launches with no input.
 - **Async/detached**, works from any hook-point (lifecycle or
   `mcp_resource_updated`): the launch is the same
@@ -431,7 +445,7 @@ hooks:
 
 ### Cross-session push
 
-A `template_push` or `shell_push` directive's `session` field routes the
+A `template_push` or `exec_capture` directive's `session` field routes the
 push to a *different* session's inbox instead of the current one — the
 target session processes it exactly as it would its own hook push (`wake`
 rides along: `true` triggers a turn there, `false` rides passively into its
@@ -506,8 +520,8 @@ unexpected workflow behavior would otherwise leave open.
 
 ## Sandbox
 
-Shell hooks run inside the same backend-agnostic sandbox abstraction as
-Control IR `shell_exec` ops: Seatbelt (macOS), Landlock/seccomp (Linux), Noop
+`exec`/`exec_capture` hooks run inside the same backend-agnostic sandbox abstraction as
+Control IR `sandboxed_exec` ops: Seatbelt (macOS), Landlock/seccomp (Linux), Noop
 (unsupported platforms), or a container backend.
 
 A hook shell's sandbox is scoped **per hook**. Three axes start at a floor and
@@ -532,10 +546,11 @@ naming it an environment/config problem rather than a command failure.
 
 Two boundaries hold regardless of the keys:
 
-- The sensitive-file read deny-list (`~/.ssh`, `~/.aws`, …) applies to shell
-  hooks as it does to any other sandboxed run, and a `write_paths` grant does
-  not pierce it — the deny wins over an overlapping grant.
-- Consent is fail-closed: if the sandbox backend cannot be confirmed, the shell
+- The sensitive-file read deny-list (`~/.ssh`, `~/.aws`, …) applies to
+  `exec`/`exec_capture` hooks as it does to any other sandboxed run, and a
+  `write_paths` grant does not pierce it — the deny wins over an overlapping
+  grant.
+- Consent is fail-closed: if the sandbox backend cannot be confirmed, the
   hook is refused rather than run unsandboxed.
 
 ### Why the agent-level `sandbox.policy` is not the hook's policy
@@ -548,7 +563,7 @@ because a run's *ops* are deliberately unsandboxed. The hook site is where a
 hook's sandbox is decided.
 
 What the OS does not do is ignore you. If the agent-level policy declares one of
-the three axes above and a shell hook does not re-declare it, the run logs a
+the three axes above and an `exec`/`exec_capture` hook does not re-declare it, the run logs a
 WARNING naming the per-hook key that reaches it and emits a
 `sandbox_policy_not_applied` audit-event recording what was configured, what
 actually applied, and which hook. Declaring the key on the hook — to *any*
@@ -558,9 +573,9 @@ refused, never silently dropped.
 
 ### Consent and allowlist
 
-Shell-hook commands require operator consent before they run. The consent flow depends on whether a live intervention listener is attached:
+`exec`/`exec_capture` argv require operator consent before they run. The consent flow depends on whether a live intervention listener is attached:
 
-- **Interactive chat session** (inline CUI) — consent routes through the unified intervention bus and renders as a closed-set intervention in the above-input region: "Shell hook `<name>` wants to run a command" (the hook's configured `name:` field, or a generic message if unnamed). Three choices:
+- **Interactive chat session** (inline CUI) — consent routes through the unified intervention bus and renders as a closed-set intervention in the above-input region: "Shell hook `<name>` wants to run a command" (the hook's configured `name:` field, or a generic message if unnamed; the prompt text still says "shell hook" — a UI-label detail, not a config field name). Three choices:
   - **[A]lways** — allow and persist to the allowlist (`~/.reyn/shell-hooks-allowlist.json`, override via `REYN_SHELL_HOOKS_ALLOWLIST`). Future runs of the same command are auto-approved.
   - **[y]es** — allow this run only.
   - **[n]o** — skip (fail-closed).
@@ -573,13 +588,13 @@ See [sandbox](sandbox.md) for the full backend model and [permission model](perm
 
 ### P6 event: `hook_shell_executed`
 
-Every shell hook run — including silently auto-approved runs — emits a `hook_shell_executed` P6 event (under the "tool" group), recording:
+Every `exec`/`exec_capture` hook run — including silently auto-approved runs — emits a `hook_shell_executed` P6 event (under the "tool" group; the event kind name itself is unchanged by #3226 Phase 4 — only the `mode` value below was renamed), recording:
 
 ```
-shell_exec: <command> [rc=N]
+exec: <command> [rc=N]
 ```
 
-(`shell_push:` prefix for push-mode hooks.) The return code suffix is omitted when the command exits 0. This gives the operator a complete audit trail of shell-hook activity regardless of consent path.
+(`exec_capture:` prefix for push-mode hooks — renamed from `shell_exec:`/`shell_push:` in #3226 Phase 4.) The return code suffix is omitted when the command exits 0. This gives the operator a complete audit trail of exec-hook activity regardless of consent path.
 
 ## Configuration
 
@@ -588,7 +603,7 @@ Hooks are declared under the `hooks:` key in `reyn.yaml`. See the
 for the full schema.
 
 Brief example — a `turn_end` self-continuation `template_push`, a `session_start`
-`shell_exec`, a `turn_end` `shell_push` whose stdout decides the push, and a
+`exec`, a `turn_end` `exec_capture` whose stdout decides the push, and a
 matcher-narrowed `mcp_resource_updated` `pipeline_launch`:
 
 ```yaml
@@ -599,11 +614,11 @@ hooks:
       wake: true
 
   - on: session_start
-    shell_exec: "echo session-started >> /tmp/reyn-hooks.log"
+    exec: ["touch", "/tmp/reyn-session-started"]   # argv only — no shell redirection (">>")
 
   - name: dynamic
     on: turn_end
-    shell_push: "scripts/decide-next.sh"   # emits {"push_when":true,"wake":true,"message":"..."}
+    exec_capture: ["scripts/decide-next.sh"]   # emits {"push_when":true,"wake":true,"message":"..."}
 
   - on: mcp_resource_updated
     matcher: {server: "github", uri: "file:///repo/docs/**"}
@@ -613,9 +628,12 @@ hooks:
 ```
 
 The `wake: true` on the first hook triggers a new turn after each `turn_end`,
-with the message injected as the system context. The `shell_exec` on
-`session_start` appends a log line; its output is discarded. The `shell_push`
-runs its command, parses stdout, and pushes only if the directive says so.
+with the message injected as the system context. The `exec` on
+`session_start` runs its argv as a pure side-effect; its output is discarded
+(argv is executed directly — no shell, so a literal `>>` redirect token would
+NOT redirect; use a script or an explicit `["sh", "-c", "..."]` argv if you
+need shell semantics). The `exec_capture`
+runs its argv, parses stdout, and pushes only if the directive says so.
 The last hook only fires for a `github`-server resource under
 `docs/` — and, when it does, launches the `reindex_docs` pipeline
 asynchronously with the changed URI as input.
@@ -699,7 +717,7 @@ by, this Sync consumer.
 ```yaml
 hooks:
   - on: composed:deploy_approved      # a composed event as a Sync on: target
-    shell_exec: "reyn deploy.sh"
+    exec: ["reyn", "deploy.sh"]
 
 composers:
   - name: deploy_approved
