@@ -50,15 +50,26 @@ class _EnvelopeSource(Protocol):
 
 
 class _RouterHost(Protocol):
-    """The two seams this class needs from its ``router_host`` dep (the
+    """The seams this class needs from its ``router_host`` dep (the
     ``RouterHostAdapter``): the live MCP-server roster (read) + the filtered
-    skill list (write). Protocol, same decoupling rationale as
-    ``_EnvelopeSource``. ``_available_skills`` is a live-mutated attribute, not
-    a property, so it is typed as a plain field here."""
+    skill list (write), plus (#3220) the same host accessors ``RouterLoop.
+    SchemeOps.present`` / ``base_tools`` call to build the ``tools=`` payload —
+    so ``capability_visibility_state`` can derive the "tool" census from the
+    SAME ``build_tools()`` substrate the composed per-turn payload uses,
+    instead of a raw global-registry census (#3220 ground-truth: the two
+    diverge — a ``gates.router != "allow"`` tool, or a name the active scheme's
+    wrapper-collapse strips, is registry-visible but never payload-reachable).
+    Protocol, same decoupling rationale as ``_EnvelopeSource``.
+    ``_available_skills`` is a live-mutated attribute, not a property, so it is
+    typed as a plain field here."""
 
     _available_skills: "list | None"
 
     def get_mcp_servers(self) -> "list[dict]": ...
+    def list_available_agents(self) -> "list[dict]": ...
+    def get_file_permissions(self) -> "dict | None": ...
+    def get_web_fetch_allowed(self) -> bool: ...
+    def get_sandbox_backend(self) -> "str | None": ...
 
 
 class _SkillEntry(Protocol):
@@ -84,6 +95,7 @@ class CapabilityVisibility:
         available_skills_provider: "Callable[[], list[_SkillEntry] | None]",
         contextual_permission: "object | None" = None,
         excluded_categories: "frozenset[str] | None" = None,
+        chat_tool_use_scheme: "str" = "enumerate-all",
     ) -> None:
         self._registry = registry
         self._router_host = router_host
@@ -95,6 +107,12 @@ class CapabilityVisibility:
         self._available_skills_provider = available_skills_provider
         self._contextual_permission = contextual_permission
         self._excluded_categories = frozenset(excluded_categories or ())
+        # #3220: the chat-layer ``ToolUseScheme`` name (``reyn.tools.scheme.get_scheme``
+        # registry key — "enumerate-all" / "universal-category" / "codeact" / "retrieval").
+        # Immutable for the session's lifetime (Session never reassigns
+        # ``self._chat_tool_use_scheme`` post-construction — same stability class as
+        # ``agent_name``), so a plain field is correct here, not a live provider.
+        self._chat_tool_use_scheme = chat_tool_use_scheme
         # Session-scoped LLM tool-VISIBILITY override, restrict-only on top of the resolved agent envelope (#2285)
         self._visibility_override: "dict[str, set[str]]" = {
             "tool": set(), "mcp": set(), "category": set(), "skill": set(),
@@ -241,6 +259,100 @@ class CapabilityVisibility:
             self.reapply_visibility_override()
         self.persist_visibility_override(toggle_store_dir)  # #2285 step2 — survive restart (best-effort)
 
+    def _reachable_tool_names(self, excluded_categories: "frozenset[str]") -> "set[str]":
+        """#3220: the "tool" census SOURCE — capabilities reachable in the actual
+        per-turn composed payload for the active chat-layer scheme, NOT a global
+        registry census.
+
+        Ground truth (#3220 issue): the prior source, ``get_default_registry().names()``,
+        enumerates every registered ``ToolDefinition`` regardless of whether the active
+        scheme's ``build_tools()`` call ever advertises it (a ``gates.router != "allow"``
+        tool — e.g. the phase-only ``ask_user`` — is registry-visible but NEVER emitted by
+        ``build_tools()`` for ANY scheme) and regardless of scheme shape (``universal-category``
+        collapses individual/MCP tool names into 3-4 wrapper meta-tools; ``codeact`` emits no
+        ``tools=`` schema at all). This method re-derives the census from the SAME
+        ``build_tools()`` / ``universal_catalog.catalog_entries()`` substrate the real
+        composition path (``RouterLoop.present`` / ``base_tools`` / ``catalog_entries``, and
+        each ``ToolUseScheme.build_presentation``) calls — no reinvented logic.
+
+        Per-scheme granularity (architect-confirmed #3220 firm): a wrapper-folded scheme
+        must EXPAND the wrapper back to the reachable capabilities it makes callable, not
+        show the opaque wrapper name — the operator sees "the underlying capability is
+        usable", not "invoke_action is a tool".
+
+        - ``universal-category``: ``build_tools(universal_wrappers_enabled=True)`` strips
+          the legacy per-kind names EXCEPT a few router-only primitives added after the
+          strip-list was last updated (``session_spawn`` / ``agent_spawn`` /
+          ``topology_create`` — #2120's advertise-drift lesson) — those SURVIVE the
+          wrapper-mode build and stay literally in ``tools=``, so they are kept (computed
+          as the intersection with the wrappers-off build, no hardcoded name list — a new
+          survivor is picked up automatically). Every OTHER capability is reachable only
+          THROUGH the ``invoke_action`` wrapper, against the closed ``universal_catalog``
+          table — expanded here via ``catalog_entries()``.
+        - ``codeact``: ``llm_tools_payload`` is genuinely ``[]`` (no JSON schema at all);
+          the model calls actions via the code-API rendered from ``ops.catalog_entries()``
+          alone (``CodeActScheme.build_presentation`` never unions ``base_tools()``) — so
+          the reachable set is the catalog names only, matching ``dispatchable_catalog``.
+        - ``enumerate-all`` / ``retrieval`` / any other registered scheme: both the flat
+          legacy names (``build_tools(universal_wrappers_enabled=False)``) AND the catalog
+          names are literally present in ``tools=`` (``EnumerateAllScheme.build_presentation``
+          unions ``base_tools() + catalog_entries()``) — the safe default for a scheme this
+          method does not special-case.
+
+        ``excluded_categories`` (the same conjunct the "category" kind below already
+        applies) also drops a whole category's catalog actions here — one source of
+        exclusion, not two competing ones.
+        """
+        from reyn.runtime.router_tools import build_tools
+        from reyn.tools import universal_catalog
+        from reyn.tools.types import RouterCallerState, ToolContext
+
+        host = self._router_host
+        agents = host.list_available_agents()
+        file_permissions = host.get_file_permissions()
+        mcp_servers = host.get_mcp_servers()
+        web_fetch_allowed = host.get_web_fetch_allowed()
+
+        legacy_tools = build_tools(
+            agents,
+            file_permissions=file_permissions,
+            mcp_servers=mcp_servers,
+            web_fetch_allowed=web_fetch_allowed,
+            universal_wrappers_enabled=False,
+        )
+        legacy_names = {t["function"]["name"] for t in legacy_tools}
+
+        # #3026/#1667: the catalog's OWN availability gate (excluded_categories, exec's
+        # sandbox backend) — router_state carries only what _enumerate_category reads,
+        # never events/permission_resolver/workspace (catalog_entries's NAME projection
+        # doesn't dereference those), so a minimal RouterCallerState is faithful here.
+        tool_ctx = ToolContext(
+            events=None,
+            permission_resolver=None,
+            workspace=None,
+            caller_kind="router",
+            router_state=RouterCallerState(
+                excluded_categories=excluded_categories,
+                sandbox_backend=host.get_sandbox_backend(),
+            ),
+        )
+        catalog_names = {entry["name"] for entry in universal_catalog.catalog_entries(tool_ctx)}
+
+        if self._chat_tool_use_scheme == "universal-category":
+            universal_tools = build_tools(
+                agents,
+                file_permissions=file_permissions,
+                mcp_servers=mcp_servers,
+                web_fetch_allowed=web_fetch_allowed,
+                universal_wrappers_enabled=True,
+            )
+            universal_names = {t["function"]["name"] for t in universal_tools}
+            native_survivors = universal_names & legacy_names
+            return native_survivors | catalog_names
+        if self._chat_tool_use_scheme == "codeact":
+            return set(catalog_names)
+        return legacy_names | catalog_names
+
     def capability_visibility_state(self) -> dict:
         """#2285: the status-bar's read model.
 
@@ -249,7 +361,11 @@ class CapabilityVisibility:
         universe. ``hidden_by_session`` = the override set (what the user turned OFF). The UI renders
         ``on = item not in hidden_by_session``. authorized is computed from the live catalogs
         (tools / mcp / categories / skills) filtered by the envelope's ``allows`` — so it always
-        reflects visible ⊆ authorized (nothing outside the envelope is ever togglable).
+        reflects visible ⊆ authorized (nothing outside the envelope is ever togglable). #3220: the
+        "tool" kind is sourced from ``_reachable_tool_names`` — the actual per-turn composed
+        ``tools=`` payload for the active scheme (expanded through any wrapper) — not a raw global
+        registry census, so a capability absent from every scheme's composed payload (e.g. a
+        ``gates.router="deny"`` phase-only tool) is never shown as visible.
         Kind ∈ tool / mcp / category / skill."""
         from typing import cast
 
@@ -258,7 +374,6 @@ class CapabilityVisibility:
             ContextualLayer,
             ContextualPermission,
         )
-        from reyn.tools import get_default_registry
         from reyn.tools.universal_catalog import CATEGORIES
 
         # resolved_profile_for's declared return is the wider `object | None`; cast to the
@@ -273,7 +388,7 @@ class CapabilityVisibility:
         ctx = ContextualLayer(base_ctx)  # the envelope gate (None → allows all)
 
         authorized: "list[dict]" = []
-        for name in sorted(get_default_registry().names()):
+        for name in sorted(self._reachable_tool_names(base_excl)):
             if ctx.allows(CapabilityAxis.TOOL, name):
                 authorized.append({"kind": "tool", "name": name})
         for server in self._router_host.get_mcp_servers():
