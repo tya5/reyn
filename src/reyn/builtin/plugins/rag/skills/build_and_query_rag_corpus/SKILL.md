@@ -39,11 +39,46 @@ mcp__install_local(name="reyn_markitdown", command="uvx", args=["markitdown-mcp"
 ```
 
 `plugin_management__install` is **register-only** (#3209) -- it does NOT
-install the plugin's Python dependencies for you. **Before your first
-`rag_ingest` call, read `install-and-venv-setup.md`** for the exact venv
-creation + `pip install -r requirements.txt` + mcp-config-command steps
-(Windows included) -- a probe/spawn against an unready venv fails fast
-rather than falling back to a runtime fetch.
+install the plugin's Python dependencies for you. Do this next, via
+`sandboxed_exec`, entirely from chat -- no operator keypress needed:
+
+**1. Create the venv INSIDE the current project workspace** -- never under
+`~/.reyn/...` (home dir). Your sandbox's write scope is the project
+directory only; a home-dir path fails with "Operation not permitted", and a
+shared home-dir path also collides across separate projects/sessions.
+
+```bash
+python3 -m venv ./.venv-rag
+./.venv-rag/bin/pip install -r ~/.reyn/plugins/rag/requirements.txt
+```
+
+Windows: `python -m venv .venv-rag` then
+`.venv-rag\Scripts\pip.exe install -r %USERPROFILE%\.reyn\plugins\rag\requirements.txt`.
+
+**2. Point the two registered servers at that venv** -- edit
+`.reyn/config/mcp.yaml`'s `mcp.servers.reyn_chunker.command` and
+`mcp.servers.reyn_vector_store.command` (the entries
+`plugin_management__install` just wrote) to the venv's OWN interpreter,
+absolute path:
+
+```yaml
+mcp:
+  servers:
+    reyn_chunker:
+      command: /abs/path/to/this/project/.venv-rag/bin/python   # Windows: ...\.venv-rag\Scripts\python.exe
+    reyn_vector_store:
+      command: /abs/path/to/this/project/.venv-rag/bin/python   # Windows: ...\.venv-rag\Scripts\python.exe
+```
+
+**Edit `command` ONLY -- leave `args` exactly as written.** `args` is
+already the plugin's own absolute script path (e.g.
+`~/.reyn/plugins/rag/scripts/chunker_server.py`) -- there is no
+`-m reyn_chunker` module form; inventing one breaks spawn. And it is
+`.venv-rag`, not a bare `venv/` -- the leading dot matters.
+
+A probe/spawn against an unready or wrong-path venv fails fast with a clear
+error -- reyn never falls back to a runtime fetch. Full detail
+(troubleshooting, markitdown's own venv): `install-and-venv-setup.md`.
 
 ## Next steps -- which reference answers your question
 
@@ -66,10 +101,9 @@ Config to copy: `docs/cookbook/configs/with-builtin-rag-mcp.yaml`.
 ## Bundled references
 
 - [install-and-venv-setup.md](${CLAUDE_SKILL_DIR}/references/install-and-venv-setup.md)
-  -- register-only install (#3209): the exact commands to create the
-  plugin's own venv, `pip install -r requirements.txt`, and point the
-  registered `reyn_chunker`/`reyn_vector_store` MCP `command` at it
-  (Windows included).
+  -- supplementary detail for the Prerequisites steps above: why the venv
+  must be workspace-relative, troubleshooting, and markitdown's own
+  fallback venv.
 - [configure-embedding-provider.md](${CLAUDE_SKILL_DIR}/references/configure-embedding-provider.md)
   -- confirm a working embedding provider before your first `rag_ingest`
   call: the pre-flight curl check, and the API-key path (Case A, no proxy

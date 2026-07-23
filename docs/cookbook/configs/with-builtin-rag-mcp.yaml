@@ -23,30 +23,40 @@
 # project's `.reyn/config/{mcp,pipelines,skills}.yaml`, using the plugin's
 # own `.mcp.json` `command` value AS-IS -- it does NOT install the plugin's
 # runtime deps (chonkie/apsw/sqlite-vec/fastmcp) for you. That step is
-# skill-driven: the `build_and_query_rag_corpus` skill's SETUP section walks
-# the operator/LLM through creating a venv + `pip install -r requirements.txt`
+# skill-driven: the `build_and_query_rag_corpus` skill's body walks the
+# operator/LLM through creating a venv + `pip install -r requirements.txt`
 # (never reyn's own environment -- no `pip install "reyn[builtin-rag]"`
 # needed) and then editing the registered entries below to point `command`
-# at that venv's own interpreter, absolute path:
+# at that venv's own interpreter, absolute path.
 #
-#   python3 -m venv ~/.reyn/plugins/rag/.venv
-#   ~/.reyn/plugins/rag/.venv/bin/pip install -r ~/.reyn/plugins/rag/requirements.txt
+# **The venv MUST live INSIDE the project workspace** (e.g. `./.venv-rag` at
+# the project root) -- NEVER under `~/.reyn/...` (home dir). An LLM-driven
+# `sandboxed_exec` call cannot write outside the project's write scope, so a
+# home-dir venv path fails with "Operation not permitted" and the whole flow
+# silently stalls; a home-dir path is also global across every
+# project/session on the machine, so two unrelated projects would race the
+# SAME materialised venv:
+#
+#   python3 -m venv ./.venv-rag
+#   ./.venv-rag/bin/pip install -r ~/.reyn/plugins/rag/requirements.txt
 #
 # Windows: the interpreter is at `Scripts\python.exe`, not `bin/python`:
 #
-#   python -m venv %USERPROFILE%\.reyn\plugins\rag\.venv
-#   %USERPROFILE%\.reyn\plugins\rag\.venv\Scripts\pip.exe install -r %USERPROFILE%\.reyn\plugins\rag\requirements.txt
+#   python -m venv .venv-rag
+#   .venv-rag\Scripts\pip.exe install -r %USERPROFILE%\.reyn\plugins\rag\requirements.txt
 #
-# Then edit `.reyn/config/mcp.yaml`'s two registered entries:
+# Then edit `.reyn/config/mcp.yaml`'s two registered entries -- ONLY
+# `command`, never `args` (already the plugin's own absolute script path,
+# written correctly by install -- there is no `-m <module>` form):
 #
 #   mcp:
 #     servers:
 #       reyn_chunker:
-#         command: /home/you/.reyn/plugins/rag/.venv/bin/python   # Windows: ...\.venv\Scripts\python.exe
-#         # ... plugin_management__install's own args/env fields unchanged ...
+#         command: /abs/path/to/this/project/.venv-rag/bin/python   # Windows: ...\.venv-rag\Scripts\python.exe
+#         # args: unchanged -- already the plugin's own absolute script path
 #       reyn_vector_store:
-#         command: /home/you/.reyn/plugins/rag/.venv/bin/python   # Windows: ...\.venv\Scripts\python.exe
-#         # ... plugin_management__install's own args/env fields unchanged ...
+#         command: /abs/path/to/this/project/.venv-rag/bin/python   # Windows: ...\.venv-rag\Scripts\python.exe
+#         # args: unchanged -- already the plugin's own absolute script path
 #
 # so spawning them needs no network and does not depend on your ambient
 # `python3` (which is a DIFFERENT interpreter under `pipx install reyn`, a
@@ -69,12 +79,14 @@
 # Do NOT `pip install markitdown-mcp` beside reyn: `command: uvx` fetches it
 # into uvx's OWN isolated environment on first run, which is the point --
 # installing it beside reyn only invites a dependency conflict. Firewalled?
-# Give it its own venv and an absolute path, never reyn's venv:
+# Give it its own venv, ALSO inside the project workspace (same write-scope
+# reasoning as above -- never a home-dir path, never reyn's venv), and an
+# absolute path:
 #
-#   python3 -m venv ~/.reyn-markitdown
-#   ~/.reyn-markitdown/bin/pip install markitdown-mcp
+#   python3 -m venv ./.venv-markitdown
+#   ./.venv-markitdown/bin/pip install markitdown-mcp
 #   mcp__install_local(name="reyn_markitdown", args=[],
-#                      command="/home/you/.reyn-markitdown/bin/markitdown-mcp")
+#                      command="/abs/path/to/this/project/.venv-markitdown/bin/markitdown-mcp")
 #
 # rag_ingest's own step-0 pre-flight (X1) probes each of the three servers
 # for real BEFORE any embedding spend and names the one that failed with a

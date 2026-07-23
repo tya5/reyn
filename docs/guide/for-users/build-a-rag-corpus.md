@@ -38,34 +38,34 @@ mcp__install_local(name="reyn_markitdown", command="uvx", args=["markitdown-mcp"
 
 `plugin_management__install` is **register-only**: it copies the plugin's files and registers **both MCP servers, both pipelines, and its RAG skill** together — no `permissions:` block to add, because a configured server is granted when the pipeline runs it. **Refuse and nothing is written.** It does **not** install the plugin's Python dependencies (chonkie/apsw/sqlite-vec/fastmcp) for you — that is a separate, deliberate next step:
 
-> **Create the plugin's own venv, then point the servers at it** — Reyn's LLM does this in-sandbox, following the `build_and_query_rag_corpus` skill's SETUP steps, so you normally don't type these yourself:
+> **Create the plugin's own venv INSIDE this project, then point the servers at it** — Reyn's LLM does this in-sandbox, following the `build_and_query_rag_corpus` skill's own body, so you normally don't type these yourself. **The venv must live in the project (e.g. `./.venv-rag`), never under `~/.reyn/...`** — an LLM-driven sandboxed command cannot write outside the project's workspace, so a home-dir venv path fails with "Operation not permitted" and the whole flow silently stalls; a home-dir path is also global across every project on the machine, so two unrelated projects would race the same venv:
 >
 > ```bash
-> python3 -m venv ~/.reyn/plugins/rag/.venv
-> ~/.reyn/plugins/rag/.venv/bin/pip install -r ~/.reyn/plugins/rag/requirements.txt
+> python3 -m venv ./.venv-rag
+> ./.venv-rag/bin/pip install -r ~/.reyn/plugins/rag/requirements.txt
 > ```
 >
 > Windows: the interpreter is at `Scripts\python.exe`, not `bin/python`:
 >
 > ```powershell
-> python -m venv %USERPROFILE%\.reyn\plugins\rag\.venv
-> %USERPROFILE%\.reyn\plugins\rag\.venv\Scripts\pip.exe install -r %USERPROFILE%\.reyn\plugins\rag\requirements.txt
+> python -m venv .venv-rag
+> .venv-rag\Scripts\pip.exe install -r %USERPROFILE%\.reyn\plugins\rag\requirements.txt
 > ```
 >
-> Then edit `.reyn/config/mcp.yaml`'s `mcp.servers.reyn_chunker.command` and `mcp.servers.reyn_vector_store.command` (the two entries `plugin_management__install` just wrote) to that venv's own interpreter, absolute path — see [`cookbook/configs/with-builtin-rag-mcp.yaml`](../../cookbook/configs/with-builtin-rag-mcp.yaml) for the exact shape. If you skip this (or the venv is incomplete), spawning either server **fails fast with a clear error** — Reyn never falls back to fetching the missing dependency at spawn time.
+> Then edit `.reyn/config/mcp.yaml`'s `mcp.servers.reyn_chunker.command` and `mcp.servers.reyn_vector_store.command` (the two entries `plugin_management__install` just wrote) to that venv's own interpreter, absolute path — **`args` stays exactly as written** (already the plugin's own absolute script path; there is no `-m <module>` form) — see [`cookbook/configs/with-builtin-rag-mcp.yaml`](../../cookbook/configs/with-builtin-rag-mcp.yaml) for the exact shape. If you skip this (or the venv is incomplete), spawning either server **fails fast with a clear error** — Reyn never falls back to fetching the missing dependency at spawn time.
 
 Each server is **probed before its registration is committed**: if a command does not start on your machine, that server is skipped rather than leaving a half-configured entry — do the venv setup above BEFORE registering, or re-run the install after fixing it.
 
 > `sqlite-vec` is **wheel-only** (no sdist), so your venv's `pip install` needs a package index that serves wheels — an sdist-only internal mirror cannot install it, and musl/Alpine has no wheel at all. Reyn's own `python:3.12-slim` base image is glibc, so containers are unaffected.
 
-> **Firewalled network?** `uvx` fetches `markitdown-mcp` from PyPI on first run, and your own `pip install -r requirements.txt` above fetches the `rag` plugin's deps from PyPI. If PyPI is blocked for `markitdown-mcp`, give it its **own venv** — never Reyn's — and point `command` at the absolute path:
+> **Firewalled network?** `uvx` fetches `markitdown-mcp` from PyPI on first run, and your own `pip install -r requirements.txt` above fetches the `rag` plugin's deps from PyPI. If PyPI is blocked for `markitdown-mcp`, give it its **own venv, also inside this project** (never Reyn's, never a home-dir path — same write-scope reasoning as above) and point `command` at the absolute path:
 >
 > ```bash
-> python3 -m venv ~/.reyn-markitdown
-> ~/.reyn-markitdown/bin/pip install markitdown-mcp
+> python3 -m venv ./.venv-markitdown
+> ./.venv-markitdown/bin/pip install markitdown-mcp
 > ```
 >
-> then use `command: /home/you/.reyn-markitdown/bin/markitdown-mcp` with `args: []`. Reyn starts whatever `command` names, as-is, so an absolute path to a script whose environment actually has the package is the reliable form.
+> then use `command: /abs/path/to/this/project/.venv-markitdown/bin/markitdown-mcp` with `args: []`. Reyn starts whatever `command` names, as-is, so an absolute path to a script whose environment actually has the package is the reliable form.
 
 **Why does the registered `reyn_chunker`/`reyn_vector_store` command need to be an absolute path to a venv interpreter (`.venv/bin/python` on macOS/Linux, `.venv\Scripts\python.exe` on Windows), not `python`?** `plugin_management__install` registers whatever `command` the plugin's own `.mcp.json` names, unmodified — pointing it at YOUR venv's absolute interpreter path is what makes spawning it independent of your ambient `PATH`'s `python3`, which is a *different* interpreter under `pipx install reyn`, a non-activated venv, or a `PATH` with another python first.
 
