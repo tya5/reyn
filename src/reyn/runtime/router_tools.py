@@ -37,9 +37,15 @@ from typing import Literal
 # demand, rather than receiving all N schemas upfront.
 #
 # Spring AI experiment shows 63–64% token reduction for 40+ MCP tools.
-# Override per-project via ``mcp.search_threshold:`` in reyn.yaml (parsed by
-# config._parse_mcp_search_threshold; injected into build_tools() as kwarg).
-# Setting threshold=0 disables the switch (always inline).
+# Nominally overridable per-project via ``mcp.search_threshold:`` in reyn.yaml
+# (parsed into ``ReynConfig.mcp_search_threshold`` by
+# config._parse_mcp_search_threshold), but as of this writing neither
+# router_loop.py call site (SchemeOps.present / SchemeOps.base_tools) passes
+# that config value through to build_tools()'s ``mcp_search_threshold=``
+# kwarg — the config field is parsed but not threaded, so build_tools()
+# always falls back to the module-level MCP_SEARCH_THRESHOLD constant below
+# regardless of reyn.yaml. Setting threshold=0 disables the switch (always
+# inline).
 #
 # The exact Anthropic ``tool_search_tool`` API spec as of 2025-11:
 #   {
@@ -254,8 +260,14 @@ def build_tools(
         FP-0024 Component D. When the total MCP tool count is >= this value
         (and > 0), the D1–D3 inline MCP tools are replaced by a single
         tool_search_tool meta-tool that loads specific tools on demand.
-        Default: MCP_SEARCH_THRESHOLD (30). Set 0 to always inline.
-        Override per-project via ``mcp.search_threshold:`` in reyn.yaml.
+        Default: MCP_SEARCH_THRESHOLD (0) — always inline. ``ReynConfig.
+        mcp_search_threshold`` (parsed from ``mcp.search_threshold:`` in
+        reyn.yaml, config-side default 30) is NOT currently threaded through
+        to this parameter by either router_loop.py call site
+        (``present()`` / ``base_tools()``), so the effective runtime default
+        is 0 regardless of ``reyn.yaml``. A caller that wants the config
+        value honored must pass it explicitly:
+        ``build_tools(..., mcp_search_threshold=cfg.mcp_search_threshold)``.
     """
     # RETRO-H1+H2 fix: dynamic enum injection for delegate_to_agent.to closes
     # the schema-level hallucination gap (P4 alignment — LLM picks only from
