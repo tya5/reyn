@@ -146,6 +146,20 @@ def test_resolve_invoke_action_rag_list_sources_routes_to_discovery_verb() -> No
     assert result.target_tool_name == "list_rag_sources"
 
 
+def test_resolve_invoke_action_rag_index_update_routes_to_ingestion_verb() -> None:
+    """Tier 2: #3222 — rag_operation__index_update → index_update, the ADD verb.
+
+    Before this fix, index_update was registered in ToolRegistry but absent
+    from ``_OPERATION_RULES`` (and from ``build_tools()``), so the RAG
+    in-core family could delete a source (rag_operation__drop_source) but
+    never add one — an incomplete enumeration (#2032-class dead-registration).
+    Strip-falsifiable: deleting the ``rag_operation__index_update`` row from
+    ``_OPERATION_RULES`` turns this RED (UnknownActionError instead).
+    """
+    result = resolve_invoke_action("rag_operation__index_update", {})
+    assert result.target_tool_name == "index_update"
+
+
 # ── 2. resolve_invoke_action — operation categories (passthrough) ────────
 
 
@@ -172,6 +186,7 @@ def test_resolve_invoke_action_rag_list_sources_routes_to_discovery_verb() -> No
         # rag_operation (FP-0057 Phase 2a: rag_operation__recall renamed rag_operation__semantic_search)
         ("rag_operation__semantic_search", "semantic_search"),
         ("rag_operation__drop_source",     "drop_source"),
+        ("rag_operation__index_update",    "index_update"),
     ],
 )
 def test_operation_categories_route_passthrough(
@@ -322,6 +337,7 @@ def test_suggest_similar_names_empty_candidates_returns_empty() -> None:
         ("web__search",              "web_search"),
         ("memory_operation__forget", "forget_memory"),
         ("rag_operation__semantic_search", "semantic_search"),
+        ("rag_operation__index_update",    "index_update"),
     ],
 )
 def test_resolve_describe_returns_invoke_target(
@@ -369,8 +385,13 @@ def test_known_static_names_covers_all_operation_categories() -> None:
     } <= names
     # reyn_repo (2 ops — read/list; glob/grep are future)
     assert {"reyn_repo__read", "reyn_repo__list"} <= names
-    # rag_operation (2 ops)
-    assert {"rag_operation__semantic_search", "rag_operation__drop_source"} <= names
+    # rag_operation (3 ops — #3222 adds index_update, the ADD verb, alongside
+    # the query verb (semantic_search) and the delete verb (drop_source))
+    assert {
+        "rag_operation__semantic_search",
+        "rag_operation__drop_source",
+        "rag_operation__index_update",
+    } <= names
 
 
 def test_known_static_names_excludes_resource_categories() -> None:
@@ -592,6 +613,9 @@ _ROUTE_CONTRACT_SAMPLES: list[tuple[str, dict[str, Any]]] = [
     ("reyn_repo__grep", {"pattern": "x"}),
     ("rag_operation__semantic_search", {"query": "q", "sources": ["s"]}),
     ("rag_operation__drop_source", {"source": "s"}),
+    # #3222: index_update (ADD verb) — requires source + chunks.
+    ("rag_operation__index_update",
+     {"source": "s", "chunks": [{"text": "t", "metadata": {}}]}),
     ("exec__run",       {"argv": ["echo", "hi"]}),
     # skill_management category (#2548 PR-C) — install_local requires path.
     ("skill_management__install_local",  {"path": "/tmp/my-skill"}),

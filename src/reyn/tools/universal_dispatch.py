@@ -281,6 +281,10 @@ _OPERATION_RULES: Final[dict[str, tuple[str, Callable[[str, Mapping[str, Any]], 
     # semantic_search tool rename, no compat alias)
     "rag_operation__semantic_search": ("semantic_search", _passthrough_args),
     "rag_operation__drop_source":     ("drop_source",     _passthrough_args),
+    # #3222: index_update was registered in ToolRegistry but absent from this
+    # table (and from build_tools() §H3) — the RAG in-core family could
+    # delete a source but never add one. Mirrors the sibling rows exactly.
+    "rag_operation__index_update":    ("index_update",    _passthrough_args),
     # #3026: the discovery verb. ``semantic_search`` takes a REQUIRED ``sources``
     # list of operator-chosen corpus names; before this, the only surface naming
     # them was the per-corpus ``rag_corpus__<name>`` action (one LLM tool per

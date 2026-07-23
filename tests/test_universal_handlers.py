@@ -249,6 +249,10 @@ def test_list_actions_rag_corpus_category_uses_router_state() -> None:
         "rag_operation__semantic_search",
         "rag_operation__drop_source",
         "rag_operation__list_sources",
+        # #3222: index_update (the ADD verb) — was missing from
+        # _OPERATION_RULES, so the RAG in-core family could delete a source
+        # but never add one until this fix.
+        "rag_operation__index_update",
     }
     assert not any(qn.startswith("rag_corpus__") for qn in qns)
 

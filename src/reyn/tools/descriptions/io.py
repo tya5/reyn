@@ -381,17 +381,25 @@ PARAMS: dict[str, dict[str, ParamDescription]] = {
             text="Chunks to reconcile into the index.",
             ja="インデックスに反映するチャンク群。",
         ),
-        "chunks.metadata": ParamDescription(
+        # #3222: each array item's schema, used as the (flat, depth-1-safe)
+        # description on `chunks.items` rather than a nested JSON-schema —
+        # see the router_tools.py §H3 / index_update.py comment for why.
+        # Combines the former standalone `text` + `chunks.metadata`
+        # descriptions into one string describing the whole item shape.
+        "chunks.item": ParamDescription(
             text=(
-                "content_hash (required, change-detection key), "
-                "source_path (required, reconciliation-scope "
-                "key), plus optional source_type / chunk_index "
-                "/ size_tokens / parent_context / extra."
+                "Object with `text` (string, required) and `metadata` "
+                "(object, required): content_hash (required, "
+                "change-detection key), source_path (required, "
+                "reconciliation-scope key), plus optional source_type / "
+                "chunk_index / size_tokens / parent_context / extra."
             ),
             ja=(
-                "content_hash（必須、変更検知キー）、source_path（必須、"
-                "reconcile 範囲キー）、任意で source_type / chunk_index / "
-                "size_tokens / parent_context / extra。"
+                "`text`（文字列、必須）と `metadata`（オブジェクト、必須）を"
+                "持つオブジェクト: content_hash（必須、変更検知キー）、"
+                "source_path（必須、reconcile 範囲キー）、任意で "
+                "source_type / chunk_index / size_tokens / parent_context / "
+                "extra。"
             ),
         ),
         "embedding_model": ParamDescription(
