@@ -12,7 +12,7 @@ pipeline: greet
 description: Greet a name and shout it.
 steps:
   - transform: {value: "'Hello, ' + ctx.name + '!'", output: greeting}
-  - shell: {command: !expr "'echo ' + ctx.greeting", output: shouted}
+  - tool: {name: sandboxed_exec, args: {argv: !expr "['echo', ctx.greeting]"}, output: shouted}
 ```
 
 このファイルについて注目すべき点がいくつかあります:
@@ -20,8 +20,8 @@ steps:
 - pipeline は `pipeline:` キーの名前(`greet`)の下に登録されます。ファイル名ではありません — `pipelines/greet.yaml` は何にリネームしても `greet` として登録され続けます。
 - 各ステップは、自身の種別(`transform`、`tool`、`agent`、または合成プリミティブ(Pipeline DSL リファレンス参照)のいずれか)を名前とする単一キーのマッピングです。
 - `ctx.name` はこの pipeline が期待する seed input です。`greeting` は最初のステップの `output` で書き込まれた後、それ以降のすべてのステップから `ctx.greeting` として利用可能になります。bare name のショートカットはありません — `ctx.greeting` の代わりに bare な `greeting` として読もうとするとステップが失敗します。すべての expression は `ctx`(すべての named store)と `pipe`(直前のステップ自身の結果)の 2 つだけをトップレベルキーとして持つコンテキストに対して評価されるためです。完全なルールと実例のトレースは [ステップ間のデータフロー](../../reference/runtime/pipeline-dsl.ja.md#data-flow-between-steps) を参照してください。
-- `!expr` は `command` をリテラル文字列ではなく評価すべき expression としてマークします — [リテラル vs `!expr`](../../reference/runtime/pipeline-dsl.ja.md#vs-expr) 参照。
-- `shell` は operator のサンドボックスの中でコマンドを実行し、前のステップの pipe data を JSON エンコードして STDIN に渡します — この pipeline はその入力を使いませんが、完全な STDIN/STDOUT の契約は[リファレンスの `shell` セクション](../../reference/runtime/pipeline-dsl.ja.md#tool-shell)を参照してください。
+- `!expr` は `argv` をリテラルのリストではなく評価すべき expression としてマークします — [リテラル vs `!expr`](../../reference/runtime/pipeline-dsl.ja.md#vs-expr) 参照。
+- `sandboxed_exec` は operator のサンドボックスの中で `argv` を実行します(argv のみ — シェル解釈はありません)。前のステップの pipe data は `stdin_pipe: !expr pipe` 引数で STDIN に渡せます — この pipeline はその入力を使いませんが、完全な STDIN/STDOUT の契約は[リファレンスの `sandboxed_exec` ステップの説明](../../reference/runtime/pipeline-dsl.ja.md#tool-step-results)を参照してください。
 
 ## 2. 登録する
 

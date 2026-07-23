@@ -143,12 +143,13 @@ def test_valid_reyn_repo_shape_still_dispatches() -> None:
 # per-field selection, so there is no sub-view to silently drop on a "miss"). The probe's heuristic
 # ("does the rendered text contain the bare status echoed back") cannot distinguish "the WHOLE input
 # legitimately IS ``{status: ...}``" from a discriminator-miss catch-all for such a mapper — narrowly
-# exempted by name, not blanket-skipped:
-# - ``shell_to_canonical`` (#2681 Bucket A): ``shell``'s stdout can be ANY JSON shape (including one
-#   whose only key happens to be ``status`` — a health-check-style command's own output), and the
-#   mapper's whole job is to render that value faithfully — never select/drop a sub-field the way
-#   ``file``/``reyn_repo`` dispatch on ``op``/body-key. Nothing is ever dropped, so M3 cannot recur.
-_NO_INNER_DISCRIMINATOR_MAPPERS = frozenset({"shell_to_canonical"})
+# exempted by name, not blanket-skipped.
+#
+# #3226 Phase 1: ``shell_to_canonical`` (#2681 Bucket A), the previous sole member (the ``shell``
+# tool's stdout-is-any-JSON-shape mapper), was removed along with the ``shell`` tool itself — the
+# sole `/bin/sh -c <str>` shell-injection surface in the codebase. The set is currently empty; kept
+# as a frozenset (not deleted) so a future non-discriminating mapper has an obvious place to land.
+_NO_INNER_DISCRIMINATOR_MAPPERS: frozenset[str] = frozenset()
 
 
 def _registered_mappers() -> set:

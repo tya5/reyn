@@ -354,7 +354,7 @@ def _validate_number_bounds(
     non-bool `int`/`float` — this is the closing half of the "0.6 threshold
     against a model answering 85 on a 0-100 scale" gap: `to_json_schema`
     asks the provider to constrain generation to the same bound, but a
-    provider that ignores/can't honor it (or a non-`agent` `tool`/`shell`
+    provider that ignores/can't honor it (or a non-`agent` `tool`
     step) still gets caught here, post-hoc."""
     minimum = ft.get("minimum")
     maximum = ft.get("maximum")

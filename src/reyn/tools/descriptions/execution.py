@@ -8,8 +8,11 @@ its origin tool module; the origin module now aliases its
 ``_X_DESCRIPTION`` module constant to ``execution.NAME.text`` so every
 call site is unchanged.
 
-Covers: sandboxed_exec (``sandboxed_exec.py``), shell (``shell.py`` —
-pipeline DSL sugar over sandboxed_exec, #2593).
+Covers: sandboxed_exec (``sandboxed_exec.py``). #3226 Phase 1: the ``shell``
+tool description this module used to also cover (thin pipeline-DSL sugar over
+sandboxed_exec, #2593) was removed along with the tool itself — its only
+production path built ``/bin/sh -c <command>``, the sole shell-injection
+surface in the codebase.
 """
 from __future__ import annotations
 
@@ -42,38 +45,8 @@ sandboxed_exec = ToolDescription(
     ),
 )
 
-shell = ToolDescription(
-    tool_name="shell",
-    surfaced=(
-        "router + phase (gates.router=allow, gates.phase=allow) — pipeline "
-        "DSL ``shell`` step sugar over sandboxed_exec (#2593)"
-    ),
-    purpose=(
-        "Run a shell command as pipeline-DSL sugar: STDIN carries the "
-        "previous step's pipe-data, STDOUT becomes this step's output, "
-        "same sandbox confinement as sandboxed_exec."
-    ),
-    text=(
-        "Run a shell command (via sandboxed_exec) whose STDIN receives the "
-        "previous pipeline step's pipe-data JSON-encoded, and whose STDOUT "
-        "becomes this step's output. command: the shell command line "
-        "(argv[0]='/bin/sh', argv[1]='-c'). timeout: wall-clock time limit in "
-        "seconds (default 60). The sandbox policy (network access + filesystem "
-        "scope) is the OPERATOR's, resolved by the OS — it is not chosen here."
-    ),
-    ja=(
-        "シェルコマンドを実行する（sandboxed_exec 経由）。STDIN には前段の"
-        "パイプラインステップの pipe-data が JSON エンコードされて渡り、"
-        "STDOUT がこのステップの出力になる。command: シェルコマンドライン"
-        "（argv[0]='/bin/sh', argv[1]='-c'）。timeout: 秒単位のタイムアウト"
-        "（デフォルト60）。サンドボックスポリシーはオペレーターのものとして"
-        "OS が解決する。"
-    ),
-)
-
 ALL: dict[str, ToolDescription] = {
     "sandboxed_exec": sandboxed_exec,
-    "shell": shell,
 }
 
 
@@ -91,16 +64,5 @@ PARAMS: dict[str, dict[str, ParamDescription]] = {
             ja="コマンドと引数。argv[0] が実行ファイル。",
         ),
         "timeout_seconds": _timeout_seconds_desc,
-    },
-    "shell": {
-        "command": ParamDescription(
-            text="Shell command line, run as `/bin/sh -c <command>`.",
-            ja="`/bin/sh -c <command>` として実行されるシェルコマンド行。",
-        ),
-        "stdin_pipe": ParamDescription(
-            text="The previous pipeline step's pipe-data (JSON-encoded onto stdin).",
-            ja="直前のパイプラインステップのパイプデータ（JSON エンコードして stdin に渡す）。",
-        ),
-        "timeout": _timeout_seconds_desc,
     },
 }

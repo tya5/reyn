@@ -3,8 +3,7 @@ compositional foundation (``_run_scope`` + dotted-path recovery + ``call`` +
 ``fold``).
 
 The executor for ``docs/proposals/reyn-pipeline-v0.9-design-resolutions.md``: a
-sequence of ``transform`` / ``tool`` (``shell`` is just a ``ToolStep(name="shell",
-...)``) / ``agent`` (R5) steps, plus three COMPOSITIONAL primitives: ``call``
+sequence of ``transform`` / ``tool`` / ``agent`` (R5) steps, plus three COMPOSITIONAL primitives: ``call``
 (R7, a STATIC callee), ``match`` (``call``'s runtime-selected sibling — the
 ``on`` VALUE picks a LABEL, never a target; see :class:`MatchStep`), and
 ``fold`` (the sequential accumulator, Appendix B), ``for_each`` (the
@@ -139,7 +138,7 @@ if TYPE_CHECKING:
 class ExprRef:
     """Marks a ``ToolStep.args`` value as an R1 expression SOURCE to resolve against
     the step's context, rather than a literal Python value passed through as-is. A bare
-    Python value (``"shell"``, ``42``, ``["a", "b"]``) in ``args`` is always a literal —
+    Python value (``"echo"``, ``42``, ``["a", "b"]``) in ``args`` is always a literal —
     only an explicit ``ExprRef`` is evaluated, so there is no parse-ambiguity between "a
     literal string that happens to look like an expression" and "an expression"."""
 
@@ -159,8 +158,7 @@ class TransformStep:
 class ToolStep:
     """A side-effecting step: ``tool_dispatch(name, resolved_args)`` is invoked (``args``
     values wrapped in :class:`ExprRef` are resolved against the context first; other
-    values pass through literally). ``shell`` is just ``ToolStep(name="shell", ...)`` —
-    there is no separate shell-step type. ``schema``, if set, names a
+    values pass through literally). ``schema``, if set, names a
     ``SchemaRegistry``-registered schema the step's result must conform to (verify:
     schema) — non-conformance fails the step."""
 

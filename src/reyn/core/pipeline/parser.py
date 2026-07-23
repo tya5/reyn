@@ -3,7 +3,7 @@
 Implements the surface grammar in Appendix B of
 ``docs/proposals/reyn-pipeline-spec-v0.8.md`` (lines 706-835), narrowed to
 exactly the subset :class:`reyn.core.pipeline.executor.PipelineExecutor` can
-run today: a **linear** sequence of ``transform`` / ``tool`` / ``shell`` /
+run today: a **linear** sequence of ``transform`` / ``tool`` /
 ``agent`` steps plus FIVE COMPOSITIONAL primitives — ``call`` (R7 — runs a
 STATIC registered sub-pipeline synchronously), ``match`` (``call``'s
 runtime-selected sibling: a runtime VALUE picks a case LABEL, whose target
@@ -22,7 +22,7 @@ not yet executable raises
 not-yet-supported pipeline fails at parse time, at the DSL text, not deep in
 an executor stack trace.
 
-**Tool/shell ``args`` — the load-bearing divergence from Appendix B.** The
+**Tool ``args`` — the load-bearing divergence from Appendix B.** The
 compact spec writes ``tool = {... args?:{KEY:TPL} ...}`` (a template string
 per arg, interpolated the same way an ``agent.prompt`` is). The executor does
 **not** do that: :class:`~reyn.core.pipeline.executor.ToolStep` resolves an
@@ -35,7 +35,7 @@ exactly the "parses fine, resolves wrong at runtime" drift this parser must
 not produce. So this parser defines its own explicit surface rule instead of
 mirroring Appendix B literally:
 
-    A tool/shell ``args``/``command`` value is a **literal** UNLESS it is
+    A tool ``args`` value is a **literal** UNLESS it is
     tagged with the YAML tag ``!expr``, e.g. ``query: !expr ctx.brief`` or
     ``limit: !expr "ctx.n + 1"`` — in which case it becomes an
     :class:`ExprRef` wrapping the scalar's text as an R1 expression source
@@ -145,7 +145,7 @@ class PipelineParseError(ValueError):
 
 
 # ---------------------------------------------------------------------------
-# `!expr` YAML tag — the tool/shell-arg expression marker (see module
+# `!expr` YAML tag — the tool-arg expression marker (see module
 # docstring). A dedicated tag rather than reusing agent-prompt `{...}`
 # brace syntax so there is no ambiguity between "a literal string that
 # happens to contain braces" and "an expression to resolve".
@@ -174,7 +174,7 @@ class _PipelineLoader(yaml.SafeLoader):
     ...}`) — under `SafeLoader`'s stock YAML 1.1 resolver, an unquoted `on:`
     key (or `off`/`yes`/`no`) resolves to the Python `bool` `True`/`False`
     instead of the string key/value the DSL author wrote, silently breaking
-    every `match` step (and any tool/shell arg literally named or valued
+    every `match` step (and any tool arg literally named or valued
     `on`/`off`/`yes`/`no`) unless every author remembers to quote it. This
     loader instead resolves `bool` only for YAML 1.2 core-schema spellings
     (`true`/`True`/`TRUE`/`false`/`False`/`FALSE`) — `on`/`off`/`yes`/`no`
@@ -217,7 +217,7 @@ _PipelineLoader.add_constructor("!expr", _construct_expr_tag)
 # so a future Appendix-B step kind beyond this module's current scope has an
 # obvious place to land — see the parser module docstring).
 _UNSUPPORTED_STEP_KINDS: "tuple[str, ...]" = ()
-_LINEAR_STEP_KINDS = ("transform", "tool", "shell", "agent")
+_LINEAR_STEP_KINDS = ("transform", "tool", "agent")
 # ``call``/``match``/``fold``/``for_each``/``parallel`` are compositional, not
 # linear, but ARE executable — listed separately so error text distinguishes
 # "the linear kinds" from the full supported set.
@@ -317,7 +317,6 @@ def _reject_unknown_keys(
 
 _TRANSFORM_KEYS = frozenset({"value", "output"})
 _TOOL_KEYS = frozenset({"name", "args", "schema", "output"})
-_SHELL_KEYS = frozenset({"command", "schema", "output", "timeout"})
 _AGENT_KEYS = frozenset({"prompt", "identity", "capabilities", "schema", "model", "output"})
 _CALL_KEYS = frozenset({"pipeline", "pass", "output"})
 _MATCH_KEYS = frozenset({"on", "cases", "default", "output"})
@@ -350,33 +349,6 @@ def _parse_tool_step(body: "dict[str, Any]") -> ToolStep:
     if schema is not None and not isinstance(schema, str):
         _fail(f"tool step 'schema': expected a schema-name string, got {type(schema).__name__}")
     return ToolStep(name=name, args=args, output=body.get("output"), schema=schema)
-
-
-def _parse_shell_step(body: "dict[str, Any]") -> ToolStep:
-    """``shell`` is tool-step sugar (#2593): the command is STATIC (a literal or
-    ``!expr``-tagged value, same rule as any tool ``args`` entry — see the module
-    docstring); the previous step's pipe-data is threaded to the process STDIN via
-    an ``ExprRef("pipe")`` arg, resolved for free by the executor's existing
-    ``ToolStep`` arg-resolution (``evaluate_expr("pipe", context)`` against the
-    ``{"ctx": ..., "pipe": pipe_data}`` context every step already receives) — no
-    executor change needed. STDOUT becomes the step's output/pipe-data, optionally
-    ``verify: schema``-checked, same as any other tool step."""
-    _reject_unknown_keys(body, _SHELL_KEYS, where="shell step")
-    if "command" not in body:
-        _fail("shell step: missing required field 'command'")
-    command = _resolve_arg_value(body["command"], where="shell step 'command'")
-    schema = body.get("schema")
-    if schema is not None and not isinstance(schema, str):
-        _fail(f"shell step 'schema': expected a schema-name string, got {type(schema).__name__}")
-    args: "dict[str, Any]" = {"command": command, "stdin_pipe": ExprRef("pipe")}
-    if "timeout" in body:
-        timeout = body["timeout"]
-        if not isinstance(timeout, int) or isinstance(timeout, bool):
-            _fail(f"shell step 'timeout': expected an integer, got {type(timeout).__name__}")
-        args["timeout"] = timeout
-    return ToolStep(
-        name="shell", args=args, output=body.get("output"), schema=schema,
-    )
 
 
 def _parse_agent_step(body: "dict[str, Any]") -> AgentStep:
@@ -646,7 +618,6 @@ def _parse_parallel_step(body: "dict[str, Any]", *, index: "int | str") -> Paral
 _STEP_PARSERS = {
     "transform": _parse_transform_step,
     "tool": _parse_tool_step,
-    "shell": _parse_shell_step,
     "agent": _parse_agent_step,
     "call": _parse_call_step,
     "match": _parse_match_step,

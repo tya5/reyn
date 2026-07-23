@@ -259,7 +259,7 @@ def _compute_llm_args_hash(
 # denied and HOW to allow it without leaving the chat to read source.
 #
 # Names cover both router-tool catalog entries (read_file, web_fetch, …)
-# and op-loop op kinds (file, shell, web_fetch, …). Unmapped names
+# and op-loop op kinds (file, web_fetch, …). Unmapped names
 # fall back to a generic "see logs / events tab" suffix — better than
 # fabricating a config key the user can't actually find.
 _PERMISSION_CONFIG_HINTS: dict[str, str] = {
@@ -269,8 +269,6 @@ _PERMISSION_CONFIG_HINTS: dict[str, str] = {
     "write_file": "permissions.file.write: allow",
     "delete_file": "permissions.file.write: allow",
     "list_directory": "permissions.file.read: allow",
-    # Shell.
-    "shell": "permissions.shell: allow",
     # MCP family.
     "mcp": "permissions.mcp.<server>: allow",
     "call_mcp_tool": "permissions.mcp.<server>: allow",

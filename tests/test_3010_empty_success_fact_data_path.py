@@ -41,12 +41,11 @@ get_default_registry()
 # third-party server's SDK version: a server on a ``structuredContent``-era SDK returns
 # ``{"content": "", "structuredContent": {"result": ""}}``, which reyn carries as a structured
 # attachment -- and the mapper skips the marker when an attachment is present. The producers below
-# that never touch MCP (``read_file``/``shell``/``sandboxed_exec``/``render_template``) call
+# that never touch MCP (``read_file``/``sandboxed_exec``/``render_template``) call
 # ``_explicit_empty`` directly, so they pin this invariant independently of any SDK version.
 _EMPTY_SUCCESS_CASES = [
     # --- non-MCP: reached today, on every SDK ---
     ("read_file", {"op": "read", "status": "ok", "content": ""}, "(empty file)"),
-    ("shell", {"status": "ok", "data": ""}, "(no output)"),
     ("sandboxed_exec", {"stdout": "", "stderr": "", "returncode": 0}, "(no output)"),
     ("render_template", {"rendered": ""}, "(empty render)"),
     ("read_memory_body", {"content": ""}, "(empty)"),
