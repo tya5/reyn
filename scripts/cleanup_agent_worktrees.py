@@ -2,14 +2,18 @@
 """Cleanup stale agent worktrees from .claude/worktrees/agent-* paths.
 
 Detects worktrees whose lock file references a dead PID and removes them
-safely, skipping any whose process is still alive.
+safely, skipping any whose process is still alive. Also reclaims UNLOCKED
+worktrees whose branch was pushed and merged (squash-merge + branch-delete
+safe — see `classify_unlocked_reclaimability` for the safety criterion,
+#3237).
 
 Usage:
     python scripts/cleanup_agent_worktrees.py --list        # default: show breakdown
     python scripts/cleanup_agent_worktrees.py --dry-run     # simulate cleanup
-    python scripts/cleanup_agent_worktrees.py --force       # actually remove stale
+    python scripts/cleanup_agent_worktrees.py --force       # remove stale + merged+clean unlocked
     python scripts/cleanup_agent_worktrees.py --keep-recent 5 --force
     python scripts/cleanup_agent_worktrees.py --include-alive --dry-run  # dangerous
+    python scripts/cleanup_agent_worktrees.py --include-dirty --dry-run  # dangerous
     python scripts/cleanup_agent_worktrees.py --json        # machine-readable
 """
 from __future__ import annotations
@@ -39,6 +43,8 @@ class WorktreeInfo:
     locked: bool
     pid: int | None = None
     alive: bool | None = None  # None = unknown (no pid)
+    reclaimable: bool | None = None  # unlocked only; None = not evaluated (locked)
+    reclaim_reason: str | None = None  # unlocked only; see classify_unlocked_reclaimability
     name: str = field(init=False)
 
     def __post_init__(self) -> None:
@@ -125,6 +131,150 @@ def enrich(worktrees: list[WorktreeInfo]) -> None:
             wt.pid = get_lock_pid(wt)
             if wt.pid is not None:
                 wt.alive = is_pid_alive(wt.pid)
+
+
+# ---------------------------------------------------------------------------
+# Unlocked-worktree clean-gate reclaim (#3237)
+# ---------------------------------------------------------------------------
+#
+# reyn merges via squash-merge + branch-delete. Squash creates a NEW commit,
+# so a worktree's original commits are never ancestors of origin/main:
+# `git branch -r --contains HEAD` is empty and `HEAD@{upstream}` ERRORS once
+# the remote ref is pruned (`fatal: ambiguous argument '...@{upstream}':
+# unknown revision`) — both signals are wrong for exactly the case we target
+# and must not be reintroduced.
+#
+# The safe v3 rule keys off `branch.<local>.merge` git config instead: it is
+# a pure local-config read that SURVIVES remote-ref pruning (verified), so it
+# still resolves the worktree's pushed branch name after squash-merge +
+# branch-delete. Cross-referenced against the merged-PR head set fetched
+# once via `gh pr list --state merged`.
+
+
+def fetch_merged_head_set() -> set[str] | None:
+    """
+    Fetch head branch names of all merged PRs via `gh`, once (not per-worktree).
+
+    Returns the set of head ref names, or None if `gh` is unavailable for
+    ANY reason (offline, no auth, error, timeout). Callers MUST fail safe on
+    None: treat the merged-PR signal as unavailable and refuse to reclaim
+    any unlocked worktree rather than guessing.
+    """
+    try:
+        result = subprocess.run(
+            [
+                "gh",
+                "pr",
+                "list",
+                "--state",
+                "merged",
+                "--limit",
+                "5000",  # default is 30 — an under-fetch would wrongly KEEP old merged worktrees
+                "--json",
+                "headRefName",
+                "--jq",
+                ".[].headRefName",
+            ],
+            capture_output=True,
+            text=True,
+            cwd=REPO_ROOT,
+            timeout=60,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if result.returncode != 0:
+        return None
+    return {line.strip() for line in result.stdout.splitlines() if line.strip()}
+
+
+def classify_unlocked_reclaimability(
+    worktree_path: Path, merged_heads: set[str] | None
+) -> tuple[bool, str]:
+    """
+    Decide whether an UNLOCKED worktree is safe to reclaim (v3 rule, #3237).
+
+    Reclaimable iff ALL of:
+      1. `git status --porcelain` is empty (no uncommitted/untracked changes)
+      2. it was pushed to `origin` and its pushed branch has a merged PR —
+         keyed via `branch.<local>.merge` config (NOT `@{upstream}`, which
+         errors after the remote ref is pruned post squash-merge-and-delete)
+
+    NOTE: `git stash` is deliberately NOT part of this gate. The stash ref
+    lives in the shared `.git` dir, not per-worktree — every worktree of the
+    same repo (including `main`) sees the SAME stash list. A stash is
+    therefore neither evidence of *this* worktree's state nor a loss vector
+    on removal: `git worktree remove` never touches the shared stash, so
+    reclaiming a worktree can never destroy stashed work (#3237 v3 — an
+    earlier revision wrongly gated on stash and, in practice, saw every
+    worktree in a real repo classified as "stash" because they all shared
+    one common-repo entry).
+
+    Returns (reclaimable, reason). `reason` is one of: "reclaimable",
+    "dirty", "detached-head", "no-upstream-config", "wrong-remote",
+    "no-merged-pr", "gh-unavailable", "git-error".
+
+    Fail-safe by construction: any git command erroring, a detached HEAD, a
+    missing `branch.<local>.merge`/`.remote` config (push never set
+    upstream), a remote other than `origin`, or an unavailable merged-PR set
+    (`merged_heads is None`) all resolve to `False` (KEEP) — never reclaim
+    on uncertainty.
+
+    Known residual (documented, not solved here): unpushed commits made
+    AFTER a merge are not captured by this signal — such a worktree would
+    read as clean + merged yet hold unpushed work. Low risk (post-merge
+    local commits without a push are unusual for this workflow).
+    """
+
+    def _run(args: list[str]) -> subprocess.CompletedProcess[str] | None:
+        try:
+            return subprocess.run(
+                args, capture_output=True, text=True, cwd=worktree_path
+            )
+        except OSError:
+            return None
+
+    status = _run(["git", "status", "--porcelain"])
+    if status is None or status.returncode != 0:
+        return False, "git-error"
+    if status.stdout.strip():
+        return False, "dirty"
+
+    symbolic_ref = _run(["git", "symbolic-ref", "--short", "HEAD"])
+    if symbolic_ref is None or symbolic_ref.returncode != 0:
+        return False, "detached-head"
+    localname = symbolic_ref.stdout.strip()
+    if not localname:
+        return False, "detached-head"
+
+    remote_cfg = _run(["git", "config", "--get", f"branch.{localname}.remote"])
+    if remote_cfg is None or remote_cfg.returncode != 0:
+        return False, "no-upstream-config"
+    if remote_cfg.stdout.strip() != "origin":
+        return False, "wrong-remote"
+
+    merge_cfg = _run(["git", "config", "--get", f"branch.{localname}.merge"])
+    if merge_cfg is None or merge_cfg.returncode != 0:
+        return False, "no-upstream-config"
+    merge_ref = merge_cfg.stdout.strip()
+    if not merge_ref:
+        return False, "no-upstream-config"
+    pushed = merge_ref.removeprefix("refs/heads/")
+
+    if merged_heads is None:
+        return False, "gh-unavailable"
+    if pushed not in merged_heads:
+        return False, "no-merged-pr"
+
+    return True, "reclaimable"
+
+
+def enrich_unlocked(worktrees: list[WorktreeInfo], merged_heads: set[str] | None) -> None:
+    """Fill in reclaimable + reclaim_reason for unlocked worktrees in-place."""
+    for wt in worktrees:
+        if not wt.locked:
+            wt.reclaimable, wt.reclaim_reason = classify_unlocked_reclaimability(
+                wt.path, merged_heads
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -218,38 +368,52 @@ def cleanup_worktree(wt: WorktreeInfo, *, dry_run: bool) -> tuple[bool, str]:
 def print_list(worktrees: list[WorktreeInfo], candidates: list[WorktreeInfo]) -> None:
     candidate_names = {wt.name for wt in candidates}
     alive_count = sum(1 for wt in worktrees if wt.alive is True)
-    stale_count = len(candidates)
-    unlocked_count = sum(1 for wt in worktrees if not wt.locked)
+    stale_count = sum(1 for wt in worktrees if wt.stale)
     no_pid_count = sum(1 for wt in worktrees if wt.locked and wt.pid is None)
+    unlocked = [wt for wt in worktrees if not wt.locked]
+    reclaimable = [wt for wt in unlocked if wt.reclaimable]
+    kept_unlocked = [wt for wt in unlocked if not wt.reclaimable]
+    kept_reasons: dict[str, int] = {}
+    for wt in kept_unlocked:
+        reason = wt.reclaim_reason or "not-evaluated"
+        kept_reasons[reason] = kept_reasons.get(reason, 0) + 1
 
     print(f"\nFound {len(worktrees)} agent worktrees:")
     for wt in worktrees:
-        if wt.name in candidate_names:
+        if wt.stale:
             pid_str = f"pid {wt.pid}, dead" if wt.pid else "no pid"
             print(f"  WARNING  {wt.name} ({pid_str}) — STALE")
         elif wt.alive:
             print(f"  OK  {wt.name} (pid {wt.pid}, alive) — KEEP")
         elif not wt.locked:
-            print(f"  -   {wt.name} (unlocked) — KEEP")
+            if wt.reclaimable:
+                candidate_str = " (candidate under --force)" if wt.name in candidate_names else ""
+                print(f"  RECLAIM  {wt.name} (unlocked, merged+clean){candidate_str}")
+            else:
+                print(f"  -   {wt.name} (unlocked, {wt.reclaim_reason}) — KEEP")
         else:
             pid_str = f"pid {wt.pid}" if wt.pid else "no pid"
             print(f"  ?   {wt.name} ({pid_str}) — KEEP (uncertain)")
 
     print()
     print("Summary:")
-    print(f"  alive:    {alive_count} (keep)")
-    if unlocked_count:
-        print(f"  unlocked: {unlocked_count} (keep)")
+    print(f"  alive:               {alive_count} (keep)")
     if no_pid_count:
-        print(f"  no-pid:   {no_pid_count} (keep — cannot determine status)")
-    print(f"  stale:    {stale_count} (cleanup candidates)")
+        print(f"  no-pid:              {no_pid_count} (keep — cannot determine status)")
+    print(f"  stale:               {stale_count} (cleanup candidates)")
+    print(f"  unlocked total:      {len(unlocked)}")
+    print(f"  unlocked-reclaimable: {len(reclaimable)} (merged+clean — --force candidates)")
+    print(f"  unlocked-kept:       {len(kept_unlocked)}")
+    for reason, count in sorted(kept_reasons.items()):
+        print(f"    - {reason}: {count}")
 
 
 def output_json(worktrees: list[WorktreeInfo], candidates: list[WorktreeInfo]) -> None:
     candidate_names = {wt.name for wt in candidates}
     data = {
         "total": len(worktrees),
-        "stale": len(candidates),
+        "stale": sum(1 for wt in worktrees if wt.stale),
+        "unlocked_reclaimable": sum(1 for wt in worktrees if not wt.locked and wt.reclaimable),
         "worktrees": [
             {
                 "name": wt.name,
@@ -258,6 +422,8 @@ def output_json(worktrees: list[WorktreeInfo], candidates: list[WorktreeInfo]) -
                 "locked": wt.locked,
                 "pid": wt.pid,
                 "alive": wt.alive,
+                "reclaimable": wt.reclaimable,
+                "reclaim_reason": wt.reclaim_reason,
                 "candidate": wt.name in candidate_names,
                 "status": wt.status_label,
             }
@@ -277,13 +443,31 @@ def build_candidates(
     *,
     include_alive: bool,
     keep_recent: int,
+    include_dirty: bool = False,
 ) -> list[WorktreeInfo]:
-    """Filter worktrees down to cleanup candidates."""
-    # Base: stale (dead-pid locked) — or alive if --include-alive is set
+    """Filter worktrees down to cleanup candidates.
+
+    Two independent axes compose:
+      - locked axis: stale (dead-pid) by default, or all locked worktrees
+        (including alive) if `include_alive` (DANGEROUS).
+      - unlocked axis: merged+clean unlocked worktrees (`reclaimable`) by
+        default, plus ALL non-reclaimable unlocked worktrees (dirty /
+        unmerged / unpushed / uncertain) if `include_dirty` (DANGEROUS —
+        may destroy uncommitted/unpushed work; requires `reclaimable` to
+        have been computed via `enrich_unlocked` beforehand).
+    """
+    # Locked axis: stale (dead-pid locked) — or all locked if --include-alive
     if include_alive:
         candidates = [wt for wt in worktrees if wt.locked]
     else:
         candidates = [wt for wt in worktrees if wt.stale]
+
+    # Unlocked axis: merged+clean reclaimable worktrees are always safe to add
+    candidates += [wt for wt in worktrees if not wt.locked and wt.reclaimable]
+
+    # --include-dirty: additionally target non-reclaimable unlocked worktrees
+    if include_dirty:
+        candidates += [wt for wt in worktrees if not wt.locked and not wt.reclaimable]
 
     # --keep-recent N: retain the last N worktrees by list order (as-is from git)
     if keep_recent > 0 and keep_recent < len(worktrees):
@@ -331,6 +515,16 @@ def main(argv: list[str] | None = None) -> int:
         help="DANGEROUS: also target worktrees with living processes.",
     )
     parser.add_argument(
+        "--include-dirty",
+        action="store_true",
+        default=False,
+        help=(
+            "DANGEROUS: also target unlocked worktrees that are NOT proven "
+            "merged+clean (dirty, unmerged, unpushed, or uncertain). May "
+            "destroy uncommitted or unpushed work."
+        ),
+    )
+    parser.add_argument(
         "--json",
         action="store_true",
         default=False,
@@ -345,6 +539,8 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.include_alive and not (args.dry_run or args.force):
         print("WARNING: --include-alive has no effect without --dry-run or --force.")
+    if args.include_dirty and not (args.dry_run or args.force):
+        print("WARNING: --include-dirty has no effect without --dry-run or --force.")
 
     # --- Gather info ---
     worktrees = get_agent_worktrees()
@@ -353,10 +549,23 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     enrich(worktrees)
+
+    # Fetch the merged-PR head set once (not per-worktree), only if needed.
+    if any(not wt.locked for wt in worktrees):
+        merged_heads = fetch_merged_head_set()
+        if merged_heads is None:
+            print(
+                "WARNING: gh unavailable — cannot confirm merges, "
+                "keeping all unlocked worktrees.",
+                file=sys.stderr,
+            )
+        enrich_unlocked(worktrees, merged_heads)
+
     candidates = build_candidates(
         worktrees,
         include_alive=args.include_alive,
         keep_recent=args.keep_recent,
+        include_dirty=args.include_dirty,
     )
 
     # --- Output ---
@@ -371,9 +580,14 @@ def main(argv: list[str] | None = None) -> int:
     # dry-run or force
     if args.include_alive:
         print("WARNING: --include-alive is set — alive-process worktrees will be targeted!")
+    if args.include_dirty:
+        print(
+            "WARNING: --include-dirty is set — dirty/unmerged/unpushed "
+            "unlocked worktrees will be targeted!"
+        )
 
     mode_label = "Simulating cleanup" if args.dry_run else "Cleaning up"
-    print(f"\n{mode_label} of {len(candidates)} stale worktrees...")
+    print(f"\n{mode_label} of {len(candidates)} worktrees...")
 
     cleaned = 0
     failed = 0
