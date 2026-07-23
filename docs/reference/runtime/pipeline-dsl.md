@@ -166,7 +166,6 @@ PipelineDoc   ::= "pipeline:" NAME
 
 Step          ::= "transform:" TransformBody
                  | "tool:"      ToolBody
-                 | "shell:"     ShellBody
                  | "agent:"     AgentBody
                  | "call:"      CallBody
                  | "match:"     MatchBody
@@ -182,11 +181,6 @@ ToolBody      ::= "{" "name:" STRING
                       ["output:" NAME] "}"
 ArgMap        ::= "{" (KEY ":" ArgValue ("," KEY ":" ArgValue)*)? "}"
 ArgValue      ::= LITERAL | "!expr" EXPR        (* !expr only as the WHOLE value, never nested *)
-
-ShellBody     ::= "{" "command:" ArgValue
-                      ["schema:" NAME]
-                      ["output:" NAME]
-                      ["timeout:" INT] "}"
 
 AgentBody     ::= "{" "prompt:" TPL
                       ["identity:" NAME]
@@ -251,7 +245,7 @@ and executor, not just documented convention):
 - `for_each`/`parallel` branches each get an **isolated copy** of the outer
   named stores — no sibling communication between concurrent items/branches
   (see [Data flow between steps](#data-flow-between-steps)).
-- `!expr` is the *only* way a `tool`/`shell` argument becomes a resolved
+- `!expr` is the *only* way a `tool` argument becomes a resolved
   expression instead of a literal — nesting it inside a list/mapping value is
   a parse error, not a silent no-op.
 
@@ -277,7 +271,7 @@ store).
 | `value` | yes | An R1 expression source. |
 | `output` | no | Named store to write the result to. |
 
-### `tool` (+ `shell` sugar)
+### `tool`
 
 A side-effecting step: dispatches `name` with `args` through the same
 qualified-action-routing-then-bare-lookup a live `invoke_action` call uses —
@@ -297,7 +291,7 @@ registered tool name (`web_search`).
 
 #### `tool` step results
 
-A `tool` (and `shell`) step's result — what lands as `pipe` and `ctx.<output>`
+A `tool` step's result — what lands as `pipe` and `ctx.<output>`
 — is always the flat shape `{text: ..., structured: ..., meta: ...}`, uniform
 across every tool kind (the same shape the chat side exposes to an LLM):
 
@@ -340,36 +334,25 @@ a nonzero `returncode` (a zero exit is not signal, so no key); an MCP call →
 `isError`. Reach for `meta` when you need what a result *cost* or *how* it was
 produced — as opposed to `structured`, which is the result itself.
 
-`shell` is sugar for a `tool` step named `"shell"`: `command` runs as
-`/bin/sh -c <command>` inside the operator's sandbox
-(`sandboxed_exec` — same confinement, policy precedence, and audit events as
-a direct `sandboxed_exec` call). The step's incoming pipe data is threaded to
-the process's **STDIN, JSON-encoded**; the process's **STDOUT becomes the
-step's result** — JSON-decoded when it parses as JSON (so `verify: schema`,
-which requires a `dict`, can apply to a JSON-emitting command), otherwise the
-raw text — and that (raw or JSON-decoded) value goes through the same
-`text`/`structured` reduction as any other `tool` step (a JSON-decoded dict
-lands in `ctx.<name>.structured`; raw text lands in `ctx.<name>.text`).
+To run a sandboxed command from a pipeline, use a `tool` step naming
+`sandboxed_exec` directly:
 
 ```yaml
-- shell: {command: !expr "'ls ' + ctx.dir", output: listing}
+- tool: {name: sandboxed_exec, args: {argv: !expr "['ls', ctx.dir]"}, output: listing}
 ```
 
-| Key | Required | Meaning |
-|-----|----------|---------|
-| `command` | yes | Literal or `!expr`, same rule as a `tool` step's `args` values. Run as `/bin/sh -c <command>`. |
-| `schema` | no | Same as `tool`. |
-| `output` | no | Same as `tool`. |
-| `timeout` | no | Wall-clock time limit in seconds. Defaults to 60. |
-
-Launching a `shell` step sits on the same `HIGH`-severity capability floor as
-`exec__sandboxed_exec` — a context narrowed by the untrusted-content floor or
-an unbound delegate's floor cannot run one, same as it cannot call
-`sandboxed_exec` directly.
+The previous step's pipe data can be threaded to the process's STDIN via the
+`stdin_pipe` arg (`args: {argv: [...], stdin_pipe: !expr pipe}`) — the same
+JSON-encoded-STDIN / STDOUT-becomes-result shape the removed `shell:` step
+used to wire up automatically. (#3226 Phase 1+2 removed the pipeline DSL's
+`shell:` step — thin sugar that ran `/bin/sh -c <command>`, the sole
+shell-injection surface in the codebase — without adding a new step kind: a
+`tool: {name: sandboxed_exec, ...}` step already covers argv-based exec in
+full.)
 
 #### Literals vs `!expr`
 
-A `tool`/`shell` argument value is a **literal** — passed through to the tool
+A `tool` argument value is a **literal** — passed through to the tool
 exactly as written — unless it is tagged with the YAML tag `!expr`:
 
 ```yaml
@@ -585,7 +568,7 @@ no sibling visibility between branches.
 
 ## The R1 expression language
 
-`transform.value`, a `tool`/`shell` argument tagged `!expr`, and `match.on`
+`transform.value`, a `tool` argument tagged `!expr`, and `match.on`
 all resolve against the same small, **total** expression language (R1) — a
 purpose-built tree-walking interpreter, not a general scripting language and
 not a code-execution sandbox. It has no recursion, no user-defined functions,
@@ -704,7 +687,7 @@ As the "0062" note just below describes, an `agent` step's `schema:`
 converts to the provider's `response_format` — so `minimum`/`maximum` reach
 generation-time constraint too, not just post-hoc validation.
 
-A `tool`/`shell`/`agent` step's `schema: NAME` key names a registered schema
+A `tool`/`agent` step's `schema: NAME` key names a registered schema
 its result (or, for `agent`, its parsed JSON reply) must conform to —
 non-conformance fails the step. Schemas declared in the same DSL document set
 (standalone `schema:` documents) are what makes this possible for an ad-hoc
@@ -850,7 +833,6 @@ PipelineDoc   ::= "pipeline:" NAME ("description:" STRING)? "steps:" Step+
 
 Step          ::= "transform:" "{" "value:" EXPR ["output:" NAME] "}"
                  | "tool:"     "{" "name:" STRING ["args:" ArgMap] ["schema:" NAME] ["output:" NAME] "}"
-                 | "shell:"    "{" "command:" ArgValue ["schema:" NAME] ["output:" NAME] ["timeout:" INT] "}"
                  | "agent:"    "{" "prompt:" TPL ["identity:" NAME]
                                     ["capabilities:" "{" "tools:" "[" NAME* "]" "}"]
                                     ["schema:" NAME] ["model:" NAME] ["output:" NAME] "}"
@@ -887,7 +869,7 @@ run-time step failure — never a silent wrong result):
    `parallel` branch's step: only `pipeline:` targets in `call`/`match` are
    ever a static literal name — never an expression. The runtime-evaluated
    `match.on` only ever selects a case *label*, never a target directly.
-2. `!expr` marks a `tool`/`shell` argument as an R1 expression; everything
+2. `!expr` marks a `tool` argument as an R1 expression; everything
    else is a literal, passed through untouched. Do not write `{ctx.x}`
    inside an unmarked argument expecting interpolation — that only works
    for `agent.prompt` (`TPL`), and only there.
@@ -931,7 +913,8 @@ steps:
   - transform:
       value: "ctx.review.passed and 'OK' or 'NEEDS WORK'"
       output: verdict
-  - shell:
-      command: !expr "'echo ' + ctx.verdict"
+  - tool:
+      name: sandboxed_exec
+      args: {argv: !expr "['echo', ctx.verdict]"}
       output: shouted
 ```

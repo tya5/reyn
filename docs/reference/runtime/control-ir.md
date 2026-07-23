@@ -360,7 +360,7 @@ Fields:
 - `allow_subprocess` (optional, default `true`) — may spawn children.
 - `env_passthrough` (optional) — env-var names that pass through (others are stripped).
 - `timeout_seconds` (optional, default `60`) — wall-clock cap.
-- `stdin` (optional, default `None`) — bytes written to the process's stdin, if any (#2593: the pipeline DSL's `shell` step threads the previous step's pipe-data here as JSON).
+- `stdin` (optional, default `None`) — bytes written to the process's stdin, if any (a pipeline `tool` step can thread the previous step's pipe-data here as JSON via `args: {argv: [...], stdin_pipe: !expr pipe}` — see [Pipeline DSL](pipeline-dsl.md#tool)).
 
 **Backend selection**: `get_default_backend()` chooses per platform. On macOS < 26, `SeatbeltBackend` (sandbox-exec SBPL). On Linux ≥ 5.13 with the `sandbox-linux` extra installed, `LandlockBackend` (+ optional seccomp-BPF stack). On other platforms or when the chosen backend is unavailable, falls back to `NoopBackend` (audit-only, no enforcement) — emits a one-line WARN on first use. Override via `reyn.yaml` `sandbox.backend` (`auto` | `seatbelt` | `landlock` | `noop`) and `sandbox.on_unsupported` (`warn` | `error` | `ignore`).
 

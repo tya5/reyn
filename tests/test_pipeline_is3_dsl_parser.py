@@ -35,17 +35,16 @@ from tests._support.agent_session import make_session
 # ── plain dataclass-shape contract tests ────────────────────────────────────
 
 
-def test_parses_minimal_linear_pipeline_transform_tool_shell_agent() -> None:
+def test_parses_minimal_linear_pipeline_transform_tool_agent() -> None:
     """Tier 1: a linear DSL text with one of each supported step kind parses
     into the exact `Pipeline`/`Step` dataclass shape the executor consumes,
-    including the `!expr` tag producing `ExprRef` for tool/shell args."""
+    including the `!expr` tag producing `ExprRef` for tool args."""
     dsl = """
 pipeline: demo
 description: a small linear pipeline
 steps:
   - transform: {value: "ctx.x + 1", output: bumped}
   - tool: {name: search, args: {query: !expr ctx.bumped, limit: 5}, output: hits}
-  - shell: {command: !expr "'echo ' + ctx.bumped", output: shelled}
   - agent: {prompt: "review {ctx.hits}", identity: worker, output: verdict}
 """
     pipeline = parse_pipeline_dsl(dsl, SchemaRegistry())
@@ -61,21 +60,28 @@ steps:
                 output="hits",
                 schema=None,
             ),
-            ToolStep(
-                name="shell",
-                args={
-                    "command": ExprRef("'echo ' + ctx.bumped"),
-                    "stdin_pipe": ExprRef("pipe"),
-                },
-                output="shelled",
-                schema=None,
-            ),
             AgentStep(
                 prompt="review {ctx.hits}", identity="worker", capabilities=None,
                 schema=None, output="verdict",
             ),
         ],
     )
+
+
+def test_shell_step_kind_no_longer_supported() -> None:
+    """Tier 1: #3226 Phase 2 deleted the pipeline DSL's `shell:` step sugar
+    (thin sugar over a `ToolStep(name="shell", ...)` that built `/bin/sh -c
+    <command>`, the sole shell-injection surface in the codebase) without
+    replacing it with a new step kind — pipeline exec is fully covered by
+    `tool: {name: sandboxed_exec, args: {argv: [...], ...}}`. A DSL text
+    using `shell:` must now fail to parse as an unknown step kind."""
+    dsl = """
+pipeline: demo
+steps:
+  - shell: {command: "echo hi"}
+"""
+    with pytest.raises(PipelineParseError, match="shell"):
+        parse_pipeline_dsl(dsl, SchemaRegistry())
 
 
 def test_description_defaults_to_empty_string_when_omitted() -> None:

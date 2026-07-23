@@ -1825,32 +1825,6 @@
     },
     "type": "function"
   },
-  "shell": {
-    "function": {
-      "description": "Run a shell command (via sandboxed_exec) whose STDIN receives the previous pipeline step's pipe-data JSON-encoded, and whose STDOUT becomes this step's output. command: the shell command line (argv[0]='/bin/sh', argv[1]='-c'). timeout: wall-clock time limit in seconds (default 60). The sandbox policy (network access + filesystem scope) is the OPERATOR's, resolved by the OS — it is not chosen here.",
-      "name": "shell",
-      "parameters": {
-        "properties": {
-          "command": {
-            "description": "Shell command line, run as `/bin/sh -c <command>`.",
-            "type": "string"
-          },
-          "stdin_pipe": {
-            "description": "The previous pipeline step's pipe-data (JSON-encoded onto stdin)."
-          },
-          "timeout": {
-            "description": "Wall-clock time limit in seconds (default 60).",
-            "type": "integer"
-          }
-        },
-        "required": [
-          "command"
-        ],
-        "type": "object"
-      }
-    },
-    "type": "function"
-  },
   "skill_install_local": {
     "function": {
       "description": "Register a local skill directory into the project config by reading its SKILL.md frontmatter and writing an entry to .reyn/config/skills.yaml. The skill is immediately available to sessions after the next hot-reload. Pass the path to the directory containing SKILL.md (or the SKILL.md file directly). Use 'name' to override the config key when the directory name differs from the desired skill identifier.",

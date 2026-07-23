@@ -19,7 +19,7 @@ pipeline: greet
 description: Greet a name and shout it.
 steps:
   - transform: {value: "'Hello, ' + ctx.name + '!'", output: greeting}
-  - shell: {command: !expr "'echo ' + ctx.greeting", output: shouted}
+  - tool: {name: sandboxed_exec, args: {argv: !expr "['echo', ctx.greeting]"}, output: shouted}
 ```
 
 A few things worth noting about this file:
@@ -37,14 +37,15 @@ A few things worth noting about this file:
   `ctx` (all named stores) and `pipe` (the immediately-preceding step's own
   result). See [Data flow between steps](../../reference/runtime/pipeline-dsl.md#data-flow-between-steps)
   for the full rule and a worked trace.
-- `!expr` marks `command` as an expression to evaluate, not a literal string
-  — see [Literals vs `!expr`](../../reference/runtime/pipeline-dsl.md#literals-vs-expr).
-- `shell` runs the command in the operator's sandbox and threads the
-  previous step's pipe data to its STDIN, JSON-encoded — this pipeline
-  doesn't use that input, but see the
-  [reference doc's `shell` section](../../reference/runtime/pipeline-dsl.md#tool-shell-sugar)
+- `!expr` marks the `argv` value as an expression to evaluate, not a literal
+  list — see [Literals vs `!expr`](../../reference/runtime/pipeline-dsl.md#literals-vs-expr).
+- `sandboxed_exec` runs `argv` in the operator's sandbox (argv-only — no
+  shell interpretation); the previous step's pipe data can be threaded to its
+  STDIN via an `stdin_pipe: !expr pipe` arg — this pipeline doesn't use that
+  input, but see the
+  [reference doc's `sandboxed_exec` step docs](../../reference/runtime/pipeline-dsl.md#tool-step-results)
   for the full STDIN/STDOUT contract.
-- A `tool`/`shell` step's result (here, `ctx.shouted`) is always the flat
+- A `tool` step's result (here, `ctx.shouted`) is always the flat
   `{text: ..., structured: ...}` shape (`structured` only present for
   non-text data) — see [`tool` step results](../../reference/runtime/pipeline-dsl.md#tool-step-results).
 

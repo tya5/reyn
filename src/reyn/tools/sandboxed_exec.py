@@ -51,11 +51,12 @@ async def op_context_from_tool_context(ctx: ToolContext) -> Any:
     ``op_runtime.sandboxed_exec`` handler (and any other op_runtime handler
     reached this way) expects.
 
-    Shared by :func:`_handle` (the ``sandboxed_exec`` tool) and the ``shell``
-    tool (:mod:`reyn.tools.shell`, #2593) — both need the SAME
+    Used by :func:`_handle` (the ``sandboxed_exec`` tool) — the
     router_state → legacy-OpContext bridge (sandbox_config derivation +
-    op_context_factory-or-minimal-synthesis); duplicating it would let the two
-    surfaces drift on sandbox policy derivation.
+    op_context_factory-or-minimal-synthesis). #3226 Phase 1: the ``shell``
+    tool (:mod:`reyn.tools.shell`, #2593), which used to share this bridge,
+    was removed outright — it was the sole `/bin/sh -c <str>`
+    shell-injection surface in the codebase.
     """
     from reyn.core.op_runtime.context import OpContext
     from reyn.security.permissions.permissions import PermissionDecl

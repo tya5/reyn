@@ -273,7 +273,7 @@ Each side-effect kind has a corresponding declarable axis. The axis vocabulary i
 | `mcp` | `list[str]` | per-server | implicit at MCP call | per-server-name allowlist |
 | `python` | `list[{module, function, mode, timeout}]` | per-step | `require_python_step()` | mode ∈ {`safe`, `unsafe`} |
 | `tool` | `list[str]` | per-tool | `require_tool()` | named-tool allowlist |
-| `shell` | `bool` | abstract | `require_shell()` | binary: any shell access at all |
+| `shell` | *(no live gate)* | — | — | **Doc drift, flagged not fixed here**: this row historically named `require_shell()` as the gate site for a bool `permissions.shell` axis. `require_shell()` does not exist in the current codebase — the subprocess-exec gate it once named was retired when the raw `shell` op was removed (#1352-A/#1352-L3); subprocess access is bounded today by `SandboxPolicy.allow_subprocess` (declared per sandbox config, not per `permissions:` dict entry) at the `sandboxed_exec` seam. See [Why `shell` is the only bool](#why-shell-is-the-only-bool) below for the now-stale rationale this row supported. |
 | `allowed_mcp` | `list[str] \| None` | ACL filter | implicit at MCP call | per-agent restriction, cross-cuts `mcp` |
 
 ### A deliberately non-declarable gate: plugin git run-code trust
@@ -290,7 +290,9 @@ This is **weaker than the builtin boundary, not equivalent to it**, and that gap
 
 ### Why `shell` is the only bool
 
-`shell` is process exec of an arbitrary command. The side-effect set is unbounded (= a shell command can read any file, write any file, network any host) and the author cannot enumerate which side effects a particular invocation will produce. There is no single I/O scope to reduce it to — process exec **is** the irreducible primitive.
+**Historical section — see the axis-table note above.** This section describes the RETIRED bool `shell` declaration axis and its gate `require_shell()`, neither of which exists in the current codebase (confirmed: `grep -rn "require_shell"` over `src/` returns zero hits). It predates, and is unrelated to, #3226's removal of the LLM-facing `shell` pipeline tool (a different mechanism — thin sugar over `sandboxed_exec` that built `/bin/sh -c <command>`, never itself declarable via this axis system). Kept here as a historical record of the original bool-vs-list-axis reasoning rather than rewritten, since the criterion below (paragraph "The criterion is...") remains a fair general principle even though its one cited example is now stale.
+
+`shell` was process exec of an arbitrary command. The side-effect set is unbounded (= a shell command can read any file, write any file, network any host) and the author cannot enumerate which side effects a particular invocation will produce. There is no single I/O scope to reduce it to — process exec **is** the irreducible primitive.
 
 Every other former bool axis (`mcp_install`, `mcp_drop_server`, `cron_register`, `index_drop`) has been re-expressed as one or more list axes, because each is actually reducible to a small set of file / network / secret operations:
 

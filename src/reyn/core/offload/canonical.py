@@ -509,45 +509,6 @@ def sandboxed_exec_to_canonical(result: dict) -> CanonicalToolResult:
     return CanonicalToolResult(text=text, attachments=[], source_ref=None, meta=meta)
 
 
-# The exact dispatch-envelope key set ``unwrap_dispatch_envelope`` also tests for (#2681 Bucket A) —
-# ``shell_to_canonical`` uses the SAME shape heuristic to find the enveloped payload.
-_DISPATCH_ENVELOPE_KEYS = frozenset({"status", "data", "error"})
-
-
-def shell_to_canonical(result: dict) -> CanonicalToolResult:
-    """``shell`` tool result → canonical (#2681 Bucket A — the scout-flagged latent file-class bug:
-    PR-F1's ``CANONICAL_TODO`` triage missed that ``shell`` is a TEXT producer, so its readable STDOUT
-    was shown to the LLM as a whole-dict ``structured`` blob instead of clean text).
-
-    ``shell`` is #2593 thin pipeline-DSL sugar over ``sandboxed_exec`` whose ``_handle`` (locked design)
-    returns ONLY the command's STDOUT — JSON-decoded when it parses (so ``verify: schema`` can apply to
-    a JSON-emitting command), else the raw text. ``stderr``/``returncode`` never reach this seam (they
-    are dropped one layer up, by that same locked design) — the one respect this mapper CANNOT mirror
-    ``sandboxed_exec_to_canonical`` (whose ``returncode`` signal meta this would carry, were it visible
-    here); ``meta`` therefore carries no signal of its OWN for ``shell`` — only the shared ``empty``
-    fact a no-output command records through :func:`_explicit_empty` (#3010).
-
-    The shape THIS mapper actually receives (post ``unwrap_dispatch_envelope``) is one of:
-
-    - the dispatch envelope ``{"status": ..., "data": <value>}`` — the common case (a plain-text
-      command, or JSON stdout that decoded to a non-``dict`` such as a list/number/bool/``None``: the
-      envelope could not be peeled because peeling requires a ``dict`` ``data``);
-    - ``<value>`` directly when stdout decoded to a ``dict`` (already peeled one envelope layer).
-
-    Either way, mirroring ``sandboxed_exec``'s "stdout IS the text" treatment: ``value`` renders as the
-    readable ``text`` body — verbatim when it is already a ``str``, else ``json.dumps``'d so a
-    JSON-emitting command's output stays fully legible — and there is NO ``structured`` attachment (the
-    whole-dict blob this mapper replaces)."""
-    if "data" in result and set(result) <= _DISPATCH_ENVELOPE_KEYS:
-        value = result["data"]
-    else:
-        value = result
-    text = value if isinstance(value, str) else json.dumps(value, default=str)
-    meta: dict[str, Any] = {}
-    text = _explicit_empty(text, "(no output)", meta)
-    return CanonicalToolResult(text=text, attachments=[], source_ref=None, meta=meta)
-
-
 def chunks_to_canonical(result: dict) -> CanonicalToolResult:
     """semantic_search (FP-0057 Phase 2a; renamed from recall) / index_query result → canonical. The
     retrieved ``chunks`` list → a ``structured`` attachment (frontmatter YAML, or its own ref when

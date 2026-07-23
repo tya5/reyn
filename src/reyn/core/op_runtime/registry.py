@@ -3,7 +3,7 @@
 This module holds two classifications keyed by **op kind**
 (= the ``op.kind`` values phase Control IR emits today:
 ``read_file`` / ``write_file`` / ``edit_file`` / ``delete_file`` /
-``glob_files`` / ``grep_files`` / ``mcp`` / ``shell`` /
+``glob_files`` / ``grep_files`` / ``mcp`` / ``sandboxed_exec`` /
 ``ask_user`` / ``web_fetch`` / ``web_search`` / etc.).
 
 Note: the coarse ``"file"`` kind was retired in #1240 Wave 2b. All file
