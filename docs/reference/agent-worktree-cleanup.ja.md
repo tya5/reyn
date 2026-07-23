@@ -28,7 +28,7 @@ python scripts/cleanup_agent_worktrees.py
 python scripts/cleanup_agent_worktrees.py --list
 ```
 
-`.claude/worktrees/` 配下で `agent-*` にマッチするすべての worktree を、ロック状態とロック PID の生死とともに一覧表示します。unlocked な worktree はさらに reclaimable (merged+clean — `--force` で削除される) か kept かに分類され、kept の場合は理由 (dirty / stash / no-merged-PR / no-upstream-config / wrong-remote / detached-head / gh-unavailable / git-error) が付きます。変更は行いません。
+`.claude/worktrees/` 配下で `agent-*` にマッチするすべての worktree を、ロック状態とロック PID の生死とともに一覧表示します。unlocked な worktree はさらに reclaimable (merged+clean — `--force` で削除される) か kept かに分類され、kept の場合は理由 (dirty / no-merged-PR / no-upstream-config / wrong-remote / detached-head / gh-unavailable / git-error) が付きます。変更は行いません。
 
 出力例:
 
@@ -93,18 +93,23 @@ Removed 2 worktrees, skipped 1 (alive)
 unlocked な worktree が **reclaimable** であるのは、以下の ALL を満たす場合のみです:
 
 1. `git status --porcelain` が空 (未コミット/untracked 変更なし)
-2. `git stash list` が空
-3. `origin` に push 済みで、その push 先ブランチに **merged PR** が存在する —
+2. `origin` に push 済みで、その push 先ブランチに **merged PR** が存在する —
    `@{upstream}` ではなく `branch.<local-branch>.merge` git config でキーイングする。
    このコンフィグは純粋なローカル読み取りであり **remote ref の prune 後も生存する** ため、
    remote branch が削除された後もその push 先ブランチ名を解決できます。merged-PR の
    head 集合は worktree ごとではなく **一度だけ** `gh pr list --state merged --limit 5000
    --json headRefName` で取得します。
 
-3 つのうち **どれか一つでも**満たさない場合、その worktree は **keep** されます。これには
+2 つのうち **どちらか一つでも**満たさない場合、その worktree は **keep** されます。これには
 以下が含まれます: git コマンドのエラー、detached HEAD (`symbolic-ref` なし)、
 `branch.<name>.merge`/`.remote` config が無い (push が upstream を設定していない)、
 `origin` 以外の remote、単にそのブランチにまだ merged PR が無い場合。
+
+**`git stash` は意図的にこの gate の対象外です。** stash 参照は共有の `.git` ディレクトリに
+存在し worktree ごとではありません — 同じリポジトリのすべての worktree (main を含む) が
+**同一の** stash list を見ます。したがって特定 worktree の状態を示すものではなく、また
+`git worktree remove` でも stash は削除されない (worktree 内に保存されているわけではない)
+ため、そもそも回収時の損失ベクトルにもなりません。
 
 **`gh` が使えない場合は fail-safe。** `gh pr list` が何らかの理由(オフライン・未認証・API
 エラー)で失敗した場合、merged-PR 集合は unavailable となり **すべての unlocked worktree が
@@ -216,7 +221,7 @@ fi
 
 - **`--include-alive` なしで生存 PID は決して触られません。** PID チェックは削除前に `ps -p <pid>` で実行されます。チェックが失敗した (PID 生存) 場合、worktree はスキップされてログに記録されます。
 - **`--dry-run` は常に安全です。** ファイルシステムや git 操作は一切実行されません。
-- **unlocked な worktree は merged+clean と証明されて初めて削除候補になります。** `build_candidates()` が unlocked worktree を追加するのは `classify_unlocked_reclaimability()` が `reclaimable=True` を返した場合のみです (porcelain 空、stash 空、push 先ブランチに merged PR あり — `@{upstream}` ではなく `branch.<name>.merge` config でキーイング)。dirty なツリー、upstream config 無し、remote 不一致、detached HEAD、`gh` unavailable、git エラーなどの不確実性はすべて KEEP に解決されます。この範囲を非 reclaimable な unlocked worktree にまで広げる唯一の方法が `--include-dirty` であり、これは危険です。
+- **unlocked な worktree は merged+clean と証明されて初めて削除候補になります。** `build_candidates()` が unlocked worktree を追加するのは `classify_unlocked_reclaimability()` が `reclaimable=True` を返した場合のみです (porcelain 空、push 先ブランチに merged PR あり — `@{upstream}` ではなく `branch.<name>.merge` config でキーイング。`git stash` は意図的にチェックしません — stash 参照はリポジトリの全 worktree で共有され worktree 固有の証拠にならず、`git worktree remove` でも失われないため)。dirty なツリー、upstream config 無し、remote 不一致、detached HEAD、`gh` unavailable、git エラーなどの不確実性はすべて KEEP に解決されます。この範囲を非 reclaimable な unlocked worktree にまで広げる唯一の方法が `--include-dirty` であり、これは危険です。
 - **スクリプトは `.claude/worktrees/` 配下の `agent-*` パスのみを対象とします。** フィーチャーブランチや main などの他のすべての worktree はスクリプトには見えません。
 
 ## 関連リソース

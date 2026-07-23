@@ -44,7 +44,7 @@ python scripts/cleanup_agent_worktrees.py --list
 Lists all worktrees matching `agent-*` under `.claude/worktrees/`, annotated
 with their lock status and whether the lock PID is alive or dead. Unlocked
 worktrees are further classified as reclaimable (merged+clean — will be
-removed by `--force`) or kept, with a reason (dirty / stash / no-merged-PR /
+removed by `--force`) or kept, with a reason (dirty / no-merged-PR /
 no-upstream-config / wrong-remote / detached-head / gh-unavailable /
 git-error). No changes are made.
 
@@ -118,18 +118,24 @@ Neither signal can be used.
 An unlocked worktree is **reclaimable** iff ALL of:
 
 1. `git status --porcelain` is empty (no uncommitted or untracked changes)
-2. `git stash list` is empty
-3. it was pushed to `origin`, and its pushed branch has a **merged PR** —
+2. it was pushed to `origin`, and its pushed branch has a **merged PR** —
    keyed via `branch.<local-branch>.merge` git config, NOT `@{upstream}`.
    This config is a pure local read that **survives remote-ref pruning**,
    so it still resolves the pushed branch name after the remote branch is
    deleted. The merged-PR head set is fetched once (not per-worktree) via
    `gh pr list --state merged --limit 5000 --json headRefName`.
 
-If ANY of the three fails, the worktree is **kept**. This includes: a git
+If ANY of the two fails, the worktree is **kept**. This includes: a git
 command erroring, a detached HEAD (no `symbolic-ref`), a missing
 `branch.<name>.merge`/`.remote` config (push never set upstream), a remote
 other than `origin`, or the branch simply not (yet) having a merged PR.
+
+**`git stash` is deliberately NOT part of this gate.** The stash ref lives
+in the shared `.git` dir, not per-worktree — every worktree of a repo
+(including `main`) sees the SAME stash list, so it is not evidence of any
+one worktree's state. It also survives `git worktree remove` (it isn't
+stored in the worktree), so it was never a reclaim-time loss vector to
+protect against.
 
 **Fail-safe on `gh` unavailability.** If `gh pr list` fails for any reason —
 offline, not authenticated, API error — the merged-PR set is unavailable and
@@ -268,8 +274,11 @@ fi
 - **Unlocked worktrees are only removal candidates once proven merged+clean.**
   `build_candidates()` adds unlocked worktrees only when
   `classify_unlocked_reclaimability()` returns `reclaimable=True` (porcelain
-  empty, stash empty, pushed branch has a merged PR — keyed via
-  `branch.<name>.merge` config, never `@{upstream}`). Any uncertainty —
+  empty, pushed branch has a merged PR — keyed via `branch.<name>.merge`
+  config, never `@{upstream}`; `git stash` is deliberately not checked — the
+  stash ref is shared across all worktrees of a repo, so it isn't
+  per-worktree evidence, and it survives `git worktree remove` regardless).
+  Any uncertainty —
   dirty tree, no upstream config, wrong remote, detached HEAD, `gh`
   unavailable, git error — resolves to KEEP. `--include-dirty` is the only
   way to widen this to non-reclaimable unlocked worktrees, and it is

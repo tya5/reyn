@@ -1,12 +1,22 @@
 """Tier 1: unlocked-worktree clean-gate reclaim contract (#3237).
 
 Pins the public contract of `classify_unlocked_reclaimability` in
-`scripts/cleanup_agent_worktrees.py`: the v2 safety rule that decides
+`scripts/cleanup_agent_worktrees.py`: the v3 safety rule that decides
 whether an UNLOCKED worktree is safe to reclaim. This is squash-merge safe
 (reyn merges via squash-merge + branch-delete, so `git branch -r --contains
 HEAD` / `HEAD@{upstream}` are both wrong signals — see the module docstring
 in the script for why). The rule keys off `branch.<local>.merge` git config
 instead, which survives remote-ref pruning.
+
+NOTE (v3): `git stash` is deliberately NOT part of the gate and there is no
+"stash present → KEEP" test case here. An earlier revision (v2) gated on
+`git stash list`, but the stash ref lives in the shared `.git` dir, not
+per-worktree — every worktree of a repo (including `main`) sees the SAME
+stash list, so that check wrongly classified every worktree with any shared
+stash as non-reclaimable (verified against real worktrees: 186/196 unlocked
+worktrees in this repo shared one identical `stash@{0}` entry). A stash also
+survives `git worktree remove` (it isn't stored in the worktree), so it was
+never a worktree-local loss vector to protect against in the first place.
 
 Testing policy compliance:
 - No MagicMock / AsyncMock / patch. All fixtures are real temp git repos
@@ -157,22 +167,6 @@ def test_untracked_file_is_not_reclaimable(cleanup_mod, tmp_path):
 
     assert reclaimable is False
     assert reason == "dirty"
-
-
-def test_stash_present_is_not_reclaimable(cleanup_mod, tmp_path):
-    """Tier 1: a non-empty stash makes the worktree non-reclaimable."""
-    origin = _init_bare_origin(tmp_path)
-    wt = _clone_and_seed_branch(tmp_path, origin, "wt4", "feat-stash")
-    _simulate_squash_merge_and_delete(wt, "feat-stash")
-    (wt / "f.txt").write_text("stash me\n")
-    _git(["stash"], wt)
-
-    reclaimable, reason = cleanup_mod.classify_unlocked_reclaimability(
-        wt, merged_heads={"feat-stash"}
-    )
-
-    assert reclaimable is False
-    assert reason == "stash"
 
 
 def test_pushed_but_not_in_merged_set_is_not_reclaimable(cleanup_mod, tmp_path):

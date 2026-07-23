@@ -144,7 +144,7 @@ def enrich(worktrees: list[WorktreeInfo]) -> None:
 # unknown revision`) — both signals are wrong for exactly the case we target
 # and must not be reintroduced.
 #
-# The safe v2 rule keys off `branch.<local>.merge` git config instead: it is
+# The safe v3 rule keys off `branch.<local>.merge` git config instead: it is
 # a pure local-config read that SURVIVES remote-ref pruning (verified), so it
 # still resolves the worktree's pushed branch name after squash-merge +
 # branch-delete. Cross-referenced against the merged-PR head set fetched
@@ -191,17 +191,26 @@ def classify_unlocked_reclaimability(
     worktree_path: Path, merged_heads: set[str] | None
 ) -> tuple[bool, str]:
     """
-    Decide whether an UNLOCKED worktree is safe to reclaim (v2 rule, #3237).
+    Decide whether an UNLOCKED worktree is safe to reclaim (v3 rule, #3237).
 
     Reclaimable iff ALL of:
       1. `git status --porcelain` is empty (no uncommitted/untracked changes)
-      2. `git stash list` is empty
-      3. it was pushed to `origin` and its pushed branch has a merged PR —
+      2. it was pushed to `origin` and its pushed branch has a merged PR —
          keyed via `branch.<local>.merge` config (NOT `@{upstream}`, which
          errors after the remote ref is pruned post squash-merge-and-delete)
 
+    NOTE: `git stash` is deliberately NOT part of this gate. The stash ref
+    lives in the shared `.git` dir, not per-worktree — every worktree of the
+    same repo (including `main`) sees the SAME stash list. A stash is
+    therefore neither evidence of *this* worktree's state nor a loss vector
+    on removal: `git worktree remove` never touches the shared stash, so
+    reclaiming a worktree can never destroy stashed work (#3237 v3 — an
+    earlier revision wrongly gated on stash and, in practice, saw every
+    worktree in a real repo classified as "stash" because they all shared
+    one common-repo entry).
+
     Returns (reclaimable, reason). `reason` is one of: "reclaimable",
-    "dirty", "stash", "detached-head", "no-upstream-config", "wrong-remote",
+    "dirty", "detached-head", "no-upstream-config", "wrong-remote",
     "no-merged-pr", "gh-unavailable", "git-error".
 
     Fail-safe by construction: any git command erroring, a detached HEAD, a
@@ -229,12 +238,6 @@ def classify_unlocked_reclaimability(
         return False, "git-error"
     if status.stdout.strip():
         return False, "dirty"
-
-    stash = _run(["git", "stash", "list"])
-    if stash is None or stash.returncode != 0:
-        return False, "git-error"
-    if stash.stdout.strip():
-        return False, "stash"
 
     symbolic_ref = _run(["git", "symbolic-ref", "--short", "HEAD"])
     if symbolic_ref is None or symbolic_ref.returncode != 0:
