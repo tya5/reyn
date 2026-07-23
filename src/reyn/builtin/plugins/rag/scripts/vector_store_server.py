@@ -51,9 +51,11 @@ Five gates satisfied by construction (proposal 0063 P2 spec):
 can be exercised directly (no MCP transport needed) by tests; the module-
 level ``mcp = FastMCP(...)`` object below is the thin tool-call skin over
 it, run directly as ``python <this file's path>`` (stdio transport) --
-either from a dev checkout, or (ADR 0064 P5) via the builtin ``rag``
-plugin's materialised per-plugin venv interpreter once
-``plugin_management__install(source={"kind": "builtin", "name": "rag"})`` has run.
+either from a dev checkout, or (ADR 0064 P5/§3.11b, #3209) via the
+operator/LLM's OWN per-plugin venv interpreter (created per the installing
+skill's SETUP steps -- never one ``plugin_install`` provisions) once
+``plugin_management__install(source={"kind": "builtin", "name": "rag"})`` has
+registered the server.
 """
 from __future__ import annotations
 

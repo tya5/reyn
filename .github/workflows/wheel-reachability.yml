@@ -28,24 +28,26 @@ jobs:
       # and asserts byte-identity with the dev checkout, (3) asserts a
       # non-declared path is refused, (4) re-checks the still-LIVE
       # read_builtin_body_bytes path (#2913, untouched by 0061), (5) installs
-      # the builtin `rag` PLUGIN via a real `plugin_install` call (ADR 0064
-      # P5 -- supersedes #2972's retired `reyn-rag-chunker` console script),
-      # which materialises its dependencies into a dedicated per-plugin venv
-      # via real `uv`, then spawns the registered chunker server from a PATH
-      # shaped like a `pipx install reyn` environment (ambient `python3`
-      # cannot import reyn) and calls a real tool on it. This is deliberately
-      # NOT path-filtered: a positive include-list is itself a false-allow
-      # surface — an incomplete list lets a packaging regression under an
-      # unlisted path merge with the gate silently never running. Cost is
-      # ~1-2 minutes end-to-end (checks 1-4 install the wheel with no
-      # dependencies and stay a few seconds; check 5 needs a second venv plus
-      # `plugin_install`'s own real `uv venv`/`uv pip install` fetch of
-      # chonkie/apsw/sqlite-vec/fastmcp) — trivial next to the severity of a
+      # the builtin `rag` PLUGIN via a real `plugin_install` call and asserts
+      # the REGISTER-ONLY contract (ADR 0064 §3.11b, #3209 -- supersedes
+      # #2972's retired `reyn-rag-chunker` console script): no per-plugin
+      # venv materialised, the spawn command registered AS-IS, a fail-fast
+      # (no network/no runtime fetch) startup error when the spawn
+      # interpreter lacks the plugin's own deps, and a real served tool call
+      # once a venv WITH those deps (pip-installed here, playing the
+      # operator/LLM's skill-driven setup role) is pointed at. This is
+      # deliberately NOT path-filtered: a positive include-list is itself a
+      # false-allow surface — an incomplete list lets a packaging regression
+      # under an unlisted path merge with the gate silently never running.
+      # Cost is ~1-2 minutes end-to-end (checks 1-4 install the wheel with no
+      # dependencies and stay a few seconds; check 5 needs two more venvs plus
+      # a real `pip install` of chonkie/apsw/sqlite-vec/fastmcp into one of
+      # them for the deps-present leg) — trivial next to the severity of a
       # production wheel silently shipping a broken/incomplete repo-access
       # surface with zero CI signal, so this runs unconditionally on every PR
       # instead of trying to enumerate "every packaging-affecting path".
       - name: Install build tooling
-        run: pip install build uv
+        run: pip install build
 
       - name: Wheel reachability parity gate
         run: python scripts/wheel_reachability_smoke.py

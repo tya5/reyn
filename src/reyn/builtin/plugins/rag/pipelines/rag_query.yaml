@@ -130,7 +130,7 @@ steps:
       output: reachable
   - transform:
       value: >-
-        "Vector-store MCP server '" + ctx.vectorstore_server + "' is unreachable. It ships as part of the builtin `rag` plugin, not pre-installed -- install it yourself and the operator is prompted at the permission gate: plugin_management__install(source={\"kind\": \"builtin\", \"name\": \"rag\"}). This installs ALL of the rag plugin's capabilities in one call and materialises its dependencies (chonkie/apsw/sqlite-vec) into a dedicated per-plugin environment -- no hand-edited YAML."
+        "Vector-store MCP server '" + ctx.vectorstore_server + "' is unreachable. It ships as part of the builtin `rag` plugin, not pre-installed. (1) Not registered yet -- install it yourself and the operator is prompted at the permission gate: plugin_management__install(source={\"kind\": \"builtin\", \"name\": \"rag\"}). This registers ALL of the rag plugin's capabilities in one call -- it does NOT install the plugin's Python deps for you. (2) Deps/venv missing (the common cause post-registration) -- read the `build_and_query_rag_corpus` skill's SETUP section: create a venv, `pip install -r ~/.reyn/plugins/rag/requirements.txt` into it, then point `reyn_vector_store`'s registered `command` (.reyn/config/mcp.yaml) at that venv's python interpreter absolute path."
         + join(map(filter([{fired: ctx.reachable.cause != "", text: "\n\n[actual error observed] " + ctx.reachable.cause}], f -> f.fired), f -> f.text), "")
       output: remedy
   - match:
