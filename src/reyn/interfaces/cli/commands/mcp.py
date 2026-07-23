@@ -420,13 +420,6 @@ def run_serve(args: argparse.Namespace) -> None:
             reasoning_config=session_cfg.config.chat.reasoning,  # #1652
             registry=registry,
             allowed_mcp=profile.allowed_mcp,
-            # #1953 slice R, I-5=(A): stdio-MCP is single-tenant per process, so the
-            # agent's sqlite backend (rewind-participating) ≈ the singleton — durable
-            # in-session task state, opt-in rewind (flag #3 confirmed).
-            # #2180: the agent's SHARED backend via the registry's single construction
-            # seam (ONE connection per agent) — NOT a direct per_session_sqlite_backend
-            # (the N+1-connection #2125 race). The factory closure captures ``registry``.
-            task_backend=registry.task_backend,
             events_config=session_cfg.config.events,
             state_log=state_log,
             budget_tracker=budget_tracker,

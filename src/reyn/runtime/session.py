@@ -38,7 +38,6 @@ from reyn.core.events.snapshot_generations import SnapshotGenerationStore
 from reyn.core.events.state_log import StateLog
 from reyn.core.op_runtime.status_classify import classify_op_status
 from reyn.core.pipeline.registry import PipelineNotFoundError, PipelineRegistry
-from reyn.hooks.dispatcher import HOOK_INBOX_KIND
 from reyn.hooks.schema_registry import build_hook_payload
 from reyn.llm.model_resolver import ModelResolver
 from reyn.runtime.agent import Agent
@@ -80,7 +79,6 @@ from reyn.runtime.services import (
 from reyn.runtime.services.chain_manager import _PendingChain
 from reyn.runtime.services.execution_driver import ExecutionDriver
 from reyn.runtime.services.inter_agent_messaging import InterAgentMessaging
-from reyn.runtime.services.task_wake import WAKE_READY_KIND, WAKE_REQUESTER_KIND
 from reyn.runtime.session_buses import (
     AgentRequestBus,
     AuditOnlyInterventionBridge,
@@ -90,12 +88,10 @@ from reyn.runtime.session_params import (
     CapabilityScope,
     PresentationWiring,
     ReactivityConfig,
-    TaskWiring,
 )
 from reyn.runtime.spawn_tracker import SpawnTracker
 from reyn.security.permissions.permissions import PermissionResolver
 from reyn.services.compaction.engine import CompactionEngine
-from reyn.task.subscription import SubscriptionWriter
 from reyn.user_intervention import (
     InterventionAnswer,
     InterventionChoice,
@@ -1016,7 +1012,6 @@ class Session:
         # 4 cohesive param objects replacing 12 flat params (#3121 step1, see session-construction.md#3121-step1-parameter-objects)
         reactivity: "ReactivityConfig | None" = None,
         capability_scope: "CapabilityScope | None" = None,
-        task_wiring: "TaskWiring | None" = None,
         presentation_wiring: "PresentationWiring | None" = None,
     ) -> None:
         """
@@ -1029,7 +1024,6 @@ class Session:
         # Default each omitted parameter object, unpack into pre-#3121 local names (#3121 step1, see session-construction.md#3121-step1-parameter-objects)
         reactivity = reactivity if reactivity is not None else ReactivityConfig()
         capability_scope = capability_scope if capability_scope is not None else CapabilityScope()
-        task_wiring = task_wiring if task_wiring is not None else TaskWiring()
         presentation_wiring = (
             presentation_wiring if presentation_wiring is not None else PresentationWiring()
         )
@@ -1041,8 +1035,6 @@ class Session:
         contextual_permission = capability_scope.contextual_permission
         available_skills = capability_scope.available_skills
         skill_collisions = capability_scope.skill_collisions
-        task_backend = task_wiring.task_backend
-        task_waker = task_wiring.task_waker
         presentation_registry = presentation_wiring.presentation_registry
         presentation_consumer = presentation_wiring.presentation_consumer
         intervention_bridge = presentation_wiring.intervention_bridge
@@ -1066,9 +1058,6 @@ class Session:
         # contextual_permission (#1827 S3) is owned by CapabilityVisibility, constructed below
         # once registry/router_host/session_id exist; `contextual_permission` (this local) is
         # threaded in as its initial value (see #3121 step3 Extract Class).
-        # Session-scoped Task backend instance, threaded to task.* op handlers (#1953 slice 3a, see session-construction.md#capability-permission-visibility)
-        self._task_backend = task_backend
-        self._task_waker = task_waker  # #1953 slice 7
         # Present-sink consumer; production always supplies one, direct/test construction falls back to outbox-backed default (#2708 P1, see session-construction.md#misc-lifecycle-wiring)
         self._presentation_consumer = (
             presentation_consumer
@@ -1077,8 +1066,6 @@ class Session:
         )
         # Spawn-time intervention bridge; binds an attached driver's ask_user to the parent's listener (#2708 P3.2a, see session-construction.md#misc-lifecycle-wiring)
         self._intervention_bridge = intervention_bridge
-        # task_id this session is EXECUTING as a task-as-request, read by op-ctx builders for task.create ownership (#1953 §16, see session-construction.md#safety-limits-interactive-mode)
-        self._current_task_id: "str | None" = None
         # OS-authoritative provenance classification of the current turn, stamps entry["provenance"] (proposal 0060 Phase1 A7, see session-construction.md#safety-limits-interactive-mode)
         self._current_turn_origin: str = "auto_improvement"
         # Spawned EPHEMERAL flag, set post-construction by the registry (#2103, see session-construction.md#safety-limits-interactive-mode).
@@ -1221,7 +1208,6 @@ class Session:
         # Kept directly (not only via journal) so ops launched from this session can emit step events into the same WAL
         self._state_log = state_log
         self._halted_reason: "str | None" = None  # #2259 PR-3: set on FAIL-STOP, see session-construction.md#family-2-recovery-wal-journal
-        self._task_subscription_writer = SubscriptionWriter(state_log) if state_log is not None else None  # #2187 backend-master, mirrors task_waker
         # In-memory buffer of restored-then-resolved intervention answers, keyed by run_id (PR-intervention-link L6)
         self._buffered_intervention_answers: dict[str, "InterventionAnswer"] = {}
         # In-memory staging for wake=false ride-along messages, durably persisted in the snapshot (#1800 slice 4b, see session-construction.md#safety-limits-interactive-mode)
@@ -2321,15 +2307,6 @@ class Session:
         instance is set once in ``__init__`` and never re-bound.
         """
         return self._journal
-
-    @property
-    def task_backend(self) -> "object | None":
-        """Read-only accessor for this session's Task backend (#1953 slice 3a).
-
-        The registry hands the GLOBAL backend in at construction
-        (``_construct_session``). None when the session carries no backend
-        (op-runtime in-memory fallback)."""
-        return self._task_backend
 
     def iter_applied_seqs(
         self, *, now_ts: float, long_await_threshold: float,
@@ -3602,17 +3579,15 @@ class Session:
         constructible; the sole production caller, ``__init__``, always passes
         the real constructor value.
 
-        ★ Three args are DEFERRED lambdas, NOT eager values —
-        ``live_session_id_fn`` / ``current_task_id_fn`` / ``turn_origin_fn``
-        keep resolving ``self._session_id`` / ``self._current_task_id`` /
-        ``self._current_turn_origin`` at CALL time, not here: both already
-        carry a pre-turn DEFAULT at construction (``_current_task_id`` is
-        ``None``, set at :1074; ``_current_turn_origin`` is
-        ``"auto_improvement"``, set at :1083 — both BEFORE this builder
-        runs), but both are then REASSIGNED per turn inside
-        ``run_one_iteration`` (far after ``__init__`` returns) — an
+        ★ Two args are DEFERRED lambdas, NOT eager values —
+        ``live_session_id_fn`` / ``turn_origin_fn``
+        keep resolving ``self._session_id`` / ``self._current_turn_origin``
+        at CALL time, not here: ``_current_turn_origin`` already carries a
+        pre-turn DEFAULT at construction (``"auto_improvement"``, set at
+        :1083 — BEFORE this builder runs), but it is then REASSIGNED per turn
+        inside ``run_one_iteration`` (far after ``__init__`` returns) — an
         eager-captured value here would freeze the pre-turn default forever,
-        never seeing a real turn's task id / origin; ``live_session_id_fn``
+        never seeing a real turn's origin; ``live_session_id_fn``
         is deferred because a spawned session's live session id can change
         AFTER this constructor runs (the cached ``self._session_id`` read
         here is stale for that case — see the inline comment above
@@ -3666,13 +3641,8 @@ class Session:
             # file/MCP ops, which no embed op reaches.
             budget_gateway=self._budget,
             state_log=self._state_log,  # #2259 PR-1 → config generation emit from config ops
-            # #1953 dynamic-wire: thread the REAL session id + Task backend so
-            # router-dispatched task.* ops hit the assignee/requester CAS gate.
             session_id=self._session_id,
-            task_backend=self._task_backend,
-            task_waker=self._task_waker,  # #2107: thread the TaskWaker into the router op-ctx
-            task_subscription_writer=self._task_subscription_writer,  # #2187 backend-master: the Task subscription WAL writer
-            hook_dispatcher=self._hook_dispatcher,  # #1800 slice 5c: task_start/end (router path)
+            hook_dispatcher=self._hook_dispatcher,  # #1800 slice 5c (router path)
             hook_bus=self._hook_bus,  # Hook-Event Redesign Phase 5 part 2: emit_hook_event's publish target
             agent_name=self.agent_name,
             agent_role=self._agent_role,
@@ -3702,11 +3672,8 @@ class Session:
             # spawn guard.
             record_spawned_task=self.record_spawned_task,
             live_session_id_fn=lambda: self._session_id,
-            # #1953 §16: the per-turn execution context (set in run_one_iteration),
-            # read at op-ctx-build time so a router task.create derives ownership.
-            current_task_id_fn=lambda: self._current_task_id,
-            # proposal 0060 Phase 1 (A7): mirrors current_task_id_fn exactly — a live
-            # callback (not a fixed init value) because turn_origin varies per turn.
+            # proposal 0060 Phase 1 (A7): a live callback (not a fixed init
+            # value) because turn_origin varies per turn.
             turn_origin_fn=lambda: self._current_turn_origin,
             agent_workspace_dir=self.workspace_dir,
             file_read=self._file_read,
@@ -4651,7 +4618,7 @@ class Session:
         """#2072: deliver a hook push to ANOTHER session of this agent (cross-session push).
 
         The canonical wake-triple (``resolve_session`` / ``get_session`` → ``_put_inbox`` →
-        ``ensure_session_running``) — the same pattern TaskWaker / webhook_routing use. A
+        ``ensure_session_running``) — the same pattern webhook_routing uses. A
         ``transport:native`` target resolves via ``resolve_session``; a bare sid via
         ``get_session``. A target naming no live session is logged + dropped (the push is
         best-effort — a cross-session push to an absent peer must never crash the source run).
@@ -5029,8 +4996,8 @@ class Session:
             # shutdown sentinel
             return False
         kind, payload = trigger
-        # #1953 §16 (recursive-request): stamp this session's per-turn execution
-        # context from the trigger (the SOURCE of OpContext.current_task_id).
+        # proposal 0060 Phase 1 (A7): stamp this session's per-turn provenance
+        # classification from the trigger (the SOURCE of OpContext.turn_origin).
         self._stamp_execution_context(kind, payload)
         # #1800 slice 7: the loop valve. Bound hook self-continuation at the
         # SINGLE seam — before any per-turn work (sender attribution / turn_started
@@ -5215,13 +5182,7 @@ class Session:
             # launch returned immediately, so this is a fresh turn, routed
             # exactly like a task wake).
             await self._handle_pipeline_result(payload)
-        elif kind in ("task_ready", "task_dependency_aborted"):
-            # #1953 slice 7: the TaskWaker delivered a dep-graph disposition
-            # (a dependent became ready, or a parent must decide recovery). Both
-            # surface as an OS-originated message so the LLM acts via ordinary
-            # task ops (P7 — no decision vocabulary).
-            await self._handle_task_wake(payload)
-        elif kind == "hook":  # HOOK_INBOX_KIND (#1800 slice 5b)
+        elif kind == "hook":  # HOOK_INBOX_KIND value (#1800 slice 5b)
             # E (wake=true) lifecycle-hook push delivered as a turn trigger:
             # a system-role [hook:name] message + one router turn (self-
             # continuation). The attribution + wake binding ride in the
@@ -5232,95 +5193,30 @@ class Session:
     def _maybe_schedule_ephemeral_vanish(self) -> None:
         """#2103: schedule the ephemeral auto-vanish teardown once this session's turn
         is idle-done. Thin forwarder — see ``SpawnTracker._maybe_schedule_ephemeral_vanish``
-        for the full rationale (#3133 P3 Extract Class). ``current_task_id`` is per-turn
-        mutable (reassigned every turn by ``_stamp_execution_context``), so it is threaded
-        as a call-time argument rather than baked into the tracker's construction."""
-        self._spawn_tracker._maybe_schedule_ephemeral_vanish(
-            current_task_id=self._current_task_id,
-        )
+        for the full rationale (#3133 P3 Extract Class)."""
+        self._spawn_tracker._maybe_schedule_ephemeral_vanish()
 
     def _stamp_execution_context(self, kind: str, payload: dict) -> None:
-        """#1953 §16 (recursive-request): set the per-turn execution context read by
-        the router op-ctx builders (→ ``OpContext.current_task_id``) so a
-        ``task.create`` during this turn derives ownership (requester=<this task>,
-        requester_kind=task). Per-turn + interleaving-precise: the context is exactly
-        the task the THIS turn's wake is about, so a session juggling T1/T2 never
-        mis-owns a create.
-
-        - ``task_ready`` (``WAKE_READY_KIND``, execute-wake): stamp the task to execute
-          (``meta.task_id``). Continuations are re-wakes (a completed sub-task promotes
-          T → ``wake_ready_dependent`` re-stamps current=T on resume), so multi-turn
-          execution is covered.
-        - ``task_dependency_aborted`` (``WAKE_REQUESTER_KIND``, recovery-wake): stamp the
-          MANAGING task-as-request (``meta.managing_task_id`` = T, set by
-          ``notify_requester_decide`` only when the requester is a TASK) — so a
-          REPLACEMENT the managing session creates this turn is owned by T (§16 B1,
-          closes hole (i) recovery-create). None for a session-requester recovery (a
-          top-level request's recovery stays session-owned). NOTE: NOT ``meta.task_id``
-          here — that names the FAILED dependent, not the manager.
-
-        Every trigger kind ``run_one_iteration`` can dispatch is classified
-        explicitly (complete-by-construction — §16 B1.5, the iteration-cap orphan
-        tui found: a hook self-continuation while executing T hit the old else→reset
-        and orphaned a post-cap sub-task). The three bands:
-        - SET (a task wake introduces the task context): the two above.
-        - PRESERVE (a self-continuation / a response to the agent's OWN prior action —
-          NOT a new context, so the current execution context must survive): ``hook``
-          (the #1800 self-continuation), ``agent_response`` (a reply to a request THIS
-          agent sent). These never switch tasks, so preserving is interleaving-safe.
-        - RESET→None (a genuinely NEW external context = session-owned creates):
-          ``user``, ``agent_request`` (an INCOMING peer ask), ``pipeline_result``
-          (IS-2: an async pipeline's terminal result — a fresh external context,
-          not a continuation of a task the receiver was executing). An unknown
-          future kind falls here — fail-safe to session-owned (a mis-own/leak is
-          worse than an orphan); a new self-continuation kind must be added to
-          the PRESERVE set.
-
-        Linger note (B1.5, considered + accepted): a post-completion hook can preserve
-        current=T past T's completion. Functionally harmless — §16 B2's
-        ownership-cascade fires on ABORT (a COMPLETED T is skipped), and a
-        linger-owned sub-task's own recovery still routes to T's assignee. The
-        clear-on-terminal alternative adds op→session coupling for no functional gain,
-        so it is intentionally NOT done.
-
-        proposal 0060 Phase 1 Layer A (A7): also derives ``self._current_turn_origin``
+        """proposal 0060 Phase 1 Layer A (A7): derive ``self._current_turn_origin``
         — the OS-authoritative provenance classification of this turn, threaded into
-        ``OpContext.turn_origin`` at both ctx-build sites exactly like
-        ``current_task_id`` above. Only an explicit ``kind == "user"`` turn grants
-        ``"user_directed"``; EVERY other kind — hook, pipeline_result, the wake family,
-        sub-agent ``agent_request``/``agent_response``, or any future kind this method
-        does not yet know about — resolves to the strictER ``"auto_improvement"``. This
-        is an if/else fail-safe, not a lookup table: there is no path by which an
-        unmapped kind can silently fall through to ``"user_directed"`` (0060 §2.7 —
-        that would let an autonomous turn bypass the Phase-4 auto-improvement gate).
-        Sub-agent turns are deliberately `"auto_improvement"` (lead-adjudicated,
-        Addendum B A7): a human directed the PARENT task, not necessarily this
-        install action."""
-        meta = payload.get("meta", {})
-        if kind == WAKE_READY_KIND:
-            self._current_task_id = meta.get("task_id")
-        elif kind == WAKE_REQUESTER_KIND:
-            self._current_task_id = meta.get("managing_task_id")
-        elif kind in (HOOK_INBOX_KIND, "agent_response"):
-            pass  # PRESERVE: self-continuation / response to the agent's own action
-        else:
-            self._current_task_id = None  # user / agent_request / unknown → new context
+        ``OpContext.turn_origin`` at both ctx-build sites. Only an explicit
+        ``kind == "user"`` turn grants ``"user_directed"``; EVERY other kind —
+        hook, pipeline_result, sub-agent ``agent_request``/``agent_response``, or
+        any future kind this method does not yet know about — resolves to the
+        strictER ``"auto_improvement"``. This is an if/else fail-safe, not a
+        lookup table: there is no path by which an unmapped kind can silently
+        fall through to ``"user_directed"`` (0060 §2.7 — that would let an
+        autonomous turn bypass the Phase-4 auto-improvement gate). Sub-agent
+        turns are deliberately `"auto_improvement"` (lead-adjudicated, Addendum
+        B A7): a human directed the PARENT task, not necessarily this install
+        action."""
         # A7: fail-safe if/else — "user" is the ONLY kind granting user_directed.
         self._current_turn_origin = "user_directed" if kind == "user" else "auto_improvement"
 
-    async def _handle_task_wake(self, payload: dict) -> None:
-        """#1953 slice 7: surface a Task dep-graph wake (``task_ready`` /
-        ``task_dependency_aborted``) to the LLM as one router turn, so it resumes /
-        recovers the work via ordinary task ops."""
-        await self._handle_user_message(
-            payload.get("text", ""),
-            chain_id=payload.get("chain_id") or _new_chain_id(),
-        )
-
     async def _handle_pipeline_result(self, payload: dict) -> None:
         """IS-2: surface an async pipeline's terminal result (``pipeline_result``)
-        to the LLM as one router turn — same shape as ``_handle_task_wake``: the
-        driver already formatted the OS-framed ``text``."""
+        to the LLM as one router turn — the driver already formatted the
+        OS-framed ``text``."""
         await self._handle_user_message(
             payload.get("text", ""),
             chain_id=payload.get("chain_id") or _new_chain_id(),
@@ -6844,7 +6740,6 @@ class Session:
             contextual_permission=self._capability_visibility.contextual_permission,  # #1827 S3 → control-IR OpContext
             hook_dispatcher=self._hook_dispatcher,  # #1800 slice 5c: complete-by-construction (both router callers)
             hook_bus=self._hook_bus,  # Hook-Event Redesign Phase 5 part 2: emit_hook_event's publish target (both router op-ctx builders complete-by-construction)
-            current_task_id=self._current_task_id,  # #1953 §16: ownership-derivation for task.create (enumerate ALL op-ctx builders)
             turn_origin=self._current_turn_origin,  # proposal 0060 Phase 1 (A7): OS-authoritative provenance source (enumerate ALL op-ctx builders)
             hot_reloader=self._hot_reloader,  # #2761 PR-2: per-session reloader (both router op-ctx builders complete-by-construction)
             render_template_bounds=self._render_template_bounds,  # #2679: operator bounds (both router op-ctx builders complete-by-construction)

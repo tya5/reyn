@@ -63,18 +63,9 @@ def build_router_op_context(
     cancel_event: Any = None,  # #1470: asyncio.Event for mid-subprocess cancel
     threat_scan: Any = None,  # FP-0050/#1822 S5 (EP4): exec command-scan config
     contextual_permission: Any = None,  # #1827 S3: per-session capability narrowing → OpContext
-    # #1953 dynamic-wire: thread the caller's session identity + Task backend so
-    # router-dispatched task.* ops hit the SAME assignee/requester CAS gate as the
-    # phase path (control_ir_executor threads task_session_id + task_backend). The
-    # gate reads OpContext.session_id (_caller_session); a None here would mask the
-    # CAS (the no-bypass-by-construction invariant requires the REAL session_id).
     session_id: str | None = None,
-    task_backend: Any = None,
-    task_waker: Any = None,  # #2107: OS TaskWaker so a router task.* terminal wakes the requester
-    task_subscription_writer: Any = None,  # #2187 backend-master: the Task subscription WAL writer
     hook_dispatcher: Any = None,  # #1800 slice 5c: the Session's HookDispatcher
     hook_bus: Any = None,  # Hook-Event Redesign Phase 5 part 2: the Session's HookBus → emit_hook_event
-    current_task_id: str | None = None,  # #1953 §16: the task this turn is executing → task.create ownership
     turn_origin: str | None = None,  # proposal 0060 Phase 1 (A7): OS-derived turn provenance → install-op stamping (A9)
     hot_reloader: Any = None,  # #2761 PR-2: this session's HotReloader → immediate mid-turn install apply
     render_template_bounds: Any = None,  # #2679: operator RenderTemplateBounds → the render_template op cap. None → the op's in-handler defaults.
@@ -175,15 +166,9 @@ def build_router_op_context(
         cancel_event=cancel_event,
         threat_scan=threat_scan,
         contextual_permission=contextual_permission,
-        # #1953 dynamic-wire: real caller session + Task backend → the task.* CAS
-        # gate enforces byte-equal to the phase path (no None-placeholder mask).
         session_id=session_id,
-        task_backend=task_backend,
-        task_waker=task_waker,  # #2107: a router task.* terminal wakes the requester
-        task_subscription_writer=task_subscription_writer,  # #2187 backend-master: the Task subscription WAL writer
-        hook_dispatcher=hook_dispatcher,  # #1800 slice 5c: task_start/end dispatch
+        hook_dispatcher=hook_dispatcher,  # #1800 slice 5c
         hook_bus=hook_bus,  # Hook-Event Redesign Phase 5 part 2: emit_hook_event's publish target
-        current_task_id=current_task_id,  # #1953 §16: ownership-derivation context
         turn_origin=turn_origin,  # proposal 0060 Phase 1 (A7): OS-authoritative provenance source (A9)
         hot_reloader=hot_reloader,  # #2761 PR-2: per-session reloader for immediate mid-turn install apply
         render_template_bounds=render_template_bounds,  # #2679: operator render_template output cap

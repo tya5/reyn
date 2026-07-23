@@ -34,7 +34,7 @@ Everything else is excluded, by one of four reasons:
 .reyn/
 ├── state/                  RECOVERY-CORE — run-authored, reconstructs in-memory state
 │   ├── wal.jsonl           the WAL (append-only, seq'd) — the recovery TRUTH
-│   ├── tasks.db            the task backend (sqlite)
+│   ├── run_registry.json   A2A's async-run store — standalone snapshot, NOT recovery-core (see below)
 │   └── budget_ledger.jsonl the cost ledger
 ├── agents/<name>/state/    RECOVERY-CORE (per-agent) — reconstructed alongside the WAL
 │   ├── snapshot.json       the agent's runtime snapshot (a derived projection of the WAL)
@@ -100,8 +100,7 @@ same rewind path (WAL replay + snapshot generations — see
 
 - **Authoritative** (the recovery TRUTH — write-gated):
   - `.reyn/state/wal.jsonl` — the append-only, seq'd WAL: the complete WAL-event history
-    everything else is replayed from. Also `.reyn/state/tasks.db`,
-    `.reyn/state/budget_ledger.jsonl`.
+    everything else is replayed from. Also `.reyn/state/budget_ledger.jsonl`.
   - `.reyn/config/<x>.yaml` — the agent-edited config registries. Each mutation goes
     through a dedicated op that writes a **full-state config generation** (seq-keyed,
     truncation-surviving); the `.yaml` is materialised from the generation at the target
@@ -119,6 +118,14 @@ same rewind path (WAL replay + snapshot generations — see
     `cache/`. Agent-identity and lineage are likewise stored as seq-keyed generation
     snapshots (truncation-surviving, same generation-store pattern as config). (This is
     why the write-gate, below, covers only the authoritative tier.)
+
+**Not recovery-core:** `.reyn/state/run_registry.json` — A2A's own async-run store
+(`RunRegistry`). It is a standalone, atomically-written (tmp → `Path.replace()`)
+full-state snapshot, independent of the WAL, so it trivially survives WAL
+truncation — but it does not participate in rewind: A2A/web is a process
+singleton (see [A2A concepts](../../concepts/multi-agent/a2a.md)), and an
+external A2A run is durable + query-coherent but intentionally does not
+time-travel with a session's own rewind.
 
 ## The recovery-core write-gate (the rule you hit as a workflow author)
 

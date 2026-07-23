@@ -23,8 +23,6 @@ Hidden commands (matrix / donut) and no-arg commands
 /quit / /exit) intentionally do NOT get a
 usage line — they have no args to document. Pinned by spot
 checks to make sure no accidental opt-in slipped through.
-Note: /tasks is NOT no-arg — it has status/kill/list subcommands
-and is listed in _EXPECTED_USAGE above.
 """
 from __future__ import annotations
 
@@ -45,10 +43,6 @@ _EXPECTED_USAGE: dict[str, str] = {
     "reset":       "/reset confirm",
     "budget":      "/budget [reset]",
     "pending":     "/pending [list|discard <id>|claim <id>]",
-    # /tasks has status/kill/list subcommands and genuinely takes args.
-    # Previously omitted from _EXPECTED_USAGE (and misclassified as no-arg);
-    # corrected here alongside the usage= addition in slash/tasks.py.
-    "tasks":       "/tasks [list|status <task_id>|kill <task_id>]",
 }
 
 
@@ -104,8 +98,6 @@ def test_no_arg_commands_have_no_usage() -> None:
     from reyn.interfaces.slash import REGISTRY
 
     no_arg_commands = [
-        # "tasks" intentionally removed: /tasks has status/kill/list subcommands
-        # and now carries usage= (see _EXPECTED_USAGE above).
         "list", "cost",  # "skills" removed with skill/phase machinery
         "quit", "exit",
     ]
@@ -136,14 +128,14 @@ def test_help_focus_panel_renders_usage_for_extended_commands() -> None:
     """
     from reyn.interfaces.slash.help import _render_command_focus
 
-    # /tasks is a representative subcommand-style command — pin it
+    # /pending is a representative subcommand-style command — pin it
     # to keep the test from rusting if the exact usage syntax
     # gets tweaked. We only assert the usage *substring* appears,
     # not the full string, so trivial wording shifts don't break.
-    panel = _render_command_focus("tasks")
-    assert "/tasks" in panel
+    panel = _render_command_focus("pending")
+    assert "/pending" in panel
     assert "usage:" in panel
-    assert "kill" in panel or "status" in panel or "list" in panel
+    assert "discard" in panel or "claim" in panel or "list" in panel
 
     panel = _render_command_focus("answer")
     assert "/answer <id-prefix>" in panel

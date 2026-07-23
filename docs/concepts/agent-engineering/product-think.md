@@ -32,7 +32,7 @@ Two things that look similar but are lens-distinct:
 - **`reyn events`.** When a run does something unexpected, the artifact-of-record is one CLI call away.
 - **State is on disk.** `.reyn/` holds events, chats, approvals, memory. Nothing important is in process memory only.
 - **On-limit modes.** `interactive` / `auto_extend` / `unattended` give the operator predictable, config-selectable control over every loop/timeout/budget checkpoint uniformly — see [reliability-engineering.md](reliability-engineering.md).
-- **`/tasks` view.** Lists running tasks, per-task status, and kill — operator legibility into orchestrated work, spanning skill runs and dynamic tasks.
+- **`/agents` view.** Lists running agents/sessions and lets you attach — operator legibility into orchestrated work, spanning skill runs and delegated peers.
 
 ## Where it's still thin
 

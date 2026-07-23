@@ -13,9 +13,7 @@ completes tool-LEVEL relocation with the remaining feature-area buckets:
 ``cron``, ``hooks``, ``presentation``, ``catalog`` (peer-agent browse +
 ``invoke_action``), ``interactive``, ``context``, ``pipeline`` (launch
 verbs), ``pipeline_management`` (install verbs), ``skill`` (install
-verbs), ``dev`` (``reyn_repo_*``), and ``task`` (the 12 ``task.*``
-control-IR ops — the one module lifted out of a data-tuple rather than
-``_X_DESCRIPTION`` constants; see ``descriptions.task``'s docstring).
+verbs), and ``dev`` (``reyn_repo_*``).
 Each origin tool module keeps a
 ``_X_DESCRIPTION = descriptions.<bucket>.<name>.text`` alias so no call
 site changes — this package is purely a relocation of the string literal,
@@ -30,8 +28,7 @@ grouped by feature).
 ``dict[str, ToolDescription]`` keyed by a package-unique entry name (NOT
 always the bare tool name — e.g. ``semantic_search_hide_legacy`` shares
 ``tool_name="semantic_search"`` with the ``semantic_search`` entry, since it
-is an alternate, currently-unwired description variant for that same tool;
-the 12 ``task`` entries are keyed by their op_kind, e.g. ``"task.create"``).
+is an alternate, currently-unwired description variant for that same tool).
 """
 from __future__ import annotations
 
@@ -53,7 +50,6 @@ from reyn.tools.descriptions import (
     plugin_management,
     presentation,
     skill,
-    task,
 )
 from reyn.tools.descriptions._types import ParamDescription, ToolDescription
 
@@ -75,16 +71,13 @@ ALL: dict[str, ToolDescription] = {
     **plugin_management.ALL,
     **skill.ALL,
     **dev.ALL,
-    **task.ALL,
 }
 
 # Phase 4 (param-level relocation): each bucket that has at least one
 # per-parameter description exposes a ``PARAMS: dict[str, dict[str,
 # ParamDescription]]`` — keyed by the SAME entry name as that bucket's
-# ``ALL`` (tool_name for nearly every bucket; the ``task`` bucket has no
-# PARAMS module yet — its 12 op-kind entries carry no per-param text in
-# their origin schemas). ``interactive`` (ask_user) also has none. Buckets
-# without a PARAMS module are simply omitted from this merge.
+# ``ALL``. ``interactive`` (ask_user) has none. Buckets without a PARAMS
+# module are simply omitted from this merge.
 ALL_PARAMS: dict[str, dict[str, ParamDescription]] = {
     **discovery.PARAMS,
     **io.PARAMS,
@@ -124,7 +117,6 @@ __all__ = [
     "plugin_management",
     "skill",
     "dev",
-    "task",
     "ALL",
     "ALL_PARAMS",
 ]

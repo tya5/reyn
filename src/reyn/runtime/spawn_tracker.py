@@ -38,10 +38,6 @@ Ownership split:
   (``session._session_id = ...`` / ``session._ephemeral = True``) after
   construction, so a plain constructor value would freeze the pre-mutation
   value forever — the same pattern #3129 already solved with a provider.
-- **Method-arg (per-turn mutable, NOT injected)**: ``current_task_id`` is
-  reassigned every turn (``session.py`` ``_stamp_execution_context``), so
-  ``_maybe_schedule_ephemeral_vanish`` takes it as a call-time argument
-  rather than a constructor dependency (per the #3133 P3 firm spec).
 """
 from __future__ import annotations
 
@@ -143,38 +139,32 @@ class SpawnTracker:
         """
         self._journal.set_anchor_store(anchor_store)
 
-    def _maybe_schedule_ephemeral_vanish(self, *, current_task_id: "str | None") -> None:
-        """#2103: an ephemeral spawned session auto-vanishes once its task is done —
+    def _maybe_schedule_ephemeral_vanish(self) -> None:
+        """#2103: an ephemeral spawned session auto-vanishes once its work is done —
         the turn completed and no further trigger is queued (the inbox is drained, so
         the run-loop is about to idle-block). Schedules a DETACHED teardown via the
         registry's ``remove_session`` seam (the SAME teardown the rewind as-of-cut drop
-        uses): it quiesces + closes the per-session Task backend, cancels this idle
-        run-loop, drops the session, emits ``session_vanished``, and purges the dir.
-        Detached (not awaited here) because ``remove_session`` cancels THIS run-loop
-        task — running it inline would cancel the caller. Idempotent (the
-        ``_vanish_scheduled`` guard). The main session + persistent spawns are never
-        ``_ephemeral`` -> unaffected.
+        uses): it cancels this idle run-loop, drops the session, emits
+        ``session_vanished``, and purges the dir. Detached (not awaited here) because
+        ``remove_session`` cancels THIS run-loop task — running it inline would cancel
+        the caller. Idempotent (the ``_vanish_scheduled`` guard). The main session +
+        persistent spawns are never ``_ephemeral`` -> unaffected.
 
-        "Task done" = the inbox is drained AND there is no AWAITED work whose resume
+        "Work done" = the inbox is drained AND there is no AWAITED work whose resume
         arrives OUTSIDE the now-empty inbox: a pending delegation chain (an
-        ``agent_response`` is still coming — ``self._chains``) or a live task-as-request
-        execution (``current_task_id``). Without these guards a spawned ephemeral
-        session that DELEGATES + awaits a response has a transiently-empty inbox
-        mid-await -> it would vanish (dir purged + ``session_vanished``) before the
-        response lands = silent + destructive. A spawned session CAN reach delegate +
-        await (it has the full ChainManager + send_to_agent wiring), so the guard is
-        load-bearing, not theoretical.
-
-        ``current_task_id`` is per-turn mutable (reassigned every turn by
-        ``Session._stamp_execution_context``), so the caller passes the current value
-        rather than this class owning a staleable copy.
+        ``agent_response`` is still coming — ``self._chains``). Without this guard a
+        spawned ephemeral session that DELEGATES + awaits a response has a
+        transiently-empty inbox mid-await -> it would vanish (dir purged +
+        ``session_vanished``) before the response lands = silent + destructive. A
+        spawned session CAN reach delegate + await (it has the full ChainManager +
+        send_to_agent wiring), so the guard is load-bearing, not theoretical.
         """
         if (not self._ephemeral_provider() or self._vanish_scheduled
                 or self._registry is None or not self._inbox.empty()):
             return
-        # awaited-work guard (delegate-then-await / live §16 task): the resume arrives
-        # outside the now-empty inbox, so emptiness alone is not "done".
-        if current_task_id is not None or self._chains.all_chain_ids():
+        # awaited-work guard (delegate-then-await): the resume arrives outside the
+        # now-empty inbox, so emptiness alone is not "done".
+        if self._chains.all_chain_ids():
             return
         self._vanish_scheduled = True
         # Keep a strong ref (self._vanish_task) so the task is not GC'd before it runs

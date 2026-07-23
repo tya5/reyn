@@ -503,74 +503,6 @@ def _agent_expansion(snap, dispatch):
     return CommandUIElement(rows, cmds, dispatch)
 
 
-def _build_task_tree(task_dicts: list[dict]) -> list[dict]:
-    """Build a nested task tree from a flat list of Task.to_dict() projections.
-
-    Roots are tasks whose requester_kind is not "task" or whose requester is
-    not the task_id of any task in the input. Children are tasks with
-    requester_kind == "task" and requester == parent task_id. Siblings are
-    sorted by task_id for determinism. Cycles are guarded by tracking visited
-    task_ids so no task appears twice.
-    """
-    by_id: dict[str, dict] = {d["task_id"]: d for d in task_dicts}
-    task_ids: frozenset[str] = frozenset(by_id)
-
-    def _is_root(d: dict) -> bool:
-        return d.get("requester_kind") != "task" or d.get("requester") not in task_ids
-
-    def _children_of(parent_id: str, visited: set[str]) -> list[dict]:
-        kids = [
-            d for d in task_dicts
-            if d.get("requester_kind") == "task"
-            and d.get("requester") == parent_id
-            and d["task_id"] not in visited
-        ]
-        kids.sort(key=lambda d: d["task_id"])
-        result = []
-        for k in kids:
-            visited.add(k["task_id"])
-            result.append({
-                "task_id": k["task_id"],
-                "name": k["name"],
-                "status": k["status"],
-                "children": _children_of(k["task_id"], visited),
-            })
-        return result
-
-    roots = sorted(
-        [d for d in task_dicts if _is_root(d)],
-        key=lambda d: d["task_id"],
-    )
-    visited: set[str] = {d["task_id"] for d in roots}
-    return [
-        {
-            "task_id": r["task_id"],
-            "name": r["name"],
-            "status": r["status"],
-            "children": _children_of(r["task_id"], visited),
-        }
-        for r in roots
-    ]
-
-
-def _task_rows(nodes: list[dict], depth: int) -> list[str]:
-    out = []
-    for node in nodes:
-        out.append(f"{'  ' * depth}{node['status']}  {node['name']}")
-        out.extend(_task_rows(node["children"], depth + 1))
-    return out
-
-
-def _task_expansion(snap, dispatch):
-    # Phase 3: task tree. Depth-first indented rows (2 spaces per depth).
-    # NOTE: tree is a snapshot captured at call time — callers that need live
-    # updates (e.g. the open dropdown) should substitute a live-reading element.
-    tree = snap.get("task_tree") or []
-    if not tree:
-        return DetailElement(lambda: ["(no active tasks)"])
-    return DetailElement(lambda: _task_rows(tree, 0))
-
-
 def _visibility_items_by_kind(snap, kind: str) -> list[dict]:
     """The session-backed visibility toggle items for one kind (tool/mcp/skill/…)."""
     return [it for it in (snap.get("visibility_items") or []) if it.get("kind") == kind]
@@ -681,8 +613,6 @@ _CHIP_SPECS = [
              value_color=_CC_ACCENT),
     ChipSpec("agent", "agent", lambda s: str(s["attached_name"] or "—"), _agent_expansion,
              value_color=_CC_COOL),
-    ChipSpec("task",  "task",  lambda s: str(s.get("task_count", 0)), _task_expansion,
-             value_color=_CC_WARN),
     ChipSpec("cost",  "cost",  lambda s: f"${s['cost_agent']:.4f}", _cost_expansion,
              value_color=_CC_DONE),
     ChipSpec("ctx",   "ctx",   _ctx_pct, _ctx_expansion,
@@ -965,7 +895,7 @@ def _session_pipelines(session) -> list[dict]:
         return []
 
 
-def _snapshot(registry, task_cache=None, config=None):
+def _snapshot(registry, config=None):
     """Read live status values off the attached session via sync accessors."""
     s = registry.attached_session()
     if s is None:
@@ -1036,8 +966,6 @@ def _snapshot(registry, task_cache=None, config=None):
         "session_cached_tokens": u.cached_tokens,
         "ctx_recent_usage": (recent.prompt_tokens, recent.cached_tokens),
         "ctx_compaction_status_fn": ctx_compaction_status_fn,
-        "task_count": task_cache["count"] if task_cache else 0,
-        "task_tree": task_cache["tree"] if task_cache else [],
         "cron_jobs": _extract_cron_jobs(config) if config is not None else [],
         "mcp_servers": _extract_mcp_servers(config) if config is not None else [],
         "hooks": _extract_hooks(config) if config is not None else [],
@@ -1064,9 +992,9 @@ async def run_inline_input(read_model, renderer, config=None, transport=None) ->
     sections — backward-compatible.
 
     ``read_model`` is the :class:`~reyn.interfaces.repl.read_model.ChatReadModel`
-    (ADR-0039 P3) this driver READS all of its status/region/task state through —
+    (ADR-0039 P3) this driver READS all of its status/region state through —
     the status snapshot, the intervention-region head, the ``/rewind`` command-UI,
-    the task poll, and the input-history path. A :class:`RegistryReadModel` (local)
+    and the input-history path. A :class:`RegistryReadModel` (local)
     reads them off the attached session; a :class:`RemoteReadModel` reads the
     server's ``STATE_*`` status view over the wire. This is what removed the last
     local-only coupling, so the inline CUI now renders on ``reyn chat --connect``.
@@ -1104,9 +1032,6 @@ async def run_inline_input(read_model, renderer, config=None, transport=None) ->
     # sub_sel/cat_open are unused — open=True goes straight to its dropdown,
     # unchanged from before this 2-level "more" redesign.
     menu = {"sel": 0, "open": False, "sub_sel": 0, "cat_open": False}
-    # Async-polled task cache: updated every ~1 s by _task_poll; read by
-    # _snapshot so the status bar and dropdown reflect live active tasks.
-    task_cache: dict = {"tree": [], "count": 0}
     # Below-input region: hosts the opened chip's dropdown as a region element —
     # a CommandUIElement model picker (selectable) or a read-only DetailElement
     # (live detail, no cursor). Empty (cleared) while the menu is closed.
@@ -1168,7 +1093,7 @@ async def run_inline_input(read_model, renderer, config=None, transport=None) ->
     inputrow = VSplit([prompt_sym, input_win])
 
     def status_fragments() -> list:
-        snap = read_model.snapshot(task_cache, config)
+        snap = read_model.snapshot(config)
         if snap is None:
             return [(f"fg:{_CC_DIM}", " /quit to exit · ↑ history")]
         focused = get_app().layout.has_focus(status_win)
@@ -1216,7 +1141,7 @@ async def run_inline_input(read_model, renderer, config=None, transport=None) ->
         # Same rendering shape as status_fragments, one level down. Stays
         # visible (as a breadcrumb) even while a sub-chip's own category
         # dropdown (level 2) is open below it.
-        snap = read_model.snapshot(task_cache, config)
+        snap = read_model.snapshot(config)
         if snap is None:
             return []
         frags: list = []
@@ -1486,26 +1411,15 @@ async def run_inline_input(read_model, renderer, config=None, transport=None) ->
             _menu_close()
         app.create_background_task(_submit(transport, text))
 
-    def _fill_menu_region(expansion, snap, *, live_task: bool = False) -> None:
+    def _fill_menu_region(expansion, snap) -> None:
         """Build one chip/category's element(s) fresh and host them in
         menu_region. Expansion functions may return a single element (model /
         agent / a category / …) or a list of mixed elements (multiple
-        DetailElement / CommandUIElement rows). Both paths are supported.
-
-        ``live_task=True`` (task chip only): snap["task_tree"] is frozen at
-        open time but task_cache updates every second (_task_poll) — swap in
-        a live-reading provider so the dropdown reflects task state changes
-        while it stays open, BEFORE registering (not after — a post-hoc
-        re-register would double the work for no benefit)."""
+        DetailElement / CommandUIElement rows). Both paths are supported."""
         menu_region.clear()
         if expansion is None or snap is None:
             return
         result = expansion(snap, _menu_submit)
-        if live_task and isinstance(result, DetailElement):
-            _tc = task_cache
-            def _live_tasks() -> list[str]:
-                return _task_rows(_tc.get("tree") or [], 0) or ["(no active tasks)"]
-            result = DetailElement(_live_tasks)
         if isinstance(result, list):
             for el in result:
                 menu_region.register(el)
@@ -1521,8 +1435,8 @@ async def run_inline_input(read_model, renderer, config=None, transport=None) ->
             menu["open"] = True
             menu["cat_open"] = False
             return
-        snap = read_model.snapshot(task_cache, config)
-        _fill_menu_region(spec.expansion, snap, live_task=(spec.key == "task"))
+        snap = read_model.snapshot(config)
+        _fill_menu_region(spec.expansion, snap)
         menu["open"] = True
 
     def _menu_close() -> None:
@@ -1535,7 +1449,7 @@ async def run_inline_input(read_model, renderer, config=None, transport=None) ->
     def _cat_open() -> None:
         # Enter the selected SUB-chip's category (level 2) — "more" only.
         spec = _MORE_SUB_CHIP_SPECS[menu["sub_sel"]]
-        snap = read_model.snapshot(task_cache, config)
+        snap = read_model.snapshot(config)
         _fill_menu_region(spec.expansion, snap)
         menu["cat_open"] = True
 
@@ -1709,16 +1623,6 @@ async def run_inline_input(read_model, renderer, config=None, transport=None) ->
             region_holder["key"] = None
             app.layout.focus(input_win)
 
-    async def _task_poll() -> None:
-        while True:
-            await asyncio.sleep(1.0)
-            try:
-                active = await read_model.list_active_tasks()
-                task_cache["tree"] = _build_task_tree(active)
-                task_cache["count"] = len(active)
-            except Exception:
-                logger.debug("task poll failed", exc_info=True)
-
     async def _intervention_poll() -> None:
         while True:
             await asyncio.sleep(0.15)
@@ -1752,7 +1656,6 @@ async def run_inline_input(read_model, renderer, config=None, transport=None) ->
     # PromptSession path. Renderer output (sys.__stdout__ via run_in_terminal in
     # _output_loop) is unaffected.
     poll_task = asyncio.create_task(_intervention_poll())
-    task_poll_task = asyncio.create_task(_task_poll())
     try:
         with patch_stdout():
             # #2786: this Application.run_async() is the input driver for the
@@ -1768,7 +1671,6 @@ async def run_inline_input(read_model, renderer, config=None, transport=None) ->
             await app.run_async(set_exception_handler=False)
     finally:
         poll_task.cancel()
-        task_poll_task.cancel()
 
 
 async def _deliver_intervention_choice(transport, choice_id: str, label: str) -> None:

@@ -72,8 +72,6 @@ def test_categories_master_table_order() -> None:
         # #3026: ``rag_corpus`` removed (was a resource category).
         "rag_operation",
         "exec",
-        # #1953 dynamic-wire: task.* control-IR ops as invoke_action targets.
-        "task",
         # #2548 PR-C: skill management ops (install_local). NOT the ``skill__``
         # resource category; this is the management plane (mirrors ``mcp``).
         "skill_management",

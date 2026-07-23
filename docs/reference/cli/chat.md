@@ -85,12 +85,9 @@ While a session is active, lines starting with `/` are intercepted and never rou
 | `/reset confirm` | Reset in-flight run state (snapshots + WAL; audit logs preserved) |
 | `/rewind [seq]` | Time-travel to an earlier checkpoint — no arg opens the picker menu; `seq` jumps directly (see [Time-travel](../../concepts/runtime/time-travel.md) · [How-to](../../guide/for-users/time-travel.md)) |
 | `/session new \| switch <sid> \| list` | Open / switch / list conversation sessions for the attached agent (see [Sessions](../../concepts/multi-agent/sessions.md)) |
-| `/tasks [list]` | List dynamic tasks the LLM created via `task__create` |
-| `/tasks status <task_id-prefix>` | Show a task's status + dependencies |
-| `/tasks kill <task_id-prefix>` | Abort a specific dynamic task |
 | `/visibility on\|off <tool\|mcp\|category> <name>` | Toggle this session's LLM visibility of a capability (hidden next turn / restored up to the agent's authorized envelope — an envelope-denied capability stays hidden) |
 
-`/list` / `/answer` are foundational — they let pending interventions coexist without blocking the prompt. `/agents` / `/attach` / `/agent` are the multi-agent workflow primitives. `/tasks` is the entry point for dynamic tasks the LLM spawns via `task__create` — list what's running, inspect a specific one's status/dependencies, or kill it; the LLM also points users at `/tasks` after creating one. `/hook` / `/visibility` are session-scoped LLM-catalog controls, mirroring the status bar's `hook`/`tool`/`mcp`/`category` chips. `/copy` is a conversation-pane utility; `/image` enables multimodal input.
+`/list` / `/answer` are foundational — they let pending interventions coexist without blocking the prompt. `/agents` / `/attach` / `/agent` are the multi-agent workflow primitives; a spawned/delegated peer's progress is monitored via `/agents`. `/hook` / `/visibility` are session-scoped LLM-catalog controls, mirroring the status bar's `hook`/`tool`/`mcp`/`category` chips. `/copy` is a conversation-pane utility; `/image` enables multimodal input.
 
 ## Multi-agent behavior
 

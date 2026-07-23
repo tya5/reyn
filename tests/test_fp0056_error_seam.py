@@ -156,7 +156,7 @@ def test_removed_branch_mappers_still_route_errors_through_the_seam() -> None:
     """Tier 1: each mapper whose per-mapper error branch was removed (success-only now) still surfaces
     its error as NON-EMPTY ``text`` + ``meta.isError`` via the shared seam — spot-checking ``file``
     (denied + not_found), ``reyn_repo``, ``memory_body``, ``compact``, ``present``,
-    ``render_template``, and a ``task`` op (CANONICAL_TODO, also in seam scope)."""
+    and ``render_template``."""
     cases = [
         # (result, source, a substring expected in the rendered text)
         ({"kind": "file", "op": "read", "path": "missing.md", "status": "not_found",
@@ -173,8 +173,6 @@ def test_removed_branch_mappers_still_route_errors_through_the_seam() -> None:
          "present", "data_ref not found"),
         ({"kind": "render_template", "status": "error", "ok": False,
           "error": "template syntax error at line 3"}, "render_template", "syntax error"),
-        ({"kind": "task", "ok": False, "error_message": "task.create args invalid: missing title"},
-         "task.create", "args invalid"),
     ]
     for result, source, expected_substr in cases:
         canonical = to_canonical(result, source=source)

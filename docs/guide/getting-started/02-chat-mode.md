@@ -67,9 +67,8 @@ Lines starting with `/` are intercepted as control commands, not routed to the L
 
 - `/list` — show any pending user prompts (`ask_user` / permission asks).
 - `/answer <id> <text>` — answer a pending prompt from `/list`.
-- `/tasks` — list any dynamic tasks a skill has spawned (`/tasks kill <id>` to cancel one).
 
-These three are the only ones you need for default-mode use. More slash commands (`/agents`, `/attach`, `/rewind`, …) become useful once you have multiple agents or want to time-travel a conversation — see [reference/cli/chat](../../reference/cli/chat.md) when you get there.
+These two are the only ones you need for default-mode use. More slash commands (`/agents`, `/attach`, `/rewind`, …) become useful once you have multiple agents or want to time-travel a conversation — see [reference/cli/chat](../../reference/cli/chat.md) when you get there.
 
 ## Memory is automatic
 
@@ -96,7 +95,7 @@ The OS doesn't know about "chat". It just runs the chat router, which picks a sk
 - `reyn chat` attaches a REPL to the auto-created `default` agent.
 - Each turn goes through the chat router, which picks a skill and runs it.
 - Memory is two-layered (shared + agent) and read/written automatically.
-- `/list`, `/answer`, `/tasks` are the slash commands you need at this stage.
+- `/list`, `/answer` are the slash commands you need at this stage.
 
 ## Where to go next
 

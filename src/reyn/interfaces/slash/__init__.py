@@ -25,8 +25,8 @@ from typing import Awaitable, Callable, Iterable
 HandlerFn = Callable[..., Awaitable[None]]
 # CompleterFn signature: ``(session, arg_partial: str = "") -> list[str]``.
 # ``arg_partial`` is the string typed after the slash command and the
-# trailing space (e.g. for ``/tasks kill ab`` the partial is
-# ``"kill ab"``). Completers that don't need it (e.g. ``/attach``
+# trailing space (e.g. for ``/attach <partial>`` the partial is what's typed
+# so far). Completers that don't need it (e.g. ``/attach``
 # which always lists agent names) can ignore the arg via a default.
 CompleterFn = Callable[..., list[str]]
 # TabFooterFn signature: ``() -> str | None``. Supplies the optional
@@ -272,7 +272,6 @@ from reyn.interfaces.slash import reload as _reload_mod  # noqa: E402, F401
 from reyn.interfaces.slash import reset as _reset_mod  # noqa: E402, F401
 from reyn.interfaces.slash import rewind as _rewind_mod  # noqa: E402, F401
 from reyn.interfaces.slash import session as _session_mod  # noqa: E402, F401
-from reyn.interfaces.slash import tasks as _tasks_mod  # noqa: E402, F401
 from reyn.interfaces.slash import visibility as _visibility_mod  # noqa: E402, F401
 
 __all__ = [

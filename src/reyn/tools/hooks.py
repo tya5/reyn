@@ -28,7 +28,6 @@ from reyn.tools.types import ToolContext, ToolDefinition, ToolGates, ToolResult
 
 _HOOK_POINTS = [
     "turn_start", "turn_end", "session_start", "session_end",
-    "task_start", "task_end",
 ]
 # Isolation note (#2898): the schema below embeds ``list(_HOOK_POINTS)`` — a
 # defensive copy — NOT the module list by reference. ``render_for_router`` only

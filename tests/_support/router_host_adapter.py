@@ -63,10 +63,7 @@ def make_adapter(
     resolver: ModelResolver | None = None,
     turn_budget_engine: object = None,
     environment_backend: object = None,  # #1477: optional for sandbox-cwd tests
-    task_backend: object = None,  # #1953 / #2107: session-scoped Task backend
-    task_waker: object = None,    # #2107: OS TaskWaker (router task.* terminal → requester wake)
     session_id: "str | None" = None,
-    current_task_id_fn: "object | None" = None,  # #1953 §16: per-turn execution context
     turn_origin_fn: "object | None" = None,  # proposal 0060 Phase 1 (A7): per-turn provenance source
     workspace_base_dir: "object | None" = None,  # router-op-ctx Workspace root (else cwd)
     agent_registry: object = None,  # #2103: real AgentRegistry for spawn/topology seams
@@ -151,10 +148,7 @@ def make_adapter(
         agent_replies_tracker=lambda: _replies,
         turn_budget_engine=turn_budget_engine,
         environment_backend=environment_backend,
-        task_backend=task_backend,
-        task_waker=task_waker,
         session_id=session_id,
-        current_task_id_fn=current_task_id_fn,
         turn_origin_fn=turn_origin_fn,
         workspace_base_dir=workspace_base_dir,
     )

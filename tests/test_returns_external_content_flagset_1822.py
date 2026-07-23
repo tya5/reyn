@@ -178,16 +178,6 @@ _NOT_EXTERNAL = {
     "invoke_action",
     # — reyn's own framework source (trusted) —
     "reyn_repo_list", "reyn_repo_read", "reyn_repo_glob", "reyn_repo_grep",
-    # — task subsystem (#1953 dynamic-wire) — return the OS task RECORD (id /
-    # status / deps / the task's own fields) from the CAS-gated task backend:
-    # structured OS state, not external content. Cross-session content (a
-    # delegated task's description / a peer's comment) crosses the trust
-    # boundary at the WAKE / result inbound seam (items 4-5), fenced THERE —
-    # the same pattern as delegate_to_agent (ACK here, reply fenced inbound).
-    "task.create", "task.update_status", "task.get", "task.list",
-    "task.add_dependency", "task.remove_dependency", "task.repoint_dependency",
-    "task.abort", "task.heartbeat", "task.register_unblock_predicate",
-    "task.comment", "task.assign",
     # IS-1 (pipeline v0.9 R6): run_pipeline returns the pipeline's OWN final
     # output (run_id / output / named_stores) — an OS-assembled result of
     # internal step execution, not fetched external content. Any external

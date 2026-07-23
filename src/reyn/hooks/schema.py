@@ -5,11 +5,11 @@ and ``PushBlock`` (the inline inbox-push sub-schema).  Template strings are
 stored **raw** — rendering is a later slice.
 
 Hook-point identifiers are normalised lowercase; the allowed set is the
-starter set agreed in #1800 (skill_start/skill_end removed — never dispatched):
+starter set agreed in #1800 (skill_start/skill_end removed — never dispatched;
+task_start/task_end removed with the internal task system, #2839 Phase 2):
 
     turn_start   turn_end
     session_start  session_end
-    task_start   task_end
 
 #2608 H1 adds the first EXTERNAL-event hook-point, ``mcp_resource_updated``
 (fired by a server-pushed MCP ``resources/updated`` notification on a
@@ -93,9 +93,9 @@ from reyn.hooks.schema_registry import BARE_TO_KIND
 # kind table) rather than hand-maintained here — a future builtin point (the
 # proposal's "future point" list: pre/post_tool_use, pipeline_start/end) is
 # added there (schema + one dispatch call site) and automatically becomes a
-# recognised ``on:`` value here, with zero edits to this module. The 10
+# recognised ``on:`` value here, with zero edits to this module. The 8
 # points today are unchanged: turn_start/turn_end, session_start/
-# session_end, task_start/task_end (lifecycle), mcp_resource_updated
+# session_end (lifecycle), mcp_resource_updated
 # (#2608 H1), file_changed (#2608 H4), cron_fired/webhook_received (#2608 H5).
 # The registry's namespaced kind (e.g. ``builtin:lifecycle:turn_end``) is
 # ALSO accepted in ``on:`` — a permanent alias of the bare form below,

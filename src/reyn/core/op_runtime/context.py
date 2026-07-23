@@ -243,36 +243,10 @@ class OpContext:
     # non-interactive callers, pre-#1470 tests).
     cancel_event: "asyncio.Event | None" = None
 
-    # #1953 slice 3a: the config-selected, session-scoped Task backend instance.
-    # Threaded from the Session (which owns the session-scoped db path) down
-    # through the ctx-build seams to OpContext, exactly like sandbox_backend.
-    # The task.* op handlers use this when set; None → the op-runtime falls back
-    # to its process-local in-memory backend (slice-1 stub for tests / direct
-    # OpContext construction). Mirrors the contextual_permission (#1912) chain
-    # across BOTH the control-IR and preprocessor ctx-build seams.
-    task_backend: "object | None" = None
-
-    # #1953 slice 6-ext: the OS TaskWaker driver (parallel to task_backend). The
-    # abort/failed → parent-routing hub calls it to wake the parent's session to
-    # decide recovery. None = no-op stub here (slice 7 wires the real TaskWaker +
-    # threads it through the same Session → OpContext chain). Tests
-    # inject a recording waker to verify the call-site fires.
-    task_waker: "object | None" = None
-
-    # #2187 backend-master: the Task SUBSCRIPTION writer (a SubscriptionWriter; parallel
-    # to task_backend / task_waker, threaded down the SAME Session → OpContext
-    # chain). The mutating task ops (create / reassign) call it to append the
-    # task↔session BINDING to the WAL (the Reyn-internal subscription — what Reyn owns +
-    # rewinds; the backend keeps task-STATE). None = no-op (direct/test construction or
-    # no state_log) → the op skips the append (the opt-in contract). Tests inject a
-    # recording writer to verify the binding append.
-    task_subscription_writer: "object | None" = None
-
     # #1800 slice 5c: the awaited HookDispatcher (the Session's instance, with the
     # loaded hooks registry + the _put_inbox/_stage/_run_shell seams from 5b),
-    # threaded down the SAME Session → router / kernel chain as task_waker. The
-    # task op handlers (_create → task_start, _update_status→COMPLETED → task_end)
-    # call ``ctx.hook_dispatcher.dispatch(...)``. None = no-op (direct/test
+    # threaded down the SAME Session → router / kernel chain as hook_bus. Lifecycle
+    # hook points call ``ctx.hook_dispatcher.dispatch(...)``. None = no-op (direct/test
     # construction or no hooks) → the dispatch site is skipped.
     hook_dispatcher: "object | None" = None
 
@@ -289,32 +263,21 @@ class OpContext:
     hook_bus: "object | None" = None
 
     # #1953 slice 3 (rework): the caller's session identity (#1814 per-contextId
-    # routing-key ``Session._session_id``), threaded down the same chain. This is
-    # the single-writer key for Task ``update_status`` — the backend CAS-rejects
-    # when ``task.assignee != ctx.session_id`` (assignee is immutable, so a fixed
-    # equality suffices — no claim/version). agent_id (= agent_name) is too coarse
-    # because one agent can own many per-contextId sessions (#1814). None = no
-    # session identity (direct construction / OS-internal callers).
+    # routing-key ``Session._session_id``), threaded down the same chain.
+    # ``emit_hook_event`` uses it to build the LLM-authored event's ONLY
+    # permitted namespace (``llm:<session_id>:*``) — never an op field, so
+    # the LLM cannot forge another session's namespace. agent_id (= agent_name)
+    # is too coarse because one agent can own many per-contextId sessions
+    # (#1814). None = no session identity (direct construction / OS-internal
+    # callers).
     session_id: "str | None" = None
 
-    # #1953 §16 (recursive-request): the task_id the caller is currently EXECUTING
-    # as a task-as-request, when this op-ctx is built for a turn the OS woke to
-    # execute an assigned task. ``task.create`` reads this to derive ownership: set
-    # → the new sub-task is owned by this task (``requester=current_task_id``,
-    # ``requester_kind=task``); None → a top-level/session-owned task
-    # (``requester=session_id``, ``requester_kind=session``). OS-SET from the
-    # execution context (NOT an op field — the recursive-request invariant requires
-    # the LLM cannot mark ownership). This is the STABLE seam: its SOURCE evolves
-    # (execute-wake meta now; a persistent session-assignment later) but the
-    # ``_create`` read-side stays fixed. None = not executing a task-as-request.
-    current_task_id: "str | None" = None
-
     # proposal 0060 Phase 1 Layer A (A7): the OS-authoritative provenance
-    # classification of THIS turn, mirroring current_task_id's threading exactly
-    # (same _stamp_execution_context seam, same two ctx-build sites). Derived
-    # session-side from the turn ``kind`` (session.py `_stamp_execution_context`)
+    # classification of THIS turn, threaded down the same Session → ctx-build
+    # seams as session_id. Derived session-side from the turn ``kind``
+    # (session.py `_stamp_execution_context`)
     # — NEVER LLM-supplied. ``"user_directed"`` only for an explicit ``kind ==
-    # "user"`` turn; every other kind (hook / pipeline_result / wake-family /
+    # "user"`` turn; every other kind (hook / pipeline_result /
     # sub-agent agent_request|agent_response / any future unmapped kind)
     # resolves to the strictER ``"auto_improvement"`` — the fail-safe default
     # (0060 §2.7: silently falling to "user_directed" would let an unmapped

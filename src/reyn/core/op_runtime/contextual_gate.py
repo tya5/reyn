@@ -66,20 +66,6 @@ _OP_KIND_ALIASES: "dict[str, frozenset[str]]" = {
     # kind name under a per-session contextual narrowing (no distinct chat-tool
     # qualified name → kind only; no silent bypass).
     "present": frozenset(),
-    # #1953 slice 1: Task ops have no distinct chat-tool qualified name → each
-    # is gated on its own kind name (no silent bypass).
-    "task.create": frozenset(),
-    "task.update_status": frozenset(),
-    "task.get": frozenset(),
-    "task.list": frozenset(),
-    "task.add_dependency": frozenset(),
-    "task.remove_dependency": frozenset(),
-    "task.repoint_dependency": frozenset(),
-    "task.abort": frozenset(),
-    "task.heartbeat": frozenset(),
-    "task.register_unblock_predicate": frozenset(),
-    "task.comment": frozenset(),
-    "task.assign": frozenset(),
 }
 
 

@@ -134,11 +134,11 @@ def test_load_hooks_pipeline_launch_parses() -> None:
             "on": "session_start",
             "pipeline_launch": {"name": "digest", "input_template": {"a": "{{ x }}"}},
         },
-        {"on": "task_end", "pipeline_launch": {"name": "no-input"}},
+        {"on": "turn_end", "pipeline_launch": {"name": "no-input"}},
     ]
     registry = load_hooks(raw)
     (h1,) = registry.hooks_for("session_start")
-    (h2,) = registry.hooks_for("task_end")
+    (h2,) = registry.hooks_for("turn_end")
     assert h1.pipeline_launch.name == "digest"
     assert h1.pipeline_launch.input_template == {"a": "{{ x }}"}
     assert h2.pipeline_launch.name == "no-input"

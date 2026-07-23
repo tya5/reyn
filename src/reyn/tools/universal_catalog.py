@@ -118,7 +118,6 @@ CATEGORIES: Final[tuple[str, ...]] = (
     "reyn_repo",
     "rag_operation",
     "exec",
-    "task",  # #1953 dynamic-wire: task.* control-IR ops as invoke_action targets
     # #2548 PR-C: skill management ops (install / list). Skills are the
     # already-correct shape and always were: there is no ``skill__`` resource
     # category — despite what several comments in this repo used to claim, and
@@ -579,12 +578,6 @@ def _enumerate_category(category: str, ctx: ToolContext) -> list[dict[str, str]]
     if category in (
         "file", "web", "memory_operation", "reyn_repo", "rag_operation",
         "multi_agent",
-        # #1953 dynamic-wire: the 12 task.* ops have static qualified names in
-        # _OPERATION_RULES (task__create/…) → enumerate them here too. Without
-        # this, task ops were DISPATCH-wired (invoke_action) but NOT ENUMERATED
-        # → unreachable on the enumerate-all production-default scheme + empty
-        # list_actions(task). The single-source enumeration seam (#2032).
-        "task",
         # Pre-existing #2032-class gap found + closed while adding
         # pipeline_management: skill_management had a static _OPERATION_RULES
         # entry + dispatch route but was NEVER added to this enumeration list —

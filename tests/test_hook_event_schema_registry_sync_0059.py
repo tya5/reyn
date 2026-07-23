@@ -3,9 +3,9 @@ CI sync gate (proposal ``docs/deep-dives/proposals/0059-hook-event-redesign.md``
 §4), mirroring the ``OP_KIND_MODEL_MAP`` <-> ``control-ir.md`` sync discipline
 (CLAUDE.md hard rule).
 
-Every one of reyn's 10 builtin hook-points now funnels its payload through
+Every one of reyn's 8 builtin hook-points now funnels its payload through
 ``reyn.hooks.schema_registry.build_hook_payload`` at its ONE producer call
-site (``reyn.core.op_runtime.task`` / ``reyn.runtime.session`` /
+site (``reyn.runtime.session`` /
 ``reyn.mcp.message_handler`` / ``reyn.runtime.fs_watcher`` /
 ``reyn.runtime.cron.routing`` / ``reyn.runtime.webhook_routing``) — so a call
 site's assembled payload IS the shipped schema BY CONSTRUCTION: a missing,
@@ -16,7 +16,7 @@ This file drives the REAL production call sites (no mocks — real ``Session``,
 real ``HookDispatcher``, real op handlers, real ingress-routing functions) and
 captures the EXACT field-set each dispatches, proving:
 
-1. byte-identical coverage — every one of the 10 builtin points is actually
+1. byte-identical coverage — every one of the 8 builtin points is actually
    exercised and its captured payload key-set matches
    ``BUILTIN_HOOK_SCHEMAS`` exactly (the values are the same ones the
    pre-Phase-1 ad-hoc dict literals carried — only the schema-check is new).
@@ -45,7 +45,6 @@ from types import SimpleNamespace
 import pytest
 
 from reyn.core.events.state_log import StateLog
-from reyn.core.op_runtime import task as taskmod
 from reyn.hooks import dispatcher as dispatcher_mod
 from reyn.hooks.ingress import McpIngressAdapter
 from reyn.hooks.loader import load_hooks
@@ -63,7 +62,6 @@ from reyn.mcp.message_handler import ReynMCPMessageHandler
 from reyn.runtime.cron.routing import dispatch_cron_fired
 from reyn.runtime.session import Session
 from reyn.runtime.webhook_routing import dispatch_webhook_received
-from reyn.task import InMemoryTaskBackend
 from tests._support.agent_session import make_session
 
 _EMPTY_USAGE = TokenUsage(prompt_tokens=5, completion_tokens=3)
@@ -85,7 +83,7 @@ def _capture_dispatch(monkeypatch, captured: list) -> None:
     push/shell/pipeline routing all still run for real — only observation is
     added). Every builtin producer (in-process or out-of-process) funnels
     through some ``HookDispatcher`` instance's ``dispatch``, so patching the
-    class method here captures all 10 points uniformly."""
+    class method here captures all 8 points uniformly."""
     original = dispatcher_mod.HookDispatcher.dispatch
 
     async def _recording_dispatch(self, point, template_vars):
@@ -115,16 +113,16 @@ def _make_session(tmp_path: Path) -> Session:
 
 
 # ---------------------------------------------------------------------------
-# 1) byte-identical coverage — drive all 10 real producer call sites, capture
+# 1) byte-identical coverage — drive all 8 real producer call sites, capture
 #    every dispatched payload, and assert each matches its builtin schema.
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_all_ten_builtin_points_dispatch_schema_matching_payloads(
+async def test_all_eight_builtin_points_dispatch_schema_matching_payloads(
     tmp_path, monkeypatch,
 ):
-    """Tier 2: every one of the 10 builtin hook-points, exercised via its REAL
+    """Tier 2: every one of the 8 builtin hook-points, exercised via its REAL
     production call site, dispatches a payload whose key-set EXACTLY matches
     ``BUILTIN_HOOK_SCHEMAS`` for that point — the byte-identical proof."""
     captured: list[tuple[str, dict]] = []
@@ -146,28 +144,9 @@ async def test_all_ten_builtin_points_dispatch_schema_matching_payloads(
         run_task.cancel()
         await asyncio.gather(run_task, return_exceptions=True)
 
-    # ── task_start / task_end (done) / task_end (aborted) (reyn.core.op_runtime.task) ──
-    backend = InMemoryTaskBackend()
     disp = dispatcher_mod.HookDispatcher(
         HookRegistry([]), put_inbox=_noop, stage_next_turn_context=_noop,
     )
-    ctx = SimpleNamespace(
-        session_id="worker-1", agent_id="a", events=None, task_backend=backend,
-        task_waker=None, task_subscription_writer=None, current_task_id=None,
-        hook_dispatcher=disp,
-    )
-    created = await taskmod._create(
-        SimpleNamespace(name="job-1", assignee="worker-1", description="d", deps=[]), ctx,
-    )
-    task_id = created["task"]["task_id"]
-    await taskmod._update_status(
-        SimpleNamespace(task_id=task_id, status="done"), ctx,
-    )
-    created2 = await taskmod._create(
-        SimpleNamespace(name="job-2", assignee="worker-1", description="d", deps=[]), ctx,
-    )
-    task_id2 = created2["task"]["task_id"]
-    await taskmod._abort(SimpleNamespace(task_id=task_id2, reason="no longer needed"), ctx)
 
     # ── cron_fired / webhook_received (out-of-process ingress routing) ──
     dispatch_cron_fired(session, "nightly-backup", "sync-gate-agent")
@@ -207,7 +186,7 @@ async def test_all_ten_builtin_points_dispatch_schema_matching_payloads(
     seen_points = {p for p, _ in captured}
     expected_points = {
         "session_start", "session_end", "turn_start", "turn_end",
-        "task_start", "task_end", "cron_fired", "webhook_received",
+        "cron_fired", "webhook_received",
         "mcp_resource_updated", "file_changed",
     }
     missing = expected_points - seen_points

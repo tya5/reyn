@@ -286,12 +286,11 @@ async def _lifespan(app: FastAPI):
         from reyn.runtime.cron import set_active_scheduler
         set_active_scheduler(None)
 
-    # #2839 Phase 1: A2A no longer opens its own Task-backend sqlite
-    # connection (``app.state.task_backend`` retired along with the GetTask /
-    # Cancel / sweep re-base onto ``RunRegistry``) — so there is nothing left
-    # to close here. The internal LLM ``task__*`` tool's OWN backend
-    # (``AgentRegistry.task_backend``, a separate lazily-built connection) is
-    # unaffected and out of scope for this surface.
+    # #2839: A2A no longer opens its own Task-backend sqlite connection
+    # (``app.state.task_backend`` retired along with the GetTask / Cancel /
+    # sweep re-base onto ``RunRegistry``, Phase 1) — and the internal LLM
+    # task-decomposition tool it used to share a backend with is removed
+    # entirely (Phase 2/3) — so there is nothing left to close here.
 
 
 app = FastAPI(

@@ -14,7 +14,7 @@ which read their part. A new uniform arg is added in ONE place (the dataclass +
 
 This is deliberately ONLY the uniform config-derived args. Per-SITE args that
 legitimately differ (model / resolver / state_log / the env+sandbox backends /
-workspace dirs / contextual_permission / agent_id / allowed_mcp / task_backend /
+workspace dirs / contextual_permission / agent_id / allowed_mcp /
 router_max_iterations / non_interactive / eager_embedding_build) stay explicit
 per-site params — they are NOT a drift class.
 """

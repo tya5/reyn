@@ -61,7 +61,6 @@ _REQUIRED_SCOPED = frozenset({
     "non_interactive",  # #1439 Fix #1: run-once SP autonomy flag (per-frontend scoped)
     "eager_embedding_build",
     "allowed_mcp",
-    "task_backend",  # #1953 slice R: per-session Task backend (per-frontend scoped — I-5=(A))
     "presentation_consumer",  # #2708 P1: per-frontend present-sink consumer (orphan-impossible — a surface cannot silently omit a present sink)
     "factory_config",  # #2093: the uniform config bundle — required, can't be omitted
 })

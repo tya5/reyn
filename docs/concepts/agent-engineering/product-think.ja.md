@@ -32,7 +32,7 @@ inline CUI のステータス chip バー(Agents / Cost / Model / Tools / MCP / 
 - **`reyn events`。** ランが予期しないことをした場合、記録の artifact は 1 回の CLI 呼び出しで取得できます。
 - **状態はディスク上に存在する。** `.reyn/` にはイベント、チャット、承認、Memory が格納されます。重要なものはプロセスメモリだけに存在しません。
 - **On-limit mode。** `interactive` / `auto_extend` / `unattended` は、あらゆる loop/timeout/budget チェックポイントに対して、オペレーターに予測可能で config で選択可能な制御を一様に与えます — [reliability-engineering.md](reliability-engineering.md) を参照。
-- **`/tasks` view。** 実行中のタスク、タスクごとのステータス、kill を一覧表示 — skill run と dynamic task にまたがる、オーケストレーションされた作業への operator legibility。
+- **`/agents` view。** 実行中の agent/session を一覧表示し attach できる — skill run と delegate されたピアにまたがる、オーケストレーションされた作業への operator legibility。
 
 ## まだ薄い部分
 

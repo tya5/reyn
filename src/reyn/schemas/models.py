@@ -777,162 +777,6 @@ class CompactIROp(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# Task ops (#1953 slice 1) — first-class trackable work-units.
-# ---------------------------------------------------------------------------
-# Agent-facing Task operations as Control IR ops (P4). P7 term-neutral: op
-# names + fields are generic; A2A vocabulary (contextId / TaskState) maps only
-# at the A2A layer. Single-writer is a backend-CAS on the caller's
-# run_id (threaded from OpContext, NOT an op field → unforgeable; audit C2),
-# NOT a permission gate. Enforcement (CAS reject, abort quiescence, cascade,
-# cycle-check, predicate-eval) lands in later slices; these are the shapes.
-
-
-class TaskCreateIROp(BaseModel):
-    """Create a Task. The **requester** is the caller's session (set by the OS,
-    not an op field — §model "requester=self"); the **assignee** is the worker
-    session, immutable for the Task's life (no handoff — §12). ``assignee``
-    defaults to the caller (a self-task); a different value delegates cross-session.
-
-    Ownership is OS-derived (§16 recursive-request): a sub-task created while a
-    session executes a task-as-request T is owned by T (``requester=T``,
-    ``requester_kind=task``, set from the execution context — never an op field).
-    The legacy ``parent_id`` tree was removed (§16 slice C); ``deps`` are
-    depends-on edges (dependency DAG, §13)."""
-
-    kind: Literal["task.create"]
-    name: str
-    assignee: str | None = None  # default: the caller's own session (self-task)
-    description: str | None = None
-    deps: list[str] = Field(default_factory=list)  # depends-on task_ids (DAG, §13)
-    # #2187 §3.5 (5b): the decomposition-link type when this is a sub-task — `awaited`
-    # gates the parent's completion (the parent blocks on the result), `background`
-    # runs parallel (never blocks). Default awaited (the safe, blocking default);
-    # consulted only when the OS derives requester_kind=task.
-    link_type: Literal["awaited", "background"] = "awaited"
-
-
-class TaskUpdateStatusIROp(BaseModel):
-    """Declare a status transition. Writer = the task's **assignee session**; the
-    gate is a fixed-equality backend CAS ``assignee == caller_session_id``
-    (``OpContext.session_id``, the #1814 routing-key — threaded, not a field here).
-    The assignee is immutable, so no claim token / run_id / version is needed; a
-    terminal task rejects all writes (the cooperative-terminal guard)."""
-
-    kind: Literal["task.update_status"]
-    task_id: str
-    # #2187 followup: the assignee-SETTABLE lifecycle transitions only (running = start,
-    # done = complete, failed = declare failure). A `Literal` (not a bare str) so the OS
-    # injects the valid values to the LLM (P8) and Control-IR validation REJECTS an
-    # invalid/stale value — a weak model emitting the pre-#2187 "completed" (or any other
-    # string) is caught at op-validation, never written. `aborted` is a separate op
-    # (`task.abort`); `unassigned`/`blocked`/`ready` are OS-derived, never assignee-set.
-    status: Literal["running", "done", "failed"]
-    reason: str | None = None
-
-
-class TaskGetIROp(BaseModel):
-    """Read one Task record."""
-
-    kind: Literal["task.get"]
-    task_id: str
-
-
-class TaskListIROp(BaseModel):
-    """List Tasks, optionally narrowed by assignee / requester / status.
-
-    Narrowing by ``requester`` (a task-as-request id) is the ownership query — it
-    lists the sub-tasks that task owns (§16 recursive-request)."""
-
-    kind: Literal["task.list"]
-    assignee: str | None = None
-    requester: str | None = None
-    status: str | None = None
-
-
-class TaskAddDependencyIROp(BaseModel):
-    """Add a depends-on edge (dependency DAG, §13). Topology owned by the
-    decomposing requester; readiness is derived read-only (no write to the dep).
-    Existence + cycle-checked via the shared edge-guard (slice 6)."""
-
-    kind: Literal["task.add_dependency"]
-    task_id: str
-    depends_on: str
-
-
-class TaskRemoveDependencyIROp(BaseModel):
-    """Drop a depends-on edge (#1953 slice 6-ext). Requester topology write,
-    idempotent (no-op on a missing edge). Dropping an edge only relaxes the graph,
-    so the OS re-derive may promote a now-satisfied blocked dependent (incl. the
-    last-dep-removed → ready case); it never demotes."""
-
-    kind: Literal["task.remove_dependency"]
-    task_id: str
-    depends_on: str
-
-
-class TaskRepointDependencyIROp(BaseModel):
-    """Atomically repoint an edge ``from_depends_on`` → ``to_depends_on`` (#1953
-    slice 6-ext) — the parent's primary recovery move (point a dependent at a
-    substitute). The NEW edge is cycle-checked BEFORE any mutation (a cycle/dangling
-    repoint changes nothing, returning the structured error); then the dependent's
-    readiness is re-blocked + re-evaluated against the new graph."""
-
-    kind: Literal["task.repoint_dependency"]
-    task_id: str
-    from_depends_on: str
-    to_depends_on: str
-
-
-class TaskAbortIROp(BaseModel):
-    """Requester remove-op (= delete) → ``aborted``/``archived`` (A2A canceled).
-    Cooperative-terminal: it archives the task + its sub-tree (DOWN-cascade); there
-    is no forced cancel — the assignee's in-flight work is rejected by the terminal
-    guard at its next status-write (no straggler, no sibling-kill)."""
-
-    kind: Literal["task.abort"]
-    task_id: str
-    reason: str | None = None
-
-
-class TaskHeartbeatIROp(BaseModel):
-    """Liveness + (slice 7) unblock-predicate evaluation trigger for a blocked
-    task. Returns the current state; predicate-eval / liveness-timeout land in
-    slice 7."""
-
-    kind: Literal["task.heartbeat"]
-    task_id: str
-
-
-class TaskRegisterUnblockPredicateIROp(BaseModel):
-    """Register a deterministic unblock predicate (code, no LLM) evaluated at
-    heartbeat (§22 tier B'); true → unblock → LLM only then. Predicate-eval is
-    slice 7; this records it."""
-
-    kind: Literal["task.register_unblock_predicate"]
-    task_id: str
-    predicate: str
-
-
-class TaskCommentIROp(BaseModel):
-    """Append a comment to a Task's thread (durable inter-agent/HITL protocol —
-    Hermes gap7). Core-contract field; richer thread semantics deferred."""
-
-    kind: Literal["task.comment"]
-    task_id: str
-    body: str
-
-
-class TaskAssignIROp(BaseModel):
-    """Assign a session to a task (#2187 §27-31, the pending-assignment queue). An
-    UNASSIGNED task may be claimed by anyone; an assigned task may be reassigned only
-    by its current owner (the assignee) — the op layer gates this. Rebinds the
-    WAL subscription (``record_rebound``) and re-derives the now-startable status."""
-
-    kind: Literal["task.assign"]
-    task_id: str
-    assignee: str  # the (agent,session) routing-key to bind as the new executor
-
-
 # ── Op-kind registry — the single source for the Control IR op surface ───────
 # #1983: OP_KIND_MODEL_MAP is co-located HERE (relocated from
 # op_runtime/registry.py) so the Op union, ALL_OP_KINDS, and
@@ -998,18 +842,6 @@ OP_KIND_MODEL_MAP: dict[str, type[BaseModel]] = {
     "index_update": IndexUpdateIROp,
     "sandboxed_exec": SandboxedExecIROp,
     "compact": CompactIROp,
-    "task.create": TaskCreateIROp,
-    "task.update_status": TaskUpdateStatusIROp,
-    "task.get": TaskGetIROp,
-    "task.list": TaskListIROp,
-    "task.add_dependency": TaskAddDependencyIROp,
-    "task.remove_dependency": TaskRemoveDependencyIROp,
-    "task.repoint_dependency": TaskRepointDependencyIROp,
-    "task.abort": TaskAbortIROp,
-    "task.heartbeat": TaskHeartbeatIROp,
-    "task.register_unblock_predicate": TaskRegisterUnblockPredicateIROp,
-    "task.comment": TaskCommentIROp,
-    "task.assign": TaskAssignIROp,
     # #2548 PR-C: local skill directory install — register a SKILL.md dir into
     # skills.entries (parallel to mcp_install writing mcp.servers).
     "skill_install": SkillInstallIROp,
@@ -1060,11 +892,6 @@ if TYPE_CHECKING:
             EmbedIROp, IndexQueryIROp, SemanticSearchIROp, IndexDropIROp,
             IndexUpdateIROp,
             SandboxedExecIROp, CompactIROp,
-            TaskCreateIROp, TaskUpdateStatusIROp, TaskGetIROp, TaskListIROp,
-            TaskAddDependencyIROp, TaskRemoveDependencyIROp, TaskRepointDependencyIROp,
-            TaskAbortIROp,
-            TaskHeartbeatIROp, TaskRegisterUnblockPredicateIROp,
-            TaskCommentIROp,
             SkillInstallIROp,
             PipelineInstallIROp,
             PresentationInstallIROp,

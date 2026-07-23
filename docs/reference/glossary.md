@@ -46,7 +46,7 @@ Terms you will encounter in the conv pane, events tab, agents tab, or memory tab
 
 | English | 日本語 | Definition |
 |---------|--------|------------|
-| Attached agent / attach pointer | アタッチ済みエージェント | The agent your TUI session currently talks to — the one labelled "you" in `/tasks` and `/agents` output. Switch with `/attach <name>`. The attached agent receives your text submissions and dispatches them; non-attached agents continue running in the background. See `docs/concepts/multi-agent/multi-agent.md`. |
+| Attached agent / attach pointer | アタッチ済みエージェント | The agent your TUI session currently talks to — the one labelled "you" in `/agents` output. Switch with `/attach <name>`. The attached agent receives your text submissions and dispatches them; non-attached agents continue running in the background. See `docs/concepts/multi-agent/multi-agent.md`. |
 | ARS (Action Retrieval Service) / Hot list | ARS / ホットリスト | The action-routing service that ranks action candidates by recent use ("hot now"). The "HOT NOW" section of the Memory tab shows the current top of this list. See `docs/concepts/tools-integrations/universal-catalog.md`. |
 | Checkpoint (snapshot + WAL) | チェックポイント | A durable point in a run where state is persisted (snapshot) and subsequent transitions append to a write-ahead log (WAL). `safety_limit_checkpoint` events fire when a checkpoint is taken. Enables crash recovery. See `docs/concepts/runtime/time-travel.md`. |
 | Compaction | コンパクション | Automatic summarisation of older conv-pane history when the context window approaches its limit. Surfaced in the TUI as a `── ↑ compaction summary saved ────` divider in the conv pane and an "earlier history trimmed (N lines)" sticky warning. See `docs/concepts/data-retrieval/chat-compaction.md`. |

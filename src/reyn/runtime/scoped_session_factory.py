@@ -40,7 +40,6 @@ from reyn.runtime.session_params import (
     CapabilityScope,
     PresentationWiring,
     ReactivityConfig,
-    TaskWiring,
 )
 
 if TYPE_CHECKING:
@@ -68,7 +67,6 @@ def build_scoped_chat_session(
     presentation_consumer: "PresentationConsumer",  # #2708 P1: the surface's present-sink CONSUMER (orphan-impossible). Its .sink(session) yields the PresentationRenderer wired per-turn. REQUIRED (no default) so a surface cannot silently omit a present sink; a bare renderer can't be the kwarg because the outbox sink needs the not-yet-built Session (.sink defers it). Per-frontend: CUI=OutboxPresentationConsumer / web/mcp/dogfood=NullPresentationConsumer(reviewed NA)
     eager_embedding_build: bool,  # build the action embedding index up-front
     allowed_mcp: list[str] | None,  # per-profile MCP allow-list
-    task_backend: Any,  # #1953 slice R — session-scoped Task backend instance. I-5=(A): cli/chat + MCP pass a per-session sqlite (rewind-participating); A2A/web passes None (the process-singleton A2A surface is read directly, NOT threaded here, so A2A tasks stay durable but un-rewound). None → op-runtime in-memory fallback (_BACKEND)
     # ── per-session config — the UNIFORM, reyn.yaml-derived bundle (#2093) ──
     # All previously-individual uniform args (sandbox_config / multimodal_config
     # / action_retrieval_config / embedding_config / router_config / retry_config /
@@ -109,17 +107,7 @@ def build_scoped_chat_session(
     if agent_id is not None:
         _agent_kwargs["agent_id"] = agent_id
     agent = Agent(**_agent_kwargs)
-    # #1953 slice 7: construct the OS TaskWaker for this session at the single
-    # factory chokepoint (every frontend builds sessions here). It closes over the
-    # AgentRegistry + this agent's name to resolve + wake sibling sessions on a
-    # dep-graph disposition. None when no registry is available (direct/test
-    # construction) → the op-runtime no-op stub.
-    _registry = base.get("registry")
-    task_waker = None
-    if _registry is not None:
-        from reyn.runtime.services.task_wake import TaskWaker  # noqa: PLC0415
-        task_waker = TaskWaker(_registry, agent.agent_name)
-    # #3121 step1: group the scoped capability / task / presentation / reactivity
+    # #3121 step1: group the scoped capability / presentation / reactivity
     # params into their cohesive parameter objects at this single construction
     # chokepoint. ``intervention_bridge`` and the ``hooks_config``/
     # ``composers_config``/``fs_watch_config`` reyn.yaml blocks arrive via
@@ -146,10 +134,6 @@ def build_scoped_chat_session(
             contextual_permission=contextual_permission,
             available_skills=factory_config.available_skills,  # #2548 PR-A
             skill_collisions=factory_config.skill_collisions,  # #3100 Axis 4
-        ),
-        task_wiring=TaskWiring(
-            task_backend=task_backend,  # #1953 slice R
-            task_waker=task_waker,
         ),
         presentation_wiring=PresentationWiring(
             presentation_registry=factory_config.presentation_registry,  # FP-0054 PR-C

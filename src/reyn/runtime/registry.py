@@ -54,7 +54,6 @@ from reyn.core.events.snapshot_generations import (
 )
 from reyn.core.events.snapshot_generations import checkout as _append_reset_record
 from reyn.core.events.state_log import StateLog
-from reyn.task.subscription import SubscriptionRegistry
 
 from .profile import PROFILE_FILENAME, AgentProfile
 from .spawn_routing import ReviewedNA
@@ -282,32 +281,6 @@ class AgentRegistry:
         self._rewind_in_progress: bool = False
         # ADR-0038 Stage 1e (D5): retention window. None → live (current).
         self._retention_policy = retention_policy or RetentionPolicy()
-        # #2187 S1: the Task backend is GLOBAL — ONE per process, registry-owned, built
-        # lazily here. Reverts the #2180 per-AGENT / #2186 per-SESSION splits: a task is
-        # first-class (task ⊥ agent/session, #2187 §2), so its store is a single global db
-        # (``.reyn/state/tasks.db`` — same path the A2A/web server already uses), NOT
-        # agent-keyed. ONE instance ⟹ ONE connection in this process: the #2180
-        # single-connection-registry-owned-lazy pattern survives, just keyed globally
-        # instead of per-agent (so the per-instance ``asyncio.Lock`` serialises every write
-        # + the ``restore_to_seq`` file-swap is the only connection touching the file — the
-        # #2125/#2180 cross-connection concerns stay dissolved by construction). The A2A/web
-        # server (a separate process) opens its own connection to the same global db;
-        # sqlite multi-process file-locking handles that. Process-lifetime (parity with
-        # ``_state_log``, never closed mid-run); the per-agent
-        # close-on-PURGE the #2180 split needed is gone — a global db outlives any one
-        # agent's teardown. (S2 moves task STATE into the global WAL control-plane; this
-        # stage is the data-plane relocation only — the #2128 rewind/generation MECHANISM
-        # is unchanged, just single-backend.)
-        self._task_backend: "object | None" = None
-        # #2187 backend-master: the live Task SUBSCRIPTION registry (the Reyn-internal
-        # task↔session binding — assignee + requester). WAL-derived (the SAME live-state
-        # pattern the reverted (A) used for STATUS, now applied to the CORRECT target:
-        # the binding is what Reyn owns + rewinds; task-STATE stays in the backend, the
-        # external master). The #1560 post-append observer keeps it live; restore_all
-        # rebuilds it by replay (recovery / rewind). Registered whenever a WAL exists.
-        self._task_subscriptions = SubscriptionRegistry()
-        if state_log is not None:
-            state_log.register_post_append(self._on_wal_append_subscription)
         # #1547: per-checkpoint anchor text (rewind-timeline preview). One global
         # store keyed by WAL seq; lazily built. None when no WAL.
         self._anchor_store: AnchorStore | None = None
@@ -852,9 +825,6 @@ class AgentRegistry:
             # runtime PITR generations (rewind-to-before-purge is intentionally
             # unsupported); the real escape hatch for a genuine delete.
             import shutil
-            # #2187 S1: the Task backend is GLOBAL (``.reyn/state/tasks.db``), NOT under
-            # this agent dir, so the agent-dir rmtree no longer touches it — no per-agent
-            # close needed (the #2180 close-before-rmtree is gone with the per-agent split).
             shutil.rmtree(target)
             # PR12: a hard-deleted agent would leave dangling topology references,
             # so drop it from every topology (a team losing its leader / an
@@ -1086,21 +1056,6 @@ class AgentRegistry:
         # 0. crash-mid-rewind recovery (no-op without an active reset-record).
         await self.recover_rewind_if_needed()
 
-        # #2187 backend-master: rebuild the live Task SUBSCRIPTION registry (the
-        # Reyn-internal task↔session binding) by replaying the WAL. ``is_active_seq``
-        # skips abandoned rewind-branch segments (the SAME active-branch predicate the
-        # workspace/runtime restore honours), so a restart after a rewind reconstructs
-        # the active branch's bindings — a prior rewind's undone (re)binding is not
-        # resurrected. The backend's task-STATE is the current external truth (re-read,
-        # not rewound) — only Reyn's own subscription is replayed.
-        self._task_subscriptions.replay(
-            self._state_log.iter_from(0),
-            is_active=build_active_predicate(self._state_log),
-        )
-        # #2187 Stage 4: the recovery RE-READ seam — the binding is restored above; now
-        # re-read the CURRENT backend task-state (the external master, not rewound).
-        await self._reconcile_subscriptions_after_recovery()
-
         # 1. Load snapshots — main (legacy path) + per-session (spawned).
         # FP-0043 Stage 5: ``snapshots`` (name → MAIN AgentSnapshot) is the
         # returned back-compat view; ``all_snaps`` ((name, sid) → AgentSnapshot)
@@ -1171,16 +1126,10 @@ class AgentRegistry:
         # unchanged); a spawned session is recreated via spawn_session(name, sid)
         # — which re-applies the S5 path fixup — then re-adopts its state. Its
         # run-loop starts lazily on attach_session (S4a), so no auto-run here.
-        # #2187 5d: a session with a recovery-ACTIONABLE subscription MUST be instantiated
-        # even with an empty snapshot — else a delegate that consumed its inbox then
-        # crashed (RUNNING task, empty inbox) would never be re-woken (finding 3). Bounded:
-        # only §3.6-actionable tasks (an awaited>0 idle parent is NOT instantiated).
-        recovery_work = await self._compute_recovery_work()
         for (name, sid), snap in all_snaps.items():
             if (not snap.inbox
                     and not snap.pending_chains
-                    and not snap.outstanding_interventions
-                    and sid not in recovery_work):
+                    and not snap.outstanding_interventions):
                 continue
             if sid == _DEFAULT_SID:
                 session = self.get_or_load(name)
@@ -1200,17 +1149,12 @@ class AgentRegistry:
                 if session is not None:
                     session.restore_state(snap)
 
-        # #2187 §3.6 (5d): the RE-DELIVERY half — now that the actionable sessions are
-        # live, re-publish their missed events through each session's OWN production waker.
-        await self._redeliver_recovery_wakes(recovery_work)
-
         # IS-2: pipeline driver-session re-wake — a SELF-SUFFICIENT scan of
         # `.reyn/pipeline/state/` (invocation.json + terminal marker), deliberately
-        # independent of the task-backend subscription machinery above AND of the
-        # snapshot-driven step-5 loop: a driver-session that crashed before its
-        # first session snapshot has no snapshot.json (never enters all_snaps),
-        # and its start-nudge was already consumed (empty inbox) — the #2187-5d
-        # "RUNNING-but-empty-inbox" trap. The scan re-creates + re-wakes it from
+        # independent of the snapshot-driven step-5 loop: a driver-session that
+        # crashed before its first session snapshot has no snapshot.json (never
+        # enters all_snaps), and its start-nudge was already consumed (empty
+        # inbox) — a "RUNNING-but-empty-inbox" trap. The scan re-creates + re-wakes it from
         # the work-order FILE alone (truncation-surviving, like the R4 gens).
         await self._rewake_pipeline_runs()
         return snapshots
@@ -1238,8 +1182,7 @@ class AgentRegistry:
         - ensure the driver-session EXISTS (re-create via ``spawn_session(name,
           sid=...)`` when the crash predated any session record), swap in a
           fresh ``PipelineExecutorDriver`` built from the work-order, nudge
-          (empty user turn), and boot the run-loop pump — the same
-          wake-triple shape ``TaskWaker._wake`` uses."""
+          (empty user turn), and boot the run-loop pump."""
         if self._state_log is None:
             return []
         from reyn.core.events.config_recovery import reyn_root
@@ -1259,9 +1202,8 @@ class AgentRegistry:
         if not state_root.is_dir():
             return []
         rewoken: "list[str]" = []
-        # Hoisted once for the whole scan (not per run_dir) — same call-shape fix
-        # as restore_all's task-subscription replay: the seq-independent derivation
-        # otherwise re-scans the WAL once per pipeline run dir (#2941 sibling).
+        # Hoisted once for the whole scan (not per run_dir): the seq-independent
+        # derivation otherwise re-scans the WAL once per pipeline run dir (#2941/#2944).
         is_active = build_active_predicate(self._state_log)
         for run_dir in sorted(state_root.iterdir()):
             if not run_dir.is_dir() or has_result(run_dir):
@@ -1576,114 +1518,6 @@ class AgentRegistry:
         return lineage_predecessor(self._state_log, turn_cps, seq)
 
     @property
-    def task_subscriptions(self) -> SubscriptionRegistry:
-        """#2187 backend-master: the live Task SUBSCRIPTION registry (the Reyn-internal
-        task↔session binding). The op-layer gates requests against this (single-writer /
-        role / abort-cascade); the backend is the external master of task-STATE."""
-        return self._task_subscriptions
-
-    async def _on_wal_append_subscription(self, kind: str, seq: int, fields: dict) -> None:
-        """#2187 backend-master: the #1560 post-append observer that keeps the live
-        SubscriptionRegistry current. Applies each durable subscription WAL append
-        (non-subscription kinds are ignored by ``apply``)."""
-        self._task_subscriptions.apply(kind, seq, fields)
-
-    async def _reconcile_subscriptions_after_recovery(self) -> "list[str]":
-        """#2187 recovery RE-READ + PRUNE (the backend-master recovery model: re-subscribe,
-        then re-read the current external task-state). The subscription (the Reyn-internal
-        binding) is already restored by the WAL replay in ``restore_all``; the backend is
-        the external MASTER of task-STATE and is NOT rewound — so on recovery the binding
-        may name a task whose backend state moved (or vanished) while Reyn was down.
-
-        Stage 5d — the PRUNE half (runs here, BEFORE session instantiation, since it needs
-        no live session): re-read each binding; a STALE one (the backend no longer holds
-        the task — the master dropped it) is PRUNED from the live registry (live-only,
-        self-healing — see ``SubscriptionRegistry.prune``). The RE-DELIVERY half (waking
-        the re-subscribed session for its actionable tasks, §3.6) runs AFTER session
-        instantiation, via each live session's own waker — ``_redeliver_recovery_wakes``.
-        Returns the pruned (stale) task ids (for the log / tests)."""
-        task_ids = self._task_subscriptions.task_ids()
-        if not task_ids:
-            return []
-        backend = self.task_backend  # the durable external master (built lazily)
-        stale = [tid for tid in task_ids if await backend.get(tid) is None]
-        for tid in stale:
-            self._task_subscriptions.prune(tid)
-        if stale:
-            logger.info(
-                "#2187 recovery reconcile: pruned %d/%d stale subscription(s) (the "
-                "external master no longer holds the task).", len(stale), len(task_ids))
-        return stale
-
-    async def _recovery_action(self, backend, task) -> "str | None":
-        """#2187 §3.6 (5d): the 7-state recovery wake predicate → the ``publish_task_event``
-        event to re-deliver to the task's owner on recovery, or ``None`` (no wake).
-
-        - ``UNASSIGNED`` (no subscriber) / ``BLOCKED`` (DAG-driven, woken by the readiness
-          promote, not the subscription) / terminal (``DONE``/``FAILED``/``ABORTED``) → None.
-        - ``READY`` → ``ready`` (the assignee resumes execution).
-        - ``RUNNING`` → ``recovery_resume`` iff ``N_awaited == 0`` (the awaited children
-          settled while down → continue/complete) OR a child ``FAILED`` (recover); else
-          None (still blocked on running awaited children → idle, no busy-loop)."""
-        from reyn.runtime.services.task_wake import (  # noqa: PLC0415
-            TASK_EVENT_READY,
-            TASK_EVENT_RECOVERY_RESUME,
-        )
-        from reyn.task import TaskState  # noqa: PLC0415
-
-        if task.status is TaskState.READY:
-            return TASK_EVENT_READY
-        if task.status is TaskState.RUNNING:
-            counts = await backend.open_child_counts(task.task_id)
-            if counts.awaited == 0:
-                return TASK_EVENT_RECOVERY_RESUME
-            children = await backend.children_of(task.task_id)
-            if any(c.status is TaskState.FAILED for c in children):
-                return TASK_EVENT_RECOVERY_RESUME
-        return None
-
-    async def _compute_recovery_work(self) -> "dict[str, list]":
-        """#2187 5d: group the recovery-ACTIONABLE subscriptions by assignee sid
-        ``{sid → [(task, event), ...]}`` from the current backend state. Drives BOTH the
-        step-5 instantiate widening (a session with an actionable task MUST be
-        instantiated to be re-woken — finding 3: else a delegate that consumed its inbox
-        then crashed never resumes = "org builds but doesn't run" recurs after crash) AND
-        the re-delivery. Stale bindings are already pruned; an UNASSIGNED binding has no
-        owner."""
-        subs = self._task_subscriptions
-        backend = self.task_backend
-        out: "dict[str, list]" = {}
-        for tid in subs.task_ids():
-            assignee = subs.assignee_of(tid)
-            if assignee is None:
-                continue
-            task = await backend.get(tid)
-            if task is None:
-                continue
-            action = await self._recovery_action(backend, task)
-            if action is not None:
-                out.setdefault(assignee, []).append((task, action))
-        return out
-
-    async def _redeliver_recovery_wakes(self, recovery_work: dict) -> None:
-        """#2187 §3.6 (5d) re-delivery — AFTER session instantiation, via each LIVE
-        session's OWN ``task_waker`` (the production per-agent waker → delivery-equivalent
-        BY CONSTRUCTION; the session holds its agent_name, so no separate resolution, no
-        divergent path). Session-driven: for each live session, re-publish its actionable
-        tasks' events through the SAME ``publish_task_event`` seam production uses."""
-        if not recovery_work:
-            return
-        for _name, session in self._iter_named_sessions():
-            work = recovery_work.get(getattr(session, "_session_id", None))
-            if not work:
-                continue
-            waker = getattr(session, "_task_waker", None)
-            if waker is None:
-                continue
-            for task, event in work:
-                await waker.publish_task_event(event, task)
-
-    @property
     def anchor_store(self) -> AnchorStore | None:
         """The per-checkpoint anchor store (#1547), lazily built. None w/o WAL."""
         if self._state_log is None:
@@ -1741,8 +1575,6 @@ class AgentRegistry:
         (they nest under the agent dir). Best-effort, but a failure is LOGGED (not
         silently swallowed) so a stuck teardown is visible (#2114 review note)."""
         import shutil
-        # #2187 S1: the Task backend is GLOBAL (not under this agent dir), so the rmtree
-        # no longer touches it — the #2180 per-agent close-before-rmtree is gone.
         try:
             shutil.rmtree(self._dir / name)
         except FileNotFoundError:
@@ -2062,9 +1894,7 @@ class AgentRegistry:
         ``purge_dir=False`` (the rewind path) defers the destructive on-disk rmtree to
         the caller, so it runs only AFTER the substrate restores succeed (#2125 atomicity
         — a restore-failure must not leave the dir dropped). The session is quiesced here
-        (in-flight task writes settle before teardown); #2180: the Task backend is NOT
-        closed on a session drop — it is agent-shared (one connection per agent), closed
-        only on agent teardown, so the surviving sessions keep using it."""
+        (in-flight writes settle before teardown)."""
         await self.remove_session(name, sid, purge_dir=purge_dir, record=False)
 
     async def remove_session(
@@ -2077,15 +1907,10 @@ class AgentRegistry:
         on-disk per-session state dir (``state/sessions/<enc(sid)>/``). Returns True iff
         anything was removed.
 
-        #2187 S1 (supersedes the #2125/#2180 per-session/per-agent close): the Task backend
-        is GLOBAL — ONE process-wide ``sqlite3`` connection (registry-owned via the
-        ``task_backend`` property), not under any agent/session dir. So this seam must NOT
-        close it (it is shared process-wide + outlives this session). It only QUIESCES
-        (``cancel_inflight`` + ``await_quiescent``, mirroring the global-rewind stop-world —
-        idempotent when rewind_to already quiesced; REQUIRED for the ephemeral caller, which
-        has no rewind orchestration) so any in-flight ``BEGIN IMMEDIATE`` settles before
-        teardown. The Task backend is the EXTERNAL MASTER of task-state (#2187) and is NOT
-        rewound by time-travel.
+        Quiesces (``cancel_inflight`` + ``await_quiescent``, mirroring the global-rewind
+        stop-world — idempotent when rewind_to already quiesced; REQUIRED for the
+        ephemeral caller, which has no rewind orchestration) so any in-flight write
+        settles before teardown.
 
         Full teardown (rmtree) is correct: the global WAL is the durable source — the
         ``session_spawned`` create-record + the session's session_id-routed entries
@@ -2096,11 +1921,8 @@ class AgentRegistry:
         if sid == _DEFAULT_SID:
             raise ValueError("cannot remove the main session via remove_session")
         removed = False
-        # #2125: quiesce the session BEFORE teardown so any in-flight task write
+        # #2125: quiesce the session BEFORE teardown so any in-flight write
         # completes ahead of teardown.
-        # #2187 S1: do NOT close the Task backend here — it is GLOBAL (one process-wide
-        # connection, registry-owned via the ``task_backend`` property), shared across all
-        # sessions + process-lifetime, so a per-session/per-agent teardown never closes it.
         session = self._peek_session(name, sid)
         if session is not None:
             cancel_inflight = getattr(session, "cancel_inflight", None)
@@ -2156,35 +1978,6 @@ class AgentRegistry:
                 "session_vanished", entity_kind="session", name=name, sid=sid,
             )
         return removed
-
-    @property
-    def task_backend(self) -> "object":
-        """#2187 S1: the GLOBAL Task backend — ONE per process, registry-owned, built
-        lazily. The SINGLE construction seam for every session (chat / stdio-MCP / spawned)
-        — they all route ``task_backend=`` through here, so there is ONE connection in this
-        process (the #2180 single-connection pattern, now keyed globally not per-agent: the
-        per-instance ``asyncio.Lock`` serialises every write). Path is the global
-        ``project_root/.reyn/state/tasks.db`` (the same db the A2A/web server uses — a
-        first-class global task store, task ⊥ agent/session). Lazy import avoids an import
-        cycle (task.factory → task.sqlite_backend)."""
-        if self._task_backend is None:
-            from reyn.task.factory import create_task_backend  # noqa: PLC0415
-            path = self._project_root / ".reyn" / "state" / "tasks.db"
-            self._task_backend = create_task_backend(
-                "sqlite",
-                path=str(path),
-                # #2187 backend-master (2c-i): inject the WAL-derived
-                # SubscriptionRegistry so the backend hydrates the binding
-                # (assignee/requester/requester_kind) through it.
-                subscription_reader=self._task_subscriptions,
-            )
-        return self._task_backend
-
-    # #2187 S1: the #2180 per-agent ``_close_task_backend`` is removed — the global Task
-    # backend is PROCESS-LIFETIME (parity with ``_state_log``, which is
-    # likewise never closed mid-run); a global store is not closed on any one agent's
-    # purge/drop (it outlives them), and an open sqlite connection does not block the
-    # agent-dir rmtree (POSIX unlink-while-open). Closed on process exit.
 
     def _purge_session_dir(self, name: str, sid: str) -> bool:
         """#2125: the destructive half of session teardown — rmtree the per-session
@@ -2305,9 +2098,8 @@ class AgentRegistry:
                     and is_active(van_seq)
                 )
                 if spawned_after_cut or vanished_by_cut:
-                    # #2125/#2180: detach now (quiesce in-flight writes; the global Task
-                    # backend is NOT closed on a session drop — one process-wide
-                    # connection); defer the destructive rmtree until the restores succeed.
+                    # #2125: detach now (quiesce in-flight writes); defer the
+                    # destructive rmtree until the restores succeed.
                     await self._drop_session(name, sid, purge_dir=False)
                     deferred_session_purges.append((name, sid))
                     continue
@@ -2542,8 +2334,6 @@ class AgentRegistry:
                     sid for sid in self._discover_session_ids(name)
                     if sid != _DEFAULT_SID
                 ]
-                # #2187 S1: the Task backend is GLOBAL (not under this agent dir) — the
-                # #2180 per-agent close-before-rmtree is gone.
                 shutil.rmtree(self._dir / name, ignore_errors=True)
                 # #2159: emit the destroy-side session_vanished mirror for each
                 # subsumed session through the logged seam (async GC path already

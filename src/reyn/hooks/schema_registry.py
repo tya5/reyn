@@ -20,7 +20,7 @@ per-``event_name`` value allowlist — the future OUT-set config file layers
 name-level curation ON TOP of this structural gate, it does not replace it.
 
 ``BUILTIN_HOOK_SCHEMAS`` is the single source of truth for what field-set
-each of reyn's 10 builtin hook-points carries — mirroring the
+each of reyn's 8 builtin hook-points carries — mirroring the
 ``OP_KIND_MODEL_MAP`` ↔ ``control-ir.md`` sync discipline (CLAUDE.md hard
 rule): every dispatch call site MUST build its payload through
 ``build_hook_payload`` (below), which validates the assembled dict against
@@ -34,7 +34,7 @@ Kind Namespace (proposal §2) + bare-name aliasing
 The canonical kind is namespaced (``builtin:lifecycle:turn_end``,
 ``builtin:external:cron_fired``); the pre-existing BARE point name
 (``turn_end``, ``cron_fired``, ...) is a **permanent canonical short-form
-alias** for the builtin 10 — existing ``hooks.yaml`` configs written before
+alias** for the builtin 8 — existing ``hooks.yaml`` configs written before
 this module existed keep working completely unmodified (``canonical_kind``/
 ``bare_point`` below normalize either spelling to the other; see
 ``reyn.hooks.loader`` for where config ``on:`` values are normalized, and
@@ -57,7 +57,7 @@ from __future__ import annotations
 # ---------------------------------------------------------------------------
 
 _LIFECYCLE_POINTS: "tuple[str, ...]" = (
-    "session_start", "session_end", "turn_start", "turn_end", "task_start", "task_end",
+    "session_start", "session_end", "turn_start", "turn_end",
 )
 _EXTERNAL_POINTS: "tuple[str, ...]" = (
     "mcp_resource_updated", "file_changed", "cron_fired", "webhook_received",
@@ -103,8 +103,6 @@ BUILTIN_HOOK_SCHEMAS: "dict[str, frozenset[str]]" = {
     "builtin:lifecycle:session_end": frozenset({"point", "agent_name"}),
     "builtin:lifecycle:turn_start": frozenset({"point", "agent_name", "kind", "chain_id"}),
     "builtin:lifecycle:turn_end": frozenset({"point", "agent_name", "chain_id", "user_text"}),
-    "builtin:lifecycle:task_start": frozenset({"point", "task_id", "name", "assignee"}),
-    "builtin:lifecycle:task_end": frozenset({"point", "task_id", "status"}),
     "builtin:external:mcp_resource_updated": frozenset(
         {"point", "server", "uri", "agent_name", "resync"},
     ),

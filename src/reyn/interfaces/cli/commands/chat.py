@@ -493,14 +493,6 @@ def run(args: argparse.Namespace) -> None:
             reasoning_config=session_cfg.config.chat.reasoning,  # #1652
             registry=registry,  # back-reference for :agents / :attach + PR11 messaging
             allowed_mcp=profile.allowed_mcp,
-            # #1953 slice R, I-5=(A): sqlite Task backend → in-session task.* ops are
-            # durable + rewind with the session (local single-tenant).
-            # #2180: the agent's SHARED backend (ONE connection per agent) via the
-            # registry's single construction seam — NOT a direct per_session_sqlite_backend
-            # (that opened an N+1 connection per session, the #2125 cross-connection write
-            # race). The factory closure captures ``registry`` (assigned below), so this
-            # resolves at session-construction time.
-            task_backend=registry.task_backend,
             events_config=session_cfg.config.events,
             cost_warn_config=session_cfg.config.cost_warn,  # #2230: wire the warn/block gate
             offload_config=session_cfg.config.offload,  # tool-result-schema-redesign §5
