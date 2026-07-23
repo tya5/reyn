@@ -7,7 +7,7 @@ workspace-relative venv path.
 
 ## Why the venv must be INSIDE the project workspace, not `~/.reyn/...`
 
-The sandbox's write scope for `sandboxed_exec` (what an LLM-driven `python3
+The sandbox's write scope for `exec` (what an LLM-driven `python3
 -m venv ...` / `pip install ...` actually runs under) is tight to the
 current project workspace -- it cannot be widened by the LLM. A venv path
 under the operator's home directory (`~/.reyn/plugins/rag/.venv`, the

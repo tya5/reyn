@@ -561,7 +561,9 @@ cron:
 
 ```yaml
 permissions:
-  shell: deny           # deny | ask | allow
+  exec: deny            # deny | ask | allow — `exec` ツールの事前承認キー
+                         # （#3226 Phase 3 で `shell` から改名。clean-break、
+                         # alias なし — 既存の reyn.yaml の `shell:` は `exec:` へ）
   file:
     read:  [".reyn/", "src/stdlib/"]
     write: [".reyn/state/", "reyn/local/"]

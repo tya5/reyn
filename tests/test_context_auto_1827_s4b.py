@@ -60,7 +60,7 @@ def test_tainted_composes_untrusted_and_denies(tmp_path):
     assert eff is not None
     # the dangerous side-effecting surfaces are now denied (context-auto)
     for denied in ("memory_operation__remember_shared", "delegate_to_agent",
-                   "exec__sandboxed_exec", "sandboxed_exec"):
+                   "exec__run", "exec"):
         assert tool_contextually_denied(eff, denied), denied
     # a read tool stays allowed
     assert not tool_contextually_denied(eff, "semantic_search")
@@ -71,7 +71,7 @@ def test_self_clears_when_taint_removed(tmp_path):
     s = _session(tmp_path)
     _mark_untrusted(s)
     eff = s._effective_contextual_for_turn()
-    assert tool_contextually_denied(eff, "exec__sandboxed_exec")
+    assert tool_contextually_denied(eff, "exec__run")
     # simulate the untrusted entry compacting out of the active context
     s.history = [m for m in s.history if not (m.meta or {}).get("external_source")]
     eff = s._effective_contextual_for_turn()
@@ -86,9 +86,9 @@ def test_composes_with_static_union(tmp_path):
     # untainted: only the static deny applies
     eff = s._effective_contextual_for_turn()
     assert tool_contextually_denied(eff, "web__search")
-    assert not tool_contextually_denied(eff, "exec__sandboxed_exec")
+    assert not tool_contextually_denied(eff, "exec__run")
     # tainted: BOTH the static deny AND the untrusted deny-set apply
     _mark_untrusted(s)
     eff = s._effective_contextual_for_turn()
     assert tool_contextually_denied(eff, "web__search")          # static
-    assert tool_contextually_denied(eff, "exec__sandboxed_exec")  # untrusted
+    assert tool_contextually_denied(eff, "exec__run")  # untrusted

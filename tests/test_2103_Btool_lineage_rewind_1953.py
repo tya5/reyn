@@ -54,7 +54,7 @@ async def test_lineage_survives_rewind_round_trip_child_stays_capped(tmp_path):
     rebuilt as-of-cut, so C is STILL ⊆ P (the parent's deny still applies). RED if the
     as-of-cut lineage rebuild is absent (the re-materialised C would resolve un-capped =
     escalation-on-rewind)."""
-    _bind(tmp_path, member="P", profile="prole", body="name: prole\ntool_deny: [sandboxed_exec]\n")
+    _bind(tmp_path, member="P", profile="prole", body="name: prole\ntool_deny: [exec]\n")
     _seed(tmp_path, "P")
     _seed(tmp_path, "C")
     reg = _make_registry(tmp_path)
@@ -77,7 +77,7 @@ async def test_lineage_survives_rewind_round_trip_child_stays_capped(tmp_path):
     assert _agent_dir(tmp_path, "C").is_dir()  # re-materialised
     contextual, _ = reg.resolved_profile_for("C")
     assert contextual is not None
-    assert tool_contextually_denied(contextual, "sandboxed_exec")  # STILL capped at parent
+    assert tool_contextually_denied(contextual, "exec")  # STILL capped at parent
 
 
 @pytest.mark.asyncio
@@ -86,7 +86,7 @@ async def test_rewound_out_child_is_dropped_parent_survives(tmp_path):
     public list_names); the as-of-cut lineage rebuild excludes it by construction (a
     full rebuild over present-as-of-cut agents → no stale edge). The parent P, present
     as-of-cut, survives and remains resolvable."""
-    _bind(tmp_path, member="P", profile="prole", body="name: prole\ntool_deny: [sandboxed_exec]\n")
+    _bind(tmp_path, member="P", profile="prole", body="name: prole\ntool_deny: [exec]\n")
     _seed(tmp_path, "P")
     _seed(tmp_path, "C")
     reg = _make_registry(tmp_path)

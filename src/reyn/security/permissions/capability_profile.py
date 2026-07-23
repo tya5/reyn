@@ -239,7 +239,9 @@ _FLOORED_QUALIFIED: "dict[str, frozenset[str]]" = {
     # (thin sugar over sandboxed_exec, same subprocess-exec threat surface)
     # was removed outright — it was the sole `/bin/sh -c <str>` injection
     # surface in the codebase — so it no longer needs a deny-parity entry.
-    "exec": frozenset({"exec__sandboxed_exec"}),
+    # #3226 Phase 3: the surviving tool renamed sandboxed_exec -> exec
+    # (qualified name exec__run).
+    "exec": frozenset({"exec__run"}),
     # MCP install — no installing servers from untrusted content
     "mcp-install": frozenset({
         "mcp__install_registry", "mcp__install_package", "mcp__install_local",

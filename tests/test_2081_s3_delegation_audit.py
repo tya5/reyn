@@ -160,8 +160,8 @@ def test_reachable_role_that_denies_is_clean(tmp_path: Path, monkeypatch) -> Non
     # aliases (#2111 — the audit taxonomy covers every invocable form, so a profile
     # denying only the qualified form would still re-grant the bare one).
     (_profiles(tmp_path) / "tight.yaml").write_text(
-        "name: tight\ntool_deny: [delegate_to_agent, multi_agent__delegate, sandboxed_exec, "
-        "exec__sandboxed_exec, "
+        "name: tight\ntool_deny: [delegate_to_agent, multi_agent__delegate, exec, "
+        "exec__run, "
         "delete_file, file__delete, memory_operation__remember_shared, "
         "memory_operation__remember_agent, memory_operation__forget, remember_shared, "
         "remember_agent, forget_memory, mcp__install_registry, mcp__install_package, "

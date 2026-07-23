@@ -53,7 +53,7 @@ session_spawn(request: str, mode: "ephemeral" | "persistent" = "persistent",
 **`narrowing`**（オプション）：構築時にサブセッションに課すケイパビリティプロファイルの部分集合。制限のみ——自分自身のケイパビリティを超えてサブセッションにケイパビリティを付与することはできません。例：
 
 ```json
-{"tool_deny": ["sandboxed_exec"]}
+{"tool_deny": ["exec"]}
 ```
 
 両モードとも巻き戻し安全です：巻き戻しカット後にスポーンされたセッションは巻き戻し再構成中に削除されます。

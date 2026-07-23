@@ -3,7 +3,7 @@ backend instance, not the reyn.yaml config string.
 
 Construction-forwarding-gap fix: ``sandbox.backend=noop`` config + an injected
 exec backend (``--env-backend=docker``) must still expose ``exec`` in
-``list_actions(category=["exec"])`` because ``sandboxed_exec`` is functionally
+``list_actions(category=["exec"])`` because ``exec`` is functionally
 available via the injected instance. Pins ``_exec_gate_backend_name`` (the
 derivation) + ``visible_categories`` (the gate consuming it).
 """
@@ -99,12 +99,12 @@ def test_instance_without_name_degrades_to_hidden() -> None:
 
 def test_enumerate_exec_visible_with_docker_gate() -> None:
     """Tier 2: #1417 — the real `_enumerate_category('exec', ...)` handler returns
-    exec__sandboxed_exec when the threaded gate value is a real backend ('docker',
+    exec__run when the threaded gate value is a real backend ('docker',
     the value _exec_gate_backend_name derives from an injected docker instance even
     under noop config). Exercises the actual list_actions exec-gate path."""
     gate = _exec_gate_backend_name(_FakeBackend(name="docker"), _FakeSandboxConfig(backend="noop"))
     actions = _enumerate_category("exec", _router_ctx(gate))
-    assert [a["qualified_name"] for a in actions] == ["exec__sandboxed_exec"]
+    assert [a["qualified_name"] for a in actions] == ["exec__run"]
 
 
 def test_enumerate_exec_hidden_with_noop_gate() -> None:

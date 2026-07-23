@@ -530,7 +530,8 @@ async def run_shell_hook(
             emit_event=emit_event,
         )
 
-    # --- Run via backend (same abstraction as sandboxed_exec.py) ----------
+    # --- Run via backend (same abstraction as tools/exec.py, #3226 Phase 3
+    # renamed from sandboxed_exec.py) ----------
     try:
         stdin_bytes = json.dumps(event_context, default=str).encode("utf-8")
 

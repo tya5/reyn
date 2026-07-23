@@ -89,7 +89,7 @@ def test_unknown_tool_suggests_close_match():
         catalog = {
             "source__read": {"function": {"name": "source__read"}},
             "source__list": {"function": {"name": "source__list"}},
-            "exec__sandboxed_exec": {"function": {"name": "exec__sandboxed_exec"}},
+            "exec__run": {"function": {"name": "exec__run"}},
         }
         ctx, _ev = make_ctx(catalog=catalog)
         result = await dispatch_tool(

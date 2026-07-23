@@ -49,7 +49,7 @@ def test_catalog_filter_hides_web_keeps_others() -> None:
         _tool("web__fetch"),
         _tool("file__read"),
         _tool("file__write"),
-        _tool("exec__sandboxed_exec"),
+        _tool("exec__run"),
     ]
     filtered = _apply_tool_exclusions(catalog, frozenset({"web__search", "web__fetch"}))
     names = {t["function"]["name"] for t in filtered}
@@ -58,7 +58,7 @@ def test_catalog_filter_hides_web_keeps_others() -> None:
         "web-look-up the gold solution"
     )
     # the repo-editing tools the agent actually needs survive the exclusion
-    assert {"file__read", "file__write", "exec__sandboxed_exec"} <= names
+    assert {"file__read", "file__write", "exec__run"} <= names
     # empty exclusion = no filtering (the default, non-faithful path)
     assert len(_apply_tool_exclusions(catalog, frozenset())) == len(catalog)
 

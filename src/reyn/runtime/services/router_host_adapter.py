@@ -197,7 +197,7 @@ class RouterHostAdapter:
         # FP-0034 Phase 2: sandbox backend name for exec D14 visibility
         # gate. Passed from ``session._sandbox_config.backend`` so the
         # universal catalog ``_enumerate_category("exec")`` can decide
-        # whether to expose ``exec__sandboxed_exec``. Default None hides
+        # whether to expose ``exec__run``. Default None hides
         # the exec category (= noop / no sandbox configured).
         sandbox_backend: str | None = None,
         sandbox_policy: dict | None = None,
@@ -910,7 +910,7 @@ class RouterHostAdapter:
         forwards this into ``RouterCallerState.sandbox_backend`` so the
         exec category D14 visibility gate in
         ``universal_catalog._enumerate_category`` can decide whether to
-        expose ``exec__sandboxed_exec``.  ``None`` and ``"noop"`` both
+        expose ``exec__run``.  ``None`` and ``"noop"`` both
         hide the exec category; any other value (``"seatbelt"`` /
         ``"landlock"`` / ``"auto"``) makes it visible.
         """

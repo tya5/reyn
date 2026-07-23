@@ -1,8 +1,14 @@
-"""sandboxed_exec ToolDefinition — FP-0034 Phase 2 exec category.
+"""exec ToolDefinition — FP-0034 Phase 2 exec category.
 
 Router-and-phase callable capability that exposes the FP-0017
 ``sandboxed_exec`` op_runtime handler via the universal catalog
-(``exec__sandboxed_exec`` qualified name).
+(``exec__run`` qualified name). #3226 Phase 3: the tool itself was
+renamed ``sandboxed_exec`` -> ``exec`` (the surviving argv-only exec
+primitive, collapsed to the owner-directed name); the op_runtime layer
+(``SandboxedExecIROp``, ``OP_KIND_MODEL_MAP["sandboxed_exec"]``, the
+``sandboxed_exec_started``/``_completed``/``_cancelled`` audit-events)
+is UNCHANGED — only the tool/qualified name + the ``permissions.exec``
+key moved.
 
 D14-ext visibility gating: the ``exec`` category is only shown to the
 LLM when a real sandbox backend is configured (= not "noop" / not None).
@@ -21,7 +27,7 @@ from reyn.tools.types import ToolContext, ToolDefinition, ToolGates, ToolResult
 # Reviewable in src/reyn/tools/descriptions/execution.py (Phase 2 of the
 # tool-description package refactor) — this alias keeps the call site
 # unchanged (byte-identical relocation, no LLM-facing text change).
-_SANDBOXED_EXEC_DESCRIPTION = _execution_descriptions.sandboxed_exec.text
+_EXEC_DESCRIPTION = _execution_descriptions.exec_.text
 
 
 # #1339 / sandbox-model completion: the tool exposes ONLY argv (+ timeout). The
@@ -29,17 +35,17 @@ _SANDBOXED_EXEC_DESCRIPTION = _execution_descriptions.sandboxed_exec.text
 # env_passthrough) is operator-or-default, resolved onto the OpContext — the LLM
 # cannot set it via the tool. (The SandboxedExecIROp keeps those fields for
 # phase-authored Control IR; only this tool surface is trimmed.)
-_SANDBOXED_EXEC_PARAMETERS: dict[str, Any] = {
+_EXEC_PARAMETERS: dict[str, Any] = {
     "type": "object",
     "properties": {
         "argv": {
             "type": "array",
             "items": {"type": "string"},
-            "description": _execution_descriptions.PARAMS["sandboxed_exec"]["argv"].text,
+            "description": _execution_descriptions.PARAMS["exec"]["argv"].text,
         },
         "timeout_seconds": {
             "type": "integer",
-            "description": _execution_descriptions.PARAMS["sandboxed_exec"]["timeout_seconds"].text,
+            "description": _execution_descriptions.PARAMS["exec"]["timeout_seconds"].text,
         },
     },
     "required": ["argv"],
@@ -51,7 +57,7 @@ async def op_context_from_tool_context(ctx: ToolContext) -> Any:
     ``op_runtime.sandboxed_exec`` handler (and any other op_runtime handler
     reached this way) expects.
 
-    Used by :func:`_handle` (the ``sandboxed_exec`` tool) — the
+    Used by :func:`_handle` (the ``exec`` tool) — the
     router_state → legacy-OpContext bridge (sandbox_config derivation +
     op_context_factory-or-minimal-synthesis). #3226 Phase 1: the ``shell``
     tool (:mod:`reyn.tools.shell`, #2593), which used to share this bridge,
@@ -112,9 +118,11 @@ async def _handle(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
     """Adapter wrapping op_runtime.sandboxed_exec.handle.
 
     Bridges between the unified (args, ctx) signature and the
-    existing (op, ctx) signature for the sandboxed_exec handler.
+    existing (op, ctx) signature for the sandboxed_exec op handler.
     Builds a SandboxedExecIROp from args and a legacy OpContext from
-    ToolContext, then delegates to the op_runtime handler.
+    ToolContext, then delegates to the op_runtime handler. The op kind
+    stays ``sandboxed_exec`` (#3226 Phase 3 renamed only the tool/
+    qualified-name surface, not the Control IR op).
     """
     from reyn.core.op_runtime.sandboxed_exec import handle as handle_sandboxed_exec
     from reyn.schemas.models import SandboxedExecIROp
@@ -144,11 +152,11 @@ def _with_sandbox_config(op_ctx: Any, sandbox_config: Any) -> Any:
 
 from reyn.core.offload.canonical import sandboxed_exec_to_canonical  # noqa: E402
 
-SANDBOXED_EXEC = ToolDefinition(
+EXEC = ToolDefinition(
     canonical=sandboxed_exec_to_canonical,
-    name="sandboxed_exec",
-    description=_SANDBOXED_EXEC_DESCRIPTION,
-    parameters=_SANDBOXED_EXEC_PARAMETERS,
+    name="exec",
+    description=_EXEC_DESCRIPTION,
+    parameters=_EXEC_PARAMETERS,
     gates=ToolGates(router="allow", phase="allow"),
     handler=_handle,
     category="execution",

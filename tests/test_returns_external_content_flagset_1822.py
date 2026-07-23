@@ -54,7 +54,7 @@ _NOT_EXTERNAL = {
     # — deferred to the tracked fast-follow (scan-only in S2; FP-0050 §6) —
     # file content / exec output: agent work-products, secondary vector; fencing
     # every such result = broad bloat at low precision → content-origin follow-up.
-    "read_file", "grep_files", "glob_files", "list_directory", "sandboxed_exec",
+    "read_file", "grep_files", "glob_files", "list_directory", "exec",
     # — principal / peer (lead finding: explicitly classified) —
     # ask_user: the user is the trust ROOT — their input is the legitimate
     # instruction channel, not untrusted-data (fencing it would break the

@@ -63,7 +63,7 @@ async def test_external_answer_narrows_next_turn_end_to_end(tmp_path):
     # CONSUMER: the next turn's contextual now narrows (context-auto).
     eff = s._effective_contextual_for_turn()
     assert eff is not None
-    assert tool_contextually_denied(eff, "exec__sandboxed_exec")
+    assert tool_contextually_denied(eff, "exec__run")
     assert tool_contextually_denied(eff, "memory_operation__remember_shared")
     assert not tool_contextually_denied(eff, "semantic_search")  # read stays allowed
 

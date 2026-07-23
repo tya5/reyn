@@ -55,9 +55,9 @@ async def test_direct_function_denied_raises_in_snippet() -> None:
 
     runner = CodeActRunner()
     out = await runner.run(
-        code="result = exec__sandboxed_exec(cmd='rm -rf /')",
+        code="result = exec__run(cmd='rm -rf /')",
         dispatch=dispatch,
-        actions={"exec__sandboxed_exec": "exec__sandboxed_exec"},
+        actions={"exec__run": "exec__run"},
         allow_unsandboxed=True,
     )
     # The denied stub call raised ToolError → uncaught → snippet failed.

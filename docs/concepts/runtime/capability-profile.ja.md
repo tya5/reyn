@@ -131,7 +131,7 @@ mcp_allow: null        # 全 MCP サーバー利用可能
 mcp_deny: []
 tool_allow: null       # 拒否リストのみ
 tool_deny:
-  - exec__sandboxed_exec
+  - exec__run
   - memory_operation__remember_shared
   - multi_agent__delegate
 ```

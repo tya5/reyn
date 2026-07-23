@@ -57,7 +57,7 @@ _REQUIRED_FIELDS = ("instance_id", "repo", "base_commit", "problem_statement")
 # container (OpenHands-style: framework python separate from the repo env), and
 # point the harness at it via REYN_HARNESS_PYTHON (the only OS-side change — a
 # general 1-line env override in PythonRunner; this script is OS-change-free).
-# pytest (sandboxed_exec) stays on the testbed conda — the agent's repo tests
+# pytest (exec) stays on the testbed conda — the agent's repo tests
 # need the repo env, not the venv.
 #
 # Recipe (primary-evidence: real `docker run` on astropy-13453):
@@ -193,7 +193,7 @@ def build_swe_task_prompt(instance: dict[str, Any]) -> str:
     """#187: a minimal, de-prescribed SWE task for the general agent.
 
     No procedure ("reproduce → verify → …") — the agent has tools (read / edit /
-    grep / glob / sandboxed_exec) and decides how. NO test_patch (it is held out;
+    grep / glob / exec) and decides how. NO test_patch (it is held out;
     the harness scores externally from the dataset). The agent fixes the issue in
     the working tree; the model_patch is the resulting ``git diff HEAD``.
     """

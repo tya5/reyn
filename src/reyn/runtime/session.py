@@ -3724,7 +3724,8 @@ class Session:
             # #1417: gate on the INJECTED backend's real capability, not the
             # reyn.yaml config STRING. The exec capability comes from the
             # injected ``self._sandbox_backend`` instance (the SAME object used
-            # for actual exec at line 1847 / sandboxed_exec.py: ``ctx.sandbox_
+            # for actual exec at line 1847 / tools/exec.py (#3226 Phase 3
+            # renamed from sandboxed_exec.py): ``ctx.sandbox_
             # backend or get_default_backend(...)``); both injected types expose
             # ``.name`` (DockerEnvironmentBackend.name="docker" / SandboxBackend
             # .name). Without this, ``sandbox.backend=noop`` config + an injected

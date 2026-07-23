@@ -483,7 +483,7 @@ def test_sandboxed_exec_ok_shows_exit_code() -> None:
     with the exit code so failure is visually distinct from a successful result row.
     """
     assert summarize_tool_result(
-        "sandboxed_exec",
+        "exec",
         {"kind": "sandboxed_exec", "status": "ok", "backend": "subprocess",
          "returncode": 0, "stdout": "hello", "stderr": "", "truncated": False},
     ) == "exit 0"
@@ -630,7 +630,7 @@ def test_sandboxed_exec_cancelled_shows_failure_text() -> None:
     string 'cancelled' with no visual failure signal.
     """
     assert summarize_tool_result(
-        "sandboxed_exec",
+        "exec",
         {"kind": "sandboxed_exec", "status": "cancelled",
          "backend": "local", "returncode": -9, "stdout": "", "stderr": ""},
     ) == "✗ cancelled (exit -9)"
@@ -644,7 +644,7 @@ def test_sandboxed_exec_timeout_shows_failure_text() -> None:
     from a successful result in the ⎿ row without an explicit failure prefix.
     """
     assert summarize_tool_result(
-        "sandboxed_exec",
+        "exec",
         {"kind": "sandboxed_exec", "status": "timeout",
          "backend": "local", "returncode": -1, "stdout": "partial", "stderr": ""},
     ) == "✗ timeout (exit -1)"

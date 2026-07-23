@@ -54,6 +54,7 @@ def get_default_registry() -> ToolRegistry:
     from reyn.tools.drop_source import DROP_SOURCE
     from reyn.tools.embed import EMBED
     from reyn.tools.emit_hook_event import EMIT_HOOK_EVENT
+    from reyn.tools.exec import EXEC
 
     # Wave 2 additions (ADR-0026 M3 Wave 2)
     from reyn.tools.file import (
@@ -118,7 +119,6 @@ def get_default_registry() -> ToolRegistry:
         REYN_REPO_LIST,
         REYN_REPO_READ,
     )
-    from reyn.tools.sandboxed_exec import SANDBOXED_EXEC
     from reyn.tools.semantic_search import SEMANTIC_SEARCH
     from reyn.tools.session_spawn import SESSION_SPAWN
     from reyn.tools.skill_verbs import SKILL_INSTALL_LOCAL, SKILL_INSTALL_SOURCE, SKILL_LIST
@@ -202,15 +202,16 @@ def get_default_registry() -> ToolRegistry:
     registry.register(LIST_AGENTS)
     registry.register(DESCRIBE_AGENT)
     # ── Exec / lint / ask_user (gates declared per-tool) ──
-    # #1352-D: SANDBOXED_EXEC is router="allow" (chat-reachable; the exec
+    # #1352-D: EXEC is router="allow" (chat-reachable; the exec
     # category is additionally gated by is_exec_available = a real sandbox
     # backend, not by gates.router) — it was previously mis-grouped under a
     # "gates.router=deny" comment alongside the now-removed `shell` op (the only
     # true router=deny here was ask_user). #3226 Phase 1: the #2593 pipeline
     # DSL `shell` tool (thin sugar building `/bin/sh -c <command>` over this
-    # same SANDBOXED_EXEC) is removed outright — the sole `/bin/sh -c <str>`
-    # injection surface in the codebase. ASK_USER=router="deny".
-    registry.register(SANDBOXED_EXEC)
+    # same EXEC, then named `sandboxed_exec`) is removed outright — the sole
+    # `/bin/sh -c <str>` injection surface in the codebase. #3226 Phase 3
+    # renamed the tool `sandboxed_exec` -> `exec`. ASK_USER=router="deny".
+    registry.register(EXEC)
     registry.register(ASK_USER)
     # ── Router-only capabilities (gates.router=allow, gates.phase=deny) ──
     registry.register(DELEGATE_TO_AGENT)

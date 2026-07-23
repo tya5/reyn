@@ -161,12 +161,12 @@ PARAMS: dict[str, dict[str, ParamDescription]] = {
             text=(
                 "Optional per-session capability narrowing (restrict-only, cannot "
                 "widen your envelope): a capability_profile subset, e.g. "
-                "{\"tool_deny\": [\"sandboxed_exec\"]}."
+                "{\"tool_deny\": [\"exec\"]}."
             ),
             ja=(
                 "任意のセッション単位の権限絞り込み（restrict-only、自分の"
                 "権限範囲を広げることはできない）: capability_profile の"
-                "サブセット、例 {\"tool_deny\": [\"sandboxed_exec\"]}。"
+                "サブセット、例 {\"tool_deny\": [\"exec\"]}。"
             ),
         ),
     },

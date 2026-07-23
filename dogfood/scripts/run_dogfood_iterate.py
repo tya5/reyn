@@ -180,12 +180,16 @@ def parse_trace(trace_file: Path, impl_filename: str) -> dict:
                 args_blob = str(args_blob)
                 blob_l = args_blob.lower()
                 # iteration = each shell-class invocation that ran pytest.
-                # Tool surface: invoke_action(action_name="exec__sandboxed_exec",
-                # args={"argv": [..., "pytest", ...]}). Catch both the direct
-                # name and the embedded action_name in args.
+                # Tool surface: invoke_action(action_name="exec__run",
+                # args={"argv": [..., "pytest", ...]}). Catch the direct
+                # name, the embedded action_name in args, AND the pre-#3226
+                # Phase 3 qualified/tool name ("sandboxed_exec" /
+                # "exec__sandboxed_exec") so historical traces still match.
                 if "pytest" in blob_l and (
                     "sandboxed_exec" in blob_l
                     or "sandboxed_exec" in name
+                    or "exec__run" in blob_l
+                    or "exec__run" in name
                     or "shell" in name
                 ):
                     iterations += 1

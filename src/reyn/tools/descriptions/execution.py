@@ -8,18 +8,20 @@ its origin tool module; the origin module now aliases its
 ``_X_DESCRIPTION`` module constant to ``execution.NAME.text`` so every
 call site is unchanged.
 
-Covers: sandboxed_exec (``sandboxed_exec.py``). #3226 Phase 1: the ``shell``
-tool description this module used to also cover (thin pipeline-DSL sugar over
-sandboxed_exec, #2593) was removed along with the tool itself — its only
-production path built ``/bin/sh -c <command>``, the sole shell-injection
-surface in the codebase.
+Covers: the ``exec`` tool (``exec.py``, renamed from ``sandboxed_exec``
+#3226 Phase 3 — the op_runtime kind stays ``sandboxed_exec``, only the
+tool/qualified name changed). #3226 Phase 1: the ``shell`` tool description
+this module used to also cover (thin pipeline-DSL sugar over sandboxed_exec,
+#2593) was removed along with the tool itself — its only production path
+built ``/bin/sh -c <command>``, the sole shell-injection surface in the
+codebase.
 """
 from __future__ import annotations
 
 from reyn.tools.descriptions._types import ParamDescription, ToolDescription
 
-sandboxed_exec = ToolDescription(
-    tool_name="sandboxed_exec",
+exec_ = ToolDescription(
+    tool_name="exec",
     surfaced=(
         "router + phase (gates.router=allow, gates.phase=allow) — FP-0034 "
         "exec category, visibility-gated on a configured sandbox backend"
@@ -46,7 +48,7 @@ sandboxed_exec = ToolDescription(
 )
 
 ALL: dict[str, ToolDescription] = {
-    "sandboxed_exec": sandboxed_exec,
+    "exec": exec_,
 }
 
 
@@ -58,7 +60,7 @@ _timeout_seconds_desc = ParamDescription(
 )
 
 PARAMS: dict[str, dict[str, ParamDescription]] = {
-    "sandboxed_exec": {
+    "exec": {
         "argv": ParamDescription(
             text="Command and arguments; argv[0] is the executable.",
             ja="コマンドと引数。argv[0] が実行ファイル。",

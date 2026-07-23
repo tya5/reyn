@@ -33,7 +33,7 @@ delegation:
 | クラス | 拒否されるツール | 理由 |
 |--------|----------------|------|
 | `re-delegation` | `multi_agent__delegate`、`delegate_to_agent` | アンバウンド委任エージェントからの無制限スポーニングチェーンを防止 |
-| `exec` | `exec__sandboxed_exec`、`sandboxed_exec` | 実行には明示的なオペレーター認証が必要 |
+| `exec` | `exec__run`、`exec` | 実行には明示的なオペレーター認証が必要 |
 | `mcp-install` | `mcp__install_registry`、`mcp__install_package`、`mcp__install_local` | MCP サーバーインストールは高権限のオペレーター管理アクション |
 | `memory-write` | `memory_operation__remember_shared`、`memory_operation__remember_agent`、`memory_operation__forget` | アンバウンド委任エージェントからの永続化には意図的なオプトインが必要 |
 
@@ -82,7 +82,7 @@ delegation:
 | クラス | 重大度 | ツール |
 |--------|--------|--------|
 | `re-delegation` | HIGH | `multi_agent__delegate`、`delegate_to_agent` |
-| `exec` | HIGH | `exec__sandboxed_exec`、`sandboxed_exec` |
+| `exec` | HIGH | `exec__run`、`exec` |
 | `mcp-install` | HIGH | `mcp__install_registry`、`mcp__install_package`、`mcp__install_local` |
 | `memory-write` | MED | `memory_operation__remember_shared`、`memory_operation__remember_agent`、`memory_operation__forget` |
 | `destructive-fs` | MED | `delete_file`、`file__delete`（監査のみ、ランタイムフロア外） |

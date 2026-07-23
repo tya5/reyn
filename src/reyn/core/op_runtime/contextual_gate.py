@@ -6,7 +6,7 @@ control-IR op gate both call the SAME shared check
 is enforced on every tool path, bypass-impossible by construction (#1912).
 
 A contextual ``tool_deny`` is expressed in *tool* names (the chat vocabulary,
-e.g. ``exec__sandboxed_exec``). A control-IR op has an *op kind* (e.g.
+e.g. ``exec__run``). A control-IR op has an *op kind* (e.g.
 ``sandboxed_exec``). This module bridges the two: for an op kind it returns the
 contextual name-candidates = ``{kind}`` ∪ the chat-tool qualified aliases. The op
 kind itself is ALWAYS a candidate, so an un-aliased kind still gates on its own
@@ -49,8 +49,10 @@ _OP_KIND_ALIASES: "dict[str, frozenset[str]]" = {
     # rag_operation category, same posture as embed/index_query) → gated on
     # its own kind name only.
     "index_update": frozenset(),
-    # exec (the dangerous one — both forms)
-    "sandboxed_exec": frozenset({"exec__sandboxed_exec"}),
+    # exec (the dangerous one — both forms). #3226 Phase 3: the tool/
+    # qualified name renamed sandboxed_exec -> exec (exec__run); the op
+    # kind key here is UNCHANGED (op_runtime layer).
+    "sandboxed_exec": frozenset({"exec__run"}),
     # mcp: the install surface is its OWN op kind (precisely gated); the generic
     # ``mcp`` op (call_tool / list / …) is gated on its kind name (per-verb deny
     # is a follow-up — the built-in untrusted profile denies install, not call).

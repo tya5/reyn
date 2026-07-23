@@ -193,7 +193,7 @@ def test_plugin_management_actions_reachable_via_catalog_entries() -> None:
         # Flat category, simple entry
         ("file__read", "file", "read"),
         ("web__search", "web", "search"),
-        ("exec__sandboxed_exec", "exec", "sandboxed_exec"),
+        ("exec__run", "exec", "run"),
         # Dotted category, simple entry
         ("multi_agent__delegate", "multi_agent", "delegate"),
         # #3026: ``memory_entry__<slug>`` (a per-memory RESOURCE name) no

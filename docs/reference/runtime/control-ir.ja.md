@@ -147,6 +147,8 @@ bindings_dropped:
 
 ## `sandboxed_exec`
 
+Control IR の op kind は `sandboxed_exec` のまま変わりません（`OP_KIND_MODEL_MAP["sandboxed_exec"]` / `SandboxedExecIROp`）。この op に到達する router/phase ツールは `sandboxed_exec` から **`exec`** へ改名されました（#3226 Phase 3、catalog qualified name は **`exec__run`**）— この改名は tool/qualified-name のみで、この op のスキーマ・イベント・結果形状には影響しません。
+
 宣言された `SandboxPolicy` と OS が選択した `SandboxBackend` を介して `argv` を実行します。分離強制が必要な（または将来必要になる）ケースで `shell` を置き換えます。
 
 ```json

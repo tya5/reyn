@@ -329,16 +329,16 @@ reading a default. Use `get(...)` when the signal is genuinely optional:
 ```
 
 What a given tool puts in `meta` is that tool's own contract; common examples:
-`embed` → `model` / `total_tokens` / `cost_usd` / `priced`; `sandboxed_exec` →
+`embed` → `model` / `total_tokens` / `cost_usd` / `priced`; `exec` →
 a nonzero `returncode` (a zero exit is not signal, so no key); an MCP call →
 `isError`. Reach for `meta` when you need what a result *cost* or *how* it was
 produced — as opposed to `structured`, which is the result itself.
 
 To run a sandboxed command from a pipeline, use a `tool` step naming
-`sandboxed_exec` directly:
+`exec` directly:
 
 ```yaml
-- tool: {name: sandboxed_exec, args: {argv: !expr "['ls', ctx.dir]"}, output: listing}
+- tool: {name: exec, args: {argv: !expr "['ls', ctx.dir]"}, output: listing}
 ```
 
 The previous step's pipe data can be threaded to the process's STDIN via the
@@ -347,7 +347,7 @@ JSON-encoded-STDIN / STDOUT-becomes-result shape the removed `shell:` step
 used to wire up automatically. (#3226 Phase 1+2 removed the pipeline DSL's
 `shell:` step — thin sugar that ran `/bin/sh -c <command>`, the sole
 shell-injection surface in the codebase — without adding a new step kind: a
-`tool: {name: sandboxed_exec, ...}` step already covers argv-based exec in
+`tool: {name: exec, ...}` step already covers argv-based exec in
 full.)
 
 #### Literals vs `!expr`
@@ -914,7 +914,7 @@ steps:
       value: "ctx.review.passed and 'OK' or 'NEEDS WORK'"
       output: verdict
   - tool:
-      name: sandboxed_exec
+      name: exec
       args: {argv: !expr "['echo', ctx.verdict]"}
       output: shouted
 ```

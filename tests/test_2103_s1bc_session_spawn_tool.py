@@ -46,14 +46,14 @@ async def test_spawn_session_recorded_emits_config_complete_event(tmp_path: Path
     asserted via the production path in the next test.)"""
     reg = _registry(tmp_path)
     sid = await reg.spawn_session_recorded(
-        "worker", mode="ephemeral", narrowing={"tool_deny": ["sandboxed_exec"]},
+        "worker", mode="ephemeral", narrowing={"tool_deny": ["exec"]},
     presentation_consumer=None, intervention_bridge=None)
     ev = next(
         e for e in reg.state_log.iter_from(0)
         if e.get("kind") == "session_spawned" and e.get("sid") == sid
     )
     assert ev["entity_kind"] == "session" and ev["name"] == "worker"
-    assert ev["mode"] == "ephemeral" and ev["narrowing"] == {"tool_deny": ["sandboxed_exec"]}
+    assert ev["mode"] == "ephemeral" and ev["narrowing"] == {"tool_deny": ["exec"]}
 
 
 @pytest.mark.asyncio

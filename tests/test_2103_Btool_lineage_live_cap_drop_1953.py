@@ -67,20 +67,20 @@ def _child_denied(reg: AgentRegistry, tool: str) -> bool:
 
 @pytest.mark.asyncio
 async def test_live_purge_parent_child_stays_capped(tmp_path):
-    """Tier 2: a child spawned ⊆ a parent that denies ``sandboxed_exec`` must STAY denied
+    """Tier 2: a child spawned ⊆ a parent that denies ``exec`` must STAY denied
     after the parent is LIVE-purged. RED on current HEAD: the un-pruned lineage edge points
     at an absent (purged) parent → the parent-conjunct is dropped → the child resolves
     un-capped (escalation-via-parent-purge). GREEN once the absent-parent edge fails closed."""
-    _bind(tmp_path, member="parent", profile="prole", body="name: prole\ntool_deny: [sandboxed_exec]\n")
+    _bind(tmp_path, member="parent", profile="prole", body="name: prole\ntool_deny: [exec]\n")
     _seed(tmp_path, "parent")
     reg = _make_registry(tmp_path)
     # production spawn seam: child created under parent (OS-set lineage, ⊆-parent cap).
     await reg.create_agent("child", parent="parent")
-    assert _child_denied(reg, "sandboxed_exec"), "child must be capped ⊆ parent pre-purge"
+    assert _child_denied(reg, "exec"), "child must be capped ⊆ parent pre-purge"
 
     await reg.archive_agent("parent", purge=True)  # LIVE purge (NOT a rewind)
 
-    assert _child_denied(reg, "sandboxed_exec"), (
+    assert _child_denied(reg, "exec"), (
         "escalation-via-parent-purge: child un-capped after parent live-purge "
         "(lineage edge present but purged parent absent → parent-conjunct silently dropped)"
     )
@@ -92,14 +92,14 @@ async def test_live_archive_parent_keeps_child_capped_control(tmp_path):
     parent profile resolvable, so the child STAYS denied. Passing on current HEAD: this pins
     the gap to the absent-parent (purge) case, so the fail-closed fix targets that and does
     not over-broadly deny on a still-resolvable archived parent."""
-    _bind(tmp_path, member="parent", profile="prole", body="name: prole\ntool_deny: [sandboxed_exec]\n")
+    _bind(tmp_path, member="parent", profile="prole", body="name: prole\ntool_deny: [exec]\n")
     _seed(tmp_path, "parent")
     reg = _make_registry(tmp_path)
     await reg.create_agent("child", parent="parent")
-    assert _child_denied(reg, "sandboxed_exec"), "child must be capped ⊆ parent pre-archive"
+    assert _child_denied(reg, "exec"), "child must be capped ⊆ parent pre-archive"
 
     await reg.archive_agent("parent", purge=False)  # LIVE archive (parent profile persists)
 
-    assert _child_denied(reg, "sandboxed_exec"), (
+    assert _child_denied(reg, "exec"), (
         "child must stay capped after parent live-archive (parent still resolvable)"
     )

@@ -34,7 +34,7 @@ def test_builtin_denies_side_effecting_surfaces():
     layer = ContextualLayer(contextual)
     for denied in (
         "memory_operation__remember_shared", "multi_agent__delegate",
-        "delegate_to_agent", "exec__sandboxed_exec", "mcp__install_registry",
+        "delegate_to_agent", "exec__run", "mcp__install_registry",
     ):
         assert layer.allows(CapabilityAxis.TOOL, denied) is False, denied
     # a read/query tool is NOT denied by the built-in (read + reason is allowed)
@@ -53,10 +53,10 @@ def test_load_untrusted_honors_override(tmp_path: Path):
     d = tmp_path / ".reyn" / "capability_profiles"
     d.mkdir(parents=True)
     (d / "_untrusted.yaml").write_text(
-        "name: _untrusted\ntool_deny: [exec__sandboxed_exec]\n", encoding="utf-8",
+        "name: _untrusted\ntool_deny: [exec__run]\n", encoding="utf-8",
     )
     prof = load_untrusted_profile(tmp_path)
-    assert prof.tool_deny == ("exec__sandboxed_exec",)  # only the operator's choice
+    assert prof.tool_deny == ("exec__run",)  # only the operator's choice
 
 
 def test_load_untrusted_malformed_falls_back_to_builtin(tmp_path: Path):

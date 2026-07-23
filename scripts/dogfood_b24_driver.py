@@ -64,7 +64,7 @@ SCENARIOS = {
     "s3_auto": {  # default auto
         "name": "exec visibility — sandbox.backend=auto path",
         "prompt": "sandboxed コマンド実行に使える action はありますか",
-        "expected_path": "list_actions(category=['exec']) → [exec__sandboxed_exec] → describe",
+        "expected_path": "list_actions(category=['exec']) → [exec__run] → describe",
         "prompt_class": "P-natural",
     },
     "s4_hot_cold": {  # hot list cold start

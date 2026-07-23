@@ -1,7 +1,8 @@
 """Tier 2: sandbox-model completion — #1339 structural close.
 
-Pins the wave: (C) single-source default policy resolver; (A) the sandboxed_exec
-TOOL exposes only argv(+timeout) so the LLM cannot set sandbox axes; (C') the
+Pins the wave: (C) single-source default policy resolver; (A) the exec
+TOOL (op kind sandboxed_exec) exposes only argv(+timeout) so the LLM cannot
+set sandbox axes; (C') the
 handler's started event shows the ENFORCED policy network (not the op's request);
 (B) both chat OpContext factories resolve a concrete default_sandbox_policy (was
 None → the op-fields fallback = the sandbox-escape gap). permission layer
@@ -72,19 +73,16 @@ def test_resolve_explicit_empty_write_paths_is_respected_not_defaulted():
 
 
 def test_tool_schema_is_argv_only():
-    """Tier 2: #1339 —the sandboxed_exec TOOL exposes only argv + timeout — the
+    """Tier 2: #1339 —the exec TOOL exposes only argv + timeout — the
     LLM cannot set network / fs scope (those are operator-or-default)."""
-    from reyn.tools.sandboxed_exec import (
-        _SANDBOXED_EXEC_DESCRIPTION,
-        _SANDBOXED_EXEC_PARAMETERS,
-    )
+    from reyn.tools.exec import _EXEC_DESCRIPTION, _EXEC_PARAMETERS
 
-    props = set(_SANDBOXED_EXEC_PARAMETERS["properties"])
+    props = set(_EXEC_PARAMETERS["properties"])
     assert props == {"argv", "timeout_seconds"}
     for removed in ("network", "read_paths", "write_paths", "allow_subprocess"):
         assert removed not in props
     # the description frames the policy as the OPERATOR's (not a settable param)
-    assert "operator" in _SANDBOXED_EXEC_DESCRIPTION.lower()
+    assert "operator" in _EXEC_DESCRIPTION.lower()
 
 
 # ── (C') handler emits the ENFORCED policy network, not the op request ─────────
