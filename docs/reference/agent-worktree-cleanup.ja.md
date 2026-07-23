@@ -59,11 +59,14 @@ python scripts/cleanup_agent_worktrees.py --dry-run
 python scripts/cleanup_agent_worktrees.py --force
 ```
 
-死亡 PID (またはロックファイルなし) の worktree をすべて削除します。各候補に対して:
+死亡 PID の worktree をすべて削除します(ロックされていて、かつその PID がもう生存していない場合のみ対象)。各候補に対して:
 1. `.git/worktrees/<id>/locked` ファイルを削除 (存在する場合)
 2. `git worktree remove -f <path>` を呼び出す
 
-生存 PID の worktree は触れません。ロックファイルのない worktree (unlocked) も実行中のプロセスに守られていないため、デフォルトで削除されます。
+生存 PID の worktree は触れません。ロックファイルのない worktree (unlocked) は**常に保持され、決して削除されません** —
+unlocked な worktree は「放棄された」と証明されたわけではなく (未コミットのサブエージェント作業を保持している可能性があるため)、
+本ツールは「ロックファイルがない」ことを削除シグナルとして意図的に扱いません。`--force` の削除候補になるのは死亡 PID (stale) の
+worktree のみです。
 
 出力例:
 
@@ -127,7 +130,7 @@ worktree ごとに 1 つの JSON オブジェクトを stdout に出力し、最
 |--------|-----------|------|
 | `--list` | on | 候補とステータスを一覧表示。変更なし |
 | `--dry-run` | off | 削除をシミュレーション。何が起きるかを表示 |
-| `--force` | off | 死亡 PID と unlocked の worktree を削除 |
+| `--force` | off | 死亡 PID (stale) の worktree のみ削除;unlocked は常に保持 |
 | `--keep-recent N` | 0 (0 件保持) | 最近更新された N 件の worktree を除外 |
 | `--include-alive` | off | 生存 PID の worktree も削除 (危険) |
 | `--json` | off | 機械可読な JSON 出力 |
@@ -166,12 +169,13 @@ fi
 ### 使うべきでない場面
 
 - **エージェント以外の worktree を削除したい場合。** スクリプトは `.claude/worktrees/` 配下の `agent-*` プレフィックスでフィルタリングします。意図的に他のすべての worktree を無視します。セーフティへの影響を理解せずにフィルタを拡大しないでください。
-- **誤った dispatch からの回復時。** 検査したい誤った結果を出したサブエージェントがある場合は、まず `--list` を実行して worktree が dead/unlocked リストにあることを確認してから削除してください。クリーンアップ中に最近の worktree を保護するために `--keep-recent` を使用してください。
+- **誤った dispatch からの回復時。** 検査したい誤った結果を出したサブエージェントがある場合は、まず `--list` を実行して worktree が dead (ロック済みで PID がもう生存していない) であることを確認してから削除してください。unlocked な worktree は `--force` でそもそも触れられないため、検査のためにそのまま残しておいても常に安全です。クリーンアップ中に最近の worktree を保護するために `--keep-recent` を使用してください。
 
 ## セーフティ特性
 
 - **`--include-alive` なしで生存 PID は決して触られません。** PID チェックは削除前に `ps -p <pid>` で実行されます。チェックが失敗した (PID 生存) 場合、worktree はスキップされてログに記録されます。
 - **`--dry-run` は常に安全です。** ファイルシステムや git 操作は一切実行されません。
+- **unlocked な worktree はどのフラグでも削除候補になりません。** `build_candidates()` が選ぶのは `stale` (または `--include-alive` 指定時は `locked` 全体) のみです。unlocked な worktree にはチェックすべき PID を持つロックファイルが存在せず、放棄されたと証明できないため、本ツールは常にそれをそのままにします。unlocked を回収するフラグは存在しません。
 - **スクリプトは `.claude/worktrees/` 配下の `agent-*` パスのみを対象とします。** フィーチャーブランチや main などの他のすべての worktree はスクリプトには見えません。
 
 ## 関連リソース
