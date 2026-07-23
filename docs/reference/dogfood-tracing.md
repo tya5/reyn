@@ -202,7 +202,7 @@ development only.
 # Hook Liveness (`--mode hook-liveness`)
 
 External-event hooks (`mcp_resource_updated` / `file_changed` / `cron_fired` /
-`webhook_received`, plus in-session `template_push`/`shell_push` hooks) can
+`webhook_received`, plus in-session `template_push`/`exec_capture` hooks) can
 fail silently in one specific way: the push lands in a session's inbox but the
 run-loop never drains it into a turn. Before this mode existed, that failure
 left no trace an operator could find — the packaged `dogfood_trace.py` modes
@@ -229,7 +229,7 @@ python scripts/dogfood_trace.py --mode hook-liveness --root .reyn
 The `point` column (the lifecycle point / external-event source that
 triggered the push) is cross-referenced from the `hook_push_fired` P6 event
 (emitted at fire-time by `HookDispatcher._push_resolved` for every push path —
-`template_push`, `shell_push`, E and C, cross-session or local). Its absence
+`template_push`, `exec_capture`, E and C, cross-session or local). Its absence
 (an older WAL, or a session with no `emit_event` sink configured) only
 degrades the `point` column to `?`; it never changes the INERT verdict, which
 depends solely on the WAL/EventLog pairing.

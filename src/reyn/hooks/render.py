@@ -212,7 +212,7 @@ def render_pipeline_input(input_template: "dict | str | None", context: dict) ->
       (keys, nesting) is never templated — only leaf strings are.
     - ``str``: the whole string is rendered as ONE Jinja2 template, and the
       rendered text is parsed as JSON — the result must be a JSON object
-      (mirrors ``shell_push``'s stdout-is-a-JSON-object contract). Use this
+      (mirrors ``exec_capture``'s stdout-is-a-JSON-object contract). Use this
       form to build the input from a single templated JSON blob.
 
     Rendering uses a ``SandboxedEnvironment`` with silent ``Undefined`` (an

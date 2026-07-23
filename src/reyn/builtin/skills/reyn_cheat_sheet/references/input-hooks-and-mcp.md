@@ -9,8 +9,8 @@ cheat sheet's decision tree "need **input**" branch.
 A hook fires an action at a lifecycle point (`session_start` / `turn_end` /
 ...) or an external-event point (`file_changed` / `mcp_resource_updated` /
 `cron_fired` / `webhook_received`). Four action schemes: `template_push`
-(inject context or self-continue), `shell_exec` (sandboxed side effect),
-`shell_push` (stdout decides the push), `pipeline_launch` (launch a
+(inject context or self-continue), `exec` (sandboxed side effect, argv-list
+only), `exec_capture` (stdout decides the push, argv-list only), `pipeline_launch` (launch a
 registered pipeline, async). Hooks are operator-config only (`hooks:` in
 `reyn.yaml`) -- you cannot author one yourself; `emit_hook_event` is the one
 op that lets you put an event onto your OWN session's bus for an

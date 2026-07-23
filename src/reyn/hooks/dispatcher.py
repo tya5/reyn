@@ -38,7 +38,7 @@ from reyn.hooks.registry import HookRegistry
 from reyn.hooks.render import ResolvedPush, render_pipeline_input, render_push
 from reyn.hooks.schema import HookDef
 from reyn.hooks.schema_registry import canonical_kind
-from reyn.hooks.shell_runner import run_shell_hook
+from reyn.hooks.shell_runner import run_shell_hook  # runs exec/exec_capture argv (#3226 P4)
 
 _log = logging.getLogger(__name__)
 
@@ -247,27 +247,34 @@ class HookDispatcher:
                 )
 
     async def _dispatch_one(self, hook: HookDef, point: str, event: HookEvent) -> None:
-        """Dispatch a single hook by scheme: template_push (C/E) / shell_exec (F)
-        / shell_push (run + parse stdout → the same C/E path as template_push)
-        / pipeline_launch (#2608 H3: render input_template, launch via the
-        injected ``launch_pipeline`` callable)."""
+        """Dispatch a single hook by scheme: template_push (C/E) / exec (F)
+        / exec_capture (run + parse stdout → the same C/E path as
+        template_push) / pipeline_launch (#2608 H3: render input_template,
+        launch via the injected ``launch_pipeline`` callable).
+
+        #3226 Phase 4 renamed ``shell_exec``/``shell_push`` → ``exec``/
+        ``exec_capture`` (naming honesty — the runner never ran
+        ``/bin/sh -c <string>``; it always argv-executed via
+        ``shell=False``) and the payload from a shell-command string to an
+        argv list (``HookDef.exec``/``HookDef.exec_capture`` are now
+        ``tuple[str, ...]``)."""
         template_vars = event.payload
         if hook.template_push is not None:
             resolved = render_push(hook.template_push, template_vars)
             await self._push_resolved(resolved, hook, point)
-        elif hook.shell_exec is not None:
-            # shell_exec — an external side-effect. Output IGNORED; never raises
+        elif hook.exec is not None:
+            # exec — an external side-effect. Output IGNORED; never raises
             # (the runner logs + returns). Backend: the injected instance, else
             # run_shell_hook resolves get_default_backend(sandbox_config).
             await self._run_shell(
-                hook.shell_exec,
+                hook.exec,
                 template_vars,
                 sandbox_backend=self._sandbox_backend,
                 sandbox_config=self._sandbox_config,
                 # #2827/#3005: the operator's per-hook sandbox knobs. None =
                 # omitted = the runner keeps that axis at its floor (today's
                 # behaviour). The agent-level sandbox.policy does not reach a
-                # hook shell, so these keys are the operator's whole surface —
+                # hook exec, so these keys are the operator's whole surface —
                 # threading only some of them would leave the rest of the
                 # asymmetry the issue names in place.
                 allow_subprocess=hook.subprocess,
@@ -277,22 +284,22 @@ class HookDispatcher:
                 hook_name=hook.name,
                 emit_event=self._emit_event,
             )
-        elif hook.shell_push is not None:
-            # shell_push (#2069) — a shell command whose STDOUT is a JSON
-            # push-directive. Captured (capture_stdout, vs shell_exec's ignored
+        elif hook.exec_capture is not None:
+            # exec_capture (#2069) — an argv whose STDOUT is a JSON
+            # push-directive. Captured (capture_stdout, vs exec's ignored
             # output), parsed fail-safe into a ResolvedPush, then dispatched via
             # the SAME C/E path as template_push. The ONLY difference from
             # template_push is the SOURCE of the ResolvedPush: stdout JSON here vs
             # Jinja2 render there. A run-failure (→ stdout None) or a parse-failure
-            # (→ _parse_shell_push None) skips the push (fail-safe).
+            # (→ _parse_exec_push None) skips the push (fail-safe).
             stdout = await self._run_shell(
-                hook.shell_push,
+                hook.exec_capture,
                 template_vars,
                 sandbox_backend=self._sandbox_backend,
                 sandbox_config=self._sandbox_config,
                 capture_stdout=True,
-                # #2827/#3005: the same knobs on the shell_push sibling — what a
-                # command needs from the sandbox is a property of the command,
+                # #2827/#3005: the same knobs on the exec_capture sibling — what
+                # an argv needs from the sandbox is a property of the command,
                 # not of which scheme consumes its stdout.
                 allow_subprocess=hook.subprocess,
                 network=hook.network,
@@ -301,7 +308,7 @@ class HookDispatcher:
                 hook_name=hook.name,
                 emit_event=self._emit_event,
             )
-            resolved = _parse_shell_push(stdout)
+            resolved = _parse_exec_push(stdout)
             if resolved is not None:
                 await self._push_resolved(resolved, hook, point)
         elif hook.pipeline_launch is not None:
@@ -338,13 +345,13 @@ class HookDispatcher:
 
     async def _push_resolved(self, resolved, hook: HookDef, point: str) -> None:
         """Dispatch a resolved push directive via C/E (#1800 slice 5b/6) — shared
-        by ``template_push`` (Jinja2 render) and ``shell_push`` (stdout JSON), so
+        by ``template_push`` (Jinja2 render) and ``exec_capture`` (stdout JSON), so
         the only difference between the two is where ``resolved`` comes from."""
         if not resolved.push_when:
             return  # conditional push guard (or a render/parse failure — fail-safe)
         # #2608 observability: every push FIRE (template_push's Jinja2 render or
-        # shell_push's stdout JSON, both funnel through here) is surfaced as a P6
-        # event — previously ONLY shell_exec/shell_push emitted `hook_shell_executed`
+        # exec_capture's stdout JSON, both funnel through here) is surfaced as a P6
+        # event — previously ONLY exec/exec_capture emitted `hook_shell_executed`
         # on the RUN side; a push's only artifact was the WAL `inbox_put`/staged
         # context, so a push that fired but never drained (sat in the inbox forever)
         # left no EventLog trace at all. `hook_push_fired` closes that gap: metadata
@@ -392,8 +399,8 @@ class HookDispatcher:
             await self._stage_next_turn_context(HOOK_STAGE_KIND, payload)
 
 
-def _parse_shell_push(stdout: str | None) -> ResolvedPush | None:
-    """Parse a ``shell_push`` command's captured stdout (a JSON push-directive,
+def _parse_exec_push(stdout: str | None) -> ResolvedPush | None:
+    """Parse an ``exec_capture`` argv's captured stdout (a JSON push-directive,
     #2069) into a ``ResolvedPush``, or ``None`` to skip the push.
 
     Contract: stdout is a single JSON object
@@ -415,13 +422,13 @@ def _parse_shell_push(stdout: str | None) -> ResolvedPush | None:
         obj = json.loads(stdout)
     except (json.JSONDecodeError, ValueError) as exc:
         _log.warning(
-            "shell_push stdout is not valid JSON — push skipped. error=%s: %s",
+            "exec_capture stdout is not valid JSON — push skipped. error=%s: %s",
             type(exc).__name__, exc,
         )
         return None
     if not isinstance(obj, dict):
         _log.warning(
-            "shell_push directive must be a JSON object, got %s — push skipped.",
+            "exec_capture directive must be a JSON object, got %s — push skipped.",
             type(obj).__name__,
         )
         return None
@@ -434,16 +441,16 @@ def _parse_shell_push(stdout: str | None) -> ResolvedPush | None:
     # Required-field + type checks (bool first — bool is an int subclass, so the
     # isinstance(..., bool) guard correctly rejects an integer 1/0).
     if not isinstance(message, str) or not message.strip():
-        _log.warning("shell_push directive 'message' must be a non-empty string — push skipped.")
+        _log.warning("exec_capture directive 'message' must be a non-empty string — push skipped.")
         return None
     if not isinstance(wake, bool):
-        _log.warning("shell_push directive 'wake' must be a JSON bool — push skipped.")
+        _log.warning("exec_capture directive 'wake' must be a JSON bool — push skipped.")
         return None
     if not isinstance(push_when, bool):
-        _log.warning("shell_push directive 'push_when' must be a JSON bool — push skipped.")
+        _log.warning("exec_capture directive 'push_when' must be a JSON bool — push skipped.")
         return None
     if session is not None and not isinstance(session, str):
-        _log.warning("shell_push directive 'session' must be a string or null — push skipped.")
+        _log.warning("exec_capture directive 'session' must be a string or null — push skipped.")
         return None
     session = session if (session and session.strip()) else None
 

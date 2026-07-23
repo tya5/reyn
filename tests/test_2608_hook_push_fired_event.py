@@ -1,8 +1,9 @@
 """Tier 2: #2608 observability — a hook push FIRE emits a P6 `hook_push_fired`
 EventLog event.
 
-Investigation-confirmed gap: only `shell_exec`/`shell_push` runs emitted a P6
-event (`hook_shell_executed`); a `template_push`/`shell_push` PUSH's only
+Investigation-confirmed gap: only `exec`/`exec_capture` runs (renamed from
+`shell_exec`/`shell_push` in #3226 Phase 4) emitted a P6
+event (`hook_shell_executed`); a `template_push`/`exec_capture` PUSH's only
 artifact was the WAL `inbox_put`/staged-context entry — so a push that landed
 in the inbox but was never drained (the "sits in inbox forever" failure) left
 NO EventLog trace. `hook_push_fired` (emitted at fire-time, in
@@ -110,11 +111,11 @@ async def test_no_emit_sink_stays_a_noop():
 
 @pytest.mark.asyncio
 async def test_shell_exec_hook_still_emits_hook_shell_executed_not_push_fired():
-    """Tier 2: a shell_exec hook (no push at all) does NOT emit hook_push_fired —
+    """Tier 2: an exec hook (no push at all) does NOT emit hook_push_fired —
     that event is a PUSH-fire signal only, distinct from the pre-existing
     hook_shell_executed (run-side) signal."""
     log = EventLog()
-    hook = HookDef(name="shell-h", on="session_start", shell_exec="true")
+    hook = HookDef(name="shell-h", on="session_start", exec=("true",))
     disp = HookDispatcher(
         HookRegistry([hook]),
         put_inbox=_Recorder(),

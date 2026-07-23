@@ -92,30 +92,30 @@ def _not_applied(events) -> dict:
 
 def test_network_parses_as_operator_will():
     """Tier 1: ``network: true`` on a shell hook parses to True."""
-    assert _load_one({"on": "turn_end", "shell_exec": "echo hi", "network": True}).network is True
+    assert _load_one({"on": "turn_end", "exec": ["echo", "hi"], "network": True}).network is True
 
 
 def test_network_omitted_is_none_not_false():
     """Tier 1: omitting ``network:`` yields None (= keep the floor), NOT False —
     "the operator said nothing" must stay distinguishable from "the operator said
     no", which is the #2964 principle the knob hinges on."""
-    assert _load_one({"on": "turn_end", "shell_exec": "echo hi"}).network is None
+    assert _load_one({"on": "turn_end", "exec": ["echo", "hi"]}).network is None
 
 
 def test_network_false_parses_as_explicit_not_omitted():
     """Tier 1: ``network: false`` parses to False — DISTINCT from omitted (None).
     The distinction is load-bearing beyond the policy value: an explicit False is
     the operator deciding, so it also silences the not-applied refusal."""
-    assert _load_one({"on": "turn_end", "shell_exec": "echo hi", "network": False}).network is False
+    assert _load_one({"on": "turn_end", "exec": ["echo", "hi"], "network": False}).network is False
 
 
 def test_write_paths_parses_and_explicit_empty_is_distinct_from_omitted():
     """Tier 1: ``write_paths: []`` is an explicit (empty) grant, not an omission —
     the same explicit-vs-omitted distinction, on the field where it is easiest to
     lose (an empty list is falsy)."""
-    granted = _load_one({"on": "turn_end", "shell_exec": "echo hi", "write_paths": ["/tmp/x"]})
-    explicit_empty = _load_one({"on": "turn_end", "shell_exec": "echo hi", "write_paths": []})
-    omitted = _load_one({"on": "turn_end", "shell_exec": "echo hi"})
+    granted = _load_one({"on": "turn_end", "exec": ["echo", "hi"], "write_paths": ["/tmp/x"]})
+    explicit_empty = _load_one({"on": "turn_end", "exec": ["echo", "hi"], "write_paths": []})
+    omitted = _load_one({"on": "turn_end", "exec": ["echo", "hi"]})
 
     assert granted.write_paths == ("/tmp/x",)
     assert explicit_empty.write_paths == ()
@@ -141,7 +141,7 @@ def test_sandbox_knob_rejected_when_ill_typed(key, value):
     must never be silently coerced into granting network, and a bare string must
     not be silently iterated into per-character write paths."""
     with pytest.raises(HookConfigError, match=key):
-        load_hooks([{"on": "turn_end", "shell_exec": "echo hi", key: value}])
+        load_hooks([{"on": "turn_end", "exec": ["echo", "hi"], key: value}])
 
 
 # ── the scope map (Tier 1: pure function) ────────────────────────────────────
@@ -186,7 +186,7 @@ async def test_operator_network_and_write_paths_reach_the_sandbox_policy(monkeyp
     await _dispatch(
         [{
             "on": "turn_end",
-            "shell_exec": "echo reach",
+            "exec": ["echo", "reach"],
             "network": True,
             "write_paths": ["/tmp/hook-said-this"],
         }],
@@ -205,7 +205,7 @@ async def test_omitted_knobs_keep_the_floor(monkeypatch):
     monkeypatch.setenv("REYN_ACCEPT_HOOKS", "1")
     backend = _RecordingBackend()
 
-    await _dispatch([{"on": "turn_end", "shell_exec": "echo floor"}], backend)
+    await _dispatch([{"on": "turn_end", "exec": ["echo", "floor"]}], backend)
 
     policy = _policy_for(backend, "floor")
     assert policy.network is False
@@ -225,9 +225,9 @@ async def test_network_is_per_hook_not_a_global_flip(monkeypatch):
 
     await _dispatch(
         [
-            {"on": "turn_end", "shell_exec": "echo online", "network": True},
-            {"on": "turn_end", "shell_exec": "echo mute"},                     # omitted → floor
-            {"on": "turn_end", "shell_exec": "echo isolated", "network": False},
+            {"on": "turn_end", "exec": ["echo", "online"], "network": True},
+            {"on": "turn_end", "exec": ["echo", "mute"]},                     # omitted → floor
+            {"on": "turn_end", "exec": ["echo", "isolated"], "network": False},
         ],
         backend,
     )
@@ -238,14 +238,15 @@ async def test_network_is_per_hook_not_a_global_flip(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_shell_push_sibling_honours_the_same_knobs(monkeypatch):
-    """Tier 2: the fix-class sibling — shell_push gets the knobs too. What a command
-    needs from the sandbox is a property of the command, not of which scheme consumes
-    its stdout; wiring only shell_exec would leave half the class unfixed."""
+    """Tier 2: the fix-class sibling — exec_capture gets the knobs too. What a
+    command needs from the sandbox is a property of the command, not of which
+    scheme consumes its stdout; wiring only exec would leave half the class
+    unfixed."""
     monkeypatch.setenv("REYN_ACCEPT_HOOKS", "1")
     backend = _RecordingBackend()
 
     await _dispatch(
-        [{"on": "turn_end", "shell_push": "echo {}", "network": True, "write_paths": ["/tmp/p"]}],
+        [{"on": "turn_end", "exec_capture": ["echo", "{}"], "network": True, "write_paths": ["/tmp/p"]}],
         backend,
     )
 
@@ -270,7 +271,7 @@ async def test_ignored_agent_policy_is_refused_out_loud_not_dropped(monkeypatch)
     backend, events = _RecordingBackend(), []
 
     await _dispatch(
-        [{"on": "turn_end", "name": "silent-hook", "shell_exec": "echo silent"}],
+        [{"on": "turn_end", "name": "silent-hook", "exec": ["echo", "silent"]}],
         backend,
         config_policy={"network": True, "allow_subprocess": True, "write_paths": ["/tmp/op"]},
         events=events,
@@ -303,7 +304,7 @@ async def test_explicit_per_hook_value_is_a_decision_and_silences_the_refusal(mo
         [{
             "on": "turn_end",
             "name": "decided",
-            "shell_exec": "echo decided",
+            "exec": ["echo", "decided"],
             "network": False,        # contradicts the agent-level network: true
             "subprocess": True,
             "write_paths": [],       # explicit empty grant, contradicting the agent-level one
@@ -328,7 +329,7 @@ async def test_no_agent_policy_means_no_refusal_noise(monkeypatch):
     backend, events = _RecordingBackend(), []
 
     await _dispatch(
-        [{"on": "turn_end", "shell_exec": "echo quiet"}], backend, config_policy=None, events=events
+        [{"on": "turn_end", "exec": ["echo", "quiet"]}], backend, config_policy=None, events=events
     )
 
     assert _not_applied(events) == {}

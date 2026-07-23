@@ -66,7 +66,7 @@ reaches the resolved session's dispatcher through a new public accessor,
 ``Session.dispatch_external_event(point, template_vars)`` (see
 ``reyn.runtime.session``), called via ``reyn.hooks.external_fire.
 fire_and_forget`` — a background ``asyncio.create_task`` wrapper so a slow
-hook action (e.g. ``shell_exec``) can never stall the cron job's own inbox
+hook action (e.g. ``exec``) can never stall the cron job's own inbox
 delivery or the webhook's HTTP response (see
 ``reyn.runtime.cron.routing.dispatch_cron_fired`` /
 ``reyn.runtime.webhook_routing.dispatch_webhook_received``). ``cron_fired``
@@ -178,7 +178,7 @@ class PipelineLaunchBlock:
           lists) is rendered as a Jinja2 template; the dict's structure and
           non-string leaves pass through unchanged.
         - a ``str``: rendered as ONE Jinja2 template whose output is parsed as
-          a JSON object (mirrors the ``shell_push`` stdout-is-JSON contract).
+          a JSON object (mirrors the ``exec_capture`` stdout-is-JSON contract).
         - ``None`` (default): the pipeline launches with ``input=None``.
     """
 
@@ -195,11 +195,20 @@ class PipelineLaunchBlock:
 class HookDef:
     """A single lifecycle hook definition.
 
-    Exactly one of ``template_push`` / ``shell_exec`` / ``shell_push`` /
+    Exactly one of ``template_push`` / ``exec`` / ``exec_capture`` /
     ``pipeline_launch`` must be set (validated by the loader, not by the
     dataclass itself — the dataclass is a plain data container). The
     consistent ``<source>_<action>`` keywords (#2069 converged design;
-    #2608 H3 adds ``pipeline_launch``):
+    #2608 H3 adds ``pipeline_launch``; #3226 Phase 4 renames the two shell
+    actions ``shell_exec``/``shell_push`` → ``exec``/``exec_capture`` — a
+    naming-honesty fix, NOT a security one: ``reyn.hooks.shell_runner`` never
+    ran ``/bin/sh -c <string>`` — it always ``shlex.split`` a command into
+    argv and executed with ``shell=False``. The ``shell_`` prefix was a
+    misnomer; #3226 Phase 4 also collapses the payload to **argv-list-only**
+    (a ``list[str]``, stored as ``tuple[str, ...]`` since ``HookDef`` is
+    frozen) — the pre-Phase-4 shell-command STRING shape is gone, a clean
+    break, not a compat alias. See ``docs/concepts/runtime/hooks.md`` §
+    "exec / exec_capture" for the operator-facing migration note).
 
     Fields
     ------
@@ -213,14 +222,19 @@ class HookDef:
         Declarative inbox-push block from config Jinja2 templates (C/E). The
         push directive is computed from the template against event/context.
         Mutually exclusive with the other actions.
-    shell_exec:
-        Shell command run as a pure side-effect — **output IGNORED**. Mutually
-        exclusive with the other actions.
-    shell_push:
-        Shell command whose **stdout is a JSON push-directive**
+    exec:
+        Argv (``tuple[str, ...]``) run as a pure side-effect — **output
+        IGNORED**. Executed directly (``shell=False``, no shell
+        interpretation) via the same sandbox backend ``sandboxed_exec`` uses.
+        Mutually exclusive with the other actions. (Renamed from
+        ``shell_exec`` in #3226 Phase 4 — naming honesty only, the execution
+        mechanism is unchanged.)
+    exec_capture:
+        Argv (``tuple[str, ...]``) whose **stdout is a JSON push-directive**
         (``{push_when, wake, message, session?}``, #2069) → pushed via the same
         C/E dispatch path as ``template_push``. Mutually exclusive with the
-        other actions.
+        other actions. (Renamed from ``shell_push`` in #3226 Phase 4 — naming
+        honesty only, the execution mechanism is unchanged.)
     pipeline_launch:
         Launch a registered Pipeline (#2608 H3) with an input built from the
         event payload — see ``PipelineLaunchBlock``. Async/detached (the
@@ -236,10 +250,10 @@ class HookDef:
         applied (before the hook's action runs). Absent/empty -> always fires
         (unchanged for every hook that predates H2).
     subprocess:
-        OPERATOR-declared per-hook sandbox knob (#2827): may this hook's shell
-        command spawn children? Only meaningful for ``shell_exec`` /
-        ``shell_push`` (the loader rejects it on the other schemes rather than
-        silently ignoring a security field — the #2976 eager-rejection model).
+        OPERATOR-declared per-hook sandbox knob (#2827): may this hook's exec
+        argv spawn children? Only meaningful for ``exec`` / ``exec_capture``
+        (the loader rejects it on the other schemes rather than silently
+        ignoring a security field — the #2976 eager-rejection model).
 
         ``None`` = omitted = keep the floor (``False``, today's behaviour); an
         explicit ``true``/``false`` is the operator's expressed will. This is
@@ -256,13 +270,13 @@ class HookDef:
         ``git``/``npm``/pipeline hook forks; a pure-python one may not — so the
         judgment is the operator's per hook, not a blanket flip (#2827).
     network:
-        OPERATOR-declared per-hook sandbox knob (#3005): may this hook's shell
-        command reach the network? Same shape, scheme-restriction and
+        OPERATOR-declared per-hook sandbox knob (#3005): may this hook's exec
+        argv reach the network? Same shape, scheme-restriction and
         ``bool | None`` semantics as ``subprocess`` above — ``None`` = omitted =
         the ``False`` floor.
 
         Exists because the agent-level ``reyn.yaml sandbox.policy`` does NOT
-        reach a hook shell (it is resolved only on the op path), so before this
+        reach a hook exec (it is resolved only on the op path), so before this
         knob an operator had **no** way to grant a hook network at all — their
         global ``network: true`` was silently dropped. The direction of that
         drop was fail-safe (the hook got *less* than asked), which is why it was
@@ -271,7 +285,7 @@ class HookDef:
         silently (see ``reyn.hooks.sandbox_scope``).
     write_paths:
         OPERATOR-declared per-hook sandbox knob (#3005): filesystem paths this
-        hook's shell command may write (``~`` expanded by the backend, write
+        hook's exec argv may write (``~`` expanded by the backend, write
         implies read). ``None`` = omitted = the floor, which grants **no** write
         paths; an explicit list — including ``[]`` — is the operator's expressed
         will. Optional (``... | None``) rather than a bare sequence for the same
@@ -290,8 +304,8 @@ class HookDef:
     on: str
     name: str | None = field(default=None)
     template_push: PushBlock | None = field(default=None)
-    shell_exec: str | None = field(default=None)
-    shell_push: str | None = field(default=None)
+    exec: "tuple[str, ...] | None" = field(default=None)
+    exec_capture: "tuple[str, ...] | None" = field(default=None)
     pipeline_launch: PipelineLaunchBlock | None = field(default=None)
     matcher: "dict[str, str] | None" = field(default=None)
     subprocess: bool | None = field(default=None)

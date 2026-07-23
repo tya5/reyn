@@ -48,9 +48,9 @@ def _raw_push(
     return entry
 
 
-def _raw_shell(*, on: str = "session_end", command: str = "echo done") -> dict:
-    """Build a raw shell-hook dict (valid by default)."""
-    return {"on": on, "shell_exec": command}
+def _raw_shell(*, on: str = "session_end", argv: "list[str] | None" = None) -> dict:
+    """Build a raw exec-hook dict (valid by default; argv-list-only, #3226 P4)."""
+    return {"on": on, "exec": list(argv) if argv is not None else ["echo", "done"]}
 
 
 # ===========================================================================
@@ -71,7 +71,7 @@ def test_hookdef_push_shape() -> None:
     # field the point's builtin schema actually carries (this HookDef is built
     # directly, not via load_hooks, but keep it schema-valid for consistency).
     hd = HookDef(
-        on="turn_end", template_push=push, shell_exec=None, matcher={"agent_name": "my-agent"}
+        on="turn_end", template_push=push, exec=None, matcher={"agent_name": "my-agent"}
     )
 
     assert hd.on == "turn_end"
@@ -81,21 +81,22 @@ def test_hookdef_push_shape() -> None:
     assert hd.template_push.push_when == "{{ ctx.condition }}"
     assert hd.template_push.session == "session-abc"
     assert hd.matcher == {"agent_name": "my-agent"}
-    assert hd.shell_exec is None
+    assert hd.exec is None
 
 
 def test_hookdef_shell_shape() -> None:
-    """Tier 1: ``HookDef`` with a shell command carries the expected fields."""
-    hd = HookDef(on="session_end", shell_exec="scripts/cleanup.sh", template_push=None)
+    """Tier 1: ``HookDef`` with an exec argv carries the expected fields (#3226 P4:
+    argv-list-only, renamed from ``shell_exec``)."""
+    hd = HookDef(on="session_end", exec=("scripts/cleanup.sh",), template_push=None)
 
     assert hd.on == "session_end"
-    assert hd.shell_exec == "scripts/cleanup.sh"
+    assert hd.exec == ("scripts/cleanup.sh",)
     assert hd.template_push is None
 
 
 def test_hookdef_is_frozen() -> None:
     """Tier 1: ``HookDef`` and ``PushBlock`` are immutable (frozen dataclasses)."""
-    hd = HookDef(on="turn_start", shell_exec="echo hi")
+    hd = HookDef(on="turn_start", exec=("echo", "hi"))
     with pytest.raises(Exception):  # FrozenInstanceError
         hd.on = "turn_end"  # type: ignore[misc]
 
@@ -161,12 +162,13 @@ def test_load_hooks_push_all_fields_accepted() -> None:
 
 
 def test_load_hooks_shell_valid() -> None:
-    """Tier 1: a shell hook is accepted and stores the command raw."""
-    raw = [{"on": "session_end", "shell_exec": "scripts/cleanup.sh --force"}]
+    """Tier 1: an exec hook is accepted and stores the argv as a tuple (#3226 P4:
+    argv-list-only — a clean break from the pre-Phase-4 shell-command string)."""
+    raw = [{"on": "session_end", "exec": ["scripts/cleanup.sh", "--force"]}]
     registry = load_hooks(raw)
     hooks = registry.hooks_for("session_end")
     (hd,) = hooks  # exactly one — unpack enforces count
-    assert hd.shell_exec == "scripts/cleanup.sh --force"
+    assert hd.exec == ("scripts/cleanup.sh", "--force")
     assert hd.template_push is None
 
 
@@ -199,31 +201,31 @@ def test_load_hooks_empty_list_returns_empty_registry() -> None:
 def test_load_hooks_bad_hook_point_rejected() -> None:
     """Tier 1: an unrecognised ``on:`` value raises ``HookConfigError``."""
     with pytest.raises(HookConfigError, match="not a recognised hook-point"):
-        load_hooks([{"on": "phase_start", "shell_exec": "echo hi"}])
+        load_hooks([{"on": "phase_start", "exec": ["echo", "hi"]}])
 
 
 def test_load_hooks_missing_on_field_rejected() -> None:
     """Tier 1: a hook entry missing ``on`` raises ``HookConfigError``."""
     with pytest.raises(HookConfigError, match="on is required"):
-        load_hooks([{"shell_exec": "echo hi"}])
+        load_hooks([{"exec": ["echo", "hi"]}])
 
 
 def test_load_hooks_both_push_and_shell_rejected() -> None:
-    """Tier 1: specifying more than one of template_push / shell_exec / shell_push raises ``HookConfigError``."""
+    """Tier 1: specifying more than one of template_push / exec / exec_capture raises ``HookConfigError``."""
     with pytest.raises(HookConfigError, match="mutually exclusive"):
         load_hooks(
             [
                 {
                     "on": "turn_end",
                     "template_push": {"message": "hi"},
-                    "shell_exec": "echo hi",
+                    "exec": ["echo", "hi"],
                 }
             ]
         )
 
 
 def test_load_hooks_neither_push_nor_shell_rejected() -> None:
-    """Tier 1: an entry with none of template_push / shell_exec / shell_push raises ``HookConfigError``."""
+    """Tier 1: an entry with none of template_push / exec / exec_capture raises ``HookConfigError``."""
     with pytest.raises(HookConfigError, match="exactly one of"):
         load_hooks([{"on": "turn_end"}])
 
@@ -241,9 +243,11 @@ def test_load_hooks_push_empty_message_rejected() -> None:
 
 
 def test_load_hooks_shell_empty_command_rejected() -> None:
-    """Tier 1: a shell hook with empty command raises ``HookConfigError``."""
-    with pytest.raises(HookConfigError, match="must not be empty"):
-        load_hooks([{"on": "session_end", "shell_exec": ""}])
+    """Tier 1: an exec hook with an empty argv list raises ``HookConfigError``
+    (#3226 P4: argv-list-only — an empty list, not an empty string, is now
+    the empty-command shape)."""
+    with pytest.raises(HookConfigError, match="must not be an empty list"):
+        load_hooks([{"on": "session_end", "exec": []}])
 
 
 def test_load_hooks_push_wake_wrong_type_rejected() -> None:
@@ -273,7 +277,7 @@ def test_load_hooks_error_message_includes_entry_index() -> None:
         load_hooks(
             [
                 {"on": "turn_end", "template_push": {"message": "ok"}},
-                {"on": "bad_point", "shell_exec": "echo"},
+                {"on": "bad_point", "exec": ["echo"]},
             ]
         )
         raise AssertionError("should have raised")
@@ -290,30 +294,30 @@ def test_registry_hooks_for_preserves_registration_order() -> None:
     """Tier 1: ``hooks_for`` returns hooks in registration (list) order."""
     raw = [
         {"on": "turn_end", "template_push": {"message": "first"}},
-        {"on": "session_end", "shell_exec": "echo a"},
+        {"on": "session_end", "exec": ["echo", "a"]},
         {"on": "turn_end", "template_push": {"message": "second"}},
-        {"on": "turn_end", "shell_exec": "echo b"},
+        {"on": "turn_end", "exec": ["echo", "b"]},
     ]
     registry = load_hooks(raw)
     hooks = registry.hooks_for("turn_end")
     # Exactly three hooks at turn_end — use unpack-enforcement so extra/missing fails
     first, second, third = hooks
-    # Order: first push → second push → shell
+    # Order: first push → second push → exec
     assert first.template_push is not None and first.template_push.message == "first"
     assert second.template_push is not None and second.template_push.message == "second"
-    assert third.shell_exec == "echo b"
+    assert third.exec == ("echo", "b")
 
 
 def test_registry_hooks_for_unknown_point_returns_empty() -> None:
     """Tier 1: ``hooks_for`` with an unknown point returns an empty list (no error)."""
-    raw = [{"on": "turn_end", "shell_exec": "echo hi"}]
+    raw = [{"on": "turn_end", "exec": ["echo", "hi"]}]
     registry = load_hooks(raw)
     assert registry.hooks_for("agent_start") == []
 
 
 def test_registry_hooks_for_no_match_returns_empty() -> None:
     """Tier 1: ``hooks_for`` returns an empty list when no hooks match the point."""
-    raw = [{"on": "turn_end", "shell_exec": "echo hi"}]
+    raw = [{"on": "turn_end", "exec": ["echo", "hi"]}]
     registry = load_hooks(raw)
     assert registry.hooks_for("session_start") == []
 
@@ -342,7 +346,7 @@ hooks:
       chain_id: turn-done-filter
 
   - on: session_start
-    shell_exec: "scripts/on-session-start.sh"
+    exec: ["scripts/on-session-start.sh"]
     matcher:
       agent_name: session-filter
 """.lstrip()
@@ -368,11 +372,11 @@ hooks:
     # non-default matcher (default is None) — schema-valid field for turn_end
     assert h1.matcher == {"chain_id": "turn-done-filter"}
 
-    # ── Hook 2: shell hook at session_start ───────────────────────────────
+    # ── Hook 2: exec hook at session_start ───────────────────────────────
     session_start_hooks = registry.hooks_for("session_start")
     (h2,) = session_start_hooks  # exactly one — unpack enforces count
     assert h2.on == "session_start"
-    assert h2.shell_exec == "scripts/on-session-start.sh"
+    assert h2.exec == ("scripts/on-session-start.sh",)
     assert h2.template_push is None
     assert h2.matcher == {"agent_name": "session-filter"}
 

@@ -4,9 +4,16 @@ Entry point: ``load_hooks(raw)`` — accepts the raw value of the ``hooks:``
 key from a reyn.yaml dict and returns a ``HookRegistry``.
 
 Validation is *structural only* (field presence, types, hook-point membership,
-the template_push / shell_exec / shell_push / pipeline_launch mutual-exclusion
+the template_push / exec / exec_capture / pipeline_launch mutual-exclusion
 — exactly one, #2608 H3 adds ``pipeline_launch``). Template *semantics* are
 not validated here — rendering is a later slice.
+
+#3226 Phase 4: ``exec`` / ``exec_capture`` (renamed from ``shell_exec`` /
+``shell_push`` — naming honesty, the runner never shell-interpreted a
+string) now take an **argv list** (``list[str]``, non-empty, every item a
+non-empty string) rather than a shell-command string — a clean break, not a
+compat alias; an operator's pre-Phase-4 ``shell_exec: "cmd arg1 arg2"``
+becomes ``exec: ["cmd", "arg1", "arg2"]``.
 
 Validation errors raise ``HookConfigError`` with a decision-enabling message
 that names the entry index and the failing field so the operator can fix the
@@ -253,22 +260,23 @@ def _parse_entry(
             f"{sorted(composed_schemas) or '(none configured)'}."
         )
 
-    # ── scheme: exactly one of template_push / shell_exec / shell_push /
-    # pipeline_launch (#2069, #2608 H3) ─────────────────────────────────────
+    # ── scheme: exactly one of template_push / exec / exec_capture /
+    # pipeline_launch (#2069, #2608 H3; #3226 Phase 4 renamed shell_exec/
+    # shell_push → exec/exec_capture) ───────────────────────────────────────
     present = [
-        k for k in ("template_push", "shell_exec", "shell_push", "pipeline_launch")
+        k for k in ("template_push", "exec", "exec_capture", "pipeline_launch")
         if k in raw
     ]
     if len(present) > 1:
         raise HookConfigError(
-            f"hooks[{entry_index}]: template_push / shell_exec / shell_push / "
+            f"hooks[{entry_index}]: template_push / exec / exec_capture / "
             f"pipeline_launch are mutually exclusive; specify exactly one "
             f"(got {present})."
         )
     if not present:
         raise HookConfigError(
-            f"hooks[{entry_index}]: exactly one of template_push / shell_exec / "
-            f"shell_push / pipeline_launch is required."
+            f"hooks[{entry_index}]: exactly one of template_push / exec / "
+            f"exec_capture / pipeline_launch is required."
         )
 
     # ── template_push block ──────────────────────────────────────────────────
@@ -276,20 +284,30 @@ def _parse_entry(
     if "template_push" in raw:
         template_push = _parse_push_block(raw["template_push"], entry_index)
 
-    # ── shell_exec / shell_push (each a non-empty command string) ─────────────
-    def _shell_cmd(key: str) -> str:
-        cmd = raw[key]
-        if not isinstance(cmd, str):
+    # ── exec / exec_capture (#3226 Phase 4: argv-list-only — a clean break
+    # from the pre-Phase-4 shell-command STRING; the runner already ran argv
+    # via shlex.split/shell=False, so this closes the string/argv shape gap
+    # rather than changing execution semantics) ────────────────────────────
+    def _argv(key: str) -> "tuple[str, ...]":
+        value = raw[key]
+        if not isinstance(value, list):
             raise HookConfigError(
-                f"hooks[{entry_index}].{key} must be a string, "
-                f"got {type(cmd).__name__!r}."
+                f"hooks[{entry_index}].{key} must be a list of argv strings "
+                f"(e.g. [\"scripts/cleanup.sh\", \"--force\"]), "
+                f"got {type(value).__name__!r}."
             )
-        if not cmd.strip():
-            raise HookConfigError(f"hooks[{entry_index}].{key} must not be empty.")
-        return cmd
+        if not value:
+            raise HookConfigError(f"hooks[{entry_index}].{key} must not be an empty list.")
+        for item_index, item in enumerate(value):
+            if not isinstance(item, str) or not item.strip():
+                raise HookConfigError(
+                    f"hooks[{entry_index}].{key}[{item_index}] must be a "
+                    f"non-empty string, got {item!r}."
+                )
+        return tuple(value)
 
-    shell_exec: str | None = _shell_cmd("shell_exec") if "shell_exec" in raw else None
-    shell_push: str | None = _shell_cmd("shell_push") if "shell_push" in raw else None
+    exec_argv: "tuple[str, ...] | None" = _argv("exec") if "exec" in raw else None
+    exec_capture_argv: "tuple[str, ...] | None" = _argv("exec_capture") if "exec_capture" in raw else None
 
     # ── per-hook sandbox knobs: subprocess (#2827) / network + write_paths ────
     # (#3005). The three axes an operator owns per-site — the same triad a stdio
@@ -303,18 +321,18 @@ def _parse_entry(
     # as an applied restriction that was never applied. Key PRESENCE (not the
     # value) expresses the operator's will, so `subprocess: false` on a
     # template_push hook is rejected too: it would restrict nothing.
-    def _shell_only(key: str) -> None:
-        if shell_exec is None and shell_push is None:
+    def _exec_only(key: str) -> None:
+        if exec_argv is None and exec_capture_argv is None:
             raise HookConfigError(
-                f"hooks[{entry_index}].{key} is only supported on a "
-                f"shell_exec / shell_push hook (it scopes the sandboxed shell "
-                f"command); this hook declares {present[0]!r}."
+                f"hooks[{entry_index}].{key} is only supported on an "
+                f"exec / exec_capture hook (it scopes the sandboxed exec "
+                f"argv); this hook declares {present[0]!r}."
             )
 
     def _sandbox_bool(key: str) -> bool | None:
         if key not in raw:
             return None
-        _shell_only(key)
+        _exec_only(key)
         value = raw[key]
         if not isinstance(value, bool):
             raise HookConfigError(
@@ -331,7 +349,7 @@ def _parse_entry(
     # stored as a tuple because HookDef is frozen.
     write_paths_raw: "tuple[str, ...] | None" = None
     if "write_paths" in raw:
-        _shell_only("write_paths")
+        _exec_only("write_paths")
         value = raw["write_paths"]
         if not isinstance(value, list):
             raise HookConfigError(
@@ -389,8 +407,8 @@ def _parse_entry(
         on=on_key,
         name=name,
         template_push=template_push,
-        shell_exec=shell_exec,
-        shell_push=shell_push,
+        exec=exec_argv,
+        exec_capture=exec_capture_argv,
         pipeline_launch=pipeline_launch,
         matcher=matcher,
         # #2827/#3005: None when omitted (keep the floor) vs an explicit value

@@ -10,13 +10,21 @@ pre-#2095 stdin / fail-closed path — so plain ``mcp-serve`` / headless (no
 listener) and ``reyn run`` on a TTY (no listener) all preserve the old behavior.
 
 No mocks: a real ``_RecordingBus`` implements the ``request(iv)`` contract; a
-real ``NoopBackend`` executes the command; the allowlist is a real file. Whether
-the command actually RAN is observed via a marker file it writes (shell_exec
+real ``NoopBackend`` executes the argv; the allowlist is a real file. Whether
+the command actually RAN is observed via a marker file it writes (exec
 returns ``None`` either way, so the return value can't distinguish
 approved-vs-skipped).
+
+#3226 Phase 4: ``run_shell_hook`` now takes an argv list (not a shell-command
+string); it derives its own ``shlex.join``-ed display/allowlist-key string
+internally. Tests that assert against that string (the consent-prompt
+``detail``, the allowlist lookup key) build the SAME joined form via
+``shlex.join(argv)`` so the assertion tracks the runner's own derivation
+rather than duplicating a hand-written command string.
 """
 from __future__ import annotations
 
+import shlex
 import sys
 from pathlib import Path
 
@@ -53,14 +61,14 @@ def _policy() -> SandboxPolicy:
     return SandboxPolicy(network=False, allow_subprocess=False, timeout_seconds=10)
 
 
-def _marker_command(marker: Path) -> str:
+def _marker_argv(marker: Path) -> list[str]:
     script = f"open({str(marker)!r}, 'w').write('ran')"
-    return f'{_PY} -c "{script}"'
+    return [_PY, "-c", script]
 
 
-async def _run(command: str, allowlist: Path, **kw) -> None:
+async def _run(argv: list[str], allowlist: Path, **kw) -> None:
     await run_shell_hook(
-        command,
+        argv,
         event_context={"event": "turn_end"},
         timeout_seconds=10,
         sandbox_backend=NoopBackend(),
@@ -84,10 +92,11 @@ async def test_consent_bus_always_records_and_runs(
     allowlist = tmp_path / "allowlist.json"
     allowlist.write_text("[]", encoding="utf-8")
     marker = tmp_path / "ran.txt"
-    command = _marker_command(marker)
+    argv = _marker_argv(marker)
+    command = shlex.join(argv)
     bus = _RecordingBus(ALWAYS)
 
-    await _run(command, allowlist, consent_bus=bus)
+    await _run(argv, allowlist, consent_bus=bus)
 
     assert marker.exists(), "ALWAYS should run the hook"
     assert bus.seen, "the consent prompt must route through the bus"
@@ -106,14 +115,15 @@ async def test_consent_prompt_names_the_hook(
     allowlist = tmp_path / "allowlist.json"
     allowlist.write_text("[]", encoding="utf-8")
     marker = tmp_path / "ran.txt"
-    command = _marker_command(marker)
+    argv = _marker_argv(marker)
+    command = shlex.join(argv)
 
     named = _RecordingBus(NO)
-    await _run(command, allowlist, consent_bus=named, hook_name="nightly-sync")
+    await _run(argv, allowlist, consent_bus=named, hook_name="nightly-sync")
     assert "nightly-sync" in named.seen[0].prompt
 
     anon = _RecordingBus(NO)
-    await _run(command, allowlist, consent_bus=anon, hook_name=None)
+    await _run(argv, allowlist, consent_bus=anon, hook_name=None)
     assert "nightly-sync" not in anon.seen[0].prompt
     assert "shell hook" in anon.seen[0].prompt.lower()
 
@@ -127,10 +137,11 @@ async def test_consent_bus_yes_runs_without_persisting(
     allowlist = tmp_path / "allowlist.json"
     allowlist.write_text("[]", encoding="utf-8")
     marker = tmp_path / "ran.txt"
-    command = _marker_command(marker)
+    argv = _marker_argv(marker)
+    command = shlex.join(argv)
     bus = _RecordingBus(YES)
 
-    await _run(command, allowlist, consent_bus=bus)
+    await _run(argv, allowlist, consent_bus=bus)
 
     assert marker.exists(), "YES should run the hook"
     assert not _is_approved(command, _load_allowlist(allowlist)), "YES must not persist"
@@ -145,10 +156,11 @@ async def test_consent_bus_no_denies_and_skips(
     allowlist = tmp_path / "allowlist.json"
     allowlist.write_text("[]", encoding="utf-8")
     marker = tmp_path / "ran.txt"
-    command = _marker_command(marker)
+    argv = _marker_argv(marker)
+    command = shlex.join(argv)
     bus = _RecordingBus(NO)
 
-    await _run(command, allowlist, consent_bus=bus)
+    await _run(argv, allowlist, consent_bus=bus)
 
     assert bus.seen and bus.seen[0].kind == "permission.shell_hook", (
         "NO still routes through the bus"
@@ -166,10 +178,11 @@ async def test_consent_bus_empty_answer_denies(
     allowlist = tmp_path / "allowlist.json"
     allowlist.write_text("[]", encoding="utf-8")
     marker = tmp_path / "ran.txt"
-    command = _marker_command(marker)
+    argv = _marker_argv(marker)
+    command = shlex.join(argv)
     bus = _RecordingBus(None)  # empty answer
 
-    await _run(command, allowlist, consent_bus=bus)
+    await _run(argv, allowlist, consent_bus=bus)
 
     assert not marker.exists(), "an unanswered/empty consent must skip the hook"
 
@@ -185,9 +198,10 @@ async def test_no_bus_nontty_fails_closed(
     allowlist = tmp_path / "allowlist.json"
     allowlist.write_text("[]", encoding="utf-8")
     marker = tmp_path / "ran.txt"
-    command = _marker_command(marker)
+    argv = _marker_argv(marker)
+    command = shlex.join(argv)
 
-    await _run(command, allowlist, consent_bus=None)
+    await _run(argv, allowlist, consent_bus=None)
 
     assert not marker.exists(), "no bus + non-TTY → fail-closed"
 
@@ -202,10 +216,11 @@ async def test_accept_env_short_circuits_before_bus(
     allowlist = tmp_path / "allowlist.json"
     allowlist.write_text("[]", encoding="utf-8")
     marker = tmp_path / "ran.txt"
-    command = _marker_command(marker)
+    argv = _marker_argv(marker)
+    command = shlex.join(argv)
     bus = _RecordingBus(NO)  # would deny IF consulted
 
-    await _run(command, allowlist, consent_bus=bus)
+    await _run(argv, allowlist, consent_bus=bus)
 
     assert bus.seen == [], "REYN_ACCEPT_HOOKS=1 short-circuits before the bus"
     assert marker.exists(), "accept-env should run the hook"
@@ -231,7 +246,7 @@ def _shell_exec_dispatcher(*, gate, run_shell, bus, hook_name="e2e-probe") -> Ho
     async def _noop(*_a, **_k):
         return None
 
-    reg = HookRegistry([HookDef(on="turn_end", name=hook_name, shell_exec="echo hi")])
+    reg = HookRegistry([HookDef(on="turn_end", name=hook_name, exec=("echo", "hi"))])
     return HookDispatcher(
         reg,
         put_inbox=_noop,

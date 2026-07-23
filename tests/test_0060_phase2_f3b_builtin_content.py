@@ -152,7 +152,7 @@ def test_cheat_sheet_hook_example_corrupted_raises_hookconfigerror() -> None:
     proving the positive test is exercising real structural validation."""
     from reyn.hooks.schema import HookConfigError
 
-    bad_raw = [{"on": "llm:main:something", "shell_exec": "echo hi"}]
+    bad_raw = [{"on": "llm:main:something", "exec": ["echo", "hi"]}]
     with pytest.raises(HookConfigError):
         load_hooks(bad_raw)
 

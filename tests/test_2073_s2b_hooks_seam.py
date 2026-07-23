@@ -165,7 +165,7 @@ async def test_boot_resilience_malformed_runtime_degrades_to_startup(tmp_path: P
     can't brick its own boot by writing a bad runtime layer."""
     monkeypatch.chdir(tmp_path)
     (tmp_path / ".reyn" / "config").mkdir(parents=True)
-    # malformed: a hook with no scheme (template_push/shell_exec/shell_push) → load_hooks raises
+    # malformed: a hook with no scheme (template_push/exec/exec_capture) → load_hooks raises
     (tmp_path / ".reyn" / "config" / "hooks.yaml").write_text(
         "hooks:\n  - on: turn_end\n", encoding="utf-8",
     )
