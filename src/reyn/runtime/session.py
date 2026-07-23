@@ -55,7 +55,7 @@ from reyn.runtime.chat_message import (  # #312 C1: extracted VO + helpers
     _now_iso,
 )
 from reyn.runtime.error_format import classify_router_error
-from reyn.runtime.errors import RouterCapExceeded, StructuredOutputError
+from reyn.runtime.errors import AgentStepError, RouterCapExceeded, StructuredOutputError
 from reyn.runtime.limits.limit_handler import (
     LimitDecision,
     handle_limit_exceeded,
@@ -5500,6 +5500,29 @@ class Session:
                 )
             except Exception:  # noqa: BLE001 — instrumentation must never break the path
                 pass
+            # #2732: this except is a CATCH-ALL (any LLM-call or router-loop
+            # exception, not only cred errors) — the ORIGINAL swallow-to-empty-
+            # reply bug. Interactive chat (self._ephemeral is False) keeps the
+            # pre-existing render-not-raise behavior below: the classified
+            # summary reaches the TUI/renderer as an OutboxMessage, which is
+            # correct there. But an agent-step spawn's leaf session IS ALWAYS
+            # ephemeral (spawn_ephemeral_session hardcodes mode="ephemeral"),
+            # and its ``kind="agent"``-only join in
+            # ``session_api.run_agent_step`` silently drops this ``kind="error"``
+            # outbox message, returning "" with no exception — the pipeline
+            # executor's ``except AgentStepError`` (executor.py) never fires and
+            # the step looks like it succeeded with an empty answer. Gate the
+            # re-raise on ``self._ephemeral`` (NOT unconditional — an
+            # unconditional raise here would break the interactive chat loop,
+            # which relies on this method returning normally after queuing the
+            # error reply) so only the agent-step-spawn leg gets a typed
+            # failure the caller can observe. Re-raise the BASE
+            # ``AgentStepError`` (not an LLM-specific subclass) because this
+            # catch-all also covers non-LLM exceptions; `from exc` preserves
+            # the original exception via chaining (already retained above by
+            # the audit event + traceback log for both branches).
+            if self._ephemeral:
+                raise AgentStepError(classify_router_error(exc)) from exc
             await self._put_outbox(OutboxMessage(
                 kind="error", text=classify_router_error(exc),
                 meta={"chain_id": chain_id},

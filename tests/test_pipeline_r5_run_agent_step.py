@@ -38,9 +38,11 @@ import pytest
 
 from reyn.core.events.state_log import StateLog
 from reyn.core.pipeline.schema import SchemaRegistry
+from reyn.llm.credentials import MissingCredentialsError
 from reyn.llm.llm import LLMToolCallResult
 from reyn.llm.pricing import TokenUsage
 from reyn.runtime.errors import AgentStepError
+from reyn.runtime.message_bus import MessageBus
 from reyn.runtime.registry import AgentRegistry
 from reyn.runtime.session import Session
 from reyn.runtime.session_api import (
@@ -49,6 +51,7 @@ from reyn.runtime.session_api import (
     spawn_ephemeral_session,
 )
 from reyn.runtime.session_params import PresentationWiring
+from reyn.runtime.transport import SystemRef
 from tests._support.agent_session import make_session
 
 # ── real-callable LLM stub (Tier 2c: LLM is incidental) ─────────────────────
@@ -70,6 +73,24 @@ class _ScriptedAgentReply:
             content=self.content, tool_calls=[], finish_reason="stop",
             usage=TokenUsage(),
         )
+
+
+class _RaisingAgentReply:
+    """#2732: a real ``_llm_caller``-shaped callable (same typed signature as
+    ``_ScriptedAgentReply`` — a signature drift raises ``TypeError`` here
+    exactly as in production) that raises instead of returning, standing in
+    for the ``call_llm`` chokepoint failing (e.g. ``MissingCredentialsError``
+    or any other router-loop exception) — the class of failure
+    ``session.py``'s catch-all ``except Exception`` at the bottom of
+    ``_handle_user_message`` swallows."""
+
+    def __init__(self, exc: Exception) -> None:
+        self.exc = exc
+        self.calls = 0
+
+    async def __call__(self, **kwargs: Any) -> LLMToolCallResult:
+        self.calls += 1
+        raise self.exc
 
 
 def _registry(tmp_path: Path, scripted: "_ScriptedAgentReply | None") -> AgentRegistry:
@@ -278,3 +299,88 @@ async def test_run_agent_step_ephemeral_session_vanishes(tmp_path: Path) -> None
             await vanish_task
 
     assert spawned_sid not in reg.session_ids("worker")
+
+
+# ── #2732: LLM-call exception surfacing (ephemeral raises / interactive renders) ──
+
+
+@pytest.mark.asyncio
+async def test_run_agent_step_llm_exception_raises_agent_step_error(tmp_path: Path) -> None:
+    """Tier 2c: an agent-step spawn's leaf session is ALWAYS ephemeral
+    (``spawn_ephemeral_session`` hardcodes ``mode="ephemeral"``). When its
+    ``_llm_caller`` raises, ``session.py``'s catch-all ``except Exception``
+    in ``_handle_user_message`` must re-raise a typed ``AgentStepError``
+    (chained via ``from exc``) instead of returning normally — the prior
+    (buggy) behavior let the turn finish with an outbox ``kind="error"``
+    message that ``run_agent_step``'s ``kind == "agent"``-only join
+    silently drops, yielding an empty ``""`` reply with no exception at
+    all. This is the ephemeral leg of the dual, strip-falsifiable pair
+    with ``test_run_agent_step_interactive_llm_exception_renders_not_raises``
+    below — together they guard the ``if self._ephemeral:`` conditional
+    gate in ``session.py``."""
+    original = MissingCredentialsError(
+        model="gpt-4", provider="openai", env_var="OPENAI_API_KEY",
+    )
+    scripted = _RaisingAgentReply(original)
+    reg = _registry(tmp_path, scripted)
+
+    with pytest.raises(AgentStepError) as excinfo:
+        await run_agent_step(reg, identity="worker", prompt="do the thing")
+
+    assert excinfo.value.__cause__ is original
+    assert scripted.calls == 1
+
+
+@pytest.mark.asyncio
+async def test_run_agent_step_interactive_llm_exception_renders_not_raises(tmp_path: Path) -> None:
+    """Tier 2c: guards refinement 1 (the ``self._ephemeral`` conditional
+    gate) — the SAME raising ``_llm_caller``, driven through a NON-ephemeral
+    (interactive-chat-shaped) session's normal turn via
+    ``MessageBus.request(kind="user")``, must NOT raise. Interactive chat
+    relies on ``_handle_user_message`` returning normally after queuing an
+    ``OutboxMessage(kind="error", ...)`` so the TUI/renderer can surface it
+    (render-not-raise) — an unconditional re-raise would break that loop.
+
+    Strip-falsifiable: if the ``if self._ephemeral:`` gate in ``session.py``
+    is deleted (made unconditional), THIS session (``_ephemeral`` is False,
+    the default post-construction value — never set True outside
+    ``spawn_ephemeral_session``'s ``mode="ephemeral"`` path) would flip to
+    raising ``AgentStepError`` out of ``MessageBus.request`` here, turning
+    this test RED. Verified by running with the gate stripped (see PR
+    description) rather than asserted in-test (stripping the gate in a
+    fixture would defeat the point of testing production code)."""
+    from reyn.llm.model_resolver import ModelResolver
+
+    original = MissingCredentialsError(
+        model="gpt-4", provider="openai", env_var="OPENAI_API_KEY",
+    )
+    scripted = _RaisingAgentReply(original)
+    state_log = StateLog(tmp_path / ".reyn" / "wal.jsonl")
+    resolver = ModelResolver({"standard": "gemini/gemini-2.5-flash-lite"})
+    session = make_session(
+        agent_name="interactive-worker", state_log=state_log,
+        non_interactive=True, resolver=resolver,
+    )
+    session._loop_driver._loop_observer = (  # noqa: SLF001 — production seam, precedent above
+        lambda loop: setattr(loop, "_llm_caller", scripted)
+    )
+    # ``session`` is built directly via ``make_session`` (the plain
+    # interactive-chat construction path, never touching
+    # ``spawn_ephemeral_session``'s ``mode="ephemeral"``), so it is
+    # non-ephemeral BY CONSTRUCTION — no private-state peek needed to know
+    # this test is driving the gate's "else" branch.
+
+    bus = MessageBus()
+    replies = await bus.request(
+        session, kind="user",
+        payload={"text": "do the thing", "chain_id": "chain-2732"},
+        reply_to=SystemRef(), timeout=10.0,
+    )
+
+    assert scripted.calls == 1
+    # Tuple-unpack (not a size check): raises ValueError itself if the turn
+    # produced zero or more than one ``kind="error"`` reply — behavioral,
+    # not a format/size pin (mirrors the tuple-unpack precedent in
+    # ``test_run_agent_step_ephemeral_session_vanishes`` above).
+    (error_reply,) = [r for r in replies if r.kind == "error"]
+    assert error_reply.text
