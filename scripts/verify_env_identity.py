@@ -326,9 +326,77 @@ def check_console_scripts(root: Path) -> list[Finding]:
     return findings
 
 
+def check_in_process_tree(reyn_file: Path, root: Path) -> Finding | None:
+    """The in-process ``reyn`` — the one THIS interpreter already imported — must
+    resolve under ``<root>/src`` (#3233).
+
+    This is the in-process complement to `check_tree_identity` / `check_pinned_tree`
+    above, not a third entry in the same shape. Both of those measure a SPAWNED
+    subprocess's resolution while deliberately never importing `reyn` themselves —
+    `reyn`'s own resolution is the subject under test, so an importing checker
+    would assert with the very mechanism in question. This check asks a different
+    question: given that the CALLER has already imported `reyn` (a root
+    `conftest.py`'s `pytest_configure` necessarily has — that import IS the thing
+    every collected test file's own `import reyn` will read, since Python caches
+    modules by name in `sys.modules`), did it come from this checkout?
+
+    That is why this function is NOT registered in `CHECKS` / dispatched through
+    `verify()`: every `CHECKS` entry is `Callable[[Path], list[Finding]]` and stays
+    reyn-free so `main()` can run it standalone, out-of-process, with no `reyn` on
+    `sys.path` at all. This check's whole point is the opposite — it inspects an
+    `import reyn` that has ALREADY happened — so it takes the resolved
+    ``reyn.__file__`` as an argument from a caller that did the import, rather than
+    performing one itself.
+
+    A git worktree with no venv of its own resolves `import reyn` through whatever
+    checkout the ambient venv's editable ``.pth`` points at — a DIFFERENT checkout
+    than the one `pytest` was started from. `pytest`'s own `pythonpath = ["src"]`
+    (`pyproject.toml`) puts `<rootdir>/src` on `sys.path`, but an editable `.pth`
+    entry can still resolve first depending on `sys.path` ordering, and once
+    `reyn` is in `sys.modules` every subsequent `import reyn` in the process
+    — including every test file's — reads that same (possibly wrong) module
+    object. #3231: a coder's local `pytest` ran this way, against a DIFFERENT
+    worktree's stale code, and reported a false-green ("9150 passed") that hid a
+    real RED an architect's fresh-worktree run caught.
+    """
+    expected = (root / "src").resolve()
+    actual = Path(reyn_file).resolve()
+    try:
+        actual.relative_to(expected)
+        return None
+    except ValueError:
+        pass
+    return Finding(
+        check="in-process-tree",
+        detail=(
+            f"the in-process `reyn` this interpreter already imported resolves OUTSIDE "
+            f"the tree pytest was started from.\n"
+            f"    pytest rootdir:  {root}\n"
+            f"    expected under:  {expected}\n"
+            f"    reyn.__file__ resolves to: {actual}\n"
+            f"    Every test file's `import reyn` in THIS process reads this same "
+            f"(wrong) module — a whole suite can report green while measuring a "
+            f"different checkout's code (#3231)."
+        ),
+        remedy=(
+            f"run pytest from this worktree ({root}) rather than another checkout's "
+            f"venv/shell; or fix the editable install so its `.pth` points at "
+            f"{expected}; or set PYTHONPATH={expected} for this invocation so it "
+            f"wins over the stale `.pth` entry."
+        ),
+    )
+
+
 # The enumeration. A check is registered here or it does not run — `main` and the
 # `tests/conftest.py` fixtures both derive their work from this map rather than
 # from a hand-kept call list, so adding a check cannot leave a caller behind.
+#
+# `check_in_process_tree` above is deliberately NOT registered here — see its
+# docstring: every entry in this map is reyn-free and takes only `root`, so
+# `main()` can run standalone with no `reyn` on `sys.path`. The in-process check
+# takes an already-resolved `reyn.__file__` from a caller that necessarily
+# imported `reyn` itself (the root `conftest.py`'s `pytest_configure`), which
+# breaks that shape on purpose.
 CHECKS = {
     "tree-identity": check_tree_identity,
     "pinned-tree": check_pinned_tree,
