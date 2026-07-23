@@ -1,17 +1,22 @@
-"""Tier 2: #1953 slice 5a-2 — A2A disposition sweep (backend-derived webhook).
+"""Tier 2: #1953 slice 5a-2 — A2A disposition sweep (RunRegistry-derived webhook).
 
-The periodic sweep notifies the external requester of every aborted
-``origin=external`` Task via its registered webhook, exactly once, retrying
-failures, bounded by construction. Real Task backend + a real recording poster
-(no mocks). The webhook channel map is A2A-owned (P7 — never on the Task).
+The periodic sweep notifies the external requester of every cancelled run via
+its registered webhook, exactly once, retrying failures, bounded by
+construction. Real ``RunRegistry`` + a real recording poster (no mocks). The
+webhook channel map is A2A-owned (P7 — never on the internal Task model, and
+after #2839 Phase 1, never derived from it either).
 
-Falsification:
-- (a) an aborted external task with a registered webhook → fires once;
-- (b) an aborted self-origin task → never fires;
-- (c) a second sweep pass → no re-fire (notified-set);
-- (d) a failed POST → not notified → retried next sweep;
-- (e) the notified-set self-prunes hard-deleted task_ids (bounded);
-- (f) the registry persists the map + notified-set across a reload.
+#2839 Phase 1: re-based off ``RunRegistry`` instead of the internal Task
+backend — every ``RunEntry`` is structurally A2A-external (RunRegistry has no
+internal/self-origin concept), so the prior self-vs-external split test is
+retired along with the ``origin`` filter it pinned (there is nothing left to
+distinguish; every RunEntry would fire). The remaining falsifications:
+
+- (a) a cancelled run with a registered webhook → fires once;
+- (b) a second sweep pass → no re-fire (notified-set);
+- (c) a failed POST → not notified → retried next sweep;
+- (d) the notified-set self-prunes hard-deleted run_ids (bounded);
+- (e) the registry persists the map + notified-set across a reload.
 """
 from __future__ import annotations
 
@@ -23,8 +28,8 @@ from reyn.interfaces.web.a2a_webhook_registry import (
     A2AWebhookRegistry,
     sweep_dispositions,
 )
+from reyn.interfaces.web.run_registry import RunRegistry
 from reyn.runtime.a2a_routing import a2a_session_id
-from reyn.task import InMemoryTaskBackend, Task, TaskOrigin, TaskState
 
 
 class _RecordingPoster:
@@ -39,102 +44,103 @@ class _RecordingPoster:
         return SimpleNamespace(ok=self._ok)
 
 
-async def _aborted(backend, task_id, ctx, origin):
-    """Seed an aborted task assigned to the context's session."""
-    await backend.create(Task(task_id=task_id, name="n", assignee=a2a_session_id(ctx),
-                              requester="ext", origin=origin, status=TaskState.ABORTED))
+def _cancelled_run(run_registry: RunRegistry, run_id_suffix: str, ctx: str) -> str:
+    """Create a run assigned to the context's session and mark it cancelled.
+    Returns the allocated run_id."""
+    entry = run_registry.create(
+        agent_name=f"agent-{run_id_suffix}", chain_id=f"chain-{run_id_suffix}",
+        session_id=a2a_session_id(ctx),
+    )
+    run_registry.cancel(entry.run_id)
+    return entry.run_id
 
 
 @pytest.mark.asyncio
-async def test_sweep_fires_for_external_and_not_for_self():
-    """Tier 2: an aborted external task with a registered webhook fires (a);
-    an aborted self-origin task never fires (b)."""
-    backend = InMemoryTaskBackend()
-    await _aborted(backend, "ext-1", "ctx-a", TaskOrigin.EXTERNAL)
-    await _aborted(backend, "self-1", "ctx-b", TaskOrigin.SELF)
+async def test_sweep_fires_for_cancelled_run_with_webhook():
+    """Tier 2: (a): a cancelled run with a registered webhook fires exactly once."""
+    run_registry = RunRegistry()
+    run_id = _cancelled_run(run_registry, "1", "ctx-a")
     reg = A2AWebhookRegistry()
     reg.register_webhook("ctx-a", "https://client.example/hook")
-    reg.register_webhook("ctx-b", "https://client.example/hook")  # self still excluded
     poster = _RecordingPoster()
 
-    fired = await sweep_dispositions(backend, reg, post_fn=poster)
+    fired = await sweep_dispositions(run_registry, reg, post_fn=poster)
 
-    # RED if origin filter drops (self would fire) or the external one is missed.
     assert fired == 1
-    assert [c[1]["task_id"] for c in poster.calls] == ["ext-1"]
+    assert [c[1]["task_id"] for c in poster.calls] == [run_id]
     assert poster.calls[0][0] == "https://client.example/hook"
     assert poster.calls[0][1]["contextId"] == "ctx-a"
-    assert reg.is_notified("ext-1") and not reg.is_notified("self-1")
+    assert reg.is_notified(run_id)
 
 
 @pytest.mark.asyncio
 async def test_sweep_does_not_refire_on_second_pass():
-    """Tier 2: (c): a notified task is not re-fired on the next sweep."""
-    backend = InMemoryTaskBackend()
-    await _aborted(backend, "ext-1", "ctx-a", TaskOrigin.EXTERNAL)
+    """Tier 2: (b): a notified run is not re-fired on the next sweep."""
+    run_registry = RunRegistry()
+    run_id = _cancelled_run(run_registry, "1", "ctx-a")
     reg = A2AWebhookRegistry()
     reg.register_webhook("ctx-a", "https://client.example/hook")
     poster = _RecordingPoster()
 
-    await sweep_dispositions(backend, reg, post_fn=poster)
-    await sweep_dispositions(backend, reg, post_fn=poster)
+    await sweep_dispositions(run_registry, reg, post_fn=poster)
+    await sweep_dispositions(run_registry, reg, post_fn=poster)
 
-    # RED if the notified-set is dropped: the task would re-fire (the list would
-    # carry "ext-1" twice).
-    assert [c[1]["task_id"] for c in poster.calls] == ["ext-1"]
+    # RED if the notified-set is dropped: the run would re-fire (the list would
+    # carry the run_id twice).
+    assert [c[1]["task_id"] for c in poster.calls] == [run_id]
 
 
 @pytest.mark.asyncio
 async def test_sweep_retries_failed_post():
-    """Tier 2: (d): a failed POST leaves the task un-notified → retried next sweep
+    """Tier 2: (c): a failed POST leaves the run un-notified → retried next sweep
     (§24 forward-progress with retry)."""
-    backend = InMemoryTaskBackend()
-    await _aborted(backend, "ext-1", "ctx-a", TaskOrigin.EXTERNAL)
+    run_registry = RunRegistry()
+    run_id = _cancelled_run(run_registry, "1", "ctx-a")
     reg = A2AWebhookRegistry()
     reg.register_webhook("ctx-a", "https://client.example/hook")
 
     failing = _RecordingPoster(ok=False)
-    await sweep_dispositions(backend, reg, post_fn=failing)
-    assert not reg.is_notified("ext-1")  # not marked on failure
+    await sweep_dispositions(run_registry, reg, post_fn=failing)
+    assert not reg.is_notified(run_id)  # not marked on failure
 
     ok_poster = _RecordingPoster(ok=True)
-    await sweep_dispositions(backend, reg, post_fn=ok_poster)
-    assert ok_poster.calls and reg.is_notified("ext-1")  # retried + succeeded
+    await sweep_dispositions(run_registry, reg, post_fn=ok_poster)
+    assert ok_poster.calls and reg.is_notified(run_id)  # retried + succeeded
 
 
 @pytest.mark.asyncio
 async def test_sweep_skips_context_without_registered_webhook():
-    """Tier 2: an external task whose context has no webhook (e.g. pre-5b) is
+    """Tier 2: a cancelled run whose context has no webhook (e.g. pre-5b) is
     skipped (no channel) — no crash, no notify."""
-    backend = InMemoryTaskBackend()
-    await _aborted(backend, "ext-1", "ctx-a", TaskOrigin.EXTERNAL)
+    run_registry = RunRegistry()
+    _cancelled_run(run_registry, "1", "ctx-a")
     reg = A2AWebhookRegistry()  # no webhook registered
     poster = _RecordingPoster()
 
-    fired = await sweep_dispositions(backend, reg, post_fn=poster)
+    fired = await sweep_dispositions(run_registry, reg, post_fn=poster)
     assert fired == 0 and poster.calls == []
 
 
 @pytest.mark.asyncio
 async def test_reconcile_prunes_hard_deleted_notified():
-    """Tier 2: (e): the notified-set self-prunes a task_id no longer present
-    (hard-deleted) — bounded by construction."""
-    backend = InMemoryTaskBackend()
-    await _aborted(backend, "ext-1", "ctx-a", TaskOrigin.EXTERNAL)
+    """Tier 2: (d): the notified-set self-prunes a run_id no longer present
+    (hard-deleted / pruned by retention) — bounded by construction."""
+    run_registry = RunRegistry()
+    run_id = _cancelled_run(run_registry, "1", "ctx-a")
     reg = A2AWebhookRegistry()
     reg.register_webhook("ctx-a", "https://client.example/hook")
-    reg.mark_notified("gone-task")  # a task no longer in the backend
-    reg.mark_notified("ext-1")
+    reg.mark_notified("gone-run")  # a run no longer in the registry
+    reg.mark_notified(run_id)
 
-    await sweep_dispositions(backend, reg, post_fn=_RecordingPoster())
+    await sweep_dispositions(run_registry, reg, post_fn=_RecordingPoster())
 
     # RED if reconcile is dropped: the notified-set grows unbounded with stale ids.
-    assert not reg.is_notified("gone-task")
-    assert reg.is_notified("ext-1")  # still present → kept
+    assert not reg.is_notified("gone-run")
+    assert reg.is_notified(run_id)  # still present → kept
 
 
 def test_registry_persists_map_and_notified_across_reload(tmp_path):
-    """Tier 2: (f): the contextId→webhook map + notified-set survive a reload (so
+    """Tier 2: (e): the contextId→webhook map + notified-set survive a reload (so
     a server restart neither loses a pending webhook nor re-fires a delivered one)."""
     path = tmp_path / "state" / "a2a_webhooks.json"
     reg = A2AWebhookRegistry(persist_path=path)

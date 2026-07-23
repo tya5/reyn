@@ -86,45 +86,48 @@ class A2AWebhookRegistry:
         self._notified = set(data.get("notified") or [])
 
 
-async def sweep_dispositions(task_backend, registry: A2AWebhookRegistry, *, post_fn=None) -> int:
+async def sweep_dispositions(run_registry, registry: A2AWebhookRegistry, *, post_fn=None) -> int:
     """One disposition-sweep pass (#1953 slice 5a-2). Notify the external requester
-    of every archived ``origin=external`` Task not yet notified, via its webhook;
-    returns the count of webhooks fired.
+    of every cancelled run not yet notified, via its webhook; returns the count of
+    webhooks fired.
 
-    Backend-derived: the ``archived`` state is the single **cross-process** source
-    of truth that *every* abort path reifies (the agent op-handler, the A2A
-    ``cancel_task`` web endpoint, and the DOWN-cascade) — so this catches them all,
-    fires regardless of inbound A2A traffic (§24 forward-progress), and self-heals
-    across restarts (a missed webhook is caught on the next sweep; a failed POST
-    leaves the task un-notified → retried next sweep, bounded by §24 hard-delete).
+    #2839 Phase 1: re-based off ``RunRegistry`` instead of the internal Task
+    backend. Every ``RunEntry`` is structurally A2A-external (RunRegistry has
+    no internal/self-origin concept — it exists only to back A2A async runs),
+    so the prior ``origin == EXTERNAL`` filter is dropped rather than ported:
+    it would always be true. The single cancellation trigger left after the
+    decouple is the A2A ``cancel_task`` web endpoint itself (``run_registry.
+    cancel()``) — self-heals across restarts the same way (a missed webhook
+    is caught on the next sweep; a failed POST leaves the run un-notified →
+    retried next sweep).
     """
     from reyn.interfaces.web.notifications import post_webhook
     from reyn.runtime.a2a_routing import a2a_context_id
-    from reyn.task.model import TaskOrigin
 
     # ``post_fn`` is the (injectable) webhook poster — the real ``post_webhook`` in
     # production; tests inject a real recording callable (no mocks).
     post = post_fn if post_fn is not None else post_webhook
 
-    # #2187: the sweep is a LIFECYCLE signal (abort → A2A canceled notify), so it
-    # keys on the ABORTED state — not the orthogonal archived_at retention marker.
-    aborted = await task_backend.list(status="aborted")
-    external = [t for t in aborted if t.origin == TaskOrigin.EXTERNAL]
-    registry.reconcile_notified({t.task_id for t in external})
+    from reyn.interfaces.web.run_registry import RunStatus  # noqa: PLC0415
+
+    cancelled = run_registry.list(status=RunStatus.CANCELLED)
+    registry.reconcile_notified({e.run_id for e in cancelled})
 
     fired = 0
-    for t in external:
-        if registry.is_notified(t.task_id):
+    for entry in cancelled:
+        if registry.is_notified(entry.run_id):
             continue
-        context_id = a2a_context_id(t.assignee)
+        if entry.session_id is None:
+            continue  # no core session_id → no contextId to resolve a channel for
+        context_id = a2a_context_id(entry.session_id)
         url = registry.webhook_for(context_id)
         if url is None:
             continue  # no webhook channel registered for this context (e.g. pre-5b)
         result = await post(
             url,
-            {"task_id": t.task_id, "contextId": context_id, "disposition": "aborted"},
+            {"task_id": entry.run_id, "contextId": context_id, "disposition": "aborted"},
         )
         if getattr(result, "ok", False):
-            registry.mark_notified(t.task_id)
+            registry.mark_notified(entry.run_id)
             fired += 1
     return fired

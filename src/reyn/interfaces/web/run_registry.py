@@ -28,6 +28,20 @@ What does NOT persist (= volatile, restored as ``None`` / dropped):
   - asyncio.Task reference (= bound to the process that died)
   - pending iv state (= owned by Session; queried at request time
     rather than mirrored here)
+
+Phase 1 of #2839 (decouple A2A from the internal task system):
+
+``RunEntry.status`` moves from a free-form ``str`` to the typed
+:class:`RunStatus` enum — the NARROW subset A2A actually needs
+(``running`` / ``input-required`` / ``completed`` / ``failed`` /
+``cancelled``), matching the 5 values every producer in this module
+already wrote (verified by grep across ``src/`` before adding this
+enum — no 6th value exists in production). This is deliberately
+**not** the reyn Task-tree vocabulary (7-state ``TaskState``,
+``deps`` / ``assignee`` / ``requester_kind``) — a flat A2A run is not
+a task-tree, and re-importing that decomposition vocabulary here
+would re-import the complexity #2839 exists to delete. ``RunEntry``
+is a flat wrapper around ONE run; ``RunStatus`` stays flat too.
 """
 from __future__ import annotations
 
@@ -36,7 +50,8 @@ import json
 import logging
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+from enum import Enum
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -44,6 +59,30 @@ if TYPE_CHECKING:
     from reyn.runtime.channel_state import ChannelState
 
 logger = logging.getLogger(__name__)
+
+
+class RunStatus(str, Enum):
+    """The narrow, flat run-status vocabulary A2A needs (#2839 Phase 1).
+
+    Deliberately NOT the 7-state Task-tree ``TaskState`` (unassigned /
+    ready / running / blocked / done / failed / aborted) — this enum
+    only carries what an A2A async run's lifecycle actually produces:
+    the running default, the terminal outcomes, and the one
+    interactive state (``INPUT_REQUIRED`` — an ask_user escalation is
+    pending). ``str`` subclass so persisted JSON + wire comparisons
+    (``entry.status == "running"``) keep working without a shim.
+    """
+
+    RUNNING = "running"
+    INPUT_REQUIRED = "input-required"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+
+
+_TERMINAL_RUN_STATUSES: frozenset[RunStatus] = frozenset({
+    RunStatus.COMPLETED, RunStatus.FAILED, RunStatus.CANCELLED,
+})
 
 
 @dataclass
@@ -61,7 +100,7 @@ class RunEntry:
     run_id: str
     agent_name: str
     chain_id: str
-    status: str = "running"
+    status: RunStatus = RunStatus.RUNNING
     result: str | None = None
     error: str | None = None
     webhook_url: str | None = None
@@ -90,7 +129,7 @@ class RunEntry:
             "run_id": self.run_id,
             "agent_name": self.agent_name,
             "chain_id": self.chain_id,
-            "status": self.status,
+            "status": self.status.value,
             "result": self.result,
             "error": self.error,
             "created_at": self.created_at.isoformat(),
@@ -112,7 +151,7 @@ class RunEntry:
             "run_id": self.run_id,
             "agent_name": self.agent_name,
             "chain_id": self.chain_id,
-            "status": self.status,
+            "status": self.status.value,
             "result": self.result,
             "error": self.error,
             "webhook_url": self.webhook_url,
@@ -140,11 +179,20 @@ class RunEntry:
                     pass
             return datetime.now(timezone.utc)
 
+        def _parse_status(value: object) -> RunStatus:
+            try:
+                return RunStatus(str(value))
+            except ValueError:
+                # Unknown / pre-enum snapshot value — RUNNING is the safe
+                # non-terminal default (never silently claim a terminal
+                # state that wasn't actually recorded).
+                return RunStatus.RUNNING
+
         return cls(
             run_id=str(data.get("run_id", "")),
             agent_name=str(data.get("agent_name", "")),
             chain_id=str(data.get("chain_id", "")),
-            status=str(data.get("status", "running")),
+            status=_parse_status(data.get("status", "running")),
             result=data.get("result"),
             error=data.get("error"),
             webhook_url=data.get("webhook_url"),
@@ -273,39 +321,51 @@ class RunRegistry:
         agent_name: str | None = None,
         *,
         session_id: str | None = None,
+        status: "RunStatus | None" = None,
     ) -> list[RunEntry]:
-        """Return runs, optionally narrowed by ``agent_name`` and/or
-        ``session_id``.
+        """Return runs, optionally narrowed by ``agent_name`` / ``session_id``
+        / ``status``.
 
         ``session_id`` is the core-neutral routing-key (#1814,
         ``<transport>:<native_id>``) — filtering by it is how the A2A
         layer scopes ListTasks to one ``contextId`` (the A2A layer owns
         the ``contextId ↔ session_id`` map; core stays term-neutral).
+
+        ``status`` (#2839 Phase 1) lets a caller narrow to e.g. only
+        ``RunStatus.CANCELLED`` runs — the disposition sweep's use case
+        once it moves off the internal Task backend's ``list(status=...)``.
         """
         entries = self._runs.values()
         if agent_name is not None:
             entries = [e for e in entries if e.agent_name == agent_name]
         if session_id is not None:
             entries = [e for e in entries if e.session_id == session_id]
+        if status is not None:
+            entries = [e for e in entries if e.status == status]
         return list(entries)
 
     def update(
         self,
         run_id: str,
         *,
-        status: str | None = None,
+        status: "RunStatus | str | None" = None,
         result: str | None = None,
         error: str | None = None,
     ) -> RunEntry | None:
         """Update task-wrapper state. issue #292 (α): ``question`` and
         ``pending_intervention`` params removed — iv lifecycle is owned
         by Session.
+
+        ``status`` accepts either a :class:`RunStatus` member or its
+        wire string (#2839 Phase 1 kept callers passing plain strings
+        — e.g. ``status="running"`` — working without a mechanical
+        rename sweep; both construct the same typed value).
         """
         entry = self._runs.get(run_id)
         if entry is None:
             return None
         if status is not None:
-            entry.status = status
+            entry.status = RunStatus(status) if not isinstance(status, RunStatus) else status
         if result is not None:
             entry.result = result
         if error is not None:
@@ -327,7 +387,7 @@ class RunRegistry:
             return False
         if entry.task is not None and not entry.task.done():
             entry.task.cancel()
-        entry.status = "cancelled"
+        entry.status = RunStatus.CANCELLED
         entry.updated_at = datetime.now(timezone.utc)
         self._persist()
         return True
@@ -342,6 +402,33 @@ class RunRegistry:
     def remove(self, run_id: str) -> None:
         if self._runs.pop(run_id, None) is not None:
             self._persist()
+
+    def prune_terminal(
+        self, *, older_than: timedelta, now: datetime | None = None,
+    ) -> int:
+        """Remove terminal (completed / failed / cancelled) entries whose
+        ``updated_at`` is older than ``older_than``. Returns the count removed.
+
+        #2839 Phase 1 gap 4: pre-Phase-1, ``RunEntry`` had no retention path
+        at all — ``remove()`` had zero production callers, and the internal
+        Task backend's ``archived_at`` soft-delete purge (§24) incidentally
+        covered every A2A task because A2A dual-wrote into it. Decoupling A2A
+        off that backend removes the only thing that was bounding
+        ``run_registry.json``'s growth, so Phase 1 must supply its own bound
+        (a latent leak promoted to the only surviving path, not a new one).
+        Only terminal entries are eligible — a ``running`` / ``input-required``
+        run is never pruned regardless of age.
+        """
+        cutoff = (now or datetime.now(timezone.utc)) - older_than
+        to_remove = [
+            run_id for run_id, entry in self._runs.items()
+            if entry.status in _TERMINAL_RUN_STATUSES and entry.updated_at < cutoff
+        ]
+        for run_id in to_remove:
+            del self._runs[run_id]
+        if to_remove:
+            self._persist()
+        return len(to_remove)
 
     def webhook_channel_state(
         self, run_id: str,
@@ -372,4 +459,4 @@ class RunRegistry:
         return entry._webhook_channel_state
 
 
-__all__ = ["RunEntry", "RunRegistry"]
+__all__ = ["RunEntry", "RunRegistry", "RunStatus"]

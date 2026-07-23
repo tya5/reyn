@@ -243,11 +243,9 @@ def test_async_mode_message_send_returns_task_envelope(tmp_path, monkeypatch):
         get_a2a_webhook_registry,
         get_registry,
         get_run_registry,
-        get_task_backend,
     )
     from reyn.interfaces.web.run_registry import RunRegistry
     from reyn.interfaces.web.server import app
-    from reyn.task import InMemoryTaskBackend
     from tests._support.web_auth import local_operator_client
 
     registry = _build_registry_for_test(tmp_path)
@@ -255,10 +253,8 @@ def test_async_mode_message_send_returns_task_envelope(tmp_path, monkeypatch):
     # TestClient constructed without ``with ...`` doesn't fire the lifespan,
     # so override the dependency with a real instance for this test.
     run_registry = RunRegistry()
-    task_backend = InMemoryTaskBackend()
     app.dependency_overrides[get_registry] = lambda: registry
     app.dependency_overrides[get_run_registry] = lambda: run_registry
-    app.dependency_overrides[get_task_backend] = lambda: task_backend
     app.dependency_overrides[get_a2a_webhook_registry] = lambda: A2AWebhookRegistry()
     client = local_operator_client(app, raise_server_exceptions=False)
 
@@ -282,39 +278,42 @@ def test_async_mode_message_send_returns_task_envelope(tmp_path, monkeypatch):
         body = r.json()
         assert body.get("jsonrpc") == "2.0"
         result = body.get("result", {})
-        # #1953 slice 5b: async-mode returns the canonical Task envelope (the Task
-        # is the single A2A work-unit authority; id = task_id, status is nested).
+        # #2839 Phase 1: async-mode returns the RunEntry-backed A2A Task
+        # envelope (RunRegistry is now the single A2A work-unit authority;
+        # id = run_id, status is nested).
         assert result.get("kind") == "task", f"Expected kind=task, got: {result}"
-        task_id = result.get("id")
-        assert task_id, "Task envelope must include a task_id"
-        assert result["status"]["state"] == "working"  # in_progress → working
-        # The create path actually created the canonical Task in the backend
-        # (RED if 5b's Task creation is dropped — the async run would be a
-        # RunEntry-only tombstone invisible to GetTask).
-        created = asyncio.new_event_loop().run_until_complete(task_backend.get(task_id))
-        assert created is not None and created.origin.value == "external"
-        assert created.assignee.startswith("a2a:")  # the #1814 per-contextId session_id
+        run_id = result.get("id")
+        assert run_id, "Task envelope must include a run_id"
+        assert result["status"]["state"] == "working"  # running → working
+        # The create path actually created the RunEntry (RED if the create
+        # path dropped it — the run would be invisible to GetTask).
+        created = run_registry.get(run_id)
+        assert created is not None
+        assert created.session_id.startswith("a2a:")  # the #1814 per-contextId session_id
     finally:
         app.dependency_overrides.clear()
 
 
 @pytest.mark.skipif(_SKIP_ROUTER, reason=_SKIP_REASON)
 def test_e2e_create_with_webhook_then_cancel_fires_disposition(tmp_path, monkeypatch):
-    """Tier 2c: #1953 slice 5b — the full create→cancel→disposition wiring proof.
+    """Tier 2c: #2839 Phase 1 — the full create→cancel→disposition wiring proof,
+    re-based onto RunRegistry (the internal Task backend is no longer consulted
+    anywhere in this path).
 
     Drives the REAL endpoints (no mock collaborators; the agent send is a real
     injected stub callable, the webhook poster is a real recording callable):
 
-      message/send (async + webhook_url)  → Task created + webhook channel
+      message/send (async + webhook_url)  → RunEntry created + webhook channel
                                             registered in the live A2AWebhookRegistry
-      POST /a2a/tasks/{task_id}/cancel    → task.abort → archived (cooperative-terminal)
-      sweep_dispositions(...)             → the registered webhook fires exactly once,
-                                            carrying the right contextId + task_id
+      POST /a2a/tasks/{run_id}/cancel      → RunRegistry.cancel → cancelled
+      sweep_dispositions(...)              → the registered webhook fires exactly
+                                            once, carrying the right contextId + run_id
 
-    This is the production-wiring proof that slice 5a-2's registry is populated by
+    This is the production-wiring proof that the webhook registry is populated by
     the live create path (replacing the test-seeded `register_webhook` of the unit
-    test) — RED if 5b drops the `register_webhook` call or the assignee→contextId
-    round-trip breaks (the sweep would find no channel and fire 0).
+    test) — RED if the create path drops the `register_webhook` call or the
+    session_id→contextId round-trip breaks (the sweep would find no channel and
+    fire 0).
     """
     monkeypatch.chdir(tmp_path)
 
@@ -327,11 +326,9 @@ def test_e2e_create_with_webhook_then_cancel_fires_disposition(tmp_path, monkeyp
         get_a2a_webhook_registry,
         get_registry,
         get_run_registry,
-        get_task_backend,
     )
     from reyn.interfaces.web.run_registry import RunRegistry
     from reyn.interfaces.web.server import app
-    from reyn.task import InMemoryTaskBackend
     from tests._support.web_auth import local_operator_client
 
     # Real injected collaborators (no mocks): a fast agent-send stub so the
@@ -356,18 +353,16 @@ def test_e2e_create_with_webhook_then_cancel_fires_disposition(tmp_path, monkeyp
 
     registry = _build_registry_for_test(tmp_path)
     run_registry = RunRegistry()
-    task_backend = InMemoryTaskBackend()
     webhook_registry = A2AWebhookRegistry()  # the ONE live instance create + sweep share
 
     app.dependency_overrides[get_registry] = lambda: registry
     app.dependency_overrides[get_run_registry] = lambda: run_registry
-    app.dependency_overrides[get_task_backend] = lambda: task_backend
     app.dependency_overrides[get_a2a_webhook_registry] = lambda: webhook_registry
     client = local_operator_client(app, raise_server_exceptions=False)
 
     hook_url = "https://client.example/disposition-hook"
     try:
-        # 1. create with a webhook_url → Task created + channel registered.
+        # 1. create with a webhook_url → RunEntry created + channel registered.
         r = client.post(
             "/a2a/agents/default",
             json={
@@ -383,24 +378,24 @@ def test_e2e_create_with_webhook_then_cancel_fires_disposition(tmp_path, monkeyp
             },
         )
         assert r.status_code == 200, r.text
-        task_id = r.json()["result"]["id"]
+        run_id = r.json()["result"]["id"]
         # The live create path populated the registry (NOT a test seed).
         assert webhook_registry.webhook_for("ctx-e2e") == hook_url
 
-        # 2. external requester cancels → task.abort → archived.
-        rc = client.post(f"/a2a/tasks/{task_id}/cancel")
+        # 2. external requester cancels → RunRegistry.cancel → cancelled.
+        rc = client.post(f"/a2a/tasks/{run_id}/cancel")
         assert rc.status_code == 200, rc.text
         assert rc.json()["status"]["state"] == "canceled"
 
         # 3. the periodic sweep notifies the external requester exactly once.
         poster = _RecordingPoster()
         fired = asyncio.new_event_loop().run_until_complete(
-            sweep_dispositions(task_backend, webhook_registry, post_fn=poster)
+            sweep_dispositions(run_registry, webhook_registry, post_fn=poster)
         )
         assert fired == 1
-        # Exactly the one aborted external task was notified, on its channel —
-        # behavioral (which task_ids fired), not a size/shape pin.
-        assert [c[1]["task_id"] for c in poster.calls] == [task_id]
+        # Exactly the one cancelled run was notified, on its channel —
+        # behavioral (which run_ids fired), not a size/shape pin.
+        assert [c[1]["task_id"] for c in poster.calls] == [run_id]
         url, payload = poster.calls[0]
         assert url == hook_url
         assert payload["contextId"] == "ctx-e2e"
@@ -410,38 +405,36 @@ def test_e2e_create_with_webhook_then_cancel_fires_disposition(tmp_path, monkeyp
 
 
 @pytest.mark.skipif(_SKIP_ROUTER, reason=_SKIP_REASON)
-def test_get_task_returns_a2a_envelope_from_task_backend(tmp_path, monkeypatch):
-    """Tier 2c: (#1953 slice 5a) GET /a2a/tasks/{task_id} returns the spec A2A
-    Task envelope read from the Task backend (Task-vocab state). A blocked Task
-    surfaces as input-required (interim — slice 7 splits the block-reason)."""
-    import asyncio
-
+def test_get_task_returns_a2a_envelope_from_run_registry(tmp_path, monkeypatch):
+    """Tier 2c: (#2839 Phase 1) GET /a2a/tasks/{run_id} returns the spec A2A
+    Task envelope read directly from RunRegistry. A run with
+    status=input-required surfaces as input-required NATIVELY (no
+    blocked→input-required overload — #2839 Phase 1 retires that interim
+    placeholder, which the old Task-backed mapper's own comment flagged as an
+    unfixed correctness bug: slice 7's promised block-reason split never landed)."""
     monkeypatch.chdir(tmp_path)
 
-    from reyn.interfaces.web.deps import get_registry, get_run_registry, get_task_backend
+    from reyn.interfaces.web.deps import get_registry, get_run_registry
     from reyn.interfaces.web.run_registry import RunRegistry
     from reyn.interfaces.web.server import app
-    from reyn.task import InMemoryTaskBackend, Task, TaskState
     from tests._support.web_auth import local_operator_client
 
     registry = _build_registry_for_test(tmp_path)
-    backend = InMemoryTaskBackend()
-    asyncio.new_event_loop().run_until_complete(
-        backend.create(Task(task_id="t-1", name="n", assignee="a2a:ctx-9",
-                            requester="r", status=TaskState.BLOCKED)))
+    run_registry = RunRegistry()
+    entry = run_registry.create(agent_name="default", chain_id="c-1", session_id="a2a:ctx-9")
+    run_registry.update(entry.run_id, status="input-required")
 
     app.dependency_overrides[get_registry] = lambda: registry
-    app.dependency_overrides[get_run_registry] = lambda: RunRegistry()
-    app.dependency_overrides[get_task_backend] = lambda: backend
+    app.dependency_overrides[get_run_registry] = lambda: run_registry
     client = local_operator_client(app, raise_server_exceptions=False)
 
     try:
-        r = client.get("/a2a/tasks/t-1")
+        r = client.get(f"/a2a/tasks/{entry.run_id}")
         assert r.status_code == 200, r.text
         body = r.json()
         assert body["kind"] == "task"
-        assert body["id"] == "t-1"
-        assert body["status"]["state"] == "input-required"  # blocked (interim)
+        assert body["id"] == entry.run_id
+        assert body["status"]["state"] == "input-required"
         assert body["contextId"] == "ctx-9"
         assert "question" not in body
     finally:

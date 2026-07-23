@@ -116,6 +116,12 @@ def _make_cron_runner():
 # decoupled from inbound A2A traffic for §24 forward-progress).
 _DISPOSITION_SWEEP_INTERVAL_SECONDS = 30.0
 
+# #2839 Phase 1 gap 4: how long a terminal (completed / failed / cancelled)
+# RunEntry survives before the sweep loop prunes it from ``run_registry.json``.
+# 24h gives a generous window for a peer to poll GetTask / stream the final SSE
+# event after completion before the row is reclaimed.
+_RUN_REGISTRY_RETENTION_HOURS = 24
+
 
 @asynccontextmanager
 async def _lifespan(app: FastAPI):
@@ -176,19 +182,16 @@ async def _lifespan(app: FastAPI):
     persist_path = Path(".reyn") / "state" / "run_registry.json"
     app.state.run_registry = RunRegistry(persist_path=persist_path)
 
-    # #1953 slice 5a: the process-singleton Task backend the A2A surface reads
-    # (GetTask / ListTasks / Cancel). Single store keyed by session_id columns
-    # (the §24/R1 per-session store for rewind is revisited at slice 9). Durable
-    # sqlite under the server state dir.
-    from reyn.task import create_task_backend  # noqa: PLC0415
-    task_db_path = Path(".reyn") / "state" / "tasks.db"
-    app.state.task_backend = create_task_backend("sqlite", path=str(task_db_path))
-
     # #1953 slice 5a-2: A2A-owned webhook registry (P7 — webhook_url stays out of
-    # the core Task model) + a periodic disposition sweep. The sweep is
-    # backend-derived + decoupled from inbound traffic (§24 forward-progress) and
+    # the core Task model) + a periodic disposition sweep. #2839 Phase 1: the
+    # sweep is re-based off ``RunRegistry`` (cancelled runs) instead of the
+    # internal Task backend — A2A no longer opens a Task-backend connection at
+    # all, so the sqlite-lock-leak hazard the old shutdown handler guarded
+    # against (a second open connection to ``tasks.db``) no longer applies to
+    # this surface. Decoupled from inbound traffic (§24 forward-progress) and
     # runs as a lifespan-owned asyncio task (mirrors the cron_scheduler lifecycle).
     import asyncio  # noqa: PLC0415
+    from datetime import timedelta  # noqa: PLC0415
 
     from reyn.interfaces.web.a2a_webhook_registry import (  # noqa: PLC0415
         A2AWebhookRegistry,
@@ -202,7 +205,16 @@ async def _lifespan(app: FastAPI):
         while True:
             try:
                 await sweep_dispositions(
-                    app.state.task_backend, app.state.a2a_webhook_registry
+                    app.state.run_registry, app.state.a2a_webhook_registry
+                )
+                # #2839 Phase 1 gap 4: RunRegistry retention. Pre-Phase-1 the
+                # internal Task backend's archived_at purge (§24) incidentally
+                # bounded every A2A run because A2A dual-wrote into it;
+                # decoupling removes that incidental bound, so the sweep loop
+                # (already the periodic heartbeat for this surface) also prunes
+                # terminal RunEntry rows older than the retention window.
+                app.state.run_registry.prune_terminal(
+                    older_than=timedelta(hours=_RUN_REGISTRY_RETENTION_HOURS),
                 )
             except asyncio.CancelledError:
                 raise
@@ -274,24 +286,12 @@ async def _lifespan(app: FastAPI):
         from reyn.runtime.cron import set_active_scheduler
         set_active_scheduler(None)
 
-    # #1953 slice 5a: close the sqlite task backend opened at startup. Without
-    # this the sqlite connection (and its WAL lock on ``.reyn/state/tasks.db``)
-    # is leaked on every lifespan shutdown — the module-level ``app`` singleton
-    # overwrites ``app.state.task_backend`` on the next startup and the orphaned
-    # connection lingers until GC. Because the backend opens with
-    # ``PRAGMA busy_timeout=0`` (deliberate fail-fast — a lock contention raises
-    # immediately rather than waiting), an un-GC'd orphan overlapping the next
-    # open surfaces as ``sqlite3.OperationalError: database is locked``. Under a
-    # TestClient-per-test suite this is order-dependent flake; in production it
-    # is a genuine fd/lock leak across gateway restarts. Closing here mirrors
-    # the sweep-task cancel + cron-scheduler stop above (defensive: never let a
-    # shutdown error mask the exit).
-    task_backend = getattr(app.state, "task_backend", None)
-    if task_backend is not None:
-        try:
-            task_backend.close()
-        except Exception as exc:  # noqa: BLE001 — defensive shutdown
-            logger.warning("Task backend close failed: %s", exc)
+    # #2839 Phase 1: A2A no longer opens its own Task-backend sqlite
+    # connection (``app.state.task_backend`` retired along with the GetTask /
+    # Cancel / sweep re-base onto ``RunRegistry``) — so there is nothing left
+    # to close here. The internal LLM ``task__*`` tool's OWN backend
+    # (``AgentRegistry.task_backend``, a separate lazily-built connection) is
+    # unaffected and out of scope for this surface.
 
 
 app = FastAPI(
