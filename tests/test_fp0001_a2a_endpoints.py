@@ -1,6 +1,8 @@
 """Tier 2: FP-0001 A2A task lifecycle endpoints.
 
-Tests the new task-lifecycle surface added by FP-0001:
+Tests the task-lifecycle surface added by FP-0001, re-based (#2839 Phase 1)
+onto ``RunRegistry`` as the sole A2A work-unit authority (the internal Task
+backend is no longer consulted by any of these endpoints):
   - GET /a2a/tasks/{run_id}
   - POST /a2a/tasks/{run_id}/cancel
   - GET /a2a/tasks/{run_id}/events
@@ -11,7 +13,7 @@ Tests the new task-lifecycle surface added by FP-0001:
 Policy compliance (docs/deep-dives/contributing/testing.ja.md):
 - No unittest.mock / MagicMock / AsyncMock / patch usage.
 - RunRegistry populated directly from its public API (create / attach_task /
-  append_event / cancel / answer_intervention).
+  append_event / cancel / update).
 - FastAPI app dependency-overridden via app.dependency_overrides so the
   real singleton from deps.py is never touched.
 - Observed via public HTTP response shapes and RunEntry.to_public_dict().
@@ -42,26 +44,20 @@ from tests._support.agent_session import make_session
 # ---------------------------------------------------------------------------
 
 
-def _make_client_with_registry(registry: RunRegistry, task_backend=None, webhook_registry=None):
-    """Build a TestClient that uses the supplied RunRegistry (and an optional
-    Task backend — #1953 slice 5a — for the Task-backed A2A surface) via DI
-    override. A default in-memory Task backend + A2A webhook registry satisfy
-    a2a_jsonrpc's get_task_backend / get_a2a_webhook_registry dependencies for
-    tests that don't exercise them."""
+def _make_client_with_registry(registry: RunRegistry, webhook_registry=None):
+    """Build a TestClient that uses the supplied RunRegistry via DI override.
+    A default A2A webhook registry satisfies a2a_jsonrpc's
+    get_a2a_webhook_registry dependency for tests that don't exercise it."""
     from reyn.interfaces.web.a2a_webhook_registry import A2AWebhookRegistry
     from reyn.interfaces.web.deps import (
         get_a2a_webhook_registry,
         get_run_registry,
-        get_task_backend,
     )
     from reyn.interfaces.web.server import app
-    from reyn.task import InMemoryTaskBackend
     from tests._support.web_auth import local_operator_client
 
-    backend = task_backend if task_backend is not None else InMemoryTaskBackend()
     reg = webhook_registry if webhook_registry is not None else A2AWebhookRegistry()
     app.dependency_overrides[get_run_registry] = lambda: registry
-    app.dependency_overrides[get_task_backend] = lambda: backend
     app.dependency_overrides[get_a2a_webhook_registry] = lambda: reg
     client = local_operator_client(app, raise_server_exceptions=False)
     return client
@@ -77,24 +73,20 @@ def _restore_overrides() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_get_task_returns_a2a_envelope_from_task_backend() -> None:
-    """Tier 2: (#1953 slice 5a) GET /a2a/tasks/{task_id} returns 200 with the spec
-    A2A Task envelope read from the Task backend (Task-vocab state)."""
-    import asyncio
+def test_get_task_returns_a2a_envelope_from_run_registry() -> None:
+    """Tier 2: (#2839 Phase 1) GET /a2a/tasks/{run_id} returns 200 with the spec
+    A2A Task envelope read directly from RunRegistry (no Task backend consulted)."""
+    registry = RunRegistry()
+    entry = registry.create(agent_name="demo", chain_id="c-1", session_id="a2a:ctx-7")
+    assert entry.run_id  # sanity: run_id is what GetTask's path param addresses
 
-    from reyn.task import InMemoryTaskBackend, Task, TaskState
-
-    backend = InMemoryTaskBackend()
-    asyncio.new_event_loop().run_until_complete(
-        backend.create(Task(task_id="t-1", name="n", assignee="a2a:ctx-7",
-                            requester="r", status=TaskState.RUNNING)))
-    client = _make_client_with_registry(RunRegistry(), task_backend=backend)
+    client = _make_client_with_registry(registry)
     try:
-        r = client.get("/a2a/tasks/t-1")
+        r = client.get(f"/a2a/tasks/{entry.run_id}")
         assert r.status_code == 200, r.text
         body = r.json()
         assert body["kind"] == "task"
-        assert body["id"] == "t-1"
+        assert body["id"] == entry.run_id
         assert body["status"]["state"] == "working"  # running → working
         assert body["contextId"] == "ctx-7"
         assert "run_id" not in body
@@ -124,31 +116,26 @@ def test_get_task_returns_404_for_unknown_run() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_cancel_task_aborts_task_in_backend() -> None:
-    """Tier 2: (#1953 slice 5a) POST /a2a/tasks/{task_id}/cancel = the external
-    requester's remove-op → task.abort (cooperative-terminal → aborted). The
-    response is the aborted Task's A2A envelope (status=canceled)."""
-    import asyncio
+def test_cancel_task_marks_run_cancelled() -> None:
+    """Tier 2: (#2839 Phase 1) POST /a2a/tasks/{run_id}/cancel = the external
+    requester's remove-op → RunRegistry.cancel (marks cancelled, and would
+    cancel the live asyncio.Task if one were attached). The response is the
+    cancelled run's A2A envelope (status=canceled)."""
+    registry = RunRegistry()
+    entry = registry.create(agent_name="demo", chain_id="c-1", session_id="a2a:ctx-1")
 
-    from reyn.task import InMemoryTaskBackend, Task, TaskState
-
-    backend = InMemoryTaskBackend()
-    loop = asyncio.new_event_loop()
-    loop.run_until_complete(
-        backend.create(Task(task_id="t-1", name="n", assignee="a2a:ctx-1",
-                            requester="r", status=TaskState.RUNNING)))
-    client = _make_client_with_registry(RunRegistry(), task_backend=backend)
+    client = _make_client_with_registry(registry)
     try:
-        r = client.post("/a2a/tasks/t-1/cancel")
+        r = client.post(f"/a2a/tasks/{entry.run_id}/cancel")
         assert r.status_code == 200, r.text
         body = r.json()
         assert body["kind"] == "task"
-        assert body["id"] == "t-1"
-        assert body["status"]["state"] == "canceled"  # aborted → canceled
+        assert body["id"] == entry.run_id
+        assert body["status"]["state"] == "canceled"  # cancelled → canceled
 
-        # backend task is aborted (the abort terminal).
-        refreshed = loop.run_until_complete(backend.get("t-1"))
-        assert refreshed is not None and refreshed.status is TaskState.ABORTED
+        # RunRegistry itself reflects the cancellation (the CancelTask endpoint's
+        # authoritative write — no separate Task backend to cross-check).
+        assert registry.get(entry.run_id).status == "cancelled"
     finally:
         _restore_overrides()
 
@@ -268,13 +255,11 @@ def test_agent_card_shows_streaming_and_push_notifications_true(tmp_path) -> Non
     )
     registry.create("demo", role="demo agent")
 
-    from reyn.interfaces.web.deps import get_run_registry, get_task_backend  # noqa: PLC0415
-    from reyn.task import InMemoryTaskBackend  # noqa: PLC0415
+    from reyn.interfaces.web.deps import get_run_registry  # noqa: PLC0415
 
     run_registry = RunRegistry()
     app.dependency_overrides[get_registry] = lambda: registry
     app.dependency_overrides[get_run_registry] = lambda: run_registry
-    app.dependency_overrides[get_task_backend] = lambda: InMemoryTaskBackend()
     client = local_operator_client(app, raise_server_exceptions=False)
     try:
         r = client.get("/a2a/agents/demo/.well-known/agent-card.json")
@@ -374,14 +359,9 @@ def test_answer_injection_delivers_to_pending_intervention(tmp_path) -> None:
         session._interventions._order.append(iv.id)
 
         from reyn.interfaces.web.a2a_webhook_registry import A2AWebhookRegistry  # noqa: PLC0415
-        from reyn.interfaces.web.deps import (  # noqa: PLC0415
-            get_a2a_webhook_registry,
-            get_task_backend,
-        )
-        from reyn.task import InMemoryTaskBackend  # noqa: PLC0415
+        from reyn.interfaces.web.deps import get_a2a_webhook_registry  # noqa: PLC0415
         app.dependency_overrides[get_registry] = lambda: registry
         app.dependency_overrides[get_run_registry] = lambda: run_registry
-        app.dependency_overrides[get_task_backend] = lambda: InMemoryTaskBackend()
         app.dependency_overrides[get_a2a_webhook_registry] = lambda: A2AWebhookRegistry()
         client = local_operator_client(app, raise_server_exceptions=False)
         try:
@@ -428,14 +408,12 @@ def test_answer_injection_returns_answered_false_for_unknown_task(tmp_path) -> N
         get_a2a_webhook_registry,
         get_registry,
         get_run_registry,
-        get_task_backend,
     )
     from reyn.interfaces.web.server import app
     from reyn.runtime.budget.budget import BudgetTracker, CostConfig
     from reyn.runtime.profile import AgentProfile
     from reyn.runtime.registry import AgentRegistry
     from reyn.runtime.session import Session
-    from reyn.task import InMemoryTaskBackend
     from tests._support.web_auth import local_operator_client
 
     state_log = StateLog(tmp_path / ".reyn" / "state" / "wal.jsonl")
@@ -464,7 +442,6 @@ def test_answer_injection_returns_answered_false_for_unknown_task(tmp_path) -> N
 
     app.dependency_overrides[get_registry] = lambda: registry
     app.dependency_overrides[get_run_registry] = lambda: run_registry
-    app.dependency_overrides[get_task_backend] = lambda: InMemoryTaskBackend()
     app.dependency_overrides[get_a2a_webhook_registry] = lambda: A2AWebhookRegistry()
     client = local_operator_client(app, raise_server_exceptions=False)
     try:

@@ -35,6 +35,13 @@ the caller consumes it, so restart-resume picks up cleanly.
 Wired by ``mcp_server.send_to_agent_impl`` through
 ``Session.register_intervention_override(chain_id, bus)``.
 
+#2839 Phase 1: the ``task_backend``-reflection side effect (#1981 P3 —
+mirroring ``input-required`` onto the canonical Task's ``blocked`` state)
+is REMOVED. A2A's GetTask now reads ``RunEntry`` directly (see
+``a2a_task_view.to_a2a_task``), so there is nothing left for the
+Task-backed mirror to keep coherent with — the RunEntry status mirror
+below is the sole source GetTask consults.
+
 Scope guard:
   - ⭕ in-scope: notify A2A peer of input-required state via webhook +
     SSE buffer + RunEntry status mirror.
@@ -60,14 +67,9 @@ class A2AInterventionBus:
     issue #292 (α): no longer an iv owner; pure side-effect emitter.
     """
 
-    def __init__(self, run_id: str, registry: "RunRegistry", *, task_backend=None) -> None:
+    def __init__(self, run_id: str, registry: "RunRegistry") -> None:
         self._run_id = run_id
         self._registry = registry
-        # #1981 P3: the canonical Task backend (optional). When wired, an ask_user
-        # dispatch reflects the Task → blocked (input-required) so GetTask stays
-        # coherent with the RunEntry's input-required mirror. The iv itself remains
-        # Session-owned (#292 α); this is only the public-status reflection.
-        self._task_backend = task_backend
 
     @property
     def channel_id(self) -> str:
@@ -93,7 +95,8 @@ class A2AInterventionBus:
         Side effects (each best-effort; failures logged, never raised):
           1. Stamp ``iv.origin_channel_id`` with ``a2a:<run_id>`` (= for
              #268 cross-channel routing).
-          2. Mirror ``status="input-required"`` on the RunEntry.
+          2. Mirror ``status="input-required"`` on the RunEntry (the
+             sole authority GetTask reads — #2839 Phase 1).
           3. Append the input-required payload to
              ``RunEntry.history_events`` for SSE replay (issue #267
              Gap 1, payload shape per Gap 4).
@@ -115,14 +118,10 @@ class A2AInterventionBus:
 
         # Mirror status. Post-α the iv itself lives in Session's
         # outstanding_interventions; we only reflect the high-level
-        # state on the RunEntry for peer polling visibility.
+        # state on the RunEntry for peer polling visibility. #2839
+        # Phase 1: this RunEntry mirror is now the ONLY thing GetTask
+        # consults (the prior Task-backend blocked-reflection is removed).
         self._registry.update(self._run_id, status="input-required")
-
-        # #1981 P3: reflect the canonical Task → blocked (= A2A input-required) so
-        # GetTask is coherent with this RunEntry mirror. Best-effort + race-safe
-        # (assignee CAS, terminal-guard); the assignee read off the Task is the
-        # immutable owner session, so this is the assignee's own status write.
-        await self._reflect_task_blocked()
 
         # Build the canonical input-required payload (issue #267 Gap 4 shape).
         payload: dict = {
@@ -188,33 +187,6 @@ class A2AInterventionBus:
                 )
             if channel_state is not None:
                 channel_state.record_attempt(result)
-
-    async def _reflect_task_blocked(self) -> None:
-        """#1981 P3: reflect the canonical Task → ``blocked`` on ask_user dispatch.
-
-        Best-effort + race-safe: the assignee read off the Task is the immutable
-        owner session, so the ``update_status`` is the assignee's own write (the
-        CAS passes); a terminal Task (e.g. already cancelled) is left as-is via the
-        terminal-guard. A missing backend / Task is a no-op. Never raised."""
-        if self._task_backend is None:
-            return
-        try:
-            task = await self._task_backend.get(self._run_id)
-            if task is None or not task.assignee:
-                return
-            await self._task_backend.update_status(
-                self._run_id, "blocked", caller_session_id=task.assignee,
-            )
-        except PermissionError:
-            logger.debug(
-                "A2AInterventionBus: task %r blocked-reflection skipped "
-                "(terminal-guard)", self._run_id,
-            )
-        except Exception:  # noqa: BLE001 — reflection is best-effort
-            logger.exception(
-                "A2AInterventionBus: task %r blocked-reflection failed",
-                self._run_id,
-            )
 
 
 __all__ = ["A2AInterventionBus"]
