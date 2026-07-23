@@ -59,7 +59,26 @@ class EnumerateAllScheme:
         # router holds host context + catalog, so the scheme stays P7-clean.
         # catalog_entries is async (the live-catalog enumeration awaits the
         # router caller-state / rag manifest); base_tools stays sync.
-        flat_tools = list(ops.base_tools(available, layer_ctx)) + list(await ops.catalog_entries())
+        #
+        # #3219: ``mcp__call_tool`` (the catalog projection of mcp_verbs.py's
+        # MCP_CALL_TOOL ToolDefinition) is a zero-capability thin adapter that
+        # purely splits ``<server>__<tool>`` and delegates to native
+        # ``call_mcp_tool`` (mcp.py) — already present in ``base_tools()`` above.
+        # Enumerate-all's own contract is "never has wrappers" (see module
+        # docstring), so this catalog wrapper leaking into the flat ``tools=``
+        # alongside its native equivalent contradicted the scheme's own rule:
+        # the model saw the same MCP-call action twice, in two arg shapes, in
+        # one payload. Excluded HERE (enumerate-all only) — capability is
+        # lossless (native ``call_mcp_tool`` covers it) and the universal
+        # scheme (which legitimately keeps the catalog-uniform wrapper for its
+        # own reasons) is untouched, since it does not build from
+        # ``catalog_entries()`` at all (see ``RouterLoop.present``).
+        _ENUMERATE_ALL_EXCLUDED_CATALOG_NAMES = frozenset({"mcp__call_tool"})
+        catalog = [
+            entry for entry in await ops.catalog_entries()
+            if entry.get("function", entry).get("name") not in _ENUMERATE_ALL_EXCLUDED_CATALOG_NAMES
+        ]
+        flat_tools = list(ops.base_tools(available, layer_ctx)) + catalog
         # #1627 Stage 2: own the tool-use SP via the slot-map.
         # Derive the 5 builder inputs from the raw FACTS in layer_ctx. Enumerate
         # NEVER has universal wrappers, so universal_wrappers_enabled is always
