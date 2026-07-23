@@ -31,10 +31,119 @@ Ownership split:
 """
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Callable, Protocol
+from typing import TYPE_CHECKING, Any, Callable, Protocol
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+
+def _run_coro_sync(coro: Any) -> Any:
+    """#3220: run a coroutine to completion from a SYNC call site, without
+    changing ``capability_visibility_state()``'s public sync contract (every
+    call site — the inline TUI's per-render-frame status snapshot, the REPL /
+    AG-UI read models — invokes it as a plain sync accessor; making it ``async``
+    would ripple through those frontends for what is a status-bar read).
+
+    Always drives the coroutine on a throwaway event loop in a dedicated thread
+    (``asyncio.run`` in a fresh thread, never on the calling thread) — safe
+    regardless of whether the calling thread already has a running loop of its
+    own (a bare ``asyncio.run()`` here would raise in that case; a TUI's async
+    event loop is the expected caller). Cheap in practice: every coroutine this
+    module drives through here (``_VisibilityProbeOps``) resolves without a
+    true suspension (no real disk/network I/O — see its docstring), so the only
+    cost is thread + loop setup, not a blocking wait.
+    """
+    import asyncio
+    import concurrent.futures
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+        return pool.submit(asyncio.run, coro).result()
+
+
+class _VisibilityProbeOps:
+    """#3220: a minimal ``SchemeOps``-shaped facade providing ONLY the three
+    host-derived RAW-INGREDIENT methods every ``ToolUseScheme.build_presentation``
+    calls (``present`` / ``base_tools`` / ``catalog_entries``) — the SAME
+    ``build_tools()`` / ``universal_catalog.catalog_entries()`` substrate
+    ``RouterLoop``'s real ``SchemeOps`` implementation wraps. Calling a scheme's
+    REAL (unmodified, imported from ``reyn.tools.schemes.*``) ``build_presentation``
+    through this facade reproduces the scheme's OWN composition transform (e.g.
+    ``EnumerateAllScheme``'s #3224 post-catalog ``mcp__call_tool`` exclusion)
+    instead of re-deriving the final output in parallel and silently drifting the
+    moment a scheme adds one of those — the exact bug an architect co-vet caught
+    in this fix's first cut.
+
+    Unlike ``RouterLoop.catalog_entries`` (which awaits
+    ``build_resource_caller_state(host)`` — a genuine disk read for the RAG
+    source-manifest, appropriate mid-turn but wrong for a status-bar snapshot
+    called every render frame), ``catalog_entries`` here builds a MINIMAL
+    ``RouterCallerState`` carrying only what #3026 documents actually gates the
+    NAME set (``excluded_categories`` / ``sandbox_backend``) — every await this
+    class performs resolves without a true suspension.
+
+    Only the 3 methods the 4 shipped schemes' ``build_presentation`` bodies
+    call are implemented (``search_actions`` is never reached: this facade
+    forces ``search_visible=False``, and retrieval's own fallback for that case
+    never calls it either)."""
+
+    def __init__(self, router_host: "_RouterHost", excluded_categories: "frozenset[str]") -> None:
+        self._host = router_host
+        self._excluded_categories = excluded_categories
+
+    def present(self, available: dict, layer_ctx: dict) -> Any:
+        from reyn.runtime.router_tools import build_tools
+        from reyn.tools.scheme import Presentation
+
+        return Presentation(llm_tools_payload=build_tools(
+            self._host.list_available_agents(),
+            file_permissions=self._host.get_file_permissions(),
+            mcp_servers=self._host.get_mcp_servers(),
+            web_fetch_allowed=self._host.get_web_fetch_allowed(),
+            universal_wrappers_enabled=layer_ctx.get("univ_enabled", False),
+            search_actions_visible=layer_ctx.get("search_visible", False),
+            hot_list_aliases=available.get("hot_list_aliases"),
+            compact_visible=layer_ctx.get("ctx_signal_present", False),
+        ))
+
+    def base_tools(self, available: dict, layer_ctx: dict) -> "list[dict]":
+        from reyn.runtime.router_tools import build_tools
+
+        return build_tools(
+            self._host.list_available_agents(),
+            file_permissions=self._host.get_file_permissions(),
+            mcp_servers=self._host.get_mcp_servers(),
+            web_fetch_allowed=self._host.get_web_fetch_allowed(),
+            universal_wrappers_enabled=False,
+            search_actions_visible=False,
+            hot_list_aliases=available.get("hot_list_aliases"),
+            compact_visible=layer_ctx.get("ctx_signal_present", False),
+        )
+
+    async def catalog_entries(self) -> "list[dict]":
+        from reyn.tools import universal_catalog
+        from reyn.tools.types import RouterCallerState, ToolContext
+
+        tool_ctx = ToolContext(
+            events=None,
+            permission_resolver=None,
+            workspace=None,
+            caller_kind="router",
+            router_state=RouterCallerState(
+                excluded_categories=self._excluded_categories,
+                sandbox_backend=self._host.get_sandbox_backend(),
+            ),
+        )
+        return [
+            {
+                "type": "function",
+                "function": {
+                    "name": entry["name"],
+                    "description": entry["description"],
+                    "parameters": entry["parameters"],
+                },
+            }
+            for entry in universal_catalog.catalog_entries(tool_ctx)
+        ]
 
 
 class _EnvelopeSource(Protocol):
@@ -70,6 +179,7 @@ class _RouterHost(Protocol):
     def get_file_permissions(self) -> "dict | None": ...
     def get_web_fetch_allowed(self) -> bool: ...
     def get_sandbox_backend(self) -> "str | None": ...
+    def get_universal_wrappers_enabled(self) -> bool: ...
 
 
 class _SkillEntry(Protocol):
@@ -260,98 +370,108 @@ class CapabilityVisibility:
         self.persist_visibility_override(toggle_store_dir)  # #2285 step2 — survive restart (best-effort)
 
     def _reachable_tool_names(self, excluded_categories: "frozenset[str]") -> "set[str]":
-        """#3220: the "tool" census SOURCE — capabilities reachable in the actual
-        per-turn composed payload for the active chat-layer scheme, NOT a global
-        registry census.
+        """#3220: the "tool" census SOURCE — capabilities reachable in the ACTUAL
+        composed payload the active chat-layer scheme's OWN ``build_presentation``
+        produces, NOT a global registry census, and NOT a parallel re-derivation of
+        what that composition is believed to do.
 
-        Ground truth (#3220 issue): the prior source, ``get_default_registry().names()``,
-        enumerates every registered ``ToolDefinition`` regardless of whether the active
-        scheme's ``build_tools()`` call ever advertises it (a ``gates.router != "allow"``
-        tool — e.g. the phase-only ``ask_user`` — is registry-visible but NEVER emitted by
-        ``build_tools()`` for ANY scheme) and regardless of scheme shape (``universal-category``
-        collapses individual/MCP tool names into 3-4 wrapper meta-tools; ``codeact`` emits no
-        ``tools=`` schema at all). This method re-derives the census from the SAME
-        ``build_tools()`` / ``universal_catalog.catalog_entries()`` substrate the real
-        composition path (``RouterLoop.present`` / ``base_tools`` / ``catalog_entries``, and
-        each ``ToolUseScheme.build_presentation``) calls — no reinvented logic.
+        Ground truth (#3220 issue + architect co-vet on the first cut of this fix):
+        the prior source, ``get_default_registry().names()``, enumerates every
+        registered ``ToolDefinition`` regardless of whether the active scheme's
+        composition ever advertises it. A first attempt at this fix called
+        ``build_tools()`` + ``universal_catalog.catalog_entries()`` DIRECTLY, in
+        parallel with (not through) each scheme's ``build_presentation`` — which
+        re-introduced the exact same class of divergence at finer grain: #3224
+        made ``EnumerateAllScheme.build_presentation`` EXCLUDE ``mcp__call_tool``
+        from its flattened payload (already covered by the native ``call_mcp_tool``
+        tool), a transform that lives INSIDE the scheme method, not in the raw
+        ``catalog_entries()`` building block — a parallel re-derivation has no way
+        to see it and silently drifts every time a scheme adds one.
 
-        Per-scheme granularity (architect-confirmed #3220 firm): a wrapper-folded scheme
-        must EXPAND the wrapper back to the reachable capabilities it makes callable, not
-        show the opaque wrapper name — the operator sees "the underlying capability is
-        usable", not "invoke_action is a tool".
+        The fix: call the REAL, unmodified ``ToolUseScheme.build_presentation``
+        (``reyn.tools.scheme.get_scheme``) for the session's configured scheme, via
+        ``_VisibilityProbeOps`` — a facade that supplies ONLY the three host-derived
+        RAW INGREDIENTS every scheme's ``build_presentation`` calls (``present`` /
+        ``base_tools`` / ``catalog_entries``, the same ``build_tools()`` /
+        ``universal_catalog.catalog_entries()`` substrate ``RouterLoop``'s real
+        ``SchemeOps`` implementation wraps) — so any scheme-owned transform on top
+        of those ingredients (like the #3224 exclusion) is captured for free,
+        because this calls the actual method body, never a copy of it.
 
-        - ``universal-category``: ``build_tools(universal_wrappers_enabled=True)`` strips
-          the legacy per-kind names EXCEPT a few router-only primitives added after the
-          strip-list was last updated (``session_spawn`` / ``agent_spawn`` /
-          ``topology_create`` — #2120's advertise-drift lesson) — those SURVIVE the
-          wrapper-mode build and stay literally in ``tools=``, so they are kept (computed
-          as the intersection with the wrappers-off build, no hardcoded name list — a new
-          survivor is picked up automatically). Every OTHER capability is reachable only
-          THROUGH the ``invoke_action`` wrapper, against the closed ``universal_catalog``
-          table — expanded here via ``catalog_entries()``.
-        - ``codeact``: ``llm_tools_payload`` is genuinely ``[]`` (no JSON schema at all);
-          the model calls actions via the code-API rendered from ``ops.catalog_entries()``
-          alone (``CodeActScheme.build_presentation`` never unions ``base_tools()``) — so
-          the reachable set is the catalog names only, matching ``dispatchable_catalog``.
-        - ``enumerate-all`` / ``retrieval`` / any other registered scheme: both the flat
-          legacy names (``build_tools(universal_wrappers_enabled=False)``) AND the catalog
-          names are literally present in ``tools=`` (``EnumerateAllScheme.build_presentation``
-          unions ``base_tools() + catalog_entries()``) — the safe default for a scheme this
-          method does not special-case.
+        ``build_presentation`` is ``async def`` on every scheme (P7: schemes can do
+        real I/O, e.g. retrieval's dynamic search). ``capability_visibility_state``
+        must stay a plain SYNC accessor (every call site — the inline TUI's
+        per-render-frame status snapshot, the REPL/AG-UI read models — calls it
+        synchronously; making it async ripples through 3+ frontends for a
+        status-bar read, well past this fix's scope). ``_run_coro_sync`` bridges
+        the two: none of ``_VisibilityProbeOps``'s awaits ever truly suspend (its
+        ``catalog_entries`` builds a MINIMAL ``RouterCallerState`` — #3026 documents
+        the catalog's NAME set depends only on ``excluded_categories`` /
+        ``sandbox_backend``, both already available synchronously here — never the
+        real ``build_resource_caller_state(host)`` RouterLoop uses mid-turn, which
+        does genuine disk I/O for the RAG source manifest), so the bridge's cost is
+        coroutine-scheduling overhead only, not a hidden I/O wait.
 
-        ``excluded_categories`` (the same conjunct the "category" kind below already
-        applies) also drops a whole category's catalog actions here — one source of
-        exclusion, not two competing ones.
+        Wrapper-expansion (architect-confirmed granularity) still holds: whatever
+        NAMES a scheme's own ``build_presentation`` puts in ``llm_tools_payload``
+        (or ``dispatchable_catalog`` when the scheme decouples it — CodeAct) ARE
+        the reachable set, by construction — ``universal-category``'s own
+        ``present()`` calls ``build_tools(universal_wrappers_enabled=True)``,
+        whose payload already IS "the wrapper meta-tools + whatever legacy
+        primitives survive the strip"; expanding to the underlying catalog
+        capabilities the wrapper makes reachable (not just the opaque wrapper
+        name) is this method's OWN addition on top of the composed payload, driven
+        by the SAME catalog ingredient the wrapper dispatches against.
         """
-        from reyn.runtime.router_tools import build_tools
-        from reyn.tools import universal_catalog
-        from reyn.tools.types import RouterCallerState, ToolContext
-
-        host = self._router_host
-        agents = host.list_available_agents()
-        file_permissions = host.get_file_permissions()
-        mcp_servers = host.get_mcp_servers()
-        web_fetch_allowed = host.get_web_fetch_allowed()
-
-        legacy_tools = build_tools(
-            agents,
-            file_permissions=file_permissions,
-            mcp_servers=mcp_servers,
-            web_fetch_allowed=web_fetch_allowed,
-            universal_wrappers_enabled=False,
+        from reyn.tools.scheme import (
+            DEFAULT_SCHEME_NAME,
+            flat_catalog_entries,
+            get_scheme,
         )
-        legacy_names = {t["function"]["name"] for t in legacy_tools}
 
-        # #3026/#1667: the catalog's OWN availability gate (excluded_categories, exec's
-        # sandbox backend) — router_state carries only what _enumerate_category reads,
-        # never events/permission_resolver/workspace (catalog_entries's NAME projection
-        # doesn't dereference those), so a minimal RouterCallerState is faithful here.
-        tool_ctx = ToolContext(
-            events=None,
-            permission_resolver=None,
-            workspace=None,
-            caller_kind="router",
-            router_state=RouterCallerState(
-                excluded_categories=excluded_categories,
-                sandbox_backend=host.get_sandbox_backend(),
-            ),
-        )
-        catalog_names = {entry["name"] for entry in universal_catalog.catalog_entries(tool_ctx)}
+        scheme = get_scheme(self._chat_tool_use_scheme) or get_scheme(DEFAULT_SCHEME_NAME)
+        ops = _VisibilityProbeOps(self._router_host, excluded_categories)
+        univ_enabled = bool(self._router_host.get_universal_wrappers_enabled())
+        available = {"hot_list_aliases": [], "exclude_tools": frozenset()}
+        layer_ctx = {
+            "univ_enabled": univ_enabled,
+            # search_actions is wrapper plumbing (excluded below regardless of
+            # visibility) and retrieval's own search-unavailable fallback path
+            # already degrades to "present the full flat catalog" when False —
+            # the conservative default for a read-only census (no live embedding
+            # search performed for a status-bar snapshot).
+            "search_visible": False,
+            "ctx_signal_present": False,
+            "router_model": None,
+            "router_model_family": "other",
+            "non_interactive": True,
+            "available_skills": None,
+        }
+        pres = _run_coro_sync(scheme.build_presentation(available, layer_ctx, ops=ops))
+
+        names = {e["name"] for e in flat_catalog_entries(pres.llm_tools_payload)}
+        if pres.dispatchable_catalog is not None:
+            # CodeAct: llm_tools_payload is genuinely [] (no tools= schema); the
+            # actually-reachable set is the code-API's dispatchable catalog.
+            names = {e["name"] for e in flat_catalog_entries(pres.dispatchable_catalog)}
 
         if self._chat_tool_use_scheme == "universal-category":
-            universal_tools = build_tools(
-                agents,
-                file_permissions=file_permissions,
-                mcp_servers=mcp_servers,
-                web_fetch_allowed=web_fetch_allowed,
-                universal_wrappers_enabled=True,
-            )
-            universal_names = {t["function"]["name"] for t in universal_tools}
-            native_survivors = universal_names & legacy_names
-            return native_survivors | catalog_names
-        if self._chat_tool_use_scheme == "codeact":
-            return set(catalog_names)
-        return legacy_names | catalog_names
+            # Wrapper-expansion: the composed payload names the 3-4 wrapper
+            # meta-tools themselves (list_actions / describe_action /
+            # invoke_action[/ search_actions]) — not "capabilities". Drop the
+            # plumbing, keep any legacy primitive that survived the wrapper-mode
+            # strip (computed generically below, not by hardcoding names), and
+            # expand to the underlying catalog capabilities invoke_action makes
+            # reachable.
+            legacy_names = {
+                e["name"] for e in flat_catalog_entries(ops.base_tools(available, layer_ctx))
+            }
+            catalog_names = {
+                e["name"] for e in flat_catalog_entries(_run_coro_sync(ops.catalog_entries()))
+            }
+            wrapper_plumbing = names - legacy_names - catalog_names
+            names = (names - wrapper_plumbing) | catalog_names
+        return names
 
     def capability_visibility_state(self) -> dict:
         """#2285: the status-bar's read model.
