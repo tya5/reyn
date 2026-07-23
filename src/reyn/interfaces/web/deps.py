@@ -345,14 +345,6 @@ def _get_registry():
                 # byte-identical. allowed_mcp / agent_id / router_max_iterations
                 # remain the #1431 item-2 gaps (separate capability decision).
                 allowed_mcp=None,
-                # #1953 slice R, I-5=(A): A2A/web does NOT thread a per-session
-                # (internal LLM ``task__*`` tool) backend — that's an orthogonal
-                # concern from A2A's own run tracking. #2839 Phase 1: A2A's
-                # GetTask / Cancel / disposition surface is re-based onto
-                # ``RunRegistry`` (``app.state.run_registry`` — a standalone,
-                # WAL-independent snapshot; see ``run_registry.py``), which
-                # this per-session ``task_backend=None`` has never touched.
-                task_backend=None,
                 agent_id=None,
                 exclude_tools=_scoped.exclude_tools,
                 excluded_categories=_profile_excluded,  # #1667 (none here) + #1827 S3 profile view

@@ -12,7 +12,6 @@ with no args reproduces today's byte-identical fallback behaviour.
 - ``CapabilityScope``: the per-session tool/category/skill visibility
   narrowing surface (catalog exclusions + the resolved
   ``ContextualPermission`` + the enabled skill snapshot).
-- ``TaskWiring``: the OS Task subsystem seam (backend instance + waker).
 - ``PresentationWiring``: the present-sink / spawn-intervention wiring
   (registry + consumer + bridge).
 """
@@ -52,14 +51,6 @@ class CapabilityScope:
     # skill_collisions`` so ``:skill`` invocation can fire a LOUD warning
     # instead of a silent shadow. None/absent -> {} (no collisions known).
     skill_collisions: Any = None
-
-
-@dataclass(frozen=True)
-class TaskWiring:
-    """The OS Task subsystem seam: the session-scoped backend + waker."""
-
-    task_backend: "object | None" = None
-    task_waker: "object | None" = None
 
 
 @dataclass(frozen=True)

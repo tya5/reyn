@@ -437,14 +437,6 @@ def _summarize_result(tool, result) -> str:
         forgotten = result.get("deleted")
         if isinstance(forgotten, str):
             return f"Forgot {forgotten}"
-        tasks = result.get("tasks")
-        if isinstance(tasks, list):
-            n = len(tasks)
-            return f"{n} task{'s' if n != 1 else ''}"
-        task_record = result.get("task")
-        if isinstance(task_record, dict):
-            name = task_record.get("name") or task_record.get("task_id") or "task"
-            return _short(str(name), 60)
         entries = result.get("entries")
         if isinstance(entries, list):
             n = len(entries)
@@ -510,9 +502,6 @@ def _summarize_result(tool, result) -> str:
         url = result.get("url")
         if isinstance(url, str) and url:
             return _short(url, 60)
-        state = result.get("state")
-        if isinstance(state, str) and state:
-            return state
         server = result.get("server")
         if isinstance(server, str) and server and status == "ok" and result.get("kind") == "mcp_drop_server":
             return f"Removed {server}"

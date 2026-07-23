@@ -2,7 +2,7 @@
 transport-agnostic (local ≡ remote by construction, at the RENDERER layer).
 
 The inline input driver (:func:`reyn.interfaces.inline.app.run_inline_input`)
-renders a live status bar, an intervention region, and a task tree. P1/P2 already
+renders a live status bar and an intervention region. P1/P2 already
 unified the client's WRITE side behind
 :class:`~reyn.interfaces.transport.client_transport.ClientTransport` and its READ
 of the conversation/working-indicator stream behind the frame stream — but the
@@ -12,7 +12,7 @@ remote client that holds no session). That was the last local-only coupling, and
 the inline app's own docstring named it: *"a full client-side read-model is P3."*
 
 This module is that read-model: one seam the inline driver reads ALL of its
-status/region/task state from, with two implementations —
+status/region state from, with two implementations —
 
 - :class:`RegistryReadModel` — LOCAL, byte-identical to the pre-P3 behavior:
   every accessor delegates to the exact ``_snapshot(registry, …)`` /
@@ -28,13 +28,10 @@ the MAIN-bar subset onto the wire (``state.py``'s ``project_status`` /
 ``_WIRE_KEYS``): ``model`` · ``attached_name`` · ``cost_agent`` / ``cost_total``
 / ``agent_tokens`` · ``ctx_used`` / ``ctx_window`` · ``waiting_on``. Those chip
 VALUES render on remote. The dropdown EXPANSIONS (cost/ctx detail tuples, the
-``/model`` class picker, the agent/session tree, the task tree, the ``…`` sub-bar
-toggle counts), the interactive intervention / rewind PICKERS, and the ``task``
-chip count are session-local and are NOT on the wire — the remote model returns
-empty/``—``/0 for them (graceful degrade), never a fake value. (The ``task`` chip
-is degraded rather than streamed because the task system is a deprecation
-candidate; adding any other field back is an additive ``project_status`` key, not
-a client rewrite.)
+``/model`` class picker, the agent/session tree, the ``…`` sub-bar
+toggle counts) and the interactive intervention / rewind PICKERS are
+session-local and are NOT on the wire — the remote model returns
+empty/``—``/0 for them (graceful degrade), never a fake value.
 """
 from __future__ import annotations
 
@@ -47,7 +44,7 @@ if TYPE_CHECKING:
 
 
 class ChatReadModel(ABC):
-    """The inline CUI's sole READ seam: status snapshot + region + tasks + history.
+    """The inline CUI's sole READ seam: status snapshot + region + history.
 
     Writes still ride the :class:`ClientTransport`; this is the read half the
     inline driver used to take off the registry directly. Abstract (not a bare
@@ -56,7 +53,7 @@ class ChatReadModel(ABC):
     """
 
     @abstractmethod
-    def snapshot(self, task_cache: "dict | None" = None, config=None) -> "dict | None":
+    def snapshot(self, config=None) -> "dict | None":
         """Return the status-bar snapshot dict (the ``_snapshot`` shape), or None
         when there is nothing to show (no attached session locally)."""
 
@@ -75,12 +72,6 @@ class ChatReadModel(ABC):
     @abstractmethod
     def clear_pending_command_ui(self) -> None:
         """Consume the pending command-UI request (no-op when unsupported)."""
-
-    @abstractmethod
-    async def list_active_tasks(self) -> "list[dict]":
-        """Active-task dicts (``Task.to_dict()``) for the local task-tree poll.
-        Remote returns [] — the remote task chip shows the wire ``task_count``,
-        with no tree."""
 
     @property
     @abstractmethod
@@ -102,9 +93,9 @@ class RegistryReadModel(ChatReadModel):
     def __init__(self, registry) -> None:
         self._registry = registry
 
-    def snapshot(self, task_cache=None, config=None):
+    def snapshot(self, config=None):
         from reyn.interfaces.inline.app import _snapshot  # noqa: PLC0415 — avoid cycle
-        return _snapshot(self._registry, task_cache, config)
+        return _snapshot(self._registry, config)
 
     def _attached(self):
         return self._registry.attached_session()
@@ -121,11 +112,6 @@ class RegistryReadModel(ChatReadModel):
         s = self._attached()
         if s is not None:
             s.set_pending_command_ui(None)
-
-    async def list_active_tasks(self):
-        tasks = await self._registry.task_backend.list()
-        dicts = [t.to_dict() for t in tasks]
-        return [d for d in dicts if d["status"] not in ("done", "failed", "aborted")]
 
     @property
     def has_command_ui_region(self) -> bool:
@@ -163,10 +149,6 @@ def project_remote_snapshot(values: "dict | None") -> dict:
         "ctx_used": v.get("ctx_used", 0),
         "ctx_window": v.get("ctx_window", 0),
         # -- session-local keys (NOT on the wire) → graceful empty/zero --
-        # task_count is degraded to 0 on remote: the task system is a deprecation
-        # candidate, so it is deliberately NOT streamed (no per-connection poll) —
-        # the remote `task` chip reads 0, like the other non-frame-available chips.
-        "task_count": 0,
         "model_active_class": None,
         "model_classes": [],
         "agent_names": [],
@@ -176,7 +158,6 @@ def project_remote_snapshot(values: "dict | None") -> dict:
         "ctx_recent_usage": (0, 0),
         "ctx_source": "remote",
         "ctx_compaction_status_fn": None,
-        "task_tree": [],
         "cron_jobs": [],
         "mcp_servers": [],
         "hooks": [],
@@ -191,14 +172,14 @@ class RemoteReadModel(ChatReadModel):
     """REMOTE read-model — projects the transport's P2 ``RemoteStatusView`` (fed by
     the server's ``STATE_SNAPSHOT`` / ``STATE_DELTA``) into the status-bar shape.
 
-    Region/task/command-UI are inline-app-local and not on the wire → empty. The
+    Region/command-UI are inline-app-local and not on the wire → empty. The
     input-history file lands under ``~/.reyn`` (there is no per-agent workspace on
     the client side of a remote attach)."""
 
     def __init__(self, transport: "ClientTransport") -> None:
         self._transport = transport
 
-    def snapshot(self, task_cache=None, config=None):
+    def snapshot(self, config=None):
         # ``transport.status`` is the RemoteStatusView the AgUiTransport updates as
         # it decodes STATE_* frames; read it live each render tick.
         values = getattr(getattr(self._transport, "status", None), "values", None)
@@ -212,9 +193,6 @@ class RemoteReadModel(ChatReadModel):
 
     def clear_pending_command_ui(self) -> None:
         return None
-
-    async def list_active_tasks(self):
-        return []
 
     @property
     def has_command_ui_region(self) -> bool:

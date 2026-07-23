@@ -85,12 +85,9 @@ reyn chat researcher
 | `/reset confirm` | 進行中の run 状態をリセット(スナップショット + WAL; 監査ログは保持) |
 | `/rewind [seq]` | 以前のチェックポイントへタイムトラベル — 引数無しでピッカーメニューを開く、`seq` で直接ジャンプ([Time-travel](../../concepts/runtime/time-travel.md) · [How-to](../../guide/for-users/time-travel.md) 参照) |
 | `/session new \| switch <sid> \| list` | アタッチ中 agent の会話セッションを開く / 切り替える / 一覧表示([Sessions](../../concepts/multi-agent/sessions.md) 参照) |
-| `/tasks [list]` | LLM が `task__create` で作成した dynamic task を一覧表示 |
-| `/tasks status <task_id-prefix>` | 特定の task のステータス + 依存関係を表示 |
-| `/tasks kill <task_id-prefix>` | 特定の dynamic task を中止 |
 | `/visibility on\|off <tool\|mcp\|category> <name>` | このセッションでの capability の LLM 可視性を切り替え(次ターンで非表示 / agent の許可済 envelope の範囲内で復元 — envelope が拒否する capability は非表示のまま) |
 
-`/list` / `/answer` は基盤となります。保留中の介入がプロンプトをブロックせずに共存できます。`/agents` / `/attach` / `/agent` はマルチエージェントワークフローのプリミティブです。`/tasks` は LLM が `task__create` で spawn する dynamic task のエントリーポイントです — 実行中のものを一覧表示、特定タスクのステータス/依存関係を確認、または kill します; task 作成後 LLM も user に `/tasks` を案内します。`/hook` / `/visibility` はセッションスコープの LLM カタログ制御で、ステータスバーの `hook`/`tool`/`mcp`/`category` チップと対応します。`/copy` は会話ペインのユーティリティ; `/image` はマルチモーダル入力を可能にします。
+`/list` / `/answer` は基盤となります。保留中の介入がプロンプトをブロックせずに共存できます。`/agents` / `/attach` / `/agent` はマルチエージェントワークフローのプリミティブです — spawn/delegate したピアの進行状況は `/agents` で確認します。`/hook` / `/visibility` はセッションスコープの LLM カタログ制御で、ステータスバーの `hook`/`tool`/`mcp`/`category` チップと対応します。`/copy` は会話ペインのユーティリティ; `/image` はマルチモーダル入力を可能にします。
 
 ## マルチエージェントの動作
 

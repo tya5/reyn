@@ -8,7 +8,7 @@ audience: [human, agent]
 
 Hooks are a thin operator-scoped layer that lets you inject context,
 trigger self-continuation, run a sandboxed side-effect, or launch a pipeline
-at any of the six **lifecycle points** in a reyn session — or, at an
+at any of the four **lifecycle points** in a reyn session — or, at an
 **external-event point** fired by something outside the session's own
 run-loop (a subscribed MCP resource changing, a watched file changing, a
 cron job firing, or an inbound webhook).
@@ -35,8 +35,6 @@ valid in one is not necessarily valid in the other:
 | `session_end` | `builtin:lifecycle:session_end` | session closes | ✅ | ✅ |
 | `turn_start` | `builtin:lifecycle:turn_start` | a turn begins | ✅ | ✅ |
 | `turn_end` | `builtin:lifecycle:turn_end` | a turn's terminal `stop_reason` | ✅ | ✅ |
-| `task_start` | `builtin:lifecycle:task_start` | a dynamic task is created | ✅ | ✅ |
-| `task_end` | `builtin:lifecycle:task_end` | a dynamic task completes or aborts | ✅ | ✅ |
 | `mcp_resource_updated` | `builtin:external:mcp_resource_updated` | a subscribed MCP resource pushes an update | ✅ | ✅ |
 | `file_changed` | `builtin:external:file_changed` | a watched path changes ([`fs_watch`](../../reference/config/reyn-yaml.md#fs_watch-block) required) | ✅ | ✅ |
 | `cron_fired` | `builtin:external:cron_fired` | a message-based `cron:` job delivers | ✅ | ✅ |
@@ -45,13 +43,13 @@ valid in one is not necessarily valid in the other:
 | — (open) | `llm:<session_id>:<event_name>` | the LLM itself emits one via `emit_hook_event` (always its own session) | ❌ **rejected at load** (`HookConfigError`) | ✅ |
 
 **`llm:*` can never be a hook's `on:` value — only a Composer input.** A
-`hooks:` entry only accepts the 10 builtin bare/namespaced forms above or a
+`hooks:` entry only accepts the 8 builtin bare/namespaced forms above or a
 `composed:<name>` prefix; anything else (including a well-formed
 `llm:<session_id>:<event_name>`) is a load-time `HookConfigError`. To react
 to an LLM-emitted event, correlate it through a `composers:` entry into a
 `composed:<name>` event, then put your `hooks:` entry's `on:` on THAT
 composed kind — see the [worked example](#llm-authored-hook-events-emit_hook_event)
-below. The bare/namespaced-form duality only applies within the 10 builtin
+below. The bare/namespaced-form duality only applies within the 8 builtin
 points — it does not extend `on:`'s acceptance to `llm:*`.
 
 ### The 4 config schemes — every field
@@ -106,7 +104,7 @@ template vars before the hook's action runs.
 - Match rule by field **name**: `uri` and `path` use a shell-style glob
   (`fnmatch`); every other field name is exact string equality.
 - Absent or empty `matcher` → the hook always fires.
-- For the 10 builtin points, a matcher field outside that point's payload
+- For the 8 builtin points, a matcher field outside that point's payload
   (a typo, or a field the point never carries) is a **load-time
   `HookConfigError`** — rejected before the hook can ever run.
 - For a hook's `matcher` on a `composed:*` `on:` target, or a Composer
@@ -200,13 +198,12 @@ for the full syntax, autonomy boundary, and a worked example.
 
 ## Lifecycle points
 
-Hooks fire at six lifecycle points, one for each combination of scope and direction:
+Hooks fire at four lifecycle points, one for each combination of scope and direction:
 
 | Scope   | `_start` | `_end` |
 |---------|----------|--------|
 | session | `session_start` | `session_end` |
 | turn    | `turn_start` | `turn_end` |
-| task    | `task_start` | `task_end` |
 
 Every point is an **awaited dispatch**: the hook completes (shell exits, push is
 queued) before the lifecycle point continues. This is what gives shell hooks
@@ -216,14 +213,11 @@ the first turn begins.
 Implementation anchors:
 
 - `turn_end` fires at the terminal `stop_reason`
-- `task_start` fires at the `_create` Control IR op; `task_end` fires at
-  `_update_status` (status → completed) AND at `_abort` (status → aborted) —
-  every task that starts is guaranteed a matching `task_end` regardless of how it terminates
 
 ## External-event points
 
-Unlike the six lifecycle points above — fired from the session's own
-turn/task run-loop — an **external-event point** is fired by something
+Unlike the four lifecycle points above — fired from the session's own
+turn run-loop — an **external-event point** is fired by something
 outside that loop: today, a subscribed MCP resource changing.
 
 ### `mcp_resource_updated`
@@ -752,7 +746,7 @@ context (`wake: false`), without a restart.
 ```
 
 - `on` (required) — one of the lifecycle points above: `turn_start`,
-  `turn_end`, `session_start`, `session_end`, `task_start`, `task_end`.
+  `turn_end`, `session_start`, `session_end`.
 - `message` (required) — the push message (Jinja2 template allowed).
 - `wake` (optional, default `true`) — `true` starts a new turn
   (self-continuation, bounded by `safety.loop.max_hook_driven_turns`); `false`
@@ -839,7 +833,7 @@ hooks:
 The following capabilities are designed but not yet implemented:
 
 - **Agent-level and phase-level hooks** — fine-grained points inside a turn
-  (rare use cases; session/turn/task covers the common ones).
+  (rare use cases; session/turn covers the common ones).
 - **`WalBackedPendingStore`** — a crash-durable swap for a Composer's
   `PendingStore` seam (recovery-feature-gated: the moment it lands, CLAUDE.md's
   truncate-falsify PR gate applies). Composer pending state stays

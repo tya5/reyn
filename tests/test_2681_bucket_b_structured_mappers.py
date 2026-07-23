@@ -4,9 +4,9 @@ the record(s) as a ``structured`` attachment), NOT the ``CANONICAL_TODO`` whole-
 
 Owner Decision #1 restricts ``STRUCTURED_PASSTHROUGH`` to the admin-6 (external/protocol payloads
 needing verbatim structure); these producers are internal record-reads instead. Real ``to_canonical``
-dispatch throughout — no mocks. Spot-checks span memory / mcp / task / cron / catalog / topology, plus
+dispatch throughout — no mocks. Spot-checks span memory / mcp / cron / catalog / topology, plus
 an ``invoke_action`` delegation-vs-fallback pair, a falsify pin (the mapped result must differ from
-the naive whole-dict fallback), and a full callable-membership sweep of all 25 producers. The
+the naive whole-dict fallback), and a full callable-membership sweep of all producers. The
 set-EQUALITY ratchet-ledger gate (``CANONICAL_TODO`` / ``STRUCTURED_PASSTHROUGH`` membership) lives in
 ``test_fp0056_canonical_coverage_gate.py``; this file pins THIS PR's producer-level behavior.
 """
@@ -51,27 +51,6 @@ def test_list_mcp_servers_summarizes_bounded_text_and_carries_full_records() -> 
     canonical = to_canonical(result, source="list_mcp_servers")
     assert canonical["text"] == "2 MCP servers: acme, globex."
     assert canonical["attachments"] == [{"kind": "structured", "data": servers}]
-
-
-def test_task_list_summarizes_bounded_text_and_carries_full_records() -> None:
-    """Tier 1: task.list (dual-registered in op_runtime/task.py + tools/task_ops.py) canonicalizes
-    its plural ``tasks`` list via the shared ``task_op_to_canonical`` (the list-shaped discriminator
-    branch)."""
-    tasks = [{"task_id": "t1", "status": "ready"}, {"task_id": "t2", "status": "blocked"}]
-    result = {"kind": "task.list", "status": "ok", "tasks": tasks}
-    canonical = to_canonical(result, source="task.list")
-    assert canonical["text"] == "2 tasks."
-    assert canonical["attachments"] == [{"kind": "structured", "data": tasks}]
-
-
-def test_task_get_summarizes_the_singular_task_record() -> None:
-    """Tier 1: task.get (the singular ``{"task": <dict>}`` shape shared by 8 of the 9 migrated task
-    ops) names the task id + status; the full ``Task.to_dict()`` record rides in the attachment."""
-    task = {"task_id": "t1", "status": "running", "name": "do the thing"}
-    result = {"kind": "task.get", "status": "ok", "task": task}
-    canonical = to_canonical(result, source="task.get")
-    assert canonical["text"] == "task t1: running."
-    assert canonical["attachments"] == [{"kind": "structured", "data": task}]
 
 
 def test_cron_list_summarizes_bounded_text_and_carries_full_records() -> None:
@@ -157,9 +136,6 @@ def test_all_bucket_b_producers_are_real_callables_not_todo_or_passthrough() -> 
         "mcp_search_registry",
         "cron_list",
         "topology_create",
-        "task.create", "task.update_status", "task.get", "task.list",
-        "task.add_dependency", "task.remove_dependency", "task.repoint_dependency",
-        "task.abort", "task.assign",
     ]
     for sid in bucket_b:
         decl = canonical_declaration(sid)

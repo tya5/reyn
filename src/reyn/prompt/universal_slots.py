@@ -87,14 +87,11 @@ SINGLE_TARGET_PREFIX = (
 
 MULTI_TARGET_LINE = (
     "- Multi-target / iteration (= \"do X for each Y\", \"process N"
-    " files\", \"run X on every Y\") or multi-step work worth"
-    " tracking: decompose into sub-tasks — `task__create` one per"
-    " target/step (use `deps` to order them, plus a final aggregate"
-    " task depending on the rest), then track via `task__list` /"
-    " `task__update_status`, or delegate a sub-task to another agent"
-    " via `task__create`'s `assignee`. Do NOT invoke a per-target"
-    " action directly without decomposition — it loses the iteration"
-    " shape and gets stuck on the first item."
+    " files\", \"run X on every Y\") or multi-step work: call the"
+    " per-target action once per item in sequence (or run a registered"
+    " `pipeline__` for a structured multi-step composition), or delegate"
+    " the whole request to another agent when the work belongs to a"
+    " different capability profile."
 )
 
 # ── OTHERWISE variants (4: wrappers×discovery_mandate) ──────────────────────
@@ -225,13 +222,6 @@ ACTION_CATEGORIES_LINES = [
         "`sources`; drop_source removes one."
     ),
     "- **exec** — sandboxed argv execution (only when sandbox backend is enabled).",
-    (
-        "- **task** — dynamically create + manage sub-tasks: decompose a "
-        "complex request into trackable units (`task__create` — `deps` order "
-        "them, `assignee` delegates to another session), then "
-        "`task__update_status` / `task__list` / `task__abort`. Use when a "
-        "request needs multi-step tracking or delegation, not a single reply."
-    ),
     (
         "- **skill_management** — discover and manage skill definitions: "
         "`skill_management__list` returns every skill available to you "

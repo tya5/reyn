@@ -3,7 +3,7 @@
 The status bar is now declarative: each chip is a ``ChipSpec`` with a key,
 label, value function, and optional expansion builder. Tests exercise the
 public surface (``_CHIP_SPECS``, ``_model_expansion``, ``_cost_expansion``,
-``_agent_expansion``, ``_task_expansion``) using real instances; no mocks.
+``_agent_expansion``) using real instances; no mocks.
 
 The "…" ("more") chip is a 2-level redesign: it has no ``expansion`` of its
 own — Enter on it shows a level-1 sub-bar (``_MORE_SUB_CHIP_SPECS``: tool /
@@ -22,7 +22,6 @@ from reyn.interfaces.inline.app import (
     _MENU_REGION_MAX_HEIGHT,
     _MORE_SUB_CHIP_SPECS,
     _agent_expansion,
-    _build_task_tree,
     _cost_expansion,
     _cost_scope_state,
     _cron_category_expansion,
@@ -35,8 +34,6 @@ from reyn.interfaces.inline.app import (
     _session_pipelines,
     _session_visibility_items,
     _skill_category_expansion,
-    _task_expansion,
-    _task_rows,
     _tool_category_expansion,
     _visibility_items_by_kind,
 )
@@ -64,8 +61,6 @@ def _snap(**over):
         "session_cached_tokens": 0,
         "ctx_recent_usage": (0, 0),
         "ctx_compaction_status_fn": lambda: {"effective_trigger": 0, "free_window": 0},
-        "task_count": 0,
-        "task_tree": [],
         "cron_jobs": [],
         "mcp_servers": [],
         "hooks": [],
@@ -84,10 +79,9 @@ def _snap(**over):
 
 
 def test_chip_specs_has_required_keys_in_order() -> None:
-    """Tier 2: the registry exposes model/agent/task/cost/ctx/more in that order
-    (owner: cost moved between task and ctx)."""
+    """Tier 2: the registry exposes model/agent/cost/ctx/more in that order."""
     keys = [s.key for s in _CHIP_SPECS]
-    assert keys == ["model", "agent", "task", "cost", "ctx", "more"]
+    assert keys == ["model", "agent", "cost", "ctx", "more"]
 
 
 def test_chips_carry_per_item_value_colours() -> None:
@@ -97,7 +91,7 @@ def test_chips_carry_per_item_value_colours() -> None:
     by = {s.key: s.value_color for s in _CHIP_SPECS}
     assert all(by.values())                  # every chip has a colour
     assert by["model"] != by["agent"]        # per-item variation, not uniform
-    assert by["cost"] != by["task"]
+    assert by["cost"] != by["ctx"]
 
 
 def test_model_chip_value_returns_model_name() -> None:
@@ -134,12 +128,6 @@ def test_agent_chip_value_returns_dash_when_none() -> None:
     spec = next(s for s in _CHIP_SPECS if s.key == "agent")
     assert spec.value(_snap(attached_name=None)) == "—"
 
-
-def test_task_chip_value_returns_count_string() -> None:
-    """Tier 2: the task chip's value() returns the task count as a string."""
-    spec = next(s for s in _CHIP_SPECS if s.key == "task")
-    assert spec.value(_snap(task_count=3)) == "3"
-    assert spec.value(_snap(task_count=0)) == "0"
 
 
 def test_ctx_chip_value_returns_usage_percent() -> None:
@@ -1048,129 +1036,6 @@ def test_agent_expansion_empty_tree_returns_detail_element() -> None:
     assert isinstance(el, DetailElement)
     assert el.selectable is False
     assert any("no agents" in r for r in el.lines())
-
-
-# ---------------------------------------------------------------------------
-# _build_task_tree
-# ---------------------------------------------------------------------------
-
-_ROOT_DICT = {
-    "task_id": "t-root",
-    "name": "Root Task",
-    "status": "running",
-    "requester": "session-1",
-    "requester_kind": "session",
-}
-_CHILD_DICT = {
-    "task_id": "t-child",
-    "name": "Child Task",
-    "status": "ready",
-    "requester": "t-root",
-    "requester_kind": "task",
-}
-
-
-def test_build_task_tree_child_nests_under_root() -> None:
-    """Tier 2: a task with requester_kind='task' and requester=<root id> nests under root."""
-    tree = _build_task_tree([_ROOT_DICT, _CHILD_DICT])
-    assert tree, "expected at least one root node"
-    root = next((n for n in tree if n["task_id"] == "t-root"), None)
-    assert root is not None
-    child_ids = [c["task_id"] for c in root["children"]]
-    assert "t-child" in child_ids
-
-
-def test_build_task_tree_session_owned_task_is_root() -> None:
-    """Tier 2: a task with requester_kind='session' appears at the top level (is a root)."""
-    tree = _build_task_tree([_ROOT_DICT])
-    root_ids = [n["task_id"] for n in tree]
-    assert "t-root" in root_ids
-
-
-def test_build_task_tree_returns_plain_dicts() -> None:
-    """Tier 2: _build_task_tree returns plain dicts; mutating the result does not raise."""
-    tree = _build_task_tree([_ROOT_DICT, _CHILD_DICT])
-    assert tree
-    node = tree[0]
-    assert isinstance(node, dict)
-    # Mutating should be fine — plain dict, not a frozen dataclass or Task instance.
-    node["_test_key"] = "ok"
-
-
-# ---------------------------------------------------------------------------
-# _task_expansion
-# ---------------------------------------------------------------------------
-
-
-def test_task_expansion_empty_tree_is_detail_element() -> None:
-    """Tier 2: _task_expansion with empty task_tree returns a non-selectable DetailElement."""
-    snap = _snap(task_tree=[])
-    el = _task_expansion(snap, lambda _: None)
-    assert isinstance(el, DetailElement)
-    assert el.selectable is False
-
-
-def test_task_expansion_empty_tree_shows_no_active_tasks_message() -> None:
-    """Tier 2: empty task_tree expansion contains a 'no active task' message."""
-    snap = _snap(task_tree=[])
-    el = _task_expansion(snap, lambda _: None)
-    joined = " ".join(el.lines())
-    assert "no active task" in joined
-
-
-def test_task_expansion_populated_shows_parent_and_child_names() -> None:
-    """Tier 2: populated task_tree renders both parent and child task names."""
-    tree = _build_task_tree([_ROOT_DICT, _CHILD_DICT])
-    snap = _snap(task_tree=tree)
-    el = _task_expansion(snap, lambda _: None)
-    joined = " ".join(el.lines())
-    assert "Root Task" in joined
-    assert "Child Task" in joined
-
-
-def test_task_expansion_child_row_more_indented_than_parent() -> None:
-    """Tier 2: in a populated tree, the child row has more leading whitespace than the root."""
-    tree = _build_task_tree([_ROOT_DICT, _CHILD_DICT])
-    snap = _snap(task_tree=tree)
-    el = _task_expansion(snap, lambda _: None)
-    rows = el.lines()
-    root_row = next(r for r in rows if "Root Task" in r)
-    child_row = next(r for r in rows if "Child Task" in r)
-    root_indent = len(root_row) - len(root_row.lstrip())
-    child_indent = len(child_row) - len(child_row.lstrip())
-    assert child_indent > root_indent
-
-
-# _task_rows live-reading contract
-# ---------------------------------------------------------------------------
-
-
-def test_task_rows_dict_replacement_is_visible_through_lambda() -> None:
-    """Tier 2: live-reading DetailElement over task_cache re-reads the dict on every lines() call.
-
-    _menu_open creates DetailElement(lambda: _task_rows(tc.get("tree") or [], 0) …)
-    so that the open task dropdown reflects _task_poll's updates. The key contract:
-    replacing tc["tree"] (as _task_poll does — it assigns a new list, not in-place)
-    is immediately visible in the next lines() call, unlike a snapshot-time pre-compute.
-    """
-    tc: dict = {"tree": [{"task_id": "a", "name": "Task A", "status": "running", "children": []}]}
-    el = DetailElement(lambda: _task_rows(tc.get("tree") or [], 0) or ["(no active tasks)"])
-    assert any("Task A" in ln for ln in el.lines())
-
-    # Simulate _task_poll replacing the tree with a new list (not in-place mutation):
-    tc["tree"] = [{"task_id": "b", "name": "Task B", "status": "done", "children": []}]
-    assert any("Task B" in ln for ln in el.lines())
-    assert not any("Task A" in ln for ln in el.lines())
-
-
-def test_task_rows_empty_tree_replacement_shows_fallback() -> None:
-    """Tier 2: when _task_poll clears the tree, the live element shows the empty-state fallback."""
-    tc: dict = {"tree": [{"task_id": "a", "name": "Task A", "status": "running", "children": []}]}
-    el = DetailElement(lambda: _task_rows(tc.get("tree") or [], 0) or ["(no active tasks)"])
-    assert any("Task A" in ln for ln in el.lines())
-
-    tc["tree"] = []
-    assert el.lines() == ["(no active tasks)"]
 
 
 # ---------------------------------------------------------------------------

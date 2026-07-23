@@ -123,7 +123,6 @@ class RouterHostAdapter:
         presentation_registry: Any = None,      # PresentationRegistry | None — FP-0054 PR-C
         record_spawned_task: "Callable[[str, str], None] | None" = None,  # #2103 S1bc-exec
         live_session_id_fn: "Callable[[], str | None] | None" = None,     # #2103 S1bc-exec
-        current_task_id_fn: "Callable[[], str | None] | None" = None,     # #1953 §16
         turn_origin_fn: "Callable[[], str | None] | None" = None,  # proposal 0060 Phase 1 (A7)
         agent_workspace_dir: Path,
         # File op callbacks
@@ -165,13 +164,10 @@ class RouterHostAdapter:
         # adapters by hand) preserve the prior tools= shape and don't
         # accidentally activate wrappers without intent.
         universal_wrappers_enabled: bool = False,
-        # #1953 dynamic-wire: the chat session identity (the single-writer CAS key)
-        # + the session-scoped Task backend, threaded so router-dispatched task.*
-        # ops hit the SAME assignee/requester gate as the phase path (no None mask).
+        # #1953 dynamic-wire: the chat session identity, threaded so
+        # ``emit_hook_event`` builds the LLM's own ``llm:<session_id>:*``
+        # namespace (never an op field the LLM could forge).
         session_id: str | None = None,
-        task_backend: Any = None,
-        task_waker: Any = None,  # #1953 slice 7 / #2107: the OS TaskWaker for the router op-ctx
-        task_subscription_writer: Any = None,  # #2187 backend-master: the Task subscription WAL writer
         hook_dispatcher: Any = None,  # #1800 slice 5c: the Session's HookDispatcher
         hook_bus: Any = None,  # Hook-Event Redesign Phase 5 part 2: the Session's HookBus → emit_hook_event
         # FP-0034 Phase 2 step 1: ActionEmbeddingIndex + EmbeddingProvider
@@ -366,11 +362,8 @@ class RouterHostAdapter:
         # #2073 S3: exposed (public) so RouterLoop threads it onto the tool ctx, so a
         # self-reload tool reloads THIS session (per-session, not a process global).
         self.hot_reloader = hot_reloader
-        self._session_id = session_id  # #1953 dynamic-wire: task.* CAS gate key
-        self._task_backend = task_backend  # #1953 dynamic-wire: session-scoped Task backend
-        self._task_waker = task_waker  # #1953 slice 7 / #2107: OS TaskWaker for router task ops
-        self._task_subscription_writer = task_subscription_writer  # #2187 backend-master: the Task subscription WAL writer
-        self._hook_dispatcher = hook_dispatcher  # #1800 slice 5c: task_start/end dispatch
+        self._session_id = session_id  # #1953 dynamic-wire: emit_hook_event's session-namespace key
+        self._hook_dispatcher = hook_dispatcher  # #1800 slice 5c
         self._hook_bus = hook_bus  # Hook-Event Redesign Phase 5 part 2: emit_hook_event's publish target
         self._turn_budget_engine = turn_budget_engine
         self._turn_cancel_fn = turn_cancel_fn  # #1468
@@ -415,7 +408,6 @@ class RouterHostAdapter:
         self._presentation_registry = presentation_registry
         self._record_spawned_task = record_spawned_task   # #2103 S1bc-exec
         self._live_session_id_fn = live_session_id_fn      # #2103 S1bc-exec
-        self._current_task_id_fn = current_task_id_fn      # #1953 §16
         self._turn_origin_fn = turn_origin_fn      # proposal 0060 Phase 1 (A7)
         self._workspace_dir = Path(agent_workspace_dir)
         # File callbacks
@@ -2128,28 +2120,13 @@ class RouterHostAdapter:
             cancel_event=self._cancel_event,
             threat_scan=self._threat_scan,
             contextual_permission=self._contextual_permission,  # #1827 S3
-            # #1953 dynamic-wire: the REAL chat-session id + Task backend so the
-            # task.* CAS gate enforces (no None-placeholder mask-pass).
+            # #1953 dynamic-wire: the REAL chat-session id, threaded so
+            # emit_hook_event builds the LLM's own session-scoped namespace.
             session_id=self._session_id,
-            task_backend=self._task_backend,
-            # #2107: thread the TaskWaker so a chat-router task.* terminal (abort/failed)
-            # actually WAKES the requester. It was the ONE op-ctx builder missing it
-            # (task_backend was #1953-wired here; task_waker was not), so the live chat
-            # recovery wake was silently skipped (ctx.task_waker=None).
-            task_waker=self._task_waker,
-            task_subscription_writer=self._task_subscription_writer,  # #2187 backend-master: the Task subscription WAL writer
             hook_dispatcher=self._hook_dispatcher,  # #1800 slice 5c
             hook_bus=self._hook_bus,  # Hook-Event Redesign Phase 5 part 2: emit_hook_event's publish target
-            # #1953 §16: the per-turn execution context (set by the session in
-            # run_one_iteration). Read via the callback — it varies per turn, so the
-            # fixed init value would be stale (cf. live_session_id_fn). None when the
-            # session is not executing an assigned task → task.create stays
-            # session-owned (the original model).
-            current_task_id=(
-                self._current_task_id_fn() if self._current_task_id_fn else None
-            ),
-            # proposal 0060 Phase 1 (A7): mirrors current_task_id's live-callback
-            # read exactly (varies per turn, so the fixed init value would be stale).
+            # proposal 0060 Phase 1 (A7): a live callback read (varies per turn, so
+            # a fixed init value would be stale — cf. live_session_id_fn).
             # This is the router-dispatched install path (skill_management__install_*
             # / pipeline / presentation_management__install_* → this factory), so it
             # is the load-bearing wiring for A9's per-handler provenance stamp.

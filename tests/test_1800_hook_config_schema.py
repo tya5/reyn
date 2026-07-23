@@ -137,27 +137,27 @@ def test_load_hooks_push_all_fields_accepted() -> None:
     """Tier 1: a push hook with all optional fields is accepted and parsed correctly."""
     raw = [
         {
-            "on": "task_end",
+            "on": "turn_end",
             "template_push": {
-                "message": "{{ task.name }} finished",
+                "message": "{{ chain_id }} finished",
                 "wake": "{{ ctx.wake_needed }}",
                 "push_when": "{{ ctx.should_push }}",
                 "session": "{{ ctx.target_session }}",
             },
-            # schema-valid field for task_end (task_id) — Phase-3 load-time
+            # schema-valid field for turn_end (chain_id) — Phase-3 load-time
             # validation would reject a schema-external field.
-            "matcher": {"task_id": "my-task-filter"},
+            "matcher": {"chain_id": "my-chain-filter"},
         }
     ]
     registry = load_hooks(raw)
-    hooks = registry.hooks_for("task_end")
+    hooks = registry.hooks_for("turn_end")
     (hd,) = hooks  # exactly one — unpack enforces count
     assert hd.template_push is not None
-    assert hd.template_push.message == "{{ task.name }} finished"
+    assert hd.template_push.message == "{{ chain_id }} finished"
     assert hd.template_push.wake == "{{ ctx.wake_needed }}"
     assert hd.template_push.push_when == "{{ ctx.should_push }}"
     assert hd.template_push.session == "{{ ctx.target_session }}"
-    assert hd.matcher == {"task_id": "my-task-filter"}
+    assert hd.matcher == {"chain_id": "my-chain-filter"}
 
 
 def test_load_hooks_shell_valid() -> None:
@@ -290,7 +290,7 @@ def test_registry_hooks_for_preserves_registration_order() -> None:
     """Tier 1: ``hooks_for`` returns hooks in registration (list) order."""
     raw = [
         {"on": "turn_end", "template_push": {"message": "first"}},
-        {"on": "task_start", "shell_exec": "echo a"},
+        {"on": "session_end", "shell_exec": "echo a"},
         {"on": "turn_end", "template_push": {"message": "second"}},
         {"on": "turn_end", "shell_exec": "echo b"},
     ]
@@ -315,7 +315,7 @@ def test_registry_hooks_for_no_match_returns_empty() -> None:
     """Tier 1: ``hooks_for`` returns an empty list when no hooks match the point."""
     raw = [{"on": "turn_end", "shell_exec": "echo hi"}]
     registry = load_hooks(raw)
-    assert registry.hooks_for("task_start") == []
+    assert registry.hooks_for("session_start") == []
 
 
 # ===========================================================================
@@ -332,14 +332,14 @@ def test_load_hooks_round_trip_from_yaml(tmp_path: Path) -> None:
 
     yaml_content = """
 hooks:
-  - on: task_end
+  - on: turn_end
     template_push:
-      message: "task {{ task.name }} done"
+      message: "turn {{ chain_id }} done"
       wake: false
       push_when: "{{ ctx.should_notify }}"
       session: "{{ ctx.target_session }}"
     matcher:
-      task_id: task-done-filter
+      chain_id: turn-done-filter
 
   - on: session_start
     shell_exec: "scripts/on-session-start.sh"
@@ -353,20 +353,20 @@ hooks:
     raw_cfg = yaml.safe_load(reyn_yaml.read_text(encoding="utf-8"))
     registry = load_hooks(raw_cfg.get("hooks"))
 
-    # ── Hook 1: push hook at task_end ────────────────────────────────────
-    task_end_hooks = registry.hooks_for("task_end")
-    (h1,) = task_end_hooks  # exactly one — unpack enforces count
-    assert h1.on == "task_end"
+    # ── Hook 1: push hook at turn_end ────────────────────────────────────
+    turn_end_hooks = registry.hooks_for("turn_end")
+    (h1,) = turn_end_hooks  # exactly one — unpack enforces count
+    assert h1.on == "turn_end"
     assert h1.template_push is not None
-    assert h1.template_push.message == "task {{ task.name }} done"
+    assert h1.template_push.message == "turn {{ chain_id }} done"
     # non-default wake=False (default is True)
     assert h1.template_push.wake is False
     # non-default push_when template (default is "true")
     assert h1.template_push.push_when == "{{ ctx.should_notify }}"
     # non-default session template (default is None)
     assert h1.template_push.session == "{{ ctx.target_session }}"
-    # non-default matcher (default is None) — schema-valid field for task_end
-    assert h1.matcher == {"task_id": "task-done-filter"}
+    # non-default matcher (default is None) — schema-valid field for turn_end
+    assert h1.matcher == {"chain_id": "turn-done-filter"}
 
     # ── Hook 2: shell hook at session_start ───────────────────────────────
     session_start_hooks = registry.hooks_for("session_start")
@@ -377,6 +377,5 @@ hooks:
     assert h2.matcher == {"agent_name": "session-filter"}
 
     # ── Hooks at other points are empty (no stray registrations) ─────────
-    assert registry.hooks_for("turn_end") == []
-    assert registry.hooks_for("task_start") == []
+    assert registry.hooks_for("session_end") == []
     assert registry.hooks_for("turn_start") == []

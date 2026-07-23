@@ -87,19 +87,6 @@ def test_generic_list_counts_items_with_pluralisation() -> None:
     assert summarize_tool_result("anything", ["only"]) == "1 item"
 
 
-def test_task_list_result_shows_count() -> None:
-    """Tier 2: task__list result counts tasks rather than falling through to 'ok'."""
-    assert summarize_tool_result(
-        "task__list", {"kind": "task.list", "status": "ok", "tasks": []}
-    ) == "0 tasks"
-    assert summarize_tool_result(
-        "task__list", {"kind": "task.list", "status": "ok", "tasks": [{"id": "t1"}]}
-    ) == "1 task"
-    assert summarize_tool_result(
-        "task__list", {"kind": "task.list", "status": "ok", "tasks": [{"id": "t1"}, {"id": "t2"}]}
-    ) == "2 tasks"
-
-
 def test_dict_with_error_key_shows_error_not_raw_repr() -> None:
     """Tier 2: a dict with an 'error' key shows '✗ <error message>', not raw repr.
 
@@ -201,7 +188,7 @@ def test_error_message_field_shown_not_raw_dict() -> None:
     """Tier 2: dicts with 'error_message' (no 'error' key) show '✗ <message>'.
 
     semantic_search validation errors return {"ok": False, "error_kind": ..., "error_message": ...}
-    and task_ops returns the same shape for invalid-args/no-context errors.
+    and other ops return the same shape for invalid-args/no-context errors.
     Without the error_message fallback both fell through to raw dict repr.
     The '✗' prefix ensures the ⎿ row renders in red (tool_call_completed + ✗ → _CC_ERR).
     """
@@ -502,30 +489,6 @@ def test_sandboxed_exec_ok_shows_exit_code() -> None:
     ) == "exit 0"
 
 
-def test_task_op_shows_task_name() -> None:
-    """Tier 2: task op result ({kind, status, task: {name, ...}}) shows the task name.
-
-    task.create/get/update_status/abort/assign/add_dependency/... all return a
-    nested 'task' dict; without this branch they fall to status → 'ok', losing
-    the identity of which task was acted on.
-    """
-    assert summarize_tool_result(
-        "task__create",
-        {"kind": "task.create", "status": "ok",
-         "task": {"task_id": "t1", "name": "Add user auth", "status": "open"}},
-    ) == "Add user auth"
-    assert summarize_tool_result(
-        "task__update_status",
-        {"kind": "task.update_status", "status": "ok",
-         "task": {"task_id": "t2", "name": "Fix login bug", "status": "done"}},
-    ) == "Fix login bug"
-    assert summarize_tool_result(
-        "task__get",
-        {"kind": "task.get", "status": "ok",
-         "task": {"task_id": "abc-123", "name": "", "status": "open"}},
-    ) == "abc-123"
-
-
 def test_compact_shows_freed_tokens() -> None:
     """Tier 2: compact success ({kind, status, freed_tokens, ...}) shows 'Freed N tokens'.
 
@@ -605,24 +568,6 @@ def test_web_fetch_shows_url() -> None:
         {"kind": "web_fetch", "url": long_url, "status": "ok", "content": ""},
     )
     assert "…" in out2 and "\n" not in out2
-
-
-def test_task_heartbeat_shows_state() -> None:
-    """Tier 2: task.heartbeat result ({state, task_id, status:"ok"}) shows the state.
-
-    task.heartbeat returns {kind:"task.heartbeat", status:"ok", task_id, state, unblocked};
-    showing the state ("running"/"awaiting"/"completed") is more informative than 'ok'.
-    """
-    assert summarize_tool_result(
-        "task__heartbeat",
-        {"kind": "task.heartbeat", "status": "ok",
-         "task_id": "t-abc", "state": "running", "unblocked": False},
-    ) == "running"
-    assert summarize_tool_result(
-        "task__heartbeat",
-        {"kind": "task.heartbeat", "status": "ok",
-         "task_id": "t-def", "state": "awaiting", "unblocked": False},
-    ) == "awaiting"
 
 
 def test_file_regenerate_index_shows_indexed_path() -> None:

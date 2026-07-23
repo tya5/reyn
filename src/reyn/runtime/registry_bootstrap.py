@@ -200,7 +200,6 @@ def build_agent_registry_from_project(
             reasoning_config=config.chat.reasoning,
             registry=registry,
             allowed_mcp=profile.allowed_mcp,
-            task_backend=registry.task_backend,
             events_config=config.events,
             cost_warn_config=config.cost_warn,
             offload_config=config.offload,

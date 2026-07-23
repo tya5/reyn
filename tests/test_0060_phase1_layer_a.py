@@ -168,9 +168,7 @@ def test_turn_origin_maps_every_known_kind_and_fails_safe_on_unmapped(tmp_path):
     "user_directed"; every other known kind (hook / pipeline_result / the wake
     family / agent_request / agent_response) AND a brand-new, never-registered
     kind all resolve to "auto_improvement". Asserts on the PUBLIC op-ctx output
-    (current adapter's turn_origin), not private state — mirrors the sibling
-    _stamp_execution_context / current_task_id completeness test
-    (test_2107_B15_preserve_self_continuation_1953.py). FALSIFY: if an unmapped
+    (current adapter's turn_origin), not private state. FALSIFY: if an unmapped
     kind fell through to "user_directed", this test goes RED (a Phase-4-gate
     bypass — 0060 SS2.7)."""
     s = make_session(agent_name="alice", state_log=StateLog(tmp_path / "wal.jsonl"))
@@ -185,14 +183,12 @@ def test_turn_origin_maps_every_known_kind_and_fails_safe_on_unmapped(tmp_path):
     s._stamp_execution_context("user", {})
     assert current() == "user_directed"
 
-    # Every other DISPATCHED kind (hook self-continuation, sub-agent turns, the
-    # wake family, an async pipeline's terminal result) resolves to the
-    # stricter auto_improvement — including kinds that PRESERVE current_task_id
-    # (hook/agent_response): turn_origin has its OWN (simpler) fail-safe rule,
-    # not derived from the task-ownership PRESERVE/RESET bands.
+    # Every other DISPATCHED kind (hook self-continuation, sub-agent turns, an
+    # async pipeline's terminal result) resolves to the stricter
+    # auto_improvement: turn_origin's fail-safe rule grants "user_directed" to
+    # ONLY an explicit "user" kind.
     for kind in (
         "hook", "agent_response", "agent_request", "pipeline_result",
-        "task_ready", "task_dependency_aborted",
         # a brand-new kind this method has never seen before.
         "some_unknown_future_kind_0060",
     ):

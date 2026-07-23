@@ -167,37 +167,3 @@ async def test_rewind_restore_failure_does_not_drop_the_session_dir(tmp_path) ->
         "#2125: a failed reconstruction must not commit the destructive session drop"
     )
 
-
-@pytest.mark.asyncio
-async def test_remove_session_keeps_shared_backend_open_survivor_usable(tmp_path) -> None:
-    """Tier 2: #2180 REVERSES the #2125 per-session close-on-drop. The Task backend is now
-    GLOBAL (#2187) — ONE instance/connection per process, so every session holds the SAME
-    backend object. remove_session must therefore NOT close it: closing on one session's
-    drop would strand every SURVIVING sibling session (use-after-close on the shared
-    connection). After the drop the survivor keeps the SAME open instance. RED if
-    remove_session re-introduces the close() (the survivor's read would raise
-    ProgrammingError on a closed db)."""
-    from reyn.task.factory import create_task_backend
-
-    reg = _make_registry(tmp_path)
-    db = tmp_path / "worker_tasks.db"
-    shared_backend = create_task_backend("sqlite", path=str(db))  # the ONE global backend
-
-    async def _noop() -> None:
-        return None
-
-    # both sessions hold the SAME shared instance — the global backend model.
-    main = SimpleNamespace(
-        task_backend=shared_backend, cancel_inflight=_noop, await_quiescent=_noop,
-    )
-    spawned = SimpleNamespace(
-        task_backend=shared_backend, cancel_inflight=_noop, await_quiescent=_noop,
-    )
-    reg._sessions["worker"] = {"main": main, "s1": spawned}
-    _make_session_dir(reg, "worker", "s1")
-
-    await reg.remove_session("worker", "s1")
-
-    # the shared backend is STILL OPEN — the survivor can read/write through it (a closed
-    # connection would raise ProgrammingError here).
-    assert await shared_backend.get("any-task-id") is None

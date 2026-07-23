@@ -1061,36 +1061,6 @@ hooks_add_to_canonical = make_status_text_mapper(
 )
 
 
-def _render_task_heartbeat(result: dict) -> str:
-    return f"Heartbeat recorded for task {result.get('task_id', '')} (state={result.get('state', '')})."
-
-
-# ``task.heartbeat`` (core/op_runtime/task.py) — ``{kind, status, task_id, state, unblocked}``.
-task_heartbeat_to_canonical = make_status_text_mapper(
-    render=_render_task_heartbeat, meta_keys=("task_id", "state", "unblocked"),
-)
-
-
-def _render_task_register_unblock_predicate(result: dict) -> str:
-    return f"Unblock predicate registered for task {result.get('task_id', '')}."
-
-
-# ``task.register_unblock_predicate`` (core/op_runtime/task.py) — ``{kind, status, task_id}``.
-task_register_unblock_predicate_to_canonical = make_status_text_mapper(
-    render=_render_task_register_unblock_predicate, meta_keys=("task_id",),
-)
-
-
-def _render_task_comment(result: dict) -> str:
-    return f"Comment {result.get('comment_id', '')} added to task {result.get('task_id', '')}."
-
-
-# ``task.comment`` (core/op_runtime/task.py) — ``{kind, status, task_id, comment_id}``.
-task_comment_to_canonical = make_status_text_mapper(
-    render=_render_task_comment, meta_keys=("task_id", "comment_id"),
-)
-
-
 def _render_agent_spawn(result: dict) -> str:
     text = f"Spawned agent '{result.get('name', '')}' (parent={result.get('parent', '')})."
     note = result.get("note")
@@ -1595,33 +1565,6 @@ def cron_list_to_canonical(result: dict) -> CanonicalToolResult:
     preview = _bounded_join(jobs, "name")
     text = f"{n} cron job{'s' if n != 1 else ''} ({source})" + (f": {preview}" if preview else "") + "."
     return _records_to_canonical(text, jobs)
-
-
-def task_op_to_canonical(result: dict) -> CanonicalToolResult:
-    """Shared ``task.*`` op result -> canonical (#2681 Bucket B) for the 9 record-read/write ops whose
-    success view is a task record: ``task.create`` / ``.update_status`` / ``.get`` / ``.list`` /
-    ``.add_dependency`` / ``.remove_dependency`` / ``.repoint_dependency`` / ``.abort`` / ``.assign``.
-    Every op's error/denied result (``_not_found`` / ``_edge_error`` / ``_role_denied`` /
-    ``_open_children_error`` in ``op_runtime/task.py``) carries an ``error`` field, caught by the
-    shared error seam before this mapper runs.
-
-    Two success shapes share this ONE mapper (the inner discriminator): ``task.list`` returns
-    ``{"tasks": [<task dict>, ...]}`` (plural — the one list-shaped op among these 9); every other op
-    returns ``{"task": <task dict>}`` (singular, one ``Task.to_dict()`` record). Neither key present
-    is a discriminator-miss (mode M3, fail-visible per this module's convention) rather than a
-    silent status-only line."""
-    if "tasks" in result:
-        tasks = result.get("tasks") or []
-        n = len(tasks)
-        text = f"{n} task{'s' if n != 1 else ''}."
-        return _records_to_canonical(text, tasks)
-    if "task" in result:
-        task = result.get("task") or {}
-        task_id = task.get("task_id", "")
-        status = task.get("status", "")
-        text = f"task {task_id}: {status}."
-        return _records_to_canonical(text, task)
-    raise CanonicalDiscriminatorMiss("task_op_to_canonical: no task/tasks body key")
 
 
 def topology_create_to_canonical(result: dict) -> CanonicalToolResult:

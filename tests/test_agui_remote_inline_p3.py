@@ -16,9 +16,7 @@ These pin the invariants that keep the two paths in lockstep:
   ``STATE_*`` and the ``RemoteReadModel`` projects them into the snapshot the chips
   read.
 - **The read-model degrades gracefully**: session-local affordances (intervention
-  region, command-UI, task tree, and the ``task`` chip count — the task system is
-  a deprecation candidate, so it is NOT streamed) are empty/0 on remote, never
-  faked.
+  region and command-UI) are empty/0 on remote, never faked.
 - **The shared driver drives EITHER transport to termination.**
 
 Real emitter / codec / AgUiTransport / renderers throughout — no mocks.
@@ -80,13 +78,11 @@ def test_inline_interactive_predicate_gates_both_paths() -> None:
 async def test_remote_read_model_projects_wire_status() -> None:
     """Tier 2: driving a real emitter → wire → AgUiTransport populates the
     RemoteStatusView, and the RemoteReadModel projects the MAIN-bar chip values
-    into the snapshot shape the inline chips read. `task_count` is NOT streamed
-    (task system is a deprecation candidate) → it degrades to 0 even though the
-    server-side snapshot carried a non-zero value."""
+    into the snapshot shape the inline chips read."""
     state = {
         "attached_name": "researcher", "model": "opus",
         "cost_agent": 1.5, "cost_total": 3.0, "agent_tokens": 42,
-        "ctx_used": 200, "ctx_window": 1000, "task_count": 3,
+        "ctx_used": 200, "ctx_window": 1000,
     }
 
     async def frames():
@@ -96,8 +92,6 @@ async def test_remote_read_model_projects_wire_status() -> None:
     emitter = AgUiEmitter(frames(), lambda: dict(state))
     sse = "".join([chunk async for chunk in emitter.stream()])
     assert "STATE_SNAPSHOT" in sse
-    # task_count must NOT ride the wire (no poll, deprecation candidate).
-    assert "task_count" not in sse
 
     async def _noop_send(_payload):
         return None
@@ -111,8 +105,6 @@ async def test_remote_read_model_projects_wire_status() -> None:
     assert snap["model"] == "opus"
     assert snap["cost_agent"] == 1.5
     assert snap["ctx_window"] == 1000
-    # Degraded to 0 despite the server-side value — never streamed, never faked.
-    assert snap["task_count"] == 0
 
 
 # --- graceful degrade: session-local affordances are empty, never faked --------
@@ -121,7 +113,7 @@ async def test_remote_read_model_projects_wire_status() -> None:
 @pytest.mark.asyncio
 async def test_remote_read_model_degrades_local_only_affordances() -> None:
     """Tier 2: the remote read-model returns empty (not fabricated) for everything
-    NOT on the wire — intervention region, command-UI, task tree — and declares it
+    NOT on the wire — intervention region, command-UI — and declares it
     has no command-UI region so the /rewind text fallback engages."""
 
     async def _noop_send(_payload):
@@ -132,12 +124,9 @@ async def test_remote_read_model_degrades_local_only_affordances() -> None:
     assert rm.intervention_head() is None
     assert rm.pending_command_ui() is None
     assert rm.has_command_ui_region is False
-    assert await rm.list_active_tasks() == []
-    # A pre-STATE_SNAPSHOT snapshot renders a placeholder model, empty tree/counts.
+    # A pre-STATE_SNAPSHOT snapshot renders a placeholder model.
     snap = rm.snapshot()
     assert snap["model"] == "—"
-    assert snap["task_tree"] == []
-    assert snap["task_count"] == 0
 
 
 def test_project_remote_snapshot_expansion_keys_are_empty() -> None:

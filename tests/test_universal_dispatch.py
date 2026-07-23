@@ -593,20 +593,6 @@ _ROUTE_CONTRACT_SAMPLES: list[tuple[str, dict[str, Any]]] = [
     ("rag_operation__semantic_search", {"query": "q", "sources": ["s"]}),
     ("rag_operation__drop_source", {"source": "s"}),
     ("exec__sandboxed_exec",       {"argv": ["echo", "hi"]}),
-    # task category (#1953 dynamic-wire) — args cover each IROp's required fields.
-    ("task__create",                     {"name": "ship it"}),
-    ("task__update_status",              {"task_id": "t1", "status": "in_progress"}),
-    ("task__get",                        {"task_id": "t1"}),
-    ("task__list",                       {}),
-    ("task__add_dependency",             {"task_id": "t1", "depends_on": "t0"}),
-    ("task__remove_dependency",          {"task_id": "t1", "depends_on": "t0"}),
-    ("task__repoint_dependency",
-     {"task_id": "t1", "from_depends_on": "t0", "to_depends_on": "t2"}),
-    ("task__abort",                      {"task_id": "t1"}),
-    ("task__heartbeat",                  {"task_id": "t1"}),
-    ("task__register_unblock_predicate", {"task_id": "t1", "predicate": "x>0"}),
-    ("task__comment",                    {"task_id": "t1", "body": "note"}),
-    ("task__assign",                     {"task_id": "t1", "assignee": "s1"}),
     # skill_management category (#2548 PR-C) — install_local requires path.
     ("skill_management__install_local",  {"path": "/tmp/my-skill"}),
     # skill_management category (#2548 PR-D) — install_source requires source URL.

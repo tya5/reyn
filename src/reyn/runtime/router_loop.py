@@ -79,7 +79,7 @@ _EMPTY_RESPONSE_MSG: dict[str, str] = {
 # eventual ``[task_completed]`` arrival. The previous (pre-H3) LLM-composed
 # ack was hallucinating output that hadn't happened yet (B32
 # W3 S1); this deterministic OS message carries the same UX guarantee
-# (= "/tasks" hint) without LLM composition, so the race condition does
+# (= "/agents" hint) without LLM composition, so the race condition does
 # not re-emerge.  P7-clean: no tool names, no qualified action names.
 # #1593 PR-4: the OS-generic synthetic tool-response the RePresent arm appends for
 # an intercepted re-present tool_call (a retrieval search). The scheme's interpret
@@ -110,11 +110,11 @@ _MAX_REPRESENT_ROUNDS = 64
 _AGENT_SPAWN_ACK_MSG: dict[str, str] = {
     "ja": (
         "ピアエージェントにリクエストを送信しました。"
-        " 返答を待っています — `/tasks` で進行状況を確認できます。"
+        " 返答を待っています — `/agents` で進行状況を確認できます。"
     ),
     "en": (
         "Request dispatched to the peer agent."
-        " Awaiting reply — use `/tasks` to monitor progress."
+        " Awaiting reply — use `/agents` to monitor progress."
     ),
 }
 
