@@ -1376,6 +1376,7 @@ class Session:
             available_skills_provider=lambda: self._available_skills,
             contextual_permission=contextual_permission,
             excluded_categories=excluded_categories,
+            chat_tool_use_scheme=self._chat_tool_use_scheme,  # #3220: tool census matches the active scheme's composed payload
         )
 
         # owns + orchestrates them in one method (#2073 S2, see session-construction.md#family-3-hook-event-reactivity)
