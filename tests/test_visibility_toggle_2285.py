@@ -83,7 +83,19 @@ async def test_toggle_hides_then_restores_within_envelope(tmp_path, monkeypatch)
 @pytest.mark.asyncio
 async def test_visibility_state_reflects_envelope_and_override(tmp_path, monkeypatch):
     """Tier 2: capability_visibility_state — authorized excludes the envelope-denied tool (never
-    togglable); hidden_by_session carries the override."""
+    togglable); hidden_by_session carries the override.
+
+    #3220: ``ask_user`` is a ``gates.router="deny", gates.phase="allow"`` PHASE-ONLY
+    capability — it is registered in the global registry but never appears in ANY chat-layer
+    scheme's composed ``tools=`` payload (it isn't in ``build_tools()``'s router=allow set,
+    nor in the ``universal_catalog`` action table). Pre-#3220, ``capability_visibility_state``
+    sourced "authorized" from the raw registry census + envelope filtering alone, so
+    ``ask_user`` showed up as an "authorized" (togglable) tool despite never being reachable
+    this session — the exact bug #3220 fixes (source = the composed payload, not the
+    registry). ``set_capability_visible`` itself does not validate against "authorized" (the
+    override dict accepts any name), so toggling ``ask_user`` off still lands in
+    ``hidden_by_session`` — that mechanic is unchanged and asserted below.
+    """
     monkeypatch.chdir(tmp_path)
     reg = _make_registry(tmp_path)
     reg.get_or_load("alice")
@@ -94,5 +106,12 @@ async def test_visibility_state_reflects_envelope_and_override(tmp_path, monkeyp
     state = session.capability_visibility_state()
     authorized_tools = {i["name"] for i in state["authorized"] if i["kind"] == "tool"}
     assert "delete_file" not in authorized_tools, "envelope-denied tool absent from authorized"
-    assert "ask_user" in authorized_tools, "an allowed tool is authorized (togglable)"
-    assert {"kind": "tool", "name": "ask_user"} in state["hidden_by_session"]
+    assert "list_agents" in authorized_tools, "an allowed, payload-reachable tool is authorized (togglable)"
+    assert "ask_user" not in authorized_tools, (
+        "#3220: a phase-only (gates.router='deny') tool registered globally but absent from "
+        "every scheme's composed payload must NOT appear as authorized/visible"
+    )
+    assert {"kind": "tool", "name": "ask_user"} in state["hidden_by_session"], (
+        "toggling a name off still records it in hidden_by_session even if it was never "
+        "'authorized' -- set_capability_visible does not gate on authorized membership"
+    )
