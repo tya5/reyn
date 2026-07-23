@@ -802,11 +802,31 @@ ADR 0064 (plugin model) P2 install machinery. A plugin is a self-contained
 directory (`.reyn-plugin/plugin.json` manifest + optional `mcp`/`pipelines`/
 `skills` subdirs, ADR §3.1) — `plugin_install` copies it to
 `~/.reyn/plugins/<name>/` (global, once), expands `${REYN_*}` stable-location
-tokens, materialises per-plugin Python deps (install-time network, network-free
-spawn), and REGISTERS whatever capabilities the manifest declares by calling
+tokens, and REGISTERS whatever capabilities the manifest declares by calling
 the SAME existing verbs `skill_install` / `pipeline_install` already provide
 (plus a direct `.reyn/config/mcp.yaml` write for the optional root
-`.mcp.json`) — an orchestration layer, not a fourth registry. Handled by
+`.mcp.json`) — an orchestration layer, not a fourth registry.
+
+**Register-only** (#3209 — architect-firm redesign, owner GO 2026-07-23):
+`plugin_install` never provisions a plugin's external Python dependencies.
+The pre-#3209 design materialised a per-plugin venv (`<sys.executable> -m
+venv` + `pip install`) at install time and rewrote a `command: "python"` mcp
+entry to that venv's interpreter — a foreign env-provisioning responsibility
+riding a registration op. That entire step (its two interpreter-path
+resolvers, the venv materialise call, the `_deps_materialised` install-state
+stage) is REMOVED, clean-break, no transition shim. A plugin's
+`requirements.txt` (if present) is now inert data plugin_install copies but
+never reads: external deps are **skill-driven** — the installing skill's
+SETUP instructions walk the operator/LLM through creating their OWN venv,
+`pip install -r requirements.txt` inside it, and pointing the plugin's
+`.mcp.json` server `command` at that venv's python interpreter absolute
+path directly (Windows: `Scripts\python.exe`). `plugin_install` registers
+whatever `command` the plugin's `.mcp.json` names AS-IS — no rewrite of any
+kind. **Fail-fast preserved** (#3060 by-construction requirement): a
+`command` naming an incomplete/missing venv fails at MCP spawn with a clear
+OS-level error; plugin_install/spawn never falls back to a runtime fetch.
+See ADR 0064 §3.11a for the interpreter-path-resolution history this
+redesign supersedes. Handled by
 `op_runtime/plugin_install.py` / `op_runtime/plugin_uninstall.py`. LLM tool
 surface: `plugin_management__install` / `plugin_management__uninstall`
 (`tools/plugin_management_verbs.py`) — named distinctly from the op kind to
@@ -871,7 +891,7 @@ form-sniffed string):
   on disk. Middle RCE trust risk.
 - `{kind: "git", url: "<url>"}` — a remote git URL, shallow-cloned. Highest
   RCE trust risk — gated by a DISTINCT per-install run-code trust decision
-  (`require_plugin_git_run_code_trust`, gate 3 below), separate from the fetch
+  (`require_plugin_git_run_code_trust`, gate 2 below), separate from the fetch
   axis; fetching and running remote code is an explicit operator-trust
   decision, never auto-run and never pre-grantable.
 
@@ -889,15 +909,7 @@ Permission gates (§3.10 — composed from EXISTING gates, no new bool axis; the
    This path is OUTSIDE the default write zone (`.reyn/` under CWD), so the
    existing gate's "zone OR approved" decl-less rule already denies it
    without an explicit approval / JIT ask — no new gate needed.
-2. **Dependency materialisation** (`requirements.txt` present) —
-   `require_http_get` for the package-index host (`pypi.org`) before running
-   `<sys.executable> -m venv` + `<venv_python> -m pip install` into
-   `<plugin_root>/.venv` (#3202 — no `uv` dependency; see ADR 0064 §3.11a for
-   why). Install-time only; the resulting venv's interpreter — resolved via
-   stdlib `sysconfig`'s `"venv"` scheme, not a hardcoded POSIX path — is what
-   a `command: "python"` mcp entry's spawn is rewritten to point at —
-   **spawn itself stays network-free**.
-3. **`{kind: "git"}` run-code trust** — a DEDICATED
+2. **`{kind: "git"}` run-code trust** — a DEDICATED
    `require_plugin_git_run_code_trust` gate, checked BEFORE the fetch. This is
    the RCE trust boundary and is deliberately SEPARATE from `require_http_get`
    (the fetch axis): fetching bytes and RUNNING them are different decisions.
@@ -932,7 +944,7 @@ higher-trust one.
    (ungated — OS-internal repair of already-broken entries) BEFORE the copy is
    removed, or a dangling registry entry would survive.
 1. Resolve `source` → a source directory per its `kind`, applying the source's
-   gate(s): `{kind: "git"}` runs the run-code trust gate (3) then
+   gate(s): `{kind: "git"}` runs the run-code trust gate (2) then
    `require_http_get` before cloning; `builtin`/`local` touch no network.
 2. Load + validate `.reyn-plugin/plugin.json` via `reyn.plugins.manifest.
    load_plugin_manifest` (P1) — a missing/malformed manifest refuses
@@ -953,14 +965,14 @@ higher-trust one.
    `~/.reyn/plugins/<name>/` copy can be enabled into more than one project
    (§3.3) — baking one install call's project into the shared copy would
    freeze every later enabling project to whichever one installed it first.
-7. Materialise deps (gate 2, when `requirements.txt` is present). Emit
-   `plugin_install_deps_materialised`.
-8. Register: for each manifest capability, call `skill_install.handle` /
-   `pipeline_install.handle` (each sub-op carries `plugin_id=<name>`, §3.7)
-   for skills/pipelines, or write `.reyn/config/mcp.yaml` directly
-   (probe-then-commit, mirrors `mcp__install_local`) for the root `.mcp.json`.
-   Emit `plugin_install_registered`.
-9. Delete the `_install_state.json` marker (absence = completed) and emit
+7. Register (#3209: register-only, no dep materialise step): for each
+   manifest capability, call `skill_install.handle` / `pipeline_install.
+   handle` (each sub-op carries `plugin_id=<name>`, §3.7) for
+   skills/pipelines, or write `.reyn/config/mcp.yaml` directly
+   (probe-then-commit, mirrors `mcp__install_local`) for the root
+   `.mcp.json` — a server's `command` is registered AS-IS, no
+   venv-interpreter rewrite. Emit `plugin_install_registered`.
+8. Delete the `_install_state.json` marker (absence = completed) and emit
    `plugin_install_completed`.
 
 `plugin_uninstall` handler lifecycle (drop-registry-first, §3.11 — an
@@ -972,12 +984,11 @@ deleted copy):
 2. Remove the `~/.reyn/plugins/<name>/` copy (gated `require_file_write`).
    Emit `plugin_uninstall_completed`.
 
-**Not WAL-derived** (§3.11): the `~/.reyn/plugins/` copies + the materialised
-venv are FILES, not WAL-event-derived state — the CLAUDE.md truncate-falsify
-recovery gate does not apply to them. The reconcile above is a
-filesystem/registry consistency check; the registry entries THEMSELVES still
-ride the existing config-generation recovery path via `skill_install` /
-`pipeline_install`.
+**Not WAL-derived** (§3.11): the `~/.reyn/plugins/` copies are FILES, not
+WAL-event-derived state — the CLAUDE.md truncate-falsify recovery gate does
+not apply to them. The reconcile above is a filesystem/registry consistency
+check; the registry entries THEMSELVES still ride the existing
+config-generation recovery path via `skill_install` / `pipeline_install`.
 
 Result fields (`plugin_install`): `status` (`"installed"` / `"skipped"` /
 `"error"`), `name`, `plugin_root`, `source_kind`, `capabilities`, `registered`
@@ -986,9 +997,9 @@ Result fields (`plugin_install`): `status` (`"installed"` / `"skipped"` /
 Result fields (`plugin_uninstall`): `status` (`"uninstalled"` / `"error"`),
 `name`, `removed` (per-registry list of dropped entry names), `copy_removed`.
 
-Events emitted: `plugin_install_started` / `_copied` / `_deps_materialised` /
-`_registered` / `_completed`; `plugin_uninstall_started` /
-`_registry_dropped` / `_completed`.
+Events emitted: `plugin_install_started` / `_copied` / `_registered` /
+`_completed`; `plugin_uninstall_started` / `_registry_dropped` /
+`_completed`.
 
 ## `embed`
 

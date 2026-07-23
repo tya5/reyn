@@ -284,7 +284,8 @@ def get_default_registry() -> ToolRegistry:
     # ADR 0064 plugin model P2: plugin_install / plugin_uninstall — promote/
     # install and uninstall a self-contained plugin directory (security-critical:
     # composite of require_file_write (~/.reyn/plugins/, recursive) +
-    # require_http_get (git fetch / dep materialisation)).
+    # require_http_get (git fetch only — register-only since #3209, never a
+    # dep-fetch)).
     registry.register(PLUGIN_INSTALL)
     registry.register(PLUGIN_UNINSTALL)
     # #3202 symptom 3: plugin discovery verb -- read-only enumeration of

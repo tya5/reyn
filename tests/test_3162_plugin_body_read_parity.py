@@ -68,16 +68,14 @@ def _make_plugin_source(base: Path, name: str = "myplugin") -> Path:
     dir ALSO carries an L3 bundled reference file, plus non-body content
     (``scripts/``) that must stay gated post-install.
 
-    Deliberately carries NO ``requirements.txt``: `plugin_install`'s step 7
-    (`_materialise_deps`) shells out to the real `uv` binary whenever the
-    copied plugin has one, which a CI runner may not have installed (the
-    fixture must not depend on `uv` being present just to prove witness 4's
-    "install completed" — that would make the REAL-install witness flaky on
-    dependency-materialisation infrastructure it has nothing to do with).
-    Witness 1 needs a `requirements.txt` on disk under the registered root
-    ONLY to prove it stays gated post-install; it writes one directly into
-    the fixture's already-completed `plugin_root` (see that test) instead of
-    routing it through install.
+    Deliberately carries NO ``requirements.txt`` at SOURCE: `plugin_install`
+    is register-only (#3209) and never reads/materialises one regardless, so
+    this omission is no longer load-bearing for install itself — kept
+    anyway so this fixture stays minimal and focused on the body-read gate
+    it exists to test. Witness 1 needs a `requirements.txt` on disk under the
+    registered root ONLY to prove it stays gated post-install; it writes one
+    directly into the fixture's already-completed `plugin_root` (see that
+    test) instead of routing it through install.
     """
     plugin_dir = base / name
     (plugin_dir / ".reyn-plugin").mkdir(parents=True, exist_ok=True)

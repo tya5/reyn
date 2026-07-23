@@ -14,10 +14,13 @@ COMPOSITE of existing gates (§3.10, no new bool axis — the #571 collapse arc
 removed those): ``file.write`` (recursive, scoped to ``~/.reyn/plugins/`` —
 the global-copy write is OUTSIDE the default ``.reyn/`` write zone, so the
 EXISTING ``require_file_write`` JIT-ask/deny path already covers it) +
-``http.get`` (wildcard — covers BOTH the ``{kind:"git"}`` remote-code fetch
-AND the install-time dependency-materialisation fetch; the op handler gates
-each SPECIFIC host as it becomes known, mirroring ``pipeline_install``'s
-source-fetch gate).
+``http.get`` (wildcard — covers the ``{kind:"git"}`` remote-code fetch; the
+op handler gates the SPECIFIC clone host as it becomes known, mirroring
+``pipeline_install``'s source-fetch gate). Install never fetches a
+plugin's Python dependencies (ADR 0064 §3.11b, #3209 — register-only; that
+responsibility moved to the installing skill's SETUP instructions + the
+operator/LLM's own venv), so this declaration covers no dependency-fetch
+surface any more.
 """
 from __future__ import annotations
 
@@ -117,10 +120,10 @@ async def _handle_plugin_install(
     # covers the whole global-copy root, matching how the op itself gates
     # the SPECIFIC resolved path via require_file_write at handler time.
     decl.file_write = [{"path": str(plugins_root()), "scope": "recursive"}]
-    # Wildcard: covers both the {kind:"git"} remote-code fetch AND the
-    # install-time dependency-materialisation fetch (pypi.org) — the op
-    # handler gates each SPECIFIC host as it becomes known (mirrors
-    # pipeline_install's source-fetch gate).
+    # Wildcard: covers the {kind:"git"} remote-code fetch — the op handler
+    # gates the SPECIFIC clone host as it becomes known (mirrors
+    # pipeline_install's source-fetch gate). Install never fetches a
+    # plugin's Python deps (#3209 — register-only).
     decl.http_get = [{"host": "*"}]
 
     op_ctx = build_legacy_op_context(ctx)

@@ -31,43 +31,19 @@ setup. Do not ingest a corpus just to answer one question about one file:
 Neither the builtin `rag` plugin nor the third-party markitdown server ships
 pre-installed, so enabling them is a decision, not a default. **The decision
 is the operator's; making the request is yours** -- install and the
-permission gate prompts them before anything reaches config. **Do not tell
-the operator to hand-edit YAML.**
+permission gate prompts them before anything reaches config.
 
 ```
 plugin_management__install(source={"kind": "builtin", "name": "rag"})
 mcp__install_local(name="reyn_markitdown", command="uvx", args=["markitdown-mcp"])
 ```
 
-The single `plugin_management__install` call installs **everything the rag
-plugin ships** -- both MCP servers (`reyn_chunker` / `reyn_vector_store`),
-the `rag_ingest` / `rag_query` pipelines, and this skill -- in one step:
-copies the plugin to `~/.reyn/plugins/rag/`, materialises its dependencies
-(chonkie/apsw/sqlite-vec) into a **dedicated per-plugin environment** (never
-reyn's own env), and registers everything. **No `permissions:` block to
-add** -- a server in the merged config is granted when the pipeline runs it,
-and the registration step is **probed before it commits** (a failing server
-is skipped, not half-written).
-
-`rag_ingest` pre-flights all three servers and returns a **"blocked"**
-message naming any unreachable one *before* spending on embeddings:
-
-- **Not installed yet** (the common case): install it above, re-run.
-- **Operator refused**: stop and relay it -- a refusal is an answer, not an
-  error to route around. **Do not shell out, hand-roll an ingest, or re-ask.**
-- **Materialisation failed**: `plugin_management__install` reports the failure
-  inline -- **the operator's machine or network, not your call**; name what
-  failed and let them.
-
-**Never `pip install markitdown-mcp` beside Reyn** -- `uvx` fetches it into
-an isolated environment instead. If `uvx` cannot reach PyPI (firewalled),
-use a **separate venv + an absolute path** -- never Reyn's own venv:
-
-```
-python3 -m venv ~/.reyn-markitdown && ~/.reyn-markitdown/bin/pip install markitdown-mcp
-mcp__install_local(name="reyn_markitdown", args=[],
-                   command="/abs/path/.reyn-markitdown/bin/markitdown-mcp")
-```
+`plugin_management__install` is **register-only** (#3209) -- it does NOT
+install the plugin's Python dependencies for you. **Before your first
+`rag_ingest` call, read `install-and-venv-setup.md`** for the exact venv
+creation + `pip install -r requirements.txt` + mcp-config-command steps
+(Windows included) -- a probe/spawn against an unready venv fails fast
+rather than falling back to a runtime fetch.
 
 ## Next steps -- which reference answers your question
 
@@ -89,6 +65,11 @@ Config to copy: `docs/cookbook/configs/with-builtin-rag-mcp.yaml`.
 
 ## Bundled references
 
+- [install-and-venv-setup.md](${CLAUDE_SKILL_DIR}/references/install-and-venv-setup.md)
+  -- register-only install (#3209): the exact commands to create the
+  plugin's own venv, `pip install -r requirements.txt`, and point the
+  registered `reyn_chunker`/`reyn_vector_store` MCP `command` at it
+  (Windows included).
 - [configure-embedding-provider.md](${CLAUDE_SKILL_DIR}/references/configure-embedding-provider.md)
   -- confirm a working embedding provider before your first `rag_ingest`
   call: the pre-flight curl check, and the API-key path (Case A, no proxy
