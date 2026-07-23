@@ -158,6 +158,92 @@ def test_format_feedback_delegates_to_ops() -> None:
     assert msgs == [{"role": "tool", "content": "git__commit"}]
 
 
+@pytest.mark.asyncio
+async def test_enumerate_all_excludes_catalog_mcp_wrapper_3219() -> None:
+    """Tier 2: #3219 — enumerate-all excludes the catalog ``mcp__call_tool``
+    wrapper (mcp_verbs.py MCP_CALL_TOOL, a zero-capability thin adapter that
+    purely splits ``<server>__<tool>`` and delegates to native
+    ``call_mcp_tool``) from its flat ``tools=`` payload, so a single enumerate-all
+    payload carries the MCP-call action in exactly ONE shape (native).
+
+    Sources the catalog from the REAL production substrate
+    (``universal_catalog.catalog_entries``, wrapped canonical like the router's
+    ``SchemeOps.catalog_entries`` does) rather than a hand-picked Fake list, so
+    the exclusion is proven against the actual entry name it must filter — not
+    an invented stand-in (testing.ja.md: real instances over Fakes where cheap)."""
+    from reyn.runtime.router_tools import build_tools
+    from reyn.tools import universal_catalog
+    from reyn.tools.types import ToolContext
+
+    class _RS:
+        excluded_categories = frozenset()
+
+    ctx = ToolContext(
+        events=None, permission_resolver=None, workspace=None,
+        caller_kind="router", router_state=_RS(),
+    )
+    real_catalog = [
+        {
+            "type": "function",
+            "function": {
+                "name": e["name"],
+                "description": e["description"],
+                "parameters": e["parameters"],
+            },
+        }
+        for e in universal_catalog.catalog_entries(ctx)
+    ]
+    # Sanity: the wrapper IS present in the raw production catalog (else the
+    # exclusion below would pass vacuously).
+    assert any(e["function"]["name"] == "mcp__call_tool" for e in real_catalog)
+
+    real_base = build_tools(
+        [], mcp_servers=[{"name": "srv", "description": "d"}], hot_list_aliases=[],
+    )
+    # Sanity: native call_mcp_tool is present via base_tools (real build_tools).
+    assert any(t["function"]["name"] == "call_mcp_tool" for t in real_base)
+
+    class _RealCatalogOps(_FakeOps):
+        def base_tools(self, available, layer_ctx) -> list[dict]:
+            return real_base
+
+        async def catalog_entries(self) -> list[dict]:
+            return real_catalog
+
+    s = EnumerateAllScheme()
+    pres = await s.build_presentation(
+        {"hot_list_aliases": []}, {"search_visible": False}, _RealCatalogOps(),
+    )
+    names = [t["function"]["name"] for t in pres.llm_tools_payload]
+
+    # after: MCP-call action appears in exactly one shape — native, only once.
+    assert names.count("call_mcp_tool") == 1
+    assert "mcp__call_tool" not in names
+
+
+def test_shared_catalog_entries_substrate_unchanged_by_3219() -> None:
+    """Tier 2: #3219 regression guard — the exclusion above is enumerate-all-LOCAL.
+    The shared production catalog (``universal_catalog.catalog_entries``, the same
+    substrate ``RouterLoop.catalog_entries``/``SchemeOps.catalog_entries`` project
+    from, which universal-category's invoke_action/describe_action/list_actions
+    resolution reads) still carries ``mcp__call_tool`` untouched — only
+    enumerate-all's own ``build_presentation`` composition filters it out, so
+    universal's payload (which legitimately keeps the catalog-uniform wrapper) is
+    unaffected."""
+    from reyn.tools import universal_catalog
+    from reyn.tools.types import ToolContext
+
+    class _RS:
+        excluded_categories = frozenset()
+
+    ctx = ToolContext(
+        events=None, permission_resolver=None, workspace=None,
+        caller_kind="router", router_state=_RS(),
+    )
+    entries = universal_catalog.catalog_entries(ctx)
+    assert any(e["name"] == "mcp__call_tool" for e in entries)
+
+
 def test_default_chat_layer_resolves_to_enumerate_all() -> None:
     """Tier 2: #1657 — the DEFAULT chat layer (None / missing tool_use:) is
     ``enumerate-all`` (the owner H1 fix) and resolves to EnumerateAllScheme. A
