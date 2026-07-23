@@ -88,9 +88,28 @@ Once installed:
    or every chunk it embeds is wasted spend. Have an API key? read
    `configure-embedding-provider.md`. No key / offline? read
    `configure-local-embedding-model.md`.
-2. **Run it.** Read `run-ingest-and-query-workflow.md` for the exact
-   `pipeline__run` calls, parameter names, and the `embedding_model`
-   mismatch that silently ruins a corpus.
+2. **Run it.** The exact `pipeline__run` calls -- copy these param names
+   **verbatim**, a light model has generated `corpus_path`/`db_path`
+   (ingest) and other plausible-sounding names unprompted:
+
+   ```
+   pipeline__run(name="rag_ingest.ingest", input={
+     "input_path": "/abs/path/to/docs",   # required; absolute; folder or one file
+     "output_db": "./rag/docs.sqlite",    # required; cwd-relative, zero-config
+   })
+
+   pipeline__run(name="rag_query.query", input={
+     "query_text": "how does X work?",    # required
+     "db": "./rag/docs.sqlite",           # required; SAME file output_db wrote.
+                                           # EXACT name "db" -- not "db_path",
+                                           # not "vector_store_path", not "corpus_path".
+   })
+   ```
+
+   Full detail (absolute-vs-cwd-relative path rules, `top_k`/
+   `embedding_model` defaults, the returned summary fields, and the
+   `embedding_model` mismatch that silently ruins a corpus):
+   `run-ingest-and-query-workflow.md`.
 3. **Internals.** For the sqlite schema, incremental re-ingest, tuning, or
    swapping the vector-store/chunker/parser backend, read
    `corpus-internals-schema-tuning-and-backend-swap.md`.
