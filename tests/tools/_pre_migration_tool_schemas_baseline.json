@@ -405,6 +405,32 @@
     },
     "type": "function"
   },
+  "exec": {
+    "function": {
+      "description": "Execute a command in a sandboxed environment (FP-0017). The sandbox policy (network access + filesystem scope) is the OPERATOR's, resolved by the OS — it is not chosen here. argv: command and arguments (argv[0] is the executable). timeout_seconds: wall-clock time limit in seconds (default 60).",
+      "name": "exec",
+      "parameters": {
+        "properties": {
+          "argv": {
+            "description": "Command and arguments; argv[0] is the executable.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "timeout_seconds": {
+            "description": "Wall-clock time limit in seconds (default 60).",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "argv"
+        ],
+        "type": "object"
+      }
+    },
+    "type": "function"
+  },
   "forget_memory": {
     "function": {
       "description": "Delete a memory entry. Only when the user explicitly says 'forget' or the memory turned out wrong.",
@@ -1676,32 +1702,6 @@
     },
     "type": "function"
   },
-  "sandboxed_exec": {
-    "function": {
-      "description": "Execute a command in a sandboxed environment (FP-0017). The sandbox policy (network access + filesystem scope) is the OPERATOR's, resolved by the OS — it is not chosen here. argv: command and arguments (argv[0] is the executable). timeout_seconds: wall-clock time limit in seconds (default 60).",
-      "name": "sandboxed_exec",
-      "parameters": {
-        "properties": {
-          "argv": {
-            "description": "Command and arguments; argv[0] is the executable.",
-            "items": {
-              "type": "string"
-            },
-            "type": "array"
-          },
-          "timeout_seconds": {
-            "description": "Wall-clock time limit in seconds (default 60).",
-            "type": "integer"
-          }
-        },
-        "required": [
-          "argv"
-        ],
-        "type": "object"
-      }
-    },
-    "type": "function"
-  },
   "search_actions": {
     "function": {
       "description": "WHAT: Semantic search across available actions — multilingual, embedding-based, relevance-ranked. Returns {items: [{qualified_name, short_description, score}, ...]}. WHEN: PREFERRED FIRST for semantic / natural-language / free-text queries — when the user asks to find / search for / something related to / similar to / something for X / actions about Y / find ... related to Z (the request may be phrased in any language, including Japanese and other non-English input), or describes an intent without naming a specific category. ALWAYS call search_actions BEFORE refusing a semantic-intent capability request. Refusing without a search_actions check is a FAILURE MODE (= relevance ranking may surface the action across categories that a flat enumeration would miss). Multilingual — works in any language (Japanese, English, etc.). Handles both semantic descriptions AND free-text keyword lookup (e.g. an action containing 'http'). WHEN NOT: For known-category enumeration (e.g. 'show me all exec actions', 'list of memory_operation actions' — again, phrasable in any language) use list_actions(category=[...]) instead — it returns the flat catalogue slice rather than relevance-ranked hits. If you already know the exact action name, skip both and call invoke_action directly. Available only when an embedding class is configured (reyn.yaml action_retrieval.embedding_class). POST_CALL: After search_actions reveals at least one matching action, you MUST follow with describe_action or invoke_action. Do NOT reply directly — silent stop after semantic search is a failure mode.",
@@ -1809,7 +1809,7 @@
             "type": "string"
           },
           "narrowing": {
-            "description": "Optional per-session capability narrowing (restrict-only, cannot widen your envelope): a capability_profile subset, e.g. {\"tool_deny\": [\"sandboxed_exec\"]}.",
+            "description": "Optional per-session capability narrowing (restrict-only, cannot widen your envelope): a capability_profile subset, e.g. {\"tool_deny\": [\"exec\"]}.",
             "type": "object"
           },
           "request": {

@@ -38,7 +38,7 @@ from reyn.prompt.codeact import (
 
 def _sanitize_identifier(name: str) -> str:
     """#1658: a qualified action name → a valid Python identifier. Most names
-    (``file__read``, ``exec__sandboxed_exec``) already are; MCP names with
+    (``file__read``, ``exec__run``) already are; MCP names with
     hyphens or dots (``web-search__search``) are not — non-identifier chars become
     ``_``, a leading digit is prefixed, and a Python keyword is suffixed. The REAL
     qualified name is preserved in the actions map and is what the parent gate

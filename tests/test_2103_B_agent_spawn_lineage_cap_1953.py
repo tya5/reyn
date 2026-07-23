@@ -48,16 +48,16 @@ def _bind(tmp_path: Path, *, member: str, profile: str, body: str) -> None:
 
 
 def test_a_wider_subset_is_capped_at_parent(tmp_path: Path) -> None:
-    """Tier 2: (a) the parent denies sandboxed_exec; the child has NO own deny — yet the child
-    is capped at ⊆ parent via the live parent-conjunct, so it denies sandboxed_exec too.
+    """Tier 2: (a) the parent denies exec; the child has NO own deny — yet the child
+    is capped at ⊆ parent via the live parent-conjunct, so it denies exec too.
     RED if the parent-conjunct is absent (the child would not inherit the parent's deny)."""
-    _bind(tmp_path, member="P", profile="prole", body="name: prole\ntool_deny: [sandboxed_exec]\n")
+    _bind(tmp_path, member="P", profile="prole", body="name: prole\ntool_deny: [exec]\n")
     reg = _registry(tmp_path)
     reg._record_spawn_lineage("C", "P")
 
     contextual, _ = reg.resolved_profile_for("C")
     assert isinstance(contextual, ContextualPermission)
-    assert tool_contextually_denied(contextual, "sandboxed_exec")  # capped at parent
+    assert tool_contextually_denied(contextual, "exec")  # capped at parent
 
 
 def test_b_narrow_parent_after_spawn_recaps_live(tmp_path: Path) -> None:
@@ -84,14 +84,14 @@ def test_c_topology_regrant_is_capped_at_parent(tmp_path: Path) -> None:
     """Tier 2: (c) a topology binding for the CHILD that allow-lists a parent-denied tool does
     NOT re-grant it — the parent-conjunct's ∪-deny wins. A re-grant is bounded ONLY
     because the live parent-conjunct caps it."""
-    _bind(tmp_path, member="P", profile="prole", body="name: prole\ntool_deny: [sandboxed_exec]\n")
-    # the child is bound to a profile that tries to ALLOW sandboxed_exec (a re-grant attempt).
-    _bind(tmp_path, member="C", profile="crole", body="name: crole\ntool_allow: [sandboxed_exec, read_file]\n")
+    _bind(tmp_path, member="P", profile="prole", body="name: prole\ntool_deny: [exec]\n")
+    # the child is bound to a profile that tries to ALLOW exec (a re-grant attempt).
+    _bind(tmp_path, member="C", profile="crole", body="name: crole\ntool_allow: [exec, read_file]\n")
     reg = _registry(tmp_path)
     reg._record_spawn_lineage("C", "P")
 
     contextual, _ = reg.resolved_profile_for("C")
-    assert tool_contextually_denied(contextual, "sandboxed_exec")  # capped — re-grant refused
+    assert tool_contextually_denied(contextual, "exec")  # capped — re-grant refused
 
 
 def test_d_lineage_is_os_set_and_immutable(tmp_path: Path) -> None:
@@ -115,13 +115,13 @@ def test_orphaned_parent_fails_closed(tmp_path: Path) -> None:
     purge-the-parent-to-uncap-the-child (the destroy-side mirror of the rewind
     escalation). RED if the parent-EXISTENCE check is dropped (child → unrestricted)."""
     import shutil
-    _bind(tmp_path, member="P", profile="prole", body="name: prole\ntool_deny: [sandboxed_exec]\n")
+    _bind(tmp_path, member="P", profile="prole", body="name: prole\ntool_deny: [exec]\n")
     reg = _registry(tmp_path)
     reg._record_spawn_lineage("C", "P")
 
-    # parent PRESENT → C ⊆ P (denies P's sandboxed_exec; NOT the floor's re-delegation).
+    # parent PRESENT → C ⊆ P (denies P's exec; NOT the floor's re-delegation).
     present, _ = reg.resolved_profile_for("C", is_delegate=False)
-    assert tool_contextually_denied(present, "sandboxed_exec")
+    assert tool_contextually_denied(present, "exec")
     assert not tool_contextually_denied(present, "multi_agent__delegate")  # P's binding only
 
     # ORPHAN the parent (purge/remove its agent dir); the lineage edge persists.

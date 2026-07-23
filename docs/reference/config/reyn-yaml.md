@@ -1113,7 +1113,9 @@ Project-wide capability defaults. Per-skill permissions in `skill.md` override t
 
 ```yaml
 permissions:
-  shell: deny           # deny | ask | allow
+  exec: deny            # deny | ask | allow — pre-approval key for the `exec` tool
+                         # (renamed from `shell` #3226 Phase 3; existing reyn.yaml
+                         # `shell:` keys are a clean break, no alias — rename to `exec`)
   file:
     read:  [".reyn/", "src/stdlib/"]
     write: [".reyn/state/", "reyn/local/"]

@@ -73,7 +73,7 @@ def test_shell_step_kind_no_longer_supported() -> None:
     (thin sugar over a `ToolStep(name="shell", ...)` that built `/bin/sh -c
     <command>`, the sole shell-injection surface in the codebase) without
     replacing it with a new step kind — pipeline exec is fully covered by
-    `tool: {name: sandboxed_exec, args: {argv: [...], ...}}`. A DSL text
+    `tool: {name: exec, args: {argv: [...], ...}}`. A DSL text
     using `shell:` must now fail to parse as an unknown step kind."""
     dsl = """
 pipeline: demo

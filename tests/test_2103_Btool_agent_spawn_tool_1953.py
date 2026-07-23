@@ -62,13 +62,13 @@ async def test_create_via_spawn_caps_child_at_parent(tmp_path):
     """Tier 2: create_agent(parent=P) records the OS-set lineage → the new agent resolves
     ⊆ P (the spawner's deny propagates). RED if the lineage isn't recorded on the
     create-via-spawn path."""
-    _bind(tmp_path, member="parent", profile="prole", body="name: prole\ntool_deny: [sandboxed_exec]\n")
+    _bind(tmp_path, member="parent", profile="prole", body="name: prole\ntool_deny: [exec]\n")
     reg = _registry(tmp_path)
     reg.create("parent")                              # the spawner pre-exists
     await reg.create_agent("child", parent="parent")  # create-via-spawn: lineage set
     contextual, _ = reg.resolved_profile_for("child")
     assert contextual is not None
-    assert tool_contextually_denied(contextual, "sandboxed_exec")  # capped at parent
+    assert tool_contextually_denied(contextual, "exec")  # capped at parent
 
 
 @pytest.mark.asyncio

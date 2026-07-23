@@ -19,7 +19,7 @@ pipeline: greet
 description: Greet a name and shout it.
 steps:
   - transform: {value: "'Hello, ' + ctx.name + '!'", output: greeting}
-  - tool: {name: sandboxed_exec, args: {argv: !expr "['echo', ctx.greeting]"}, output: shouted}
+  - tool: {name: exec, args: {argv: !expr "['echo', ctx.greeting]"}, output: shouted}
 ```
 
 A few things worth noting about this file:
@@ -39,11 +39,11 @@ A few things worth noting about this file:
   for the full rule and a worked trace.
 - `!expr` marks the `argv` value as an expression to evaluate, not a literal
   list — see [Literals vs `!expr`](../../reference/runtime/pipeline-dsl.md#literals-vs-expr).
-- `sandboxed_exec` runs `argv` in the operator's sandbox (argv-only — no
+- `exec` runs `argv` in the operator's sandbox (argv-only — no
   shell interpretation); the previous step's pipe data can be threaded to its
   STDIN via an `stdin_pipe: !expr pipe` arg — this pipeline doesn't use that
   input, but see the
-  [reference doc's `sandboxed_exec` step docs](../../reference/runtime/pipeline-dsl.md#tool-step-results)
+  [reference doc's `exec` step docs](../../reference/runtime/pipeline-dsl.md#tool-step-results)
   for the full STDIN/STDOUT contract.
 - A `tool` step's result (here, `ctx.shouted`) is always the flat
   `{text: ..., structured: ...}` shape (`structured` only present for

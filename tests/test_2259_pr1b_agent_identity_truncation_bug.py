@@ -64,7 +64,7 @@ async def test_child_parent_cap_survives_wal_truncation_of_agent_created(tmp_pat
     survives truncation as a per-agent generation → the ⊆-parent cap is reconstructed."""
     _bind_parent_narrowing(
         tmp_path, parent="parent_a", profile="prole",
-        body="name: prole\ntool_deny: [sandboxed_exec]\n",
+        body="name: prole\ntool_deny: [exec]\n",
     )
     reg = _registry(tmp_path)
     log = reg.state_log
@@ -74,10 +74,10 @@ async def test_child_parent_cap_survives_wal_truncation_of_agent_created(tmp_pat
     await reg.create_agent("parent_a")
     await reg.create_agent("child_a", parent="parent_a")
 
-    # SANITY (pre-truncation): the child is capped at ⊆ parent (denies P's sandboxed_exec).
+    # SANITY (pre-truncation): the child is capped at ⊆ parent (denies P's exec).
     pre, _ = reg.resolved_profile_for("child_a")
     assert isinstance(pre, ContextualPermission)
-    assert tool_contextually_denied(pre, "sandboxed_exec"), "pre-rewind child must be ⊆ parent"
+    assert tool_contextually_denied(pre, "exec"), "pre-rewind child must be ⊆ parent"
 
     # the agents advance far past their create seqs (filler → the truncation floor climbs).
     for i in range(120):
@@ -104,7 +104,7 @@ async def test_child_parent_cap_survives_wal_truncation_of_agent_created(tmp_pat
     # SECURITY dimension (the load-bearing one): the child is STILL capped at ⊆ parent.
     after, _ = reg.resolved_profile_for("child_a")
     assert isinstance(after, ContextualPermission) and tool_contextually_denied(
-        after, "sandboxed_exec"
+        after, "exec"
     ), (
         "ESCALATION-ON-REWIND: child runs UN-capped after rewind — the dropped lineage edge "
         "made resolved_profile_for skip the ⊆-parent conjunct (the security bug). The "
@@ -124,7 +124,7 @@ async def test_identity_generation_survives_but_post_cut_child_is_undone(tmp_pat
     regardless of the cut. Identity generations are as-of-cut (latest seq ≤ cut), like config."""
     _bind_parent_narrowing(
         tmp_path, parent="parent_a", profile="prole",
-        body="name: prole\ntool_deny: [sandboxed_exec]\n",
+        body="name: prole\ntool_deny: [exec]\n",
     )
     reg = _registry(tmp_path)
     log = reg.state_log

@@ -6,7 +6,7 @@ audience: [human, agent]
 
 # Permission model
 
-reyn's permission system gates four kinds of capability: file paths, shell, MCP tool calls, and Python preprocessor steps. The defaults are conservative; anything beyond them must be declared by the workflow **and** approved by the user (or pre-approved in `reyn.yaml`).
+reyn's permission system gates four kinds of capability: file paths, exec (argv-only process execution — #3226 renamed `shell` -> `exec`), MCP tool calls, and Python preprocessor steps. The defaults are conservative; anything beyond them must be declared by the workflow **and** approved by the user (or pre-approved in `reyn.yaml`).
 
 ## Three layers, in order
 
@@ -70,12 +70,16 @@ When no intervention bus is wired for the call (`bus=None` — a non-interactive
 
 ```yaml
 permissions:
-  shell: allow
+  exec: allow
   file.write: allow
   python:
     safe: allow
     unsafe: allow
 ```
+
+(`exec` was renamed from `shell` in #3226 Phase 3 — a clean break, no
+alias. An existing `reyn.yaml` `permissions.shell:` key must be renamed
+to `permissions.exec:` by hand; it grants no authority once un-renamed.)
 
 Use sparingly — `allow` removes the prompt entirely.
 
@@ -556,7 +560,7 @@ See [reyn-yaml § safety.spawn](../../reference/config/reyn-yaml.md#safetyspawn-
 
 - **Not a Linux capability sandbox.** A Python step's subprocess runs as the same user; the AST allowlist is honor-system, and reyn doesn't sandbox the kernel (that layer is `sandboxed_exec`).
 - **Not a secret keeper.** Don't put credentials in approvals.yaml or rely on permissions to hide environment variables. Use [Concepts: secret handling](../runtime/secret-handling.md) for credentials.
-- **Not protection against the user.** If you `permissions: shell: allow` in reyn.yaml, you've authorized shell. The system is protecting against accidental capability creep, not user intent.
+- **Not protection against the user.** If you `permissions: exec: allow` in reyn.yaml, you've authorized exec. The system is protecting against accidental capability creep, not user intent.
 
 ## See also
 

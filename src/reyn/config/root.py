@@ -131,7 +131,9 @@ class ReynConfig:
         metadata={"desc": "LiteLLM proxy base URL. Set this if you route requests through a local proxy."},
     )
     # Pre-approved permissions (same structure as phase frontmatter, but value is "allow").
-    # Example: permissions: {shell: allow, file.delete: allow, mcp: {github: allow}}
+    # Example: permissions: {exec: allow, file.delete: allow, mcp: {github: allow}}
+    # (#3226 Phase 3: the `exec` tool's pre-approval key was renamed from `shell`
+    # — clean break, no alias; existing reyn.yaml `shell:` keys must be renamed.)
     permissions: dict = field(
         default_factory=dict,
         metadata={"desc": "Pre-approve specific Control IR ops without interactive prompts."},

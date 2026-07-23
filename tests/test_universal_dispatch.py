@@ -220,7 +220,7 @@ def test_unknown_action_error_unknown_category() -> None:
 def test_unknown_action_error_no_rule_for_unknown_entry() -> None:
     """Tier 2: known category with an unknown entry raises UnknownActionError.
 
-    exec__sandboxed_exec now has a routing rule (FP-0034 Phase 2), so
+    exec__run now has a routing rule (FP-0034 Phase 2), so
     use a genuinely unknown entry within the exec category to verify the
     error path still works.
     """
@@ -410,15 +410,15 @@ def test_known_static_names_includes_collapsed_mcp_surface() -> None:
         )
 
 
-def test_known_static_names_includes_exec_sandboxed_exec() -> None:
-    """Tier 2: exec__sandboxed_exec is in the static catalogue (FP-0034 Phase 2).
+def test_known_static_names_includes_exec_run() -> None:
+    """Tier 2: exec__run is in the static catalogue (FP-0034 Phase 2).
 
-    FP-0034 Phase 2 landed the exec route; exec__sandboxed_exec is now
+    FP-0034 Phase 2 landed the exec route; exec__run is now
     in _OPERATION_RULES and therefore in KNOWN_STATIC_QUALIFIED_NAMES.
     D14 visibility gating (= hide when sandbox_backend is None/noop)
     happens at the catalog enumeration layer, not here.
     """
-    assert "exec__sandboxed_exec" in KNOWN_STATIC_QUALIFIED_NAMES
+    assert "exec__run" in KNOWN_STATIC_QUALIFIED_NAMES
 
 
 def test_known_qualified_name_for_category() -> None:
@@ -439,8 +439,8 @@ def test_known_qualified_name_for_category() -> None:
         "memory_operation__forget", "memory_operation__list",
         "memory_operation__read",
     }
-    # exec has sandboxed_exec (FP-0034 Phase 2)
-    assert known_qualified_name_for_category("exec") == ("exec__sandboxed_exec",)
+    # exec has run (FP-0034 Phase 2; qualified name exec__run since #3226 Phase 3)
+    assert known_qualified_name_for_category("exec") == ("exec__run",)
     # mcp (= issue #879 + 2026-05-25 install 3-verb split) verb set.
     assert set(known_qualified_name_for_category("mcp")) == {
         "mcp__search_registry",
@@ -592,7 +592,7 @@ _ROUTE_CONTRACT_SAMPLES: list[tuple[str, dict[str, Any]]] = [
     ("reyn_repo__grep", {"pattern": "x"}),
     ("rag_operation__semantic_search", {"query": "q", "sources": ["s"]}),
     ("rag_operation__drop_source", {"source": "s"}),
-    ("exec__sandboxed_exec",       {"argv": ["echo", "hi"]}),
+    ("exec__run",       {"argv": ["echo", "hi"]}),
     # skill_management category (#2548 PR-C) — install_local requires path.
     ("skill_management__install_local",  {"path": "/tmp/my-skill"}),
     # skill_management category (#2548 PR-D) — install_source requires source URL.

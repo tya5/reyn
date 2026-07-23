@@ -201,7 +201,7 @@ mcp_allow: null        # all MCP servers available
 mcp_deny: []
 tool_allow: null       # deny-list only
 tool_deny:
-  - exec__sandboxed_exec
+  - exec__run
   - memory_operation__remember_shared
   - multi_agent__delegate
 ```

@@ -116,18 +116,18 @@ async def test_name_reuse_after_purge_fails_closed_no_cap_escalation(tmp_path):
     does NOT inherit a reused same-named parent's wider capability — the stale edge FAILS
     CLOSED (the _delegate floor). RED on the name-keyed lineage (orphan would resolve under
     the new coord → lose the old parent's deny)."""
-    # old coord bound to a profile that denies sandboxed_exec → worker ⊆ coord inherits it
+    # old coord bound to a profile that denies exec → worker ⊆ coord inherits it
     _bind(tmp_path, member="coord", profile="tight",
-          body="name: tight\ntool_deny: [sandboxed_exec]\n")
+          body="name: tight\ntool_deny: [exec]\n")
     reg = _registry(tmp_path)
     await reg.create_agent("coord")
     await reg.create_agent("worker", parent="coord")
     c0, _ = reg.resolved_profile_for("worker")
-    assert c0 is not None and tool_contextually_denied(c0, "sandboxed_exec")  # capped ⊆ coord
+    assert c0 is not None and tool_contextually_denied(c0, "exec")  # capped ⊆ coord
 
     await reg.archive_agent("coord", purge=True)
     await reg.create_agent("coord")  # name reused → NEW identity (no tight binding now)
 
     c1, _ = reg.resolved_profile_for("worker")
     assert c1 is not None  # fail-closed, NOT skipped-to-unrestricted
-    assert tool_contextually_denied(c1, "sandboxed_exec")  # STILL denied (floor) — no escalation
+    assert tool_contextually_denied(c1, "exec")  # STILL denied (floor) — no escalation

@@ -628,7 +628,7 @@ class RouterLoopHost(RouterLoopCore, Protocol):
         forwards this into ``RouterCallerState.sandbox_backend`` so the
         ``exec`` category D14 visibility gate in
         ``universal_catalog._enumerate_category`` can decide whether to
-        expose ``exec__sandboxed_exec``.  ``None`` and ``"noop"`` both
+        expose ``exec__run``.  ``None`` and ``"noop"`` both
         hide the category; any other value (``"seatbelt"`` /
         ``"landlock"`` / ``"auto"``) makes it visible.
         """

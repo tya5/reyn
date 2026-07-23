@@ -57,10 +57,10 @@ def test_per_session_config_narrows(tmp_path: Path) -> None:
     """Tier 2: a per-session config.yaml narrows the session's capability (a denied
     tool is denied in the resolved ContextualPermission)."""
     reg = _registry(tmp_path)
-    _write_per_session(reg, "worker", "task1", "name: s\ntool_deny: [sandboxed_exec]\n")
+    _write_per_session(reg, "worker", "task1", "name: s\ntool_deny: [exec]\n")
     contextual, _ = reg.resolved_profile_for("worker", sid="task1")
     assert isinstance(contextual, ContextualPermission)
-    assert "sandboxed_exec" in contextual.tool_deny
+    assert "exec" in contextual.tool_deny
 
 
 def test_absent_per_session_is_inert(tmp_path: Path) -> None:
@@ -74,7 +74,7 @@ def test_sid_none_skips_per_session_layer(tmp_path: Path) -> None:
     """Tier 2: sid=None (the default — every current caller) → per-session layer is
     never consulted, even if a config.yaml happens to exist."""
     reg = _registry(tmp_path)
-    _write_per_session(reg, "worker", "task1", "name: s\ntool_deny: [sandboxed_exec]\n")
+    _write_per_session(reg, "worker", "task1", "name: s\ntool_deny: [exec]\n")
     assert reg.resolved_profile_for("worker") == (None, frozenset())  # sid omitted
 
 
@@ -87,11 +87,11 @@ def test_composes_with_topology_binding(tmp_path: Path) -> None:
     _bind_topology(tmp_path, member="worker", profile="role",
                    body="name: role\ntool_deny: [delete_file]\n")
     reg = _registry(tmp_path)
-    _write_per_session(reg, "worker", "task1", "name: s\ntool_deny: [sandboxed_exec]\n")
+    _write_per_session(reg, "worker", "task1", "name: s\ntool_deny: [exec]\n")
     contextual, _ = reg.resolved_profile_for("worker", sid="task1")
     # #2132: both layers AND both invocable forms of each (the gate matches the effective
     # resolved name — the qualified catalog form must be denied too, not just the bare).
-    assert {"delete_file", "file__delete", "sandboxed_exec", "exec__sandboxed_exec"} \
+    assert {"delete_file", "file__delete", "exec", "exec__run"} \
         <= contextual.tool_deny
 
 

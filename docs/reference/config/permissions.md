@@ -7,7 +7,7 @@ applies_to: [reyn.yaml, skill.md, phases/*.md]
 
 # Permissions
 
-reyn's permission system gates access to file paths, shell, MCP tools, named tools, and Python preprocessor steps. Defaults are conservative; anything outside the defaults requires either a workflow-level declaration plus user approval, OR a project-wide pre-approval in `reyn.yaml`.
+reyn's permission system gates access to file paths, exec (argv-only process execution — `#3226` renamed `shell` -> `exec`), MCP tools, named tools, and Python preprocessor steps. Defaults are conservative; anything outside the defaults requires either a workflow-level declaration plus user approval, OR a project-wide pre-approval in `reyn.yaml`.
 
 ## Default grants (no declaration needed)
 

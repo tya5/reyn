@@ -312,8 +312,11 @@ _OPERATION_RULES: Final[dict[str, tuple[str, Callable[[str, Mapping[str, Any]], 
     "multi_agent__describe_peer": ("describe_agent",    _passthrough_args),
     "multi_agent__delegate":      ("delegate_to_agent", _multi_agent_delegate_args),
 
-    # exec category (FP-0017 sandboxed_exec, D14 visibility gating).
-    "exec__sandboxed_exec": ("sandboxed_exec", _passthrough_args),
+    # exec category (FP-0017 sandboxed_exec op, tool renamed `exec` #3226
+    # Phase 3, D14 visibility gating). Qualified name is `exec__run` — NOT
+    # `exec__exec` (architect ruling on #3223/#3226: single-entry categories
+    # use a canonical action-verb, never repeat the category as the verb).
+    "exec__run": ("exec", _passthrough_args),
 
     # skill_management category (#2548 PR-C/PR-D: skill directory install verbs).
     # NOTE: there is NO ``skill__`` resource category and there never has been —
@@ -557,9 +560,10 @@ def known_qualified_name_for_category(category: str) -> tuple[str, ...]:
     rag_operation / mcp / exec) return the qualified names this module
     has routing rules for. ``mcp__drop_server`` is a static verb
     (= PR-4 landed). ``exec``
-    returns ``("exec__sandboxed_exec",)`` — the route is now wired
-    (FP-0034 Phase 2); D14 visibility gating stays in the catalog
-    enumeration layer (``_enumerate_category`` checks sandbox_backend).
+    returns ``("exec__run",)`` — the route is now wired
+    (FP-0034 Phase 2; qualified name `exec__run` since #3226 Phase 3);
+    D14 visibility gating stays in the catalog enumeration layer
+    (``_enumerate_category`` checks sandbox_backend).
     """
     if category not in CATEGORIES:
         raise ValueError(

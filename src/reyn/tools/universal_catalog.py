@@ -623,9 +623,10 @@ def _enumerate_category(category: str, ctx: ToolContext) -> list[dict[str, str]]
         # now ``pipeline__list``, a single fixed verb.
         return _enumerate_static_category("pipeline")
 
-    # exec category — sandboxed_exec (FP-0017).
-    # Visible only when a real sandbox backend is configured (D14-ext).
-    # RouterCallerState.sandbox_backend carries the backend name (None = noop).
+    # exec category — the `exec` tool (FP-0017; renamed from `sandboxed_exec`
+    # #3226 Phase 3). Visible only when a real sandbox backend is configured
+    # (D14-ext). RouterCallerState.sandbox_backend carries the backend name
+    # (None = noop).
     if category == "exec":
         if rs is None:
             return []
@@ -634,7 +635,7 @@ def _enumerate_category(category: str, ctx: ToolContext) -> list[dict[str, str]]
             return []
         return [
             {
-                "qualified_name": "exec__sandboxed_exec",
+                "qualified_name": "exec__run",
                 "short_description": (
                     "Execute a command in a sandboxed environment."
                 ),

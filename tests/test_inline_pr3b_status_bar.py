@@ -377,17 +377,17 @@ def test_tool_category_toggle_rows_and_dispatch() -> None:
     snap = _snap(
         visibility_items=[
             {"kind": "tool", "name": "bash", "on": True},
-            {"kind": "tool", "name": "sandboxed_exec", "on": False},
+            {"kind": "tool", "name": "exec", "on": False},
         ],
     )
     el = _tool_category_expansion(snap, dispatched.append)
     assert isinstance(el, CommandUIElement)
     lines = el.lines()
     assert any("[on] bash" in ln for ln in lines)
-    assert any("[off] sandboxed_exec" in ln for ln in lines)
+    assert any("[off] exec" in ln for ln in lines)
     el.on_select(0)
     el.on_select(1)
-    assert dispatched == ["/visibility off tool bash", "/visibility on tool sandboxed_exec"]
+    assert dispatched == ["/visibility off tool bash", "/visibility on tool exec"]
 
 
 # ---------------------------------------------------------------------------

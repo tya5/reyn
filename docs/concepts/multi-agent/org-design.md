@@ -79,7 +79,7 @@ sub-session at construction time. Restrict-only — you cannot grant the
 sub-session capabilities beyond your own. Example:
 
 ```json
-{"tool_deny": ["sandboxed_exec"]}
+{"tool_deny": ["exec"]}
 ```
 
 Both modes are rewind-safe: a session spawned after a rewind cut is

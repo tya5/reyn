@@ -31,7 +31,7 @@
 #
 # **The venv MUST live INSIDE the project workspace** (e.g. `./.venv-rag` at
 # the project root) -- NEVER under `~/.reyn/...` (home dir). An LLM-driven
-# `sandboxed_exec` call cannot write outside the project's write scope, so a
+# `exec` call cannot write outside the project's write scope, so a
 # home-dir venv path fails with "Operation not permitted" and the whole flow
 # silently stalls; a home-dir path is also global across every
 # project/session on the machine, so two unrelated projects would race the

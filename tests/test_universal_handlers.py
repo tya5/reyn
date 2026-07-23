@@ -759,18 +759,18 @@ def test_describe_action_via_registry_returns_target_meta() -> None:
 
 
 def test_exec_enumerable_when_sandbox_configured() -> None:
-    """Tier 2: exec__sandboxed_exec appears in list_actions when sandbox backend is set.
+    """Tier 2: exec__run appears in list_actions when sandbox backend is set.
 
     D14-ext visibility gate: when RouterCallerState.sandbox_backend is a
     real backend name (not 'noop' / None), the exec category returns
-    exec__sandboxed_exec in list_actions output.
+    exec__run in list_actions output.
     """
     rs = RouterCallerState(sandbox_backend="seatbelt")
     result = _run(LIST_ACTIONS.handler(
         {"category": ["exec"]}, _make_ctx(rs),
     ))
     qns = {it["qualified_name"] for it in result["items"]}
-    assert "exec__sandboxed_exec" in qns
+    assert "exec__run" in qns
     assert result["total"] == 1
     # short_description must be a non-empty string
     for item in result["items"]:
@@ -788,14 +788,14 @@ def test_exec_enumerable_when_sandbox_landlock() -> None:
         {"category": ["exec"]}, _make_ctx(rs),
     ))
     assert result["total"] == 1
-    assert result["items"][0]["qualified_name"] == "exec__sandboxed_exec"
+    assert result["items"][0]["qualified_name"] == "exec__run"
 
 
 def test_exec_hidden_when_sandbox_noop() -> None:
     """Tier 2: exec category returns empty when sandbox_backend is 'noop'.
 
     D14-ext: noop backend means no real enforcement; exec stays hidden
-    so the LLM does not attempt sandboxed_exec without isolation.
+    so the LLM does not attempt exec without isolation.
     """
     rs = RouterCallerState(sandbox_backend="noop")
     result = _run(LIST_ACTIONS.handler(
@@ -831,53 +831,54 @@ def test_exec_hidden_when_no_router_state() -> None:
     assert result["total"] == 0
 
 
-def test_exec_dispatch_routes_to_sandboxed_exec() -> None:
-    """Tier 2: invoke_action('exec__sandboxed_exec', ...) resolves to sandboxed_exec op.
+def test_exec_dispatch_routes_to_exec() -> None:
+    """Tier 2: invoke_action('exec__run', ...) resolves to the exec tool.
 
-    Verifies the routing layer contract: exec__sandboxed_exec maps to
-    the 'sandboxed_exec' ToolDefinition via _OPERATION_RULES. The
+    Verifies the routing layer contract: exec__run maps to
+    the 'exec' ToolDefinition via _OPERATION_RULES (#3226 Phase 3 renamed
+    the tool sandboxed_exec -> exec; the op kind stays sandboxed_exec). The
     actual handler invocation is covered separately; this test pins
     the routing decision alone (pure-function layer, no I/O).
     """
     from reyn.tools.universal_dispatch import resolve_invoke_action
     resolved = resolve_invoke_action(
-        "exec__sandboxed_exec",
+        "exec__run",
         {"argv": ["echo", "hello"]},
     )
-    assert resolved.target_tool_name == "sandboxed_exec"
+    assert resolved.target_tool_name == "exec"
     # passthrough transformer — args forwarded unchanged
     assert resolved.target_args == {"argv": ["echo", "hello"]}
 
 
-def test_exec_sandboxed_exec_in_registry() -> None:
-    """Tier 2: sandboxed_exec ToolDefinition is in get_default_registry().
+def test_exec_exec_in_registry() -> None:
+    """Tier 2: exec ToolDefinition is in get_default_registry().
 
-    The routing layer resolves exec__sandboxed_exec to 'sandboxed_exec';
+    The routing layer resolves exec__run to 'exec';
     that target must exist in the default registry so describe_action /
     invoke_action can find it.
     """
     registry = get_default_registry()
-    td = registry.lookup("sandboxed_exec")
-    assert td is not None, "sandboxed_exec must be in the default registry"
-    assert td.name == "sandboxed_exec"
+    td = registry.lookup("exec")
+    assert td is not None, "exec must be in the default registry"
+    assert td.name == "exec"
     # Both router and phase callable (exec is a side-effect op usable
     # from phase Control IR as well as the router's universal wrapper).
     assert td.gates.router == "allow"
     assert td.gates.phase == "allow"
 
 
-def test_exec_describe_action_returns_sandboxed_exec_schema() -> None:
-    """Tier 2: describe_action('exec__sandboxed_exec') returns the sandboxed_exec schema.
+def test_exec_describe_action_returns_exec_schema() -> None:
+    """Tier 2: describe_action('exec__run') returns the exec schema.
 
     End-to-end: describe_action resolves the routing target via the
     registry and returns its description + input_schema.
     """
     result = _run(DESCRIBE_ACTION.handler(
-        {"action_name": "exec__sandboxed_exec"}, _make_ctx(),
+        {"action_name": "exec__run"}, _make_ctx(),
     ))
-    assert result["qualified_name"] == "exec__sandboxed_exec"
-    assert result["metadata"]["target_tool_name"] == "sandboxed_exec"
-    # argv is a required field in the sandboxed_exec schema
+    assert result["qualified_name"] == "exec__run"
+    assert result["metadata"]["target_tool_name"] == "exec"
+    # argv is a required field in the exec schema
     props = result["input_schema"].get("properties", {})
     assert "argv" in props
     required = result["input_schema"].get("required", [])
@@ -907,4 +908,4 @@ def test_list_actions_all_categories_exec_visible_with_sandbox() -> None:
     rs = RouterCallerState(sandbox_backend="seatbelt")
     result = _run(LIST_ACTIONS.handler({}, _make_ctx(rs)))
     qns = [it["qualified_name"] for it in result["items"]]
-    assert "exec__sandboxed_exec" in qns
+    assert "exec__run" in qns

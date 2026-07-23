@@ -40,7 +40,7 @@ mcp__install_local(name="reyn_markitdown", command="uvx", args=["markitdown-mcp"
 
 `plugin_management__install` is **register-only** (#3209) -- it does NOT
 install the plugin's Python dependencies for you. Do this next, via
-`sandboxed_exec`, entirely from chat -- no operator keypress needed:
+`exec`, entirely from chat -- no operator keypress needed:
 
 **1. Create the venv INSIDE the current project workspace** -- never under
 `~/.reyn/...` (home dir). Your sandbox's write scope is the project

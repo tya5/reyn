@@ -80,7 +80,7 @@ async def test_missing_bound_profile_fails_closed(tmp_path):
     # FAIL CLOSED: still capped (floor), NOT None/unrestricted
     c1, _ = reg.resolved_profile_for("m")
     assert c1 is not None  # a skip would yield None (no layer) = unrestricted = ESCALATION
-    assert tool_contextually_denied(c1, "sandboxed_exec")  # a floored ("spawn"-peer) class
+    assert tool_contextually_denied(c1, "exec")  # a floored ("spawn"-peer) class
     assert tool_contextually_denied(c1, "agent_spawn")     # the spawn class, floored
 
 
@@ -97,7 +97,7 @@ async def test_malformed_bound_profile_fails_closed(tmp_path):
 
     c, _ = reg.resolved_profile_for("m")
     assert c is not None  # fail-closed, not skipped-to-None
-    assert tool_contextually_denied(c, "sandboxed_exec")
+    assert tool_contextually_denied(c, "exec")
 
 
 @pytest.mark.asyncio

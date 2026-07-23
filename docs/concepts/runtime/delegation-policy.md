@@ -41,7 +41,7 @@ from `_FLOORED_DENY_CLASSES`):
 | Class | Denied tools | Rationale |
 |-------|-------------|-----------|
 | `re-delegation` | `multi_agent__delegate`, `delegate_to_agent` | Prevent unlimited spawning chains from an unbound delegate |
-| `exec` | `exec__sandboxed_exec`, `sandboxed_exec` | Execution requires explicit operator authorization |
+| `exec` | `exec__run`, `exec` | Execution requires explicit operator authorization |
 | `mcp-install` | `mcp__install_registry`, `mcp__install_package`, `mcp__install_local` | MCP server installation is a high-privilege, operator-controlled action |
 | `memory-write` | `memory_operation__remember_shared`, `memory_operation__remember_agent`, `memory_operation__forget` | Persistence from an unbound delegate requires deliberate opt-in |
 
@@ -117,7 +117,7 @@ delegate-reachable roles.
 | Class | Severity | Tools |
 |-------|----------|-------|
 | `re-delegation` | HIGH | `multi_agent__delegate`, `delegate_to_agent` |
-| `exec` | HIGH | `exec__sandboxed_exec`, `sandboxed_exec` |
+| `exec` | HIGH | `exec__run`, `exec` |
 | `mcp-install` | HIGH | `mcp__install_registry`, `mcp__install_package`, `mcp__install_local` |
 | `memory-write` | MED | `memory_operation__remember_shared`, `memory_operation__remember_agent`, `memory_operation__forget` |
 | `destructive-fs` | MED | `delete_file`, `file__delete` (audit-only, not on runtime floor) |

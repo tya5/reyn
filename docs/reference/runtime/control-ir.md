@@ -338,6 +338,8 @@ so ordinary memo/replay applies.
 
 Executes `argv` under a declared `SandboxPolicy` via the OS's selected `SandboxBackend`. Replaces `shell` for cases that need (or will need, once `SeatbeltBackend` / `LandlockBackend` land) real isolation enforcement.
 
+The Control IR op kind stays `sandboxed_exec` (`OP_KIND_MODEL_MAP["sandboxed_exec"]` / `SandboxedExecIROp`). The router/phase tool that reaches this op was renamed `sandboxed_exec` -> **`exec`** (#3226 Phase 3, catalog qualified name **`exec__run`**) — the rename is tool/qualified-name-only and does not touch this op schema, its events, or its result shape.
+
 ```json
 {
   "kind": "sandboxed_exec",
