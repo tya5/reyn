@@ -27,12 +27,20 @@ def sources_manifest_path(workspace_root: Path) -> Path:
     ``workspace_root / ".reyn" / "config" / "index" / "sources.yaml"`` in two
     independent places — ``SourceManifest.__init__``
     (``data/index/source_manifest.py``) and the ``index_update`` op's own
-    permission-check path (``core/op_runtime/index_update.py``) — with a
-    third copy about to be added for the safe-mode wrapper's pre-flight
-    sandbox gate (``api/safe/index_update.py``). This is the single canonical
-    definition, mirroring ``cache_dir_for_source`` above: all three call
-    sites route through this helper so the gated path is byte-identical to
-    the actual write path by construction.
+    permission-check path (``core/op_runtime/index_update.py``). This is the
+    single canonical definition, mirroring ``cache_dir_for_source`` above:
+    both call sites route through this helper so the gated path is
+    byte-identical to the actual write path by construction.
+
+    A third call site was briefly planned for the safe-mode wrapper's own
+    pre-flight sandbox gate (``reyn.api.safe.index_update``), but #2856 Part B
+    retired that wrapper-side pre-flight before it needed this helper (the
+    cap is forwarded onto ``OpContext.default_sandbox_policy`` instead, and
+    enforced at the real write sites — see ``core/op_runtime/index_update.py``
+    and ``data/index/source_manifest.py::SourceManifest.upsert``), and
+    FP-0066 P1c then retired the wrapper module itself, clean-break — the
+    in-core index is OS-internal only now (user RAG = FP-0063 plugin). Two
+    call sites, not three.
     """
     return workspace_root / ".reyn" / "config" / "index" / "sources.yaml"
 

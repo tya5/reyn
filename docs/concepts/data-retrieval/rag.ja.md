@@ -6,6 +6,16 @@ audience: [human, agent]
 
 # RAG（Retrieval-Augmented Generation）
 
+> **このページは stale です — 英語版 [Concepts: RAG](rag.md) が正です。** 特に:
+> `semantic_search` / `drop_source` / `list_rag_sources` はエージェント向けツールとして
+> 既に retire 済み（FP-0066 P1b）、safe-mode `index_update()`（`reyn.api.safe.
+> index_update`）と CLI `reyn source list / describe / rm` も retire 済み（FP-0066
+> P1c、本 PR）— in-core index は現在 OS-internal 専用で、ユーザー向け/エージェント向けの
+> 作成・検索手段は一切ありません。以下の本文（Phase 1/1.5/2 の表記、`index_update()`
+> クイックスタート例、`reyn source` への言及を含む）はこの retire 前の状態を記述した
+> ままの historical スナップショットです。ユーザー向け RAG は FP-0063 plugin
+> （[Build a RAG corpus](../../guide/for-users/build-a-rag-corpus.md)）を使用してください。
+
 reyn は RAG **framework foundation** を提供します — 5 つの primitive op（`embed` / `index_query` / `index_drop` / `semantic_search` / `index_update`）、 拡張可能な `IndexBackend` protocol、 `EmbeddingProvider` protocol、 safe-mode の `index_update()` エントリーポイント（FP-0057 Phase 2b; 旧 `embed_and_index()` を clean-break で retire）。 任意のドキュメントコーパスを index し、 クエリ時に LLM が関連する chunk を取得できます。コーパス全体をコンテキストウィンドウに展開する必要はありません。
 
 **差別化: 検索は組み込みツール、ライブラリ呼び出しではない。** LangChain や LlamaIndex は自分のドライバーコードから呼び出す Python pipeline を提供しますが、reyn の `semantic_search`/`drop_source` は通常の `reyn chat` セッション中に LLM 自身が呼び出す組み込みツールです — 検索側にオーケストレーションコードは不要です。
@@ -212,7 +222,6 @@ API キーは `~/.reyn/secrets.env` から `${OPENAI_API_KEY}` 経由で読み�
 
 ## 関連項目
 
-- [Reference: `reyn source`](../../reference/cli/source.md) — CLI から index 済み source を管理する
 - [ADR-0033](../../deep-dives/decisions/0033-rag-extensible-os.md) — 設計の根拠と完全な技術仕様（内部向け）
 - [コンセプト: workspace](../runtime/workspace.md) — `.reyn/` の状態構造
 - [コンセプト: パーミッションモデル](../runtime/permission-model.md) — `index_drop` パーミッションゲート

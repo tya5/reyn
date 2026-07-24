@@ -4,9 +4,11 @@ FP-0034 §D13 / §D15 spec — Phase 2 step 2 added SQLite-WAL persistence so
 that re-embedding is skipped across process restarts when the catalog has
 not changed. FP-0057 Phase 0 (#2843) folds the storage/cosine/lock layer
 that used to be hand-rolled here onto the pluggable ``IndexBackend`` (the
-same substrate doc-RAG ingestion — ``index_update`` / the safe-mode
-``reyn.api.safe.index_update``, FP-0057 Phase 2b — and query — ``semantic_search``
-— ride) — this class is now a thin **domain adapter**: it owns the action-catalog-
+same substrate OS-internal RAG ingestion — the ``index_update`` op — and
+query — ``semantic_search`` — ride; the safe-mode ``reyn.api.safe.
+index_update`` user-facing wrapper that used to sit in front of the op was
+retired FP-0066 P1c) — this class is now a thin **domain adapter**: it owns
+the action-catalog-
 specific dual-axis (catalog-hash + model-class) invalidation policy and
 delegates vector storage, cosine ranking, and content-hash dedup to the
 backend. What moved out (single canonical implementation now, no more

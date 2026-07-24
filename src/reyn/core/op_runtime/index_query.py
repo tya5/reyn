@@ -107,8 +107,9 @@ async def handle(
     except sqlite3.DatabaseError as exc:
         raise IndexCorruptionError(
             f"Source '{op.source}' index appears corrupted: {exc}. "
-            f"Run: reyn source rm {op.source} && reyn run index_docs "
-            f"--source {op.source} ... to re-index."
+            f"Dispatch index_drop on source '{op.source}' to clear it, then "
+            f"re-run the ingest that populates it (the in-core index is "
+            f"OS-internal; there is no user-facing CLI/tool for this)."
         ) from exc
 
     mode = "semantic" if chunks else "fallback"

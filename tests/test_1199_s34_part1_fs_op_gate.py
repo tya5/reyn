@@ -4,13 +4,29 @@
 (bypassing require_file_*), so S3.1c-2's SandboxLayer ∩ never applied. Two seams:
   - OS-side op handlers (index_query / index_drop) call require_file_read/write
     with the phase sandbox_policy ∩ BEFORE invoking the backend.
-  - the WRITE path runs in the safe subprocess (no ctx): the sandbox write_paths
-    cap is forwarded onto the `OpContext.default_sandbox_policy` the subprocess
-    builds (harness → reyn.api.safe.index_update, FP-0057 Phase 2b successor to
-    the retired embed_index), and the `index_update` op forwards it into the
+  - the write path forwards the sandbox write_paths cap onto the
+    `OpContext.default_sandbox_policy` the caller builds (an `OpContext` with
+    `permission_resolver=None`, mirroring a subprocess/safe-mode-shaped
+    caller), and the `index_update` op forwards it into the
     `SqliteIndexBackend`/`SourceManifest` construction, which self-gate at
     their OWN real write sites (#2856 Part B — this superseded the #2851/F3
     wrapper pre-flight, which duplicated the same path-check by hand).
+
+FP-0066 P1c note: the safe-mode `reyn.api.safe.index_update` wrapper this
+file used to also exercise directly (a thin `_set_context`/`index_update_
+async` dispatch onto the SAME op below) was retired as a user-facing
+surface — the in-core index is OS-internal only now (user RAG = FP-0063
+plugin). The wrapper-specific assertion (`test_safe_index_update_forwards_
+cap_to_backend`) is removed with it; the underlying fs-op-gate invariant it
+exercised — cap-forwarding through `OpContext.default_sandbox_policy` into
+the `index_update` op's backend construction, with no `permission_resolver`
+— is NOT lost: `test_index_update_backend_self_gate_fires_with_no_resolver`
+below drives the identical `index_update` op handler directly with the same
+resolver=None / cap shape (its own docstring already called this out as
+"Symmetric with the safe-mode-path assertion" before the wrapper was
+retired). No other surviving `reyn.api.safe.*` module dispatches through
+`execute_op`/`OpContext` at all, so there is no alternative safe-mode
+vehicle to re-base onto — this op-level test is the surviving coverage.
 """
 from __future__ import annotations
 
@@ -82,17 +98,6 @@ def test_write_sandbox_falsification(tmp_path: Path) -> None:
     )))["written"] == 1
 
 
-# ── reyn.api.safe.index_update forwards the cap to the backend (subprocess
-#    context) ────────────────────────────────────────────────────────────────
-#
-# FP-0057 Phase 2b: the retired `reyn.api.safe.embed_index.embed_and_index`
-# (which forwarded the cap straight into `SqliteIndexBackend(sandbox_write_
-# paths=...)`) was replaced by `reyn.api.safe.index_update`. #2856 Part B then
-# retired that module's OWN pre-flight duplicate — it now promotes the cap
-# onto `OpContext.default_sandbox_policy`, and the `index_update` op forwards
-# it into the backend construction, which self-gates at the real write site.
-
-
 class _FakeProvider:
     def __init__(self, config=None) -> None:
         self._batch_size = 100
@@ -106,32 +111,6 @@ class _FakeProvider:
 
     def get_dimension(self, model):
         return 4
-
-
-def test_safe_index_update_forwards_cap_to_backend(tmp_path: Path) -> None:
-    """Tier 2: the harness-set sandbox_write_paths context flows from
-    reyn.api.safe.index_update → OpContext.default_sandbox_policy → the
-    `index_update` op's `SqliteIndexBackend` construction → the backend's own
-    real-write-site self-gate. `execute_op` catches the resulting
-    `PermissionError` and returns `status="denied"` (never raises for
-    op-level failures) — so a restrictive cap denies the write with a denied
-    envelope, and nothing lands on disk."""
-    from reyn.api.safe import index_update as iu
-    from reyn.data.embedding import register_provider
-
-    register_provider("fake_s34", _FakeProvider)
-    iu._reset_context()
-    iu._set_context(
-        workspace_root=tmp_path, provider_name="fake_s34",
-        sandbox_write_paths=["/sandboxed"],  # excludes tmp_path
-    )
-    chunk = {"text": "hello", "metadata": {"content_hash": "h1", "source_path": "src.md"}}
-    try:
-        result = asyncio.run(iu.index_update_async([chunk], "src", "standard"))
-        assert result["status"] == "denied"
-        assert not (tmp_path / ".reyn" / "cache" / "index" / "src" / "index.db").exists()
-    finally:
-        iu._reset_context()
 
 
 # ── OS-side op-handler gates (read / drop) ───────────────────────────────────

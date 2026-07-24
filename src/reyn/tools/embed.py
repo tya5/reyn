@@ -9,8 +9,11 @@ name-gateable via `contextual_gate` like every other op kind.
 
 ADDITIVE at Phase 1: this did NOT retire `embed_and_index` (the CodeAct-only
 ingestion entry) — that clean-break landed in FP-0057 Phase 2b, which
-replaced it with `reyn.api.safe.index_update` (a thin dispatch onto the
-`index_update` op below).
+replaced it with the safe-mode `reyn.api.safe.index_update` (a thin dispatch
+onto the `index_update` op below). That safe-mode wrapper was itself later
+retired (FP-0066 P1c, clean-break) — the in-core index is OS-internal only
+now (user RAG = FP-0063 plugin); `index_update` below remains an OS-internal
+primitive.
 
 Per ADR-0026: the ToolDefinition lives here; registration is in
 get_default_registry() in tools/__init__.py.

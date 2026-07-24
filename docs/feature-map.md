@@ -68,7 +68,6 @@ mindmap
       reyn events
       reyn mcp
       reyn secret
-      reyn source
       reyn config
       reyn auth
       reyn cron
@@ -313,7 +312,7 @@ The op kinds below mirror `OP_KIND_MODEL_MAP` in `schemas/models.py`.
 | `index_update` | Incremental/delta-reconcile ingestion into a source's index (FP-0057 Phase 2a): add/update/remove/skip against `content_hash`, source-model-bound, cost-warn surfacing; no full-rebuild mode | [Control IR § index_update](reference/runtime/control-ir.md#index_update) |
 | `compact` | Summarise / compact conversation history within budget |
 
-> `index_write` remains removed. FP-0057 Phase 2b: `semantic_search`'s query embed and `index_update`'s ingestion embed BOTH now dispatch through the shared `embed` op (`execute_op(EmbedIROp(...))`, not provider-direct) — the PRE-embed redaction-egress seam applies to both paths symmetrically. The CodeAct-only ingestion entry `reyn.api.safe.embed_index.embed_and_index` is **retired clean-break** (deleted, no shim) — safe-mode python steps now call `reyn.api.safe.index_update()`, a thin dispatch onto the `index_update` op. See [Control IR](reference/runtime/control-ir.md).
+> `index_write` remains removed. FP-0057 Phase 2b: `semantic_search`'s query embed and `index_update`'s ingestion embed BOTH now dispatch through the shared `embed` op (`execute_op(EmbedIROp(...))`, not provider-direct) — the PRE-embed redaction-egress seam applies to both paths symmetrically. The CodeAct-only ingestion entry `reyn.api.safe.embed_index.embed_and_index` was **retired clean-break** (deleted, no shim) in FP-0057 Phase 2b, replaced by the safe-mode `reyn.api.safe.index_update()` wrapper — which **FP-0066 P1c then also retired clean-break** (alongside the CLI `reyn source` command group): the in-core index is OS-internal only now (populated by internal `index_update` op callers, not a user-facing entry point); user RAG is the FP-0063 plugin. See [Control IR](reference/runtime/control-ir.md).
 
 ---
 
@@ -363,7 +362,6 @@ How tools are presented to the LLM and how its calls are dispatched is a **plugg
 | `reyn events` | Replay event JSONL files or purge old files by date | [Reference](reference/cli/events.md) |
 | `reyn mcp` | Serve, search, install, and manage MCP servers | [Reference](reference/cli/mcp.md) |
 | `reyn secret` | Set / list / clear secrets in `~/.reyn/secrets.env` | [Reference](reference/cli/secret.md) |
-| `reyn source` | List, describe, and remove indexed RAG sources | [Reference](reference/cli/source.md) |
 | `reyn embeddings` | `status` / `rebuild` / `clear` for the action embedding index (`search_actions`) | [Reference](reference/cli/embeddings.md) |
 | `reyn config` | Show, query, and set effective configuration | [Reference](reference/cli/config.md) |
 | `reyn auth` | Manage OAuth credentials — `login` (RFC 8628 device grant against `auth.providers`) / `list` / `revoke` | [reyn.yaml § auth](reference/config/reyn-yaml.md) |
@@ -496,7 +494,7 @@ logic. Design: [content-threat scan proposal](deep-dives/proposals/0050-content-
 | Action embedding index | `ActionEmbeddingIndex` (class-swap detection, cross-process build lock) — backs the `search_actions` tool the chat LLM uses. FP-0057 Phase 0: a thin domain adapter over the same pluggable `IndexBackend` doc-RAG uses (unified cosine + advisory-lock + storage; was a separately-implemented SQLite-WAL index pre-consolidation) | [Universal catalog § search_actions](concepts/tools-integrations/universal-catalog.md#what-stays-out-of-phase-1) · [`reyn embeddings`](reference/cli/embeddings.md) |
 | Memory CRUD | `list` / `read` / `remember_shared` / `remember_agent` / `forget` | [Memory concepts](concepts/data-retrieval/memory.md) · [reyn memory CLI](reference/cli/memory.md) |
 
-> **Differentiation vs general agents:** beyond chat memory, Reyn ships a RAG *framework* — a safe-mode Python step calls `index_update()` directly (you own the chunking logic) over a pluggable `IndexBackend`. A foundation to build on, not a fixed memory feature. Embedding is litellm-delegated (a provider's own API, or a local model behind an operator-run litellm proxy), so a credential-free / offline setup is a proxy-configuration choice, not a bundled backend. **And, separately, a turnkey path on top of it** (proposal 0063): builtin pipelines that ingest a document folder into a sqlite store *the operator owns* — where reyn's contribution is deliberately just `embed`, and the pipeline you copy is the extension mechanism.
+> **Differentiation vs general agents:** beyond chat memory, Reyn ships a RAG *framework* — the `index_update` op (add/update/remove/skip reconcile) over a pluggable `IndexBackend`, now OS-internal only (FP-0066 P1c retired the user-facing safe-mode `index_update()` entry point and the CLI `reyn source` command group; the in-core store is populated by internal callers, not a user-facing surface). A foundation the OS builds on, not a fixed memory feature. Embedding is litellm-delegated (a provider's own API, or a local model behind an operator-run litellm proxy), so a credential-free / offline setup is a proxy-configuration choice, not a bundled backend. **User RAG is, separately, a turnkey path** (proposal 0063): builtin pipelines that ingest a document folder into a sqlite store *the operator owns* — where reyn's contribution is deliberately just `embed`, and the pipeline you copy is the extension mechanism.
 
 ---
 
