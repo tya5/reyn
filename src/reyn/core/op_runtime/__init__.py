@@ -126,6 +126,10 @@ from . import compact as _compact  # noqa: F401, E402
 # `reyn.api.safe.index_update`, a thin safe-mode dispatch onto this SAME
 # `index_update` op (no more provider-direct embed path from safe-mode
 # python steps).
+# FP-0066 P1c: that safe-mode wrapper (`reyn.api.safe.index_update`) is
+# itself retired clean-break — the in-core index is OS-internal only now
+# (user RAG = FP-0063 plugin). `index_update` below stays an OS-internal
+# primitive (used by later FP-0066 §8 ingest phases).
 from . import embed as _embed  # noqa: F401, E402
 
 # Hook-Event Redesign Phase 5 part 2 (proposal 0059 §8): emit_hook_event —

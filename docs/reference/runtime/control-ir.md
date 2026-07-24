@@ -543,16 +543,22 @@ Handler lifecycle:
 
 > **`index_write` removed (still); `embed` re-exposed (FP-0057 Phase 1); `index_update`
 > added (FP-0057 Phase 2a) and its safe-mode entry point retired `embed_and_index`
-> clean-break (FP-0057 Phase 2b).** The `index_write` control-IR op stays removed.
-> Index writing for a safe-mode `python` step now goes through
-> `reyn.api.safe.index_update()` — a thin dispatch onto the `index_update` op
-> (incremental/delta-reconcile: add/update/remove/skip against the source's
+> clean-break (FP-0057 Phase 2b), and that safe-mode entry point itself later
+> retired clean-break (FP-0066 P1c).** The `index_write` control-IR op stays
+> removed. `index_update` used to be reachable from a safe-mode `python` step
+> via `reyn.api.safe.index_update()` — a thin dispatch onto the `index_update`
+> op (incremental/delta-reconcile: add/update/remove/skip against the source's
 > current index), which itself calls the shared `embed` op (via `execute_op`, not
 > provider-direct) for the actual embedding. The old `reyn.api.safe.embed_index.
-> embed_and_index()` (provider-direct, append/replace) is **deleted, no shim** —
-> the bundled `index_docs` / `index_events` chunkers were removed earlier along
-> with the stdlib skills that wrapped them, unaffected by this later retirement.
-> `semantic_search` (FP-0057 Phase 2a; renamed from `recall`) also embeds its
+> embed_and_index()` (provider-direct, append/replace) was **deleted, no shim**
+> in FP-0057 Phase 2b — the bundled `index_docs` / `index_events` chunkers were
+> removed earlier along with the stdlib skills that wrapped them, unaffected by
+> that retirement. **FP-0066 P1c then retired `reyn.api.safe.index_update()`
+> itself, clean-break, plus the CLI `reyn source` command group** — the in-core
+> index is OS-internal only now (populated by internal `index_update` op
+> callers, not a user-facing entry point); user RAG is the FP-0063 plugin over
+> an external store. `semantic_search` (FP-0057 Phase 2a; renamed from `recall`)
+> also embeds its
 > query via the shared `embed` op (not provider-direct — the query-embed path was
 > switched onto `execute_op(EmbedIROp(...))` so it passes the same PRE-embed
 > redaction-egress seam as ingestion), per-source-model. The `EmbeddingProvider`

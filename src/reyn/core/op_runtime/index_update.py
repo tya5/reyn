@@ -21,10 +21,12 @@ Reuses the Phase 1 ``embed`` op for the actual embedding call (dispatched via
 ``SqliteIndexBackend`` / ``SourceManifest`` (ADR-0033 Phase 1 / FP-0057 Phase
 0) for storage — the resume-key pattern (dedup BEFORE embedding = the cost
 save) mirrors the retired ``reyn.api.safe.embed_index.embed_and_index``
-(FP-0057 Phase 2b clean-break: safe-mode python steps now call
-``reyn.api.safe.index_update`` instead, a thin dispatch onto THIS op), plus
-the update/remove reconciliation legs the old append-only safe-mode entry
-never had.
+(FP-0057 Phase 2b clean-break: safe-mode python steps used to call
+``reyn.api.safe.index_update``, a thin dispatch onto THIS op — that
+safe-mode wrapper is itself retired, FP-0066 P1c clean-break; the in-core
+index is OS-internal only now, populated by later FP-0066 §8 ingest phases
+rather than a user-facing entry point), plus the update/remove
+reconciliation legs the old append-only safe-mode entry never had.
 
 **Source-model-bound**: the source's embedding model is recorded on first
 ingestion (``SourceManifest.embedding_model`` / the SQLite backend's
@@ -90,10 +92,11 @@ async def handle(op: IndexUpdateIROp, ctx: OpContext) -> dict:
     # #2856 Part B: resolve the sandbox cap ONCE, unconditionally (not just
     # inside the `permission_resolver is not None` branch below) — it is
     # forwarded into the backend/manifest regardless of whether a
-    # permission_resolver is present, so the safe-mode path (resolver=None,
-    # e.g. `reyn.api.safe.index_update`) gets the SAME real-write-site
-    # self-gate as the LLM-tool path, closing the asymmetry the wrapper's
-    # retired pre-flight used to paper over.
+    # permission_resolver is present, so any resolver=None caller (the now-
+    # retired `reyn.api.safe.index_update` safe-mode wrapper used to be one;
+    # FP-0066 P1c) gets the SAME real-write-site self-gate as the LLM-tool
+    # path, closing the asymmetry the wrapper's retired pre-flight used to
+    # paper over.
     sandbox_policy = sandbox_policy_from_ctx(ctx)
     sandbox_write_paths = sandbox_policy.write_paths if sandbox_policy is not None else None
 
