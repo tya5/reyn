@@ -337,7 +337,7 @@ def test_search_actions_no_router_state_returns_empty() -> None:
 def test_search_actions_no_index_returns_empty() -> None:
     """Tier 2: handler degrades to empty when index is None.
 
-    Production path: embedding_class not configured → RouterLoop
+    Production path: embedding.enabled: false (FP-0066 §7) → RouterLoop
     leaves ``action_embedding_index=None`` → handler reports empty.
     """
     rs = RouterCallerState(

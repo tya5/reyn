@@ -36,7 +36,7 @@ models:
 | `voice` | マップ | ⚠️ 現在利用不可(consumerなし)。以下参照。 |
 | `events` | マップ | チャットセッションイベントファイルの監査ログローテーションポリシー。以下参照。 |
 | `observability` | マップ | P6 監査イベントの OpenTelemetry (OTLP) エクスポート（オプトイン）。デフォルトは無効。以下参照。 |
-| `mcp` | マップ | MCP サーバー定義と `search_threshold`。以下参照。 |
+| `mcp` | マップ | MCP サーバー定義。以下参照。 |
 | `python` | マップ | Python preprocessor の追加許可モジュール。以下参照。 |
 | `agent` | マップ | P6 イベント監査証跡と送信 HTTP ヘッダー用のエージェント識別子。以下参照。 |
 | `auth` | マップ | `reyn auth login` 用の OAuth プロバイダー設定。以下参照。 |
@@ -67,7 +67,7 @@ models:
 
 config には2種類の位置があり、逆のルールに従います。同じルールが補完側 `models:` ブロック **と** `embedding.classes:` ブロックの両方に適用されます。
 
-- **クラス位置**（クラスへの *参照*）：`model`、per-agent / per-phase / per-op のモデル上書き、`embedding_class`。これらは **closed-world** — 値は `models:` / `embedding.classes:` に存在するクラス（または組み込み tier: `light` / `standard` / `strong`）を指さなければなりません。既知クラスでない値は、リテラルモデルとして黙って素通しされません：
+- **クラス位置**（クラスへの *参照*）：`model`、per-agent / per-phase / per-op のモデル上書き、`embedding.default_class`。これらは **closed-world** — 値は `models:` / `embedding.classes:` に存在するクラス（または組み込み tier: `light` / `standard` / `strong`）を指さなければなりません。既知クラスでない値は、リテラルモデルとして黙って素通しされません：
   - オペレータ config（reyn.yaml の `model:`）は後方互換のリテラル素通しを維持（`openai/gpt-4o` を直接書ける）；
   - **skill/op 由来**のモデル（`op.model`）が既知クラスでない場合は **reject** され、runtime モデルにフォールバック（警告1件）します。これにより skill・LLM 由来の文字列が proxy config を迂回できません — モデル選択の単一の真実源は proxy config です。
 - **名前位置**（モデルの *定義*）：`models:` / `embedding.classes:` エントリ内の `model:` 値。名前は `provider/model`（例：`openai/gpt-4o`、litellm proxy 背後のローカルモデルなら `openai/nomic-embed-text`）であるべきです。`/` のない bare 名は許容されます（一部の LiteLLM 文字列は bare）が、ロード時に **警告** します — 解決が誤ルートする場合は prefix を追加してください。
@@ -365,40 +365,51 @@ sandbox:
 ```yaml
 action_retrieval:
   universal_wrappers_enabled: true    # デフォルト; false でオプトアウト
-  # embedding_class: standard         # デフォルトは null (無効); opt-in するにはコメント解除
   hot_list_n: 0                       # 0 = 無効（デフォルト）; opt-in は例えば 10
   mode: default                       # default | minimal | performance
+embedding:
+  enabled: false                      # デフォルト（無効）; opt-in するには true
+  # default_class: standard           # enabled 時に使う embedding class
 ```
 
 ### `action_retrieval` フィールド
 
 | フィールド | 型 | デフォルト | 説明 |
 |-----|------|---------|-------------|
-| `universal_wrappers_enabled` | bool | `true` | `tool_use` scheme が `universal-category` に解決される layer について、`true`(デフォルト)の時、その layer の `tools=` は 4 universal wrappers (`list_actions` / `search_actions` / `describe_action` / `invoke_action`) + hot list direct aliases のみ。 legacy per-kind tool (`invoke_skill` / `call_mcp_tool` 等) はその layer で LLM に surface されず、 wrapper の backing handler として残存。 `search_actions` は `embedding_class` で別途ゲート。 `false` 設定でその layer の wrapper surface 自体を無効化 (= legacy のみが addressing path)。 scheme が `enumerate-all`(`chat` layer 自身のデフォルト)である layer には影響しない — その scheme はこのフラグを一切参照しない。 |
-| `embedding_class` | string \| null | `null` | action-retrieval の semantic 検索に使用する [`embedding.classes`](../../concepts/data-retrieval/rag.md) のエントリ名。 **デフォルト `null` (無効) — semantic `search_actions` は opt-in。** `null` または空の場合、 wrapper が有効でも `search_actions` は `tools=` から除外され、 embedding index の build も一切試行されない (= silent、失敗も警告も発生しない)。 opt-in するには明示的に `standard`（= または `light` / `strong`；OpenAI backed、`OPENAI_API_KEY` が必要、ローカルインストール不要）、または任意の litellm-routable モデルを指す custom `embedding.classes` エントリ（operator が自前で立てた litellm proxy 背後のローカルモデルを含む — #3128 で reyn の in-process sentence-transformers backend は削除済み。reyn は埋め込みを litellm に一元依存。[Guide: enable semantic search](../../guide/for-users/enable-semantic-search.md) 参照）を設定する。 設定すると cold-start session で eager embedding build を発動し初回ターンの hallucination を回避。 |
+| `universal_wrappers_enabled` | bool | `true` | `tool_use` scheme が `universal-category` に解決される layer について、`true`(デフォルト)の時、その layer の `tools=` は 4 universal wrappers (`list_actions` / `search_actions` / `describe_action` / `invoke_action`) + hot list direct aliases のみ。 legacy per-kind tool (`invoke_skill` / `call_mcp_tool` 等) はその layer で LLM に surface されず、 wrapper の backing handler として残存。 `search_actions` は `embedding.enabled` で別途ゲート（下記参照）。 `false` 設定でその layer の wrapper surface 自体を無効化 (= legacy のみが addressing path)。 scheme が `enumerate-all`(`chat` layer 自身のデフォルト)である layer には影響しない — その scheme はこのフラグを一切参照しない。 |
 | `hot_list_n` | int | `0` | top-N `freq+recency` direct alias のホットリスト投影サイズ。 デフォルト `0` (= 無効) — `list_actions` が正規の discovery path。 opt-in は `10` 以上を設定; seed・usage tracker・alias-builder は完全維持。 |
 | `mode` | string | `"default"` | 運用モードラベル: `"minimal"` (キャッシュ安定性最大、 ホットリストなし) / `"default"` (バランス) / `"performance"` (大規模ホットリスト)。 自由文字列で、 呼び出し側がセマンティクスを上乗せ。 |
 
 ### クイックスタート — semantic `search_actions` を opt-in
 
-`search_actions` はデフォルトで無効 (`embedding_class: null`) — semantic search はプロジェクト全体で opt-in の方針です。有効にするには:
+`search_actions` はデフォルトで無効(`embedding.enabled: false`)— semantic search はプロジェクト全体で opt-in の方針です。有効にするには:
 
 ```yaml
 # reyn.yaml — API backed、ローカルインストール不要 (`OPENAI_API_KEY` が必要)
-action_retrieval:
-  embedding_class: standard
+embedding:
+  enabled: true
+  # default_class: standard   # デフォルト; openai/text-embedding-3-small を使用
 ```
 
 ```yaml
 # reyn.yaml — 自前の litellm proxy 背後のローカルモデル（API キー不要）;
 # reyn 起動前に LITELLM_API_BASE を export — proxy の config.yaml と命名規則はガイド参照
 embedding:
+  enabled: true
+  default_class: local
   classes:
     local:
       model: openai/nomic-embed-text
-action_retrieval:
-  embedding_class: local
 ```
+
+> **FP-0066 §7(2026-07)— config clean-break。** 以前の断片的なゲート
+> `action_retrieval.embedding_class`(on/off の判断と、どの embedding class を
+> 使うかを混同していた)は **廃止(alias なし)**。 2 つの独立したフィールドに
+> 分割: `embedding.enabled`(bool、デフォルト `false` — embedding-backed な
+> semantic-discovery レイヤー全体 — action retrieval の `search_actions` +
+> FP-0063 プラグインの `rag_ingest` embed step — の単一 opt-in スイッチ)と
+> `embedding.default_class`(string、デフォルト `"standard"` — 既存フィールド、
+> 変更なし)。
 
 詳細な手順（オフライン/エアギャップ環境のガイダンスを含む）は [ガイド: semantic search を有効にする](../../guide/for-users/enable-semantic-search.ja.md) を参照。
 
@@ -783,18 +794,18 @@ mcp:
 
 MCP ランタイムはコアインストールに同梱されます。`fastmcp` はコア依存（MCP クライアントは各セッションで構築されます）なので extra は不要です。（既存の `pip install -e ".[mcp]"` が解決し続けられるよう、空の `[mcp]` extra を後方互換エイリアスとして残しています。）
 
-### `mcp.search_threshold`
-
-すべての接続済みサーバーにわたる MCP ツールの総数がこの閾値に達すると、`build_tools()` が全 MCP ツールスキーマのインライン展開から Anthropic の `tool_search_tool`（遅延ロードモード）に切り替わります。デフォルト `30`。`0` で無効化。
-
-```yaml
-mcp:
-  search_threshold: 30   # デフォルト; スキーマを常にインライン化するには 0 に設定
-  servers:
-    ...
-```
-
 [コンセプト: MCP](../../concepts/tools-integrations/mcp.md) でプロトコル概要を参照してください。
+
+> **`mcp.search_threshold` は削除されました（#3218 / FP-0066 §7 P1a）。**
+> `ReynConfig.mcp_search_threshold` フィールド + その `mcp.search_threshold:`
+> パースは、確認済みの no-op として fold-remove されました：パースされた値は
+> `build_tools()` のどちらの router_loop.py 呼び出しサイトにも一度も
+> threading されていなかったため、設定しても効果がありませんでした。
+> `build_tools()` 自身の `mcp_search_threshold` パラメータは引き続き存在します
+> （デフォルト `0` — 常にインライン；`src/reyn/runtime/router_tools.py` の
+> `MCP_SEARCH_THRESHOLD` 参照）が、`reyn.yaml` からは到達不能になりました —
+> 非デフォルト動作が必要な呼び出し元はコードで明示的に渡します。基盤の
+> `tool_search_tool` メカニズム自体の完全削除は FP-0033 で追跡されています。
 
 ## `skills` ブロック
 

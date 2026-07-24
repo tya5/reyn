@@ -99,7 +99,9 @@ def test_pure_test_context_does_not_receive_hint() -> None:
 
 
 def test_no_embedding_class_configured_fires_hint() -> None:
-    """Tier 2: fresh production session with no embedding class fires the hint.
+    """Tier 2: fresh production session with ``embedding.enabled: false``
+    (FP-0066 §7 — the retired ``action_retrieval.embedding_class`` gate's
+    clean-break replacement) fires the hint.
 
     This is the canonical onboarding scenario: operator hasn't enabled
     semantic search, the LLM sees only ``list_actions`` in tools=, the
@@ -112,7 +114,7 @@ def test_no_embedding_class_configured_fires_hint() -> None:
     )
     result = _run(LIST_ACTIONS.handler({"category": ["file"]}, _ctx(rs)))
     assert "hint" in result, (
-        "hint must fire when embedding_class is unset in a production session"
+        "hint must fire when embedding.enabled is false in a production session"
     )
 
 
@@ -180,7 +182,7 @@ def test_hint_references_openai_config_path() -> None:
     result = _run(LIST_ACTIONS.handler({"category": ["file"]}, _ctx(rs)))
     hint = result["hint"]
     assert "OPENAI_API_KEY" in hint
-    assert "embedding_class" in hint
+    assert "embedding" in hint and "enabled" in hint
 
 
 def test_hint_references_search_actions_by_name() -> None:

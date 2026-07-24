@@ -1,10 +1,15 @@
 """Tier 2: pure helpers in config/loader.py.
 
 ``_as_config_dict(val, key)``   — coerce to dict, default {} on wrong type
-``_parse_mcp_search_threshold`` — extract int from mcp dict, clamp negatives
 ``_merge(base, override)``      — None values skip; unknown key overrides;
                                    models/permissions shallow-merge
 ``_find_project_root(start)``   — walk up until reyn.yaml found or root hit
+
+#3218 / FP-0066 §7 P1a: ``_parse_mcp_search_threshold`` (+ its dead
+``ReynConfig.mcp_search_threshold`` field) was fold-removed as a confirmed
+no-op — the parsed value was never threaded through to ``build_tools()`` by
+either router_loop.py call site. Its unit tests are removed with it (clean
+break, no alias).
 """
 from __future__ import annotations
 
@@ -19,7 +24,6 @@ from reyn.config.loader import (
     _as_config_dict,
     _find_project_root,
     _merge,
-    _parse_mcp_search_threshold,
 )
 
 # ---------------------------------------------------------------------------
@@ -51,46 +55,6 @@ def test_as_config_dict_list_returns_empty() -> None:
 def test_as_config_dict_int_returns_empty() -> None:
     """Tier 2: integer → {}."""
     assert _as_config_dict(42, "models") == {}
-
-
-# ---------------------------------------------------------------------------
-# _parse_mcp_search_threshold
-# ---------------------------------------------------------------------------
-
-
-def test_parse_mcp_search_threshold_none_section_returns_default() -> None:
-    """Tier 2: absent mcp section → default 30."""
-    assert _parse_mcp_search_threshold(None) == 30
-
-
-def test_parse_mcp_search_threshold_missing_key_returns_default() -> None:
-    """Tier 2: dict without search_threshold key → default 30."""
-    assert _parse_mcp_search_threshold({"servers": {}}) == 30
-
-
-def test_parse_mcp_search_threshold_explicit_value() -> None:
-    """Tier 2: explicit integer value is returned."""
-    assert _parse_mcp_search_threshold({"search_threshold": 88}) == 88
-
-
-def test_parse_mcp_search_threshold_zero_allowed() -> None:
-    """Tier 2: zero disables the switch and is accepted (not clamped to default)."""
-    assert _parse_mcp_search_threshold({"search_threshold": 0}) == 0
-
-
-def test_parse_mcp_search_threshold_negative_clamped_to_zero() -> None:
-    """Tier 2: negative value is clamped to 0."""
-    assert _parse_mcp_search_threshold({"search_threshold": -5}) == 0
-
-
-def test_parse_mcp_search_threshold_string_non_numeric_returns_default() -> None:
-    """Tier 2: non-numeric string → default 30."""
-    assert _parse_mcp_search_threshold({"search_threshold": "high"}) == 30
-
-
-def test_parse_mcp_search_threshold_numeric_string_coerces() -> None:
-    """Tier 2: numeric string like '50' is coerced to int."""
-    assert _parse_mcp_search_threshold({"search_threshold": "50"}) == 50
 
 
 # ---------------------------------------------------------------------------

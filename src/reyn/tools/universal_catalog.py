@@ -268,35 +268,21 @@ def strip_provider_tool_namespace(name: str) -> str:
 # ── D14 visibility gating helpers ──────────────────────────────────────────
 
 
-def is_search_available(
-    *,
-    action_retrieval_embedding_class: str | None,
-    embedding_class_names: "Collection[str] | None" = None,
-) -> bool:
+def is_search_available(*, embedding_enabled: bool) -> bool:
     """Return True iff ``search_actions`` should be exposed to the LLM.
 
-    Per FP-0034 §D14, ``search_actions`` is only visible when an embedding
-    class is configured for action retrieval AND that class is a real entry
-    in ``embedding.classes`` (a class-typed field is closed-world).
-
-    #1454: the primary membership reconciliation happens upstream at config
-    load (``_reconcile_embedding_class`` degrades a dangling class to None +
-    logs once). By the time this is called the value is normally already
-    clean, so the ``bool()`` check suffices. ``embedding_class_names`` is the
-    belt-and-suspenders leg: when a caller passes the known class names, a
-    non-member class returns False here too (closed-world enforced at the
-    visibility boundary, not just at config load). No logging here — the single
-    actionable log lives in the config-load reconciliation to avoid double
-    surfacing.
+    Per FP-0034 §D14 / FP-0066 §7, ``search_actions`` is only visible when
+    the operator has opted into the embedding-backed semantic-discovery
+    layer (``embedding.enabled: true``). Clean-break replacement for the
+    retired ``action_retrieval.embedding_class`` gate (which conflated
+    on/off with which embedding class to use) — the embedding CLASS itself
+    (``embedding.default_class`` / a dangling ``embedding.classes``
+    reference) is validated eagerly by ``_build_embedding_config`` at
+    config-load time (raises there), so by the time this predicate runs,
+    ``embedding_enabled=True`` already implies a resolvable class — no
+    membership check is needed here.
     """
-    if not action_retrieval_embedding_class:
-        return False
-    if (
-        embedding_class_names is not None
-        and action_retrieval_embedding_class not in embedding_class_names
-    ):
-        return False
-    return True
+    return bool(embedding_enabled)
 
 
 def is_exec_available(*, sandbox_backend: str | None) -> bool:
@@ -315,7 +301,6 @@ def is_exec_available(*, sandbox_backend: str | None) -> bool:
 
 def visible_categories(
     *,
-    action_retrieval_embedding_class: str | None = None,
     sandbox_backend: str | None = None,
 ) -> tuple[str, ...]:
     """Return the categories that should be visible given the current env.
@@ -739,20 +724,20 @@ def _validate_category_filter(
 
 # ── Hidden-state hint (FP-0043 Component C.1) ──────────────────────────────
 #
-# When ``search_actions`` is gated out of ``tools=`` (= operator hasn't
-# configured ``action_retrieval.embedding_class``, or the embedding
-# class points at a backend whose extras aren't installed), the LLM
-# has no way to discover that semantic search exists. ``list_actions``
-# is the discovery wrapper the LLM does see; we attach a ``hint`` field
-# to its response so the LLM can surface the install / config path
-# back to the user. This is the "self-service onboarding" bridge in
-# FP-0043 §Component C.
+# When ``search_actions`` is gated out of ``tools=`` (= operator hasn't set
+# ``embedding.enabled: true``, or the configured embedding class points at a
+# backend whose extras aren't installed), the LLM has no way to discover
+# that semantic search exists. ``list_actions`` is the discovery wrapper the
+# LLM does see; we attach a ``hint`` field to its response so the LLM can
+# surface the install / config path back to the user. This is the
+# "self-service onboarding" bridge in FP-0043 §Component C.
 
 _HIDDEN_STATE_HINT: Final[str] = (
     "Semantic action search (`search_actions`) is currently unavailable "
     "in this session. To enable it, add to reyn.yaml: "
-    "`action_retrieval:\\n  embedding_class: standard` — uses OpenAI "
-    "embeddings, requires `OPENAI_API_KEY` (or point `embedding_class` at "
+    "`embedding:\\n  enabled: true` — uses the configured "
+    "`embedding.default_class` (default `standard` = OpenAI embeddings, "
+    "requires `OPENAI_API_KEY`), or point `embedding.default_class` at "
     "another `embedding.classes` entry, e.g. a litellm-fronted proxy for a "
     "local model).\n"
     "Until enabled, use `list_actions(category=[...])` to browse the "
@@ -801,7 +786,7 @@ def _should_inject_hidden_state_hint(rs: Any) -> bool:
     Brief false-positives during the background index build (= rs is
     present but idx.is_ready() returns False yet) are acceptable —
     the hint is informational, not blocking; the LLM may surface the
-    enable-hint (= configure ``action_retrieval.embedding_class`` in
+    enable-hint (= set ``embedding.enabled: true`` in
     reyn.yaml) once during boot, then stop on subsequent turns once
     the index becomes ready.
     """
@@ -890,8 +875,8 @@ async def _handle_search_actions(
 
     Per §D13 / §D14, semantic search routes through an
     ``ActionEmbeddingIndex`` populated from the catalog enumeration.
-    RouterLoop builds the index on first turn when the operator has
-    configured ``action_retrieval.embedding_class`` and binds the
+    RouterLoop builds the index on first turn when the operator has set
+    ``embedding.enabled: true`` (FP-0066 §7) and binds the
     index + provider + model class into the ``RouterCallerState``.
 
     Response shape per §D11:

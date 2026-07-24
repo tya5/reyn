@@ -164,23 +164,6 @@ class ReynConfig:
     #           Authorization: "Bearer ${GITHUB_TOKEN}"
     #           X-API-Version: "2024-01-01"
     mcp: dict = field(default_factory=dict)
-    # FP-0024 Component D — Anthropic tool_search_tool threshold.
-    # Number of MCP tools at or above which build_tools() switches from
-    # inlining all MCP tool schemas to using Anthropic's tool_search_tool
-    # (deferred-loading mode).  Default 30; set 0 to disable.
-    # Configurable via ``mcp.search_threshold:`` in reyn.yaml.
-    # Spring AI experiment: 63–64% token reduction at 40+ MCP tools.
-    #
-    # ``schema_internal``: this field is INTERNAL storage derived by the
-    # loader from the ``mcp.search_threshold`` key (see
-    # ``_parse_mcp_search_threshold``); it is NOT itself an operator-settable
-    # top-level key. The operator sets ``mcp.search_threshold`` (a free-form
-    # sub-key of the ``mcp`` dict); ``reyn config set mcp_search_threshold``
-    # would be a no-op on reload. The metadata flag tells
-    # ``walk_config_schema`` to omit it from the settable schema so
-    # ``reyn config set/get/fields`` and the doc-mirror guard don't advertise
-    # a key the set/get path can't honor.
-    mcp_search_threshold: int = field(default=30, metadata={"schema_internal": True})
     # Python preprocessor step settings.
     python: PythonConfig = field(default_factory=PythonConfig)
     # FP-0016 Component E — agent identity for audit trail + HTTP header

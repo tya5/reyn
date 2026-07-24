@@ -413,44 +413,24 @@ def test_invoke_action_action_name_is_free_form_no_enum() -> None:
 
 
 @pytest.mark.parametrize(
-    "embedding_class, expected",
+    "embedding_enabled, expected",
     [
-        ("standard", True),
-        ("light", True),
-        ("custom_ollama", True),
-        (None, False),
-        ("", False),
+        (True, True),
+        (False, False),
     ],
 )
 def test_is_search_available_predicate(
-    embedding_class: str | None, expected: bool,
+    embedding_enabled: bool, expected: bool,
 ) -> None:
-    """Tier 2: search_actions visibility per §D14."""
-    assert is_search_available(
-        action_retrieval_embedding_class=embedding_class
-    ) is expected
+    """Tier 2: search_actions visibility per §D14 / FP-0066 §7.
 
-
-def test_is_search_available_membership_belt_and_suspenders() -> None:
-    """Tier 2: #1454 (b) — when the known class names are supplied, a class
-    NOT among them returns False (closed-world enforced at the visibility
-    boundary too, not just at config-load reconciliation)."""
-    classes = {"standard", "custom-alias"}
-    # member → available
-    assert is_search_available(
-        action_retrieval_embedding_class="standard",
-        embedding_class_names=classes,
-    ) is True
-    # non-member (dangling) → hidden, even though the string is truthy
-    assert is_search_available(
-        action_retrieval_embedding_class="company-proxy",
-        embedding_class_names=classes,
-    ) is False
-    # None class stays False regardless of membership set
-    assert is_search_available(
-        action_retrieval_embedding_class=None,
-        embedding_class_names=classes,
-    ) is False
+    Clean-break replacement for the retired ``action_retrieval.embedding_class``
+    truthy + closed-world-membership predicate: the on/off decision is now a
+    single bool (``embedding.enabled``) — the embedding CLASS itself is
+    validated eagerly at config-load time (``_build_embedding_config``), so
+    this predicate no longer needs a membership check.
+    """
+    assert is_search_available(embedding_enabled=embedding_enabled) is expected
 
 
 @pytest.mark.parametrize(

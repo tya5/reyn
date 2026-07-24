@@ -254,10 +254,10 @@ match する rule がなければ dispatch は `UnknownActionError` を raise
 
 | Predicate | 効果 |
 |---|---|
-| `is_search_available(embedding_class)` | `search_actions` が tools= に出るか (Phase 2) |
+| `is_search_available(embedding_enabled)` | `search_actions` が tools= に出るか (Phase 2) |
 | `is_exec_available(sandbox_backend)` | `exec` が `list_actions` 列挙に出るか |
 
-gate は pure function; runtime は `action_retrieval.embedding_class`
+gate は pure function; runtime は `embedding.enabled`(FP-0066 §7)
 と resolved sandbox backend から configuration を渡す。 hidden category
 は `list_actions` の `category=` enum にも列挙結果にも現れない。
 

@@ -99,10 +99,11 @@ def test_walk_covers_every_top_level_field_no_silent_skip() -> None:
     auto-resolve and retire the manual injection).
 
     Fields explicitly flagged ``field(metadata={'schema_internal': True})``
-    (#1146 — internal storage that is NOT an operator-settable key, e.g.
-    ``mcp_search_threshold`` which the loader derives from
-    ``mcp.search_threshold``) are intentionally omitted from the walk and so
-    excluded here — their omission is deliberate, not a silent forward-ref drop.
+    (#1146 — internal storage that is NOT an operator-settable key; no field
+    currently uses this flag since the sole prior instance,
+    ``mcp_search_threshold``, was fold-removed — #3218 / FP-0066 §7 P1a) are
+    intentionally omitted from the walk and so excluded here — their omission
+    is deliberate, not a silent forward-ref drop.
     """
     nodes = walk_config_schema()
     top_level = {n.key.split(".", 1)[0] for n in nodes}

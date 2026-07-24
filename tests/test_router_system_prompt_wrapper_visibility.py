@@ -63,7 +63,7 @@ def test_search_actions_enabled_true_includes_behaviour_guidance() -> None:
 
 
 # ---------------------------------------------------------------------------
-# search_actions_enabled=False (= no embedding_class configured)
+# search_actions_enabled=False (= embedding.enabled: false, FP-0066 §7)
 # ---------------------------------------------------------------------------
 
 

@@ -483,7 +483,7 @@ def _action_index_build_failure_warning(exc: BaseException, model_class: Any) ->
             "`litellm_settings:\n  drop_params: true` on your LiteLLM PROXY (the "
             "client-side flag does NOT apply on the proxy route — known litellm "
             "behaviour), OR use an OpenAI-compatible embedding class. Options to "
-            "opt out: set `action_retrieval.embedding_class: null`."
+            "opt out: set `embedding.enabled: false`."
         )
     return (
         "Semantic search_actions disabled for this session: action embedding "
@@ -491,8 +491,8 @@ def _action_index_build_failure_warning(exc: BaseException, model_class: Any) ->
         f"({type(exc).__name__}: {exc}). Options: (1) check the embedding "
         "provider config (`embedding.classes` / API credentials / LiteLLM "
         "proxy reachability) in reyn.yaml, (2) set "
-        "`action_retrieval.embedding_class: null` to opt out, (3) use a "
-        "different API-backed class (e.g. `standard`)."
+        "`embedding.enabled: false` to opt out, (3) use a "
+        "different API-backed class via `embedding.default_class` (e.g. `standard`)."
     )
 
 
@@ -600,7 +600,7 @@ class RouterLoopHost(RouterLoopCore, Protocol):
         """Return the session-scoped ActionEmbeddingIndex, or None.
 
         FP-0034 Phase 2 step 1.  Bound by Session when the operator
-        has configured ``action_retrieval.embedding_class``.
+        has set ``embedding.enabled: true`` (FP-0066 §7).
         """
         ...
 
@@ -616,7 +616,8 @@ class RouterLoopHost(RouterLoopCore, Protocol):
         """Return the configured embedding model class name, or None.
 
         FP-0034 Phase 2 step 1.  Mirror of
-        ``action_retrieval.embedding_class`` from reyn.yaml.
+        ``embedding.default_class`` from reyn.yaml (bound only when
+        ``embedding.enabled: true`` — FP-0066 §7).
         """
         ...
 
@@ -3424,9 +3425,9 @@ class RouterLoop:
             except Exception:
                 pass
             # #1458: decision-enabling operator warning — names the likely
-            # cause + three actionable outs, same family as the #1454
-            # _reconcile_embedding_class message so the operator surface is
-            # consistent.
+            # cause + three actionable outs, same family as the
+            # ``_build_embedding_config`` / ``_validate_retrieval_scheme_embedding``
+            # config-load messages so the operator surface is consistent.
             import logging
 
             # #1616: cause-aware guidance (UnsupportedParamsError → proxy-side

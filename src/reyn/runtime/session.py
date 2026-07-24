@@ -702,7 +702,8 @@ class _RetrievalBundle:
     """#3082 Family 5: the retrieval spine — the embedding block
     (``embedding_provider`` / ``embedding_event_sink`` / ``embedding_model_class``
     / ``action_embedding_index``, four attrs, one conditional construction
-    guarded by ``universal_wrappers_enabled and embedding_class`` with a
+    guarded by ``universal_wrappers_enabled and embedding.enabled`` (FP-0066
+    §7) with a
     try/except None-fallback) plus ``action_usage_tracker`` (hot-list
     freq+recency, a SEPARATE conditional guarded by
     ``universal_wrappers_enabled and hot_list_n > 0``, also with a
@@ -3392,7 +3393,9 @@ class Session:
     ) -> "_RetrievalBundle":
         """#3082 Family 5: build the retrieval spine — the embedding block
         (four attrs, one conditional construction guarded by
-        ``universal_wrappers_enabled and embedding_class`` with a try/except
+        ``universal_wrappers_enabled and embedding.enabled`` (FP-0066 §7,
+        clean-break replacement for the retired ``embedding_class`` truthy
+        gate) with a try/except
         None-fallback) and ``action_usage_tracker`` (a SEPARATE conditional
         guarded by ``universal_wrappers_enabled and hot_list_n > 0``, also
         with a try/except None-fallback). ``action_usage_tracker`` is
@@ -3428,9 +3431,11 @@ class Session:
         see the four embedding attrs' and ``action_usage_tracker``'s
         original inline comments, reproduced verbatim below."""
         # FP-0034 Phase 2 step 1: build the ActionEmbeddingIndex +
-        # EmbeddingProvider once per session when the operator has
-        # configured ``action_retrieval.embedding_class``.  Both stay
-        # None when embedding is not configured, in which case the
+        # EmbeddingProvider once per session when the operator has set
+        # ``embedding.enabled: true`` (FP-0066 §7 — clean-break
+        # replacement for the retired ``action_retrieval.embedding_class``
+        # on/off gate; the model CLASS is ``embedding.default_class``).
+        # Both stay None when embedding is not enabled, in which case the
         # ``search_actions`` wrapper is hidden by ``build_tools`` and
         # the handler degrades to an empty-result response.
         action_embedding_index: Any = None
@@ -3446,8 +3451,8 @@ class Session:
         embedding_event_sink: Any = None
         if (
             action_retrieval.universal_wrappers_enabled
-            and action_retrieval.embedding_class
             and embedding_config is not None
+            and embedding_config.enabled
         ):
             try:
                 from reyn.data.embedding import get_provider as _get_provider
@@ -3496,7 +3501,7 @@ class Session:
                 # ``embedding_provider`` (which stays for non-tool-use /
                 # legacy callers until they migrate).
                 embedding_event_sink = _embedding_event_sink
-                embedding_model_class = action_retrieval.embedding_class
+                embedding_model_class = embedding_config.default_class
                 # FP-0057 Phase 0: unified onto IndexBackend's cache
                 # convention (.reyn/cache/index/<source>/); the old
                 # .reyn/cache/action_index/ path is no longer read or

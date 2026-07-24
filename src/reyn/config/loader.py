@@ -15,7 +15,6 @@ from reyn.config.chat import (  # #1682 #3 cross-section
     _build_safety_config,
 )
 from reyn.config.embedding import (  # #1682 #3 cross-section
-    ActionRetrievalConfig,
     _build_action_retrieval_config,
     _build_embedding_config,
 )
@@ -331,66 +330,6 @@ def _warn_legacy_dot_reyn_config(path: Path) -> None:
         )
 
 
-def _parse_mcp_search_threshold(raw_mcp: object) -> int:
-    """Extract ``mcp.search_threshold`` from the raw ``mcp:`` section dict.
-
-    Returns the default (30) when the section is absent, the key is missing,
-    or the value is invalid. Accepts 0 (= disable the search tool switch).
-    """
-    _default = 30  # mirrors ReynConfig.mcp_search_threshold default
-    if not isinstance(raw_mcp, dict):
-        return _default
-    threshold_raw = raw_mcp.get("search_threshold", _default)
-    try:
-        threshold = int(threshold_raw)
-        if threshold < 0:
-            threshold = 0
-        return threshold
-    except (TypeError, ValueError):
-        return _default
-
-
-def _reconcile_embedding_class(cfg: "ReynConfig") -> None:
-    """#1454 (c)+(d): a class-typed field is closed-world.
-
-    ``action_retrieval.embedding_class`` names an entry in
-    ``embedding.classes``. If it names a class with no such entry — e.g. the
-    user set ``embedding_class`` to a built-in class name (``light`` /
-    ``standard`` / ``strong``) and then REPLACED ``embedding.classes``
-    (config.py: user classes override the builtin registry) without keeping
-    that name, or a typo — the alias can never resolve. Degrade semantic
-    ``search_actions`` to off (None)
-    with one decision-enabling log, rather than letting the dangling alias
-    reach the embedding backend where it surfaces as a misleading "model not
-    found" naming the alias (the owner-reported HF-blocked-company failure).
-
-    Same graceful-degrade family as the missing-extras path; an opt-out-able
-    auxiliary feature must never crash a zero-config session.
-    """
-    import logging
-
-    ec = cfg.action_retrieval.embedding_class
-    if not ec or ec in cfg.embedding.classes:
-        return
-    known = ", ".join(sorted(cfg.embedding.classes)) or "(none)"
-    if ec == ActionRetrievalConfig().embedding_class:
-        detail = (
-            f"the default embedding class {ec!r} has no entry in your "
-            f"embedding.classes — add it under embedding.classes, or set "
-            f"action_retrieval.embedding_class: null to silence this"
-        )
-    else:
-        detail = (
-            f"action_retrieval.embedding_class={ec!r} has no entry in "
-            f"embedding.classes (typo?) — add the class or set it to null"
-        )
-    logging.getLogger(__name__).warning(
-        "Semantic search_actions disabled: %s. Known classes: %s.",
-        detail, known,
-    )
-    cfg.action_retrieval.embedding_class = None
-
-
 def _validate_retrieval_scheme_embedding(cfg: "ReynConfig") -> None:
     """#2895 fix (a): fail loud at config load when ``tool_use.chat:
     retrieval`` is selected with no working embedding configured.
@@ -408,14 +347,16 @@ def _validate_retrieval_scheme_embedding(cfg: "ReynConfig") -> None:
     ``is_search_available`` (hide the tool + surface a hint) instead of
     going silently dead.
 
-    Reuses the SAME primary gate ``is_search_available`` checks
-    (``action_retrieval.embedding_class`` truthy) and the SAME enable-hint
-    text those schemes surface via ``list_actions``
+    Reuses the SAME primary gate ``is_search_available`` checks (FP-0066 §7:
+    ``embedding.enabled`` truthy — clean-break replacement for the retired
+    ``action_retrieval.embedding_class`` gate) and the SAME enable-hint text
+    those schemes surface via ``list_actions``
     (``universal_catalog._HIDDEN_STATE_HINT``) — one consistent operator
-    message regardless of which layer catches the misconfiguration. Runs
-    AFTER ``_reconcile_embedding_class`` so a dangling ``embedding_class``
-    (typo, no entry in ``embedding.classes``) is already degraded to None
-    here too, not just the explicit-null case.
+    message regardless of which layer catches the misconfiguration. The
+    embedding CLASS itself (``embedding.default_class`` / a dangling
+    ``embedding.classes`` reference) is validated eagerly by
+    ``_build_embedding_config`` at parse time (raises there), so by the time
+    this runs ``embedding.enabled`` implies a resolvable class.
 
     This is the config-time half of the #2895 fix; ``RetrievalScheme.
     build_presentation`` carries the runtime-auto-fallback half (defense in
@@ -425,13 +366,13 @@ def _validate_retrieval_scheme_embedding(cfg: "ReynConfig") -> None:
     """
     if cfg.tool_use.chat != "retrieval":
         return
-    if cfg.action_retrieval.embedding_class:
+    if cfg.embedding.enabled:
         return
     from reyn.tools.universal_catalog import _HIDDEN_STATE_HINT
 
     raise ValueError(
         "tool_use.chat: retrieval requires a working embedding "
-        "(action_retrieval.embedding_class is unset/disabled) — without one, "
+        "(embedding.enabled is false) — without one, "
         "the search_actions tool always returns no results, and retrieval's "
         "terminal-on-empty-match rule drops it on the very first search, "
         "stranding the LLM on base tools only with no catalog action ever "
@@ -707,7 +648,6 @@ def load_config(cwd: Path | None = None) -> ReynConfig:
         ),
         permissions=_as_config_dict(merged.get("permissions"), "permissions"),
         mcp=_as_config_dict(merged.get("mcp"), "mcp"),
-        mcp_search_threshold=_parse_mcp_search_threshold(merged.get("mcp")),
         python=_build_python_config(merged.get("python")),
         agent=_build_agent_config(merged.get("agent")),
         delegation=_build_delegation_config(merged.get("delegation")),
@@ -746,7 +686,6 @@ def load_config(cwd: Path | None = None) -> ReynConfig:
         pipelines=_as_config_dict(merged.get("pipelines"), "pipelines"),
         presentations=_as_config_dict(merged.get("presentations"), "presentations"),
     )
-    _reconcile_embedding_class(_cfg)
     _validate_retrieval_scheme_embedding(_cfg)
     _validate_skill_visibility(_cfg)
     return _cfg

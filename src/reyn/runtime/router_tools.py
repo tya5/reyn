@@ -37,15 +37,15 @@ from typing import Literal
 # demand, rather than receiving all N schemas upfront.
 #
 # Spring AI experiment shows 63–64% token reduction for 40+ MCP tools.
-# Nominally overridable per-project via ``mcp.search_threshold:`` in reyn.yaml
-# (parsed into ``ReynConfig.mcp_search_threshold`` by
-# config._parse_mcp_search_threshold), but as of this writing neither
-# router_loop.py call site (SchemeOps.present / SchemeOps.base_tools) passes
-# that config value through to build_tools()'s ``mcp_search_threshold=``
-# kwarg — the config field is parsed but not threaded, so build_tools()
-# always falls back to the module-level MCP_SEARCH_THRESHOLD constant below
-# regardless of reyn.yaml. Setting threshold=0 disables the switch (always
-# inline).
+# #3218 / FP-0066 §7 P1a: the dead ``ReynConfig.mcp_search_threshold`` config
+# field (parsed from ``mcp.search_threshold:`` in reyn.yaml but never
+# threaded through to this parameter by either router_loop.py call site —
+# SchemeOps.present / SchemeOps.base_tools) was fold-removed (confirmed
+# no-op). ``mcp_search_threshold`` is now purely a ``build_tools()`` function
+# parameter; a caller wanting non-default behavior passes it explicitly.
+# Setting it to 0 (the default, see MCP_SEARCH_THRESHOLD below) disables the
+# switch (always inline). Full removal of tool_search_tool is tracked as
+# FP-0033.
 #
 # The exact Anthropic ``tool_search_tool`` API spec as of 2025-11:
 #   {
@@ -260,14 +260,13 @@ def build_tools(
         FP-0024 Component D. When the total MCP tool count is >= this value
         (and > 0), the D1–D3 inline MCP tools are replaced by a single
         tool_search_tool meta-tool that loads specific tools on demand.
-        Default: MCP_SEARCH_THRESHOLD (0) — always inline. ``ReynConfig.
-        mcp_search_threshold`` (parsed from ``mcp.search_threshold:`` in
-        reyn.yaml, config-side default 30) is NOT currently threaded through
-        to this parameter by either router_loop.py call site
-        (``present()`` / ``base_tools()``), so the effective runtime default
-        is 0 regardless of ``reyn.yaml``. A caller that wants the config
-        value honored must pass it explicitly:
-        ``build_tools(..., mcp_search_threshold=cfg.mcp_search_threshold)``.
+        Default: MCP_SEARCH_THRESHOLD (0) — always inline. This is a pure
+        ``build_tools()`` function parameter — #3218 / FP-0066 §7 P1a
+        fold-removed the dead ``ReynConfig.mcp_search_threshold`` config
+        field (it was parsed from ``mcp.search_threshold:`` in reyn.yaml
+        but never threaded through to this parameter by either
+        router_loop.py call site — confirmed no-op). A caller that wants
+        non-default behavior passes this kwarg explicitly.
     """
     # RETRO-H1+H2 fix: dynamic enum injection for delegate_to_agent.to closes
     # the schema-level hallucination gap (P4 alignment — LLM picks only from
@@ -896,17 +895,18 @@ def build_tools(
     # fixture-safe path).
     #
     # search_actions is visibility-gated per §D14: only exposed when
-    # ``action_retrieval.embedding_class`` is configured (= operator opt-in)
+    # ``embedding.enabled: true`` (FP-0066 §7 — operator opt-in, clean-break
+    # replacement for the retired ``action_retrieval.embedding_class`` gate)
     # AND the ActionEmbeddingIndex is ready. RouterLoop computes
     # ``search_actions_visible`` from both signals and passes it here.
-    # When not configured the handler still degrades gracefully (returns
+    # When not enabled the handler still degrades gracefully (returns
     # ``{"items": [], "total": 0}``), but we don't expose the tool to
     # avoid LLM confusion about a capability that isn't wired up.
     if universal_wrappers_enabled:
         # Default 3 wrappers always exposed when the flag is on.
         # search_actions is added conditionally per §D14 only when the
         # session has an ActionEmbeddingIndex ready AND the operator
-        # configured ``action_retrieval.embedding_class``.  Callers
+        # set ``embedding.enabled: true``.  Callers
         # (= RouterLoop) compute ``search_actions_visible`` from both
         # signals before invoking ``build_tools``.
         _wrapper_names: tuple[str, ...] = (

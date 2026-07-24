@@ -2,7 +2,7 @@
 
 `reyn chat` ships with two ways for the LLM to discover what it can do: a fast **`list_actions`** browser (= category-prefix enumeration, always available) and a **`search_actions`** semantic search (= natural-language queries against an embedding index of every action). This guide walks through enabling the semantic path.
 
-> **TL;DR**: `search_actions` is **off by default** (semantic search is opt-in project-wide). If you already have an embedding API key, `reyn secret set OPENAI_API_KEY` then set `action_retrieval.embedding_class: standard` in `reyn.yaml` — no proxy, no extra install. If you'd rather run a local model with no API key, put it behind a **litellm proxy** and point reyn at it (see [Case B](#case-b-no-embedding-api-contract-litellm-proxy-a-local-model) below).
+> **TL;DR**: `search_actions` is **off by default** (semantic search is opt-in project-wide). If you already have an embedding API key, `reyn secret set OPENAI_API_KEY` then set `embedding.enabled: true` in `reyn.yaml` — no proxy, no extra install. If you'd rather run a local model with no API key, put it behind a **litellm proxy** and point reyn at it (see [Case B](#case-b-no-embedding-api-contract-litellm-proxy-a-local-model) below).
 
 ## When you'd want it
 
@@ -11,7 +11,7 @@
 - **Without it**: the LLM has to guess which category your intent belongs to (`file` / `mcp` / `memory_operation` / …) and run `list_actions(category=[...])` to enumerate. For natural-language asks like _"find an action that converts PDF to text"_ the LLM may also try and refuse if it doesn't immediately spot a match.
 - **With it**: the LLM runs `search_actions(query="PDF to text")` and gets a top-K relevance-ranked list across every category. It can then `describe_action` or `invoke_action` directly.
 
-`action_retrieval.embedding_class` defaults to `null` (off) — semantic search is opt-in, so an explicit `reyn.yaml` setting is required. With no class configured, `search_actions` is gated **out** of the LLM's tool list (see [visibility gate](../../concepts/tools-integrations/universal-catalog.md#what-stays-out-of-phase-1)) — silently, with no startup warning, since nothing is attempted.
+`embedding.enabled` defaults to `false` (off) — semantic search is opt-in, so an explicit `reyn.yaml` setting is required (FP-0066 §7; clean-break replacement for the retired `action_retrieval.embedding_class` gate). With embedding disabled, `search_actions` is gated **out** of the LLM's tool list (see [visibility gate](../../concepts/tools-integrations/universal-catalog.md#what-stays-out-of-phase-1)) — silently, with no startup warning, since nothing is attempted.
 
 ## Reyn depends on litellm exclusively for embeddings
 
@@ -47,11 +47,12 @@ reyn secret set OPENAI_API_KEY
 # enter your sk-... key when prompted
 ```
 
-Then opt in explicitly in `reyn.yaml` (the default is `null` / off):
+Then opt in explicitly in `reyn.yaml` (the default is `false` / off):
 
 ```yaml
-action_retrieval:
-  embedding_class: standard   # = openai/text-embedding-3-small
+embedding:
+  enabled: true
+  # default_class: standard   # default; = openai/text-embedding-3-small
 ```
 
 With `LITELLM_API_BASE` unset, reyn's litellm client calls the provider's API **directly**, so `standard` works with **no proxy and no `drop_params` setting** — the client already passes `drop_params=True` on every call, which is only a no-op when a proxy sits in between (see Case B). Run the pre-flight curl above against the provider's own endpoint (e.g. `https://api.openai.com/v1`) to confirm, then start a chat session — `search_actions` builds its index eagerly on the next cold start.
@@ -95,19 +96,19 @@ export LITELLM_API_BASE=http://localhost:4000   # your proxy's address
 
 **Naming rule (read before choosing a model name):** when `LITELLM_API_BASE` is set, reyn strips the resolved model string's leading `provider/` segment before sending it to the proxy — `openai/foo` arrives at the proxy as plain `foo`. So the proxy's `model_list[].model_name` must equal **everything after the first `/`** of whichever reyn-side model string you use:
 
-- **(a) Simplest — no `reyn.yaml` edit at all.** Keep the built-in `standard` class (`openai/text-embedding-3-small`) and register the proxy's `model_name` as `text-embedding-3-small` (as in Step 2 above) — the local model now answers under reyn's default class name:
+- **(a) Simplest — no class edit needed, just enable.** Keep the built-in `standard` class (`openai/text-embedding-3-small`, the default `embedding.default_class`) and register the proxy's `model_name` as `text-embedding-3-small` (as in Step 2 above) — the local model now answers under reyn's default class name:
   ```yaml
-  action_retrieval:
-    embedding_class: standard
+  embedding:
+    enabled: true
   ```
 - **(b) Or add an explicit class**, e.g. in `reyn.yaml`:
   ```yaml
   embedding:
+    enabled: true
+    default_class: local
     classes:
       local:
         model: openai/nomic-embed-text
-  action_retrieval:
-    embedding_class: local
   ```
   Here the proxy's `model_name` must be `nomic-embed-text` (everything after `openai/`).
 
@@ -129,7 +130,7 @@ If you skip both Case A and Case B and still ask the LLM to "find an action for 
 
 ## Troubleshooting
 
-**`search_actions` doesn't appear in the LLM's tool list** — either `action_retrieval.embedding_class` is still `null`, or the index hasn't finished building yet (= cold start, a handful of seconds). Check `reyn embeddings status` — a configured class with `ACTIONS = 0` and `LAST_BUILT = (never)` means the build hasn't completed:
+**`search_actions` doesn't appear in the LLM's tool list** — either `embedding.enabled` is still `false`, or the index hasn't finished building yet (= cold start, a handful of seconds). Check `reyn embeddings status` — a configured class with `ACTIONS = 0` and `LAST_BUILT = (never)` means the build hasn't completed:
 
 ```bash
 $ reyn embeddings status

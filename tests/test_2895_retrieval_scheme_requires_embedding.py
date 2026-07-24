@@ -12,6 +12,16 @@ only for the rest of the session, with no catalog action ever reachable
 the common "never configured" case at config load instead of letting it
 reach a live session.
 
+#3218 / FP-0066 §7 P1a: the gate this validation reuses moved from the
+retired ``action_retrieval.embedding_class`` truthy check to
+``embedding.enabled`` (clean-break, no alias). The embedding CLASS itself
+(``embedding.default_class`` / a dangling ``embedding.classes`` entry) is
+now validated eagerly and unconditionally by ``_build_embedding_config`` at
+parse time (independent of ``enabled``), so the "dangling class" scenario
+this file used to test against ``_reconcile_embedding_class`` is instead a
+``_build_embedding_config`` ValueError — covered in
+``tests/test_embedding_config.py``, not duplicated here.
+
 No mocks: drives the real ``load_config`` end to end against a real
 ``reyn.yaml`` on disk (mirrors the pattern in
 ``tests/test_action_retrieval_wiring.py``).
@@ -29,10 +39,10 @@ def _write_yaml(tmp_path: Path, body: str) -> None:
     (tmp_path / "reyn.yaml").write_text(body, encoding="utf-8")
 
 
-def test_retrieval_scheme_without_embedding_class_fails_loud(tmp_path: Path) -> None:
-    """Tier 2: #2895 fix (a), falsify-pin. ``tool_use.chat: retrieval`` +
-    ``action_retrieval.embedding_class: null`` (explicit no-embedding) must
-    raise a ValueError carrying the SAME enable-hint text the graceful
+def test_retrieval_scheme_without_embedding_enabled_fails_loud(tmp_path: Path) -> None:
+    """Tier 2: #2895 fix (a), falsify-pin. ``tool_use.chat: retrieval`` with
+    ``embedding.enabled`` left at its default (False — opt-in, FP-0066 §7)
+    must raise a ValueError carrying the SAME enable-hint text the graceful
     schemes surface via ``list_actions`` (``universal_catalog.
     _HIDDEN_STATE_HINT``) — not a bare/opaque error, so the operator is told
     how to fix it.
@@ -49,8 +59,6 @@ def test_retrieval_scheme_without_embedding_class_fails_loud(tmp_path: Path) -> 
         """
 tool_use:
   chat: retrieval
-action_retrieval:
-  embedding_class: null
 """,
     )
     with pytest.raises(ValueError) as excinfo:
@@ -60,43 +68,40 @@ action_retrieval:
     assert _HIDDEN_STATE_HINT in message
 
 
-def test_retrieval_scheme_with_dangling_embedding_class_fails_loud(tmp_path: Path) -> None:
-    """Tier 2: an ``embedding_class`` naming no real entry in
-    ``embedding.classes`` (typo) is degraded to None by
-    ``_reconcile_embedding_class`` BEFORE the #2895 validation runs — so a
-    dangling class is caught too, not just the explicit-null case. Reuses
-    the same reconciliation ``is_search_available`` relies on at runtime
-    (closed-world class membership), not a new notion of "configured"."""
+def test_retrieval_scheme_with_explicit_embedding_disabled_fails_loud(tmp_path: Path) -> None:
+    """Tier 2: explicit ``embedding.enabled: false`` alongside
+    ``tool_use.chat: retrieval`` fails loud identically to the unset-default
+    case — an explicit opt-out is treated the same as never having opted in."""
     _write_yaml(
         tmp_path,
         """
 tool_use:
   chat: retrieval
-action_retrieval:
-  embedding_class: totally-made-up-class
+embedding:
+  enabled: false
 """,
     )
     with pytest.raises(ValueError):
         load_config(cwd=tmp_path)
 
 
-def test_retrieval_scheme_with_embedding_class_loads_cleanly(tmp_path: Path) -> None:
-    """Tier 2: the contrast — ``tool_use.chat: retrieval`` with a REAL
-    embedding class configured loads without error (the fail-loud check is
-    scoped to the no-embedding misconfiguration, not to selecting retrieval
-    at all)."""
+def test_retrieval_scheme_with_embedding_enabled_loads_cleanly(tmp_path: Path) -> None:
+    """Tier 2: the contrast — ``tool_use.chat: retrieval`` with
+    ``embedding.enabled: true`` configured loads without error (the
+    fail-loud check is scoped to the no-embedding misconfiguration, not to
+    selecting retrieval at all)."""
     _write_yaml(
         tmp_path,
         """
 tool_use:
   chat: retrieval
-action_retrieval:
-  embedding_class: standard
+embedding:
+  enabled: true
 """,
     )
     cfg: ReynConfig = load_config(cwd=tmp_path)
     assert cfg.tool_use.chat == "retrieval"
-    assert cfg.action_retrieval.embedding_class == "standard"
+    assert cfg.embedding.enabled is True
 
 
 def test_other_schemes_do_not_require_embedding(tmp_path: Path) -> None:
@@ -108,10 +113,8 @@ def test_other_schemes_do_not_require_embedding(tmp_path: Path) -> None:
         """
 tool_use:
   chat: enumerate-all
-action_retrieval:
-  embedding_class: null
 """,
     )
     cfg: ReynConfig = load_config(cwd=tmp_path)
     assert cfg.tool_use.chat == "enumerate-all"
-    assert cfg.action_retrieval.embedding_class is None
+    assert cfg.embedding.enabled is False

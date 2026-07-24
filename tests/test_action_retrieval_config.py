@@ -1,8 +1,8 @@
 """Tier 2: FP-0034 PR-3b-ii ActionRetrievalConfig + parser contract.
 
-Tests for the new ``action_retrieval:`` config block:
-  - Default config has the safe defaults (= wrappers enabled, no embedding,
-    mode='default', hot_list_n=0 — off by default; opt-in via reyn.yaml).
+Tests for the ``action_retrieval:`` config block:
+  - Default config has the safe defaults (= wrappers enabled, mode='default',
+    hot_list_n=0 — off by default; opt-in via reyn.yaml).
   - Parser accepts each field independently, validates types, and
     raises on bad values.
   - ReynConfig.action_retrieval is populated by load_config from the
@@ -13,12 +13,19 @@ Tests for the new ``action_retrieval:`` config block:
 Note: hide_legacy_tools was removed in FP-0034 Phase 6 (wrapper-only is
 now the sole path). Tests for that field have been deleted.
 
+#3218 / FP-0066 §7 P1a: the fragmented ``action_retrieval.embedding_class``
+field (on/off + which model, conflated) is retired, clean-break, no alias.
+The on/off decision now lives at ``embedding.enabled: bool`` (default
+False); the model-class field is the (pre-existing) ``embedding.default_class``
+(default "standard"). Its tests live in ``tests/test_embedding_config.py``;
+this file keeps only the ``action_retrieval:`` block's own fields
+(``universal_wrappers_enabled`` / ``hot_list_n`` / ``mode`` / ``hot_list_seed``).
+
 No mocks; uses real load_config with a yaml file written to tmp_path.
 """
 
 from __future__ import annotations
 
-import logging
 from pathlib import Path
 
 import pytest
@@ -29,7 +36,6 @@ from reyn.config import (
     _build_action_retrieval_config,
     load_config,
 )
-from reyn.tools.universal_catalog import is_search_available
 
 # ── 1. Default values ─────────────────────────────────────────────────────
 
@@ -39,18 +45,9 @@ def test_default_action_retrieval_config_is_on() -> None:
 
     PR-3b-iv flipped universal_wrappers_enabled from False to True.
     FP-0034 Phase 6 removed hide_legacy_tools (wrapper-only is the sole path).
-    FP-0043 Phase 4 flipped embedding_class default from None to a
-    built-in local-model class name (removed by #3128); the
-    semantic-search-opt-in fix (2026) flipped it back to None — that
-    prior default attempted a model download at startup even for
-    zero-config / offline installs, contradicting the project's
-    semantic_search-is-opt-in principle. search_actions is now
-    off (silently — no build is attempted) until an operator explicitly
-    sets ``action_retrieval.embedding_class`` in reyn.yaml.
     """
     cfg = ActionRetrievalConfig()
     assert cfg.universal_wrappers_enabled is True
-    assert cfg.embedding_class is None
     assert cfg.hot_list_n == 0  # N=0 default: viability verdict; opt-in via reyn.yaml
     assert cfg.mode == "default"
 
@@ -86,24 +83,6 @@ def test_parser_universal_wrappers_enabled_true() -> None:
     assert cfg.universal_wrappers_enabled is True
 
 
-def test_parser_embedding_class_set() -> None:
-    """Tier 2: setting embedding_class flows through."""
-    cfg = _build_action_retrieval_config({"embedding_class": "standard"})
-    assert cfg.embedding_class == "standard"
-
-
-def test_parser_embedding_class_empty_string_becomes_none() -> None:
-    """Tier 2: empty-string embedding_class normalises to None (§D14)."""
-    cfg = _build_action_retrieval_config({"embedding_class": ""})
-    assert cfg.embedding_class is None
-
-
-def test_parser_embedding_class_null() -> None:
-    """Tier 2: explicit null embedding_class stays None."""
-    cfg = _build_action_retrieval_config({"embedding_class": None})
-    assert cfg.embedding_class is None
-
-
 def test_parser_hot_list_n_zero() -> None:
     """Tier 2: hot_list_n=0 (= opt-out, §D24 minimal mode) is accepted."""
     cfg = _build_action_retrieval_config({"hot_list_n": 0})
@@ -132,12 +111,10 @@ def test_parser_all_fields_at_once() -> None:
     """Tier 2: all supported fields can be set together."""
     cfg = _build_action_retrieval_config({
         "universal_wrappers_enabled": True,
-        "embedding_class": "voyage_multi",
         "hot_list_n": 15,
         "mode": "performance",
     })
     assert cfg.universal_wrappers_enabled is True
-    assert cfg.embedding_class == "voyage_multi"
     assert cfg.hot_list_n == 15
     assert cfg.mode == "performance"
 
@@ -155,12 +132,6 @@ def test_parser_rejects_non_bool_wrappers_enabled() -> None:
     """Tier 2: universal_wrappers_enabled with non-bool raises."""
     with pytest.raises(ValueError, match="universal_wrappers_enabled"):
         _build_action_retrieval_config({"universal_wrappers_enabled": "yes"})
-
-
-def test_parser_rejects_non_string_embedding_class() -> None:
-    """Tier 2: embedding_class with non-string raises."""
-    with pytest.raises(ValueError, match="embedding_class"):
-        _build_action_retrieval_config({"embedding_class": 42})
 
 
 def test_parser_rejects_non_int_hot_list_n() -> None:
@@ -182,9 +153,15 @@ def test_parser_rejects_non_string_mode() -> None:
 
 
 def test_parser_ignores_unknown_keys() -> None:
-    """Tier 2: unknown keys are silently ignored (forward compat)."""
+    """Tier 2: unknown keys are silently ignored (forward compat).
+
+    #3218 / FP-0066 §7: ``embedding_class`` is now itself an unknown key here
+    (retired, clean-break) — doubles as the regression guard that removing it
+    does not raise.
+    """
     cfg = _build_action_retrieval_config({
         "universal_wrappers_enabled": True,
+        "embedding_class": "standard",  # retired field name — now just unknown
         "phase2_hot_list_strategy": "freq+recency",  # future field
         "phase3_cold_start_seed": ["x", "y"],
     })
@@ -212,7 +189,6 @@ def test_load_config_picks_up_action_retrieval_yaml(tmp_path: Path) -> None:
         """
 action_retrieval:
   universal_wrappers_enabled: true
-  embedding_class: standard
   hot_list_n: 15
   mode: performance
 """,
@@ -221,7 +197,6 @@ action_retrieval:
 
     cfg = load_config(cwd=tmp_path)
     assert cfg.action_retrieval.universal_wrappers_enabled is True
-    assert cfg.action_retrieval.embedding_class == "standard"
     assert cfg.action_retrieval.hot_list_n == 15
     assert cfg.action_retrieval.mode == "performance"
 
@@ -240,7 +215,6 @@ def test_load_config_without_action_retrieval_uses_defaults(tmp_path: Path) -> N
 
     cfg = load_config(cwd=tmp_path)
     assert cfg.action_retrieval.universal_wrappers_enabled is True
-    assert cfg.action_retrieval.embedding_class is None  # off by default; opt-in only
     assert cfg.action_retrieval.hot_list_n == 0  # N=0 default
     assert cfg.action_retrieval.mode == "default"
 
@@ -274,53 +248,6 @@ def test_hot_list_n_default_is_zero() -> None:
     in reyn.yaml). The seed/tracker/alias-builder remain operative as opt-in.
     """
     assert ActionRetrievalConfig().hot_list_n == 0
-
-
-# ── 6. Semantic-search-opt-in fix: the null default is SILENT ─────────────
-
-
-def test_fresh_config_null_embedding_class_gates_search_actions_silently(
-    tmp_path: Path, caplog: pytest.LogCaptureFixture,
-) -> None:
-    """Tier 2: a fresh (no ``action_retrieval:`` block) ``load_config`` call
-    resolves ``embedding_class`` to None AND emits NO "disabled" /
-    "Semantic search_actions" warning anywhere in the load path.
-
-    This is the crux of the semantic-search-opt-in fix: the old default
-    (a built-in local-model class name, removed by #3128) made reyn
-    attempt an index build at chat startup that failed offline, surfacing
-    a "Semantic search_actions disabled … index build failed …" warning
-    even for operators who never asked for semantic search. The fix
-    makes the off-path load-bearing-silent: with no class configured
-    there is nothing to build and nothing to fail, so
-    ``_reconcile_embedding_class`` (the only warning source at config-load
-    time — see ``config/loader.py``) must take its early-return branch
-    (``if not ec or ec in cfg.embedding.classes: return``) without logging.
-
-    FALSIFY: if the default reverts to a truthy value (e.g. a dangling
-    class name) without ``embedding.classes`` containing that class in this test's
-    fixture, ``_reconcile_embedding_class`` follows its non-early-return
-    branch and DOES log a "Semantic search_actions disabled: …" warning —
-    this test would then fail on the ``caplog`` assertion, proving the
-    silent-null-path guarantee is actually exercised (not vacuously true).
-    """
-    (tmp_path / "reyn.yaml").write_text("model: standard\n", encoding="utf-8")
-
-    with caplog.at_level(logging.WARNING):
-        cfg = load_config(cwd=tmp_path)
-
-    assert cfg.action_retrieval.embedding_class is None
-    assert is_search_available(
-        action_retrieval_embedding_class=cfg.action_retrieval.embedding_class,
-    ) is False
-    disabled_records = [
-        r for r in caplog.records
-        if "search_actions" in r.getMessage() and "disabled" in r.getMessage().lower()
-    ]
-    assert disabled_records == [], (
-        "expected no 'disabled' warning on the null-embedding_class path, got: "
-        f"{[r.getMessage() for r in disabled_records]}"
-    )
 
 
 def test_load_config_hot_list_n_explicit_opt_in(tmp_path: Path) -> None:

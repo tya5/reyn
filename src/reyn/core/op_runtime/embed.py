@@ -97,10 +97,92 @@ def _resolve_provider(event_sink=None):
     return get_provider(name, config={}, event_sink=event_sink)
 
 
+def _is_embedding_enabled() -> bool:
+    """FP-0066 §7: read ``embedding.enabled`` off the live effective config.
+
+    Mirrors ``_resolve_provider``'s own ``load_config()`` pattern (both
+    resolve config fresh per call — op handlers are stateless; the caller
+    is expected to have a real ``reyn.yaml``/``reyn.local.yaml`` on disk in
+    production). Extracted to a module-level function (rather than inlined
+    in ``handle``) so tests can monkeypatch this one seam instead of
+    needing a real ``reyn.yaml`` on disk.
+
+    A missing/unloadable config fails **CLOSED** (= disabled) — architect
+    ruling (co-vet on #3256), not a fail-open convenience:
+
+    - **Cost-safety**: a config-load failure must not silently start
+      billing an operator for embedding-provider calls they never opted
+      into. Fail-open would spend money on a config *fault*, not a config
+      *choice*.
+    - **Opt-in symmetry**: a field-ABSENT config already resolves
+      ``enabled=False`` (the dataclass default). An unREADABLE config
+      resolving to ``True`` would be the asymmetric case — "we don't know"
+      must not read more permissive than "we know it's unset".
+    - **Consistency with sibling gates**: mirrors #3201 (identity
+      unreadable → floor, not privilege) and #3227 (can't confirm →
+      deny). Embedding is a CAPABILITY gate, so the same
+      "cannot confirm enabled → treat as disabled" rule applies here too.
+    - **Predictability**: `embedding.enabled` defaults OFF; a config fault
+      silently flipping a default-off feature ON is exactly the
+      unpredictable-behavior class the owner's UX/predictability
+      principle rules against.
+    - **The availability counter-argument is weak here**: fail-open is
+      the right call for a load-bearing DEPENDENCY (deny-by-default would
+      break the OS), but embedding is an opt-in CAPABILITY — refusing it
+      on an unreadable config costs nothing but one blocked embed call,
+      which the caller can retry once config is fixed.
+
+    The provider call itself still fails loudly downstream in the
+    genuinely-broken-config case anyway (whichever caller next needs a
+    real config value hits the same load failure) — fail-closed here does
+    not hide that; it just stops this ONE opt-in gate from defaulting to
+    "on" under uncertainty.
+    """
+    try:
+        from reyn.config import load_config
+
+        return bool(load_config().embedding.enabled)
+    except Exception:
+        return False
+
+
+def _embedding_disabled_block(op: EmbedIROp) -> dict:
+    """FP-0066 §7 / §G9: decision-enabling block when ``embedding.enabled``
+    is False.
+
+    `embed` is the OS-internal substrate every embedding egress in the OS
+    funnels through (`semantic_search`, `index_update`, `ActionEmbeddingIndex`,
+    and — the §G9 plugin touchpoint — the FP-0063 builtin `rag` plugin's
+    `rag_ingest` pipeline). Placing the pre-flight check HERE (rather than in
+    the plugin, which is unchanged per §7) means every one of those callers —
+    present and future — gets the same actionable block for free, with no
+    plugin-side edit required. Mirrors the ``status="blocked"`` shape the
+    install ops (`mcp_install` / `skill_install` / `pipeline_install` /
+    `presentation_install`) already use for a decision-enabling refusal,
+    rather than a silent no-op or an opaque provider error.
+    """
+    return {
+        "kind": "embed",
+        "status": "blocked",
+        "error": (
+            "embedding is disabled (embedding.enabled: false in reyn.yaml). "
+            "Set `embedding.enabled: true` to use semantic search / RAG "
+            "ingest — this is the single opt-in switch for the whole "
+            "embedding-backed semantic-discovery layer (FP-0066 §7). "
+            "Optionally pair it with a non-default `embedding.default_class` "
+            "or a custom `embedding.classes` entry."
+        ),
+        "model": op.embedding_model,
+    }
+
+
 async def handle(op: EmbedIROp, ctx: OpContext) -> dict:
     """Execute an embed op: batch texts -> vectors (FP-0057 Phase 1).
 
     Steps:
+      0. FP-0066 §7/§G9 pre-flight: ``embedding.enabled`` must be True, else
+         return a decision-enabling ``status="blocked"`` block (see
+         ``_embedding_disabled_block``) instead of attempting the call.
       1. PRE-embed redaction-egress scan (co-vet #3) — every text is passed
          through `redact_secrets()` before it reaches the provider, i.e.
          before the egress boundary to an external embedding API.
@@ -135,6 +217,10 @@ async def handle(op: EmbedIROp, ctx: OpContext) -> dict:
     `control_ir_failed` event) — this handler does not swallow provider
     failures.
     """
+    # ── FP-0066 §7/§G9 pre-flight: embedding.enabled gate ──────────────────
+    if not _is_embedding_enabled():
+        return _embedding_disabled_block(op)
+
     if not op.texts:
         return {
             "kind": "embed", "vectors": [], "model": op.embedding_model,
