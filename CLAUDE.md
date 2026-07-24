@@ -198,5 +198,6 @@ and run the checklist below before continuing:
   `docs/reference/runtime/reyn-dir-layout.md`
 - **Permission model**: `docs/concepts/runtime/permission-model.md`
 - **Op catalog and dispatch**: `src/reyn/core/op_runtime/`
+- **Tool naming convention** (word-order, removal/fetch-one/install verb classes, drift-gate rationale): `docs/reference/runtime/tool-naming.md` (#3223)
 - **LLM trace analysis**: `docs/reference/dogfood-tracing.md` — `scripts/dogfood_trace.py --mode llm-payloads` is the canonical entry point for inspecting LLM payloads; do not hand-parse JSONL.
 - **Full feature inventory**: `docs/feature-map.md` — every implemented feature grouped by subsystem, each linked to its reference/concept doc (impl-extracted; impl↔doc mirror).
