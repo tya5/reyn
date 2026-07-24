@@ -35,6 +35,21 @@ from reyn.data.index.build_lock import pid_alive as _pid_alive
 SourceState = Literal["clean", "dirty", "building", "error"]
 _VALID_SOURCE_STATES: frozenset[str] = frozenset({"clean", "dirty", "building", "error"})
 
+# FP-0066 P2b (#3247 firm §2): per-kind source taxonomy. ``dynamic`` = a
+# source whose content changes via an operator-driven op (skill load/
+# install, remember, index_update) — P2c wires these to sync-in-op
+# ``ensure_built(await_completion=True)``. ``static`` = a source that
+# changes out-of-band of any single op (the builtin action-catalog,
+# repo_doc, repo_src) — built in the BACKGROUND per the firm's §3
+# sync-vs-background table (never a foreground surprise to an unaware
+# operation). ``backfill`` = a source that already existed before
+# ``embedding.enabled`` was ever flipped on — the SAFE coercion default
+# for any pre-P2b ``sources.yaml`` entry (or one missing/garbled ``kind``),
+# since "assume this predates the taxonomy" is the least-surprising read
+# (mirrors the ``state`` coercion default rationale below).
+SourceKind = Literal["dynamic", "static", "backfill"]
+_VALID_SOURCE_KINDS: frozenset[str] = frozenset({"dynamic", "static", "backfill"})
+
 
 @dataclass
 class SourceEntry:
@@ -54,6 +69,13 @@ class SourceEntry:
     # truncate-falsify test).
     state: SourceState = "clean"
     last_error: str | None = None
+    # FP-0066 P2b (#3247 firm §2): per-kind taxonomy, persisted alongside
+    # ``state`` (same file SSoT — no second state store). Defaults to
+    # "backfill" for the dataclass itself (a freshly-constructed entry with
+    # no caller-supplied kind is, by construction, not yet classified as
+    # dynamic/static — "predates the taxonomy" is the safe read, same
+    # rationale as the on-disk coercion default in ``from_dict``).
+    kind: SourceKind = "backfill"
 
     def to_dict(self) -> dict[str, Any]:
         """Serialise to the on-disk YAML structure (name is the key, not a field)."""
@@ -63,6 +85,7 @@ class SourceEntry:
             "backend": self.backend,
             "chunk_count": self.chunk_count,
             "state": self.state,
+            "kind": self.kind,
         }
         if self.last_indexed is not None:
             d["last_indexed"] = self.last_indexed
@@ -100,6 +123,14 @@ class SourceEntry:
                 return v  # type: ignore[return-value]
             return "clean"
 
+        def _coerce_kind(v: object) -> SourceKind:
+            if isinstance(v, str) and v in _VALID_SOURCE_KINDS:
+                return v  # type: ignore[return-value]
+            # Missing/garbled kind on a pre-P2b (or operator-edited)
+            # sources.yaml → "backfill" (predates the taxonomy), per this
+            # field's own docstring.
+            return "backfill"
+
         return cls(
             name=name,
             description=data.get("description", ""),
@@ -110,6 +141,7 @@ class SourceEntry:
             embedding_model=data.get("embedding_model"),
             state=_coerce_state(data.get("state")),
             last_error=data.get("last_error"),
+            kind=_coerce_kind(data.get("kind")),
         )
 
 

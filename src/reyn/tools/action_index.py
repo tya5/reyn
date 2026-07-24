@@ -189,6 +189,14 @@ class ActionEmbeddingIndex:
         self._build_lock = asyncio.Lock()
         self._building = False
 
+    # ── identity ────────────────────────────────────────────────────────
+
+    @property
+    def source_name(self) -> str:
+        """The logical source id this instance rides on the IndexBackend /
+        IndexCoordinator (FP-0066 P2b, #3247) — ``"actions"`` by default."""
+        return self._source
+
     # ── paths ───────────────────────────────────────────────────────────
 
     @property
