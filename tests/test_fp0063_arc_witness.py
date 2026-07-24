@@ -201,15 +201,14 @@ class FakeEmbeddingProvider:
         return 3
 
 
-def _server_env() -> dict[str, str]:
+def _server_env(src_root: str) -> dict[str, str]:
     """Env for the plugin's real MCP server subprocesses -- pins PYTHONPATH to
-    THIS checkout (see test_fp0063_p3_rag_pipelines.py's ``_server_env`` for
-    the full rationale: the MCP SDK's stdio transport passes only a 6-key env
-    whitelist that drops PYTHONPATH, so a plain ``env=os.environ`` inherit is
-    not enough in a multi-worktree dev box)."""
-    import reyn
-
-    src_root = str(Path(reyn.__file__).resolve().parent.parent)
+    *src_root* (the ``out_of_process_reyn`` fixture value, threaded in from
+    the calling test rather than a fresh ``import reyn``/``__file__``
+    computation here; see test_fp0063_p3_rag_pipelines.py's ``_server_env``
+    for the full rationale: the MCP SDK's stdio transport passes only a
+    6-key env whitelist that drops PYTHONPATH, so a plain ``env=os.environ``
+    inherit is not enough in a multi-worktree dev box)."""
     passthrough = {
         k: v for k, v in os.environ.items()
         if k in ("PATH", "HOME", "LOGNAME", "SHELL", "TERM", "USER", "TMPDIR")
@@ -217,7 +216,7 @@ def _server_env() -> dict[str, str]:
     return {**passthrough, "PYTHONPATH": src_root}
 
 
-def _prepare_local_plugin_copy(tmp_path: Path) -> Path:
+def _prepare_local_plugin_copy(tmp_path: Path, src_root: str) -> Path:
     """Copy the real ``rag`` plugin tree into ``tmp_path``, then:
 
     - DROP ``requirements.txt`` entirely, so ``plugin_install``'s dependency
@@ -247,7 +246,7 @@ def _prepare_local_plugin_copy(tmp_path: Path) -> Path:
 
     mcp_json_path = dest / ".mcp.json"
     mcp_json = json.loads(mcp_json_path.read_text(encoding="utf-8"))
-    env = _server_env()
+    env = _server_env(src_root)
     for name, spec in mcp_json["mcpServers"].items():
         spec["command"] = sys.executable
         spec["env"] = env
@@ -569,7 +568,7 @@ def _install_key_normalizer(monkeypatch: pytest.MonkeyPatch, base_dir: Path) -> 
 
 @pytest.mark.asyncio
 async def test_llm_driven_install_ingest_query_arc_reaches_the_ingested_chunk(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, out_of_process_reyn: str,
 ) -> None:
     """Tier 3a: an LLM (replayed via LLMReplay at the real litellm.acompletion
     boundary) drives plugin_management__install -> run_pipeline(rag_ingest.ingest)
@@ -677,7 +676,7 @@ async def test_llm_driven_install_ingest_query_arc_reaches_the_ingested_chunk(
             "mcp": {"servers": {
                 "reyn_markitdown": {
                     "type": "stdio", "command": sys.executable,
-                    "args": [str(markitdown_stub)], "env": _server_env(),
+                    "args": [str(markitdown_stub)], "env": _server_env(out_of_process_reyn),
                 },
             }},
             # A plain ``reyn pipe run`` CLI invocation auto-grants any MCP
@@ -697,7 +696,7 @@ async def test_llm_driven_install_ingest_query_arc_reaches_the_ingested_chunk(
         encoding="utf-8",
     )
 
-    plugin_src = _prepare_local_plugin_copy(tmp_path)
+    plugin_src = _prepare_local_plugin_copy(tmp_path, out_of_process_reyn)
     registry, _perm_resolver = _build_registry(tmp_path, project_root)
 
     from reyn.dev.testing.replay import LLMReplay

@@ -310,7 +310,7 @@ def test_design_file_stdlib_warm(tmp_project: Path, monkeypatch: pytest.MonkeyPa
 # 5. CLI --default-design flag
 # ---------------------------------------------------------------------------
 
-def test_web_help_includes_default_design() -> None:
+def test_web_help_includes_default_design(out_of_process_reyn) -> None:
     """Tier 2b: `reyn web --help` mentions --default-design."""
     result = subprocess.run(
         [sys.executable, "-c",
@@ -319,7 +319,7 @@ def test_web_help_includes_default_design() -> None:
         text=True,
         env={
             **__import__("os").environ,
-            "PYTHONPATH": str(_WORKTREE_SRC),
+            "PYTHONPATH": out_of_process_reyn,
         },
         timeout=15,
     )

@@ -153,7 +153,7 @@ def _ns(**kwargs: Any) -> argparse.Namespace:
     return argparse.Namespace(**kwargs)
 
 
-def _server_env() -> dict[str, str]:
+def _server_env(src_root: str) -> dict[str, str]:
     """Env for the builtin MCP server subprocesses, pinning them to the SAME
     reyn tree this test process imported.
 
@@ -167,14 +167,16 @@ def _server_env() -> dict[str, str]:
     diff). Pinning it makes the module docstring's "REAL builtin MCP servers"
     claim true about THIS tree in both environments.
 
+    *src_root* is the ``out_of_process_reyn`` fixture value, threaded in from
+    the calling test (rather than a fresh ``import reyn``/``__file__``
+    computation here), so the pin is the same declared dependency every
+    other out-of-process spawn in this suite uses.
+
     ``env`` REPLACES the subprocess environment rather than extending it (the
     MCP SDK otherwise passes a 6-key whitelist that excludes PYTHONPATH), so
     the handful of vars the interpreter and uvx actually need are carried
     over explicitly.
     """
-    import reyn
-
-    src_root = str(Path(reyn.__file__).resolve().parent.parent)
     passthrough = {
         k: v for k, v in os.environ.items()
         if k in ("PATH", "HOME", "LOGNAME", "SHELL", "TERM", "USER", "TMPDIR")
@@ -228,7 +230,9 @@ def _fake_embedding_provider(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(embed_mod, "get_provider", lambda *a, **k: fake)
 
 
-def _write_project(tmp_path: Path, *, vectorstore_server: str = "reyn_vector_store") -> Path:
+def _write_project(
+    tmp_path: Path, src_root: str, *, vectorstore_server: str = "reyn_vector_store",
+) -> Path:
     """Write a reyn.yaml wiring the 3 MCP servers (2 real, 1 stub) + the two
     builtin RAG pipeline entries, and return project_root."""
     stub_path = tmp_path / "stub_markitdown_server.py"
@@ -245,19 +249,19 @@ def _write_project(tmp_path: Path, *, vectorstore_server: str = "reyn_vector_sto
                             "type": "stdio",
                             "command": sys.executable,
                             "args": [str(stub_path)],
-                            "env": _server_env(),
+                            "env": _server_env(src_root),
                         },
                         "reyn_chunker": {
                             "type": "stdio",
                             "command": sys.executable,
                             "args": ["-m", "reyn.builtin.plugins.rag.scripts.chunker_server"],
-                            "env": _server_env(),
+                            "env": _server_env(src_root),
                         },
                         vectorstore_server: {
                             "type": "stdio",
                             "command": sys.executable,
                             "args": ["-m", "reyn.builtin.plugins.rag.scripts.vector_store_server"],
-                            "env": _server_env(),
+                            "env": _server_env(src_root),
                         },
                     },
                 },
@@ -325,12 +329,13 @@ def test_rag_query_pipeline_parses() -> None:
 
 def test_ingest_add_then_dedup_then_update_then_remove(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture,
+    out_of_process_reyn: str,
 ) -> None:
     """Tier 2b: C5's full add/update/remove convergence + X5's dedup
     visibility, driven end-to-end via 'reyn pipe run' against the REAL
     chunker + vector-store MCP servers."""
     monkeypatch.chdir(tmp_path)
-    project_root = _write_project(tmp_path)
+    project_root = _write_project(tmp_path, out_of_process_reyn)
     docs_dir = project_root / "docs"
     docs_dir.mkdir()
     (docs_dir / "a.txt").write_text("Alpha document about apples and oranges.", encoding="utf-8")
@@ -371,6 +376,7 @@ def test_ingest_add_then_dedup_then_update_then_remove(
 
 def test_only_real_document_content_reaches_the_store(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture,
+    out_of_process_reyn: str,
 ) -> None:
     """Tier 2c: a file that yields no usable document is NOT indexed, and IS reported (#3010).
 
@@ -403,7 +409,7 @@ def test_only_real_document_content_reaches_the_store(
     UnicodeDecodeError). No sentinel or special-case branch is added to the stub.
     """
     monkeypatch.chdir(tmp_path)
-    project_root = _write_project(tmp_path)
+    project_root = _write_project(tmp_path, out_of_process_reyn)
     docs_dir = project_root / "docs"
     docs_dir.mkdir()
     # A real document -- the falsify direction: the gates must skip the unusable files WITHOUT
@@ -439,6 +445,7 @@ def test_only_real_document_content_reaches_the_store(
 
 def test_a_none_conversion_is_reported_as_a_failure_not_indexed(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture,
+    out_of_process_reyn: str,
 ) -> None:
     """Tier 2c: a conversion whose whole output is "None" is treated as a failed conversion (#3010).
 
@@ -453,7 +460,7 @@ def test_a_none_conversion_is_reported_as_a_failure_not_indexed(
     None is indexed untouched.
     """
     monkeypatch.chdir(tmp_path)
-    project_root = _write_project(tmp_path)
+    project_root = _write_project(tmp_path, out_of_process_reyn)
     docs_dir = project_root / "docs"
     docs_dir.mkdir()
     # The bug's signature: the converter's entire output is "None".
@@ -486,6 +493,7 @@ def test_a_none_conversion_is_reported_as_a_failure_not_indexed(
 
 def test_the_none_filter_is_opt_out(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture,
+    out_of_process_reyn: str,
 ) -> None:
     """Tier 2c: an operator can turn the None filter off, and then "None" is indexed as content.
 
@@ -494,7 +502,7 @@ def test_the_none_filter_is_opt_out(
     default that cannot be overridden would make the corpus lossy with no recourse.
     """
     monkeypatch.chdir(tmp_path)
-    project_root = _write_project(tmp_path)
+    project_root = _write_project(tmp_path, out_of_process_reyn)
     docs_dir = project_root / "docs"
     docs_dir.mkdir()
     (docs_dir / "literally_none.txt").write_text("None", encoding="utf-8")
@@ -514,6 +522,7 @@ def test_the_none_filter_is_opt_out(
 
 def test_ingest_reports_mojibake_via_files_ingested_preview(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture,
+    out_of_process_reyn: str,
 ) -> None:
     """Tier 2c: #3010 cause-3 -- a charset-mismatched (mojibake) conversion is
     NOT detectable/skippable (garbled bytes are semantically indistinguishable
@@ -546,7 +555,7 @@ def test_ingest_reports_mojibake_via_files_ingested_preview(
     now pinned as an invariant rather than re-derived per-cause).
     """
     monkeypatch.chdir(tmp_path)
-    project_root = _write_project(tmp_path)
+    project_root = _write_project(tmp_path, out_of_process_reyn)
     docs_dir = project_root / "docs"
     docs_dir.mkdir()
     good_text = "Bananas are a good source of potassium."
@@ -594,6 +603,7 @@ def test_ingest_reports_mojibake_via_files_ingested_preview(
 
 def test_upserted_chunk_embedding_model_is_the_resolved_model_not_the_alias(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture,
+    out_of_process_reyn: str,
 ) -> None:
     """Tier 2b: C4 -- every upserted chunk's embedding_model column names the
     model that ACTUALLY produced its vector (embed's envelope.model), not the
@@ -606,7 +616,7 @@ def test_upserted_chunk_embedding_model_is_the_resolved_model_not_the_alias(
     FP-0057's C1 gate exists to prevent. Read straight back out of the real
     sqlite store."""
     monkeypatch.chdir(tmp_path)
-    project_root = _write_project(tmp_path)
+    project_root = _write_project(tmp_path, out_of_process_reyn)
     docs_dir = project_root / "docs"
     docs_dir.mkdir()
     (docs_dir / "a.txt").write_text("A short note about penguins.", encoding="utf-8")
@@ -627,6 +637,7 @@ def test_upserted_chunk_embedding_model_is_the_resolved_model_not_the_alias(
 
 def test_ingest_reports_metered_spend_not_the_chars4_estimate(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture,
+    out_of_process_reyn: str,
 ) -> None:
     """Tier 2b: X2a -- the summary's tokens_embedded is embed's OWN METERED
     total_tokens (envelope meta), not the pipeline's chars/4 estimate.
@@ -636,7 +647,7 @@ def test_ingest_reports_metered_spend_not_the_chars4_estimate(
     attributable to exactly one source. Also pins that the resolved model
     and the priced flag ride the same envelope meta."""
     monkeypatch.chdir(tmp_path)
-    project_root = _write_project(tmp_path)
+    project_root = _write_project(tmp_path, out_of_process_reyn)
     docs_dir = project_root / "docs"
     docs_dir.mkdir()
     body = "Alpha document about apples and oranges. " * 20
@@ -663,11 +674,12 @@ def test_ingest_reports_metered_spend_not_the_chars4_estimate(
 
 def test_rag_query_returns_the_ingested_chunk_as_top_result(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture,
+    out_of_process_reyn: str,
 ) -> None:
     """Tier 2b: rag_query.query, run after rag_ingest.ingest, returns a
     top-k result whose metadata source_path is the ingested file."""
     monkeypatch.chdir(tmp_path)
-    project_root = _write_project(tmp_path)
+    project_root = _write_project(tmp_path, out_of_process_reyn)
     docs_dir = project_root / "docs"
     docs_dir.mkdir()
     target = docs_dir / "notes.txt"
@@ -700,6 +712,7 @@ def test_rag_query_returns_the_ingested_chunk_as_top_result(
 
 def test_query_missing_db_param_is_diagnosed_not_misdiagnosed_as_unreachable(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture,
+    out_of_process_reyn: str,
 ) -> None:
     """Tier 2b: #2955 -- a live dogfood witness had a weak model call
     ``rag_query.query`` with an invented param name (``vector_store_path``
@@ -715,7 +728,7 @@ def test_query_missing_db_param_is_diagnosed_not_misdiagnosed_as_unreachable(
     names the missing parameter.
     """
     monkeypatch.chdir(tmp_path)
-    project_root = _write_project(tmp_path)
+    project_root = _write_project(tmp_path, out_of_process_reyn)
     docs_dir = project_root / "docs"
     docs_dir.mkdir()
     (docs_dir / "a.txt").write_text("content", encoding="utf-8")
@@ -747,13 +760,14 @@ def test_query_missing_db_param_is_diagnosed_not_misdiagnosed_as_unreachable(
 
 def test_ingest_preflight_blocks_on_unreachable_vectorstore_with_named_remedy(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture,
+    out_of_process_reyn: str,
 ) -> None:
     """Tier 2b: X1 -- pointing vectorstore_server at a name NOT present in
     mcp.servers blocks the run with a decision-enabling message naming that
     server + a concrete remedy (never a bare transport exception), and does
     NOT attempt any embedding spend (falsified below by the working case)."""
     monkeypatch.chdir(tmp_path)
-    project_root = _write_project(tmp_path)  # only registers "reyn_vector_store"
+    project_root = _write_project(tmp_path, out_of_process_reyn)  # only registers "reyn_vector_store"
     docs_dir = project_root / "docs"
     docs_dir.mkdir()
     (docs_dir / "a.txt").write_text("content", encoding="utf-8")
@@ -773,6 +787,7 @@ def test_ingest_preflight_blocks_on_unreachable_vectorstore_with_named_remedy(
 
 def test_ingest_file_discovery_aborts_clean_on_unreadable_input_path(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture,
+    out_of_process_reyn: str,
 ) -> None:
     """Tier 2b: #3095 -- `_ingest_body`'s file discovery (the #3101 upfront
     `glob_files` gate against `input_path` itself, followed by a `for_each`
@@ -816,7 +831,7 @@ def test_ingest_file_discovery_aborts_clean_on_unreadable_input_path(
     test while developing the fix).
     """
     monkeypatch.chdir(tmp_path)
-    project_root = _write_project(tmp_path)
+    project_root = _write_project(tmp_path, out_of_process_reyn)
     # A folder OUTSIDE project_root with no permission grant -- Workspace's
     # own default-deny boundary for absolute paths outside base_dir/state_dir
     # (see tests/test_workspace_glob_outside_root_perm.py) with `reyn pipe
@@ -851,6 +866,7 @@ def test_ingest_file_discovery_aborts_clean_on_unreadable_input_path(
 
 def test_ingest_is_unaffected_by_a_hostile_ambient_python3(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture,
+    out_of_process_reyn: str,
 ) -> None:
     """Tier 2b: #2972 -- the ingest completes normally even when the ambient
     `python3` is broken, because the pipeline runs no python of its own.
@@ -868,7 +884,7 @@ def test_ingest_is_unaffected_by_a_hostile_ambient_python3(
     the deletion behaviourally rather than by grepping the pipeline for the
     absence of a `shell:` step (see the sibling structural test for that)."""
     monkeypatch.chdir(tmp_path)
-    project_root = _write_project(tmp_path)
+    project_root = _write_project(tmp_path, out_of_process_reyn)
     docs_dir = project_root / "docs"
     docs_dir.mkdir()
     (docs_dir / "a.txt").write_text("Alpha document about apples.", encoding="utf-8")
@@ -896,6 +912,7 @@ def test_ingest_is_unaffected_by_a_hostile_ambient_python3(
 
 def test_ingest_pipeline_shells_out_to_nothing(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture,
+    out_of_process_reyn: str,
 ) -> None:
     """Tier 2b: #2972 -- the ingest pipeline reaches the shell zero times.
 
@@ -916,7 +933,7 @@ def test_ingest_pipeline_shells_out_to_nothing(
 
     monkeypatch.setattr(sandboxed_exec_mod, "handle", _explode)
     monkeypatch.chdir(tmp_path)
-    project_root = _write_project(tmp_path)
+    project_root = _write_project(tmp_path, out_of_process_reyn)
     docs_dir = project_root / "docs"
     docs_dir.mkdir()
     (docs_dir / "a.txt").write_text("Alpha document about apples.", encoding="utf-8")
@@ -927,6 +944,7 @@ def test_ingest_pipeline_shells_out_to_nothing(
 
 def test_ingest_scans_every_file_past_the_glob_default_cap(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture,
+    out_of_process_reyn: str,
 ) -> None:
     """Tier 2b: #2972/#2994 -- a folder with more files than `glob_files`'
     own 50 default is ingested WHOLE, because the pipeline passes
@@ -939,7 +957,7 @@ def test_ingest_scans_every_file_past_the_glob_default_cap(
     (60 -> 50): that is the whole point of asserting it end-to-end on a
     corpus straddling the cap rather than pinning the YAML text."""
     monkeypatch.chdir(tmp_path)
-    project_root = _write_project(tmp_path)
+    project_root = _write_project(tmp_path, out_of_process_reyn)
     docs_dir = project_root / "docs"
     docs_dir.mkdir()
     for i in range(60):
@@ -955,13 +973,14 @@ def test_ingest_scans_every_file_past_the_glob_default_cap(
 
 def test_ingest_preflight_falsify_proceeds_with_the_real_server_name(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture,
+    out_of_process_reyn: str,
 ) -> None:
     """Tier 2b: FALSIFY control for the block above -- the SAME setup with
     the real, configured server name proceeds past pre-flight into the
     real ingest body (proves the sibling test's block is attributable to
     the unreachable server, not a broken pre-flight gate)."""
     monkeypatch.chdir(tmp_path)
-    project_root = _write_project(tmp_path)
+    project_root = _write_project(tmp_path, out_of_process_reyn)
     docs_dir = project_root / "docs"
     docs_dir.mkdir()
     (docs_dir / "a.txt").write_text("content", encoding="utf-8")
@@ -980,6 +999,7 @@ def test_ingest_preflight_falsify_proceeds_with_the_real_server_name(
 
 def test_query_preflight_blocks_on_unreachable_vectorstore_with_named_remedy(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture,
+    out_of_process_reyn: str,
 ) -> None:
     """Tier 2b: #2955 follow-up -- rag_query's own pre-flight (restructured
     into `_query_preflight`, mirroring rag_ingest's X1) still blocks a
@@ -987,7 +1007,7 @@ def test_query_preflight_blocks_on_unreachable_vectorstore_with_named_remedy(
     server + a concrete remedy, once a valid `db` param rules out the
     missing-param diagnosis (the sibling test above)."""
     monkeypatch.chdir(tmp_path)
-    project_root = _write_project(tmp_path)  # only registers "reyn_vector_store"
+    project_root = _write_project(tmp_path, out_of_process_reyn)  # only registers "reyn_vector_store"
     docs_dir = project_root / "docs"
     docs_dir.mkdir()
     (docs_dir / "a.txt").write_text("content", encoding="utf-8")
@@ -1042,6 +1062,7 @@ class FailingEmbeddingProvider:
 
 def test_query_embed_failure_surfaces_the_real_provider_error_not_a_field_absent_crash(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture,
+    out_of_process_reyn: str,
 ) -> None:
     """Tier 2b: #2955 follow-up -- when the `embed` op fails (a real
     provider error, e.g. litellm's own `insufficient_quota` message), the
@@ -1062,7 +1083,7 @@ def test_query_embed_failure_surfaces_the_real_provider_error_not_a_field_absent
     (`insufficient_quota: the operator's API key`) nowhere in stderr.
     """
     monkeypatch.chdir(tmp_path)
-    project_root = _write_project(tmp_path)
+    project_root = _write_project(tmp_path, out_of_process_reyn)
     docs_dir = project_root / "docs"
     docs_dir.mkdir()
     (docs_dir / "a.txt").write_text("content", encoding="utf-8")
@@ -1102,6 +1123,7 @@ def test_query_embed_failure_surfaces_the_real_provider_error_not_a_field_absent
 
 def test_ingest_with_relative_input_path_indexes_the_corpus(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture,
+    out_of_process_reyn: str,
 ) -> None:
     """Tier 2b: #3102 -- a RELATIVE ``input_path`` (the natural way an
     operator points this pipeline at a project-root corpus, e.g. ``docs`` or
@@ -1140,7 +1162,7 @@ def test_ingest_with_relative_input_path_indexes_the_corpus(
     developing this fix).
     """
     monkeypatch.chdir(tmp_path)
-    project_root = _write_project(tmp_path)
+    project_root = _write_project(tmp_path, out_of_process_reyn)
     docs_dir = project_root / "docs"
     docs_dir.mkdir()
     (docs_dir / "a.txt").write_text("Alpha document about apples.", encoding="utf-8")
@@ -1175,6 +1197,7 @@ def test_ingest_with_relative_input_path_indexes_the_corpus(
 
 def test_ingest_all_discovered_files_skipped_flag_names_the_zero_yield_run(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture,
+    out_of_process_reyn: str,
 ) -> None:
     """Tier 2b: #3102 -- when EVERY discovered file is unusable, the
     summary's ``all_discovered_files_skipped`` flag is True: 0 chunks
@@ -1184,7 +1207,7 @@ def test_ingest_all_discovered_files_skipped_flag_names_the_zero_yield_run(
     Falsified in the same test: a normal, at-least-partially-successful
     ingest reports False (not a flag that is vacuously always True)."""
     monkeypatch.chdir(tmp_path)
-    project_root = _write_project(tmp_path)
+    project_root = _write_project(tmp_path, out_of_process_reyn)
     docs_dir = project_root / "docs"
     docs_dir.mkdir()
     (docs_dir / "corrupt.pdf").write_bytes(b"\xff\xfe\x00\x01broken")

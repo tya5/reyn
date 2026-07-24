@@ -13,29 +13,25 @@ import os
 import subprocess
 import sys
 import textwrap
-from pathlib import Path
-
-import reyn
-
-# This test tree's src root — propagated to the subprocess so it imports the SAME
-# reyn (the #1609 worktree-drift lesson: sys.executable's default reyn may resolve
-# to a different worktree's venv).
-_SRC = str(Path(reyn.__file__).resolve().parent.parent)
 
 
-def _fresh_interpreter(code: str) -> subprocess.CompletedProcess:
-    env = {**os.environ, "PYTHONPATH": _SRC + os.pathsep + os.environ.get("PYTHONPATH", "")}
+def _fresh_interpreter(src_root: str, code: str) -> subprocess.CompletedProcess:
+    # `out_of_process_reyn` propagates this test tree's src root to the subprocess
+    # so it imports the SAME reyn (the #1609 worktree-drift lesson: sys.executable's
+    # default reyn may resolve to a different worktree's venv).
+    env = {**os.environ, "PYTHONPATH": src_root + os.pathsep + os.environ.get("PYTHONPATH", "")}
     return subprocess.run(
         [sys.executable, "-c", textwrap.dedent(code)],
         capture_output=True, text=True, env=env,
     )
 
 
-def test_all_builtins_resolve_in_fresh_interpreter() -> None:
+def test_all_builtins_resolve_in_fresh_interpreter(out_of_process_reyn) -> None:
     """Tier 2: #1608 ④ — a fresh interpreter that imports ONLY the schemes package
     (no explicit scheme-class import) finds all 4 built-ins registered + resolvable,
     and the default is unchanged. This is the completeness gate."""
     result = _fresh_interpreter(
+        out_of_process_reyn,
         """
         # The ONLY scheme-related import — must self-register the full built-in set.
         import reyn.tools.schemes  # noqa: F401
@@ -57,11 +53,12 @@ def test_all_builtins_resolve_in_fresh_interpreter() -> None:
     assert "RESOLVE_OK" in result.stdout
 
 
-def test_resolver_finds_all_builtins_without_naming_them() -> None:
+def test_resolver_finds_all_builtins_without_naming_them(out_of_process_reyn) -> None:
     """Tier 2: #1608 ④ — _resolve_tool_use_scheme (the OS resolver, which names NO
     scheme class) resolves each built-in name from a fresh interpreter, and an
     unknown name falls back to the default. Behaviour-invariant vs the old lazy loop."""
     result = _fresh_interpreter(
+        out_of_process_reyn,
         """
         from reyn.runtime.router_loop import _resolve_tool_use_scheme
         for n in ("universal-category", "enumerate-all", "retrieval", "codeact"):

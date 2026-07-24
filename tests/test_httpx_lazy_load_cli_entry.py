@@ -26,13 +26,10 @@ import os
 import subprocess
 import sys
 import textwrap
-from pathlib import Path
-
-SRC_DIR = Path(__file__).resolve().parents[1] / "src"
 
 
-def _run(script: str) -> subprocess.CompletedProcess:
-    env = {**os.environ, "PYTHONPATH": str(SRC_DIR)}
+def _run(src_root: str, script: str) -> subprocess.CompletedProcess:
+    env = {**os.environ, "PYTHONPATH": src_root}
     return subprocess.run(
         [sys.executable, "-c", textwrap.dedent(script)],
         capture_output=True,
@@ -42,7 +39,7 @@ def _run(script: str) -> subprocess.CompletedProcess:
     )
 
 
-def test_chat_command_module_import_does_not_import_httpx() -> None:
+def test_chat_command_module_import_does_not_import_httpx(out_of_process_reyn) -> None:
     """Tier 2: importing `reyn.interfaces.cli.commands.chat` leaves httpx unimported.
 
     FALSIFY: restoring the eager `from reyn.llm.llm import run_async` at module
@@ -55,12 +52,12 @@ def test_chat_command_module_import_does_not_import_httpx() -> None:
         assert "httpx" not in sys.modules, sorted(m for m in sys.modules if "httpx" in m)
         print("OK")
         """
-    result = _run(script)
+    result = _run(out_of_process_reyn, script)
     assert result.returncode == 0, result.stderr
     assert "OK" in result.stdout
 
 
-def test_mcp_command_module_import_does_not_import_httpx() -> None:
+def test_mcp_command_module_import_does_not_import_httpx(out_of_process_reyn) -> None:
     """Tier 2: importing `reyn.interfaces.cli.commands.mcp` leaves httpx unimported."""
     script = """
         import sys
@@ -68,12 +65,12 @@ def test_mcp_command_module_import_does_not_import_httpx() -> None:
         assert "httpx" not in sys.modules, sorted(m for m in sys.modules if "httpx" in m)
         print("OK")
         """
-    result = _run(script)
+    result = _run(out_of_process_reyn, script)
     assert result.returncode == 0, result.stderr
     assert "OK" in result.stdout
 
 
-def test_llm_module_import_does_not_import_httpx() -> None:
+def test_llm_module_import_does_not_import_httpx(out_of_process_reyn) -> None:
     """Tier 2: importing `reyn.llm.llm` directly leaves httpx unimported — the
     two `isinstance(exc, httpx.X)` exception-classification sites must resolve
     httpx lazily, not via a module-level `import httpx`."""
@@ -83,12 +80,12 @@ def test_llm_module_import_does_not_import_httpx() -> None:
         assert "httpx" not in sys.modules, sorted(m for m in sys.modules if "httpx" in m)
         print("OK")
         """
-    result = _run(script)
+    result = _run(out_of_process_reyn, script)
     assert result.returncode == 0, result.stderr
     assert "OK" in result.stdout
 
 
-def test_cli_help_invocation_does_not_import_httpx() -> None:
+def test_cli_help_invocation_does_not_import_httpx(out_of_process_reyn) -> None:
     """Tier 2: the full `reyn --help` entry path (the actual cold-start
     invocation this fix targets) never touches httpx.
 
@@ -107,12 +104,12 @@ def test_cli_help_invocation_does_not_import_httpx() -> None:
         assert "httpx" not in sys.modules, sorted(m for m in sys.modules if "httpx" in m)
         print("OK")
         """
-    result = _run(script)
+    result = _run(out_of_process_reyn, script)
     assert result.returncode == 0, result.stderr
     assert "OK" in result.stdout
 
 
-def test_httpx_exception_classification_still_resolves_lazily() -> None:
+def test_httpx_exception_classification_still_resolves_lazily(out_of_process_reyn) -> None:
     """Tier 2: `_get_httpx_exc_types()` (the httpx-equivalent of
     `_get_retryable_litellm_exceptions`) imports httpx on first call and
     returns the real `(httpx.ConnectError, httpx.ReadTimeout)` pair, so the
@@ -135,6 +132,6 @@ def test_httpx_exception_classification_still_resolves_lazily() -> None:
         assert read_timeout_exc is httpx.ReadTimeout
         print("OK")
         """
-    result = _run(script)
+    result = _run(out_of_process_reyn, script)
     assert result.returncode == 0, result.stderr
     assert "OK" in result.stdout

@@ -126,20 +126,14 @@ def test_apply_landlock_refuses_when_unavailable():
 @pytest.mark.skipif(
     _landlock_available(), reason="Landlock available — enforcement path Linux-validated separately"
 )
-def test_main_subprocess_refuses_when_unavailable():
+def test_main_subprocess_refuses_when_unavailable(out_of_process_reyn: str):
     """Tier 2: run as a real subprocess on a no-Landlock host, the shim exits
     non-zero and does NOT exec the target (end-to-end of the refuse path)."""
-    import os
-    from pathlib import Path
-
-    import reyn
-
     pol = SandboxPolicy()
     exe, argv = build_landlock_exec_argv(pol, "/bin/echo", ["SHOULD-NOT-RUN"])
     # Run the shim against the reyn under test (not a venv-installed copy) by
     # pinning PYTHONPATH to this checkout's src root (env-dependent path lesson).
-    src_root = Path(reyn.__file__).resolve().parent.parent
-    env = {**os.environ, "PYTHONPATH": str(src_root)}
+    env = {**os.environ, "PYTHONPATH": out_of_process_reyn}
     proc = subprocess.run(
         [exe, *argv], capture_output=True, text=True, timeout=30, env=env,
     )
@@ -160,30 +154,34 @@ requires_landlock = pytest.mark.skipif(
 )
 
 
-def _shim_run(policy: SandboxPolicy, argv: list[str]) -> subprocess.CompletedProcess:
+def _shim_run(
+    src_root: str, policy: SandboxPolicy, argv: list[str]
+) -> subprocess.CompletedProcess:
     """Launch *argv* through the backend's real ``wrap_command`` — the production
     seam (MCP stdio / CodeAct) — and return the finished process.
 
-    PYTHONPATH is pinned to this checkout (as the refuse-path test above does) so
-    the shim re-execs the reyn under test rather than an installed copy.
+    PYTHONPATH is pinned to *src_root* (the ``out_of_process_reyn`` fixture
+    value, as the refuse-path test above does) so the shim re-execs the reyn
+    under test rather than an installed copy. Custom ``PATH`` preserved — the
+    landlock test needs it.
     """
-    import reyn
     from reyn.security.sandbox.backends.landlock import LandlockBackend
 
     wrapped = LandlockBackend().wrap_command(argv, policy)
-    src_root = Path(reyn.__file__).resolve().parent.parent
     return subprocess.run(
         wrapped.argv,
         capture_output=True,
         text=True,
         timeout=60,
         stdin=subprocess.DEVNULL,
-        env={"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "PYTHONPATH": str(src_root)},
+        env={"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "PYTHONPATH": src_root},
     )
 
 
 @requires_landlock
-def test_shim_denies_a_write_outside_write_paths(tmp_path: Path) -> None:
+def test_shim_denies_a_write_outside_write_paths(
+    tmp_path: Path, out_of_process_reyn: str,
+) -> None:
     """Tier 2c: the shim actually restricts the filesystem — a write outside
     ``write_paths`` does not happen, while one inside it does.
 
@@ -206,7 +204,7 @@ def test_shim_denies_a_write_outside_write_paths(tmp_path: Path) -> None:
     )
 
     control = granted / "control"
-    _shim_run(policy, [touch, str(control)])
+    _shim_run(out_of_process_reyn, policy, [touch, str(control)])
     assert control.exists(), (
         "the shim could not write to a path the policy GRANTS, so a denied write "
         "below would prove nothing (this is #2980's shape: the shim raising "
@@ -214,7 +212,7 @@ def test_shim_denies_a_write_outside_write_paths(tmp_path: Path) -> None:
     )
 
     escape = denied / "escape"
-    proc = _shim_run(policy, [touch, str(escape)])
+    proc = _shim_run(out_of_process_reyn, policy, [touch, str(escape)])
     assert not escape.exists(), (
         f"no deny fired: the shim wrote {escape}, outside the policy's only "
         f"write grant — it execs the target unrestricted (rc={proc.returncode}, "
@@ -223,7 +221,9 @@ def test_shim_denies_a_write_outside_write_paths(tmp_path: Path) -> None:
 
 
 @requires_landlock
-def test_shim_denies_a_fork_when_allow_subprocess_is_false(tmp_path: Path) -> None:
+def test_shim_denies_a_fork_when_allow_subprocess_is_false(
+    tmp_path: Path, out_of_process_reyn: str,
+) -> None:
     """Tier 2c: the shim's seccomp filter LOADS and denies process creation —
     the axis #3020 broke by importing pyseccomp after Landlock had restricted it.
 
@@ -260,14 +260,14 @@ def test_shim_denies_a_fork_when_allow_subprocess_is_false(tmp_path: Path) -> No
                           f"| {shlex.quote(cat)}"]
 
     control = granted / "control-spawn"
-    _shim_run(policy(True), forking(control))
+    _shim_run(out_of_process_reyn, policy(True), forking(control))
     assert control.exists(), (
         "the shim could not spawn even with allow_subprocess=True, so a missing "
         "marker under False would prove nothing"
     )
 
     alive = granted / "control-nofork"
-    proc = _shim_run(policy(False), [touch, str(alive)])
+    proc = _shim_run(out_of_process_reyn, policy(False), [touch, str(alive)])
     assert alive.exists(), (
         f"under allow_subprocess=False the shim could not run even a NON-forking "
         f"command — it is failing wholesale rather than denying process creation "
@@ -277,7 +277,7 @@ def test_shim_denies_a_fork_when_allow_subprocess_is_false(tmp_path: Path) -> No
     )
 
     spawned = granted / "spawned"
-    proc = _shim_run(policy(False), forking(spawned))
+    proc = _shim_run(out_of_process_reyn, policy(False), forking(spawned))
     assert not spawned.exists(), (
         f"no subprocess deny fired: a command that must fork to run wrote "
         f"{spawned} under allow_subprocess=False — the seccomp filter is not "

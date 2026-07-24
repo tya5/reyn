@@ -84,23 +84,24 @@ requires_landlock = pytest.mark.skipif(
 )
 
 
-def _shim_run(policy: SandboxPolicy, argv: list[str]) -> subprocess.CompletedProcess:
+def _shim_run(
+    src_root: str, policy: SandboxPolicy, argv: list[str]
+) -> subprocess.CompletedProcess:
     """Launch *argv* through the backend's real ``wrap_command`` (the production
-    MCP-stdio / CodeAct seam), pinned to run THIS checkout (env-dependent path
-    lesson: without PYTHONPATH the shim re-execs an installed reyn copy, not the
-    one under test)."""
-    import reyn
+    MCP-stdio / CodeAct seam), pinned to run THIS checkout via *src_root* (the
+    ``out_of_process_reyn`` fixture value — env-dependent path lesson: without
+    PYTHONPATH the shim re-execs an installed reyn copy, not the one under
+    test). Custom ``PATH`` preserved — the sandbox test needs it."""
     from reyn.security.sandbox.backends.landlock import LandlockBackend
 
     wrapped = LandlockBackend().wrap_command(argv, policy)
-    src_root = Path(reyn.__file__).resolve().parent.parent
     return subprocess.run(
         wrapped.argv,
         capture_output=True,
         text=True,
         timeout=60,
         stdin=subprocess.DEVNULL,
-        env={"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "PYTHONPATH": str(src_root)},
+        env={"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "PYTHONPATH": src_root},
     )
 
 
@@ -109,7 +110,7 @@ def _shim_run(policy: SandboxPolicy, argv: list[str]) -> subprocess.CompletedPro
 
 @requires_landlock
 def test_shim_denies_outbound_connect_when_network_false_and_subprocess_allowed(
-    tmp_path: Path,
+    tmp_path: Path, out_of_process_reyn: str,
 ) -> None:
     """Tier 2c: the shim denies connect() under ``network=False,
     allow_subprocess=True`` — the exact policy #3030 measured as broken.
@@ -168,7 +169,7 @@ def test_shim_denies_outbound_connect_when_network_false_and_subprocess_allowed(
 
         # 1. Positive control.
         control = granted / "control-connect"
-        proc = _shim_run(policy(True), connect_argv(control))
+        proc = _shim_run(out_of_process_reyn, policy(True), connect_argv(control))
         assert control.exists(), (
             f"the shim could not connect() even with network=True, so a "
             f"missing marker under network=False would prove nothing "
@@ -178,7 +179,7 @@ def test_shim_denies_outbound_connect_when_network_false_and_subprocess_allowed(
         # 2. Non-networking control — isolates a dead filter from a network-specific
         #    deny (mirrors #3030's own falsification set, arm 2).
         alive = granted / "control-nonet"
-        proc = _shim_run(policy(False), [touch, str(alive)])
+        proc = _shim_run(out_of_process_reyn, policy(False), [touch, str(alive)])
         assert alive.exists(), (
             f"under network=False, allow_subprocess=True the shim could not run "
             f"even a NON-networking command — it is failing wholesale, not denying "
@@ -187,7 +188,7 @@ def test_shim_denies_outbound_connect_when_network_false_and_subprocess_allowed(
 
         # 3. The deny — the actual #3030 claim.
         escape = granted / "escaped-connect"
-        proc = _shim_run(policy(False), connect_argv(escape))
+        proc = _shim_run(out_of_process_reyn, policy(False), connect_argv(escape))
         assert not escape.exists(), (
             f"no network deny fired: connect() succeeded under network=False, "
             f"allow_subprocess=True — the exact #3030 condition (rc={proc.returncode}, "
@@ -198,7 +199,7 @@ def test_shim_denies_outbound_connect_when_network_false_and_subprocess_allowed(
 
 
 @requires_landlock
-def test_shim_allows_socket_and_bind_when_network_false(tmp_path: Path) -> None:
+def test_shim_allows_socket_and_bind_when_network_false(tmp_path: Path, out_of_process_reyn: str) -> None:
     """Tier 2c: #3060 — socket() and a LOOPBACK bind() both succeed through the
     shim even under ``network=False, allow_subprocess=True``, the exact
     condition under which urllib3's import-time IPv6-support probe
@@ -225,7 +226,7 @@ def test_shim_allows_socket_and_bind_when_network_false(tmp_path: Path) -> None:
         "s.bind(('::1', 0))\n"
         f"open({str(marker)!r}, 'w').close()\n"
     )
-    proc = _shim_run(policy, [sys.executable, "-c", code])
+    proc = _shim_run(out_of_process_reyn, policy, [sys.executable, "-c", code])
     assert marker.exists(), (
         f"socket()+bind(('::1', 0)) must succeed under network=False — this is "
         f"the exact urllib3 IPv6-probe shape #3060 fixes "
@@ -239,7 +240,7 @@ def test_shim_allows_socket_and_bind_when_network_false(tmp_path: Path) -> None:
 
 @requires_landlock
 def test_shim_allows_null_addr_socketpair_sendto_recvfrom_when_network_false(
-    tmp_path: Path,
+    tmp_path: Path, out_of_process_reyn: str,
 ) -> None:
     """Tier 2c: #3060 case-(b) POSITIVE witness — ``sendto``/``recvfrom`` with a
     NULL address pointer SUCCEED under ``network=False``.
@@ -272,7 +273,7 @@ def test_shim_allows_null_addr_socketpair_sendto_recvfrom_when_network_false(
         "assert b.recv(4) == b'ping'\n"
         f"open({str(marker)!r}, 'w').close()\n"
     )
-    proc = _shim_run(policy, [sys.executable, "-c", code])
+    proc = _shim_run(out_of_process_reyn, policy, [sys.executable, "-c", code])
     assert marker.exists(), (
         f"NULL-addr socketpair sendto/recvfrom must SUCCEED under network=False "
         f"(the async event-loop self-pipe #3060 fixes) — rc={proc.returncode}, "
@@ -281,7 +282,9 @@ def test_shim_allows_null_addr_socketpair_sendto_recvfrom_when_network_false(
 
 
 @requires_landlock
-def test_shim_denies_addressed_sendto_when_network_false(tmp_path: Path) -> None:
+def test_shim_denies_addressed_sendto_when_network_false(
+    tmp_path: Path, out_of_process_reyn: str,
+) -> None:
     """Tier 2c: #3060 case-(b) NEGATIVE witness (egress-safety — the load-bearing
     one) — an ADDRESSED ``sendto`` (real UDP egress,
     ``sendto(fd, buf, len, flags, &sockaddr_in, addrlen)``) stays EPERM-DENIED
@@ -318,7 +321,7 @@ def test_shim_denies_addressed_sendto_when_network_false(tmp_path: Path) -> None
         "s.sendto(b'x', ('93.184.216.34', 53))\n"
         f"open({str(marker)!r}, 'w').close()\n"
     )
-    proc = _shim_run(policy, [sys.executable, "-c", code])
+    proc = _shim_run(out_of_process_reyn, policy, [sys.executable, "-c", code])
     assert not marker.exists(), (
         f"addressed sendto (real UDP egress) MUST stay denied under "
         f"network=False — the NULL-addr sendto/recvfrom exception must NOT open "
@@ -365,7 +368,9 @@ def _bare_io_uring_supported() -> bool:
     reason="io_uring_setup not usable unsandboxed on this host/kernel — cannot "
     "distinguish a seccomp EPERM from ENOSYS",
 )
-def test_shim_denies_io_uring_setup_unconditionally(tmp_path: Path) -> None:
+def test_shim_denies_io_uring_setup_unconditionally(
+    tmp_path: Path, out_of_process_reyn: str,
+) -> None:
     """Tier 2c: io_uring_setup is refused EPERM through the shim REGARDLESS of
     policy — the exact gap a syscall-name denylist (the design #3030's issue
     considered and rejected) would have missed, since io_uring's opcodes never
@@ -380,7 +385,7 @@ def test_shim_denies_io_uring_setup_unconditionally(tmp_path: Path) -> None:
     policy = SandboxPolicy(
         write_paths=[str(granted)], read_deny_paths=[], network=True, allow_subprocess=True,
     )
-    proc = _shim_run(policy, [sys.executable, "-c", _IO_URING_PROBE_SRC])
+    proc = _shim_run(out_of_process_reyn, policy, [sys.executable, "-c", _IO_URING_PROBE_SRC])
     assert "URING_ERR errno=" in proc.stdout, (
         f"io_uring_setup was NOT refused through the shim (stdout={proc.stdout!r}, "
         f"rc={proc.returncode}, stderr={proc.stderr[:300]!r}) — a denylist-shaped "
