@@ -187,7 +187,7 @@ def test_resolve_github_canonical_server_name_post_319() -> None:
 # ── #320: macOS /tmp install-time warning ────────────────────────────
 
 
-def test_install_command_warns_on_tmp_args_on_darwin(tmp_path) -> None:
+def test_install_command_warns_on_tmp_args_on_darwin(tmp_path, reyn_console_scripts) -> None:
     """Tier 2: on macOS, ``reyn mcp install --args /tmp/...`` emits a
     warning explaining the symlink gotcha. Skipped on non-Darwin
     because the warning is platform-gated.
@@ -206,9 +206,10 @@ def test_install_command_warns_on_tmp_args_on_darwin(tmp_path) -> None:
     # subsequent install failure is irrelevant to the assertion.
     import shutil
     reyn_bin = shutil.which("reyn")
-    if reyn_bin is None:
-        import pytest
-        pytest.skip("reyn executable not on PATH for subprocess invocation")
+    assert reyn_bin is not None, (
+        "reyn_console_scripts already verified this venv declares the "
+        "console script; shutil.which should find it"
+    )
     # #1442: install now resolves a project root and fails loud outside one
     # (error-not-silent-cwd), so give tmp_path a reyn.yaml — the #320 /tmp-args
     # warning fires inside the source install, past project resolution.

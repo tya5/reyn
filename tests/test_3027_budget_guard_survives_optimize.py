@@ -22,15 +22,6 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
-from pathlib import Path
-
-# The repo may be `pip install -e`'d from a different checkout (e.g. another
-# worktree) than the one pytest is running from — pytest itself picks up the
-# right `src/` via `pythonpath = ["src"]` in pyproject.toml, but a bare
-# subprocess `python -c` does not. Point PYTHONPATH at *this* checkout's
-# `src/` explicitly so the subprocess imports the code under test, not
-# whatever `reyn` happens to be installed in site-packages.
-_SRC_DIR = str(Path(__file__).resolve().parent.parent / "src")
 
 _SCRIPT_TEMPLATE = """
 import sys
@@ -48,17 +39,17 @@ print("NO_RAISE", file=sys.stdout)
 """
 
 
-def _run(script: str, *, optimize: bool) -> subprocess.CompletedProcess:
+def _run(src_root: str, script: str, *, optimize: bool) -> subprocess.CompletedProcess:
     args = [sys.executable]
     if optimize:
         args.append("-O")
     args += ["-c", script]
     env = dict(os.environ)
-    env["PYTHONPATH"] = _SRC_DIR + os.pathsep + env.get("PYTHONPATH", "")
+    env["PYTHONPATH"] = src_root + os.pathsep + env.get("PYTHONPATH", "")
     return subprocess.run(args, capture_output=True, text=True, timeout=60, env=env)
 
 
-def test_effective_trigger_guard_fires_under_dash_o() -> None:
+def test_effective_trigger_guard_fires_under_dash_o(out_of_process_reyn) -> None:
     """Tier 2: the effective_trigger<=0 guard raises even under `python -O`.
 
     This is the load-bearing witness for #3027: before the fix, this exact
@@ -66,7 +57,7 @@ def test_effective_trigger_guard_fires_under_dash_o() -> None:
     -O instead of raising.
     """
     script = _SCRIPT_TEMPLATE.format(b_m=5000, effective_trigger=-7)
-    result = _run(script, optimize=True)
+    result = _run(out_of_process_reyn, script, optimize=True)
     assert result.returncode != 0, (
         f"guard did NOT fire under -O (stdout={result.stdout!r}): "
         f"a negative effective_trigger silently flowed through"
@@ -76,27 +67,27 @@ def test_effective_trigger_guard_fires_under_dash_o() -> None:
     assert "NO_RAISE" not in result.stdout
 
 
-def test_effective_trigger_guard_fires_in_normal_mode() -> None:
+def test_effective_trigger_guard_fires_in_normal_mode(out_of_process_reyn) -> None:
     """Tier 2: regression — the guard still fires in normal (non -O) mode."""
     script = _SCRIPT_TEMPLATE.format(b_m=5000, effective_trigger=-7)
-    result = _run(script, optimize=False)
+    result = _run(out_of_process_reyn, script, optimize=False)
     assert result.returncode != 0
     assert "CompactionBudgetSelfConsistencyError" in result.stderr, result.stderr
     assert "effective_trigger = -7" in result.stderr, result.stderr
 
 
-def test_valid_budgets_do_not_fire_under_dash_o() -> None:
+def test_valid_budgets_do_not_fire_under_dash_o(out_of_process_reyn) -> None:
     """Tier 2: control — a self-consistent budget config does NOT raise
     under -O (the guard is not over-firing)."""
     script = _SCRIPT_TEMPLATE.format(b_m=5000, effective_trigger=5000)
-    result = _run(script, optimize=True)
+    result = _run(out_of_process_reyn, script, optimize=True)
     assert result.returncode == 0, f"stderr={result.stderr!r}"
     assert "NO_RAISE" in result.stdout
 
 
-def test_valid_budgets_do_not_fire_in_normal_mode() -> None:
+def test_valid_budgets_do_not_fire_in_normal_mode(out_of_process_reyn) -> None:
     """Tier 2: control — same as above in normal mode (no over-firing)."""
     script = _SCRIPT_TEMPLATE.format(b_m=5000, effective_trigger=5000)
-    result = _run(script, optimize=False)
+    result = _run(out_of_process_reyn, script, optimize=False)
     assert result.returncode == 0, f"stderr={result.stderr!r}"
     assert "NO_RAISE" in result.stdout

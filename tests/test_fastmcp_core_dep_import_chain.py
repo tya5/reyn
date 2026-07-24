@@ -16,11 +16,12 @@ OS invariant:
 """
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 
 
-def test_mcp_connection_service_import_chain_reaches_fastmcp():
+def test_mcp_connection_service_import_chain_reaches_fastmcp(out_of_process_reyn):
     """Tier 2: importing the MCP client stack succeeds and loads fastmcp in a fresh interpreter."""
     code = (
         "import reyn.mcp.connection_service;"
@@ -36,6 +37,7 @@ def test_mcp_connection_service_import_chain_reaches_fastmcp():
         capture_output=True,
         text=True,
         timeout=60,
+        env={**os.environ, "PYTHONPATH": out_of_process_reyn},
     )
     assert result.returncode == 0, (
         "MCP import chain failed in a core install (fastmcp not importable?).\n"

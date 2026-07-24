@@ -57,7 +57,7 @@ def test_routers_mounted() -> None:
 # 2. CLI smoke test
 # ---------------------------------------------------------------------------
 
-def test_reyn_web_help() -> None:
+def test_reyn_web_help(out_of_process_reyn) -> None:
     """Tier 2b: `reyn web --help` exits cleanly (exit code 0, stdout contains usage).
 
     Uses the reyn._cli:main entry point directly so we don't depend on the
@@ -70,7 +70,7 @@ def test_reyn_web_help() -> None:
         text=True,
         env={
             **__import__("os").environ,
-            "PYTHONPATH": str(_WORKTREE_SRC),
+            "PYTHONPATH": out_of_process_reyn,
         },
         timeout=15,
     )

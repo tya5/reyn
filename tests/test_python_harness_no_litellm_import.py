@@ -12,12 +12,24 @@ OS invariant (FP-0008 C4):
 """
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 import time
 
 
-def test_harness_import_does_not_load_litellm():
+def _run(src_root: str, code: str) -> subprocess.CompletedProcess:
+    env = {**os.environ, "PYTHONPATH": src_root}
+    return subprocess.run(
+        [sys.executable, "-c", code],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        env=env,
+    )
+
+
+def test_harness_import_does_not_load_litellm(out_of_process_reyn):
     """Tier 2: fresh subprocess import of harness leaves litellm out of sys.modules."""
     code = (
         "import reyn.core.kernel._python_harness; "
@@ -25,12 +37,7 @@ def test_harness_import_does_not_load_litellm():
         "assert 'litellm' not in sys.modules, "
         "'litellm was eagerly loaded by harness import: ' + str(sorted(k for k in sys.modules if k.startswith('litellm')))"
     )
-    result = subprocess.run(
-        [sys.executable, "-c", code],
-        capture_output=True,
-        text=True,
-        timeout=30,
-    )
+    result = _run(out_of_process_reyn, code)
     assert result.returncode == 0, (
         f"harness import loaded litellm (or failed).\n"
         f"stdout: {result.stdout}\n"
@@ -38,7 +45,7 @@ def test_harness_import_does_not_load_litellm():
     )
 
 
-def test_harness_import_does_not_load_agent_llm_chain():
+def test_harness_import_does_not_load_agent_llm_chain(out_of_process_reyn):
     """Tier 2: fresh subprocess import of harness leaves the agent/llm/httpx chain out.
 
     #1367 — the C4 lazy-litellm fix removed litellm from the harness path, but
@@ -55,12 +62,7 @@ def test_harness_import_does_not_load_agent_llm_chain():
         "          if m in sys.modules]; "
         "assert not leaked, 'harness import eagerly loaded heavy chain: ' + str(leaked)"
     )
-    result = subprocess.run(
-        [sys.executable, "-c", code],
-        capture_output=True,
-        text=True,
-        timeout=30,
-    )
+    result = _run(out_of_process_reyn, code)
     assert result.returncode == 0, (
         f"harness import loaded the agent/llm/httpx chain (or failed).\n"
         f"stdout: {result.stdout}\n"
@@ -68,7 +70,7 @@ def test_harness_import_does_not_load_agent_llm_chain():
     )
 
 
-def test_harness_import_time_is_below_ceiling():
+def test_harness_import_time_is_below_ceiling(out_of_process_reyn):
     """Tier 2: harness import completes well under the preprocessor timeout ceiling.
 
     Ceiling is 3.0s — generous enough to avoid flake on slow CI, but well
@@ -83,12 +85,7 @@ def test_harness_import_time_is_below_ceiling():
         "elapsed = time.time() - t; "
         "assert elapsed < 3.0, f'harness import took {elapsed:.2f}s (ceiling 3.0s)'"
     )
-    result = subprocess.run(
-        [sys.executable, "-c", code],
-        capture_output=True,
-        text=True,
-        timeout=30,
-    )
+    result = _run(out_of_process_reyn, code)
     assert result.returncode == 0, (
         f"harness import exceeded ceiling.\n"
         f"stdout: {result.stdout}\n"
