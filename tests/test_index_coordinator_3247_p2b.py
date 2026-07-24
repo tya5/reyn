@@ -258,14 +258,25 @@ def test_ready_gate_reflects_state(tmp_path: Path) -> None:
 def test_1458_pinned_build_primitive_still_used_unchanged(tmp_path: Path) -> None:
     """Tier 2: the P2b migration routes THROUGH
     ``_build_action_embedding_index_background`` (#1458's pinned failure-
-    event/log/memo primitive) rather than bypassing it — regression pin
+    memoization/log primitive) rather than bypassing it — regression pin
     that the migration didn't orphan that method into dead code reachable
-    only from its own unit test."""
+    only from its own unit test.
+
+    FP-0066 P2d (#3247 firm §6) updated this pin's audit-event assertion:
+    the primitive's OWN direct ``action_index_build_failed`` emit was
+    folded into ``embedding_index_build_error``, now emitted by
+    ``IndexCoordinator.ensure_built_self_contained`` (one layer up, reached
+    via ``_ensure_action_index_built``) — so a failure surfaces the NEW
+    event name here, and the OLD name must not double-emit."""
     loop = _LoopForP2b(tmp_path)
     idx = _FakeActionIndex(should_fail=True)
     _run(loop._ensure_action_index_built(idx, "provider", "standard", await_completion=True))
     kinds = [e["kind"] for e in loop.host.events.emitted]
-    assert "action_index_build_failed" in kinds, (
-        "the #1458 action_index_build_failed event must still fire via the "
-        "unchanged _build_action_embedding_index_background primitive"
+    assert "embedding_index_build_error" in kinds, (
+        "the folded embedding_index_build_error event must fire via "
+        "IndexCoordinator.ensure_built_self_contained on a build failure"
+    )
+    assert "action_index_build_failed" not in kinds, (
+        "the pre-P2d action_index_build_failed event must not double-emit "
+        "alongside its P2d fold target"
     )

@@ -903,6 +903,12 @@ async def _handle_search_actions(
     the handler is only invoked when the index is configured.  The
     None-checks above are defense-in-depth for narrow callers (= plan
     steps / test sites) that bypass the gate.
+
+    FP-0066 P2d (#3247 firm §5/§6): before ``idx.query()`` serves, awaits
+    ``IndexCoordinator.search_await(source_id)`` (steady-state clean =
+    cheap no-op; dirty/building = heals/awaits first) and emits
+    ``semantic_search_started``/``semantic_search_complete`` (results
+    count) audit-events around the query.
     """
     query = args.get("query")
     if not isinstance(query, str) or not query.strip():
@@ -956,7 +962,27 @@ async def _handle_search_actions(
     # Over-fetch when filtering by category so we still return up to
     # ``limit`` after the post-filter cut.
     raw_top_k = limit * len(CATEGORIES) if category_set else limit
+
+    # FP-0066 P2d (#3247 firm §5/§6): await the Coordinator's search-await
+    # contract before serving — a cheap manifest-read no-op in the steady
+    # state (source already "clean"), or a heal-await if a prior sync-in-op
+    # build left the source dirty/mid-building (the "best-effort search is
+    # a bug" completeness guarantee). Wrapped in semantic_search_started/
+    # _complete audit-events (results count) — this call site, not
+    # ``Coordinator.search_await`` itself, is where the result count is
+    # actually known.
+    from reyn.data.index.coordinator import get_index_coordinator
+
+    source_id = getattr(idx, "source_name", None) or "actions"
+    events = ctx.events
+    if events is not None:
+        events.emit("semantic_search_started", source_id=source_id)
+    if ctx.workspace is not None:
+        coordinator = get_index_coordinator(ctx.workspace.base_dir)
+        await coordinator.search_await(source_id)
     results = await idx.query(query, op_ctx, model_class, top_k=raw_top_k)
+    if events is not None:
+        events.emit("semantic_search_complete", source_id=source_id, results=len(results))
 
     if category_set:
         from reyn.tools.universal_catalog import split_qualified_name
