@@ -74,6 +74,7 @@ __all__ = [
     "EmbedWriteResult",
     "assert_vector_count_match",
     "embed_verify_write",
+    "emit_wrapped_semantic_search",
     "IndexCoordinator",
     "get_index_coordinator",
 ]
@@ -652,3 +653,68 @@ def get_index_coordinator(workspace_root: Path) -> IndexCoordinator:
     if workspace_root not in _COORDINATORS:
         _COORDINATORS[workspace_root] = IndexCoordinator(workspace_root)
     return _COORDINATORS[workspace_root]
+
+
+# ── search-emit helper (P3-helper, #3247 firm §6) ─────────────────────────
+#
+# `semantic_search_started -> search_await -> query -> semantic_search_
+# complete` was duplicated verbatim at the two live query call sites
+# (RouterLoop.search_actions in router_loop.py, universal_catalog.
+# _handle_search_actions) — a third caller (search_knowledge, P3c) would
+# have made it three, so the firm calls for a single-source helper BEFORE
+# that lands (do not let the dup become an established pattern).
+#
+# ``coordinator``/``op_ctx`` are argument-injected rather than resolved
+# inside the helper: the two call sites acquire them asymmetrically
+# (RouterLoop via ``self._get_index_coordinator()`` + ``self.host.
+# make_router_op_context()``; the catalog handler via ``get_index_
+# coordinator(ctx.workspace.base_dir)`` gated on ``ctx.workspace`` being
+# set + ``rs.op_context_factory()``) — the helper must not special-case
+# either acquisition path, so it never calls ``get_index_coordinator``
+# itself. ``coordinator=None`` is honored as "skip search_await" (the
+# catalog site's pre-existing degrade when ``ctx.workspace`` is unset).
+# ``events`` is None-tolerant for the same reason (the catalog handler
+# may be invoked without an events sink).
+#
+# ★ Bug fix this extraction exposes: the catalog call site had NO
+# try/finally around ``index.query()`` — a query failure emitted
+# ``semantic_search_started`` but never its matching ``_complete``, a
+# dangling started-without-complete in the audit trail (undetected
+# because nothing previously asserted the pairing under failure). The
+# router_loop site already wrapped the query in try/finally (with its
+# own best-effort except/log around the whole thing); this helper folds
+# that guarantee in ONE place so both sites get it uniformly — on any
+# exception raised by ``search_await``/``index.query``, ``_complete``
+# still fires (with ``results=0``) before the exception re-raises to the
+# caller, which decides for itself whether to swallow it (best-effort
+# presentation, per ``RouterLoop.search_actions``) or propagate it
+# (the catalog handler, unchanged from before).
+async def emit_wrapped_semantic_search(
+    *,
+    events: "EventLog | None",
+    coordinator: "IndexCoordinator | None",
+    source_id: str,
+    index: Any,
+    query: str,
+    op_ctx: "OpContext",
+    model_class: str,
+    top_k: int,
+) -> list[dict[str, Any]]:
+    """Unified ``semantic_search_started`` -> ``search_await`` -> ``query``
+    -> ``semantic_search_complete`` wrap (#3247 firm §6). Guarantees
+    ``semantic_search_complete`` always fires (``results=0`` on failure)
+    even when ``search_await``/``index.query`` raises, then re-raises so
+    the caller retains its own error-handling policy."""
+    if events is not None:
+        events.emit("semantic_search_started", source_id=source_id)
+    results: list[dict[str, Any]] = []
+    try:
+        if coordinator is not None:
+            await coordinator.search_await(source_id)
+        results = await index.query(query, op_ctx, model_class, top_k=top_k)
+    finally:
+        if events is not None:
+            events.emit(
+                "semantic_search_complete", source_id=source_id, results=len(results),
+            )
+    return results
