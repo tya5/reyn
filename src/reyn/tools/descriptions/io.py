@@ -381,17 +381,56 @@ PARAMS: dict[str, dict[str, ParamDescription]] = {
             text="Chunks to reconcile into the index.",
             ja="インデックスに反映するチャンク群。",
         ),
-        "chunks.metadata": ParamDescription(
+        # #3222: each array item's schema, used as the (flat, depth-1-safe)
+        # description on `chunks.items` rather than a nested JSON-schema —
+        # see the router_tools.py §H3 / index_update.py comment for why.
+        # Combines the former standalone `text` + `chunks.metadata`
+        # descriptions into one string describing the whole item shape.
+        "chunks.item": ParamDescription(
             text=(
-                "content_hash (required, change-detection key), "
-                "source_path (required, reconciliation-scope "
-                "key), plus optional source_type / chunk_index "
-                "/ size_tokens / parent_context / extra."
+                "Object with two top-level fields: "
+                "`text` (string, required) — the chunk's content to embed. "
+                "`metadata` (object, required) — per-chunk metadata with: "
+                "`content_hash` (string, required) — change-detection / dedup "
+                "key; a chunk whose hash is unchanged from the current index "
+                "is skipped (no re-embed). "
+                "`source_path` (string, required) — reconciliation-scope key "
+                "(file path or memory slug); chunks are added/updated/removed "
+                "per source_path, one path at a time. "
+                "`source_type` (string, optional, default \"generic\") — a "
+                "caller-defined label for the content's origin kind (not "
+                "interpreted by the OS); read back via filters at query time. "
+                "`chunk_index` (integer, optional, default 0) — this chunk's "
+                "position within its source_path, for ordering. "
+                "`size_tokens` (integer, optional, default 0) — token count of "
+                "`text`, for downstream context-budget accounting. "
+                "`parent_context` (string, optional) — the enclosing heading / "
+                "class / function name, for retrieval-time context. "
+                "`extra` (object, optional) — caller-defined fields beyond the "
+                "above, carried through unchanged."
             ),
             ja=(
-                "content_hash（必須、変更検知キー）、source_path（必須、"
-                "reconcile 範囲キー）、任意で source_type / chunk_index / "
-                "size_tokens / parent_context / extra。"
+                "トップレベルに 2 フィールドを持つオブジェクト: "
+                "`text`（文字列、必須） — 埋め込み対象のチャンク本文。 "
+                "`metadata`（オブジェクト、必須） — 以下を含むチャンク単位の"
+                "メタデータ: "
+                "`content_hash`（文字列、必須） — 変更検知・重複排除キー。"
+                "現インデックスとハッシュが変わらないチャンクは"
+                "再埋め込みされずスキップされる。 "
+                "`source_path`（文字列、必須） — reconcile 範囲キー"
+                "（ファイルパスまたはメモリ slug）。追加・更新・削除は "
+                "source_path 単位で一つずつ行われる。 "
+                "`source_type`（文字列、任意、既定値 \"generic\"） — 呼び出し側が"
+                "定義するコンテンツ由来のラベル（OS 側は解釈しない）。"
+                "クエリ時にフィルタとして読み戻される。 "
+                "`chunk_index`（整数、任意、既定値 0） — その source_path 内での"
+                "このチャンクの位置（並び順用）。 "
+                "`size_tokens`（整数、任意、既定値 0） — `text` のトークン数"
+                "（下流のコンテキスト予算管理用）。 "
+                "`parent_context`（文字列、任意） — 包含する見出し／クラス／"
+                "関数名（検索時のコンテキスト用）。 "
+                "`extra`（オブジェクト、任意） — 上記以外の呼び出し側定義の"
+                "フィールド。そのまま保持される。"
             ),
         ),
         "embedding_model": ParamDescription(

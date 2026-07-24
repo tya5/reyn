@@ -615,6 +615,22 @@ def build_tools(
             dispatch_kind=_drop_source_def.dispatch_kind,
         ))
 
+    # ── H3: index_update ──────────────────────────────────────────────────
+    # #3222: index_update was registered in ToolRegistry (tools/__init__.py)
+    # but never wired into build_tools() (or _OPERATION_RULES), so it was
+    # unreachable in every scheme — the RAG in-core family could delete a
+    # source (drop_source) but never add one (#2032-class dead-registration).
+    # Mirrors H1/H2 exactly, including the gates.router="allow" guard.
+    _index_update_def = _registry.lookup("index_update")
+    if _index_update_def is not None and _index_update_def.gates.router == "allow":
+        _index_update_rendered = _index_update_def.render_for_router()
+        specs.append(ToolSpec(
+            name=_index_update_rendered["function"]["name"],
+            description=_index_update_rendered["function"]["description"],
+            parameters=_index_update_rendered["function"]["parameters"],
+            dispatch_kind=_index_update_def.dispatch_kind,
+        ))
+
     # ── #272/#1128: compact (voluntary history compaction) ─────────────────────
     # Visibility-gated (like search_actions §D14): only advertised when the
     # window is filling (compact_visible, paired with the context-size signal).
@@ -924,7 +940,7 @@ def build_tools(
             "call_mcp_tool", "describe_mcp_tool",
             "list_memory", "read_memory_body",
             "remember_shared", "remember_agent", "forget_memory",
-            "semantic_search", "drop_source",
+            "semantic_search", "drop_source", "index_update",
             "read_file", "write_file", "delete_file", "list_directory",
             "web_search", "web_fetch",
             "reyn_repo_list", "reyn_repo_read",

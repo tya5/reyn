@@ -602,19 +602,7 @@
           "chunks": {
             "description": "Chunks to reconcile into the index.",
             "items": {
-              "properties": {
-                "metadata": {
-                  "description": "content_hash (required, change-detection key), source_path (required, reconciliation-scope key), plus optional source_type / chunk_index / size_tokens / parent_context / extra.",
-                  "type": "object"
-                },
-                "text": {
-                  "type": "string"
-                }
-              },
-              "required": [
-                "text",
-                "metadata"
-              ],
+              "description": "Object with two top-level fields: `text` (string, required) — the chunk's content to embed. `metadata` (object, required) — per-chunk metadata with: `content_hash` (string, required) — change-detection / dedup key; a chunk whose hash is unchanged from the current index is skipped (no re-embed). `source_path` (string, required) — reconciliation-scope key (file path or memory slug); chunks are added/updated/removed per source_path, one path at a time. `source_type` (string, optional, default \"generic\") — a caller-defined label for the content's origin kind (not interpreted by the OS); read back via filters at query time. `chunk_index` (integer, optional, default 0) — this chunk's position within its source_path, for ordering. `size_tokens` (integer, optional, default 0) — token count of `text`, for downstream context-budget accounting. `parent_context` (string, optional) — the enclosing heading / class / function name, for retrieval-time context. `extra` (object, optional) — caller-defined fields beyond the above, carried through unchanged.",
               "type": "object"
             },
             "type": "array"

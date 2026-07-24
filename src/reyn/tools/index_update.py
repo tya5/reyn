@@ -37,18 +37,24 @@ _INDEX_UPDATE_PARAMETERS: dict[str, Any] = {
         },
         "chunks": {
             "type": "array",
+            # #3222: no nested "properties" on `items` — the router-wide
+            # max-object-nesting-depth-1 invariant (tests/test_router_tools.py
+            # ``test_nested_objects_max_depth_1``) disallows a third-level
+            # `properties` key (top-level params.properties is depth 0/1;
+            # an object-typed array item declaring its OWN `properties` would
+            # push a nested field like `metadata` to depth 3). Each chunk's
+            # required shape (`text` string + `metadata` object — content_hash
+            # + source_path required, rest optional) is documented in this
+            # description instead of a nested JSON-schema, mirroring the
+            # existing `mcp_call_tool`-style flat-object pattern. Handler-side
+            # validation (``_handle_index_update`` / ``IndexUpdateIROp``)
+            # unchanged — depth-1 is a router *exposure* contract, not a
+            # runtime dispatch one.
             "items": {
                 "type": "object",
-                "properties": {
-                    "text": {"type": "string"},
-                    "metadata": {
-                        "type": "object",
-                        "description": _io_descriptions.PARAMS["index_update"][
-                            "chunks.metadata"
-                        ].text,
-                    },
-                },
-                "required": ["text", "metadata"],
+                "description": _io_descriptions.PARAMS["index_update"][
+                    "chunks.item"
+                ].text,
             },
             "description": _io_descriptions.PARAMS["index_update"]["chunks"].text,
         },
