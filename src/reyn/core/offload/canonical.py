@@ -734,6 +734,27 @@ def _render_file_status(op: "str | None", result: dict) -> str:
     raise CanonicalDiscriminatorMiss(f"_render_file_status: unhandled op {op!r}")
 
 
+def load_skill_to_canonical(result: dict) -> CanonicalToolResult:
+    """``load_skill`` op result (FP-0066 P0, #3247) → canonical. The (possibly
+    invocation-time-expanded) skill body ``content`` is the ``text`` body;
+    ``path``/``status``/``truncated``/``total_chars`` are signal meta, mirroring
+    ``file_to_canonical``'s ``read`` branch (the shape this op was extracted
+    out of) — an empty body renders the explicit ``"(empty skill body)"``
+    marker rather than a blank string, same rationale as that branch's
+    ``(empty file)``.
+
+    SUCCESS shape only — FP-0056 v2 piece #1 routes any error (``status``
+    error/not_found, which carries an ``error`` field) through the shared
+    ``error_to_canonical`` seam before this mapper runs."""
+    meta: dict[str, Any] = {}
+    for key in ("path", "status", "truncated", "total_chars"):
+        value = result.get(key)
+        if value is not None:
+            meta[key] = value
+    text = _explicit_empty(result.get("content", "") or "", "(empty skill body)", meta)
+    return CanonicalToolResult(text=text, attachments=[], source_ref=None, meta=meta)
+
+
 def reyn_repo_to_canonical(result: dict) -> CanonicalToolResult:
     """``reyn_repo_*`` handler result (read/list/glob/grep) → canonical. These handlers return a
     kind-less ``{path, content}`` / ``{entries}`` / ``{matches}`` dict — the dogfood incident root: a

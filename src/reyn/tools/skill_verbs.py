@@ -1,8 +1,8 @@
 """Skill verb-object handlers — local install (#2548 PR-C) + source/git install
-(#2548 PR-D) + discovery (#2971).
+(#2548 PR-D) + discovery (#2971) + the dedicated load verb (FP-0066 P0, #3247).
 
 Router-callable skill management verbs under the ``skill_management`` category.
-Exposes two install verbs and one discovery verb:
+Exposes two install verbs, one discovery verb, and one load verb:
 
   - ``skill_management__install_local`` — register a local skill directory
     (one containing a ``SKILL.md`` file) into the project
@@ -19,20 +19,32 @@ Exposes two install verbs and one discovery verb:
     no permission gate: it reveals only the operator's own declarations, and
     strictly less than the L1 Skills menu already puts in the system prompt.
 
-**Why there is a list verb but no run verb (#2971).** Until #2971 the
-``skill_management`` category was install-only, and the L1 Skills menu was the
-only surface that named a skill — so a skill the menu excluded could not be
-reached by the model, the operator, or anything else. Registering it did
-nothing. The fix needs exactly one new hop, DISCOVERY, because the invocation
-path already exists and is complete: the menu has always shipped each skill's
-``path``, and "invoking" a skill means reading that file with the ordinary
-``file`` read op and following its instructions — a skill body is model
-instructions, not code to execute. For builtin skills, whose paths sit outside
-the project root, ``reyn.builtin.docs.read_builtin_body_bytes`` (#2913/#2914)
-already short-circuits the out-of-project read gate for exactly the
-``skills`` / ``pipelines`` body dirs. A ``run_skill`` verb would therefore be a
-second execution surface duplicating that chain, with its own permission story
-to get wrong. Discovery was the only missing link, so it is the only one added.
+  - ``skill_management__load`` — load a skill's SKILL.md body (invocation-time
+    ``${REYN_*}``/``${CLAUDE_*}``/``${env:VAR}`` expansion applied for a
+    registered skill). Delegates to the dedicated ``load_skill`` op
+    (``reyn.core.op_runtime.load_skill``, FP-0066 P0/#3247) — extracted OUT
+    of the ordinary file read tool, which used to special-case this.
+
+**Why there is a list + load verb but no run verb (#2971, extended by
+#3247).** Until #2971 the ``skill_management`` category was install-only,
+and the L1 Skills menu was the only surface that named a skill — so a skill
+the menu excluded could not be reached by the model, the operator, or
+anything else. Registering it did nothing. #2971's fix needed exactly one
+new hop, DISCOVERY, because the invocation path already existed: the menu
+has always shipped each skill's ``path``. #2971 itself then folded
+"invoking" INTO the ordinary ``file`` read op (a filename special-case);
+FP-0066 P0 (#3247) reverses that fold, giving invocation ITS OWN verb
+(``load_skill``) instead — the model still just loads the body and follows
+its instructions (a skill body is model instructions, not code to execute),
+it is simply no longer piggybacked on a general-purpose file handler. For
+builtin skills, whose paths sit outside the project root,
+``reyn.builtin.docs.read_builtin_body_bytes`` (#2913/#2914) already
+short-circuits the out-of-project read gate for exactly the
+``skills`` / ``pipelines`` body dirs — reused by ``load_skill`` the same
+way ``file.read`` reuses it for other builtin/plugin body content. A
+``run_skill`` verb would still be a second, unneeded execution surface (a
+skill body is never code); the dedicated LOAD hop is not that — it moves
+WHERE the existing load-time expansion pass lives, not what it does.
 
 NOTE: there is NO ``skill__`` category and there never has been. This note used
 to claim otherwise ("the RESOURCE category prefix for per-skill dynamic
@@ -254,9 +266,56 @@ async def _handle_skill_list(
     return {"skills": skills}
 
 
+# ── load_skill (FP-0066 P0, #3247) ───────────────────────────────────────────
+#
+# The dedicated skill-activation verb: extracted OUT of the ordinary file
+# read tool, which used to special-case a SKILL.md-named path
+# (`is_skill_body_path` in `reyn.core.op_runtime.file`) into invocation-time
+# `${REYN_*}`/`${CLAUDE_*}`/`${env:VAR}` expansion. That drifted from ADR
+# 0064 §3.5 (#3070)'s original call for a dedicated verb; #2971 chose "no
+# dedicated verb" instead, and this reverses that choice (owner-ratified,
+# FP-0066 proposal §6/§11 P0). "Invoking" a skill is still just "loading its
+# body and following it" — there is NO separate run tool — but the load hop
+# is now its own op (`load_skill`), not piggybacked on `file.read`.
+
+_LOAD_SKILL_DESCRIPTION = _skill_descriptions.load_skill.text
+
+_LOAD_SKILL_PARAMETERS: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "path": {
+            "type": "string",
+            "description": (
+                "The skill's SKILL.md path, as given by the Skills menu or "
+                "skill_list."
+            ),
+        },
+    },
+    "required": ["path"],
+}
+
+
+async def _handle_load_skill(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
+    """Adapter for load_skill — delegates to op_runtime's dedicated
+    ``load_skill`` op handler (FP-0066 P0, #3247).
+
+    Builds ``LoadSkillIROp(path=...)`` and routes via ``execute_op`` — the
+    SAME dispatch shape ``tools/file.py``'s adapters use for the fine file
+    ops, just onto the new op kind instead of the coarse ``FileIROp``.
+    """
+    from reyn.core.op_runtime import execute_op
+    from reyn.schemas.models import LoadSkillIROp
+    from reyn.tools.op_context_bridge import build_legacy_op_context
+
+    op = LoadSkillIROp(kind="load_skill", path=args["path"])
+    legacy_ctx = build_legacy_op_context(ctx)
+    return await execute_op(op, legacy_ctx)
+
+
 # ── ToolDefinitions ───────────────────────────────────────────────────────────
 
 from reyn.core.offload.canonical import (  # noqa: E402
+    load_skill_to_canonical,
     skill_install_verb_to_canonical,
     skill_list_to_canonical,
 )
@@ -307,4 +366,25 @@ SKILL_LIST = ToolDefinition(
     doc_ref=_SKILL_DOC_REF,
 )
 
-__all__ = ["SKILL_INSTALL_LOCAL", "SKILL_INSTALL_SOURCE", "SKILL_LIST"]
+LOAD_SKILL = ToolDefinition(
+    canonical=load_skill_to_canonical,
+    name="load_skill",
+    router_dispatched=True,
+    description=_LOAD_SKILL_DESCRIPTION,
+    parameters=_LOAD_SKILL_PARAMETERS,
+    gates=ToolGates(router="allow", phase="allow"),
+    handler=_handle_load_skill,
+    category="io",
+    purity="read_only",
+    # FP-0066 P0 (#3254, architect ruling): a skill body becomes agent
+    # INSTRUCTIONS on load (load = fetch+activate), not untrusted data to
+    # fence. Refactor-neutrality: the pre-P0 path read skill bodies via
+    # read_file, which is NOT flagged external — this extraction must not
+    # smuggle a trust-semantics flip. Differs from skill_list (flagged
+    # external above) by ROLE — discovery/listing of re-surfaced metadata
+    # vs activation.
+    returns_external_content=False,
+    doc_ref=_SKILL_DOC_REF,
+)
+
+__all__ = ["SKILL_INSTALL_LOCAL", "SKILL_INSTALL_SOURCE", "SKILL_LIST", "LOAD_SKILL"]

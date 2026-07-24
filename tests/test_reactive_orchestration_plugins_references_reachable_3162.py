@@ -14,19 +14,21 @@ reach the skill's own `references/` directory).
 
 That convention only pays off if the FULL chain actually closes for a
 model: (1) `skill_list` hands the model this skill's absolute SKILL.md
-`path`; (2) reading SKILL.md through the real `file` read op runs it
-through `reyn.plugins.skill_load.load_skill_body`
-(`is_skill_body_path` routes any read whose basename is `SKILL.md`,
-`alias_claude=True` unconditionally so the `${CLAUDE_*}` alias table in
+`path`; (2) loading SKILL.md through the real `load_skill` op
+(FP-0066 P0/#3247 — prior to that extraction this ran through the ordinary
+`file` read op's `is_skill_body_path` special-case; the mechanism moved,
+not the behavior) runs it through `reyn.plugins.skill_load.load_skill_body`
+(`alias_claude=True` unconditionally so the `${CLAUDE_*}` alias table in
 `reyn.plugins.tokens.CLAUDE_ALIAS_MAP` applies), which expands
 `${CLAUDE_SKILL_DIR}` to this skill's own absolute directory; (3) the model
 resolves the now-absolute link and issues an ordinary `file` read op
 against it. This test exercises that FULL chain against the REAL
-`reyn.core.op_runtime.file.handle` op for BOTH reads (SKILL.md's own body,
-then each reference) -- not `read_builtin_body_bytes` in isolation and not
-a hand-rolled token substitution -- proving the token actually expands at
-the same seam a model's read would go through, and that the resulting
-absolute path is readable.
+`reyn.core.op_runtime.load_skill.handle` op for SKILL.md's own body, and
+the REAL `reyn.core.op_runtime.file.handle` op for each reference -- not
+`read_builtin_body_bytes` in isolation and not a hand-rolled token
+substitution -- proving the token actually expands at the same seam a
+model's load would go through, and that the resulting absolute path is
+readable.
 
 No mocks: real `BUILTIN_SKILLS` registry entry, real file bytes, real
 `PermissionResolver` + `OpContext` + `handle()` dispatch (the same harness
@@ -42,8 +44,9 @@ from reyn.builtin.registry import BUILTIN_SKILLS
 from reyn.core.events.events import EventLog
 from reyn.core.op_runtime.context import OpContext
 from reyn.core.op_runtime.file import handle
+from reyn.core.op_runtime.load_skill import handle as load_skill_handle
 from reyn.data.workspace.workspace import Workspace
-from reyn.schemas.models import FileIROp
+from reyn.schemas.models import FileIROp, LoadSkillIROp
 from reyn.security.permissions.permissions import PermissionDecl, PermissionResolver
 
 _SKILL_PATH = Path(BUILTIN_SKILLS["reactive_orchestration_plugins"]["path"])
@@ -86,11 +89,11 @@ def _make_ctx() -> OpContext:
 
 
 def _read_skill_md_via_real_op(ctx: OpContext) -> str:
-    """Reads SKILL.md through the REAL `file` read op -- the same op a
-    model's read would go through, including the skill-load token-expansion
-    pass (`is_skill_body_path` routes on basename == "SKILL.md")."""
-    op = FileIROp(kind="file", op="read", path=str(_SKILL_PATH))
-    result = _run(handle(op, ctx))
+    """Loads SKILL.md through the REAL `load_skill` op -- the same op a
+    model's load would go through (FP-0066 P0/#3247), including the
+    skill-load token-expansion pass."""
+    op = LoadSkillIROp(kind="load_skill", path=str(_SKILL_PATH))
+    result = _run(load_skill_handle(op, ctx))
     assert result.get("status") == "ok", result
     return result["content"]
 
@@ -188,10 +191,11 @@ def test_every_linked_reference_is_readable_through_the_real_file_read_op() -> N
 
 
 def test_reference_files_do_not_themselves_contain_unexpanded_tokens() -> None:
-    """Tier 2: OS invariant -- token expansion is documented (and wired,
-    `is_skill_body_path`) to run ONLY for the basename `SKILL.md`; a
-    reference file under references/ must not rely on it, since it would be
-    handed to the model unexpanded (owner ruling)."""
+    """Tier 2: OS invariant -- token expansion is documented (and wired, via
+    the dedicated `load_skill` op) to run ONLY for a skill's own `SKILL.md`;
+    a reference file under references/ must not rely on it, since it would
+    be handed to the model unexpanded (owner ruling) -- it is read via the
+    ordinary `file` read op, which never expands anything."""
     for ref_path in _REFERENCES_DIR.glob("*.md"):
         text = ref_path.read_text(encoding="utf-8")
         assert "${CLAUDE_SKILL_DIR}" not in text, (

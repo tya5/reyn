@@ -93,16 +93,46 @@ skill_list = ToolDescription(
         "prompt; this tool additionally returns on-demand skills, which are "
         "registered and usable but deliberately not advertised there. Call it "
         "when a task looks like it might have a matching skill and the menu "
-        "does not show one. To use a skill from the result, read its 'path' "
-        "with the file read tool and follow the instructions in the file — "
-        "there is no separate run tool. Reading a skill's file is what "
+        "does not show one. To use a skill from the result, call load_skill "
+        "with its 'path' and follow the instructions in the returned body — "
+        "there is no separate run tool. Loading a skill's file is what "
         "invokes it."
     ),
     ja=(
         "このセッションで参照可能な skill の一覧を返す（name / description / "
         "path）。システムプロンプトの '## Skills' に載らない on_demand の "
-        "skill もここには現れる。使うときは path を file read ツールで読み、"
-        "その内容に従う（専用の実行ツールは無い）。"
+        "skill もここには現れる。使うときは path を load_skill に渡し、"
+        "返ってきた本文に従う（専用の実行ツールは無い）。"
+    ),
+)
+
+# FP-0066 P0 (#3247): the dedicated skill-activation verb — extracted OUT of
+# the ordinary file read tool's former SKILL.md special-case. Loading a
+# skill's body (this call) IS the invocation; there is still no separate
+# "run" verb (#2971's rationale holds — a skill body is model instructions,
+# not code to execute — it just now has its own load-time hop instead of
+# piggybacking on file.read).
+load_skill = ToolDescription(
+    tool_name="load_skill",
+    surfaced="router + phase (gates.router=allow, gates.phase=allow)",
+    purpose=(
+        "Load a skill's SKILL.md body (invocation-time ${REYN_*}/${CLAUDE_*}/"
+        "${env:VAR} expansion applied for a registered skill) — the "
+        "dedicated activation verb (FP-0066 P0, #3247), replacing the "
+        "former file-read special-case."
+    ),
+    text=(
+        "Load a skill's instructions by its 'path' (from the Skills menu or "
+        "skill_list). Returns the skill's body as text — read it and follow "
+        "its instructions for the current task. This is the ONLY way to "
+        "invoke a skill; there is no separate run tool, and the ordinary "
+        "file read tool no longer expands a skill body."
+    ),
+    ja=(
+        "path（Skills メニューまたは skill_list から得たもの）を指定して "
+        "skill の本文をロードする。返ってきた本文を読み、その指示に従う。"
+        "skill を起動する唯一の方法であり、専用の実行ツールは無い。通常の "
+        "file read ツールはもう skill 本文を展開しない。"
     ),
 )
 
@@ -110,6 +140,7 @@ ALL: dict[str, ToolDescription] = {
     "skill_install_local": skill_install_local,
     "skill_install_source": skill_install_source,
     "skill_list": skill_list,
+    "load_skill": load_skill,
 }
 
 

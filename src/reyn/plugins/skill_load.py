@@ -1,18 +1,25 @@
 """Skill-load: invocation-time ``${REYN_*}``/``${CLAUDE_*}`` expansion for a
 SKILL.md body (ADR 0064 §3.5, plugin-model P4, #3070).
 
-**The seam.** Before this module, a skill body was read raw by the ordinary
-``file`` read op (``reyn.core.op_runtime.file.handle``) — zero substitution,
-the only capability with no invocation-time expansion pass (ADR §3.5). This
-module supplies the missing pass; ``file.handle`` calls
-:func:`load_skill_body` for exactly one file: the resolved read target whose
-basename is the standard ``SKILL.md`` filename (:data:`SKILL_BODY_FILENAME`,
-the agentskills.io convention ADR §3.6 honours as-is). Every other read
-(a regular file, an ``L3`` bundled asset a skill's instructions reference)
-is untouched — this is NOT a new execution surface (#2971's "no run_skill
-verb" rationale still holds: reading is still the invocation, just no longer
-byte-identical to what's on disk); it is the SAME read op, doing one more
-thing to the content it already decoded.
+**The seam.** Originally (#2971) a skill body was read raw by the ordinary
+``file`` read op, special-cased inline (``is_skill_body_path`` routed
+exactly the ``SKILL.md`` filename through this module's
+:func:`load_skill_body`) — the only capability with no invocation-time
+expansion pass of its own (ADR §3.5's original point). **FP-0066 P0
+(#3247)** extracted that responsibility OUT of the general-purpose file
+handler into the dedicated ``load_skill`` op
+(``reyn.core.op_runtime.load_skill``), which now owns the WHOLE call —
+provenance classification, permission gate, the #3196 resolve-once, and
+this module's expansion primitives. ``file.read`` is a plain read again for
+every path, including a ``SKILL.md``-named one. The operator-explicit
+``:name`` invocation path (``reyn.interfaces.skill_invoke.
+resolve_skill_body``) has its own separate, lightweight call site over
+these SAME primitives — it never went through ``file.read`` either, before
+or after this extraction. Every other read (a regular file, an ``L3``
+bundled asset a skill's instructions reference) is untouched by any of
+this — this is still NOT a new execution surface (#2971's "no run_skill
+verb" rationale still holds: loading is still the invocation, just via its
+own dedicated op now instead of piggybacking on ``file.read``).
 
 **Reuses P1's token layer verbatim** (``reyn.plugins.tokens`` —
 :func:`~reyn.plugins.tokens.expand_reyn_tokens` /
@@ -170,18 +177,20 @@ def _expand_env_tokens(
 def is_skill_body_path(path: "str | Path") -> bool:
     """True when *path*'s filename is the standard SKILL.md body filename.
 
-    #3196: this is NECESSARY but NOT SUFFICIENT for routing a read through
+    #3196: this is NECESSARY but NOT SUFFICIENT for routing a load through
     skill-load expansion — filename alone used to be the whole gate (the
     vulnerability), letting an attacker-planted, unregistered ``SKILL.md``
     anywhere under the project root have its ``${env:VAR}`` tokens expanded
-    to real secret values on an ORDINARY read. ``file.handle`` now ALSO
-    requires the resolved path to fall into a registered provenance class
-    (builtin / registered-plugin-body / config-registered skill entry —
-    see ``file._skill_body_provenance``) before calling
+    to real secret values on an ORDINARY read. The ``load_skill`` op
+    (``reyn.core.op_runtime.load_skill``, FP-0066 P0/#3247) ALSO requires
+    the resolved path to fall into a registered provenance class (builtin /
+    registered-plugin-body / config-registered skill entry) before calling
     :func:`load_skill_body`. This predicate stays filename-only because it
     still answers its own narrow question correctly (is this file shaped
     like a skill body); it is simply no longer used alone as the trust
-    gate.
+    gate. (Prior to #3247 this same check + gate lived inline in
+    ``reyn.core.op_runtime.file``; it is unchanged in shape, just relocated
+    to its own dedicated op.)
     """
     return Path(path).name == SKILL_BODY_FILENAME
 

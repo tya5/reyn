@@ -12,15 +12,20 @@ namespace (same skill name declared in two config tiers) still exist —
 those are handled LOUDLY (see :data:`SKILL_STACK_MAX` callers /
 ``Session._skill_collisions``), never silently.
 
-**Reuses the existing file-read-skill mechanism — no new execution surface.**
-#2971 established that "invoking" a skill is reading its ``SKILL.md`` with
-the ordinary file-read op and letting the model follow the body; there is
-NO ``skill__<name>`` dispatch and this module does not add one.
-:func:`resolve_skill_body` reads the SAME way the ordinary ``file`` read op's
-skill-load pass does (``reyn.plugins.skill_load.load_skill_body``,
-``reyn.builtin.docs.read_builtin_body_bytes`` for builtin-provenance paths) —
-this module only supplies the trailing-args substitution the ordinary read
-op has no reason to know about.
+**Reuses the shared skill-load primitives directly — no new execution
+surface, and never routed through ``file.read``.** #2971 established that
+"invoking" a skill is loading its ``SKILL.md`` and letting the model follow
+the body; there is NO ``skill__<name>`` dispatch and this module does not
+add one. :func:`resolve_skill_body` calls the SAME primitives the dedicated
+``load_skill`` op (``reyn.core.op_runtime.load_skill``, FP-0066 P0/#3247)
+wraps — ``reyn.plugins.skill_load.load_skill_body``,
+``reyn.builtin.docs.read_builtin_body_bytes`` /
+``reyn.plugins.body_read.read_plugin_body_bytes`` for builtin/plugin
+provenance — directly, as its own lightweight call site (no OpContext /
+permission-op round-trip: an operator typing ``:name`` at their own prompt
+grants no capability beyond what they already declared in
+``skills.entries``). This module only supplies the trailing-args
+substitution the shared primitives have no reason to know about.
 
 **No new permission gate on WHICH file is read.** `:skillname` names come
 from the operator's OWN registered ``skills.entries`` — a set the operator
@@ -254,14 +259,16 @@ def resolve_skill_body(
 ) -> str:
     """Read + skill-load-expand a SKILL.md body.
 
-    Reuses the SAME primitives the ordinary ``file`` read op's skill-load
-    pass uses (``reyn.core.op_runtime.file.handle``, #3070/ADR-0064 §3.5) —
-    ``read_builtin_body_bytes`` for a builtin-provenance path,
+    Reuses the SAME primitives the dedicated ``load_skill`` op wraps
+    (``reyn.core.op_runtime.load_skill``, FP-0066 P0/#3247, #3070/ADR-0064
+    §3.5) — ``read_builtin_body_bytes`` for a builtin-provenance path,
     ``read_plugin_body_bytes`` for a registered-plugin-provenance path, a
     plain filesystem read otherwise, then ``load_skill_body`` for
     ``${REYN_*}``/``${CLAUDE_*}``/``${env:...}`` token expansion. This is
-    deliberately NOT a second read mechanism — #2971's "reading is the
-    invocation" holds for `:` too.
+    its own lightweight call site over those primitives, never routed
+    through ``file.read`` OR through the ``load_skill`` op's own dispatch
+    (no OpContext needed here) — #2971's "loading is the invocation" holds
+    for `:` too.
 
     ``permission_decl`` (#3198) is forwarded to ``load_skill_body`` verbatim
     — the SAME allowlist gate ``file.handle``'s read path applies (this is

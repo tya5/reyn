@@ -97,6 +97,18 @@ _NOT_EXTERNAL = {
     # classification rationale as mcp_install_local / topology_create.
     "subscribe_mcp_resource", "unsubscribe_mcp_resource",
     "skill_install_source",
+    # FP-0066 P0 (#3254): load_skill returns a skill body that becomes agent
+    # INSTRUCTIONS (load = fetch+activate), not untrusted data to fence.
+    # Refactor-neutrality (architect ruling): the pre-P0 path read skill
+    # bodies via read_file, which is _NOT_EXTERNAL (above) — P0 is a
+    # responsibility-extraction refactor and must not smuggle a trust-semantics
+    # flip (not-fenced -> fenced). Fencing would mark the body "as data"
+    # (inter-agent taint), degrading activation: the body is meant to work AS
+    # instructions. Differs from skill_list (_EXTERNAL) by ROLE — discovery/
+    # listing of re-surfaced metadata vs activation. (#1909: external_source
+    # taint-narrowing does not fire for a _NOT_EXTERNAL load; a load_skill-
+    # specific opt-in taint is a separate arc, not this binary gate.)
+    "load_skill",
     # pipeline_install_local writes .reyn/config/pipelines.yaml — returns an
     # install status dict (path / name / status), not fetched external content.
     # Same classification rationale as skill_install_local / mcp_install_local.

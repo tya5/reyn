@@ -121,7 +121,12 @@ def get_default_registry() -> ToolRegistry:
     )
     from reyn.tools.semantic_search import SEMANTIC_SEARCH
     from reyn.tools.session_spawn import SESSION_SPAWN
-    from reyn.tools.skill_verbs import SKILL_INSTALL_LOCAL, SKILL_INSTALL_SOURCE, SKILL_LIST
+    from reyn.tools.skill_verbs import (
+        LOAD_SKILL,
+        SKILL_INSTALL_LOCAL,
+        SKILL_INSTALL_SOURCE,
+        SKILL_LIST,
+    )
     from reyn.tools.topology_create import TOPOLOGY_CREATE
 
     # FP-0034 PR-3a: universal catalog wrappers (registered in registry;
@@ -266,6 +271,9 @@ def get_default_registry() -> ToolRegistry:
     # reachable at all (read-only; returns name/description/path for every
     # registered skill whose visibility is not "hidden").
     registry.register(SKILL_LIST)
+    # FP-0066 P0 (#3247): dedicated skill-activation verb — replaces the
+    # former file-read SKILL.md special-case.
+    registry.register(LOAD_SKILL)
     # pipeline install verbs (local DSL file registration + git/GitHub URL
     # source fetch) — mirrors SKILL_INSTALL_LOCAL / SKILL_INSTALL_SOURCE.
     registry.register(PIPELINE_INSTALL_LOCAL)

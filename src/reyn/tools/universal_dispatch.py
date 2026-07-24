@@ -334,6 +334,11 @@ _OPERATION_RULES: Final[dict[str, tuple[str, Callable[[str, Mapping[str, Any]], 
     # #2971: the discovery verb. Without it a skill outside the L1 menu had no
     # surface naming it, so it was unreachable rather than merely unadvertised.
     "skill_management__list":           ("skill_list",           _passthrough_args),
+    # FP-0066 P0 (#3247): the dedicated skill-activation verb — "load" is the
+    # formal activation-verb class in the #3223 naming-convention lexicon
+    # (distinct from "read" = content-fetch), ratified for skill_management
+    # specifically. Replaces the former file-read SKILL.md special-case.
+    "skill_management__load":           ("load_skill",           _passthrough_args),
 
     # pipeline_management category: pipeline directory/DSL install verbs
     # (mirrors skill_management__install_local / __install_source above).
