@@ -84,7 +84,10 @@ def _internal_dispatch_target_names() -> "set[str]":
     always the #3090/#3092 drift shape — the pre-refactor "friendly" host
     function name instead of the qualified catalog name — never a false
     positive on an unrelated identifier, because these strings are reserved
-    to routing-internal use by the routing table itself."""
+    to routing-internal use by the routing table itself (#3141: this does
+    NOT exclude fenced code blocks, so a dual-use name such as
+    ``semantic_search`` shown in a legitimate Python-step example could
+    still trip this check)."""
     from reyn.tools.universal_dispatch import _OPERATION_RULES, _RESOURCE_RULES
 
     return (
