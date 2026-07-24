@@ -79,9 +79,9 @@ knowledge : search_knowledge → (kind-specific load verb)(id)                  
 
 ## §6 skill-load: a dedicated verb (strip file.read)
 
-**Corrects a design-vs-impl drift.** ADR 0064 §3.5 (#3070) called for a **skill-load verb**; #2971 instead chose "reading IS the invocation, no dedicated verb" and routed skill-load *inside* `file.read` via a special path (`is_skill_body_path`). Consequences (measured): **17 skill-specific hits leaked into `file.py`** — provenance classification, `${env}`-expansion trust-gating, and the **#3196 symlink-swap security surface that exists only because the provenance-check and the read were conflated**. This is the same "foreign responsibility riding an op" anti-pattern the owner already fixed for `plugin_install`/venv (§3.11b / #3209).
+**Corrects a design-vs-impl drift.** ADR 0064 §3.5 (#3070) called for a **skill-load verb**; #2971 instead chose "reading IS the invocation, no dedicated verb" and routed skill-load *inside* `file.read` via a special path (`is_skill_body_path`). Consequences: **skill-specific logic is scattered through `file.py`** (the `is_skill_body_path` / `load_skill_body` / `skill_body` identifiers recur a dozen-plus times — exact count is grep-method-dependent, so the anchor is the *presence*, not a number) — provenance classification, `${env}`-expansion trust-gating, and the **#3196 symlink-swap security surface that exists only because the provenance-check and the read were conflated**. This is the same "foreign responsibility riding an op" anti-pattern the owner already fixed for `plugin_install`/venv (§3.11b / #3209).
 
-**Decision (ratified here to prevent re-drift):** extract a first-class **`load_skill`** verb owning provenance / `${env}` expansion / permission / the symlink-swap-safe resolve; `file.read` returns to plain file reading (17 special-cases + the import removed). This is **P0** — independent, immediately valuable, and the prerequisite for skill as a first-class knowledge-group entity.
+**Decision (ratified here to prevent re-drift):** extract a first-class **`load_skill`** verb owning provenance / `${env}` expansion / permission / the symlink-swap-safe resolve; `file.read` returns to plain file reading (the scattered special-cases + the skill-load import removed). This is **P0** — independent, immediately valuable, and the prerequisite for skill as a first-class knowledge-group entity.
 
 ---
 
@@ -145,7 +145,7 @@ in-core store = **OS-only**; no compat shim, no migration (clean end-state). **�
 
 ## §11 Phasing (this arc = one umbrella issue)
 
-- **P0** — extract `load_skill` verb; strip 17 skill special-cases from `file.py` (independent, immediate; shrinks #3196 surface).
+- **P0** — extract `load_skill` verb; strip the scattered skill special-cases from `file.py` (independent, immediate; shrinks #3196 surface).
 - **P1** — retire layers 1+2 (reverse #3240) + config clean-break (introduce `embedding.enabled`; fold-remove `mcp_search_threshold` #3218). LLMReplay fixtures re-recorded (RED-pairing). Doc rewrites: `docs/concepts/data-retrieval/rag.md`, feature-map, reyn-dir-layout.
 - **P2** — per-kind source split + sync-in-op ingest + **IndexCoordinator** + audit-event phase emit.
 - **P3** — `search_knowledge` + knowledge ingest (skill/memory/repo) — depends on P0's `load_skill`.
