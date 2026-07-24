@@ -56,6 +56,7 @@ from reyn.data.index.backend import (
     cache_dir_for_source,
     sources_manifest_path,
 )
+from reyn.data.index.coordinator import assert_vector_count_match
 from reyn.data.index.source_manifest import SourceEntry, get_source_manifest
 from reyn.schemas.models import EmbedIROp, IndexUpdateIROp
 
@@ -207,11 +208,13 @@ async def handle(op: IndexUpdateIROp, ctx: OpContext) -> dict:
         if embed_result.get("status") == "error":
             return embed_result
         vectors = embed_result.get("vectors", [])
-        if len(vectors) != len(to_embed):
-            raise RuntimeError(
-                f"embed op returned {len(vectors)} vectors for {len(to_embed)} "
-                f"chunks; refusing partial index_update write"
-            )
+        # FP-0066 P2a (#3247): the count-match guard is the ONE canonical
+        # implementation shared with `ActionEmbeddingIndex.build()` (which
+        # used to duplicate this verbatim) — see
+        # ``reyn.data.index.coordinator.assert_vector_count_match``.
+        assert_vector_count_match(
+            len(vectors), len(to_embed), item_noun="chunks", label="index_update write",
+        )
         records: list[ChunkRecord] = []
         resolved_model = embed_result.get("model", model)
         for chunk, vector in zip(to_embed, vectors):

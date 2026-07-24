@@ -13,7 +13,7 @@ import time
 from contextlib import asynccontextmanager
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any, AsyncIterator
+from typing import Any, AsyncIterator, Literal
 
 import yaml
 
@@ -22,6 +22,18 @@ from reyn.data.index.backends.sqlite import _within_paths
 from reyn.data.index.build_lock import pid_alive as _pid_alive
 
 # ── Data model ────────────────────────────────────────────────────────────────
+
+# FP-0066 P2a (#3247 firm §2): the IndexCoordinator dirty-state contract.
+# ``clean`` = built and current; ``dirty`` = a provider/build failure or an
+# explicit invalidation left this source needing a (re)build; ``building`` =
+# a build is in flight (this process or another, per the cross-process
+# build_lock); ``error`` = the last build attempt failed and ``last_error``
+# carries why. ``dirty``/``error`` both mean "needs a build" — kept distinct
+# so an operator/log can tell "never tried since the mark" from "tried and
+# failed" at a glance; ``IndexCoordinator.search_await`` treats both the same
+# (heal by rebuilding).
+SourceState = Literal["clean", "dirty", "building", "error"]
+_VALID_SOURCE_STATES: frozenset[str] = frozenset({"clean", "dirty", "building", "error"})
 
 
 @dataclass
@@ -35,6 +47,13 @@ class SourceEntry:
     last_indexed: str | None = None  # ISO 8601 UTC
     chunk_count: int = 0
     embedding_model: str | None = None
+    # FP-0066 P2a (#3247 firm §2): dirty-state, persisted here (sources.yaml
+    # is the single SSoT — workspace-SSoT band; no second state store). This
+    # is the crash-recovery-of-record for the IndexCoordinator: durable,
+    # WAL-independent (see coordinator.py module docstring / the P2a
+    # truncate-falsify test).
+    state: SourceState = "clean"
+    last_error: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Serialise to the on-disk YAML structure (name is the key, not a field)."""
@@ -43,11 +62,14 @@ class SourceEntry:
             "path": self.path,
             "backend": self.backend,
             "chunk_count": self.chunk_count,
+            "state": self.state,
         }
         if self.last_indexed is not None:
             d["last_indexed"] = self.last_indexed
         if self.embedding_model is not None:
             d["embedding_model"] = self.embedding_model
+        if self.last_error is not None:
+            d["last_error"] = self.last_error
         return d
 
     @classmethod
@@ -59,12 +81,24 @@ class SourceEntry:
         ``chunk_count: null`` or a non-numeric value would otherwise crash the
         whole manifest reload (``int(None)`` → TypeError, ``int("x")`` → ValueError);
         ``_coerce_int`` closes that gap. Mirrors the #1906 TokenUsage fix.
+
+        ``state``: defaults to (and is coerced to, if garbage/missing)
+        ``"clean"`` — a pre-P2a ``sources.yaml`` (or an operator-edited one
+        with a typo'd value) has no usable dirty signal, and "assume clean"
+        is the safe read (a truly dirty source gets re-marked on its next
+        provider failure; it does not silently masquerade as needing an
+        unwanted rebuild).
         """
         def _coerce_int(v: object) -> int:
             try:
                 return int(v)  # type: ignore[arg-type]
             except (TypeError, ValueError):
                 return 0
+
+        def _coerce_state(v: object) -> SourceState:
+            if isinstance(v, str) and v in _VALID_SOURCE_STATES:
+                return v  # type: ignore[return-value]
+            return "clean"
 
         return cls(
             name=name,
@@ -74,6 +108,8 @@ class SourceEntry:
             last_indexed=data.get("last_indexed"),
             chunk_count=_coerce_int(data.get("chunk_count", 0)),
             embedding_model=data.get("embedding_model"),
+            state=_coerce_state(data.get("state")),
+            last_error=data.get("last_error"),
         )
 
 
