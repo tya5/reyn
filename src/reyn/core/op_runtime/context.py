@@ -8,6 +8,7 @@ and reuse it for the whole phase or act loop.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -312,6 +313,42 @@ class OpContext:
     # via their own package/registry-backed readers, and everything else
     # correctly fails closed (raw pass-through, no expansion).
     available_skills: "Sequence[object] | None" = None
+
+
+def resolve_path_for_gate(ctx: "OpContext", path_str: str) -> str:
+    """Resolve an op path against the workspace ``base_dir`` so the permission
+    gate / provenance checks / the actual read all judge the SAME absolute
+    target (shared by ``op_runtime/file.py`` and ``op_runtime/load_skill.py``
+    — #187 B3 originally, generalized here at FP-0066 P0 / #3247 so
+    ``load_skill`` reuses the SAME resolve-once helper file.py's read path
+    already relied on, instead of a second, independently-drifting copy).
+
+    #187 B3: a file-op handler previously passed the raw (often relative)
+    ``op.path`` to ``require_file_*``; the gate's SandboxLayer then resolved
+    it with ``Path(path).resolve()`` against the HOST process cwd — not the
+    workspace base_dir. Under a container backend (base_dir=/testbed) a
+    relative repo write like ``astropy/io/ascii/html.py`` was therefore
+    checked against the host cwd, fell outside the sandbox ``write_paths``
+    cap, and was DENIED even though ``Workspace.write_file`` resolves that
+    same path against /testbed and would land it there. Resolving here closes
+    the base mismatch. Behaviour-preserving for the host case (base_dir ==
+    cwd -> the identical absolute path).
+
+    **#3196 load-bearing invariant for any caller judging trust from the
+    result**: call this EXACTLY ONCE per read and reuse the single returned
+    string for every later decision (permission gate, provenance
+    classification, the actual byte read) — never re-resolve independently
+    for "is this trusted" vs "what do I read". A second, separate resolve
+    reopens the symlink-swap TOCTOU window #3196 closed (see
+    ``load_skill.py``'s module docstring for the full scope note).
+    """
+    ws = getattr(ctx, "workspace", None)
+    if ws is None:
+        return path_str
+    p = Path(path_str).expanduser()
+    if p.is_absolute():
+        return str(p.resolve())
+    return str((ws.base_dir / p).resolve())
 
 
 def sandbox_policy_from_ctx(ctx: "OpContext") -> "SandboxPolicy | None":

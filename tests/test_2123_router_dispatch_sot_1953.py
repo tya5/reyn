@@ -56,6 +56,11 @@ _EXPECTED_DISPATCH: "frozenset[str]" = frozenset({
     # (router_dispatched=True) so chat + pipeline can reach the existing op handlers.
     "present", "render_template",
     "list_actions", "search_actions", "describe_action", "invoke_action",
+    # FP-0066 P0 (#3247): load_skill gained a router-dispatched ToolDefinition
+    # (the dedicated skill-activation verb, extracted out of the former
+    # file-read SKILL.md special-case) so chat + pipeline reach the new
+    # load_skill op handler.
+    "load_skill",
 })
 
 _AG = [{"name": "a1", "description": "d"}]

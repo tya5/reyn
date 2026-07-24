@@ -859,6 +859,25 @@
     },
     "type": "function"
   },
+  "load_skill": {
+    "function": {
+      "description": "Load a skill's instructions by its 'path' (from the Skills menu or skill_list). Returns the skill's body as text — read it and follow its instructions for the current task. This is the ONLY way to invoke a skill; there is no separate run tool, and the ordinary file read tool no longer expands a skill body.",
+      "name": "load_skill",
+      "parameters": {
+        "properties": {
+          "path": {
+            "description": "The skill's SKILL.md path, as given by the Skills menu or skill_list.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "path"
+        ],
+        "type": "object"
+      }
+    },
+    "type": "function"
+  },
   "mcp_call_tool": {
     "function": {
       "description": "Call a tool on an installed MCP server — GENERIC FALLBACK. PREFER the per-tool 'mcp__<server>__<tool>' actions (e.g. 'mcp__time__get_current_time') when one is listed: they take the target tool's own parameters directly (authoritative input_schema via describe_action), with no generic envelope. Use this generic verb only as a fallback when no per-tool action is available. Pass the tool identifier in <server>__<tool> form (e.g. 'time__get_current_time') as returned by mcp__list_tools, plus the tool's own args dict.",
@@ -1861,7 +1880,7 @@
   },
   "skill_list": {
     "function": {
-      "description": "List the skills registered in this session that you are allowed to see, with each skill's name, one-line description, and file path. Some skills are already listed in the Skills section of your system prompt; this tool additionally returns on-demand skills, which are registered and usable but deliberately not advertised there. Call it when a task looks like it might have a matching skill and the menu does not show one. To use a skill from the result, read its 'path' with the file read tool and follow the instructions in the file — there is no separate run tool. Reading a skill's file is what invokes it.",
+      "description": "List the skills registered in this session that you are allowed to see, with each skill's name, one-line description, and file path. Some skills are already listed in the Skills section of your system prompt; this tool additionally returns on-demand skills, which are registered and usable but deliberately not advertised there. Call it when a task looks like it might have a matching skill and the menu does not show one. To use a skill from the result, call load_skill with its 'path' and follow the instructions in the returned body — there is no separate run tool. Loading a skill's file is what invokes it.",
       "name": "skill_list",
       "parameters": {
         "properties": {},

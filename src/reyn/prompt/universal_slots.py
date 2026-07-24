@@ -454,11 +454,11 @@ SKILLS_INTRO_LINES = [
         " live in its file. When the"
     ),
     (
-        "current task matches a skill, read its file to load the instructions"
-        " (and any files it references),"
+        "current task matches a skill, call load_skill with its file path to"
+        " load the instructions (and any files it references),"
     ),
     (
-        "then follow them for that task. This list is a menu: read a skill only"
+        "then follow them for that task. This list is a menu: load a skill only"
         " when it is relevant — do not"
     ),
     (

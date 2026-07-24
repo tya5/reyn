@@ -406,6 +406,38 @@ class SkillInstallIROp(BaseModel):
     plugin_id: str | None = None
 
 
+class LoadSkillIROp(BaseModel):
+    """Load a skill's ``SKILL.md`` body — the dedicated skill-activation verb
+    (FP-0066 proposal §6/§11 P0, #3247; corrects the #2971 "no dedicated
+    verb, reading IS the invocation" drift from ADR 0064 §3.5 / #3070's
+    original call for one).
+
+    Owns the FULL skill-load responsibility extracted out of ``file.read``'s
+    former ``is_skill_body_path`` special-case: builtin/registered-plugin/
+    config-registered PROVENANCE classification, permission-gated read,
+    ``${REYN_*}``/``${CLAUDE_*}``/``${env:VAR}`` invocation-time expansion
+    (``reyn.plugins.skill_load.load_skill_body``), and the **#3196
+    symlink-swap-safe resolve-once** (the path is resolved EXACTLY ONCE per
+    call and that single resolved string is reused for the permission gate,
+    the provenance check, AND the actual byte read — never re-derived
+    separately for "is this trusted" vs "what do I read", which is exactly
+    the split #3196 closed).
+
+    ``path`` is the skill's ``SKILL.md`` path as surfaced by ``skill_list`` /
+    the L1 Skills menu — a registered entry's path, config-registered /
+    builtin / plugin-shipped. A path that resolves to none of those
+    provenance classes is still read (never a hard error — mirrors the
+    pre-extraction fallback), but WITHOUT expansion and without a
+    ``skill_body_loaded`` audit-event (fails closed, never open).
+
+    LLM-callable via ToolDefinition ``load_skill`` (qualified name
+    ``skill_management__load`` per the #3223 naming-convention arc —
+    ratified, not provisional).
+    """
+    kind: Literal["load_skill"]
+    path: str
+
+
 class PipelineInstallIROp(BaseModel):
     """Register a pipeline into the project pipelines config (mirrors SkillInstallIROp).
 
@@ -845,6 +877,10 @@ OP_KIND_MODEL_MAP: dict[str, type[BaseModel]] = {
     # #2548 PR-C: local skill directory install — register a SKILL.md dir into
     # skills.entries (parallel to mcp_install writing mcp.servers).
     "skill_install": SkillInstallIROp,
+    # FP-0066 P0 (#3247): dedicated skill-activation verb — extracted OUT of
+    # file.read's former is_skill_body_path special-case (ADR 0064 §3.5,
+    # reversing the #2971 "no dedicated verb" drift).
+    "load_skill": LoadSkillIROp,
     # pipeline install — register a pipeline DSL file into pipelines.entries
     # (mirrors skill_install writing skills.entries; parallel install mechanism).
     "pipeline_install": PipelineInstallIROp,
