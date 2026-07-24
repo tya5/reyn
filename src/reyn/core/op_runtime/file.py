@@ -10,11 +10,11 @@ from typing import Any, Literal
 from reyn.builtin.docs import read_builtin_body_bytes
 from reyn.data.workspace.text_codec import decode_text_or_none, encode_text
 from reyn.plugins.body_read import read_plugin_body_bytes
-from reyn.plugins.skill_load import is_skill_body_path, load_skill_body
 from reyn.schemas.models import FileIROp
 
 from . import register
 from .context import OpContext
+from .context import resolve_path_for_gate as _resolve_for_gate
 from .context import sandbox_policy_from_ctx as _sandbox_policy_from_ctx
 from .path_locks import get_path_lock, locked_paths
 
@@ -177,72 +177,6 @@ def _read_inline_cap(ctx: OpContext) -> int:
     return control_ir_inline_cap(model_str, events=ctx.events, phase=ctx.actor)
 
 
-def _config_registered_skill_body_provenance(ctx: OpContext, resolved_path: str) -> bool:
-    """True when *resolved_path* — an ALREADY `_resolve_for_gate`d absolute
-    path — matches a config-registered skill entry's body path (#3196's
-    third provenance class, alongside builtin/registered-plugin below).
-
-    Enumerated from ``ctx.available_skills`` — the SAME registered-skill
-    snapshot ``:skill`` invocation resolves against (``Session``/
-    ``RouterHostAdapter``'s ``_available_skills``, built by
-    ``reyn.data.skills.registry.build_skill_registry`` from config), never a
-    hand-curated path list of this module's own (a second, drifting
-    enumeration would just relocate the same "curated subset diverges from
-    the registry" bug #3194 fixed elsewhere). Each entry's ``path`` is
-    resolved the SAME way ``reyn.interfaces.skill_invoke.resolve_skill_body``
-    resolves it (project-root-relative or absolute, then ``.resolve()`` —
-    the same symlink/``..``-collapsing call ``_resolve_for_gate`` already
-    made on *resolved_path*), so a symlinked or ``../``-relative entry still
-    compares equal to its real target instead of by literal string.
-    ``ctx.available_skills`` is ``None`` in test/phase-fallback construction
-    (see ``OpContext.available_skills``'s docstring) — this simply returns
-    ``False`` there, failing CLOSED (no expansion), never open.
-    """
-    entries = getattr(ctx, "available_skills", None)
-    if not entries:
-        return False
-    ws = getattr(ctx, "workspace", None)
-    base_dir = ws.base_dir if ws is not None else Path.cwd()
-    for entry in entries:
-        entry_path = getattr(entry, "path", None)
-        if not entry_path:
-            continue
-        p = Path(entry_path).expanduser()
-        if not p.is_absolute():
-            p = base_dir / p
-        try:
-            if str(p.resolve()) == resolved_path:
-                return True
-        except OSError:
-            continue
-    return False
-
-
-def _resolve_for_gate(ctx: OpContext, path_str: str) -> str:
-    """Resolve a file-op path against the workspace base_dir so the permission
-    gate checks the SAME absolute target the op will actually read/write.
-
-    #187 B3: the handler previously passed the raw (often relative) op.path to
-    ``require_file_*``; the gate's SandboxLayer then resolved it with
-    ``Path(path).resolve()`` against the HOST process cwd — not the workspace
-    base_dir. Under a container backend (base_dir=/testbed) a relative repo
-    write like ``astropy/io/ascii/html.py`` was therefore checked against the
-    host cwd, fell outside the sandbox ``write_paths`` cap (``[/testbed]``), and
-    was DENIED — even though ``Workspace.write_file`` resolves that same path
-    against /testbed and would land it there. Resolving here closes the base
-    mismatch (the Workspace already documents that the gate operates on the
-    absolute paths it resolves). Behaviour-preserving for the host case
-    (base_dir == cwd → the identical absolute path).
-    """
-    ws = getattr(ctx, "workspace", None)
-    if ws is None:
-        return path_str
-    p = Path(path_str).expanduser()
-    if p.is_absolute():
-        return str(p.resolve())
-    return str((ws.base_dir / p).resolve())
-
-
 async def handle(op: FileIROp, ctx: OpContext) -> dict:
     # #2913: a builtin skill/pipeline BODY (`reyn.builtin.registry`'s
     # `path` entries) resolves outside `project_root` in EVERY deploy
@@ -261,62 +195,25 @@ async def handle(op: FileIROp, ctx: OpContext) -> dict:
     # asymmetry, gated on install-registration
     # (`plugin_install.is_registered_plugin_root`), never on a hand-placed
     # `.reyn-plugin/` marker alone. See `reyn.plugins.body_read` for the
-    # full rationale.
-    # #3196: the resolved provenance class of a skill body being read —
-    # "builtin" / "plugin" / "config_entry" / None (untrusted). This is now
-    # the trust gate for skill-load `${env:...}` expansion below, REPLACING
-    # the pre-#3196 filename-only check (`is_skill_body_path` alone let ANY
-    # file literally named `SKILL.md` anywhere under the project root have
-    # its `${env:VAR}` tokens expanded to real secret values on an ordinary
-    # read — a confused-deputy: a trivially attacker-controlled filename
-    # gated a trust-sensitive substitution). `read_builtin_body_bytes` /
-    # `read_plugin_body_bytes` already gate on real registration (importlib
-    # package membership / `plugin_install.is_registered_plugin_root`), so a
-    # non-None result here already IS a trusted provenance, not merely a
-    # permission-bypass signal.
-    # co-vet round 2 (#3196): resolve `op.path` EXACTLY ONCE for a `read`,
-    # into `_resolved_read_path`, and reuse THIS SAME string for every later
-    # decision AND for the actual byte read below (the permission gate,
-    # builtin/plugin detection, the skill-load provenance check, and
-    # `load_skill_body`'s `skill_path`). Resolving separately at each site
-    # (as an earlier revision of this PR did for the skill-load check) left
-    # a gap: an attacker could swap a symlinked `SKILL.md`'s target BETWEEN
-    # an earlier resolve (used to decide trust) and a later, independent
-    # resolve (used to actually read bytes) — "trusted" content and "read"
-    # content could then come from two DIFFERENT files.
+    # full rationale. (FP-0066 P0/#3247: SKILL.md's own dedicated
+    # provenance/expansion/#3196-resolve-once handling has moved to the
+    # `load_skill` op — `file.read` no longer special-cases it; this
+    # builtin/plugin BYPASS stays here because it is general to ANY
+    # builtin/plugin-shipped body file, e.g. a pipeline doc or a skill's
+    # non-SKILL.md reference file, not skill-specific.)
     #
-    # Scope, precisely (do not overstate this in either direction):
-    #   CLOSED: the decision/content SPLIT within this process — every
-    #     later `Path(...).resolve()` call on `_resolved_read_path`
-    #     (including `read_builtin_body_bytes`/`read_plugin_body_bytes`/
-    #     `Workspace._resolve_read`'s own internal re-derivation) operates
-    #     on the SAME string this function already dereferenced, so no
-    #     in-process interleaving between the trust decision and the read
-    #     can substitute a different symlink target for one but not the
-    #     other (there is no `await` between them for another task in this
-    #     process to run in).
-    #   NOT CLOSED: `resolve()` and the later `open()`-equivalent read call
-    #     are still SEPARATE syscalls. A concurrent OS-level process (not
-    #     this one) can still swap the underlying file between the two —
-    #     the resolved path string is not a guarantee that the byte read
-    #     later comes from the same inode `resolve()` observed. Closing
-    #     that fully needs an atomic open-by-fd + fstat pattern, which this
-    #     change does not add.
-    #
-    # Do not reintroduce a second `_resolve_for_gate(ctx, op.path)` call
-    # anywhere below this point for the `read` op; thread
-    # `_resolved_read_path` instead.
+    # Resolve `op.path` EXACTLY ONCE for a `read`, into `_resolved_read_path`,
+    # and reuse THIS SAME string for every later decision AND for the actual
+    # byte read below (the permission gate, builtin/plugin detection). This
+    # keeps the read-side half of the #3196 resolve-once discipline for the
+    # (non-skill) builtin/plugin body-bypass check; `load_skill.py` keeps the
+    # skill-specific half.
     _resolved_read_path: "str | None" = _resolve_for_gate(ctx, op.path) if op.op == "read" else None
     _builtin_bytes: "bytes | None" = None
-    _skill_body_provenance: "str | None" = None
     if _resolved_read_path is not None:
         _builtin_bytes = read_builtin_body_bytes(_resolved_read_path)
-        if _builtin_bytes is not None:
-            _skill_body_provenance = "builtin"
-        else:
+        if _builtin_bytes is None:
             _builtin_bytes = read_plugin_body_bytes(_resolved_read_path)
-            if _builtin_bytes is not None:
-                _skill_body_provenance = "plugin"
 
     # Permission check (single point for both frontends). For
     # `regenerate_index` the file actually written is `output_path`, not
@@ -410,10 +307,10 @@ async def handle(op: FileIROp, ctx: OpContext) -> dict:
         if _builtin_bytes is not None:
             raw_bytes, found = _builtin_bytes, True
         else:
-            # Reuse `_resolved_read_path` (the single resolve, TOCTOU note
-            # above) rather than `op.path` — the bytes actually read must
-            # come from the SAME canonical target the skill-load provenance
-            # check below judges, not a fresh, independently-resolved lookup.
+            # Reuse `_resolved_read_path` (the single resolve above) rather
+            # than `op.path` — the bytes actually read must come from the
+            # SAME canonical target the builtin/plugin bypass check judged,
+            # not a fresh, independently-resolved lookup.
             raw_bytes, found = ctx.workspace.read_file_bytes(_resolved_read_path)
         if not found:
             suggestions = _nearby_files(ctx.workspace, op.path)
@@ -440,61 +337,15 @@ async def handle(op: FileIROp, ctx: OpContext) -> dict:
         # byte-identical (no `encoding` field) for the common case.
         _enc_field = {"encoding": _detected_encoding} if _detected_encoding else {}
 
-        # ADR 0064 §3.5 (plugin-model P4, #3070): a SKILL.md body gets ONE
-        # additional pass — invocation-time ${REYN_*}/${CLAUDE_*}/${env:...}
-        # expansion (`reyn.plugins.skill_load`) — before the windowing/
-        # truncation logic below runs on it. This is still the SAME `read`
-        # op (#2971: reading is the invocation, no dedicated verb), it just
-        # no longer hands back byte-identical disk content for exactly this
-        # one filename. `alias_claude=True` unconditionally: SKILL.md is the
-        # one open standard (agentskills.io) multiple hosts share, so every
-        # skill-load IS the ingestion boundary §3.6 scopes the alias to —
-        # there is no narrower "this one is Claude-authored" signal to gate
-        # on, and a stray literal `${CLAUDE_*}` in prose is vanishingly
-        # unlikely. project_dir comes from the live workspace root — the
-        # dynamic param that must be resolved fresh on every load, never
-        # baked (§3.4).
-        if is_skill_body_path(op.path):
-            # #3196: filename match is necessary but NOT sufficient — also
-            # require a resolved (symlink/`..`-collapsed) provenance class.
-            # `_skill_body_provenance` may already be "builtin"/"plugin" from
-            # the bypass check above; otherwise check the config-registered-
-            # entry class (the ONLY class that check hasn't already ruled
-            # on). Judged against `_resolved_read_path` — the SAME single
-            # resolve the bytes above were actually read from (TOCTOU note
-            # at the top of `handle`) — never a fresh, independent resolve.
-            if _skill_body_provenance is None and _config_registered_skill_body_provenance(
-                ctx, _resolved_read_path,
-            ):
-                _skill_body_provenance = "config_entry"
-            if _skill_body_provenance is not None:
-                content, _env_names_expanded, _env_names_denied = load_skill_body(
-                    content,
-                    skill_path=_resolved_read_path,
-                    project_dir=ctx.workspace.base_dir,
-                    alias_claude=True,
-                    # #3198: the allowlist gate on WHAT a body that already
-                    # cleared the #3196 provenance gate may read from
-                    # os.environ. ctx.permission_decl is a required
-                    # (non-Optional) OpContext field — always present.
-                    permission_decl=ctx.permission_decl,
-                )
-                # NEVER include the expanded/denied VALUES here — an
-                # audit-event is not a second secret-storage location (#3196
-                # firm design, extended by #3198 to the denial side too).
-                ctx.events.emit(
-                    "skill_body_loaded",
-                    path=op.path,
-                    provenance=_skill_body_provenance,
-                    env_tokens_expanded=len(_env_names_expanded),
-                    env_names_expanded=list(_env_names_expanded),
-                    env_tokens_denied=len(_env_names_denied),
-                    env_names_denied=list(_env_names_denied),
-                )
-            # else: unregistered SKILL.md (#3196) — an ordinary, unremarkable
-            # read. `content` stays byte-identical to disk; no expansion, no
-            # skill_body_loaded event (the downstream `tool_executed` event
-            # below still fires as for any other read).
+        # FP-0066 P0 (#3247): `file.read` is a PLAIN read again — the
+        # SKILL.md-specific invocation-time expansion pass (ADR 0064 §3.5,
+        # `${REYN_*}`/`${CLAUDE_*}`/`${env:...}`, #3196 provenance gate,
+        # #3198 env-allowlist) moved OUT to the dedicated `load_skill` op
+        # (`reyn.core.op_runtime.load_skill`). This reverses the #2971
+        # "reading is the invocation, no dedicated verb" choice for skills
+        # specifically (§6 of the retrieval two-groups-two-axes proposal) —
+        # `content` here is always byte-identical to what was decoded off
+        # disk, for every path including a `SKILL.md`-named one.
         # #2335: read MODE. An explicit LINE window (offset/limit given, no char_offset) is honored
         # VERBATIM — the LLM's line-based read contract, byte-identical — AS LONG AS its slice fits
         # the inline cap. Otherwise (an unbounded read, a char_offset mid-line RESUME, OR an explicit

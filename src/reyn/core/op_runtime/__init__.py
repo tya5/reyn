@@ -135,6 +135,10 @@ from . import file as _file  # noqa: F401, E402
 from . import index_drop as _index_drop  # noqa: F401, E402
 from . import index_query as _index_query  # noqa: F401, E402
 from . import index_update as _index_update  # noqa: F401, E402
+
+# FP-0066 P0 (#3247): dedicated skill-activation verb, extracted OUT of
+# file.py's former is_skill_body_path special-case (ADR 0064 §3.5).
+from . import load_skill as _load_skill  # noqa: F401, E402
 from . import mcp as _mcp  # noqa: F401, E402
 from . import mcp_drop_server as _mcp_drop_server  # noqa: F401, E402
 

@@ -56,25 +56,31 @@ never consulted. The two fields therefore describe **four** states, not six —
 > behavior `false` actually delivered, not the narrower thing its old
 > description promised).
 
-The registry never reads `SKILL.md` itself — only `path` and `description` from the config entry populate the L1 menu and the `skill_list` result. The file is read by the model at L2, on demand, via the ordinary file-read op — which, for exactly the `SKILL.md` filename, additionally expands invocation-time `${REYN_*}`/`${CLAUDE_*}`/`${env:VAR}` tokens in the body before returning it (see [Skill-load variable expansion](#skill-load-variable-expansion) below).
+The registry never reads `SKILL.md` itself — only `path` and `description` from the config entry populate the L1 menu and the `skill_list` result. The file is loaded by the model at L2, on demand, via the dedicated `load_skill` op (`skill_management__load`, FP-0066 P0/#3247) — which additionally expands invocation-time `${REYN_*}`/`${CLAUDE_*}`/`${env:VAR}` tokens in the body before returning it (see [Skill-load variable expansion](#skill-load-variable-expansion) below). The ordinary file-read op does NOT special-case `SKILL.md` — reading one with `file__read` returns its bytes byte-identical, same as any other file.
 
 ## Discovering and using a skill
 
 There is no `run_skill` tool, by design. A skill body is *instructions for the
-model*, not code to execute, so **reading the file is the invocation**:
+model*, not code to execute, so **loading the file is the invocation**:
 
 1. **Discover** — `menu` skills are already listed in the L1 `## Skills` block.
    For the rest, `skill_management__list` (the `skill_list` tool) returns every
    registered skill whose `visibility` is not `hidden`, with its `name`,
    `description`, and `path`.
-2. **Read** — the model reads that `path` with the ordinary file-read op and
-   follows the instructions for the current task.
+2. **Load** — the model calls `load_skill` (`skill_management__load`) with
+   that `path` and follows the instructions for the current task.
 
 Builtin skills ship inside the installed package, physically outside any
-project root; the file-read op resolves those paths through a least-privilege
-carve-out scoped to the package's `skills/` and `pipelines/` directories, so
-they read cleanly in a non-interactive run without an operator to approve
-anything.
+project root; `load_skill` resolves those paths through the same
+least-privilege carve-out `file.read` uses, scoped to the package's `skills/`
+and `pipelines/` directories, so they load cleanly in a non-interactive run
+without an operator to approve anything.
+
+> **Prior to FP-0066 P0 (#3247)**, this hop rode the ordinary `file` read
+> op's `is_skill_body_path` special-case (#2971's "reading is the
+> invocation, no dedicated verb" — a drift from ADR 0064 §3.5's original
+> call for one). That special-casing has been extracted into `load_skill`;
+> `file.read` is a plain read again for every path, including `SKILL.md`.
 
 ## Operator-explicit invocation: the `:skill` namespace (#3100)
 
@@ -89,11 +95,16 @@ distinction rather than a runtime name-precedence lookup — the root cause
 class of Claude Code issue #13586 (an undocumented `/` shadow between a
 skill and a built-in command).
 
-`:skill` still reuses the exact mechanism above — reading `SKILL.md` (skill-
+`:skill` still reuses the exact mechanism above — loading `SKILL.md` (skill-
 load token expansion included) IS the invocation, no `skill__<name>` op
-exists for it either (`reyn.interfaces.skill_invoke.resolve_skill_body`
-calls the same `read_builtin_body_bytes` / `load_skill_body` primitives the
-ordinary file-read op's skill-load pass uses).
+exists for it either. `reyn.interfaces.skill_invoke.resolve_skill_body` calls
+the same `read_builtin_body_bytes` / `read_plugin_body_bytes` /
+`load_skill_body` primitives the `load_skill` op wraps, directly — the `:`
+path has never gone through `file.read` or the `load_skill` op's own
+dispatch; it is its own lightweight call site over the shared primitives
+(no OpContext / permission-op round-trip needed, since an operator typing
+`:name` at their own prompt grants no capability beyond what they already
+declared in `skills.entries`).
 
 **Stacking.** `:a :b <trailing>` invokes both skills in ONE turn — one LLM
 wake loads both `SKILL.md` bodies into context, capped at 6 stacked names
@@ -148,13 +159,14 @@ collision-lookup helpers, pure functions) and
 
 ## Skill-load variable expansion
 
-Reading a `SKILL.md` body is not a byte-identical file read: the `file` read
-op (`reyn.core.op_runtime.file.handle`) routes the SAME request through a
-skill-load pass (`reyn.plugins.skill_load`, ADR 0064 §3.5) when the resolved
-path's filename is exactly `SKILL.md` **and** that resolved path falls into a
-registered provenance class. This is still the ordinary read op — no
-dedicated "invoke skill" verb exists (see below) — the pass just does one
-more thing to the content before returning it.
+Loading a `SKILL.md` body is not a byte-identical file read: the dedicated
+`load_skill` op (`reyn.core.op_runtime.load_skill.handle`, FP-0066 P0/#3247)
+routes the request through a skill-load pass (`reyn.plugins.skill_load`, ADR
+0064 §3.5) when the resolved path falls into a registered provenance class.
+Prior to #3247 this pass rode the ordinary `file` read op's
+`is_skill_body_path` special-case; it is now `load_skill`'s own
+responsibility exclusively — `file.read` no longer inspects the path's
+filename or provenance at all.
 
 **Provenance gate (#3196).** The filename check alone is NOT the trust
 boundary — a file literally named `SKILL.md` anywhere under the project root
@@ -170,9 +182,17 @@ other skill surface uses — never a hand-curated path list:
 2. **registered plugin body** — a completed-install `~/.reyn/plugins/<name>/skills/**`, via `read_plugin_body_bytes` (`plugin_install.is_registered_plugin_root`).
 3. **config-registered entry** — a `skills.entries` declaration (`build_skill_registry`), matched against the session's live registered-skill snapshot.
 
-A `SKILL.md` that resolves to none of the three is read byte-identical —
-no expansion, no `skill_body_loaded` audit-event (an ordinary,
-unremarkable read).
+A `SKILL.md` that resolves to none of the three is still loaded — but
+byte-identical, no expansion, no `skill_body_loaded` audit-event (an
+ordinary, unremarkable load; fails closed, never open).
+
+**Resolve-once (#3196 co-vet round 2).** `load_skill` resolves its `path`
+argument EXACTLY ONCE per call (`reyn.core.op_runtime.context.
+resolve_path_for_gate`) and reuses that single resolved string for the
+permission gate, the provenance classification, AND the actual byte read —
+never a second, independent resolve for "is this trusted" vs "what do I
+read". A split there is exactly the symlink-swap TOCTOU window #3196
+closed.
 
 **`${env:VAR}` allowlist gate (#3198) — orthogonal to the provenance gate
 above.** The provenance gate (#3196) answers "is this SKILL.md trustworthy
@@ -273,17 +293,17 @@ Use `pypdf` for form-field operations...
 | Layer | What the model sees | Mechanism |
 |-------|---------------------|-----------|
 | **L1 — menu** | A dedicated `## Skills` system-prompt block, one line per enabled + auto-invoke skill: `name — description [path]`. | Built once per turn from the registry; no dedicated dispatch. |
-| **L2 — instructions** | The full `SKILL.md` body, read only when the model judges the current task matches an entry's description. | Ordinary `file__read` — no dedicated "invoke skill" op, but the body passes through invocation-time variable expansion (see [Skill-load variable expansion](#skill-load-variable-expansion)) before it reaches the model. |
+| **L2 — instructions** | The full `SKILL.md` body, loaded only when the model judges the current task matches an entry's description. | The dedicated `load_skill` op (`skill_management__load`, FP-0066 P0/#3247) — the body passes through invocation-time variable expansion (see [Skill-load variable expansion](#skill-load-variable-expansion)) before it reaches the model. `file__read` no longer special-cases this path. |
 | **L3 — bundled assets** | Any additional files the skill's instructions reference (templates, scripts, reference data) sitting alongside `SKILL.md`. | Ordinary `file__read`, gated by the standard permission model like any other path — **except** for a builtin or installed-plugin skill (below), where `skills/**`/`pipelines/**` content bypasses the gate the same way `SKILL.md` itself does. |
 
-There is no dedicated "run this skill" primitive at any layer — a skill is discovered via L1, loaded via L2, and its assets are just files. The model decides relevance from the L1 description; the OS does not gate *which* skill the model may read, only *which paths* it may read (the standard permission model — reading inside the project root is a default; outside requires the usual declaration + approval).
+There is no dedicated "run this skill" primitive at any layer — a skill is discovered via L1, loaded via L2, and its assets are just files. The model decides relevance from the L1 description; the OS does not gate *which* skill the model may load, only *which paths* it may read/load (the standard permission model — reading inside the project root is a default; outside requires the usual declaration + approval).
 
-**Builtin/plugin body reads bypass the read-zone gate; everything else doesn't.** A builtin skill/pipeline's `path` (`reyn.builtin.registry`'s `BUILTIN_SKILLS`/`BUILTIN_PIPELINES` entries) and an installed plugin's `skills/**`/`pipelines/**` content (`~/.reyn/plugins/<name>/`, ADR 0064 §3.3) both resolve OUTSIDE `project_root` in every deploy — the standard out-of-root gate would hard-deny them non-interactively, with no operator present to approve. `reyn.builtin.docs.read_builtin_body_bytes` (#2913/#2914) and `reyn.plugins.body_read.read_plugin_body_bytes` (owner ruling + architect firm) short-circuit that gate for exactly this content — both `file__read` (any L2/L3 path under `skills/`/`pipelines/`, including the `${CLAUDE_SKILL_DIR}`-referenced L3 files described just below) and `:name` skill-invoke (`reyn.interfaces.skill_invoke.resolve_skill_body`) route through them. The plugin bypass is gated on **install-registration**, not on the presence of a `.reyn-plugin/` marker: a plugin only qualifies once `plugin_install` has completed (source-resolve → manifest-validate → operator-permission-gated global copy → capability-register all succeeded — `reyn.core.op_runtime.plugin_install.is_registered_plugin_root`), so a hand-placed marker under `~/.reyn/plugins/` can never forge the bypass. `~/.reyn/plugins/.staging/` (pre-approval git-clone staging content) and anything outside `skills/`/`pipelines/` (`scripts/`, `requirements.txt`, `.mcp.json`) are explicitly excluded — least-privilege, mirroring the builtin bypass's own package-body-dir scoping. Enable/disable state never gates this: it is a project-local "use it or don't" toggle over content already approved once, globally, at install time.
+**Builtin/plugin body reads bypass the read-zone gate; everything else doesn't.** A builtin skill/pipeline's `path` (`reyn.builtin.registry`'s `BUILTIN_SKILLS`/`BUILTIN_PIPELINES` entries) and an installed plugin's `skills/**`/`pipelines/**` content (`~/.reyn/plugins/<name>/`, ADR 0064 §3.3) both resolve OUTSIDE `project_root` in every deploy — the standard out-of-root gate would hard-deny them non-interactively, with no operator present to approve. `reyn.builtin.docs.read_builtin_body_bytes` (#2913/#2914) and `reyn.plugins.body_read.read_plugin_body_bytes` (owner ruling + architect firm) short-circuit that gate for exactly this content — `load_skill` (L2, `SKILL.md` itself), `file__read` (L3, any bundled asset under `skills/`/`pipelines/`, including the `${CLAUDE_SKILL_DIR}`-referenced files described just below), and `:name` skill-invoke (`reyn.interfaces.skill_invoke.resolve_skill_body`) all route through them. The plugin bypass is gated on **install-registration**, not on the presence of a `.reyn-plugin/` marker: a plugin only qualifies once `plugin_install` has completed (source-resolve → manifest-validate → operator-permission-gated global copy → capability-register all succeeded — `reyn.core.op_runtime.plugin_install.is_registered_plugin_root`), so a hand-placed marker under `~/.reyn/plugins/` can never forge the bypass. `~/.reyn/plugins/.staging/` (pre-approval git-clone staging content) and anything outside `skills/`/`pipelines/` (`scripts/`, `requirements.txt`, `.mcp.json`) are explicitly excluded — least-privilege, mirroring the builtin bypass's own package-body-dir scoping. Enable/disable state never gates this: it is a project-local "use it or don't" toggle over content already approved once, globally, at install time.
 
 ## Splitting a large skill: `${CLAUDE_SKILL_DIR}` references (#3162)
 
-`SKILL.md`'s body is read via the ordinary `file__read` op, so it is subject
-to that op's inline-read cap — the model-unresolved default floor is
+`SKILL.md`'s body is loaded via the dedicated `load_skill` op, so it is
+subject to that op's own inline-read cap — the model-unresolved default floor is
 `MAX_CONTROL_IR_RESULT_INLINE_BYTES` (`src/reyn/core/context_builder.py`,
 currently 8,192 chars). A body at or above that floor is silently truncated
 whenever no model (or a small-window model) resolves at read time — the

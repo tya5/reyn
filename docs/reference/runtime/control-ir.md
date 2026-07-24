@@ -32,6 +32,7 @@ Control IR is the list of side-effect operations the LLM may emit. The OS dispat
 | `mcp_install` | Install an MCP server from the registry into the project config | `permissions.mcp_install: true` in skill frontmatter |
 | `mcp_drop_server` | Remove an MCP server from project/local/user config (inverse of `mcp_install`) | `permissions.mcp_drop_server: true` in skill frontmatter |
 | `skill_install` | Register a skill (local dir or git/URL source) into the project skills config | `file.write: [.reyn/config/skills.yaml]` in skill frontmatter; `http.get: [{host: <source_host>}]` when `source` is set |
+| `load_skill` | Load a skill's `SKILL.md` body — the dedicated skill-activation verb (FP-0066 P0, #3247); expands invocation-time `${REYN_*}`/`${CLAUDE_*}`/`${env:VAR}` tokens for a registered skill | `file.read` |
 | `pipeline_install` | Register a pipeline (local DSL file or git/URL source) into the project pipelines config | `file.write: [.reyn/config/pipelines.yaml]` in skill frontmatter; `http.get: [{host: <source_host>}]` when `source` is set |
 | `presentation_install` | Register a named presentation template (inline blueprint) into the project presentations config | `file.write: [.reyn/config/presentations.yaml]` |
 | `embed` | Raw embedding primitive: batch texts -> vectors (FP-0057 Phase 1; the user-facing primitive AND the shared logic later internal RAG ops call) | none (default-allow; embedding API cost) |
@@ -81,7 +82,7 @@ Each is a distinct op kind with its own schema; there is no `op` sub-field.
 
 | Kind | Permission | Notes |
 |------|-----------|-------|
-| `read_file` | `file.read` | `offset` / `limit` (line range) optional. When the resolved path's filename is exactly `SKILL.md` **and** that resolved path also falls into a registered provenance class (builtin / registered-plugin-body / config-registered `skills.entries` — #3196), the decoded content additionally passes through invocation-time `${REYN_*}`/`${CLAUDE_*}`/`${env:VAR}` expansion (`reyn.plugins.skill_load.load_skill_body`, ADR 0064 §3.5, P4/#3070) before it is returned. `${env:VAR}` expansion is FURTHER gated by a deny-by-default `permissions.env.expand` allowlist (#3198, `PermissionDecl.env_expand`) — an undeclared name's token is left unexpanded, same as an unset one; location tokens (`${REYN_*}`/`${CLAUDE_*}`) are unaffected. A `skill_body_loaded` audit-event is emitted with `provenance` + `env_tokens_expanded`/`env_names_expanded` + `env_tokens_denied`/`env_names_denied` (never the expanded/denied values). A `SKILL.md`-named file resolving OUTSIDE all three provenance classes is unaffected — byte-identical read, no event — same as every other path. When the inline cap self-bounds the read, the result carries `status: "truncated"` and a `note` (chars shown of total + the on-disk path/offset to resume from); the chat router's `read_file` alias, which otherwise flattens the result to a bare string before `to_canonical` runs, appends that same `note` inline instead of dropping it (#3191). |
+| `read_file` | `file.read` | `offset` / `limit` (line range) optional. A plain read — no path/filename special-casing: a `SKILL.md`-named file reads byte-identical to any other file (the former invocation-time `${REYN_*}`/`${CLAUDE_*}`/`${env:VAR}` expansion pass for exactly that filename moved to the dedicated `load_skill` op below, FP-0066 P0/#3247 — see that op's section). When the inline cap self-bounds the read, the result carries `status: "truncated"` and a `note` (chars shown of total + the on-disk path/offset to resume from); the chat router's `read_file` alias, which otherwise flattens the result to a bare string before `to_canonical` runs, appends that same `note` inline instead of dropping it (#3191). |
 | `write_file` | `file.write` | Creates or overwrites; parent dirs created as needed. |
 | `edit_file` | `file.write` | `old_string` must be unique unless `replace_all: true`. |
 | `delete_file` | `file.write` | |
@@ -639,6 +640,70 @@ Result fields: `status` (`"installed"` / `"blocked"` / `"error"`), `name`, `path
 
 Events emitted: `skill_install_threat_match`, `skill_install_threat_blocked` (threat scan),
 `skill_installed` (P6 on success).
+
+## `load_skill`
+
+**FP-0066 P0 (#3247).** The dedicated skill-activation verb — loading a
+skill's `SKILL.md` body IS the invocation (#2971's rationale still holds:
+a skill body is model instructions, not code to execute; there is still no
+`run_skill` op). Extracted OUT of `read_file`'s former `is_skill_body_path`
+special-case (ADR 0064 §3.5 originally called for a dedicated verb; #2971
+instead folded it into the ordinary read op — this reverses that drift).
+Tool surface: `load_skill` (flat name), qualified `skill_management__load`
+(ratified per the #3223 naming-convention arc).
+
+```json
+{
+  "kind": "load_skill",
+  "path": "skills/my-skill/SKILL.md"
+}
+```
+
+Fields:
+- `path` (required) — the skill's `SKILL.md` path, as surfaced by the L1
+  `## Skills` menu or the `skill_list` tool.
+
+Handler lifecycle (`op_runtime/load_skill.py`):
+1. **Resolve-once (#3196 co-vet round 2, security-critical)**: `op.path` is
+   resolved via `reyn.core.op_runtime.context.resolve_path_for_gate`
+   EXACTLY ONCE, into `resolved_path`; every later decision (permission
+   gate, provenance classification, the actual byte read) reuses THIS SAME
+   string. A separate, independent resolve for "is this trusted" vs "what
+   do I read" reopens the symlink-swap TOCTOU window #3196 closed.
+2. **Builtin/plugin bypass**: `read_builtin_body_bytes` (#2913/#2914) /
+   `read_plugin_body_bytes` (`plugin_install.is_registered_plugin_root`) —
+   the SAME helpers `file.py` uses for its own (unrelated) general
+   builtin/plugin body reads. A non-`None` result already IS a trusted
+   provenance (`"builtin"` / `"plugin"`), not merely a permission-bypass
+   signal, and skips the ordinary `require_file_read` gate.
+3. **Permission gate**: `require_file_read` against `resolved_path` when the
+   bypass did not fire.
+4. **Read + decode**: `ctx.workspace.read_file_bytes` (or the bypass bytes)
+   → the shared text-codec decode ladder. A binary result is an error (a
+   skill body must be text).
+5. **Provenance classification (#3196)**: builtin/plugin from step 2, or
+   `config_entry` when `resolved_path` matches an entry in
+   `ctx.available_skills` (the SAME registered-skill snapshot `:skill`
+   invocation resolves against). A path matching NONE of the three classes
+   is still returned — plain, unexpanded, no event (fails closed).
+6. **Expansion**: when provenance is set, `reyn.plugins.skill_load.
+   load_skill_body` expands `${REYN_PLUGIN_ROOT}`/`${REYN_SKILL_DIR}`/
+   `${REYN_PROJECT_DIR}`/`${CLAUDE_*}` aliases unconditionally, and
+   `${env:VAR}` only when `VAR` is declared on `ctx.permission_decl.
+   env_expand` (#3198, deny-by-default) — an undeclared or unset name's
+   token is left unexpanded, never blanked.
+7. **Self-bounding**: an oversized body is truncated to the resolver's
+   inline cap (`control_ir_inline_cap`) rather than blowing the context;
+   `status: "truncated"` + a `note` on that path.
+
+Result fields: `status` (`"ok"` / `"truncated"` / `"not_found"` / `"error"`),
+`path`, `content`, plus `total_chars`/`_truncated`/`note` on a truncated
+result and `encoding` when a non-UTF-8 codec was used.
+
+Events emitted: `tool_executed` (`op="load_skill"`) always; `skill_body_loaded`
+(`provenance`, `env_tokens_expanded`/`env_names_expanded`,
+`env_tokens_denied`/`env_names_denied` — names + counts only, NEVER the
+expanded/denied values) only when provenance was classified.
 
 ## `pipeline_install`
 
