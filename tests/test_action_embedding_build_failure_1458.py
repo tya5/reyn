@@ -38,10 +38,14 @@ class _FailingProvider:
 class _FailingIndex:
     """Real fake index whose build() method raises."""
 
+    def __init__(self) -> None:
+        self.build_calls = 0
+
     def is_ready(self) -> bool:
         return False
 
     async def build(self, *_args, **_kwargs):  # type: ignore[override]
+        self.build_calls += 1
         raise RuntimeError("Index build failed — provider error")
 
 
@@ -86,11 +90,12 @@ class _LoopWithFailingBuild(RouterLoop):
         return None  # list_actions handler is not reached; provider raises first
 
 
-def _run_build(loop: _LoopWithFailingBuild) -> None:
-    idx = _FailingIndex()
+def _run_build(loop: _LoopWithFailingBuild, idx: "_FailingIndex | None" = None) -> "_FailingIndex":
+    idx = idx if idx is not None else _FailingIndex()
     provider = _FailingProvider()
     loop.host.op_ctx_stub = provider  # see _MinimalHost.make_router_op_context
     asyncio.run(loop._build_action_embedding_index_background(idx, provider, "standard"))
+    return idx
 
 
 # ── Tests ─────────────────────────────────────────────────────────────────────
@@ -99,25 +104,41 @@ def _run_build(loop: _LoopWithFailingBuild) -> None:
 def test_build_failure_prevents_retry_same_session() -> None:
     """Tier 2: #1458 — after a build failure the memoization flag is set, so a
     second call that checks the flag (as the production guard does) does not
-    re-invoke the build. Observable via event count: a retry would emit another
-    action_index_build_failed event; no retry → count stays at 1."""
+    re-invoke the build. Observable via ``idx.build_calls``: a retry would
+    invoke ``idx.build()`` a second time; no retry → count stays at 1.
+
+    (FP-0066 P2d, #3247: this used to be observed via the
+    ``action_index_build_failed`` audit-event count. That event is no longer
+    emitted from this primitive — see ``test_build_failure_no_audit_event_
+    emitted_here`` — folded into ``embedding_index_build_error``, emitted by
+    ``IndexCoordinator`` one layer up. ``idx.build_calls`` is the public
+    observable this test needs and does not depend on that.)"""
     loop = _LoopWithFailingBuild()
-    _run_build(loop)
-    first_count = len(loop.host.events.emitted)
+    idx = _FailingIndex()
+    _run_build(loop, idx)
+    assert idx.build_calls == 1
     # Simulate the production guard: only call again if the flag is NOT set.
     if not getattr(loop, "_action_index_build_failed", False):
-        _run_build(loop)
+        _run_build(loop, idx)
     # Count must be unchanged — the guard prevented the retry.
-    assert len(loop.host.events.emitted) == first_count
+    assert idx.build_calls == 1
 
 
-def test_build_failure_emits_event() -> None:
-    """Tier 2: #1458 — the existing action_index_build_failed event is still
-    emitted (regression pin: existing downstream consumers must not break)."""
+def test_build_failure_no_audit_event_emitted_here() -> None:
+    """Tier 2: FP-0066 P2d (#3247 firm §6) — the pre-P2d
+    ``action_index_build_failed`` audit-event, previously emitted directly
+    by ``_build_action_embedding_index_background`` on failure, is FOLDED
+    into ``embedding_index_build_error`` emitted by
+    ``IndexCoordinator.ensure_built_self_contained`` one layer up (see
+    ``tests/test_index_coordinator_3247_p2d.py``). This low-level primitive,
+    called directly (bypassing the Coordinator, as this test file does),
+    now emits NO audit-event at all — a double-emit would occur if both
+    layers still emitted for the same failure."""
     loop = _LoopWithFailingBuild()
     _run_build(loop)
     kinds = [e["kind"] for e in loop.host.events.emitted]
-    assert "action_index_build_failed" in kinds
+    assert "action_index_build_failed" not in kinds
+    assert kinds == [], f"expected no audit-event emit from this primitive, got {kinds!r}"
 
 
 def test_build_failure_search_stays_hidden() -> None:

@@ -2906,13 +2906,30 @@ class RouterLoop:
         match to ``query`` → matched qualified names. Reuses the FP-0034
         ``ActionEmbeddingIndex`` (the same substrate the ``search_actions`` tool uses);
         ``query`` awaits the embedding of the dynamic query (the reason presentation
-        is async). Returns ``[]`` when the index / provider is unavailable (degrade)."""
+        is async). Returns ``[]`` when the index / provider is unavailable (degrade).
+
+        FP-0066 P2d (#3247 firm §5/§6): before serving, awaits
+        ``IndexCoordinator.search_await`` — a cheap manifest-read no-op in
+        the steady state (source already ``clean``), or a heal-await if a
+        prior sync-in-op build left the source ``dirty``/mid-``building``
+        (the "best-effort search is a bug" completeness guarantee). Wraps
+        the search in ``semantic_search_started``/``_complete`` audit-events
+        (results count) — this call site (not ``Coordinator.search_await``
+        itself, which has no visibility into the actual query results) is
+        where the count is known, so ``_complete`` fires here.
+        """
         index = self.host.get_action_embedding_index()
         provider = self.host.get_embedding_provider()
         model_class = self.host.get_embedding_model_class()
         if index is None or provider is None:
             return []
+        source_id = getattr(index, "source_name", None) or "actions"
+        events = self.host.events
+        self.host.events.emit("semantic_search_started", source_id=source_id)
+        results: list[dict[str, Any]] = []
         try:
+            coordinator = self._get_index_coordinator()
+            await coordinator.search_await(source_id)
             # FP-0057 #2856 Part A: idx.query() routes through the shared
             # `embed` op (execute_op) instead of calling ``provider`` directly
             # — needs an OpContext, not the provider instance itself.
@@ -2921,7 +2938,8 @@ class RouterLoop:
         except Exception as e:  # noqa: BLE001 — search is best-effort presentation aid
             import logging
             logging.getLogger(__name__).warning("search_actions failed: %s", e)
-            return []
+        finally:
+            events.emit("semantic_search_complete", source_id=source_id, results=len(results))
         return [r["qualified_name"] for r in results if r.get("qualified_name")]
 
     def resolve(self, llm_response, tool_catalog: dict) -> list[dict]:
@@ -3444,6 +3462,7 @@ class RouterLoop:
             is_ready_probe=lambda: bool(getattr(idx, "is_ready", lambda: False)()),
             chunk_count_probe=lambda: int(getattr(idx, "size", lambda: 0)()),
             kind="static",
+            events=self.host.events,
         )
 
     async def _build_action_embedding_index_background(
@@ -3503,15 +3522,26 @@ class RouterLoop:
             await idx.build(items, op_ctx, model_class)
         except Exception as exc:
             # #1458: memoize the failure so subsequent turns do not retry.
+            # FP-0066 P2d/#3247 convergence-debt (co-vet, pre-merge): this
+            # flag and the Coordinator's own failure-memo
+            # (``IndexCoordinator._failure_memo`` / ``build_failed()``) are
+            # BOTH set on this same exception today (byte-identical two-path
+            # retention from P2b) — keep them in sync until the #3247
+            # convergence follow-up unifies failure-state into one signal.
+            # A future edit to only ONE of the two paths silently desyncs
+            # them; see the interim guard pin
+            # ``test_action_index_build_failure_both_signals_stay_in_sync``
+            # in ``tests/test_index_coordinator_3247_p2d.py``.
             self._action_index_build_failed = True
-            try:
-                self.host.events.emit(
-                    "action_index_build_failed",
-                    error=repr(exc),
-                    model_class=model_class,
-                )
-            except Exception:
-                pass
+            # FP-0066 P2d (#3247): the audit-event for this failure used to
+            # be emitted HERE directly (``action_index_build_failed``).
+            # It is now folded into ``embedding_index_build_error``,
+            # emitted by ``IndexCoordinator.ensure_built_self_contained``
+            # (this method's only production caller routes through it via
+            # ``_ensure_action_index_built``'s ``_build_coro`` wrapper,
+            # which re-raises on this exact failure so the Coordinator's
+            # except-block observes it) — see ``coordinator.py``. Emitting
+            # both here AND there would double-emit for the same failure.
             # #1458: decision-enabling operator warning — names the likely
             # cause + three actionable outs, same family as the
             # ``_build_embedding_config`` / ``_validate_retrieval_scheme_embedding``

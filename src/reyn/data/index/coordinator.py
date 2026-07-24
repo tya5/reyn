@@ -19,9 +19,19 @@ all-or-nothing embed-verify-write primitive (``embed_verify_write``) that
 ``ActionEmbeddingIndex.build()`` and the ``index_update`` op used to
 duplicate verbatim. Migrating those two call sites to trigger builds
 *through* the Coordinator (eager-vs-background, once-per-chain spawn) is
-**P2b** — deliberately NOT done here. Wiring dynamic ops to
-``ensure_built(await_completion=True)`` and G3 sync de-index is **P2c**.
-Audit-event phase emission is **P2d**.
+**P2b** — done (#3260). The architect's decomposition-correction comment on
+#3247 folds the original P2c (sync-in-op op wiring + G3 delete-de-index)
+INTO P3 — its only producers (skill/memory knowledge ingest, doc-RAG
+``index_update``) are all P3-dependent (0 live callers today), so building
+that wiring here would be a producer-less framework. **P2d (this module's
+current state)**: audit-event phase emission (``embedding_index_build_
+started``/``_progress``/``_complete``/``_error`` — the last folding the
+pre-P2d ``action_index_build_failed`` event, which used to be emitted
+directly by ``RouterLoop._build_action_embedding_index_background`` — see
+``ensure_built``/``ensure_built_self_contained``'s ``events`` parameter)
+plus the ``search_await`` contract's production wiring at the two live
+action-catalog query call sites (``RouterLoop.search_actions`` /
+``universal_catalog._handle_search_actions``).
 
 **Crash-recovery (the band requirement, CLAUDE.md recovery-feature gate)**:
 the dirty/building/error state lives in ``SourceEntry`` (persisted to
@@ -54,6 +64,7 @@ from reyn.data.index.source_manifest import (
 )
 
 if TYPE_CHECKING:
+    from reyn.core.events.events import EventLog
     from reyn.core.op_runtime.context import OpContext
 
 __all__ = [
@@ -291,7 +302,11 @@ class IndexCoordinator:
     # ── ensure_built (#3247 firm §1) ─────────────────────────────────────
 
     async def ensure_built(
-        self, source_id: str, *, await_completion: bool,
+        self,
+        source_id: str,
+        *,
+        await_completion: bool,
+        events: "EventLog | None" = None,
     ) -> BuildOutcome:
         """If ``source_id`` is dirty/error/never-built, (re)build it.
 
@@ -306,6 +321,14 @@ class IndexCoordinator:
         Never raises: a build failure is caught, recorded via
         ``mark_dirty`` + the in-process failure-memo, and reported on the
         returned ``BuildOutcome.error`` (the §G2 best-effort contract).
+
+        ``events`` (FP-0066 P2d, #3247 firm §6): an optional ``EventLog`` to
+        emit the ``embedding_index_build_started``/``_progress``/
+        ``_complete``/``_error`` audit-event phases to. ``None`` (the
+        default — matches every other best-effort-optional collaborator on
+        this class) silently skips the audit-emit; a real build call site
+        (production or test) threads its ``EventLog`` here to get the P6
+        audit trail.
         """
         entry = await self._manifest.get(source_id)
         if entry is not None and entry.state == "clean":
@@ -328,13 +351,31 @@ class IndexCoordinator:
             existing_task = self._bg_tasks.get(source_id)
             if existing_task is not None and not existing_task.done():
                 return BuildOutcome(source_id=source_id, triggered=True, background=True)
-            task = asyncio.create_task(self._run_build(source_id, build_fn))
+            task = asyncio.create_task(self._run_build(source_id, build_fn, events))
             self._bg_tasks[source_id] = task
             return BuildOutcome(source_id=source_id, triggered=True, background=True)
 
-        return await self._run_build(source_id, build_fn)
+        return await self._run_build(source_id, build_fn, events)
 
-    async def _run_build(self, source_id: str, build_fn: BuildFn) -> BuildOutcome:
+    def _emit(self, events: "EventLog | None", event_type: str, **data: Any) -> None:
+        """Best-effort audit-event emit (FP-0066 P2d) — never raises; a
+        broken/absent sink must not fail a build or a search (mirrors
+        ``emit_cli_event``'s "audit-emit failure must not propagate"
+        contract). ``event_type`` (not ``kind``) to avoid colliding with
+        the ``kind=`` (dynamic/static/backfill taxonomy) keyword every
+        build-phase emit also carries as data."""
+        if events is None:
+            return
+        try:
+            events.emit(event_type, **data)
+        except Exception:
+            pass
+
+    async def _run_build(
+        self, source_id: str, build_fn: BuildFn, events: "EventLog | None" = None,
+    ) -> BuildOutcome:
+        kind = self._kinds.get(source_id, "backfill")
+        self._emit(events, "embedding_index_build_started", source_id=source_id, kind=kind)
         await self._set_state(source_id, "building")
         lock_dir = cache_dir_for_source(self._workspace_root, source_id)
         with try_acquire_build_lock(lock_dir) as got_lock:
@@ -344,6 +385,10 @@ class IndexCoordinator:
                 return BuildOutcome(source_id=source_id, triggered=False, background=False)
             try:
                 material = await build_fn()
+                self._emit(
+                    events, "embedding_index_build_progress",
+                    source_id=source_id, chunk_count=len(material.items),
+                )
                 result = await embed_verify_write(
                     ctx=material.ctx,
                     texts=material.texts,
@@ -360,6 +405,10 @@ class IndexCoordinator:
                 reason = f"build_error: {exc}"
                 self._failure_memo[source_id] = reason
                 await self.mark_dirty(source_id, reason=reason)
+                self._emit(
+                    events, "embedding_index_build_error",
+                    source_id=source_id, reason=str(exc),
+                )
                 return BuildOutcome(
                     source_id=source_id, triggered=True, background=False, error=str(exc),
                 )
@@ -368,6 +417,10 @@ class IndexCoordinator:
         await self._set_state(
             source_id, "clean", chunk_count=chunk_count,
             embedding_model=result.resolved_model,
+        )
+        self._emit(
+            events, "embedding_index_build_complete",
+            source_id=source_id, chunk_count=chunk_count,
         )
         return BuildOutcome(
             source_id=source_id, triggered=True, background=False, chunk_count=chunk_count,
@@ -487,6 +540,7 @@ class IndexCoordinator:
         is_ready_probe: Callable[[], bool],
         chunk_count_probe: Callable[[], int] | None = None,
         kind: SourceKind = "backfill",
+        events: "EventLog | None" = None,
     ) -> BuildOutcome:
         """Orchestrate (dedup/failure-memo/state) a self-contained builder.
 
@@ -503,6 +557,25 @@ class IndexCoordinator:
         with the same once-per-source in-flight dedup (``_bg_tasks``).
         Never raises — a failure is caught, mark_dirty'd, memoized, and
         reported on the returned ``BuildOutcome.error``.
+
+        ``events`` (FP-0066 P2d, #3247 firm §6): same optional ``EventLog``
+        contract as ``ensure_built`` — emits the ``embedding_index_build_
+        started``/``_progress``/``_complete``/``_error`` phases. This is
+        the path the production action-catalog build uses
+        (``RouterLoop._ensure_action_index_built``), so this is also where
+        the pre-P2d ``action_index_build_failed`` event (previously emitted
+        directly by ``_build_action_embedding_index_background`` on
+        failure) is FOLDED into ``embedding_index_build_error`` — that
+        direct emit was removed from the RouterLoop primitive; this method
+        is now the single emitter for a self-contained builder's failure.
+        Since ``build_coro`` is opaque (no material/item count visible
+        before it runs), the ``_progress`` checkpoint fires right after
+        ``build_coro`` returns without raising (using ``chunk_count_probe``
+        if given) rather than mid-build — a coarser granularity than
+        ``ensure_built``'s material-aware progress, an honest limitation
+        given this builder shape (see the class docstring's boundary
+        principle: the builder, not the Coordinator, owns its own
+        progress internals).
         """
         self._kinds[source_id] = kind
         entry = await self._manifest.get(source_id)
@@ -513,6 +586,7 @@ class IndexCoordinator:
             )
 
         async def _run() -> BuildOutcome:
+            self._emit(events, "embedding_index_build_started", source_id=source_id, kind=kind)
             await self._set_state(source_id, "building")
             try:
                 await build_coro()
@@ -520,13 +594,25 @@ class IndexCoordinator:
                 reason = f"build_error: {exc}"
                 self._failure_memo[source_id] = reason
                 await self.mark_dirty(source_id, reason=reason)
+                self._emit(
+                    events, "embedding_index_build_error",
+                    source_id=source_id, reason=str(exc),
+                )
                 return BuildOutcome(
                     source_id=source_id, triggered=True, background=False,
                     error=str(exc),
                 )
             if is_ready_probe():
                 chunk_count = chunk_count_probe() if chunk_count_probe else None
+                self._emit(
+                    events, "embedding_index_build_progress",
+                    source_id=source_id, chunk_count=chunk_count,
+                )
                 await self._set_state(source_id, "clean", chunk_count=chunk_count)
+                self._emit(
+                    events, "embedding_index_build_complete",
+                    source_id=source_id, chunk_count=chunk_count,
+                )
                 return BuildOutcome(
                     source_id=source_id, triggered=True, background=False,
                     chunk_count=chunk_count,
@@ -534,7 +620,8 @@ class IndexCoordinator:
             # The builder ran without raising but didn't reach readiness
             # (e.g. its own lock-skip fallback: "another process is mid-
             # build") — leave manifest state as-is (not clean), matching
-            # the pre-migration silent-fallback semantics.
+            # the pre-migration silent-fallback semantics. No _complete
+            # emit — the build did not actually complete.
             return BuildOutcome(source_id=source_id, triggered=True, background=False)
 
         if not await_completion:
