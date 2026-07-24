@@ -9,8 +9,10 @@ Tested tool descriptions:
 - _DESCRIBE_ACTION_DESCRIPTION: POST_CALL MUST chain
 - _SEARCH_ACTIONS_DESCRIPTION: multilingual + POST_CALL
 - _PLAN_DESCRIPTION: multi-source examples
-- _SEMANTIC_SEARCH_DESCRIPTION_HIDE_LEGACY: semantic_search vs memory disambiguation, multilingual
-  (FP-0057 Phase 2a: renamed from _RECALL_DESCRIPTION_HIDE_LEGACY)
+
+FP-0066 P1b: the ``_SEMANTIC_SEARCH_DESCRIPTION_HIDE_LEGACY`` coverage
+(semantic_search vs memory disambiguation, multilingual) is removed along
+with the retired ``semantic_search`` agent tool.
 """
 from __future__ import annotations
 
@@ -18,7 +20,6 @@ from reyn.tools.memory import (
     _FORGET_MEMORY_DESCRIPTION,
     _REMEMBER_SHARED_DESCRIPTION,
 )
-from reyn.tools.semantic_search import _SEMANTIC_SEARCH_DESCRIPTION_HIDE_LEGACY
 from reyn.tools.universal_catalog import (
     _DESCRIBE_ACTION_DESCRIPTION,
     _INVOKE_ACTION_DESCRIPTION,
@@ -172,27 +173,10 @@ def test_search_actions_description_contains_post_call_must() -> None:
     assert "MUST" in desc
 
 
-# ── semantic_search description tests ──────────────────────────────────────────
-
-def test_recall_description_contains_disambiguation_with_memory() -> None:
-    """Tier 2: semantic_search _HIDE_LEGACY description distinguishes semantic_search from memory_entry.
-
-    B23-PRE-1: recall vs memory disambiguation moved from SP disambiguation
-    block to semantic_search._SEMANTIC_SEARCH_DESCRIPTION_HIDE_LEGACY (FP-0057
-    Phase 2a: renamed from recall._RECALL_DESCRIPTION_HIDE_LEGACY).
-    """
-    desc = _SEMANTIC_SEARCH_DESCRIPTION_HIDE_LEGACY
-    assert "memory_entry" in desc or "memory" in desc
-    # The description must explicitly note the anti-confusion rule
-    assert "recall" in desc.lower() or "semantic_search" in desc.lower()
-    # The disambiguation signal
-    assert "NOT" in desc or "WHEN NOT" in desc
-
-
-def test_recall_description_is_multilingual() -> None:
-    """Tier 2: semantic_search _HIDE_LEGACY description mentions multilingual capability."""
-    desc = _SEMANTIC_SEARCH_DESCRIPTION_HIDE_LEGACY
-    assert "multilingual" in desc.lower() or "any language" in desc.lower()
+# FP-0066 P1b: the semantic_search _HIDE_LEGACY description tests are removed
+# along with the retired ``semantic_search`` agent tool (ADR-0033 Phase 1 /
+# FP-0057 Phase 2a) — see
+# docs/deep-dives/proposals/0066-retrieval-two-groups-two-axes.md §9.
 
 
 # ── remember_shared description tests ──────────────────────────────────────────

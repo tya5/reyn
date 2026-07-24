@@ -1,10 +1,10 @@
 """Tier 2: FP-0034 PR-2 universal_dispatch routing contract.
 
 Tests for ``src/reyn/tools/universal_dispatch.py`` covering:
-  1. resolve_invoke_action across all 14 categories (= resource
+  1. resolve_invoke_action across all 12 categories (= resource
      invoke per §D19 AND operation per-name lookup).
   2. Arg transformers for each routing flavour (skill / agent /
-     mcp.server / mcp.tool / memory_entry / rag_corpus + passthrough
+     mcp.server / mcp.tool / memory_entry + passthrough
      for the operation categories).
   3. UnknownActionError carrying ``action_name`` / ``reason`` /
      ``suggestions`` per §D12.
@@ -124,40 +124,10 @@ def test_resolve_invoke_action_memory_list_routes_to_list_memory() -> None:
     assert result.target_tool_name == "list_memory"
 
 
-def test_resolve_invoke_action_rag_search_takes_sources_explicitly() -> None:
-    """Tier 2: #3026 — rag_operation__semantic_search carries the corpus in its
-    ``sources`` ARGUMENT, replacing rag_corpus__<name>'s currying of it out of the
-    action name. Same reach, but one fixed action instead of one per corpus."""
-    result = resolve_invoke_action(
-        "rag_operation__semantic_search",
-        {"sources": ["meetings"], "query": "Q3 plans", "top_k": 5},
-    )
-    assert result.target_tool_name == "semantic_search"
-    assert result.target_args == {
-        "sources": ["meetings"], "query": "Q3 plans", "top_k": 5,
-    }
-
-
-def test_resolve_invoke_action_rag_list_sources_routes_to_discovery_verb() -> None:
-    """Tier 2: #3026 — rag_operation__list_sources → list_rag_sources, the verb that
-    NAMES the corpora. Without it, ``sources`` (required, operator-chosen names)
-    would be unanswerable once rag_corpus__<name> stopped being enumerated."""
-    result = resolve_invoke_action("rag_operation__list_sources", {})
-    assert result.target_tool_name == "list_rag_sources"
-
-
-def test_resolve_invoke_action_rag_index_update_routes_to_ingestion_verb() -> None:
-    """Tier 2: #3222 — rag_operation__index_update → index_update, the ADD verb.
-
-    Before this fix, index_update was registered in ToolRegistry but absent
-    from ``_OPERATION_RULES`` (and from ``build_tools()``), so the RAG
-    in-core family could delete a source (rag_operation__drop_source) but
-    never add one — an incomplete enumeration (#2032-class dead-registration).
-    Strip-falsifiable: deleting the ``rag_operation__index_update`` row from
-    ``_OPERATION_RULES`` turns this RED (UnknownActionError instead).
-    """
-    result = resolve_invoke_action("rag_operation__index_update", {})
-    assert result.target_tool_name == "index_update"
+# FP-0066 P1b: the rag_operation__semantic_search / __list_sources /
+# __index_update resolution tests are removed along with the ``rag_operation``
+# category and the layer-1 agent tools it routed to — see
+# docs/deep-dives/proposals/0066-retrieval-two-groups-two-axes.md §9.
 
 
 # ── 2. resolve_invoke_action — operation categories (passthrough) ────────
@@ -183,10 +153,7 @@ def test_resolve_invoke_action_rag_index_update_routes_to_ingestion_verb() -> No
         # reyn_repo
         ("reyn_repo__read", "reyn_repo_read"),
         ("reyn_repo__list", "reyn_repo_list"),
-        # rag_operation (FP-0057 Phase 2a: rag_operation__recall renamed rag_operation__semantic_search)
-        ("rag_operation__semantic_search", "semantic_search"),
-        ("rag_operation__drop_source",     "drop_source"),
-        ("rag_operation__index_update",    "index_update"),
+        # FP-0066 P1b: rag_operation__* rows retired along with the category.
     ],
 )
 def test_operation_categories_route_passthrough(
@@ -331,13 +298,11 @@ def test_suggest_similar_names_empty_candidates_returns_empty() -> None:
         ("mcp__drop_server",         "mcp_drop_server"),
         ("memory_operation__read",   "read_memory_body"),
         ("memory_operation__list",   "list_memory"),
-        ("rag_operation__list_sources", "list_rag_sources"),
         ("pipeline__list",           "pipeline_list"),
         ("file__read",               "read_file"),
         ("web__search",              "web_search"),
         ("memory_operation__forget", "forget_memory"),
-        ("rag_operation__semantic_search", "semantic_search"),
-        ("rag_operation__index_update",    "index_update"),
+        # FP-0066 P1b: rag_operation__* rows retired along with the category.
     ],
 )
 def test_resolve_describe_returns_invoke_target(
@@ -369,8 +334,9 @@ def test_known_static_names_is_sorted_and_deduped() -> None:
 def test_known_static_names_covers_all_operation_categories() -> None:
     """Tier 2: statically-routed operation categories cover §D11 baseline.
 
-    file / web / memory_operation / reyn_repo / rag_operation /
+    file / web / memory_operation / reyn_repo /
     mcp.operation (PR-4) / exec (FP-0034 Phase 2) are all fully routed.
+    FP-0066 P1b retired the ``rag_operation`` category outright.
     """
     names = set(KNOWN_STATIC_QUALIFIED_NAMES)
     # file (4 ops)
@@ -385,13 +351,8 @@ def test_known_static_names_covers_all_operation_categories() -> None:
     } <= names
     # reyn_repo (2 ops — read/list; glob/grep are future)
     assert {"reyn_repo__read", "reyn_repo__list"} <= names
-    # rag_operation (3 ops — #3222 adds index_update, the ADD verb, alongside
-    # the query verb (semantic_search) and the delete verb (drop_source))
-    assert {
-        "rag_operation__semantic_search",
-        "rag_operation__drop_source",
-        "rag_operation__index_update",
-    } <= names
+    # FP-0066 P1b: the former rag_operation (3 ops) assertion is removed —
+    # the category itself is retired.
 
 
 def test_known_static_names_excludes_resource_categories() -> None:
@@ -579,7 +540,6 @@ _ROUTE_CONTRACT_SAMPLES: list[tuple[str, dict[str, Any]]] = [
     # hard-coded ``shared`` fails the contract here.
     ("memory_operation__list", {"path": ""}),
     ("memory_operation__read", {"layer": "agent", "slug": "pref_dates"}),
-    ("rag_operation__list_sources", {}),
     ("pipeline__list", {}),
     # Operation categories (= _OPERATION_RULES) — passthrough transformers,
     # so the caller args must already include the target's required keys.
@@ -611,11 +571,7 @@ _ROUTE_CONTRACT_SAMPLES: list[tuple[str, dict[str, Any]]] = [
     ("reyn_repo__list", {"path": "."}),
     ("reyn_repo__glob", {"pattern": "*.py"}),
     ("reyn_repo__grep", {"pattern": "x"}),
-    ("rag_operation__semantic_search", {"query": "q", "sources": ["s"]}),
-    ("rag_operation__drop_source", {"source": "s"}),
-    # #3222: index_update (ADD verb) — requires source + chunks.
-    ("rag_operation__index_update",
-     {"source": "s", "chunks": [{"text": "t", "metadata": {}}]}),
+    # FP-0066 P1b: rag_operation__* rows retired along with the category.
     ("exec__run",       {"argv": ["echo", "hi"]}),
     # skill_management category (#2548 PR-C) — install_local requires path.
     ("skill_management__install_local",  {"path": "/tmp/my-skill"}),

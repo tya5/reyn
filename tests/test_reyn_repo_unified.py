@@ -70,16 +70,20 @@ def test_reyn_repo_read_router_render_exact_description():
     preserves the README curated-navigation fallback (= constraint C2
     from the description history audit), and preserves the no-web-
     search directive (= original HN first-touch motivation).
+
+    FP-0066 P1b: the cross-reference to `semantic_search` (retired — the
+    agent-facing layer-1 in-core RAG tool) is removed from the canonical
+    text; the description now stands on its own as the repo-navigation
+    fallback entry point.
     """
     rendered = REYN_REPO_READ.render_for_router()
     canonical_description = (
         "Read a text file from Reyn's own repository by an exact "
         "repo-root-relative path. Use for: (a) reading a specific file the "
         "user named (e.g. README.md), or (b) navigating "
-        "Reyn's source / docs when NO indexed source covers the topic. "
-        "If an indexed source description mentions concepts / design / "
-        "docs / Reyn, use `semantic_search` instead — guessing a file path is "
-        "unreliable; semantic search over indexed chunks is not. Fallback "
+        "Reyn's source / docs to find the relevant file. Prefer this over "
+        "guessing a file path from memory — start from a curated entry "
+        "point. Fallback "
         "entry point: reyn_repo_read(\"README.md\") for the overview + "
         "curated map of deep-dive paths."
     )

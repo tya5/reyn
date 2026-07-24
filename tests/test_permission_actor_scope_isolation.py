@@ -23,7 +23,7 @@ from reyn.security.permissions.permissions import PermissionResolver
 # The actor categories the field carries in production. Non-empty actors
 # (session-router, router, tool-verb name) scope approvals; the empty actor is
 # unscoped and can never hold a grant (see test_empty_actor_is_never_approved).
-_GRANTABLE_ACTORS = ["chat_router", "router", "drop_source"]
+_GRANTABLE_ACTORS = ["chat_router", "router", "mcp_install"]
 
 
 def _resolver(project_root: Path) -> PermissionResolver:
@@ -86,4 +86,4 @@ def test_recursive_grant_is_actor_scoped(tmp_path: Path) -> None:
     r.session_approve_path(str(base), actor="chat_router", kind="file.write", recursive=True)
 
     assert r.is_write_allowed(child, "chat_router") is True
-    assert r.is_write_allowed(child, "drop_source") is False
+    assert r.is_write_allowed(child, "mcp_install") is False

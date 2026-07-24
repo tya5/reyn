@@ -15,8 +15,9 @@ Per-entry reachability (architect audit, #3089 issue comment — bounded,
 per-entry, #3037):
 
   - **index_update / index_drop / mcp_drop_server** (FIX — reachable): their
-    tool wrappers (``tools/index_update.py`` / ``tools/drop_source.py`` /
-    ``tools/mcp_drop.py``) all prefer ``ctx.router_state.op_context_factory()``
+    tool wrappers (FP-0066 P1b: the ``index_update`` / ``drop_source`` agent
+    tools are retired; ``mcp_drop.py`` remains) all prefer
+    ``ctx.router_state.op_context_factory()``
     when bound. That factory resolves to ``RouterHostAdapter.make_router_op_
     context`` in the standard chat/phase host, which threads BOTH a real
     (operator-narrowable via ``reyn.yaml``'s ``sandbox.policy.write_paths``)

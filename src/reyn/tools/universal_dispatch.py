@@ -221,8 +221,9 @@ def _passthrough_args(
 # _enumerate_category), not of resolution: resolving a name the caller already
 # typed costs zero tools. #1647's mistake was to enumerate what only needed to
 # resolve. ``memory_entry`` / ``rag_corpus`` are absent because nothing authors
-# those names by hand; their capability is memory_operation__read / list and
-# rag_operation__semantic_search / list_sources.
+# those names by hand; their capability is memory_operation__read / list.
+# FP-0066 P1b: the former ``rag_operation`` category (and the layer-1 agent
+# tools it routed to) is retired outright — see the retrieval redesign doc.
 #
 # ``tests/test_resource_collapse_invariant_3026.py`` pins both halves: the
 # payload stays constant as resources grow, AND these author-time names still
@@ -276,20 +277,10 @@ _OPERATION_RULES: Final[dict[str, tuple[str, Callable[[str, Mapping[str, Any]], 
     "reyn_repo__glob": ("reyn_repo_glob", _passthrough_args),
     "reyn_repo__grep": ("reyn_repo_grep", _passthrough_args),
 
-    # rag_operation category (FP-0057 Phase 2a: rag_operation__recall renamed
-    # rag_operation__semantic_search — clean-break alongside the recall ->
-    # semantic_search tool rename, no compat alias)
-    "rag_operation__semantic_search": ("semantic_search", _passthrough_args),
-    "rag_operation__drop_source":     ("drop_source",     _passthrough_args),
-    # #3222: index_update was registered in ToolRegistry but absent from this
-    # table (and from build_tools() §H3) — the RAG in-core family could
-    # delete a source but never add one. Mirrors the sibling rows exactly.
-    "rag_operation__index_update":    ("index_update",    _passthrough_args),
-    # #3026: the discovery verb. ``semantic_search`` takes a REQUIRED ``sources``
-    # list of operator-chosen corpus names; before this, the only surface naming
-    # them was the per-corpus ``rag_corpus__<name>`` action (one LLM tool per
-    # corpus). Same shape as skill_management__list (#2971) / mcp__list_tools.
-    "rag_operation__list_sources":    ("list_rag_sources", _passthrough_args),
+    # FP-0066 P1b: the ``rag_operation`` category (semantic_search / drop_source
+    # / index_update / list_sources) is RETIRED along with the layer-1
+    # agent-facing tools it routed to — see
+    # docs/deep-dives/proposals/0066-retrieval-two-groups-two-axes.md §9.
 
     # Issue #879 — single ``mcp`` category. 2026-05-25 install-surface
     # refactor: split ``mcp__install_server`` into 3 verbs along the
@@ -566,7 +557,7 @@ def known_qualified_name_for_category(category: str) -> tuple[str, ...]:
     are not names this (or any) enumerator knows.
 
     Operation categories (file / web / memory_operation / reyn_repo /
-    rag_operation / mcp / exec) return the qualified names this module
+    mcp / exec) return the qualified names this module
     has routing rules for. ``mcp__drop_server`` is a static verb
     (= PR-4 landed). ``exec``
     returns ``("exec__run",)`` — the route is now wired

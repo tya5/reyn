@@ -38,14 +38,9 @@ EXPECTED_TOOL_NAMES = [
     # public OSS repo, not the user's files, so no permission gate.
     "reyn_repo_list",
     "reyn_repo_read",
-    # semantic_search (renamed from recall, FP-0057 Phase 2a) + drop_source
-    # (H1/H2, ADR-0033 Phase 1) — always exposed when the ToolRegistry
-    # contains them (B17-S6-1 / B17-S8-2 fix). index_update (H3, #3222) was
-    # registered in ToolRegistry but missing from build_tools() — the RAG
-    # in-core family could delete a source but never add one until this fix.
-    "semantic_search",
-    "drop_source",
-    "index_update",
+    # FP-0066 P1b: semantic_search / drop_source / index_update (former H1-H3,
+    # ADR-0033 Phase 1 / FP-0057 Phase 2a / #3222) are retired — the
+    # agent-facing layer-1 in-core RAG tools.
     # present + render_template (#2692, part of the #2688 sweep) — always exposed
     # so chat can reach the existing present-layer ops (read-authority is enforced
     # at op-exec, not by catalog exclusion; the pipeline surface opens from the same
@@ -106,8 +101,8 @@ def test_build_tools_returns_expected_baseline_tools():
     + read_tool_result (E3, B49 Step 2 v6 fix: lazy-expand half of the
     preview-driven design, surfaced for router-side use)
     + reyn_repo_list + reyn_repo_read (F1/F2, always on)
-    + plan (G1, always on) + recall + drop_source + index_update
-    (H1/H2/H3, always on; #3222 adds index_update). compact
+    + plan (G1, always on). FP-0066 P1b retired the former H1-H3 RAG tools
+    (semantic_search / drop_source / index_update). compact
     (#272/#1128) is visibility-gated (off by default), so the unconfigured
     baseline is exactly EXPECTED_TOOL_NAMES. All file-class tools and MCP
     remain gated.
@@ -305,8 +300,9 @@ def test_total_tool_count_with_full_permissions():
     + 2 web E1+E2 (web_search + web_fetch always on since FP-0022; #1449
     retired read_tool_result E3) + 4 MCP D1-D4
     + 2 reyn_repo F1-F2 + 1 plan G1
-    + 3 RAG H1-H3 (recall + drop_source + index_update, #3222)
-    + 2 presentation (present + render_template, #2692) = 29 tools total.
+    + 2 presentation (present + render_template, #2692) = 26 tools total.
+    FP-0066 P1b retired the former 3 RAG H1-H3 tools (semantic_search /
+    drop_source / index_update).
     FP-0032: D4 describe_mcp_tool added alongside D1-D3.
     web_fetch_allowed param is kept for backward compat but now a no-op.
     """
@@ -357,90 +353,14 @@ def test_nested_objects_max_depth_1_full_permissions():
         )
 
 
-# ── B17-S6-1 / B17-S8-2 fix: semantic_search (renamed from recall) + drop_source wiring tests ──
-
-
-def test_recall_in_build_tools():
-    """Tier 2: semantic_search ToolDefinition is exposed in build_tools() for router LLM.
-
-    B17-S6-1 fix: SEMANTIC_SEARCH (then RECALL) was registered in ToolRegistry
-    but missing from build_tools(), so the LLM could not see or call it (S5/S6
-    blocked).
-    """
-    tools = build_tools(SAMPLE_AGENTS)
-    tool_names = [t["function"]["name"] for t in tools]
-    assert "semantic_search" in tool_names, (
-        f"'semantic_search' missing from build_tools() output; got: {tool_names}"
-    )
-
-
-def test_drop_source_in_build_tools():
-    """Tier 2: drop_source ToolDefinition is exposed in build_tools() for router LLM.
-
-    B17-S8-2 fix: DROP_SOURCE was registered in ToolRegistry but missing from
-    build_tools(), so the LLM could not see or call it (S8 blocked).
-    """
-    tools = build_tools(SAMPLE_AGENTS)
-    tool_names = [t["function"]["name"] for t in tools]
-    assert "drop_source" in tool_names, (
-        f"'drop_source' missing from build_tools() output; got: {tool_names}"
-    )
-
-
-def test_recall_in_dispatch_registry():
-    """Tier 2: semantic_search is in RouterLoop.REGISTRY_DISPATCH_TOOLS for runtime dispatch.
-
-    B17-S6-1 fix: without this, dispatch_tool would fall through to the
-    legacy if/elif tree and return {"error": "unhandled tool: semantic_search"}.
-    REGISTRY_DISPATCH_TOOLS is a class attribute on RouterLoop.
-    """
-    from reyn.runtime.router_loop import RouterLoop
-    assert "semantic_search" in RouterLoop.REGISTRY_DISPATCH_TOOLS, (
-        "'semantic_search' missing from RouterLoop.REGISTRY_DISPATCH_TOOLS"
-    )
-
-
-def test_drop_source_in_dispatch_registry():
-    """Tier 2: drop_source is in RouterLoop.REGISTRY_DISPATCH_TOOLS for runtime dispatch.
-
-    B17-S8-2 fix: without this, dispatch_tool would fall through to the
-    legacy if/elif tree and return {"error": "unhandled tool: drop_source"}.
-    REGISTRY_DISPATCH_TOOLS is a class attribute on RouterLoop.
-    """
-    from reyn.runtime.router_loop import RouterLoop
-    assert "drop_source" in RouterLoop.REGISTRY_DISPATCH_TOOLS, (
-        "'drop_source' missing from RouterLoop.REGISTRY_DISPATCH_TOOLS"
-    )
-
-
-def test_index_update_in_build_tools():
-    """Tier 2: index_update ToolDefinition is exposed in build_tools() for router LLM.
-
-    #3222: INDEX_UPDATE was registered in ToolRegistry (tools/__init__.py)
-    but missing from build_tools() §H (#2032-class dead-registration) — the
-    RAG in-core family could delete a source (drop_source, H2) but never add
-    one. Strip-falsifiable: deleting the §H3 block in router_tools.py turns
-    this RED.
-    """
-    tools = build_tools(SAMPLE_AGENTS)
-    tool_names = [t["function"]["name"] for t in tools]
-    assert "index_update" in tool_names, (
-        f"'index_update' missing from build_tools() output; got: {tool_names}"
-    )
-
-
-def test_index_update_in_dispatch_registry():
-    """Tier 2: index_update is in RouterLoop.REGISTRY_DISPATCH_TOOLS for runtime dispatch.
-
-    #3222: mirrors test_recall_in_dispatch_registry / test_drop_source_in_dispatch_registry
-    — REGISTRY_DISPATCH_TOOLS is derived from the registry's router_dispatched
-    flag, which INDEX_UPDATE already sets, so this leg was already reachable;
-    asserted here for parity with the sibling ops.
-    """
-    from reyn.runtime.router_loop import RouterLoop
-    assert "index_update" in RouterLoop.REGISTRY_DISPATCH_TOOLS, (
-        "'index_update' missing from RouterLoop.REGISTRY_DISPATCH_TOOLS"
-    )
+# ── FP-0066 P1b: semantic_search / drop_source / index_update retired ──────
+#
+# The former B17-S6-1 / B17-S8-2 / #3222 wiring tests for these 3 layer-1
+# agent-facing RAG tools are removed along with the tools themselves — see
+# docs/deep-dives/proposals/0066-retrieval-two-groups-two-axes.md §9.
+# test_returns_external_content_flagset_1822.py / test_universal_catalog.py /
+# tests/test_op_semantic_search.py + test_op_index_update.py (OS-internal op
+# level, kept) cover the surviving invariants.
 
 
 def test_session_spawn_in_dispatch_registry():

@@ -66,8 +66,13 @@ adds an entry to the `CATEGORIES` tuple and one routing rule.
 | `web` | Web search + fetch | search or fetch |
 | `memory_operation` | Memory ops | `list` / `read` (by `layer` + `slug`) / `remember_shared` / `remember_agent` / `forget` |
 | `reyn_repo` | Reyn source / docs (read-only) | read or list |
-| `rag_operation` | RAG ops | `list_sources` / multi-source `semantic_search` / drop source |
 | `exec` | Sandboxed argv execution | run argv under the sandbox backend |
+
+> **FP-0066 P1b**: the `rag_operation` category (`list_sources` / multi-source
+> `semantic_search` / drop source) is **retired outright** — those were the
+> agent-facing layer-1 in-core RAG tools, a pre-audience-split relic. See
+> [proposal 0066 §9](../../deep-dives/proposals/0066-retrieval-two-groups-two-axes.md)
+> and [RAG concepts](../data-retrieval/rag.md).
 
 The `mcp` category provides six verb_object actions that cover the LLM-visible surface:
 
@@ -92,7 +97,7 @@ memory, an indexed corpus, an installed MCP tool, a registered pipeline — is a
 actions the LLM is shown does not grow with what the operator has accumulated.
 Where collapsing a resource category removed the only surface that *named* those
 resources, a constant-count discovery verb replaces it (`memory_operation__list`,
-`rag_operation__list_sources`, `mcp__list_tools`, `pipeline__list`,
+`mcp__list_tools`, `pipeline__list`,
 `skill_management__list`).
 
 ## Qualified-name format

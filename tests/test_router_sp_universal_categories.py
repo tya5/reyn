@@ -95,7 +95,6 @@ def test_flag_on_lists_all_categories() -> None:
         "file", "web",
         "memory_operation",
         "reyn_repo",
-        "rag_operation",
         "exec",
     ):
         assert f"**{cat}**" in prompt, (

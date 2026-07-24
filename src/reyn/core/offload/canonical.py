@@ -1085,8 +1085,8 @@ def _render_index_drop(result: dict) -> str:
     return f"{verb} {chunks} chunk(s)."
 
 
-# ``index_drop`` (core/op_runtime/index_drop.py) op kind AND its ``drop_source`` (tools/drop_source.py)
-# tool wrapper — both surface the same handler's ``{removed, chunks_dropped}`` result verbatim.
+# ``index_drop`` (core/op_runtime/index_drop.py) op kind — OS-internal substrate
+# (FP-0066 P1b: the ``drop_source`` agent tool that used to wrap it is retired).
 index_drop_to_canonical = make_status_text_mapper(
     render=_render_index_drop, meta_keys=("removed", "chunks_dropped"),
 )
@@ -1454,22 +1454,6 @@ def plugin_list_to_canonical(result: dict) -> CanonicalToolResult:
     preview = _bounded_join(plugins, "name")
     text = f"{n} builtin plugin{'s' if n != 1 else ''}" + (f": {preview}" if preview else "") + "."
     return _records_to_canonical(text, plugins)
-
-
-def list_rag_sources_to_canonical(result: dict) -> CanonicalToolResult:
-    """``list_rag_sources`` result -> canonical (#3026). ``sources`` entries carry
-    ``{name, description, backend, chunk_count}`` — the discovery view of every
-    corpus indexed for this session.
-
-    ``name`` rides in the records because it is the field the model acts on: it
-    is passed straight back as ``semantic_search(sources=[...])``, so it must
-    survive offload. The summary only needs to say what is on offer.
-    """
-    sources = result.get("sources") or []
-    n = len(sources)
-    preview = _bounded_join(sources, "name")
-    text = f"{n} indexed source{'s' if n != 1 else ''}" + (f": {preview}" if preview else "") + "."
-    return _records_to_canonical(text, sources)
 
 
 def list_mcp_tools_to_canonical(result: dict) -> CanonicalToolResult:

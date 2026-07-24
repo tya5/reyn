@@ -163,23 +163,12 @@ fixtures:
       - 'mcp__install_local({name: "weather", command: "python", args: ["/tmp/weather_mcp.py"]})'
     axis: [precision]
 
-  # ── rag (2 entries) ───────────────────────────────────────────────────────
-
-  - id: rag_recall_semantic
-    source: dogfood/scenarios/control_ir_ops.yaml
-    prompt: "Use the rag_operation__semantic_search action to find documentation about 'phase rollback'."
-    expected_action: rag_operation__semantic_search
-    expected_reach_path:
-      - 'rag_operation__semantic_search({query: "phase rollback"})'
-    axis: [precision]
-
-  - id: rag_drop_source_destructive
-    source: dogfood/scenarios/permissions_and_safety.yaml
-    prompt: "Drop the events index to free up disk space."
-    expected_action: rag_operation__drop_source
-    expected_reach_path:
-      - 'rag_operation__drop_source({source_name: "events"})'
-    axis: [precision]
+  # FP-0066 P1b: the rag (2-entry) section — rag_recall_semantic /
+  # rag_drop_source_destructive, pinning rag_operation__semantic_search /
+  # rag_operation__drop_source — is removed. Both actions are retired along
+  # with the layer-1 agent-facing RAG tools (the `rag_operation` category no
+  # longer exists); see
+  # docs/deep-dives/proposals/0066-retrieval-two-groups-two-axes.md §9.
 
   # ── memory (1 entry) ──────────────────────────────────────────────────────
 

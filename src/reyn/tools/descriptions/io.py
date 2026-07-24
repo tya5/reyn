@@ -9,12 +9,13 @@ its origin tool module; the origin module now aliases its
 site is unchanged.
 
 Covers: file.py's 6 verbs (read_file / write_file / delete_file /
-edit_file / list_directory / grep_files / glob_files), drop_source, and
-index_update. ``index_update``'s ``ToolDefinition.category`` field is
-``"discovery"`` in code (it shares the FP-0057 index lifecycle with
-``drop_source``) — it is grouped here by feature (index/file-adjacent
-I/O), matching the Phase 2 dispatch brief, not by its literal
-``category=`` value.
+edit_file / list_directory / grep_files / glob_files).
+
+FP-0066 P1b: ``drop_source`` and ``index_update`` — the agent-facing
+layer-1 in-core RAG tools (FP-0057 Phase 2a) — are RETIRED along with the
+``ToolDescription`` records that used to live here. The OS-internal
+``IndexUpdateIROp`` substrate they rode is kept; see
+docs/deep-dives/proposals/0066-retrieval-two-groups-two-axes.md §9.
 """
 from __future__ import annotations
 
@@ -158,61 +159,6 @@ list_directory = ToolDescription(
     ),
 )
 
-drop_source = ToolDescription(
-    tool_name="drop_source",
-    surfaced="router + phase (gates.router=allow, gates.phase=allow)",
-    purpose=(
-        "Remove an indexed source entirely (SQLite backend + manifest "
-        "entry) — the destructive counterpart to index_update, e.g. when "
-        "retiring a trial source or rebuilding from scratch."
-    ),
-    text=(
-        "Remove an indexed source entirely (= delete its SQLite + manifest entry). "
-        "Use when retiring trial sources or replacing with a different strategy. "
-        "Permission-gated; user is prompted to confirm."
-    ),
-    ja=(
-        "インデックス済みソースを完全に削除する（SQLite バックエンド＋"
-        "マニフェストエントリを削除）。試験的なソースの廃止や別の戦略への"
-        "切り替え時に使う。パーミッションゲート付きで、ユーザーに確認を"
-        "求める。"
-    ),
-)
-
-index_update = ToolDescription(
-    tool_name="index_update",
-    surfaced=(
-        "router + phase (gates.router=allow, gates.phase=allow) — own-write, "
-        "default-ALLOW op (FP-0057 Phase 2a)"
-    ),
-    purpose=(
-        "Incrementally reconcile chunks into an indexed source's in-core "
-        "IndexBackend (add/update/remove/skip by content_hash), the "
-        "constructive counterpart to drop_source — NO full-rebuild mode."
-    ),
-    text=(
-        "Incrementally ingest chunks into an indexed source, reconciling "
-        "against its current content: NEW content_hash values are embedded and "
-        "added; a source_path whose chunks changed (new hash under a path "
-        "already indexed) is updated (old chunks for that path replaced); a "
-        "source_path this call re-supplies chunks for but whose old chunk "
-        "hashes are absent from this call are removed; unchanged content_hash "
-        "values are skipped (no re-embed). NO full-rebuild mode — to rebuild a "
-        "source from scratch, call `drop_source` then `index_update` on the "
-        "fresh (empty) source. The caller supplies pre-chunked text (chunking "
-        "is the caller's responsibility, not this tool's)."
-    ),
-    ja=(
-        "インデックス済みソースに対してチャンクを差分投入し、現在の内容と"
-        "照合する（reconcile）: 新しい content_hash は埋め込んで追加、既存"
-        "パスのハッシュが変わっていれば更新、今回再提示されなかった旧"
-        "ハッシュは削除、変化のない content_hash は再埋め込みせずスキップ"
-        "する。フルリビルドモードはない（ゼロから作り直すには drop_source "
-        "してから空のソースに index_update する）。チャンク分割は呼び出し"
-        "側の責任。"
-    ),
-)
-
 ALL: dict[str, ToolDescription] = {
     "read_file": read_file,
     "write_file": write_file,
@@ -221,8 +167,6 @@ ALL: dict[str, ToolDescription] = {
     "grep_files": grep_files,
     "glob_files": glob_files,
     "list_directory": list_directory,
-    "drop_source": drop_source,
-    "index_update": index_update,
 }
 
 
@@ -364,96 +308,6 @@ PARAMS: dict[str, dict[str, ParamDescription]] = {
                 "のではなく、一覧の末尾に「何件中何件を表示したか」の注記"
                 "が付く。"
             ),
-        ),
-    },
-    "drop_source": {
-        "source": ParamDescription(
-            text="Logical source name to remove (from list_rag_sources).",
-            ja="削除する論理ソース名（list_rag_sources の結果から）。",
-        ),
-    },
-    "index_update": {
-        "source": ParamDescription(
-            text="Logical source name to ingest into.",
-            ja="投入先の論理ソース名。",
-        ),
-        "chunks": ParamDescription(
-            text="Chunks to reconcile into the index.",
-            ja="インデックスに反映するチャンク群。",
-        ),
-        # #3222: each array item's schema, used as the (flat, depth-1-safe)
-        # description on `chunks.items` rather than a nested JSON-schema —
-        # see the router_tools.py §H3 / index_update.py comment for why.
-        # Combines the former standalone `text` + `chunks.metadata`
-        # descriptions into one string describing the whole item shape.
-        "chunks.item": ParamDescription(
-            text=(
-                "Object with two top-level fields: "
-                "`text` (string, required) — the chunk's content to embed. "
-                "`metadata` (object, required) — per-chunk metadata with: "
-                "`content_hash` (string, required) — change-detection / dedup "
-                "key; a chunk whose hash is unchanged from the current index "
-                "is skipped (no re-embed). "
-                "`source_path` (string, required) — reconciliation-scope key "
-                "(file path or memory slug); chunks are added/updated/removed "
-                "per source_path, one path at a time. "
-                "`source_type` (string, optional, default \"generic\") — a "
-                "caller-defined label for the content's origin kind (not "
-                "interpreted by the OS); read back via filters at query time. "
-                "`chunk_index` (integer, optional, default 0) — this chunk's "
-                "position within its source_path, for ordering. "
-                "`size_tokens` (integer, optional, default 0) — token count of "
-                "`text`, for downstream context-budget accounting. "
-                "`parent_context` (string, optional) — the enclosing heading / "
-                "class / function name, for retrieval-time context. "
-                "`extra` (object, optional) — caller-defined fields beyond the "
-                "above, carried through unchanged."
-            ),
-            ja=(
-                "トップレベルに 2 フィールドを持つオブジェクト: "
-                "`text`（文字列、必須） — 埋め込み対象のチャンク本文。 "
-                "`metadata`（オブジェクト、必須） — 以下を含むチャンク単位の"
-                "メタデータ: "
-                "`content_hash`（文字列、必須） — 変更検知・重複排除キー。"
-                "現インデックスとハッシュが変わらないチャンクは"
-                "再埋め込みされずスキップされる。 "
-                "`source_path`（文字列、必須） — reconcile 範囲キー"
-                "（ファイルパスまたはメモリ slug）。追加・更新・削除は "
-                "source_path 単位で一つずつ行われる。 "
-                "`source_type`（文字列、任意、既定値 \"generic\"） — 呼び出し側が"
-                "定義するコンテンツ由来のラベル（OS 側は解釈しない）。"
-                "クエリ時にフィルタとして読み戻される。 "
-                "`chunk_index`（整数、任意、既定値 0） — その source_path 内での"
-                "このチャンクの位置（並び順用）。 "
-                "`size_tokens`（整数、任意、既定値 0） — `text` のトークン数"
-                "（下流のコンテキスト予算管理用）。 "
-                "`parent_context`（文字列、任意） — 包含する見出し／クラス／"
-                "関数名（検索時のコンテキスト用）。 "
-                "`extra`（オブジェクト、任意） — 上記以外の呼び出し側定義の"
-                "フィールド。そのまま保持される。"
-            ),
-        ),
-        "embedding_model": ParamDescription(
-            text=(
-                "Embedding model class, used ONLY when this source has no "
-                "recorded model yet (first index_update for a new source) "
-                "— an already-indexed source's recorded model always wins "
-                "(a source is one embedding space)."
-            ),
-            ja=(
-                "埋め込みモデルクラス。このソースに記録済みモデルがまだない"
-                "場合（新規ソースの最初の index_update）のみ使用される — "
-                "既にインデックス済みのソースは記録済みモデルが常に優先"
-                "（1ソース=1埋め込み空間）。"
-            ),
-        ),
-        "description": ParamDescription(
-            text="SourceManifest description (first-index or override).",
-            ja="SourceManifest の説明文（初回インデックス時または上書き）。",
-        ),
-        "path": ParamDescription(
-            text="SourceManifest path label (first-index or override).",
-            ja="SourceManifest のパスラベル（初回インデックス時または上書き）。",
         ),
     },
 }

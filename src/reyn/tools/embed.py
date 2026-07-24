@@ -47,7 +47,7 @@ _EMBED_PARAMETERS: dict[str, Any] = {
 
 
 async def _handle_embed(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
-    """Dispatch an EmbedIROp via op_runtime (mirrors tools/semantic_search.py's shape)."""
+    """Dispatch an EmbedIROp via op_runtime (mirrors the other op-dispatching agent tools' shape)."""
     from reyn.core.op_runtime import execute_op
     from reyn.core.op_runtime.context import OpContext
     from reyn.schemas.models import EmbedIROp
@@ -77,7 +77,7 @@ async def _handle_embed(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult
         # Minimal context for router-side calls without a factory. embed has
         # no workspace side effect (read-only w.r.t. the workspace; its only
         # effect is the outbound embedding API call), so a workspace-less
-        # OpContext is safe here — same posture as tools/semantic_search.py.
+        # OpContext is safe here.
         legacy_ctx = OpContext(
             workspace=ctx.workspace,
             events=ctx.events,

@@ -20,7 +20,6 @@ from reyn.tools import get_default_registry
 # — external network / external store / user-written disk.
 _EXTERNAL = {
     "list_memory", "read_memory_body",   # user/agent-written .md
-    "semantic_search",                   # RAG over user content (memory/docs/chat); FP-0057 Phase 2a renamed from recall
     "call_mcp_tool", "mcp_call_tool",    # external MCP server result
     "list_mcp_tools", "describe_mcp_tool",  # external server-authored descriptions
     "mcp_search_registry",               # external registry listing
@@ -42,10 +41,9 @@ _EXTERNAL = {
     # git repo, exactly as skill_install_source does. pipeline_list re-surfaces
     # them on every later call. Same rationale as skill_list directly above.
     "pipeline_list",
-    # #3026: a corpus description is set via the agent-callable index_update's
-    # ``description`` parameter, so it is agent-written text that list_rag_sources
-    # re-surfaces later. Same rationale as list_memory ("user/agent-written").
-    "list_rag_sources",
+    # FP-0066 P1b: "semantic_search" and "list_rag_sources" are removed from
+    # this set — the agent-facing layer-1 in-core RAG tools are retired. See
+    # docs/deep-dives/proposals/0066-retrieval-two-groups-two-axes.md §9.
 }
 
 # Not fenced (returns_external_content=False): each justified below. Scan-all
@@ -77,7 +75,7 @@ _NOT_EXTERNAL = {
     # {status, name, kind, members, ...}, not external content (it wires a topology).
     "topology_create",
     # — writes / installs / deletes: return status, not external content —
-    "write_file", "edit_file", "delete_file", "drop_source",
+    "write_file", "edit_file", "delete_file",
     "remember_shared", "remember_agent", "forget_memory",
     "mcp_install", "mcp_install_local", "mcp_install_package",
     "mcp_install_registry", "mcp_drop_server",
@@ -161,13 +159,8 @@ _NOT_EXTERNAL = {
     # API call; the returned vectors carry no external payload.) Same "derived
     # from input, not a relay" rationale as render_template.
     "embed",
-    # FP-0057 Phase 2a: index_update reconciles caller-supplied chunks into a
-    # source's own index and returns reconciliation COUNTS (added/updated/
-    # removed/skipped) + the source's own recorded chunk_count/embedding_model —
-    # an OS-assembled status summary, not relayed external content (the caller
-    # already supplied the chunk text; index_update never fetches anything
-    # itself). Same "derived from input, not a relay" rationale as embed.
-    "index_update",
+    # FP-0066 P1b: "index_update" is removed from this set — the agent-facing
+    # layer-1 in-core RAG tool is retired (the OS-internal op is kept).
     # — catalog / discovery (reyn-assembled or operator config) —
     "list_agents", "describe_agent",
     "list_actions", "search_actions", "describe_action",

@@ -92,8 +92,8 @@ FLAT_GRANDFATHER: frozenset[str] = frozenset(
         "get_mcp_prompt",
         # sole hooks_*-shaped tool, predates convention, no established family
         "hooks_add",
-        # object_verb order anomaly ("update" the "index"), predates convention
-        "index_update",
+        # FP-0066 P1b: "index_update" (object_verb order anomaly) retired along
+        # with the layer-1 agent tool it named.
         # mcp_* family (R1 family-prefix grandfather); mcp_install is additionally
         # an orphan superseded by the install_local/_package/_registry split
         # (2026-05-25) and not present in _OPERATION_RULES any more — flagged
@@ -111,8 +111,8 @@ FLAT_GRANDFATHER: frozenset[str] = frozenset(
         "presentation_install_local",
         # reyn_repo_* family (R1 family-prefix grandfather)
         "reyn_repo_glob", "reyn_repo_grep", "reyn_repo_list", "reyn_repo_read",
-        # established term-of-art compound naming the whole RAG retrieval macro
-        "semantic_search",
+        # FP-0066 P1b: "semantic_search" (established term-of-art compound)
+        # retired along with the layer-1 agent tool it named.
         # skill_* family (R1 family-prefix grandfather)
         "skill_install_local", "skill_install_source", "skill_list",
         # sole tool of its shape, no established family, predates convention
@@ -131,10 +131,9 @@ QUALIFIED_GRANDFATHER: frozenset[str] = frozenset(
         # NOT an X__X violation (category "presentation_management" != verb
         # "install") but the bare "install" verb itself is grandfathered
         "presentation_management__install",
-        # object_verb order anomaly, mirrors the flat "index_update" anomaly
-        "rag_operation__index_update",
-        # term-of-art compound, mirrors the flat "semantic_search" anomaly
-        "rag_operation__semantic_search",
+        # FP-0066 P1b: "rag_operation__index_update" / "rag_operation__semantic_search"
+        # retired along with the ``rag_operation`` category and the layer-1
+        # agent tools it routed to.
     }
 )
 

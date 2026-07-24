@@ -250,7 +250,7 @@
       "parameters": {
         "properties": {
           "action_name": {
-            "description": "Qualified name of the action to describe (e.g. 'mcp__call_tool', 'rag_operation__semantic_search').",
+            "description": "Qualified name of the action to describe (e.g. 'mcp__call_tool', 'memory_operation__read').",
             "type": "string"
           }
         },
@@ -304,25 +304,6 @@
     },
     "type": "function"
   },
-  "drop_source": {
-    "function": {
-      "description": "Remove an indexed source entirely (= delete its SQLite + manifest entry). Use when retiring trial sources or replacing with a different strategy. Permission-gated; user is prompted to confirm.",
-      "name": "drop_source",
-      "parameters": {
-        "properties": {
-          "source": {
-            "description": "Logical source name to remove (from list_rag_sources).",
-            "type": "string"
-          }
-        },
-        "required": [
-          "source"
-        ],
-        "type": "object"
-      }
-    },
-    "type": "function"
-  },
   "edit_file": {
     "function": {
       "description": "Replace a unique string in a file under the agent's write scope. `old_string` MUST appear exactly once in the file; if it appears multiple times, the call fails with a count — re-call with a longer context-including snippet, or pass `replace_all=true` to replace every occurrence. Use this for partial edits instead of read+write for the whole file.",
@@ -357,7 +338,7 @@
   },
   "embed": {
     "function": {
-      "description": "Embed a batch of texts into vectors using reyn's configured embedding model (raw primitive — no storage). Returns one vector per input text, in the same order. Use this to build your OWN persistent RAG store: embed your texts, then hand the vectors to your own vector-DB MCP tools (store/upsert) to persist them, and again at query time to embed a query before calling that store's search tool. For reyn's OWN indexed sources / memory / tool-use retrieval, use `semantic_search` instead — it embeds and searches in one call over reyn-managed indexes.",
+      "description": "Embed a batch of texts into vectors using reyn's configured embedding model (raw primitive — no storage). Returns one vector per input text, in the same order. Use this to build your OWN persistent RAG store: embed your texts, then hand the vectors to your own vector-DB MCP tools (store/upsert) to persist them, and again at query time to embed a query before calling that store's search tool. reyn's own indexed sources / tool-use retrieval are OS-internal (not agent-callable); for personal memory retrieval use `list_memory` / `read_memory_body`.",
       "name": "embed",
       "parameters": {
         "properties": {
@@ -593,47 +574,6 @@
     },
     "type": "function"
   },
-  "index_update": {
-    "function": {
-      "description": "Incrementally ingest chunks into an indexed source, reconciling against its current content: NEW content_hash values are embedded and added; a source_path whose chunks changed (new hash under a path already indexed) is updated (old chunks for that path replaced); a source_path this call re-supplies chunks for but whose old chunk hashes are absent from this call are removed; unchanged content_hash values are skipped (no re-embed). NO full-rebuild mode — to rebuild a source from scratch, call `drop_source` then `index_update` on the fresh (empty) source. The caller supplies pre-chunked text (chunking is the caller's responsibility, not this tool's).",
-      "name": "index_update",
-      "parameters": {
-        "properties": {
-          "chunks": {
-            "description": "Chunks to reconcile into the index.",
-            "items": {
-              "description": "Object with two top-level fields: `text` (string, required) — the chunk's content to embed. `metadata` (object, required) — per-chunk metadata with: `content_hash` (string, required) — change-detection / dedup key; a chunk whose hash is unchanged from the current index is skipped (no re-embed). `source_path` (string, required) — reconciliation-scope key (file path or memory slug); chunks are added/updated/removed per source_path, one path at a time. `source_type` (string, optional, default \"generic\") — a caller-defined label for the content's origin kind (not interpreted by the OS); read back via filters at query time. `chunk_index` (integer, optional, default 0) — this chunk's position within its source_path, for ordering. `size_tokens` (integer, optional, default 0) — token count of `text`, for downstream context-budget accounting. `parent_context` (string, optional) — the enclosing heading / class / function name, for retrieval-time context. `extra` (object, optional) — caller-defined fields beyond the above, carried through unchanged.",
-              "type": "object"
-            },
-            "type": "array"
-          },
-          "description": {
-            "description": "SourceManifest description (first-index or override).",
-            "type": "string"
-          },
-          "embedding_model": {
-            "default": "standard",
-            "description": "Embedding model class, used ONLY when this source has no recorded model yet (first index_update for a new source) — an already-indexed source's recorded model always wins (a source is one embedding space).",
-            "type": "string"
-          },
-          "path": {
-            "description": "SourceManifest path label (first-index or override).",
-            "type": "string"
-          },
-          "source": {
-            "description": "Logical source name to ingest into.",
-            "type": "string"
-          }
-        },
-        "required": [
-          "source",
-          "chunks"
-        ],
-        "type": "object"
-      }
-    },
-    "type": "function"
-  },
   "invoke_action": {
     "function": {
       "description": "WHAT: Execute an action by qualified name (<category>__<entry>). Executes the action's default semantic operation. WHEN: Call this whenever you intend to run any action — MCP tool, file operation, web search, memory write, semantic search, etc. All catalog actions are invoked through this single entry point. WHEN NOT: For chitchat or self-questions, reply without tools. PREFERRED OVER: Legacy per-kind tools (call_mcp_tool, etc.) — invoke_action covers all 13 action categories uniformly. On unknown action_name, returns an error with similar-name suggestions. SPAWN-ACK HANDLING: when an action result is {status:'spawned', ...}, the router exits the current turn before this tool description applies; the OS emits the user-visible acknowledgment directly. You will not be asked to compose a reply for the spawn-ack turn. TASK_SPAWNED: an agent-role message starting with [task_spawned] is OS-emitted when an async task is launched (kind=agent, paired with chain_id). The structured header lets you correlate the spawn with the later [task_completed] message carrying the same identifier. The trailing human-readable line is what the user sees; the header is your correlation record. TASK_COMPLETED: a user-role message starting with [task_completed] is OS-injected when a previously-spawned async task finishes (kind=agent) or a spawned session completes (kind=spawned_session). The message carries the task's status + result fields. status='finished' means normal completion; other values ('loop_limit_exceeded', 'phase_budget_exceeded', 'budget_exceeded', 'error', or any non-'finished' value with result.error present) indicate the task did not complete normally. AGENT DELEGATION: For peer agent delegation, use action_name='multi_agent__delegate' with args {to: '<agent_name>', request: ...}; get its canonical args via describe_action(action_name='multi_agent__delegate'). Use when task is outside available actions but matches a peer agent's role, or when user explicitly addresses a named agent. Acknowledge delegation in 1 sentence.",
@@ -664,7 +604,7 @@
       "parameters": {
         "properties": {
           "category": {
-            "description": "Filter by category. Pass an array of category names (e.g. category=['exec'], category=['web', 'file']). Omit or pass [] to include all categories. Categories: multi_agent, mcp, file, web, memory_operation, reyn_repo, rag_operation, exec, skill_management, pipeline, pipeline_management, presentation_management, plugin_management.",
+            "description": "Filter by category. Pass an array of category names (e.g. category=['exec'], category=['web', 'file']). Omit or pass [] to include all categories. Categories: multi_agent, mcp, file, web, memory_operation, reyn_repo, exec, skill_management, pipeline, pipeline_management, presentation_management, plugin_management.",
             "items": {
               "enum": [
                 "multi_agent",
@@ -673,7 +613,6 @@
                 "web",
                 "memory_operation",
                 "reyn_repo",
-                "rag_operation",
                 "exec",
                 "skill_management",
                 "pipeline",
@@ -843,17 +782,6 @@
         "required": [
           "path"
         ],
-        "type": "object"
-      }
-    },
-    "type": "function"
-  },
-  "list_rag_sources": {
-    "function": {
-      "description": "List the indexed sources (RAG corpora) available in this session, with each source's name, description, and indexed chunk count. Call this before `semantic_search` when you do not already know a source name: `semantic_search` requires `sources`, and the names are chosen by the operator, so they cannot be guessed. An empty list means nothing has been indexed yet — say so rather than guessing a source name.",
-      "name": "list_rag_sources",
-      "parameters": {
-        "properties": {},
         "type": "object"
       }
     },
@@ -1593,7 +1521,7 @@
   },
   "reyn_repo_read": {
     "function": {
-      "description": "Read a text file from Reyn's own repository by an exact repo-root-relative path. Use for: (a) reading a specific file the user named (e.g. README.md), or (b) navigating Reyn's source / docs when NO indexed source covers the topic. If an indexed source description mentions concepts / design / docs / Reyn, use `semantic_search` instead — guessing a file path is unreliable; semantic search over indexed chunks is not. Fallback entry point: reyn_repo_read(\"README.md\") for the overview + curated map of deep-dive paths.",
+      "description": "Read a text file from Reyn's own repository by an exact repo-root-relative path. Use for: (a) reading a specific file the user named (e.g. README.md), or (b) navigating Reyn's source / docs to find the relevant file. Prefer this over guessing a file path from memory — start from a curated entry point. Fallback entry point: reyn_repo_read(\"README.md\") for the overview + curated map of deep-dive paths.",
       "name": "reyn_repo_read",
       "parameters": {
         "properties": {
@@ -1725,7 +1653,6 @@
                 "web",
                 "memory_operation",
                 "reyn_repo",
-                "rag_operation",
                 "exec",
                 "skill_management",
                 "pipeline",
@@ -1750,50 +1677,6 @@
         },
         "required": [
           "query"
-        ],
-        "type": "object"
-      }
-    },
-    "type": "function"
-  },
-  "semantic_search": {
-    "function": {
-      "description": "Search indexed sources by natural-language query. Returns top-K relevant chunks with text + metadata. Use this when the user's question is about a topic an indexed source covers — including 'what is X?', 'explain X', 'how does X work?' style questions. Call `list_rag_sources` to see which sources exist; each source's description tells you what topics it covers. Prefer this over `reyn_repo_read` / file_read when an indexed source description matches the question's topic — semantic search across indexed chunks is more reliable than guessing a file path.",
-      "name": "semantic_search",
-      "parameters": {
-        "properties": {
-          "embedding_model": {
-            "default": "standard",
-            "description": "Fallback embedding model class (light/standard/strong) or full model id, used ONLY for a source with no recorded model yet — every already-indexed source auto-adopts its OWN recorded model regardless of this value (multi-model correctness, FP-0057 Phase 2a).",
-            "type": "string"
-          },
-          "filters": {
-            "default": {},
-            "description": "ChunkMetadata field equality filters (e.g. source_path).",
-            "type": "object"
-          },
-          "query": {
-            "description": "Natural language query to search for.",
-            "type": "string"
-          },
-          "sources": {
-            "description": "Logical source names to search (from list_rag_sources).",
-            "items": {
-              "type": "string"
-            },
-            "type": "array"
-          },
-          "top_k": {
-            "default": 5,
-            "description": "Number of top chunks to return.",
-            "maximum": 50,
-            "minimum": 1,
-            "type": "integer"
-          }
-        },
-        "required": [
-          "query",
-          "sources"
         ],
         "type": "object"
       }

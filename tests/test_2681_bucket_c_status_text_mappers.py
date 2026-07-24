@@ -102,17 +102,17 @@ def test_delegate_to_agent_renders_status_text() -> None:
     assert canonical["meta"]["to"] == "peer_agent"
 
 
-def test_index_drop_shared_by_op_kind_and_drop_source_tool() -> None:
-    """Tier 1: ``index_drop`` (op kind) and ``drop_source`` (its tool wrapper, tools/drop_source.py)
-    surface the SAME ``{removed, chunks_dropped}`` handler result — both declared through the same
-    mapper, so both render identically."""
+def test_index_drop_renders_status_text() -> None:
+    """Tier 1: ``index_drop`` (OS-internal op kind, core/op_runtime/index_drop.py) surfaces its
+    ``{removed, chunks_dropped}`` handler result via its declared mapper. FP-0066 P1b: the
+    ``drop_source`` agent tool that used to wrap this op (and shared the same mapper declaration
+    under its own tool name) is retired — only the op-kind declaration remains."""
     result = {"removed": True, "chunks_dropped": 17}
-    for source in ("index_drop", "drop_source"):
-        canonical = to_canonical(result, source=source)
-        assert "17" in canonical["text"]
-        assert "chunk" in canonical["text"]
-        assert canonical["meta"]["chunks_dropped"] == 17
-        assert canonical["meta"]["removed"] is True
+    canonical = to_canonical(result, source="index_drop")
+    assert "17" in canonical["text"]
+    assert "chunk" in canonical["text"]
+    assert canonical["meta"]["chunks_dropped"] == 17
+    assert canonical["meta"]["removed"] is True
 
 
 def test_skill_install_local_renders_status_text() -> None:

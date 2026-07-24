@@ -66,7 +66,7 @@ async def _handle_mcp_drop_server_op(
     op_runtime, which owns the full lifecycle (= scope detection,
     permission gate, yaml edit, secrets cleanup, P6 event emit).
 
-    OpContext resolution mirrors drop_source / mcp_install:
+    OpContext resolution mirrors mcp_install:
       - Router context: use ctx.router_state.op_context_factory when
         bound (= RouterLoop wires this with permission_decl populated)
       - Fallback: minimal OpContext with mcp_drop_server decl

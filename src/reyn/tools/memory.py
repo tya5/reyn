@@ -14,7 +14,7 @@ closure so the registry advertises memory write as phase-eligible.
 
 Status (post-FP-0039 audit, 2026-05-18): coarse-kind phase dispatch
 (= file / mcp / ask_user / web_fetch /
-web_search / mcp_install / semantic_search / sandboxed_exec) is wired through
+web_search / mcp_install / sandboxed_exec) is wired through
 ``invoke_tool(get_default_registry(), op.kind, ...)``.  #3226 Phase 3: the
 ``sandboxed_exec`` op's ToolRegistry entry is now named ``exec`` (a
 tool/qualified-name-only rename — the op kind stays ``sandboxed_exec``), so
