@@ -2914,32 +2914,38 @@ class RouterLoop:
         prior sync-in-op build left the source ``dirty``/mid-``building``
         (the "best-effort search is a bug" completeness guarantee). Wraps
         the search in ``semantic_search_started``/``_complete`` audit-events
-        (results count) — this call site (not ``Coordinator.search_await``
-        itself, which has no visibility into the actual query results) is
-        where the count is known, so ``_complete`` fires here.
+        (results count) via the shared ``emit_wrapped_semantic_search``
+        helper (P3-helper, #3247 firm §6) — the unification of this wrap
+        with the ``universal_catalog._handle_search_actions`` copy.
         """
+        from reyn.data.index.coordinator import emit_wrapped_semantic_search
+
         index = self.host.get_action_embedding_index()
         provider = self.host.get_embedding_provider()
         model_class = self.host.get_embedding_model_class()
         if index is None or provider is None:
             return []
         source_id = getattr(index, "source_name", None) or "actions"
-        events = self.host.events
-        self.host.events.emit("semantic_search_started", source_id=source_id)
         results: list[dict[str, Any]] = []
         try:
             coordinator = self._get_index_coordinator()
-            await coordinator.search_await(source_id)
             # FP-0057 #2856 Part A: idx.query() routes through the shared
             # `embed` op (execute_op) instead of calling ``provider`` directly
             # — needs an OpContext, not the provider instance itself.
             op_ctx = self.host.make_router_op_context()
-            results = await index.query(query, op_ctx, model_class, top_k=top_k)
+            results = await emit_wrapped_semantic_search(
+                events=self.host.events,
+                coordinator=coordinator,
+                source_id=source_id,
+                index=index,
+                query=query,
+                op_ctx=op_ctx,
+                model_class=model_class,
+                top_k=top_k,
+            )
         except Exception as e:  # noqa: BLE001 — search is best-effort presentation aid
             import logging
             logging.getLogger(__name__).warning("search_actions failed: %s", e)
-        finally:
-            events.emit("semantic_search_complete", source_id=source_id, results=len(results))
         return [r["qualified_name"] for r in results if r.get("qualified_name")]
 
     def resolve(self, llm_response, tool_catalog: dict) -> list[dict]:
