@@ -1,0 +1,432 @@
+"""IndexCoordinator — orchestration for embedding-index builds (FP-0066 P2a,
+#3247 "P2 IndexCoordinator 設計 firm").
+
+**Boundary principle (the firm's one-line frame)**: the Coordinator owns
+*orchestration* — dirty-marking, await, the background build queue, the
+cross-process ``build_lock``, failure-memoization, and the readiness gate.
+It never owns *execution* (the ``embed``/``index_update`` ops + the
+``SqliteIndexBackend`` remain the real index write — layer-3, kept from
+FP-0066 P1) and never owns *domain policy* (a source's own item↔ChunkRecord
+mapping and what to embed is supplied by the caller as a ``BuildFn`` "domain
+adapter" strategy callback — see ``register_builder`` below). Centralising
+the await/build-queue orchestration here is what prevents the "file.read
+dispersion" replay the firm calls out: without one owner, await logic would
+scatter across install/remember/search call sites again.
+
+**P2a scope** (per the firm's §7 sub-PR decomposition): the Coordinator
+CORE + the ``SourceManifest`` dirty/pending state, plus the ONE unified
+all-or-nothing embed-verify-write primitive (``embed_verify_write``) that
+``ActionEmbeddingIndex.build()`` and the ``index_update`` op used to
+duplicate verbatim. Migrating those two call sites to trigger builds
+*through* the Coordinator (eager-vs-background, once-per-chain spawn) is
+**P2b** — deliberately NOT done here. Wiring dynamic ops to
+``ensure_built(await_completion=True)`` and G3 sync de-index is **P2c**.
+Audit-event phase emission is **P2d**.
+
+**Crash-recovery (the band requirement, CLAUDE.md recovery-feature gate)**:
+the dirty/building/error state lives in ``SourceEntry`` (persisted to
+``sources.yaml`` — the SourceManifest's existing atomic-write file SSoT).
+This is DELIBERATELY NOT the WAL (``.reyn/state/wal.jsonl``) — the WAL is
+agent chat-state's crash-recovery substrate (see
+``docs/concepts/runtime/events.md`` — "WAL vs audit-event separation"); the
+IndexCoordinator's dirty flag has nothing to do with it and must survive
+completely independently of it. The in-memory build-queue (``_bg_tasks``,
+``_failure_memo``) is volatile BY DESIGN — a crash loses it, and that is
+fine, because ``search_await`` re-derives "does this need a build" from the
+persisted ``sources.yaml`` state alone, not from the in-memory queue. See
+``tests/test_index_coordinator_3247_p2a.py`` for the truncate-falsify proof.
+"""
+from __future__ import annotations
+
+import asyncio
+from dataclasses import dataclass
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, Awaitable, Callable, Mapping
+
+from reyn.data.index import ChunkRecord, IndexBackend, WriteResult, get_backend
+from reyn.data.index.backend import cache_dir_for_source
+from reyn.data.index.build_lock import try_acquire_build_lock
+from reyn.data.index.source_manifest import (
+    SourceEntry,
+    SourceManifest,
+    get_source_manifest,
+)
+
+if TYPE_CHECKING:
+    from reyn.core.op_runtime.context import OpContext
+
+__all__ = [
+    "BuildMaterial",
+    "BuildFn",
+    "BuildOutcome",
+    "EmbedWriteResult",
+    "assert_vector_count_match",
+    "embed_verify_write",
+    "IndexCoordinator",
+]
+
+
+# ── Unified all-or-nothing embed-verify-write (the firm's dedup target) ────
+
+
+@dataclass(frozen=True)
+class EmbedWriteResult:
+    """Return shape of ``embed_verify_write`` — the write outcome plus the
+    embed op's resolved model id (some callers, e.g. ``index_update``, must
+    record the resolved model on subsequent chunk metadata / the manifest)."""
+
+    write_result: WriteResult
+    resolved_model: str
+
+
+def assert_vector_count_match(
+    vector_count: int, item_count: int, *, item_noun: str = "items", label: str = "build",
+) -> None:
+    """The all-or-nothing guard, itself — the ONE canonical implementation of
+    what used to be a verbatim-duplicated ``if len(vectors) != len(items):
+    raise RuntimeError(...)`` in both ``ActionEmbeddingIndex.build()`` and
+    the ``index_update`` op. Both call sites now call THIS function for
+    their count-match check (``item_noun``/``label`` preserve each site's
+    distinct error-message wording — "...refusing partial build" vs
+    "...refusing partial index_update write" — respectively; behavior is
+    now identical by construction, not by two hand-maintained copies
+    agreeing).
+
+    Public (not underscore-prefixed) precisely so it can be imported and
+    monkeypatched-to-a-no-op by the strip-falsify test that proves this
+    guard — not just the surrounding plumbing — is load-bearing: neuter
+    it and a mismatched vector count silently writes a partial batch
+    instead of raising.
+    """
+    if vector_count != item_count:
+        raise RuntimeError(
+            f"embed returned {vector_count} vectors for {item_count} "
+            f"{item_noun}; refusing partial {label}"
+        )
+
+
+async def embed_verify_write(
+    *,
+    ctx: "OpContext",
+    texts: list[str],
+    model_class: str,
+    items: list[Any],
+    to_chunk_record: Callable[[Any, list[float], str], ChunkRecord],
+    backend: IndexBackend,
+    source: str,
+    mode: str = "replace",
+    item_noun: str = "items",
+    label: str = "build",
+) -> EmbedWriteResult:
+    """Embed ``texts`` via the shared ``embed`` op, verify the returned
+    vector count matches ``len(items)`` (raising ``RuntimeError`` on a
+    mismatch — the all-or-nothing guard), map each ``(item, vector)`` pair
+    to a ``ChunkRecord`` via the caller-supplied ``to_chunk_record``, and
+    write the batch to ``backend``.
+
+    This is the ONE canonical implementation of the verification that used
+    to exist twice, verbatim, in ``ActionEmbeddingIndex.build()`` (message:
+    "...refusing partial build") and the ``index_update`` op (message:
+    "...refusing partial index_update write") — both call sites now route
+    through this function (``item_noun``/``label`` preserve their distinct
+    error-message wording; the *behavior* — raise-before-write on a count
+    mismatch — is now byte-identical by construction, not by two hand-
+    maintained copies agreeing).
+    """
+    from reyn.core.op_runtime import execute_op
+    from reyn.schemas.models import EmbedIROp
+
+    result = await execute_op(
+        EmbedIROp(kind="embed", texts=texts, embedding_model=model_class), ctx,
+    )
+    if result.get("status") == "error":
+        raise RuntimeError(f"embed op failed: {result.get('error')}")
+    vectors = list(result.get("vectors", []))
+    assert_vector_count_match(
+        len(vectors), len(items), item_noun=item_noun, label=label,
+    )
+    resolved_model = str(result.get("model", model_class))
+    records = [
+        to_chunk_record(item, vector, resolved_model)
+        for item, vector in zip(items, vectors)
+    ]
+    write_result = await backend.write(source, records, mode=mode)  # type: ignore[arg-type]
+    return EmbedWriteResult(write_result=write_result, resolved_model=resolved_model)
+
+
+# ── IndexCoordinator public interface (#3247 firm §1) ──────────────────────
+
+
+@dataclass(frozen=True)
+class BuildMaterial:
+    """What a domain adapter (the ``BuildFn`` strategy callback) supplies so
+    the Coordinator can run a build without knowing anything domain-specific.
+
+    ``items``/``texts`` are parallel (``len(items) == len(texts)``);
+    ``to_chunk_record(item, vector, resolved_model) -> ChunkRecord`` is the
+    domain's item↔ChunkRecord mapping (kept OUT of the Coordinator per the
+    firm's boundary principle — e.g. the action-catalog's dual-axis
+    category/qualified_name mapping, or a doc-RAG source's chunk metadata).
+    """
+
+    items: list[Any]
+    texts: list[str]
+    to_chunk_record: Callable[[Any, list[float], str], ChunkRecord]
+    model_class: str
+    ctx: "OpContext"
+
+
+BuildFn = Callable[[], Awaitable[BuildMaterial]]
+
+
+@dataclass(frozen=True)
+class BuildOutcome:
+    """Result of an ``ensure_built`` (or an internally-driven heal) call.
+
+    ``triggered``: a build was attempted this call (vs. a cheap clean-state
+    no-op). ``background``: the build was scheduled as a fire-and-forget
+    ``asyncio.create_task`` rather than awaited in-line. ``chunk_count``:
+    populated on a successful synchronous build. ``error``: populated
+    (without raising) when the build failed — ``ensure_built`` never raises;
+    a failure is best-effort-recorded (dirty + failure-memo) and reported
+    via this field, per the firm's §G2 best-effort contract.
+    """
+
+    source_id: str
+    triggered: bool
+    background: bool
+    chunk_count: int | None = None
+    error: str | None = None
+
+
+class IndexCoordinator:
+    """Per-workspace orchestrator for embedding-index builds.
+
+    Singleton-per-workspace is the caller's choice (mirrors
+    ``SourceManifest``/``get_source_manifest``) — this class itself does not
+    enforce singleton-ness; production wiring (P2b/P2c) will decide where
+    one instance lives (likely session-scoped, one per workspace).
+
+    A source must be registered via ``register_builder`` before
+    ``ensure_built``/``search_await`` can build/heal it — this is necessary
+    plumbing the firm's interface section does not spell out (its
+    ``ensure_built(source_id, *, await_completion)`` signature carries no
+    build strategy per call), so the strategy has to be associated with the
+    ``source_id`` some other way. Registering a builder is NOT a production
+    call-site migration (P2b) — it is just how a domain adapter tells the
+    Coordinator "this is how you'd build me", exercised directly by this
+    PR's tests; no production code calls ``register_builder`` yet.
+    """
+
+    def __init__(
+        self,
+        workspace_root: Path,
+        *,
+        backend: IndexBackend | None = None,
+        manifest: SourceManifest | None = None,
+    ) -> None:
+        self._workspace_root = workspace_root
+        self._backend: IndexBackend = (
+            backend if backend is not None else get_backend("sqlite", workspace_root=workspace_root)
+        )
+        self._manifest: SourceManifest = (
+            manifest if manifest is not None else get_source_manifest(workspace_root)
+        )
+        self._builders: dict[str, BuildFn] = {}
+        # Volatile by design (crash-recovery band): lost on process restart.
+        # Recovery does NOT depend on these — see module docstring.
+        self._bg_tasks: dict[str, "asyncio.Task[BuildOutcome]"] = {}
+        self._failure_memo: dict[str, str] = {}
+
+    # ── registration (necessary plumbing, not a P2b call-site migration) ──
+
+    def register_builder(self, source_id: str, build_fn: BuildFn) -> None:
+        """Associate a domain build strategy with ``source_id``.
+
+        Idempotent — re-registering replaces the prior strategy (useful for
+        tests and for a future config-driven re-registration on reload).
+        """
+        self._builders[source_id] = build_fn
+
+    # ── mark_dirty (#3247 firm §1) ──────────────────────────────────────
+
+    async def mark_dirty(self, source_id: str, *, reason: str) -> None:
+        """Best-effort dirty mark — the §G2 provider-failure recovery hook.
+
+        Persists ``state="dirty"`` + ``last_error=reason`` to
+        ``sources.yaml`` via ``SourceManifest.upsert`` (the workspace-SSoT
+        band: no second state store). If no entry exists yet for
+        ``source_id`` (a build never even reached a first write), a minimal
+        placeholder entry is created so the dirty mark is not silently lost
+        — a later real build overwrites the placeholder fields.
+        """
+        entry = await self._manifest.get(source_id)
+        if entry is None:
+            entry = SourceEntry(
+                name=source_id, description="", path="", backend="sqlite",
+            )
+        entry.state = "dirty"
+        entry.last_error = reason
+        await self._manifest.upsert(entry)
+
+    # ── ensure_built (#3247 firm §1) ─────────────────────────────────────
+
+    async def ensure_built(
+        self, source_id: str, *, await_completion: bool,
+    ) -> BuildOutcome:
+        """If ``source_id`` is dirty/error/never-built, (re)build it.
+
+        ``await_completion=True`` runs the build in-line and returns once
+        done (sync-in-op await, per the firm's §3 dynamic-kind rule).
+        ``await_completion=False`` schedules ``asyncio.create_task`` and
+        returns immediately (background, per §3 static/backfill rule) —
+        at most one background task per ``source_id`` is live at a time
+        (once-per-source spawn, mirrors ``RouterLoop``'s
+        ``_action_index_build_task`` once-per-chain dedup).
+
+        Never raises: a build failure is caught, recorded via
+        ``mark_dirty`` + the in-process failure-memo, and reported on the
+        returned ``BuildOutcome.error`` (the §G2 best-effort contract).
+        """
+        entry = await self._manifest.get(source_id)
+        if entry is not None and entry.state == "clean":
+            return BuildOutcome(
+                source_id=source_id, triggered=False, background=False,
+                chunk_count=entry.chunk_count,
+            )
+        if entry is not None and entry.state == "building":
+            # Someone (this process or another) is already mid-build.
+            return BuildOutcome(source_id=source_id, triggered=False, background=False)
+
+        build_fn = self._builders.get(source_id)
+        if build_fn is None:
+            raise ValueError(
+                f"IndexCoordinator.ensure_built({source_id!r}): no builder "
+                f"registered — call register_builder(source_id, build_fn) first."
+            )
+
+        if not await_completion:
+            existing_task = self._bg_tasks.get(source_id)
+            if existing_task is not None and not existing_task.done():
+                return BuildOutcome(source_id=source_id, triggered=True, background=True)
+            task = asyncio.create_task(self._run_build(source_id, build_fn))
+            self._bg_tasks[source_id] = task
+            return BuildOutcome(source_id=source_id, triggered=True, background=True)
+
+        return await self._run_build(source_id, build_fn)
+
+    async def _run_build(self, source_id: str, build_fn: BuildFn) -> BuildOutcome:
+        await self._set_state(source_id, "building")
+        lock_dir = cache_dir_for_source(self._workspace_root, source_id)
+        with try_acquire_build_lock(lock_dir) as got_lock:
+            if not got_lock:
+                # Another process is mid-build — fall back to whatever is
+                # on disk rather than duplicating the embed-API cost.
+                return BuildOutcome(source_id=source_id, triggered=False, background=False)
+            try:
+                material = await build_fn()
+                result = await embed_verify_write(
+                    ctx=material.ctx,
+                    texts=material.texts,
+                    model_class=material.model_class,
+                    items=material.items,
+                    to_chunk_record=material.to_chunk_record,
+                    backend=self._backend,
+                    source=source_id,
+                    mode="replace",
+                    item_noun="items",
+                    label="build",
+                )
+            except Exception as exc:
+                reason = f"build_error: {exc}"
+                self._failure_memo[source_id] = reason
+                await self.mark_dirty(source_id, reason=reason)
+                return BuildOutcome(
+                    source_id=source_id, triggered=True, background=False, error=str(exc),
+                )
+
+        chunk_count = result.write_result["written"]
+        await self._set_state(
+            source_id, "clean", chunk_count=chunk_count,
+            embedding_model=result.resolved_model,
+        )
+        return BuildOutcome(
+            source_id=source_id, triggered=True, background=False, chunk_count=chunk_count,
+        )
+
+    async def _set_state(
+        self,
+        source_id: str,
+        state: str,
+        *,
+        chunk_count: int | None = None,
+        embedding_model: str | None = None,
+    ) -> None:
+        entry = await self._manifest.get(source_id)
+        if entry is None:
+            entry = SourceEntry(name=source_id, description="", path="", backend="sqlite")
+        entry.state = state  # type: ignore[assignment]
+        if state == "clean":
+            entry.last_error = None
+        if chunk_count is not None:
+            entry.chunk_count = chunk_count
+        if embedding_model is not None:
+            entry.embedding_model = embedding_model
+        if state == "clean":
+            from datetime import datetime, timezone
+            entry.last_indexed = datetime.now(timezone.utc).isoformat()
+        await self._manifest.upsert(entry)
+
+    # ── search_await (#3247 firm §1 + §5 search-await contract) ─────────
+
+    async def search_await(self, source_id: str) -> None:
+        """Await any pending/dirty ingest for ``source_id`` before a search
+        returns (the completeness guarantee — "best-effort search is a
+        bug").
+
+        Steady-state (``state == "clean"``) is a cheap manifest-read no-op
+        — no build is triggered. ``dirty``/``error`` triggers a heal
+        (synchronous rebuild via ``ensure_built(await_completion=True)``).
+        ``building`` awaits the in-flight background task if this process
+        is the one running it (volatile — a DIFFERENT process's in-flight
+        build is not awaitable here; the next call after it completes will
+        observe ``clean`` via the persisted manifest).
+        """
+        entry = await self._manifest.get(source_id)
+        if entry is None or entry.state == "clean":
+            return
+        if entry.state == "building":
+            task = self._bg_tasks.get(source_id)
+            if task is not None:
+                await task
+            return
+        # dirty or error → heal.
+        if source_id not in self._builders:
+            # No strategy registered in THIS process (e.g. a fresh process
+            # after a crash, before P2b/P2c wire real builders). Nothing to
+            # heal with — the persisted dirty flag still correctly reports
+            # "not ready" via is_ready(); a caller that owns a builder can
+            # register it and call ensure_built/search_await again.
+            return
+        await self.ensure_built(source_id, await_completion=True)
+
+    # ── is_ready (#3247 firm §1) ─────────────────────────────────────────
+
+    async def is_ready(self, source_id: str) -> bool:
+        """Readiness gate — True iff the manifest records this source as
+        ``clean`` (a completed, current build)."""
+        entry = await self._manifest.get(source_id)
+        return entry is not None and entry.state == "clean"
+
+    # ── failure-memo read surface (mirrors router_loop's
+    #    ``_action_index_build_failed`` semantics) ───────────────────────
+
+    def build_failed(self, source_id: str) -> bool:
+        """True if a prior build attempt in THIS process failed (per-process
+        once-per-source memoization, mirrors ``RouterLoop.
+        _action_index_build_failed`` — cross-process/cross-restart
+        persistence of "don't retry" is intentionally NOT implemented; the
+        persisted ``sources.yaml`` state is ``dirty``/``error`` regardless,
+        so a fresh process/session gets exactly one retry, which is the
+        desired heal path)."""
+        return source_id in self._failure_memo

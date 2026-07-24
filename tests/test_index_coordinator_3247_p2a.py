@@ -1,0 +1,390 @@
+"""FP-0066 P2a (#3247) — IndexCoordinator core + SourceManifest dirty state.
+
+Covers: mark_dirty state transition, ensure_built (await vs background),
+search_await (steady-state no-op vs cold-start/dirty heal), is_ready, the
+unified all-or-nothing embed-verify-write (+ its mandatory strip-falsify),
+and the mandatory truncate-falsify recovery test (CLAUDE.md recovery-feature
+gate) proving the dirty flag survives independently of the WAL.
+
+No mocks — real ``SourceManifest``, real ``SqliteIndexBackend``, real
+``OpContext``; a plain ``FakeEmbeddingProvider`` (same pattern as
+``tests/test_action_embedding_index.py``) stands in for the litellm
+boundary via the established ``get_provider`` monkeypatch convention.
+"""
+from __future__ import annotations
+
+import asyncio
+from pathlib import Path
+from typing import Any
+
+import pytest
+
+from reyn.core.events.events import EventLog
+from reyn.core.op_runtime.context import OpContext
+from reyn.data.index import SqliteIndexBackend
+from reyn.data.index.backend import ChunkRecord
+from reyn.data.index.coordinator import (
+    BuildMaterial,
+    IndexCoordinator,
+    assert_vector_count_match,
+    embed_verify_write,
+)
+from reyn.data.index.source_manifest import get_source_manifest
+from reyn.data.workspace.workspace import Workspace
+from reyn.security.permissions.permissions import PermissionDecl
+
+
+def _run(coro: Any) -> Any:
+    return asyncio.run(coro)
+
+
+def _ctx_for(provider: Any, monkeypatch: pytest.MonkeyPatch) -> OpContext:
+    """Real OpContext whose `embed` op resolves to ``provider`` (mirrors
+    ``tests/test_action_embedding_index.py::_ctx_for``)."""
+    import reyn.core.op_runtime.embed as _embed_mod
+    monkeypatch.setattr(_embed_mod, "get_provider", lambda *a, **kw: provider)
+    events = EventLog()
+    ws = Workspace(events=events)
+    return OpContext(workspace=ws, events=events, permission_decl=PermissionDecl())
+
+
+class _FakeEmbeddingProvider:
+    """Deterministic canned vectors, one per input text (no litellm call)."""
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, ...]] = []
+
+    async def embed(self, texts: list[str], model: str) -> dict[str, Any]:
+        self.calls.append(tuple(texts))
+        vectors = [[float((hash((t, i)) % 1000) / 1000.0) for i in range(4)] for t in texts]
+        return {"vectors": vectors, "model": model, "total_tokens": len(texts)}
+
+
+class _DegenerateFakeProvider:
+    """Always returns exactly 1 vector, regardless of input size — the
+    partial-build repro used by the all-or-nothing strip-falsify test."""
+
+    async def embed(self, texts: list[str], model: str) -> dict[str, Any]:
+        return {"vectors": [[1.0, 0.0]], "model": model, "total_tokens": 1}
+
+
+def _to_chunk_record(item: dict, vector: list[float], resolved_model: str) -> ChunkRecord:
+    return ChunkRecord(
+        text=item["text"],
+        vector=list(vector),
+        metadata={
+            "source_path": item["id"],
+            "source_type": "test",
+            "content_hash": item["id"],
+            "embedding_model": resolved_model,
+            "chunk_index": 0,
+            "size_tokens": 0,
+            "parent_context": None,
+            "extra": {},
+        },
+        score=None,
+    )
+
+
+def _working_build_fn(ctx: OpContext, items: list[dict]):
+    async def _build() -> BuildMaterial:
+        return BuildMaterial(
+            items=items,
+            texts=[it["text"] for it in items],
+            to_chunk_record=_to_chunk_record,
+            model_class="standard",
+            ctx=ctx,
+        )
+    return _build
+
+
+# ── 1. mark_dirty — state transition ────────────────────────────────────────
+
+
+def test_mark_dirty_persists_dirty_state_and_reason(tmp_path: Path) -> None:
+    """Tier 2: mark_dirty sets state="dirty" + last_error on the manifest
+    entry, persisted to sources.yaml (no entry needs to pre-exist)."""
+    coord = IndexCoordinator(tmp_path)
+    _run(coord.mark_dirty("skill", reason="provider_error: timeout"))
+
+    manifest = get_source_manifest(tmp_path)
+    entry = _run(manifest.get("skill"))
+    assert entry is not None
+    assert entry.state == "dirty"
+    assert entry.last_error == "provider_error: timeout"
+
+
+def test_mark_dirty_on_existing_clean_entry_flips_to_dirty(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Tier 2: a previously-clean (built) source can be marked dirty without
+    losing its chunk_count (only state + last_error change)."""
+    coord = IndexCoordinator(tmp_path)
+    ctx = _ctx_for(_FakeEmbeddingProvider(), monkeypatch)
+    items = [{"id": "a", "text": "alpha"}]
+    coord.register_builder("mem", _working_build_fn(ctx, items))
+    _run(coord.ensure_built("mem", await_completion=True))
+
+    manifest = get_source_manifest(tmp_path)
+    before = _run(manifest.get("mem"))
+    assert before is not None and before.state == "clean" and before.chunk_count == 1
+
+    _run(coord.mark_dirty("mem", reason="remember_failed"))
+    after = _run(manifest.get("mem"))
+    assert after is not None
+    assert after.state == "dirty"
+    assert after.last_error == "remember_failed"
+    assert after.chunk_count == 1, "chunk_count from the prior build must survive the dirty mark"
+
+
+# ── 2. ensure_built — await vs background, clean no-op ────────────────────
+
+
+def test_ensure_built_await_completion_builds_synchronously(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Tier 2: ensure_built(await_completion=True) runs the build in-line and
+    returns a BuildOutcome with the written chunk_count; the manifest state
+    transitions to clean."""
+    coord = IndexCoordinator(tmp_path)
+    ctx = _ctx_for(_FakeEmbeddingProvider(), monkeypatch)
+    items = [{"id": "a", "text": "alpha"}, {"id": "b", "text": "beta"}]
+    coord.register_builder("skill", _working_build_fn(ctx, items))
+
+    outcome = _run(coord.ensure_built("skill", await_completion=True))
+
+    assert outcome.triggered is True
+    assert outcome.background is False
+    assert outcome.chunk_count == 2
+    assert outcome.error is None
+    assert _run(coord.is_ready("skill")) is True
+
+
+def test_ensure_built_background_schedules_a_task_and_completes(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Tier 2: ensure_built(await_completion=False) returns immediately with
+    background=True; awaiting the loop lets the scheduled task finish and
+    the manifest observably transitions to clean."""
+    coord = IndexCoordinator(tmp_path)
+    ctx = _ctx_for(_FakeEmbeddingProvider(), monkeypatch)
+    items = [{"id": "a", "text": "alpha"}]
+    coord.register_builder("repo_doc", _working_build_fn(ctx, items))
+
+    async def _scenario() -> None:
+        outcome = await coord.ensure_built("repo_doc", await_completion=False)
+        assert outcome.background is True
+        assert outcome.triggered is True
+        # Poll the PUBLIC readiness gate for the scheduled background task
+        # to complete (bounded — no private-state introspection).
+        for _ in range(200):
+            if await coord.is_ready("repo_doc"):
+                break
+            await asyncio.sleep(0.01)
+        assert await coord.is_ready("repo_doc") is True
+
+    _run(_scenario())
+
+
+def test_ensure_built_clean_source_is_a_no_op(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Tier 2: a source already state==clean short-circuits without
+    re-invoking the builder (no re-embed)."""
+    coord = IndexCoordinator(tmp_path)
+    provider = _FakeEmbeddingProvider()
+    ctx = _ctx_for(provider, monkeypatch)
+    items = [{"id": "a", "text": "alpha"}]
+    coord.register_builder("skill", _working_build_fn(ctx, items))
+    _run(coord.ensure_built("skill", await_completion=True))
+    calls_after_first_build = len(provider.calls)
+
+    outcome = _run(coord.ensure_built("skill", await_completion=True))
+
+    assert outcome.triggered is False
+    assert len(provider.calls) == calls_after_first_build, "clean source must not re-embed"
+
+
+# ── 3. search_await — steady-state no-op vs dirty heal ─────────────────────
+
+
+def test_search_await_on_clean_source_is_a_cheap_noop(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Tier 2: search_await on a clean source does not invoke the builder
+    (steady-state = cheap state-check only, per the firm's §5 contract)."""
+    coord = IndexCoordinator(tmp_path)
+    provider = _FakeEmbeddingProvider()
+    ctx = _ctx_for(provider, monkeypatch)
+    items = [{"id": "a", "text": "alpha"}]
+    coord.register_builder("skill", _working_build_fn(ctx, items))
+    _run(coord.ensure_built("skill", await_completion=True))
+    calls_after_build = len(provider.calls)
+
+    _run(coord.search_await("skill"))
+
+    assert len(provider.calls) == calls_after_build, "clean-state search_await must not build"
+
+
+def test_search_await_heals_a_dirty_source(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Tier 2: search_await on a dirty source triggers a synchronous rebuild
+    (the §G2 completeness guarantee: a prior best-effort failure's dirty
+    mark gets healed at the next search)."""
+    coord = IndexCoordinator(tmp_path)
+    ctx = _ctx_for(_FakeEmbeddingProvider(), monkeypatch)
+    items = [{"id": "a", "text": "alpha"}]
+    coord.register_builder("memory", _working_build_fn(ctx, items))
+    _run(coord.mark_dirty("memory", reason="provider_error"))
+    assert _run(coord.is_ready("memory")) is False
+
+    _run(coord.search_await("memory"))
+
+    assert _run(coord.is_ready("memory")) is True
+
+
+def test_search_await_missing_source_is_a_noop(tmp_path: Path) -> None:
+    """Tier 2: search_await on a never-registered/never-built source_id is a
+    silent no-op (nothing to await)."""
+    coord = IndexCoordinator(tmp_path)
+    _run(coord.search_await("nonexistent"))  # must not raise
+
+
+# ── 4. is_ready ──────────────────────────────────────────────────────────
+
+
+def test_is_ready_false_before_build_true_after(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Tier 2: is_ready reflects the persisted state==clean gate."""
+    coord = IndexCoordinator(tmp_path)
+    assert _run(coord.is_ready("skill")) is False
+    ctx = _ctx_for(_FakeEmbeddingProvider(), monkeypatch)
+    coord.register_builder("skill", _working_build_fn(ctx, [{"id": "a", "text": "a"}]))
+    _run(coord.ensure_built("skill", await_completion=True))
+    assert _run(coord.is_ready("skill")) is True
+
+
+# ── 5. all-or-nothing unification — positive + strip-falsify ──────────────
+
+
+def test_assert_vector_count_match_raises_on_mismatch() -> None:
+    """Tier 2: the unified guard raises RuntimeError naming the item_noun/
+    label (both existing call sites' distinct wording is preserved via
+    these params)."""
+    with pytest.raises(RuntimeError, match="refusing partial build"):
+        assert_vector_count_match(1, 2, item_noun="items", label="build")
+    with pytest.raises(RuntimeError, match="refusing partial index_update write"):
+        assert_vector_count_match(1, 2, item_noun="chunks", label="index_update write")
+
+
+def test_embed_verify_write_refuses_partial_write(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Tier 2: embed_verify_write, with the REAL (unpatched) guard, raises
+    before writing anything when the provider returns too few vectors — no
+    partial batch reaches the backend."""
+    ctx = _ctx_for(_DegenerateFakeProvider(), monkeypatch)
+    backend = SqliteIndexBackend(workspace_root=tmp_path)
+    items = [{"id": "a", "text": "alpha"}, {"id": "b", "text": "beta"}]
+
+    with pytest.raises(RuntimeError, match="refusing partial build"):
+        _run(embed_verify_write(
+            ctx=ctx, texts=[it["text"] for it in items], model_class="standard",
+            items=items, to_chunk_record=_to_chunk_record, backend=backend,
+            source="strip_test", mode="replace", item_noun="items", label="build",
+        ))
+
+    stat = _run(backend.stat("strip_test"))
+    assert stat["chunk_count"] == 0, "no partial write must have reached the backend"
+
+
+def test_strip_falsify_neutered_guard_accepts_partial_write(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Tier 2: (strip-falsify, #3247 architect-required) neutering the
+    unified all-or-nothing guard (monkeypatch it to a no-op) causes the
+    SAME mismatched-vector-count input that the previous test proved gets
+    REJECTED to instead be silently ACCEPTED as a partial write (1 chunk
+    persisted for 2 requested items, no exception). This demonstrates the
+    guard itself — not incidental plumbing around it — is what prevents
+    the partial-write data-loss vector. RED (of the guarantee) is exactly
+    this test passing."""
+    import reyn.data.index.coordinator as coordinator_mod
+
+    monkeypatch.setattr(coordinator_mod, "assert_vector_count_match", lambda *a, **kw: None)
+    ctx = _ctx_for(_DegenerateFakeProvider(), monkeypatch)
+    backend = SqliteIndexBackend(workspace_root=tmp_path)
+    items = [{"id": "a", "text": "alpha"}, {"id": "b", "text": "beta"}]
+
+    result = _run(embed_verify_write(
+        ctx=ctx, texts=[it["text"] for it in items], model_class="standard",
+        items=items, to_chunk_record=_to_chunk_record, backend=backend,
+        source="strip_test", mode="replace", item_noun="items", label="build",
+    ))
+
+    stat = _run(backend.stat("strip_test"))
+    assert stat["chunk_count"] == 1, (
+        "with the guard neutered, zip(items, vectors) silently truncates to "
+        "the SHORTER list -- a 1-vector response for 2 requested items writes "
+        "exactly 1 chunk instead of raising; this is the partial-write bug "
+        "the real (unpatched) guard exists to prevent"
+    )
+    assert result.write_result["written"] == 1
+
+
+# ── 6. truncate-falsify — recovery-feature gate (CLAUDE.md, #2259/#2260-class) ─
+
+
+def test_dirty_flag_survives_wal_truncation_and_search_await_heals(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    """Tier 2: (truncate-falsify, mandatory recovery-feature gate) the
+    IndexCoordinator's dirty state is recorded in sources.yaml -- a file
+    completely independent of the agent-state WAL
+    (``.reyn/state/wal.jsonl``, see docs/concepts/runtime/events.md "WAL vs
+    audit-event separation"). This test proves recovery-of-record is the
+    persisted sources.yaml dirty flag, NOT anything WAL-derived:
+
+      1. Build a source to state==clean (coordinator instance #1).
+      2. mark_dirty (simulating a sync-in-op provider failure, §G2).
+      3. Write SOME WAL entries, then TRUNCATE the WAL file to empty --
+         simulating a crash where the WAL substrate loses everything past
+         (and including) the point the dirty mark was set. If the dirty
+         flag depended on the WAL, it would be gone here.
+      4. Discard coordinator #1 entirely (its in-memory build-queue /
+         failure-memo are volatile BY DESIGN -- simulates a process
+         restart) and construct a FRESH coordinator #2 against the SAME
+         workspace_root.
+      5. Assert the dirty state SURVIVED (read purely from sources.yaml)
+         and that a fresh search_await (with a newly-registered builder,
+         as a real restarted process would re-register its domain
+         adapters) HEALS it -- re-running the build and returning to
+         state==clean.
+    """
+    from reyn.core.events.state_log import StateLog
+
+    coord1 = IndexCoordinator(tmp_path)
+    ctx = _ctx_for(_FakeEmbeddingProvider(), monkeypatch)
+    items = [{"id": "a", "text": "alpha"}]
+    coord1.register_builder("doc_source", _working_build_fn(ctx, items))
+    _run(coord1.ensure_built("doc_source", await_completion=True))
+    assert _run(coord1.is_ready("doc_source")) is True
+
+    _run(coord1.mark_dirty("doc_source", reason="provider_error: transient timeout"))
+
+    # Simulate WAL activity around the dirty mark, then truncate it away --
+    # proving the dirty flag's survival has nothing to do with WAL content.
+    wal_path = tmp_path / ".reyn" / "state" / "wal.jsonl"
+    wal_path.parent.mkdir(parents=True, exist_ok=True)
+    log = StateLog(wal_path)
+    _run(log.append("inbox_put", target="some-agent", msg_id="m1", msg_kind="user", payload={}))
+    _run(log.flush())
+    assert wal_path.exists() and wal_path.stat().st_size > 0
+    wal_path.write_bytes(b"")  # truncate below (= including) the dirty-mark point
+
+    # "restart": drop coordinator #1's in-memory state, build a fresh one.
+    del coord1
+    coord2 = IndexCoordinator(tmp_path)
+
+    entry_after_restart = _run(get_source_manifest(tmp_path).get("doc_source"))
+    assert entry_after_restart is not None
+    assert entry_after_restart.state == "dirty", (
+        "the dirty flag must survive a fully-truncated WAL -- it is persisted "
+        "in sources.yaml, independent of the WAL substrate"
+    )
+    assert _run(coord2.is_ready("doc_source")) is False
+
+    # A restarted process re-registers its domain builder, then a search
+    # triggers the heal (§G2's recovery path).
+    coord2.register_builder("doc_source", _working_build_fn(ctx, items))
+    _run(coord2.search_await("doc_source"))
+
+    assert _run(coord2.is_ready("doc_source")) is True
+    healed_entry = _run(get_source_manifest(tmp_path).get("doc_source"))
+    assert healed_entry is not None
+    assert healed_entry.state == "clean"
+    assert healed_entry.last_error is None

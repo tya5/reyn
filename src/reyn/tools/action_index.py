@@ -101,6 +101,7 @@ from typing import TYPE_CHECKING, Any, Mapping
 from reyn.data.index import IndexBackend, get_backend
 from reyn.data.index.backend import ChunkRecord, cache_dir_for_source
 from reyn.data.index.build_lock import try_acquire_build_lock
+from reyn.data.index.coordinator import embed_verify_write
 
 if TYPE_CHECKING:
     from reyn.core.op_runtime.context import OpContext
@@ -413,23 +414,33 @@ class ActionEmbeddingIndex:
                 self._building = True
                 _built_ok = False
                 try:
-                    vectors = await self._embed_via_op(texts, ctx, model_class)
-                    if len(vectors) != len(valid_items):
-                        raise RuntimeError(
-                            f"EmbeddingProvider returned {len(vectors)} "
-                            f"vectors for {len(valid_items)} items; "
-                            f"refusing partial build"
-                        )
-                    records = [
-                        self._to_chunk_record(it, v, model_class)
-                        for it, v in zip(valid_items, vectors)
-                    ]
-                    write_result = await self._backend.write(
-                        self._source, records, mode="replace",
+                    # FP-0066 P2a (#3247): the embed+verify+write step is the
+                    # ONE canonical all-or-nothing implementation, shared
+                    # with the `index_update` op (which used to duplicate
+                    # this verbatim) — see
+                    # ``reyn.data.index.coordinator.embed_verify_write``.
+                    # ``model_class`` (the caller's class label, e.g.
+                    # "standard") is passed to ``_to_chunk_record``, NOT the
+                    # embed op's resolved literal model id — the dual-axis
+                    # invalidation policy compares against the class label
+                    # (see this module's docstring / ``model_class`` property).
+                    result = await embed_verify_write(
+                        ctx=ctx,
+                        texts=texts,
+                        model_class=model_class,
+                        items=valid_items,
+                        to_chunk_record=lambda it, v, _resolved: self._to_chunk_record(
+                            it, v, model_class,
+                        ),
+                        backend=self._backend,
+                        source=self._source,
+                        mode="replace",
+                        item_noun="items",
+                        label="build",
                     )
                     self._catalog_hash = new_hash
                     self._model_class = model_class
-                    self._size = write_result["written"]
+                    self._size = result.write_result["written"]
                     _built_ok = True
                 finally:
                     self._building = False
