@@ -597,6 +597,15 @@
 #     max_tool_calls_per_turn: 50  # cost-bound: max tool_calls honoured from ONE completion; 0 = unlimited
 #     max_hook_driven_turns: 25  # #1800 loop valve: cap hook self-continuation per user turn; resets on user turn; 0 = unlimited
 #     max_agent_hops: 3
+#     # #1909 OPT-IN security hardening (default false = byte-identical to
+#     # today's turn-boundary-only narrowing, no mid-turn capability loss).
+#     # true: re-resolve contextual-permission narrowing every router-loop
+#     # iteration once external_source-tagged content is live, closing the
+#     # same-turn injection window at the cost of narrowing a legitimate
+#     # external->privileged flow mid-turn. Monotonic once engaged (a
+#     # turn-scoped latch survives a later compaction evicting the tainted
+#     # entry); emits an untrusted_narrowing_engaged audit-event on engage.
+#     intra_turn_untrusted_narrowing: false
 #     # plan() tool call parse-error self-correction (B51 NF-W6-3). 0 = disable.
 #     plan_invalid_retries: 1
 #     # Per-(chain, skill) spawn / token caps (= CostLimitConfig shape):
