@@ -376,10 +376,14 @@ LOAD_SKILL = ToolDefinition(
     handler=_handle_load_skill,
     category="io",
     purity="read_only",
-    # A skill body is operator/third-party-authored content (an installed
-    # plugin's SKILL.md, a git-fetched skill) — same trust boundary as
-    # `skill_list`'s description re-surfacing above.
-    returns_external_content=True,
+    # FP-0066 P0 (#3254, architect ruling): a skill body becomes agent
+    # INSTRUCTIONS on load (load = fetch+activate), not untrusted data to
+    # fence. Refactor-neutrality: the pre-P0 path read skill bodies via
+    # read_file, which is NOT flagged external — this extraction must not
+    # smuggle a trust-semantics flip. Differs from skill_list (flagged
+    # external above) by ROLE — discovery/listing of re-surfaced metadata
+    # vs activation.
+    returns_external_content=False,
     doc_ref=_SKILL_DOC_REF,
 )
 
