@@ -1,4 +1,4 @@
-# FP-0057 — RAG / Retrieval redesign (proposal, draft)
+# FP-0057 — RAG / Retrieval redesign (VALIDATED — partially landed)
 
 **[lead-coder]** — Owner-designed in consultation; captured for architect co-vet + phasing. **Design VALIDATED by owner; partially landed** — Phase 1 (`embed` op, #2846), Phase 2a (`index_update`+`semantic_search`, #2848), Phase 2b (retire `embed_and_index`, #2851), and Phase 4 (offline degrade, #2854) merged; the default-embedding mechanism Phase 4 covered was later superseded by #3128. The near-term-deferred scope (automatic retrieval, ephemeral-attachment auto-flow) remains unbuilt by design, not blocked on owner GO.
 
