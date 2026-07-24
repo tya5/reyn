@@ -145,7 +145,9 @@ def test_warning_log_emitted_once_with_options(caplog) -> None:
     assert warnings, "expected at least one WARNING log on build failure"
     text = " ".join(r.getMessage() for r in warnings).lower()
     # All three options mentioned.
-    assert "null" in text or "embedding_class" in text, "option 2 (set null) must be named"
+    # FP-0066 §7 / #3218: option 2 (opt out) moved from `embedding_class: null`
+    # to `embedding.enabled: false` (clean-break).
+    assert "embedding.enabled" in text, "option 2 (set embedding.enabled: false) must be named"
     assert "standard" in text or "api" in text, "option 3 (api class) must be named"
     assert "embedding" in text and ("unreachable" in text or "provider" in text), (
         "cause (embedding provider failure) must be named"

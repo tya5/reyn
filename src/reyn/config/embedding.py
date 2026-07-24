@@ -52,6 +52,26 @@ class EmbeddingConfig:
     ``reyn.yaml`` changes required.
 
     Fields:
+        enabled:       FP-0066 §7 — single opt-in switch for the whole
+                       embedding-backed semantic-discovery layer (action
+                       retrieval `search_actions` + knowledge retrieval +
+                       the FP-0063 plugin's `rag_ingest` embed step).
+                       Default **False** (opt-in / predictable-safe
+                       default — embedding needs a provider + cost).
+                       Clean-break replacement for the fragmented
+                       ``action_retrieval.embedding_class`` on/off gate
+                       (#3218 / FP-0066 §7): the on/off decision now lives
+                       HERE, single switch, no per-group/source
+                       granularity (YAGNI). The MODEL used when enabled is
+                       ``default_class`` below (unchanged field, already
+                       defaulted to ``"standard"``) — ``enabled`` and
+                       ``default_class`` are orthogonal (which model
+                       vs whether to embed at all).
+
+                       Symmetric model (§7): ``enabled=False`` hides only
+                       the *semantic-discovery* layer (`search_actions` /
+                       future `search_knowledge`) — `list_*` discovery and
+                       load/read/invoke verbs are unaffected.
         default_class: Name of the class used when callers don't specify one.
         classes:       Named embedding class → EmbeddingClassSpec mapping.
         batch_size:    Texts per embedding API call (1–2048).
@@ -85,6 +105,7 @@ class EmbeddingConfig:
                        exceeds this value (UX gap fix B, ADR-0033 §2.1).
     """
 
+    enabled: bool = False
     default_class: str = "standard"
     classes: dict[str, EmbeddingClassSpec] = field(
         default_factory=lambda: dict(_DEFAULT_EMBEDDING_CLASSES)
@@ -190,6 +211,14 @@ def _build_embedding_config(raw: object) -> EmbeddingConfig:
     if not isinstance(raw, dict):
         return EmbeddingConfig(classes=dict(_DEFAULT_EMBEDDING_CLASSES))
 
+    defaults_for_enabled = EmbeddingConfig()
+    raw_enabled = raw.get("enabled", defaults_for_enabled.enabled)
+    if not isinstance(raw_enabled, bool):
+        raise ValueError(
+            f"embedding.enabled must be a bool, got {type(raw_enabled).__name__}"
+        )
+    enabled = raw_enabled
+
     raw_classes = raw.get("classes") or {}
     if not isinstance(raw_classes, dict):
         raw_classes = {}
@@ -251,6 +280,7 @@ def _build_embedding_config(raw: object) -> EmbeddingConfig:
         )
 
     return EmbeddingConfig(
+        enabled=enabled,
         default_class=default_class,
         classes=classes,
         batch_size=batch_size,
@@ -279,7 +309,9 @@ class ActionRetrievalConfig:
             appends the 3 universal wrappers (list_actions /
             describe_action / invoke_action) at the end of tools=.
             ``search_actions`` is gated separately via
-            ``embedding_class`` per §D14.
+            ``embedding.enabled`` (FP-0066 §7; clean-break replacement
+            for the retired ``action_retrieval.embedding_class`` on/off
+            gate) per §D14.
 
             The flip from False (= PR-3b-i through iii) to True
             happens here in PR-3b-iv. Operators who want to opt out
@@ -294,34 +326,24 @@ class ActionRetrievalConfig:
             for the recorded fixtures. The flip affects production
             runtime only.
 
-        embedding_class:
-            Name of the entry in ``embedding.classes`` to use for
-            action retrieval semantic search (= §D13). When None or
-            empty, ``search_actions`` is excluded from tools= even if
+            **FP-0066 §7 (2026-07)**: the fragmented
+            ``action_retrieval.embedding_class`` field (on/off + which
+            model, conflated) is retired (clean-break, no alias). The
+            on/off decision now lives at ``embedding.enabled: bool``
+            (default ``False`` — opt-in / predictable-safe default);
+            the model-class selection stays a separate field —
+            ``embedding.default_class`` (already existed, default
+            ``"standard"``). ``search_actions`` is excluded from
+            tools= whenever ``embedding.enabled`` is False, even if
             ``universal_wrappers_enabled`` is True (§D14 gating).
-
-            **Default since the semantic-search-opt-in fix (2026)**:
-            ``None`` (= off). ``search_actions`` is a semantic-search
-            feature and the project's standing principle is that
-            semantic search is opt-in, never on by default — a
-            default of a built-in local-model class (FP-0043 Phase 4
-            through 2026) made reyn attempt a Hugging Face model download at
-            startup even for zero-config / offline installs, which
-            surfaced as a startup warning when the download failed.
-            Defaulting to ``None`` makes the off-path silent: no
-            index build is attempted, so there is nothing to fail or
-            warn about; ``search_actions`` is simply absent from
-            tools= (§D14 gating).
-
             Operators who want semantic ``search_actions`` set
-            ``action_retrieval.embedding_class`` explicitly in
-            reyn.yaml: ``standard`` (= or ``light`` / ``strong``) for
-            the built-in OpenAI-backed classes, or a custom entry
-            under ``embedding.classes`` pointing at any litellm-
-            routable model (including a local model served behind a
-            litellm-fronted proxy — #3128 removed the in-process
-            local-model embedding backend; reyn depends on litellm
-            exclusively for embeddings).
+            ``embedding.enabled: true`` in reyn.yaml (optionally
+            pairing it with a non-default ``embedding.default_class``
+            or a custom ``embedding.classes`` entry pointing at any
+            litellm-routable model, including a local model served
+            behind a litellm-fronted proxy — #3128 removed the
+            in-process local-model embedding backend; reyn depends on
+            litellm exclusively for embeddings).
 
         hot_list_n:
             Hot list size for top-N freq+recency projection (§D2).
@@ -341,7 +363,6 @@ class ActionRetrievalConfig:
     """
 
     universal_wrappers_enabled: bool = True
-    embedding_class: str | None = None
     hot_list_n: int = 0
     mode: str = "default"
     # FP-0034 §D16: seed qualified names for initial hot list (before freq
@@ -380,15 +401,6 @@ def _build_action_retrieval_config(raw: object) -> ActionRetrievalConfig:
                 f"got {type(val).__name__}"
             )
         cfg.universal_wrappers_enabled = val
-
-    if "embedding_class" in raw:
-        val = raw["embedding_class"]
-        if val is not None and not isinstance(val, str):
-            raise ValueError(
-                "action_retrieval.embedding_class must be a string or null, "
-                f"got {type(val).__name__}"
-            )
-        cfg.embedding_class = val or None
 
     if "hot_list_n" in raw:
         val = raw["hot_list_n"]

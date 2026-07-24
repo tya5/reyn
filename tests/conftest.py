@@ -218,6 +218,27 @@ def _provider_credentials_present(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.fixture(autouse=True)
+def _embedding_enabled_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    """FP-0066 §7: the `embed` op pre-flights ``embedding.enabled`` (default
+    **False** in production — opt-in / predictable-safe default) and
+    returns a decision-enabling block when it is off (see
+    ``reyn.core.op_runtime.embed._is_embedding_enabled`` /
+    ``_embedding_disabled_block``). The overwhelming majority of the test
+    suite (embed / index_update / semantic_search / ActionEmbeddingIndex /
+    rag pipeline tests) predates that gate and exercises the embed-succeeds
+    path directly against a FakeEmbeddingProvider with no ``reyn.yaml`` on
+    disk, so the real config-load default would block them all uniformly —
+    the same "provider credentials present by default" shape as
+    ``_provider_credentials_present`` above. A test that specifically
+    exercises the DISABLED / ``embedding.enabled: false`` path
+    monkeypatches ``_is_embedding_enabled`` back to False (or False-like)
+    itself, AFTER this fixture runs, which wins (monkeypatch has no
+    ordering concept beyond last-write)."""
+    import reyn.core.op_runtime.embed as _embed_mod
+    monkeypatch.setattr(_embed_mod, "_is_embedding_enabled", lambda: True)
+
+
+@pytest.fixture(autouse=True)
 def _isolate_budget_limit_context():
     """Reset ``reyn.llm.llm._llm_call_limit_context_var`` after every test.
 

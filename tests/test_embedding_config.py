@@ -3,6 +3,12 @@
 Covers:
   - Empty / missing `embedding:` section returns default EmbeddingConfig.
   - Partial config keeps defaults for unset fields.
+  - FP-0066 §7 / #3218: ``embedding.enabled`` (bool, default False) — the
+    clean-break on/off switch replacing the retired
+    ``action_retrieval.embedding_class`` gate. Non-default round-trip
+    (``enabled: true`` + a non-default ``default_class``) through
+    ``_build_embedding_config``.
+  - ``enabled`` with a non-bool value raises ValueError.
   - str-form class resolves to EmbeddingClassSpec(model=...).
   - dict-form class with model + api_base resolves correctly.
   - ``extends`` from str base.
@@ -52,6 +58,7 @@ class TestDefaultEmbeddingConfig:
         """Tier 2: _build_embedding_config(None) returns a fully-defaulted EmbeddingConfig."""
         cfg = _build_embedding_config(None)
         assert isinstance(cfg, EmbeddingConfig)
+        assert cfg.enabled is False  # FP-0066 §7: opt-in, off by default
         assert cfg.default_class == "standard"
         assert set(cfg.classes) == {"light", "standard", "strong"}
         assert cfg.batch_size == 100
@@ -103,6 +110,43 @@ class TestPartialEmbeddingConfig:
         raw = _parse_yaml("tokenizer: p50k_base")
         cfg = _build_embedding_config(raw)
         assert cfg.tokenizer == "p50k_base"
+        assert cfg.batch_size == 100
+
+
+# ---------------------------------------------------------------------------
+# `embedding.enabled` — FP-0066 §7 / #3218 clean-break on/off switch
+# ---------------------------------------------------------------------------
+
+
+class TestEmbeddingEnabled:
+    def test_enabled_true_flows_through(self):
+        """Tier 2: explicit `enabled: true` flows through the parser."""
+        raw = _parse_yaml("enabled: true")
+        cfg = _build_embedding_config(raw)
+        assert cfg.enabled is True
+
+    def test_enabled_false_flows_through(self):
+        """Tier 2: explicit `enabled: false` flows through (same as default)."""
+        raw = _parse_yaml("enabled: false")
+        cfg = _build_embedding_config(raw)
+        assert cfg.enabled is False
+
+    def test_enabled_rejects_non_bool(self):
+        """Tier 2: a non-bool `enabled` value raises ValueError."""
+        raw = _parse_yaml("enabled: yes_please")
+        with pytest.raises(ValueError, match="enabled"):
+            _build_embedding_config(raw)
+
+    def test_nondefault_roundtrip_enabled_and_default_class(self):
+        """Tier 2: FP-0066 §7 non-default round-trip — `enabled: true` PLUS a
+        non-default `default_class` both survive parse→object together (a
+        round-trip that only exercises defaults proves nothing per the
+        testing-policy round-trip idiom)."""
+        raw = _parse_yaml("enabled: true\ndefault_class: light\n")
+        cfg = _build_embedding_config(raw)
+        assert cfg.enabled is True
+        assert cfg.default_class == "light"
+        # unaffected sibling fields still resolve to their own defaults.
         assert cfg.batch_size == 100
 
 

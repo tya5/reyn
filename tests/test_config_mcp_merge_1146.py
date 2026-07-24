@@ -1,61 +1,33 @@
-"""Tier 2: OS invariant — mcp config merge + schema-internal field (#1146).
+"""Tier 2: OS invariant — mcp config merge (#1146).
 
-Two coupled fixes, both exercised through the public ``load_config`` surface:
+``_merge``'s ``mcp`` branch used to drop the override's non-``servers`` keys
+(``{**existing, "servers": union}``), so scalar sub-keys of ``mcp:`` (e.g.
+``mcp.registries``) set in any config layer were silently discarded (always
+the default). The fix (``{**existing, **val, "servers": union}``) preserves
+override scalars while keeping the server union — verified here that
+``mcp.registries`` now takes effect, and that the server union still works
+(regression guard for the existing ``test_config_mcp_headers`` behavior).
 
-1. ``_merge``'s ``mcp`` branch used to drop the override's non-``servers`` keys
-   (``{**existing, "servers": union}``), so ``mcp.search_threshold`` and
-   ``mcp.registries`` set in any config layer were silently discarded (always
-   the default). The fix (``{**existing, **val, "servers": union}``) preserves
-   override scalars while keeping the server union — verified here that both now
-   take effect, and that the server union still works (regression guard for the
-   existing ``test_config_mcp_headers`` behavior).
-
-2. ``mcp_search_threshold`` is internal storage the loader derives from
-   ``mcp.search_threshold``; it is not an operator-settable top-level key
-   (setting it would be a no-op on reload). It is flagged
-   ``field(metadata={'schema_internal': True})`` so ``walk_config_schema`` omits
-   it — verified the operator key ``mcp.search_threshold`` stays settable while
-   the top-level alias is no longer advertised, and the consumer field is intact.
+#3218 / FP-0066 §7 P1a: ``ReynConfig.mcp_search_threshold`` (the derived,
+``schema_internal``-flagged field this module's merge fix used as its worked
+example — a confirmed no-op, never threaded to ``build_tools()``) was
+fold-removed. ``mcp:`` stays a raw, unvalidated dict (no schema on its
+sub-keys), so a bare ``mcp.search_threshold:`` in reyn.yaml is now simply an
+inert free-form key inside ``cfg.mcp`` — same "unknown key inside a raw
+dict block" policy as any other undeclared ``mcp:`` sub-key, verified below
+in place of the old derived-field assertions.
 """
 from __future__ import annotations
 
 import os
 from pathlib import Path
 
-from reyn.config import ReynConfig, load_config
-from reyn.config.config_schema import (
-    is_valid_config_key,
-    resolve_config_value,
-    walk_config_schema,
-)
+from reyn.config import load_config
 
 
 def _root(tmp_path: Path) -> Path:
     (tmp_path / "reyn.yaml").write_text("model: standard\n", encoding="utf-8")
     return tmp_path
-
-
-def test_mcp_search_threshold_set_via_operator_key_takes_effect(tmp_path: Path) -> None:
-    """Tier 2: ``mcp.search_threshold`` set in config reaches cfg.mcp_search_threshold.
-
-    Pre-fix the merge dropped it → always the 30 default. Guards the override-
-    scalar-preservation in ``_merge``.
-    """
-    root = _root(tmp_path)
-    (root / "reyn.local.yaml").write_text(
-        "mcp:\n  search_threshold: 88\n", encoding="utf-8"
-    )
-    old = os.getcwd()
-    os.chdir(root)
-    try:
-        cfg = load_config()
-    finally:
-        os.chdir(old)
-    assert cfg.mcp_search_threshold == 88, (
-        f"mcp.search_threshold=88 did not reach the derived field "
-        f"(got {cfg.mcp_search_threshold}) — merge dropped the override scalar"
-    )
-    assert resolve_config_value(cfg, "mcp.search_threshold")[1] == 88
 
 
 def test_mcp_registries_set_in_config_takes_effect(tmp_path: Path) -> None:
@@ -94,8 +66,9 @@ def test_mcp_servers_union_preserved_across_layers(tmp_path: Path) -> None:
     """Tier 2: server entries from different layers union, alongside scalar keys.
 
     Regression guard: the merge fix must keep the existing servers-union behavior
-    (project ∪ local) AND now also carry a scalar key (search_threshold) set in
-    one layer — both coexist.
+    (project ∪ local) AND now also carry an arbitrary scalar key (here the
+    now-inert ``search_threshold``, #3218) set in one layer — both coexist in
+    the raw ``cfg.mcp`` dict.
     """
     root = tmp_path
     (root / "reyn.yaml").write_text(
@@ -117,25 +90,9 @@ def test_mcp_servers_union_preserved_across_layers(tmp_path: Path) -> None:
     assert "alpha" in servers and "beta" in servers, (
         f"server union broken — expected alpha+beta, got {sorted(servers)}"
     )
-    assert cfg.mcp_search_threshold == 5, "scalar key lost when servers also present"
-
-
-def test_mcp_search_threshold_field_is_unadvertised_but_operator_key_valid() -> None:
-    """Tier 2: top-level mcp_search_threshold omitted from the schema; operator key valid.
-
-    The internal field is flagged schema_internal so the walk omits it (a no-op
-    set is not advertised), while the real operator key ``mcp.search_threshold``
-    (a free-form sub-key of the ``mcp`` dict) stays valid and the consumer field
-    survives on the dataclass.
-    """
-    walk_keys = {n.key for n in walk_config_schema()}
-    assert "mcp_search_threshold" not in walk_keys, (
-        "mcp_search_threshold should be omitted from the settable schema "
-        "(schema_internal) — it's a no-op set"
+    # #3218: no derived field reads this anymore, but the raw dict merge still
+    # preserves the scalar key alongside the server union (unknown-key-inside-
+    # a-raw-dict policy — it is inert, not dropped).
+    assert cfg.mcp.get("search_threshold") == 5, (
+        "scalar key lost from the raw mcp dict when servers also present"
     )
-    assert not is_valid_config_key("mcp_search_threshold")
-    assert is_valid_config_key("mcp.search_threshold"), (
-        "the real operator key mcp.search_threshold must stay settable"
-    )
-    # Consumer field intact (router_tools reads cfg.mcp_search_threshold).
-    assert ReynConfig().mcp_search_threshold == 30

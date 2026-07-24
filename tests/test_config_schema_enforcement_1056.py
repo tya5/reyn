@@ -45,13 +45,7 @@ from reyn.config.config_schema import (
 # distinguish "loader read+coerced" from a real no-op. Supply a domain-valid
 # non-default so the guard stays decisive. Keyed by dotted key; the iteration
 # itself is still live-walk-derived — this only overrides the candidate VALUE.
-_VALID_NONDEFAULT_OVERRIDES: dict[str, object] = {
-    # #1454: embedding_class is closed-world — a class not in embedding.classes
-    # degrades to None at load (graceful). "standard" is a real builtin class
-    # (!= the None default, opt-in-off since the semantic-search-opt-in fix),
-    # so it survives the membership check.
-    "action_retrieval.embedding_class": "standard",
-}
+_VALID_NONDEFAULT_OVERRIDES: dict[str, object] = {}
 
 
 def _nondefault_candidate(node: SchemaNode) -> object | None:
@@ -113,7 +107,8 @@ def test_every_scalar_leaf_takes_effect_on_nondefault_set(tmp_path: Path) -> Non
     The original default-valued round-trip (#1142) passed *trivially* for a field
     the loader silently ignores: set X → reload → default, and default == X when X
     is the default. #1146: set a value ≠ default so a no-op-set field (loader never
-    reads the key — e.g. a parse-derived alias like ``mcp_search_threshold``, or a
+    reads the key — e.g. a parse-derived alias like the formerly-dead
+    ``ReynConfig.mcp_search_threshold`` (fold-removed #3218 / FP-0066 §7 P1a), or a
     field declared + consumed but never wired into ``load_config`` like the
     formerly-dead ``prompt_cache_enabled`` / ``project_context_path``) is caught.
 

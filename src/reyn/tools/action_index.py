@@ -156,7 +156,7 @@ class ActionEmbeddingIndex:
     Production wiring:
       - One instance per Session (= router-scoped).
       - RouterLoop bootstraps an async ``build()`` task on first turn
-        when ``action_retrieval.embedding_class`` is configured.
+        when ``embedding.enabled: true`` (FP-0066 §7).
       - ``search_actions`` handler delegates to ``query()`` when
         ``is_ready()`` returns True; otherwise returns an empty result.
       - ``workspace_root`` defaults to ``Path.cwd()`` (mirrors

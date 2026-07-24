@@ -271,11 +271,11 @@ Some categories are visibility-gated by the runtime environment:
 
 | Predicate | Effect |
 |---|---|
-| `is_search_available(embedding_class)` | Whether `search_actions` appears in tools= (Phase 2) |
+| `is_search_available(embedding_enabled)` | Whether `search_actions` appears in tools= (Phase 2) |
 | `is_exec_available(sandbox_backend)` | Whether `exec` appears in `list_actions` enumeration |
 
 The gates are pure functions; the runtime supplies the configuration
-values from `action_retrieval.embedding_class` and the resolved
+values from `embedding.enabled` (FP-0066 §7) and the resolved
 sandbox backend. Hidden categories appear neither in the
 `list_actions` `category=` enum nor in any enumeration result.
 
@@ -427,7 +427,7 @@ action_retrieval:
   universal_wrappers_enabled: false
 ```
 
-## `embedding_class` default + opt-in
+## `embedding.enabled` default + opt-in
 
 **FP-0043 Phase 4** defaulted `ActionRetrievalConfig.embedding_class` to
 `"local-mini"` (= a since-removed in-process `sentence-transformers`
@@ -440,15 +440,21 @@ zero-config / offline installs, surfacing as a startup warning when
 the download failed — contradicting the project's standing principle
 that semantic search is opt-in.
 
-`ActionRetrievalConfig.embedding_class` now defaults to `None` (off).
-With no class configured, no embedding index build is attempted at
-all — `search_actions` is simply absent from `tools=` per the §D14
+**FP-0066 §7 (2026-07) config clean-break**: the fragmented
+`ActionRetrievalConfig.embedding_class` field (which conflated the
+on/off decision with which embedding class to use) is retired,
+clean-break, no alias. It splits into `embedding.enabled: bool`
+(default `False` — off) and `embedding.default_class` (already
+existed, default `"standard"` — which model to use when enabled).
+With `embedding.enabled: false`, no embedding index build is attempted
+at all — `search_actions` is simply absent from `tools=` per the §D14
 gate below, silently (there is nothing to fail or warn about).
-Operators opt in explicitly via `action_retrieval.embedding_class:
-standard` (= or `light` / `strong`, all OpenAI-backed, no local
-install) or a custom `embedding.classes` entry pointing at any
-litellm-routable model (including a local model served behind an
-operator-run litellm proxy) in `reyn.yaml` — see
+Operators opt in explicitly via `embedding.enabled: true` in
+`reyn.yaml` (optionally paired with a non-default
+`embedding.default_class: standard` — or `light` / `strong`, all
+OpenAI-backed, no local install — or a custom `embedding.classes`
+entry pointing at any litellm-routable model, including a local model
+served behind an operator-run litellm proxy) — see
 [Guide: enable semantic search](../../guide/for-users/enable-semantic-search.md).
 
 **#3128 removed reyn's in-process `sentence-transformers` backend**
@@ -460,7 +466,7 @@ custom, resolves the same way, so there is no separate "extras missing"
 degrade path to document; a class that names an unreachable endpoint
 simply fails the embed call the same way any other litellm call would,
 surfaced through the normal error path rather than a silent `None`
-degrade. Setting `embedding_class` to `null` opts out of
+degrade. Setting `embedding.enabled` to `false` opts out of
 `search_actions` entirely.
 
 ## What stays out of Phase 1

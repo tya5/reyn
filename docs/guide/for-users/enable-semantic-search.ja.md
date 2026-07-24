@@ -2,7 +2,7 @@
 
 `reyn chat` には、LLM が実行可能なことを発見するための 2 つの手段が同梱されています: 高速な **`list_actions`** ブラウザ（= カテゴリ接頭辞による列挙、常時利用可能）と、**`search_actions`** セマンティック検索（= 全アクションの埋め込みインデックスに対する自然言語クエリ）です。本ガイドではセマンティックな経路を有効にする手順を説明します。
 
-> **TL;DR**: `search_actions` は **デフォルトで無効**（semantic search はプロジェクト全体で opt-in の方針）。すでに埋め込み API キーがある場合は `reyn secret set OPENAI_API_KEY` のあと `reyn.yaml` で `action_retrieval.embedding_class: standard` を設定するだけ — proxy も追加インストールも不要です。API キーなしでローカルモデルを使いたい場合は **litellm proxy** の背後にモデルを立て、reyn からそこを指してください（後述の [経路 B](#経路-b-埋め込み-api-契約なし-litellm-proxy-ローカルモデル) を参照）。
+> **TL;DR**: `search_actions` は **デフォルトで無効**（semantic search はプロジェクト全体で opt-in の方針）。すでに埋め込み API キーがある場合は `reyn secret set OPENAI_API_KEY` のあと `reyn.yaml` で `embedding.enabled: true` を設定するだけ — proxy も追加インストールも不要です。API キーなしでローカルモデルを使いたい場合は **litellm proxy** の背後にモデルを立て、reyn からそこを指してください（後述の [経路 B](#経路-b-埋め込み-api-契約なし-litellm-proxy-ローカルモデル) を参照）。
 
 ## どんなときに欲しくなるか
 
@@ -11,7 +11,7 @@
 - **無い場合**: LLM はあなたの意図がどのカテゴリ（`file` / `mcp` / `memory_operation` / …）に属するかを推測し、`list_actions(category=[...])` を実行して列挙する必要があります。_「PDF をテキストに変換するアクションを探して」_ のような自然言語の依頼では、すぐに一致が見つからないと LLM が試したうえで断ることもあります。
 - **有る場合**: LLM は `search_actions(query="PDF to text")` を実行し、全カテゴリ横断で関連度順に並んだ top-K のリストを得ます。その後そのまま `describe_action` や `invoke_action` を実行できます。
 
-`action_retrieval.embedding_class` のデフォルトは `null`（無効）です — semantic search は opt-in なので、明示的な `reyn.yaml` 設定が必要です。クラス未設定の場合、`search_actions` は LLM のツールリストから **除外** されます（[可視性ゲート](../../concepts/tools-integrations/universal-catalog.md#what-stays-out-of-phase-1) を参照）— これは何も試行されないため起動時警告なしで silent に行われます。
+`embedding.enabled` のデフォルトは `false`（無効）です — semantic search は opt-in なので、明示的な `reyn.yaml` 設定が必要です（FP-0066 §7；廃止された `action_retrieval.embedding_class` ゲートの clean-break 後継）。無効のままの場合、`search_actions` は LLM のツールリストから **除外** されます（[可視性ゲート](../../concepts/tools-integrations/universal-catalog.md#what-stays-out-of-phase-1) を参照）— これは何も試行されないため起動時警告なしで silent に行われます。
 
 ## Reyn の埋め込みは litellm 専属
 
@@ -47,11 +47,12 @@ reyn secret set OPENAI_API_KEY
 # プロンプトが出たら sk-... キーを入力
 ```
 
-続けて `reyn.yaml` で明示的に opt-in します（デフォルトは `null` / 無効）:
+続けて `reyn.yaml` で明示的に opt-in します（デフォルトは `false` / 無効）:
 
 ```yaml
-action_retrieval:
-  embedding_class: standard   # = openai/text-embedding-3-small
+embedding:
+  enabled: true
+  # default_class: standard   # デフォルト; = openai/text-embedding-3-small
 ```
 
 `LITELLM_API_BASE` が未設定の場合、reyn の litellm クライアントはプロバイダーの API を **直接** 呼び出すため、`standard` は **proxy も `drop_params` 設定も不要**で動作します — クライアントはすべての呼び出しで既に `drop_params=True` を渡しており、これは proxy が間に入っているときにのみ意味を持ちます（経路 B を参照）。上記の pre-flight curl をプロバイダー自身のエンドポイント（例: `https://api.openai.com/v1`）に対して実行して確認し、チャットセッションを開始してください — `search_actions` は次のコールドスタートでインデックスを eager に構築します。
@@ -95,19 +96,19 @@ export LITELLM_API_BASE=http://localhost:4000   # あなたの proxy のアド�
 
 **命名ルール（モデル名を選ぶ前に読む）**: `LITELLM_API_BASE` が設定されている場合、reyn は解決済みモデル文字列の先頭 `provider/` セグメントを proxy へ送る前に取り除きます — `openai/foo` は proxy には単なる `foo` として届きます。そのため proxy の `model_list[].model_name` は、使用する reyn 側モデル文字列の**最初の `/` より後ろすべて**と一致させる必要があります:
 
-- **(a) 最もシンプル — `reyn.yaml` の編集は不要。** 組み込みの `standard` クラス（`openai/text-embedding-3-small`）をそのまま使い、proxy の `model_name` を `text-embedding-3-small`（上記 Step 2 のとおり）として登録します — これでローカルモデルが reyn のデフォルトクラス名で応答するようになります:
+- **(a) 最もシンプル — クラス変更は不要、有効化するだけ。** 組み込みの `standard` クラス（`openai/text-embedding-3-small`、デフォルトの `embedding.default_class`）をそのまま使い、proxy の `model_name` を `text-embedding-3-small`（上記 Step 2 のとおり）として登録します — これでローカルモデルが reyn のデフォルトクラス名で応答するようになります:
   ```yaml
-  action_retrieval:
-    embedding_class: standard
+  embedding:
+    enabled: true
   ```
 - **(b) または明示的なクラスを追加**、例えば `reyn.yaml` に:
   ```yaml
   embedding:
+    enabled: true
+    default_class: local
     classes:
       local:
         model: openai/nomic-embed-text
-  action_retrieval:
-    embedding_class: local
   ```
   ここでは proxy の `model_name` は `nomic-embed-text`（`openai/` より後ろすべて）である必要があります。
 
@@ -129,7 +130,7 @@ export LITELLM_API_BASE=http://localhost:4000   # あなたの proxy のアド�
 
 ## トラブルシューティング
 
-**`search_actions` が LLM のツールリストに現れない** — `action_retrieval.embedding_class` がまだ `null` のままか、インデックスの構築がまだ終わっていません（= コールドスタート、数秒程度）。`reyn embeddings status` を確認してください。設定済みクラスで `ACTIONS = 0` かつ `LAST_BUILT = (never)` なら、構築が完了していません:
+**`search_actions` が LLM のツールリストに現れない** — `embedding.enabled` がまだ `false` のままか、インデックスの構築がまだ終わっていません（= コールドスタート、数秒程度）。`reyn embeddings status` を確認してください。設定済みクラスで `ACTIONS = 0` かつ `LAST_BUILT = (never)` なら、構築が完了していません:
 
 ```bash
 $ reyn embeddings status

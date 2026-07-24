@@ -171,8 +171,8 @@ class RouterHostAdapter:
         hook_dispatcher: Any = None,  # #1800 slice 5c: the Session's HookDispatcher
         hook_bus: Any = None,  # Hook-Event Redesign Phase 5 part 2: the Session's HookBus → emit_hook_event
         # FP-0034 Phase 2 step 1: ActionEmbeddingIndex + EmbeddingProvider
-        # for search_actions.  When all three are set (= operator configured
-        # ``action_retrieval.embedding_class`` AND Session built a
+        # for search_actions.  When all three are set (= operator set
+        # ``embedding.enabled: true`` (FP-0066 §7) AND Session built a
         # provider AND the index has been initialized), search_actions
         # appears in tools= and routes to the index.  When any is None
         # the wrapper stays out of tools= (= D14 visibility gate).
@@ -865,7 +865,7 @@ class RouterHostAdapter:
         """Return the ActionEmbeddingIndex instance, or None.
 
         FP-0034 Phase 2 step 1.  Bound by Session when the operator
-        has configured ``action_retrieval.embedding_class``.  RouterLoop
+        has set ``embedding.enabled: true`` (FP-0066 §7).  RouterLoop
         forwards into ``RouterCallerState.action_embedding_index`` so
         the ``search_actions`` handler can call ``query()``.
         """
@@ -883,7 +883,8 @@ class RouterHostAdapter:
         """Return the configured embedding model class name, or None.
 
         FP-0034 Phase 2 step 1.  Mirror of
-        ``action_retrieval.embedding_class`` from reyn.yaml.  Used by
+        ``embedding.default_class`` from reyn.yaml (bound only when
+        ``embedding.enabled: true`` — FP-0066 §7).  Used by
         ``RouterLoop._build_router_caller_state`` to bind the
         ``embedding_model_class`` field on ``RouterCallerState``.
         """

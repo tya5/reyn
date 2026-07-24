@@ -39,7 +39,7 @@ models:
 | `events` | map | Audit-log rotation policy for chat-session event files. See below. |
 | `observability` | map | Opt-in OpenTelemetry (OTLP) export of P6 audit-events. Off by default. See below. |
 | `tool_use` | map | Chat-layer tool-use scheme selector (`chat`). See below. |
-| `mcp` | map | MCP server definitions and `search_threshold`. See below. |
+| `mcp` | map | MCP server definitions. See below. |
 | `python` | map | Python preprocessor additional allowed-modules. See below. |
 | `agent` | map | Agent identity for P6 event audit trail and outgoing HTTP header. See below. |
 | `auth` | map | OAuth provider configurations for `reyn auth login`. See below. |
@@ -72,7 +72,7 @@ Each entry under `models:` maps a class name to a LiteLLM model string **or** a 
 
 Two kinds of position appear in config, and they follow opposite rules. The same rule applies to the completion `models:` block **and** the `embedding.classes:` block.
 
-- **Class position** (a *reference* to a class): `model`, per-agent / per-phase / per-op model overrides, `embedding_class`. These are **closed-world** — the value must name a class that exists in `models:` / `embedding.classes:` (or a built-in tier: `light` / `standard` / `strong`). A value that is not a known class is **not** silently treated as a literal model:
+- **Class position** (a *reference* to a class): `model`, per-agent / per-phase / per-op model overrides, `embedding.default_class`. These are **closed-world** — the value must name a class that exists in `models:` / `embedding.classes:` (or a built-in tier: `light` / `standard` / `strong`). A value that is not a known class is **not** silently treated as a literal model:
   - operator config (`model:` in reyn.yaml) keeps a backward-compatible literal passthrough (you may put `openai/gpt-4o` directly);
   - a **skill/op-supplied** model (`op.model`) that is not a known class is **rejected** and falls back to the runtime model (one warning), so a skill- or LLM-authored string cannot bypass the proxy config — the proxy config is the single source of truth for model selection.
 - **Name position** (the *definition* of a model): the `model:` value inside a `models:` / `embedding.classes:` entry. A name should be `provider/model` (e.g. `openai/gpt-4o`, `openai/nomic-embed-text` for a local model served behind a litellm proxy). A bare name with no `/` is accepted (some LiteLLM strings are bare) but **warns** at load — add the prefix if resolution misroutes.
@@ -490,7 +490,7 @@ tool_use:
 |-----|------|---------|-------------|
 | `chat` | string | `enumerate-all` | Tool-use scheme for the top-level chat layer. **Default `enumerate-all`** — flat-lists actions so the LLM invokes them directly instead of hallucinating `invoke_action` names (raised non-hot-list tool-use ~30%→100%). Set to `universal-category` for a minimal-surface / many-tool catalog (discover-then-call), or another registered scheme. |
 
-The chat layer defaults to `enumerate-all`. A scheme owns how the `tools=` payload is built, the SP tool-use instructions, how an LLM response is interpreted, and how it is dispatched — so swapping the scheme changes the whole tool-use loop for the chat layer without OS changes. `universal-category` remains available via this config (e.g. for very large tool catalogs where flat-listing every action would bloat the request). `retrieval` (search-over-tools) and `CodeAct` are likewise supported opt-in schemes; `retrieval` additionally requires `action_retrieval.embedding_class` set to a configured embedding provider.
+The chat layer defaults to `enumerate-all`. A scheme owns how the `tools=` payload is built, the SP tool-use instructions, how an LLM response is interpreted, and how it is dispatched — so swapping the scheme changes the whole tool-use loop for the chat layer without OS changes. `universal-category` remains available via this config (e.g. for very large tool catalogs where flat-listing every action would bloat the request). `retrieval` (search-over-tools) and `CodeAct` are likewise supported opt-in schemes; `retrieval` additionally requires `embedding.enabled: true` (FP-0066 §7).
 
 For what each scheme does and **when to choose which** (`enumerate-all` / `retrieval` / `CodeAct` vs the default), see [Tool-Use Schemes](../../concepts/tools-integrations/tool-use-schemes.md).
 
@@ -858,29 +858,41 @@ Universal catalog visibility + retrieval settings.  Scheme *selection* is genera
 ```yaml
 action_retrieval:
   universal_wrappers_enabled: true    # default; set false to opt out
-  # embedding_class: standard         # default is null (off); uncomment to opt in
   hot_list_n: 0                       # 0 = off (default); set e.g. 10 to opt in
   mode: default                       # default | minimal | performance
+embedding:
+  enabled: false                      # default (off); set true to opt in to search_actions
+  # default_class: standard           # which embedding class to use when enabled
 ```
 
 ### `action_retrieval` fields
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `universal_wrappers_enabled` | bool | `true` | For a layer whose `tool_use` scheme resolves to `universal-category`, `true` (default) exposes only the 4 universal wrappers (`list_actions`, `search_actions`, `describe_action`, `invoke_action`) plus hot-list direct aliases in that layer's `tools=`.  Legacy per-kind tools (`invoke_skill`, `call_mcp_tool`, etc.) are no longer surfaced to the LLM on that layer but remain available as wrapper backing handlers.  `search_actions` is gated separately by `embedding_class`.  Set `false` to disable the wrapper surface entirely for that layer (= legacy tools become the only addressing path again).  Does not affect a layer whose scheme is `enumerate-all` (the `chat` layer's own default) — that scheme never consults this flag. |
-| `embedding_class` | string \| null | `null` | Name of an entry in [`embedding.classes`](../../concepts/data-retrieval/rag.md) to use for action-retrieval semantic search. **Default `null` (off) — semantic `search_actions` is opt-in.** When `null` or empty, `search_actions` is excluded from `tools=` even when wrappers are enabled, and no embedding index build is attempted (silent — nothing to fail or warn about). To opt in, set it explicitly to `standard` (= or `light` / `strong`; OpenAI-backed, needs `OPENAI_API_KEY`, no local install) or a custom `embedding.classes` entry naming any litellm-routable model — including a local model served behind an operator-run litellm proxy (#3128 removed reyn's in-process sentence-transformers backend; reyn depends on litellm exclusively for embeddings now — see [Guide: enable semantic search](../../guide/for-users/enable-semantic-search.md)). Setting this also enables eager embedding build on cold-start sessions to avoid first-turn hallucinations. |
+| `universal_wrappers_enabled` | bool | `true` | For a layer whose `tool_use` scheme resolves to `universal-category`, `true` (default) exposes only the 4 universal wrappers (`list_actions`, `search_actions`, `describe_action`, `invoke_action`) plus hot-list direct aliases in that layer's `tools=`.  Legacy per-kind tools (`invoke_skill`, `call_mcp_tool`, etc.) are no longer surfaced to the LLM on that layer but remain available as wrapper backing handlers.  `search_actions` is gated separately by [`embedding.enabled`](#embedding-block).  Set `false` to disable the wrapper surface entirely for that layer (= legacy tools become the only addressing path again).  Does not affect a layer whose scheme is `enumerate-all` (the `chat` layer's own default) — that scheme never consults this flag. |
 | `hot_list_n` | int | `0` | Hot-list projection size for top-N `freq+recency` direct aliases. `0` (default) disables hot-list entirely — `list_actions` is the canonical discovery path. Set to `10` or higher to opt in; the seed, usage tracker, and alias-builder remain fully operative. |
 | `mode` | string | `"default"` | Operational mode label: `"minimal"` (max cache stability, no hot list) / `"default"` (balanced) / `"performance"` (large hot list).  Free-form string; callers layer semantics on top. |
 | `hot_list_seed` | list \| string | `"default"` | Seed for the hot-list projection. `"default"` uses the built-in freq+recency seeding; a list of qualified action names (e.g. `["mcp__call_tool"]`) pins those as the initial hot list before usage stats accumulate. |
 
+> **FP-0066 §7 (2026-07) — config clean-break.** The prior fragmented gate
+> `action_retrieval.embedding_class` (which conflated the on/off decision with
+> which embedding class to use) is **retired, no alias**. It splits into two
+> orthogonal fields: [`embedding.enabled`](#embedding-block) (bool, default
+> `false` — the single opt-in switch for the whole embedding-backed
+> semantic-discovery layer: action retrieval `search_actions` + the FP-0063
+> plugin's `rag_ingest` embed step) and `embedding.default_class` (string,
+> default `"standard"` — already existed; unaffected by this change). See
+> [`embedding` block](#embedding-block) below for the full field table.
+
 ### Quick-start — opt in to semantic `search_actions`
 
-`search_actions` is off by default (`embedding_class: null`) — semantic search is opt-in project-wide. To turn it on:
+`search_actions` is off by default (`embedding.enabled: false`) — semantic search is opt-in project-wide. To turn it on:
 
 ```yaml
 # reyn.yaml — API-backed, no local install (needs OPENAI_API_KEY)
-action_retrieval:
-  embedding_class: standard
+embedding:
+  enabled: true
+  # default_class: standard   # default; uses openai/text-embedding-3-small
 ```
 
 ```yaml
@@ -888,11 +900,11 @@ action_retrieval:
 # export LITELLM_API_BASE before starting reyn — see the Guide for the
 # proxy config.yaml + naming rule
 embedding:
+  enabled: true
+  default_class: local
   classes:
     local:
       model: openai/nomic-embed-text
-action_retrieval:
-  embedding_class: local
 ```
 
 See [Guide: enable semantic search](../../guide/for-users/enable-semantic-search.md) for the full walkthrough, including offline/air-gapped guidance.
@@ -1417,20 +1429,18 @@ Servers are merged across config sources: `~/.reyn/config.yaml` ⊕ `reyn.yaml` 
 
 The MCP runtime ships in the core install — `fastmcp` is a core dependency (the MCP client is constructed by every session), so no extra is required. (A now-empty `[mcp]` extra is retained as a back-compat alias so existing `pip install -e ".[mcp]"` invocations keep resolving.)
 
-### `mcp.search_threshold`
-
-When the total number of MCP tools (across all connected servers) reaches this threshold, `build_tools()` switches from inlining all MCP tool schemas to using Anthropic's `tool_search_tool` (deferred-loading mode). Default `30`. Set `0` to disable.
-
-> **Note**: internally this is the `ReynConfig.mcp_search_threshold` field, but the operator-facing key is `mcp.search_threshold` (read from the `mcp:` block) — set it there, not as a top-level `mcp_search_threshold:`.
-
-```yaml
-mcp:
-  search_threshold: 30   # default; set 0 to always inline schemas
-  servers:
-    ...
-```
-
 See [Concepts: MCP](../../concepts/tools-integrations/mcp.md) for the protocol overview and How-to: use an MCP server for the end-to-end quickstart.
+
+> **`mcp.search_threshold` removed (#3218 / FP-0066 §7 P1a).** The
+> `ReynConfig.mcp_search_threshold` field + its `mcp.search_threshold:`
+> parsing were fold-removed as a confirmed no-op: the parsed value was never
+> threaded through to `build_tools()` by either router_loop.py call site, so
+> setting it never took effect. `build_tools()`'s own `mcp_search_threshold`
+> parameter still exists (default `0` — always inline; see
+> `MCP_SEARCH_THRESHOLD` in `src/reyn/runtime/router_tools.py`), but it is no
+> longer reachable from `reyn.yaml` — a caller wanting non-default behavior
+> passes it explicitly in code. Full removal of the underlying
+> `tool_search_tool` mechanism is tracked as FP-0033.
 
 ## `skills` block
 
@@ -1529,11 +1539,12 @@ RAG embedding model classes and batch settings. Built-in defaults cover the Open
 > does **not** apply on the proxy route — a known litellm behaviour. For a
 > *direct* non-proxy embedding call, reyn already passes `drop_params=True`.)
 > Alternatively use an OpenAI-compatible embedding class, or set
-> `action_retrieval.embedding_class: null` to opt out. reyn surfaces this exact
+> `embedding.enabled: false` to opt out. reyn surfaces this exact
 > guidance when the index build fails with an `UnsupportedParamsError`.
 
 ```yaml
 embedding:
+  enabled: false                  # default (off, opt-in) — FP-0066 §7
   default_class: standard         # class to use when no class is specified
   batch_size: 100                 # texts per embedding API call (1–2048)
   max_concurrent_batches: 1       # parallel batch calls in flight (1–10)
@@ -1559,7 +1570,8 @@ embedding:
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `default_class` | string | `standard` | Class used when embedding ops don't specify one. Must be a key in `classes`. |
+| `enabled` | bool | `false` | **FP-0066 §7 — single opt-in switch** for the whole embedding-backed semantic-discovery layer: action retrieval's `search_actions` tool + the FP-0063 `rag` plugin's `rag_ingest` embed step. Default `false` (opt-in / predictable-safe default — embedding needs a provider + cost). Clean-break replacement for the retired `action_retrieval.embedding_class` gate (no alias) — the on/off decision now lives here; the model class is the separate `default_class` field below, unaffected. **Symmetric model**: `enabled: false` hides only semantic discovery (`search_actions`) — non-semantic discovery (`list_actions`, …) and load/invoke verbs (`invoke_action`, …) are unaffected. When `embedding.enabled` is `false`, the `embed` op pre-flights and returns a decision-enabling `status: "blocked"` result (naming this key) rather than a silent no-op or an opaque provider error. |
+| `default_class` | string | `standard` | Class used when embedding ops don't specify one (used only when `enabled: true`). Must be a key in `classes`. |
 | `batch_size` | int | `100` | Texts per embedding API call. Valid range: 1–2048. |
 | `max_concurrent_batches` | int | `1` | Parallel batch calls in flight. Valid range: 1–10. Values > 1 are accepted but log a warning until concurrent support lands. |
 | `max_retries` | int | `3` | Transient-error retries per batch call. Valid range: 0–10. |
