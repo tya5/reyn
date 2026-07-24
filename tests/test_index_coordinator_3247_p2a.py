@@ -29,7 +29,7 @@ from reyn.data.index.coordinator import (
     assert_vector_count_match,
     embed_verify_write,
 )
-from reyn.data.index.source_manifest import get_source_manifest
+from reyn.data.index.source_manifest import SourceManifest, get_source_manifest
 from reyn.data.workspace.workspace import Workspace
 from reyn.security.permissions.permissions import PermissionDecl
 
@@ -327,7 +327,9 @@ def test_dirty_flag_survives_wal_truncation_and_search_await_heals(
     completely independent of the agent-state WAL
     (``.reyn/state/wal.jsonl``, see docs/concepts/runtime/events.md "WAL vs
     audit-event separation"). This test proves recovery-of-record is the
-    persisted sources.yaml dirty flag, NOT anything WAL-derived:
+    persisted sources.yaml dirty flag, NOT anything WAL-derived, AND that
+    the "restart" genuinely reloads from the FILE rather than riding an
+    in-memory manifest cache still alive in the same process:
 
       1. Build a source to state==clean (coordinator instance #1).
       2. mark_dirty (simulating a sync-in-op provider failure, §G2).
@@ -335,15 +337,24 @@ def test_dirty_flag_survives_wal_truncation_and_search_await_heals(
          simulating a crash where the WAL substrate loses everything past
          (and including) the point the dirty mark was set. If the dirty
          flag depended on the WAL, it would be gone here.
-      4. Discard coordinator #1 entirely (its in-memory build-queue /
+      4. Reset the per-workspace ``SourceManifest`` SINGLETON cache
+         (``get_source_manifest`` caches one instance per resolved
+         workspace_root in a module-level dict) -- WITHOUT this, step 5
+         below would silently pass by reading the SAME in-memory
+         ``SourceEntry`` object rather than genuinely re-parsing
+         ``sources.yaml``, which would make the test vacuous with respect
+         to file-persistence (see the paired strip-falsify test below,
+         which proves this reset is what makes the gate non-vacuous).
+      5. Discard coordinator #1 entirely (its in-memory build-queue /
          failure-memo are volatile BY DESIGN -- simulates a process
          restart) and construct a FRESH coordinator #2 against the SAME
-         workspace_root.
-      5. Assert the dirty state SURVIVED (read purely from sources.yaml)
-         and that a fresh search_await (with a newly-registered builder,
-         as a real restarted process would re-register its domain
-         adapters) HEALS it -- re-running the build and returning to
-         state==clean.
+         workspace_root -- it gets a brand-new ``SourceManifest`` that has
+         never read anything, forcing a real file parse on first access.
+      6. Assert the dirty state SURVIVED (read purely from a freshly
+         re-parsed sources.yaml) and that a fresh search_await (with a
+         newly-registered builder, as a real restarted process would
+         re-register its domain adapters) HEALS it -- re-running the
+         build and returning to state==clean.
     """
     from reyn.core.events.state_log import StateLog
 
@@ -366,15 +377,22 @@ def test_dirty_flag_survives_wal_truncation_and_search_await_heals(
     assert wal_path.exists() and wal_path.stat().st_size > 0
     wal_path.write_bytes(b"")  # truncate below (= including) the dirty-mark point
 
-    # "restart": drop coordinator #1's in-memory state, build a fresh one.
+    # "restart": drop coordinator #1's in-memory state AND the per-workspace
+    # SourceManifest singleton cache (else coord2 below would transparently
+    # ride #1's already-loaded in-memory SourceEntry, never touching disk --
+    # see test_reload_after_singleton_reset_depends_on_real_file_persist for
+    # the strip-falsify proof that this reset is what forces a real reload).
     del coord1
+    _reset_manifest_singleton(tmp_path)
     coord2 = IndexCoordinator(tmp_path)
 
     entry_after_restart = _run(get_source_manifest(tmp_path).get("doc_source"))
     assert entry_after_restart is not None
     assert entry_after_restart.state == "dirty", (
-        "the dirty flag must survive a fully-truncated WAL -- it is persisted "
-        "in sources.yaml, independent of the WAL substrate"
+        "the dirty flag must survive a fully-truncated WAL AND a fresh "
+        "SourceManifest re-parse of sources.yaml -- it is persisted on "
+        "disk, independent of both the WAL substrate and any in-process "
+        "manifest cache"
     )
     assert _run(coord2.is_ready("doc_source")) is False
 
@@ -388,3 +406,72 @@ def test_dirty_flag_survives_wal_truncation_and_search_await_heals(
     assert healed_entry is not None
     assert healed_entry.state == "clean"
     assert healed_entry.last_error is None
+
+
+def _reset_manifest_singleton(workspace_root: Path) -> None:
+    """Evict the ``get_source_manifest`` per-workspace singleton cache so the
+    next call constructs a fresh ``SourceManifest`` (empty in-memory cache,
+    forced to re-parse ``sources.yaml`` from disk on first read) -- the
+    same-process equivalent of a process restart for THIS specific cache."""
+    import reyn.data.index.source_manifest as _sm_mod
+
+    _sm_mod._MANIFESTS.pop(workspace_root.resolve(), None)
+
+
+def test_reload_after_singleton_reset_depends_on_real_file_persist(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    """Tier 2: (strip-falsify, #3247 co-vet) proves the singleton reset in
+    the truncate-falsify test above is not itself vacuous -- it genuinely
+    forces a read FROM ``sources.yaml``, not from an in-memory cache.
+
+    Neuters ``SourceManifest._atomic_write`` (the real on-disk persist) to a
+    no-op so ``mark_dirty``'s ``upsert`` updates ONLY the in-memory cache,
+    never the file. Confirms the (expected, uninteresting) in-process read
+    still shows "dirty" via the live cache. Then resets the singleton
+    (forcing a fresh ``SourceManifest`` that has never cached anything) and
+    re-reads: because the file was never actually written, the entry comes
+    back "clean" (or absent) -- NOT "dirty". This is the falsifying case:
+    if the truncate-falsify test's post-restart assertion
+    (``state == "dirty"``) were run against a build whose file-persistence
+    is broken, it would FAIL here -- proving that test's green result
+    requires genuine file persistence, not merely the singleton surviving
+    in memory.
+    """
+    coord = IndexCoordinator(tmp_path)
+    ctx = _ctx_for(_FakeEmbeddingProvider(), monkeypatch)
+    items = [{"id": "a", "text": "alpha"}]
+    coord.register_builder("doc_source", _working_build_fn(ctx, items))
+    _run(coord.ensure_built("doc_source", await_completion=True))
+    assert _run(coord.is_ready("doc_source")) is True
+
+    # Neuter the real on-disk persist -- upsert() still updates the
+    # in-memory cache, but the write to sources.yaml never happens.
+    async def _noop_atomic_write(self, *, sandbox_write_paths=None) -> None:  # noqa: ANN001
+        return None
+
+    monkeypatch.setattr(SourceManifest, "_atomic_write", _noop_atomic_write)
+
+    _run(coord.mark_dirty("doc_source", reason="provider_error: transient timeout"))
+
+    # Same-process, same singleton: the in-memory cache DOES show dirty --
+    # this is the uninteresting case the original (un-fixed) test relied on.
+    same_process_entry = _run(get_source_manifest(tmp_path).get("doc_source"))
+    assert same_process_entry is not None and same_process_entry.state == "dirty", (
+        "sanity check: the in-memory cache reflects the mark_dirty call "
+        "regardless of whether the file write happened"
+    )
+
+    # Reset the singleton -- the next get_source_manifest() constructs a
+    # FRESH SourceManifest with an empty cache, forced to parse the file.
+    _reset_manifest_singleton(tmp_path)
+    reloaded_entry = _run(get_source_manifest(tmp_path).get("doc_source"))
+
+    assert reloaded_entry is not None
+    assert reloaded_entry.state != "dirty", (
+        "with the real file-write neutered, a genuine reload from "
+        "sources.yaml must NOT observe 'dirty' -- it was never durably "
+        "written. Seeing 'dirty' here would mean the singleton reset "
+        "failed to force a real file re-parse, which would make the "
+        "truncate-falsify test's post-restart assertion vacuous."
+    )
