@@ -581,6 +581,27 @@ async def handle(
         source=op.source or "",
     )
 
+    # ── 7b. FP-0066 P3a (#3247 firm §3/§7): dynamic sync-in-op knowledge
+    #        ingest — (re)embed the skill corpus into "knowledge_skill".
+    #        Best-effort (§G2): a provider/embedding failure must not fail
+    #        this install (see ``sync_skill_ingest``'s own docstring). A
+    #        fresh ``load_config()`` (not ``existing``) is used so the
+    #        registry reflects the FULL merged config cascade — this op
+    #        only writes ONE tier's file, and other tiers' skills must
+    #        still be part of the ingested corpus.
+    from reyn.data.index.coordinator import get_index_coordinator  # noqa: PLC0415
+    from reyn.data.index.knowledge_ingest import sync_skill_ingest  # noqa: PLC0415
+
+    try:
+        from reyn.config import load_config  # noqa: PLC0415
+        _raw_skills = load_config().skills
+    except Exception:
+        _raw_skills = existing["skills"]
+    await sync_skill_ingest(
+        get_index_coordinator(ctx.workspace.base_dir), _raw_skills, ctx,
+        events=ctx.events,
+    )
+
     # ── 8. Hot-reload: surface the installed skill in the current session ─────
     # #2761 PR-2: a PURE ADDITION on a live per-session reloader (ctx.hot_reloader)
     # applies IMMEDIATELY (mid-turn) so the just-installed NEW skill is resolvable this

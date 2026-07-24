@@ -116,6 +116,22 @@ async def handle(op: PluginUninstallIROp, ctx: OpContext) -> dict:
 
         ctx.events.emit("plugin_uninstall_registry_dropped", name=name, removed=removed)
 
+        # ── 1b. FP-0066 P3a (#3247 firm §4 G3): sync skill de-index — NOT
+        #       best-effort. The firm's "plugin-unit de-index" ruling: every
+        #       skill THIS plugin registered (per the ``skills`` registry
+        #       drop above) is de-indexed together, one call covering the
+        #       whole set. Raises on failure (propagates to the shared
+        #       execute_op error surface) rather than silently leaving a
+        #       stale, still-searchable embedded row for a skill whose
+        #       registry entry (and, next, its file copy) is gone.
+        if removed.get("skills"):
+            from reyn.data.index.coordinator import get_index_coordinator
+            from reyn.data.index.knowledge_ingest import sync_skill_deindex
+
+            await sync_skill_deindex(
+                get_index_coordinator(ctx.workspace.base_dir), removed["skills"],
+            )
+
         # ── 2. Remove the global copy ─────────────────────────────────────────
         plugin_root = root / name
         copy_removed = plugin_root.is_dir()

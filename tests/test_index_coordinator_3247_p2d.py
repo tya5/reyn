@@ -207,7 +207,7 @@ def test_events_none_is_a_silent_noop(tmp_path: Path) -> None:
     async def _build_fn() -> BuildMaterial:
         raise AssertionError("not reached — no builder registered")
 
-    coord.register_builder("x", _build_fn)
+    coord.register_builder("x", _build_fn, kind="dynamic")
     # No events kwarg at all — must not raise.
     outcome = _run(coord.ensure_built("x", await_completion=True))
     assert outcome.error is None or outcome.error is not None  # just must not raise
