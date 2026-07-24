@@ -86,6 +86,38 @@ gate rejects — pick the class from this table instead of inventing a new
 verb. `verb → class` is injective (each verb maps to exactly one class);
 there is deliberately no "catch-all" removal verb.
 
+### Dual-pair verbs — the general pattern R2 is one instance of
+
+Several canonical verbs exist specifically as the *inverse* of another
+canonical verb — an intentional symmetry an LLM can reason about ("this
+undoes that"), not an accident of naming:
+
+| pair | meaning | class |
+|---|---|---|
+| `install` ↔ `uninstall` | register a capability ↔ its removal | R4 install / R2 removal (uninstall row) |
+| `remember` ↔ `forget` | write memory ↔ its removal | memory write / R2 removal (forget row) |
+| `register` ↔ `unregister` | activate a scheduled/registered entity ↔ deactivate it | lifecycle registration (not a removal — the entity is not deleted, dropped, forgotten, or uninstalled, only deregistered from the scheduler) |
+| `enable` ↔ `disable` | turn a registered entity on ↔ off | lifecycle toggle (not a removal — no deregistration happens, only a status flip) |
+
+`register`/`unregister`/`enable`/`disable` are in the canonical verb lexicon
+(so a new tool may use them, either in `verb_object` position per R1's flat
+default, e.g. `register_webhook`, or in the pre-existing `cron_*` family's
+`object_verb` order, e.g. `cron_register` / `cron_unregister` /
+`cron_enable` / `cron_disable`) precisely so a future cron-like family is
+not false-rejected for legitimately reusing this lifecycle-toggle dual
+pattern.
+
+**What is gated vs what is not**: the gate checks that a name's verb token
+belongs to the canonical lexicon, is positioned correctly for its
+namespace/family, and — for the R2 removal table specifically — is one of
+the frozen four rather than a 5th removal verb. **Whether a dual pair's
+*counterpart* actually exists (e.g. "if there's a `register_x`, is there
+really an `unregister_x`?") is a SEMANTIC check, not a structural one** —
+verifying real symmetry requires reading what the paired tool does, which
+is intent-reading, the same reason R2/R3's class-selection is doc+review
+only (see the STRUCTURAL vs SEMANTIC section above). The gate does not and
+cannot assert "this dual pair is complete."
+
 (`cron_unregister` is a family-scoped exception: the `cron_*` family already
 grandfathered under R1 uses `register`/`unregister` as its own dual pair,
 scoped to that family only — it does not add a 5th verb to the general
@@ -180,7 +212,12 @@ than invented into a new "rule":
 `install_local`, `install_source`, `install_package`, `install_registry`,
 `run`, `load`, `search`, `fetch`, `spawn`, `call`, `remember`, `render`,
 `present`, `compact`, `ask`, `edit`, `emit`, `glob`, `grep`, `invoke`,
-`subscribe`, `unsubscribe`, `write`, `delegate`, `embed`, `exec`.
+`subscribe`, `unsubscribe`, `write`, `delegate`, `embed`, `exec`,
+`register`, `unregister`, `enable`, `disable` (the last four accepted in
+either `verb_object` position, per R1's flat default, or `object_verb`
+suffix position for the pre-existing `cron_*` family and any future
+cron-like family reusing this lifecycle-toggle dual pattern — see "Dual-pair
+verbs" above).
 
 This lexicon (and the grandfather frozen-set) is reconciled against the full
 live registry census in `tests/test_tool_naming_convention_gate_3223.py` —

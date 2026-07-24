@@ -42,8 +42,21 @@ CANONICAL_VERBS: frozenset[str] = frozenset(
         "run", "load", "search", "fetch", "spawn", "call", "remember", "render",
         "present", "compact", "ask", "edit", "emit", "glob", "grep", "invoke",
         "subscribe", "unsubscribe", "write", "delegate", "embed", "exec",
+        "register", "unregister", "enable", "disable",
     }
 )
+
+# Lifecycle-toggle dual-pair verbs (register<->unregister, enable<->disable).
+# These are ALSO accepted in OBJECT_verb suffix position (not just the R1
+# verb_object prefix position all other CANONICAL_VERBS get), because the
+# existing cron_* family already uses them that way and a future cron-like
+# family legitimately may do the same (R1: "family-internal consistency >
+# global rule"). Scoped to exactly these four verbs — NOT a blanket
+# first-OR-last-token rule for every canonical verb, which would silently
+# sweep unrelated grandfather entries (web_fetch, semantic_search, ...) into
+# "structurally compliant" for reasons that have nothing to do with this
+# lifecycle-toggle class.
+LIFECYCLE_TOGGLE_VERBS: frozenset[str] = frozenset({"register", "unregister", "enable", "disable"})
 
 # R2's frozen 4-verb removal class table. A name using one of these verbs is
 # fine; a NEW removal verb outside this set (a "5th verb") is the drift this
@@ -67,8 +80,14 @@ FLAT_GRANDFATHER: frozenset[str] = frozenset(
     {
         # spawn-family (long-lived entity creation), object_verb order
         "agent_spawn", "session_spawn",
-        # cron_* family (R1 family-prefix grandfather)
-        "cron_disable", "cron_enable", "cron_list", "cron_register", "cron_unregister",
+        # cron_* family (R1 family-prefix grandfather). NOTE: cron_disable /
+        # cron_enable / cron_register / cron_unregister are NOT here — they
+        # now pass structurally via LIFECYCLE_TOGGLE_VERBS suffix matching
+        # (see _classify_flat). cron_list stays grandfathered: "list" is a
+        # verb_object-position verb elsewhere in the lexicon, not a
+        # lifecycle-toggle verb, so cron_list's object_verb order still
+        # needs the family-prefix grandfather exemption.
+        "cron_list",
         # R3 sole pre-existing `get` exception (new `get` is forbidden)
         "get_mcp_prompt",
         # sole hooks_*-shaped tool, predates convention, no established family
@@ -132,6 +151,9 @@ def _classify_flat(name: str) -> tuple[bool, str]:
     first_token = name.split("_", 1)[0]
     if first_token in CANONICAL_VERBS:
         return True, f"verb_object (verb={first_token!r})"
+    last_token = name.rsplit("_", 1)[-1]
+    if last_token in LIFECYCLE_TOGGLE_VERBS:
+        return True, f"object_verb lifecycle-toggle (verb={last_token!r})"
     return False, f"first token {first_token!r} not in canonical verb lexicon"
 
 
@@ -321,44 +343,47 @@ def test_stripping_grandfather_makes_real_names_fail() -> None:
     were empty, real currently-registered tool names would fail the
     convention check. This proves the gate actually constrains something
     (it is not vacuously green regardless of what the grandfather set
-    contains). Does not modify the module-level frozensets (uses local
-    empty sets), so it cannot corrupt the real gate's state for other tests
-    in this file."""
-    empty_flat: frozenset[str] = frozenset()
-    empty_qualified: frozenset[str] = frozenset()
+    contains).
 
-    def classify_flat_stripped(name: str) -> bool:
-        if name in empty_flat:
-            return True
-        if name in CANONICAL_VERBS:
-            return True
-        for compound in _COMPOUND_VERBS:
-            if name == compound or name.startswith(compound + "_"):
-                return True
-        return name.split("_", 1)[0] in CANONICAL_VERBS
+    Calls the REAL ``_classify_flat``/``_classify_qualified`` (via a
+    monkeypatch of the module-level grandfather globals, restored in a
+    ``finally``) rather than a hand-duplicated copy of the classification
+    logic — a duplicated copy would silently drift out of sync with the
+    real classifier (e.g. it would not know about
+    ``LIFECYCLE_TOGGLE_VERBS`` suffix-matching unless someone remembered to
+    update both places), which is exactly the kind of drift this whole gate
+    exists to prevent elsewhere."""
+    import sys
 
-    def classify_qualified_stripped(name: str) -> bool:
-        if name in empty_qualified:
-            return True
-        if "__" not in name:
-            return False
-        category, remainder = name.split("__", 1)
-        if category == remainder:
-            return False
-        for compound in _COMPOUND_VERBS:
-            if remainder == compound or remainder.startswith(compound + "_"):
-                return True
-        return remainder.split("_", 1)[0] in CANONICAL_VERBS
+    # ``sys.modules[__name__]`` (not ``import tests.test_tool_naming_...``):
+    # this test file has no ``tests/__init__.py`` package marker, so pytest
+    # imports it under a bare module name — a dotted ``tests.<name>`` import
+    # would silently create a SECOND, distinct module object rather than
+    # referencing the one pytest already loaded, and mutating that second
+    # copy's globals would have zero effect on the real classifier (verified:
+    # this is exactly the failure mode that first version of this test hit).
+    gate_module = sys.modules[__name__]
 
-    flat_failures = [n for n in _live_flat_names() if not classify_flat_stripped(n)]
-    qualified_failures = [n for n in _live_qualified_names() if not classify_qualified_stripped(n)]
+    original_flat = gate_module.FLAT_GRANDFATHER
+    original_qualified = gate_module.QUALIFIED_GRANDFATHER
+    try:
+        gate_module.FLAT_GRANDFATHER = frozenset()
+        gate_module.QUALIFIED_GRANDFATHER = frozenset()
+        flat_failures = [n for n in _live_flat_names() if not _classify_flat(n)[0]]
+        qualified_failures = [n for n in _live_qualified_names() if not _classify_qualified(n)[0]]
+    finally:
+        gate_module.FLAT_GRANDFATHER = original_flat
+        gate_module.QUALIFIED_GRANDFATHER = original_qualified
 
-    # At authoring time: 35 flat + 4 qualified real names go RED with the
-    # grandfather set stripped (e.g. agent_spawn, cron_disable, mcp_call_tool,
-    # plugin_management__install, rag_operation__index_update). We assert a
-    # generous lower bound rather than pinning the exact count (which would
-    # be a Tier-4 format pin) — the property under test is "load-bearing",
-    # i.e. strictly greater than zero.
+    # At authoring time (post lifecycle-toggle-verb promotion): 31 flat + 4
+    # qualified real names go RED with the grandfather set stripped (e.g.
+    # agent_spawn, hooks_add, mcp_call_tool, plugin_management__install,
+    # rag_operation__index_update — cron_disable/enable/register/unregister
+    # no longer need grandfather at all, since they now pass structurally
+    # via LIFECYCLE_TOGGLE_VERBS). We assert a generous lower bound rather
+    # than pinning the exact count (which would be a Tier-4 format pin) —
+    # the property under test is "load-bearing", i.e. strictly greater than
+    # zero.
     assert len(flat_failures) > 0, (
         "expected at least one real flat tool name to fail WITHOUT the "
         "grandfather allowlist (proves the gate is load-bearing, not "
@@ -369,4 +394,41 @@ def test_stripping_grandfather_makes_real_names_fail() -> None:
         "expected at least one real qualified tool name to fail WITHOUT the "
         "grandfather allowlist — got zero, meaning the gate is vacuous for "
         "qualified names"
+    )
+
+
+def test_cron_lifecycle_toggle_verbs_pass_via_lexicon_not_grandfather() -> None:
+    """Tier 2: contract — cron_register / cron_unregister / cron_enable /
+    cron_disable pass the structural check via CANONICAL_VERBS +
+    LIFECYCLE_TOGGLE_VERBS suffix-matching, and are correctly ABSENT from
+    FLAT_GRANDFATHER (promoting register/unregister/enable/disable to the
+    lexicon made their grandfather entries redundant — this pins that they
+    were actually removed, not just that the gate happens to pass for some
+    other reason)."""
+    for name in ("cron_register", "cron_unregister", "cron_enable", "cron_disable"):
+        assert name not in FLAT_GRANDFATHER, (
+            f"{name!r} should no longer need FLAT_GRANDFATHER now that its verb "
+            f"is in LIFECYCLE_TOGGLE_VERBS"
+        )
+        ok, reason = _classify_flat(name)
+        assert ok, f"{name!r} should pass structurally, got: {reason}"
+        assert "lifecycle-toggle" in reason, (
+            f"{name!r} should pass specifically via the lifecycle-toggle suffix "
+            f"path, got reason: {reason!r}"
+        )
+
+
+def test_cron_list_still_needs_grandfather() -> None:
+    """Tier 2: contract — cron_list is NOT a lifecycle-toggle verb ("list" is
+    a normal verb_object-position verb elsewhere in the lexicon, not a
+    register/unregister/enable/disable dual), so it still needs
+    FLAT_GRANDFATHER for its object_verb word order. Pins that the
+    lifecycle-toggle promotion was scoped narrowly rather than accidentally
+    widened into a blanket first-OR-last-token rule for every canonical
+    verb (which would sweep unrelated entries like web_fetch or
+    semantic_search into "no longer needs grandfather" for reasons that
+    have nothing to do with the lifecycle-toggle class)."""
+    assert "cron_list" in FLAT_GRANDFATHER, (
+        "cron_list should still be grandfathered — 'list' is not a "
+        "lifecycle-toggle verb, so it cannot pass via the narrow suffix path"
     )
