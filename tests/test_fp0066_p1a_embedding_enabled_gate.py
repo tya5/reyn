@@ -125,6 +125,49 @@ def _embed_ctx() -> OpContext:
     )
 
 
+def test_embed_op_fails_closed_on_unloadable_config(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Tier 1: architect co-vet ruling (#3256) — an unloadable config makes
+    the `embed` op fail **CLOSED** (the §G9 block), not open.
+
+    A config-load failure must not silently enable a cost-bearing, opt-in
+    capability the operator never configured (cost-safety); "cannot confirm
+    enabled" must resolve the same way "confirmed disabled" does (opt-in
+    symmetry with the field-absent default) — the same "unreadable → deny"
+    shape as #3201 (identity unreadable → floor) and #3227 (can't confirm →
+    deny). Driven through the PUBLIC `handle()` entry point (not the
+    private `_is_embedding_enabled` helper) so the assertion is on real
+    op-level behavior, not private state. Narrow monkeypatch of
+    ``load_config`` itself (raises) — NOT a faked config object — is the
+    seam under test.
+
+    ``monkeypatch.undo()`` first reverts the suite-wide autouse
+    ``_embedding_enabled_by_default`` fixture (conftest.py), which patches
+    the private ``_is_embedding_enabled`` helper directly to keep the rest
+    of the suite green — this test needs the REAL implementation (which
+    calls ``load_config``) under test, not that stand-in.
+    """
+    import reyn.config as config_mod
+    import reyn.core.op_runtime.embed as embed_mod
+
+    monkeypatch.undo()  # restore the real _is_embedding_enabled (see docstring)
+
+    def _raise() -> None:
+        raise RuntimeError("simulated unreadable reyn.yaml")
+
+    monkeypatch.setattr(config_mod, "load_config", _raise)
+
+    result = asyncio.run(
+        embed_mod.handle(
+            EmbedIROp(kind="embed", texts=["hello"], embedding_model="standard"),
+            _embed_ctx(),
+        )
+    )
+    assert result["status"] == "blocked"
+    assert "embedding.enabled: true" in result["error"]
+
+
 def test_embed_op_blocks_with_decision_enabling_message_when_disabled(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

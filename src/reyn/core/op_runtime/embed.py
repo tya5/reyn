@@ -103,19 +103,47 @@ def _is_embedding_enabled() -> bool:
     Mirrors ``_resolve_provider``'s own ``load_config()`` pattern (both
     resolve config fresh per call — op handlers are stateless; the caller
     is expected to have a real ``reyn.yaml``/``reyn.local.yaml`` on disk in
-    production). A missing/unloadable config fails OPEN (= enabled) rather
-    than blocking every caller on an unrelated config problem — the
-    provider call itself still fails loudly downstream if config is
-    genuinely broken. Extracted to a module-level function (rather than
-    inlined in ``handle``) so tests can monkeypatch this one seam instead
-    of needing a real ``reyn.yaml`` on disk.
+    production). Extracted to a module-level function (rather than inlined
+    in ``handle``) so tests can monkeypatch this one seam instead of
+    needing a real ``reyn.yaml`` on disk.
+
+    A missing/unloadable config fails **CLOSED** (= disabled) — architect
+    ruling (co-vet on #3256), not a fail-open convenience:
+
+    - **Cost-safety**: a config-load failure must not silently start
+      billing an operator for embedding-provider calls they never opted
+      into. Fail-open would spend money on a config *fault*, not a config
+      *choice*.
+    - **Opt-in symmetry**: a field-ABSENT config already resolves
+      ``enabled=False`` (the dataclass default). An unREADABLE config
+      resolving to ``True`` would be the asymmetric case — "we don't know"
+      must not read more permissive than "we know it's unset".
+    - **Consistency with sibling gates**: mirrors #3201 (identity
+      unreadable → floor, not privilege) and #3227 (can't confirm →
+      deny). Embedding is a CAPABILITY gate, so the same
+      "cannot confirm enabled → treat as disabled" rule applies here too.
+    - **Predictability**: `embedding.enabled` defaults OFF; a config fault
+      silently flipping a default-off feature ON is exactly the
+      unpredictable-behavior class the owner's UX/predictability
+      principle rules against.
+    - **The availability counter-argument is weak here**: fail-open is
+      the right call for a load-bearing DEPENDENCY (deny-by-default would
+      break the OS), but embedding is an opt-in CAPABILITY — refusing it
+      on an unreadable config costs nothing but one blocked embed call,
+      which the caller can retry once config is fixed.
+
+    The provider call itself still fails loudly downstream in the
+    genuinely-broken-config case anyway (whichever caller next needs a
+    real config value hits the same load failure) — fail-closed here does
+    not hide that; it just stops this ONE opt-in gate from defaulting to
+    "on" under uncertainty.
     """
     try:
         from reyn.config import load_config
 
         return bool(load_config().embedding.enabled)
     except Exception:
-        return True
+        return False
 
 
 def _embedding_disabled_block(op: EmbedIROp) -> dict:
