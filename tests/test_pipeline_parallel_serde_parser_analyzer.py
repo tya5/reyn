@@ -63,9 +63,10 @@ def test_parallel_serde_round_trip_non_default_values_with_nested_branches_and_c
             },
             "score": {
                 "kind": "tool", "name": "scorer", "args": {}, "output": "sc", "schema": None,
+                "on_error": None,
             },
         },
-        "collect": {"kind": "tool", "name": "merge", "args": {}, "output": "merged", "schema": None},
+        "collect": {"kind": "tool", "name": "merge", "args": {}, "output": "merged", "schema": None, "on_error": None},
         "on_error": "retry(3)",
         "output": "results",
     }

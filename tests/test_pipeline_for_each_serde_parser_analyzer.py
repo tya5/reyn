@@ -58,7 +58,7 @@ def test_for_each_serde_round_trip_non_default_values_with_nested_do_and_collect
             "kind": "call", "pipeline": "summarize-one",
             "pass": [["item", "item"]], "output": "r",
         },
-        "collect": {"kind": "tool", "name": "merge", "args": {}, "output": "merged", "schema": None},
+        "collect": {"kind": "tool", "name": "merge", "args": {}, "output": "merged", "schema": None, "on_error": None},
         "output": "results",
     }
     assert pipeline_from_dict(json.loads(json.dumps(wire))) == pipeline

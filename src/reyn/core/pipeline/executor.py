@@ -113,6 +113,7 @@ from reyn.core.offload.canonical import (
     canonical_degraded_reason,
     canonical_fallback_reason,
     canonical_to_ctx_fields,
+    error_to_canonical,
     extract_canonical_source,
     to_canonical,
     unwrap_dispatch_envelope,
@@ -160,12 +161,32 @@ class ToolStep:
     values wrapped in :class:`ExprRef` are resolved against the context first; other
     values pass through literally). ``schema``, if set, names a
     ``SchemaRegistry``-registered schema the step's result must conform to (verify:
-    schema) — non-conformance fails the step."""
+    schema) — non-conformance fails the step.
+
+    ``on_error`` (#3130, optional, default ``None``): mirrors the fan-out
+    steps' ``on_error: continue|abort|retry(n)`` (:class:`ForEachStep` /
+    :class:`ParallelStep`), reusing the SAME parse/validation/retry mechanism
+    (:func:`_parse_on_error`) so a single top-level ``tool:`` step can react to
+    a tool's own canonical ``meta.isError`` result WITHOUT the ``schema:
+    PreflightCheck`` crutch (#3096/#3105's "last piece").
+
+    ``None`` (the field's default AND what an omitted DSL key parses to) is a
+    DISTINCT state from the string ``"abort"`` — it means "no ``on_error`` was
+    declared" and preserves today's exact byte-identical behavior: a raised
+    exception still propagates unchanged, and a canonical-error dict result
+    (``meta.isError``) still passes through UNCHECKED (the existing
+    ``schema:``-gated preflight pattern some pipelines already rely on keeps
+    working exactly as before). Only an EXPLICIT ``on_error`` string
+    (``"abort"``/``"continue"``/``"retry(n)"``) turns on the new
+    canonical-error-aware handling in :func:`_run_tool_step` — see that
+    function's docstring for the continue/abort/retry semantics.
+    """
 
     name: str
     args: "dict[str, Any]" = field(default_factory=dict)
     output: "str | None" = None
     schema: "str | None" = None
+    on_error: "str | None" = None
 
 
 @dataclass(frozen=True)
@@ -826,6 +847,94 @@ async def _run_transform_step(inv: "_StepInvocation") -> "tuple[Any, bool, dict[
 
 
 async def _run_tool_step(inv: "_StepInvocation") -> "tuple[Any, bool, dict[str, Any]]":
+    """Dispatch a ``tool:`` step, then apply ``step.on_error`` (#3130).
+
+    ``step.on_error is None`` (the field's default, and what an omitted DSL
+    key parses to) skips ALL of the logic below entirely — :func:`_dispatch_tool_step_once`
+    is called exactly once, a raised exception propagates unchanged, and a
+    canonical-error result (``meta.isError``) is returned unchecked. This is
+    the exact byte-identical pre-#3130 behavior.
+
+    An EXPLICIT ``on_error`` reuses the fan-out ``_OnError`` mechanism
+    (:func:`_parse_on_error`) — the SAME retry-safety model ``for_each``/
+    ``parallel`` already rely on (a retry re-invokes the tool body, so any
+    internal side-effect may re-fire; the WAL only records a FINISHED step
+    once — see this module's top-of-file retry-safety notes): ``retry(n)``
+    re-attempts the WHOLE dispatch (including schema validation) up to ``n``
+    extra times; if still failing, it falls through to ``abort`` — mirroring
+    ``for_each``'s hard-coded "retry(n) exhausted -> abort" fallback (there is
+    no combined "retry then continue" DSL value, single-step or fan-out).
+
+    ``"continue"``: the failed attempt's result is bound to ``output`` as a
+    typed error-envelope — NOT the for_each-style DROPPED-item marker (that
+    only makes sense for a fan-out COLLECTION; a single step's ``output`` is a
+    NAMED binding downstream steps reference, so dropping it would leave an
+    unbound-variable reference). If the failure was a canonical-error tool
+    RESULT (``meta.isError``), that result IS ALREADY the existing typed
+    error-envelope shape (``to_canonical``/``canonical_to_ctx_fields`` — the
+    same shape a success result takes, just with ``meta.isError: True`` and
+    non-empty ``text``) and is bound as-is. If the failure was a RAISED
+    exception (no dict result to canonicalize), the SAME shape is synthesized
+    via :func:`~reyn.core.offload.canonical.error_to_canonical` — reusing the
+    codebase's one typed-error-result constructor rather than inventing a
+    second envelope shape. Either way the bound value is discriminable from a
+    success result via ``meta.isError``, symmetric with the success path.
+
+    ``"abort"`` (explicit): identical detection, but any failure — after
+    exhausting retries, if ``retry(n)`` — raises :class:`PipelineExecutionError`
+    naming the step and the tool's own error text, instead of proceeding."""
+    step: ToolStep = inv.step  # type: ignore[assignment]
+    on_err = _parse_on_error(step.on_error) if step.on_error is not None else None
+    if on_err is None:
+        # #3130 byte-identical path: no on_error declared -> exactly today's
+        # behavior (exception propagates; canonical error passes through
+        # unchecked for a schema-crutch pipeline to inspect downstream).
+        ctx_result, durable, completed = await _dispatch_tool_step_once(inv)
+        return ctx_result, durable, completed
+
+    attempts = 1 + (on_err.retries if on_err.kind == "retry" else 0)
+    last_exc: "Exception | None" = None
+    last_error_ctx: Any = None
+    for _attempt in range(attempts):
+        try:
+            ctx_result, durable, completed = await _dispatch_tool_step_once(inv)
+        except Exception as exc:  # noqa: BLE001 - on_error policy boundary (#3130)
+            last_exc = exc
+            last_error_ctx = None
+            continue
+        canonical_error = _tool_step_canonical_error(step, ctx_result)
+        if canonical_error is None:
+            return ctx_result, durable, completed
+        last_exc = None
+        last_error_ctx = ctx_result
+
+    if on_err.kind == "continue":
+        if last_error_ctx is not None:
+            return last_error_ctx, True, inv.completed_step_results
+        envelope = canonical_to_ctx_fields(error_to_canonical({"error": str(last_exc)}))
+        return envelope, True, inv.completed_step_results
+
+    reason = str(last_exc) if last_exc is not None else _tool_step_canonical_error(
+        step, last_error_ctx
+    )
+    raise PipelineExecutionError(
+        f"step {inv.step_label} (tool {step.name!r}) failed "
+        f"(on_error={step.on_error!r}): {reason}"
+    )
+
+
+async def _dispatch_tool_step_once(
+    inv: "_StepInvocation",
+) -> "tuple[Any, bool, dict[str, Any]]":
+    """One dispatch attempt of a ``tool:`` step — the pre-#3130 body of
+    ``_run_tool_step``, factored out so :func:`_run_tool_step` can retry it
+    (``on_error: retry(n)``) or catch its exceptions (``on_error:
+    continue``/``abort``) without duplicating the dispatch/schema/canonicalize
+    logic. Raises on a genuine failure (tool_dispatch exception, missing
+    schema_registry, schema non-conformance) exactly like before; a
+    canonical-error tool RESULT (``meta.isError``) still returns NORMALLY —
+    the caller (:func:`_run_tool_step`) is what decides whether that triggers
+    ``on_error``."""
     step: ToolStep = inv.step  # type: ignore[assignment]
     deps = inv.deps
     resolved_args = {
