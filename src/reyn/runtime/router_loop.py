@@ -3522,6 +3522,16 @@ class RouterLoop:
             await idx.build(items, op_ctx, model_class)
         except Exception as exc:
             # #1458: memoize the failure so subsequent turns do not retry.
+            # FP-0066 P2d/#3247 convergence-debt (co-vet, pre-merge): this
+            # flag and the Coordinator's own failure-memo
+            # (``IndexCoordinator._failure_memo`` / ``build_failed()``) are
+            # BOTH set on this same exception today (byte-identical two-path
+            # retention from P2b) — keep them in sync until the #3247
+            # convergence follow-up unifies failure-state into one signal.
+            # A future edit to only ONE of the two paths silently desyncs
+            # them; see the interim guard pin
+            # ``test_action_index_build_failure_both_signals_stay_in_sync``
+            # in ``tests/test_index_coordinator_3247_p2d.py``.
             self._action_index_build_failed = True
             # FP-0066 P2d (#3247): the audit-event for this failure used to
             # be emitted HERE directly (``action_index_build_failed``).

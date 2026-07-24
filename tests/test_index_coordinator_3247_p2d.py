@@ -338,6 +338,66 @@ class _LoopForP2d(RouterLoop):
             self._test_coordinator = IndexCoordinator(self._workspace_root_for_test)
         return self._test_coordinator
 
+    async def _build_router_caller_state(self) -> Any:
+        # Same minimal-subclass shim as test_index_coordinator_3247_p2b.py's
+        # _LoopForP2b — the list_actions handler still returns the static
+        # categories with router_state=None; dynamic categories are not
+        # needed for these tests.
+        return None
+
+
+# ── convergence-debt interim guard (#3247 co-vet, pre-merge) ──────────────
+
+
+def test_action_index_build_failure_both_signals_stay_in_sync(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    """Tier 2: FP-0066 P2d / #3247 convergence-debt interim guard.
+
+    ``RouterLoop._action_index_build_failed`` (the pre-P2b per-session
+    retry-prevention flag, #1458) and ``IndexCoordinator``'s own failure-
+    memo (``build_failed(source_id)``) are currently BOTH set on the SAME
+    build failure — P2b's byte-identical two-path retention left them as
+    two independent bookkeeping mechanisms for one fact, kept in sync only
+    IMPLICITLY. Full unification into a single failure-state signal is
+    deferred to the #3247 convergence follow-up (see ``coordinator.py``'s
+    P2b docstring on the two-path builder shape). This test drives a REAL
+    build failure through the REAL production path
+    (``RouterLoop._ensure_action_index_built``, real ``IndexCoordinator``,
+    real ``ActionEmbeddingIndex``, no mocks) and asserts BOTH signals
+    reflect the failure TOGETHER — a future edit that touches only one of
+    the two paths (e.g. a refactor that stops setting one flag) turns this
+    RED instead of silently desyncing them.
+    """
+    log, store = _events_and_store(tmp_path)
+    provider = _FailingEmbeddingProvider()
+    op_ctx = _op_ctx_for(provider, monkeypatch, log)
+    idx = ActionEmbeddingIndex(workspace_root=tmp_path)
+
+    host = _StubHost(idx, provider, log, op_ctx)
+    loop = _LoopForP2d(tmp_path, host)
+    coordinator = loop._get_index_coordinator()
+
+    async def _scenario() -> None:
+        await loop._ensure_action_index_built(
+            idx, provider, "standard", await_completion=True,
+        )
+
+    _run(_scenario())
+
+    # getattr (not a direct attribute access) mirrors the established
+    # #1458 pin convention (test_action_embedding_build_failure_1458.py /
+    # test_index_coordinator_3247_p2b.py) — this flag is the production
+    # guard's own read surface (RouterLoop.run() checks it the same way).
+    assert getattr(loop, "_action_index_build_failed", False) is True, (
+        "the RouterLoop-side #1458 retry-prevention flag must be set on "
+        "a real build failure"
+    )
+    assert coordinator.build_failed("actions") is True, (
+        "the Coordinator's own failure-memo must ALSO be set on the SAME "
+        "build failure — the two signals must not desync"
+    )
+
 
 def test_router_loop_search_actions_wires_search_await_and_emits_audit(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
