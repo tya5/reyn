@@ -12,28 +12,37 @@ back to a full ledger re-scan (P3, over-count-safe).
 Covers the CLAUDE.md recovery-feature PR gate's 4-arm truncate-falsify
 requirement:
   A. main: set X, truncate the ledger past X's own records, reconstruct, X survives.
-  B. anchor tampering — ledger-side (replaced with same-size-or-larger
-     unrelated content, "invalid" status) and checkpoint-side (its own
-     content_sha256 tampered) — each handled differently: a replaced
-     ledger still FLOORS (governing rule below), a tampered checkpoint's
-     own content cannot be trusted at all (no floor, full re-scan).
+  B. anchor tampering — ledger-side (same-size-or-larger unrelated content
+     with a DIFFERENT leading-line identity, "invalid" status, #3201: no
+     floor) and checkpoint-side (its own content_sha256 tampered, no floor,
+     full re-scan) — each handled differently from the SAME-identity
+     truncation case (governing rule below), which still floors.
   C. partial/corrupt checkpoint write -> full re-scan fallback.
   D. checkpoint deleted entirely -> full re-scan fallback (still reconstructs).
 Plus a parity check (checkpoint-fast-path vs checkpoint-absent-full-scan
 agree on totals for the same ledger).
 
-Co-vet firm (governing rule for WHICH statuses floor): only an EXPLICIT
-operator action (archiving/deleting BOTH the ledger and the checkpoint
-together) may LOWER a per-agent cap counter. Every IMPLICIT path —
-truncation, deletion, or replacement of the ledger alone — is
-non-decreasing. This is why status "invalid" (replaced) floors just like
-"truncated": over-count is observable and has an explicit remedy;
-under-count is silent and has none. Additional witnesses below cover: the
-floor firing is never silent (surfaced through `/budget`'s actual rendered
-output, not just the checkpoint file) and the explicit-operator-action reset
-path genuinely does lower the counters (the "can be lowered explicitly"
-side of the invariant — without this witness, an implementation that could
-NEVER be lowered at all would also pass every other test here).
+Co-vet firm (governing rule for WHICH statuses floor), precision-refined by
+#3201 (ledger IDENTITY discriminates "truncated" from "invalid", not file
+SIZE): only an EXPLICIT operator action (archiving/deleting BOTH the ledger
+and the checkpoint together) may LOWER a per-agent cap counter. The floor
+is the DEFAULT for every non-"valid" status — "truncated" (same ledger
+identity, anchor stale), "missing" (ledger absent/empty, no identity
+derivable), and "identity_absent" (checkpoint predates #3201, or the
+current ledger's identity is unreadable) all floor. The ONE exception is
+"invalid": the ledger's leading-line identity is AFFIRMATIVELY computable
+on BOTH sides and DIFFERS — a genuinely different ledger, whose past totals
+are unrelated to this checkpoint's, so no floor applies. Reaching "invalid"
+always requires positive proof, never merely the absence of proof — an
+attacker who truncates the SAME ledger (leading line intact) still lands in
+"truncated", not "invalid", however they pad the file's size. Additional
+witnesses below cover: the floor firing is never silent (surfaced through
+`/budget`'s actual rendered output, not just the checkpoint file), the
+explicit-operator-action reset path genuinely does lower the counters (the
+"can be lowered explicitly" side of the invariant — without this witness,
+an implementation that could NEVER be lowered at all would also pass every
+other test here), and a forged ``ledger_identity_sha256`` cannot spoof
+either direction of the floor decision (caught by content_sha256).
 """
 from __future__ import annotations
 
@@ -42,6 +51,7 @@ from pathlib import Path
 
 from reyn.llm.pricing import TokenUsage
 from reyn.runtime.budget.budget import (
+    BudgetCheckpoint,
     BudgetLedger,
     BudgetTracker,
     CostConfig,
@@ -233,26 +243,25 @@ def test_arm_A_truncate_destroys_X_source_records_checkpoint_floor_survives(tmp_
     )
 
 
-def test_arm_B_ledger_replaced_same_or_larger_size_still_floors(tmp_path):
-    """Tier 2a: arm B (ledger-side, "invalid" status) — the ledger file is
-    wholesale REPLACED with unrelated content that is the SAME SIZE OR
-    LARGER than the stale checkpoint's anchor offset. The boundary-line
-    content hash correctly classifies this as ``"invalid"`` (not
-    ``"valid"`` — a byte-size-only check would wrongly accept it and
-    mis-parse the new file's bytes as "the tail since last checkpoint").
-
-    Per the co-vet firm (#2945 follow-up): only an EXPLICIT operator action
-    (archiving both the ledger AND the checkpoint) may lower a per-agent
-    cap counter. A replaced ledger is an IMPLICIT path, so the stale
-    ``alpha`` total is floored in here too, exactly like a truncation — it
-    is not reset just because the ledger's content changed underneath it.
+def test_arm_B_ledger_replaced_different_identity_gets_no_floor(tmp_path):
+    """Tier 2a: arm B (ledger-side, "invalid" status) — #3201. The ledger
+    file is wholesale REPLACED with unrelated content that is the SAME SIZE
+    OR LARGER than the stale checkpoint's anchor offset (defeats a
+    size-only check) AND whose LEADING line differs from the checkpoint's
+    stored ``ledger_identity_sha256``. This is now discriminated by
+    IDENTITY, not size: the boundary-line content hash correctly rejects
+    the fast path (not ``"valid"``), and the leading-line hash
+    AFFIRMATIVELY proves this is a genuinely DIFFERENT ledger — so, unlike
+    the pre-#3201 behavior, alpha's stale total does NOT floor here. A
+    different ledger's past totals are simply not this checkpoint's
+    business (see ``verify_anchor``'s docstring).
 
     FALSIFICATION (verified out-of-band with the hash check short-circuited
     to always-pass): the FAST tail-only path would incorrectly activate and
     mis-parse the new ledger's bytes from the stale anchor offset, corrupting
-    ``beta``'s total (rather than just failing to floor ``alpha``) — the hash
-    check remains required for correctness of the fast path, independent of
-    the floor question.
+    ``beta``'s total (rather than just misclassifying the floor question) —
+    the anchor hash check remains required for correctness of the fast
+    path, independent of the floor question.
     """
     ledger_path = tmp_path / ".reyn" / "state" / "budget_ledger.jsonl"
     state_path = tmp_path / ".reyn" / "state" / "budget_state.json"
@@ -263,8 +272,8 @@ def test_arm_B_ledger_replaced_same_or_larger_size_still_floors(tmp_path):
 
     # Wholesale replacement: unrelated agent, padded so the new file is AT
     # LEAST as large as the stale anchor's byte offset (defeats a
-    # size-only check) while its actual bytes differ from what the
-    # checkpoint's anchor pins.
+    # size-only check) while its actual bytes — INCLUDING its leading
+    # line — differ from what the checkpoint's anchor/identity pin.
     ts = BudgetLedger._now_iso()
     pad = "p" * (old_offset + 16)
     rec1 = {"ts": ts, "agent": "beta", "model": "gpt-4", "tokens": 15, "cost_usd": 0.001, "pad": pad}
@@ -276,15 +285,128 @@ def test_arm_B_ledger_replaced_same_or_larger_size_still_floors(tmp_path):
     bt2 = BudgetTracker(_cfg())
     bt2.hydrate(ledger_path)
     snap = bt2.snapshot()
-    assert snap["agent_tokens"].get("alpha", 0) == 40, (
-        "an implicit ledger replacement must NOT lower alpha's per-agent "
-        "total — only an explicit operator action (archiving both files) may"
+    assert snap["agent_tokens"].get("alpha", 0) == 0, (
+        "#3201: a ledger AFFIRMATIVELY proven different by leading-line "
+        "identity must NOT floor alpha's stale total — a different "
+        "ledger's history is unrelated to this checkpoint's"
     )
     assert snap["agent_tokens"].get("beta", 0) == 30, (
         "the new ledger's own records must still be counted correctly"
     )
+    assert snap["budget_floor_applied"] is False, (
+        "the actual cap-relevant total must reflect NO floor -- this is the "
+        "witness the issue mandates: check the ACTUAL cap behavior, not "
+        "just that an identity field got populated"
+    )
+    assert snap["budget_floor_reason"] is None
+
+
+def test_same_identity_truncation_still_floors_even_at_old_anchor_size(tmp_path):
+    """Tier 2a: #3201 positive witness for the precision fix itself. The
+    ledger is truncated (real content lost) but then PADDED back up to at
+    least the size of the stale anchor offset — the exact shape that a
+    file-SIZE-based discriminator (the pre-#3201 implementation) would have
+    misclassified as "invalid"/replaced. Because the padding preserves the
+    ORIGINAL leading line byte-for-byte, ledger IDENTITY still matches the
+    checkpoint's ``ledger_identity_sha256`` -- this must be classified
+    ``"truncated"`` (same ledger, corrupted) and the floor must actually
+    fire, holding alpha's cap-relevant total at its pre-truncation value
+    despite the surviving ledger literally re-counting to less.
+
+    This is the ACTUAL-cap-behavior witness for the "identity, not size"
+    half of #3201: without identity, this same-size-or-larger shape would
+    wrongly land in "invalid" and DROP the floor -- an under-count / silent
+    cap lapse for an attacker who truncates-then-pads to dodge a
+    size-only check.
+    """
+    ledger_path = tmp_path / ".reyn" / "state" / "budget_ledger.jsonl"
+    state_path = tmp_path / ".reyn" / "state" / "budget_state.json"
+    _record_calls(ledger_path, state_path, n=4, tokens_each=10)  # alpha=40
+
+    checkpoint_path = _default_checkpoint_path(ledger_path)
+    old_offset = json.loads(checkpoint_path.read_text(encoding="utf-8"))["anchor"]["byte_offset"]
+
+    original_first_line = ledger_path.read_bytes().split(b"\n", 1)[0] + b"\n"
+
+    # Truncate to keep ONLY the original leading line (real records lost,
+    # under-count if trusted verbatim), then pad the tail with a harmless
+    # comment-shaped JSON line so the file is >= the stale anchor's size --
+    # defeating a pure size check while the leading line is untouched.
+    pad_len = max(0, (old_offset + 32) - len(original_first_line))
+    padding_line = json.dumps({"agent": "beta", "tokens": 0, "cost_usd": 0.0, "pad": "p" * pad_len})
+    ledger_path.write_bytes(original_first_line + (padding_line + "\n").encode("utf-8"))
+    assert ledger_path.stat().st_size >= old_offset, "padded ledger must be >= the stale anchor offset"
+
+    bt2 = BudgetTracker(_cfg())
+    bt2.hydrate(ledger_path)
+    snap = bt2.snapshot()
+    assert snap["agent_tokens"].get("alpha", 0) == 40, (
+        "#3201: same-identity (leading line intact) truncation must still "
+        "floor alpha's total even when padded to the old anchor's size or "
+        "larger -- this is exactly the case file-size alone gets wrong"
+    )
     assert snap["budget_floor_applied"] is True
-    assert snap["budget_floor_reason"] == "replaced"
+    assert snap["budget_floor_reason"] == "truncated"
+
+
+def test_checkpoint_predating_identity_feature_still_floors(tmp_path):
+    """Tier 2a: #3201 backward-compat / negative-proof witness. A checkpoint
+    written BEFORE this feature existed (``ledger_identity_sha256`` field
+    entirely absent) must still floor when its anchor no longer verifies --
+    absence of identity can never be treated as AFFIRMATIVE proof of a
+    different ledger. Constructs such a checkpoint directly (an old-format
+    payload with no identity key at all) to prove ``from_dict`` accepts it
+    (content_sha256 computed without the field must still validate) and
+    that ``hydrate`` routes it to "identity_absent" -> floors, never to
+    "invalid" -> no floor.
+    """
+    ledger_path = tmp_path / ".reyn" / "state" / "budget_ledger.jsonl"
+    state_path = tmp_path / ".reyn" / "state" / "budget_state.json"
+    bt = _record_calls(ledger_path, state_path, n=4, tokens_each=10)  # alpha=40
+    expected = bt.snapshot()["agent_tokens"]["alpha"]
+    del bt
+
+    # Build a pre-#3201-shaped checkpoint payload: same content as the
+    # tracker's real checkpoint but with NO ``ledger_identity_sha256`` key
+    # anywhere (simulating a file written by the old code).
+    checkpoint = BudgetCheckpoint(
+        agent_tokens={"alpha": expected},
+        agent_cost_usd={"alpha": expected / 2},
+        day_key=None, daily_tokens=0, daily_cost_usd=0.0,
+        month_key=None, monthly_tokens=0, monthly_cost_usd=0.0,
+        anchor_byte_offset=999_999_999,  # deliberately past the real ledger -> anchor invalid
+        anchor_line_len=8,
+        anchor_line_sha256="0" * 64,
+        ledger_identity_sha256=None,
+    )
+    old_format_dict = checkpoint.to_dict()
+    assert "ledger_identity_sha256" not in old_format_dict, (
+        "sanity: the old-format payload must genuinely omit the identity "
+        "key, not merely set it to null, to faithfully simulate a pre-#3201 "
+        "checkpoint file"
+    )
+    checkpoint_path = _default_checkpoint_path(ledger_path)
+    checkpoint_path.write_text(json.dumps(old_format_dict), encoding="utf-8")
+
+    # Re-parse must succeed (old-format content_sha256 still validates) with
+    # ledger_identity_sha256 == None.
+    reparsed = BudgetCheckpoint.from_dict(json.loads(checkpoint_path.read_text(encoding="utf-8")))
+    assert reparsed is not None, (
+        "an old-format checkpoint (no identity field) must still parse -- "
+        "identity absence is a legitimate historical state, not corruption"
+    )
+    assert reparsed.ledger_identity_sha256 is None
+
+    bt2 = BudgetTracker(_cfg())
+    bt2.hydrate(ledger_path)
+    snap = bt2.snapshot()
+    assert snap["agent_tokens"].get("alpha", 0) == expected, (
+        "identity ABSENT (old-format checkpoint) must floor -- it can never "
+        "AFFIRMATIVELY prove a different ledger, so it must not be routed "
+        "to the no-floor branch"
+    )
+    assert snap["budget_floor_applied"] is True
+    assert snap["budget_floor_reason"] == "identity_absent"
 
 
 def test_arm_B_tampered_checkpoint_content_falls_back_to_full_scan(tmp_path):
@@ -311,6 +433,52 @@ def test_arm_B_tampered_checkpoint_content_falls_back_to_full_scan(tmp_path):
     assert bt2.snapshot()["agent_tokens"]["alpha"] == 40, (
         "a checkpoint with tampered counted values (anchor otherwise intact) "
         "must not be trusted; full re-scan must still recover the correct total"
+    )
+
+
+def test_tampered_ledger_identity_field_cannot_spoof_the_floor_decision(tmp_path):
+    """Tier 2a: #3201 mandate — a forged ``ledger_identity_sha256`` must not
+    be able to spoof the truncated-vs-different-ledger decision. Directly
+    edits the on-disk checkpoint's ``ledger_identity_sha256`` field to an
+    ATTACKER-CHOSEN value (leaving ``content_sha256`` as originally
+    computed) — the ONLY way to make an identity-mismatch look like a
+    match (or vice versa) without ``content_sha256`` catching it.
+
+    This must fail ``BudgetCheckpoint.from_dict``'s content_sha256 check
+    (the field is HASHED, per its docstring), so the checkpoint is
+    rejected wholesale and ``hydrate`` falls back to a full ledger re-scan
+    — the attacker cannot use a forged identity to either (a) fake a floor
+    on a different ledger or (b) fake "different" to dodge a floor on the
+    SAME ledger.
+    """
+    ledger_path = tmp_path / ".reyn" / "state" / "budget_ledger.jsonl"
+    state_path = tmp_path / ".reyn" / "state" / "budget_state.json"
+    _record_calls(ledger_path, state_path, n=4, tokens_each=10)  # 40 tokens
+
+    checkpoint_path = _default_checkpoint_path(ledger_path)
+    data = json.loads(checkpoint_path.read_text(encoding="utf-8"))
+    assert "ledger_identity_sha256" in data, (
+        "sanity: the real checkpoint must actually carry the new identity "
+        "field for this tamper to be meaningful"
+    )
+    forged = "f" * 64
+    assert data["ledger_identity_sha256"] != forged
+    data["ledger_identity_sha256"] = forged  # tamper: forge the identity, content_sha256 untouched
+    checkpoint_path.write_text(json.dumps(data), encoding="utf-8")
+
+    reparsed = BudgetCheckpoint.from_dict(json.loads(checkpoint_path.read_text(encoding="utf-8")))
+    assert reparsed is None, (
+        "a forged ledger_identity_sha256 (content_sha256 left stale) must "
+        "be caught by the content_sha256 check and rejected wholesale -- "
+        "identity is tamper-evident, not a free-standing unverified field"
+    )
+
+    bt2 = BudgetTracker(_cfg())
+    bt2.hydrate(ledger_path)
+    assert bt2.snapshot()["agent_tokens"]["alpha"] == 40, (
+        "with the tampered checkpoint rejected outright, hydrate falls back "
+        "to a full re-scan of the (untouched) ledger and recovers the "
+        "correct total regardless of the forged identity"
     )
 
 
@@ -425,7 +593,12 @@ def test_floor_applied_is_visible_in_the_actual_budget_output(tmp_path):
         "explanation — the operator reads THIS text, not the snapshot dict "
         "or the checkpoint file directly"
     )
-    assert "truncated" in rendered.lower(), (
+    # #3201: truncating all the way to 0 bytes destroys the ledger's leading
+    # line too, so no identity is derivable at all -- this now classifies as
+    # "missing" (ambiguous), not "truncated" (which #3201 reserves for a
+    # ledger whose leading-line identity is still readable and matches).
+    # Both floor; this assertion pins the SPECIFIC, now more precise reason.
+    assert "missing" in rendered.lower(), (
         "the rendered output must include the SPECIFIC reason, not just a "
         "generic 'something happened'"
     )

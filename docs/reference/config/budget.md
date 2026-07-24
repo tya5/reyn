@@ -248,33 +248,42 @@ at their period boundary, so only the lifetime per-agent aggregate needed
 the compaction.
 
 **Only an explicit operator action may lower a per-agent cap counter.**
-Every implicit path — the ledger found truncated, deleted entirely, or
-wholesale replaced with different content (same size or larger, but its
-boundary content no longer matches what the checkpoint saw) — is
+Every implicit path that cannot AFFIRMATIVELY prove the ledger is a
+different one from the checkpoint's — truncated, deleted entirely, or an
+identity check that could not be established on one or both sides (e.g. a
+checkpoint written before this ledger-identity mechanism existed) — is
 non-decreasing: `hydrate` never simply discards the checkpoint and re-scans
 whatever ledger remains. Instead the checkpoint's per-agent totals are
 merged in as a **floor** (never lower than what the checkpoint recorded) on
-top of the re-scan. The governing question is not "over-count vs
-under-count" but which operation is allowed to lower the counter at all:
-over-count is observable and has an explicit remedy (archive both files, see
-below); under-count is silent and has none — so both truncation-class events
-AND replacement-class events floor. The one explicit remedy is archiving
-**both** `budget_ledger.jsonl` **and** `budget_checkpoint.json` together (see
-below).
+top of the re-scan. The floor is the *default*; the ONE exception is a
+ledger whose **identity** — a hash of its leading (first) record line,
+stable across truncation/growth because the ledger is append-only and never
+rotated — is AFFIRMATIVELY computable on both the checkpoint and the current
+ledger AND differs: that is a genuinely different ledger (cross-workspace
+copy, deliberate archive+recreate), and its past totals are simply not this
+checkpoint's business, so no floor applies. Identity, not file size, is the
+discriminator: an earlier version of this mechanism classified "same size or
+larger with a content mismatch" as a replacement, but size is
+attacker-controllable (a replacement can be padded to any length) — identity
+lets the truncated-same-ledger case floor correctly even when it happens to
+land at or above the old anchor's size. The governing question is still not
+"over-count vs under-count" but which operation is allowed to lower the
+counter at all: over-count is observable and has an explicit remedy (archive
+both files, see below); under-count is silent and has none. The one explicit
+remedy is archiving **both** `budget_ledger.jsonl` **and**
+`budget_checkpoint.json` together (see below).
 
 **A floor firing is never silent.** `/budget` shows a `⚠` line naming the
-reason (`truncated` / `missing` / `replaced`) whenever the most recent
-startup had to preserve a per-agent total this way, so an operator seeing a
-higher-than-expected number can tell it was deliberately preserved rather
-than wondering if it's a bug.
+reason (`truncated` / `missing` / `identity_absent`) whenever the most
+recent startup had to preserve a per-agent total this way, so an operator
+seeing a higher-than-expected number can tell it was deliberately preserved
+rather than wondering if it's a bug. (No `⚠` line means the ledger's
+identity was affirmatively proven different — an intentional replacement —
+and no floor was applied.)
 
 See the `.reyn/cache/budget_checkpoint.json` entry in
 [reference/runtime/reyn-dir-layout.md](../runtime/reyn-dir-layout.md) for
-the full anchor-classification rationale. (A replaced ledger can still leak
-a stale total from an unrelated history via this floor — a known, accepted
-limitation; identifying the ledger by more than size/position, e.g. an
-embedded identity token, is tracked as separate follow-up work, not in scope
-here.)
+the full anchor-classification rationale.
 
 ## Per-agent cap recovery semantics
 
