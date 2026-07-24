@@ -6,19 +6,13 @@ audience: [human, agent]
 
 # RAG (Retrieval-Augmented Generation)
 
-reyn ships a RAG **framework foundation** — five primitive ops (`embed` / `index_query` / `index_drop` / `semantic_search` / `index_update`), an extensible `IndexBackend` protocol, an `EmbeddingProvider` protocol, and a safe-mode `index_update()` entry point — that lets you index any document corpus and have the LLM retrieve relevant chunks at query time, without ever overloading the context window with the full corpus.
+reyn ships an internal RAG **framework foundation** — the `embed` / `index_query` / `index_drop` / `semantic_search` / `index_update` control-IR ops, an extensible `IndexBackend` protocol, an `EmbeddingProvider` protocol, and a safe-mode `index_update()` entry point — that lets you index any document corpus into reyn's own store. **As of FP-0066 P1b, this in-core index is OS-internal**: the four ops that used to be agent-facing tools (`semantic_search`, `index_update`, `drop_source`, `list_rag_sources`) are retired as LLM-callable tools. They were a pre-audience-split relic — user-RAG semantics riding reyn's own internal store, from before user RAG and in-core RAG were split into separate systems. See [proposal 0066 §9](../../deep-dives/proposals/0066-retrieval-two-groups-two-axes.md) for the retire rationale and the later phases that will make the in-core index reachable again (as `search_actions` / a future `search_knowledge` verb — not a general-purpose agent search tool).
 
-**The differentiation: retrieval is a built-in tool, not a library call.** LangChain and LlamaIndex give you a Python pipeline you call from your own driver code. reyn's `semantic_search` and `drop_source` are built-in tools the LLM itself calls during a normal `reyn chat` session — no orchestration code required on the search side.
+> **If you want an agent to search your own documents today, use the builtin user RAG** (proposal 0063): two bundled pipelines that ingest a folder of documents (pdf / xlsx / pptx / docx / txt / md) into **an external sqlite vector store you name**, via MCP servers, and query it — no Python step to write, and it is agent-callable end-to-end. See [Build a RAG corpus](../../guide/for-users/build-a-rag-corpus.md). That is a *different* store with a *different* setup from the in-core index this page describes; the two share only the `embed` primitive and the `embedding:` class config below.
 
-**Phase 1 scope (= 1.0 release).** The framework foundation, the SQLite default backend (≤100K chunks, sub-second query), and the LiteLLM embedding passthrough ship in 1.0. Vector store plugin variety (Qdrant / FAISS / Weaviate / Pinecone), advanced retrieval (rerank / HyDE / contextual retrieval), RAG eval frameworks, and IDE integration are post-1.0 (= phase 2) territory — see [../architecture/care-boundary.md](../architecture/care-boundary.md). If you need that ecosystem today, LangChain / LlamaIndex are the better fit.
+## The in-core index is OS-internal
 
-**TL;DR:** Search is automatic — the LLM calls the built-in `semantic_search` tool whenever it needs information from an indexed source. Creating a source requires a short safe-mode Python step that reads your files and calls `index_update()` (there is no bundled one-command indexer for an **in-core source**).
-
-> **This page is about the in-core RAG.** Reyn also ships a **builtin user RAG** (proposal 0063): two bundled pipelines that ingest a folder of documents (pdf / xlsx / pptx / docx / txt / md) into **an external sqlite vector store you name**, via MCP servers, and query it — no Python step to write. It is a *different* store with a *different* setup, and it does **not** create a source `semantic_search` can see. Use this page's `IndexBackend` path when you want reyn's own index; see [Build a RAG corpus](../../guide/for-users/build-a-rag-corpus.md) when you want a portable store of your own documents. The two share only the `embed` primitive and the `embedding:` class config below.
-
-## Quick start
-
-Indexing a corpus is a small script run once as a safe-mode `python` step — read the files, split them into chunks, hand them to `index_update`:
+`index_update()` (safe-mode, `reyn.api.safe.index_update`) still lets you build a source in reyn's own store — the reconcile / chunking contract below is unchanged. What changed is what can READ that store: there is currently no agent-facing tool and no safe-mode search entry point over the in-core index. The substrate (`IndexUpdateIROp` / `SemanticSearchIROp` / `SqliteIndexBackend`) is kept because later FP-0066 phases (§8 ingest, §5 search) build reyn's own internal retrieval on top of it — action-catalog search (`search_actions`) already does; skill/memory/repo retrieval (a future `search_knowledge` verb) is planned. None of that is a general-purpose "index your own docs and have the LLM search them" surface — for that, use the FP-0063 plugin above.
 
 ```python
 # my_project/index_docs.py — run once via a `python` step (mode: safe by default)
@@ -48,76 +42,21 @@ iu.index_update(
 
 `index_update` is a **reconcile**, not an append/replace toggle — see [§Chunking is your own code](#chunking-is-your-own-code) and [§Limitations](#limitations) for the add/update/remove/skip contract (a re-run with the same chunks re-embeds nothing; a re-run with a changed `content_hash` under an already-indexed `source_path` re-embeds just that chunk and drops the stale one).
 
-```bash
-# Start chatting — the LLM will fetch chunks via semantic_search when needed
-reyn chat
-> Summarise the authentication design from the docs
-```
-
-Verified end-to-end with real `gemini-embedding-001` via the LiteLLM proxy: 21 EN concept docs → 418 chunks indexed (~$0.001), and natural concept queries ("What is X in Reyn?", "Explain Reyn's permission model") returned the indexed semantic answers in 3/3 chat runs (= batch 22, 2026-05-10). See `docs/deep-dives/journal/dogfood/2026-05-10-batch-22-affordance-bias-fix/findings.md`. (That run predates both the `embed_and_index()` entry point and its FP-0057 Phase 2b successor `index_update()`, and used the since-removed `index_docs` skill — the underlying embed/index/search mechanics are unchanged; `recall` was renamed `semantic_search` in FP-0057 Phase 2a.)
-
-Behind the scenes the LLM calls `semantic_search` and retrieves the top matching chunks:
-
-```
-LLM internally calls: semantic_search(query="authentication design", sources=["my_docs"], top_k=5)
-```
-
-The same script pattern indexes any file glob — user notes, source code, or JSONL logs — just point `file.glob()` at a different path and pick a `source` name.
-
 ## What is a "source"
 
 A **source** is a named collection of chunks from a set of files. You give it:
 
 | Field | Example | Purpose |
 |-------|---------|---------|
-| `source` | `my_docs` | Logical name used in `semantic_search` calls and `reyn source` commands |
+| `source` | `my_docs` | Logical name for this collection of chunks |
 | `path` | `docs/**/*.md` | Single glob pattern — all matching files are indexed together |
-| `description` | `"Project documentation"` | Required. Helps the LLM decide when to search this source |
+| `description` | `"Project documentation"` | Required. Free-text label for the source |
 
-One indexing run covers one source, one path, one chunking approach. To index multiple file types with different chunking, run the indexing script once per source and then combine them at query time using `sources=[...]`:
-
-```
-semantic_search(query="...", sources=["python_src", "my_docs", "memory"], top_k=5)
-```
-
-Source metadata is persisted in `.reyn/index/sources.yaml`. The LLM discovers what
-is indexed by calling `list_rag_sources`, which returns each source's name,
-description, and chunk count:
-
-```
-list_rag_sources()
-→ {"sources": [
-    {"name": "memory",    "description": "User notes / past session memos", "chunk_count": 142},
-    {"name": "reyn_code", "description": "Reyn Python framework code",      "chunk_count": 1247},
-    {"name": "my_docs",   "description": "Project documentation",           "chunk_count": 89}
-  ]}
-```
-
-Those names are what `semantic_search`'s `sources` argument takes. Discovery is a
-tool call rather than a standing block in the system prompt, so an operator with
-many corpora pays for the list only on the turns the model actually asks.
-
-## The `semantic_search` tool
-
-`semantic_search` is a built-in tool available to the LLM in every chat session (FP-0057 Phase 2a; renamed from `recall` — clean-break, fixes the observed recall/search_actions/memory naming collision). It takes a natural-language query, searches the requested sources, and returns the top-K matching chunks:
-
-```
-semantic_search(query="plan-mode discussion", sources=["memory"], top_k=5)
-```
-
-The LLM picks which sources to search based on the source descriptions you provided at index time. You do not need to configure which sources a workflow may use — any indexed source is accessible.
-
-Internally, `semantic_search` embeds the query using the same model used for indexing (once per DISTINCT model when sources span more than one — never a caller-supplied model per source), runs a cosine-similarity search against each source's SQLite index, and merges results ranked by similarity score. The entire operation is deterministic; the LLM sees only the top-K chunks as text, never the raw vectors.
-
-A second built-in tool, `drop_source`, lets the LLM drop an index on your behalf — useful when iterating on a chunking strategy:
-
-```
-drop_source(source="my_docs")
-```
+One indexing run covers one source, one path, one chunking approach. Source metadata is persisted in `.reyn/config/index/sources.yaml`.
 
 ## Chunking is your own code
 
-There is no bundled chunker and no LLM-driven strategy selection — the chunking logic in the [Quick start](#quick-start) example (paragraph split) is plain Python you write and adapt per corpus. For specialised corpora — Python source code, SQL schemas, structured YAML — swap in whatever splitting logic fits (e.g. an AST-based splitter for source code, a heading-based splitter for Markdown) before calling `index_update`.
+There is no bundled chunker and no LLM-driven strategy selection — the chunking logic in the example above (paragraph split) is plain Python you write and adapt per corpus. For specialised corpora — Python source code, SQL schemas, structured YAML — swap in whatever splitting logic fits (e.g. an AST-based splitter for source code, a heading-based splitter for Markdown) before calling `index_update`.
 
 The chunking step runs deterministically in your `python` step — no LLM involvement, no attractor surface. `index_update` handles the add/update/remove/skip reconciliation, embedding, and index writes; everything upstream of that call (reading files, splitting into chunks) is ordinary Python. Pass the **full current chunk set** for whatever `source_path`s you are (re-)indexing in one call — reconciliation needs to see the complete set for a path to detect deletions (a partial re-ingest that only ever mentions a few files never mass-deletes the rest of the source).
 
@@ -140,21 +79,9 @@ All index data is stored inside your project's `.reyn/` directory:
 
 `sources.yaml` is the single source of truth for what is indexed; it lives under `config/` because it is operator-editable state. The SQLite index data lives under `cache/` because it is derived/rebuildable. See [`.reyn/` directory layout](../../reference/runtime/reyn-dir-layout.md) for the full recovery-core/cache/audit split. The SQLite files contain the chunk text and embedding vectors. You can inspect them with any SQLite client, though the schema is internal.
 
-Phase 1 uses SQLite as the only storage backend. Phase 2 will add pluggable backends (Qdrant, FAISS, Pinecone) via a `register_backend()` extension point.
-
-## Permissions
-
-One permission gate protects RAG operations on the LLM-facing side:
-
-| Permission | Default | Trigger |
-|-----------|---------|---------|
-| `permissions.index_drop` | `ask` | `drop_source` tool call or `reyn source rm` |
-
-There is no dedicated permission gate on `index_update()` itself — a safe-mode `python` step that calls it runs under the calling phase's ordinary python-step permissions, not a RAG-specific one.
-
 ## Cost
 
-Embedding cost is linear in to-embed chunk count (after the add/update dedup — unchanged chunks are skipped, never re-embedded) and depends on your corpus size and embedding model — `text-embedding-3-small` is the default. Unlike the removed `index_docs` skill's wrapper, the safe-mode entry has no interactive cost preflight, but a large to-embed batch (over `embedding.cost_warn_threshold`, see [§Embedding configuration](#embedding-configuration)) now surfaces an `index_update_cost_warning` audit-event and a `cost_warning` field in the returned envelope — check `result["cost_warning"]` if you want to react to it in your indexing script.
+Embedding cost is linear in to-embed chunk count (after the add/update dedup — unchanged chunks are skipped, never re-embedded) and depends on your corpus size and embedding model — `text-embedding-3-small` is the default. A large to-embed batch (over `embedding.cost_warn_threshold`, see [§Embedding configuration](#embedding-configuration)) surfaces an `index_update_cost_warning` audit-event and a `cost_warning` field in the returned envelope — check `result["cost_warning"]` if you want to react to it in your indexing script.
 
 ## Embedding configuration
 
@@ -162,6 +89,7 @@ The embedding model and batching behaviour are configured under `embedding:` in 
 
 ```yaml
 embedding:
+  enabled: true
   default_class: standard
   classes:
     light:      openai/text-embedding-3-small
@@ -172,6 +100,8 @@ embedding:
   timeout: 60.0
   cost_warn_threshold: 10000
 ```
+
+`embedding.enabled` (default `false`, opt-in) gates the embed op and everything built on it — see [proposal 0066 §7](../../deep-dives/proposals/0066-retrieval-two-groups-two-axes.md#7-opt-in-embeddingenabled-symmetric-model).
 
 `timeout` is the per-attempt deadline (seconds) — how long reyn waits for one embedding attempt. It exists because a stalled embedding endpoint would otherwise be capped only by litellm's own `request_timeout` default of 6000s per attempt, which an operator cannot tell from a hang. `<= 0` opts out.
 
@@ -192,55 +122,46 @@ embedding:
       model: openai/nomic-embed-text   # name after LITELLM_API_BASE strips the provider/ prefix
 ```
 
-then `export LITELLM_API_BASE=http://localhost:4000` (your proxy's address) before starting reyn. Full setup walkthrough (server choice, proxy `config.yaml`, the `provider/` name-stripping rule, pre-flight verification) lives in [Guide: enable semantic search § Case B](../../guide/for-users/enable-semantic-search.md#case-b-no-embedding-api-contract-litellm-proxy-a-local-model) — written for `search_actions` but the same mechanism serves `index_update`/`semantic_search`.
+then `export LITELLM_API_BASE=http://localhost:4000` (your proxy's address) before starting reyn. Full setup walkthrough (server choice, proxy `config.yaml`, the `provider/` name-stripping rule, pre-flight verification) lives in [Guide: enable semantic search § Case B](../../guide/for-users/enable-semantic-search.md#case-b-no-embedding-api-contract-litellm-proxy-a-local-model) — written for `search_actions` but the same mechanism serves `index_update`.
 
 For chat-side action retrieval specifically (= `search_actions`), see [Guide: enable semantic search](../../guide/for-users/enable-semantic-search.md) and the [`reyn embeddings`](../../reference/cli/embeddings.md) CLI for cache management.
 
-## Phase 1 scope
+## Permissions
 
-**Included in Phase 1 (1.0 release):**
+There is no dedicated permission gate on `index_update()` itself — a safe-mode `python` step that calls it runs under the calling phase's ordinary python-step permissions, not a RAG-specific one.
 
-- `semantic_search` tool available to the LLM in every chat session
-- `drop_source` tool for cleanup
-- SQLite vector store backend
-- `reyn source list / describe / rm` CLI
-- Empty-state hint in the chat system prompt
+## Phase history
 
-**Deferred to Phase 1.5 (1.1+):**
+**FP-0066 P1b (this state)**: the agent-facing layer-1 tools (`semantic_search`, `index_update`, `drop_source`, `list_rag_sources`) are retired. In-core indexing (`index_update()` safe-mode) still works; there is currently no agent-facing or safe-mode search entry point over the result. See [proposal 0066](../../deep-dives/proposals/0066-retrieval-two-groups-two-axes.md) for the phases that will make the in-core index reachable again.
 
-- Memory layer migration from inline expansion to `semantic_search(sources=["memory"])`. Memory continues to work as-is in 1.0.
-
-**Landed post-1.0:**
+**Landed pre-retirement (historical):**
 
 - **FP-0043** added the local-embedding path for chat-side action retrieval (`search_actions`). It originally shipped as an in-process `sentence-transformers` backend; **#3128 removed that in-process backend** — reyn depends on litellm exclusively for embeddings now, and "local" is reached, if wanted, via an operator-run litellm proxy fronting a local model server — see [§Local and offline embedding models](#local-and-offline-embedding-models).
-- **FP-0057 Phase 2a/2b**: `recall` renamed `semantic_search`; the safe-mode ingestion entry point is now `index_update()` (`reyn.api.safe.index_update`) — an incremental/delta-reconcile call (add/update/remove/skip against the source's current index), replacing the retired `embed_and_index()` (`reyn.api.safe.embed_index`, clean-break, no shim). This also closes the "no incremental indexing" gap below — reconcile detects deleted/changed source files by content_hash, no separate rebuild mode needed for ordinary file changes.
+- **FP-0057 Phase 2a/2b**: `recall` renamed `semantic_search` (later retired, FP-0066 P1b); the safe-mode ingestion entry point is `index_update()` (`reyn.api.safe.index_update`) — an incremental/delta-reconcile call (add/update/remove/skip against the source's current index), replacing the retired `embed_and_index()` (`reyn.api.safe.embed_index`, clean-break, no shim). This closes the "no incremental indexing" gap — reconcile detects deleted/changed source files by content_hash, no separate rebuild mode needed for ordinary file changes.
+- **#3026** added `list_rag_sources` (later retired, FP-0066 P1b) as the discovery verb naming indexed corpora.
 
-**Deferred to Phase 2 (post-1.1):**
+**Deferred to a future phase:**
 
 - Alternative vector store backends (Qdrant, FAISS, Pinecone)
 - Advanced retrieval (rerank, HyDE, contextual retrieval)
 - Additional local backends (ollama, ONNX, GGUF)
 - RAG evaluation framework
+- Reachable in-core search (`search_knowledge`, per proposal 0066 §5/§11 P3)
 
 ## Limitations
 
-- **100K chunks recommended maximum** per source for Phase 1 SQLite backend. Larger corpora will work but query latency increases.
-- **No full-rebuild mode.** `index_update` is reconcile-only (add/update/remove/skip against the current index) — there is no `mode="replace"` full-clear-and-rebuild call. To force a from-scratch rebuild, call the `index_drop` tool (or `reyn source rm`) on the source first, then re-run `index_update` on the empty source.
-- **Memory layer is unchanged in Phase 1.** Session memory still uses inline system-prompt expansion. The `semantic_search` tool and memory are independent systems in this release.
-- **No advanced retrieval.** Phase 1 uses cosine similarity only — no reranking, HyDE, or contextual retrieval.
-- **Sensitive data.** reyn does not redact sensitive content before indexing. Do not index secrets, credentials, or PII unless you understand the implications. A redaction policy is planned for Phase 2.
+- **100K chunks recommended maximum** per source for the SQLite backend. Larger corpora will work but query latency increases.
+- **No full-rebuild mode.** `index_update` is reconcile-only (add/update/remove/skip against the current index) — there is no `mode="replace"` full-clear-and-rebuild call. To force a from-scratch rebuild, drop the source's index data directly (there is no agent-facing `drop_source` tool any more) and re-run `index_update` against the empty source.
+- **No agent-facing or safe-mode search entry point.** As of FP-0066 P1b, indexing via `index_update()` builds the store, but nothing reads it back except later OS-internal phases (`search_actions` today; a future `search_knowledge`). Use the FP-0063 user RAG plugin if you need agent-driven search over your own documents today.
+- **No advanced retrieval.** Cosine similarity only — no reranking, HyDE, or contextual retrieval.
+- **Sensitive data.** reyn does not redact sensitive content before indexing. Do not index secrets, credentials, or PII unless you understand the implications.
 - **Embedding requires either an API key OR a self-run litellm proxy.** The built-in classes (`light` / `standard` / `strong`) need `OPENAI_API_KEY`; a fully credential-free path needs an operator to stand up a local embedding server behind a litellm proxy and add an `embedding.classes` entry pointing at it (see [§Local and offline embedding models](#local-and-offline-embedding-models)). See [§Embedding configuration](#embedding-configuration).
-
-## Operational Intelligence — `semantic_search` on events
-
-The same `semantic_search` op works on Reyn's own P6 execution event log once it has been indexed into a source (conventionally named `"events"`) using the same `index_update()` pattern as any other corpus. See [Concepts: Operational Intelligence](operational-intelligence.md) for the chunk-metadata shape, example queries, and the current state of that indexing path.
 
 ## See also
 
-- [Guide: Build a RAG corpus](../../guide/for-users/build-a-rag-corpus.md) — the *other* RAG: the builtin user-RAG pipelines over an external sqlite store (proposal 0063)
-- [Reference: `reyn source`](../../reference/cli/source.md) — manage indexed sources from the CLI
-- [ADR-0033](../../deep-dives/decisions/0033-rag-extensible-os.md) — design rationale and full technical spec (internal)
+- [Guide: Build a RAG corpus](../../guide/for-users/build-a-rag-corpus.md) — the agent-callable user RAG: the builtin pipelines over an external sqlite store (proposal 0063)
+- [Proposal 0066: retrieval redesign](../../deep-dives/proposals/0066-retrieval-two-groups-two-axes.md) — why the in-core agent tools were retired, and what replaces them
+- [ADR-0033](../../deep-dives/decisions/0033-rag-extensible-os.md) — design rationale and full technical spec (internal, historical)
 - [Concepts: workspace](../runtime/workspace.md) — how `.reyn/` state is structured
-- [Concepts: permission model](../runtime/permission-model.md) — `index_drop` permission gate
 - [Concepts: secret handling](../runtime/secret-handling.md) — embedding API key management
 - [Reference: `reyn.yaml`](../../reference/config/reyn-yaml.md) — `embedding:` section schema

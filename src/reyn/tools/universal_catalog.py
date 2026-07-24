@@ -11,11 +11,15 @@ etc.) with 4 wrappers that cover every category uniformly. Per
 §D18, qualified names use ``<category>__<entry_name>`` format with
 ``__`` (double underscore) as the separator.
 
-**#3026 — the enumerated action set is a constant.** Every category here
-enumerates a FIXED set of verbs. No category mints an action from operator
-data, so the number of tools the LLM is sent does not depend on how many
-memories, corpora, MCP tools or pipelines the operator has accumulated. This
-is the invariant this module exists to hold: every name it emits comes from
+**#3026 — the catalog *enumeration* is constant.** (Reworded per FP-0066 §G8:
+the retrieval index legitimately carries operator-derived dynamic names — mcp
+tool / pipeline names — that ``universal_dispatch._RESOURCE_RULES`` already
+resolves without enumerating them, so the invariant is about ENUMERATION, not
+about no dynamic names existing anywhere.) Every category here enumerates a
+FIXED set of verbs. No category mints an action from operator data, so the
+number of tools the LLM is sent does not depend on how many memories, corpora,
+MCP tools or pipelines the operator has accumulated. This is the invariant
+this module exists to hold: every name it emits comes from
 ``universal_dispatch._OPERATION_RULES``, a closed table of full literal names.
 
 ``universal_dispatch._RESOURCE_RULES`` still RESOLVES author-time resource
@@ -31,8 +35,9 @@ The four collapses that got here — #879 (mcp.server/mcp.tool), #909
 rule: a resource is an ARGUMENT to a verb, never a tool of its own. Where
 collapsing removed the only surface that NAMED a resource, #3026 added a
 constant-count discovery verb rather than accepting the loss
-(``rag_operation__list_sources``, ``pipeline__list``, and the
-``memory_operation__list`` / ``__read`` routes).
+(``pipeline__list`` and the ``memory_operation__list`` / ``__read`` routes;
+the ``rag_operation__list_sources`` verb #3026 added the same way was itself
+retired in FP-0066 P1b along with the rest of the layer-1 RAG tools).
 
 **#879 → #1647 is the cautionary tale.** #879 collapsed the mcp resource
 categories; #1647 re-added a per-tool action for every MCP tool, citing (a)
@@ -46,7 +51,7 @@ category that has never existed. Before re-introducing per-resource actions,
 check whether the motivating gap is still open: twice now it was not.
 
 PR-1 (landed): type surface only — 4 ToolDefinitions with stub
-handlers, qualified-name parse / build / validate, 14-category enum,
+handlers, qualified-name parse / build / validate, 12-category enum,
 D14 visibility-gating helpers.
 
 PR-2 (landed): pure routing layer — ``universal_dispatch.py`` with
@@ -84,7 +89,7 @@ if TYPE_CHECKING:
     from reyn.tools.universal_dispatch import UnknownActionError
 
 
-# ── Canonical 14-category enum (FP-0034 §D18 master taxonomy) ──────────────
+# ── Canonical 12-category enum (FP-0034 §D18 master taxonomy) ──────────────
 #
 # Order matches the master table in FP-0034 §D18 so reviewers reading the
 # design doc and the code see the same shape. ``exec`` ships last because
@@ -109,14 +114,16 @@ CATEGORIES: Final[tuple[str, ...]] = (
     "web",
     # #3026: ``memory_entry`` / ``rag_corpus`` removed. They were RESOURCE
     # categories — one action per stored memory / indexed corpus — so the LLM's
-    # tools= payload scaled with what the operator had accumulated. Their verb
-    # counterparts below now carry the resource id as an ARGUMENT
-    # (memory_operation__read{layer,slug} / rag_operation__list_sources +
-    # __semantic_search{sources}). Same shape rationale as the #879 mcp collapse
-    # and the #909 agent.peer collapse.
+    # tools= payload scaled with what the operator had accumulated. The
+    # memory_operation verb counterpart below now carries the resource id as an
+    # ARGUMENT (memory_operation__read{layer,slug}). Same shape rationale as the
+    # #879 mcp collapse and the #909 agent.peer collapse. FP-0066 P1b: the
+    # ``rag_operation`` category itself (semantic_search / drop_source /
+    # index_update / list_sources) is retired outright — those were the
+    # agent-facing layer-1 in-core RAG tools, a pre-audience-split relic; see
+    # docs/deep-dives/proposals/0066-retrieval-two-groups-two-axes.md §9.
     "memory_operation",
     "reyn_repo",
-    "rag_operation",
     "exec",
     # #2548 PR-C: skill management ops (install / list). Skills are the
     # already-correct shape and always were: there is no ``skill__`` resource
@@ -180,7 +187,6 @@ def split_qualified_name(qualified_name: str) -> tuple[str, str]:
 
     Examples:
         ``mcp__call_tool``            → ("mcp", "call_tool")
-        ``rag_operation__list_sources`` → ("rag_operation", "list_sources")
         ``memory_operation__read``    → ("memory_operation", "read")
 
     Raises:
@@ -561,7 +567,7 @@ def _enumerate_category(category: str, ctx: ToolContext) -> list[dict[str, str]]
         return []
 
     if category in (
-        "file", "web", "memory_operation", "reyn_repo", "rag_operation",
+        "file", "web", "memory_operation", "reyn_repo",
         "multi_agent",
         # Pre-existing #2032-class gap found + closed while adding
         # pipeline_management: skill_management had a static _OPERATION_RULES
@@ -656,8 +662,11 @@ _LEGACY_CATEGORY_REDIRECTS: Final[dict[str, str]] = {
     # #3026 — the last two resource categories collapsed into their verb
     # counterparts. A model whose catalog snapshot pre-dates the collapse asks
     # for these by name; the redirect lets it self-correct in one turn.
+    # FP-0066 P1b: ``rag_corpus`` -> ``rag_operation`` redirect removed —
+    # ``rag_operation`` itself is retired (no replacement category to redirect
+    # to; a model asking for either name now gets the plain unknown-category
+    # error listing the current CATEGORIES).
     "memory_entry": "memory_operation",
-    "rag_corpus": "rag_operation",
 }
 
 
@@ -1015,7 +1024,7 @@ def catalog_entries(ctx: ToolContext) -> list[dict[str, Any]]:
     """Every usable action as a FLAT generic tool-schema dict
     ``{name, description, parameters}`` — the #1593 ``SchemeOps.catalog_entries``
     projection a scheme presents however it likes (enumerate-all flat, CodeAct
-    code-API, retrieval subset). Exposes the **actions**, not the 14-category
+    code-API, retrieval subset). Exposes the **actions**, not the 12-category
     hierarchy (the P7 boundary: the catalog structure stays universal-internal;
     what crosses is a flat action list any scheme can render).
 

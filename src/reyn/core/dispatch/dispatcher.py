@@ -281,7 +281,6 @@ _PERMISSION_CONFIG_HINTS: dict[str, str] = {
     "web_search": "permissions.web.search: allow",
     # Index ops.
     "index_drop": "permissions.index_drop: allow",
-    "drop_source": "permissions.index_drop: allow",
 }
 
 

@@ -3,7 +3,7 @@
 Tests for the real handlers in
 ``src/reyn/tools/universal_catalog.py`` covering:
   1. list_actions returns static-category items (file / web /
-     memory_operation / reyn_repo / rag_operation) without
+     memory_operation / reyn_repo) without
      consulting router_state.
   2. list_actions enumerates dynamic categories (skill /
      agent.peer / mcp.{server,tool} / memory_entry) when
@@ -197,81 +197,10 @@ def test_list_actions_multi_agent_static_category_returns_verbs() -> None:
     }, f"multi_agent enumeration drifted: got {qns}"
 
 
-def test_list_actions_rag_corpus_category_uses_router_state() -> None:
-    """Tier 2: the rag_operation__list_sources VERB enumerates
-    rs.available_rag_sources — the #3026 replacement for the ``rag_corpus``
-    RESOURCE category this test used to pin.
+# FP-0066 P1b: the rag_operation__list_sources handler tests are removed
+# along with the retired rag_operation category / layer-1 agent tools —
+# see docs/deep-dives/proposals/0066-retrieval-two-groups-two-axes.md §9.
 
-    #3026 removed ``rag_corpus`` from CATEGORIES (a resource category that
-    minted one ``rag_corpus__<name>`` action per indexed corpus, so
-    ``list_actions`` itself no longer names corpora). ``rag_operation`` now
-    enumerates as a single fixed set of verbs (see
-    ``test_list_actions_..._static_category`` siblings); the corpus names +
-    descriptions instead come back as DATA from invoking
-    ``rag_operation__list_sources`` (target: ``list_rag_sources``), which
-    still reads the same ``rs.available_rag_sources`` snapshot RouterLoop
-    populates from ``SourceManifest.get_all()``. This pins that data path
-    directly, via invoke_action, since list_actions no longer surfaces
-    per-corpus names at all.
-    """
-    rs = RouterCallerState(
-        available_rag_sources=[
-            {
-                "name": "meetings",
-                "description": "Q3 meeting minutes",
-                "backend": "sqlite",
-                "chunk_count": 124,
-            },
-            {
-                "name": "design_docs",
-                "description": "Architecture design documents",
-                "backend": "sqlite",
-                "chunk_count": 38,
-            },
-        ],
-    )
-    result = _run(INVOKE_ACTION.handler(
-        {"action_name": "rag_operation__list_sources"}, _make_ctx(rs),
-    ))
-    names = {s["name"] for s in result["sources"]}
-    assert names == {"meetings", "design_docs"}
-    desc_by_name = {s["name"]: s["description"] for s in result["sources"]}
-    assert desc_by_name["meetings"] == "Q3 meeting minutes"
-
-    # list_actions(category=['rag_operation']) itself stays a FIXED verb
-    # set regardless of how many corpora are configured — the invariant
-    # #3026 exists to hold.
-    list_result = _run(LIST_ACTIONS.handler(
-        {"category": ["rag_operation"]}, _make_ctx(rs),
-    ))
-    qns = {it["qualified_name"] for it in list_result["items"]}
-    assert qns == {
-        "rag_operation__semantic_search",
-        "rag_operation__drop_source",
-        "rag_operation__list_sources",
-        # #3222: index_update (the ADD verb) — was missing from
-        # _OPERATION_RULES, so the RAG in-core family could delete a source
-        # but never add one until this fix.
-        "rag_operation__index_update",
-    }
-    assert not any(qn.startswith("rag_corpus__") for qn in qns)
-
-
-def test_list_actions_rag_corpus_empty_when_state_absent() -> None:
-    """Tier 2: rag_operation__list_sources returns an empty ``sources`` list
-    when the router didn't snapshot a manifest.
-
-    #3026 replacement for the deleted ``rag_corpus`` category's
-    empty-state test: plan-mode hosts / test sites without a
-    ``SourceManifest`` leave ``available_rag_sources=None`` — the verb's
-    handler (``_handle_list_rag_sources``) must treat that identically to
-    an empty list rather than crashing, same graceful-degradation contract
-    the removed resource category had.
-    """
-    result = _run(INVOKE_ACTION.handler(
-        {"action_name": "rag_operation__list_sources"}, _make_ctx(None),
-    ))
-    assert result["sources"] == []
 
 
 # ── search_actions handler (FP-0034 Phase 2 step 1) ──────────────────────
@@ -449,10 +378,13 @@ def test_list_actions_legacy_rag_corpus_and_memory_entry_redirect() -> None:
     an empty result without router_state (= a "dynamic category" contract).
     #3026 removed them from CATEGORIES entirely, so they now join the
     ``mcp.server`` / ``agent.peer`` legacy names covered above: a stale-enum
-    model asking for them by name gets the #934 explicit error envelope with
-    a redirect hint to the new verb category, not a silent empty result —
-    same self-correcting-in-one-turn contract, same
-    ``_LEGACY_CATEGORY_REDIRECTS`` mechanism.
+    model asking for them by name gets the #934 explicit error envelope.
+    ``memory_entry`` still carries a redirect hint to ``memory_operation``
+    (its #3026 verb replacement, still live). ``rag_corpus``'s #3026
+    replacement (``rag_operation``) was itself retired outright in FP-0066
+    P1b, so ``rag_corpus`` no longer has ANY redirect target — it now falls
+    through to the plain valid-categories listing, same as any other
+    never-recognized name.
     """
     result = _run(LIST_ACTIONS.handler(
         {"category": ["rag_corpus", "memory_entry"]},
@@ -460,8 +392,8 @@ def test_list_actions_legacy_rag_corpus_and_memory_entry_redirect() -> None:
     ))
     assert "error" in result
     assert "items" not in result
-    assert "'rag_corpus' → 'rag_operation'" in result["reason"]
     assert "'memory_entry' → 'memory_operation'" in result["reason"]
+    assert "'rag_corpus' →" not in result["reason"]
 
 
 # ── 3. pagination ─────────────────────────────────────────────────────────

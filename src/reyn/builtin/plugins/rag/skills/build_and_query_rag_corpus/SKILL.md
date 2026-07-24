@@ -1,6 +1,6 @@
 ---
 name: build_and_query_rag_corpus
-description: Make a folder of the operator's own documents (txt/md/pdf/xlsx/pptx/docx) searchable by meaning via a user-named sqlite vector store. Covers routing (this vs. `semantic_search`), installing the `rag` plugin, embedding-provider setup, the exact `rag_ingest`/`rag_query` pipeline calls, and corpus internals -- via bundled references. Read this before running the builtin `rag_ingest` / `rag_query` pipelines, or when the operator asks you to search documents that are NOT already in reyn's own semantic_search index.
+description: Make a folder of the operator's own documents (txt/md/pdf/xlsx/pptx/docx) searchable by meaning via a user-named sqlite vector store. Covers installing the `rag` plugin, embedding-provider setup, the exact `rag_ingest`/`rag_query` pipeline calls, and corpus internals -- via bundled references. Read this before running the builtin `rag_ingest` / `rag_query` pipelines, or when the operator asks you to search a folder/file of their own documents.
 ---
 
 # Build and query a RAG corpus
@@ -13,18 +13,15 @@ your question maps to it, not all four unconditionally.
 
 ## First: is this even the right mechanism?
 
-**Reyn has two different RAGs. Picking the wrong one wastes an ingest.**
-
-| | **this skill** (builtin user RAG) | **`semantic_search`** (in-core RAG) |
-|---|---|---|
-| Store | an **external** sqlite file **you name** (`docs.sqlite`) | reyn's own index, `.reyn/index/<source>/` |
-| Setup | you install the **`rag` plugin** + a markitdown MCP server (operator is prompted) | operator indexes a **source**; nothing else |
-| Reach for it when | the operator points at **a folder/file of documents** and wants a corpus they own, keep, and can hand to another tool | the operator asks about docs **already indexed** as a reyn source |
-| Formats | pdf/xlsx/pptx/docx + txt/md (via markitdown) | whatever the indexing code chunked |
-
-If `semantic_search` already covers the question, **use it** -- it needs no
-setup. Do not ingest a corpus just to answer one question about one file:
-**read the file.**
+This skill (builtin user RAG) is the **only** agent-invocable RAG surface:
+it embeds the operator's own documents into an **external** sqlite file
+**you name** (`docs.sqlite`), via the `rag` plugin + a markitdown MCP server
+(operator is prompted to install). Reach for it when the operator points at
+**a folder/file of documents** and wants a corpus they own, keep, and can
+hand to another tool. Reyn's own OS-internal index (used for reyn's own
+tool-catalog / skills / memory retrieval) is not agent-callable — there is
+no in-core-RAG alternative to route to. Do not ingest a corpus just to
+answer one question about one file: **read the file.**
 
 ## Prerequisites -- install them yourself
 

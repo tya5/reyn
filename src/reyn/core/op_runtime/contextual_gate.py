@@ -34,20 +34,17 @@ _OP_KIND_ALIASES: "dict[str, frozenset[str]]" = {
     "web_fetch": frozenset({"web__fetch"}),
     # rag / memory-read
     # FP-0057 Phase 1: embed is the raw user-facing embedding primitive — no
-    # distinct chat-tool qualified name (unlike semantic_search/drop_source,
-    # which the universal_dispatch wrapper exposes under a `rag_operation__*`
-    # alias) → gated on its own kind name only, same shape as index_query.
+    # distinct chat-tool qualified name → gated on its own kind name only,
+    # same shape as index_query.
     "embed": frozenset(),
-    # FP-0057 Phase 2a: renamed from "recall" (clean-break) — the alias is
-    # renamed alongside it (`rag_operation__recall` -> `rag_operation__
-    # semantic_search`, no compat shim).
-    "semantic_search": frozenset({"rag_operation__semantic_search"}),
+    # FP-0066 P1b: semantic_search / index_drop no longer have a distinct
+    # chat-tool qualified name — the layer-1 agent tool + its
+    # `rag_operation__*` alias that used to expose them are retired (the OS-
+    # internal op kind itself is kept; see the retrieval redesign doc §9) →
+    # gated on their own kind name only, same shape as index_query/index_update.
+    "semantic_search": frozenset(),
     "index_query": frozenset(),
-    "index_drop": frozenset({"rag_operation__drop_source"}),
-    # FP-0057 Phase 2a: index_update is own-write ingestion — no distinct
-    # chat-tool qualified name (not wired into the universal_dispatch
-    # rag_operation category, same posture as embed/index_query) → gated on
-    # its own kind name only.
+    "index_drop": frozenset(),
     "index_update": frozenset(),
     # exec (the dangerous one — both forms). #3226 Phase 3: the tool/
     # qualified name renamed sandboxed_exec -> exec (exec__run); the op

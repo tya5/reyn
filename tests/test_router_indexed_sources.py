@@ -11,8 +11,11 @@ Two orthogonal things live here:
   ``build_system_prompt`` (Tier 1 contract). B23-PRE-1 dropped the section from
   the wrapper-only path; #3025 then removed the vestigial parameter and the
   per-turn ``SourceManifest.format_for_prompt()`` prefetch that fed it (the
-  rendered string was accepted and discarded every turn). Corpus discovery is
-  the ``list_rag_sources`` verb (#3026), not the SP.
+  rendered string was accepted and discarded every turn). Corpus discovery was
+  the ``list_rag_sources`` verb (#3026); FP-0066 P1b retired it along with the
+  rest of the layer-1 in-core RAG tools, so there is now no agent-facing
+  corpus-discovery surface at all — the SP still has no "## Indexed sources"
+  section either way.
 """
 from __future__ import annotations
 
@@ -89,7 +92,8 @@ class TestEmptyStateHint:
 
         #3025: the SP has no "## Indexed sources" section, and even the distinctive
         empty-state hint text the manifest renders is absent from the SP — corpus
-        discovery is the list_rag_sources verb (#3026), never the prompt.
+        discovery was the list_rag_sources verb (#3026, retired in FP-0066 P1b),
+        never the prompt.
         """
         manifest = SourceManifest(tmp_path)
         section = await manifest.format_for_prompt()

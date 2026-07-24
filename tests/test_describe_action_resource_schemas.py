@@ -21,7 +21,9 @@ per-resource matrix:
   - The collapsed name (``rag_corpus__X``) no longer resolves at all —
     ``split_qualified_name`` rejects the category before any schema lookup.
   - Its operation-category replacement (``rag_operation__semantic_search``)
-    describes with its own real schema, ``sources`` included (no currying).
+    is ITSELF now retired (FP-0066 P1b: the ``rag_operation`` category and
+    the layer-1 agent tool it routed to are gone) — so this name ALSO no
+    longer resolves, for the same reason as ``rag_corpus__X``.
   - The surviving AUTHOR-TIME resource name (``mcp__<server>__<tool>``,
     resolved via ``universal_dispatch._RESOURCE_RULES`` — kept alive only
     for names a human/DSL writes by hand, never enumerated) still describes
@@ -86,40 +88,30 @@ def _describe(qualified_name: str, ctx: ToolContext) -> dict:
 # ── rag_corpus__X (#3026: collapsed; see replacement below) ──────────────
 
 
-def test_rag_corpus_describe_drops_curried_sources_field():
-    """Tier 1: ``rag_corpus__X`` no longer resolves at all (#3026);
-    ``rag_operation__semantic_search`` — the operation-category verb that
-    replaced it — describes with its full real schema, ``sources`` INCLUDED.
+def test_rag_corpus_and_retired_rag_operation_neither_resolve():
+    """Tier 1: ``rag_corpus__X`` (#3026-collapsed) and
+    ``rag_operation__semantic_search`` (FP-0066 P1b-retired, was #3026's
+    operation-category replacement for ``rag_corpus``) both fail to resolve —
+    neither ``rag_corpus`` nor ``rag_operation`` is a category any more.
 
     This test used to pin the per-resource override (``_resource_input_schema``)
     that made ``rag_corpus__X`` describe as ``recall``'s schema minus the
     curried ``sources`` field, papering over the fact that the target was a
     generic dispatcher. #3026 deleted that override seam along with the
-    ``rag_corpus`` category: there is no longer a resource action whose
-    target is generic, so the special-casing this test pinned has nothing
-    left to guard. ``sources`` is no longer curried away because there is no
-    per-corpus qualified name to curry it FROM — the model must pass
-    ``sources`` explicitly, using names learned from
-    ``rag_operation__list_sources`` (see test_universal_handlers.py). The
-    collapsed name itself resolving to an explicit §D12 error (not a
-    schema) is the other half of the same invariant, pinned below.
+    ``rag_corpus`` category. FP-0066 P1b then retired the operation-category
+    replacement itself (the ``rag_operation`` category + the layer-1 agent
+    tools it routed to), so both qualified names now resolve to the same
+    §D12 error-with-suggestions envelope, not a schema.
     """
     ctx = _make_ctx()
 
-    # The collapsed resource name no longer resolves — #3026 removed
-    # ``rag_corpus`` from CATEGORIES, so describe_action returns the
-    # §D12 error-with-suggestions envelope, not a schema.
     gone = _describe("rag_corpus__my_docs", ctx)
     assert "error" in gone
     assert "input_schema" not in gone
 
-    # Its replacement — the operation-category verb — describes with its
-    # OWN full schema (no curried-field override; #3026 deleted that seam).
-    out = _describe("rag_operation__semantic_search", ctx)
-    schema = out["input_schema"]
-    assert "sources" in schema["properties"]
-    assert "sources" in (schema.get("required") or [])
-    assert "query" in schema["properties"]
+    also_gone = _describe("rag_operation__semantic_search", ctx)
+    assert "error" in also_gone
+    assert "input_schema" not in also_gone
 
 
 # Issue #879: mcp.server__X / mcp.tool__X.Y resource-invoke describe

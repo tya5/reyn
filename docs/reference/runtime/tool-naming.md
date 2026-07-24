@@ -67,7 +67,7 @@ each already picked one verb, and the verb choices carry real distinctions
 | verb | operation-class (meaning) | example tools |
 |---|---|---|
 | `delete` | irreversible filesystem delete | `delete_file`, `file__delete` |
-| `drop` | deregister from an index (entity may still exist elsewhere) | `drop_source`, `mcp_drop_server`, `rag_operation__drop_source`, `mcp__drop_server` |
+| `drop` | deregister from an index (entity may still exist elsewhere) | `mcp_drop_server`, `mcp__drop_server` (FP-0066 P1b retired `drop_source` / `rag_operation__drop_source`) |
 | `forget` | memory removal — the dual of `remember` | `forget_memory`, `memory_operation__forget` |
 | `uninstall` | the dual of `install` | `plugin_management__uninstall` |
 
@@ -199,12 +199,14 @@ established family-prefix group. Each is grandfathered individually rather
 than invented into a new "rule":
 
 - `hooks_add` — sole `hooks_*`-shaped tool, predates the convention.
-- `index_update` (flat) / `rag_operation__index_update` (qualified) —
-  object_verb order anomaly (`update` the `index`), predates the convention.
 - `topology_create` — sole tool of its shape, no established family.
-- `semantic_search` (flat) / `rag_operation__semantic_search` (qualified) —
-  an established term-of-art compound naming the RAG retrieval macro as a
-  whole feature name, not a `<verb>_<object>` construction.
+
+> FP-0066 P1b retired the agent-facing layer-1 in-core RAG tools
+> (`semantic_search`, `index_update`, `drop_source`, `list_rag_sources`)
+> along with the `rag_operation` category — the `index_update` /
+> `semantic_search` naming-anomaly grandfather entries that used to live
+> here no longer apply. See
+> [proposal 0066 §9](../../deep-dives/proposals/0066-retrieval-two-groups-two-axes.md).
 
 ## Canonical verb lexicon (as reconciled against the live registry)
 

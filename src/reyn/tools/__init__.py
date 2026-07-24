@@ -51,7 +51,6 @@ def get_default_registry() -> ToolRegistry:
         CRON_UNREGISTER,
     )
     from reyn.tools.delegate_to_agent import DELEGATE_TO_AGENT
-    from reyn.tools.drop_source import DROP_SOURCE
     from reyn.tools.embed import EMBED
     from reyn.tools.emit_hook_event import EMIT_HOOK_EVENT
     from reyn.tools.exec import EXEC
@@ -67,7 +66,6 @@ def get_default_registry() -> ToolRegistry:
         WRITE_FILE,
     )
     from reyn.tools.hooks import HOOKS_ADD
-    from reyn.tools.index_update import INDEX_UPDATE
     from reyn.tools.mcp import (
         CALL_MCP_TOOL,
         DESCRIBE_MCP_TOOL,
@@ -111,7 +109,6 @@ def get_default_registry() -> ToolRegistry:
     from reyn.tools.plugin_management_verbs import PLUGIN_INSTALL, PLUGIN_LIST, PLUGIN_UNINSTALL
     from reyn.tools.present import PRESENT
     from reyn.tools.presentation_management_verbs import PRESENTATION_INSTALL
-    from reyn.tools.rag_discovery import LIST_RAG_SOURCES
     from reyn.tools.render_template import RENDER_TEMPLATE
     from reyn.tools.reyn_repo import (
         REYN_REPO_GLOB,
@@ -119,7 +116,6 @@ def get_default_registry() -> ToolRegistry:
         REYN_REPO_LIST,
         REYN_REPO_READ,
     )
-    from reyn.tools.semantic_search import SEMANTIC_SEARCH
     from reyn.tools.session_spawn import SESSION_SPAWN
     from reyn.tools.skill_verbs import (
         LOAD_SKILL,
@@ -148,21 +144,15 @@ def get_default_registry() -> ToolRegistry:
     # file__read(path) (the refs are plain files under .reyn/tool-results/), and
     # its image guard is superseded by file__read's #365 media-blocks + #1449
     # binary guard. The cross-host resource_uri path was a never-implemented stub.
-    # RAG ops (ADR-0033 Phase 1; FP-0057 Phase 2a renamed recall -> semantic_search)
-    registry.register(SEMANTIC_SEARCH)
-    registry.register(DROP_SOURCE)
-    # #3026: RAG discovery verb — the surface that NAMES the indexed corpora.
-    # Constant-count replacement for the per-corpus ``rag_corpus__<name>``
-    # catalog actions (which scaled the LLM payload with the operator's corpus
-    # count); ``semantic_search``'s required ``sources`` argument is a closed
-    # set of operator-chosen names and is unguessable without it.
-    registry.register(LIST_RAG_SOURCES)
+    # FP-0066 P1b: semantic_search / drop_source / index_update / list_rag_sources
+    # (the agent-facing layer-1 in-core RAG tools, ADR-0033 Phase 1 / FP-0057
+    # Phase 2a / #3026) are RETIRED — they were a pre-audience-split relic (user-RAG
+    # semantics riding the OS-internal store). The OS-internal substrate they rode
+    # (IndexUpdateIROp / SemanticSearchIROp / SqliteIndexBackend) is kept — see
+    # docs/deep-dives/proposals/0066-retrieval-two-groups-two-axes.md §9.
     # FP-0057 Phase 1: raw embed primitive (user-facing; composes with an
     # external MCP vector-DB via pipeline — reyn hosts no user RAG store).
     registry.register(EMBED)
-    # FP-0057 Phase 2a: incremental/delta-reconcile ingestion (add/update/
-    # remove/skip) — the internal-RAG counterpart to embed's user-facing surface.
-    registry.register(INDEX_UPDATE)
     registry.register(COMPACT)
     # #2692 (part of the #2688 sweep): present + render_template invocation surface.
     # One registration each opens BOTH chat (build_tools + gates.router="allow") and

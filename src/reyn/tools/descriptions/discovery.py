@@ -8,22 +8,14 @@ its origin tool module; the origin module now aliases its
 ``_X_DESCRIPTION`` module constant to ``discovery.NAME.text`` so every
 call site is unchanged.
 
-Covers: embed, semantic_search (+ the currently-unwired
-``_HIDE_LEGACY`` enriched variant), list_rag_sources, web_fetch,
-web_search, mcp_search_registry, and universal_catalog's list_actions /
-search_actions / describe_action.
+Covers: embed, web_fetch, web_search, mcp_search_registry, and
+universal_catalog's list_actions / search_actions / describe_action.
 
-``list_rag_sources`` (#3026) is NOT a relocation — the tool is new. It is
-the discovery verb that replaced the ``rag_corpus__<name>`` catalog
-category when #3026 collapsed the per-resource action surface, so
-``semantic_search``'s ``sources`` argument stays answerable without one
-action per corpus in ``tools=``. Its text (and ``semantic_search``'s, which
-used to point at an "Indexed sources" system-prompt section that was never
-rendered in the wrapper-only path — the vestigial ``indexed_sources_section``
-parameter and its per-turn prefetch were removed in #3025) names it
-explicitly, because a required
-closed-set argument with no stated way to enumerate it is the same
-reachability gap #2971 closed for skills.
+FP-0066 P1b: ``semantic_search`` (+ its ``_HIDE_LEGACY`` enriched variant)
+and ``list_rag_sources`` — the agent-facing layer-1 in-core RAG tools
+(ADR-0033 Phase 1 / #3026) — are RETIRED along with the ``ToolDescription``
+records that used to live here. See
+docs/deep-dives/proposals/0066-retrieval-two-groups-two-axes.md §9.
 """
 from __future__ import annotations
 
@@ -43,119 +35,16 @@ embed = ToolDescription(
         "in the same order. Use this to build your OWN persistent RAG store: "
         "embed your texts, then hand the vectors to your own vector-DB MCP "
         "tools (store/upsert) to persist them, and again at query time to embed "
-        "a query before calling that store's search tool. For reyn's OWN "
-        "indexed sources / memory / tool-use retrieval, use `semantic_search` "
-        "instead — "
-        "it embeds and searches in one call over reyn-managed indexes."
+        "a query before calling that store's search tool. reyn's own indexed "
+        "sources / tool-use retrieval are OS-internal (not agent-callable); "
+        "for personal memory retrieval use `list_memory` / `read_memory_body`."
     ),
     ja=(
         "テキストのバッチをベクトルに変換する生のプリミティブ（保存はしない）。"
         "ユーザー自身が外部の vector-DB MCP と組み合わせて自前の RAG ストアを"
         "構築するためのもの。reyn 自身が管理するインデックス済みソース / "
-        "メモリ / ツール利用検索には embed でなく semantic_search を使う。"
-    ),
-)
-
-semantic_search = ToolDescription(
-    tool_name="semantic_search",
-    surfaced=(
-        "router + phase (gates.router=allow, gates.phase=allow) — the primary "
-        "LLM entry point for semantic search over indexed sources"
-    ),
-    purpose=(
-        "Search reyn-managed indexed sources by natural-language query; the "
-        "primary retrieval tool for 'what is X?' / topic-lookup style "
-        "questions when an indexed source covers the topic."
-    ),
-    text=(
-        "Search indexed sources by natural-language query. Returns top-K "
-        "relevant chunks with text + metadata. Use this when the user's "
-        "question is about a topic an indexed source covers — including "
-        "'what is X?', 'explain X', 'how does X work?' style questions. "
-        "Call `list_rag_sources` to see which sources exist; each source's "
-        "description tells you what topics it covers. "
-        "Prefer this over `reyn_repo_read` / file_read when an indexed source "
-        "description matches the question's topic — semantic search across "
-        "indexed chunks is more reliable than guessing a file path."
-    ),
-    ja=(
-        "自然言語クエリでインデックス済みソースを検索する。トップKの関連"
-        "チャンク（テキスト＋メタデータ）を返す。ユーザーの質問がインデック"
-        "ス済みソースの話題と一致する場合（「Xとは？」「Xを説明して」等）に"
-        "使う。ファイルパスを推測するより、list_rag_sources で得たソース"
-        "からこのツールを使う方が信頼できる。"
-    ),
-)
-
-# B23-PRE-1 SP role-separation: enriched WHAT/WHEN/WHEN_NOT variant carrying
-# the semantic_search vs memory disambiguation that previously lived in the
-# SP disambiguation block. Not currently wired into any ToolDefinition (a
-# bare constant a wrapper-only describe_action path may expose); kept
-# alongside `semantic_search` above (which stays byte-identical to the
-# pre-rename `_RECALL_DESCRIPTION` for LLMReplay fixture stability).
-semantic_search_hide_legacy = ToolDescription(
-    tool_name="semantic_search",
-    surfaced=(
-        "NOT currently wired into any ToolDefinition — a bare constant a "
-        "wrapper-only describe_action path may expose (B23-PRE-1)"
-    ),
-    purpose=(
-        "Enriched WHAT/WHEN/WHEN_NOT variant disambiguating semantic_search "
-        "from memory retrieval, for a wrapper-only exposure path."
-    ),
-    text=(
-        "WHAT: Semantic search over indexed corpora (= RAG retrieval). "
-        "Returns top-K relevant chunks with text + metadata. "
-        "WHEN: Use when user asks 'search', 'find in docs', 'lookup', or any "
-        "'what is X?' / 'explain X' / 'how does X work?' style question when "
-        "an indexed source covers the topic. Multilingual — works across languages. "
-        "WHEN NOT: "
-        "For personal memory retrieval, use `list_memory` / `read_memory_body`. "
-        "semantic_search is for indexed corpora, NOT memory. "
-        "The word 'recall' in user input refers to THIS tool — never map it "
-        "to the memory tools. "
-        "PREFERRED OVER: the memory tools when content is indexed (source-"
-        "level), not personal memory. "
-        "Call `list_rag_sources` to see which sources exist; "
-        "each source's description tells you what topics it covers. "
-        "Prefer this over reyn_repo_read / file_read when an indexed source "
-        "description matches the question's topic — semantic search across "
-        "indexed chunks is more reliable than guessing a file path."
-    ),
-    ja=(
-        "semantic_search とメモリ検索を区別するための、"
-        "WHAT/WHEN/WHEN NOT 形式の拡張版説明。個人メモリの取得には "
-        "read_memory_body を使い、インデックス済みコーパスの検索には "
-        "semantic_search を使う、という判断基準を明示する。現在どの "
-        "ToolDefinition にも配線されていない補助定数。"
-    ),
-)
-
-list_rag_sources = ToolDescription(
-    tool_name="list_rag_sources",
-    surfaced="router + phase (gates.router=allow, gates.phase=allow)",
-    purpose=(
-        "The discovery half of the RAG surface (#3026): names the indexed "
-        "corpora so `semantic_search`'s `sources` argument is answerable. "
-        "Replaces the per-corpus `rag_corpus__<name>` catalog actions, whose "
-        "count scaled with the operator's corpora."
-    ),
-    text=(
-        "List the indexed sources (RAG corpora) available in this session, "
-        "with each source's name, description, and indexed chunk count. Call "
-        "this before `semantic_search` when you do not already know a source "
-        "name: `semantic_search` requires `sources`, and the names are chosen "
-        "by the operator, so they cannot be guessed. An empty list means "
-        "nothing has been indexed yet — say so rather than guessing a source "
-        "name."
-    ),
-    ja=(
-        "このセッションでインデックス済みのソース（RAG コーパス）を、"
-        "名前・説明・チャンク数つきで列挙する。semantic_search の sources は "
-        "必須かつ運用者が決めた名前なので推測できない。ソース名を知らない"
-        "場合はまずこれを呼ぶ。#3026 で rag_corpus__<name> のコーパス毎の"
-        "アクション（= payload が運用者のコーパス数に比例して増える原因）を"
-        "畳んだ代わりに置かれた、定数個の discovery verb。"
+        "ツール利用検索は OS 内部専用（エージェントからは呼び出せない）。"
+        "個人メモリの取得には list_memory / read_memory_body を使う。"
     ),
 )
 
@@ -351,8 +240,6 @@ describe_action = ToolDescription(
 
 ALL: dict[str, ToolDescription] = {
     "embed": embed,
-    "semantic_search": semantic_search,
-    "semantic_search_hide_legacy": semantic_search_hide_legacy,
     "web_fetch": web_fetch,
     "web_search": web_search,
     "mcp_search_registry": mcp_search_registry,
@@ -379,40 +266,6 @@ PARAMS: dict[str, dict[str, ParamDescription]] = {
                 "provider model id."
             ),
             ja="埋め込みモデルクラス（light/standard/strong）またはプロバイダのフルモデルID。",
-        ),
-    },
-    "semantic_search": {
-        "query": ParamDescription(
-            text="Natural language query to search for.",
-            ja="検索する自然言語クエリ。",
-        ),
-        "sources": ParamDescription(
-            text="Logical source names to search (from list_rag_sources).",
-            ja="検索対象の論理ソース名（list_rag_sources の結果から）。",
-        ),
-        "top_k": ParamDescription(
-            text="Number of top chunks to return.",
-            ja="返す上位チャンク数。",
-        ),
-        "filters": ParamDescription(
-            text="ChunkMetadata field equality filters (e.g. source_path).",
-            ja="ChunkMetadata フィールドの等価フィルタ（例 source_path）。",
-        ),
-        "embedding_model": ParamDescription(
-            text=(
-                "Fallback embedding model class (light/standard/strong) or "
-                "full model id, used ONLY for a source with no recorded "
-                "model yet — every already-indexed source auto-adopts its "
-                "OWN recorded model regardless of this value (multi-model "
-                "correctness, FP-0057 Phase 2a)."
-            ),
-            ja=(
-                "フォールバックの埋め込みモデルクラス（light/standard/strong）"
-                "またはフルモデルID。まだ記録済みモデルがないソースにのみ使わ"
-                "れる — 既にインデックス済みのソースはこの値に関係なく自身の"
-                "記録済みモデルを自動採用する（マルチモデル正当性、FP-0057 "
-                "Phase 2a）。"
-            ),
         ),
     },
     "mcp_search_registry": {
@@ -475,11 +328,11 @@ PARAMS: dict[str, dict[str, ParamDescription]] = {
         "action_name": ParamDescription(
             text=(
                 "Qualified name of the action to describe "
-                "(e.g. 'mcp__call_tool', 'rag_operation__semantic_search')."
+                "(e.g. 'mcp__call_tool', 'memory_operation__read')."
             ),
             ja=(
                 "説明対象のアクションの修飾名（例 "
-                "'mcp__call_tool', 'rag_operation__semantic_search'）。"
+                "'mcp__call_tool', 'memory_operation__read'）。"
             ),
         ),
     },

@@ -2,13 +2,16 @@
 
 Covers:
   - file__write with ``text`` instead of ``content`` → handler accepts, no KeyError
-  - drop_source with ``source_id`` instead of ``source`` → handler accepts
   - Canonical key wins when both synonyms are provided simultaneously
 
 Observed in dogfood:
   - B33 W4 S1: LLM sends {path:..., text:...} to file__write → KeyError: 'content'
   - B30 W4 S1: same mismatch (cross-batch recurrence)
-  - B33 W4 S6: LLM sends {source_id:...} to drop_source → KeyError: 'source'
+
+FP-0066 P1b: the ``drop_source`` synonym tests (B33 W4 S6: LLM sends
+{source_id:...} to drop_source → KeyError: 'source') are removed along with
+the retired ``drop_source`` agent tool — see
+docs/deep-dives/proposals/0066-retrieval-two-groups-two-axes.md §9.
 
 No MagicMock — uses monkeypatch on execute_op (real handler path,
 real op construction, fake op_runtime to avoid index/permission wiring).
@@ -17,7 +20,6 @@ from __future__ import annotations
 
 import pytest
 
-from reyn.tools.drop_source import DROP_SOURCE
 from reyn.tools.file import WRITE_FILE
 from reyn.tools.types import ToolContext
 
@@ -124,86 +126,3 @@ async def test_write_file_canonical_content_still_works(monkeypatch):
     assert isinstance(op, FileIROp)
     assert op.content == "# Notes"
     assert op.path == "notes.md"
-
-
-# ── drop_source synonym: source_id → source ───────────────────────────────────
-
-
-@pytest.mark.asyncio
-async def test_drop_source_accepts_source_id_synonym(monkeypatch):
-    """Tier 2: drop_source handler accepts ``source_id`` as synonym for ``source``.
-
-    Regression guard for B33 W4 S6: LLM sends {source_id:...} and handler
-    previously raised KeyError: 'source' before reaching permission gate.
-    """
-    from reyn.schemas.models import IndexDropIROp
-
-    captured_ops: list = []
-
-    async def fake_execute_op(op, ctx):
-        captured_ops.append(op)
-        return {"removed": True, "chunks_dropped": 5}
-
-    import reyn.core.op_runtime as _orm
-    monkeypatch.setattr(_orm, "execute_op", fake_execute_op)
-
-    ctx = _make_ctx()
-    # LLM-attractor form: {source_id:...} instead of {source:...}
-    args = {"source_id": "my_corpus"}
-    result = await DROP_SOURCE.handler(args, ctx)
-
-    op = captured_ops[0]
-    assert isinstance(op, IndexDropIROp)
-    assert op.kind == "index_drop"
-    assert op.source == "my_corpus"
-    assert result["removed"] is True
-
-
-@pytest.mark.asyncio
-async def test_drop_source_canonical_source_wins_over_source_id(monkeypatch):
-    """Tier 2: drop_source canonical ``source`` key takes priority over ``source_id``.
-
-    When both are present, ``source`` is used unchanged.
-    """
-    from reyn.schemas.models import IndexDropIROp
-
-    captured_ops: list = []
-
-    async def fake_execute_op(op, ctx):
-        captured_ops.append(op)
-        return {"removed": True, "chunks_dropped": 1}
-
-    import reyn.core.op_runtime as _orm
-    monkeypatch.setattr(_orm, "execute_op", fake_execute_op)
-
-    ctx = _make_ctx()
-    # Both present: source must win
-    args = {"source": "canonical_name", "source_id": "should_be_ignored"}
-    await DROP_SOURCE.handler(args, ctx)
-
-    op = captured_ops[0]
-    assert isinstance(op, IndexDropIROp)
-    assert op.source == "canonical_name"
-
-
-@pytest.mark.asyncio
-async def test_drop_source_canonical_source_still_works(monkeypatch):
-    """Tier 2: drop_source canonical {source:...} call is unaffected by B34 fix."""
-    from reyn.schemas.models import IndexDropIROp
-
-    captured_ops: list = []
-
-    async def fake_execute_op(op, ctx):
-        captured_ops.append(op)
-        return {"removed": True, "chunks_dropped": 0}
-
-    import reyn.core.op_runtime as _orm
-    monkeypatch.setattr(_orm, "execute_op", fake_execute_op)
-
-    ctx = _make_ctx()
-    args = {"source": "existing_source"}
-    await DROP_SOURCE.handler(args, ctx)
-
-    op = captured_ops[0]
-    assert isinstance(op, IndexDropIROp)
-    assert op.source == "existing_source"

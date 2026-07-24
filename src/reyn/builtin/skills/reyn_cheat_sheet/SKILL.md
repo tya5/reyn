@@ -19,7 +19,8 @@ need it.
 ## Decision tree (which mechanism)
 
 - Need **input** (new data, or a reactive trigger) -> `hook` | `mcp` |
-  `retrieval` (`semantic_search`). Deeper detail (hook action schemes, a
+  the builtin `build_and_query_rag_corpus` skill (document search over the
+  operator's own files). Deeper detail (hook action schemes, a
   CI-verified worked hook example, MCP tool discovery):
   [input-hooks-and-mcp.md](${CLAUDE_SKILL_DIR}/references/input-hooks-and-mcp.md)
   -- read when wiring a reactive trigger or calling an external tool/resource.

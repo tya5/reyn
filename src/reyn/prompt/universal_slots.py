@@ -216,11 +216,6 @@ ACTION_CATEGORIES_LINES = [
         "forget write them."
     ),
     "- **reyn_repo** — Reyn source/docs (read-only).",
-    (
-        "- **rag_operation** — indexed corpora: `rag_operation__list_sources` "
-        "names them, then `rag_operation__semantic_search` with those names in "
-        "`sources`; drop_source removes one."
-    ),
     "- **exec** — sandboxed argv execution (only when sandbox backend is enabled).",
     (
         "- **skill_management** — discover and manage skill definitions: "

@@ -52,11 +52,13 @@ def test_categories_master_table_order() -> None:
     #3026 dropped ``memory_entry`` / ``rag_corpus`` from this table: both
     were RESOURCE categories that minted one LLM tool per stored memory /
     indexed corpus, so the enumerated payload scaled with the operator's
-    data. Their capability survives as verbs in ``memory_operation`` (the
-    new ``__list`` / ``__read`` pair) and ``rag_operation`` (the new
-    ``__list_sources`` verb) — a fixed-count discovery action replaces the
-    per-resource naming surface. See the module docstring's "four collapses"
-    note.
+    data. ``memory_entry``'s capability survives as verbs in
+    ``memory_operation`` (the new ``__list`` / ``__read`` pair) — a
+    fixed-count discovery action replaces the per-resource naming surface.
+    ``rag_corpus``'s #3026 operation-category replacement (``rag_operation``)
+    was itself retired outright in FP-0066 P1b, along with the layer-1 agent
+    tools it routed to — there is no in-core-RAG category any more. See the
+    module docstring's "four collapses" note.
     """
     assert CATEGORIES == (
         "multi_agent",
@@ -69,8 +71,8 @@ def test_categories_master_table_order() -> None:
         # #3026: ``memory_entry`` removed (was a resource category).
         "memory_operation",
         "reyn_repo",
-        # #3026: ``rag_corpus`` removed (was a resource category).
-        "rag_operation",
+        # FP-0066 P1b: ``rag_operation`` retired outright (was #3026's
+        # replacement for the removed ``rag_corpus`` resource category).
         "exec",
         # #2548 PR-C: skill management ops (install_local). NOT the ``skill__``
         # resource category; this is the management plane (mirrors ``mcp``).
@@ -202,12 +204,9 @@ def test_plugin_management_actions_reachable_via_catalog_entries() -> None:
         # currying the slug into the qualified name.
         ("memory_operation__read", "memory_operation", "read"),
         ("memory_operation__remember_shared", "memory_operation", "remember_shared"),
-        # #3026: ``rag_corpus__<name>`` (a per-corpus RESOURCE name) no longer
-        # parses — replaced by ``rag_operation__list_sources`` (discovery
-        # verb, names carried in the RESULT, not the tool name) plus
-        # ``rag_operation__semantic_search`` (takes ``sources`` as an arg).
-        ("rag_operation__list_sources", "rag_operation", "list_sources"),
-        ("rag_operation__semantic_search", "rag_operation", "semantic_search"),
+        # FP-0066 P1b: ``rag_operation__*`` rows retired — the category no
+        # longer exists (#3026's ``rag_corpus`` operation-category replacement,
+        # itself now retired outright).
         ("reyn_repo__read", "reyn_repo", "read"),
         # Issue #879 collapsed mcp surface — verb_object actions.
         ("mcp__search_registry", "mcp", "search_registry"),
@@ -233,9 +232,8 @@ def test_split_qualified_name_parses_correctly(
 @pytest.mark.parametrize(
     "category, entry_name, expected",
     [
-        # #3026: ``rag_corpus`` is gone; ``rag_operation__list_sources`` is
-        # the discovery verb replacement (fixed name, no per-corpus growth).
-        ("rag_operation", "list_sources", "rag_operation__list_sources"),
+        # FP-0066 P1b: the ``rag_operation`` row is retired — the category no
+        # longer exists.
         # Issue #879 collapsed mcp surface.
         ("mcp", "search_registry", "mcp__search_registry"),
         ("mcp", "call_tool", "mcp__call_tool"),

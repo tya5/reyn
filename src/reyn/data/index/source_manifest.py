@@ -309,7 +309,10 @@ class SourceManifest:
                 f"- **{entry.name}** — {entry.description} ({entry.chunk_count} chunks)"
             )
         lines.append("")
-        lines.append("Use the `semantic_search` tool with `sources=[<name>, ...]` to search.")
+        lines.append(
+            "These sources are OS-internal (FP-0066 P1b: there is no "
+            "agent-callable search tool over them)."
+        )
         return "\n".join(lines)
 
     @asynccontextmanager

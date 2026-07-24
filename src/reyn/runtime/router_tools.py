@@ -576,59 +576,12 @@ def build_tools(
             dispatch_kind=_reyn_repo_read_def.dispatch_kind,
         ))
 
-    # ── H. RAG tools (always present when registered) ────────────────────────
-    #
-    # `semantic_search` (FP-0057 Phase 2a; renamed from `recall`) performs
-    # semantic search over indexed sources; `drop_source` removes an indexed
-    # source (permission-gated at the op level via the index_drop permission
-    # resolver gate).  Both are gated only by registry gates (=
-    # gates.router="allow"); no operator config is required to expose
-    # them — they appear unconditionally when the registry contains them.
-    #
-    # ADR-0033 Phase 1: wired here after the reyn_repo cluster (F) and before
-    # MCP (D) so the LLM sees them as first-class tools rather than
-    # capability-gated extras.
-    #
-    # B17-S6-1 / B17-S8-2 fix: these were registered in ToolRegistry but
-    # missing from build_tools(), so the LLM could not see or call them.
-
-    # ── H1: semantic_search ────────────────────────────────────────────────
-    _semantic_search_def = _registry.lookup("semantic_search")
-    if _semantic_search_def is not None and _semantic_search_def.gates.router == "allow":
-        _semantic_search_rendered = _semantic_search_def.render_for_router()
-        specs.append(ToolSpec(
-            name=_semantic_search_rendered["function"]["name"],
-            description=_semantic_search_rendered["function"]["description"],
-            parameters=_semantic_search_rendered["function"]["parameters"],
-            dispatch_kind=_semantic_search_def.dispatch_kind,
-        ))
-
-    # ── H2: drop_source ──────────────────────────────────────────────────────
-    _drop_source_def = _registry.lookup("drop_source")
-    if _drop_source_def is not None and _drop_source_def.gates.router == "allow":
-        _drop_source_rendered = _drop_source_def.render_for_router()
-        specs.append(ToolSpec(
-            name=_drop_source_rendered["function"]["name"],
-            description=_drop_source_rendered["function"]["description"],
-            parameters=_drop_source_rendered["function"]["parameters"],
-            dispatch_kind=_drop_source_def.dispatch_kind,
-        ))
-
-    # ── H3: index_update ──────────────────────────────────────────────────
-    # #3222: index_update was registered in ToolRegistry (tools/__init__.py)
-    # but never wired into build_tools() (or _OPERATION_RULES), so it was
-    # unreachable in every scheme — the RAG in-core family could delete a
-    # source (drop_source) but never add one (#2032-class dead-registration).
-    # Mirrors H1/H2 exactly, including the gates.router="allow" guard.
-    _index_update_def = _registry.lookup("index_update")
-    if _index_update_def is not None and _index_update_def.gates.router == "allow":
-        _index_update_rendered = _index_update_def.render_for_router()
-        specs.append(ToolSpec(
-            name=_index_update_rendered["function"]["name"],
-            description=_index_update_rendered["function"]["description"],
-            parameters=_index_update_rendered["function"]["parameters"],
-            dispatch_kind=_index_update_def.dispatch_kind,
-        ))
+    # FP-0066 P1b: the former § H (RAG tools: semantic_search / drop_source /
+    # index_update — ADR-0033 Phase 1 / FP-0057 Phase 2a / #3222) is retired.
+    # These agent-facing layer-1 in-core RAG tools were a pre-audience-split
+    # relic; see docs/deep-dives/proposals/0066-retrieval-two-groups-two-axes.md
+    # §9. The OS-internal substrate they rode (IndexUpdateIROp /
+    # SemanticSearchIROp / SqliteIndexBackend) is kept for later phases.
 
     # ── #272/#1128: compact (voluntary history compaction) ─────────────────────
     # Visibility-gated (like search_actions §D14): only advertised when the
@@ -648,7 +601,7 @@ def build_tools(
         ))
 
     # ── #2692: present + render_template (presentation surface) ─────────────────
-    # part of the #2688 sweep. Unconditional (like semantic_search/drop_source §H): present
+    # part of the #2688 sweep. Unconditional (like compact above): present
     # has no natural window-fill visibility gate — the agent may want to display
     # bulk data on any turn, and read-authority is enforced at op-exec (data_ref ==
     # file.read), not by catalog exclusion (the web_fetch posture). Registering one
@@ -940,7 +893,6 @@ def build_tools(
             "call_mcp_tool", "describe_mcp_tool",
             "list_memory", "read_memory_body",
             "remember_shared", "remember_agent", "forget_memory",
-            "semantic_search", "drop_source", "index_update",
             "read_file", "write_file", "delete_file", "list_directory",
             "web_search", "web_fetch",
             "reyn_repo_list", "reyn_repo_read",

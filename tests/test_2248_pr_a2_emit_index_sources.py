@@ -1,7 +1,7 @@
 """Tier 2: OS invariant — #2259 config-recovery emission for the index-sources registry.
 
 The REAL ``index_drop`` op handler — handed a ``state_log`` via its OpContext (the
-production wiring: session → ToolContext → drop_source adapter → OpContext) — records
+production wiring: OS-internal op dispatch → OpContext) — records
 a full-state config GENERATION carrying the FULL post-drop sources registry content
 after the SourceManifest persists ``.reyn/config/index/sources.yaml``. The yaml is a
 derived projection; the generation is the recovery truth (reconstructable as-of-cut).

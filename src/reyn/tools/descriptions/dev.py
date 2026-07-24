@@ -42,26 +42,24 @@ reyn_repo_read = ToolDescription(
     tool_name="reyn_repo_read",
     surfaced="router-only (gates.router=allow, gates.phase=deny)",
     purpose=(
-        "Read one named file from Reyn's own repository by exact path, "
-        "when no indexed source covers the topic (else prefer "
-        "semantic_search)."
+        "Read one named file from Reyn's own repository by exact path — "
+        "the fallback entry point for navigating Reyn's own source / docs."
     ),
     text=(
         "Read a text file from Reyn's own repository by an exact "
         "repo-root-relative path. Use for: (a) reading a specific file the "
         "user named (e.g. README.md), or (b) navigating "
-        "Reyn's source / docs when NO indexed source covers the topic. "
-        "If an indexed source description mentions concepts / design / "
-        "docs / Reyn, use `semantic_search` instead — guessing a file path is "
-        "unreliable; semantic search over indexed chunks is not. Fallback "
+        "Reyn's source / docs to find the relevant file. Prefer this over "
+        "guessing a file path from memory — start from a curated entry "
+        "point. Fallback "
         "entry point: reyn_repo_read(\"README.md\") for the overview + "
         "curated map of deep-dive paths."
     ),
     ja=(
         "Reyn 自身のリポジトリ内のテキストファイルを、リポジトリルート"
         "からの正確な相対パスで読む。ユーザーが名指ししたファイル（例: "
-        "README.md）を読む場合、またはインデックス済みソースがそのト"
-        "ピックをカバーしていない場合のナビゲーションに使う。"
+        "README.md）を読む場合、または Reyn のソース／ドキュメントを"
+        "ナビゲートして目的のファイルを探す場合に使う。"
     ),
 )
 
