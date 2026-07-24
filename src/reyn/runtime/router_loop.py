@@ -1156,13 +1156,13 @@ class RouterLoop:
             )
         else:
             self._contextual_permission = None
-        # FP-0034 Phase 2 step 1: action embedding index background
-        # build task handle.  None until the first turn that finds the
-        # index configured + not ready, then asyncio.Task while
-        # building.  Stays set after completion so we don't re-spawn
-        # (the build itself is idempotent via catalog hash, but we
-        # avoid the extra Task overhead).
-        self._action_index_build_task: "asyncio.Task[None] | None" = None
+        # FP-0034 Phase 2 step 1 / FP-0066 P2b (#3247): the action embedding
+        # index background-build once-per-chain dedup used to live on a
+        # RouterLoop instance attr (``_action_index_build_task``). That
+        # dedup is now owned by ``IndexCoordinator._bg_tasks`` (per-
+        # workspace singleton, see ``_get_index_coordinator`` below) —
+        # absorbed per the #3247 firm §1/§7, so there is no
+        # RouterLoop-instance-scoped task handle to declare here anymore.
         # ADR-0025: optional sub-loop LLM call memoization. When set,
         # ``call_llm_tools`` invocations consult the provider before
         # invoking — args_hash hit returns the recorded LLMToolCallResult
@@ -1285,12 +1285,21 @@ class RouterLoop:
         # fixture SP keys unaffected.
         _env_info_getter = getattr(host, "get_environment_info", None)
         _environment_info = _env_info_getter() if callable(_env_info_getter) else None
-        # FP-0034 Phase 2 step 1: D14 visibility gate for search_actions.
-        # Only show search_actions when (a) wrappers are on, (b) the
-        # operator configured an embedding model class, AND (c) the
-        # session has an ActionEmbeddingIndex that is_ready().  Any
+        # FP-0034 Phase 2 step 1 / FP-0066 P2b (#3247): D14 visibility gate
+        # for search_actions. Only show search_actions when (a) wrappers are
+        # on, (b) the operator configured an embedding model class, AND (c)
+        # the session has an ActionEmbeddingIndex that is_ready().  Any
         # missing signal degrades to "hide" so the LLM does not see a
         # tool whose query would return empty results.
+        #
+        # P2b: the eager-vs-background DECISION + once-per-chain spawn dedup
+        # + failure-memo are now routed through ``IndexCoordinator`` (see
+        # ``_ensure_action_index_built`` / ``ensure_built_self_contained``)
+        # instead of the RouterLoop-instance-scoped ``_action_index_build_task``
+        # flag. ``_build_action_embedding_index_background`` itself (the
+        # actual build primitive: fetch catalog, call ``idx.build()``,
+        # handle failure — pinned by #1458's tests) is UNCHANGED; only its
+        # caller-side orchestration moved.
         _search_visible = False
         if _univ_enabled:
             _idx_getter = getattr(host, "get_action_embedding_index", None)
@@ -1301,15 +1310,15 @@ class RouterLoop:
             _provider = _provider_getter() if _provider_getter else None
             _model_class = _model_getter() if _model_getter else None
             _eager_embedding_build = bool(_eager_getter()) if _eager_getter else False
+            # #1458: skip both build paths when a prior attempt in this session
+            # failed (per-session failure memoization). The failed flag is set
+            # in _build_action_embedding_index_background on any exception.
+            _build_failed = getattr(self, "_action_index_build_failed", False)
             # B25-S5-1: when eager flag is set, await the build synchronously
             # before computing _search_visible. This pays the build cost on
             # the first turn (= once per session; subsequent turns see
             # is_ready() True via SQLite cache) but eliminates the cold-start
             # race where search_actions is hidden from the LLM on Turn 1.
-            # #1458: skip both build paths when a prior attempt in this session
-            # failed (per-session failure memoization). The failed flag is set
-            # in _build_action_embedding_index_background on any exception.
-            _build_failed = getattr(self, "_action_index_build_failed", False)
             if (
                 _eager_embedding_build
                 and _idx is not None
@@ -1318,8 +1327,8 @@ class RouterLoop:
                 and not getattr(_idx, "is_ready", lambda: False)()
                 and not _build_failed
             ):
-                await self._build_action_embedding_index_background(
-                    _idx, _provider, _model_class,
+                await self._ensure_action_index_built(
+                    _idx, _provider, _model_class, await_completion=True,
                 )
             if (
                 _idx is not None
@@ -1327,24 +1336,22 @@ class RouterLoop:
                 and getattr(_idx, "is_ready", lambda: False)()
             ):
                 _search_visible = True
-            # FP-0034 Phase 2 step 1: kick off the background build
-            # when the index is configured but not yet ready.  The
+            # FP-0034 Phase 2 step 1 / FP-0066 P2b: kick off the background
+            # build when the index is configured but not yet ready.  The
             # build is idempotent (= same catalog hash → no-op) and
-            # serialised by the index's internal lock.  Only spawned
-            # once per RouterLoop (= per chain) via the
-            # ``_action_index_build_task`` flag below.
+            # serialised by the index's internal lock; once-per-source
+            # in-flight dedup is now IndexCoordinator's
+            # ``ensure_built_self_contained`` (``_bg_tasks``), not a
+            # RouterLoop instance flag.
             if (
                 _idx is not None
                 and _provider is not None
                 and _model_class
                 and not getattr(_idx, "is_ready", lambda: False)()
-                and getattr(self, "_action_index_build_task", None) is None
                 and not _build_failed
             ):
-                self._action_index_build_task = asyncio.create_task(
-                    self._build_action_embedding_index_background(
-                        _idx, _provider, _model_class,
-                    )
+                await self._ensure_action_index_built(
+                    _idx, _provider, _model_class, await_completion=False,
                 )
         # D2-wrapper scope expansion (B38): build session-level resource
         # metadata maps when universal wrappers are enabled — regardless of
@@ -3357,6 +3364,87 @@ class RouterLoop:
     # wired by one flag, and the cross-seam guard asserts every ADVERTISED bare router
     # tool carries it. Per-tool rationale now lives on each ToolDefinition.
     REGISTRY_DISPATCH_TOOLS: "frozenset[str]" = _derive_registry_dispatch_tools()
+
+    def _get_index_coordinator(self) -> Any:
+        """Return the per-workspace ``IndexCoordinator`` singleton (FP-0066
+        P2b, #3247) used to orchestrate the action-catalog build.
+
+        Prefers a host-provided coordinator (``host.get_index_coordinator``,
+        a seam for tests/hosts that want to inject one — mirrors the
+        ``get_action_embedding_index`` getattr-fallback pattern used
+        throughout this method); falls back to the module-level
+        ``get_index_coordinator(workspace_root)`` singleton, keyed by
+        ``host.workspace_root`` (or ``Path.cwd()`` when the host does not
+        expose one — mirrors ``ActionEmbeddingIndex.__init__``'s own
+        default).
+        """
+        from pathlib import Path as _Path
+
+        _coord_getter = getattr(self.host, "get_index_coordinator", None)
+        if _coord_getter is not None:
+            _coord = _coord_getter()
+            if _coord is not None:
+                return _coord
+        from reyn.data.index.coordinator import get_index_coordinator
+
+        workspace_root = getattr(self.host, "workspace_root", None) or _Path.cwd()
+        return get_index_coordinator(workspace_root)
+
+    async def _ensure_action_index_built(
+        self, idx: Any, provider: Any, model_class: str, *, await_completion: bool,
+    ) -> None:
+        """FP-0066 P2b (#3247): route the action-catalog build's eager-vs-
+        background DECISION + once-per-chain spawn dedup + failure-memo
+        through ``IndexCoordinator.ensure_built_self_contained``.
+
+        ``ActionEmbeddingIndex.build()`` (invoked via
+        ``_build_action_embedding_index_background``, UNCHANGED — see that
+        method's docstring and #1458's pinning tests) already owns its own
+        cross-process build lock + disk-adopt + dual-axis invalidation
+        policy — domain-adapter policy the #3247 firm keeps OUT of the
+        Coordinator. Using the material-producing ``ensure_built`` here
+        would either duplicate that policy in the Coordinator or acquire
+        the SAME advisory lock a second time within one process (self-
+        deadlock-shaped). ``ensure_built_self_contained`` narrows the
+        Coordinator's role to orchestration only: once-per-source
+        background-task dedup, failure-memo, and manifest state — the
+        build itself stays exactly as it was.
+
+        Readiness/visibility (``idx.is_ready()``) and the retry gate
+        (``self._action_index_build_failed``) are read directly off
+        ``idx``/``self`` by the caller (unchanged) rather than off the
+        Coordinator's own ``is_ready()``/``build_failed()`` — those stay
+        genuinely accurate here (``idx.build()`` always runs for real),
+        whereas the Coordinator's manifest write for a background build
+        settles one event-loop tick after ``idx``'s own state does, which
+        would otherwise open a window where the tool is advertised
+        visible before ``idx.query()`` can serve it. The Coordinator's
+        manifest/is_ready() stays a truthful PARALLEL observability
+        surface for future kinds/consumers (P2c/P2d).
+        """
+        coordinator = self._get_index_coordinator()
+        source_id = getattr(idx, "source_name", None) or "actions"
+
+        async def _build_coro() -> None:
+            await self._build_action_embedding_index_background(
+                idx, provider, model_class,
+            )
+            if getattr(self, "_action_index_build_failed", False):
+                # _build_action_embedding_index_background swallows its own
+                # exception (memoizing the failure + emitting the event/log
+                # itself); re-raise a synthetic error here so the
+                # Coordinator's own failure-memo/mark_dirty bookkeeping
+                # stays consistent with the RouterLoop-side flag.
+                raise RuntimeError("action index build failed (see prior log)")
+
+        await coordinator.ensure_built_self_contained(
+            source_id,
+            _build_coro,
+            await_completion=await_completion,
+            is_ready_probe=lambda: bool(getattr(idx, "is_ready", lambda: False)()),
+            chunk_count_probe=lambda: int(getattr(idx, "size", lambda: 0)()),
+            kind="static",
+        )
 
     async def _build_action_embedding_index_background(
         self, idx: Any, provider: Any, model_class: str,

@@ -48,6 +48,7 @@ from reyn.data.index.backend import cache_dir_for_source
 from reyn.data.index.build_lock import try_acquire_build_lock
 from reyn.data.index.source_manifest import (
     SourceEntry,
+    SourceKind,
     SourceManifest,
     get_source_manifest,
 )
@@ -63,6 +64,7 @@ __all__ = [
     "assert_vector_count_match",
     "embed_verify_write",
     "IndexCoordinator",
+    "get_index_coordinator",
 ]
 
 
@@ -237,16 +239,32 @@ class IndexCoordinator:
         # Recovery does NOT depend on these — see module docstring.
         self._bg_tasks: dict[str, "asyncio.Task[BuildOutcome]"] = {}
         self._failure_memo: dict[str, str] = {}
+        # FP-0066 P2b (#3247 firm §2): per-source kind, remembered so a
+        # freshly-created manifest entry (mark_dirty/_set_state on a
+        # source never seen before) is tagged correctly instead of falling
+        # through to the "backfill" dataclass default. Registered
+        # alongside the build strategy (see ``register_builder``/
+        # ``ensure_built_self_contained``); a source that never registers
+        # a kind stays "backfill" (predates the taxonomy).
+        self._kinds: dict[str, SourceKind] = {}
 
     # ── registration (necessary plumbing, not a P2b call-site migration) ──
 
-    def register_builder(self, source_id: str, build_fn: BuildFn) -> None:
+    def register_builder(
+        self, source_id: str, build_fn: BuildFn, *, kind: SourceKind = "backfill",
+    ) -> None:
         """Associate a domain build strategy with ``source_id``.
 
         Idempotent — re-registering replaces the prior strategy (useful for
         tests and for a future config-driven re-registration on reload).
+        ``kind`` (FP-0066 P2b, #3247 firm §2) tags a freshly-created
+        manifest entry for this source with its taxonomy classification;
+        re-registering with a different ``kind`` updates the remembered
+        value for the NEXT freshly-created entry (an already-persisted
+        entry's ``kind`` is not silently overwritten by re-registration).
         """
         self._builders[source_id] = build_fn
+        self._kinds[source_id] = kind
 
     # ── mark_dirty (#3247 firm §1) ──────────────────────────────────────
 
@@ -264,6 +282,7 @@ class IndexCoordinator:
         if entry is None:
             entry = SourceEntry(
                 name=source_id, description="", path="", backend="sqlite",
+                kind=self._kinds.get(source_id, "backfill"),
             )
         entry.state = "dirty"
         entry.last_error = reason
@@ -364,7 +383,10 @@ class IndexCoordinator:
     ) -> None:
         entry = await self._manifest.get(source_id)
         if entry is None:
-            entry = SourceEntry(name=source_id, description="", path="", backend="sqlite")
+            entry = SourceEntry(
+                name=source_id, description="", path="", backend="sqlite",
+                kind=self._kinds.get(source_id, "backfill"),
+            )
         entry.state = state  # type: ignore[assignment]
         if state == "clean":
             entry.last_error = None
@@ -430,3 +452,116 @@ class IndexCoordinator:
         so a fresh process/session gets exactly one retry, which is the
         desired heal path)."""
         return source_id in self._failure_memo
+
+    # ── ensure_built_self_contained (FP-0066 P2b, #3247) ─────────────────
+    #
+    # ``ensure_built`` (above) is for a domain adapter that hands the
+    # Coordinator raw MATERIAL (items/texts/mapping) and lets the
+    # Coordinator own the cross-process lock + ``embed_verify_write``. That
+    # shape does not fit every domain adapter discovered while actually
+    # doing the P2b migration: ``ActionEmbeddingIndex.build()`` already owns
+    # its OWN cross-process lock (``try_acquire_build_lock`` at the SAME
+    # ``cache_dir_for_source`` path ``ensure_built`` would acquire) plus a
+    # disk-adopt / dual-axis invalidation policy that is deeply entangled
+    # with whether it writes at all — splitting it into a material-only
+    # ``BuildFn`` would either duplicate that policy here (violating the
+    # firm's "domain adapter owns invalidation policy" boundary) or cause a
+    # SECOND acquisition of the same advisory lock within one process
+    # (self-deadlock-shaped: the second ``try_acquire_build_lock`` call
+    # would see ITS OWN pid as a live holder and skip, silently no-op-ing
+    # every build).
+    #
+    # ``ensure_built_self_contained`` narrows the Coordinator's role for
+    # such an adapter to pure orchestration — once-per-source background-
+    # task dedup (``_bg_tasks``) + failure-memo (``_failure_memo``) +
+    # manifest state bookkeeping — while the SELF-CONTAINED builder
+    # (``build_coro``) keeps owning its own lock/write/invalidation policy
+    # end to end, exactly as it did pre-migration. See
+    # ``RouterLoop._ensure_action_index_built`` for the production caller.
+    async def ensure_built_self_contained(
+        self,
+        source_id: str,
+        build_coro: Callable[[], Awaitable[None]],
+        *,
+        await_completion: bool,
+        is_ready_probe: Callable[[], bool],
+        chunk_count_probe: Callable[[], int] | None = None,
+        kind: SourceKind = "backfill",
+    ) -> BuildOutcome:
+        """Orchestrate (dedup/failure-memo/state) a self-contained builder.
+
+        ``build_coro`` is called with no args and is expected to perform
+        the ENTIRE build (its own locking, its own write) and raise on
+        failure (never swallow) — ``is_ready_probe`` is then consulted
+        (not ``build_coro``'s return value) to decide whether the manifest
+        should record ``clean`` (matches the domain adapter's own
+        source-of-truth for "did this actually succeed", e.g.
+        ``ActionEmbeddingIndex.is_ready()`` post-``build()``).
+
+        Same await/background split as ``ensure_built``: ``await_completion
+        =True`` runs inline; ``=False`` schedules via ``asyncio.create_task``
+        with the same once-per-source in-flight dedup (``_bg_tasks``).
+        Never raises — a failure is caught, mark_dirty'd, memoized, and
+        reported on the returned ``BuildOutcome.error``.
+        """
+        self._kinds[source_id] = kind
+        entry = await self._manifest.get(source_id)
+        if entry is not None and entry.state == "clean" and is_ready_probe():
+            return BuildOutcome(
+                source_id=source_id, triggered=False, background=False,
+                chunk_count=entry.chunk_count,
+            )
+
+        async def _run() -> BuildOutcome:
+            await self._set_state(source_id, "building")
+            try:
+                await build_coro()
+            except Exception as exc:
+                reason = f"build_error: {exc}"
+                self._failure_memo[source_id] = reason
+                await self.mark_dirty(source_id, reason=reason)
+                return BuildOutcome(
+                    source_id=source_id, triggered=True, background=False,
+                    error=str(exc),
+                )
+            if is_ready_probe():
+                chunk_count = chunk_count_probe() if chunk_count_probe else None
+                await self._set_state(source_id, "clean", chunk_count=chunk_count)
+                return BuildOutcome(
+                    source_id=source_id, triggered=True, background=False,
+                    chunk_count=chunk_count,
+                )
+            # The builder ran without raising but didn't reach readiness
+            # (e.g. its own lock-skip fallback: "another process is mid-
+            # build") — leave manifest state as-is (not clean), matching
+            # the pre-migration silent-fallback semantics.
+            return BuildOutcome(source_id=source_id, triggered=True, background=False)
+
+        if not await_completion:
+            existing_task = self._bg_tasks.get(source_id)
+            if existing_task is not None and not existing_task.done():
+                return BuildOutcome(source_id=source_id, triggered=True, background=True)
+            task = asyncio.create_task(_run())
+            self._bg_tasks[source_id] = task
+            return BuildOutcome(source_id=source_id, triggered=True, background=True)
+
+        return await _run()
+
+
+# ── Module-level singleton registry (per-workspace) ───────────────────────
+#
+# Mirrors ``get_source_manifest`` (FP-0066 P2b, #3247): a session/router-
+# scoped caller (``RouterLoop._get_index_coordinator``) needs the SAME
+# ``IndexCoordinator`` instance across turns within a chain (and across
+# chains within the same workspace) so ``_bg_tasks``/``_failure_memo``
+# once-per-source dedup actually dedups rather than resetting every call.
+
+_COORDINATORS: dict[Path, IndexCoordinator] = {}
+
+
+def get_index_coordinator(workspace_root: Path) -> IndexCoordinator:
+    """Get or create the IndexCoordinator singleton for a workspace."""
+    workspace_root = workspace_root.resolve()
+    if workspace_root not in _COORDINATORS:
+        _COORDINATORS[workspace_root] = IndexCoordinator(workspace_root)
+    return _COORDINATORS[workspace_root]
