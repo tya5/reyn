@@ -393,6 +393,7 @@ safety:
     max_tool_calls_per_turn: 50 # max tool_calls honoured from ONE completion (cost-bound); 0 = unlimited
     max_hook_driven_turns: 25  # loop valve: cap hook self-continuation; resets on user turn; 0 = unlimited
     max_agent_hops: 3          # maximum delegation depth
+    intra_turn_untrusted_narrowing: false  # #1909 OPT-IN: re-narrow capability every router-loop iteration (not just once per turn) once external_source-tagged content is live; default false = today's turn-boundary-only narrowing (byte-identical)
   timeout:
     llm_call_seconds: 60       # per-call HTTP timeout (--llm-timeout)
     llm_max_retries: 3         # transient-error retries per call (--llm-max-retries)
@@ -424,6 +425,7 @@ safety:
 | `safety.loop.max_tool_calls_per_turn` | int | `50` | — | Cost-bound: maximum `tool_calls` honoured from a SINGLE LLM completion. A degenerate completion can emit thousands (observed 3451); the OS processes only the first N, drops the overflow, and appends a re-grounding notice. `0` = unlimited. |
 | `safety.loop.max_hook_driven_turns` | int | `25` | — | Loop valve: caps hook self-continuation. Each hook-originated (`kind="hook"`) turn counts 1; the counter resets on each human user turn. When the count would exceed the cap the next hook turn hits the `safety.on_limit` checkpoint (warn → ask_user → abort) instead of running — a backstop that does not obstruct intentional loop-engineering. `0` = unlimited. |
 | `safety.loop.max_agent_hops` | int | `3` | — | Maximum delegation depth (user → A → B → C = 3 hops). |
+| `safety.loop.intra_turn_untrusted_narrowing` | bool | `false` | — | #1909 OPT-IN security hardening. `false` (default): contextual-permission narrowing for `external_source`-tagged content is resolved once per turn (byte-identical to pre-#1909 — no mid-turn capability loss). `true`: re-resolved every router-loop iteration, so external content encountered mid-turn narrows the very next dispatch in the SAME turn (closes the same-turn injection window), at the cost of a legitimate external→privileged flow being narrowed mid-flow and having to resume next turn. Narrowing is monotonic once engaged in a turn (a turn-scoped latch survives a later compaction evicting the tainted history entry) and emits an `untrusted_narrowing_engaged` audit-event the first time it engages in a turn. |
 
 ### `safety.timeout` fields
 

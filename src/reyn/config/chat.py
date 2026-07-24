@@ -53,6 +53,30 @@ class LoopConfig:
             ``safety.on_limit`` checkpoint (warn → ask_user → abort) instead of
             running. A backstop only — does NOT obstruct intentional
             loop-engineering (the operator raises the cap). ``0`` = unlimited.
+        intra_turn_untrusted_narrowing:
+            #1909 (OPT-IN, default ``False``). When ``False`` (default),
+            contextual-permission narrowing for ``external_source``-tagged
+            content is resolved ONCE per turn (turn-boundary narrowing,
+            today's behavior) — an agent that touches external content
+            mid-turn does not lose capabilities until the *next* turn.
+            This is the predictable default: no mid-turn capability loss,
+            byte-identical to pre-#1909 behavior.
+
+            When ``True``, the OS re-resolves the contextual permission at
+            the top of every router-loop iteration within a turn, so
+            external content encountered in round *N* narrows dispatch in
+            round *N+1* of the *same* turn — closing the same-turn
+            injection window (the "lethal trifecta" mid-turn dispatch
+            gap). The trade-off (Product Think / operator legibility):
+            a legitimate external-content → privileged-action flow that
+            would have completed within one turn now gets narrowed
+            mid-flow and must resume next turn. Narrowing is monotonic
+            once engaged (a turn-scoped latch) — it does not un-narrow
+            mid-turn even if a later compaction evicts the tainted
+            history entry, closing a taint-laundering hole where
+            compaction could otherwise "launder" the taint away and let
+            capabilities recover within the same turn. An audit-event
+            fires the first time narrowing engages in a turn.
     """
 
     max_router_calls_per_turn: int = 3
@@ -60,6 +84,7 @@ class LoopConfig:
     max_router_iterations: int = 5
     max_tool_calls_per_turn: int = 50
     max_hook_driven_turns: int = 25
+    intra_turn_untrusted_narrowing: bool = False
 
 
 @dataclass
@@ -687,6 +712,10 @@ def _build_safety_config(raw: object) -> SafetyConfig:
         )),
         max_hook_driven_turns=int(loop_raw.get(
             "max_hook_driven_turns", loop_defaults.max_hook_driven_turns,
+        )),
+        intra_turn_untrusted_narrowing=bool(loop_raw.get(
+            "intra_turn_untrusted_narrowing",
+            loop_defaults.intra_turn_untrusted_narrowing,
         )),
     )
     timeout = TimeoutConfig(

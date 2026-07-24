@@ -1103,6 +1103,8 @@ class RouterLoop:
         response_format: "dict | None" = None,  # 0062: schema-constrained answer turn; None = byte-identical (no other caller sets this)
         schema_validate_fn: "Any | None" = None,  # 0062: Callable[[Any], list[str]] — parsed-value -> validation-error strings ([] = conforming)
         max_schema_reprompt_attempts: int = 2,  # 0062 §2.1 failure-mode-(c): bounded re-prompt budget (extra attempts beyond the first)
+        intra_turn_contextual_for_turn_fn: "Any | None" = None,  # #1909 OPT-IN: () -> ContextualPermission|None, re-invoked every run() iteration. None (default) = off — self._contextual_permission stays turn-frozen (byte-identical). RouterLoopDriver only threads this when safety.loop.intra_turn_untrusted_narrowing is True.
+        contextual_static_baseline: "object | None" = None,  # #1909: the UN-narrowed static contextual (identity anchor) — a per-iteration resolve equal (by identity) to this means "not tainted"; anything else means the untrusted-composed profile engaged. Only consulted when intra_turn_contextual_for_turn_fn is not None.
     ):
         self.host = host
         self.chain_id = chain_id
@@ -1227,6 +1229,18 @@ class RouterLoop:
         # config selection (tool_use:{chat,step,phase}) plugs in here; with all
         # layers defaulting to universal-category it is byte-identical today.
         self._scheme = _resolve_tool_use_scheme(scheme_name)
+        # #1909 OPT-IN (default off): intra-turn untrusted-content re-narrowing.
+        # None (the default, every caller except the opt-in path) means run()'s
+        # per-iteration re-resolve block below is skipped entirely — no new
+        # code path executes, so the default posture is structurally
+        # byte-identical to pre-#1909 (turn-frozen ``_contextual_permission``).
+        self._intra_turn_contextual_for_turn_fn = intra_turn_contextual_for_turn_fn
+        self._contextual_static_baseline = contextual_static_baseline
+        # Turn-scoped monotonic latch (only meaningful when the above is set):
+        # once tainted this turn, stays tainted through turn end regardless of
+        # a later compaction evicting the ``external_source`` marker.
+        self._untrusted_latched: bool = False
+        self._untrusted_latched_permission: "object | None" = None
 
     @property
     def total_usage(self) -> TokenUsage:
@@ -1671,6 +1685,45 @@ class RouterLoop:
                 host.events.emit("turn_cancelled", chain_id=self.chain_id)
                 _loop_cancelled = True
                 break
+            # #1909 (OPT-IN, default off): intra-turn untrusted-content
+            # re-narrowing. ``self._intra_turn_contextual_for_turn_fn`` is
+            # None unless ``safety.loop.intra_turn_untrusted_narrowing`` is
+            # True (RouterLoopDriver only threads it on the opt-in path) —
+            # so the default posture takes NEITHER branch here and
+            # ``self._contextual_permission`` stays the turn-frozen value
+            # set at __init__ (byte-identical to pre-#1909 behaviour).
+            #
+            # On the opt-in path: re-invoke the live history tag-scan every
+            # iteration so external content spliced in round N narrows
+            # dispatch in round N+1 of the SAME turn (closes the same-turn
+            # injection window). ★ Monotonic latch: once ANY iteration this
+            # turn observes the ``external_source`` taint, stay narrowed
+            # through the rest of the turn even if a later compaction
+            # evicts the tainted history entry — ``_effective_contextual_
+            # for_turn`` self-clears on compaction (until-compaction
+            # scope), so a naive re-scan would let capability RECOVER
+            # mid-turn after compaction (a taint-laundering hole). The
+            # latch closes it; it clears only at the turn boundary (a
+            # fresh RouterLoop per user turn).
+            if self._intra_turn_contextual_for_turn_fn is not None:
+                _resolved_contextual = self._intra_turn_contextual_for_turn_fn()
+                _live_tainted = (
+                    _resolved_contextual is not self._contextual_static_baseline
+                )
+                if _live_tainted:
+                    if not self._untrusted_latched:
+                        self._untrusted_latched = True
+                        host.events.emit(
+                            "untrusted_narrowing_engaged",
+                            chain_id=self.chain_id,
+                            iteration=_iteration,
+                            provenance="external_source",
+                        )
+                    self._untrusted_latched_permission = _resolved_contextual
+                    self._contextual_permission = _resolved_contextual
+                elif self._untrusted_latched:
+                    # Compaction evicted the marker mid-turn — latch holds.
+                    self._contextual_permission = self._untrusted_latched_permission
             resolved_model = host.resolve_model(self.router_model)
             # #1654: the FULL ModelSpec (model + operator kwargs) for the LLM
             # call below, so per-model kwargs (reasoning_effort #1650/#1652,

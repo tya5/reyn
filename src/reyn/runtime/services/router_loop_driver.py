@@ -430,6 +430,28 @@ class RouterLoopDriver:
             response_format=self._response_format,
             schema_validate_fn=self._schema_validate_fn,
             max_schema_reprompt_attempts=self._max_schema_reprompt_attempts,
+            # #1909 (OPT-IN, default off — safety.loop.intra_turn_untrusted_
+            # narrowing): only thread the per-iteration re-resolve callable
+            # (+ its un-narrowed identity baseline) into RouterLoop when the
+            # operator has opted in. Default False → neither kwarg is passed
+            # (both stay None on the RouterLoop side) → RouterLoop's
+            # per-iteration re-resolve block is a no-op — byte-identical to
+            # pre-#1909 turn-frozen behaviour.
+            **(
+                {
+                    "intra_turn_contextual_for_turn_fn": self._contextual_for_turn_fn,
+                    "contextual_static_baseline": self._contextual_permission,
+                }
+                if (
+                    bool(getattr(
+                        getattr(self._safety, "loop", None),
+                        "intra_turn_untrusted_narrowing",
+                        False,
+                    ))
+                    and self._contextual_for_turn_fn is not None
+                )
+                else {}
+            ),
         )
         if self._loop_observer:
             self._loop_observer(loop)
