@@ -87,14 +87,62 @@ not apply to them. The reconcile in this module is a filesystem/registry
 consistency check; the registry entries THEMSELVES (mcp/pipelines/skills.yaml)
 still ride the existing config-generation recovery path via the
 sub-handlers they call.
+
+**Concurrency (#3212)**: ``~/.reyn/plugins/`` is DELIBERATELY a single
+global, session/workspace-UNSCOPED path (ADR 0064 §3.3 — "install once, use
+everywhere"); this is unchanged by #3212. What #3212 fixes is that two
+concurrent ``plugin_install``/``plugin_uninstall`` calls (same or different
+sessions) racing on the SAME global path could wipe each other's in-flight
+work:
+
+  - The step-0 reconcile above previously could not tell a genuinely-crashed
+    partial install (marker present, no live owner) from a CONCURRENT
+    still-in-progress install of the SAME name (marker present, owner very
+    much alive) — both looked identical, so a concurrent reconcile could
+    ``rmtree`` a live install mid-copy. Fixed by making the
+    ``_install_state.json`` marker carry ``{pid, ts}`` (mirroring
+    ``reyn.data.index.build_lock``'s marker shape) and having reconcile check
+    liveness via ``build_lock.pid_alive`` PER ENTRY before rolling anything
+    back: a live owner is skipped (back off, not wiped), only a dead/missing/
+    legacy (no-pid) marker is treated as crashed and rolled back as before.
+  - ``plugin_name_lock`` (below) is a blocking, bounded-wait, cross-process
+    per-plugin-name advisory lock (same marker-file primitive, reused from
+    ``build_lock.py``, but BLOCK-AND-WAIT semantics rather than
+    ``build_lock``'s take-or-skip index-build contract — a skipped uninstall
+    would surprise the operator) serializing every mutating step of
+    ``plugin_install``/``plugin_uninstall`` on the same name, so an install's
+    ``copytree`` can never interleave with a concurrent uninstall's
+    ``rmtree`` (or another install of the same name). Reconcile's own
+    rollback of a dead entry also takes this lock (short timeout) before
+    touching it, so the sweep can never race a live mutator either.
+  - The content copy itself (``_copy_plugin_tree``) is staged into a unique
+    ``~/.reyn/plugins/.staging/<name>-<uuid>/`` dir (same filesystem as the
+    final target, so the final move is an atomic ``Path.replace``) and only
+    swapped into place at ``plugin_root`` once fully copied — a concurrent
+    reader (e.g. ``pipe list`` resolving an absolute registered path) always
+    sees either the complete old tree or the complete new tree, never a
+    half-copied one. The staging dir carries the SAME liveness marker (it
+    IS the eventual ``_install_state.json``, moved into place by the rename),
+    so reconcile's ``.staging`` sweep is liveness-aware too, not a blanket
+    wipe — it must not delete a concurrent install's in-progress staging.
 """
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import json
+import os
 import shutil
+import time
 from pathlib import Path
 from uuid import uuid4
 
+from reyn.data.index.build_lock import (
+    pid_alive,
+    read_lock_holder,
+    remove_lock_marker,
+    write_lock_marker,
+)
 from reyn.plugins.manifest import (
     PluginManifestError,
     load_plugin_manifest,
@@ -137,6 +185,83 @@ def plugins_root() -> Path:
     """``~/.reyn/plugins/`` — the global plugin-code cache (ADR §3.3: code
     installs once to global, enablement is project-local)."""
     return Path.home() / ".reyn" / "plugins"
+
+
+# ---------------------------------------------------------------------------
+# Per-plugin-name cross-process lock (#3212 layer b)
+# ---------------------------------------------------------------------------
+
+_LOCK_POLL_INTERVAL_S = 0.05
+DEFAULT_PLUGIN_LOCK_TIMEOUT_S = 30.0
+
+
+def _locks_dir(root: Path) -> Path:
+    return root / ".locks"
+
+
+def _plugin_lock_path(root: Path, name: str) -> Path:
+    return _locks_dir(root) / f"{name}.lock"
+
+
+@contextlib.asynccontextmanager
+async def plugin_name_lock(
+    name: str,
+    root: "Path | None" = None,
+    *,
+    timeout: float = DEFAULT_PLUGIN_LOCK_TIMEOUT_S,
+):
+    """Blocking, bounded-wait, cross-process advisory lock serializing every
+    MUTATING step of ``plugin_install``/``plugin_uninstall`` on the same
+    plugin *name* (#3212 layer b) — so an install's ``copytree`` can never
+    interleave with a concurrent uninstall's ``rmtree`` (or another install
+    of the same name).
+
+    Reuses ``reyn.data.index.build_lock``'s ``{pid, ts}`` marker-file
+    primitives (``pid_alive`` / ``read_lock_holder`` / ``write_lock_marker`` /
+    ``remove_lock_marker``) for the atomic take + staleness check, but with
+    **BLOCKING wait** semantics bounded by *timeout* seconds — NOT
+    ``build_lock``'s take-or-skip contract (a skipped uninstall would
+    surprise the operator; here the caller genuinely needs the mutation to
+    happen, just serialized). A stale lock (dead holder pid) is reclaimed
+    immediately rather than waited out.
+
+    Raises ``TimeoutError`` if *timeout* elapses with a live holder still
+    present.
+    """
+    base = root if root is not None else plugins_root()
+    locks_dir = _locks_dir(base)
+    locks_dir.mkdir(parents=True, exist_ok=True)
+    lock_path = _plugin_lock_path(base, name)
+
+    def _take_atomic() -> bool:
+        try:
+            fd = os.open(str(lock_path), os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
+        except OSError:
+            return False
+        os.close(fd)
+        write_lock_marker(lock_path)
+        return True
+
+    deadline = time.monotonic() + timeout
+    while True:
+        if _take_atomic():
+            break
+        holder_pid = read_lock_holder(lock_path)
+        if holder_pid is None or not pid_alive(holder_pid):
+            # Stale/legacy/dead lock — reclaim immediately, no waiting.
+            remove_lock_marker(lock_path)
+            continue
+        if time.monotonic() >= deadline:
+            raise TimeoutError(
+                f"timed out after {timeout}s waiting for the plugin lock on "
+                f"{name!r} (held by pid {holder_pid})"
+            )
+        await asyncio.sleep(_LOCK_POLL_INTERVAL_S)
+
+    try:
+        yield
+    finally:
+        remove_lock_marker(lock_path)
 
 
 # ---------------------------------------------------------------------------
@@ -213,11 +338,22 @@ def _install_state_path(plugin_root: Path) -> Path:
     return plugin_root / ".reyn-plugin" / _INSTALL_STATE_FILENAME
 
 
-def _write_install_state(plugin_root: Path, kind: str) -> None:
+def _write_install_state(plugin_root: Path, kind: str, *, pid: "int | None" = None) -> None:
+    """Write the in-progress marker, carrying ``{pid, ts}`` (#3212) so
+    ``reconcile_plugin_installs`` can tell a genuinely-crashed partial (dead
+    pid) from a concurrent still-in-progress install of the SAME name (live
+    pid) — both previously looked identical (marker present), which is the
+    #3212 root cause. ``pid`` defaults to the CURRENT process
+    (``os.getpid()``, the real production path); callers simulating a crash
+    for tests pass an explicit dead pid."""
     state_path = _install_state_path(plugin_root)
     state_path.parent.mkdir(parents=True, exist_ok=True)
     state_path.write_text(
-        json.dumps({"name": plugin_root.name, "kind": kind, "status": "installing"}),
+        json.dumps({
+            "name": plugin_root.name, "kind": kind, "status": "installing",
+            "pid": pid if pid is not None else os.getpid(),
+            "ts": time.time(),
+        }),
         encoding="utf-8",
     )
 
@@ -278,6 +414,17 @@ async def reconcile_plugin_installs(
     correct behavior when there is no project registry in scope.
 
     Returns the list of plugin names rolled back.
+
+    **Liveness-aware (#3212 layer a)**: a marker whose ``pid`` is ALIVE means
+    a CONCURRENT install of this same name is still in progress — not a
+    crashed partial — so it is SKIPPED (back off, do not wipe) rather than
+    rolled back. Only a dead / missing / legacy (no-``pid`` field) marker is
+    treated as a crashed partial and rolled back, same as before #3212. Each
+    rollback additionally takes the #3212 per-name ``plugin_name_lock``
+    (short timeout) before touching the entry, so this sweep can never race
+    a live ``plugin_install``/``plugin_uninstall`` mutator either — if the
+    lock cannot be acquired promptly (some other mutator just grabbed it),
+    the entry is left for the next reconcile pass rather than forced.
     """
     base = root if root is not None else plugins_root()
     if not base.is_dir():
@@ -289,21 +436,49 @@ async def reconcile_plugin_installs(
         state = _read_install_state(entry)
         if state is None:
             continue
+        marker_pid = state.get("pid")
+        if isinstance(marker_pid, int) and marker_pid > 0 and pid_alive(marker_pid):
+            # A concurrent install of THIS name is still in progress — not a
+            # crashed partial. Skip; do not wipe a live install (#3212).
+            continue
         # Drop-registry-FIRST (§3.11): remove any entries this partial install
-        # registered before deleting the copy they point at.
-        if project_root is not None:
-            await _reconcile_drop_registry_entries(
-                project_root, entry.name, state_log=state_log, events=events,
-            )
-        shutil.rmtree(entry, ignore_errors=True)
-        rolled_back.append(entry.name)
-        if events is not None:
-            events.emit("plugin_install_reconciled", name=entry.name, action="rolled_back")
-    # A staging clone dir interrupted mid-clone is never "installed" under
-    # any name — always safe to sweep in full.
+        # registered before deleting the copy they point at. Guarded by the
+        # per-name lock so this rollback cannot interleave with a concurrent
+        # mutator that just took ownership of this name.
+        try:
+            async with plugin_name_lock(entry.name, base, timeout=5.0):
+                if project_root is not None:
+                    await _reconcile_drop_registry_entries(
+                        project_root, entry.name, state_log=state_log, events=events,
+                    )
+                shutil.rmtree(entry, ignore_errors=True)
+                rolled_back.append(entry.name)
+                if events is not None:
+                    events.emit(
+                        "plugin_install_reconciled", name=entry.name, action="rolled_back",
+                    )
+        except TimeoutError:
+            # Someone else holds this name's lock right now — leave it for
+            # the next reconcile pass rather than forcing the rollback.
+            continue
+    # A staging dir (git-clone OR the atomic-copy staging, #3212 layer c) is
+    # never "installed" under any name. Atomic-copy staging carries the SAME
+    # ``_install_state.json`` marker it will be renamed into place with, so
+    # it is liveness-checked the same way as a top-level entry above — a
+    # concurrent install's in-progress staging must not be swept. Git-clone
+    # staging carries no such marker and is always safe to sweep (its window
+    # is a single synchronous clone call, never left half-formed across
+    # reconcile passes under a live owner).
     staging = base / ".staging"
     if staging.is_dir():
-        shutil.rmtree(staging, ignore_errors=True)
+        for child in sorted(staging.iterdir()):
+            if not child.is_dir():
+                continue
+            child_state = _read_install_state(child)
+            child_pid = child_state.get("pid") if child_state else None
+            if isinstance(child_pid, int) and child_pid > 0 and pid_alive(child_pid):
+                continue
+            shutil.rmtree(child, ignore_errors=True)
     return rolled_back
 
 
@@ -626,103 +801,125 @@ async def handle(op: PluginInstallIROp, ctx: OpContext) -> dict:
                      "~/.reyn/plugins/. This is a path-containment violation.",
         }
 
-    # ── 3. Name-collision precedence (§3.8/§3.10) ─────────────────────────────
-    existing_state = _read_install_state(plugin_root)
-    existing_kind = None
-    if plugin_root.is_dir() and existing_state is None:
-        # A completed prior install has no _install_state.json marker (cleared
-        # on success) — its own kind is recorded in .reyn-plugin/plugin.json's
-        # sibling manifest read is not authoritative for SOURCE kind, so a
-        # completed install's provenance is tracked via a lightweight sidecar
-        # written alongside the manifest at registration time (below).
-        existing_kind = _read_completed_kind(plugin_root)
-    if existing_kind is not None and existing_kind != source_kind:
-        winner = resolve_name_collision([existing_kind, source_kind])
-        if winner != source_kind:
-            if staging_cleanup:
-                shutil.rmtree(staging_cleanup, ignore_errors=True)
-            return {
-                "kind": "plugin_install", "status": "skipped", "name": safe_name,
-                "error": f"plugin {safe_name!r} is already installed from a "
-                         f"higher-trust {existing_kind!r} source; refusing to "
-                         f"shadow it with a {source_kind!r} source (ADR 0064 "
-                         "§3.8 precedence: builtin <= local << git).",
-            }
+    # ── 3.–8. Per-name-locked mutation (#3212 layer b) ────────────────────────
+    # Everything from the name-collision check (which READS plugin_root's
+    # current state) through completion is serialized against any concurrent
+    # plugin_install/plugin_uninstall of the SAME name — so a collision
+    # decision, the copy, and the register/complete steps all observe (and
+    # leave) a consistent state, and a concurrent uninstall's rmtree can never
+    # interleave with this copy.
+    async with plugin_name_lock(safe_name, root):
+        # ── 3. Name-collision precedence (§3.8/§3.10) ─────────────────────────
+        existing_state = _read_install_state(plugin_root)
+        existing_kind = None
+        if plugin_root.is_dir() and existing_state is None:
+            # A completed prior install has no _install_state.json marker
+            # (cleared on success) — its own kind is recorded in a lightweight
+            # sidecar written alongside the manifest at registration time
+            # (below), since the manifest itself carries no source-kind field.
+            existing_kind = _read_completed_kind(plugin_root)
+        if existing_kind is not None and existing_kind != source_kind:
+            winner = resolve_name_collision([existing_kind, source_kind])
+            if winner != source_kind:
+                if staging_cleanup:
+                    shutil.rmtree(staging_cleanup, ignore_errors=True)
+                return {
+                    "kind": "plugin_install", "status": "skipped", "name": safe_name,
+                    "error": f"plugin {safe_name!r} is already installed from a "
+                             f"higher-trust {existing_kind!r} source; refusing to "
+                             f"shadow it with a {source_kind!r} source (ADR 0064 "
+                             "§3.8 precedence: builtin <= local << git).",
+                }
 
-    ctx.events.emit("plugin_install_started", name=safe_name, source_kind=source_kind)
+        ctx.events.emit("plugin_install_started", name=safe_name, source_kind=source_kind)
 
-    # ── 4. Permission gate 1 — global-copy write outside the workspace ────────
-    if ctx.permission_resolver is not None:
-        sandbox = _sandbox_policy_from_ctx(ctx)
-        await ctx.permission_resolver.require_file_write(
-            ctx.permission_decl, str(plugin_root), ctx.actor,
-            sandbox_policy=sandbox, bus=ctx.intervention_bus,
-        )
-
-    # ── 5. Copy ─────────────────────────────────────────────────────────────
-    plugin_root.mkdir(parents=True, exist_ok=True)
-    _write_install_state(plugin_root, source_kind)
-    _copy_plugin_tree(source_dir, plugin_root)
-    if staging_cleanup:
-        shutil.rmtree(staging_cleanup, ignore_errors=True)
-    ctx.events.emit("plugin_install_copied", name=safe_name, plugin_root=str(plugin_root))
-
-    # ── 6. Expand ${REYN_*} stable-location tokens ────────────────────────────
-    token_ctx = PluginTokenContext(plugin_root=plugin_root, project_dir=project_root)
-    _expand_plugin_files(plugin_root, token_ctx)
-
-    # ── 7. Register capabilities (#3209: register-only — no dep materialise) ──
-    manifest_path = manifest_path_for(plugin_root)
-    reloaded_manifest = load_plugin_manifest(plugin_root) if manifest_path.exists() else manifest
-    registered: dict[str, list] = {"mcp": [], "pipelines": [], "skills": []}
-
-    for cap in reloaded_manifest.capabilities:
-        if cap.kind == "mcp":
-            registered["mcp"] = await _register_mcp(
-                plugin_root, safe_name, ctx, project_root,
+        # ── 4. Permission gate 1 — global-copy write outside the workspace ────
+        if ctx.permission_resolver is not None:
+            sandbox = _sandbox_policy_from_ctx(ctx)
+            await ctx.permission_resolver.require_file_write(
+                ctx.permission_decl, str(plugin_root), ctx.actor,
+                sandbox_policy=sandbox, bus=ctx.intervention_bus,
             )
-        elif cap.kind == "pipelines":
-            pipelines_dir = plugin_root / "pipelines"
-            files = (
-                [pipelines_dir / e for e in cap.entries]
-                if cap.entries
-                else (sorted(pipelines_dir.glob("*.yaml")) if pipelines_dir.is_dir() else [])
-            )
-            for dsl_file in files:
-                sub_op = PipelineInstallIROp(
-                    kind="pipeline_install", path=str(dsl_file), plugin_id=safe_name,
+
+        # ── 5. Copy — atomic temp-then-rename (#3212 layer c) ──────────────────
+        # Build the full new tree in a UNIQUE staging dir under the same
+        # ~/.reyn/plugins/ filesystem (so the final swap is an atomic
+        # Path.replace), carrying the SAME _install_state.json marker it will
+        # be renamed into place with (reconcile's liveness check above applies
+        # to it unchanged, whether it is still under .staging/ or has already
+        # been renamed to plugin_root). A concurrent reader resolving
+        # plugin_root's absolute path always sees either the complete old tree
+        # or the complete new one — never a half-copied one.
+        atomic_staging = root / ".staging" / f"{safe_name}-{uuid4().hex}"
+        atomic_staging.mkdir(parents=True, exist_ok=True)
+        _write_install_state(atomic_staging, source_kind)
+        _copy_plugin_tree(source_dir, atomic_staging)
+        if staging_cleanup:
+            shutil.rmtree(staging_cleanup, ignore_errors=True)
+        if plugin_root.exists():
+            # Updating an existing install: replace it wholesale (clean
+            # atomic swap) rather than merging over stale files the new
+            # source no longer carries.
+            shutil.rmtree(plugin_root, ignore_errors=True)
+        atomic_staging.replace(plugin_root)
+        ctx.events.emit("plugin_install_copied", name=safe_name, plugin_root=str(plugin_root))
+
+        # ── 6. Expand ${REYN_*} stable-location tokens ─────────────────────────
+        token_ctx = PluginTokenContext(plugin_root=plugin_root, project_dir=project_root)
+        _expand_plugin_files(plugin_root, token_ctx)
+
+        # ── 7. Register capabilities (#3209: register-only — no dep materialise) ──
+        manifest_path = manifest_path_for(plugin_root)
+        reloaded_manifest = load_plugin_manifest(plugin_root) if manifest_path.exists() else manifest
+        registered: dict[str, list] = {"mcp": [], "pipelines": [], "skills": []}
+
+        for cap in reloaded_manifest.capabilities:
+            if cap.kind == "mcp":
+                registered["mcp"] = await _register_mcp(
+                    plugin_root, safe_name, ctx, project_root,
                 )
-                sub_result = await _pipeline_install_handle(sub_op, ctx)
-                registered["pipelines"].append(sub_result)
-        elif cap.kind == "skills":
-            skills_dir = plugin_root / "skills"
-            dirs = (
-                [skills_dir / e for e in cap.entries]
-                if cap.entries
-                else (sorted(p for p in skills_dir.glob("*") if p.is_dir()) if skills_dir.is_dir() else [])
-            )
-            for skill_dir in dirs:
-                sub_op = SkillInstallIROp(
-                    kind="skill_install", path=str(skill_dir), plugin_id=safe_name,
+            elif cap.kind == "pipelines":
+                pipelines_dir = plugin_root / "pipelines"
+                files = (
+                    [pipelines_dir / e for e in cap.entries]
+                    if cap.entries
+                    else (sorted(pipelines_dir.glob("*.yaml")) if pipelines_dir.is_dir() else [])
                 )
-                sub_result = await _skill_install_handle(sub_op, ctx)
-                registered["skills"].append(sub_result)
+                for dsl_file in files:
+                    sub_op = PipelineInstallIROp(
+                        kind="pipeline_install", path=str(dsl_file), plugin_id=safe_name,
+                    )
+                    sub_result = await _pipeline_install_handle(sub_op, ctx)
+                    registered["pipelines"].append(sub_result)
+            elif cap.kind == "skills":
+                skills_dir = plugin_root / "skills"
+                dirs = (
+                    [skills_dir / e for e in cap.entries]
+                    if cap.entries
+                    else (sorted(p for p in skills_dir.glob("*") if p.is_dir()) if skills_dir.is_dir() else [])
+                )
+                for skill_dir in dirs:
+                    sub_op = SkillInstallIROp(
+                        kind="skill_install", path=str(skill_dir), plugin_id=safe_name,
+                    )
+                    sub_result = await _skill_install_handle(sub_op, ctx)
+                    registered["skills"].append(sub_result)
 
-    ctx.events.emit("plugin_install_registered", name=safe_name, registered=registered)
+        ctx.events.emit("plugin_install_registered", name=safe_name, registered=registered)
 
-    # ── 8. Complete ────────────────────────────────────────────────────────────
-    _clear_install_state(plugin_root)
-    _write_completed_kind(plugin_root, source_kind)
-    ctx.events.emit("plugin_install_completed", name=safe_name)
+        # ── 8. Complete ────────────────────────────────────────────────────────
+        _clear_install_state(plugin_root)
+        _write_completed_kind(plugin_root, source_kind)
+        ctx.events.emit("plugin_install_completed", name=safe_name)
 
-    return {
-        "status": "installed",
-        "name": safe_name,
-        "plugin_root": str(plugin_root),
-        "source_kind": source_kind,
-        "capabilities": sorted(reloaded_manifest.capability_kinds),
-        "registered": registered,
-    }
+        return {
+            "status": "installed",
+            "name": safe_name,
+            "plugin_root": str(plugin_root),
+            "source_kind": source_kind,
+            "capabilities": sorted(reloaded_manifest.capability_kinds),
+            "registered": registered,
+        }
 
 
 # ---------------------------------------------------------------------------

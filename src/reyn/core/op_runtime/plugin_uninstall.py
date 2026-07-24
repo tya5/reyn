@@ -11,6 +11,16 @@ explicitly).
 Not WAL-derived (§3.11): same rationale as ``plugin_install`` — these are
 file/registry mutations, not WAL-event-derived state, so the CLAUDE.md
 truncate-falsify recovery gate does not apply.
+
+**Concurrency (#3212)**: both the registry-drop and the copy-removal below
+are wrapped in ``plugin_install.plugin_name_lock`` — the SAME per-name,
+blocking, bounded-wait, cross-process advisory lock ``plugin_install``
+takes around its own copy/register/complete steps. Without this, an
+uninstall's ``rmtree`` of ``~/.reyn/plugins/<name>/`` could interleave with
+a concurrent install of the same name's ``copytree`` (or vice versa),
+corrupting the shared global copy mid-write. See ``plugin_install.py``'s
+module docstring for the full #3212 write-up (liveness-aware reconcile +
+this lock + atomic-rename copy, the three layers together).
 """
 from __future__ import annotations
 
@@ -24,6 +34,7 @@ from .context import OpContext
 from .context import sandbox_policy_from_ctx as _sandbox_policy_from_ctx
 from .plugin_install import (
     drop_entries_by_plugin_id,
+    plugin_name_lock,
     plugins_root,
     registry_config_paths,
     registry_entries_section,
@@ -75,49 +86,56 @@ async def handle(op: PluginUninstallIROp, ctx: OpContext) -> dict:
 
     ctx.events.emit("plugin_uninstall_started", name=name)
 
-    # ── 1. Drop registry entries FIRST (§3.11 crash-safety ordering) ─────────
-    removed: dict[str, list[str]] = {}
-    for registry_kind, config_path in registry_config_paths(project_root).items():
-        removed[registry_kind] = await _drop_plugin_entries(registry_kind, config_path, name, ctx)
-
-    if any(removed.values()):
-        from reyn.runtime.hot_reload import dispatch_install_reload
-        # A drop is a same-name-removal, not a pure addition — it always
-        # takes the deferred turn-boundary reload path (mirrors
-        # mcp_drop_server's non-immediate-apply behavior); dispatch_install_reload
-        # with is_addition=False routes there uniformly across all three seams.
-        for registry_kind in ("mcp", "pipelines", "skills"):
-            if removed.get(registry_kind):
-                seam_source = {
-                    "mcp": "mcp__install_local", "pipelines": "pipeline_install",
-                    "skills": "skill_install",
-                }[registry_kind]
-                await dispatch_install_reload(
-                    getattr(ctx, "hot_reloader", None), source=seam_source, is_addition=False,
-                )
-
-    ctx.events.emit("plugin_uninstall_registry_dropped", name=name, removed=removed)
-
-    # ── 2. Remove the global copy ─────────────────────────────────────────────
-    plugin_root = plugins_root() / name
-    copy_removed = plugin_root.is_dir()
-    if copy_removed:
-        if ctx.permission_resolver is not None:
-            sandbox = _sandbox_policy_from_ctx(ctx)
-            await ctx.permission_resolver.require_file_write(
-                ctx.permission_decl, str(plugin_root), ctx.actor,
-                sandbox_policy=sandbox, bus=ctx.intervention_bus,
+    root = plugins_root()
+    # ── #3212 layer b: same per-name lock plugin_install takes — serializes
+    # this uninstall's registry-drop + rmtree against a concurrent install/
+    # uninstall of the SAME name so a copytree/rmtree can never interleave.
+    async with plugin_name_lock(name, root):
+        # ── 1. Drop registry entries FIRST (§3.11 crash-safety ordering) ─────
+        removed: dict[str, list[str]] = {}
+        for registry_kind, config_path in registry_config_paths(project_root).items():
+            removed[registry_kind] = await _drop_plugin_entries(
+                registry_kind, config_path, name, ctx,
             )
-        shutil.rmtree(plugin_root, ignore_errors=True)
 
-    ctx.events.emit("plugin_uninstall_completed", name=name, copy_removed=copy_removed)
+        if any(removed.values()):
+            from reyn.runtime.hot_reload import dispatch_install_reload
+            # A drop is a same-name-removal, not a pure addition — it always
+            # takes the deferred turn-boundary reload path (mirrors
+            # mcp_drop_server's non-immediate-apply behavior); dispatch_install_reload
+            # with is_addition=False routes there uniformly across all three seams.
+            for registry_kind in ("mcp", "pipelines", "skills"):
+                if removed.get(registry_kind):
+                    seam_source = {
+                        "mcp": "mcp__install_local", "pipelines": "pipeline_install",
+                        "skills": "skill_install",
+                    }[registry_kind]
+                    await dispatch_install_reload(
+                        getattr(ctx, "hot_reloader", None), source=seam_source, is_addition=False,
+                    )
 
-    return {
-        "status": "uninstalled",
-        "name": name,
-        "removed": removed,
-        "copy_removed": copy_removed,
-    }
+        ctx.events.emit("plugin_uninstall_registry_dropped", name=name, removed=removed)
+
+        # ── 2. Remove the global copy ─────────────────────────────────────────
+        plugin_root = root / name
+        copy_removed = plugin_root.is_dir()
+        if copy_removed:
+            if ctx.permission_resolver is not None:
+                sandbox = _sandbox_policy_from_ctx(ctx)
+                await ctx.permission_resolver.require_file_write(
+                    ctx.permission_decl, str(plugin_root), ctx.actor,
+                    sandbox_policy=sandbox, bus=ctx.intervention_bus,
+                )
+            shutil.rmtree(plugin_root, ignore_errors=True)
+
+        ctx.events.emit("plugin_uninstall_completed", name=name, copy_removed=copy_removed)
+
+        return {
+            "status": "uninstalled",
+            "name": name,
+            "removed": removed,
+            "copy_removed": copy_removed,
+        }
 
 
 from reyn.core.offload.canonical import STRUCTURED_PASSTHROUGH  # noqa: E402

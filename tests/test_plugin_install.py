@@ -414,9 +414,14 @@ async def test_reconcile_rolls_back_partial_install_registry_and_copy(tmp_path, 
     project_root.mkdir()
 
     # A partial copy (marker present = never completed) that DID register a skill.
+    # #3212: the marker now carries a pid; a DEAD pid is what distinguishes a
+    # genuinely-crashed partial (this test) from a concurrent still-in-progress
+    # install of the same name (test_3212's "the race" scenario) — the current
+    # process (an alive pid) would be treated as a live, in-progress install
+    # and correctly SKIPPED rather than rolled back.
     partial = plugins_root() / "crashed-plugin"
     (partial / "skills" / "s").mkdir(parents=True)
-    _write_install_state(partial, "local")
+    _write_install_state(partial, "local", pid=2**31 - 1)
 
     skills_yaml = project_root / ".reyn" / "config" / "skills.yaml"
     skills_yaml.parent.mkdir(parents=True, exist_ok=True)
@@ -458,7 +463,7 @@ def test_reconcile_bare_sweep_without_project_root_drops_only_copies(tmp_path, m
 
     partial = plugins_root() / "crashed"
     partial.mkdir(parents=True)
-    _write_install_state(partial, "git")
+    _write_install_state(partial, "git", pid=2**31 - 1)  # #3212: dead pid = crashed
     completed = plugins_root() / "done"
     completed.mkdir(parents=True)
 
