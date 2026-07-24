@@ -63,13 +63,17 @@ Everything else is excluded, by one of four reasons:
 │                           reconstructable from the ledger by re-scanning,
 │                           safe to delete at any time (a write failure is
 │                           logged and swallowed, never blocks startup).
-│                           NOTE: its per-agent totals act as a FLOOR
-│                           whenever the ledger is found truncated,
-│                           missing, or REPLACED (same size or larger but
-│                           content mismatch) below/at the anchor — only an
-│                           explicit operator action (archiving/deleting
-│                           BOTH this file and the ledger together) resets
-│                           per-agent spend; `/budget` surfaces the floor
+│                           NOTE: its per-agent totals act as a FLOOR by
+│                           default — whenever the ledger is found
+│                           truncated, missing, or its identity (a hash of
+│                           the ledger's leading line, #3201) cannot be
+│                           established on one or both sides. The ONE
+│                           exception is a ledger AFFIRMATIVELY proven, by
+│                           that identity hash, to be a genuinely DIFFERENT
+│                           ledger — that gets no floor. Only an explicit
+│                           operator action (archiving/deleting BOTH this
+│                           file and the ledger together) resets per-agent
+│                           spend otherwise; `/budget` surfaces the floor
 │                           fact + reason whenever it fires. See
 │                           reference/config/budget.md
 └── topologies/             RECOVERY-CORE — agent topologies (reconstructed from topology_* WAL)

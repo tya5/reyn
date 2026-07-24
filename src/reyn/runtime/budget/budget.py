@@ -309,6 +309,48 @@ class BudgetLedger:
             line_bytes = buf[idx + 1:]
         return (size, line_bytes)
 
+    def leading_boundary(self, chunk_size: int = 8192) -> bytes | None:
+        """Return the raw bytes of the FIRST complete record line (including
+        its trailing newline), or ``None`` if the ledger is empty/missing or
+        no complete line has been written yet.
+
+        Used as the checkpoint's LEDGER IDENTITY pin (#3201): unlike
+        ``tail_boundary`` (which anchors to the current END and is expected
+        to move as the ledger grows, and to stop matching the instant the
+        ledger is truncated), the first line of an append-only,
+        never-rotated ledger never changes for the life of that ledger file
+        — so it is a stable fingerprint of WHICH ledger this is, independent
+        of how much of it currently remains. Same chunk-growth handling as
+        ``tail_boundary`` for a pathological first line longer than
+        ``chunk_size``. Any read failure (permissions, race with a
+        concurrent delete) also yields ``None`` rather than propagating —
+        the identity check is an over-count-avoidance OPTIMIZATION, never
+        something a read glitch may downgrade into an under-count: an
+        unreadable identity floats to ``verify_anchor``'s "identity_absent"
+        status, which still floors.
+        """
+        try:
+            if not self._path.is_file():
+                return None
+            size = self._path.stat().st_size
+            if size == 0:
+                return None
+            read_size = min(chunk_size, size)
+            with self._path.open("rb") as f:
+                buf = f.read(read_size)
+        except OSError:
+            return None
+        idx = buf.find(b"\n")
+        if idx == -1:
+            if read_size < size:
+                # Pathological: a single line longer than chunk_size. Grow
+                # the window rather than conclude there is no first line.
+                return self.leading_boundary(chunk_size=chunk_size * 4)
+            # Whole file read and still no newline -- no COMPLETE line yet
+            # (a partial/unflushed write), so no identity is available.
+            return None
+        return buf[: idx + 1]
+
 
 # ── ISO-8601 timestamp parser ───────────────────────────────────────────────
 
@@ -371,17 +413,28 @@ def _parse_iso_ts(ts_str: str) -> float:
 #
 # P3 (ambiguity -> over-count-safe, never under-count) resolves differently
 # depending on WHY the checkpoint is untrustworthy — see ``hydrate``'s
-# docstring for the full 3-way breakdown (missing/corrupt checkpoint vs.
-# ledger "truncated" vs. ledger "invalid"/replaced). The one that matters
-# most: a checkpoint that is itself still internally consistent
+# docstring for the full breakdown (missing/corrupt checkpoint vs. ledger
+# "truncated"/"missing"/"identity_absent" vs. ledger "invalid"). The one
+# that matters most: a checkpoint that is itself still internally consistent
 # (``content_sha256`` verifies) but whose ledger has been TRUNCATED below its
 # anchor (or deleted outright) is NOT discarded — its per-agent totals are
 # merged in as a floor. Silently falling back to "just re-scan whatever
 # ledger remains" for that case would re-introduce the exact staleness this
 # whole mechanism exists to prevent: a lost/truncated ledger would silently
-# reset a cap-critical per-agent counter. A ledger that is instead REPLACED
-# (same size or larger, content mismatch) is the one case that gets NO
-# floor — see ``verify_anchor``.
+# reset a cap-critical per-agent counter.
+#
+# #3201: the ONE case that gets NO floor is a ledger AFFIRMATIVELY proven,
+# by ledger IDENTITY (a hash of the ledger's leading record line, stable
+# across truncation/growth since the ledger is append-only and
+# never-rotated), to be a genuinely DIFFERENT ledger — not merely
+# "same-size-or-larger with a content mismatch" (an earlier version of this
+# discriminated "truncated" vs "invalid" by file SIZE, which is
+# attacker-controllable: a replacement ledger can be padded to any length,
+# making size an over-approximation of "different"). Identity makes the
+# floor MORE PRECISE, never looser: absence of identity (a pre-#3201
+# checkpoint, or an unreadable leading line on either side) can never
+# AFFIRMATIVELY prove "different", so it floats to the floor-applying side
+# by default — see ``verify_anchor``.
 
 
 @dataclass
@@ -408,13 +461,30 @@ class BudgetCheckpoint:
     anchor_line_sha256: str
     # #2945 follow-up (co-vet finding): whether THIS checkpoint's totals were
     # produced by floor-merging a previous checkpoint into a re-scan (i.e.
-    # the ledger was found truncated/missing/replaced when this checkpoint
-    # was written) — and why. Surfaced to the operator via `/budget` (never
-    # silent — "bound fired but nobody can tell" is the failure mode this
-    # closes). ``floor_reason`` is one of "truncated" / "missing" /
-    # "replaced", or ``None`` when no floor was applied.
+    # the ledger was found truncated/missing/identity_absent when this
+    # checkpoint was written) — and why. Surfaced to the operator via
+    # `/budget` (never silent — "bound fired but nobody can tell" is the
+    # failure mode this closes). ``floor_reason`` is one of "truncated" /
+    # "missing" / "identity_absent", or ``None`` when no floor was applied.
+    # (#3201: "replaced" is no longer a floor reason — an AFFIRMATIVELY
+    # different ledger identity now gets NO floor; see ``verify_anchor``.)
     floor_applied: bool = False
     floor_reason: str | None = None
+    # #3201: a fingerprint of the LEDGER this checkpoint was built from —
+    # sha256 of the ledger's leading (first) record line at write time.
+    # Unlike ``anchor_*`` (which pins the ledger's END and is EXPECTED to
+    # stop matching the moment the ledger is truncated), the leading line of
+    # an append-only, never-rotated ledger never changes for that ledger's
+    # lifetime, so it survives truncation and lets ``verify_anchor``
+    # discriminate "same ledger, corrupted/shrunk" (floor) from "genuinely
+    # DIFFERENT ledger" (no floor) by IDENTITY rather than by file SIZE
+    # (size is attacker-controllable — pad a replacement to any length).
+    # ``None`` for a checkpoint written before #3201 (or the vanishingly
+    # rare case the ledger's leading line could not be read at write time)
+    # — see ``verify_anchor``'s "identity_absent" status: an absent
+    # identity can never AFFIRMATIVELY prove a different ledger, so it is
+    # routed to the floor-applying side by default, never to "no floor".
+    ledger_identity_sha256: str | None = None
 
     def _content_payload(self) -> dict:
         """The counted-values subset covered by ``content_sha256`` — everything
@@ -425,8 +495,19 @@ class BudgetCheckpoint:
         stored alongside) so tampering with them — e.g. hiding that a floor
         was applied — is caught by the same ``content_sha256`` check as
         tampering with the counted totals themselves.
+
+        ``ledger_identity_sha256`` (#3201) is likewise included here rather
+        than in the excluded ``anchor`` sub-object, DELIBERATELY: it must be
+        tamper-evident (a forged/stripped identity must not be able to
+        spoof the truncated-vs-different-ledger decision), which the
+        anchor's own exclusion from this hash would defeat. It is omitted
+        from the payload entirely (not merely set to ``None`` inline) when
+        absent, so a pre-#3201 checkpoint's stored ``content_sha256`` still
+        verifies unchanged under this new code — see the field's docstring
+        for why an absent identity must float to the floor-applying side,
+        not be treated as tampering.
         """
-        return {
+        payload = {
             "agent_tokens": dict(sorted(self.agent_tokens.items())),
             "agent_cost_usd": dict(sorted(self.agent_cost_usd.items())),
             "day_key": self.day_key,
@@ -438,6 +519,9 @@ class BudgetCheckpoint:
             "floor_applied": self.floor_applied,
             "floor_reason": self.floor_reason,
         }
+        if self.ledger_identity_sha256 is not None:
+            payload["ledger_identity_sha256"] = self.ledger_identity_sha256
+        return payload
 
     def content_sha256(self) -> str:
         canonical = json.dumps(self._content_payload(), sort_keys=True, ensure_ascii=False)
@@ -490,6 +574,14 @@ class BudgetCheckpoint:
                 floor_reason=(
                     str(data["floor_reason"]) if data.get("floor_reason") is not None else None
                 ),
+                # #3201: absent for a pre-#3201 checkpoint — ``None`` is the
+                # correct default (see the field's docstring), NOT a parse
+                # failure, so this must not raise/reject on the missing key.
+                ledger_identity_sha256=(
+                    str(data["ledger_identity_sha256"])
+                    if data.get("ledger_identity_sha256") is not None
+                    else None
+                ),
             )
         except (KeyError, TypeError, ValueError):
             return None
@@ -527,61 +619,87 @@ def load_checkpoint_or_none(checkpoint_path: Path) -> BudgetCheckpoint | None:
 
 
 def verify_anchor(checkpoint: BudgetCheckpoint, ledger_path: Path) -> tuple[str, int]:
-    """Verify the checkpoint's anchor against the CURRENT ledger file.
+    """Verify the checkpoint's anchor against the CURRENT ledger file, and —
+    when it no longer verifies — discriminate WHY by ledger IDENTITY, not
+    file size (#3201).
 
     Returns ``(status, current_size)`` where ``status`` is one of:
 
     - ``"valid"`` — the ledger still contains, byte-for-byte, the line the
       checkpoint was anchored to. Fast tail-only path.
-    - ``"truncated"`` — the CURRENT ledger is shorter than the anchor's byte
-      offset (including "ledger file missing entirely", size 0).
-    - ``"invalid"`` — the ledger is the SAME SIZE OR LARGER but its content at
-      the anchor position no longer matches (or the anchor itself is
-      malformed). Ledger is append-only, so byte-identical growth can never
-      produce this — it means the file was replaced/rewritten (rotation,
-      tamper), not merely truncated.
+    - ``"truncated"`` — the anchor no longer verifies, but the CURRENT
+      ledger's leading line hashes to the SAME ``ledger_identity_sha256`` as
+      the checkpoint's: this is the SAME ledger, just shrunk/corrupted past
+      the anchor. FLOOR applies.
+    - ``"missing"`` — the ledger file is absent or empty. No identity is
+      derivable from "nothing", so this is ambiguous rather than a proven
+      replacement. FLOOR applies (same side as "truncated" — see below).
+    - ``"identity_absent"`` — the anchor no longer verifies, but identity
+      cannot be established on ONE OR BOTH sides: either this checkpoint
+      predates #3201 (``ledger_identity_sha256 is None``) or the CURRENT
+      ledger's leading line could not be read. FLOOR applies — same side as
+      "truncated"/"missing".
+    - ``"invalid"`` — the anchor no longer verifies, AND both identities
+      *are* computable, AND they differ: an AFFIRMATIVELY DIFFERENT ledger
+      (cross-workspace copy, deliberate archive+recreate). NO FLOOR — a
+      different ledger's past totals are simply not this checkpoint's
+      business.
 
-    #2945 follow-up (co-vet firm): BOTH non-``"valid"`` statuses get the
-    checkpoint's totals merged in as a per-agent FLOOR by the caller — never
-    just discarded. The governing question is not "over-count vs
-    under-count" (an earlier version of this design floored "truncated" but
-    not "invalid", reasoning from that framing) but **"which operation is
-    allowed to LOWER a cap counter"**: only an explicit operator action
-    (archiving/deleting BOTH the ledger and the checkpoint together — see
-    ``docs/reference/config/budget.md``) may lower it. Every IMPLICIT path —
-    truncation, deletion, or replacement of the ledger alone — must be
-    non-decreasing, because:
-      - over-count is observable (the operator can see and act on it) and
-        has an explicit remedy (delete both files).
-      - under-count is silent — the cap simply stops enforcing and nobody
-        notices until spend has already run away.
-    The asymmetry, not "which is more surprising," is why both statuses
-    floor. (A ``"replaced"`` ledger CAN still leak a stale total from an
-    unrelated history this way — accepted as a known limitation; a stronger
-    fix would identify the ledger by more than size/position, e.g. an
-    embedded ledger-identity token, which is tracked as separate follow-up
-    work, not in scope here.)
+    #3201 (identity, not size): a prior version of this function used file
+    SIZE as the "truncated" vs "invalid" discriminator (same-size-or-larger
+    => replaced, smaller => truncated). Size is attacker-controllable (pad a
+    replacement to any length), so that was an over-approximation dressed up
+    as a distinction. The load-bearing invariant carried over unchanged from
+    #2945/#3195 (co-vet firm): only an explicit operator action (archiving
+    BOTH the ledger and the checkpoint together) may LOWER a cap-critical
+    counter. Identity discrimination makes this MORE PRECISE, never looser:
+    the floor is the DEFAULT for every status above except "valid" — the
+    ONLY status that lifts it is "invalid", and reaching "invalid" requires
+    POSITIVE proof (both identities present, and they differ), never the
+    mere absence of proof either way. An attacker who truncates the SAME
+    ledger while leaving its leading line intact (the common truncation
+    shape — cut from the tail) is classified "truncated", not "invalid", so
+    the floor still catches them; an attacker who instead strips/corrupts
+    the identity fields to dodge the floor lands in "identity_absent" (or
+    "missing"), which ALSO floors, not "invalid". Only a ledger that
+    genuinely presents a *different*, independently-hashed leading line
+    escapes the floor.
     """
     if not ledger_path.is_file():
-        return ("truncated", 0)
+        return ("missing", 0)
     size = ledger_path.stat().st_size
+    if size == 0:
+        return ("missing", size)
+
     offset = checkpoint.anchor_byte_offset
     line_len = checkpoint.anchor_line_len
-    if line_len <= 0 or offset < line_len:
-        return ("invalid", size)  # malformed anchor — not a truncation signal
-    if size < offset:
+    anchor_ok = False
+    if not (line_len <= 0 or offset < line_len or size < offset):
+        try:
+            with ledger_path.open("rb") as f:
+                f.seek(offset - line_len)
+                buf = f.read(line_len)
+        except OSError:
+            buf = b""
+        anchor_ok = (
+            len(buf) == line_len
+            and hashlib.sha256(buf).hexdigest() == checkpoint.anchor_line_sha256
+        )
+    if anchor_ok:
+        return ("valid", size)
+
+    # Anchor didn't verify (malformed, truncated-past, or content mismatch)
+    # — discriminate the reason by IDENTITY. The floor is the default;
+    # "invalid" (no floor) requires identity to be AFFIRMATIVELY provable
+    # on both sides AND different.
+    if checkpoint.ledger_identity_sha256 is None:
+        return ("identity_absent", size)
+    leading = BudgetLedger(ledger_path).leading_boundary()
+    if leading is None:
+        return ("identity_absent", size)
+    if hashlib.sha256(leading).hexdigest() == checkpoint.ledger_identity_sha256:
         return ("truncated", size)
-    try:
-        with ledger_path.open("rb") as f:
-            f.seek(offset - line_len)
-            buf = f.read(line_len)
-    except OSError:
-        return ("invalid", size)
-    if len(buf) != line_len:
-        return ("invalid", size)
-    if hashlib.sha256(buf).hexdigest() != checkpoint.anchor_line_sha256:
-        return ("invalid", size)
-    return ("valid", size)
+    return ("invalid", size)
 
 
 def write_checkpoint(
@@ -604,9 +722,20 @@ def write_checkpoint(
     No-op if the ledger is empty/missing (nothing to anchor to yet).
 
     ``floor_applied``/``floor_reason`` record whether THIS write followed a
-    floor-merge (the ledger was found truncated/missing/replaced during the
-    hydrate that produced these totals) — surfaced to the operator via
-    ``BudgetTracker.snapshot()`` / `/budget` so a floor is never silent.
+    floor-merge (the ledger was found truncated/missing/identity_absent
+    during the hydrate that produced these totals) — surfaced to the
+    operator via ``BudgetTracker.snapshot()`` / `/budget` so a floor is
+    never silent.
+
+    #3201: also stamps ``ledger_identity_sha256`` — a hash of the ledger's
+    leading (first) record line — as this checkpoint's ledger-identity
+    fingerprint, so a FUTURE ``verify_anchor`` call can discriminate a
+    truncated/corrupted SAME ledger (floor) from a genuinely DIFFERENT
+    ledger (no floor) without relying on file size. ``None`` in the
+    vanishingly rare case the leading line cannot be read even though the
+    tail boundary (checked just above) could be — degrades to
+    ``verify_anchor``'s "identity_absent" status next time, which still
+    floors (never silently drops to "no floor").
 
     P2 write order (durability): the ledger itself is already fsync'd per
     append by ``BudgetLedger._write_record`` — by construction this always
@@ -619,6 +748,10 @@ def write_checkpoint(
     if boundary is None:
         return
     size, line_bytes = boundary
+    leading_line = ledger.leading_boundary()
+    ledger_identity_sha256 = (
+        hashlib.sha256(leading_line).hexdigest() if leading_line is not None else None
+    )
     checkpoint = BudgetCheckpoint(
         agent_tokens=dict(agent_tokens),
         agent_cost_usd=dict(agent_cost_usd),
@@ -633,6 +766,7 @@ def write_checkpoint(
         anchor_line_sha256=hashlib.sha256(line_bytes).hexdigest(),
         floor_applied=floor_applied,
         floor_reason=floor_reason,
+        ledger_identity_sha256=ledger_identity_sha256,
     )
     checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
     tmp = checkpoint_path.with_suffix(checkpoint_path.suffix + ".tmp")
@@ -760,7 +894,8 @@ class BudgetTracker:
         bounding the cost to activity since the last checkpoint refresh
         instead of the ledger's lifetime.
 
-        Two fallback classes, both resolved by the SAME rule (co-vet firm):
+        Two fallback classes, both resolved by the SAME rule (co-vet firm,
+        #2945/#3195, precision-refined by #3201):
         ``per_agent_tokens``/``per_agent_cost_usd`` may only be LOWERED by an
         explicit operator action (archiving/deleting both the ledger and the
         checkpoint together); every implicit path (truncation, deletion, or
@@ -770,21 +905,36 @@ class BudgetTracker:
             ledger, no floor (nothing trustworthy survives to floor with —
             there is no explicit-operator-action signal here either way, so
             this is simply "no checkpoint exists").
-          - ``"truncated"`` (current ledger shorter than the anchor, INCLUDING
-            deleted entirely) or ``"invalid"`` (ledger same size or larger but
-            its content no longer matches — replaced/rewritten, since a
-            genuine truncation can never produce this on an append-only
-            ledger) -> full re-scan of the current ledger, then the
-            checkpoint's per-agent totals are merged in as a per-agent FLOOR
-            (``max()``, never lower). NOTE: this means archiving/deleting
-            ONLY the ledger file no longer resets per-agent totals while a
+          - ``"truncated"`` / ``"missing"`` / ``"identity_absent"`` (see
+            ``verify_anchor``) -> full re-scan of the current ledger, then
+            the checkpoint's per-agent totals are merged in as a per-agent
+            FLOOR (``max()``, never lower). These are every case EXCEPT an
+            AFFIRMATIVELY proven different ledger — the floor is the
+            default, not the exception, and stays that way whether the
+            anchor is merely stale (truncated), the ledger is gone
+            (missing), or identity simply cannot be established on one or
+            both sides (identity_absent, e.g. a pre-#3201 checkpoint) —
+            because none of those SATISFY the burden of proof for "this is
+            a different ledger". NOTE: this means archiving/deleting ONLY
+            the ledger file no longer resets per-agent totals while a
             checkpoint still exists (see ``docs/reference/config/budget.md``)
             — deliberate: the reset UX is "archive BOTH files together".
+          - ``"invalid"`` (#3201: the CURRENT ledger's leading-line identity
+            is AFFIRMATIVELY computable and differs from the checkpoint's
+            stored ``ledger_identity_sha256``) -> full re-scan of the
+            current ledger, NO floor. A genuinely different ledger's past
+            totals are unrelated to this one (cross-workspace copy,
+            deliberate reset) — floor-merging them in would leak a stale,
+            never-lowerable total from an unrelated ledger's history. This
+            is the ONLY status that skips the floor, and it requires
+            POSITIVE proof (both identities present and different), never
+            merely the absence of proof.
 
         Whenever a floor was applied, the fact and the reason
-        (``"truncated"``/``"missing"``/``"replaced"``) are recorded on
-        ``self`` (surfaced via ``snapshot()`` -> `/budget`) AND written into
-        the fresh checkpoint below — a floor firing must never be silent.
+        (``"truncated"``/``"missing"``/``"identity_absent"``) are recorded
+        on ``self`` (surfaced via ``snapshot()`` -> `/budget`) AND written
+        into the fresh checkpoint below — a floor firing must never be
+        silent.
 
         A fresh checkpoint is written at the end of every hydrate call
         regardless of which path was taken, so the checkpoint self-heals and
@@ -832,9 +982,9 @@ class BudgetTracker:
             records = self._ledger.iter_records_from(checkpoint.anchor_byte_offset)
         else:
             # No verifiable fast path — full re-scan of the CURRENT ledger.
-            # If status is "truncated" or "invalid", the checkpoint's own
-            # totals are merged in as a floor AFTER this scan (below) — see
-            # ``verify_anchor``'s docstring for why both statuses floor.
+            # Unless status is "invalid" (an AFFIRMATIVELY different
+            # ledger), the checkpoint's own totals are merged in as a floor
+            # AFTER this scan (below) — see ``verify_anchor``'s docstring.
             records = self._ledger.iter_records()
 
         for record in records:
@@ -871,16 +1021,19 @@ class BudgetTracker:
                 monthly_tokens += tokens
                 monthly_cost += cost
 
-        # #2945 (co-vet firm): only an EXPLICIT operator action may lower a
-        # cap-critical per-agent counter — every implicit path (truncation,
-        # deletion, or replacement of the ledger alone) is non-decreasing.
-        # Merge the checkpoint's totals in as a per-agent FLOOR (max, never
-        # overwrite-down) on top of whatever the re-scan of the current
-        # ledger found, for BOTH "truncated" and "invalid" — see
-        # ``verify_anchor``'s docstring for the reasoning.
+        # #2945 (co-vet firm), precision-refined by #3201: only an EXPLICIT
+        # operator action may lower a cap-critical per-agent counter — every
+        # implicit path (truncation, deletion, or replacement of the ledger
+        # alone) is non-decreasing. Merge the checkpoint's totals in as a
+        # per-agent FLOOR (max, never overwrite-down) on top of whatever the
+        # re-scan of the current ledger found, for every status EXCEPT
+        # "invalid" (an AFFIRMATIVELY, identity-proven DIFFERENT ledger) —
+        # see ``verify_anchor``'s docstring for the full reasoning. The
+        # floor is the default; "invalid" is the one narrow exception, and
+        # it requires positive proof, never merely absent proof.
         self._floor_applied = False
         self._floor_reason = None
-        if checkpoint is not None and status in ("truncated", "invalid"):
+        if checkpoint is not None and status in ("truncated", "missing", "identity_absent"):
             for agent, tok in checkpoint.agent_tokens.items():
                 if tok > agent_tokens.get(agent, 0):
                     agent_tokens[agent] = tok
@@ -888,12 +1041,7 @@ class BudgetTracker:
                 if cost > agent_cost.get(agent, 0.0):
                     agent_cost[agent] = cost
             self._floor_applied = True
-            if status == "invalid":
-                self._floor_reason = "replaced"
-            elif not ledger_path.is_file():
-                self._floor_reason = "missing"
-            else:
-                self._floor_reason = "truncated"
+            self._floor_reason = status
 
         self._daily_tokens = daily_tokens
         self._daily_cost_usd = daily_cost
@@ -1636,7 +1784,12 @@ def format_cost_line(snapshot: dict, agent: str) -> str:
 _FLOOR_REASON_LABEL = {
     "truncated": "the budget ledger was found shorter than expected (truncated)",
     "missing": "the budget ledger was missing at startup",
-    "replaced": "the budget ledger's content no longer matched what was recorded (replaced)",
+    # #3201: a checkpoint whose ledger identity could not be established
+    # (pre-#3201 checkpoint, or the ledger's leading line was unreadable) —
+    # NOT a confirmed replacement, so it still floors on the safe side.
+    "identity_absent": (
+        "the budget ledger's identity could not be verified at startup"
+    ),
 }
 
 
