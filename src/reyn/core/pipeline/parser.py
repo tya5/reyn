@@ -316,7 +316,7 @@ def _reject_unknown_keys(
 # ---------------------------------------------------------------------------
 
 _TRANSFORM_KEYS = frozenset({"value", "output"})
-_TOOL_KEYS = frozenset({"name", "args", "schema", "output"})
+_TOOL_KEYS = frozenset({"name", "args", "schema", "output", "on_error"})
 _AGENT_KEYS = frozenset({"prompt", "identity", "capabilities", "schema", "model", "output"})
 _CALL_KEYS = frozenset({"pipeline", "pass", "output"})
 _MATCH_KEYS = frozenset({"on", "cases", "default", "output"})
@@ -332,6 +332,16 @@ def _parse_transform_step(body: "dict[str, Any]") -> TransformStep:
 
 
 def _parse_tool_step(body: "dict[str, Any]") -> ToolStep:
+    """``tool = {name:LIT, args?:{NAME:EXPR|LIT}, schema?:LIT, on_error?:
+    abort|continue|retry(n), output?:NAME}`` — the ONLY non-fan-out step kind
+    with a side effect. ``on_error`` is OPTIONAL (#3130, unlike ``for_each``'s
+    REQUIRED ``on_error`` — see :func:`_parse_for_each_step`): an omitted key
+    parses to ``None``, which is a DISTINCT state from the string ``"abort"``
+    (see :class:`~reyn.core.pipeline.executor.ToolStep`'s docstring) —
+    preserving byte-identical behavior for every existing pipeline that never
+    declared it. When present, it is the SAME three values, validated with the
+    SAME regex (:data:`_ON_ERROR_RE`) and error-message shape ``for_each``/
+    ``parallel`` already use."""
     _reject_unknown_keys(body, _TOOL_KEYS, where="tool step")
     if "name" not in body:
         _fail("tool step: missing required field 'name'")
@@ -348,7 +358,18 @@ def _parse_tool_step(body: "dict[str, Any]") -> ToolStep:
     schema = body.get("schema")
     if schema is not None and not isinstance(schema, str):
         _fail(f"tool step 'schema': expected a schema-name string, got {type(schema).__name__}")
-    return ToolStep(name=name, args=args, output=body.get("output"), schema=schema)
+    on_error = body.get("on_error")
+    if on_error is not None and (
+        not isinstance(on_error, str)
+        or (on_error not in ("continue", "abort") and _ON_ERROR_RE.match(on_error) is None)
+    ):
+        _fail(
+            "tool step 'on_error': must be 'continue', 'abort', or "
+            f"'retry(n)' (a positive integer n), got {on_error!r}"
+        )
+    return ToolStep(
+        name=name, args=args, output=body.get("output"), schema=schema, on_error=on_error,
+    )
 
 
 def _parse_agent_step(body: "dict[str, Any]") -> AgentStep:

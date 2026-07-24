@@ -97,6 +97,10 @@ def _encode_tool(step: "ToolStep") -> "dict[str, Any]":
         "args": {k: _encode_arg(step.name, k, v) for k, v in step.args.items()},
         "output": step.output,
         "schema": step.schema,
+        # #3130: optional, mirrors for_each/parallel's on_error string — None
+        # (the default) round-trips as None, preserving the byte-identical
+        # "no on_error declared" state through a work-order persist/resume.
+        "on_error": step.on_error,
     }
 
 
@@ -122,6 +126,7 @@ def _decode_tool(data: "dict[str, Any]") -> "ToolStep":
         args={k: _decode_arg(v) for k, v in dict(data.get("args") or {}).items()},
         output=data.get("output"),
         schema=data.get("schema"),
+        on_error=data.get("on_error"),
     )
 
 

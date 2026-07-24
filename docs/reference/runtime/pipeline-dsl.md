@@ -178,6 +178,7 @@ TransformBody ::= "{" "value:" EXPR ["output:" NAME] "}"
 ToolBody      ::= "{" "name:" STRING
                       ["args:" ArgMap]
                       ["schema:" NAME]
+                      ["on_error:" OnError]        (* optional — omitted = no isError check (pre-#3130 behavior) *)
                       ["output:" NAME] "}"
 ArgMap        ::= "{" (KEY ":" ArgValue ("," KEY ":" ArgValue)*)? "}"
 ArgValue      ::= LITERAL | "!expr" EXPR        (* !expr only as the WHOLE value, never nested *)
@@ -287,7 +288,39 @@ registered tool name (`web_search`).
 | `name` | yes | The tool/action name (literal string). |
 | `args` | no | Mapping of argument name → value. Each value is a **literal** unless tagged `!expr` (see [Literals vs `!expr`](#literals-vs-expr) below). |
 | `schema` | no | A registered schema name the result must conform to (`verify: schema` — see [Schemas](#schemas-verify-schema)). Non-conformance fails the step (checked against the RAW tool result, before the `text`/`structured` reduction below). |
+| `on_error` | no | (#3130) One of `continue`, `abort`, or `retry(N)` — see [`tool.on_error`](#toolon_error) below. **Omitted is a distinct state**, not a synonym for `abort`: it preserves the pre-#3130 behavior (only a raised exception fails the step; a canonical-error result — `meta.isError` — passes through unchecked, e.g. for a `schema:`-gated preflight probe to inspect downstream). |
 | `output` | no | Named store to write the result to. |
+
+#### `tool.on_error`
+
+By default (the key omitted) a `tool` step only fails on a raised exception —
+a tool that returns a *canonical-error result* (`meta.isError: true`, e.g. an
+MCP tool's `isError` branch) returns **normally**; reacting to it requires a
+downstream `schema:`-gated preflight step. `on_error` (#3130) lets a single
+`tool` step react to that natively, mirroring `for_each`/`parallel`'s
+`on_error` — same three values, same `retry(n)` regex, same retry-safety
+model (a retry re-invokes the tool: any internal side effect it has may
+re-fire, same caveat as `for_each`'s `on_error: retry(n)`):
+
+- **`abort`** — a raised exception OR a canonical-error result fails the step
+  (`PipelineExecutionError`), naming the tool's own error text.
+- **`continue`** — the step does **not** fail; instead the failure is bound to
+  `output` as a **typed error-envelope** — the SAME `{text, structured, meta:
+  {isError: true}}` shape a canonical-error tool result already takes (a
+  raised exception is rendered into that same shape). This is *not* the
+  `for_each`-style "drop the item" — a single step's `output` is a NAMED
+  binding downstream steps reference by name, so dropping it would leave an
+  unbound-variable reference; binding a discriminable error-envelope instead
+  keeps `ctx.<output>.meta.isError` inspectable downstream, symmetric with the
+  success shape.
+- **`retry(N)`** — re-run the whole step (dispatch + `schema:` validation) up
+  to `N` more times; if it still fails, falls through to `abort` (there is no
+  combined "retry then continue" value, matching `for_each`).
+
+```yaml
+- tool: {name: fetch_url, args: {url: !expr ctx.link}, on_error: continue, output: page}
+- transform: {value: "get(ctx.page, 'meta.isError', false) ? 'unreachable' : ctx.page.text", output: body}
+```
 
 #### `tool` step results
 
@@ -832,7 +865,8 @@ SchemaDoc     ::= "schema:" NAME "fields:" FieldMap
 PipelineDoc   ::= "pipeline:" NAME ("description:" STRING)? "steps:" Step+
 
 Step          ::= "transform:" "{" "value:" EXPR ["output:" NAME] "}"
-                 | "tool:"     "{" "name:" STRING ["args:" ArgMap] ["schema:" NAME] ["output:" NAME] "}"
+                 | "tool:"     "{" "name:" STRING ["args:" ArgMap] ["schema:" NAME]
+                                    ["on_error:" OnError] ["output:" NAME] "}"
                  | "agent:"    "{" "prompt:" TPL ["identity:" NAME]
                                     ["capabilities:" "{" "tools:" "[" NAME* "]" "}"]
                                     ["schema:" NAME] ["model:" NAME] ["output:" NAME] "}"
@@ -882,6 +916,12 @@ run-time step failure — never a silent wrong result):
    steps](#data-flow-between-steps).
 4. `for_each.on_error` is **required** — state `continue`/`abort`/`retry(n)`
    explicitly. `parallel.on_error` is optional and defaults to `abort`.
+   `tool.on_error` (#3130) is also optional, but — unlike `parallel` —
+   **omitted is a distinct state from `"abort"`**: omitted means no
+   canonical-error (`meta.isError`) check runs at all (only a raised
+   exception fails the step, the pre-#3130 behavior); an explicit `abort`
+   additionally fails the step on a canonical-error tool result. See
+   [`tool.on_error`](#toolon_error).
 5. A `for_each`/`parallel` item or branch cannot see any other item's or
    branch's result — only `collect` sees the merged set (an ordered list for
    `for_each`, a `{branch_name: result}` map for `parallel`).
