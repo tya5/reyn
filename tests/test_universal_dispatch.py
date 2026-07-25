@@ -610,6 +610,11 @@ _ROUTE_CONTRACT_SAMPLES: list[tuple[str, dict[str, Any]]] = [
     # (mirrors skill_management__list above: the result is the whole
     # BUILTIN_PLUGINS-advertised set, nothing here for the caller to filter by).
     ("plugin_management__list", {}),
+    # knowledge category (FP-0066 P3c, #3247 firm §3/§5) — search requires
+    # a non-empty `query` string (search_knowledge's sole required param;
+    # `limit` is optional). Mirrors mcp__search_registry's shape above
+    # (a single required free-text query key, passthrough transformer).
+    ("knowledge__search", {"query": "widgets"}),
 ]
 
 
