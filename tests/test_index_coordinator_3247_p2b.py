@@ -315,27 +315,37 @@ def test_disk_adopt_hit_skips_rebuild(tmp_path: Path, monkeypatch: pytest.Monkey
 def test_build_failure_memoized_not_reattempted(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Tier 2: equivalence case 4 — a build failure is memoized on BOTH the
-    RouterLoop-side flag (#1458, unchanged) AND the Coordinator's own
-    failure-memo (``build_failed``) — and the production retry guard
-    (checked by the caller before invoking again) prevents a second
-    attempt."""
+    """Tier 2: equivalence case 4 — a build failure is memoized SOLELY on
+    the Coordinator's own failure-memo (``build_failed``, P2-convergence
+    PR2 #3270 §3 — the twin RouterLoop-side flag is retired). The retry
+    itself is suppressed at ``_ensure_action_index_built``'s own entry
+    (the AUTO-rebuild chokepoint), NOT inside ``IndexCoordinator.
+    ensure_built`` — a co-vet-caught regression: ``ensure_built`` must
+    stay trigger-agnostic so ``search_await``'s heal path (which calls
+    ``ensure_built`` directly, for every source) is never suppressed by
+    the action-catalog's #1458 policy. DRIVEN, not mirrored: this test
+    calls ``_ensure_action_index_built`` UNCONDITIONALLY a second time (no
+    caller-side ``if not build_failed`` guard, which would make the
+    assertion pass regardless of whether the production suppression
+    works)."""
     ctx = _op_ctx_for(_FakeEmbeddingProvider(), monkeypatch)
     loop = _LoopForP2b(tmp_path, ctx)
     idx = _FakeActionIndex(should_fail=True)
 
     _run(loop._ensure_action_index_built(idx, "provider", "standard", await_completion=True))
     assert idx.prepare_calls == 1
-    assert getattr(loop, "_action_index_build_failed", False) is True
     coordinator = loop._get_index_coordinator()
     assert coordinator.build_failed("actions") is True
+    assert not hasattr(loop, "_action_index_build_failed"), (
+        "the twin RouterLoop-side flag must no longer exist (P2-convergence PR2)"
+    )
 
-    # Production retry guard (mirrors RouterLoop.run()'s own gate): do NOT
-    # call again once the failure flag is set.
-    if not getattr(loop, "_action_index_build_failed", False):
-        _run(loop._ensure_action_index_built(
-            idx, "provider", "standard", await_completion=True,
-        ))
+    # Call again UNCONDITIONALLY — the suppression must come from
+    # ``ensure_built`` itself, not from this test remembering to check
+    # ``build_failed`` first.
+    _run(loop._ensure_action_index_built(
+        idx, "provider", "standard", await_completion=True,
+    ))
     assert idx.prepare_calls == 1, "memoized failure must prevent a retry"
 
 

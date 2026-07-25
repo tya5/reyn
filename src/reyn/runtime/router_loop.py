@@ -1294,12 +1294,14 @@ class RouterLoop:
         #
         # P2b: the eager-vs-background DECISION + once-per-chain spawn dedup
         # + failure-memo are now routed through ``IndexCoordinator`` (see
-        # ``_ensure_action_index_built`` / ``ensure_built_self_contained``)
-        # instead of the RouterLoop-instance-scoped ``_action_index_build_task``
-        # flag. ``_build_action_embedding_index_background`` itself (the
-        # actual build primitive: fetch catalog, call ``idx.build()``,
-        # handle failure — pinned by #1458's tests) is UNCHANGED; only its
-        # caller-side orchestration moved.
+        # ``_ensure_action_index_built`` / ``ensure_built``). P2-convergence
+        # PR2 (#3270 §3): the failure-memo is now SOLELY
+        # ``IndexCoordinator.build_failed(source_id)`` — the RouterLoop's own
+        # ``_action_index_build_failed`` flag (a twin, in-sync-by-convention
+        # signal) and the production-dead
+        # ``_build_action_embedding_index_background`` primitive (the flag's
+        # only setter) are both removed; production failure-tracking lives
+        # only in the Coordinator's ``_failure_memo``.
         _search_visible = False
         if _univ_enabled:
             _idx_getter = getattr(host, "get_action_embedding_index", None)
@@ -1310,10 +1312,24 @@ class RouterLoop:
             _provider = _provider_getter() if _provider_getter else None
             _model_class = _model_getter() if _model_getter else None
             _eager_embedding_build = bool(_eager_getter()) if _eager_getter else False
-            # #1458: skip both build paths when a prior attempt in this session
-            # failed (per-session failure memoization). The failed flag is set
-            # in _build_action_embedding_index_background on any exception.
-            _build_failed = getattr(self, "_action_index_build_failed", False)
+            # #1458: a prior build failure in this session must not spawn a
+            # retry. P2-convergence PR2 (#3270 §3, REVISED after a co-vet-
+            # caught regression): the suppression is enforced inside
+            # ``_ensure_action_index_built`` itself (checked at ITS entry,
+            # reading ``IndexCoordinator.build_failed(source_id)`` — the
+            # single STATE owner), NOT here and NOT inside
+            # ``IndexCoordinator.ensure_built`` (an earlier revision put it
+            # there, which silently broke the §G2 heal contract:
+            # ``search_await`` calls ``ensure_built`` directly, for every
+            # OTHER registered source too, to heal a dirty/failed entry
+            # once its provider recovers — a blanket suppression inside
+            # ``ensure_built`` made that path permanently stuck). Both
+            # calls below are therefore UNCONDITIONAL here (no caller-side
+            # ``build_failed`` mirror) — the callee is the single AUTO-
+            # rebuild chokepoint that decides whether to actually attempt a
+            # build, so the calls resolve as a cheap no-op after a failure
+            # without this call site needing to know that.
+            #
             # B25-S5-1: when eager flag is set, await the build synchronously
             # before computing _search_visible. This pays the build cost on
             # the first turn (= once per session; subsequent turns see
@@ -1325,7 +1341,6 @@ class RouterLoop:
                 and _provider is not None
                 and _model_class
                 and not getattr(_idx, "is_ready", lambda: False)()
-                and not _build_failed
             ):
                 await self._ensure_action_index_built(
                     _idx, _provider, _model_class, await_completion=True,
@@ -1340,15 +1355,15 @@ class RouterLoop:
             # build when the index is configured but not yet ready.  The
             # build is idempotent (= same catalog hash → no-op) and
             # serialised by the index's internal lock; once-per-source
-            # in-flight dedup is now IndexCoordinator's
-            # ``ensure_built_self_contained`` (``_bg_tasks``), not a
-            # RouterLoop instance flag.
+            # in-flight dedup is now IndexCoordinator's ``ensure_built``
+            # (``_bg_tasks``, P2-convergence PR1 eliminated the two-path
+            # ``ensure_built_self_contained`` this comment used to name),
+            # not a RouterLoop instance flag.
             if (
                 _idx is not None
                 and _provider is not None
                 and _model_class
                 and not getattr(_idx, "is_ready", lambda: False)()
-                and not _build_failed
             ):
                 await self._ensure_action_index_built(
                     _idx, _provider, _model_class, await_completion=False,
@@ -3501,11 +3516,14 @@ class RouterLoop:
         background, since that is the one coroutine body either awaited
         inline or scheduled via ``asyncio.create_task``):
 
-        * ``on_error`` — #1458's failure-memoization
-          (``self._action_index_build_failed``) + the decision-enabling
-          warning log, kept in sync with the Coordinator's OWN
-          failure-memo (``build_failed()``), which is set on the SAME
-          exception one frame up in ``_run_build``'s own except-block.
+        * ``on_error`` — P2-convergence PR2 (#3270 §3): #1458's
+          decision-enabling warning log ONLY. The failure-memoization
+          itself is no longer duplicated on the RouterLoop instance — it
+          lives solely in the Coordinator's ``_failure_memo``
+          (``build_failed()``), set one frame up in ``_run_build``'s own
+          except-block BEFORE this callback runs, so by the time
+          ``on_error`` fires the memo is already the single source of
+          truth.
         * ``on_success`` — syncs ``idx``'s in-memory
           ``is_ready()``/``size()``/``catalog_hash()`` gate
           (``ActionEmbeddingIndex.adopt_build_result``) after a REAL
@@ -3525,12 +3543,37 @@ class RouterLoop:
         so a targeted ``mark_dirty`` forces ``ensure_built`` to actually
         invoke ``prepare_material`` (whose OWN cheap disk-adopt check then
         typically resolves in one file-stat, no embed call).
+
+        #1458 same-session AUTO-rebuild suppression (P2-convergence PR2,
+        #3270 §3, REVISED after a co-vet-caught regression): a co-vet round
+        found that enforcing this inside ``IndexCoordinator.ensure_built``
+        itself silently broke the §G2 heal contract for every OTHER
+        registered source — ``search_await`` calls ``ensure_built``
+        directly (not through this method) to heal a dirty/failed entry
+        once its provider recovers, and a blanket suppression there made a
+        dirty+failed source unhealable forever. ``ensure_built`` is
+        TRIGGER-AGNOSTIC; the suppression is enforced HERE instead — the
+        ONE chokepoint both the eager (``await_completion=True``) and
+        background (``await_completion=False``) AUTO-rebuild paths funnel
+        through (``RouterLoop.run()`` calls only this method for both).
+        Reads STATE from the Coordinator's ``build_failed(source_id)`` (the
+        single owner of that state — see ``coordinator.py``); this method
+        owns the POLICY decision to skip a further AUTO attempt once that
+        state is True, which is why the check lives here and not on the
+        Coordinator.
         """
         if getattr(idx, "is_ready", lambda: False)():
             return
 
         coordinator = self._get_index_coordinator()
         source_id = getattr(idx, "source_name", None) or "actions"
+
+        if coordinator.build_failed(source_id):
+            # #1458: a prior AUTO-rebuild attempt in this session already
+            # failed for this source — do not spawn another one. (This is
+            # the suppression POLICY seam; ``search_await``'s heal path
+            # does NOT go through this method, so it is unaffected.)
+            return
 
         if await coordinator.is_ready(source_id):
             await coordinator.mark_dirty(
@@ -3548,8 +3591,10 @@ class RouterLoop:
             return await idx.prepare_material(items, op_ctx, model_class)
 
         def _on_error(exc: BaseException) -> None:
-            # #1458: memoize the failure so subsequent turns do not retry.
-            self._action_index_build_failed = True
+            # #1458: decision-enabling warning log. Failure memoization
+            # itself is the Coordinator's ``_failure_memo`` (set already,
+            # one frame up in ``_run_build``'s except-block) — see the
+            # docstring above.
             import logging
 
             logging.getLogger(__name__).warning(
@@ -3576,95 +3621,6 @@ class RouterLoop:
             on_error=_on_error,
             on_success=_on_success,
         )
-
-    async def _build_action_embedding_index_background(
-        self, idx: Any, provider: Any, model_class: str,
-    ) -> None:
-        """FP-0034 Phase 2 step 1: background ActionEmbeddingIndex build.
-
-        Enumerates the catalog via ``LIST_ACTIONS`` against a fresh
-        ``RouterCallerState`` snapshot (``_fetch_action_catalog_items``)
-        and feeds the items into ``idx.build()``.  The build is idempotent
-        (= same catalog hash skipped).
-
-        P2-convergence PR1 (#3270 §2): this primitive is UNCHANGED (still
-        drives ``idx.build()`` — the full embed+write, now lock-free — end
-        to end and swallows/memoizes its own failure) and is kept for
-        direct/standalone callers, principally its own #1458 unit tests
-        (``tests/test_action_embedding_build_failure_1458.py``). The
-        PRODUCTION action-catalog build no longer routes through this
-        method — ``RouterLoop._ensure_action_index_built`` now calls
-        ``ActionEmbeddingIndex.prepare_material`` directly via the
-        Coordinator's ``ensure_built``, so the Coordinator (not ``idx``)
-        performs the write. Both shapes drive the exact same
-        ``ActionEmbeddingIndex`` build machinery underneath
-        (``prepare_material`` + ``embed_verify_write``); this method's own
-        failure-handling/logging contract (below) stays independently
-        exercised as a regression pin on that machinery.
-
-        ``provider`` is retained as the caller's pre-existing "embedding
-        configured" signal (callers gate on ``provider is not None`` before
-        spawning this background build) but is no longer passed to
-        ``idx.build()`` — FP-0057 #2856 Part A routes the actual embed call
-        through ``execute_op(EmbedIROp(...), op_ctx)`` (see
-        ``ActionEmbeddingIndex._embed_via_op``), so ``idx.build()`` now takes
-        an ``OpContext`` (built the same way as the other router op-ctx call
-        sites: ``self.host.make_router_op_context()``).
-
-        Errors are swallowed, flagged on the RouterLoop instance, and surfaced
-        as an operator-visible warning log so a misconfigured embedding provider
-        does not crash the chat session — the next turn finds ``is_ready()``
-        False and keeps ``search_actions`` hidden.
-
-        #1458: on failure, ``_action_index_build_failed`` is set to True so
-        neither the eager nor the background-task path retries within this
-        session (per-session once-only memoization). Cross-session persistence
-        is intentionally not implemented (YAGNI: one retry per new session with
-        a clear log is an acceptable cost, and the session boundary is a natural
-        cache-invalidation point for e.g. a model-download that was retried on a
-        reconnected machine).
-        """
-        try:
-            items = await self._fetch_action_catalog_items()
-            if items is None:
-                return
-            op_ctx = self.host.make_router_op_context()
-            await idx.build(items, op_ctx, model_class)
-        except Exception as exc:
-            # #1458: memoize the failure so subsequent turns do not retry.
-            # FP-0066 P2d/#3247 convergence-debt (co-vet, pre-merge): this
-            # flag and the Coordinator's own failure-memo
-            # (``IndexCoordinator._failure_memo`` / ``build_failed()``) are
-            # BOTH set on this same exception today (byte-identical two-path
-            # retention from P2b) — keep them in sync until the #3247
-            # convergence follow-up unifies failure-state into one signal.
-            # A future edit to only ONE of the two paths silently desyncs
-            # them; see the interim guard pin
-            # ``test_action_index_build_failure_both_signals_stay_in_sync``
-            # in ``tests/test_index_coordinator_3247_p2d.py``.
-            self._action_index_build_failed = True
-            # FP-0066 P2d (#3247): the audit-event for this failure used to
-            # be emitted HERE directly (``action_index_build_failed``).
-            # It is now folded into ``embedding_index_build_error``,
-            # emitted by ``IndexCoordinator.ensure_built_self_contained``
-            # (this method's only production caller routes through it via
-            # ``_ensure_action_index_built``'s ``_build_coro`` wrapper,
-            # which re-raises on this exact failure so the Coordinator's
-            # except-block observes it) — see ``coordinator.py``. Emitting
-            # both here AND there would double-emit for the same failure.
-            # #1458: decision-enabling operator warning — names the likely
-            # cause + three actionable outs, same family as the
-            # ``_build_embedding_config`` / ``_validate_retrieval_scheme_embedding``
-            # config-load messages so the operator surface is consistent.
-            import logging
-
-            # #1616: cause-aware guidance (UnsupportedParamsError → proxy-side
-            # drop_params; else the HF-download case). Extracted to a unit-testable
-            # module helper so the cause-selection is pinned without driving the
-            # whole index build.
-            logging.getLogger(__name__).warning(
-                "%s", _action_index_build_failure_warning(exc, model_class)
-            )
 
     async def _build_router_caller_state(self) -> Any:
         """Build a RouterCallerState populated with bound callbacks.

@@ -52,6 +52,23 @@ concern — extracted into ``ActionEmbeddingIndex.prepare_material``, a
 call — see ``_run_build``'s ``material is None`` branch and ``BuildFn``'s
 docstring).
 
+**P2-convergence PR2** (#3270 §3, subordinate to PR1's Coordinator-routing):
+collapses the twin failure signals — ``RouterLoop``'s own
+``_action_index_build_failed`` flag AND this class's ``_failure_memo`` — to
+this class's memo as the SOLE STATE owner. The flag (and its only setter, the
+production-dead ``RouterLoop._build_action_embedding_index_background``)
+are removed entirely; ``build_failed(source_id)`` below is the single read
+surface every caller (production and test) now uses. The SUPPRESSION
+POLICY built on top of that state (#1458's "at most one AUTO-rebuild
+attempt per session") is deliberately NOT enforced here — a co-vet round
+caught that an earlier revision put it in ``ensure_built`` itself, which
+silently broke the §G2 heal contract for every OTHER source (``search_await``
+calls ``ensure_built`` directly to heal a dirty entry once its provider
+recovers, for every registered source, not just the action-catalog).
+``ensure_built`` stays TRIGGER-AGNOSTIC; the #1458 suppression lives solely
+at ``RouterLoop._ensure_action_index_built``, the one AUTO-rebuild
+chokepoint that actually wants it (see that method's docstring).
+
 **Crash-recovery (the band requirement, CLAUDE.md recovery-feature gate)**:
 the dirty/building/error state lives in ``SourceEntry`` (persisted to
 ``sources.yaml`` — the SourceManifest's existing atomic-write file SSoT).
@@ -372,6 +389,26 @@ class IndexCoordinator:
         ``mark_dirty`` + the in-process failure-memo, and reported on the
         returned ``BuildOutcome.error`` (the §G2 best-effort contract).
 
+        ``ensure_built`` is deliberately TRIGGER-AGNOSTIC about a prior
+        failure (P2-convergence PR2, #3270 §3, revised after a co-vet-
+        caught regression): it does NOT itself suppress a rebuild just
+        because ``build_failed(source_id)`` is already True — a dirty/
+        error entry still attempts ``build_fn`` again on every call. This
+        is required for the §G2 heal contract: ``search_await`` calls
+        THIS method directly to heal a dirty source once its provider
+        recovers, for EVERY registered source (skill/memory/repo/action-
+        catalog) — an unconditional suppression here would have globalized
+        the action-catalog-specific #1458 "don't auto-retry a failed
+        build" POLICY onto every source's heal path, permanently stranding
+        a dirty source that could otherwise recover. #1458's per-session
+        "at most one AUTO attempt" suppression is instead enforced by the
+        ONE caller that actually wants it — ``RouterLoop.
+        _ensure_action_index_built`` (the AUTO-rebuild chokepoint both the
+        eager and background paths funnel through), which checks
+        ``build_failed(source_id)`` at ITS OWN entry, before ever calling
+        ``ensure_built``. ``search_await`` does not go through that
+        chokepoint, so a heal is never suppressed.
+
         ``events`` (FP-0066 P2d, #3247 firm §6): an optional ``EventLog`` to
         emit the ``embedding_index_build_started``/``_progress``/
         ``_complete``/``_error`` audit-event phases to. ``None`` (the
@@ -386,9 +423,11 @@ class IndexCoordinator:
         ``await_completion`` (it runs from inside ``_run_build``, the same
         coroutine body whether awaited inline or scheduled as a background
         task, so it fires uniformly for both). This is the seam a caller
-        with its OWN failure bookkeeping to keep in sync (e.g.
-        ``RouterLoop._action_index_build_failed``, #1458) hooks into,
-        without the Coordinator needing to know that bookkeeping exists —
+        with its OWN decision-enabling side effect (e.g. ``RouterLoop``'s
+        #1458 operator-warning log) hooks into — failure BOOKKEEPING itself
+        is NOT this seam's job as of P2-convergence PR2 (#3270 §3): the
+        Coordinator's ``_failure_memo`` (set one frame up, before this
+        callback fires) is the sole owner of that state —
         the callback receives the ORIGINAL exception object (not just its
         ``str()``), which a cause-aware caller (e.g.
         ``_action_index_build_failure_warning``'s exception-type branching)
@@ -666,17 +705,20 @@ class IndexCoordinator:
             await self._manifest.upsert(entry)
         return removed
 
-    # ── failure-memo read surface (mirrors router_loop's
-    #    ``_action_index_build_failed`` semantics) ───────────────────────
+    # ── failure-memo read surface (P2-convergence PR2, #3270 §3: the SOLE
+    #    owner of build-failure state — RouterLoop's twin
+    #    ``_action_index_build_failed`` flag is retired) ───────────────────
 
     def build_failed(self, source_id: str) -> bool:
         """True if a prior build attempt in THIS process failed (per-process
-        once-per-source memoization, mirrors ``RouterLoop.
-        _action_index_build_failed`` — cross-process/cross-restart
+        once-per-source memoization — cross-process/cross-restart
         persistence of "don't retry" is intentionally NOT implemented; the
         persisted ``sources.yaml`` state is ``dirty``/``error`` regardless,
         so a fresh process/session gets exactly one retry, which is the
-        desired heal path)."""
+        desired heal path). The single source of truth for build-failure
+        state (P2-convergence PR2, #3270 §3) — every caller (production
+        ``RouterLoop`` reads included) reads THIS, not a caller-side twin
+        flag."""
         return source_id in self._failure_memo
 
     # ``ensure_built_self_contained`` — the ORCHESTRATION-only twin that used
