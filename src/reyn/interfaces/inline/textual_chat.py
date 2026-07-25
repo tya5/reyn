@@ -21,6 +21,20 @@ inventing a second styling vocabulary: :class:`ReynPresenter` fills the body cel
 and :class:`ReynGutter` fills the flowview gutter column, the split flowview's
 presenter/decorator protocol expects.
 
+Phase 3 adds the bottom-chrome tab-drawer. Below the composer sit two slim rows —
+a :class:`StatusLine` of ``model │ agent │ cost │ ctx`` values and a focusable
+:class:`MenuBar` (a ``Tabs`` row: ``Model Agent History Cost Ctx Menu Help``) —
+plus a :class:`~textual.widgets.ContentSwitcher` drawer that is collapsed by
+default and expands DOWNWARD when a menu item is opened. Focus flows ``↓`` from
+the composer's last line into the menu, ``← →`` move the highlight, ``Enter``
+opens the highlighted item's drawer, and ``↑``/``Esc`` close it and return focus
+to the composer (arrow-move alone never opens — opening is an explicit Enter).
+Interactive panes are Textual :class:`~textual.widgets.OptionList` widgets
+(Model/Agent/History/Menu); static readouts are plain Rich
+:class:`~textual.widgets.Static` (Cost/Ctx/Help). The drawer content is
+PLACEHOLDER here — wiring it to reyn's real registries (model/agent/history/cost/
+ctx/slash-commands/keybindings) is Phase 4.
+
 Import boundary (load-bearing): this module imports :mod:`textual` and
 :mod:`textual_flowview` at top level, so it must only ever be imported on the TTY
 path — :func:`~reyn.interfaces.repl.client_driver.run_chat_client` imports it
@@ -38,7 +52,15 @@ from textual import events
 from textual.app import App, ComposeResult
 from textual.containers import Horizontal
 from textual.message import Message
-from textual.widgets import Static, TextArea
+from textual.widget import Widget
+from textual.widgets import (
+    ContentSwitcher,
+    OptionList,
+    Static,
+    Tab,
+    Tabs,
+    TextArea,
+)
 from textual_flowview import (
     Anchor,
     Entry,
@@ -266,6 +288,19 @@ class Composer(TextArea):
             start, end = self.selection
             self._replace_via_keyboard("\n", start, end)
             return
+        if event.key == "down":
+            # ↓ on the composer's LAST line hands focus down to the menu row
+            # (CC/reyn chrome flow: the composer is the default focus; ↓ steps
+            # into the bottom chrome). On any earlier line ↓ moves the cursor
+            # normally (falls through to the base TextArea).
+            row, _ = self.cursor_location
+            if row >= self.document.line_count - 1:
+                menubar = self.app.query(MenuBar)
+                if menubar:
+                    event.stop()
+                    event.prevent_default()
+                    menubar.first().focus()
+                    return
         await super()._on_key(event)
 
     def on_text_area_changed(self, event: TextArea.Changed) -> None:
@@ -278,6 +313,124 @@ class Composer(TextArea):
     def clear_and_reset(self) -> None:
         self.text = ""
         self._sync_height()
+
+
+# ── Phase 3: bottom-chrome tab-drawer ────────────────────────────────────────
+# Default collapsed = a slim status-values line + a focusable menu row. Pressing
+# ↓ from the composer focuses the menu; opening an item expands a drawer
+# DOWNWARD. Interactive panes are Textual OptionLists (Model/Agent/History/Menu —
+# keyboard selection); static readouts are plain Rich in a Static (Cost/Ctx/Help)
+# — the "Textual only where there is a selection" split. Content is PLACEHOLDER
+# here; wiring to reyn's real registries is Phase 4.
+
+_MENU_TABS: "list[tuple[str, str]]" = [
+    ("model", "Model"),
+    ("agent", "Agent"),
+    ("history", "History"),
+    ("cost", "Cost"),
+    ("ctx", "Ctx"),
+    ("menu", "Menu"),
+    ("help", "Help"),
+]
+
+
+def _drawer_child(tab_id: str) -> Widget:
+    """Build the drawer pane for a menu item: an :class:`OptionList` for the
+    interactive pickers (Model/Agent/History/Menu — keyboard selection), a plain
+    Rich :class:`Static` for the read-only readouts (Cost/Ctx/Help).
+
+    The content is PLACEHOLDER (Phase 3 ports the STRUCTURE only). Phase 4 swaps
+    each pane's body for its canonical reyn registry (model/agent registries,
+    session history, cost/token trackers, the slash-command registry, keybindings).
+    """
+    if tab_id == "model":
+        return OptionList(
+            "sonnet   · active", "opus", "haiku", "gemini-2.5-flash-lite",
+            id="model",
+        )
+    if tab_id == "agent":
+        return OptionList(
+            "default   · active", "planner", "reviewer", "researcher",
+            id="agent",
+        )
+    if tab_id == "history":
+        return OptionList(
+            "1 · (placeholder) previous conversation turn…",
+            "2 · (placeholder) another previous turn…",
+            id="history",
+        )
+    if tab_id == "menu":
+        return OptionList(
+            "/model — switch model",
+            "/agent — switch agent",
+            "/clear — clear conversation",
+            "/quit — exit",
+            id="menu",
+        )
+    if tab_id == "cost":
+        return Static(
+            Text.from_markup(
+                "[b]Usage · this session[/b] (placeholder)\n"
+                "  turn    $0.0000\n"
+                "  total   $0.0000\n"
+                "  tokens  0 in · 0 out"
+            ),
+            id="cost",
+        )
+    if tab_id == "ctx":
+        return Static(
+            Text.from_markup(
+                "[b]Context window[/b] (placeholder)\n"
+                "  0 / 200 000 tokens  (0%)\n"
+                "  ▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁"
+            ),
+            id="ctx",
+        )
+    return Static(
+        Text.from_markup(
+            "[b]Shortcuts[/b]\n"
+            "  enter send · shift+enter newline\n"
+            "  ↓ focus menu · ← → move · enter open · esc close"
+        ),
+        id="help",
+    )
+
+
+class StatusLine(Static):
+    """Slim bottom status-values line — plain, not rich. Mirrors reyn's inline
+    REPL bottom toolbar (``model │ agent │ cost │ ctx``), which sits BELOW the
+    input — matching Claude Code and reyn (not a top-docked line). The menu
+    *items* live in the focusable :class:`MenuBar` row just below it."""
+
+
+class MenuBar(Tabs):
+    """Focusable horizontal menu row (the collapsed bottom chrome). ``← →`` move
+    the highlight, ``Enter`` opens the highlighted item's drawer, and ``↑``/``Esc``
+    close it and hand focus back to the composer. Unlike a plain :class:`Tabs`,
+    moving the highlight does NOT open anything — opening is an explicit ``Enter``
+    (the base ``Tabs.TabActivated`` fired on arrow-move is intentionally ignored)."""
+
+    class Selected(Message):
+        """Posted on an explicit ``Enter`` (opening ``tab_id``) or on ``↑``/``Esc``
+        (the sentinel ``"__close__"``)."""
+
+        def __init__(self, tab_id: str) -> None:
+            self.tab_id = tab_id
+            super().__init__()
+
+    async def _on_key(self, event: events.Key) -> None:
+        if event.key == "enter":
+            event.stop()
+            event.prevent_default()
+            if self.active:
+                self.post_message(self.Selected(self.active))
+            return
+        if event.key in ("up", "escape"):
+            event.stop()
+            event.prevent_default()
+            self.post_message(self.Selected("__close__"))
+            return
+        await super()._on_key(event)
 
 
 class TextualChatApp(App):
@@ -296,10 +449,22 @@ class TextualChatApp(App):
     failed row is tinted coral edge-to-edge, and RUNNING rows blink via an
     app-side timer (:meth:`_advance_blink`). The blink is additive — neutering
     the timer leaves a static, correct gutter.
+
+    Phase 3 adds the bottom-chrome tab-drawer: below the composer, a
+    :class:`StatusLine` + a focusable :class:`MenuBar`, and a
+    :class:`~textual.widgets.ContentSwitcher` drawer that is collapsed by default
+    and expands DOWNWARD when a menu item is opened (see :meth:`_open_drawer`).
+    The drawer content is placeholder — real registry wiring is Phase 4.
     """
 
     #: Seconds between running-blink frames (app-side; textual-flowview unmodified).
     BLINK_INTERVAL = 0.5
+
+    BINDINGS = [
+        # Global fallback so Esc closes the drawer even when focus is INSIDE it
+        # (an OptionList pane); the MenuBar's own ↑/Esc handles the menu-row case.
+        ("escape", "close_drawer", "Close drawer"),
+    ]
 
     CSS = """
     Screen { layout: vertical; }
@@ -325,6 +490,36 @@ class TextualChatApp(App):
         border: none;
         padding: 0;
     }
+    StatusLine {
+        height: 1;
+        color: $text-muted;
+        padding: 0 1;
+    }
+    MenuBar {
+        height: 1;
+        color: $text-muted;
+        padding: 0 1;
+    }
+    MenuBar:focus-within { color: $text; }
+    MenuBar Tab { padding: 0 1; }
+    /* No separator rule between the menu row and its drawer — they read as one
+       continuous, edge-to-edge block (the $panel background is the only cue). */
+    #drawer {
+        height: auto;
+        max-height: 12;
+        background: $panel;
+        padding: 0;
+    }
+    /* OptionList ships an all-round default border — strip it so the drawer
+       content is edge-to-edge (full-width highlight rows, no side frame). */
+    #drawer OptionList {
+        height: auto;
+        max-height: 12;
+        background: $panel;
+        border: none;
+        padding: 0;
+    }
+    #drawer Static { height: auto; padding: 1 0; }
     """
 
     def __init__(
@@ -363,6 +558,21 @@ class TextualChatApp(App):
             yield Composer(
                 placeholder="Type a message — Enter to send, Shift+Enter for a newline…"
             )
+        # Bottom chrome (Phase 3): a slim status-values line + a focusable menu
+        # row, then a drawer (ContentSwitcher) that stays collapsed until a menu
+        # item opens it downward. Content is placeholder (Phase 4 wires the data).
+        yield StatusLine(self._status_text())
+        yield MenuBar(*(Tab(label, id=tid) for tid, label in _MENU_TABS), id="menubar")
+        with ContentSwitcher(initial=None, id="drawer"):
+            for tid, _label in _MENU_TABS:
+                yield _drawer_child(tid)
+
+    def _status_text(self) -> str:
+        """The status-values line (``model │ agent │ cost │ ctx``). PLACEHOLDER
+        values in Phase 3 — Phase 4 sources them from reyn's cost/token trackers
+        and the model/agent selection. The agent name is the one already threaded
+        into the app so at least that value is live."""
+        return f"model sonnet │ agent {self._agent_name} │ cost $0.0000 │ ctx 0%"
 
     def on_mount(self) -> None:
         # The running-blink timer starts PAUSED and is resumed only while a
@@ -374,7 +584,39 @@ class TextualChatApp(App):
             self.BLINK_INTERVAL, self._advance_blink, pause=True
         )
         self.run_worker(self._pump_frames(), name="frames", exclusive=True)
+        # Drawer starts collapsed — the default chrome is just the two slim rows
+        # (status-values line + menu row). It only becomes visible when a menu
+        # item is opened (:meth:`_open_drawer`).
+        self.query_one("#drawer", ContentSwitcher).display = False
         self.query_one(Composer).focus()
+
+    def _open_drawer(self, tab_id: "str | None") -> None:
+        """Expand/collapse the downward drawer. ``None`` (or the ``"__close__"``
+        sentinel) collapses it and returns focus to the composer; a tab id shows
+        that pane, focusing the :class:`OptionList` when the pane is an
+        interactive picker so ``↑``/``↓`` immediately drive the selection."""
+        drawer = self.query_one("#drawer", ContentSwitcher)
+        if tab_id is None or tab_id == "__close__":
+            drawer.display = False
+            drawer.current = None
+            self.query_one(Composer).focus()
+            return
+        drawer.current = tab_id
+        drawer.display = True
+        child = drawer.query_one(f"#{tab_id}")
+        if isinstance(child, OptionList):
+            child.focus()
+
+    def on_menu_bar_selected(self, event: "MenuBar.Selected") -> None:
+        self._open_drawer(None if event.tab_id == "__close__" else event.tab_id)
+
+    def on_option_list_option_selected(self, event: "OptionList.OptionSelected") -> None:
+        # A real impl (Phase 4) applies the picked model/agent/etc.; Phase 3 just
+        # collapses back to the composer.
+        self._open_drawer(None)
+
+    def action_close_drawer(self) -> None:
+        self._open_drawer(None)
 
     def _advance_blink(self) -> None:
         """One blink tick: advance the shared frame counter and redraw ONLY the
@@ -525,8 +767,10 @@ async def run_textual_chat(
 
 __all__ = [
     "Composer",
+    "MenuBar",
     "ReynGutter",
     "ReynPresenter",
+    "StatusLine",
     "TextualChatApp",
     "run_textual_chat",
 ]
