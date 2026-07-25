@@ -14,8 +14,9 @@ These pin the three architect-specified Phase-2 gates:
   SUCCESS (green) / ERROR (coral), and a failed row is tinted ``_CC_ERR``
   edge-to-edge.
 
-All use real instances (a concrete :class:`ScriptedTransport`, a real
-:class:`FlowModel`, real :class:`OutboxMessage`) — no mocks — per the testing policy.
+All use real instances (a concrete :class:`ScriptedTransport`, a real mounted
+:class:`TextualChatApp`, real :class:`OutboxMessage`) — no mocks — per the
+testing policy.
 """
 from __future__ import annotations
 
@@ -27,7 +28,7 @@ from typing import AsyncIterator
 
 import pytest
 from textual.app import App
-from textual_flowview import EntryState, FlowModel
+from textual_flowview import EntryState
 
 from reyn.interfaces.inline.textual_chat import (
     ReynGutter,
@@ -170,24 +171,50 @@ def test_flowview_library_is_unmodified_blink_lives_in_reyn() -> None:
 
 # ── Gate 2: set_interval neuter strip (+ non-vacuous positive) ────────────────
 
-def test_blink_changes_the_gutter_frame_across_ticks() -> None:
-    """Tier 2b: a RUNNING entry's gutter glyph DIFFERS between two blink frames.
+@pytest.mark.asyncio
+async def test_advance_blink_drives_a_running_gutter_frame_change() -> None:
+    """Tier 2b: driving the REAL ``_advance_blink`` changes a RUNNING entry's gutter.
 
-    The non-vacuity guard for the strip gate below — it proves there is a real
-    blink to neuter. Uses a real FlowModel + a mutable frame counter the
-    decorator reads, exactly as the app wires it."""
-    model: FlowModel = FlowModel()
-    entry = model.append(_started("op-blink"))
-    entry.set_state(EntryState.RUNNING)
+    The end-to-end blink witness (the non-vacuity guard for the strip gate
+    below): on a mounted app with a RUNNING tool, one call to the actual
+    ``_advance_blink`` fires the whole arrow — it bumps the shared frame counter
+    AND calls ``set_metadata`` on the running entry, so the decorator (reading
+    the same shared counter) picks the next ``_RUNNING_FRAMES`` glyph. Asserts
+    BOTH the ``set_metadata`` marker moved and the rendered glyph changed.
 
-    frame = {"n": 0}
-    gutter = ReynGutter(blink_frame=lambda: frame["n"])
+    Non-vacuous by construction: neutering ``_advance_blink`` to a no-op — the
+    exact strip in ``test_neutered_blink_leaves_a_working_gutter_and_input`` —
+    freezes the counter and the marker, so both assertions go RED (verified
+    locally by temporarily neutering the method; stated in the PR body). A large
+    ``BLINK_INTERVAL`` keeps the background timer from racing the manual tick, so
+    the single driven tick is the only source of change."""
 
-    frame["n"] = 0
-    g0 = gutter.decorate(entry, 2, 1).plain
-    frame["n"] = 1
-    g1 = gutter.decorate(entry, 2, 1).plain
-    assert g0 != g1, f"blink did not change the gutter glyph: {g0!r} == {g1!r}"
+    class _SlowTimerApp(TextualChatApp):
+        BLINK_INTERVAL = 3600.0  # background timer never fires in-test; we tick manually
+
+    transport = ScriptedTransport([_started("op-tick")], end=False)
+    app = _SlowTimerApp(transport=transport)
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        await pilot.pause()
+        entry = _entry_by_kind(app, "tool_call_started")[0]
+        assert entry.state is EntryState.RUNNING
+        gutter = ReynGutter(blink_frame=lambda: app._blink_count)
+        glyph_before = gutter.decorate(entry, 2, 1).plain
+        marker_before = entry.metadata.get("_blink")
+
+        app._advance_blink()  # drive the REAL mechanism (one tick)
+
+        glyph_after = gutter.decorate(entry, 2, 1).plain
+        marker_after = entry.metadata.get("_blink")
+
+    assert marker_after != marker_before, (
+        "_advance_blink did not drive set_metadata on the running entry"
+    )
+    assert glyph_after != glyph_before, (
+        f"_advance_blink did not change the running gutter glyph: "
+        f"{glyph_before!r} == {glyph_after!r}"
+    )
 
 
 @pytest.mark.asyncio
