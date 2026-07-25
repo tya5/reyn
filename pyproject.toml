@@ -45,7 +45,21 @@ dependencies = [
     "pyyaml>=6.0",
     "prompt_toolkit>=3.0",   # plain CUI (--cui flag) keeps this
     "ddgs>=8.0",
-    "rich>=13",              # inline CUI renderer (direct dep; was transitive via textual)
+    "rich>=13",              # inline CUI renderer — DIRECT dep (plain renderer imports it).
+                             # Kept explicit deliberately: textual is back in the tree
+                             # transitively via textual-flowview (below), and rich would
+                             # otherwise silently revert to "transitive via textual" — but
+                             # the plain renderer uses rich directly, independent of textual.
+    # TUI-rebuild arc Phase 0 (#3273): the new TTY conversation pane is a Textual app,
+    # built on the textual-flowview primitives (Presentation.background, FlowView(spacing=)).
+    # Git-pinned to a specific commit of the PUBLIC repo (no auth needed). This RE-INTRODUCES
+    # textual (flowview depends on textual>=0.80) — intentional per #3273. textual is accepted
+    # TRANSITIVELY via flowview for now: reyn core imports no textual symbol yet (Phase 0 is the
+    # dependency addition only; app code is Phase 1+), so a direct `textual` dep with no direct
+    # import would itself be the silent-phantom-dep antipattern in reverse. Phase 1 promotes
+    # textual to an explicit DIRECT dependency when the app code that imports it lands (same
+    # reasoning that keeps rich direct above).
+    "textual-flowview @ git+https://github.com/tya5/textual-flowview.git@15a942c27bdb82ddfe7f550f0f35d121c63440c8",
     "numpy>=1.24",           # RAG index backend cosine similarity (ADR-0033)
     "croniter>=2.0",         # cron expression parsing for FP-0009 Component B
     "charset-normalizer>=3.0",  # #1452 file__read encoding detection (MIT, pure-python)
@@ -241,6 +255,13 @@ norecursedirs = ["dogfood/fixtures", ".reyn", ".claude", "reyn-worktrees"]
 # entries can never silently drop out if a future file under one of these
 # globs is untracked/gitignored (the top omission risk called out in 0061
 # §3.1 — dropping any of the 3 = a silently-broken wheel).
+# Allow the git-pinned `textual-flowview @ git+https://...@<sha>` direct
+# reference in `project.dependencies` (TUI-rebuild arc Phase 0, #3273).
+# Hatchling refuses direct (URL/VCS) references by default; this opt-in is
+# required for the pinned-commit flowview dep to build/resolve.
+[tool.hatch.metadata]
+allow-direct-references = true
+
 [tool.hatch.build.targets.wheel]
 packages = ["src/reyn"]
 artifacts = [
