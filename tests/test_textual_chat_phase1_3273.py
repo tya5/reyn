@@ -212,6 +212,7 @@ class RM(ChatReadModel):
     def has_command_ui_region(self): return True
     @property
     def history_path(self): return Path("/tmp/reyn_isolation_history")
+    def conversation_history(self, *, limit=None): return []
 
 
 class R(ChatRenderer):

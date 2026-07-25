@@ -14,9 +14,11 @@ Phase 4 wires every pane to its CANONICAL reyn source (no placeholders):
   ``Session.known_model_classes()`` → ``ModelResolver.known_classes()``).
 - **Agent** — the loaded agents + attach focus from the snapshot's
   ``agent_names`` / ``attached_name`` (``AgentRegistry.loaded_names()``).
-- **History** — recent turns of the live conversation model the app already
-  retains from the frame stream (cross-session restore from ``history.jsonl`` is
-  a Phase-5 read-model-seam decision, see the app docstring).
+- **History** — recent turns of the conversation model the app retains. Phase 5
+  hydrates that model at startup from the persisted ``history.jsonl`` log (via the
+  ``ChatReadModel.conversation_history`` seam), so this pane is cross-session by
+  construction — it shows restored PRIOR turns alongside the live ones (see the
+  app docstring).
 - **Cost / Ctx** — the live token/cost + context-window figures from the same
   status snapshot the plain path's status bar reads (``usage`` / ``cost_agent`` /
   ``cost_total`` / ``ctx_used`` / ``ctx_window``).
