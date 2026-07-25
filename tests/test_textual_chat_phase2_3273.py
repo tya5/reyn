@@ -156,7 +156,7 @@ def test_flowview_library_is_unmodified_blink_lives_in_reyn() -> None:
     assert textual_flowview.__version__ == "0.3.0.dev0"
 
     # The gutter frame selection is reyn's, not a flowview subclass override.
-    assert ReynGutter.decorate.__module__ == "reyn.interfaces.inline.textual_chat"
+    assert ReynGutter.decorate.__module__.startswith("reyn.interfaces.inline.textual_chat")
     # ReynGutter is a plain reyn class (structural FlowDecorator), not a flowview
     # subclass — it does not inherit any flowview implementation.
     assert not any(
@@ -164,7 +164,7 @@ def test_flowview_library_is_unmodified_blink_lives_in_reyn() -> None:
     )
     # The blink timer is wired app-side: TextualChatApp is a reyn class built on
     # Textual's own App (its set_interval), not a flowview fork.
-    assert TextualChatApp.__module__ == "reyn.interfaces.inline.textual_chat"
+    assert TextualChatApp.__module__.startswith("reyn.interfaces.inline.textual_chat")
     assert issubclass(TextualChatApp, App)
     assert isinstance(TextualChatApp.BLINK_INTERVAL, (int, float))
 

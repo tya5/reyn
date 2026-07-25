@@ -801,8 +801,8 @@ class InlineChatRenderer(ChatRenderer):
         )
 
     def uses_app_input(self) -> bool:
-        # Interactive inline drives input via its own rule-bar Application
-        # (reyn.interfaces.inline.app.run_inline_input) on a TTY.
+        # Interactive inline drives input via the Textual conversation-pane app
+        # (reyn.interfaces.inline.textual_chat.run_textual_chat) on a TTY.
         return True
 
     def _flush(self) -> None:
