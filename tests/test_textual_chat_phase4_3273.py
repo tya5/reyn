@@ -189,6 +189,9 @@ class _SnapshotReadModel(ChatReadModel):
     def history_path(self) -> Path:
         return Path("/tmp/reyn_phase4_history")
 
+    def conversation_history(self, *, limit=None):
+        return []
+
 
 class ScriptedTransport(ClientTransport):
     """A real, minimal :class:`ClientTransport`. ``end=False`` keeps the stream

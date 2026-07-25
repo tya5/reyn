@@ -29,9 +29,11 @@ the MAIN-bar subset onto the wire (``state.py``'s ``project_status`` /
 / ``agent_tokens`` · ``ctx_used`` / ``ctx_window`` · ``waiting_on``. Those chip
 VALUES render on remote. The dropdown EXPANSIONS (cost/ctx detail tuples, the
 ``/model`` class picker, the agent/session tree, the ``…`` sub-bar
-toggle counts) and the interactive intervention / rewind PICKERS are
-session-local and are NOT on the wire — the remote model returns
-empty/``—``/0 for them (graceful degrade), never a fake value.
+toggle counts), the interactive intervention / rewind PICKERS, and the
+persisted past-turn CONVERSATION log (``conversation_history`` — the #3273
+Phase-5 restore-on-restart source) are session-local and are NOT on the wire —
+the remote model returns empty/``—``/0 for them (graceful degrade), never a fake
+value.
 """
 from __future__ import annotations
 
@@ -41,6 +43,7 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from reyn.interfaces.transport.client_transport import ClientTransport
+    from reyn.runtime.chat_message import ChatMessage
 
 
 class ChatReadModel(ABC):
@@ -85,6 +88,26 @@ class ChatReadModel(ABC):
     def history_path(self) -> Path:
         """Filesystem path for the input-history file."""
 
+    @abstractmethod
+    def conversation_history(self, *, limit: "int | None" = None) -> "list[ChatMessage]":
+        """Recent persisted CONVERSATION turns (the ``ChatMessage`` log loaded
+        from ``history.jsonl``), oldest→newest, for the Textual app's
+        restore-on-restart hydration (#3273 Phase 5).
+
+        This is the DURABLE conversation log (assistant text + tool results), NOT
+        the input-history file :attr:`history_path` (↑-recall) and NOT the P6
+        audit-event log (which carries neither and rotates). ``limit`` caps to the
+        most-recent N turns; ``None`` returns the whole loaded log (resume-
+        equivalent — whatever survives in ``history.jsonl``; turns rotated out are
+        simply not restored, exactly like ``--resume``).
+
+        **Frame-sufficiency boundary.** Like every other session-local read
+        (dropdown expansions, the rewind picker), the past-turn log is NOT
+        projected onto the AG-UI wire — a REMOTE client holds no session and
+        cannot enumerate it. The remote impl therefore degrades gracefully to an
+        empty list (never a fabricated turn); cross-session restore is a
+        LOCAL-attach affordance today."""
+
 
 class RegistryReadModel(ChatReadModel):
     """LOCAL read-model — delegates to the same registry/session accessors the
@@ -126,6 +149,20 @@ class RegistryReadModel(ChatReadModel):
                 "(call registry.attach() before run_inline_input)"
             )
         return s.workspace_dir / ".input_history"
+
+    def conversation_history(self, *, limit: "int | None" = None):
+        # The attached Session's ``history`` list IS the ChatMessage log loaded
+        # from ``history.jsonl`` by ``Session.load_history`` at attach time — read
+        # it straight (no audit-event path). Return a shallow copy so a caller can
+        # not mutate the live session history. ``None`` = whole log (resume-
+        # equivalent); a positive ``limit`` keeps the most-recent N.
+        s = self._attached()
+        if s is None:
+            return []
+        history = list(getattr(s, "history", []) or [])
+        if limit is not None and limit >= 0:
+            return history[-limit:]
+        return history
 
 
 def project_remote_snapshot(values: "dict | None") -> dict:
@@ -203,6 +240,13 @@ class RemoteReadModel(ChatReadModel):
         base = Path.home() / ".reyn"
         base.mkdir(parents=True, exist_ok=True)
         return base / "remote-input-history"
+
+    def conversation_history(self, *, limit: "int | None" = None):
+        # Frame-sufficiency: a remote client holds no session and the past-turn
+        # ChatMessage log is NOT projected onto the wire (like the dropdown
+        # expansions / rewind picker). Degrade gracefully to empty — never a
+        # fabricated turn. Restore-on-restart is a local-attach affordance today.
+        return []
 
 
 __all__ = [

@@ -49,6 +49,7 @@ from .chrome import (
 )
 from .gutter import ReynGutter
 from .presenter import ReynPresenter, choice_chip_spans
+from .restore import project_restored_frames
 
 if TYPE_CHECKING:
     from textual.timer import Timer
@@ -113,11 +114,19 @@ class TextualChatApp(App):
     token/cost figures (F5b — also surfaced on the always-visible status line),
     Menu from the slash ``REGISTRY``, History from the retained live conversation,
     Help from the app BINDINGS. Selecting a Model/Agent row routes the equivalent
-    ``/model`` / ``/attach`` slash through the transport. Cross-session restore
-    from ``history.jsonl`` (Phase 5) needs a new ``ChatReadModel`` history
-    accessor — the read model's frame-sufficiency boundary means a REMOTE client
-    cannot enumerate a session's past turns off the wire today — so History shows
-    the live conversation now and the restore seam is deferred to Phase 5.
+    ``/model`` / ``/attach`` slash through the transport.
+
+    Phase 5 adds restore-on-restart (CC ``--resume`` parity): :meth:`on_mount`
+    hydrates the retained model from the PERSISTED conversation log BEFORE the
+    live frame pump starts (:meth:`_hydrate_from_history` →
+    :func:`.restore.project_restored_frames`), reading the durable ``ChatMessage``
+    log off the new ``ChatReadModel.conversation_history`` seam (``history.jsonl``,
+    NOT the P6 audit-event log). Restored turns render RESOLVED (never RUNNING)
+    through the same presenter/gutter path a live frame does, so a restart shows
+    the previous conversation instead of a blank pane. The History drawer pane
+    reads the same retained model, so it now shows those restored turns too. A
+    REMOTE read model returns an empty log (frame-sufficiency: past turns are not
+    on the wire) → hydration is a no-op and the pane starts blank as before.
 
     Phase 3.5 wires CHOICE interventions: a closed-set intervention (permission
     confirm / choice ``ask_user`` — any ``kind="intervention"`` frame carrying
@@ -277,11 +286,14 @@ class TextualChatApp(App):
         return out
 
     def _history_turns(self, *, limit: int = 12) -> "list[str]":
-        """Recent conversation turns from the retained live model (the frame
-        stream the app already drains) — ``role · <first line>`` rows, newest
-        ``limit``. This is the honest in-package History source today; enumerating
-        PAST sessions for restore (``history.jsonl``) is a Phase-5 read-model-seam
-        decision (see the class docstring), not fabricated here."""
+        """Recent conversation turns from the retained model — ``role · <first
+        line>`` rows, newest ``limit``. The model holds BOTH the live frame
+        stream the app drains AND (Phase 5) the restored prior turns
+        :meth:`_hydrate_from_history` seeds at ``on_mount`` from ``history.jsonl``,
+        so the History drawer is cross-session by construction: restoring the
+        conversation into the model is what backs this pane's past-session view
+        (no separate accessor call here — reading the model is sufficient once it
+        is hydrated)."""
         rows: list[str] = []
         for entry in self.conversation:
             msg = entry.item
@@ -327,6 +339,13 @@ class TextualChatApp(App):
         return status_line_text(self._snapshot(), self._agent_name)
 
     def on_mount(self) -> None:
+        # Phase 5 (#3273): hydrate the retained model from the PERSISTED
+        # conversation log BEFORE the live frame pump starts, so a restart shows
+        # the previous conversation (CC ``--resume`` parity) instead of a blank
+        # pane. Restored turns render resolved (never RUNNING) through the exact
+        # same presenter/gutter path a live frame does. Must run before
+        # ``run_worker`` so the prior turns sit ABOVE the first live frame.
+        self._hydrate_from_history()
         # The running-blink timer starts PAUSED and is resumed only while a
         # tool call is RUNNING (and paused again when none remain) — it never
         # spins on an idle conversation. The blink is app-side + ADDITIVE:
@@ -341,6 +360,53 @@ class TextualChatApp(App):
         # item is opened (:meth:`_open_drawer`).
         self.query_one("#drawer", ContentSwitcher).display = False
         self.query_one(Composer).focus()
+
+    def _hydrate_from_history(self) -> None:
+        """Restore-on-restart (#3273 Phase 5): project the persisted conversation
+        log into the retained model so a restart shows the PREVIOUS conversation.
+
+        Reads the durable ``ChatMessage`` log via the read-model seam
+        (:meth:`~reyn.interfaces.repl.read_model.ChatReadModel.conversation_history`
+        — ``history.jsonl``, NOT the P6 audit-event log) and appends each projected
+        frame to ``self.conversation`` (:func:`.restore.project_restored_frames`).
+        Every restored entry is RESOLVED, never RUNNING: a completed tool result
+        gets the SUCCESS/ERROR lifecycle state the live path's completion handler
+        (:meth:`_track_tool_state`) would have assigned, and user/agent rows keep
+        DEFAULT (their live state). A REMOTE read model returns an empty log
+        (frame-sufficiency: past turns are not on the wire) → this is a no-op and
+        the pane starts blank, exactly as before. Fully guarded — a restore
+        failure must never stop the app from mounting and pumping live frames."""
+        if self._read_model is None:
+            return
+        try:
+            messages = self._read_model.conversation_history()
+        except Exception:
+            logger.exception("textual chat: conversation-history read failed")
+            return
+        try:
+            frames = project_restored_frames(messages)
+        except Exception:
+            logger.exception("textual chat: history projection failed")
+            return
+        for msg in frames:
+            try:
+                entry = self.conversation.append(msg)
+            except Exception:
+                logger.exception(
+                    "textual chat: restore append failed for kind=%r", msg.kind
+                )
+                continue
+            # Resolved, never RUNNING — mirror _track_tool_state's terminal
+            # transition for a settled tool result (SUCCESS unless the summary
+            # marks a failure); non-tool rows keep DEFAULT.
+            meta = msg.meta or {}
+            if msg.kind == "tool_call_completed":
+                summary = summarize_tool_result(meta.get("tool"), meta.get("result"))
+                entry.set_state(
+                    EntryState.ERROR if summary.startswith("✗") else EntryState.SUCCESS
+                )
+            elif msg.kind == "tool_call_failed":
+                entry.set_state(EntryState.ERROR)
 
     def _open_drawer(self, tab_id: "str | None") -> None:
         """Expand/collapse the downward drawer. ``None`` (or the ``"__close__"``
