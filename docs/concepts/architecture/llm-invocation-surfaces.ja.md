@@ -21,7 +21,7 @@ audience: [human, agent]
 > 主張へ訂正されましたが、その2度目の版**自体が誤りでした** — `src/reyn/config/execution.py`
 > の `ToolUseConfig`(`chat: str = "enumerate-all"`)と `src/reyn/tools/scheme.py` の
 > `DEFAULT_SCHEME_NAME = "enumerate-all"` で確認したところ、ツール提示は
-> **pluggable な scheme**(`reyn.yaml` の `tool_use.chat`)であり、
+> **pluggable な scheme**(`reyn.yaml` の `tool_use.scheme` x `tool_use.transport`、FP-0066 P4b #3247)であり、
 > **chat レイヤーの実際のデフォルトは `enumerate-all`**(universal wrapper ではなく
 > flat な提示)です — owner 主導の意図的な H1 fix です(flat listing が
 > `invoke_action` の name-hallucination を防ぐ、30%→100% の non-hot-list tool-use
@@ -47,11 +47,11 @@ Reyn は `RouterLoop`(インタラクティブチャットセッション)経由
 
 **仕組み:** litellm 経由の `call_llm_tools` によるネイティブ LLM function calling。ツール定義は OpenAI `tools` 配列形式に従い、モデルはアシスタントメッセージ内の `tool_calls` で応答する。OS は各呼び出しをディスパッチし、`tool_result` を追記して、モデルが通常テキストを返すまで LLM を再呼び出しする。
 
-**ツール surface:** `src/reyn/runtime/router_tools.py` の `build_tools()` がツールリストを組み立て、OpenAI `tools` 配列形式を返すが、**そのリストがどんな形になるかは pluggable な scheme** であり、単一の固定フォーマットではありません。`reyn.yaml` の `tool_use.chat` が chat レイヤーの登録済み `ToolUseScheme` を名前で選択し、どの scheme が有効でも、すべてのツール呼び出しは同じ `exclude → permission → dispatch` ゲートを通ります。完全なモデルは [Tool-Use Schemes](../tools-integrations/tool-use-schemes.md) と [Universal Action Catalog](../tools-integrations/universal-catalog.md) を参照してください。
+**ツール surface:** `src/reyn/runtime/router_tools.py` の `build_tools()` がツールリストを組み立て、OpenAI `tools` 配列形式を返すが、**そのリストがどんな形になるかは pluggable な scheme** であり、単一の固定フォーマットではありません。`reyn.yaml` の `tool_use.scheme`(presentation)x `tool_use.transport`(action の表現方法)が chat レイヤーの登録済み `ToolUseScheme` に解決され、どの scheme が有効でも、すべてのツール呼び出しは同じ `exclude → permission → dispatch` ゲートを通ります。完全なモデルは [Tool-Use Schemes](../tools-integrations/tool-use-schemes.md) と [Universal Action Catalog](../tools-integrations/universal-catalog.md) を参照してください。
 
 - **`chat` レイヤー(このページの `RouterLoop` surface)のデフォルトは `enumerate-all`** です — 使用可能なすべてのツールを universal-wrapper の discovery indirection なしで `tools=` にフラットに提示し、名前でディスパッチする flat-native-JSON baseline です。これは owner の意図的な H1 fix によるデフォルトです: flat listing が `invoke_action` の name-hallucination を防ぎ、30%→100% の non-hot-list tool-use 精度が証拠です。
 - **`retrieval`(RAG-over-tools)と `CodeAct`** は、それぞれ非常に大きなツールセットや weak model 向けの、chat レイヤーの opt-in scheme としてサポートされています。
-- **chat レイヤーの scheme は `reyn.yaml` の `tool_use.chat` でオペレーターが設定可能**です — 例えば、chat レイヤーをデフォルトの `enumerate-all` の代わりに `universal-category` に opt in させることもできます。
+- **chat レイヤーの scheme は `reyn.yaml` の `tool_use.scheme` でオペレーターが設定可能**です — 例えば、chat レイヤーをデフォルトの `enumerate-all` の代わりに `universal-category` に opt in させることもできます。
 
 **役割:** オーケストレーション — 次のサブコンポーネント（ワークフロー、Agent、plan、メモリ操作、直接テキスト応答）を選択する。
 

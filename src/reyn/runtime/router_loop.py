@@ -1100,7 +1100,7 @@ class RouterLoop:
         max_tool_calls_per_turn: int = 50,  # #1666 — safety.loop.max_tool_calls_per_turn (0 = unlimited)
         on_limit: "Any | None" = None,  # OnLimitConfig | None — FP-0005 max_iterations checkpoint
         llm_caller: "Any | None" = None,  # Tier 2 test seam: real-fake injection
-        scheme_name: "str | None" = None,  # #1593 PR-2: chat-layer tool-use scheme (None → universal default; the construction site resolves config.tool_use.chat)
+        scheme_name: "str | None" = None,  # #1593 PR-2: chat-layer tool-use scheme (None → universal default; the construction site resolves config.tool_use.scheme x .transport via P4a's registry, FP-0066 P4b #3247)
         response_format: "dict | None" = None,  # 0062: schema-constrained answer turn; None = byte-identical (no other caller sets this)
         schema_validate_fn: "Any | None" = None,  # 0062: Callable[[Any], list[str]] — parsed-value -> validation-error strings ([] = conforming)
         max_schema_reprompt_attempts: int = 2,  # 0062 §2.1 failure-mode-(c): bounded re-prompt budget (extra attempts beyond the first)

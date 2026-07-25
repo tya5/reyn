@@ -135,23 +135,63 @@ async def test_universal_execute_and_feedback_round_trip() -> None:
 
 
 def test_tool_use_config_chat_scheme_and_defaults() -> None:
-    """Tier 2: chat-layer scheme selection parses + defaults to enumerate-all;
-    a non-string value is a loud error. (#2768 removed the dead step/phase layers.)"""
+    """Tier 2: chat-layer scheme x transport selection parses + defaults to
+    enumerate-all / tool_calls; a non-string value is a loud error. (#2768
+    removed the dead step/phase layers; FP-0066 P4b split ``chat`` into
+    ``scheme`` x ``transport``.)"""
     assert _build_tool_use_config(None) == ToolUseConfig()
-    assert ToolUseConfig().chat == "enumerate-all"
-    cfg = _build_tool_use_config({"chat": "universal-category"})
-    assert cfg.chat == "universal-category"
+    assert ToolUseConfig().scheme == "enumerate-all"
+    assert ToolUseConfig().transport == "tool_calls"
+    # "category" is the presentation-axis name (P4a firm §1 census); the
+    # concrete registered scheme it resolves to is "universal-category".
+    cfg = _build_tool_use_config({"scheme": "category"})
+    assert cfg.scheme == "category"
+    assert cfg.transport == "tool_calls"
     with pytest.raises(ValueError):
-        _build_tool_use_config({"chat": 123})
+        _build_tool_use_config({"scheme": 123})
+
+
+def test_tool_use_config_nondefault_roundtrip() -> None:
+    """Tier 2: FP-0066 P4b — a non-default (scheme, transport) pair round-trips
+    through parsing. Defaults-only round-trip proves nothing about the 2-key
+    surface actually wiring both fields independently."""
+    cfg = _build_tool_use_config(
+        {"scheme": "category", "transport": "tool_calls"}
+    )
+    assert cfg.scheme == "category"
+    assert cfg.transport == "tool_calls"
+
+
+def test_tool_use_config_old_chat_key_fails_loud() -> None:
+    """Tier 2: FP-0066 P4b ★ J2 — a reyn.yaml ``tool_use:`` block still
+    carrying the removed ``chat`` key must raise a legible error naming the
+    2-key migration, NOT silently ignore it (a silently-dropped old key is a
+    "config that doesn't take effect" trap — clean-break means detect+error,
+    not remove+ignore)."""
+    with pytest.raises(ValueError) as excinfo:
+        _build_tool_use_config({"chat": "enumerate-all"})
+    message = str(excinfo.value)
+    assert "tool_use.chat" in message
+    assert "tool_use.scheme" in message
+    assert "tool_use.transport" in message
+
+
+def test_tool_use_config_invalid_pair_fails_loud_at_parse_time() -> None:
+    """Tier 2: FP-0066 P4b — an unregistered (scheme, transport) cell (P4a's
+    valid-pair registry) raises at CONFIG PARSE time, not deep in a running
+    session. ``category`` x ``content_fence`` is a real unimplemented cell
+    per the P4 firm §1 census."""
+    with pytest.raises(ValueError):
+        _build_tool_use_config({"scheme": "category", "transport": "content_fence"})
 
 
 def test_chat_default_matches_runtime_fallback_default() -> None:
     """Tier 1: the single enforced source of truth for the tool-use default (#2768).
 
     Two literals declare the default and are kept in sync by convention only: the
-    config-schema default (``ToolUseConfig().chat``) and the runtime fallback
+    config-schema default (``ToolUseConfig().scheme``) and the runtime fallback
     (``scheme.DEFAULT_SCHEME_NAME``). ``config/execution.py`` is a declarative
     dataclass, not a runtime source, so this contract test is the binding that
     prevents the two from silently drifting — edit one literal without the other
     and this fails."""
-    assert ToolUseConfig().chat == DEFAULT_SCHEME_NAME
+    assert ToolUseConfig().scheme == DEFAULT_SCHEME_NAME

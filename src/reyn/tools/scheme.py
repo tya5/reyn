@@ -28,10 +28,11 @@ from typing import Any, Protocol, runtime_checkable
 
 
 class ToolUseLayer(str, Enum):
-    """The layer a router loop runs for. Scheme-selectable via ``tool_use.chat``
-    in reyn.yaml; the chat layer defaults to ``enumerate-all`` (#1657). #2768
-    removed the dead ``step`` / ``phase`` layers (phase-graph era, zero read
-    sites — ``PhaseRouterLoopHost`` deleted #2438)."""
+    """The layer a router loop runs for. Scheme-selectable via ``tool_use.scheme``
+    x ``tool_use.transport`` in reyn.yaml (FP-0066 P4b, #3247); the chat layer
+    defaults to ``enumerate-all`` / ``tool_calls`` (#1657). #2768 removed the
+    dead ``step`` / ``phase`` layers (phase-graph era, zero read sites —
+    ``PhaseRouterLoopHost`` deleted #2438)."""
 
     CHAT = "chat"
 
@@ -313,7 +314,7 @@ def registered_scheme_names() -> list[str]:
 # The default scheme name — enumerate-all (#1657: owner default switch, the H1
 # fix; enumerate-all flat-lists actions so the LLM invokes them directly instead
 # of hallucinating invoke_action names → 30%→100% non-hot-list tool-use).
-# universal-category remains available via config (tool_use.chat) for many-tool /
+# universal-category remains available via config (tool_use.scheme) for many-tool /
 # minimal-surface setups. The OS holds the *name* string (a config key), not
 # scheme logic, so this stays P7-clean.
 DEFAULT_SCHEME_NAME = "enumerate-all"

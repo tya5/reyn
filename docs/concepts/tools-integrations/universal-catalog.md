@@ -27,7 +27,7 @@ briefly the sole production behaviour, but an owner-driven H1 fix later flipped
 the `chat` layer's own default to `enumerate-all` — a flat, no-wrapper tool
 list — because flat listing stops `invoke_action` name-hallucination (30%→100%
 non-hot-list tool-use accuracy). `universal-category` (this page's wrapper path)
-remains a registered scheme, reachable when an operator sets `tool_use.chat:
+remains a registered scheme, reachable when an operator sets `tool_use.scheme:
 universal-category` in `reyn.yaml`. See [Tool-Use Schemes](tool-use-schemes.md)
 for the full, current model — the sections below describe the
 `universal-category` scheme's own mechanics, not which layer uses it by default.
@@ -411,9 +411,9 @@ out of scope. Strong models run with the mandates off and are unaffected.
 
 **This section describes the underlying `universal_wrappers_enabled` flag's
 own default, not which tool-use scheme resolves to it today** — see the status
-update at the top of this page: the `tool_use.chat` scheme selector generalizes
-this flag's *selection* role, and `chat`'s own scheme default (`enumerate-all`)
-does not route through this flag at all. The flag itself remains live for the
+update at the top of this page: the `tool_use.scheme` (x `tool_use.transport`)
+selector generalizes this flag's *selection* role, and the chat layer's own
+scheme default (`enumerate-all`) does not route through this flag at all. The flag itself remains live for the
 `universal-category` scheme (catalog-wrapper vs direct-tool presentation).
 
 `ActionRetrievalConfig.universal_wrappers_enabled` defaults to `True`

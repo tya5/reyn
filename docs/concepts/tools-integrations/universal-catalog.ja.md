@@ -21,7 +21,7 @@ name (`<category>__<entry>`) でアドレッシングされ、 `invoke_action` �
 `describe_action`、 自然言語 / semantic 検索は `search_actions`
 (embedding-backed) で扱う。
 
-**状態の更新: ツール提示は今や pluggable な scheme であり、単一の固定パスではありません。** Phase 6 (2026-05-16) 以降、wrapper-only path は一時的に唯一の production 挙動でしたが、後に owner による H1 fix が `chat` レイヤー自身のデフォルトを `enumerate-all`(wrapper なしの flat なツールリスト)に切り替えました — flat listing が `invoke_action` の name-hallucination を防ぐためです(30%→100% の non-hot-list tool-use 精度)。`universal-category`(このページの wrapper path)は登録済み scheme として残存し、operator が `reyn.yaml` で `tool_use.chat: universal-category` を設定すれば到達できます。完全で現行のモデルは [Tool-Use Schemes](tool-use-schemes.md) を参照してください。以下のセクションは `universal-category` scheme 自体の仕組みを説明するものであり、どのレイヤーがそれをデフォルトで使うかではありません。(#2768 が死んだ phase-graph era の `step`/`phase` tool-use レイヤーを削除しました。)
+**状態の更新: ツール提示は今や pluggable な scheme であり、単一の固定パスではありません。** Phase 6 (2026-05-16) 以降、wrapper-only path は一時的に唯一の production 挙動でしたが、後に owner による H1 fix が `chat` レイヤー自身のデフォルトを `enumerate-all`(wrapper なしの flat なツールリスト)に切り替えました — flat listing が `invoke_action` の name-hallucination を防ぐためです(30%→100% の non-hot-list tool-use 精度)。`universal-category`(このページの wrapper path)は登録済み scheme として残存し、operator が `reyn.yaml` で `tool_use.scheme: category` を設定すれば到達できます(FP-0066 P4b #3247 — presentation 軸の名前は `category`、解決先の登録済み scheme 名が `universal-category`)。完全で現行のモデルは [Tool-Use Schemes](tool-use-schemes.md) を参照してください。以下のセクションは `universal-category` scheme 自体の仕組みを説明するものであり、どのレイヤーがそれをデフォルトで使うかではありません。(#2768 が死んだ phase-graph era の `step`/`phase` tool-use レイヤーを削除しました。)
 
 この wrapper path があるレイヤーで有効なとき、handler
 (`invoke_skill` / `delegate_to_agent` / `call_mcp_tool` / …) は wrapper
@@ -378,7 +378,7 @@ off で走り影響を受けない。
 
 ## Default-on (PR-3b-iv)
 
-**このセクションは `universal_wrappers_enabled` フラグ自身のデフォルトを説明するものであり、今日どの tool-use scheme がそれに解決されるかではありません** — このページ冒頭の状態更新を参照してください: `tool_use.chat` scheme selector がこのフラグの *選択* 役割を generalize しており、`chat` 自身の scheme デフォルト(`enumerate-all`)はこのフラグを一切経由しません。フラグ自体は `universal-category` scheme の live な presentation(catalog-wrapper vs direct-tool)として残存します。
+**このセクションは `universal_wrappers_enabled` フラグ自身のデフォルトを説明するものであり、今日どの tool-use scheme がそれに解決されるかではありません** — このページ冒頭の状態更新を参照してください: `tool_use.scheme`(x `tool_use.transport`)selector がこのフラグの *選択* 役割を generalize しており、chat レイヤー自身の scheme デフォルト(`enumerate-all`)はこのフラグを一切経由しません。フラグ自体は `universal-category` scheme の live な presentation(catalog-wrapper vs direct-tool)として残存します。
 
 production では `ActionRetrievalConfig.universal_wrappers_enabled` の
 default は `True`。 `build_tools` / `build_system_prompt` を直接呼ぶ

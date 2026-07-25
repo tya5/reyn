@@ -335,7 +335,7 @@ Show bulk data to the user **without the data passing through LLM output tokens*
 
 ### Tool-Use Schemes
 
-How tools are presented to the LLM and how its calls are dispatched is a **pluggable scheme**, selectable for the chat layer (`tool_use.chat` in `reyn.yaml`). The `chat` layer defaults to `enumerate-all`. Non-default schemes are opt-in. All schemes route every tool call through the same OS gate (exclude → permission → dispatch), so the security and validation pipeline is unchanged whichever scheme is active.
+How tools are presented to the LLM and how its calls are dispatched is a **pluggable scheme**, selectable for the chat layer (`tool_use.scheme` x `tool_use.transport` in `reyn.yaml`, FP-0066 P4b #3247). The chat layer defaults to `scheme=enumerate-all` / `transport=tool_calls`. Non-default schemes are opt-in. All schemes route every tool call through the same OS gate (exclude → permission → dispatch), so the security and validation pipeline is unchanged whichever scheme is active.
 
 | Feature | Description | Documentation |
 |---------|-------------|---------------|

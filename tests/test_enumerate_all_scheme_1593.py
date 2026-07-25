@@ -247,24 +247,49 @@ def test_shared_catalog_entries_substrate_unchanged_by_3219() -> None:
 def test_default_chat_layer_resolves_to_enumerate_all() -> None:
     """Tier 2: #1657 — the DEFAULT chat layer (None / missing tool_use:) is
     ``enumerate-all`` (the owner H1 fix) and resolves to EnumerateAllScheme. A
-    config override flips chat back to universal-category (the knob still works
-    both ways). (#2768 removed the dead step/phase layers.)
+    config override flips scheme back to universal-category (the knob still
+    works both ways). (#2768 removed the dead step/phase layers; FP-0066 P4b
+    split the former ``chat`` name into ``scheme`` x ``transport`` — the
+    default scheme=enumerate-all/transport=tool_calls resolves to the SAME
+    concrete scheme name the old default did, byte-identical.)
 
     Pins the config→selection seam at its public surfaces: the config dataclass
-    (``ToolUseConfig``), the scheme resolver (``_resolve_tool_use_scheme``),
-    and the scheme's public ``.name`` — NOT a running router or private state. The
-    config value is what each frontend threads (chat_tool_use_scheme) through the
-    factory → Session → RouterLoopDriver → RouterLoop(scheme_name=)."""
+    (``ToolUseConfig``), P4a's resolver (``resolve_scheme_for_transport``), the
+    OS resolver (``_resolve_tool_use_scheme``), and the scheme's public
+    ``.name`` — NOT a running router or private state. The resolved value is
+    what each frontend threads (chat_tool_use_scheme, resolved by
+    ``SessionFactoryConfig.from_config``) through the factory → Session →
+    RouterLoopDriver → RouterLoop(scheme_name=)."""
     from reyn.config import _build_tool_use_config
     from reyn.runtime.router_loop import _resolve_tool_use_scheme
+    from reyn.tools.transport import Transport, resolve_scheme_for_transport
 
-    # #1657: default chat → enumerate-all (resolves to EnumerateAllScheme).
+    # #1657: default scheme/transport → enumerate-all (resolves to EnumerateAllScheme).
     default_cfg = _build_tool_use_config(None)
-    assert default_cfg.chat == "enumerate-all"
-    assert _resolve_tool_use_scheme(default_cfg.chat).name == "enumerate-all"
+    assert default_cfg.scheme == "enumerate-all"
+    assert default_cfg.transport == "tool_calls"
+    resolved_default = resolve_scheme_for_transport(
+        default_cfg.scheme, Transport(default_cfg.transport)
+    )
+    assert resolved_default == "enumerate-all"
+    assert _resolve_tool_use_scheme(resolved_default).name == "enumerate-all"
 
-    # The override knob still works: chat → universal-category (the now-non-default)
-    # resolves back.
-    cfg = _build_tool_use_config({"chat": "universal-category"})
-    assert cfg.chat == "universal-category"
-    assert _resolve_tool_use_scheme(cfg.chat).name == "universal-category"
+    # The override knob still works: scheme → "category" (the presentation-
+    # axis name; P4a census) resolves to the concrete "universal-category"
+    # scheme, the now-non-default.
+    cfg = _build_tool_use_config({"scheme": "category"})
+    assert cfg.scheme == "category"
+    resolved = resolve_scheme_for_transport(cfg.scheme, Transport(cfg.transport))
+    assert resolved == "universal-category"
+    assert _resolve_tool_use_scheme(resolved).name == "universal-category"
+
+    # A former ``chat: codeact`` becomes scheme=enumerate-all x
+    # transport=content_fence, resolving to the same codeact scheme.
+    codeact_cfg = _build_tool_use_config(
+        {"scheme": "enumerate-all", "transport": "content_fence"}
+    )
+    resolved_codeact = resolve_scheme_for_transport(
+        codeact_cfg.scheme, Transport(codeact_cfg.transport)
+    )
+    assert resolved_codeact == "codeact"
+    assert _resolve_tool_use_scheme(resolved_codeact).name == "codeact"

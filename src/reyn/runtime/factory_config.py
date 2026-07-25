@@ -92,6 +92,7 @@ class SessionFactoryConfig:
         from reyn.data.pipelines.registry import build_pipeline_registry
         from reyn.data.presentations.registry import build_presentation_registry
         from reyn.data.skills.registry import build_skill_registry
+        from reyn.tools.transport import Transport, resolve_scheme_for_transport
         root = Path(project_root) if project_root is not None else None
         pipeline_registry = (
             build_pipeline_registry(config.pipelines, root)
@@ -109,7 +110,17 @@ class SessionFactoryConfig:
             embedding_config=config.embedding,
             router_config=config.llm.router,
             retry_config=config.llm.retry,
-            chat_tool_use_scheme=config.tool_use.chat,
+            # FP-0066 P4b: resolve the (scheme, transport) 2-axis config
+            # through P4a's valid-pair registry to the concrete registered
+            # ``ToolUseScheme`` name (e.g. (enumerate-all, content_fence) →
+            # "codeact") — this is the ONE resolution point; every downstream
+            # consumer (Session / RouterLoopDriver / RouterLoop) threads the
+            # already-resolved concrete name unchanged. Already validated at
+            # config-parse time (_build_tool_use_config), so this cannot
+            # raise here on a well-formed ReynConfig.
+            chat_tool_use_scheme=resolve_scheme_for_transport(
+                config.tool_use.scheme, Transport(config.tool_use.transport)
+            ),
             observability_config=config.observability,
             # #2548 PR-A: build the enabled skill registry once here (filtered to
             # enabled=True) so every factory site threads the same snapshot.

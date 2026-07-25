@@ -14,30 +14,64 @@ from reyn.runtime.budget.budget import CostConfig, CostLimitConfig
 
 @dataclass
 class ToolUseConfig:
-    """``tool_use:`` — the chat-layer tool-use scheme selector (#1593; #2768).
+    """``tool_use:`` — the chat-layer tool-use scheme x transport selector
+    (#1593; #2768; FP-0066 P4b, #3247).
 
-    The ``chat`` layer selects a registered ``ToolUseScheme`` by name, generalizing
-    the binary ``action_retrieval.universal_wrappers_enabled`` toggle into a
-    pluggable scheme selector. #1657: the default is ``enumerate-all`` (the owner
-    H1 fix — flat-listing actions stops invoke_action name-hallucination, 30%→100%
-    non-hot-list tool-use). Set another scheme name (e.g. ``universal-category``)
-    via reyn.yaml. #2768 removed the dead ``step`` / ``phase`` layers (phase-graph
-    era — zero read sites; ``PhaseRouterLoopHost`` deleted in #2438).
+    Two orthogonal axes (FP-0066 §2 / P4 firm §1-§2): ``scheme`` is the
+    PRESENTATION (how capabilities are shown/discovered to the LLM —
+    ``category`` / ``enumerate-all`` / ``retrieval``) and ``transport`` is how
+    the model expresses the chosen action (``tool_calls`` / ``content_fence``).
+    Before P4b these were conflated into one flat name (the retired ``chat``
+    key), with ``codeact`` registered as if it were a 4th sibling scheme when
+    it is really ``enumerate-all`` presentation over the ``content_fence``
+    transport. #1657: the default (``scheme=enumerate-all``,
+    ``transport=tool_calls``) is the owner H1 fix — flat-listing actions
+    stops invoke_action name-hallucination, 30%→100% non-hot-list tool-use.
+
+    ``tool_use.chat`` is REMOVED, clean-break (no compat alias) — a reyn.yaml
+    still carrying it fails loud at parse time naming the migration (P4 firm
+    §2 J2; see ``_build_tool_use_config``). Not every (scheme, transport)
+    combination is implemented; the pair is validated through
+    ``reyn.tools.transport.resolve_scheme_for_transport`` at parse time (P4a's
+    valid-pair registry becomes the live validation authority). #2768 removed
+    the dead ``step`` / ``phase`` layers (phase-graph era — zero read sites;
+    ``PhaseRouterLoopHost`` deleted in #2438).
     """
 
-    chat: str = "enumerate-all"
+    scheme: str = "enumerate-all"
+    transport: str = "tool_calls"
 
 
 def _build_tool_use_config(raw: object) -> ToolUseConfig:
     """Parse ``tool_use:`` from reyn.yaml. None / missing / empty → default
-    (chat=enumerate-all #1657).
+    (scheme=enumerate-all, transport=tool_calls — #1657).
 
-    The ``chat`` key accepts a scheme name (string); a missing key keeps the
-    default. A non-mapping block or non-string value is a config error (fail loud)."""
+    ``scheme`` and ``transport`` each accept a name (string); a missing key
+    keeps its default. A non-mapping block or non-string value is a config
+    error (fail loud). The old ``chat`` key is REMOVED (FP-0066 P4b,
+    clean-break) — its presence is detected and raises a legible migration
+    error rather than being silently ignored (P4 firm §2 J2: a silently
+    dropped old key is a "config that doesn't take effect" trap). The
+    resulting (scheme, transport) pair is validated through P4a's
+    ``resolve_scheme_for_transport`` — an unregistered cell (e.g.
+    ``category`` x ``content_fence``) raises at parse time, not deep in a
+    running session."""
     if raw is None:
         return ToolUseConfig()
     if not isinstance(raw, dict):
         raise ValueError(f"tool_use must be a mapping, got {type(raw).__name__}")
+
+    if "chat" in raw:
+        raise ValueError(
+            "tool_use.chat is removed (FP-0066 P4b, #3247) — it has been "
+            "split into tool_use.scheme (the presentation axis: "
+            "'category' / 'enumerate-all' / 'retrieval', default "
+            "'enumerate-all') and tool_use.transport (how the model "
+            "expresses actions: 'tool_calls' / 'content_fence', default "
+            "'tool_calls'). A former `chat: codeact` becomes "
+            "`scheme: enumerate-all` + `transport: content_fence`. Update "
+            "reyn.yaml — there is no compat alias for the old key."
+        )
 
     def _name(key: str, default: str) -> str:
         if key not in raw:
@@ -45,12 +79,28 @@ def _build_tool_use_config(raw: object) -> ToolUseConfig:
         val = raw[key]
         if not isinstance(val, str) or not val:
             raise ValueError(
-                f"tool_use.{key} must be a non-empty scheme name, got {val!r}"
+                f"tool_use.{key} must be a non-empty name, got {val!r}"
             )
         return val
 
-    return ToolUseConfig(
-        chat=_name("chat", "enumerate-all"),  # #1657: owner default switch (H1 fix)
-    )
+    scheme = _name("scheme", "enumerate-all")  # #1657: owner default switch (H1 fix)
+    transport_name = _name("transport", "tool_calls")
+
+    from reyn.tools.transport import Transport, resolve_scheme_for_transport
+
+    try:
+        transport = Transport(transport_name)
+    except ValueError:
+        valid = ", ".join(t.value for t in Transport)
+        raise ValueError(
+            f"tool_use.transport must be one of [{valid}], got {transport_name!r}"
+        ) from None
+
+    # P4a's valid-pair registry is the live parse-time validation authority
+    # (firm §2 J1): raises ValueError on an unregistered (scheme, transport)
+    # cell, e.g. ('category', 'content_fence').
+    resolve_scheme_for_transport(scheme, transport)
+
+    return ToolUseConfig(scheme=scheme, transport=transport_name)
 
 

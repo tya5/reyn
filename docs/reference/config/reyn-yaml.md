@@ -38,7 +38,7 @@ models:
 | `voice` | map | ⚠️ Currently unavailable (no consumer). See below. |
 | `events` | map | Audit-log rotation policy for chat-session event files. See below. |
 | `observability` | map | Opt-in OpenTelemetry (OTLP) export of P6 audit-events. Off by default. See below. |
-| `tool_use` | map | Chat-layer tool-use scheme selector (`chat`). See below. |
+| `tool_use` | map | Chat-layer tool-use scheme x transport selector (`scheme`, `transport`). See below. |
 | `mcp` | map | MCP server definitions. See below. |
 | `python` | map | Python preprocessor additional allowed-modules. See below. |
 | `agent` | map | Agent identity for P6 event audit trail and outgoing HTTP header. See below. |
@@ -479,18 +479,50 @@ See [`safety.on_limit` fields](#safetyon_limit-fields) for the mode settings.
 
 ## `tool_use` block
 
-Chat-layer tool-use scheme selector. The `chat` layer picks a registered `ToolUseScheme` by name — a pluggable mechanism for how tools are presented to and dispatched from the LLM.
+Chat-layer tool-use **scheme x transport** selector (FP-0066 P4b, #3247). Tool-use
+decomposes into two orthogonal axes: `scheme` is the **presentation** — how
+capabilities are shown/discovered to the LLM (`category` / `enumerate-all` /
+`retrieval`) — and `transport` is how the model expresses the chosen action
+(`tool_calls` / `content_fence`). The resolved `(scheme, transport)` pair
+selects a registered `ToolUseScheme` — a pluggable mechanism for how tools
+are presented to and dispatched from the LLM.
 
 ```yaml
 tool_use:
-  chat: enumerate-all         # default
+  scheme: enumerate-all       # default
+  transport: tool_calls       # default
 ```
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `chat` | string | `enumerate-all` | Tool-use scheme for the top-level chat layer. **Default `enumerate-all`** — flat-lists actions so the LLM invokes them directly instead of hallucinating `invoke_action` names (raised non-hot-list tool-use ~30%→100%). Set to `universal-category` for a minimal-surface / many-tool catalog (discover-then-call), or another registered scheme. |
+| `scheme` | string | `enumerate-all` | Presentation for the top-level chat layer: `category` / `enumerate-all` / `retrieval`. **Default `enumerate-all`** — flat-lists actions so the LLM invokes them directly instead of hallucinating `invoke_action` names (raised non-hot-list tool-use ~30%→100%). Set to `universal-category` for a minimal-surface / many-tool catalog (discover-then-call). |
+| `transport` | string | `tool_calls` | How the model expresses a chosen action: `tool_calls` (native tool-calling) or `content_fence` (the action is expressed as fenced code in the reply text — CodeAct). |
 
-The chat layer defaults to `enumerate-all`. A scheme owns how the `tools=` payload is built, the SP tool-use instructions, how an LLM response is interpreted, and how it is dispatched — so swapping the scheme changes the whole tool-use loop for the chat layer without OS changes. `universal-category` remains available via this config (e.g. for very large tool catalogs where flat-listing every action would bloat the request). `retrieval` (search-over-tools) and `CodeAct` are likewise supported opt-in schemes; `retrieval` additionally requires `embedding.enabled: true` (FP-0066 §7).
+Not every `(scheme, transport)` combination is implemented. The valid pairs today are:
+
+| `scheme` \ `transport` | `tool_calls` | `content_fence` |
+|---|---|---|
+| `category` | `universal-category` | *(unimplemented)* |
+| `enumerate-all` | `enumerate-all` (default) | `codeact` |
+| `retrieval` | `retrieval` | *(unimplemented)* |
+
+An unregistered pair (e.g. `scheme: category` + `transport: content_fence`) raises
+a legible error at config-parse time rather than silently falling back or being
+accepted. CodeAct is reached via `scheme: enumerate-all` + `transport:
+content_fence` — it is the same full flat catalog as `enumerate-all`, expressed
+as fenced code instead of native tool calls, not a `scheme` name of its own.
+`retrieval` additionally requires `embedding.enabled: true` (FP-0066 §7).
+
+The old single `tool_use.chat` key is **removed** (clean-break, no compat
+alias). A reyn.yaml still carrying `tool_use.chat` fails loud at config-load
+time naming the `scheme` / `transport` migration — it is never silently
+ignored. A former `chat: codeact` becomes `scheme: enumerate-all` +
+`transport: content_fence`; a former `chat: universal-category` becomes
+`scheme: category` (`transport` stays at its `tool_calls` default) — `category`
+is the presentation-axis name, and it resolves to the registered
+`universal-category` scheme.
+
+A scheme owns how the `tools=` payload is built, the SP tool-use instructions, how an LLM response is interpreted, and how it is dispatched — so swapping `scheme` / `transport` changes the whole tool-use loop for the chat layer without OS changes.
 
 For what each scheme does and **when to choose which** (`enumerate-all` / `retrieval` / `CodeAct` vs the default), see [Tool-Use Schemes](../../concepts/tools-integrations/tool-use-schemes.md).
 
@@ -853,7 +885,7 @@ See [Reference: control-ir — `sandboxed_exec`](../runtime/control-ir.md#sandbo
 
 ## `action_retrieval` block
 
-Universal catalog visibility + retrieval settings.  Scheme *selection* is generalized by the [`tool_use` block](#tool_use-block) below — `tool_use.chat` defaults to `enumerate-all` (not this wrapper path); set `tool_use.chat: universal-category` to select the wrapper scheme this flag configures. When the chat layer's scheme resolves to `universal-category`, this flag governs its presentation. Provides **universal catalog wrappers** (`list_actions` / `describe_action` / `invoke_action`) for uniform browse / describe / invoke across all skill / agent / MCP / file / memory / RAG categories. `universal_wrappers_enabled` defaults on for direct callers of the legacy flag path; operators who want the prior flat `tools=` shape for those callers can opt out with `universal_wrappers_enabled: false`.
+Universal catalog visibility + retrieval settings.  Scheme *selection* is generalized by the [`tool_use` block](#tool_use-block) below — `tool_use.scheme` defaults to `enumerate-all` (not this wrapper path); set `tool_use.scheme: category` to select the wrapper scheme this flag configures (`category` is the presentation-axis name; it resolves to the registered `universal-category` scheme). When the chat layer's scheme resolves to `universal-category`, this flag governs its presentation. Provides **universal catalog wrappers** (`list_actions` / `describe_action` / `invoke_action`) for uniform browse / describe / invoke across all skill / agent / MCP / file / memory / RAG categories. `universal_wrappers_enabled` defaults on for direct callers of the legacy flag path; operators who want the prior flat `tools=` shape for those callers can opt out with `universal_wrappers_enabled: false`.
 
 ```yaml
 action_retrieval:

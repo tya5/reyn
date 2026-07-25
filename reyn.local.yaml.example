@@ -487,17 +487,21 @@
 
 
 # -----------------------------------------------------------------------------
-# tool_use: the tool-use scheme per layer (#1593). Each of chat / step / phase
-# selects a registered ToolUseScheme by name — generalizing the binary
-# universal_wrappers_enabled toggle into a pluggable, per-layer scheme. Default
-# all "universal-category" (today's behaviour). Future schemes (enumerate-all,
-# codeact) are selected by setting a layer to that name — e.g. chat=enumerate-all
-# (weak-model-friendly at the top level) while step/phase stay universal-category.
+# tool_use: the chat-layer tool-use scheme x transport selector (#1593;
+# FP-0066 P4b, #3247). ``scheme`` is the PRESENTATION axis (category /
+# enumerate-all / retrieval — how capabilities are shown/discovered);
+# ``transport`` is how the model expresses the chosen action (tool_calls /
+# content_fence). Default: scheme=enumerate-all, transport=tool_calls (#1657
+# — flat-listing actions stops invoke_action name-hallucination). Set
+# scheme=universal-category for a minimal-surface / many-tool catalog
+# (discover-then-call), or scheme=enumerate-all + transport=content_fence for
+# CodeAct (actions expressed as code, not native tool calls). Not every
+# (scheme, transport) pair is implemented — an invalid pair fails loud at
+# config-parse time.
 # -----------------------------------------------------------------------------
 # tool_use:
-#   chat: universal-category
-#   step: universal-category
-#   phase: universal-category
+#   scheme: universal-category
+#   transport: tool_calls
 
 
 # -----------------------------------------------------------------------------
