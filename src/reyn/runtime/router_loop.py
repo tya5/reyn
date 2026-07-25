@@ -1353,6 +1353,32 @@ class RouterLoop:
                 await self._ensure_action_index_built(
                     _idx, _provider, _model_class, await_completion=False,
                 )
+            # FP-0066 P3b (#3247 firm §3): repo_doc/repo_src are "static"
+            # sources too — same background-schedule shape as the action-
+            # catalog block just above, but via the material-producing
+            # ``IndexCoordinator.ensure_built`` (not
+            # ``ensure_built_self_contained`` — the repo builders have no
+            # pre-existing self-contained build primitive to preserve, so
+            # they use the Coordinator's own cross-process lock + embed-
+            # verify-write directly, same as memory/skill). ``await``ing
+            # ``sync_repo_ingest_background`` here does NOT block this turn
+            # on the embedding build itself — the ``await_completion=False``
+            # branch inside it only schedules ``asyncio.create_task`` and
+            # returns; §8's "never a foreground surprise" holds because the
+            # ACTUAL embed/write work runs on the background task, not on
+            # this awaited call. Best-effort (never raises) + no-ops
+            # entirely when ``embedding.enabled`` is false, so this call is
+            # safe on every turn regardless of embedding configuration.
+            try:
+                from reyn.data.index.knowledge_ingest import sync_repo_ingest_background
+
+                await sync_repo_ingest_background(
+                    self._get_index_coordinator(),
+                    self.host.make_router_op_context(),
+                    events=self.host.events,
+                )
+            except Exception:
+                pass
         # D2-wrapper scope expansion (B38): build session-level resource
         # metadata maps when universal wrappers are enabled — regardless of
         # whether a tracker is present. These maps feed both the hot-list
