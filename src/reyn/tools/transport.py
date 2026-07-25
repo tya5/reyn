@@ -10,9 +10,12 @@ conflated in a single flat ``_SCHEMES`` registry (``reyn.tools.scheme``) where
 
 This module is **internal-only and behavior-preserving** (P4a): it introduces
 the ``Transport`` type and a registry that names which (scheme, transport)
-cells are actually resolvable, WITHOUT changing config (``tool_use.chat`` stays
-the selector — P4b), WITHOUT removing ``codeact`` from ``_SCHEMES`` (P4c), and
-WITHOUT physically splitting ``ToolUseScheme`` into two protocols (firm §2 J3 —
+cells are actually resolvable. P4b (config surface, #3247) now uses this
+registry as the live parse-time validation authority for the
+``tool_use.scheme`` x ``tool_use.transport`` 2-key config (the former
+``tool_use.chat`` is removed, clean-break). P4a itself is WITHOUT removing
+``codeact`` from ``_SCHEMES`` (P4c), and WITHOUT physically splitting
+``ToolUseScheme`` into two protocols (firm §2 J3 —
 ``Presentation`` already carries the transport freedom via
 ``llm_tools_payload`` emptiness + ``tool_use_sp`` + the ``Interpretation``
 Execute/CodeBlock branch; transport is expressed as a construction-strategy +

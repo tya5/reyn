@@ -105,17 +105,20 @@ specific to those two situations.
 
 ## How to enable
 
-CodeAct is selected for the chat layer in `reyn.yaml`, like any scheme. The chat
-default is `enumerate-all`, so CodeAct is opt-in:
+CodeAct is selected for the chat layer in `reyn.yaml` via the `tool_use.scheme`
+x `tool_use.transport` 2-key config (FP-0066 P4, #3247) — CodeAct is the
+`enumerate-all` presentation expressed over the `content_fence` transport, not
+a scheme name of its own. The chat default is `scheme=enumerate-all` /
+`transport=tool_calls`, so CodeAct is opt-in:
 
 ```yaml
 # reyn.yaml
 tool_use:
-  chat: codeact     # top-level chat router
+  scheme: enumerate-all
+  transport: content_fence   # top-level chat router
 ```
 
-The `chat` layer can use `codeact`. See
-[`reyn.yaml` § tool_use](../../reference/config/reyn-yaml.md#tool_use-block).
+See [`reyn.yaml` § tool_use](../../reference/config/reyn-yaml.md#tool_use-block).
 
 ## Security note
 

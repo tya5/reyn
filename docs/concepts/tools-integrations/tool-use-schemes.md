@@ -34,7 +34,7 @@ name — the plain, native-JSON baseline with no discovery indirection. **This i
 the default for the `chat` layer**: flat-listing actions lets the LLM
 invoke them directly, avoiding the `invoke_action` name-hallucination that the
 discover-then-call indirection induced (measured ~30%→100% non-hot-list tool-use
-on the chat path). Leaving `tool_use.chat` unset keeps it.
+on the chat path). Leaving `tool_use.scheme` unset keeps it.
 
 **Use when:** the default for chat — direct, deterministic name→dispatch. The
 trade-off is a **visibility cost, not a weak-model penalty**: request size grows
@@ -49,7 +49,7 @@ The [universal action catalog](universal-catalog.md): every action — a workflo
 MCP tool, a memory entry, a file op, an indexed corpus — is addressed by a single
 qualified name and reached through a small fixed set of wrappers (discover →
 describe → invoke). The LLM-facing tool list stays constant as the catalogue
-grows. Opt in for chat by setting `tool_use.chat: universal-category`.
+grows. Opt in for chat by setting `tool_use.scheme: category` (the presentation-axis name; it resolves to the registered `universal-category` scheme).
 
 **Use when:** a very large / fast-growing tool set where flat-listing every
 action in the request would cost too many tokens — the wrappers keep the
@@ -89,18 +89,37 @@ call, plus sandbox containment.
 **Use when:** running **weak / low-cost models**, where expressing tool use as
 code measurably outperforms JSON tool-calling.
 
+CodeAct is the `enumerate-all` presentation expressed over the `content_fence`
+**transport** (FP-0066 P4, #3247) — the same full flat catalog as
+`enumerate-all`, but the model expresses calls as fenced code instead of
+native tool calls. Select it via `tool_use.scheme: enumerate-all` +
+`tool_use.transport: content_fence` (see below), not a `codeact` scheme name.
+
 ## Chat-layer selection
 
-The scheme is chosen for the chat layer:
+Tool-use decomposes into two config keys: `tool_use.scheme` (the
+**presentation** — `category` / `enumerate-all` / `retrieval`) and
+`tool_use.transport` (how the model expresses a chosen action — `tool_calls`
+/ `content_fence`). Not every (scheme, transport) pair is implemented; an
+unregistered pair fails loud at config-parse time.
 
 ```yaml
 # reyn.yaml
 tool_use:
-  chat: enumerate-all         # top-level chat router (default)
+  scheme: enumerate-all       # top-level chat router (default)
+  transport: tool_calls       # default
 ```
 
-The chat layer can use any registered scheme. Full per-key
-reference: [`reyn.yaml` § tool_use](../../reference/config/reyn-yaml.md#tool_use-block).
+To select CodeAct:
+
+```yaml
+# reyn.yaml
+tool_use:
+  scheme: enumerate-all
+  transport: content_fence
+```
+
+Full per-key reference: [`reyn.yaml` § tool_use](../../reference/config/reyn-yaml.md#tool_use-block).
 
 ## Why this is safe to swap
 

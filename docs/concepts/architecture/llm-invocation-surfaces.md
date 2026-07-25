@@ -22,9 +22,10 @@ audience: [human, agent]
 > conditional" per-kind list to an (incorrect) claim that the universal-action-
 > catalog wrapper mode is the chat layer's production default; that second
 > version was **itself wrong** — verified via `src/reyn/config/execution.py`'s
-> `ToolUseConfig` (`chat: str = "enumerate-all"`) and `src/reyn/tools/scheme.py`'s
+> `ToolUseConfig` (`scheme: str = "enumerate-all"`, `transport: str = "tool_calls"`
+> — FP-0066 P4b, #3247) and `src/reyn/tools/scheme.py`'s
 > `DEFAULT_SCHEME_NAME = "enumerate-all"` that tool presentation is a
-> **pluggable scheme** (`tool_use.chat` in `reyn.yaml`), and the **chat layer's
+> **pluggable scheme** (`tool_use.scheme` x `tool_use.transport` in `reyn.yaml`), and the **chat layer's
 > actual default is `enumerate-all`** (flat presentation, not the universal
 > wrapper) — a deliberate owner-driven fix (flat listing prevents `invoke_action`
 > name-hallucination, 30%→100% non-hot-list tool-use accuracy in evidence). The
@@ -50,11 +51,11 @@ Reyn invokes the LLM via native function-calling tools over `RouterLoop` (intera
 
 **Mechanism:** native LLM function calling via `call_llm_tools` (backed by litellm). Tool definitions follow the OpenAI `tools` array shape; the model replies with `tool_calls` in the assistant message. The OS dispatches each call, appends the `tool_result`, and re-invokes the LLM until it produces a plain text reply.
 
-**Tool surface:** `build_tools()` in `src/reyn/runtime/router_tools.py` assembles the tool list, returning the OpenAI `tools` array shape — but *which shape that list takes* is a **pluggable scheme**, not a single fixed format. `tool_use.chat` in `reyn.yaml` selects a registered `ToolUseScheme` for the chat layer by name; every scheme routes every tool call through the same `exclude → permission → dispatch` gate regardless of which is active. See [Tool-Use Schemes](../tools-integrations/tool-use-schemes.md) and [Universal Action Catalog](../tools-integrations/universal-catalog.md) for the full model.
+**Tool surface:** `build_tools()` in `src/reyn/runtime/router_tools.py` assembles the tool list, returning the OpenAI `tools` array shape — but *which shape that list takes* is a **pluggable scheme**, not a single fixed format. `tool_use.scheme` (presentation) x `tool_use.transport` (how actions are expressed) in `reyn.yaml` resolves to a registered `ToolUseScheme` for the chat layer; every scheme routes every tool call through the same `exclude → permission → dispatch` gate regardless of which is active. See [Tool-Use Schemes](../tools-integrations/tool-use-schemes.md) and [Universal Action Catalog](../tools-integrations/universal-catalog.md) for the full model.
 
 - **The `chat` layer (this page's `RouterLoop` surface) defaults to `enumerate-all`** — a flat-native-JSON baseline that presents every usable tool flatly in `tools=` and dispatches by name, no universal-wrapper discovery indirection. This is a deliberate owner-driven default (an H1 fix): flat listing stops `invoke_action` name-hallucination, with 30%→100% non-hot-list tool-use accuracy as the evidence.
 - **`retrieval` (RAG-over-tools) and `CodeAct`** are supported, opt-in chat-layer schemes, for very large tool sets or weak models respectively.
-- **The chat layer's scheme is operator-configurable** via `tool_use.chat` in `reyn.yaml` — an operator can, for example, opt the chat layer into `universal-category` instead of the `enumerate-all` default.
+- **The chat layer's scheme is operator-configurable** via `tool_use.scheme` in `reyn.yaml` — an operator can, for example, opt the chat layer into `universal-category` instead of the `enumerate-all` default.
 
 **Role:** orchestration — pick the next sub-component (workflow, agent, plan, memory operation, direct text reply).
 

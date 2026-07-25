@@ -331,7 +331,7 @@ def _warn_legacy_dot_reyn_config(path: Path) -> None:
 
 
 def _validate_retrieval_scheme_embedding(cfg: "ReynConfig") -> None:
-    """#2895 fix (a): fail loud at config load when ``tool_use.chat:
+    """#2895 fix (a): fail loud at config load when ``tool_use.scheme:
     retrieval`` is selected with no working embedding configured.
 
     ``RetrievalScheme`` (``reyn.tools.schemes.retrieval``) presents a
@@ -364,14 +364,14 @@ def _validate_retrieval_scheme_embedding(cfg: "ReynConfig") -> None:
     silently missing at Session-build time — an env fact this config-load
     check cannot see).
     """
-    if cfg.tool_use.chat != "retrieval":
+    if cfg.tool_use.scheme != "retrieval":
         return
     if cfg.embedding.enabled:
         return
     from reyn.tools.universal_catalog import _HIDDEN_STATE_HINT
 
     raise ValueError(
-        "tool_use.chat: retrieval requires a working embedding "
+        "tool_use.scheme: retrieval requires a working embedding "
         "(embedding.enabled is false) — without one, "
         "the search_actions tool always returns no results, and retrieval's "
         "terminal-on-empty-match rule drops it on the very first search, "

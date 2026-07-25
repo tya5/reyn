@@ -6,7 +6,7 @@ SP, and dispatch by name. Per the #1593 competitor research this is a fine
 small-toolset baseline (max determinism, maps onto reyn's constrained
 ``candidate_outputs``) — it is **not** the weak-model fix (flat JSON is weakest
 for weak models; CodeAct/PR-3 is the evidence-winner). Selected for the chat
-layer via ``tool_use.chat``.
+layer via ``tool_use.scheme`` (FP-0066 P4b, #3247).
 
 Unlike ``UniversalCategoryScheme`` (which delegates *all four* methods to the
 router ``SchemeOps``, byte-identical), enumerate-all is the first **self-contained**

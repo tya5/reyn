@@ -29,7 +29,17 @@ def test_from_config_maps_each_field_to_its_config_source() -> None:
     assert fc.embedding_config is config.embedding
     assert fc.router_config is config.llm.router
     assert fc.retry_config is config.llm.retry
-    assert fc.chat_tool_use_scheme == config.tool_use.chat
+    # FP-0066 P4b: chat_tool_use_scheme is now the RESOLVED concrete scheme
+    # name (via P4a's resolve_scheme_for_transport over config.tool_use.
+    # scheme x .transport), not a bare passthrough of a single config field —
+    # the default (scheme=enumerate-all, transport=tool_calls) resolves to
+    # the SAME concrete name the old default (chat=enumerate-all) did
+    # (byte-identical default behavior).
+    from reyn.tools.transport import Transport, resolve_scheme_for_transport
+    assert fc.chat_tool_use_scheme == resolve_scheme_for_transport(
+        config.tool_use.scheme, Transport(config.tool_use.transport)
+    )
+    assert fc.chat_tool_use_scheme == "enumerate-all"
     # AgentRegistry uniform config
     assert fc.delegation_capability_default == config.delegation.capability_default
 

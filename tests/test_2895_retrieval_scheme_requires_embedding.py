@@ -1,4 +1,4 @@
-"""Tier 2: #2895 fix (a) — config-load fail-loud for ``tool_use.chat:
+"""Tier 2: #2895 fix (a) — config-load fail-loud for ``tool_use.scheme:
 retrieval`` selected with no working embedding configured.
 
 ``RetrievalScheme`` (``reyn.tools.schemes.retrieval``) presents a
@@ -40,7 +40,7 @@ def _write_yaml(tmp_path: Path, body: str) -> None:
 
 
 def test_retrieval_scheme_without_embedding_enabled_fails_loud(tmp_path: Path) -> None:
-    """Tier 2: #2895 fix (a), falsify-pin. ``tool_use.chat: retrieval`` with
+    """Tier 2: #2895 fix (a), falsify-pin. ``tool_use.scheme: retrieval`` with
     ``embedding.enabled`` left at its default (False — opt-in, FP-0066 §7)
     must raise a ValueError carrying the SAME enable-hint text the graceful
     schemes surface via ``list_actions`` (``universal_catalog.
@@ -58,7 +58,7 @@ def test_retrieval_scheme_without_embedding_enabled_fails_loud(tmp_path: Path) -
         tmp_path,
         """
 tool_use:
-  chat: retrieval
+  scheme: retrieval
 """,
     )
     with pytest.raises(ValueError) as excinfo:
@@ -70,13 +70,13 @@ tool_use:
 
 def test_retrieval_scheme_with_explicit_embedding_disabled_fails_loud(tmp_path: Path) -> None:
     """Tier 2: explicit ``embedding.enabled: false`` alongside
-    ``tool_use.chat: retrieval`` fails loud identically to the unset-default
+    ``tool_use.scheme: retrieval`` fails loud identically to the unset-default
     case — an explicit opt-out is treated the same as never having opted in."""
     _write_yaml(
         tmp_path,
         """
 tool_use:
-  chat: retrieval
+  scheme: retrieval
 embedding:
   enabled: false
 """,
@@ -86,7 +86,7 @@ embedding:
 
 
 def test_retrieval_scheme_with_embedding_enabled_loads_cleanly(tmp_path: Path) -> None:
-    """Tier 2: the contrast — ``tool_use.chat: retrieval`` with
+    """Tier 2: the contrast — ``tool_use.scheme: retrieval`` with
     ``embedding.enabled: true`` configured loads without error (the
     fail-loud check is scoped to the no-embedding misconfiguration, not to
     selecting retrieval at all)."""
@@ -94,13 +94,13 @@ def test_retrieval_scheme_with_embedding_enabled_loads_cleanly(tmp_path: Path) -
         tmp_path,
         """
 tool_use:
-  chat: retrieval
+  scheme: retrieval
 embedding:
   enabled: true
 """,
     )
     cfg: ReynConfig = load_config(cwd=tmp_path)
-    assert cfg.tool_use.chat == "retrieval"
+    assert cfg.tool_use.scheme == "retrieval"
     assert cfg.embedding.enabled is True
 
 
@@ -112,9 +112,9 @@ def test_other_schemes_do_not_require_embedding(tmp_path: Path) -> None:
         tmp_path,
         """
 tool_use:
-  chat: enumerate-all
+  scheme: enumerate-all
 """,
     )
     cfg: ReynConfig = load_config(cwd=tmp_path)
-    assert cfg.tool_use.chat == "enumerate-all"
+    assert cfg.tool_use.scheme == "enumerate-all"
     assert cfg.embedding.enabled is False
