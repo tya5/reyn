@@ -173,25 +173,30 @@ def test_fresh_session_attempts_build_exactly_once(
 def test_same_session_retry_suppressed(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Tier 2: #1458 — the production retry guard (``RouterLoop.run()``'s
-    own gate, mirrored here as the caller checking
-    ``coordinator.build_failed(source_id)`` before invoking the build
-    again) prevents a second attempt within the same session. Observable
-    via ``provider.embed_calls`` staying at 1 — a retry would drive a
-    second real ``embed`` op call and this assertion would go RED (the
-    non-vacuity witness: this test fails if the same-session suppression
-    is removed)."""
+    """Tier 2: #1458 — same-session retry suppression is DRIVEN, not
+    mirrored: this test calls ``_ensure_action_index_built``
+    UNCONDITIONALLY a second time (no caller-side "check
+    ``build_failed`` first" guard) and asserts the retry is suppressed —
+    the suppression itself is enforced by ``IndexCoordinator.ensure_built``
+    (the ``_failure_memo`` owner, P2-convergence PR2 #3270 §3), not by
+    this test's own logic. Observable via ``provider.embed_calls`` staying
+    at 1 after the second call — a retry would drive a second real
+    ``embed`` op call. Non-vacuity: strip ``ensure_built``'s
+    ``build_failed(source_id)`` early-return (coordinator.py) and THIS
+    assertion goes RED (``embed_calls == 2``), because the second call
+    would then run ``build_fn`` again — see the PR body for the recorded
+    RED-when-neutered proof."""
     provider = _FailingProvider()
     loop, idx, coordinator = _build_once(tmp_path, monkeypatch, provider)
     assert provider.embed_calls == 1
+    assert coordinator.build_failed("actions") is True
 
-    # Production retry guard (mirrors RouterLoop.run()'s own gate at the
-    # eager/background decision points): do NOT call again once the
-    # Coordinator's failure-memo is set.
-    if not coordinator.build_failed("actions"):
-        _run(loop._ensure_action_index_built(
-            idx, provider, "standard", await_completion=True,
-        ))
+    # Call again UNCONDITIONALLY — no caller-side guard. The suppression
+    # must come from ``ensure_built`` itself for this to be a genuine
+    # (non-vacuous) drive of the production mechanism.
+    _run(loop._ensure_action_index_built(
+        idx, provider, "standard", await_completion=True,
+    ))
 
     assert provider.embed_calls == 1, "memoized failure must prevent a retry"
     assert idx.is_ready() is False

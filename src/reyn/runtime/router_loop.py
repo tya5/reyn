@@ -1312,16 +1312,23 @@ class RouterLoop:
             _provider = _provider_getter() if _provider_getter else None
             _model_class = _model_getter() if _model_getter else None
             _eager_embedding_build = bool(_eager_getter()) if _eager_getter else False
-            # #1458: skip both build paths when a prior attempt in this session
-            # failed (per-session failure memoization). P2-convergence PR2
-            # (#3270 §3): the memo lives solely in the Coordinator now (it is
-            # set inside ``IndexCoordinator._run_build``'s except-block on the
-            # SAME exception the production build raises — see
-            # ``coordinator.py``); there is no RouterLoop-instance flag any
-            # more.
-            _build_failed = self._get_index_coordinator().build_failed(
-                getattr(_idx, "source_name", None) or "actions"
-            )
+            # #1458: a prior build failure in this session must not spawn a
+            # retry. P2-convergence PR2 (#3270 §3, co-vet-driven root-fix):
+            # the SOLE suppression site is now inside
+            # ``IndexCoordinator.ensure_built`` (the ``_failure_memo``
+            # owner — see its docstring) — it no-ops a build attempt when
+            # ``build_failed(source_id)`` is already True, BEFORE invoking
+            # ``build_fn`` again. router_loop deliberately carries NO
+            # sibling ``build_failed``-gated condition on the two
+            # ``_ensure_action_index_built`` calls below: a caller-side
+            # mirror of the same check would make any regression in the
+            # Coordinator's own suppression invisible to a test that drives
+            # this call path (the exact wiring-hazard #3270 §3 exists to
+            # close) — see ``tests/test_action_embedding_build_failure_
+            # 1458.py``'s non-vacuity proof. Both calls below are therefore
+            # UNCONDITIONAL on failure state; after a failure they still
+            # execute but resolve as a cheap Coordinator-side no-op.
+            #
             # B25-S5-1: when eager flag is set, await the build synchronously
             # before computing _search_visible. This pays the build cost on
             # the first turn (= once per session; subsequent turns see
@@ -1333,7 +1340,6 @@ class RouterLoop:
                 and _provider is not None
                 and _model_class
                 and not getattr(_idx, "is_ready", lambda: False)()
-                and not _build_failed
             ):
                 await self._ensure_action_index_built(
                     _idx, _provider, _model_class, await_completion=True,
@@ -1348,15 +1354,15 @@ class RouterLoop:
             # build when the index is configured but not yet ready.  The
             # build is idempotent (= same catalog hash → no-op) and
             # serialised by the index's internal lock; once-per-source
-            # in-flight dedup is now IndexCoordinator's
-            # ``ensure_built_self_contained`` (``_bg_tasks``), not a
-            # RouterLoop instance flag.
+            # in-flight dedup is now IndexCoordinator's ``ensure_built``
+            # (``_bg_tasks``, P2-convergence PR1 eliminated the two-path
+            # ``ensure_built_self_contained`` this comment used to name),
+            # not a RouterLoop instance flag.
             if (
                 _idx is not None
                 and _provider is not None
                 and _model_class
                 and not getattr(_idx, "is_ready", lambda: False)()
-                and not _build_failed
             ):
                 await self._ensure_action_index_built(
                     _idx, _provider, _model_class, await_completion=False,

@@ -380,6 +380,17 @@ class IndexCoordinator:
         ``mark_dirty`` + the in-process failure-memo, and reported on the
         returned ``BuildOutcome.error`` (the §G2 best-effort contract).
 
+        Same-session retry suppression (P2-convergence PR2, #3270 §3): if a
+        PRIOR attempt in THIS process already failed for ``source_id`` (per
+        ``build_failed(source_id)``), this call is a cheap no-op — it does
+        NOT re-invoke ``build_fn``/re-attempt the write — reported via
+        ``BuildOutcome(triggered=False, error=<memoized reason>)``. This is
+        enforced by the memo's OWNER so a caller does not need its own
+        "check ``build_failed`` before calling again" convention to get the
+        suppression (#1458's original invariant — a fresh process/session
+        still gets exactly one attempt, since the memo itself is per-
+        process/volatile).
+
         ``events`` (FP-0066 P2d, #3247 firm §6): an optional ``EventLog`` to
         emit the ``embedding_index_build_started``/``_progress``/
         ``_complete``/``_error`` audit-event phases to. ``None`` (the
@@ -428,6 +439,23 @@ class IndexCoordinator:
         if entry is not None and entry.state == "building":
             # Someone (this process or another) is already mid-build.
             return BuildOutcome(source_id=source_id, triggered=False, background=False)
+        if self.build_failed(source_id):
+            # P2-convergence PR2 (#3270 §3, co-vet-driven root-fix): same-
+            # session retry suppression is enforced HERE, by the
+            # ``_failure_memo`` OWNER, not merely mirrored by a caller-side
+            # "check the memo before calling again" convention (#1458). A
+            # prior build attempt in THIS process already failed for
+            # ``source_id`` (persisted state stays "dirty"/"error", which
+            # would otherwise fall through past the two early-returns above
+            # and re-attempt on every call) — skip the rebuild and report
+            # it as a no-op with the memoized reason, so a caller that
+            # calls ``ensure_built`` again unconditionally (not just one
+            # that remembers to check ``build_failed`` first) still gets
+            # the suppression for free.
+            return BuildOutcome(
+                source_id=source_id, triggered=False, background=False,
+                error=self._failure_memo[source_id],
+            )
 
         build_fn = self._builders.get(source_id)
         if build_fn is None:

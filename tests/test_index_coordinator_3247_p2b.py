@@ -317,9 +317,12 @@ def test_build_failure_memoized_not_reattempted(
 ) -> None:
     """Tier 2: equivalence case 4 — a build failure is memoized SOLELY on
     the Coordinator's own failure-memo (``build_failed``, P2-convergence
-    PR2 (#3270 §3) — the twin RouterLoop-side flag is retired) — and the
-    production retry guard (checked by the caller before invoking again)
-    prevents a second attempt."""
+    PR2 #3270 §3 — the twin RouterLoop-side flag is retired), and
+    ``ensure_built`` itself (the memo's owner) suppresses a retry — DRIVEN,
+    not mirrored: this test calls ``_ensure_action_index_built``
+    UNCONDITIONALLY a second time (no caller-side ``if not build_failed``
+    guard, which would make the assertion pass regardless of whether the
+    Coordinator's own suppression works)."""
     ctx = _op_ctx_for(_FakeEmbeddingProvider(), monkeypatch)
     loop = _LoopForP2b(tmp_path, ctx)
     idx = _FakeActionIndex(should_fail=True)
@@ -332,12 +335,12 @@ def test_build_failure_memoized_not_reattempted(
         "the twin RouterLoop-side flag must no longer exist (P2-convergence PR2)"
     )
 
-    # Production retry guard (mirrors RouterLoop.run()'s own gate): do NOT
-    # call again once the Coordinator's failure-memo is set.
-    if not coordinator.build_failed("actions"):
-        _run(loop._ensure_action_index_built(
-            idx, "provider", "standard", await_completion=True,
-        ))
+    # Call again UNCONDITIONALLY — the suppression must come from
+    # ``ensure_built`` itself, not from this test remembering to check
+    # ``build_failed`` first.
+    _run(loop._ensure_action_index_built(
+        idx, "provider", "standard", await_completion=True,
+    ))
     assert idx.prepare_calls == 1, "memoized failure must prevent a retry"
 
 
