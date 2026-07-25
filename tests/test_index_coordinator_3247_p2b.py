@@ -317,12 +317,17 @@ def test_build_failure_memoized_not_reattempted(
 ) -> None:
     """Tier 2: equivalence case 4 — a build failure is memoized SOLELY on
     the Coordinator's own failure-memo (``build_failed``, P2-convergence
-    PR2 #3270 §3 — the twin RouterLoop-side flag is retired), and
-    ``ensure_built`` itself (the memo's owner) suppresses a retry — DRIVEN,
-    not mirrored: this test calls ``_ensure_action_index_built``
-    UNCONDITIONALLY a second time (no caller-side ``if not build_failed``
-    guard, which would make the assertion pass regardless of whether the
-    Coordinator's own suppression works)."""
+    PR2 #3270 §3 — the twin RouterLoop-side flag is retired). The retry
+    itself is suppressed at ``_ensure_action_index_built``'s own entry
+    (the AUTO-rebuild chokepoint), NOT inside ``IndexCoordinator.
+    ensure_built`` — a co-vet-caught regression: ``ensure_built`` must
+    stay trigger-agnostic so ``search_await``'s heal path (which calls
+    ``ensure_built`` directly, for every source) is never suppressed by
+    the action-catalog's #1458 policy. DRIVEN, not mirrored: this test
+    calls ``_ensure_action_index_built`` UNCONDITIONALLY a second time (no
+    caller-side ``if not build_failed`` guard, which would make the
+    assertion pass regardless of whether the production suppression
+    works)."""
     ctx = _op_ctx_for(_FakeEmbeddingProvider(), monkeypatch)
     loop = _LoopForP2b(tmp_path, ctx)
     idx = _FakeActionIndex(should_fail=True)

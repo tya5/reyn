@@ -17,6 +17,22 @@ same session. Failure-state now lives SOLELY in
 ``IndexCoordinator.build_failed(source_id)`` (#3270 §3 single-owner
 collapse) — there is no more RouterLoop-instance-scoped flag to read.
 
+The same-session suppression itself lives at ``RouterLoop.
+_ensure_action_index_built``'s own entry (checked BEFORE it ever calls
+``coordinator.ensure_built``) — NOT inside ``IndexCoordinator.ensure_built``.
+An earlier revision of this migration put the suppression inside
+``ensure_built``, which co-vet caught as a regression: ``IndexCoordinator.
+search_await`` calls ``ensure_built`` directly (bypassing
+``_ensure_action_index_built`` entirely) to heal ANY dirty/failed source
+once its provider recovers, so a blanket suppression inside ``ensure_built``
+would have made a dirty+failed source unhealable forever for every OTHER
+registered source (skill/memory/repo), not just the action-catalog.
+``ensure_built`` is TRIGGER-AGNOSTIC; ``_ensure_action_index_built`` is the
+ONE AUTO-rebuild chokepoint (both eager and background paths in
+``RouterLoop.run()`` funnel through it) that owns the #1458 "at most one
+AUTO attempt per session" POLICY, reading STATE from ``IndexCoordinator.
+build_failed(source_id)`` (the single state owner).
+
 No mocks. The build path is exercised via a real ``RouterLoop`` subclass
 (minimal-subclass shim for ``_build_router_caller_state`` /
 ``_get_index_coordinator`` — same convention as
@@ -26,10 +42,10 @@ No mocks. The build path is exercised via a real ``RouterLoop`` subclass
 (monkeypatched-provider) ``embed`` op; the fake embedding provider raises a
 real ``RuntimeError`` to trigger the failure path — non-vacuity: since the
 failure now flows through ``embed_verify_write`` (not a bespoke
-``idx.build()`` call), these tests would go RED if the Coordinator's
-same-session suppression (``build_failed``) were neutered, because the
-retry-guarded second call would re-invoke the provider and the call-count
-assertion would fail.
+``idx.build()`` call), these tests would go RED if
+``_ensure_action_index_built``'s same-session suppression were neutered,
+because the unconditionally-repeated second call would re-invoke the
+provider and the call-count assertion would fail.
 """
 from __future__ import annotations
 
@@ -177,15 +193,19 @@ def test_same_session_retry_suppressed(
     mirrored: this test calls ``_ensure_action_index_built``
     UNCONDITIONALLY a second time (no caller-side "check
     ``build_failed`` first" guard) and asserts the retry is suppressed —
-    the suppression itself is enforced by ``IndexCoordinator.ensure_built``
-    (the ``_failure_memo`` owner, P2-convergence PR2 #3270 §3), not by
-    this test's own logic. Observable via ``provider.embed_calls`` staying
-    at 1 after the second call — a retry would drive a second real
-    ``embed`` op call. Non-vacuity: strip ``ensure_built``'s
-    ``build_failed(source_id)`` early-return (coordinator.py) and THIS
-    assertion goes RED (``embed_calls == 2``), because the second call
-    would then run ``build_fn`` again — see the PR body for the recorded
-    RED-when-neutered proof."""
+    the suppression itself is enforced by ``_ensure_action_index_built``'s
+    OWN entry check against ``IndexCoordinator.build_failed()`` (the
+    single state owner, P2-convergence PR2 #3270 §3 — REVISED: an earlier
+    revision put this suppression inside ``ensure_built`` itself, which
+    co-vet caught as a regression against the §G2 heal contract; see
+    ``coordinator.py``'s ``ensure_built``/module docstrings), not by this
+    test's own logic. Observable via ``provider.embed_calls`` staying at 1
+    after the second call — a retry would drive a second real ``embed`` op
+    call. Non-vacuity: strip ``_ensure_action_index_built``'s
+    ``coordinator.build_failed(source_id)`` early-return (router_loop.py)
+    and THIS assertion goes RED (``embed_calls == 2``), because the second
+    call would then run ``build_fn`` again — see the PR body for the
+    recorded RED-when-neutered proof."""
     provider = _FailingProvider()
     loop, idx, coordinator = _build_once(tmp_path, monkeypatch, provider)
     assert provider.embed_calls == 1

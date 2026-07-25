@@ -1313,21 +1313,22 @@ class RouterLoop:
             _model_class = _model_getter() if _model_getter else None
             _eager_embedding_build = bool(_eager_getter()) if _eager_getter else False
             # #1458: a prior build failure in this session must not spawn a
-            # retry. P2-convergence PR2 (#3270 §3, co-vet-driven root-fix):
-            # the SOLE suppression site is now inside
-            # ``IndexCoordinator.ensure_built`` (the ``_failure_memo``
-            # owner — see its docstring) — it no-ops a build attempt when
-            # ``build_failed(source_id)`` is already True, BEFORE invoking
-            # ``build_fn`` again. router_loop deliberately carries NO
-            # sibling ``build_failed``-gated condition on the two
-            # ``_ensure_action_index_built`` calls below: a caller-side
-            # mirror of the same check would make any regression in the
-            # Coordinator's own suppression invisible to a test that drives
-            # this call path (the exact wiring-hazard #3270 §3 exists to
-            # close) — see ``tests/test_action_embedding_build_failure_
-            # 1458.py``'s non-vacuity proof. Both calls below are therefore
-            # UNCONDITIONAL on failure state; after a failure they still
-            # execute but resolve as a cheap Coordinator-side no-op.
+            # retry. P2-convergence PR2 (#3270 §3, REVISED after a co-vet-
+            # caught regression): the suppression is enforced inside
+            # ``_ensure_action_index_built`` itself (checked at ITS entry,
+            # reading ``IndexCoordinator.build_failed(source_id)`` — the
+            # single STATE owner), NOT here and NOT inside
+            # ``IndexCoordinator.ensure_built`` (an earlier revision put it
+            # there, which silently broke the §G2 heal contract:
+            # ``search_await`` calls ``ensure_built`` directly, for every
+            # OTHER registered source too, to heal a dirty/failed entry
+            # once its provider recovers — a blanket suppression inside
+            # ``ensure_built`` made that path permanently stuck). Both
+            # calls below are therefore UNCONDITIONAL here (no caller-side
+            # ``build_failed`` mirror) — the callee is the single AUTO-
+            # rebuild chokepoint that decides whether to actually attempt a
+            # build, so the calls resolve as a cheap no-op after a failure
+            # without this call site needing to know that.
             #
             # B25-S5-1: when eager flag is set, await the build synchronously
             # before computing _search_visible. This pays the build cost on
@@ -3542,12 +3543,37 @@ class RouterLoop:
         so a targeted ``mark_dirty`` forces ``ensure_built`` to actually
         invoke ``prepare_material`` (whose OWN cheap disk-adopt check then
         typically resolves in one file-stat, no embed call).
+
+        #1458 same-session AUTO-rebuild suppression (P2-convergence PR2,
+        #3270 §3, REVISED after a co-vet-caught regression): a co-vet round
+        found that enforcing this inside ``IndexCoordinator.ensure_built``
+        itself silently broke the §G2 heal contract for every OTHER
+        registered source — ``search_await`` calls ``ensure_built``
+        directly (not through this method) to heal a dirty/failed entry
+        once its provider recovers, and a blanket suppression there made a
+        dirty+failed source unhealable forever. ``ensure_built`` is
+        TRIGGER-AGNOSTIC; the suppression is enforced HERE instead — the
+        ONE chokepoint both the eager (``await_completion=True``) and
+        background (``await_completion=False``) AUTO-rebuild paths funnel
+        through (``RouterLoop.run()`` calls only this method for both).
+        Reads STATE from the Coordinator's ``build_failed(source_id)`` (the
+        single owner of that state — see ``coordinator.py``); this method
+        owns the POLICY decision to skip a further AUTO attempt once that
+        state is True, which is why the check lives here and not on the
+        Coordinator.
         """
         if getattr(idx, "is_ready", lambda: False)():
             return
 
         coordinator = self._get_index_coordinator()
         source_id = getattr(idx, "source_name", None) or "actions"
+
+        if coordinator.build_failed(source_id):
+            # #1458: a prior AUTO-rebuild attempt in this session already
+            # failed for this source — do not spawn another one. (This is
+            # the suppression POLICY seam; ``search_await``'s heal path
+            # does NOT go through this method, so it is unaffected.)
+            return
 
         if await coordinator.is_ready(source_id):
             await coordinator.mark_dirty(

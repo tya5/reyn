@@ -55,10 +55,19 @@ docstring).
 **P2-convergence PR2** (#3270 §3, subordinate to PR1's Coordinator-routing):
 collapses the twin failure signals — ``RouterLoop``'s own
 ``_action_index_build_failed`` flag AND this class's ``_failure_memo`` — to
-this class's memo as the SOLE owner. The flag (and its only setter, the
+this class's memo as the SOLE STATE owner. The flag (and its only setter, the
 production-dead ``RouterLoop._build_action_embedding_index_background``)
 are removed entirely; ``build_failed(source_id)`` below is the single read
-surface every caller (production and test) now uses.
+surface every caller (production and test) now uses. The SUPPRESSION
+POLICY built on top of that state (#1458's "at most one AUTO-rebuild
+attempt per session") is deliberately NOT enforced here — a co-vet round
+caught that an earlier revision put it in ``ensure_built`` itself, which
+silently broke the §G2 heal contract for every OTHER source (``search_await``
+calls ``ensure_built`` directly to heal a dirty entry once its provider
+recovers, for every registered source, not just the action-catalog).
+``ensure_built`` stays TRIGGER-AGNOSTIC; the #1458 suppression lives solely
+at ``RouterLoop._ensure_action_index_built``, the one AUTO-rebuild
+chokepoint that actually wants it (see that method's docstring).
 
 **Crash-recovery (the band requirement, CLAUDE.md recovery-feature gate)**:
 the dirty/building/error state lives in ``SourceEntry`` (persisted to
@@ -380,16 +389,25 @@ class IndexCoordinator:
         ``mark_dirty`` + the in-process failure-memo, and reported on the
         returned ``BuildOutcome.error`` (the §G2 best-effort contract).
 
-        Same-session retry suppression (P2-convergence PR2, #3270 §3): if a
-        PRIOR attempt in THIS process already failed for ``source_id`` (per
-        ``build_failed(source_id)``), this call is a cheap no-op — it does
-        NOT re-invoke ``build_fn``/re-attempt the write — reported via
-        ``BuildOutcome(triggered=False, error=<memoized reason>)``. This is
-        enforced by the memo's OWNER so a caller does not need its own
-        "check ``build_failed`` before calling again" convention to get the
-        suppression (#1458's original invariant — a fresh process/session
-        still gets exactly one attempt, since the memo itself is per-
-        process/volatile).
+        ``ensure_built`` is deliberately TRIGGER-AGNOSTIC about a prior
+        failure (P2-convergence PR2, #3270 §3, revised after a co-vet-
+        caught regression): it does NOT itself suppress a rebuild just
+        because ``build_failed(source_id)`` is already True — a dirty/
+        error entry still attempts ``build_fn`` again on every call. This
+        is required for the §G2 heal contract: ``search_await`` calls
+        THIS method directly to heal a dirty source once its provider
+        recovers, for EVERY registered source (skill/memory/repo/action-
+        catalog) — an unconditional suppression here would have globalized
+        the action-catalog-specific #1458 "don't auto-retry a failed
+        build" POLICY onto every source's heal path, permanently stranding
+        a dirty source that could otherwise recover. #1458's per-session
+        "at most one AUTO attempt" suppression is instead enforced by the
+        ONE caller that actually wants it — ``RouterLoop.
+        _ensure_action_index_built`` (the AUTO-rebuild chokepoint both the
+        eager and background paths funnel through), which checks
+        ``build_failed(source_id)`` at ITS OWN entry, before ever calling
+        ``ensure_built``. ``search_await`` does not go through that
+        chokepoint, so a heal is never suppressed.
 
         ``events`` (FP-0066 P2d, #3247 firm §6): an optional ``EventLog`` to
         emit the ``embedding_index_build_started``/``_progress``/
@@ -439,23 +457,6 @@ class IndexCoordinator:
         if entry is not None and entry.state == "building":
             # Someone (this process or another) is already mid-build.
             return BuildOutcome(source_id=source_id, triggered=False, background=False)
-        if self.build_failed(source_id):
-            # P2-convergence PR2 (#3270 §3, co-vet-driven root-fix): same-
-            # session retry suppression is enforced HERE, by the
-            # ``_failure_memo`` OWNER, not merely mirrored by a caller-side
-            # "check the memo before calling again" convention (#1458). A
-            # prior build attempt in THIS process already failed for
-            # ``source_id`` (persisted state stays "dirty"/"error", which
-            # would otherwise fall through past the two early-returns above
-            # and re-attempt on every call) — skip the rebuild and report
-            # it as a no-op with the memoized reason, so a caller that
-            # calls ``ensure_built`` again unconditionally (not just one
-            # that remembers to check ``build_failed`` first) still gets
-            # the suppression for free.
-            return BuildOutcome(
-                source_id=source_id, triggered=False, background=False,
-                error=self._failure_memo[source_id],
-            )
 
         build_fn = self._builders.get(source_id)
         if build_fn is None:
