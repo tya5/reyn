@@ -28,10 +28,29 @@ current state)**: audit-event phase emission (``embedding_index_build_
 started``/``_progress``/``_complete``/``_error`` — the last folding the
 pre-P2d ``action_index_build_failed`` event, which used to be emitted
 directly by ``RouterLoop._build_action_embedding_index_background`` — see
-``ensure_built``/``ensure_built_self_contained``'s ``events`` parameter)
+``ensure_built``'s ``events`` parameter)
 plus the ``search_await`` contract's production wiring at the two live
 action-catalog query call sites (``RouterLoop.search_actions`` /
 ``universal_catalog._handle_search_actions``).
+
+**P2-convergence PR1** (#3270 §2, design firm on #3270): collapses the P2b
+two-path Coordinator API (``ensure_built`` for material-producing adapters
+vs ``ensure_built_self_contained`` for adapters that owned their own
+lock+write, e.g. the action-catalog) down to the single ``ensure_built`` —
+``ensure_built_self_contained`` is REMOVED. ``ActionEmbeddingIndex.build()``
+lost both its own locks (the in-process ``asyncio.Lock`` and the
+cross-process ``try_acquire_build_lock``); the Coordinator's own lock
+acquisition in ``_run_build`` (below) is now the SOLE holder for every
+registered source, which makes the same-path double-acquire that used to
+motivate the two-path split (self-deadlock-shaped: the second
+``try_acquire_build_lock`` call sees ITS OWN pid as a live holder and
+silently no-ops) structurally impossible rather than merely avoided. The
+action-catalog's disk-adopt/dual-axis-invalidation POLICY stays a domain
+concern — extracted into ``ActionEmbeddingIndex.prepare_material``, a
+``BuildFn`` that returns ``BuildMaterial`` (real rebuild needed) or
+``None`` (the adapter's own policy determined no write is needed this
+call — see ``_run_build``'s ``material is None`` branch and ``BuildFn``'s
+docstring).
 
 **Crash-recovery (the band requirement, CLAUDE.md recovery-feature gate)**:
 the dirty/building/error state lives in ``SourceEntry`` (persisted to
@@ -190,7 +209,15 @@ class BuildMaterial:
     ctx: "OpContext"
 
 
-BuildFn = Callable[[], Awaitable[BuildMaterial]]
+BuildFn = Callable[[], Awaitable["BuildMaterial | None"]]
+"""A domain adapter's build strategy. Returns ``BuildMaterial`` when a real
+embed+write is needed (the Coordinator's ``_run_build`` then owns
+``embed_verify_write``), or ``None`` when the adapter determined — as part
+of its OWN material-generation policy (e.g. a disk-adopt cache hit) — that
+no write is needed this call (P2-convergence PR1, #3270 §2: this is how the
+now-eliminated ``ensure_built_self_contained`` two-path shape folds into the
+single ``ensure_built``. See ``ActionEmbeddingIndex.prepare_material`` for
+the one adapter that exercises the ``None`` branch today)."""
 
 
 @dataclass(frozen=True)
@@ -226,10 +253,14 @@ class IndexCoordinator:
     plumbing the firm's interface section does not spell out (its
     ``ensure_built(source_id, *, await_completion)`` signature carries no
     build strategy per call), so the strategy has to be associated with the
-    ``source_id`` some other way. Registering a builder is NOT a production
-    call-site migration (P2b) — it is just how a domain adapter tells the
-    Coordinator "this is how you'd build me", exercised directly by this
-    PR's tests; no production code calls ``register_builder`` yet.
+    ``source_id`` some other way. Registering a builder is how a domain
+    adapter tells the Coordinator "this is how you'd build me" — P2b wired
+    the first production registrants (memory/skill/repo, via
+    ``knowledge_ingest.py``); P2-convergence PR1 (#3270 §2) adds the
+    action-catalog (``RouterLoop._ensure_action_index_built``, routed
+    through ``ActionEmbeddingIndex.prepare_material`` as its ``BuildFn``),
+    eliminating the parallel ``ensure_built_self_contained`` entry point
+    that previously carried it.
     """
 
     def __init__(
@@ -255,9 +286,9 @@ class IndexCoordinator:
         # freshly-created manifest entry (mark_dirty/_set_state on a
         # source never seen before) is tagged correctly instead of falling
         # through to the "backfill" dataclass default. Registered
-        # alongside the build strategy (see ``register_builder``/
-        # ``ensure_built_self_contained``); a source that never registers
-        # a kind stays "backfill" (predates the taxonomy).
+        # alongside the build strategy (see ``register_builder``); a source
+        # that never registers a kind stays "backfill" (predates the
+        # taxonomy).
         self._kinds: dict[str, SourceKind] = {}
 
     # ── registration (necessary plumbing, not a P2b call-site migration) ──
@@ -324,6 +355,8 @@ class IndexCoordinator:
         *,
         await_completion: bool,
         events: "EventLog | None" = None,
+        on_error: Callable[[BaseException], None] | None = None,
+        on_success: Callable[[BuildOutcome], None] | None = None,
     ) -> BuildOutcome:
         """If ``source_id`` is dirty/error/never-built, (re)build it.
 
@@ -346,6 +379,35 @@ class IndexCoordinator:
         this class) silently skips the audit-emit; a real build call site
         (production or test) threads its ``EventLog`` here to get the P6
         audit trail.
+
+        ``on_error`` (P2-convergence PR1, #3270 §2): an optional best-effort
+        callback invoked with the real ``Exception`` instance on a build
+        failure — BEFORE this method returns, regardless of
+        ``await_completion`` (it runs from inside ``_run_build``, the same
+        coroutine body whether awaited inline or scheduled as a background
+        task, so it fires uniformly for both). This is the seam a caller
+        with its OWN failure bookkeeping to keep in sync (e.g.
+        ``RouterLoop._action_index_build_failed``, #1458) hooks into,
+        without the Coordinator needing to know that bookkeeping exists —
+        the callback receives the ORIGINAL exception object (not just its
+        ``str()``), which a cause-aware caller (e.g.
+        ``_action_index_build_failure_warning``'s exception-type branching)
+        needs and ``BuildOutcome.error`` (a string) cannot carry.
+
+        ``on_success`` (P2-convergence PR1, #3270 §2): the success-path
+        mirror of ``on_error`` — an optional best-effort callback invoked
+        with the ``BuildOutcome`` when a build (real write OR a
+        material-generation ``None`` no-op) completes without raising,
+        again from inside ``_run_build`` so it fires uniformly for both
+        ``await_completion`` values. The seam a caller whose OWN
+        in-memory state needs syncing after a Coordinator-driven write
+        (e.g. ``ActionEmbeddingIndex.adopt_build_result``, since the
+        Coordinator — not the domain adapter — now performs
+        ``embed_verify_write`` for a material-producing ``BuildFn``) hooks
+        into, without which a background (``await_completion=False``)
+        build's caller would have no notification of completion at all
+        (the immediately-returned ``BuildOutcome`` reflects only "a build
+        was scheduled", not its eventual result).
         """
         entry = await self._manifest.get(source_id)
         if entry is not None and entry.state == "clean":
@@ -368,11 +430,13 @@ class IndexCoordinator:
             existing_task = self._bg_tasks.get(source_id)
             if existing_task is not None and not existing_task.done():
                 return BuildOutcome(source_id=source_id, triggered=True, background=True)
-            task = asyncio.create_task(self._run_build(source_id, build_fn, events))
+            task = asyncio.create_task(
+                self._run_build(source_id, build_fn, events, on_error, on_success)
+            )
             self._bg_tasks[source_id] = task
             return BuildOutcome(source_id=source_id, triggered=True, background=True)
 
-        return await self._run_build(source_id, build_fn, events)
+        return await self._run_build(source_id, build_fn, events, on_error, on_success)
 
     def _emit(self, events: "EventLog | None", event_type: str, **data: Any) -> None:
         """Best-effort audit-event emit (FP-0066 P2d) — never raises; a
@@ -389,7 +453,12 @@ class IndexCoordinator:
             pass
 
     async def _run_build(
-        self, source_id: str, build_fn: BuildFn, events: "EventLog | None" = None,
+        self,
+        source_id: str,
+        build_fn: BuildFn,
+        events: "EventLog | None" = None,
+        on_error: Callable[[BaseException], None] | None = None,
+        on_success: Callable[[BuildOutcome], None] | None = None,
     ) -> BuildOutcome:
         kind = self._kinds.get(source_id, "backfill")
         self._emit(events, "embedding_index_build_started", source_id=source_id, kind=kind)
@@ -398,10 +467,44 @@ class IndexCoordinator:
         with try_acquire_build_lock(lock_dir) as got_lock:
             if not got_lock:
                 # Another process is mid-build — fall back to whatever is
-                # on disk rather than duplicating the embed-API cost.
+                # on disk rather than duplicating the embed-API cost. This
+                # is now the SOLE cross-process build-lock acquisition for
+                # every registered source (P2-convergence PR1, #3270 §2):
+                # domain adapters (e.g. ``ActionEmbeddingIndex``) no longer
+                # hold their own copy of this lock, which is what made the
+                # self-deadlock-shaped double-acquire structurally
+                # impossible rather than merely avoided.
                 return BuildOutcome(source_id=source_id, triggered=False, background=False)
             try:
                 material = await build_fn()
+                if material is None:
+                    # P2-convergence PR1 (#3270 §2): the adapter's OWN
+                    # material-generation policy (e.g. a disk-adopt cache
+                    # hit) determined no embed+write is needed this call —
+                    # mark clean without touching write history. The
+                    # manifest's chunk_count/embedding_model are left as
+                    # whatever they already were (this path never had a
+                    # write to report a fresh count from — not externally
+                    # observable: no production caller reads this
+                    # BuildOutcome's chunk_count for the action-catalog
+                    # source, see ``RouterLoop._ensure_action_index_built``).
+                    await self._set_state(source_id, "clean")
+                    entry = await self._manifest.get(source_id)
+                    chunk_count = entry.chunk_count if entry is not None else None
+                    self._emit(
+                        events, "embedding_index_build_complete",
+                        source_id=source_id, chunk_count=chunk_count,
+                    )
+                    outcome = BuildOutcome(
+                        source_id=source_id, triggered=True, background=False,
+                        chunk_count=chunk_count,
+                    )
+                    if on_success is not None:
+                        try:
+                            on_success(outcome)
+                        except Exception:
+                            pass
+                    return outcome
                 self._emit(
                     events, "embedding_index_build_progress",
                     source_id=source_id, chunk_count=len(material.items),
@@ -426,6 +529,11 @@ class IndexCoordinator:
                     events, "embedding_index_build_error",
                     source_id=source_id, reason=str(exc),
                 )
+                if on_error is not None:
+                    try:
+                        on_error(exc)
+                    except Exception:
+                        pass
                 return BuildOutcome(
                     source_id=source_id, triggered=True, background=False, error=str(exc),
                 )
@@ -439,9 +547,15 @@ class IndexCoordinator:
             events, "embedding_index_build_complete",
             source_id=source_id, chunk_count=chunk_count,
         )
-        return BuildOutcome(
+        outcome = BuildOutcome(
             source_id=source_id, triggered=True, background=False, chunk_count=chunk_count,
         )
+        if on_success is not None:
+            try:
+                on_success(outcome)
+            except Exception:
+                pass
+        return outcome
 
     async def _set_state(
         self,
@@ -565,134 +679,24 @@ class IndexCoordinator:
         desired heal path)."""
         return source_id in self._failure_memo
 
-    # ── ensure_built_self_contained (FP-0066 P2b, #3247) ─────────────────
-    #
-    # ``ensure_built`` (above) is for a domain adapter that hands the
-    # Coordinator raw MATERIAL (items/texts/mapping) and lets the
-    # Coordinator own the cross-process lock + ``embed_verify_write``. That
-    # shape does not fit every domain adapter discovered while actually
-    # doing the P2b migration: ``ActionEmbeddingIndex.build()`` already owns
-    # its OWN cross-process lock (``try_acquire_build_lock`` at the SAME
-    # ``cache_dir_for_source`` path ``ensure_built`` would acquire) plus a
-    # disk-adopt / dual-axis invalidation policy that is deeply entangled
-    # with whether it writes at all — splitting it into a material-only
-    # ``BuildFn`` would either duplicate that policy here (violating the
-    # firm's "domain adapter owns invalidation policy" boundary) or cause a
-    # SECOND acquisition of the same advisory lock within one process
-    # (self-deadlock-shaped: the second ``try_acquire_build_lock`` call
-    # would see ITS OWN pid as a live holder and skip, silently no-op-ing
-    # every build).
-    #
-    # ``ensure_built_self_contained`` narrows the Coordinator's role for
-    # such an adapter to pure orchestration — once-per-source background-
-    # task dedup (``_bg_tasks``) + failure-memo (``_failure_memo``) +
-    # manifest state bookkeeping — while the SELF-CONTAINED builder
-    # (``build_coro``) keeps owning its own lock/write/invalidation policy
-    # end to end, exactly as it did pre-migration. See
-    # ``RouterLoop._ensure_action_index_built`` for the production caller.
-    async def ensure_built_self_contained(
-        self,
-        source_id: str,
-        build_coro: Callable[[], Awaitable[None]],
-        *,
-        await_completion: bool,
-        is_ready_probe: Callable[[], bool],
-        chunk_count_probe: Callable[[], int] | None = None,
-        kind: SourceKind = "backfill",
-        events: "EventLog | None" = None,
-    ) -> BuildOutcome:
-        """Orchestrate (dedup/failure-memo/state) a self-contained builder.
-
-        ``build_coro`` is called with no args and is expected to perform
-        the ENTIRE build (its own locking, its own write) and raise on
-        failure (never swallow) — ``is_ready_probe`` is then consulted
-        (not ``build_coro``'s return value) to decide whether the manifest
-        should record ``clean`` (matches the domain adapter's own
-        source-of-truth for "did this actually succeed", e.g.
-        ``ActionEmbeddingIndex.is_ready()`` post-``build()``).
-
-        Same await/background split as ``ensure_built``: ``await_completion
-        =True`` runs inline; ``=False`` schedules via ``asyncio.create_task``
-        with the same once-per-source in-flight dedup (``_bg_tasks``).
-        Never raises — a failure is caught, mark_dirty'd, memoized, and
-        reported on the returned ``BuildOutcome.error``.
-
-        ``events`` (FP-0066 P2d, #3247 firm §6): same optional ``EventLog``
-        contract as ``ensure_built`` — emits the ``embedding_index_build_
-        started``/``_progress``/``_complete``/``_error`` phases. This is
-        the path the production action-catalog build uses
-        (``RouterLoop._ensure_action_index_built``), so this is also where
-        the pre-P2d ``action_index_build_failed`` event (previously emitted
-        directly by ``_build_action_embedding_index_background`` on
-        failure) is FOLDED into ``embedding_index_build_error`` — that
-        direct emit was removed from the RouterLoop primitive; this method
-        is now the single emitter for a self-contained builder's failure.
-        Since ``build_coro`` is opaque (no material/item count visible
-        before it runs), the ``_progress`` checkpoint fires right after
-        ``build_coro`` returns without raising (using ``chunk_count_probe``
-        if given) rather than mid-build — a coarser granularity than
-        ``ensure_built``'s material-aware progress, an honest limitation
-        given this builder shape (see the class docstring's boundary
-        principle: the builder, not the Coordinator, owns its own
-        progress internals).
-        """
-        self._kinds[source_id] = kind
-        entry = await self._manifest.get(source_id)
-        if entry is not None and entry.state == "clean" and is_ready_probe():
-            return BuildOutcome(
-                source_id=source_id, triggered=False, background=False,
-                chunk_count=entry.chunk_count,
-            )
-
-        async def _run() -> BuildOutcome:
-            self._emit(events, "embedding_index_build_started", source_id=source_id, kind=kind)
-            await self._set_state(source_id, "building")
-            try:
-                await build_coro()
-            except Exception as exc:
-                reason = f"build_error: {exc}"
-                self._failure_memo[source_id] = reason
-                await self.mark_dirty(source_id, reason=reason)
-                self._emit(
-                    events, "embedding_index_build_error",
-                    source_id=source_id, reason=str(exc),
-                )
-                return BuildOutcome(
-                    source_id=source_id, triggered=True, background=False,
-                    error=str(exc),
-                )
-            if is_ready_probe():
-                chunk_count = chunk_count_probe() if chunk_count_probe else None
-                self._emit(
-                    events, "embedding_index_build_progress",
-                    source_id=source_id, chunk_count=chunk_count,
-                )
-                await self._set_state(source_id, "clean", chunk_count=chunk_count)
-                self._emit(
-                    events, "embedding_index_build_complete",
-                    source_id=source_id, chunk_count=chunk_count,
-                )
-                return BuildOutcome(
-                    source_id=source_id, triggered=True, background=False,
-                    chunk_count=chunk_count,
-                )
-            # The builder ran without raising but didn't reach readiness
-            # (e.g. its own lock-skip fallback: "another process is mid-
-            # build") — leave manifest state as-is (not clean), matching
-            # the pre-migration silent-fallback semantics. No _complete
-            # emit — the build did not actually complete.
-            return BuildOutcome(source_id=source_id, triggered=True, background=False)
-
-        if not await_completion:
-            existing_task = self._bg_tasks.get(source_id)
-            if existing_task is not None and not existing_task.done():
-                return BuildOutcome(source_id=source_id, triggered=True, background=True)
-            task = asyncio.create_task(_run())
-            self._bg_tasks[source_id] = task
-            return BuildOutcome(source_id=source_id, triggered=True, background=True)
-
-        return await _run()
-
+    # ``ensure_built_self_contained`` — the ORCHESTRATION-only twin that used
+    # to exist here for a domain adapter (``ActionEmbeddingIndex``) that
+    # owned its own cross-process lock + write, so it could not be split
+    # into a material-only ``BuildFn`` without either duplicating its
+    # disk-adopt/dual-axis-invalidation policy here or double-acquiring the
+    # SAME advisory lock within one process (self-deadlock-shaped: a second
+    # ``try_acquire_build_lock`` call sees ITS OWN pid as a live holder and
+    # silently no-ops) — was ELIMINATED by P2-convergence PR1 (#3270 §2,
+    # design firm on #3270). ``ActionEmbeddingIndex.build()`` lost both its
+    # locks (P2-convergence PR1's actual fix: the cross-process lock above,
+    # acquired once here in ``_run_build``, is now the SOLE holder, making
+    # the same-path double-acquire structurally impossible rather than
+    # merely avoided) and its policy was extracted into
+    # ``ActionEmbeddingIndex.prepare_material`` — a ``BuildFn`` that returns
+    # ``BuildMaterial`` (real rebuild) or ``None`` (adapter determined no
+    # write is needed, e.g. a disk-adopt cache hit; see ``_run_build``'s
+    # ``material is None`` branch above). ``ensure_built`` is now the ONE
+    # entry point for every registered source, action-catalog included.
 
 # ── Module-level singleton registry (per-workspace) ───────────────────────
 #

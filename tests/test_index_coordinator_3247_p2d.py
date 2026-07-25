@@ -13,9 +13,7 @@ Covers:
      the Coordinator's build-execution method boundary (``ensure_built``,
      the material-producing path).
   2. A build failure emits ``embedding_index_build_error`` (with a
-     ``reason``) — via BOTH ``ensure_built`` and
-     ``ensure_built_self_contained`` (the two build-execution shapes P2b
-     introduced).
+     ``reason``).
   3. The pre-P2d ``action_index_build_failed`` event (previously emitted
      directly by ``RouterLoop._build_action_embedding_index_background``)
      no longer double-emits alongside its fold target,
@@ -27,6 +25,21 @@ Covers:
      _handle_search_actions``): a clean source is a cheap no-op (no build
      triggered); ``semantic_search_started``/``_complete`` (results count)
      fire around the real query.
+
+P2-convergence PR1 (#3270 §2): ``IndexCoordinator.ensure_built_self_
+contained`` — the two-path shape P2b introduced for the action-catalog
+(which used to own its own lock+write) — is ELIMINATED. The action-catalog
+now routes through the SAME ``ensure_built``/``register_builder`` path as
+every other source (via ``ActionEmbeddingIndex.prepare_material``, the
+lock-free ``BuildFn`` — see ``reyn.tools.action_index``); the
+self-contained-specific coverage this file used to carry (§2's "via BOTH
+shapes" + the freestanding ``_FakeSelfContainedBuilder`` tests) is REMOVED
+— its regression value now lives in
+``tests/test_index_coordinator_3247_p2b.py`` (the equivalence suite +
+mandatory #3270 §5 strip-falsify gates), which exercises the SAME
+production call path (``RouterLoop._ensure_action_index_built``) this file
+already tests at §3's ``test_action_index_build_failure_both_signals_
+stay_in_sync``.
 
 No mocks — real ``IndexCoordinator``, real ``SourceManifest``, a real
 ``EventLog`` subscribed to a real ``EventStore`` (audit-events are read back
@@ -211,95 +224,6 @@ def test_events_none_is_a_silent_noop(tmp_path: Path) -> None:
     # No events kwarg at all — must not raise.
     outcome = _run(coord.ensure_built("x", await_completion=True))
     assert outcome.error is None or outcome.error is not None  # just must not raise
-
-
-# ── ensure_built_self_contained — the action-catalog build shape ──────────
-
-
-class _FakeSelfContainedBuilder:
-    """Mirrors ``ActionEmbeddingIndex``'s self-contained-builder shape (own
-    readiness/size probes, own lock) — same pattern as
-    ``test_index_coordinator_3247_p2b.py::_FakeActionIndex``."""
-
-    def __init__(self, *, should_fail: bool = False) -> None:
-        self.should_fail = should_fail
-        self._ready = False
-        self._size = 0
-
-    async def build(self) -> None:
-        if self.should_fail:
-            raise RuntimeError("simulated provider failure")
-        self._ready = True
-        self._size = 3
-
-    def is_ready(self) -> bool:
-        return self._ready
-
-    def size(self) -> int:
-        return self._size
-
-
-def test_ensure_built_self_contained_emits_started_progress_complete(tmp_path: Path) -> None:
-    """Tier 2: the self-contained build shape (the action-catalog's own
-    lock/readiness-probe pattern) emits the same three build phases."""
-    log, store = _events_and_store(tmp_path)
-    coord = IndexCoordinator(tmp_path)
-    builder = _FakeSelfContainedBuilder()
-
-    async def _scenario() -> list[dict]:
-        await coord.ensure_built_self_contained(
-            "actions", builder.build,
-            await_completion=True,
-            is_ready_probe=builder.is_ready,
-            chunk_count_probe=builder.size,
-            kind="static",
-            events=log,
-        )
-        return await _read_back(store)
-
-    events = _run(_scenario())
-    kinds = [e["type"] for e in events]
-    assert kinds == [
-        "embedding_index_build_started",
-        "embedding_index_build_progress",
-        "embedding_index_build_complete",
-    ]
-    for e in events:
-        assert e["data"]["source_id"] == "actions"
-    assert events[0]["data"]["kind"] == "static"
-    assert events[1]["data"]["chunk_count"] == 3
-    assert events[2]["data"]["chunk_count"] == 3
-
-
-def test_ensure_built_self_contained_failure_folds_to_build_error(tmp_path: Path) -> None:
-    """Tier 2: the FOLD — a self-contained-builder failure emits
-    ``embedding_index_build_error`` (with a reason), NOT the pre-P2d
-    ``action_index_build_failed`` — this is the Coordinator-level half of
-    the fold; the RouterLoop-level half (removing the direct emit from
-    ``_build_action_embedding_index_background``) is pinned in
-    ``test_action_embedding_build_failure_1458.py`` and
-    ``test_index_coordinator_3247_p2b.py``."""
-    log, store = _events_and_store(tmp_path)
-    coord = IndexCoordinator(tmp_path)
-    builder = _FakeSelfContainedBuilder(should_fail=True)
-
-    async def _scenario() -> list[dict]:
-        await coord.ensure_built_self_contained(
-            "actions", builder.build,
-            await_completion=True,
-            is_ready_probe=builder.is_ready,
-            kind="static",
-            events=log,
-        )
-        return await _read_back(store)
-
-    events = _run(_scenario())
-    kinds = [e["type"] for e in events]
-    assert "embedding_index_build_error" in kinds
-    assert "action_index_build_failed" not in kinds
-    error_event = next(e for e in events if e["type"] == "embedding_index_build_error")
-    assert error_event["data"]["source_id"] == "actions"
-    assert "simulated provider failure" in error_event["data"]["reason"]
 
 
 # ── search-await production wiring — RouterLoop.search_actions ────────────

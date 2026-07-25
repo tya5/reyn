@@ -10,18 +10,33 @@ per-source convention (``<workspace_root>/.reyn/cache/index/actions/``).
   1. **Class-swap detection**: rebuilding with a different ``model_class``
      against an identical catalog re-invokes the provider (= vectors
      from the previous model are NOT silently reused).
-  2. **Cross-process advisory lock**: when the unified cache dir's
-     ``.build.lock`` carries a live PID, a concurrent ``build()`` skips
-     the embed call (= no duplicate API cost / duplicate
-     embed-API cost). The lock file marks holder PID +
-     timestamp atomically.
-  3. **Stale-lock reaping**: a ``.build.lock`` whose recorded PID is
-     dead is taken over (= no permanent deadlock after a crash).
-  4. **Disk persistence carries model_class**: the on-disk state records
+  2. **Disk persistence carries model_class**: the on-disk state records
      ``model_class`` (via the unified backend's ``embedding_model`` meta
      key) and the whole-catalog hash (via a small sidecar). Same catalog
      hash + same model class → load. Same catalog hash + different model
      class → reject (= rebuild).
+  3. **Lock helper module invariants**: ``reyn.data.index.build_lock``'s
+     own acquire/stale-reap/corrupt-file-recovery contract, tested
+     directly against the module (NOT through ``ActionEmbeddingIndex`` —
+     see the note below).
+
+P2-convergence PR1 (#3270 §2): ``ActionEmbeddingIndex.build()`` lost BOTH
+its own locks (the in-process ``asyncio.Lock`` and the cross-process
+``try_acquire_build_lock``) — same-instance serialization + cross-process
+build coordination are now EXCLUSIVELY ``IndexCoordinator``'s
+responsibility (``_bg_tasks`` dedup + the ``_run_build``-owned advisory
+lock), reached via ``ensure_built``/``register_builder``, not via a direct
+``build()`` call. The three tests that used to pin a DIRECT ``build()``
+call respecting a foreign ``.build.lock`` (skip-when-live-pid /
+stale-lock-reaping / corrupt-lock-recovery) are REMOVED here — that
+guarantee moved to the Coordinator and is re-proven at that layer in
+``tests/test_index_coordinator_3247_p2b.py`` (the mandatory §5
+strip-falsify "embed-cost duplicate-avoidance" gate) and
+``tests/test_index_coordinator_3247_p2a.py``/``p2d.py`` (Coordinator-level
+lock-contention coverage). A direct ``build()`` call today (bypassing the
+Coordinator) genuinely ignores a foreign ``.build.lock`` file — this is
+the intended, documented new contract (see ``action_index.py``'s module
+docstring "Concurrency" section), not an oversight.
 
 No mocks. Real ActionEmbeddingIndex + real ``_FakeProvider`` counting
 embed calls + real filesystem operations.
@@ -40,7 +55,6 @@ import pytest
 from reyn.core.events.events import EventLog
 from reyn.core.op_runtime.context import OpContext
 from reyn.data.embedding.provider import EmbedBatchResult
-from reyn.data.index.backend import cache_dir_for_source
 from reyn.data.index.build_lock import pid_alive, try_acquire_build_lock
 from reyn.data.workspace.workspace import Workspace
 from reyn.security.permissions.permissions import PermissionDecl
@@ -66,11 +80,6 @@ def _ctx_for(provider: Any, monkeypatch: pytest.MonkeyPatch) -> OpContext:
     events = EventLog()
     ws = Workspace(events=events)
     return OpContext(workspace=ws, events=events, permission_decl=PermissionDecl())
-
-
-def _lock_dir(workspace_root: Path) -> Path:
-    """The unified cache dir the advisory build lock lives under."""
-    return cache_dir_for_source(workspace_root, "actions")
 
 
 class _FakeProvider:
@@ -196,98 +205,7 @@ def test_disk_load_accepts_matching_class_and_catalog(
     assert idx_b.model_class == "standard"
 
 
-# ── 3. Cross-process advisory lock ──────────────────────────────────────────
-
-
-def test_concurrent_build_skips_when_lock_held_by_live_pid(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Tier 2: another live process holding .build.lock → embed call skipped.
-
-    Simulates the multi-surface parallel-session race tui-coder
-    reported: both decide to rebuild simultaneously. Without the file
-    lock both would call provider.embed() and one would lose the disk
-    write race. With the lock, only the holder rebuilds; the other
-    falls back to whatever's currently on disk (= here, nothing → empty
-    state, which is fine; the holder's eventual save will be picked up
-    on the next build() call).
-    """
-    # Stage: write a lock file claiming the current (live) PID is mid-build.
-    lock_dir = _lock_dir(tmp_path)
-    lock_path = lock_dir / ".build.lock"
-    lock_dir.mkdir(parents=True, exist_ok=True)
-    lock_path.write_text(
-        json.dumps({"pid": os.getpid(), "ts": time.time()}),
-        encoding="utf-8",
-    )
-
-    provider = _FakeProvider()
-    ctx = _ctx_for(provider, monkeypatch)
-    idx = ActionEmbeddingIndex(workspace_root=tmp_path)
-    _run(idx.build(_items(), ctx, "standard"))
-
-    # The lock was held → embed must NOT have been called.
-    assert provider.embed_calls == []
-    # The index also did not mutate its in-memory state (= consistent
-    # with the "another process owns this build" semantics).
-    assert not idx.is_ready()
-    # Clean up the staged lock so other tests don't inherit it.
-    lock_path.unlink(missing_ok=True)
-
-
-def test_stale_lock_is_reaped(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Tier 2: a .build.lock whose PID is dead is taken over (no deadlock)."""
-    lock_dir = _lock_dir(tmp_path)
-    lock_path = lock_dir / ".build.lock"
-    lock_dir.mkdir(parents=True, exist_ok=True)
-    # Pick a PID that's almost certainly dead (= a very large number
-    # well outside the typical PID range). os.kill(pid, 0) will surface
-    # ProcessLookupError for it.
-    dead_pid = 2**31 - 1  # max int32; not allocated by any kernel
-    assert not pid_alive(dead_pid), (
-        f"precondition: PID {dead_pid} must not be alive for this test"
-    )
-    lock_path.write_text(
-        json.dumps({"pid": dead_pid, "ts": time.time()}),
-        encoding="utf-8",
-    )
-
-    provider = _FakeProvider()
-    ctx = _ctx_for(provider, monkeypatch)
-    idx = ActionEmbeddingIndex(workspace_root=tmp_path)
-    _run(idx.build(_items(), ctx, "standard"))
-
-    # Stale lock reaped → embed called normally; build completed.
-    assert provider.embed_calls == ["standard"]
-    assert idx.is_ready()
-    # Lock file removed on context exit.
-    assert not lock_path.exists()
-
-
-def test_corrupt_lock_file_is_treated_as_stale(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Tier 2: malformed .build.lock (= partial write, garbage) is recoverable.
-
-    A crashed previous process may leave a half-written lock; the next
-    builder should treat it as stale rather than wedging forever.
-    """
-    lock_dir = _lock_dir(tmp_path)
-    lock_path = lock_dir / ".build.lock"
-    lock_dir.mkdir(parents=True, exist_ok=True)
-    lock_path.write_text("not json at all }}}", encoding="utf-8")
-
-    provider = _FakeProvider()
-    ctx = _ctx_for(provider, monkeypatch)
-    idx = ActionEmbeddingIndex(workspace_root=tmp_path)
-    _run(idx.build(_items(), ctx, "standard"))
-
-    assert provider.embed_calls == ["standard"]
-
-
-# ── 4. Lock helper unit invariants (reyn.data.index.build_lock) ────────────
+# ── 3. Lock helper unit invariants (reyn.data.index.build_lock) ────────────
 
 
 def test_try_acquire_lock_yields_true_then_releases(tmp_path: Path) -> None:

@@ -70,15 +70,21 @@ Catalog hash semantics:
     policy — per-item incremental reconcile is Phase 2's ``index_update``,
     not built here).
 
-Concurrency:
-  - ``_build_lock`` serialises concurrent ``build()`` calls on this
-    instance; the second call awaits the first.
-  - Cross-process coordination uses the shared advisory build lock
-    (``reyn.data.index.build_lock.try_acquire_build_lock``) — a live
-    holder means "another process is mid-build", so this call falls back
-    to whatever's on disk instead of duplicating the embed-API cost of a
-    concurrent rebuild (#3128: embeddings are litellm API calls, not an
-    in-process model load).
+Concurrency (P2-convergence PR1, #3270 §2 — REVISED, both locks REMOVED
+from this class): ``build()``/``prepare_material()`` are now lock-free.
+Production builds route through ``IndexCoordinator.ensure_built`` (via
+``register_builder`` — see ``RouterLoop._ensure_action_index_built``),
+which is the SOLE holder of the cross-process advisory build lock
+(``reyn.data.index.build_lock.try_acquire_build_lock``, acquired once in
+``IndexCoordinator._run_build``) — a live holder there means "another
+process is mid-build", falling back to whatever's on disk instead of
+duplicating the embed-API cost of a concurrent rebuild (#3128: embeddings
+are litellm API calls, not an in-process model load). Same-instance
+concurrent-call serialization is the Coordinator's ``_bg_tasks``
+once-per-source dedup responsibility, not this class's. A direct/
+standalone ``build()`` call (bypassing the Coordinator — tests only in
+production code today) gets neither guarantee, matching a plain async
+method's normal semantics.
 
 Catalog coverage (FP-0057 Phase 2b re-check): today's catalog covers
 primitive tools, MCP tools, and pipelines. There is no separate per-skill
@@ -100,13 +106,10 @@ from typing import TYPE_CHECKING, Any, Mapping
 
 from reyn.data.index import IndexBackend, get_backend
 from reyn.data.index.backend import ChunkRecord, cache_dir_for_source
-from reyn.data.index.build_lock import try_acquire_build_lock
-from reyn.data.index.coordinator import embed_verify_write
+from reyn.data.index.coordinator import BuildMaterial, embed_verify_write
 
 if TYPE_CHECKING:
     from reyn.core.op_runtime.context import OpContext
-
-import asyncio
 
 # Default logical source name the action catalog rides on the unified
 # IndexBackend. A single instance's catalog is written with mode="replace"
@@ -186,7 +189,6 @@ class ActionEmbeddingIndex:
         self._catalog_hash: str | None = None
         self._model_class: str | None = None  # FP-0043 Component E: class-swap detection
         self._size: int = 0
-        self._build_lock = asyncio.Lock()
         self._building = False
 
     # ── identity ────────────────────────────────────────────────────────
@@ -268,6 +270,32 @@ class ActionEmbeddingIndex:
         """Return the number of indexed items (= vectors stored)."""
         return self._size
 
+    # ── external-write state sync (P2-convergence PR1, #3270 §2) ────────
+
+    def adopt_build_result(
+        self, catalog_hash: str, model_class: str, chunk_count: int,
+    ) -> None:
+        """Sync in-memory state (+ the on-disk catalog-hash sidecar) after
+        a CALLER-PERFORMED write succeeded.
+
+        The Coordinator-driven counterpart to ``build()``'s own post-write
+        update: when ``prepare_material`` returns real material and the
+        CALLER (``IndexCoordinator._run_build``, via
+        ``IndexCoordinator.ensure_built``) performs the actual
+        ``embed_verify_write`` — rather than this instance performing it
+        itself, as ``build()`` still does for a direct/standalone call —
+        this instance's own ``is_ready()``/``size()``/``catalog_hash()``
+        gate needs updating from that external result. Kept here (not
+        inlined at the call site, ``RouterLoop._ensure_action_index_built``)
+        so the state mutation + sidecar write stay ONE canonical
+        implementation, shared with ``build()``'s own internal update
+        (below) rather than two hand-maintained copies.
+        """
+        self._catalog_hash = catalog_hash
+        self._model_class = model_class
+        self._size = chunk_count
+        self._write_catalog_meta_hash(catalog_hash)
+
     # ── item <-> ChunkRecord mapping ───────────────────────────────────
 
     def _to_chunk_record(
@@ -343,6 +371,69 @@ class ActionEmbeddingIndex:
             raise RuntimeError(f"embed op failed: {result.get('error')}")
         return list(result.get("vectors", []))
 
+    async def prepare_material(
+        self,
+        items: list[Mapping[str, Any]],
+        ctx: "OpContext",
+        model_class: str,
+    ) -> "BuildMaterial | None":
+        """Lock-free, write-free material generation — the ``BuildFn``
+        ``IndexCoordinator.register_builder``/``ensure_built`` calls
+        (P2-convergence PR1, #3270 §2). Owns the action-catalog's
+        disk-adopt + dual-axis (catalog-hash + model-class) invalidation
+        POLICY — kept here (not moved to the Coordinator) because it is
+        part of the domain adapter's own material-generation decision,
+        per the firm's boundary principle.
+
+        Returns ``None`` when no rebuild is needed this call — either the
+        in-memory state already matches (both axes), or a disk-adopt cache
+        hit applies (this method mutates ``_catalog_hash``/``_model_class``/
+        ``_size`` directly in that case, exactly as the pre-PR1 ``build()``
+        did). Returns a ``BuildMaterial`` when a real embed+write is
+        needed; the caller (``build()`` for a direct/standalone call, or
+        the Coordinator's ``_run_build`` for the production path via
+        ``ensure_built``) owns performing the actual
+        ``embed_verify_write`` and, on success, updating this instance's
+        in-memory state — see ``build()`` below and
+        ``RouterLoop._ensure_action_index_built``.
+
+        No cross-process lock here BY DESIGN: the ONLY production entry
+        point (``IndexCoordinator.ensure_built``) already holds the SAME
+        advisory lock (``try_acquire_build_lock`` at the same
+        ``cache_dir_for_source`` path) for the ENTIRE duration this method
+        runs (it is called from inside the Coordinator's own
+        ``with try_acquire_build_lock(...)`` block in ``_run_build``) — a
+        second acquisition here would be the self-deadlock-shaped bug this
+        PR removes (the second call would see its OWN pid as the live
+        holder and silently skip). A direct/standalone caller (bypassing
+        the Coordinator, e.g. a test) gets no cross-process protection —
+        that guarantee is now Coordinator-exclusive.
+        """
+        new_hash = compute_catalog_hash(list(items))
+        if new_hash == self._catalog_hash and self._model_class == model_class:
+            return None  # idempotent (in-memory match on BOTH axes)
+
+        if await self._try_adopt_from_disk(new_hash, model_class):
+            return None  # cache hit — skip embed call
+
+        valid_items = sorted(
+            (dict(it) for it in items if it.get("qualified_name")),
+            key=lambda it: str(it["qualified_name"]),
+        )
+        texts = [
+            f"{it['qualified_name']}: {it.get('short_description', '')}"
+            for it in valid_items
+        ]
+        return BuildMaterial(
+            items=valid_items,
+            texts=texts,
+            to_chunk_record=lambda it, v, _resolved: self._to_chunk_record(
+                it, v, model_class,
+            ),
+            model_class=model_class,
+            ctx=ctx,
+        )
+
     async def build(
         self,
         items: list[Mapping[str, Any]],
@@ -365,11 +456,18 @@ class ActionEmbeddingIndex:
              (class-swap invalidates vectors from the previous model)
           3. catalog hash differs                          → rebuild
 
-        Cross-process build coordination: a non-blocking advisory file
-        lock (shared ``reyn.data.index.build_lock``) coordinates
-        concurrent builds across OS processes. If another live process
-        is mid-build, this call falls back to the disk state without
-        invoking the embedding provider.
+        Lock-free (P2-convergence PR1, #3270 §2): this method — the
+        material-generation POLICY (``prepare_material``, above) plus the
+        embed+write it performs when a real rebuild is needed — no longer
+        holds any lock (neither the prior in-process ``asyncio.Lock`` nor
+        the cross-process advisory ``build_lock``). Same-instance
+        concurrent-call serialization is now the caller's responsibility
+        (production callers go through ``IndexCoordinator.ensure_built``,
+        whose ``_bg_tasks`` once-per-source dedup + cross-process
+        ``build_lock`` — the SOLE acquisition, see ``prepare_material``'s
+        docstring — cover it); a direct/standalone call (as this method
+        remains, for tests and non-Coordinator callers) gets no locking at
+        all, matching a plain async method's normal semantics.
 
         FP-0057 #2856 Part A: ``ctx`` (an ``OpContext``) replaces the prior
         ``provider`` (``EmbeddingProvider``) argument — the embed call now
@@ -377,83 +475,37 @@ class ActionEmbeddingIndex:
         ``_embed_via_op``) instead of calling a caller-held provider
         directly.
         """
-        async with self._build_lock:
-            new_hash = compute_catalog_hash(list(items))
-            if (
-                new_hash == self._catalog_hash
-                and self._model_class == model_class
-            ):
-                return  # idempotent (in-memory match on BOTH axes)
+        material = await self.prepare_material(items, ctx, model_class)
+        if material is None:
+            return  # already satisfied — see prepare_material's docstring
 
-            if await self._try_adopt_from_disk(new_hash, model_class):
-                return  # cache hit — skip embed call
-
-            lock_dir = cache_dir_for_source(self._workspace_root, self._source)
-            with try_acquire_build_lock(lock_dir) as got_lock:
-                if not got_lock:
-                    # Another process is building. We can't safely block
-                    # the event loop on a sync lock; surface our current
-                    # state (likely empty or stale) and let the next
-                    # call observe the in-progress process's result.
-                    return
-
-                # Re-check disk under the lock — another process may
-                # have completed between our pre-lock check and now.
-                if await self._try_adopt_from_disk(new_hash, model_class):
-                    return
-
-                valid_items = sorted(
-                    (dict(it) for it in items if it.get("qualified_name")),
-                    key=lambda it: str(it["qualified_name"]),
-                )
-                if not valid_items:
-                    await self._backend.write(self._source, [], mode="replace")
-                    self._catalog_hash = new_hash
-                    self._model_class = model_class
-                    self._size = 0
-                    self._write_catalog_meta_hash(new_hash)
-                    return
-
-                texts = [
-                    f"{it['qualified_name']}: {it.get('short_description', '')}"
-                    for it in valid_items
-                ]
-
-                self._building = True
-                _built_ok = False
-                try:
-                    # FP-0066 P2a (#3247): the embed+verify+write step is the
-                    # ONE canonical all-or-nothing implementation, shared
-                    # with the `index_update` op (which used to duplicate
-                    # this verbatim) — see
-                    # ``reyn.data.index.coordinator.embed_verify_write``.
-                    # ``model_class`` (the caller's class label, e.g.
-                    # "standard") is passed to ``_to_chunk_record``, NOT the
-                    # embed op's resolved literal model id — the dual-axis
-                    # invalidation policy compares against the class label
-                    # (see this module's docstring / ``model_class`` property).
-                    result = await embed_verify_write(
-                        ctx=ctx,
-                        texts=texts,
-                        model_class=model_class,
-                        items=valid_items,
-                        to_chunk_record=lambda it, v, _resolved: self._to_chunk_record(
-                            it, v, model_class,
-                        ),
-                        backend=self._backend,
-                        source=self._source,
-                        mode="replace",
-                        item_noun="items",
-                        label="build",
-                    )
-                    self._catalog_hash = new_hash
-                    self._model_class = model_class
-                    self._size = result.write_result["written"]
-                    _built_ok = True
-                finally:
-                    self._building = False
-                if _built_ok:
-                    self._write_catalog_meta_hash(new_hash)
+        new_hash = compute_catalog_hash(list(items))
+        self._building = True
+        try:
+            # FP-0066 P2a (#3247): the embed+verify+write step is the
+            # ONE canonical all-or-nothing implementation, shared
+            # with the `index_update` op (which used to duplicate
+            # this verbatim) — see
+            # ``reyn.data.index.coordinator.embed_verify_write``. If this
+            # raises (e.g. a mismatched vector count), ``adopt_build_result``
+            # below is never reached — in-memory state stays exactly as it
+            # was pre-call (the all-or-nothing refusal-of-partial-build
+            # guarantee), matching pre-PR1 behavior.
+            result = await embed_verify_write(
+                ctx=material.ctx,
+                texts=material.texts,
+                model_class=material.model_class,
+                items=material.items,
+                to_chunk_record=material.to_chunk_record,
+                backend=self._backend,
+                source=self._source,
+                mode="replace",
+                item_noun="items",
+                label="build",
+            )
+            self.adopt_build_result(new_hash, model_class, result.write_result["written"])
+        finally:
+            self._building = False
 
     # ── query ───────────────────────────────────────────────────────────
 
