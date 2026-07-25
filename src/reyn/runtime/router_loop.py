@@ -3440,61 +3440,141 @@ class RouterLoop:
         workspace_root = getattr(self.host, "workspace_root", None) or _Path.cwd()
         return get_index_coordinator(workspace_root)
 
+    async def _fetch_action_catalog_items(self) -> list[dict] | None:
+        """Fetch the current action catalog via ``list_actions`` against a
+        fresh ``RouterCallerState`` snapshot.
+
+        Extracted (behavior-preserving) from
+        ``_build_action_embedding_index_background`` (P2-convergence PR1,
+        #3270 §2) so BOTH that method (kept for direct/standalone callers
+        — see its docstring) and the production ``ensure_built`` build_fn
+        (``_ensure_action_index_built``) fetch the SAME catalog the SAME
+        way — a single source so the two shapes cannot silently diverge on
+        WHAT gets embedded. Returns ``None`` when ``list_actions`` is not
+        registered (defensive; should not happen in production).
+        """
+        from reyn.tools import get_default_registry
+        from reyn.tools.types import ToolContext
+
+        rs = await self._build_router_caller_state()
+        tool_ctx = ToolContext(
+            events=self.host.events,
+            permission_resolver=getattr(self.host, "permission_resolver", None),
+            workspace=getattr(self.host, "workspace", None),
+            caller_kind="router",
+            router_state=rs,
+            # #1673: thread the config-aware resolver (see the sibling sites).
+            resolver=getattr(self.host, "resolver", None),
+            hot_reloader=getattr(self.host, "hot_reloader", None),  # #2073 S3
+            state_log=getattr(self.host, "state_log", None),  # #2248 PR-A2 (config emit)
+        )
+        list_actions_def = get_default_registry().lookup("list_actions")
+        if list_actions_def is None:
+            return None
+        result = await list_actions_def.handler({}, tool_ctx)
+        return result.get("items", []) if isinstance(result, dict) else []
+
     async def _ensure_action_index_built(
         self, idx: Any, provider: Any, model_class: str, *, await_completion: bool,
     ) -> None:
-        """FP-0066 P2b (#3247): route the action-catalog build's eager-vs-
-        background DECISION + once-per-chain spawn dedup + failure-memo
-        through ``IndexCoordinator.ensure_built_self_contained``.
+        """P2-convergence PR1 (#3270 §2, design firm on #3270): route the
+        action-catalog build's eager-vs-background DECISION + once-per-
+        source spawn dedup + failure-memo through the single
+        ``IndexCoordinator.ensure_built`` + ``register_builder`` — the
+        parallel ``ensure_built_self_contained`` two-path entry point this
+        method used to call is ELIMINATED (see ``coordinator.py``'s module
+        docstring).
 
-        ``ActionEmbeddingIndex.build()`` (invoked via
-        ``_build_action_embedding_index_background``, UNCHANGED — see that
-        method's docstring and #1458's pinning tests) already owns its own
-        cross-process build lock + disk-adopt + dual-axis invalidation
-        policy — domain-adapter policy the #3247 firm keeps OUT of the
-        Coordinator. Using the material-producing ``ensure_built`` here
-        would either duplicate that policy in the Coordinator or acquire
-        the SAME advisory lock a second time within one process (self-
-        deadlock-shaped). ``ensure_built_self_contained`` narrows the
-        Coordinator's role to orchestration only: once-per-source
-        background-task dedup, failure-memo, and manifest state — the
-        build itself stays exactly as it was.
+        ``ActionEmbeddingIndex.prepare_material`` (P2-convergence PR1) is
+        registered as the ``BuildFn``: lock-free, write-free material
+        generation that keeps the action-catalog's own disk-adopt +
+        dual-axis-invalidation POLICY (the Coordinator never owns domain
+        policy) — it returns ``BuildMaterial`` when a real rebuild is
+        needed (the Coordinator's ``_run_build`` then owns
+        ``embed_verify_write``) or ``None`` when its own policy already
+        determined nothing needs writing (a disk-adopt cache hit, which
+        ``prepare_material`` adopts directly onto ``idx``).
 
-        Readiness/visibility (``idx.is_ready()``) and the retry gate
-        (``self._action_index_build_failed``) are read directly off
-        ``idx``/``self`` by the caller (unchanged) rather than off the
-        Coordinator's own ``is_ready()``/``build_failed()`` — those stay
-        genuinely accurate here (``idx.build()`` always runs for real),
-        whereas the Coordinator's manifest write for a background build
-        settles one event-loop tick after ``idx``'s own state does, which
-        would otherwise open a window where the tool is advertised
-        visible before ``idx.query()`` can serve it. The Coordinator's
-        manifest/is_ready() stays a truthful PARALLEL observability
-        surface for future kinds/consumers (P2c/P2d).
+        Two Coordinator hooks close the gaps a material-only ``BuildFn``
+        opens for THIS specific adapter (both fire from inside
+        ``IndexCoordinator._run_build``, uniformly for eager AND
+        background, since that is the one coroutine body either awaited
+        inline or scheduled via ``asyncio.create_task``):
+
+        * ``on_error`` — #1458's failure-memoization
+          (``self._action_index_build_failed``) + the decision-enabling
+          warning log, kept in sync with the Coordinator's OWN
+          failure-memo (``build_failed()``), which is set on the SAME
+          exception one frame up in ``_run_build``'s own except-block.
+        * ``on_success`` — syncs ``idx``'s in-memory
+          ``is_ready()``/``size()``/``catalog_hash()`` gate
+          (``ActionEmbeddingIndex.adopt_build_result``) after a REAL
+          rebuild, since the Coordinator (not ``idx``) now performs the
+          write. The disk-adopt ``None`` case needs no sync here —
+          ``prepare_material`` already mutated ``idx`` directly.
+
+        Before any of that: if ``idx`` is already ready, this is a cheap
+        no-op (mirrors the pre-PR1 ``ensure_built_self_contained``'s
+        combined "manifest clean AND is_ready_probe()" gate). If ``idx``
+        is NOT ready but the Coordinator's PERSISTED manifest already says
+        "clean" (a fresh process/instance re-reading a prior process's
+        completed build — see ``ActionEmbeddingIndex``'s module docstring
+        "process-restart cache hit"), ``ensure_built``'s own top-level
+        clean-shortcut would otherwise skip calling ``prepare_material``
+        entirely, permanently stranding THIS ``idx`` instance not-ready —
+        so a targeted ``mark_dirty`` forces ``ensure_built`` to actually
+        invoke ``prepare_material`` (whose OWN cheap disk-adopt check then
+        typically resolves in one file-stat, no embed call).
         """
+        if getattr(idx, "is_ready", lambda: False)():
+            return
+
         coordinator = self._get_index_coordinator()
         source_id = getattr(idx, "source_name", None) or "actions"
 
-        async def _build_coro() -> None:
-            await self._build_action_embedding_index_background(
-                idx, provider, model_class,
+        if await coordinator.is_ready(source_id):
+            await coordinator.mark_dirty(
+                source_id, reason="action_index_instance_not_ready",
             )
-            if getattr(self, "_action_index_build_failed", False):
-                # _build_action_embedding_index_background swallows its own
-                # exception (memoizing the failure + emitting the event/log
-                # itself); re-raise a synthetic error here so the
-                # Coordinator's own failure-memo/mark_dirty bookkeeping
-                # stays consistent with the RouterLoop-side flag.
-                raise RuntimeError("action index build failed (see prior log)")
 
-        await coordinator.ensure_built_self_contained(
+        _fetch_state: dict[str, Any] = {}
+
+        async def _build_fn() -> Any:
+            items = await self._fetch_action_catalog_items()
+            if items is None:
+                items = []
+            _fetch_state["items"] = items
+            op_ctx = self.host.make_router_op_context()
+            return await idx.prepare_material(items, op_ctx, model_class)
+
+        def _on_error(exc: BaseException) -> None:
+            # #1458: memoize the failure so subsequent turns do not retry.
+            self._action_index_build_failed = True
+            import logging
+
+            logging.getLogger(__name__).warning(
+                "%s", _action_index_build_failure_warning(exc, model_class)
+            )
+
+        def _on_success(outcome: Any) -> None:
+            if getattr(idx, "is_ready", lambda: False)():
+                return  # prepare_material's disk-adopt branch already synced idx
+            items = _fetch_state.get("items")
+            adopt = getattr(idx, "adopt_build_result", None)
+            if items is None or adopt is None:
+                return
+            from reyn.tools.action_index import compute_catalog_hash
+
+            chunk_count = outcome.chunk_count if outcome.chunk_count is not None else 0
+            adopt(compute_catalog_hash(items), model_class, chunk_count)
+
+        coordinator.register_builder(source_id, _build_fn, kind="static")
+        await coordinator.ensure_built(
             source_id,
-            _build_coro,
             await_completion=await_completion,
-            is_ready_probe=lambda: bool(getattr(idx, "is_ready", lambda: False)()),
-            chunk_count_probe=lambda: int(getattr(idx, "size", lambda: 0)()),
-            kind="static",
             events=self.host.events,
+            on_error=_on_error,
+            on_success=_on_success,
         )
 
     async def _build_action_embedding_index_background(
@@ -3503,10 +3583,24 @@ class RouterLoop:
         """FP-0034 Phase 2 step 1: background ActionEmbeddingIndex build.
 
         Enumerates the catalog via ``LIST_ACTIONS`` against a fresh
-        ``RouterCallerState`` snapshot and feeds the items into
-        ``idx.build()``.  The build is idempotent (= same catalog
-        hash skipped) and serialised by the index's internal lock,
-        so concurrent calls are safe.
+        ``RouterCallerState`` snapshot (``_fetch_action_catalog_items``)
+        and feeds the items into ``idx.build()``.  The build is idempotent
+        (= same catalog hash skipped).
+
+        P2-convergence PR1 (#3270 §2): this primitive is UNCHANGED (still
+        drives ``idx.build()`` — the full embed+write, now lock-free — end
+        to end and swallows/memoizes its own failure) and is kept for
+        direct/standalone callers, principally its own #1458 unit tests
+        (``tests/test_action_embedding_build_failure_1458.py``). The
+        PRODUCTION action-catalog build no longer routes through this
+        method — ``RouterLoop._ensure_action_index_built`` now calls
+        ``ActionEmbeddingIndex.prepare_material`` directly via the
+        Coordinator's ``ensure_built``, so the Coordinator (not ``idx``)
+        performs the write. Both shapes drive the exact same
+        ``ActionEmbeddingIndex`` build machinery underneath
+        (``prepare_material`` + ``embed_verify_write``); this method's own
+        failure-handling/logging contract (below) stays independently
+        exercised as a regression pin on that machinery.
 
         ``provider`` is retained as the caller's pre-existing "embedding
         configured" signal (callers gate on ``provider is not None`` before
@@ -3530,26 +3624,10 @@ class RouterLoop:
         cache-invalidation point for e.g. a model-download that was retried on a
         reconnected machine).
         """
-        from reyn.tools import get_default_registry
-        from reyn.tools.types import ToolContext
         try:
-            rs = await self._build_router_caller_state()
-            tool_ctx = ToolContext(
-                events=self.host.events,
-                permission_resolver=getattr(self.host, "permission_resolver", None),
-                workspace=getattr(self.host, "workspace", None),
-                caller_kind="router",
-                router_state=rs,
-                # #1673: thread the config-aware resolver (see the sibling sites).
-                resolver=getattr(self.host, "resolver", None),
-                hot_reloader=getattr(self.host, "hot_reloader", None),  # #2073 S3
-                state_log=getattr(self.host, "state_log", None),  # #2248 PR-A2 (config emit)
-            )
-            list_actions_def = get_default_registry().lookup("list_actions")
-            if list_actions_def is None:
+            items = await self._fetch_action_catalog_items()
+            if items is None:
                 return
-            result = await list_actions_def.handler({}, tool_ctx)
-            items = result.get("items", []) if isinstance(result, dict) else []
             op_ctx = self.host.make_router_op_context()
             await idx.build(items, op_ctx, model_class)
         except Exception as exc:
