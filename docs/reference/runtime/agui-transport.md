@@ -380,14 +380,19 @@ remote renderer's display bytes and working-indicator transitions are identical
 to the local ones.
 
 Local ≡ remote holds at the **renderer/loop layer**, not just the transport. The
-renderer choice (Claude Code-style inline CUI on an interactive TTY, plain console
-for `--cui` / non-TTY / piped) is one shared seam (`logger_factory.make_renderer`
-behind the `_inline_interactive` predicate), and both `reyn chat` and `reyn chat
---connect` hand a `ClientTransport` + a `ChatReadModel` to the SAME driver
-(`client_driver.run_chat_client`). The client reads its status bar / intervention
-region / task poll through the read-model: a `RegistryReadModel` off the local
-session, or a `RemoteReadModel` off the `STATE_*` view above — so an interactive
-remote attach renders the inline CUI, not a plain fallback.
+interactive-surface choice (Claude Code-style TUI on an interactive TTY, plain
+console for `--cui` / non-TTY / piped) is one shared seam
+(`renderer.uses_app_input() and is_tty`, the same predicate `make_renderer` uses
+behind `_inline_interactive`), and both `reyn chat` and `reyn chat --connect` hand
+a `ClientTransport` + a `ChatReadModel` to the SAME driver
+(`client_driver.run_chat_client`). On an interactive TTY that driver routes to the
+Textual conversation-pane app (`reyn.interfaces.inline.textual_chat`, the #3273
+TUI rebuild), which owns both input and output and drains the SAME
+`transport.frames()` stream — so an interactive remote attach renders the TUI, not
+a plain fallback, from the identical frame stream a local attach consumes. The
+client reads its status bar / intervention region / task poll through the
+read-model: a `RegistryReadModel` off the local session, or a `RemoteReadModel`
+off the `STATE_*` view above.
 
 **Local ≡ remote holds for INPUT too, symmetric with output.** A submitted turn
 (`Session.submit_user_text`) and a resolved intervention answer

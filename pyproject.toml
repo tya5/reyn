@@ -50,15 +50,17 @@ dependencies = [
                              # transitively via textual-flowview (below), and rich would
                              # otherwise silently revert to "transitive via textual" — but
                              # the plain renderer uses rich directly, independent of textual.
-    # TUI-rebuild arc Phase 0 (#3273): the new TTY conversation pane is a Textual app,
-    # built on the textual-flowview primitives (Presentation.background, FlowView(spacing=)).
-    # Git-pinned to a specific commit of the PUBLIC repo (no auth needed). This RE-INTRODUCES
-    # textual (flowview depends on textual>=0.80) — intentional per #3273. textual is accepted
-    # TRANSITIVELY via flowview for now: reyn core imports no textual symbol yet (Phase 0 is the
-    # dependency addition only; app code is Phase 1+), so a direct `textual` dep with no direct
-    # import would itself be the silent-phantom-dep antipattern in reverse. Phase 1 promotes
-    # textual to an explicit DIRECT dependency when the app code that imports it lands (same
-    # reasoning that keeps rich direct above).
+    # TUI-rebuild arc (#3273): the interactive TTY conversation pane
+    # (`reyn.interfaces.inline.textual_chat`) is a Textual app built on the
+    # textual-flowview primitives (Presentation.background, FlowView(spacing=)).
+    # Git-pinned to a specific commit of the PUBLIC repo (no auth needed).
+    # Phase 1 promotes `textual` to an explicit DIRECT dep now that the app code
+    # imports `textual.app`/`textual.widgets` directly (Phase 0 left it transitive
+    # via flowview) — same reasoning that keeps rich direct above. Floor matches
+    # flowview's own requirement (textual>=0.80). The app module is imported
+    # LAZILY on the TTY path only, so the plain / --cui / non-TTY / CI paths never
+    # touch textual or flowview and stay green even if flowview fails to resolve.
+    "textual>=0.80",
     "textual-flowview @ git+https://github.com/tya5/textual-flowview.git@15a942c27bdb82ddfe7f550f0f35d121c63440c8",
     "numpy>=1.24",           # RAG index backend cosine similarity (ADR-0033)
     "croniter>=2.0",         # cron expression parsing for FP-0009 Component B
