@@ -21,6 +21,7 @@ imports never reach an always-loaded module.
 from __future__ import annotations
 
 import logging
+from dataclasses import replace
 from typing import TYPE_CHECKING
 
 from textual.app import App, ComposeResult
@@ -39,7 +40,7 @@ from reyn.interfaces.transport.frames import FrameTag
 
 from .chrome import _MENU_TABS, Composer, MenuBar, StatusLine, _drawer_child
 from .gutter import ReynGutter
-from .presenter import ReynPresenter
+from .presenter import ReynPresenter, choice_chip_spans
 
 if TYPE_CHECKING:
     from textual.timer import Timer
@@ -62,6 +63,12 @@ _SKIP_KINDS = frozenset(
         "__session_switch_request__",
     }
 )
+
+#: FlowView gutter column width (state-coloured marker). Shared by ``compose``
+#: (the ``FlowView(gutter_width=…)`` config) and the choice-chip click handler,
+#: which must reconstruct the presenter's body width (content − gutter) to know
+#: which ``event.x`` column a click landed on.
+_GUTTER_WIDTH = 2
 
 
 class TextualChatApp(App):
@@ -86,6 +93,16 @@ class TextualChatApp(App):
     :class:`~textual.widgets.ContentSwitcher` drawer that is collapsed by default
     and expands DOWNWARD when a menu item is opened (see :meth:`_open_drawer`).
     The drawer content is placeholder — real registry wiring is Phase 4.
+
+    Phase 3.5 wires CHOICE interventions: a closed-set intervention (permission
+    confirm / choice ``ask_user`` — any ``kind="intervention"`` frame carrying
+    ``meta["choices"]``) is surfaced by the presenter as in-flow amber option
+    chips; a click on a chip (:meth:`on_flow_view_clicked`) delivers that
+    choice's id through ``transport.answer_intervention_choice`` and re-presents
+    the entry to a green resolved state. Free-text interventions keep taking the
+    composer answer path (:meth:`_submit`). This restores choice-intervention
+    reachability, which the free-text-only wiring had left unanswerable in the
+    Textual TTY.
     """
 
     #: Seconds between running-blink frames (app-side; textual-flowview unmodified).
@@ -167,6 +184,11 @@ class TextualChatApp(App):
         self._agent_name = agent_name
         self._config = config
         self.conversation: "FlowModel[OutboxMessage]" = FlowModel()
+        # One presenter instance, shared between the FlowView (which DRAWS entries)
+        # and the choice-chip click handler (which asks it which body row the chips
+        # landed on), so hit-testing measures the prompt head exactly as it was
+        # drawn.
+        self._presenter = ReynPresenter()
         # Running tool-call entries keyed by op_id (== the dispatcher's
         # deterministic args_hash, meta["op_id"]) so a later completion/failure
         # frame transitions the SAME entry RUNNING → SUCCESS/ERROR (CC parity).
@@ -178,9 +200,9 @@ class TextualChatApp(App):
     def compose(self) -> ComposeResult:
         yield FlowView(
             model=self.conversation,
-            presenter=ReynPresenter(),
+            presenter=self._presenter,
             decorator=ReynGutter(blink_frame=lambda: self._blink_count),
-            gutter_width=2,
+            gutter_width=_GUTTER_WIDTH,
             spacing=1,
             anchor=Anchor.STICKY_BOTTOM,
         )
@@ -248,6 +270,49 @@ class TextualChatApp(App):
 
     def action_close_drawer(self) -> None:
         self._open_drawer(None)
+
+    async def on_flow_view_clicked(self, event: "FlowView.Clicked") -> None:
+        """Resolve a pending choice-intervention when an option chip is clicked.
+
+        A closed-set intervention (permission confirm / choice ``ask_user`` —
+        anything carrying ``meta["choices"]``) is surfaced by the presenter as
+        in-flow amber chips on the row below its prompt. A click that lands on a
+        chip delivers that choice's id through the transport's
+        ``answer_intervention_choice`` seam — the SAME funnel
+        (``InterventionHandler.deliver_answer_to``) every answer path (TUI
+        free-text, A2A peer, AG-UI HITL) shares — then the entry re-presents to
+        its green ``✓ resolved`` state (``EntryState.SUCCESS`` also greens the
+        gutter). This handler is the ONLY choice-answer path in the Textual TTY:
+        the free-text ``_submit`` path answers only no-choices interventions, so
+        without it a choice-intervention (a permission prompt) is UNANSWERABLE
+        here — this restores that permission-band reachability (F1)."""
+        entry = event.entry
+        msg = entry.item
+        meta = msg.meta or {}
+        choices = meta.get("choices")
+        if msg.kind != "intervention" or not choices or meta.get("_chosen_label"):
+            return
+        # Reconstruct the presenter's body width (content − gutter) so the chip
+        # geometry hit-tested here matches what was drawn.
+        body_width = max(
+            1, event.flow_view.scrollable_content_region.width - _GUTTER_WIDTH
+        )
+        if event.y != self._presenter.choice_chip_row(msg, body_width):
+            return  # click was on the prompt head / hint, not the chip row
+        for start, end, choice_id in choice_chip_spans(choices):
+            if start <= event.x < end:
+                await self._transport.answer_intervention_choice(choice_id)
+                label = next(
+                    (
+                        c.get("label")
+                        for c in choices
+                        if str(c.get("id", "")) == choice_id
+                    ),
+                    choice_id,
+                )
+                entry.set_item(replace(msg, meta={**meta, "_chosen_label": label}))
+                entry.set_state(EntryState.SUCCESS)
+                break
 
     def _advance_blink(self) -> None:
         """One blink tick: advance the shared frame counter and redraw ONLY the

@@ -63,7 +63,7 @@ from __future__ import annotations
 from .app import TextualChatApp, run_textual_chat
 from .chrome import Composer, MenuBar, StatusLine
 from .gutter import ReynGutter
-from .presenter import ReynPresenter, _body_and_background
+from .presenter import ReynPresenter, _body_and_background, choice_chip_spans
 
 __all__ = [
     "Composer",
@@ -73,5 +73,6 @@ __all__ = [
     "StatusLine",
     "TextualChatApp",
     "_body_and_background",
+    "choice_chip_spans",
     "run_textual_chat",
 ]
