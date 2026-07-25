@@ -164,6 +164,15 @@ CATEGORIES: Final[tuple[str, ...]] = (
     # gate that now guards against a category being dispatch-wired without
     # a matching CATEGORIES entry.
     "plugin_management",
+    # FP-0066 P3c (#3247 "P3 設計 firm" §3): the ``knowledge`` category —
+    # semantic search over the operator's own skill/memory/repo knowledge
+    # (``search_knowledge`` / qualified ``knowledge__search``). Single-entry
+    # category, same runtime-gated shape as ``exec`` (visible only when
+    # ``embedding.enabled: true`` — see ``_enumerate_category``'s
+    # ``"knowledge"`` branch, which shares ``is_search_available`` with
+    # ``search_actions``'s own visibility gate rather than re-deriving the
+    # embedding-config check a second time).
+    "knowledge",
 )
 
 
@@ -613,6 +622,27 @@ def _enumerate_category(category: str, ctx: ToolContext) -> list[dict[str, str]]
         # the one thing they did uniquely — NAMING the registered pipelines — is
         # now ``pipeline__list``, a single fixed verb.
         return _enumerate_static_category("pipeline")
+
+    # knowledge category — search_knowledge / knowledge__search (FP-0066 P3c,
+    # #3247 firm §3/§6). Visible only when embedding is configured, mirroring
+    # the exec branch just below (a runtime-gated, not just router-state-
+    # excludable, category) — SHARES ``is_search_available`` with
+    # search_actions's own visibility gate rather than re-deriving the
+    # embedding-config check a second time (firm §6 "set-sharing").
+    # ``rs.embedding_provider``/``embedding_model_class`` are the same two
+    # signals ``build_resource_caller_state``/``RouterLoop`` already populate
+    # for search_actions (non-None exactly when ``embedding.enabled: true``
+    # resolved a provider — see ``Session._build_retrieval_bundle``).
+    if category == "knowledge":
+        if rs is None:
+            return []
+        embedding_enabled = bool(
+            getattr(rs, "embedding_provider", None) is not None
+            and getattr(rs, "embedding_model_class", None)
+        )
+        if not is_search_available(embedding_enabled=embedding_enabled):
+            return []
+        return _enumerate_static_category("knowledge")
 
     # exec category — the `exec` tool (FP-0017; renamed from `sandboxed_exec`
     # #3226 Phase 3). Visible only when a real sandbox backend is configured

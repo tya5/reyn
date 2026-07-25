@@ -94,6 +94,12 @@ def test_categories_master_table_order() -> None:
         # made plugin_management__install/__uninstall unreachable via every
         # enumerate-all / retrieval / codeact catalog scheme.
         "plugin_management",
+        # FP-0066 P3c (#3247 firm §3): the ``knowledge`` category —
+        # search_knowledge / knowledge__search, semantic search over the
+        # operator's own skill/memory/repo knowledge. Single-entry, like
+        # ``exec`` — runtime-gated on ``embedding.enabled`` rather than a
+        # sandbox backend.
+        "knowledge",
     )
 
 

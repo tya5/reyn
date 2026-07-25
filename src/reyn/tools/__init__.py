@@ -66,6 +66,7 @@ def get_default_registry() -> ToolRegistry:
         WRITE_FILE,
     )
     from reyn.tools.hooks import HOOKS_ADD
+    from reyn.tools.knowledge import SEARCH_KNOWLEDGE
     from reyn.tools.mcp import (
         CALL_MCP_TOOL,
         DESCRIBE_MCP_TOOL,
@@ -316,4 +317,10 @@ def get_default_registry() -> ToolRegistry:
     registry.register(SEARCH_ACTIONS)
     registry.register(DESCRIBE_ACTION)
     registry.register(INVOKE_ACTION)
+    # FP-0066 P3c (#3247 firm §2/§3): search_knowledge — semantic search across
+    # the operator's own skill/memory/repo knowledge (the ``knowledge`` category,
+    # qualified ``knowledge__search`` via universal_dispatch._OPERATION_RULES).
+    # Distinct from search_actions (tool-catalog search, above) — separate index,
+    # separate role (discovery over knowledge content, not capability discovery).
+    registry.register(SEARCH_KNOWLEDGE)
     return registry

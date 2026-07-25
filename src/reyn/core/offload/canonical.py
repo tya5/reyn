@@ -1353,6 +1353,20 @@ def search_actions_to_canonical(result: dict) -> CanonicalToolResult:
     return _records_to_canonical(text, items)
 
 
+def search_knowledge_to_canonical(result: dict) -> CanonicalToolResult:
+    """``search_knowledge`` result -> canonical (FP-0066 P3c, #3247 firm §5).
+    ``items`` (each ``{kind, id, title, description}``, one row PER ENTITY
+    after the §G1 chunk->entity aggregation) is the ranked semantic-match
+    list across the four knowledge sources (skill / memory / repo_doc /
+    repo_src). Same shape as ``search_actions_to_canonical`` — a separate
+    mapper because the record shape differs (kind/id/title/description vs
+    qualified_name/short_description/score)."""
+    items = result.get("items") or []
+    total = result.get("total", len(items))
+    text = f"{total} matching knowledge entit{'y' if total == 1 else 'ies'}."
+    return _records_to_canonical(text, items)
+
+
 def describe_action_to_canonical(result: dict) -> CanonicalToolResult:
     """``describe_action`` result -> canonical (#2681 Bucket B). A SINGLE resolved-action record
     (``qualified_name``, ``description``, ``input_schema``, ``metadata``) carried whole in the

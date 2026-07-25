@@ -257,6 +257,17 @@ ACTION_CATEGORIES_LINES = [
         "`plugin_management__uninstall` removes an installed plugin by name "
         "(ADR 0064)."
     ),
+    (
+        "- **knowledge** — semantic search across your own knowledge: "
+        "`knowledge__search` (= `search_knowledge`) searches installed "
+        "skills, memory entries, and the reyn repo's docs/source together, "
+        "returning one row per matching entity ({kind, id, title, "
+        "description}). Activate a hit via the verb matching its `kind` — "
+        "skill -> `load_skill`, memory -> `read_memory_body`, repo_doc/"
+        "repo_src -> `reyn_repo__read` — never a single unified load call. "
+        "Only available when embedding is enabled (reyn.yaml "
+        "embedding.enabled: true)."
+    ),
 ]
 
 

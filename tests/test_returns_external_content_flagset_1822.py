@@ -44,6 +44,13 @@ _EXTERNAL = {
     # FP-0066 P1b: "semantic_search" and "list_rag_sources" are removed from
     # this set — the agent-facing layer-1 in-core RAG tools are retired. See
     # docs/deep-dives/proposals/0066-retrieval-two-groups-two-axes.md §9.
+    # FP-0066 P3c (#3247 firm §2): search_knowledge's role is DISCOVERY — it
+    # re-surfaces operator/user-authored skill/memory/repo text (search
+    # results, not activation) without activating it. Same role class as
+    # skill_list above — the symmetric OPPOSITE of load_skill (_NOT_EXTERNAL,
+    # activation, below): discovery=fenced / activation=not-fenced, the same
+    # distinction #3255/#3254 established for skill_list vs load_skill.
+    "search_knowledge",
 }
 
 # Not fenced (returns_external_content=False): each justified below. Scan-all

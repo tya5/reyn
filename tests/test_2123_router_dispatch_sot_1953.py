@@ -61,6 +61,11 @@ _EXPECTED_DISPATCH: "frozenset[str]" = frozenset({
     # file-read SKILL.md special-case) so chat + pipeline reach the new
     # load_skill op handler.
     "load_skill",
+    # FP-0066 P3c (#3247 firm §3): search_knowledge gained a router-dispatched
+    # ToolDefinition (the new `knowledge` category's semantic-search verb,
+    # qualified `knowledge__search`) so chat + pipeline reach the new
+    # search_knowledge handler.
+    "search_knowledge",
 })
 
 _AG = [{"name": "a1", "description": "d"}]

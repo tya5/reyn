@@ -8,8 +8,11 @@ its origin tool module; the origin module now aliases its
 ``_X_DESCRIPTION`` module constant to ``discovery.NAME.text`` so every
 call site is unchanged.
 
-Covers: embed, web_fetch, web_search, mcp_search_registry, and
-universal_catalog's list_actions / search_actions / describe_action.
+Covers: embed, web_fetch, web_search, mcp_search_registry,
+universal_catalog's list_actions / search_actions / describe_action, and
+FP-0066 P3c's search_knowledge (the ``knowledge`` category — semantic
+search across the operator's own skill / memory / repo knowledge, distinct
+from search_actions' tool-catalog search).
 
 FP-0066 P1b: ``semantic_search`` (+ its ``_HIDE_LEGACY`` enriched variant)
 and ``list_rag_sources`` — the agent-facing layer-1 in-core RAG tools
@@ -238,6 +241,52 @@ describe_action = ToolDescription(
     ),
 )
 
+search_knowledge = ToolDescription(
+    tool_name="search_knowledge",
+    surfaced=(
+        "router-only (gates.router=allow, gates.phase=deny) — new "
+        "``knowledge`` category (FP-0066 P3c, #3247 firm §3/§5); visible "
+        "only when ``embedding.enabled: true`` (shares the search_actions "
+        "D14 visibility predicate — see ``is_search_available``)"
+    ),
+    purpose=(
+        "Semantic search across the operator's own knowledge — skills, "
+        "memory entries, and repo docs/source — one entity-level row per "
+        "hit, so the LLM can discover relevant material before naming an "
+        "exact activation path."
+    ),
+    text=(
+        "WHAT: Semantic search across the operator's OWN knowledge — every "
+        "installed skill's body, every memory entry, and the reyn repo's "
+        "docs and source — merged into one relevance-ranked result set. "
+        "Returns {items: [{kind, id, title, description}, ...]}, one row "
+        "PER ENTITY (kind ∈ 'skill' | 'memory' | 'repo_doc' | 'repo_src'; "
+        "id is kind-native — a skill name, a memory doc path, or a repo "
+        "file path — never an abstract handle). "
+        "WHEN: Use this to find WHAT knowledge exists before you know its "
+        "exact name or path — a free-text description of what you're "
+        "looking for (may be phrased in any language). "
+        "WHEN NOT: If you already know the exact skill name / memory path / "
+        "repo path, skip search and activate it directly. Do not use this "
+        "for tool/action discovery — that is search_actions, a separate "
+        "index. "
+        "ACTIVATION IS KIND-ROUTED, not unified: after a hit, activate it "
+        "via the verb matching its kind — skill -> load_skill(name=id), "
+        "memory -> read_memory_body(layer, slug) derived from id, repo_doc/"
+        "repo_src -> reyn_repo_read(path=id). There is no single generic "
+        "'load' call across kinds."
+    ),
+    ja=(
+        "運用者自身のナレッジ（インストール済みスキル本文・メモリ・"
+        "reyn リポジトリのdocs/ソース）を横断する意味的検索。エンティティ"
+        "単位で1行を返す（kind ごとに id はネイティブ — スキル名・メモリ"
+        "パス・リポジトリのファイルパス。抽象ハンドルではない）。活性化は"
+        "kind ごとに異なるツールへルーティングする（統一 load 動詞は"
+        "存在しない）。search_actions（ツールカタログ検索）とは別の"
+        "インデックス。"
+    ),
+)
+
 ALL: dict[str, ToolDescription] = {
     "embed": embed,
     "web_fetch": web_fetch,
@@ -245,6 +294,7 @@ ALL: dict[str, ToolDescription] = {
     "mcp_search_registry": mcp_search_registry,
     "list_actions": list_actions,
     "search_actions": search_actions,
+    "search_knowledge": search_knowledge,
     "describe_action": describe_action,
 }
 
@@ -322,6 +372,20 @@ PARAMS: dict[str, dict[str, ParamDescription]] = {
         "limit": ParamDescription(
             text="Top-K results to return (default 10).",
             ja="返す上位K件の結果数（デフォルト 10）。",
+        ),
+    },
+    "search_knowledge": {
+        "query": ParamDescription(
+            text=(
+                "Natural-language query in any language — describe what "
+                "knowledge you're looking for (skill / memory / repo doc "
+                "or source content)."
+            ),
+            ja="任意の言語での自然言語クエリ — 探しているナレッジの内容を記述する。",
+        ),
+        "limit": ParamDescription(
+            text="Top-K entities to return (default 10), after chunk->entity aggregation.",
+            ja="返す上位K件のエンティティ数（デフォルト 10、chunk→entity 集約後）。",
         ),
     },
     "describe_action": {

@@ -353,6 +353,14 @@ _CURATED_BARE_NAME_WATCHLIST = frozenset(
         # as the 4 universal-wrapper verbs above, added deliberately here
         # rather than silently.
         "plugin_management__install", "plugin_management__uninstall",
+        # FP-0066 P3c (#3247 firm §5): the ``knowledge`` category's
+        # ACTION_CATEGORIES_LINES bullet (universal_slots.py) deliberately
+        # names the kind-routed activation verbs (load_skill /
+        # read_memory_body) plus the new tool itself (search_knowledge) by
+        # their exact registry name, in backticks, to teach the LLM the
+        # kind->verb routing table directly — same "deliberate exact-name
+        # SP vocabulary" reasoning as the 4 universal-wrapper verbs above.
+        "search_knowledge", "load_skill", "read_memory_body",
     }
 )
 _BARE_BACKTICK_TOKEN_RE = re.compile(r"`([a-zA-Z_][a-zA-Z0-9_.]*)`")
