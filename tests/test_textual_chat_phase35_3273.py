@@ -260,3 +260,54 @@ async def test_free_text_intervention_still_answered_via_composer() -> None:
     assert transport.answered_text == ["ok"]
     assert transport.submitted == []
     assert transport.answered_choice == []
+
+
+def test_choice_labels_are_neutralized_before_rendering() -> None:
+    """Tier 2c: an LLM-derived choice LABEL carrying raw terminal control
+    sequences is neutralized before it reaches the rendered chip cells — a
+    terminal-escape-injection guard on a permission surface.
+
+    Choice labels reach ``meta["choices"]`` RAW (``session._iv_meta`` copies
+    ``choice.label`` verbatim; only the ``nodes`` render-model is neutralized at
+    source), so the presenter MUST strip control bytes at its own boundary. This
+    builds a choice-intervention whose label embeds a CSI colour + OSC
+    title-set + bare ESC/BEL, presents it through the real
+    ``_present_intervention_choice`` path, renders the presentation through a
+    no-colour Console (so any escape in the output came from the LABEL, not from
+    Rich styling), and asserts the rendered cells carry NO raw ``\\x1b`` / ``\\x07``
+    while the visible label text survives (neutralized, not dropped).
+
+    NON-VACUITY (falsification): neutering ``presenter._neutralized_label`` to
+    identity (the future refactor the co-vet flagged) makes the raw ``\\x1b`` leak
+    into the rendered cells and flips this assertion RED — verified locally, so a
+    silent removal of the neutralization is caught here."""
+    from rich.console import Console
+
+    from reyn.interfaces.inline.textual_chat.presenter import ReynPresenter
+
+    payload = "\x1b[31mDANGER\x1b]0;pwn\x07"
+    msg = OutboxMessage(
+        kind="intervention",
+        text="Allow write?",
+        meta={
+            "intervention_id": "iv-x",
+            "intervention_kind": "confirm",
+            "prompt": "Allow write to /etc/hosts?",
+            "choices": [
+                {"id": "yes", "label": payload, "hotkey": "y"},
+                {"id": "no", "label": "No", "hotkey": "n"},
+            ],
+        },
+    )
+
+    presentation = ReynPresenter()._present_intervention_choice(msg, 80)
+    console = Console(width=80, no_color=True)
+    with console.capture() as cap:
+        console.print(presentation.renderable)
+    rendered = cap.get()
+
+    assert "\x1b" not in rendered, f"raw ESC leaked into chip cells: {rendered!r}"
+    assert "\x07" not in rendered, f"raw BEL leaked into chip cells: {rendered!r}"
+    # The visible label survives — neutralization strips the control bytes, it
+    # does not drop the option (a dropped option would be its own regression).
+    assert "DANGER" in rendered
