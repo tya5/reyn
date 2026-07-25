@@ -182,6 +182,13 @@ a clean canonical action-verb for that operation-class:
   besides `presentation_management`; `run` is the canonical verb for the
   "execute an ephemeral subprocess" class (`spawn` is reserved for
   long-lived entities: `agent_spawn`, `session_spawn`).
+- `knowledge__search` (FP-0066 P3c, #3247 firm §3) — another single-entry
+  category (semantic search over the operator's own skill/memory/repo
+  knowledge, flat name `search_knowledge`). `search` was already in the
+  canonical verb lexicon (`search_actions` / `mcp_search_registry`), so this
+  fits R1's `verb_object` pattern with no lexicon addition and no
+  grandfather entry needed — unlike `exec`/`load`, `knowledge` did not need
+  a new verb minted for it.
 - `skill_management__load` (not `skill_management__load_skill`).
 - `presentation_management__install` is **not** an X__X violation — the
   category is `presentation_management`, the verb is `install`; they are not

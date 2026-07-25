@@ -377,6 +377,13 @@ _OPERATION_RULES: Final[dict[str, tuple[str, Callable[[str, Mapping[str, Any]], 
     "pipeline__run_async": ("run_pipeline_async", _passthrough_args),
     "pipeline__run_inline": ("run_pipeline_inline", _passthrough_args),
     "pipeline__run_inline_async": ("run_pipeline_inline_async", _passthrough_args),
+
+    # knowledge category (FP-0066 P3c, #3247 firm §3): semantic search across
+    # the operator's own skill/memory/repo knowledge. Single-entry category
+    # (like exec__run) — "search" is the canonical verb (already in the
+    # #3223 CANONICAL_VERBS lexicon via search_actions/mcp_search_registry),
+    # so no grandfather is needed.
+    "knowledge__search": ("search_knowledge", _passthrough_args),
 }
 
 

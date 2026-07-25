@@ -604,7 +604,7 @@
       "parameters": {
         "properties": {
           "category": {
-            "description": "Filter by category. Pass an array of category names (e.g. category=['exec'], category=['web', 'file']). Omit or pass [] to include all categories. Categories: multi_agent, mcp, file, web, memory_operation, reyn_repo, exec, skill_management, pipeline, pipeline_management, presentation_management, plugin_management.",
+            "description": "Filter by category. Pass an array of category names (e.g. category=['exec'], category=['web', 'file']). Omit or pass [] to include all categories. Categories: multi_agent, mcp, file, web, memory_operation, reyn_repo, exec, skill_management, pipeline, pipeline_management, presentation_management, plugin_management, knowledge.",
             "items": {
               "enum": [
                 "multi_agent",
@@ -618,7 +618,8 @@
                 "pipeline",
                 "pipeline_management",
                 "presentation_management",
-                "plugin_management"
+                "plugin_management",
+                "knowledge"
               ],
               "type": "string"
             },
@@ -1658,7 +1659,8 @@
                 "pipeline",
                 "pipeline_management",
                 "presentation_management",
-                "plugin_management"
+                "plugin_management",
+                "knowledge"
               ],
               "type": "string"
             },
@@ -1672,6 +1674,31 @@
           },
           "query": {
             "description": "Natural-language query in any language.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "query"
+        ],
+        "type": "object"
+      }
+    },
+    "type": "function"
+  },
+  "search_knowledge": {
+    "function": {
+      "description": "WHAT: Semantic search across the operator's OWN knowledge — every installed skill's body, every memory entry, and the reyn repo's docs and source — merged into one relevance-ranked result set. Returns {items: [{kind, id, title, description}, ...]}, one row PER ENTITY (kind ∈ 'skill' | 'memory' | 'repo_doc' | 'repo_src'; id is kind-native — a skill name, a memory doc path, or a repo file path — never an abstract handle). WHEN: Use this to find WHAT knowledge exists before you know its exact name or path — a free-text description of what you're looking for (may be phrased in any language). WHEN NOT: If you already know the exact skill name / memory path / repo path, skip search and activate it directly. Do not use this for tool/action discovery — that is search_actions, a separate index. ACTIVATION IS KIND-ROUTED, not unified: after a hit, activate it via the verb matching its kind — skill -> load_skill(name=id), memory -> read_memory_body(layer, slug) derived from id, repo_doc/repo_src -> reyn_repo_read(path=id). There is no single generic 'load' call across kinds.",
+      "name": "search_knowledge",
+      "parameters": {
+        "properties": {
+          "limit": {
+            "default": 10,
+            "description": "Top-K entities to return (default 10), after chunk->entity aggregation.",
+            "minimum": 1,
+            "type": "integer"
+          },
+          "query": {
+            "description": "Natural-language query in any language — describe what knowledge you're looking for (skill / memory / repo doc or source content).",
             "type": "string"
           }
         },
