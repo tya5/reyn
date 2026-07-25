@@ -17,6 +17,16 @@ renderer is chosen ONCE (by the caller, via the same
 ``logger_factory.make_renderer`` predicate) and the input driver is selected ONCE
 (here), so the TUI is agnostic to whether its session is a page-fault away or a
 network away.
+
+The interactive TTY surface (``renderer.uses_app_input() and is_tty``) is the
+Textual conversation-pane app (:mod:`reyn.interfaces.inline.textual_chat`), which
+OWNS both input and output and consumes the same ``transport.frames()`` stream in
+a worker — so it renders identically over a local or a remote transport. That app
+module (and its ``textual`` / ``textual_flowview`` imports) is imported LAZILY
+inside the branch, TTY-path only: the plain / ``--cui`` / non-TTY / CI paths take
+the shared :class:`~reyn.interfaces.repl.renderer.ChatRenderer` + PromptSession
+input loop below and never import flowview, so they stay green even if it is
+absent.
 """
 from __future__ import annotations
 
@@ -44,43 +54,49 @@ async def run_chat_client(
     is_tty: bool,
     config=None,
 ) -> None:
-    """Banner + input-driver selection + output loop + wait + teardown.
+    """Input-driver selection + (plain) banner/output loop + wait + teardown.
 
-    ``renderer.uses_app_input()`` AND ``is_tty`` selects the interactive inline
-    Application (its own rule-bar input, reading status/region/tasks through
-    ``read_model``); otherwise the plain PromptSession loop (``--cui`` / non-TTY /
-    piped). The output loop is shared. This is the SAME selection ``run_repl``
-    made locally — now applied identically to the remote path.
+    ``renderer.uses_app_input()`` AND ``is_tty`` routes to the Textual
+    conversation-pane app (:func:`~reyn.interfaces.inline.textual_chat.run_textual_chat`),
+    which owns both input and output and drains ``transport.frames()`` itself —
+    imported LAZILY here so the flowview/textual dependency is touched on the TTY
+    path only. Otherwise (``--cui`` / non-TTY / piped) the plain PromptSession
+    input loop + shared output loop drive the handed-in ``renderer``. This is the
+    SAME selection ``run_repl`` made locally — now applied identically to the
+    remote path.
 
     The caller owns transport lifecycle (``start``/``close`` or the httpx SSE
-    context) and any cost summary; this function only drives the two loops and
-    guarantees both are cancelled + awaited on exit.
+    context) and any cost summary; this function only drives the loop(s) and
+    guarantees any tasks it spawns are cancelled + awaited on exit.
     """
+    if renderer.uses_app_input() and is_tty:
+        from reyn.interfaces.inline.textual_chat import run_textual_chat  # noqa: PLC0415
+        await run_textual_chat(
+            transport=transport,
+            read_model=read_model,
+            agent_name=agent_name,
+            config=config,
+        )
+        return
+
     renderer.banner(agent_name)
 
     # `set` = "no reply pending" (the PromptSession input loop's pacing gate is
-    # open); `clear` = "a turn is in flight". The inline Application path does not
-    # use it (it has its own submit flow), but the shared output loop always
+    # open); `clear` = "a turn is in flight". The shared output loop always
     # signals it so the plain-path gate never hangs.
     reply_seen: asyncio.Event = asyncio.Event()
     reply_seen.set()
 
-    if renderer.uses_app_input() and is_tty:
-        from reyn.interfaces.inline.app import run_inline_input  # noqa: PLC0415
-        inputs = asyncio.create_task(
-            run_inline_input(read_model, renderer, config, transport)
-        )
-    else:
-        from prompt_toolkit import PromptSession  # noqa: PLC0415
-        from prompt_toolkit.history import FileHistory  # noqa: PLC0415
-        from prompt_toolkit.styles import Style  # noqa: PLC0415
-        prompt_session: "PromptSession[str]" = PromptSession(
-            history=FileHistory(str(read_model.history_path)),
-            style=Style.from_dict({"bottom-toolbar": "noreverse bg:default"}),
-        )
-        inputs = asyncio.create_task(
-            run_input_loop(transport, prompt_session, renderer, reply_seen)
-        )
+    from prompt_toolkit import PromptSession  # noqa: PLC0415
+    from prompt_toolkit.history import FileHistory  # noqa: PLC0415
+    from prompt_toolkit.styles import Style  # noqa: PLC0415
+    prompt_session: "PromptSession[str]" = PromptSession(
+        history=FileHistory(str(read_model.history_path)),
+        style=Style.from_dict({"bottom-toolbar": "noreverse bg:default"}),
+    )
+    inputs = asyncio.create_task(
+        run_input_loop(transport, prompt_session, renderer, reply_seen)
+    )
 
     outputs = asyncio.create_task(
         run_output_loop(
