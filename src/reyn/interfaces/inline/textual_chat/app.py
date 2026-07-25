@@ -453,9 +453,9 @@ class TextualChatApp(App):
     ) -> None:
         """Apply a picked Model/Agent by routing the equivalent slash command
         through the transport — the SAME ``/model <class>`` / ``/attach <name>``
-        contract the plain path's status-bar picker (``CommandUIElement``)
-        dispatches. Non-actionable panes (History/Menu = readout/Phase-5) just
-        collapse. Then close the drawer and return focus to the composer."""
+        slash-command contract the plain path dispatches. Non-actionable panes
+        (History/Menu = readout/Phase-5) just collapse. Then close the drawer and
+        return focus to the composer."""
         tab_id = event.option_list.id
         ids = self._pane_selection_ids.get(tab_id or "", [])
         if 0 <= event.option_index < len(ids):
