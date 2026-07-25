@@ -38,8 +38,15 @@ def test_all_builtins_resolve_in_fresh_interpreter(out_of_process_reyn) -> None:
         from reyn.tools.scheme import (
             DEFAULT_SCHEME_NAME, get_scheme, registered_scheme_names,
         )
-        expected = {"universal-category", "enumerate-all", "retrieval", "codeact"}
+        # FP-0066 P4c (#3247): the CodeAct implementation self-registers under the
+        # (enumerate-all, content_fence) cell's resolved name, not the bare "codeact".
+        from reyn.tools.transport import CONTENT_FENCE_ENUMERATE_ALL_SCHEME_NAME
+        expected = {
+            "universal-category", "enumerate-all", "retrieval",
+            CONTENT_FENCE_ENUMERATE_ALL_SCHEME_NAME,
+        }
         names = set(registered_scheme_names())
+        assert "codeact" not in names
         assert expected <= names, f"missing built-ins: {expected - names}"
         for n in expected:
             s = get_scheme(n)
@@ -61,11 +68,20 @@ def test_resolver_finds_all_builtins_without_naming_them(out_of_process_reyn) ->
         out_of_process_reyn,
         """
         from reyn.runtime.router_loop import _resolve_tool_use_scheme
-        for n in ("universal-category", "enumerate-all", "retrieval", "codeact"):
+        # FP-0066 P4c (#3247): CodeAct resolves under its (enumerate-all,
+        # content_fence)-relocated name, not the bare "codeact".
+        from reyn.tools.transport import CONTENT_FENCE_ENUMERATE_ALL_SCHEME_NAME
+        for n in (
+            "universal-category", "enumerate-all", "retrieval",
+            CONTENT_FENCE_ENUMERATE_ALL_SCHEME_NAME,
+        ):
             s = _resolve_tool_use_scheme(n)
             assert s is not None and s.name == n, n
-        # Unknown / None → default.
+        # Unknown / None → default. "codeact" is now an unknown name (P4c
+        # clean-break) so it falls back to the default too, same as any
+        # other unregistered string.
         assert _resolve_tool_use_scheme("no-such").name == "enumerate-all"
+        assert _resolve_tool_use_scheme("codeact").name == "enumerate-all"
         assert _resolve_tool_use_scheme(None).name == "enumerate-all"
         print("RESOLVE_OK")
         """

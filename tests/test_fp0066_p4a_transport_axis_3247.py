@@ -14,10 +14,13 @@ Pins:
     legible ``ValueError`` rather than being silently accepted — the
     fail-closed guard is load-bearing (strip-falsify: a naive permissive
     lookup, the shape the guard replaces, WOULD silently accept it);
-  - ``codeact`` is the (enumerate-all, content_fence) cell's live
-    implementation, and P4a made zero changes to it (no import of
-    ``reyn.tools.schemes.codeact`` internals is touched by this module — the
-    registry only NAMES the existing, unmodified ``_SCHEMES`` entry).
+  - CodeAct is the (enumerate-all, content_fence) cell's live implementation.
+    P4c (#3247) relocated its ``_SCHEMES`` registration off the bare name
+    ``"codeact"`` onto ``CONTENT_FENCE_ENUMERATE_ALL_SCHEME_NAME`` (clean
+    break — ``"codeact"`` no longer resolves at all); this module was
+    updated in the SAME PR that landed that rename (P4a's own hard rule:
+    a doc/test describing a mechanism goes stale the moment the mechanism
+    changes).
 
 No mocks: ``Transport`` / the registry are pure data + functions, no
 collaborators to fake.
@@ -39,6 +42,7 @@ if str(_SRC) not in sys.path:
 import reyn.tools.schemes  # noqa: E402,F401
 from reyn.tools.scheme import get_scheme  # noqa: E402
 from reyn.tools.transport import (  # noqa: E402
+    CONTENT_FENCE_ENUMERATE_ALL_SCHEME_NAME,
     Transport,
     resolve_scheme_for_transport,
     valid_scheme_transport_pairs,
@@ -47,7 +51,7 @@ from reyn.tools.transport import (  # noqa: E402
 _CENSUS: "dict[tuple[str, Transport], str]" = {
     ("category", Transport.TOOL_CALLS): "universal-category",
     ("enumerate-all", Transport.TOOL_CALLS): "enumerate-all",
-    ("enumerate-all", Transport.CONTENT_FENCE): "codeact",
+    ("enumerate-all", Transport.CONTENT_FENCE): CONTENT_FENCE_ENUMERATE_ALL_SCHEME_NAME,
     ("retrieval", Transport.TOOL_CALLS): "retrieval",
 }
 
@@ -82,14 +86,16 @@ def test_valid_pairs_resolve_to_the_census_scheme(
     assert get_scheme(resolved) is not None
 
 
-def test_codeact_is_the_enumerate_all_content_fence_cell_unmodified() -> None:
-    """Tier 1: (enumerate-all, content_fence) resolves to the SAME registered
-    ``codeact`` scheme instance the pre-P4a ``_SCHEMES`` registry already held
-    — P4a adds a naming layer on top of the existing registry, it does not
-    reconstruct or wrap the scheme (byte-identical: 0 behavior change)."""
+def test_codeact_is_the_enumerate_all_content_fence_cell_and_codeact_name_is_gone() -> None:
+    """Tier 1: (enumerate-all, content_fence) resolves to the registered
+    CodeAct-implementing scheme instance under its P4c-relocated name — and
+    the bare ``"codeact"`` name no longer resolves at all (clean-break, #3247
+    P4c): it is reachable ONLY via this (scheme, transport) pair, never as an
+    independent ``_SCHEMES`` name."""
     resolved_name = resolve_scheme_for_transport("enumerate-all", Transport.CONTENT_FENCE)
-    assert resolved_name == "codeact"
-    assert get_scheme("codeact") is get_scheme(resolved_name)
+    assert resolved_name == CONTENT_FENCE_ENUMERATE_ALL_SCHEME_NAME
+    assert get_scheme(resolved_name) is not None
+    assert get_scheme("codeact") is None
 
 
 @pytest.mark.parametrize(

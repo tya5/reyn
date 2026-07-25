@@ -503,7 +503,7 @@ Not every `(scheme, transport)` combination is implemented. The valid pairs toda
 | `scheme` \ `transport` | `tool_calls` | `content_fence` |
 |---|---|---|
 | `category` | `universal-category` | *(unimplemented)* |
-| `enumerate-all` | `enumerate-all` (default) | `codeact` |
+| `enumerate-all` | `enumerate-all` (default) | CodeAct |
 | `retrieval` | `retrieval` | *(unimplemented)* |
 
 An unregistered pair (e.g. `scheme: category` + `transport: content_fence`) raises

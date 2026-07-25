@@ -262,7 +262,11 @@ def test_default_chat_layer_resolves_to_enumerate_all() -> None:
     RouterLoopDriver → RouterLoop(scheme_name=)."""
     from reyn.config import _build_tool_use_config
     from reyn.runtime.router_loop import _resolve_tool_use_scheme
-    from reyn.tools.transport import Transport, resolve_scheme_for_transport
+    from reyn.tools.transport import (
+        CONTENT_FENCE_ENUMERATE_ALL_SCHEME_NAME,
+        Transport,
+        resolve_scheme_for_transport,
+    )
 
     # #1657: default scheme/transport → enumerate-all (resolves to EnumerateAllScheme).
     default_cfg = _build_tool_use_config(None)
@@ -284,12 +288,13 @@ def test_default_chat_layer_resolves_to_enumerate_all() -> None:
     assert _resolve_tool_use_scheme(resolved).name == "universal-category"
 
     # A former ``chat: codeact`` becomes scheme=enumerate-all x
-    # transport=content_fence, resolving to the same codeact scheme.
+    # transport=content_fence, resolving to the CodeAct-implementing scheme
+    # under its P4c-relocated name (#3247 — no longer the bare "codeact").
     codeact_cfg = _build_tool_use_config(
         {"scheme": "enumerate-all", "transport": "content_fence"}
     )
     resolved_codeact = resolve_scheme_for_transport(
         codeact_cfg.scheme, Transport(codeact_cfg.transport)
     )
-    assert resolved_codeact == "codeact"
-    assert _resolve_tool_use_scheme(resolved_codeact).name == "codeact"
+    assert resolved_codeact == CONTENT_FENCE_ENUMERATE_ALL_SCHEME_NAME
+    assert _resolve_tool_use_scheme(resolved_codeact).name == resolved_codeact

@@ -33,7 +33,14 @@ from reyn.core.events.state_log import StateLog
 from reyn.runtime.profile import AgentProfile
 from reyn.runtime.registry import AgentRegistry
 from reyn.runtime.session import Session
+from reyn.tools.transport import Transport, resolve_scheme_for_transport
 from tests._support.agent_session import make_session
+
+# FP-0066 P4c (#3247): the CodeAct behavior is reached via the (enumerate-all,
+# content_fence) cell's resolved ``_SCHEMES`` name, not the bare "codeact"
+# (removed, clean-break) — resolve it once so this suite never hardcodes the
+# internal registry key.
+_CODEACT_CELL_SCHEME_NAME = resolve_scheme_for_transport("enumerate-all", Transport.CONTENT_FENCE)
 
 
 def _make_registry(tmp_path: Path, *, chat_tool_use_scheme: str) -> AgentRegistry:
@@ -244,7 +251,7 @@ async def _oracle_payload_names(session: Session, scheme_name: str) -> "tuple[se
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("scheme_name", ["enumerate-all", "codeact"])
+@pytest.mark.parametrize("scheme_name", ["enumerate-all", _CODEACT_CELL_SCHEME_NAME])
 async def test_visibility_census_exactly_matches_composed_payload(tmp_path, monkeypatch, scheme_name):
     """Tier 2: architect-required conformance test. capability_visibility_state's
     "tool" census must EXACTLY equal the reachable-capability set of the scheme's
