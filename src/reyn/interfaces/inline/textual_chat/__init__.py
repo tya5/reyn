@@ -35,9 +35,12 @@ highlighted item's drawer, and ``↑``/``Esc`` close it and return focus to the
 composer (arrow-move alone never opens — opening is an explicit Enter).
 Interactive panes are Textual :class:`~textual.widgets.OptionList` widgets
 (Model/Agent/History/Menu); static readouts are plain Rich
-:class:`~textual.widgets.Static` (Cost/Ctx/Help). The drawer content is
-PLACEHOLDER here — wiring it to reyn's real registries (model/agent/history/cost/
-ctx/slash-commands/keybindings) is Phase 4.
+:class:`~textual.widgets.Static` (Cost/Ctx/Help). Phase 4 wires every pane to its
+canonical reyn source — the status snapshot (model/agent/cost/ctx), the slash
+``REGISTRY`` (menu), the live conversation (history), and the app BINDINGS (help)
+— with the enumerating panes (Model/Agent/Menu) deriving their FULL set from the
+registry (never a curated subset). See
+:func:`~reyn.interfaces.inline.textual_chat.chrome.pane_payload`.
 
 Package layout (Phase 3F split — this ``__init__`` is the single lazy import
 boundary and re-exports the public API):
@@ -49,8 +52,9 @@ boundary and re-exports the public API):
 - :mod:`~reyn.interfaces.inline.textual_chat.gutter` — ``ReynGutter`` +
   running-frame constants (state-coloured gutter marker).
 - :mod:`~reyn.interfaces.inline.textual_chat.chrome` — ``Composer``,
-  ``StatusLine``, ``MenuBar``, ``_drawer_child``, ``_MENU_TABS`` (input +
-  bottom-chrome widgets).
+  ``StatusLine``, ``MenuBar``, ``_MENU_TABS``, and the pure pane formatters
+  (``pane_payload`` / ``status_line_text`` / ``build_drawer_pane``) that derive
+  each pane's rows from its canonical source (input + bottom-chrome widgets).
 
 Import boundary (load-bearing): this package imports :mod:`textual` and
 :mod:`textual_flowview` at import time (through its submodules), so it must only
