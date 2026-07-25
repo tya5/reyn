@@ -237,12 +237,44 @@ async def test_full_sp_for_codeact_session_carries_os_frame_autonomy_rule() -> N
 
 
 def test_codeact_scheme_registered_and_selectable() -> None:
-    """Tier 2: CodeActScheme is registered under 'codeact' and resolves by name
-    (selectable via tool_use=codeact); universal stays the default (not codeact)."""
+    """Tier 2: FP-0066 P4c (#3247) clean-break — CodeActScheme is registered
+    under the (enumerate-all, content_fence) cell's resolved name, NOT the
+    bare 'codeact' ('codeact' is no longer independently selectable and
+    ``_resolve_tool_use_scheme("codeact")`` now falls back to the default,
+    same as any other unregistered name — the real selection path is the
+    2-axis config: ``tool_use.scheme: enumerate-all`` +
+    ``tool_use.transport: content_fence``, validated + resolved through
+    ``reyn.tools.transport.resolve_scheme_for_transport``). Universal stays
+    the default (not codeact)."""
     from reyn.runtime.router_loop import _resolve_tool_use_scheme
+    from reyn.tools.transport import (
+        CONTENT_FENCE_ENUMERATE_ALL_SCHEME_NAME,
+        Transport,
+        resolve_scheme_for_transport,
+    )
 
-    selected = _resolve_tool_use_scheme("codeact")
-    assert selected.name == "codeact"
+    # "codeact" is no longer a registered _SCHEMES name → unknown-name fallback.
+    assert _resolve_tool_use_scheme("codeact").name == "enumerate-all"
+
+    # The real selection path: resolve the (scheme, transport) pair.
+    resolved_name = resolve_scheme_for_transport("enumerate-all", Transport.CONTENT_FENCE)
+    assert resolved_name == CONTENT_FENCE_ENUMERATE_ALL_SCHEME_NAME
+    selected = _resolve_tool_use_scheme(resolved_name)
+    assert selected.name == resolved_name
     assert isinstance(selected, CodeActScheme)
     # #1657: default is now enumerate-all (not codeact, not universal).
     assert _resolve_tool_use_scheme(None).name == "enumerate-all"  # #1657
+
+
+def test_tool_use_scheme_codeact_is_config_invalid() -> None:
+    """Tier 1: FP-0066 P4c (#3247) clean-break — ``tool_use.scheme: codeact``
+    is a config-parse-time error, the same legible-error style P4b introduced
+    for the removed ``tool_use.chat`` key. 'codeact' was never a valid
+    presentation-axis ``scheme`` value (only 'category' / 'enumerate-all' /
+    'retrieval' are), and now doubly so: no ``_SCHEMES`` entry named
+    'codeact' exists either. CodeAct is reached ONLY via
+    ``scheme: enumerate-all`` + ``transport: content_fence``."""
+    from reyn.config.execution import _build_tool_use_config
+
+    with pytest.raises(ValueError, match=r"no \(scheme, transport\) registration"):
+        _build_tool_use_config({"scheme": "codeact"})

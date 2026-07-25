@@ -1,4 +1,5 @@
-"""CodeActScheme — the CodeAct tool-use scheme (#1593 PR-3).
+"""CodeActScheme — the (enumerate-all, content_fence) transport-cell
+implementation (#1593 PR-3; FP-0066 P4c, #3247).
 
 Unlike universal-category (which delegates to the router's existing JSON tool
 logic), CodeAct implements its own scheme logic: the LLM writes a Python snippet
@@ -6,6 +7,17 @@ and tool calls happen as **in-code ``tool()`` calls**, each round-tripping throu
 the sandboxed ``CodeActRunner`` to the OS per-call gate (exclude + ``dispatch_tool``
 + permission, P5). A CodeAct call is therefore gated **>=** a JSON call (same gate
 + sandbox containment).
+
+FP-0066 P4c clean-break: this class is no longer registered under the bare
+name ``"codeact"`` (which read as if it were a 4th sibling scheme alongside
+``category`` / ``enumerate-all`` / ``retrieval``). It self-registers under
+``reyn.tools.transport.CONTENT_FENCE_ENUMERATE_ALL_SCHEME_NAME`` — reachable
+ONLY by resolving ``(scheme="enumerate-all", transport=Transport.CONTENT_FENCE)``
+through the P4a valid-pair registry (``tool_use.scheme: codeact`` was never a
+valid config value; this closes the matching ``_SCHEMES``-level naming gap).
+The class body — presentation-construction over the enum-all catalog
+(``_render_code_api``) + the CodeBlock interpret-branch + ``CodeActRunner``
+execution — is byte-identical to pre-P4c.
 
 The 4 ToolUseScheme methods:
   - ``build_presentation`` → render the permission-eligible actions as a *code-API*
@@ -78,6 +90,7 @@ from reyn.tools.scheme import (
     flat_catalog_entries,
     register_scheme,
 )
+from reyn.tools.transport import CONTENT_FENCE_ENUMERATE_ALL_SCHEME_NAME
 
 # A fenced code block — how the CodeAct LLM emits its snippet in the message
 # content. #1618 root-3 (#5): accept the Gemini-native ``tool_code`` fence label
@@ -166,9 +179,13 @@ def _format_codeact_observation(out: dict) -> str:
 
 
 class CodeActScheme:
-    """CodeAct scheme (#1593 PR-3). Own logic (not delegating)."""
+    """CodeAct scheme (#1593 PR-3). Own logic (not delegating).
 
-    name: str = "codeact"
+    ``name`` is the P4c-relocated ``_SCHEMES`` key (see module docstring) —
+    not the literal ``"codeact"`` string; that name no longer exists in the
+    registry."""
+
+    name: str = CONTENT_FENCE_ENUMERATE_ALL_SCHEME_NAME
 
     def __init__(self, runner: CodeActRunner | None = None) -> None:
         self._runner = runner or CodeActRunner()

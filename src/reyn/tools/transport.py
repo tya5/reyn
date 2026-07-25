@@ -8,18 +8,29 @@ conflated in a single flat ``_SCHEMES`` registry (``reyn.tools.scheme``) where
 ``codeact`` is really the ``content_fence`` transport applied to the
 ``enumerate-all`` presentation, registered as if it were a 4th sibling scheme.
 
-This module is **internal-only and behavior-preserving** (P4a): it introduces
-the ``Transport`` type and a registry that names which (scheme, transport)
-cells are actually resolvable. P4b (config surface, #3247) now uses this
-registry as the live parse-time validation authority for the
+This module is **internal-only and behavior-preserving** (P4a/P4c): it
+introduces the ``Transport`` type and a registry that names which (scheme,
+transport) cells are actually resolvable. P4b (config surface, #3247) uses
+this registry as the live parse-time validation authority for the
 ``tool_use.scheme`` x ``tool_use.transport`` 2-key config (the former
-``tool_use.chat`` is removed, clean-break). P4a itself is WITHOUT removing
-``codeact`` from ``_SCHEMES`` (P4c), and WITHOUT physically splitting
-``ToolUseScheme`` into two protocols (firm §2 J3 —
-``Presentation`` already carries the transport freedom via
-``llm_tools_payload`` emptiness + ``tool_use_sp`` + the ``Interpretation``
-Execute/CodeBlock branch; transport is expressed as a construction-strategy +
-interpret-branch SELECTION, not a bundle reshuffle).
+``tool_use.chat`` is removed, clean-break). WITHOUT physically splitting
+``ToolUseScheme`` into two protocols (firm §2 J3 — ``Presentation`` already
+carries the transport freedom via ``llm_tools_payload`` emptiness +
+``tool_use_sp`` + the ``Interpretation`` Execute/CodeBlock branch; transport
+is expressed as a construction-strategy + interpret-branch SELECTION, not a
+bundle reshuffle).
+
+P4c (#3247) completed the clean-break: ``codeact`` is no longer a name in
+``reyn.tools.scheme._SCHEMES`` (and is therefore no longer independently
+config-selectable — it never was, since ``tool_use.scheme`` only accepts
+presentation-axis names, but this closes the ``_SCHEMES``-level naming gap
+too). The (enumerate-all, content_fence) cell's implementation (still the
+same ``CodeActScheme`` class — presentation-construction over the enum-all
+catalog + the CodeBlock interpret-branch, byte-identical logic) now
+self-registers under ``CONTENT_FENCE_ENUMERATE_ALL_SCHEME_NAME`` below, a
+name reachable ONLY by resolving ``("enumerate-all", Transport.CONTENT_FENCE)``
+through this module's registry — not a name an operator or a test can select
+directly by typing "codeact".
 
 Only two transports are implemented today (``tool_calls``, ``content_fence``);
 a third (``structured_output``, ``response_format``/json_schema) is deferred to
@@ -46,6 +57,19 @@ class Transport(str, Enum):
     CONTENT_FENCE = "content_fence"
 
 
+# P4c (#3247): the ``_SCHEMES`` registry name for the (enumerate-all,
+# content_fence) cell's resolved implementation — the class formerly
+# self-registered under the bare name ``"codeact"`` as if it were a 4th
+# sibling scheme. NOT a valid ``tool_use.scheme`` value (the presentation
+# axis only accepts "category" / "enumerate-all" / "retrieval") and not an
+# independently-selectable ``_SCHEMES`` name either — reachable ONLY via
+# ``resolve_scheme_for_transport("enumerate-all", Transport.CONTENT_FENCE)``.
+# Exported so ``reyn.tools.schemes.codeact`` registers its (unmodified)
+# ``CodeActScheme`` instance under this exact key — single source of truth,
+# no duplicated literal between the registry and the registrant.
+CONTENT_FENCE_ENUMERATE_ALL_SCHEME_NAME = "enumerate-all+content_fence"
+
+
 # The valid-(scheme, transport) registry (firm §2 J1) — the ONLY resolvable
 # cells, explicitly enumerated from the FP-0066 §1 census of the current
 # `_SCHEMES` registry (`reyn.tools.scheme._SCHEMES`):
@@ -53,22 +77,25 @@ class Transport(str, Enum):
 #   presentation \ transport | tool_calls | content_fence
 #   -------------------------|------------|---------------
 #   category                 | universal-category | (unimplemented)
-#   enumerate-all             | enumerate-all      | codeact
+#   enumerate-all             | enumerate-all      | enumerate-all+content_fence (CodeAct)
 #   retrieval                 | retrieval          | (unimplemented)
 #
 # "category" / "enumerate-all" / "retrieval" here are the FP-0066 §2
 # presentation-axis names; the value is the name currently registered in
 # `reyn.tools.scheme._SCHEMES` that implements that (scheme, transport) cell
-# TODAY (byte-identical — P4a moves no logic). `codeact` census-verified as
-# `enumerate-all` presentation (identical full flat catalog via
+# TODAY. The (enumerate-all, content_fence) cell is CodeAct — census-verified
+# as `enumerate-all` presentation (identical full flat catalog via
 # `dispatchable_catalog=entries` / `ops.catalog_entries()`) expressed over the
 # `content_fence` transport (`llm_tools_payload=[]` + `tool_use_sp` rendered
 # code-API + the CodeBlock interpret branch) — see FP-0066 issue #3247, P4
-# firm §1.
+# firm §1. P4c (#3247) removed the standalone `"codeact"` `_SCHEMES` name
+# (clean-break: codeact is reached ONLY via this (scheme, transport) pair,
+# never as a scheme name of its own); the same unmodified implementation now
+# self-registers under `CONTENT_FENCE_ENUMERATE_ALL_SCHEME_NAME`.
 _VALID_SCHEME_TRANSPORT_PAIRS: "dict[tuple[str, Transport], str]" = {
     ("category", Transport.TOOL_CALLS): "universal-category",
     ("enumerate-all", Transport.TOOL_CALLS): "enumerate-all",
-    ("enumerate-all", Transport.CONTENT_FENCE): "codeact",
+    ("enumerate-all", Transport.CONTENT_FENCE): CONTENT_FENCE_ENUMERATE_ALL_SCHEME_NAME,
     ("retrieval", Transport.TOOL_CALLS): "retrieval",
 }
 
@@ -103,6 +130,7 @@ def valid_scheme_transport_pairs() -> "list[tuple[str, Transport]]":
 
 __all__ = [
     "Transport",
+    "CONTENT_FENCE_ENUMERATE_ALL_SCHEME_NAME",
     "resolve_scheme_for_transport",
     "valid_scheme_transport_pairs",
 ]

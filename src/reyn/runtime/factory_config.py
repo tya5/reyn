@@ -113,7 +113,8 @@ class SessionFactoryConfig:
             # FP-0066 P4b: resolve the (scheme, transport) 2-axis config
             # through P4a's valid-pair registry to the concrete registered
             # ``ToolUseScheme`` name (e.g. (enumerate-all, content_fence) →
-            # "codeact") — this is the ONE resolution point; every downstream
+            # the CodeAct cell's resolved name, P4c #3247 — no longer the
+            # bare "codeact") — this is the ONE resolution point; every downstream
             # consumer (Session / RouterLoopDriver / RouterLoop) threads the
             # already-resolved concrete name unchanged. Already validated at
             # config-parse time (_build_tool_use_config), so this cannot
