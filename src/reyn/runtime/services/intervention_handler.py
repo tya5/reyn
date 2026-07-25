@@ -320,9 +320,9 @@ class InterventionHandler:
         # this single emit site covers all of them uniformly. A peer thin
         # client previously saw only the agent's NEXT reply with no trace the
         # intervention was ever answered (unless the local TUI happened to
-        # ALSO put a local-only "answered: <label>" system echo — removed from
-        # ``interfaces/inline/app.py._deliver_intervention_choice`` as part of
-        # this fix, to avoid a double-render now that this broadcasts).
+        # ALSO put a local-only "answered: <label>" system echo — since removed
+        # from the inline CUI's choice-answer path as part of this fix, to avoid
+        # a double-render now that this broadcasts).
         #
         # Uses ``choice.label`` (when a choice was matched) or the raw
         # ``text`` — NEVER ``history_text`` (the fenced context-bound copy

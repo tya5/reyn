@@ -724,8 +724,8 @@ class InlineChatRenderer(ChatRenderer):
         self._thinking = False
         self._think_start = 0.0
         # ctrl-c cancel-in-flight flag: set via request_cancel(), cleared on
-        # turn end so it never leaks into the next turn. Owned here (not as a
-        # closure dict in run_inline_input) so on_chat_event can clear it even
+        # turn end so it never leaks into the next turn. Owned here (on the
+        # renderer, not in an input-driver closure) so on_chat_event can clear it even
         # though the ConditionalContainer stops rendering the working row the
         # moment _thinking becomes False.
         self._cancelling = False
@@ -741,7 +741,7 @@ class InlineChatRenderer(ChatRenderer):
         # directly — so this is driven by the outbox `kind="intervention"`
         # message every intervention path announces through instead (see
         # message() below), which all 6 paths DO share.
-        from reyn.interfaces.inline.app import _WAITING_ON_THINKING
+        from reyn.interfaces.repl.status import _WAITING_ON_THINKING
         self._waiting_on = _WAITING_ON_THINKING
         self._waiting_on_since = 0.0
 
@@ -751,7 +751,7 @@ class InlineChatRenderer(ChatRenderer):
 
     def working_frags(self, now: float) -> list:
         """Current working-row fragments — delegates to app.working_line with live state."""
-        from reyn.interfaces.inline.app import working_line  # deferred to avoid circular
+        from reyn.interfaces.repl.status import working_line  # deferred to avoid circular
         return working_line(
             self._thinking, self._think_start, now, cancelling=self._cancelling,
             waiting_on=self._waiting_on, waiting_on_since=self._waiting_on_since,
@@ -762,7 +762,7 @@ class InlineChatRenderer(ChatRenderer):
         self._waiting_on_since = time.monotonic()
 
     def on_chat_event(self, event) -> None:
-        from reyn.interfaces.inline.app import _WAITING_ON_BY_EVENT, _WAITING_ON_THINKING
+        from reyn.interfaces.repl.status import _WAITING_ON_BY_EVENT, _WAITING_ON_THINKING
         etype = getattr(event, "type", None)
         if etype == "turn_started":
             self._thinking = True
@@ -857,11 +857,11 @@ class InlineChatRenderer(ChatRenderer):
         # The OUT transition is on_chat_event's user_answered_intervention
         # handler (also common to all 6 — InterventionHandler.record_answer).
         if msg.kind == "intervention":
-            from reyn.interfaces.inline.app import _WAITING_ON_FOR_USER
+            from reyn.interfaces.repl.status import _WAITING_ON_FOR_USER
             self._set_waiting_on(_WAITING_ON_FOR_USER)
             # A CLOSED-SET intervention (meta["choices"] non-empty, #2770) is
-            # ALSO live-rendered as a selectable region above the input
-            # (inline/app.py's _sync_region + build_intervention_element) — the
+            # ALSO live-rendered as a selectable region above the input by the
+            # Textual chat app (interfaces/inline/textual_chat) — the
             # SAME prompt+choices this scrollback print would show. Printing it
             # here too is a permanent, redundant duplicate: once written to
             # terminal scrollback it cannot be un-printed or collapsed after the
@@ -870,8 +870,7 @@ class InlineChatRenderer(ChatRenderer):
             # answered — the reported "残り続ける" (message never goes away) UX
             # complaint. Skip the scrollback print for closed-set only; the
             # resolved answer still lands as a compact `kind="user"` echo
-            # (`deliver_answer_to`, ADR-0039 broadcast — see
-            # inline/app.py's `_deliver_intervention_choice`), which IS the
+            # (`deliver_answer_to`, ADR-0039 broadcast), which IS the
             # correct permanent record. Free-text interventions (no `choices`)
             # have no live region alternative — this scrollback print is their
             # ONLY visible prompt, so they are unaffected (print unchanged).

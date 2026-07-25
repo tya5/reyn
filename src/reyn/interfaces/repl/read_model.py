@@ -1,8 +1,10 @@
 """Client-side chat read-model — the ADR-0039 P3 seam that makes the inline CUI
 transport-agnostic (local ≡ remote by construction, at the RENDERER layer).
 
-The inline input driver (:func:`reyn.interfaces.inline.app.run_inline_input`)
-renders a live status bar and an intervention region. P1/P2 already
+The inline input driver (historically a prompt_toolkit inline TTY app, since
+retired in favour of the Textual chat app in
+:mod:`reyn.interfaces.inline.textual_chat`) renders a live status bar and an
+intervention region. P1/P2 already
 unified the client's WRITE side behind
 :class:`~reyn.interfaces.transport.client_transport.ClientTransport` and its READ
 of the conversation/working-indicator stream behind the frame stream — but the
@@ -40,6 +42,8 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import TYPE_CHECKING
+
+from reyn.interfaces.repl.status import _snapshot
 
 if TYPE_CHECKING:
     from reyn.interfaces.transport.client_transport import ClientTransport
@@ -117,7 +121,6 @@ class RegistryReadModel(ChatReadModel):
         self._registry = registry
 
     def snapshot(self, config=None):
-        from reyn.interfaces.inline.app import _snapshot  # noqa: PLC0415 — avoid cycle
         return _snapshot(self._registry, config)
 
     def _attached(self):
@@ -146,7 +149,7 @@ class RegistryReadModel(ChatReadModel):
         if s is None:
             raise RuntimeError(
                 "RegistryReadModel.history_path: no attached session "
-                "(call registry.attach() before run_inline_input)"
+                "(call registry.attach() before starting the input driver)"
             )
         return s.workspace_dir / ".input_history"
 

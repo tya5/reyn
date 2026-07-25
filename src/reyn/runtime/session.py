@@ -2811,10 +2811,10 @@ class Session:
         # broadcasts through. Before this, a 2nd+ thin client (`reyn chat
         # --connect`) saw the agent's reply with no prompt (half a conversation)
         # — the local scrollback echo was a LOCAL-ONLY `transport.put_display`
-        # injection that never reached the hub (removed from
-        # `interfaces/inline/app.py._do_submit`; every client, including this
-        # submitting one, now renders its own line from THIS broadcast frame —
-        # single source of truth, no double-render).
+        # injection that never reached the hub (since removed from the inline
+        # CUI's submit path; every client, including this submitting one, now
+        # renders its own line from THIS broadcast frame — single source of
+        # truth, no double-render).
         #
         # The DISPLAY copy is neutralized (ESC/control strip — same
         # `core/present/guard.get_neutralizer("terminal")` seam #2770 uses for
@@ -7340,8 +7340,8 @@ class Session:
 
         Public — read by both the RouterHostAdapter SP context-size signal
         (via the callback wired at __init__) and the inline UI's ctx chip
-        dropdown (status bar reads only public accessors, see
-        interfaces/inline/app.py's module docstring).
+        dropdown (the status bar reads only public accessors, via
+        interfaces/repl/status.py's ``_snapshot``).
 
         Cost is proportional to the CONVERSATION, not to the WAL. Three layers
         got it there, and each is load-bearing: #2951 caches the advisor's own

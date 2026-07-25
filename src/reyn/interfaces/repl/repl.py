@@ -35,8 +35,9 @@ async def run_repl(registry: AgentRegistry, renderer: ChatRenderer, *, config=No
     invoking this function so the user lands on a known agent.
 
     ``config`` is the loaded ReynConfig (or None). When supplied it is threaded
-    read-only to ``run_inline_input`` so the ``…`` overflow chip can surface
-    cron / mcp / hooks state. The --cui / non-TTY path is not affected.
+    read-only to the status snapshot (``interfaces/repl/status.py``'s
+    ``_snapshot``) so the ``…`` overflow chip can surface cron / mcp / hooks
+    state. The --cui / non-TTY path is not affected.
 
     ADR-0039 P3: the LOCAL half of the unified chat client — it constructs the
     transport-specific pair (an :class:`InProcessTransport` + a

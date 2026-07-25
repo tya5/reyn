@@ -1,20 +1,21 @@
-"""Tier 2: inline app input driver — working-row fragments + input-path routing flag.
+"""Tier 2: working-row fragments + input-path routing flag.
 
-The Application itself is an interactive driver verified live (e2e); here we pin
-the pure fragment builder and the renderer capability flag that selects the app
-input path. Assertions are on public return values, not whitespace/private state.
+Pins the pure ``working_line`` fragment builder (``interfaces/repl/status.py``),
+the ``InlineChatRenderer`` WaitingOn state-transition wiring, and the renderer
+capability flag that selects the app input path. Assertions are on public return
+values, not whitespace/private state.
 """
 from __future__ import annotations
 
 import time
 from datetime import datetime, timezone
 
-from reyn.interfaces.inline.app import working_line
 from reyn.interfaces.repl.renderer import (
     ChatRenderer,
     ConsoleChatRenderer,
     InlineChatRenderer,
 )
+from reyn.interfaces.repl.status import working_line
 from reyn.schemas.models import Event
 
 
@@ -143,7 +144,7 @@ def test_cancelling_state_does_not_bleed_into_next_turn() -> None:
 def test_working_line_waiting_on_running_shows_tool_name():
     """Tier 2: a WaitingOn with a detail (tool name) renders "Running <tool>…",
     not the generic "Thinking…" default."""
-    from reyn.interfaces.inline.app import WaitingOn
+    from reyn.interfaces.repl.status import WaitingOn
     text = "".join(
         t for _, t in working_line(True, 0.0, 3.0, waiting_on=WaitingOn(label="Running", detail="edit_file"))
     )
@@ -155,7 +156,7 @@ def test_working_line_waiting_on_since_resets_elapsed_not_turn_total():
     """Tier 2: elapsed seconds shown is time-in-THIS-state (waiting_on_since),
     not turn-total (think_start) — "Running grep_files… 5s" must answer "how
     long has THIS been running", not "how long has the whole turn been"."""
-    from reyn.interfaces.inline.app import WaitingOn
+    from reyn.interfaces.repl.status import WaitingOn
     text = "".join(t for _, t in working_line(
         True, think_start=0.0, now=20.0,
         waiting_on=WaitingOn(label="Running", detail="grep_files"),
@@ -168,7 +169,7 @@ def test_working_line_waiting_on_since_resets_elapsed_not_turn_total():
 def test_working_line_waiting_on_since_defaults_to_think_start():
     """Tier 2: omitting waiting_on_since falls back to think_start (turn-total
     elapsed) — the default/"Thinking" state has no separate sub-state start."""
-    from reyn.interfaces.inline.app import WaitingOn
+    from reyn.interfaces.repl.status import WaitingOn
     text = "".join(t for _, t in working_line(
         True, think_start=10.0, now=17.0, waiting_on=WaitingOn(label="Thinking"),
     ))
@@ -183,7 +184,7 @@ def test_working_line_user_wait_is_static_not_shimmering():
     (no bold-crest fragment, unlike the shimmering "Thinking"/"Running" case
     covered by test_working_line_has_a_moving_shimmer_crest above), not by
     pinning how many fragments compose the row."""
-    from reyn.interfaces.inline.app import WaitingOn
+    from reyn.interfaces.repl.status import WaitingOn
     frags = working_line(
         True, 0.0, 3.0, waiting_on=WaitingOn(label="Waiting for you", is_user_wait=True),
     )
@@ -198,7 +199,7 @@ def test_working_line_user_wait_is_static_not_shimmering():
 def test_working_line_cancelling_overrides_waiting_on():
     """Tier 2: cancelling=True still shows "Cancelling…" even with a
     waiting_on set (e.g. mid-tool-call) — cancel-in-progress always wins."""
-    from reyn.interfaces.inline.app import WaitingOn
+    from reyn.interfaces.repl.status import WaitingOn
     text = "".join(t for _, t in working_line(
         True, 0.0, 3.0, cancelling=True, waiting_on=WaitingOn(label="Running", detail="shell"),
     ))
