@@ -15,8 +15,9 @@ Covers:
   2. A build failure emits ``embedding_index_build_error`` (with a
      ``reason``).
   3. The pre-P2d ``action_index_build_failed`` event (previously emitted
-     directly by ``RouterLoop._build_action_embedding_index_background``)
-     no longer double-emits alongside its fold target,
+     directly by the now-deleted ``RouterLoop.
+     _build_action_embedding_index_background``, P2-convergence PR2,
+     #3270 §3) no longer double-emits alongside its fold target,
      ``embedding_index_build_error`` — see also the updated pins in
      ``test_action_embedding_build_failure_1458.py`` and
      ``test_index_coordinator_3247_p2b.py``.
@@ -38,8 +39,15 @@ shapes" + the freestanding ``_FakeSelfContainedBuilder`` tests) is REMOVED
 ``tests/test_index_coordinator_3247_p2b.py`` (the equivalence suite +
 mandatory #3270 §5 strip-falsify gates), which exercises the SAME
 production call path (``RouterLoop._ensure_action_index_built``) this file
-already tests at §3's ``test_action_index_build_failure_both_signals_
-stay_in_sync``.
+already tests.
+
+P2-convergence PR2 (#3270 §3): the interim dual-sync pin (formerly §3's
+``test_action_index_build_failure_both_signals_stay_in_sync``) is RETIRED
+and replaced by
+``test_action_index_build_failure_is_single_sourced_on_coordinator`` — the
+twin RouterLoop-side ``_action_index_build_failed`` flag is removed
+entirely, so failure-state has a single owner (the Coordinator's
+``_failure_memo``/``build_failed()``).
 
 No mocks — real ``IndexCoordinator``, real ``SourceManifest``, a real
 ``EventLog`` subscribed to a real ``EventStore`` (audit-events are read back
@@ -273,25 +281,23 @@ class _LoopForP2d(RouterLoop):
 # ── convergence-debt interim guard (#3247 co-vet, pre-merge) ──────────────
 
 
-def test_action_index_build_failure_both_signals_stay_in_sync(
+def test_action_index_build_failure_is_single_sourced_on_coordinator(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
 ) -> None:
-    """Tier 2: FP-0066 P2d / #3247 convergence-debt interim guard.
+    """Tier 2: P2-convergence PR2 (#3270 §3) single-source witness.
 
-    ``RouterLoop._action_index_build_failed`` (the pre-P2b per-session
-    retry-prevention flag, #1458) and ``IndexCoordinator``'s own failure-
-    memo (``build_failed(source_id)``) are currently BOTH set on the SAME
-    build failure — P2b's byte-identical two-path retention left them as
-    two independent bookkeeping mechanisms for one fact, kept in sync only
-    IMPLICITLY. Full unification into a single failure-state signal is
-    deferred to the #3247 convergence follow-up (see ``coordinator.py``'s
-    P2b docstring on the two-path builder shape). This test drives a REAL
-    build failure through the REAL production path
+    Retires the interim dual-sync pin (formerly
+    ``test_action_index_build_failure_both_signals_stay_in_sync``): the
+    twin RouterLoop-side ``_action_index_build_failed`` flag (#1458's
+    original per-session retry-prevention bookkeeping) is REMOVED — the
+    Coordinator's own failure-memo (``build_failed(source_id)``) is now
+    the SOLE owner of build-failure state. This test drives a REAL build
+    failure through the REAL production path
     (``RouterLoop._ensure_action_index_built``, real ``IndexCoordinator``,
-    real ``ActionEmbeddingIndex``, no mocks) and asserts BOTH signals
-    reflect the failure TOGETHER — a future edit that touches only one of
-    the two paths (e.g. a refactor that stops setting one flag) turns this
-    RED instead of silently desyncing them.
+    real ``ActionEmbeddingIndex``, no mocks) and asserts (a) the
+    Coordinator's memo reflects the failure AND (b) the RouterLoop
+    instance no longer even HAS the twin attribute — witnessing the
+    double-record is gone, not merely that it stayed in sync.
     """
     log, store = _events_and_store(tmp_path)
     provider = _FailingEmbeddingProvider()
@@ -309,17 +315,13 @@ def test_action_index_build_failure_both_signals_stay_in_sync(
 
     _run(_scenario())
 
-    # getattr (not a direct attribute access) mirrors the established
-    # #1458 pin convention (test_action_embedding_build_failure_1458.py /
-    # test_index_coordinator_3247_p2b.py) — this flag is the production
-    # guard's own read surface (RouterLoop.run() checks it the same way).
-    assert getattr(loop, "_action_index_build_failed", False) is True, (
-        "the RouterLoop-side #1458 retry-prevention flag must be set on "
-        "a real build failure"
-    )
     assert coordinator.build_failed("actions") is True, (
-        "the Coordinator's own failure-memo must ALSO be set on the SAME "
-        "build failure — the two signals must not desync"
+        "the Coordinator's failure-memo must be set on a real build failure"
+    )
+    _sentinel = object()
+    assert getattr(loop, "_action_index_build_failed", _sentinel) is _sentinel, (
+        "the twin RouterLoop-side #1458 flag must no longer exist — "
+        "failure-state has a single owner (the Coordinator's memo)"
     )
 
 

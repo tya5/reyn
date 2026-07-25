@@ -1,166 +1,222 @@
 """Tier 2: #1458 — per-session build-failure memoization + decision-enabling log.
 
-When the action embedding index build fails (e.g. the embedding API is
-unreachable), ``RouterLoop._build_action_embedding_index_background``
-memoizes the failure via ``_action_index_build_failed`` so neither the eager
-path nor the background-task path retries within the same RouterLoop
-session.  A decision-enabling warning log is emitted exactly once with
-actionable options (check provider config / null class / different API
-class).
+P2-convergence PR2 (#3270 §3, migrating the PR2 commitment carried from
+PR1's co-vet): this file used to drive
+``RouterLoop._build_action_embedding_index_background`` directly — a
+primitive PR1 (#3270 §2) made production-dead (its only caller after PR1's
+Coordinator-routing was this test). That primitive is now DELETED; this
+file is rewritten to drive the SAME retry-semantics invariant against the
+PRODUCTION path instead — ``RouterLoop._ensure_action_index_built``, which
+registers a ``BuildFn`` with the real ``IndexCoordinator`` and calls
+``ensure_built`` (exactly what a live chat turn does). The invariant is
+UNCHANGED: a build failure is memoized so a fresh coordinator/session
+attempts the build exactly ONCE, and the production retry-guard (checked
+by the caller BEFORE invoking the build again, mirroring
+``RouterLoop.run()``'s own gate) suppresses any further attempt within the
+same session. Failure-state now lives SOLELY in
+``IndexCoordinator.build_failed(source_id)`` (#3270 §3 single-owner
+collapse) — there is no more RouterLoop-instance-scoped flag to read.
 
-No mocks.  The build path is exercised via a real ``RouterLoop`` instance whose
-``_build_router_caller_state`` is shimmed by subclassing; the embedding provider
-raises a real ``RuntimeError`` to trigger the failure path.
+No mocks. The build path is exercised via a real ``RouterLoop`` subclass
+(minimal-subclass shim for ``_build_router_caller_state`` /
+``_get_index_coordinator`` — same convention as
+``tests/test_index_coordinator_3247_p2b.py`` /
+``tests/test_index_coordinator_3247_p2d.py``) driving a REAL
+``IndexCoordinator`` + a REAL ``ActionEmbeddingIndex`` against a real
+(monkeypatched-provider) ``embed`` op; the fake embedding provider raises a
+real ``RuntimeError`` to trigger the failure path — non-vacuity: since the
+failure now flows through ``embed_verify_write`` (not a bespoke
+``idx.build()`` call), these tests would go RED if the Coordinator's
+same-session suppression (``build_failed``) were neutered, because the
+retry-guarded second call would re-invoke the provider and the call-count
+assertion would fail.
 """
 from __future__ import annotations
 
 import asyncio
 import logging
+from pathlib import Path
 from typing import Any
 
-from reyn.runtime.router_loop import RouterLoop
+import pytest
 
-# ── Minimal RouterLoop subclass that makes _build_action_embedding_index_background
-# directly invokable without a full host/chain setup. ────────────────────────────
+from reyn.core.events.events import EventLog
+from reyn.core.op_runtime.context import OpContext
+from reyn.data.index.coordinator import IndexCoordinator
+from reyn.data.workspace.workspace import Workspace
+from reyn.runtime.router_loop import RouterLoop
+from reyn.security.permissions.permissions import PermissionDecl
+from reyn.tools.action_index import ActionEmbeddingIndex
+
+
+def _run(coro: Any) -> Any:
+    return asyncio.run(coro)
 
 
 class _FailingProvider:
     """Real fake provider that always raises (simulates the embedding API
-    being unreachable).  No Mock / AsyncMock — pure subclass fake per policy."""
+    being unreachable) and counts its own calls — the non-vacuity witness:
+    a retry would show up as a second call. No Mock/AsyncMock per policy."""
 
-    async def embed(self, *_args, **_kwargs):  # type: ignore[override]
+    def __init__(self) -> None:
+        self.embed_calls = 0
+
+    async def embed(self, texts: list[str], model: str) -> dict[str, Any]:
+        self.embed_calls += 1
         raise RuntimeError("Name or service not known (embedding API unreachable)")
 
-    def get_dimension(self, *_args, **_kwargs) -> int:
-        raise RuntimeError("Name or service not known (embedding API unreachable)")
+
+class _UnsupportedParamsError(Exception):
+    """Real fake mirroring litellm's UnsupportedParamsError TYPENAME (the
+    helper keys on the type name, not the class identity). No Mock per
+    policy."""
 
 
-class _FailingIndex:
-    """Real fake index whose build() method raises."""
+class _UnsupportedParamProvider:
+    """Real fake provider whose embed() raises the proxy-rejects-param
+    error — the #1616 gemini-via-LiteLLM-proxy case (encoding_format
+    rejected)."""
 
-    def __init__(self) -> None:
-        self.build_calls = 0
-
-    def is_ready(self) -> bool:
-        return False
-
-    async def build(self, *_args, **_kwargs):  # type: ignore[override]
-        self.build_calls += 1
-        raise RuntimeError("Index build failed — provider error")
+    async def embed(self, texts: list[str], model: str) -> dict[str, Any]:
+        raise _UnsupportedParamsError(
+            "litellm.UnsupportedParamsError: gemini-embedding-001 does not "
+            "support parameter: encoding_format"
+        )
 
 
-class _MinimalEvents:
-    """Minimal events sink; records emitted events."""
+def _op_ctx_for(provider: Any, monkeypatch: pytest.MonkeyPatch, events: EventLog) -> OpContext:
+    """Real OpContext whose `embed` op resolves to ``provider`` (mirrors
+    ``tests/test_index_coordinator_3247_p2b.py``/``_p2d.py``'s
+    ``_op_ctx_for``)."""
+    import reyn.core.op_runtime.embed as _embed_mod
 
-    def __init__(self) -> None:
-        self.emitted: list[dict] = []
-
-    def emit(self, kind: str, **kwargs) -> None:
-        self.emitted.append({"kind": kind, **kwargs})
+    monkeypatch.setattr(_embed_mod, "get_provider", lambda *a, **kw: provider)
+    ws = Workspace(events=events)
+    return OpContext(workspace=ws, events=events, permission_decl=PermissionDecl())
 
 
-class _MinimalHost:
-    def __init__(self) -> None:
-        self.events = _MinimalEvents()
-        # FP-0057 #2856 Part A: _build_action_embedding_index_background now
-        # builds an OpContext via ``host.make_router_op_context()`` and passes
-        # THAT (not the raw provider) as idx.build()'s second positional arg
-        # (idx.build() itself now routes the embed call through the shared
-        # `embed` op). These tests' fake indexes still reach into that
-        # second arg expecting the fake provider (to trigger the SAME
-        # provider-raised exception the production embed op would surface),
-        # so this stub just returns whatever provider the test stashed here.
-        self.op_ctx_stub: Any = None
+class _StubEvents(EventLog):
+    """A real EventLog — production audit-emit is exercised; nothing
+    special is asserted about its contents here (that is P2d's job)."""
+
+
+class _StubHost:
+    """Minimal host — only what ``RouterLoop._ensure_action_index_built`` /
+    ``_fetch_action_catalog_items`` touch."""
+
+    def __init__(self, op_ctx: Any, events: EventLog) -> None:
+        self.events = events
+        self.op_ctx_stub = op_ctx
 
     def make_router_op_context(self) -> Any:
         return self.op_ctx_stub
 
 
 class _LoopWithFailingBuild(RouterLoop):
-    """RouterLoop subclass whose _build_router_caller_state returns a minimal
-    state just sufficient for the build method (which only needs events).
-    The embedding index build is triggered via a real _FailingIndex provider."""
+    """RouterLoop subclass exercising the production
+    ``_ensure_action_index_built`` orchestration without a full
+    host/chain/session setup — same minimal-subclass pattern as
+    ``tests/test_index_coordinator_3247_p2b.py``'s ``_LoopForP2b``."""
 
-    def __init__(self) -> None:
-        # Skip the real __init__; we only need the method under test.
-        self.host = _MinimalHost()  # type: ignore[assignment]
+    def __init__(self, workspace_root: Path, op_ctx: Any, events: EventLog) -> None:
+        self.host = _StubHost(op_ctx, events)  # type: ignore[assignment]
         self.chain_id = "test-chain"
+        self._workspace_root_for_test = workspace_root
 
     async def _build_router_caller_state(self) -> None:  # type: ignore[override]
         return None  # list_actions handler is not reached; provider raises first
 
+    def _get_index_coordinator(self) -> IndexCoordinator:
+        # Deterministic per-test coordinator instance (bypasses the module
+        # singleton so tests don't leak state across each other) — same
+        # convention as ``_LoopForP2b``/``_LoopForP2d``.
+        if not hasattr(self, "_test_coordinator"):
+            self._test_coordinator = IndexCoordinator(self._workspace_root_for_test)
+        return self._test_coordinator
 
-def _run_build(loop: _LoopWithFailingBuild, idx: "_FailingIndex | None" = None) -> "_FailingIndex":
-    idx = idx if idx is not None else _FailingIndex()
-    provider = _FailingProvider()
-    loop.host.op_ctx_stub = provider  # see _MinimalHost.make_router_op_context
-    asyncio.run(loop._build_action_embedding_index_background(idx, provider, "standard"))
-    return idx
+
+def _build_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, provider: Any,
+) -> tuple[_LoopWithFailingBuild, ActionEmbeddingIndex, IndexCoordinator]:
+    events = _StubEvents()
+    op_ctx = _op_ctx_for(provider, monkeypatch, events)
+    idx = ActionEmbeddingIndex(workspace_root=tmp_path)
+    loop = _LoopWithFailingBuild(tmp_path, op_ctx, events)
+    coordinator = loop._get_index_coordinator()
+    _run(loop._ensure_action_index_built(idx, provider, "standard", await_completion=True))
+    return loop, idx, coordinator
 
 
 # ── Tests ─────────────────────────────────────────────────────────────────────
 
 
-def test_build_failure_prevents_retry_same_session() -> None:
-    """Tier 2: #1458 — after a build failure the memoization flag is set, so a
-    second call that checks the flag (as the production guard does) does not
-    re-invoke the build. Observable via ``idx.build_calls``: a retry would
-    invoke ``idx.build()`` a second time; no retry → count stays at 1.
-
-    (FP-0066 P2d, #3247: this used to be observed via the
-    ``action_index_build_failed`` audit-event count. That event is no longer
-    emitted from this primitive — see ``test_build_failure_no_audit_event_
-    emitted_here`` — folded into ``embedding_index_build_error``, emitted by
-    ``IndexCoordinator`` one layer up. ``idx.build_calls`` is the public
-    observable this test needs and does not depend on that.)"""
-    loop = _LoopWithFailingBuild()
-    idx = _FailingIndex()
-    _run_build(loop, idx)
-    assert idx.build_calls == 1
-    # Simulate the production guard: only call again if the flag is NOT set.
-    if not getattr(loop, "_action_index_build_failed", False):
-        _run_build(loop, idx)
-    # Count must be unchanged — the guard prevented the retry.
-    assert idx.build_calls == 1
-
-
-def test_build_failure_no_audit_event_emitted_here() -> None:
-    """Tier 2: FP-0066 P2d (#3247 firm §6) — the pre-P2d
-    ``action_index_build_failed`` audit-event, previously emitted directly
-    by ``_build_action_embedding_index_background`` on failure, is FOLDED
-    into ``embedding_index_build_error`` emitted by
-    ``IndexCoordinator.ensure_built_self_contained`` one layer up (see
-    ``tests/test_index_coordinator_3247_p2d.py``). This low-level primitive,
-    called directly (bypassing the Coordinator, as this test file does),
-    now emits NO audit-event at all — a double-emit would occur if both
-    layers still emitted for the same failure."""
-    loop = _LoopWithFailingBuild()
-    _run_build(loop)
-    kinds = [e["kind"] for e in loop.host.events.emitted]
-    assert "action_index_build_failed" not in kinds
-    assert kinds == [], f"expected no audit-event emit from this primitive, got {kinds!r}"
-
-
-def test_build_failure_search_stays_hidden() -> None:
-    """Tier 2: #1458 — after a build failure, is_ready() on the fake index stays
-    False, which is the gate that keeps _search_visible False in RouterLoop.run().
-    Regression pin: the failure must not accidentally flip search to visible."""
-    idx = _FailingIndex()
-    assert idx.is_ready() is False
+def test_fresh_session_attempts_build_exactly_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Tier 2: #1458 — a fresh coordinator/session attempts the build
+    exactly once on a failure, and the Coordinator's failure-memo
+    (single-owner, P2-convergence PR2 #3270 §3) is set as a result.
+    Observable via ``provider.embed_calls`` (the real production embed op
+    call, driven through ``ensure_built``'s ``embed_verify_write``) — a
+    silent double-attempt would show up as ``embed_calls == 2``."""
     provider = _FailingProvider()
-    loop = _LoopWithFailingBuild()
-    loop.host.op_ctx_stub = provider  # see _MinimalHost.make_router_op_context
-    asyncio.run(loop._build_action_embedding_index_background(idx, provider, "standard"))
-    # is_ready() still False after failure — search stays hidden.
+    loop, idx, coordinator = _build_once(tmp_path, monkeypatch, provider)
+
+    assert provider.embed_calls == 1
+    assert idx.is_ready() is False
+    assert coordinator.build_failed("actions") is True
+    assert not hasattr(loop, "_action_index_build_failed"), (
+        "the retired twin RouterLoop-side flag must not exist"
+    )
+
+
+def test_same_session_retry_suppressed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Tier 2: #1458 — the production retry guard (``RouterLoop.run()``'s
+    own gate, mirrored here as the caller checking
+    ``coordinator.build_failed(source_id)`` before invoking the build
+    again) prevents a second attempt within the same session. Observable
+    via ``provider.embed_calls`` staying at 1 — a retry would drive a
+    second real ``embed`` op call and this assertion would go RED (the
+    non-vacuity witness: this test fails if the same-session suppression
+    is removed)."""
+    provider = _FailingProvider()
+    loop, idx, coordinator = _build_once(tmp_path, monkeypatch, provider)
+    assert provider.embed_calls == 1
+
+    # Production retry guard (mirrors RouterLoop.run()'s own gate at the
+    # eager/background decision points): do NOT call again once the
+    # Coordinator's failure-memo is set.
+    if not coordinator.build_failed("actions"):
+        _run(loop._ensure_action_index_built(
+            idx, provider, "standard", await_completion=True,
+        ))
+
+    assert provider.embed_calls == 1, "memoized failure must prevent a retry"
     assert idx.is_ready() is False
 
 
-def test_warning_log_emitted_once_with_options(caplog) -> None:
-    """Tier 2: #1458 — a decision-enabling warning log is emitted exactly once
-    on failure; it mentions the three actionable options."""
-    loop = _LoopWithFailingBuild()
+def test_build_failure_search_stays_hidden(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Tier 2: #1458 — after a build failure, ``is_ready()`` on the real
+    index stays False, which is the gate that keeps ``_search_visible``
+    False in ``RouterLoop.run()``. Regression pin: the failure must not
+    accidentally flip search to visible."""
+    provider = _FailingProvider()
+    _loop, idx, _coordinator = _build_once(tmp_path, monkeypatch, provider)
+    assert idx.is_ready() is False
+
+
+def test_warning_log_emitted_once_with_options(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog,
+) -> None:
+    """Tier 2: #1458 — a decision-enabling warning log is emitted exactly
+    once on failure; it mentions the three actionable options."""
+    provider = _FailingProvider()
     with caplog.at_level(logging.WARNING, logger="reyn.runtime.router_loop"):
-        _run_build(loop)
+        _build_once(tmp_path, monkeypatch, provider)
 
     warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
     assert warnings, "expected at least one WARNING log on build failure"
@@ -175,39 +231,26 @@ def test_warning_log_emitted_once_with_options(caplog) -> None:
     )
 
 
+def test_build_failure_unsupported_param_warns_proxy_fix(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog,
+) -> None:
+    """Tier 2: #1616 — driving the real production build path with a
+    provider that raises the proxy-rejects-param error logs the proxy
+    drop_params guidance (the operator is NOT left with a silent empty
+    index nor the misleading HF message)."""
+    provider = _UnsupportedParamProvider()
+    with caplog.at_level(logging.WARNING, logger="reyn.runtime.router_loop"):
+        _build_once(tmp_path, monkeypatch, provider)
+
+    text = " ".join(
+        r.getMessage() for r in caplog.records if r.levelno == logging.WARNING
+    ).lower()
+    assert "drop_params" in text and "proxy" in text, (
+        f"expected proxy drop_params guidance; got: {text!r}"
+    )
+
+
 # ── #1616: cause-aware guidance — UnsupportedParamsError vs HF-download ──────────
-
-
-class _UnsupportedParamsError(Exception):
-    """Real fake mirroring litellm's UnsupportedParamsError TYPENAME (the helper
-    keys on the type name, not the class identity). No Mock per policy."""
-
-
-class _UnsupportedParamProvider:
-    """Real fake provider whose embed() raises the proxy-rejects-param error —
-    the #1616 gemini-via-LiteLLM-proxy case (encoding_format rejected)."""
-
-    async def embed(self, *_args, **_kwargs):  # type: ignore[override]
-        raise _UnsupportedParamsError(
-            "litellm.UnsupportedParamsError: gemini-embedding-001 does not support "
-            "parameter: encoding_format"
-        )
-
-    def get_dimension(self, *_args, **_kwargs) -> int:
-        raise _UnsupportedParamsError("does not support parameter: encoding_format")
-
-
-class _UnsupportedParamIndex:
-    """Real fake index whose build() surfaces the provider's UnsupportedParamsError
-    (mirrors ActionEmbeddingIndex.build propagating the embed() exception)."""
-
-    def is_ready(self) -> bool:
-        return False
-
-    async def build(self, items, provider, model_class):  # type: ignore[override]
-        # Drive the real embed() so the genuine provider exception propagates,
-        # exactly as the production build path does (idx.build(items, provider, model_class)).
-        await provider.embed(items)
 
 
 def test_helper_unsupported_param_points_to_proxy_drop_params() -> None:
@@ -239,22 +282,3 @@ def test_helper_generic_failure_keeps_config_guidance() -> None:
     msg = _action_index_build_failure_warning(exc, "standard").lower()
     assert "embedding.classes" in msg or "provider config" in msg
     assert "drop_params" not in msg
-
-
-def test_build_failure_unsupported_param_warns_proxy_fix(caplog) -> None:
-    """Tier 2: #1616 — driving the real build path with a provider that raises the
-    proxy-rejects-param error logs the proxy drop_params guidance (the operator is
-    NOT left with a silent empty index nor the misleading HF message)."""
-    loop = _LoopWithFailingBuild()
-    idx = _UnsupportedParamIndex()
-    provider = _UnsupportedParamProvider()
-    loop.host.op_ctx_stub = provider  # see _MinimalHost.make_router_op_context
-    with caplog.at_level(logging.WARNING, logger="reyn.runtime.router_loop"):
-        asyncio.run(loop._build_action_embedding_index_background(idx, provider, "standard"))
-
-    text = " ".join(
-        r.getMessage() for r in caplog.records if r.levelno == logging.WARNING
-    ).lower()
-    assert "drop_params" in text and "proxy" in text, (
-        f"expected proxy drop_params guidance; got: {text!r}"
-    )

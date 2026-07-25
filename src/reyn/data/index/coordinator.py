@@ -52,6 +52,14 @@ concern — extracted into ``ActionEmbeddingIndex.prepare_material``, a
 call — see ``_run_build``'s ``material is None`` branch and ``BuildFn``'s
 docstring).
 
+**P2-convergence PR2** (#3270 §3, subordinate to PR1's Coordinator-routing):
+collapses the twin failure signals — ``RouterLoop``'s own
+``_action_index_build_failed`` flag AND this class's ``_failure_memo`` — to
+this class's memo as the SOLE owner. The flag (and its only setter, the
+production-dead ``RouterLoop._build_action_embedding_index_background``)
+are removed entirely; ``build_failed(source_id)`` below is the single read
+surface every caller (production and test) now uses.
+
 **Crash-recovery (the band requirement, CLAUDE.md recovery-feature gate)**:
 the dirty/building/error state lives in ``SourceEntry`` (persisted to
 ``sources.yaml`` — the SourceManifest's existing atomic-write file SSoT).
@@ -386,9 +394,11 @@ class IndexCoordinator:
         ``await_completion`` (it runs from inside ``_run_build``, the same
         coroutine body whether awaited inline or scheduled as a background
         task, so it fires uniformly for both). This is the seam a caller
-        with its OWN failure bookkeeping to keep in sync (e.g.
-        ``RouterLoop._action_index_build_failed``, #1458) hooks into,
-        without the Coordinator needing to know that bookkeeping exists —
+        with its OWN decision-enabling side effect (e.g. ``RouterLoop``'s
+        #1458 operator-warning log) hooks into — failure BOOKKEEPING itself
+        is NOT this seam's job as of P2-convergence PR2 (#3270 §3): the
+        Coordinator's ``_failure_memo`` (set one frame up, before this
+        callback fires) is the sole owner of that state —
         the callback receives the ORIGINAL exception object (not just its
         ``str()``), which a cause-aware caller (e.g.
         ``_action_index_build_failure_warning``'s exception-type branching)
@@ -666,17 +676,20 @@ class IndexCoordinator:
             await self._manifest.upsert(entry)
         return removed
 
-    # ── failure-memo read surface (mirrors router_loop's
-    #    ``_action_index_build_failed`` semantics) ───────────────────────
+    # ── failure-memo read surface (P2-convergence PR2, #3270 §3: the SOLE
+    #    owner of build-failure state — RouterLoop's twin
+    #    ``_action_index_build_failed`` flag is retired) ───────────────────
 
     def build_failed(self, source_id: str) -> bool:
         """True if a prior build attempt in THIS process failed (per-process
-        once-per-source memoization, mirrors ``RouterLoop.
-        _action_index_build_failed`` — cross-process/cross-restart
+        once-per-source memoization — cross-process/cross-restart
         persistence of "don't retry" is intentionally NOT implemented; the
         persisted ``sources.yaml`` state is ``dirty``/``error`` regardless,
         so a fresh process/session gets exactly one retry, which is the
-        desired heal path)."""
+        desired heal path). The single source of truth for build-failure
+        state (P2-convergence PR2, #3270 §3) — every caller (production
+        ``RouterLoop`` reads included) reads THIS, not a caller-side twin
+        flag."""
         return source_id in self._failure_memo
 
     # ``ensure_built_self_contained`` — the ORCHESTRATION-only twin that used

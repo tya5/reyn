@@ -315,24 +315,26 @@ def test_disk_adopt_hit_skips_rebuild(tmp_path: Path, monkeypatch: pytest.Monkey
 def test_build_failure_memoized_not_reattempted(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Tier 2: equivalence case 4 — a build failure is memoized on BOTH the
-    RouterLoop-side flag (#1458, unchanged) AND the Coordinator's own
-    failure-memo (``build_failed``) — and the production retry guard
-    (checked by the caller before invoking again) prevents a second
-    attempt."""
+    """Tier 2: equivalence case 4 — a build failure is memoized SOLELY on
+    the Coordinator's own failure-memo (``build_failed``, P2-convergence
+    PR2 (#3270 §3) — the twin RouterLoop-side flag is retired) — and the
+    production retry guard (checked by the caller before invoking again)
+    prevents a second attempt."""
     ctx = _op_ctx_for(_FakeEmbeddingProvider(), monkeypatch)
     loop = _LoopForP2b(tmp_path, ctx)
     idx = _FakeActionIndex(should_fail=True)
 
     _run(loop._ensure_action_index_built(idx, "provider", "standard", await_completion=True))
     assert idx.prepare_calls == 1
-    assert getattr(loop, "_action_index_build_failed", False) is True
     coordinator = loop._get_index_coordinator()
     assert coordinator.build_failed("actions") is True
+    assert not hasattr(loop, "_action_index_build_failed"), (
+        "the twin RouterLoop-side flag must no longer exist (P2-convergence PR2)"
+    )
 
     # Production retry guard (mirrors RouterLoop.run()'s own gate): do NOT
-    # call again once the failure flag is set.
-    if not getattr(loop, "_action_index_build_failed", False):
+    # call again once the Coordinator's failure-memo is set.
+    if not coordinator.build_failed("actions"):
         _run(loop._ensure_action_index_built(
             idx, "provider", "standard", await_completion=True,
         ))
