@@ -198,3 +198,35 @@ def test_forget_memory_sync_deindexes_the_entry(
     assert memory_content_hash("shared", "note2") not in remaining_hashes, (
         "a stale embedded row for a forgotten entry must not survive forget_memory"
     )
+
+
+def test_delete_entries_raises_on_lock_contention_not_silent_skip(tmp_path: Path) -> None:
+    """Tier 2: IndexCoordinator.delete_entries RAISES RuntimeError (never
+    silently returns 0 / silently succeeds) when the source's build_lock is
+    held by another in-flight build.
+
+    Pins the §G3 "sync, not best-effort" guarantee's raise-not-skip shape:
+    a silent skip here would leave a stale, still-searchable row behind for
+    content the caller believes was de-indexed — exactly the failure §G3
+    exists to prevent. If a future edit regresses ``delete_entries`` from
+    ``raise RuntimeError(...)`` to a silent ``return 0``, this test must go
+    RED (verified manually: flipping the raise to ``return 0`` fails this
+    test; restoring it passes — see PR discussion on #3247/#3263).
+
+    Real instances only: a real ``IndexCoordinator`` + the real
+    ``try_acquire_build_lock`` primitive (same one ``delete_entries`` itself
+    uses) held open in-process to simulate contention — PID-liveness checks
+    against the CURRENT process's own PID are always "alive", so holding
+    the lock open in this test process is a faithful simulation of another
+    process's in-flight build, no mock required.
+    """
+    from reyn.data.index.backend import cache_dir_for_source
+    from reyn.data.index.build_lock import try_acquire_build_lock
+
+    coord = IndexCoordinator(tmp_path)
+    lock_dir = cache_dir_for_source(tmp_path, KNOWLEDGE_MEMORY_SOURCE_ID)
+
+    with try_acquire_build_lock(lock_dir) as got_lock:
+        assert got_lock is True, "test setup: must actually hold the lock to simulate contention"
+        with pytest.raises(RuntimeError):
+            _run(coord.delete_entries(KNOWLEDGE_MEMORY_SOURCE_ID, ["some_content_hash"]))
