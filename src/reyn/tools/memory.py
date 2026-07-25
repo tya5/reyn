@@ -474,6 +474,22 @@ async def _handle_remember(
         return {"error": f"index regeneration failed: {exc}"}
 
     ctx.events.emit("memory_saved", layer=layer, slug=slug, path=str(body_path))
+
+    # FP-0066 P3a (#3247 firm §3/§7): dynamic sync-in-op knowledge ingest —
+    # same hook as RouterLoop._remember's production path (see
+    # sync_memory_ingest's docstring for the §G2 best-effort contract).
+    # This fallback path is exercised by non-router (phase/test) callers.
+    from reyn.data.index.coordinator import get_index_coordinator
+    from reyn.data.index.knowledge_ingest import sync_memory_ingest
+    from reyn.tools.op_context_bridge import build_legacy_op_context
+
+    await sync_memory_ingest(
+        get_index_coordinator(ctx.workspace.base_dir),
+        ctx.workspace.base_dir,
+        build_legacy_op_context(ctx),
+        events=ctx.events,
+    )
+
     return {"saved": slug, "layer": layer, "path": str(body_path)}
 
 
@@ -533,6 +549,20 @@ async def _handle_forget_memory(
         return {"error": f"index regeneration failed: {exc}"}
 
     ctx.events.emit("memory_deleted", layer=layer, slug=slug, path=str(body_path))
+
+    # FP-0066 P3a (#3247 firm §4 G3): sync de-index — NOT best-effort (see
+    # sync_memory_deindex's docstring). Mirrors RouterLoop._forget's
+    # production hook for this non-router fallback path.
+    from reyn.data.index.coordinator import get_index_coordinator
+    from reyn.data.index.knowledge_ingest import sync_memory_deindex
+
+    try:
+        await sync_memory_deindex(
+            get_index_coordinator(ctx.workspace.base_dir), layer, slug,
+        )
+    except Exception as exc:
+        return {"error": f"knowledge de-index failed: {exc}", "layer": layer, "slug": slug}
+
     return {"deleted": slug, "layer": layer}
 
 

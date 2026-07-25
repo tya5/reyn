@@ -120,7 +120,7 @@ def test_mark_dirty_on_existing_clean_entry_flips_to_dirty(tmp_path: Path, monke
     coord = IndexCoordinator(tmp_path)
     ctx = _ctx_for(_FakeEmbeddingProvider(), monkeypatch)
     items = [{"id": "a", "text": "alpha"}]
-    coord.register_builder("mem", _working_build_fn(ctx, items))
+    coord.register_builder("mem", _working_build_fn(ctx, items), kind="dynamic")
     _run(coord.ensure_built("mem", await_completion=True))
 
     manifest = get_source_manifest(tmp_path)
@@ -145,7 +145,7 @@ def test_ensure_built_await_completion_builds_synchronously(monkeypatch: pytest.
     coord = IndexCoordinator(tmp_path)
     ctx = _ctx_for(_FakeEmbeddingProvider(), monkeypatch)
     items = [{"id": "a", "text": "alpha"}, {"id": "b", "text": "beta"}]
-    coord.register_builder("skill", _working_build_fn(ctx, items))
+    coord.register_builder("skill", _working_build_fn(ctx, items), kind="dynamic")
 
     outcome = _run(coord.ensure_built("skill", await_completion=True))
 
@@ -163,7 +163,7 @@ def test_ensure_built_background_schedules_a_task_and_completes(monkeypatch: pyt
     coord = IndexCoordinator(tmp_path)
     ctx = _ctx_for(_FakeEmbeddingProvider(), monkeypatch)
     items = [{"id": "a", "text": "alpha"}]
-    coord.register_builder("repo_doc", _working_build_fn(ctx, items))
+    coord.register_builder("repo_doc", _working_build_fn(ctx, items), kind="dynamic")
 
     async def _scenario() -> None:
         outcome = await coord.ensure_built("repo_doc", await_completion=False)
@@ -187,7 +187,7 @@ def test_ensure_built_clean_source_is_a_no_op(monkeypatch: pytest.MonkeyPatch, t
     provider = _FakeEmbeddingProvider()
     ctx = _ctx_for(provider, monkeypatch)
     items = [{"id": "a", "text": "alpha"}]
-    coord.register_builder("skill", _working_build_fn(ctx, items))
+    coord.register_builder("skill", _working_build_fn(ctx, items), kind="dynamic")
     _run(coord.ensure_built("skill", await_completion=True))
     calls_after_first_build = len(provider.calls)
 
@@ -207,7 +207,7 @@ def test_search_await_on_clean_source_is_a_cheap_noop(monkeypatch: pytest.Monkey
     provider = _FakeEmbeddingProvider()
     ctx = _ctx_for(provider, monkeypatch)
     items = [{"id": "a", "text": "alpha"}]
-    coord.register_builder("skill", _working_build_fn(ctx, items))
+    coord.register_builder("skill", _working_build_fn(ctx, items), kind="dynamic")
     _run(coord.ensure_built("skill", await_completion=True))
     calls_after_build = len(provider.calls)
 
@@ -223,7 +223,7 @@ def test_search_await_heals_a_dirty_source(monkeypatch: pytest.MonkeyPatch, tmp_
     coord = IndexCoordinator(tmp_path)
     ctx = _ctx_for(_FakeEmbeddingProvider(), monkeypatch)
     items = [{"id": "a", "text": "alpha"}]
-    coord.register_builder("memory", _working_build_fn(ctx, items))
+    coord.register_builder("memory", _working_build_fn(ctx, items), kind="dynamic")
     _run(coord.mark_dirty("memory", reason="provider_error"))
     assert _run(coord.is_ready("memory")) is False
 
@@ -247,7 +247,7 @@ def test_is_ready_false_before_build_true_after(monkeypatch: pytest.MonkeyPatch,
     coord = IndexCoordinator(tmp_path)
     assert _run(coord.is_ready("skill")) is False
     ctx = _ctx_for(_FakeEmbeddingProvider(), monkeypatch)
-    coord.register_builder("skill", _working_build_fn(ctx, [{"id": "a", "text": "a"}]))
+    coord.register_builder("skill", _working_build_fn(ctx, [{"id": "a", "text": "a"}]), kind="dynamic")
     _run(coord.ensure_built("skill", await_completion=True))
     assert _run(coord.is_ready("skill")) is True
 
@@ -361,7 +361,7 @@ def test_dirty_flag_survives_wal_truncation_and_search_await_heals(
     coord1 = IndexCoordinator(tmp_path)
     ctx = _ctx_for(_FakeEmbeddingProvider(), monkeypatch)
     items = [{"id": "a", "text": "alpha"}]
-    coord1.register_builder("doc_source", _working_build_fn(ctx, items))
+    coord1.register_builder("doc_source", _working_build_fn(ctx, items), kind="dynamic")
     _run(coord1.ensure_built("doc_source", await_completion=True))
     assert _run(coord1.is_ready("doc_source")) is True
 
@@ -398,7 +398,7 @@ def test_dirty_flag_survives_wal_truncation_and_search_await_heals(
 
     # A restarted process re-registers its domain builder, then a search
     # triggers the heal (§G2's recovery path).
-    coord2.register_builder("doc_source", _working_build_fn(ctx, items))
+    coord2.register_builder("doc_source", _working_build_fn(ctx, items), kind="dynamic")
     _run(coord2.search_await("doc_source"))
 
     assert _run(coord2.is_ready("doc_source")) is True
@@ -441,7 +441,7 @@ def test_reload_after_singleton_reset_depends_on_real_file_persist(
     coord = IndexCoordinator(tmp_path)
     ctx = _ctx_for(_FakeEmbeddingProvider(), monkeypatch)
     items = [{"id": "a", "text": "alpha"}]
-    coord.register_builder("doc_source", _working_build_fn(ctx, items))
+    coord.register_builder("doc_source", _working_build_fn(ctx, items), kind="dynamic")
     _run(coord.ensure_built("doc_source", await_completion=True))
     assert _run(coord.is_ready("doc_source")) is True
 

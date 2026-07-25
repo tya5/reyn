@@ -4103,6 +4103,22 @@ class RouterLoop:
             "- [{name}]({slug}.md) — {description}",
             "# Memory Index\n\n",
         )
+        # FP-0066 P3a (#3247 firm §3/§7): dynamic sync-in-op knowledge
+        # ingest — after the write + listing-index regen both succeed,
+        # (re)embed the memory corpus into the "knowledge_memory" source.
+        # Best-effort (§G2): a provider/embedding failure must not fail
+        # this `remember` op — see ``sync_memory_ingest``'s own docstring.
+        from pathlib import Path as _Path
+
+        from reyn.data.index.knowledge_ingest import sync_memory_ingest
+
+        workspace_root = getattr(self.host, "workspace_root", None) or _Path.cwd()
+        await sync_memory_ingest(
+            self._get_index_coordinator(),
+            workspace_root,
+            self.host.make_router_op_context(),
+            events=self.host.events,
+        )
         return {"saved": slug, "layer": layer}
 
     async def _forget(self, layer: str, slug: str) -> dict:
@@ -4122,4 +4138,15 @@ class RouterLoop:
             "- [{name}]({slug}.md) — {description}",
             "# Memory Index\n\n",
         )
+        # FP-0066 P3a (#3247 firm §4 G3): sync de-index — NOT best-effort.
+        # A stale embedded row for a just-forgotten entry would be
+        # discoverable by a future search over content that no longer
+        # exists; a failure here is surfaced to the caller as an error
+        # rather than silently swallowed (unlike the ingest side).
+        from reyn.data.index.knowledge_ingest import sync_memory_deindex
+
+        try:
+            await sync_memory_deindex(self._get_index_coordinator(), layer, slug)
+        except Exception as exc:
+            return {"error": f"knowledge de-index failed: {exc}", "layer": layer, "slug": slug}
         return {"deleted": slug, "layer": layer}

@@ -263,7 +263,7 @@ class IndexCoordinator:
     # ── registration (necessary plumbing, not a P2b call-site migration) ──
 
     def register_builder(
-        self, source_id: str, build_fn: BuildFn, *, kind: SourceKind = "backfill",
+        self, source_id: str, build_fn: BuildFn, *, kind: SourceKind,
     ) -> None:
         """Associate a domain build strategy with ``source_id``.
 
@@ -274,6 +274,22 @@ class IndexCoordinator:
         re-registering with a different ``kind`` updates the remembered
         value for the NEXT freshly-created entry (an already-persisted
         entry's ``kind`` is not silently overwritten by re-registration).
+
+        ``kind`` is a REQUIRED keyword-only argument (FP-0066 P3a, #3247
+        firm §7(b)) — it used to default to ``"backfill"``, silently
+        misclassifying any new registration that forgot to pass one. A
+        silent default hides exactly the failure mode the taxonomy exists
+        to catch: a registration omission reading back as "this source
+        predates the taxonomy" instead of "whoever registered this forgot
+        to say what kind it is". Loud-by-construction (a missing ``kind``
+        is now a ``TypeError`` at the call site, not a wrong-but-plausible
+        default) — mirrors the fail-closed/loud-error precedent set by
+        ``load_skill``'s unregistered-skill ``ValueError`` (#3256). The
+        pre-taxonomy ``sources.yaml`` on-disk coercion
+        (``SourceEntry.from_dict``'s ``_coerce_kind`` — a persisted entry
+        with no/garbled ``kind`` field) is UNCHANGED and stays "backfill":
+        that is a genuine migration default for data written before this
+        taxonomy existed, not a silent fallback for new code.
         """
         self._builders[source_id] = build_fn
         self._kinds[source_id] = kind
@@ -493,6 +509,48 @@ class IndexCoordinator:
         ``clean`` (a completed, current build)."""
         entry = await self._manifest.get(source_id)
         return entry is not None and entry.state == "clean"
+
+    # ── delete_entries (FP-0066 P3a, #3247 firm §4 G3) ───────────────────
+
+    async def delete_entries(self, source_id: str, content_hashes: list[str]) -> int:
+        """Sync per-entry de-index — the §G3 completeness guarantee's
+        delete-side ("a stale index entry must not survive its source
+        content being removed").
+
+        Deliberately NOT the ``index_drop`` op: ``index_drop`` is a
+        documented WHOLE-SOURCE drop (removes the entire
+        ``SourceManifest`` entry + every row in the backend for
+        ``source_id``, no per-item selection) — using it for a single
+        forgotten memory entry or one uninstalled skill would destroy
+        every OTHER entry sharing the same source too. This method calls
+        ``IndexBackend.delete(source_id, content_hashes)`` instead — the
+        existing per-row deletion primitive (already used by the
+        ``index_update`` op's remove-reconciliation path) — under the SAME
+        cross-process ``build_lock`` a concurrent build acquires, so a
+        delete cannot race a build's write.
+
+        Raises (does NOT catch/best-effort) if the lock is held by another
+        in-flight build: per the firm's §4, de-index is sync, not
+        best-effort — silently skipping would leave the stale row
+        searchable, exactly the bug this method exists to prevent. The
+        caller (``forget_memory``/``plugin_uninstall``) decides how to
+        surface that failure (typically as its own error-shaped result).
+        """
+        if not content_hashes:
+            return 0
+        lock_dir = cache_dir_for_source(self._workspace_root, source_id)
+        with try_acquire_build_lock(lock_dir) as got_lock:
+            if not got_lock:
+                raise RuntimeError(
+                    f"delete_entries({source_id!r}): another process holds "
+                    "the build lock — retry once its build completes."
+                )
+            removed = await self._backend.delete(source_id, content_hashes)
+        entry = await self._manifest.get(source_id)
+        if entry is not None and removed:
+            entry.chunk_count = max(0, entry.chunk_count - removed)
+            await self._manifest.upsert(entry)
+        return removed
 
     # ── failure-memo read surface (mirrors router_loop's
     #    ``_action_index_build_failed`` semantics) ───────────────────────
