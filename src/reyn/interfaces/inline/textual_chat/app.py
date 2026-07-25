@@ -38,7 +38,15 @@ from textual_flowview import (
 from reyn.interfaces.repl.renderer import summarize_tool_result
 from reyn.interfaces.transport.frames import FrameTag
 
-from .chrome import _MENU_TABS, Composer, MenuBar, StatusLine, _drawer_child
+from .chrome import (
+    _MENU_TABS,
+    Composer,
+    MenuBar,
+    StatusLine,
+    build_drawer_pane,
+    pane_payload,
+    status_line_text,
+)
 from .gutter import ReynGutter
 from .presenter import ReynPresenter, choice_chip_spans
 
@@ -70,6 +78,11 @@ _SKIP_KINDS = frozenset(
 #: which ``event.x`` column a click landed on.
 _GUTTER_WIDTH = 2
 
+#: Sentinel for :meth:`TextualChatApp._pane_rows`'s optional ``snap`` argument —
+#: distinguishes "no snapshot passed, read a fresh one" from an explicit ``None``
+#: snapshot (pre-session), which must NOT trigger a second read.
+_UNSET: object = object()
+
 
 class TextualChatApp(App):
     """The TTY conversation pane: a FlowView of the live conversation + a
@@ -92,7 +105,19 @@ class TextualChatApp(App):
     :class:`StatusLine` + a focusable :class:`MenuBar`, and a
     :class:`~textual.widgets.ContentSwitcher` drawer that is collapsed by default
     and expands DOWNWARD when a menu item is opened (see :meth:`_open_drawer`).
-    The drawer content is placeholder — real registry wiring is Phase 4.
+
+    Phase 4 wires each drawer pane to its canonical reyn source, rebuilding the
+    pane from a fresh status snapshot (:meth:`_snapshot`) on each open: Model/Agent
+    from ``model_classes`` / ``agent_names`` (the enumerating pickers derive their
+    FULL set from the registry, never a curated subset), Cost/Ctx from the live
+    token/cost figures (F5b — also surfaced on the always-visible status line),
+    Menu from the slash ``REGISTRY``, History from the retained live conversation,
+    Help from the app BINDINGS. Selecting a Model/Agent row routes the equivalent
+    ``/model`` / ``/attach`` slash through the transport. Cross-session restore
+    from ``history.jsonl`` (Phase 5) needs a new ``ChatReadModel`` history
+    accessor — the read model's frame-sufficiency boundary means a REMOTE client
+    cannot enumerate a session's past turns off the wire today — so History shows
+    the live conversation now and the restore seam is deferred to Phase 5.
 
     Phase 3.5 wires CHOICE interventions: a closed-set intervention (permission
     confirm / choice ``ask_user`` — any ``kind="intervention"`` frame carrying
@@ -196,6 +221,13 @@ class TextualChatApp(App):
         # Shared blink frame counter read by ReynGutter; advanced by the timer.
         self._blink_count = 0
         self._blink_timer: "Timer | None" = None
+        # Per-picker parallel id lists (class names / agent names), keyed by tab
+        # id and kept in lock-step with the OptionList options a pane was last
+        # refreshed with, so an ``OptionSelected.option_index`` maps back to the
+        # canonical id the ``/model`` / ``/attach`` slash needs. Populated on each
+        # drawer refresh (:meth:`_refresh_pane`) from the SAME snapshot that built
+        # the rows, so the option row and its id never drift.
+        self._pane_selection_ids: "dict[str, list[str]]" = {}
 
     def compose(self) -> ComposeResult:
         yield FlowView(
@@ -211,21 +243,88 @@ class TextualChatApp(App):
             yield Composer(
                 placeholder="Type a message — Enter to send, Shift+Enter for a newline…"
             )
-        # Bottom chrome (Phase 3): a slim status-values line + a focusable menu
-        # row, then a drawer (ContentSwitcher) that stays collapsed until a menu
-        # item opens it downward. Content is placeholder (Phase 4 wires the data).
+        # Bottom chrome: a slim status-values line + a focusable menu row, then a
+        # drawer (ContentSwitcher) that stays collapsed until a menu item opens it
+        # downward. Phase 4 fills each pane from its canonical reyn source; each
+        # pane is rebuilt from a fresh snapshot when opened (:meth:`_refresh_pane`).
         yield StatusLine(self._status_text())
         yield MenuBar(*(Tab(label, id=tid) for tid, label in _MENU_TABS), id="menubar")
         with ContentSwitcher(initial=None, id="drawer"):
             for tid, _label in _MENU_TABS:
-                yield _drawer_child(tid)
+                yield build_drawer_pane(tid, self._pane_rows(tid))
+
+    def _snapshot(self) -> "dict | None":
+        """The live status snapshot (model/agent/cost/ctx) off the client read
+        model — the SAME seam the plain path's status bar reads. ``None`` when
+        there is no read model or no attached session yet (pre-session): every
+        pure pane formatter degrades gracefully to empty/zero on ``None``, so the
+        drawer never fabricates a value and the plain-fallback stays untouched."""
+        if self._read_model is None:
+            return None
+        try:
+            return self._read_model.snapshot(self._config)
+        except Exception:
+            logger.exception("textual chat: status snapshot read failed")
+            return None
+
+    def _app_binding_help(self) -> "list[tuple[str, str]]":
+        """The app's declarative ``BINDINGS`` as ``(key, description)`` pairs for
+        the Help pane — sourced from the binding table itself, not re-typed."""
+        out: list[tuple[str, str]] = []
+        for b in self.BINDINGS:
+            if isinstance(b, tuple) and len(b) >= 3:
+                out.append((b[0], b[2]))
+        return out
+
+    def _history_turns(self, *, limit: int = 12) -> "list[str]":
+        """Recent conversation turns from the retained live model (the frame
+        stream the app already drains) — ``role · <first line>`` rows, newest
+        ``limit``. This is the honest in-package History source today; enumerating
+        PAST sessions for restore (``history.jsonl``) is a Phase-5 read-model-seam
+        decision (see the class docstring), not fabricated here."""
+        rows: list[str] = []
+        for entry in self.conversation:
+            msg = entry.item
+            if msg.kind not in ("user", "reply", "agent"):
+                continue
+            body = (msg.text or "").strip()
+            head = body.splitlines()[0][:60] if body else ""
+            role = "you" if msg.kind == "user" else "reyn"
+            rows.append(f"{role} · {head}")
+        return rows[-limit:]
+
+    def _pane_rows(self, tab_id: str, snap: "dict | None | object" = _UNSET) -> "list[str]":
+        """The display rows for ``tab_id``'s pane, derived from canonical sources:
+        the status snapshot (model/agent/cost/ctx), the slash ``REGISTRY`` (menu),
+        the live conversation (history), and the app BINDINGS (help). Pass ``snap``
+        to reuse an already-read snapshot (keeps the rows and the selection ids
+        derived from ONE snapshot)."""
+        from reyn.interfaces.slash import REGISTRY  # noqa: PLC0415 — TTY-local
+        snapshot = self._snapshot() if snap is _UNSET else snap
+        return pane_payload(
+            tab_id,
+            snapshot=snapshot,  # type: ignore[arg-type]
+            commands=REGISTRY.all_commands(),
+            history=self._history_turns(),
+            app_bindings=self._app_binding_help(),
+        )
+
+    def _selection_ids(self, tab_id: str, snap: "dict | None") -> "list[str]":
+        """The canonical ids parallel to a picker pane's option rows (class names
+        for Model, agent names for Agent), for mapping an ``option_index`` back to
+        the ``/model`` / ``/attach`` argument. Empty for non-actionable panes."""
+        s = snap or {}
+        if tab_id == "model":
+            return list(s.get("model_classes") or [])
+        if tab_id == "agent":
+            return list(s.get("agent_names") or [])
+        return []
 
     def _status_text(self) -> str:
-        """The status-values line (``model │ agent │ cost │ ctx``). PLACEHOLDER
-        values in Phase 3 — Phase 4 sources them from reyn's cost/token trackers
-        and the model/agent selection. The agent name is the one already threaded
-        into the app so at least that value is live."""
-        return f"model sonnet │ agent {self._agent_name} │ cost $0.0000 │ ctx 0%"
+        """The status-values line (``model │ agent │ cost │ ctx``), from the live
+        status snapshot (F5b: running cost + context percent are visible even with
+        the drawer closed). Falls back to the threaded ``agent_name`` pre-session."""
+        return status_line_text(self._snapshot(), self._agent_name)
 
     def on_mount(self) -> None:
         # The running-blink timer starts PAUSED and is resumed only while a
@@ -255,17 +354,50 @@ class TextualChatApp(App):
             self.query_one(Composer).focus()
             return
         drawer.current = tab_id
+        # Rebuild the pane from a fresh snapshot right before it becomes visible,
+        # so an opened Model/Agent/Cost/Ctx pane always reflects the CURRENT state
+        # (a snapshot read once at compose time would be stale by first open).
+        self._refresh_pane(tab_id)
         drawer.display = True
         child = drawer.query_one(f"#{tab_id}")
         if isinstance(child, OptionList):
             child.focus()
 
+    def _refresh_pane(self, tab_id: str) -> None:
+        """Re-derive ``tab_id``'s pane content from the current canonical sources
+        and update the mounted widget in place (``OptionList`` options or the
+        ``Static`` text). One snapshot read feeds BOTH the rows and the parallel
+        selection ids, so an ``OptionSelected`` maps back to the right id."""
+        snap = self._snapshot()
+        rows = self._pane_rows(tab_id, snap)
+        self._pane_selection_ids[tab_id] = self._selection_ids(tab_id, snap)
+        child = self.query_one(f"#{tab_id}")
+        if isinstance(child, OptionList):
+            child.clear_options()
+            if rows:
+                child.add_options(rows)
+        elif isinstance(child, Static):
+            child.update("\n".join(rows))
+
     def on_menu_bar_selected(self, event: "MenuBar.Selected") -> None:
         self._open_drawer(None if event.tab_id == "__close__" else event.tab_id)
 
-    def on_option_list_option_selected(self, event: "OptionList.OptionSelected") -> None:
-        # A real impl (Phase 4) applies the picked model/agent/etc.; Phase 3 just
-        # collapses back to the composer.
+    async def on_option_list_option_selected(
+        self, event: "OptionList.OptionSelected"
+    ) -> None:
+        """Apply a picked Model/Agent by routing the equivalent slash command
+        through the transport — the SAME ``/model <class>`` / ``/attach <name>``
+        contract the plain path's status-bar picker (``CommandUIElement``)
+        dispatches. Non-actionable panes (History/Menu = readout/Phase-5) just
+        collapse. Then close the drawer and return focus to the composer."""
+        tab_id = event.option_list.id
+        ids = self._pane_selection_ids.get(tab_id or "", [])
+        if 0 <= event.option_index < len(ids):
+            chosen = ids[event.option_index]
+            if tab_id == "model":
+                await self._submit(f"/model {chosen}")
+            elif tab_id == "agent":
+                await self._submit(f"/attach {chosen}")
         self._open_drawer(None)
 
     def action_close_drawer(self) -> None:
@@ -396,8 +528,25 @@ class TextualChatApp(App):
                     logger.exception(
                         "textual chat: state tracking failed for kind=%r", msg.kind
                     )
+                # F5b: refresh the always-visible status-values line (cost + ctx%)
+                # as each turn lands, so the running cost is legible in the Textual
+                # TTY like the plain path's cost_summary. Bounded by message rate
+                # (far less frequent than a render loop) and guarded so a snapshot
+                # read failure never kills the pump.
+                try:
+                    self._refresh_status()
+                except Exception:
+                    logger.exception("textual chat: status refresh failed")
         finally:
             self.exit()
+
+    def _refresh_status(self) -> None:
+        """Re-render the bottom status-values line from a fresh snapshot."""
+        try:
+            line = self.query_one(StatusLine)
+        except Exception:
+            return  # not yet mounted
+        line.update(self._status_text())
 
     async def on_composer_submitted(self, event: "Composer.Submitted") -> None:
         text = event.value.strip()
@@ -420,7 +569,17 @@ class TextualChatApp(App):
         """
         try:
             head = self._transport.pending_intervention_head()
-            if head is not None and not getattr(head, "choices", None):
+            # A ``/``-prefixed line is never an intervention answer — it is a slash
+            # command (dispatched by the session turn loop), so it must take the
+            # normal submit path even while a free-text intervention is pending
+            # (mirrors ``stream_client.submit_or_answer``'s guard). Without this,
+            # a picker-issued ``/model`` / ``/attach`` (or a typed slash) during a
+            # pending intervention would be mis-delivered as the answer text.
+            if (
+                head is not None
+                and not getattr(head, "choices", None)
+                and not text.startswith("/")
+            ):
                 await self._transport.answer_intervention_text(text)
                 return
             await self._transport.submit_user_text(text)
