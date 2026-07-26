@@ -139,6 +139,16 @@ CUSTOM_PROFILE: dict[str, CustomName] = _entries(
         "are the #3300 P2a sent-queue correlation id + order-race-gate token",
     ),
     CustomName(
+        "reyn.event.intervention_answer_submitted", EVENT_NS, "the event data object",
+        "an intervention answer was resolved (#3300, event-ifying the last "
+        "outbox kind=\"user\" broadcast site — InterventionHandler."
+        "deliver_answer_to) — carries the RAW display text (the raw answer, "
+        "or the matched choice's label) + intervention_id + attribution meta; "
+        "each surface's event→display handler renders the echo and "
+        "neutralizes at that render boundary, following the user_submitted "
+        "precedent exactly",
+    ),
+    CustomName(
         "reyn.event.inbox_cancel", EVENT_NS, "the event data object",
         "an UNDISPATCHED queued user message was cancelled by id (#3300 P3 "
         "Y-server) — carries msg_id + seq; the server-authoritative sent-queue "

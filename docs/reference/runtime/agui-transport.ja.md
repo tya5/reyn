@@ -379,7 +379,7 @@ display 行のテキストである。
 |-----------------------------------|------------------------------------------------------|
 | `reyn.display.intervention`       | intervention プロンプトが表示される                     |
 | `reyn.display.presentation`       | `present` op のテキスト。render-node モデルは `_reyn` ブロックの `meta.nodes` に乗る(ワイヤー上は inert — *present-on-wire* 参照) |
-| `reyn.display.user`               | user-authored な行 — 送信されたターン、または解決された intervention への回答 — が(agent の出力と同じ outbox fan-out 経由で)アタッチしている**すべての**クライアントへブロードキャストされる(生成元のクライアントだけではない)。`meta` はマルチクライアント描画向けに `auth_user_id` / `auth_connection_id` の attribution を任意で運ぶ(backlog の user ターンは代わりに標準の `messages` 配列に乗る) |
+| `reyn.display.user`               | user-authored な行 — 送信されたターン、または解決された intervention への回答。`reyn.event.user_submitted` / `reyn.event.intervention_answer_submitted`(下記)を受けた各 surface がローカルに描画したものであり、#3300 以降どの producer も `session.outbox` へ PUT しない(最後にそれをしていた site = intervention-answer echo も event 化された)。`OutboxMessage` の有効な kind としては残る(surface 自身のローカル構築 — 例えば永続化済み transcript の restore — 用、および fail-safe な profile entry として)が、outbox fan-out で流れる live な wire kind ではない。`meta` はマルチクライアント描画向けに `auth_user_id` / `auth_connection_id` の attribution を任意で運ぶ(backlog の user ターンは代わりに標準の `messages` 配列に乗る) |
 | `reyn.display.system`             | reyn chrome 行 — 永続化されるライフサイクル/ステータスマーカー(compaction / budget / cost-warn) |
 | `reyn.display.__copy_last_reply__` | `/copy` センチネル — 転送される(クライアント側クリップボードコピー);*control sentinels* 参照 |
 | `reyn.display.__rewind_list__`    | `/rewind` センチネル — 転送される(クライアント側 rewind ピッカー);*control sentinels* 参照 |
@@ -409,8 +409,9 @@ name ではなく)標準の `TEXT_MESSAGE_CONTENT` surface にマップする(#3
 
 | Custom `name`                        | Meaning                                          |
 |--------------------------------------|--------------------------------------------------|
-| `reyn.event.user_answered_intervention` | ユーザーが intervention に回答した              |
+| `reyn.event.user_answered_intervention` | ユーザーが intervention に回答した(working-indicator 軸のみ — display text は運ばない;echo は下記の `reyn.event.intervention_answer_submitted` を参照) |
 | `reyn.event.user_submitted`          | ユーザーがターンを送信した(#3300 P1 C)— RAW text + chain_id + msg_id + seq + meta を運ぶ。各 surface がそれぞれの render 境界で neutralize する。`msg_id`/`seq` は #3300 P2a の sent-queue correlation id + order-race-gate token |
+| `reyn.event.intervention_answer_submitted` | intervention への回答が解決した(#3300 — 最後に残っていた outbox `kind="user"` ブロードキャスト site である `InterventionHandler.deliver_answer_to` を event 化)— RAW text(生の回答、またはマッチした choice の label)+ `intervention_id` + meta を運ぶ。各 surface が `user_submitted` と全く同じ流儀で render 境界において neutralize する。`user_submitted` と異なり sent-queue へのステージングは無い — intervention への回答は queued な inbox item だったことがないため、flow へ直接描画される |
 | `reyn.event.inbox_cancel`            | 未 dispatch の queued user メッセージが id 指定でキャンセルされた(#3300 P3、`cancel_queued` client message 経由)— `msg_id` と `seq` を運ぶ。サーバー権威の sent-queue 除去シグナルであり(client-local な「キャンセル成功」応答ではない)、同じ `msg_id` について `turn_started` と排他である |
 | `reyn.event.agent_delta`             | ストリーミングされた LLM content-delta チャンク 1 件(#3288 ③b)— `text`(raw な per-chunk delta)と `chain_id` を運ぶ。plain codec の `CUSTOM` マッピング(上記の note 参照)であり、実際の AG-UI ワイヤー(`encode_frame_wire_streaming`、#3288 ③d)ではこれは代わりに `TEXT_MESSAGE_CONTENT` に乗る——完全なストリーミングメッセージ contract(END のみの完了、再構成 authority、late-joiner closure)は上記 *Text lifecycle* を参照 |
 
@@ -452,18 +453,24 @@ tab を持ち、それぞれが closed-set の `RadioSet` か自由記述の `In
 delivery)、除去されずに ✓ / inert とマークされる——そのため同時に複数の
 intervention が pending であっても、それぞれが順不同で独立に回答可能であり、
 1 つが他方を押しのけることはない)、A2A peer、上記の AG-UI HITL round-trip)は
-`session.outbox` に `kind="user"` の frame を置き、`OutboxHub`
-を経由してアタッチしているすべての surface へ fan-out される。送信されたターン
-(`Session.submit_user_text`)は代わりに `user_submitted` という chat-event を emit する
-(#3300 P1 C — 以前の outbox-echo write を置き換えた。INPUT を display/OUTPUT channel に
-書き込むのは category error だったため)。この event は同一の統一 frame stream に
+`intervention_answer_submitted` という chat-event を emit する(#3300 — 最後に
+残っていた outbox `kind="user"` ブロードキャスト site を event 化したもので、下記の
+`user_submitted` の前例に正確に倣う)。送信されたターン(`Session.submit_user_text`)は
+兄弟にあたる `user_submitted` という chat-event を emit する(#3300 P1 C — 以前の
+outbox-echo write を置き換えた。INPUT を display/OUTPUT channel に書き込むのは
+category error だったため)。どちらも同一の統一 frame stream に
 `EventFrame` として乗る(`_TURN_AND_ANSWER_EVENTS`、`transport/frames.py`)——
-encode/decode は汎用的(`transport/agui/protocol.py`)なので、新しい event type のために
-wire 側の変更は不要だった。アタッチしているすべての surface の
+encode/decode は汎用的(`transport/agui/protocol.py`)なので、どちらの event type
+についても wire 側の変更は不要だった。アタッチしているすべての surface の
 event→display handler(`ConsoleChatRenderer.on_chat_event` /
 `InlineChatRenderer.on_chat_event` / `TextualChatApp._pump_frames`)がその行を描画し、
-その render 境界で neutralize する(`renderer.user_submitted_display_message`)——
-**ただし自分の端末がすでにそれを表示していたクライアントを除く。** plain な
+その render 境界で neutralize する(`renderer.user_submitted_display_message` /
+`renderer.intervention_answer_display_message` — Textual surface については
+`TextualChatApp._handle_intervention_answer_event`)——**ただし自分の端末がすでに
+それを表示していたクライアントを除く**、これは `user_submitted` にのみ当てはまる
+(intervention への回答には重複排除すべきクライアントローカルな echo が存在しない —
+panel/composer が回答そのものを描画することはないため、回答したクライアント自身を
+含むすべての attached surface が、抑制ロジックなしにこの event から描画する)。plain な
 PromptSession ループ(`--cui` / `chat.render_mode: plain` / non-TTY、
 `stream_client.py`)では、対話的な TTY の `prompt_session.prompt_async` が Enter を
 押した瞬間にその行を画面に残す——それ自体がすでに echo である。同じ送信から発生する

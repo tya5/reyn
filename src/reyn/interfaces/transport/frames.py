@@ -76,6 +76,17 @@ _TURN_AND_ANSWER_EVENTS = frozenset(
         # #3300 P2a: also carries `seq` (the sent-queue order-race-gate
         # token, see ``Session._bump_queue_seq``).
         "user_submitted",
+        # #3300 (event-ify the intervention-answer echo): the LAST site still
+        # broadcasting a user-authored line via a ``kind="user"`` outbox
+        # frame — ``InterventionHandler.deliver_answer_to`` — migrated to this
+        # chat-event, following the ``user_submitted`` precedent exactly.
+        # Carries RAW text (the answer's display text: the raw answer, or the
+        # matched choice's label) + ``intervention_id`` + attribution ``meta``;
+        # each surface's event→display handler neutralizes at render time (see
+        # ``reyn.interfaces.repl.renderer.intervention_answer_display_message``
+        # / ``reyn.interfaces.inline.textual_chat.app.
+        # TextualChatApp._handle_intervention_answer_event``).
+        "intervention_answer_submitted",
         # #3300 P3 (Y-server): cancel-by-id for an UNDISPATCHED (queued) user
         # message — the server-authoritative removal signal (never a
         # client-local "cancel succeeded" response) a client's sent-queue

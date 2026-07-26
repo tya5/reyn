@@ -50,6 +50,28 @@ def user_submitted_display_message(event) -> OutboxMessage:
     return OutboxMessage(kind="user", text=text, meta=dict(data.get("meta") or {}))
 
 
+def intervention_answer_display_message(event) -> OutboxMessage:
+    """Build the display :class:`OutboxMessage` for an
+    ``intervention_answer_submitted`` chat-event — the SAME
+    neutralize-at-display-boundary seam :func:`user_submitted_display_message`
+    uses, applied to the last remaining answer-echo path (#3300, following the
+    #3301/P1(C) ``user_submitted`` precedent exactly).
+
+    ``InterventionHandler.deliver_answer_to`` (``runtime/services/
+    intervention_handler.py``) emits ``intervention_answer_submitted``
+    carrying the RAW display text (the raw answer, or the matched choice's
+    label — no neutralize at the producer) + ``meta`` (attribution). This
+    replaces the removed ``_put_outbox`` echo's inline
+    ``_neutralize_terminal`` call — neutralization now happens HERE, at
+    render time, via the same ``core/present/guard.get_neutralizer
+    ("terminal")`` seam #2770 uses for intervention content.
+    """
+    from reyn.core.present.guard import get_neutralizer
+    data = event.data or {}
+    text, _ = get_neutralizer("terminal").neutralize(str(data.get("text", "")))
+    return OutboxMessage(kind="user", text=text, meta=dict(data.get("meta") or {}))
+
+
 _BANNER = """\
  ██████╗ ███████╗██╗   ██╗███╗  ██╗
  ██╔══██╗██╔════╝╚██╗ ██╔╝████╗ ██║
@@ -144,6 +166,11 @@ class ConsoleChatRenderer(ChatRenderer):
             self._thinking = False
         elif etype == "user_submitted":
             self.message(user_submitted_display_message(event))
+        elif etype == "intervention_answer_submitted":
+            # #3300: the last outbox `kind="user"` broadcast site
+            # (InterventionHandler.deliver_answer_to) migrated to this
+            # chat-event — same render/neutralize idiom as user_submitted.
+            self.message(intervention_answer_display_message(event))
 
     def bottom_toolbar(self):
         if not self._thinking:
@@ -814,6 +841,14 @@ class InlineChatRenderer(ChatRenderer):
             # which has its OWN ``user_submitted`` handler
             # (``interfaces/inline/textual_chat/app.py``).
             self.message(user_submitted_display_message(event))
+        elif etype == "intervention_answer_submitted":
+            # #3300: the last outbox `kind="user"` broadcast site
+            # (InterventionHandler.deliver_answer_to) migrated to this
+            # chat-event — same render/neutralize idiom as user_submitted.
+            # Reachable on the SAME fallback condition noted above (plain
+            # render_mode on a TTY) — the default TTY path has its own
+            # handler (TextualChatApp._handle_intervention_answer_event).
+            self.message(intervention_answer_display_message(event))
 
     def bottom_toolbar(self):
         """Animated working indicator while a turn runs (spinner + elapsed).

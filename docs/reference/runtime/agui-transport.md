@@ -406,7 +406,7 @@ A reyn display frame with no standard AG-UI analog. `value` is `{"text": <string
 |-----------------------------------|------------------------------------------------------|
 | `reyn.display.intervention`       | an intervention prompt is displayed                   |
 | `reyn.display.presentation`       | a `present` op's text; the render-node model rides the `_reyn` block's `meta.nodes` (inert on the wire — see *present-on-wire*) |
-| `reyn.display.user`               | a user-authored line — a submitted turn OR a resolved intervention answer — broadcast (via the outbox fan-out, same as agent output) to EVERY attached client, not only the one that produced it; `meta` optionally carries `auth_user_id` / `auth_connection_id` attribution for a multi-client render (backlog user turns ride the standard `messages` array instead) |
+| `reyn.display.user`               | a user-authored line — a submitted turn OR a resolved intervention answer, RENDERED locally by a surface off `reyn.event.user_submitted` / `reyn.event.intervention_answer_submitted` (below), never PUT onto `session.outbox` by any producer as of #3300 (the last such write — the intervention-answer echo — was event-ified; kept as a valid `OutboxMessage` kind for surfaces' own local construction — e.g. a persisted-transcript restore — and as a fail-safe profile entry, not a live outbox-fanout wire kind); `meta` optionally carries `auth_user_id` / `auth_connection_id` attribution for a multi-client render (backlog user turns ride the standard `messages` array instead) |
 | `reyn.display.system`             | a reyn chrome line — a persisted lifecycle/status marker (compaction / budget / cost-warn) |
 | `reyn.display.__copy_last_reply__` | the `/copy` sentinel — forwarded (client-side clipboard copy); see *control sentinels* |
 | `reyn.display.__rewind_list__`    | the `/rewind` sentinel — forwarded (client-side rewind picker); see *control sentinels* |
@@ -438,8 +438,9 @@ wire.
 
 | Custom `name`                        | Meaning                                          |
 |--------------------------------------|--------------------------------------------------|
-| `reyn.event.user_answered_intervention` | the user answered an intervention             |
+| `reyn.event.user_answered_intervention` | the user answered an intervention (working-indicator axis only — carries NO display text; see `reyn.event.intervention_answer_submitted` below for the echo) |
 | `reyn.event.user_submitted`          | a user turn was submitted (#3300 P1 C) — RAW text + chain_id + msg_id + seq + meta; each surface neutralizes at its render boundary. `msg_id`/`seq` are the #3300 P2a sent-queue correlation id + order-race-gate token |
+| `reyn.event.intervention_answer_submitted` | an intervention answer was resolved (#3300, event-ifying the LAST outbox `kind="user"` broadcast site — `InterventionHandler.deliver_answer_to`) — RAW text (the raw answer, or the matched choice's label) + `intervention_id` + meta; each surface neutralizes at its render boundary, following the `user_submitted` precedent exactly. Unlike `user_submitted`, this has no sent-queue staging step — an intervention answer was never a queued inbox item, so it renders straight to the flow |
 | `reyn.event.inbox_cancel`            | an UNDISPATCHED queued user message was cancelled by id (#3300 P3, via the `cancel_queued` client message) — carries `msg_id` + `seq`; the server-authoritative sent-queue removal signal (never a client-local "cancel succeeded" response), exclusive with `turn_started` for the same `msg_id` |
 | `reyn.event.agent_delta`             | one streamed LLM content-delta chunk (#3288 ③b) — carries `text` (the raw per-chunk delta) + `chain_id`. The plain codec's `CUSTOM` mapping (see the note above); on the actual AG-UI wire (`encode_frame_wire_streaming`, #3288 ③d) this rides `TEXT_MESSAGE_CONTENT` instead — see *Text lifecycle* above for the full streamed-message contract (END-only completion, reconstruction authority, late-joiner closure) |
 
@@ -516,20 +517,26 @@ input row, replacing the earlier in-flow chip surface; answering a tab
 delivers targeted at THAT intervention's id — R1 by-id delivery — and marks
 it ✓/inert without removing it, so several simultaneously-outstanding
 interventions are each independently answerable, in any order, without one
-displacing another), an A2A peer, and the AG-UI HITL round-trip above) puts a
-`kind="user"` frame on `session.outbox`, fanning out through `OutboxHub` to
-every attached surface.
-A submitted turn (`Session.submit_user_text`) instead emits a
-`user_submitted` chat-event (#3300 P1 C — replacing an earlier outbox-echo
-write, a category error: an INPUT written into the display/OUTPUT channel)
-that rides the SAME unified frame stream as an `EventFrame`
+displacing another), an A2A peer, and the AG-UI HITL round-trip above) emits
+an `intervention_answer_submitted` chat-event (#3300 — event-ifying the LAST
+outbox `kind="user"` broadcast site, following the `user_submitted` precedent
+below exactly). A submitted turn (`Session.submit_user_text`) emits the
+sibling `user_submitted` chat-event (#3300 P1 C — replacing an earlier
+outbox-echo write, a category error: an INPUT written into the display/OUTPUT
+channel). Both ride the SAME unified frame stream as an `EventFrame`
 (`_TURN_AND_ANSWER_EVENTS`, `transport/frames.py`) — the encode/decode is
-generic (`transport/agui/protocol.py`), so no wire changes were needed for the
-new event type. Every attached surface's event→display handler
+generic (`transport/agui/protocol.py`), so no wire changes were needed for
+either event type. Every attached surface's event→display handler
 (`ConsoleChatRenderer.on_chat_event` / `InlineChatRenderer.on_chat_event` /
 `TextualChatApp._pump_frames`) renders the line, neutralizing at that render
-boundary (`renderer.user_submitted_display_message`) — **except the one
-client whose own terminal already showed it.** On the plain PromptSession
+boundary (`renderer.user_submitted_display_message` /
+`renderer.intervention_answer_display_message` —
+`TextualChatApp._handle_intervention_answer_event` for the Textual surface) —
+**except the one client whose own terminal already showed it**, for
+`user_submitted` only (an intervention answer has no client-local echo to
+de-duplicate against — the panel/composer never prints the answer itself, so
+every attached surface, including the answering one, renders off THIS event
+with no suppression logic). On the plain PromptSession
 loop (`--cui` / `chat.render_mode: plain` / non-TTY, `stream_client.py`), an
 interactive TTY's `prompt_session.prompt_async` leaves the typed line on
 screen the instant Enter is pressed — that already IS the echo. Re-rendering
