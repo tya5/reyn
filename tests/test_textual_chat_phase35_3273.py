@@ -52,6 +52,15 @@ from reyn.interfaces.inline.textual_chat import (
 from reyn.interfaces.inline.textual_chat.app import _match_choice_input
 from reyn.interfaces.transport.client_transport import ClientTransport
 from reyn.interfaces.transport.frames import DisplayFrame
+from reyn.intervention_choices import (
+    ALWAYS,
+    JUST_PATH,
+    NEVER,
+    NO,
+    YES,
+    file_access_choices,
+    generic_yn_choices,
+)
 from reyn.runtime.outbox import OutboxMessage
 from reyn.user_intervention import InterventionChoice, UserIntervention
 
@@ -353,6 +362,64 @@ def test_match_choice_input_label_hotkey_case_and_ambiguity() -> None:
         InterventionChoice(id="b", label="Go", hotkey="h"),
     ]
     assert _match_choice_input("go", dup) is None
+
+
+def test_match_choice_input_full_word_matches_bracket_decorated_label() -> None:
+    """Tier 1: #3290 follow-up — bracket-decorated labels (the real
+    ``generic_yn_choices()`` / ``file_access_choices()`` shape, e.g.
+    ``"[y]es"``) must resolve on the FULL WORD (``"yes"``), not only the
+    hotkey. Non-vacuity: the OLD exact-match (raw label + hotkey only) would
+    have failed ``"yes"`` against ``"[y]es"`` (``"yes" != "[y]es"`` and
+    ``"yes" != "y"``) — this proves the de-decoration candidate actually
+    changed the outcome, not just added a redundant path."""
+    choices = generic_yn_choices()  # [y]es / [A]lways / [n]o / [N]ever
+
+    # OLD behavior would have returned None here (falsifies vacuity).
+    old_exact_match_candidates = {
+        str(v).strip().casefold()
+        for c in choices
+        for v in (c.label, c.hotkey)
+    }
+    assert "yes" not in old_exact_match_candidates
+
+    # NEW behavior: full word resolves via the de-decorated candidate.
+    assert _match_choice_input("yes", choices) == YES
+    assert _match_choice_input("no", choices) == NO
+    assert _match_choice_input("always", choices) == ALWAYS
+    assert _match_choice_input("never", choices) == NEVER
+    # Hotkeys still resolve (regression guard — existing candidates kept).
+    # ("n" is skipped here: NO's hotkey "n" and NEVER's hotkey "N" casefold to
+    # the same needle, a pre-existing case-insensitive hotkey collision in the
+    # 4-choice generic_yn set that predates and is unrelated to this fix.)
+    assert _match_choice_input("y", choices) == YES
+    # Trimmed + case-insensitive, same as the raw-label path.
+    assert _match_choice_input("  YES  ", choices) == YES
+    # Unrelated word still returns None (stays pending, hints).
+    assert _match_choice_input("maybe", choices) is None
+
+    # A longer decorated label ("[j]ust this path always") also de-decorates.
+    file_choices = file_access_choices("/some/dir")
+    assert _match_choice_input("just this path always", file_choices) == JUST_PATH
+    assert _match_choice_input("yes", file_choices) == YES
+
+
+def test_match_choice_input_standard_yn_set_no_new_collision() -> None:
+    """Tier 1: #3290 follow-up ambiguity guard — de-decorating the standard
+    yes/no/always/never label set must NOT introduce a new cross-choice
+    collision (each de-decorated word is distinct), so each still resolves to
+    exactly one id rather than falling to ``None`` via the ambiguity guard."""
+    choices = generic_yn_choices()
+    resolved = {
+        word: _match_choice_input(word, choices)
+        for word in ("yes", "no", "always", "never")
+    }
+    assert resolved == {
+        "yes": YES,
+        "no": NO,
+        "always": ALWAYS,
+        "never": NEVER,
+    }
+    assert len(set(resolved.values())) == 4  # all four distinct, none collided to None
 
 
 @pytest.mark.asyncio

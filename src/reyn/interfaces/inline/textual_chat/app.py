@@ -90,14 +90,20 @@ _CHOICE_HINT_TEXT = "Please choose one of the options above (or click a chip)."
 
 
 def _match_choice_input(text: str, choices: "object") -> "str | None":
-    """Return the id of the ONE choice whose label or hotkey equals ``text``.
+    """Return the id of the ONE choice whose label, hotkey, or de-decorated
+    label equals ``text``.
 
     Type-or-click parity for a pending choice-intervention (#3290): a free-text
     submit that names an option (typing ``yes`` for the ``Yes`` chip) resolves
     the same intervention a chip click would. Matching is trimmed and
-    case-insensitive against BOTH the choice ``label`` and its ``hotkey``; the
-    ``choice_id`` is the authoritative delivery key (never itself matched, so a
-    label-as-id confusion can't sneak in).
+    case-insensitive against THREE forms: the raw choice ``label``, its
+    ``hotkey``, and a de-decorated label with the ``[`` ``]`` bracket
+    characters stripped — labels are conventionally hotkey-decorated
+    (``"[y]es"``, ``"[N]o"``, ``"[j]ust this path always"``), so without
+    de-decoration typing the FULL WORD (``"yes"``) never equals the raw
+    ``"[y]es"`` label and only the bare hotkey (``"y"``) would match (#3290
+    follow-up). The ``choice_id`` is the authoritative delivery key (never
+    itself matched, so a label-as-id confusion can't sneak in).
 
     Returns ``None`` when nothing matches OR the match is ambiguous (two distinct
     choices match) — the caller then keeps the intervention pending and hints,
@@ -117,11 +123,15 @@ def _match_choice_input(text: str, choices: "object") -> "str | None":
         cid = getattr(choice, "id", None)
         if cid is None:
             continue
+        label = getattr(choice, "label", None)
+        raw_forms = (label, getattr(choice, "hotkey", None))
         candidates = {
-            str(value).strip().casefold()
-            for value in (getattr(choice, "label", None), getattr(choice, "hotkey", None))
-            if value is not None and str(value).strip()
+            str(value).strip().casefold() for value in raw_forms if value is not None and str(value).strip()
         }
+        if label is not None:
+            undecorated = str(label).replace("[", "").replace("]", "").strip().casefold()
+            if undecorated:
+                candidates.add(undecorated)
         if needle in candidates:
             matched_ids.add(str(cid))
     if len(matched_ids) == 1:
