@@ -660,13 +660,27 @@ async def run_textual_chat(
     read_model: "ChatReadModel | None" = None,
     agent_name: str = "default",
     config=None,
+    inline: bool = False,
 ) -> None:
     """Run the TTY conversation-pane app until the user quits or the stream ends.
 
-    Runs ``inline=True`` so the terminal's pre-launch scrollback is preserved
-    above the app region (the ADR's Phase-0-validated inline mode) rather than
-    swapping to the alternate screen. Returns so the driver's caller can tear the
-    transport down + print the cost summary.
+    ``inline`` selects the Textual driver: ``False`` (DEFAULT) runs full-screen
+    (alt-screen), ``True`` runs the legacy bounded inline driver. The caller
+    (:func:`~reyn.interfaces.repl.client_driver.run_chat_client`) resolves this
+    from ``chat.render_mode`` (#3273) — see :func:`resolve_render_mode`.
+
+    Full-screen is the default because two inline-driver bugs made bounded inline
+    unshippable: on resize the old bounded frame is not cleared so stale copies
+    stack (#3285), and the conversation pane collapses to ~1 line regardless of
+    terminal height (#3286). Both are owned by Textual's inline driver, so reyn
+    cannot fix them in inline mode; alt-screen sidesteps the driver entirely and
+    both vanish. The scrollback-preservation rationale that originally motivated
+    inline is now redundant — alt-screen auto-saves/restores terminal scrollback
+    on enter/exit, and Phase 5 restore rebuilds the conversation from
+    ``history.jsonl`` on restart. ``inline=True`` remains selectable as an escape
+    hatch (``chat.render_mode: inline``) for scrollback-preferring users, with
+    the #3285/#3286 caveat. Returns so the driver's caller can tear the transport
+    down + print the cost summary.
     """
     app = TextualChatApp(
         transport=transport,
@@ -674,4 +688,4 @@ async def run_textual_chat(
         agent_name=agent_name,
         config=config,
     )
-    await app.run_async(inline=True)
+    await app.run_async(inline=inline)

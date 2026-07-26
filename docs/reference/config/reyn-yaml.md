@@ -352,15 +352,33 @@ unaffected). Both defaults are `true`.
 
 Chat-session runtime knobs. `chat.compaction` controls chat-history compaction
 (ratio-based budget; see `reyn.local.yaml.example`). `chat.reasoning` controls
-model reasoning/"thinking" text handling.
+model reasoning/"thinking" text handling. `chat.render_mode` selects the
+interactive chat renderer/driver.
 
 ```yaml
 chat:
+  render_mode: alt-screen # interactive chat renderer: alt-screen (default) | inline | plain | auto
   reasoning:
     continuity: true      # persist reasoning to history + replay recent turns
     display: true         # show reasoning in the UI (TUI + web, collapsible)
     recent_turns: 3       # turns of reasoning to replay; <=0 = unbounded
 ```
+
+### `chat.render_mode`
+
+Selects which renderer/driver `reyn chat` uses on a **TTY**. A **non-TTY**
+session (piped, CI, or a host with no real terminal) always falls back to
+`plain` regardless of this value — the interactive Textual drivers need a real
+terminal.
+
+| Value | Behaviour |
+|-------|-----------|
+| `alt-screen` | **Default.** Full-screen Textual (alt-screen driver). Terminal scrollback is auto-saved on enter and restored on exit; the previous conversation is rebuilt from `history.jsonl` on restart. This is the recommended mode — it sidesteps the upstream inline-driver bugs (stale frames stacking on resize, pane collapse) that `inline` still carries. |
+| `inline` | Legacy bounded inline driver — keeps your pre-launch scrollback in place above a bounded region. **Caveat**: this mode still carries upstream Textual inline-driver bugs (on resize old frames stack, and the conversation pane can collapse to ~1 line). Kept as an escape hatch for users who prefer scrollback-in-place; not recommended until those land upstream. |
+| `plain` | Force the plain line-based renderer (no Textual), equivalent to `--cui`. |
+| `auto` | Resolve to `alt-screen` on a TTY (behaviourally identical to `alt-screen` given the non-TTY→`plain` guard). |
+
+An unrecognised value warns and falls back to `alt-screen`.
 
 ### `chat.reasoning` fields
 

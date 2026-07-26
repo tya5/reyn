@@ -45,6 +45,44 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def resolve_render_mode(mode: str, *, is_tty: bool) -> str:
+    """Resolve a configured ``chat.render_mode`` + TTY presence to a concrete path.
+
+    Returns one of ``"alt-screen"``, ``"inline"``, ``"plain"`` — the three
+    physical render paths (the first two are the Textual conversation-pane app's
+    driver modes; the last is the plain :class:`ChatRenderer`).
+
+    The TTY guard is universal: a non-TTY session (piped, CI, sandbox with no
+    real terminal, or a host where alt-screen would silently no-op) can never
+    enter an interactive Textual driver, so it always resolves to ``"plain"``
+    regardless of the configured mode. On a TTY: ``"plain"`` forces the plain
+    path (config equivalent of ``--cui``); ``"inline"`` selects the legacy
+    bounded inline driver (retains upstream bugs #3285/#3286); ``"auto"`` and
+    ``"alt-screen"`` both resolve to ``"alt-screen"`` (full-screen). An
+    unrecognised mode is treated as the ``alt-screen`` default — config parsing
+    already validates+warns, this is a belt-and-braces fallback.
+    """
+    if not is_tty:
+        return "plain"
+    if mode == "plain":
+        return "plain"
+    if mode == "inline":
+        return "inline"
+    # "alt-screen", "auto", or any unexpected value → full-screen alt-screen.
+    return "alt-screen"
+
+
+def _configured_render_mode(config) -> str:
+    """Read ``config.chat.render_mode``; default ``alt-screen`` if unavailable."""
+    default = "alt-screen"
+    if config is None:
+        return default
+    try:
+        return str(config.chat.render_mode)
+    except AttributeError:
+        return default
+
+
 async def run_chat_client(
     *,
     transport: "ClientTransport",
@@ -56,28 +94,35 @@ async def run_chat_client(
 ) -> None:
     """Input-driver selection + (plain) banner/output loop + wait + teardown.
 
-    ``renderer.uses_app_input()`` AND ``is_tty`` routes to the Textual
-    conversation-pane app (:func:`~reyn.interfaces.inline.textual_chat.run_textual_chat`),
-    which owns both input and output and drains ``transport.frames()`` itself —
-    imported LAZILY here so the flowview/textual dependency is touched on the TTY
-    path only. Otherwise (``--cui`` / non-TTY / piped) the plain PromptSession
-    input loop + shared output loop drive the handed-in ``renderer``. This is the
-    SAME selection ``run_repl`` made locally — now applied identically to the
-    remote path.
+    When the renderer ``uses_app_input()``, ``chat.render_mode`` (#3273) +
+    ``is_tty`` are resolved by :func:`resolve_render_mode` to one of three paths:
+    ``alt-screen`` / ``inline`` (both the Textual conversation-pane app
+    :func:`~reyn.interfaces.inline.textual_chat.run_textual_chat`, which owns
+    both input and output and drains ``transport.frames()`` itself — imported
+    LAZILY here so the flowview/textual dependency is touched on that path only)
+    or ``plain`` (the plain PromptSession input loop + shared output loop below).
+    A non-TTY session (``--cui`` / piped / CI / no real terminal) always resolves
+    to ``plain`` regardless of mode. This is the SAME selection ``run_repl`` made
+    locally — now applied identically to the remote path.
 
     The caller owns transport lifecycle (``start``/``close`` or the httpx SSE
     context) and any cost summary; this function only drives the loop(s) and
     guarantees any tasks it spawns are cancelled + awaited on exit.
     """
-    if renderer.uses_app_input() and is_tty:
-        from reyn.interfaces.inline.textual_chat import run_textual_chat  # noqa: PLC0415
-        await run_textual_chat(
-            transport=transport,
-            read_model=read_model,
-            agent_name=agent_name,
-            config=config,
+    if renderer.uses_app_input():
+        resolved = resolve_render_mode(
+            _configured_render_mode(config), is_tty=is_tty,
         )
-        return
+        if resolved != "plain":
+            from reyn.interfaces.inline.textual_chat import run_textual_chat  # noqa: PLC0415
+            await run_textual_chat(
+                transport=transport,
+                read_model=read_model,
+                agent_name=agent_name,
+                config=config,
+                inline=(resolved == "inline"),
+            )
+            return
 
     renderer.banner(agent_name)
 
@@ -113,4 +158,4 @@ async def run_chat_client(
         await asyncio.gather(inputs, outputs, return_exceptions=True)
 
 
-__all__ = ["run_chat_client"]
+__all__ = ["resolve_render_mode", "run_chat_client"]

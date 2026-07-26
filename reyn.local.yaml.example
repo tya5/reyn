@@ -345,6 +345,18 @@
 #     recent_turns: 3         # how many recent turns' reasoning to replay.
 #                             #   <= 0 (e.g. 0 / -1) = unbounded (keep all).
 
+# chat.render_mode: interactive chat renderer/driver on a TTY (#3273). A non-TTY
+# session (piped / CI / no real terminal) always falls back to `plain`.
+# See docs/reference/config/reyn-yaml.md.
+#   render_mode: alt-screen   # alt-screen (default) | inline | plain | auto
+#                             #   alt-screen = full-screen (recommended; scrollback
+#                             #     auto-saved/restored on enter/exit).
+#                             #   inline = legacy bounded driver, keeps scrollback
+#                             #     in place BUT carries upstream resize/collapse
+#                             #     bugs (#3285/#3286) — escape hatch only.
+#                             #   plain = force plain renderer (= --cui).
+#                             #   auto = alt-screen on a TTY.
+
 
 # -----------------------------------------------------------------------------
 # events: audit-log rotation policy. Chat events land under
