@@ -1501,12 +1501,30 @@ class ResponsesEndpointRequiredError(Exception):
     so the operator isn't left with a raw 405."""
 
 
-def _requires_responses_bridge(model: str) -> bool:
-    """#3288 follow-up (issue #3288 comment thread, per-PR-coder root-cause):
-    is ``model`` an OpenAI reasoning model that needs the ``/v1/responses``
-    bridge for a ``reasoning_effort + tools`` call?
+def _responses_bridge_providers() -> "frozenset[str]":
+    """The litellm provider identities the #1678 ``/v1/responses`` bridge
+    applies to — see ``_requires_responses_bridge`` for why this is a set,
+    not a single literal.
 
-    The #1678 bridge exists because SOME OpenAI reasoning models reject
+    Enum-referenced (``litellm.LlmProviders.OPENAI.value`` /
+    ``.AZURE.value``), not bare string literals — if litellm ever renames a
+    provider identity, the enum moves with it instead of silently going
+    stale here.
+    """
+    import litellm  # noqa: PLC0415
+
+    return frozenset({
+        litellm.LlmProviders.OPENAI.value,
+        litellm.LlmProviders.AZURE.value,
+    })
+
+
+def _requires_responses_bridge(model: str) -> bool:
+    """#3288 follow-up (issue #3288 comment thread, per-PR-coder root-cause;
+    provider-set widened per co-vet finding (b) on PR #3325): does ``model``
+    need the ``/v1/responses`` bridge for a ``reasoning_effort + tools`` call?
+
+    The #1678 bridge exists because SOME reasoning models reject
     ``reasoning_effort + tools`` on ``/chat/completions`` and need
     ``/v1/responses`` instead. It is NOT a universal requirement — e.g.
     Gemini's ``reasoning_effort`` maps to a native "thinking budget" param
@@ -1518,6 +1536,31 @@ def _requires_responses_bridge(model: str) -> bool:
     ``responses/gemini/...``, which ``_streaming_capable`` cannot recognize
     (litellm's model map has no entry for the ``responses/`` marker), so
     streaming was silently disabled on the default configuration.
+
+    **Provider boundary — why {openai, azure}, and where to look if you hit a
+    405 on an ``azure/o1``-shaped model**: Azure is a first-class reyn
+    provider (``credentials.py``'s ``"azure": "AZURE_API_KEY"``) whose
+    reasoning-model deployments (``azure/o1``, ``azure/o3-mini``, …) are
+    literally OpenAI's reasoning models, hosted by Azure — the SAME
+    ``/chat/completions`` rejection this bridge exists to route around
+    applies there too. Excluding azure would have been a SILENT BEHAVIOR
+    CHANGE for this PR: ``azure/o1`` already resolves through
+    ``_to_responses_model`` (``azure/o1`` → ``azure/responses/o1``), so it was
+    almost certainly bridged before this fix (no provider check existed) —
+    narrowing to ``openai`` alone would un-bridge it and could reintroduce the
+    405 this bridge exists to avoid, for a provider nobody verified doesn't
+    need it. Minimal change = keep Azure's existing (bridged) behavior. If a
+    genuine Azure reasoning-model 405 shows up in the future, this frozenset
+    is the first place to check — either Azure's ``/v1/responses`` support
+    changed, or a model isn't resolving to the ``azure`` provider the way
+    expected (verify with ``litellm.get_llm_provider``, not by inspection).
+
+    **Deliberately excluded: ``openrouter/openai/...``.** ``get_llm_provider``
+    resolves that model string to provider ``"openrouter"``, not
+    ``"openai"`` — correctly: the HTTP call actually lands on OpenRouter's own
+    completions endpoint, not OpenAI's ``/v1/responses``, regardless of the
+    ``openai/`` segment embedded in the OpenRouter model name. Bridging it
+    would target an endpoint OpenRouter doesn't serve.
 
     Derives the provider from the resolved MODEL IDENTITY via
     ``litellm.get_llm_provider``, queried WITHOUT an explicit
@@ -1531,18 +1574,18 @@ def _requires_responses_bridge(model: str) -> bool:
     used to reach it.
 
     Any lookup failure (unmapped model name, litellm internal error) is
-    caught and treated as "not OpenAI" — conservative in the direction that
-    matters here: it means an unrecognized model is never force-routed
-    through a bridge it may not need, at the cost of a genuinely unmapped
-    OpenAI reasoning model needing an explicit ``openai/responses/...`` model
-    string (already supported — see ``_to_responses_model``'s idempotent
-    explicit-prefix path).
+    caught and treated as "does not require the bridge" — conservative in the
+    direction that matters here: it means an unrecognized model is never
+    force-routed through a bridge it may not need, at the cost of a genuinely
+    unmapped reasoning model needing an explicit ``openai/responses/...`` /
+    ``azure/responses/...`` model string (already supported — see
+    ``_to_responses_model``'s idempotent explicit-prefix path).
     """
     try:
         import litellm  # noqa: PLC0415
 
         _, provider, _, _ = litellm.get_llm_provider(model=model, custom_llm_provider=None)
-        return provider == "openai"
+        return provider in _responses_bridge_providers()
     except Exception:  # noqa: BLE001 — unknown provider → conservative "no bridge"
         return False
 
@@ -1772,8 +1815,9 @@ async def recorded_acompletion(
     # (idempotent). ``_routed_to_responses`` gates the decision-enabling error
     # below so a normal 405 is unaffected.
     #
-    # #3288 follow-up: this is an OpenAI-specific requirement — gate it on the
-    # resolved model's PROVIDER (``_requires_responses_bridge``), not merely on
+    # #3288 follow-up: this is a provider-scoped requirement (OpenAI + Azure —
+    # see ``_requires_responses_bridge``'s docstring for the boundary), not a
+    # universal one — gate it on the resolved model's PROVIDER, not merely on
     # the tools+reasoning_effort SHAPE. Without the provider check, this fired
     # for every reasoning-capable default model class (incl. Gemini, whose
     # reasoning_effort maps to a native thinking-budget param, not a

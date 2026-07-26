@@ -240,6 +240,48 @@ def test_openai_reasoning_model_still_routed_proxy_path(monkeypatch) -> None:
     assert captured["model"] == "responses/gpt-5.4"
 
 
+def test_azure_reasoning_model_still_routed(monkeypatch) -> None:
+    """Tier 2: #3288 follow-up REGRESSION gate — co-vet finding (b) on PR
+    #3325: Azure is a first-class reyn provider (`credentials.py`'s
+    `"azure": "AZURE_API_KEY"`) that literally hosts OpenAI's reasoning
+    models, so it hits the SAME `/chat/completions` rejection this bridge
+    exists to route around. `azure/o1` already resolved through
+    `_to_responses_model` before this PR (no provider check existed), so
+    narrowing the gate to `openai` alone would have been a SILENT BEHAVIOR
+    CHANGE for Azure (un-bridging a model nobody verified doesn't need the
+    bridge). Strip `"azure"` out of `_responses_bridge_providers()` and this
+    assertion goes RED (falls back to the unbridged `azure/o1`)."""
+    captured: dict = {}
+    monkeypatch.setattr(litellm, "acompletion", _capturing_acompletion(captured))
+
+    asyncio.run(recorded_acompletion(
+        model="azure/o1", messages=[{"role": "user", "content": "hi"}],
+        purpose="main", recorder=None,
+        extra_kwargs={"tools": [{"type": "function"}], "reasoning_effort": "low"},
+    ))
+    assert captured["model"] == "azure/responses/o1"
+
+
+def test_openrouter_openai_prefixed_model_is_not_routed(monkeypatch) -> None:
+    """Tier 2: #3288 follow-up — documents the deliberate exclusion co-vet
+    finding (b) asked about: an OpenRouter-routed model whose OWN model name
+    happens to embed an `openai/` segment (`openrouter/openai/gpt-5`) is NOT
+    bridged. `litellm.get_llm_provider` resolves this string's PROVIDER as
+    `"openrouter"` (not `"openai"`) — correctly: the HTTP call lands on
+    OpenRouter's own completions endpoint, never OpenAI's `/v1/responses`,
+    regardless of the embedded `openai/` segment naming OpenRouter's upstream
+    model. Bridging it would target an endpoint OpenRouter doesn't serve."""
+    captured: dict = {}
+    monkeypatch.setattr(litellm, "acompletion", _capturing_acompletion(captured))
+
+    asyncio.run(recorded_acompletion(
+        model="openrouter/openai/gpt-5", messages=[{"role": "user", "content": "hi"}],
+        purpose="main", recorder=None,
+        extra_kwargs={"tools": [{"type": "function"}], "reasoning_effort": "low"},
+    ))
+    assert captured["model"] == "openrouter/openai/gpt-5"
+
+
 def test_gemini_405_via_proxy_is_not_wrapped_since_not_routed(monkeypatch) -> None:
     """Tier 2: #3288 follow-up — a Gemini tools+reasoning_effort call that
     405s (e.g. proxy quirk unrelated to /v1/responses) is NOT wrapped in

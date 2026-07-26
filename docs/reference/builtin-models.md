@@ -157,12 +157,13 @@ quality on complex tasks.
 
 ### Reasoning on tool-bearing turns (Responses-API bridge)
 
-A turn that carries **tools** *and* has `reasoning_effort` set on an
-**OpenAI** reasoning-capable model is routed through litellm's Responses-API
-bridge (`responses/<model>`), because `reasoning_effort + tools` together are
-only valid on OpenAI's `/v1/responses` endpoint — `/v1/chat/completions`
-rejects the combination with a 405 (#1678). litellm's bridge currently cannot
-map the `reasoning` output item the model returns, so the call raises:
+A turn that carries **tools** *and* has `reasoning_effort` set on a reasoning-
+capable model resolved to the **OpenAI or Azure** provider is routed through
+litellm's Responses-API bridge (`responses/<model>`), because
+`reasoning_effort + tools` together are only valid on the `/v1/responses`
+endpoint on those providers — `/v1/chat/completions` rejects the combination
+with a 405 (#1678). litellm's bridge currently cannot map the `reasoning`
+output item the model returns, so the call raises:
 
 ```
 litellm.APIConnectionError: OpenAIException -
@@ -175,40 +176,48 @@ the current and the latest litellm release, with no released fix; Reyn does not
 ship a provider-specific workaround for it.
 
 **Provider-gated (#3288 follow-up).** The bridge only applies to models Reyn
-resolves as **OpenAI** (via a `litellm.get_llm_provider` query on the resolved
-model identity, never on the transport/proxy routing — see
-`_requires_responses_bridge` in `src/reyn/llm/llm.py`). It does NOT apply to
-Gemini, whose `reasoning_effort` maps to a native "thinking budget" parameter
-handled entirely on `/v1/chat/completions` — Gemini reasoning-on-tool-turns
-never goes through this bridge and never hits the error above. (Earlier
-behavior — before this gate existed — routed EVERY `tools + reasoning_effort`
-combination through the bridge regardless of provider, which silently disabled
-token streaming for Gemini's default model classes; see `_streaming_capable`'s
-docstring for the streaming side of that fix.)
+resolves as **OpenAI or Azure** (via a `litellm.get_llm_provider` query on the
+resolved model identity, never on the transport/proxy routing — see
+`_requires_responses_bridge` in `src/reyn/llm/llm.py`). Azure is included
+because it is a first-class reyn provider that literally hosts OpenAI's
+reasoning models (`azure/o1`, `azure/o3-mini`, …) under the same
+`/chat/completions` rejection. It does NOT apply to Gemini, whose
+`reasoning_effort` maps to a native "thinking budget" parameter handled
+entirely on `/v1/chat/completions` — Gemini reasoning-on-tool-turns never go
+through this bridge and never hit the error above. It also does NOT apply to
+an OpenRouter-routed model whose own model name happens to embed an `openai/`
+segment (e.g. `openrouter/openai/gpt-5`) — that call lands on OpenRouter's own
+completions endpoint, never OpenAI's `/v1/responses`, regardless of the
+embedded segment. (Earlier behavior — before this gate existed — routed EVERY
+`tools + reasoning_effort` combination through the bridge regardless of
+provider, which silently disabled token streaming for Gemini's default model
+classes; see `_streaming_capable`'s docstring for the streaming side of that
+fix.)
 
 **When it bites — a narrow, opt-in combination.** All must hold:
 
 1. a **tool-bearing** purpose (e.g. the router, whose turns always carry tools)
    is pointed at a reasoning-capable model; **and**
 2. `reasoning_effort` is set on that model; **and**
-3. the model resolves to the **OpenAI** provider (`model_class_by_purpose:
-   router: strong` pointed at an OpenAI reasoning model, or the default
-   `model` class set to one).
+3. the model resolves to the **OpenAI or Azure** provider
+   (`model_class_by_purpose: router: strong` pointed at an OpenAI/Azure
+   reasoning model, or the default `model` class set to one).
 
 **Unaffected paths:**
 
 - **The default setup.** The `standard`/`light` classes (Gemini Flash Lite,
   which DOES ship with `reasoning_effort: low` by default — see #1654 above)
-  are unaffected because Gemini is not the OpenAI provider the bridge targets,
-  not because `reasoning_effort` is unset. Tool-bearing turns on the default
-  config go through `/v1/chat/completions` as normal.
+  are unaffected because Gemini is not an OpenAI/Azure provider the bridge
+  targets, not because `reasoning_effort` is unset. Tool-bearing turns on the
+  default config go through `/v1/chat/completions` as normal.
 - **Non-tool chat with reasoning.** A reasoning-capable model *without* tools goes
   through `/v1/chat/completions`; reasoning survives and round-trips normally
   (surfaced as `reasoning_content` / `thinking_blocks`).
 
-**To avoid it**, keep `reasoning_effort` off any OpenAI reasoning-capable model
-that serves tool-bearing turns — or keep tool-bearing purposes on a
-non-OpenAI-reasoning model. Reasoning on the non-tool chat path is unaffected.
+**To avoid it**, keep `reasoning_effort` off any OpenAI/Azure reasoning-capable
+model that serves tool-bearing turns — or keep tool-bearing purposes on a
+model that resolves to neither provider. Reasoning on the non-tool chat path
+is unaffected.
 
 ## Namespace and override semantics
 
