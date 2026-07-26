@@ -297,6 +297,16 @@ Capability-gated, provider-agnostic token streaming from the LLM call through to
 
 > **Differentiation vs general agents:** streaming is layered onto the SAME single-chokepoint `recorded_acompletion` call, the SAME `OutboxHub`/chat-event fan-out, and the SAME `FlowView` render model every other frame uses — no parallel streaming-only pipeline, no per-provider hardcoding, and no risk of a streamed reply diverging from its non-streamed reconstruction.
 
+### Textual TUI: session-switch reset + rehydrate (#3310 N1/N2)
+
+| Feature | Description | Documentation |
+|---------|-------------|---------------|
+| `session_attached` switch barrier | `AgentRegistry.attach`/`attach_session` emit a `session_attached` chat-event (`{agent, session_id}`) as an `EventFrame` put directly on `repl_outbox` with NO `await` between the attach flip and the put — a stream barrier holding BY CONSTRUCTION (before = old session's frames, after = new session's) | [AG-UI transport § The session-switch barrier](reference/runtime/agui-transport.md) |
+| Local client reset + rehydrate on switch | `TextualChatApp` treats the barrier as a reconnect: clears every per-session client state (retained `FlowModel`, running-tool tracking, pending-intervention tabs, sent-queue view/widget + item-meta, in-flight streamed-reply tracking) and rehydrates from the NEW session's `history.jsonl` — never from a client-side cache, which is stale-by-construction while a session is detached (the forwarder drops its frames entirely) | [AG-UI transport § The session-switch barrier](reference/runtime/agui-transport.md) |
+| Targeted hydrate seam | `ChatReadModel.conversation_history` accepts an optional `(agent, session_id)` — omitted hydrates the currently attached session (pre-N2 behavior unchanged); given, hydrates that specific session (possibly never attached in this client run) via `AgentRegistry.get_session`, no duplicated `history.jsonl` path literal | [AG-UI transport § The session-switch barrier](reference/runtime/agui-transport.md) |
+
+> **Remote parity gap (N3, open):** the AG-UI/SSE remote transport does not yet re-emit `session_attached` on the wire, so a remote client's switch-hydrate is unimplemented today (`RemoteReadModel.conversation_history` degrades to empty regardless of a targeted session — the same frame-sufficiency boundary this arc follows throughout).
+
 ---
 
 ### Control IR Ops
