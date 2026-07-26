@@ -12,13 +12,15 @@ never reaches an always-loaded module.
 """
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+import time
+from typing import TYPE_CHECKING, Callable
 
 from rich.console import Console, Group, RenderableType
 from rich.text import Text
 from textual_flowview import Presentation
 
 from reyn.interfaces.repl.renderer import (
+    _CC_ACCENT,
     _CC_DIM,
     _CC_DONE,
     _CC_ERR,
@@ -26,6 +28,7 @@ from reyn.interfaces.repl.renderer import (
     _CC_USER_BG,
     _CC_WARN,
     _KIND_LINE,
+    _SPINNER,
     _body_renderable,
     _summarize_args,
     summarize_tool_result,
@@ -33,6 +36,35 @@ from reyn.interfaces.repl.renderer import (
 
 if TYPE_CHECKING:
     from reyn.runtime.outbox import OutboxMessage
+
+# --- live RUNNING-tool indicator (Phase ②) ---------------------------------
+# A ``tool_call_started`` entry that is in flight carries a monotonic START
+# timestamp under this meta key (stamped app-side by
+# ``TextualChatApp._begin_running_indicator`` when the entry goes RUNNING — tool frames
+# themselves carry no elapsed/progress, ADR finding D2). Its PRESENCE is what
+# tells :meth:`ReynPresenter.present` to render the live spinner + elapsed body
+# instead of the static ``tool(args)`` line; the completion handler REMOVES it to
+# settle the row back to static. Kept private (leading underscore) so it never
+# collides with a real display-frame meta field.
+_RUNNING_SINCE_KEY = "_running_since"
+
+# The braille-spinner advance rate (frames/sec), reusing the plain renderer's
+# working-line idiom (``_SPINNER[int(now * 8) % len]`` — see
+# :func:`reyn.interfaces.repl.status.working_line`) so the Textual tool spinner
+# reads identically to the bottom-toolbar working spinner.
+_SPINNER_SPEED = 8
+
+# --- coalesced tool call + result (one entry, CC ``⏺ tool(args)`` + ``⎿ result``)
+# When a tool completes, the frame pump SETTLES its RUNNING started entry IN PLACE
+# — folding the result into the SAME entry rather than appending a separate result
+# row (mirrors CC's block + the PoC's ``_present_tool_call`` grouping). The pump
+# stashes the completion frame's kind + meta under these keys on the started
+# item; their presence tells the presenter to render the ``⎿ <result>`` line
+# under the ``tool(args)`` header. A completion with no matching started entry is
+# still appended as its own row (kept via :func:`_body_and_background`'s
+# ``tool_call_completed`` / ``tool_call_failed`` branches), so nothing regresses.
+_RESULT_KIND_KEY = "_result_kind"
+_RESULT_META_KEY = "_result"
 
 # --- choice-intervention chip layout ---------------------------------------
 # A closed-set intervention (permission confirm / choice ``ask_user`` — anything
@@ -107,6 +139,64 @@ def _choice_head(msg: "OutboxMessage") -> RenderableType:
     return parts[0] if len(parts) == 1 else Group(*parts)
 
 
+def _tool_head(msg: "OutboxMessage") -> Text:
+    """The ``tool(args)`` header line of a tool-call row.
+
+    The SINGLE source of that header, shared by the static
+    :func:`_body_and_background` tool-call branch and the live
+    :meth:`ReynPresenter._present_running_tool` indicator, so a RUNNING row and
+    its settled form read identically (only the appended spinner/elapsed line
+    differs while in flight)."""
+    meta = msg.meta or {}
+    tool = str(meta.get("tool", msg.text))
+    args = _summarize_args(meta.get("args"))
+    return Text.assemble((tool, "bold"), (f"({args})", _CC_DIM))
+
+
+def _tool_result_line(msg: "OutboxMessage") -> "tuple[Text, str | None]":
+    """The ``⎿ <result summary>`` sub-line + optional coral tint of a SETTLED tool
+    row — the completion folded into its started entry (:data:`_RESULT_KIND_KEY`).
+
+    Reuses the plain renderer's tool-result summary (:func:`summarize_tool_result`)
+    and failure vocabulary so a coalesced result reads the same as the pre-coalesce
+    separate ``tool_call_completed`` / ``tool_call_failed`` row — only the nesting
+    (``⎿`` under the call, in one entry) is new. A failure tints the whole row
+    coral (``_CC_ERR``), matching the standalone failure row."""
+    meta = msg.meta or {}
+    result_meta = meta.get(_RESULT_META_KEY) or {}
+    if meta.get(_RESULT_KIND_KEY) == "tool_call_failed":
+        err = (
+            result_meta.get("error_message")
+            or result_meta.get("error_kind")
+            or result_meta.get("text")
+            or ""
+        )
+        return Text(f"  ⎿ ✗ {err}", style=_CC_ERR), _CC_ERR
+    summary = summarize_tool_result(meta.get("tool"), result_meta.get("result"))
+    failed = summary.startswith("✗")
+    return (
+        Text(f"  ⎿ {summary}", style=_CC_ERR if failed else _CC_DIM),
+        (_CC_ERR if failed else None),
+    )
+
+
+def _running_indicator(msg: "OutboxMessage", now: float) -> Text:
+    """The live ``⠙ elapsed Ns`` indicator line for an in-flight tool row.
+
+    A time-driven braille spinner (:data:`_SPINNER`, advanced at
+    :data:`_SPINNER_SPEED` off ``now``) plus the app-computed elapsed seconds
+    since the entry went RUNNING (``now - meta[_RUNNING_SINCE_KEY]``). ``now`` is
+    the caller's monotonic clock reading; because it is re-read on each
+    ``animate_entry`` tick, both the spinner frame and the elapsed count advance
+    with wall time (the live-indicator non-vacuity). Elapsed is clamped at 0 so a
+    clock skew never renders a negative age."""
+    meta = msg.meta or {}
+    since = float(meta.get(_RUNNING_SINCE_KEY) or now)
+    elapsed = max(0, int(now - since))
+    frame = _SPINNER[int(now * _SPINNER_SPEED) % len(_SPINNER)]
+    return Text.assemble((f"{frame} ", _CC_ACCENT), (f"elapsed {elapsed}s", _CC_DIM))
+
+
 def _body_and_background(msg: "OutboxMessage") -> "tuple[RenderableType, str | None]":
     """The body renderable + optional full-row background for one display frame.
 
@@ -129,9 +219,12 @@ def _body_and_background(msg: "OutboxMessage") -> "tuple[RenderableType, str | N
         from reyn.interfaces.repl.present_renderer import render_presentation_nodes
         return render_presentation_nodes(meta["nodes"]), None
     if kind == "tool_call_started":
-        tool = str(meta.get("tool", msg.text))
-        args = _summarize_args(meta.get("args"))
-        return Text.assemble((tool, "bold"), (f"({args})", _CC_DIM)), None
+        head = _tool_head(msg)
+        if meta.get(_RESULT_KIND_KEY) is not None:
+            # Settled (coalesced): the tool call folded together with its result.
+            result_line, background = _tool_result_line(msg)
+            return Group(head, result_line), background
+        return head, None
     if kind == "tool_call_completed":
         summary = summarize_tool_result(meta.get("tool"), meta.get("result"))
         failed = summary.startswith("✗")
@@ -156,11 +249,22 @@ class ReynPresenter:
     """Turns a reyn display frame into a body :class:`Presentation` sized to
     ``width`` — reusing the plain renderer's palette + per-kind body construction
     (``_CC_*`` / ``_KIND_LINE`` / ``_body_renderable``), never a second styling
-    vocabulary. The gutter is the :class:`ReynGutter`'s job."""
+    vocabulary. The gutter is the :class:`ReynGutter`'s job.
 
-    def __init__(self) -> None:
+    An in-flight tool-call row (``tool_call_started`` whose entry carries the
+    :data:`_RUNNING_SINCE_KEY` meta marker) renders a LIVE body — the static
+    ``tool(args)`` header plus a spinner + app-computed ``elapsed Ns`` line — at a
+    FIXED height (header rows + 1) so the per-tick re-present never reflows. The
+    body is re-derived on each ``animate_entry`` tick (viewport-gated), reading
+    ``clock`` for the current spinner frame + elapsed; ``clock`` is injectable
+    (default :func:`time.monotonic`) so a test drives the animation
+    deterministically. The completion handler removes the marker, settling the row
+    back to its static ``tool(args)`` form."""
+
+    def __init__(self, *, clock: "Callable[[], float]" = time.monotonic) -> None:
         # A private probe console for measuring wrapped height at a given width.
         self._probe = Console()
+        self._clock = clock
 
     def _measure(self, renderable: RenderableType, width: int) -> int:
         self._probe.size = (max(width, 1), 200)
@@ -214,10 +318,30 @@ class ReynPresenter:
         hint = Text(_CHOICE_HINT, style=_CC_DIM)
         return Presentation(height=head_h + 2, renderable=Group(head, chips, hint))
 
+    def _present_running_tool(
+        self, item: "OutboxMessage", width: int
+    ) -> Presentation:
+        """Present an in-flight tool-call row with a LIVE spinner + elapsed body.
+
+        The static ``tool(args)`` header (:func:`_tool_head`) with a
+        ``⠙ elapsed Ns`` line under it (:func:`_running_indicator`, read off
+        ``self._clock``). Height is FIXED at ``header_rows + 1``: the header does
+        not change while in flight and the indicator is always one line, so the
+        per-tick re-present (driven by ``animate_entry``) never reflows — only the
+        spinner frame + elapsed count advance. The completion handler strips the
+        :data:`_RUNNING_SINCE_KEY` marker, after which :meth:`present` renders the
+        static tool-call body instead (settle)."""
+        head = _tool_head(item)
+        indicator = _running_indicator(item, self._clock())
+        head_h = self._measure(head, width)
+        return Presentation(height=head_h + 1, renderable=Group(head, indicator))
+
     async def present(self, item: "OutboxMessage", width: int) -> Presentation:
         meta = item.meta or {}
         if item.kind == "intervention" and meta.get("choices"):
             return self._present_intervention_choice(item, width)
+        if item.kind == "tool_call_started" and meta.get(_RUNNING_SINCE_KEY) is not None:
+            return self._present_running_tool(item, width)
         body, background = _body_and_background(item)
         return Presentation(
             height=self._measure(body, width),

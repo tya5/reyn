@@ -132,7 +132,7 @@ def _entry_by_kind(app: TextualChatApp, kind: str):
 def _make_running_entry():
     """A real RUNNING :class:`~textual_flowview.Entry` (no mount needed): append a
     ``tool_call_started`` message to a real :class:`~textual_flowview.FlowModel`
-    and set it RUNNING — the exact state the live path's ``_track_tool_state``
+    and set it RUNNING — the exact state the live path's ``_apply_lifecycle_state``
     assigns. Real instances only (no mock)."""
     from textual_flowview import FlowModel
 
@@ -328,23 +328,28 @@ async def test_running_to_success_turns_gutter_green() -> None:
 @pytest.mark.asyncio
 async def test_running_to_error_turns_gutter_coral_and_tints_failure_row() -> None:
     """Tier 2b: RUNNING → ERROR — a failed tool call transitions the started
-    entry to ERROR (gutter ``_CC_ERR`` coral) AND the failure row itself is
-    tinted ``_CC_ERR`` edge-to-edge (CC block-tint). Feeds the correlated
-    started+failed pair and inspects both the started entry's gutter and the
-    failed entry's presentation background."""
+    entry to ERROR (gutter ``_CC_ERR`` coral) AND, under the #3283 ② coalesce,
+    the failure is folded into that SAME started entry (no separate row) whose
+    presentation is tinted ``_CC_ERR`` edge-to-edge (CC block-tint). Feeds the
+    correlated started+failed pair and inspects the coalesced entry's gutter and
+    presentation background."""
     transport = ScriptedTransport([_started("op-err"), _failed("op-err")], end=False)
     app = TextualChatApp(transport=transport)
     async with app.run_test(size=(100, 30)) as pilot:
         await pilot.pause()
         await pilot.pause()
+        # Coalesced: the started+failed pair is ONE entry, not two.
+        from textual_flowview import FlowView
+
+        assert [e.item.kind for e in app.query_one(FlowView).entries] == ["tool_call_started"]
+        assert not _entry_by_kind(app, "tool_call_failed")  # no separate failure row
         started = _entry_by_kind(app, "tool_call_started")[0]
         assert started.state is EntryState.ERROR
         gutter = ReynGutter()
         assert gutter.decorate(started, 2, 1).style == _CC_ERR
 
-        # The failure row is tinted coral edge-to-edge.
-        failed_item = _entry_by_kind(app, "tool_call_failed")[0].item
-        pres = await ReynPresenter().present(failed_item, 80)
+        # The coalesced failure entry is tinted coral edge-to-edge.
+        pres = await ReynPresenter().present(started.item, 80)
         assert pres.background == _CC_ERR
 
 
