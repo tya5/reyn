@@ -46,6 +46,7 @@ from typing import TYPE_CHECKING
 
 from rich.text import Text
 from textual import events
+from textual.content import Content
 from textual.message import Message
 from textual.widget import Widget
 from textual.widgets import (
@@ -159,6 +160,20 @@ _MENU_TABS: "list[tuple[str, str]]" = [
 
 #: Menu items whose pane is an interactive :class:`OptionList` picker (keyboard
 #: selection); every other tab renders as a read-only Rich :class:`Static`.
+#:
+#: **Known display limitation (Model/Agent/Menu, NOT a security gap):**
+#: ``OptionList`` markup-parses a bare ``str`` option — only the "history"
+#: tab's rows get the :func:`_history_option_content` ``Content``-literal
+#: wrap, because only History carries LLM-/user-derived conversation text
+#: (#3302 fix-class). Model/Agent/Menu rows are operator/config-derived
+#: identifiers (configured model classes, loaded agent names, the
+#: ``@slash``-registered command table) — not live conversation content, so
+#: they are NOT neutralize-relevant and are left unwrapped. If an operator
+#: ever names a model class / agent / slash command with a `[...]`-shaped
+#: substring, THAT row's display will visually corrupt (the same bracket-
+#: eating rendering quirk, not an injection risk) — a known, accepted
+#: limitation of leaving those three panes unwrapped, not a claim that they
+#: are immune to the rendering quirk.
 _LIST_PANES = frozenset({"model", "agent", "history", "menu"})
 
 #: The composer's navigation keys, co-located with the widget that OWNS them (they
@@ -193,6 +208,36 @@ def pane_is_list(tab_id: str) -> bool:
     """Whether ``tab_id``'s drawer pane is an interactive :class:`OptionList`
     picker (vs a read-only :class:`Static` readout)."""
     return tab_id in _LIST_PANES
+
+
+#: The ONE list pane whose rows are LLM-/user-derived content (recent
+#: conversation turns) rather than operator/config-derived identifiers —
+#: see :func:`_history_option_content`'s docstring for why only this tab
+#: needs the fidelity wrap.
+_USER_CONTENT_LIST_PANE = "history"
+
+
+def _history_option_content(rows: "Sequence[str]") -> list[Content]:
+    """Wrap each History-pane row in a literal :class:`~textual.content.Content`
+    — never a bare ``str`` handed to :class:`~textual.widgets.OptionList`.
+
+    ``OptionList`` markup-parses a bare ``str`` option exactly like
+    ``Static``/``RadioButton`` do (``Option.prompt`` → ``textual.visual.
+    visualize(..., markup=True)`` by default, unset here) — the SAME
+    ``#3302`` bracket-eating class, just reached through a different widget.
+    History rows are the one drawer pane whose text is conversation content
+    (:func:`~reyn.interfaces.inline.textual_chat.app.TextualChatApp.
+    _history_turns`, already neutralized — ESC/control strip — at that
+    source), so ONLY this pane needs the wrap; Model/Agent/Menu rows are
+    operator/config-derived identifiers (see the module docstring), not
+    live conversation text.
+
+    Two call sites need this identically — the initial build
+    (:func:`build_drawer_pane`, at ``compose`` time) and the refresh
+    (``TextualChatApp._refresh_pane``, on every drawer re-open) — a fresh
+    History tab was, before this fix, safe at ONE of those and broken at
+    the other depending on which code path last touched it."""
+    return [Content(row) for row in rows]
 
 
 # ── per-pane pure formatters (registry inputs → display strings) ──────────────
@@ -349,9 +394,24 @@ def build_drawer_pane(tab_id: str, rows: "Sequence[str]") -> Widget:
     """Build the mounted drawer pane widget for ``tab_id`` from its display
     ``rows``: an :class:`OptionList` for a picker pane, a Rich :class:`Static`
     for a readout. The app rebuilds ``rows`` from a fresh snapshot on each open
-    (see :meth:`TextualChatApp._refresh_pane`)."""
+    (see :meth:`TextualChatApp._refresh_pane`).
+
+    Two rendering idioms co-exist here, deliberately NOT interchangeable:
+    the readout branch wraps in a Rich :class:`~rich.text.Text` LITERAL
+    (never markup-parsed regardless of content — Cost/Ctx/Help are always
+    internal-only figures, so this is fidelity-safe as-is); the History
+    OptionList branch wraps in :class:`~textual.content.Content`
+    (:func:`_history_option_content`) because ``OptionList`` DOES
+    markup-parse a bare ``str`` option — do not "simplify" one branch to
+    match the other, they guard against different widgets' different
+    default behaviors."""
     if pane_is_list(tab_id):
-        return OptionList(*rows, id=tab_id)
+        options = (
+            _history_option_content(rows)
+            if tab_id == _USER_CONTENT_LIST_PANE
+            else rows
+        )
+        return OptionList(*options, id=tab_id)
     return Static(Text("\n".join(rows)), id=tab_id)
 
 

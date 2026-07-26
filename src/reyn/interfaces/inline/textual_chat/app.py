@@ -50,6 +50,7 @@ from .chrome import (
     Composer,
     MenuBar,
     StatusLine,
+    _history_option_content,
     build_drawer_pane,
     pane_payload,
     status_line_text,
@@ -477,13 +478,22 @@ class TextualChatApp(App):
         so the History drawer is cross-session by construction: restoring the
         conversation into the model is what backs this pane's past-session view
         (no separate accessor call here — reading the model is sufficient once it
-        is hydrated)."""
+        is hydrated).
+
+        **Security**: this is LLM-/user-derived conversation content reaching
+        the History drawer's ``OptionList`` — the SAME injection class as the
+        #3302 panel-label bug, just a different widget. Neutralized (ESC/
+        control strip) HERE, at the source, before the row string is even
+        assembled — the fidelity half (never a bare ``str`` handed to
+        ``OptionList``) is a SEPARATE guard at the two widget-construction
+        call sites (:func:`~reyn.interfaces.inline.textual_chat.chrome.
+        build_drawer_pane` / :meth:`_refresh_pane`), not here."""
         rows: list[str] = []
         for entry in self.conversation:
             msg = entry.item
             if msg.kind not in ("user", "reply", "agent"):
                 continue
-            body = (msg.text or "").strip()
+            body = _neutralized_label(msg.text or "").strip()
             head = body.splitlines()[0][:60] if body else ""
             role = "you" if msg.kind == "user" else "reyn"
             rows.append(f"{role} · {head}")
@@ -632,7 +642,16 @@ class TextualChatApp(App):
         """Re-derive ``tab_id``'s pane content from the current canonical sources
         and update the mounted widget in place (``OptionList`` options or the
         ``Static`` text). One snapshot read feeds BOTH the rows and the parallel
-        selection ids, so an ``OptionSelected`` maps back to the right id."""
+        selection ids, so an ``OptionSelected`` maps back to the right id.
+
+        The History tab's rows get the SAME ``Content``-literal fidelity wrap
+        :func:`~reyn.interfaces.inline.textual_chat.chrome.build_drawer_pane`
+        applies at initial ``compose`` time (:func:`~reyn.interfaces.inline.
+        textual_chat.chrome._history_option_content`) — this refresh path is a
+        SEPARATE call site from that initial build (``OptionList.add_options``
+        vs the constructor), so it needs its own, independently-verified wrap;
+        the row TEXT itself is already neutralized upstream, in
+        :meth:`_history_turns`."""
         snap = self._snapshot()
         rows = self._pane_rows(tab_id, snap)
         self._pane_selection_ids[tab_id] = self._selection_ids(tab_id, snap)
@@ -640,7 +659,8 @@ class TextualChatApp(App):
         if isinstance(child, OptionList):
             child.clear_options()
             if rows:
-                child.add_options(rows)
+                options = _history_option_content(rows) if tab_id == "history" else rows
+                child.add_options(options)
         elif isinstance(child, Static):
             child.update("\n".join(rows))
 
