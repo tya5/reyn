@@ -2863,7 +2863,7 @@ class Session:
 
     async def submit_user_text(
         self, text: str, *, attribution: "dict | None" = None,
-    ) -> None:
+    ) -> str:
         # PR14: every top-level user submission starts a fresh chain_id that
         # propagates through any agent_request / agent_response generated in
         # response. Logged in history meta + events.jsonl for cross-agent trace.
@@ -2923,6 +2923,13 @@ class Session:
             seq=self._bump_queue_seq(),
             meta=meta,
         )
+        # #3287: return the assigned msg_id — the SAME correlation id the
+        # emitted event above carries — so a submitting client can recognise
+        # its own broadcast echo (vs. another attached client's) by id rather
+        # than by text match (a same-text collision between two clients'
+        # submissions would otherwise misfire — see `stream_client.py`'s
+        # `own_submissions` set).
+        return msg_id
 
     async def submit_agent_request(
         self, *, from_agent: str, request: str, depth: int, chain_id: str,

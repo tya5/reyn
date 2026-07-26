@@ -49,7 +49,7 @@ class AgUiTransport(ClientTransport):
     def __init__(
         self,
         sse_lines: "AsyncIterator[str]",
-        send: "Callable[[dict], Awaitable[bool | None]]",
+        send: "Callable[[dict], Awaitable[dict | None]]",
         *,
         status_view: "RemoteStatusView | None" = None,
         reguard_surface: str = "terminal",
@@ -159,8 +159,19 @@ class AgUiTransport(ClientTransport):
         # to answer_intervention_text (delivered BY ID, R1) instead of a new turn.
         return self._pending_intervention_id
 
-    async def submit_user_text(self, text: str) -> None:
-        await self._send({"type": "user_message", "text": text})
+    async def submit_user_text(self, text: str) -> str:
+        # #3287: the server echoes the msg_id it assigned (the SAME
+        # correlation id the broadcast user_submitted chat-event carries,
+        # #3300 P2a) in the POST's JSON response — see
+        # `agui/endpoint.py`'s `user_message` handler. `""` (never a raised
+        # exception / None-propagating crash) on any shape the caller can't
+        # use — a rejected/failed POST (`_send` returned None) or a legacy/
+        # foreign server that doesn't echo the field — so a caller can always
+        # treat "no id" with a plain falsy check, same as `""` from
+        # `InProcessTransport` when nothing is attached.
+        result = await self._send({"type": "user_message", "text": text})
+        msg_id = (result or {}).get("msg_id")
+        return msg_id if isinstance(msg_id, str) else ""
 
     async def answer_intervention_text(
         self, text: str, *, intervention_id: "str | None" = None
