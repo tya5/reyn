@@ -77,6 +77,24 @@ class ClientTransport(ABC):
     async def cancel_inflight(self) -> None:
         """Cooperatively cancel the in-flight turn (ctrl-c seam)."""
 
+    async def cancel_queued(self, msg_id: str) -> bool:
+        """Cancel-by-id an UNDISPATCHED (queued) user message (#3300 P3
+        Y-server) — a DIFFERENT intent from :meth:`cancel_inflight` (which
+        targets the currently RUNNING turn), never escalated between the
+        two. Returns True iff the server actually removed the item (queued);
+        a no-op (already dispatched, or unknown id) returns False.
+
+        NOT abstract (unlike the other send-seam methods above): this method
+        was added after several narrow-purpose ``ClientTransport`` stubs
+        already existed across the test suite (pre-dating #3300 P3), and
+        making it abstract would force every one of them to implement a
+        method irrelevant to what they test. The default no-op preserves
+        their behavior unchanged; both production transports
+        (``InProcessTransport``, ``AgUiTransport``) override it with the
+        real op.
+        """
+        return False
+
     @abstractmethod
     async def shutdown(self) -> None:
         """Tear the session (and its registry) down — the /quit / EOF seam."""

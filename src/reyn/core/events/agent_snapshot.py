@@ -254,7 +254,12 @@ class AgentSnapshot:
                 "kind": event["msg_kind"],
                 "payload": event.get("payload", {}),
             })
-        elif kind == "inbox_consume":
+        elif kind in ("inbox_consume", "inbox_cancel"):
+            # #3300 P3 Y-server: `inbox_cancel` is symmetric with
+            # `inbox_consume` for replay purposes (both remove the entry) —
+            # the DISTINCTION between dispatched vs cancelled matters to the
+            # cancel-by-id semantics at record time (session.py), not to
+            # snapshot reconstruction, which only needs "this id is gone".
             msg_id = event.get("msg_id")
             self.inbox = [m for m in self.inbox if m.get("id") != msg_id]
         elif kind == "chain_register":

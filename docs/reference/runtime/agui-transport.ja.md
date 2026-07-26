@@ -25,6 +25,15 @@ Reyn のチャットクライアントはストリームを消費する UI で�
     下記「Human-in-the-loop answering」参照)。
   - `{"type": "cancel_inflight"}` — in-flight なターンを協調的にキャンセルする(Ctrl-C
     seam)。
+  - `{"type": "cancel_queued", "msg_id": "..."}` — まだ dispatch されていない(未実行の)
+    inbox メッセージを id 指定でキャンセルする(#3300 P3)。上記の `cancel_inflight` とは
+    異なる意図である — こちらは「まだ turn が始まっていない特定の queued item」を対象と
+    し、現在実行中の turn は対象にしない。サーバー側の意味論(`Session.cancel_queued`):
+    queued の場合 → 除去(WAL `inbox_cancel` tombstone + 同期的な snapshot-prune の後、
+    `inbox_cancel` chat-event delta を emit。下記「STATE_* — ステータス read-model」と
+    `reyn.event.inbox_cancel` を参照)。既に dispatch 済みの場合 → no-op(`cancel_inflight`
+    へのエスカレーションは行わない)。冪等(同じ id への2回目のキャンセルは no-op — at-most-once
+    の再送に対して安全)。
   - `{"type": "heartbeat"}` — liveness の keepalive。
 
   server がモデル化していない入力 type は**グレースフルな no-op**(`200` の ack)であり、
@@ -277,6 +286,16 @@ WaitingOn ラベル)は**read-model**であり、ファイルミラーではな�
 snapshot から正しい queue + turn-active 状態を得る。P2a はこの状態の publish のみで、
 sent-queue widget としての描画は P2b。
 
+item が `queue` から抜けるのは、同じ snapshot+delta channel 上の互いに排他な2つの
+granular chat-event delta のいずれかを経由する — `turn_started`(dispatch された。下記
+「Working-indicator path」参照)、または `inbox_cancel`(上記の `cancel_queued` client
+message で id 指定キャンセルされた。#3300 P3)。server 自身の atomic な
+queued/dispatched 判定が、ある item についてこの2つのうち正確に一方のみが必ず発火する
+ことを保証する(両方が発火することはない)。`inbox_cancel` は `msg_id` と `seq`(
+`user_submitted`/`turn_started` と同じ order-race-gate token — 下記
+`reyn.event.inbox_cancel` を参照)を運ぶ。granular delta をマージする client は
+(`turn_started` が `chain_id` でマッチするのとは異なり)`msg_id` で item を除去する。
+
 client は snapshot から自身のステータスビューを seed し、各 delta をマージするため、
 remote のステータスパネルは常に server の値を反映する。
 
@@ -337,6 +356,7 @@ display 行のテキストである。
 |--------------------------------------|--------------------------------------------------|
 | `reyn.event.user_answered_intervention` | ユーザーが intervention に回答した              |
 | `reyn.event.user_submitted`          | ユーザーがターンを送信した(#3300 P1 C)— RAW text + chain_id + msg_id + seq + meta を運ぶ。各 surface がそれぞれの render 境界で neutralize する。`msg_id`/`seq` は #3300 P2a の sent-queue correlation id + order-race-gate token |
+| `reyn.event.inbox_cancel`            | 未 dispatch の queued user メッセージが id 指定でキャンセルされた(#3300 P3、`cancel_queued` client message 経由)— `msg_id` と `seq` を運ぶ。サーバー権威の sent-queue 除去シグナルであり(client-local な「キャンセル成功」応答ではない)、同じ `msg_id` について `turn_started` と排他である |
 
 ### `reyn.intervention.<kind>`
 

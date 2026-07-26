@@ -138,6 +138,13 @@ CUSTOM_PROFILE: dict[str, CustomName] = _entries(
         "(replaces the earlier kind=\"user\" outbox-echo write); msg_id/seq "
         "are the #3300 P2a sent-queue correlation id + order-race-gate token",
     ),
+    CustomName(
+        "reyn.event.inbox_cancel", EVENT_NS, "the event data object",
+        "an UNDISPATCHED queued user message was cancelled by id (#3300 P3 "
+        "Y-server) — carries msg_id + seq; the server-authoritative sent-queue "
+        "removal signal, exclusive with turn_started for the same msg_id "
+        "(never a client-local cancel-success response)",
+    ),
 )
 
 

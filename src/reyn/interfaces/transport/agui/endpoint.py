@@ -461,6 +461,17 @@ async def agui_submit(request: Request, agent_name: str):
         cancel_fn = getattr(session, "cancel_inflight", None)
         if callable(cancel_fn):
             await cancel_fn()
+    elif ptype == "cancel_queued":
+        # #3300 P3 (Y-server): cancel-by-id for an UNDISPATCHED queued
+        # message — a DISTINCT op from `cancel_inflight` above (targets the
+        # inbox queue, not the running turn). The server's own atomic
+        # queued/dispatched judgement (`Session.cancel_queued`) decides
+        # queued->removed vs already-dispatched->no-op; idempotent, so a
+        # retry (e.g. after a dropped response) is always safe.
+        msg_id = payload.get("msg_id")
+        cancel_queued_fn = getattr(session, "cancel_queued", None)
+        if callable(cancel_queued_fn) and msg_id:
+            await cancel_queued_fn(msg_id)
     return JSONResponse({"status": "ok"})
 
 

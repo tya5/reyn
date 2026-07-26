@@ -67,6 +67,14 @@ _TURN_AND_ANSWER_EVENTS = frozenset(
         # #3300 P2a: also carries `seq` (the sent-queue order-race-gate
         # token, see ``Session._bump_queue_seq``).
         "user_submitted",
+        # #3300 P3 (Y-server): cancel-by-id for an UNDISPATCHED (queued) user
+        # message — the server-authoritative removal signal (never a
+        # client-local "cancel succeeded" response) a client's sent-queue
+        # rendering applies, exclusive with `turn_started` for the same
+        # msg_id (owner addendum §6a: an item leaves the sent queue via
+        # exactly one of these two deltas). Carries `msg_id` + `seq` (the
+        # same order-race-gate token) — see ``Session.cancel_queued``.
+        "inbox_cancel",
     }
 )
 
