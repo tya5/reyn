@@ -34,6 +34,9 @@ from reyn.interfaces.repl.renderer import (
     summarize_tool_result,
 )
 
+from ._meta_keys import RESULT_KIND_KEY as _RESULT_KIND_KEY
+from ._meta_keys import RESULT_META_KEY as _RESULT_META_KEY
+
 if TYPE_CHECKING:
     from reyn.runtime.outbox import OutboxMessage
 
@@ -63,8 +66,10 @@ _SPINNER_SPEED = 8
 # under the ``tool(args)`` header. A completion with no matching started entry is
 # still appended as its own row (kept via :func:`_body_and_background`'s
 # ``tool_call_completed`` / ``tool_call_failed`` branches), so nothing regresses.
-_RESULT_KIND_KEY = "_result_kind"
-_RESULT_META_KEY = "_result"
+# The restore path (``restore.py``) stamps the SAME two keys onto its projected
+# frames so a restored tool turn coalesces identically — both modules import
+# the string values from ``_meta_keys`` (restore.py must stay textual-free, so
+# the constants live there rather than here).
 
 # --- choice-intervention chip layout ---------------------------------------
 # A closed-set intervention (permission confirm / choice ``ask_user`` — anything

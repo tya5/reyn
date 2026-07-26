@@ -38,6 +38,10 @@ import pytest
 from textual_flowview import EntryState, FlowView
 
 from reyn.interfaces.inline.textual_chat import TextualChatApp
+from reyn.interfaces.inline.textual_chat._meta_keys import (
+    RESULT_KIND_KEY,
+    RESULT_META_KEY,
+)
 from reyn.interfaces.inline.textual_chat.restore import (
     RESTORED_META_KEY,
     project_restored_frames,
@@ -139,13 +143,32 @@ def _entries(app: TextualChatApp):
     return list(app.query_one(FlowView).entries)
 
 
-# A fixture conversation log: a user turn, an assistant reply, a tool result, and
-# a trailing turn — plus a ``system`` and a ``summary`` entry that must NOT
-# surface (internal chrome, filtered at the LLM wire boundary).
+# A fixture conversation log: a user turn, an assistant reply, a CORRELATED tool
+# call+result (a real tool name + real non-empty args, per the round-trip
+# non-default-value requirement), and a trailing turn — plus a ``system`` and a
+# ``summary`` entry that must NOT surface (internal chrome, filtered at the LLM
+# wire boundary). The tool-calling assistant turn carries only ``tool_calls``
+# (empty text) — matching how the LLM actually emits a call — so it contributes
+# no standalone ``agent`` frame; the call header reaches the display entirely
+# through the coalesced ``tool`` projection.
 def _fixture_log() -> "list[ChatMessage]":
     return [
         ChatMessage(role="user", content="first question"),
         ChatMessage(role="assistant", content="first answer"),
+        ChatMessage(
+            role="assistant",
+            content="",
+            tool_calls=[
+                {
+                    "id": "call_1",
+                    "type": "function",
+                    "function": {
+                        "name": "file__read",
+                        "arguments": '{"path": "foo.py", "limit": 42}',
+                    },
+                }
+            ],
+        ),
         ChatMessage(
             role="tool", content="Read 42 lines", name="file__read",
             tool_call_id="call_1",
@@ -160,32 +183,65 @@ def _fixture_log() -> "list[ChatMessage]":
 
 
 def test_projection_maps_roles_preserves_order_and_names_source() -> None:
-    """Tier 1: ``project_restored_frames`` maps user→user, assistant→agent,
-    tool→tool_call_completed, preserving conversation order, and skips the
-    internal ``system``/``summary`` roles. Its input is the ``ChatMessage`` log
-    (NOT audit-events) — the projection consumes ``ChatMessage`` values only."""
+    """Tier 1: ``project_restored_frames`` maps user→user, assistant→agent, and a
+    correlated tool call+result → a SINGLE coalesced ``tool_call_started`` frame
+    (call header + folded result, matching the live-coalesce shape — no orphan
+    ``tool_call_completed`` row), preserving conversation order and skipping the
+    internal ``system``/``summary`` roles plus the tool-calling assistant turn's
+    own (empty-text) row. Its input is the ``ChatMessage`` log (NOT
+    audit-events) — the projection consumes ``ChatMessage`` values only."""
     frames = project_restored_frames(_fixture_log())
-    # Leading resume divider (system) then the conversation, summary dropped.
+    # Leading resume divider (system) then the conversation, summary dropped,
+    # and the tool-calling assistant turn contributes no standalone row.
     kinds = [f.kind for f in frames]
     assert kinds == [
         "system",  # ⤺ resume divider
-        "user", "agent", "tool_call_completed", "user", "agent",
+        "user", "agent", "tool_call_started", "user", "agent",
     ], f"unexpected projection kinds: {kinds}"
+    # No orphan tool_call_completed frame anywhere in the projection.
+    assert "tool_call_completed" not in kinds
+
     # Order + text preserved for the conversational rows.
     convo = [(f.kind, f.text) for f in frames if f.kind != "system"]
     assert convo == [
         ("user", "first question"),
         ("agent", "first answer"),
-        ("tool_call_completed", "file__read"),
+        ("tool_call_started", "file__read"),
         ("user", "second question"),
         ("agent", "second answer"),
     ]
-    # The tool row carries the result summary meta the presenter reads.
-    tool = next(f for f in frames if f.kind == "tool_call_completed")
+    # The coalesced tool row carries BOTH the correlated call (a REAL non-default
+    # tool name + non-empty args, correlated by tool_call_id) AND the result.
+    tool = next(f for f in frames if f.kind == "tool_call_started")
     assert tool.meta.get("tool") == "file__read"
-    assert tool.meta.get("result") == "Read 42 lines"
+    assert tool.meta.get("args") == {"path": "foo.py", "limit": 42}
+    assert tool.meta.get(RESULT_KIND_KEY) == "tool_call_completed"
+    assert tool.meta.get(RESULT_META_KEY) == {"result": "Read 42 lines"}
     # Every restored frame is marked as such.
     assert all(f.meta.get(RESTORED_META_KEY) is True for f in frames)
+
+
+def test_projection_uncorrelated_tool_result_still_yields_header() -> None:
+    """Tier 1: non-vacuity — a tool result with NO matching ``tool_call_id`` (e.g.
+    truncated history: the correlating assistant turn is gone) still projects to
+    the coalesced shape with the tool NAME as header (empty args), never an
+    orphan ``⎿``-only row (``tool_call_completed`` with no call)."""
+    frames = project_restored_frames([
+        ChatMessage(
+            role="tool", content="orphaned result", name="shell__run",
+            tool_call_id="missing_call",
+        ),
+    ])
+    tool_frames = [f for f in frames if f.kind != "system"]
+    assert [f.kind for f in tool_frames] == ["tool_call_started"], (
+        "an uncorrelated tool result must still project to exactly one "
+        f"coalesced tool_call_started frame, got kinds={[f.kind for f in tool_frames]}"
+    )
+    tool = tool_frames[0]
+    assert tool.meta.get("tool") == "shell__run"
+    assert tool.meta.get("args") == {}
+    assert tool.meta.get(RESULT_KIND_KEY) == "tool_call_completed"
+    assert tool.meta.get(RESULT_META_KEY) == {"result": "orphaned result"}
 
 
 def test_projection_empty_log_yields_no_frames_no_divider() -> None:
@@ -229,7 +285,7 @@ async def test_restart_shows_previous_conversation_before_live_frames() -> None:
             ("system", "⤺ resumed previous conversation"),
             ("user", "first question"),
             ("agent", "first answer"),
-            ("tool_call_completed", "file__read"),
+            ("tool_call_started", "file__read"),
             ("user", "second question"),
             ("agent", "second answer"),
             ("user", "LIVE turn after restart"),
@@ -255,7 +311,7 @@ async def test_restored_entries_render_resolved_never_running() -> None:
         assert all(e.state is not EntryState.RUNNING for e in entries), (
             "a restored turn is RUNNING — settled past turns must be resolved"
         )
-        tool = next(e for e in entries if e.item.kind == "tool_call_completed")
+        tool = next(e for e in entries if e.item.kind == "tool_call_started")
         assert tool.state is EntryState.SUCCESS, "restored tool result not resolved to SUCCESS"
 
 
