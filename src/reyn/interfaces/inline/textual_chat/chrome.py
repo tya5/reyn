@@ -53,6 +53,8 @@ from textual.widgets import (
     TextArea,
 )
 
+from .sent_queue import SentQueue
+
 if TYPE_CHECKING:
     from collections.abc import Iterable, Sequence
 
@@ -103,6 +105,23 @@ class Composer(TextArea):
                     event.stop()
                     event.prevent_default()
                     menubar.first().focus()
+                    return
+        if event.key == "up":
+            # ↑ on the composer's FIRST line hands focus UP into the
+            # sent-queue region (#3300 Y-client) when it holds at least one
+            # undispatched item — the mirror image of the ↓ rule above (the
+            # region sits ABOVE the composer: conversation / intervention
+            # panel / sent-queue / input). On any later line, or with an
+            # empty/absent sent-queue, ↑ moves the cursor normally (falls
+            # through to the base TextArea) — never steals focus toward a
+            # region with nothing to act on.
+            row, _ = self.cursor_location
+            if row <= 0:
+                sent_queue = self.app.query(SentQueue)
+                if sent_queue and not sent_queue.first().is_empty():
+                    event.stop()
+                    event.prevent_default()
+                    sent_queue.first().focus()
                     return
         await super()._on_key(event)
 

@@ -362,6 +362,19 @@ class TextualChatApp(App):
         # co-vet fix, so a late-joiner's promoted item is attributed exactly
         # like a delta-path one).
         self._queue_item_meta: "dict[str, dict]" = {}
+        # #3300 Y-client: msg_id -> cancelled text, for a cancel THIS client
+        # itself issued (:meth:`on_sent_queue_cancelled`), populated BEFORE
+        # the ``cancel_queued`` call. The composer restore
+        # (:meth:`_restore_cancelled_text`) is driven ONLY off the matching
+        # ``inbox_cancel`` delta actually arriving
+        # (:meth:`_handle_inbox_cancel_event`) — never off this call's return
+        # value — so it never fires for a cancel that raced an already-
+        # dispatched item (no delta ever follows a no-op) and stays
+        # consistent with the row-removal contract (also delta-driven, never
+        # return-value-driven). Canceller-local by construction: only the
+        # client that populated this entry ever restores anything; every
+        # other client applies the SAME delta as a plain removal.
+        self._pending_own_cancels: "dict[str, str]" = {}
         # Per-picker parallel id lists (class names / agent names), keyed by tab
         # id and kept in lock-step with the OptionList options a pane was last
         # refreshed with, so an ``OptionSelected.option_index`` maps back to the
@@ -1015,6 +1028,97 @@ class TextualChatApp(App):
             text = _neutralized_label(str(item.get("text", "")))
             self._ingest_frame(OutboxMessage(kind="user", text=text, meta=meta))
 
+    def _handle_inbox_cancel_event(self, event) -> None:
+        """REMOVE exit (#3300 Y-client, sent-queue exit contract §6a): an
+        ``inbox_cancel`` delta removes the matching queued item from the
+        sent-queue region. Applies the SAME seq-gate protocol as the
+        materialize/promote deltas (``RemoteQueueView.apply_inbox_cancel``),
+        so a stale/already-superseded delta is a no-op, exactly like
+        :meth:`_handle_user_submitted_event`/:meth:`_handle_turn_started_event`.
+
+        Server-authoritative: removal happens for EVERY client from this SAME
+        delta, never from a client-local "cancel succeeded" return value. If
+        THIS client is the one that issued the cancel (tracked in
+        :attr:`_pending_own_cancels`, populated by
+        :meth:`on_sent_queue_cancelled` before the ``cancel_queued`` call),
+        the cancelled text is ADDITIONALLY restored into the composer
+        (:meth:`_restore_cancelled_text`) — canceller-local, per the owner's
+        ratified contract (issue #3300 §6a); every OTHER client's
+        ``_pending_own_cancels`` never had this msg_id, so it applies only
+        the removal."""
+        data = event.data or {}
+        msg_id = data.get("msg_id")
+        seq = data.get("seq", 0)
+        applied = self._queue_view.apply_inbox_cancel(msg_id=msg_id, seq=seq)
+        if not applied or not msg_id:
+            return
+        self._sent_queue.remove_item(msg_id)
+        self._queue_item_meta.pop(msg_id, None)
+        cancelled_text = self._pending_own_cancels.pop(msg_id, None)
+        if cancelled_text is not None:
+            self._restore_cancelled_text(cancelled_text)
+
+    def _restore_cancelled_text(self, text: str) -> None:
+        """Restore a cancelled submission's text into the composer (#3300
+        Y-client, owner-ratified detail): prepended at the HEAD even when the
+        composer already holds a draft — a newline boundary separates the
+        restored text from whatever was already there, so the draft survives
+        intact rather than being clobbered. The cursor lands at the END of
+        the restored text (never at the end of the whole, possibly longer,
+        document), so continuing to type picks up right after the restored
+        line(s) rather than after the user's own untouched draft.
+
+        **Security**: the composer is a NEW render surface for this text
+        (:attr:`RemoteQueueView.items` stores the RAW submission — neither
+        ``apply_user_submitted`` nor this call's own path passes through
+        ``SentQueue.show_item``'s neutralize, so nothing upstream has cleaned
+        it yet). Same injection class as the sent-queue row itself (#3302):
+        neutralized HERE, independently, before it ever reaches
+        ``composer.text`` — a strip of this call's neutralize must leave the
+        OTHER site (``SentQueue.show_item``) still clean and vice versa (two
+        independent witnesses, no cross-masking)."""
+        text = _neutralized_label(text)
+        composer = self.query_one(Composer)
+        existing = composer.text
+        composer.text = f"{text}\n{existing}" if existing else text
+        lines = text.split("\n")
+        row = len(lines) - 1
+        col = len(lines[-1])
+        composer.move_cursor((row, col))
+
+    async def on_sent_queue_cancelled(self, event: "SentQueue.Cancelled") -> None:
+        """The user cancelled a queued row (:class:`SentQueue`'s ``Enter``
+        binding, #3300 Y-client). Captures the item's CURRENT text from the
+        queue view before issuing the cancel — the source the canceller-local
+        restore uses once (if) the matching ``inbox_cancel`` delta actually
+        arrives (:meth:`_handle_inbox_cancel_event`); the row removal and the
+        restore are BOTH driven by that delta, never by this call's return
+        value. The return value is used ONLY for pending-entry hygiene: a
+        cancel that raced an already-dispatched item is a server no-op with
+        NO delta ever following it, so nothing would ever pop this entry —
+        pruning it here is memory hygiene, not a correctness dependency (the
+        entry is keyed by a unique msg_id that is never reused, so a
+        transient leftover entry can never cause a wrong future restore)."""
+        msg_id = event.msg_id
+        text = next(
+            (
+                item.get("text")
+                for item in self._queue_view.queue()
+                if item.get("msg_id") == msg_id
+            ),
+            None,
+        )
+        if text is not None:
+            self._pending_own_cancels[msg_id] = text
+        try:
+            removed = await self._transport.cancel_queued(msg_id)
+        except Exception:
+            logger.exception("textual chat: cancel_queued failed")
+            self._pending_own_cancels.pop(msg_id, None)
+            return
+        if not removed:
+            self._pending_own_cancels.pop(msg_id, None)
+
     async def _pump_frames(self) -> None:
         """Drain the transport frame stream into the retained model.
 
@@ -1027,15 +1131,18 @@ class TextualChatApp(App):
         :meth:`_sweep_orphaned_running_tools` (#72: force-settle any tool still
         RUNNING when its turn ends — a confirmed orphan).
 
-        #3300 P2b: ``user_submitted`` (:meth:`_handle_user_submitted_event`)
-        and ``turn_started`` (:meth:`_handle_turn_started_event`) drive the
+        #3300 P2b/Y-client: ``user_submitted`` (:meth:`_handle_user_submitted_event`),
+        ``turn_started`` (:meth:`_handle_turn_started_event`), and
+        ``inbox_cancel`` (:meth:`_handle_inbox_cancel_event`) drive the
         sent-queue "upward conveyor" — materialize into the sent-queue region,
-        then promote to a flow entry on dispatch. This REPLACES P1 C's
-        "append the user_submitted echo straight to the flow": a submission
-        now stages in the sent-queue first (near-instant promotion on an idle
-        server, durably visible while queued on a busy one). The queue model
-        is seeded once, on the first frame (:meth:`_seed_queue_view`). A
-        single frame's failure must not kill the pump, so ingest is guarded.
+        then EITHER promote to a flow entry on dispatch OR remove on cancel
+        (mutually exclusive per the server's atomic guarantee, issue #3300
+        §6a). This REPLACES P1 C's "append the user_submitted echo straight
+        to the flow": a submission now stages in the sent-queue first
+        (near-instant promotion on an idle server, durably visible — and
+        cancelable — while queued on a busy one). The queue model is seeded
+        once, on the first frame (:meth:`_seed_queue_view`). A single frame's
+        failure must not kill the pump, so ingest is guarded.
         """
         try:
             async for frame in self._transport.frames():
@@ -1060,6 +1167,13 @@ class TextualChatApp(App):
                         except Exception:
                             logger.exception(
                                 "textual chat: turn_started queue-promote failed"
+                            )
+                    elif etype == "inbox_cancel":
+                        try:
+                            self._handle_inbox_cancel_event(frame.event)
+                        except Exception:
+                            logger.exception(
+                                "textual chat: inbox_cancel ingest failed"
                             )
                     elif etype in _TURN_END_EVENT_TYPES:
                         try:
@@ -1124,9 +1238,10 @@ class TextualChatApp(App):
         submit that lands while an intervention is pending is NOT black-holed:
         the backend turn stays busy awaiting the intervention, so
         ``submit_user_text`` durably queues the line on the inbox — visible in
-        the sent-queue region (#3300 P2b, this module) and, once P3 Y lands,
-        cancelable there too — rather than losing it. This delegation was
-        verified live (turn-owner-task /
+        the sent-queue region (#3300 P2b, this module) and cancelable there
+        (#3300 Y-client, ``↑`` from the composer to focus it, ``Enter`` on a
+        highlighted row to cancel) — rather than losing it. This delegation
+        was verified live (turn-owner-task /
         inbox-durability trace) by the architect design pass for #3299, so P1
         needs no hint/block guard of its own. Errors are contained and
         surfaced as an error frame the pump renders — a silent input drop is
