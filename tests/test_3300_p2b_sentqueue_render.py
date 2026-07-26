@@ -208,12 +208,12 @@ async def test_turn_started_promotes_matching_item_to_flow_entry() -> None:
         )
         await pilot.pause()
         sent_queue = app.query_one(SentQueue)
-        assert not sent_queue.is_empty()
+        assert sent_queue.has_items()
 
         await transport.push_event(_turn_started(chain_id="c1", seq=2))
         await pilot.pause()
 
-        assert sent_queue.is_empty(), "promoted item must leave the sent-queue"
+        assert not sent_queue.has_items(), "promoted item must leave the sent-queue"
         (entry,) = _flow_user_entries(app)
         assert entry.item.text == "dispatch me"
 
@@ -352,7 +352,7 @@ async def test_strip_delta_subscription_leaves_sent_queue_stale(monkeypatch) -> 
         await pilot.pause()
 
         sent_queue = app.query_one(SentQueue)
-        assert sent_queue.is_empty(), "stripped handler should leave the region stale"
+        assert not sent_queue.has_items(), "stripped handler should leave the region stale"
         assert not _flow_user_entries(app)
 
 
