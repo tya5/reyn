@@ -73,6 +73,52 @@ _SKIP_KINDS = frozenset(
     }
 )
 
+# Re-affirmation shown when a free-text submit lands during a pending
+# choice-intervention but matches no option — the anti-black-hole hint (#3290).
+# The options are still rendered above as chips, so the hint re-affirms them
+# without echoing the (LLM-derived) labels back into the terminal.
+_CHOICE_HINT_TEXT = "Please choose one of the options above (or click a chip)."
+
+
+def _match_choice_input(text: str, choices: "object") -> "str | None":
+    """Return the id of the ONE choice whose label or hotkey equals ``text``.
+
+    Type-or-click parity for a pending choice-intervention (#3290): a free-text
+    submit that names an option (typing ``yes`` for the ``Yes`` chip) resolves
+    the same intervention a chip click would. Matching is trimmed and
+    case-insensitive against BOTH the choice ``label`` and its ``hotkey``; the
+    ``choice_id`` is the authoritative delivery key (never itself matched, so a
+    label-as-id confusion can't sneak in).
+
+    Returns ``None`` when nothing matches OR the match is ambiguous (two distinct
+    choices match) — the caller then keeps the intervention pending and hints,
+    never falling through to a new turn (the black-hole the seam guards against).
+
+    Distinct from :func:`reyn.user_intervention.match_choice` (hotkey-only,
+    case-sensitive — the stdin-bus contract): this is the TUI's forgiving
+    type-or-click affordance, so it is a separate seam, not that one reused.
+    ``choices`` are ``InterventionChoice``-shaped (``.id`` / ``.label`` /
+    ``.hotkey``); attributes are read defensively so a partial head cannot raise.
+    """
+    needle = text.strip().casefold()
+    if not needle:
+        return None
+    matched_ids: set[str] = set()
+    for choice in choices or ():
+        cid = getattr(choice, "id", None)
+        if cid is None:
+            continue
+        candidates = {
+            str(value).strip().casefold()
+            for value in (getattr(choice, "label", None), getattr(choice, "hotkey", None))
+            if value is not None and str(value).strip()
+        }
+        if needle in candidates:
+            matched_ids.add(str(cid))
+    if len(matched_ids) == 1:
+        return next(iter(matched_ids))
+    return None
+
 #: FlowView gutter column width (state-coloured marker). Shared by ``compose``
 #: (the ``FlowView(gutter_width=…)`` config) and the choice-chip click handler,
 #: which must reconstruct the presenter's body width (content − gutter) to know
@@ -619,24 +665,38 @@ class TextualChatApp(App):
     async def _submit(self, text: str) -> None:
         """Route one submitted line through the transport send seam.
 
-        A pending free-text intervention (no choices) takes the answer path;
-        everything else is an ordinary new turn. Errors are contained and
-        surfaced as an error frame the pump renders — a silent input drop is the
-        worst failure for a chat box.
+        A pending free-text intervention (no choices) takes the text answer path;
+        a pending CHOICE intervention takes the type-or-click parity path (match
+        the text to an option → answer that choice; no match → re-affirm the
+        options and keep the intervention pending — NEVER fall through to a new
+        turn, which the backend would black-hole while it waits for the choice
+        answer, #3290); everything else is an ordinary new turn. Errors are
+        contained and surfaced as an error frame the pump renders — a silent
+        input drop is the worst failure for a chat box.
         """
         try:
             head = self._transport.pending_intervention_head()
             # A ``/``-prefixed line is never an intervention answer — it is a slash
             # command (dispatched by the session turn loop), so it must take the
-            # normal submit path even while a free-text intervention is pending
-            # (mirrors ``stream_client.submit_or_answer``'s guard). Without this,
-            # a picker-issued ``/model`` / ``/attach`` (or a typed slash) during a
+            # normal submit path even while an intervention is pending (mirrors
+            # ``stream_client.submit_or_answer``'s guard). Without this, a
+            # picker-issued ``/model`` / ``/attach`` (or a typed slash) during a
             # pending intervention would be mis-delivered as the answer text.
-            if (
-                head is not None
-                and not getattr(head, "choices", None)
-                and not text.startswith("/")
-            ):
+            if head is not None and not text.startswith("/"):
+                choices = getattr(head, "choices", None)
+                if choices:
+                    # Closed-set (choice) intervention pending: type-or-click
+                    # parity. On an unambiguous match answer that choice; on no
+                    # match re-affirm the options and keep it pending — routing a
+                    # non-match to ``submit_user_text`` here is the #3290 black
+                    # hole (backend blocked on the choice, 0 events, UI lies).
+                    matched_id = _match_choice_input(text, choices)
+                    if matched_id is not None:
+                        await self._transport.answer_intervention_choice(matched_id)
+                    else:
+                        self._surface_choice_hint()
+                    return
+                # Free-text intervention (no choices) → deliver as the answer text.
                 await self._transport.answer_intervention_text(text)
                 return
             await self._transport.submit_user_text(text)
@@ -652,6 +712,25 @@ class TextualChatApp(App):
                 )
             except Exception:
                 pass
+
+    def _surface_choice_hint(self) -> None:
+        """Re-affirm the pending choice options after an unmatched free-text
+        submit — the #3290 anti-black-hole hint.
+
+        Injected as a ``kind="system"`` display frame (a dim lifecycle marker,
+        NOT an error) through the same ``put_display`` seam the pump drains, so it
+        lands in FIFO order below the still-rendered option chips. The
+        intervention is left pending — the user can click a chip or retype a
+        matching option — so free text is never black-holed into a blocked
+        backend."""
+        from reyn.runtime.outbox import OutboxMessage
+
+        try:
+            self._transport.put_display(
+                OutboxMessage(kind="system", text=_CHOICE_HINT_TEXT)
+            )
+        except Exception:
+            logger.exception("textual chat: choice hint surface failed")
 
 
 async def run_textual_chat(
