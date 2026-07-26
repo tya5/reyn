@@ -117,6 +117,34 @@ class ClientTransport(ABC):
     async def cancel_inflight(self) -> None:
         """Cooperatively cancel the in-flight turn (ctrl-c seam)."""
 
+    async def deliver_pending_answer(self, text: str) -> bool:
+        """Attempt DIRECT, un-queued delivery of ``text`` as an ``/answer``
+        command for a pending intervention (#3327). Returns ``True`` iff
+        delivered THIS way — the caller must NOT also call
+        :meth:`submit_user_text` for the same ``text``. Returns ``False``
+        when ``text`` is not an ``/answer`` command, or nothing is pending —
+        the caller then falls through to the ordinary queued
+        :meth:`submit_user_text` path, UNCHANGED (#3300's sent-queue keeps
+        gating every other submission).
+
+        Answering a pending intervention acts on EXISTING state, not a new
+        turn — queuing it behind :meth:`submit_user_text` can deadlock: with
+        a turn blocked awaiting that SAME intervention, the inbox item can
+        only be dequeued once the intervention resolves (chicken-and-egg,
+        #3327's keyboard-only-user repro).
+
+        NOT abstract (mirrors :meth:`cancel_queued`): added after several
+        narrow-purpose ``ClientTransport`` stubs already existed across the
+        test suite; the default no-op preserves their behavior unchanged.
+        ``InProcessTransport`` overrides it with the real bypass. The AG-UI
+        wire transport does NOT (yet) — it tracks only a SINGLE pending
+        intervention id client-side (see its module docstring) with no
+        server op to resolve an ``/answer`` id-prefix remotely; closing that
+        gap needs a new wire message and is out of #3327's scope (the issue's
+        repro, and this fix, are confined to the in-process path).
+        """
+        return False
+
     async def cancel_queued(self, msg_id: str) -> bool:
         """Cancel-by-id an UNDISPATCHED (queued) user message (#3300 P3
         Y-server) — a DIFFERENT intent from :meth:`cancel_inflight` (which

@@ -58,7 +58,15 @@ uniform loss of a redundant alias, not a functional regression, since
 ``Esc``/``Tab`` (unchanged from P1/P2): return focus to the Composer WITHOUT
 answering. Declared as widget-level (non-priority) ``BINDINGS`` so Textual's
 ordinary focused-widget-outward resolution finds them on this ancestor before
-``Screen``'s default ``tab``→``focus_next``.
+``Screen``'s default ``tab``→``focus_next``. #3327 gave this escape hatch a
+way BACK: the Composer's own ``↑`` (see
+:class:`~reyn.interfaces.inline.textual_chat.chrome.Composer`'s ``_on_key``)
+focuses this panel (:meth:`focus_pending`) FIRST, ahead of the sent-queue,
+whenever :meth:`has_pending` is true — before #3327, ``Esc``/``Tab`` here was
+a ONE-WAY trip for a keyboard-only user (no binding anywhere retargeted focus
+onto this panel, and the documented ``/answer`` fallback was itself queued
+behind the very intervention it targeted, a structural deadlock — see
+``app.py``'s module docstring and :meth:`~reyn.interfaces.inline.textual_chat.app.TextualChatApp._submit`).
 
 Selecting an option / submitting text posts a message
 (:class:`InterventionPanel.ChoiceSelected` / :class:`InterventionPanel.TextSubmitted`),
@@ -383,6 +391,46 @@ class InterventionPanel(Vertical):
         inputs = list(pane.query(Input))
         if inputs:
             self.call_after_refresh(inputs[0].focus)
+
+    def has_pending(self) -> bool:
+        """Whether at least one tab is still UNANSWERED (#3327) — the
+        Composer's ``↑`` keyboard-reachability route reads this to decide
+        whether ``↑`` should re-focus this panel (ahead of the sent-queue)
+        instead of moving the cursor / falling through to the sent-queue's
+        own ``↑`` handling. Mirrors :attr:`display` (the panel is shown iff
+        something is pending, and :meth:`collapse_all` clears both together)
+        but reads the public tab-tracking surface directly rather than a
+        CSS-facing attribute."""
+        return bool(self._pane_ids)
+
+    def focus_pending(self) -> None:
+        """Re-focus the ACTIVE tab's form — the keyboard route BACK into
+        this panel (#3327) after ``Esc``/``Tab`` returned focus to the
+        Composer (:meth:`action_dismiss_panel`) without answering. Mirrors
+        :meth:`on_tabbed_content_tab_activated`'s own focus logic exactly,
+        since that only fires on an actual tab-activated Textual message —
+        never on a bare "please re-focus what's already active" request like
+        this one. An already-answered active tab (nothing left to focus in
+        it) falls back to the ``Tabs`` bar itself, still inside this panel
+        and Left/Right-navigable to a still-pending sibling tab."""
+        tabs = self.query_one(TabbedContent)
+        active = tabs.active
+        if not active:
+            return
+        try:
+            pane = tabs.get_pane(active)
+        except Exception:
+            return
+        if pane.id in self._answered:
+            tabs.query_one(Tabs).focus()
+            return
+        radios = list(pane.query(RadioSet))
+        if radios:
+            radios[0].focus()
+            return
+        inputs = list(pane.query(Input))
+        if inputs:
+            inputs[0].focus()
 
     def action_dismiss_panel(self) -> None:
         self.post_message(self.Dismissed())

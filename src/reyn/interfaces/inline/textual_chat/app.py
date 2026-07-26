@@ -229,11 +229,35 @@ class TextualChatApp(App):
     EVERY pending intervention has resolved, at which point the whole panel
     collapses (:meth:`_resolve_intervention`). ``Esc``/``Tab`` inside the
     panel (:meth:`on_intervention_panel_dismissed`) return focus to the
-    Composer WITHOUT answering — no intervention's state changes (the #3300
-    sent-queue durably holds any new Composer submit while any stay pending;
-    no black-hole guard is needed here, see the PR body). The Composer itself
-    is now EXCLUSIVELY for new turns — it no longer reads
-    ``pending_intervention_head()`` at all.
+    Composer WITHOUT answering — no intervention's state changes. The
+    Composer itself is EXCLUSIVELY for new turns — it no longer reads
+    ``pending_intervention_head()`` at all — with ONE narrow exception,
+    ``/answer`` (#3327, see :meth:`_submit`).
+
+    **#3327 correction of an earlier, FALSIFIED claim in this docstring**:
+    an older revision asserted that Esc/Tab needed "no black-hole guard…the
+    #3300 sent-queue durably holds any new Composer submit while any stay
+    pending." That is true as far as it goes but misses the actual failure
+    mode: the #3300 sent-queue durably HOLDS a queued submit, but only
+    DISPATCHES it once the blocking turn frees — which for an ``/answer``
+    aimed at THAT SAME pending intervention can never happen (the turn frees
+    only once the intervention resolves, and the intervention resolves only
+    once the queued ``/answer`` dispatches — a chicken-and-egg deadlock, not
+    a "durably held, eventually delivered" queue wait). A keyboard-only user
+    who ``Esc``-dismissed the panel — the escape hatch above, still intended
+    and unchanged — had no way back: ``Tab``/``Shift+Tab`` only cycle
+    Composer↔MenuBar, and the Composer's own ``↓``/``↑`` targeted the menu
+    and sent-queue, never the panel. Two fixes close this, both #3327: (1)
+    :meth:`_submit` now tries ``/answer`` through
+    :meth:`~reyn.interfaces.transport.client_transport.ClientTransport.deliver_pending_answer`
+    — a DIRECT, un-queued delivery — before the queued path, so it can
+    always resolve the intervention it targets regardless of turn state; (2)
+    the Composer's ``↑`` (first line, per :class:`Composer`'s own
+    ``_on_key``) now focuses the pending :class:`InterventionPanel` FIRST,
+    ahead of the sent-queue, whenever one is showing — the SAME idiom that
+    already routes ``↑`` to the sent-queue, extended rather than replaced,
+    and registered in :data:`~reyn.interfaces.inline.textual_chat.chrome.COMPOSER_KEYS`
+    so the Help pane surfaces it.
     """
 
     #: FlowView animation frame rate (Hz) driving the native running-blink gutter.
@@ -856,11 +880,16 @@ class TextualChatApp(App):
         self, event: "InterventionPanel.Dismissed"
     ) -> None:
         """Esc/Tab inside the panel: return focus to the Composer WITHOUT
-        answering — the escape hatch of the focus lifecycle. Every pending
-        intervention stays exactly as it was (the panel stays open); a new
-        Composer submit durably queues on the inbox rather than black-holing
-        (#3300's sent-queue — see the PR body for why #3299 needs no guard of
-        its own here)."""
+        answering — the escape hatch of the focus lifecycle, unchanged by
+        #3327. Every pending intervention stays exactly as it was (the panel
+        stays open); a new Composer submit durably queues on the inbox
+        rather than black-holing (#3300's sent-queue). #3327 fixed the
+        REACHABILITY gap this escape hatch used to leave behind: a
+        keyboard-only user now has a way back to the panel (the Composer's
+        ``↑``, see :class:`Composer`'s ``_on_key``) and ``/answer`` no longer
+        deadlocks behind the sent-queue (see :meth:`_submit`) — so dismissing
+        here is a real, recoverable "focus elsewhere for now", not a
+        one-way trip."""
         self.query_one(Composer).focus()
 
     def _ingest_frame(self, msg: "OutboxMessage") -> None:
@@ -1598,27 +1627,39 @@ class TextualChatApp(App):
         await self._submit(text)
 
     async def _submit(self, text: str) -> None:
-        """Route one submitted line through the transport send seam as an
-        ordinary NEW turn.
+        """Route one submitted line through the transport send seam.
 
         #3299 P1: the Composer is now EXCLUSIVELY for new turns — it no longer
         reads ``pending_intervention_head()`` at all. Answering a pending
-        intervention (closed-set select or free-text) happens ONLY through the
+        intervention (closed-set select or free-text) happens through the
         :class:`~reyn.interfaces.inline.textual_chat.intervention_panel.InterventionPanel`
         (:meth:`on_intervention_panel_choice_selected` /
-        :meth:`on_intervention_panel_text_submitted`), never here. A Composer
-        submit that lands while an intervention is pending is NOT black-holed:
-        the backend turn stays busy awaiting the intervention, so
-        ``submit_user_text`` durably queues the line on the inbox — visible in
-        the sent-queue region (#3300 P2b, this module) and cancelable there
-        (#3300 Y-client, ``↑`` from the composer to focus it, ``Enter`` on a
-        highlighted row to cancel) — rather than losing it. This delegation
-        was verified live (turn-owner-task /
-        inbox-durability trace) by the architect design pass for #3299, so P1
-        needs no hint/block guard of its own. Errors are contained and
-        surfaced as an error frame the pump renders — a silent input drop is
-        the worst failure for a chat box."""
+        :meth:`on_intervention_panel_text_submitted`) — its own, never-queued
+        transport funnel — for anyone who can reach the panel, plus ONE
+        Composer-typed exception: ``/answer`` (#3327). ``/answer`` acts on an
+        EXISTING pending intervention, not a new turn, so it is tried FIRST
+        through :meth:`~reyn.interfaces.transport.client_transport.ClientTransport.deliver_pending_answer`
+        — a direct, un-queued delivery — before falling through to the
+        ordinary new-turn path below. This is load-bearing, not cosmetic:
+        #3327 found that a Composer submit landing while a turn is blocked on
+        an intervention is durably queued (the #3300 sent-queue) but the
+        queue only DRAINS once that SAME turn frees — which requires that
+        SAME intervention to resolve. A queued ``/answer`` therefore chases
+        its own precondition and can never fire; a keyboard-only user who
+        ``Esc``-dismissed the panel (#3299 P1's documented escape hatch, which
+        returns focus WITHOUT answering) had no way back at all before this
+        fix. Every OTHER submission (a fresh turn, or ``/answer`` typed with
+        nothing pending) is UNCHANGED: ``deliver_pending_answer`` returns
+        ``False`` and ``submit_user_text`` durably queues the line on the
+        inbox — visible in the sent-queue region (#3300 P2b, this module) and
+        cancelable there (#3300 Y-client, ``↑`` from the composer to focus
+        it when nothing is pending, ``Enter`` on a highlighted row to
+        cancel) — rather than losing it. Errors are contained and surfaced as
+        an error frame the pump renders — a silent input drop is the worst
+        failure for a chat box."""
         try:
+            if await self._transport.deliver_pending_answer(text):
+                return
             await self._transport.submit_user_text(text)
         except Exception as exc:
             logger.exception("textual chat: submit failed")
