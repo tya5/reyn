@@ -99,6 +99,17 @@ _TURN_AND_ANSWER_EVENTS = frozenset(
 )
 
 
+# #3310 N1: the session-switch notification — a stream BARRIER the registry
+# attach seam (``AgentRegistry.attach``/``attach_session``) puts directly on
+# ``repl_outbox`` (never routed through a session's own chat-events — see
+# ``AgentRegistry._announce_session_attached``). Forwarded ahead of any
+# consumer, exactly like :data:`_STREAMING_EVENTS` below: a client resets its
+# per-session display cache on this event (N2, a separate PR); until that
+# consumer lands, a surface with no branch for it drops it silently (opt-in
+# draw), never a garbage row.
+_SESSION_LIFECYCLE_EVENTS = frozenset({"session_attached"})
+
+
 # #3288 ③b: streamed LLM content-delta chat-events — the owner-ratified L4
 # replacement (issue #3288 comment thread): a partial rides a chat-event
 # (never an ``OutboxMessage`` kind, which the closed display vocabulary would
@@ -140,8 +151,17 @@ def renderer_chat_events() -> frozenset[str]:
       consumer in a DIFFERENT surface (``TextualChatApp._handle_agent_delta_event``,
       ``interfaces/inline/textual_chat/app.py``), proving the forward-ahead
       design worked: the consumer landed with zero changes needed here.
+    - :data:`_SESSION_LIFECYCLE_EVENTS` (#3310 N1) — the ``session_attached``
+      switch-barrier, a SECOND forward-ahead-of-consumer exception for the
+      same reason as ``_STREAMING_EVENTS``: no renderer branches on it yet
+      (the client-side reset is N2, a separate PR).
     """
-    return frozenset(_WAITING_ON_BY_EVENT.keys()) | _TURN_AND_ANSWER_EVENTS | _STREAMING_EVENTS
+    return (
+        frozenset(_WAITING_ON_BY_EVENT.keys())
+        | _TURN_AND_ANSWER_EVENTS
+        | _STREAMING_EVENTS
+        | _SESSION_LIFECYCLE_EVENTS
+    )
 
 
 @dataclass(frozen=True)

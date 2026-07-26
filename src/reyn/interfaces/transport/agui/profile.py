@@ -156,6 +156,16 @@ CUSTOM_PROFILE: dict[str, CustomName] = _entries(
         "(never a client-local cancel-success response)",
     ),
     CustomName(
+        "reyn.event.session_attached", EVENT_NS, "the event data object",
+        "a session/agent switch just happened (#3310 N1) — carries "
+        "{agent, session_id}, the identity a client keys its display/reset "
+        "on. Emitted at the registry attach seam (`AgentRegistry.attach`/"
+        "`attach_session`), put directly on `repl_outbox` as a stream "
+        "BARRIER (no session's own chat-events, since that stream is the "
+        "thing being swapped) — forwarded ahead of any consumer (N2, a "
+        "separate PR, adds the client-side reset)",
+    ),
+    CustomName(
         "reyn.event.agent_delta", EVENT_NS, "the event data object",
         "one streamed LLM content-delta chunk (#3288 ③b) — carries the raw "
         "delta text + chain_id; a NON-PERSISTENT, purely additive notification "

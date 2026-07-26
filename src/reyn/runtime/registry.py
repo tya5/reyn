@@ -37,6 +37,7 @@ logger = logging.getLogger(__name__)
 
 from reyn.core.events.agent_snapshot import AgentSnapshot
 from reyn.core.events.anchor_store import AnchorStore
+from reyn.core.events.events import Event
 from reyn.core.events.retention import RetentionPolicy, compute_retention_floor
 from reyn.core.events.snapshot_generations import (
     REWIND_KIND,
@@ -54,6 +55,7 @@ from reyn.core.events.snapshot_generations import (
 )
 from reyn.core.events.snapshot_generations import checkout as _append_reset_record
 from reyn.core.events.state_log import StateLog
+from reyn.interfaces.transport.frames import EventFrame
 
 from .profile import PROFILE_FILENAME, AgentProfile
 from .spawn_routing import ReviewedNA
@@ -2932,6 +2934,42 @@ class AgentRegistry:
             except AttributeError:
                 pass
 
+    def _announce_session_attached(self, name: str, sid: str) -> None:
+        """#3310 N1: notify the client a switch just happened, as a stream
+        BARRIER on ``repl_outbox`` — the one queue every local client drains.
+
+        ★Altitude: this cannot ride ``new_session._chat_events`` (the per-
+        session chat-event stream `session.subscribe_chat_events` follows) —
+        that stream IS the thing being swapped, so a client keying its reset
+        on an event emitted FROM the new session couldn't distinguish "new
+        session's first frame" from "the switch itself". Emitting here, at
+        the registry seam that owns ``repl_outbox``, is the one altitude
+        that sees both the old and the new session.
+
+        ★It is an ``EventFrame``, never an ``OutboxMessage`` kind — same
+        reasoning the owner ratified for #3288 ③b: an EVENT frame is opt-in
+        draw (a consuming surface with no branch for it drops it silently,
+        never rendering a garbage row), where an unknown DISPLAY kind is
+        rendered generically. Registering a new closed-vocabulary
+        ``OutboxMessage`` kind for a pure state transition would be the
+        category error #3288 ③b designed out.
+
+        ★Barrier property (design-pass, issue #3310): this call is placed
+        IMMEDIATELY after the ``self._attached = key`` flip, with NO
+        ``await`` anywhere in between (both are plain synchronous
+        statements: an attribute assignment and ``Queue.put_nowait``, never
+        ``await Queue.put``). Single event loop ⇒ nothing can interleave
+        inside that synchronous region, so on the ``repl_outbox`` FIFO
+        "before this frame = old session's frames, after = new session's
+        frames" holds BY CONSTRUCTION — a client resets its display on this
+        frame and cross-contamination between sessions becomes impossible,
+        not merely unlikely. Mirrors the no-await critical-section idiom in
+        ``Session.cancel_queued`` (#3300 Y-server / #3306).
+        """
+        self.repl_outbox.put_nowait(
+            EventFrame(Event(type="session_attached", data={"agent": name, "session_id": sid}))
+        )
+
     async def attach(self, name: str) -> "object":
         """Switch the attached agent to `name`. Loads + starts session.run()
         and the outbox forwarder for the new agent if not already running.
@@ -2964,6 +3002,7 @@ class AgentRegistry:
                 self._forwarder(name, sid)
             )
         self._attached = key
+        self._announce_session_attached(name, sid)
 
         # Re-announce any pending interventions for the user. While detached,
         # `_announce_intervention` already put the original message on the
@@ -3003,6 +3042,7 @@ class AgentRegistry:
         if key not in self._forward_tasks or self._forward_tasks[key].done():
             self._forward_tasks[key] = asyncio.create_task(self._forwarder(name, sid))
         self._attached = key
+        self._announce_session_attached(name, sid)
         for iv in target._interventions.list_active():
             if not iv.future.done():
                 await target._announce_intervention(iv)
