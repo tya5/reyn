@@ -1,34 +1,47 @@
-"""Tier 2: #3288 ③b — "no visible-garbage window" for the "agent_delta"
-chat-event, witnessed on the ACTUAL ``TextualChatApp`` pump (production code
-untouched — imported and driven read-only from this test, per the #3299/P5
-non-interference constraint on ``interfaces/inline/textual_chat/``).
+"""Tier 2: #3288 ③b/③c — the "no visible-garbage window" property for the
+"agent_delta" chat-event, witnessed on the ACTUAL ``TextualChatApp`` pump
+(production code untouched — imported and driven read-only from this test,
+per the #3299/P5 non-interference constraint on
+``interfaces/inline/textual_chat/``).
 
-The owner's ratified design (issue #3288 comment thread) chose a chat-event
-route specifically BECAUSE an EVENT frame with no consumer is dropped
-(``_pump_frames``'s ``if/elif/.../continue`` has no ``else`` — consumed but
-never drawn), whereas an unknown ``OutboxMessage`` DISPLAY kind is rendered as
-a generic row by the presenter. ③c (a later phase, out of scope here) adds the
-textual_chat coalescing consumer for "agent_delta"; UNTIL it lands, this test
-is the CI gate that a future change cannot silently start drawing a row per
-delta (a visible-garbage regression) without this test going RED — a
-structural strip-style witness, not a one-time manual read of the source.
+★③c re-point (issue #3288 comment thread, ③c phase): ③b's original assertion
+here was "an agent_delta draws NOTHING" — true only UNTIL ③c lands a
+consumer. ③c's whole job is to make ``agent_delta`` coalesce into a flow
+entry (:meth:`TextualChatApp._handle_agent_delta_event`), which legitimately
+FALSIFIES that literal assertion. The PROPERTY worth keeping (per the ③c
+brief: "migrate, do not delete") is narrower and still true post-③c: **a
+delta never produces a junk row of its own** — N deltas for one reply
+produce exactly ONE flow entry (never N), and that entry's content is the
+progressively-coalesced text, not a generic/garbage rendering of the raw
+event payload. This file re-points the assertion to that property instead
+of dropping the file's witness.
 
-★co-vet fix (PR #3312 review): an EARLIER version of this file asserted only
-"FlowView entry count unchanged" against the delta push — which stays GREEN
-even if ``push_event``/the transport is silently dead (verified: neutering
-``QueueTransport.push_event`` into a no-op left both tests passing), because
-"delivered but not drawn" and "never delivered" are indistinguishable from
-that assertion alone. The fix is an ARRIVAL WITNESS (positive control) that
-exercises the EXACT SAME ``push_event`` path the delta assertion depends on:
-push a real ``user_submitted`` + matching ``turn_started`` pair FIRST (the
-proven promote-to-FlowView sequence from
+★co-vet fix (PR #3312 review, ③b): an EARLIER version of this file asserted
+only "FlowView entry count unchanged" against the delta push — which stays
+GREEN even if ``push_event``/the transport is silently dead (verified:
+neutering ``QueueTransport.push_event`` into a no-op left both tests
+passing), because "delivered but not drawn" and "never delivered" are
+indistinguishable from that assertion alone. The fix is an ARRIVAL WITNESS
+(positive control) that exercises the EXACT SAME ``push_event`` path the
+delta assertion depends on: push a real ``user_submitted`` + matching
+``turn_started`` pair FIRST (the proven promote-to-FlowView sequence from
 ``tests/test_3300_p2b_sentqueue_render.py::test_turn_started_promotes_matching_item_to_flow_entry``)
 and assert the FlowView entry count DOES increase — proving this transport +
-pump pair is alive and forwarding EVENT frames — THEN push the delta and
-assert no FURTHER increase. (A bare ``user_submitted`` alone cannot serve as
-this witness: #3300 P2b made it materialize into the sent-queue only, never a
-FlowView entry by itself — the promoting ``turn_started`` companion is
-required, mirroring the cited test exactly.)
+pump pair is alive and forwarding EVENT frames — THEN push the delta(s) and
+assert against that KNOWN-alive baseline. (A bare ``user_submitted`` alone
+cannot serve as this witness: #3300 P2b made it materialize into the
+sent-queue only, never a FlowView entry by itself — the promoting
+``turn_started`` companion is required, mirroring the cited test exactly.)
+
+★self-diagnosing failure (③c brief): if
+``test_agent_delta_draws_exactly_one_coalesced_entry`` below fails at its
+ARRIVAL-WITNESS step (before any delta is even pushed), the failure is a
+regression in the EVENT delivery path itself (``push_event`` / ``frames()`` /
+``turn_started`` promotion), NOT a ③c coalesce regression — the same
+``user_submitted``+``turn_started`` pair this file has used since ③b is
+reused unmodified as the positive control, so a failure there points at the
+delivery mechanism, not at the "agent_delta" consumer this file is actually
+about.
 
 Real instances only: a real ``TextualChatApp`` driven via Textual's
 ``run_test()`` harness (mirrors ``tests/test_user_submitted_render_3300.py``'s
@@ -44,7 +57,7 @@ from textual_flowview import FlowView
 
 from reyn.interfaces.inline.textual_chat import TextualChatApp
 from reyn.interfaces.transport.client_transport import ClientTransport
-from reyn.interfaces.transport.frames import EventFrame
+from reyn.interfaces.transport.frames import DisplayFrame, EventFrame
 from reyn.runtime.outbox import OutboxMessage
 from reyn.schemas.models import Event
 
@@ -61,6 +74,9 @@ class QueueTransport(ClientTransport):
 
     async def push_event(self, event: Event) -> None:
         await self._queue.put(EventFrame(event))
+
+    async def push_display(self, msg: OutboxMessage) -> None:
+        await self._queue.put(DisplayFrame(msg))
 
     def start(self) -> None:  # pragma: no cover - trivial
         pass
@@ -136,46 +152,102 @@ async def _arrival_witness(transport: QueueTransport, pilot, app: TextualChatApp
 
 
 @pytest.mark.asyncio
-async def test_agent_delta_event_draws_nothing_in_textual_chat() -> None:
-    """Tier 2: pushing an "agent_delta" EVENT frame through the REAL
-    ``TextualChatApp._pump_frames`` must not append a FlowView entry — the
-    event is consumed (the pump does not crash / stall) but not drawn, since
-    no branch in the (untouched) pump matches "agent_delta" yet. Preceded by
-    the arrival witness (see module docstring / ``_arrival_witness``) so a
-    dead ``push_event`` cannot make this pass vacuously.
+async def test_agent_delta_draws_exactly_one_coalesced_entry() -> None:
+    """Tier 2: ③c re-point of ③b's "draws nothing" — N ``agent_delta``
+    chat-events for ONE reply must never produce more than ONE FlowView
+    entry, and that entry's content must be the progressively-coalesced
+    text — never a junk/generic row per delta (the property ③b's original
+    assertion was guarding, restated for a world where ③c's consumer
+    exists).
 
-    Strip-falsify (recorded in the PR body): re-emitting the SAME delta as a
-    ``DisplayFrame`` (an ``OutboxMessage``-kind carrier — the design the
-    owner's decision REPLACES) through this same app DOES append a generic
-    row — proving the chat-event route is what closes the visible-garbage
-    window, not an accident of this particular event's payload shape.
+    ★vacuity fix (lead-coder correction on this PR): asserting ONLY at/after
+    the terminal completion is itself vacuous — the completion frame alone
+    creates one full-text entry regardless of whether any delta was ever
+    delivered, so "1 entry, full text" would pass even with delta delivery
+    completely dead. This test instead asserts at THREE cross-sections:
+
+    1. after the arrival witness (baseline, proven alive) but BEFORE any
+       delta — establishes the pre-delta count;
+    2. after the FIRST delta only (mid-coalesce, no completion yet) — count
+       must be baseline+1 and the entry's content must be that first
+       delta's PARTIAL text (proves the delta itself is what created the
+       entry — not the later completion);
+    3. after a SECOND delta (still no completion) — count stays at
+       baseline+1 (no second row) and content is the ACCUMULATED partial
+       text of both deltas (proves in-place coalescing, not silent drop or
+       replace-by-latest);
+    4. after the terminal ``kind="agent"`` completion (same chain_id) —
+       count STILL stays at baseline+1 (no second entry from the
+       completion either) and content is the completion's authoritative
+       full text (finalize, not a third partial state).
+
+    Strip-falsify (recorded in the PR body): reverting the ③c consumer
+    (``TextualChatApp._handle_agent_delta_event``) to a no-op reproduces
+    ③b's old "draws nothing" behavior — step 2 then fails (count stays at
+    baseline instead of baseline+1) — confirming this assertion actually
+    depends on the ③c coalesce mechanism, not on a tautology.
     """
     transport = QueueTransport()
     app = TextualChatApp(transport=transport)
     async with app.run_test(size=(100, 30)) as pilot:
         await pilot.pause()
-        after_witness = await _arrival_witness(transport, pilot, app)
+        baseline = await _arrival_witness(transport, pilot, app)
 
         await transport.push_event(
-            Event(type="agent_delta", data={"text": "partial chunk", "chain_id": "c1"})
+            Event(type="agent_delta", data={"text": "Hello", "chain_id": "c1"})
         )
         await pilot.pause()
+        entries = app.query_one(FlowView).entries
+        assert len(entries) == baseline + 1, (
+            "a single agent_delta must create exactly ONE new flow entry — "
+            f"count {baseline} -> {len(entries)}; delta delivery/coalesce is "
+            "not creating an entry (possible regression to ③b's pre-③c "
+            "'draws nothing' behavior)"
+        )
+        assert entries[-1].item.text == "Hello", (
+            "the first delta's entry must render that delta's own (partial) "
+            f"text, got {entries[-1].item.text!r}"
+        )
 
-        after_delta = len(app.query_one(FlowView).entries)
-        assert after_delta == after_witness, (
-            "an agent_delta chat-event must draw NOTHING (opt-in draw, no "
-            f"consumer yet) — entry count changed {after_witness} -> {after_delta}"
+        await transport.push_event(
+            Event(type="agent_delta", data={"text": ", world", "chain_id": "c1"})
+        )
+        await pilot.pause()
+        entries = app.query_one(FlowView).entries
+        assert len(entries) == baseline + 1, (
+            "a SECOND delta for the SAME chain_id must coalesce into the "
+            f"SAME entry, not append a new row — count changed to {len(entries)}"
+        )
+        assert entries[-1].item.text == "Hello, world", (
+            "the second delta must ACCUMULATE onto the first, not replace "
+            f"or drop it, got {entries[-1].item.text!r}"
+        )
+
+        await transport.push_display(
+            OutboxMessage(kind="agent", text="Hello, world!", meta={"chain_id": "c1"})
+        )
+        await pilot.pause()
+        entries = app.query_one(FlowView).entries
+        assert len(entries) == baseline + 1, (
+            "the terminal completion for an already-streamed chain_id must "
+            f"FINALIZE the existing entry, not append a second one — count "
+            f"changed to {len(entries)}"
+        )
+        assert entries[-1].item.text == "Hello, world!", (
+            "the finalized entry must show the completion's AUTHORITATIVE "
+            f"full text (L9 whole-persist), got {entries[-1].item.text!r}"
         )
 
 
 @pytest.mark.asyncio
 async def test_agent_delta_ignored_alongside_other_unhandled_events() -> None:
-    """Tier 2: non-vacuity companion — a DIFFERENT unhandled event type
-    (mirroring ``test_textual_chat_app_ignores_non_user_submitted_events_for_flow``)
-    also draws nothing, proving the previous test's zero-delta is because NO
-    unhandled EVENT frame draws anything (the pump's structural behavior),
-    not a coincidence specific to the "agent_delta" payload shape. Carries its
-    OWN arrival witness so this test alone cannot pass vacuously either."""
+    """Tier 2: non-vacuity companion — a DIFFERENT, genuinely unhandled event
+    type (mirroring ``test_textual_chat_app_ignores_non_user_submitted_events_for_flow``)
+    still draws NOTHING, proving the opt-in-draw structural property
+    (``_pump_frames``'s ``if/elif/.../continue`` with no ``else``) survives
+    ③c's addition of an "agent_delta" branch — ③c added ONE new elif arm, it
+    did not turn the EVENT path into a default-draw path. Carries its OWN
+    arrival witness so this test alone cannot pass vacuously either."""
     transport = QueueTransport()
     app = TextualChatApp(transport=transport)
     async with app.run_test(size=(100, 30)) as pilot:

@@ -413,7 +413,11 @@ A reyn chat-event with no standard AG-UI analog. `value` is the event's data
 object. Most members are the working-indicator axis (turn-lifecycle /
 tool-call / user-submitted / cancel); `agent_delta` (#3288 ③b) is a SEPARATE
 streaming-notification axis — see its row below and the `_STREAMING_EVENTS`
-comment in `frames.py` for why it is forwarded ahead of any renderer consumer.
+comment in `frames.py` for why it was forwarded ahead of any consumer. The
+plain/repl renderer still has no `agent_delta` branch (and may never); the
+Textual TUI (`interfaces/inline/textual_chat`) is the one surface that
+consumes it, as of #3288 ③c — see *Textual TUI streamed-reply rendering*
+below.
 ★This `CUSTOM` mapping is what `encode_frame`/`encode_frame_wire` (the plain,
 non-streaming codec path) produce for an `agent_delta` `EventFrame` — the AG-UI
 emitter's actual production call site (`emitter.py`) instead runs every frame
@@ -430,6 +434,27 @@ wire.
 | `reyn.event.user_submitted`          | a user turn was submitted (#3300 P1 C) — RAW text + chain_id + msg_id + seq + meta; each surface neutralizes at its render boundary. `msg_id`/`seq` are the #3300 P2a sent-queue correlation id + order-race-gate token |
 | `reyn.event.inbox_cancel`            | an UNDISPATCHED queued user message was cancelled by id (#3300 P3, via the `cancel_queued` client message) — carries `msg_id` + `seq`; the server-authoritative sent-queue removal signal (never a client-local "cancel succeeded" response), exclusive with `turn_started` for the same `msg_id` |
 | `reyn.event.agent_delta`             | one streamed LLM content-delta chunk (#3288 ③b) — carries `text` (the raw per-chunk delta) + `chain_id`. The plain codec's `CUSTOM` mapping (see the note above); on the actual AG-UI wire (`encode_frame_wire_streaming`, #3288 ③d) this rides `TEXT_MESSAGE_CONTENT` instead — see *Text lifecycle* above for the full streamed-message contract (END-only completion, reconstruction authority, late-joiner closure) |
+
+### Textual TUI streamed-reply rendering (#3288 ③c)
+
+The Textual TUI (`interfaces/inline/textual_chat/app.py`) is the L7 consumer
+`agent_delta` was forwarded ahead of (see the note above): `TextualChatApp.
+_handle_agent_delta_event` coalesces N deltas for one reply into exactly ONE
+`FlowView` entry, keyed by `chain_id` — the SAME authoritative correlation id
+`RouterLoop._emit_agent_delta` stamps on every delta and the terminal
+`kind="agent"` `OutboxMessage` carries in its own `meta`. The first delta for
+a `chain_id` appends a new entry; every later delta for that same `chain_id`
+updates that SAME entry in place (`Entry.set_item`) rather than appending a
+second row. The terminal completion (a DISPLAY frame, not an event) then
+FINALIZES that same entry with the completion's authoritative full text
+(never the deltas — L9 whole-persist's source of truth) and stops tracking
+the `chain_id`, rather than appending a second entry of its own — this is
+what keeps a mid-stream-joining client (one that only ever received the TAIL
+of a reply's deltas, see *Text lifecycle*'s late-joiner closure above) to
+exactly one final entry instead of a duplicate. The plain/repl renderer has
+no equivalent branch and is unaffected — `agent_delta` there is still
+consumed-but-dropped (opt-in draw, no visible-garbage window), exactly as
+before ③c.
 
 ### `reyn.intervention.<kind>`
 
