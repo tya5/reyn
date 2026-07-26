@@ -43,6 +43,7 @@ from textual_flowview import (
 from reyn.interfaces.repl.renderer import summarize_tool_result
 from reyn.interfaces.transport.frames import FrameTag
 
+from ._meta_keys import ORPHANED_RESULT_KIND as _ORPHANED_RESULT_KIND
 from .chrome import (
     _MENU_TABS,
     Composer,
@@ -87,6 +88,18 @@ _SKIP_KINDS = frozenset(
 # The options are still rendered above as chips, so the hint re-affirms them
 # without echoing the (LLM-derived) labels back into the terminal.
 _CHOICE_HINT_TEXT = "Please choose one of the options above (or click a chip)."
+
+# Turn-end event types (#72): when one of these lands on the EVENT-tag frame
+# path, any tool row still RUNNING is a confirmed ORPHAN — its completion frame
+# can never arrive for THIS turn, since the turn itself just ended. Mirrors the
+# plain renderer's ``on_chat_event`` turn-end branch
+# (``src/reyn/interfaces/repl/renderer.py``): ``turn_settled`` fires for EVERY
+# turn kind (incl. slash short-circuits) and is the primary signal;
+# ``turn_completed`` / ``turn_cancelled`` are belt-and-suspenders. Deliberately
+# NOT a max-age timer — a time threshold cannot distinguish an orphan (tool
+# truly gone) from a slow-but-alive tool (a legitimately long ``exec``); the
+# turn-boundary signal is deterministic instead of guessed.
+_TURN_END_EVENT_TYPES = frozenset({"turn_settled", "turn_completed", "turn_cancelled"})
 
 
 def _match_choice_input(text: str, choices: "object") -> "str | None":
@@ -724,6 +737,59 @@ class TextualChatApp(App):
                 EntryState.ERROR if summary.startswith("✗") else EntryState.SUCCESS
             )
 
+    def _sweep_orphaned_running_tools(self) -> None:
+        """Force-settle any tool row still RUNNING at a TURN BOUNDARY (#72).
+
+        An ORPHAN is a tool whose completion frame never arrives — its report is
+        lost, or the turn ends without it — leaving its ② live spinner
+        (``⠙ elapsed Ns``) spinning FOREVER. The fix is deterministic rather than
+        a max-age timer: a time threshold cannot tell an orphan (tool truly gone)
+        apart from a slow-but-alive tool (a legitimately long ``exec``), but when
+        the TURN itself settles, there can be no more completions for that
+        turn's tools — any entry still in :attr:`_running_tools` at that instant
+        is a confirmed orphan. Called from :meth:`_pump_frames` on
+        ``turn_settled`` / ``turn_completed`` / ``turn_cancelled``.
+
+        Each orphan is settled exactly like :meth:`_coalesce_tool_result` (stop
+        the ② animation, strip :data:`_RUNNING_SINCE_KEY`, stash a result-kind
+        marker so the presenter folds a ``⎿`` sub-line under the header) EXCEPT
+        the stashed kind is the NEUTRAL sentinel
+        :data:`~reyn.interfaces.inline.textual_chat._meta_keys.ORPHANED_RESULT_KIND`
+        — never a failure. The tool did not fail; its report simply never
+        arrived, so the row goes :attr:`EntryState.CANCELLED` (dim gutter, same
+        as ``ReynGutter``'s DEFAULT/CANCELLED colour) rather than ``SUCCESS``
+        (would imply it worked) or ``ERROR`` (would imply it failed — the #3296
+        don't-fabricate-a-failure lesson). Every step is guarded so one orphan's
+        settle failure never kills the pump or leaves the others un-swept; the
+        dict is cleared unconditionally at the end so no turn's leftovers bleed
+        into the next."""
+        for entry in list(self._running_tools.values()):
+            try:
+                self._flow.stop_entry_animation(entry)
+            except Exception:
+                logger.exception(
+                    "textual chat: could not stop orphaned-tool animation"
+                )
+            try:
+                meta = {
+                    k: v
+                    for k, v in (entry.item.meta or {}).items()
+                    if k != _RUNNING_SINCE_KEY
+                }
+                meta[_RESULT_KIND_KEY] = _ORPHANED_RESULT_KIND
+                entry.set_item(replace(entry.item, meta=meta))
+            except Exception:
+                logger.exception(
+                    "textual chat: could not settle orphaned-tool entry"
+                )
+            try:
+                entry.set_state(EntryState.CANCELLED)
+            except Exception:
+                logger.exception(
+                    "textual chat: could not set orphaned-tool state"
+                )
+        self._running_tools.clear()
+
     def _begin_running_indicator(self, entry: "Entry[OutboxMessage]") -> None:
         """Start the live spinner + elapsed body for a RUNNING tool entry (②).
 
@@ -765,12 +831,23 @@ class TextualChatApp(App):
         :meth:`_ingest_frame` — appending a new entry, or COALESCING a correlated
         tool result into its RUNNING started entry (② settle-in-place). ``__end__``
         stops the app (the session closed). Event frames are the working-indicator
-        path — consumed but not yet drawn. A single frame's failure must not kill
-        the pump, so ingest is guarded.
+        path — consumed but not drawn, EXCEPT for the turn-end subset
+        (:data:`_TURN_END_EVENT_TYPES`), which triggers
+        :meth:`_sweep_orphaned_running_tools` (#72: force-settle any tool still
+        RUNNING when its turn ends — a confirmed orphan). A single frame's
+        failure must not kill the pump, so ingest is guarded.
         """
         try:
             async for frame in self._transport.frames():
                 if frame.tag is FrameTag.EVENT:
+                    etype = getattr(frame.event, "type", None)
+                    if etype in _TURN_END_EVENT_TYPES:
+                        try:
+                            self._sweep_orphaned_running_tools()
+                        except Exception:
+                            logger.exception(
+                                "textual chat: orphaned-tool sweep failed"
+                            )
                     continue
                 msg = frame.message
                 if msg.kind == "__end__":
