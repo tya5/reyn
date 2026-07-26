@@ -118,6 +118,25 @@ class InterventionPanel(Vertical):
     PENDING intervention (#3308); collapsed (``display=False``) only while
     NOTHING is pending — the default state until the first :meth:`add_pending`."""
 
+    #: ★ #3311 real-TTY regression: this CSS deliberately does NOT set a rule
+    #: for ``Tabs`` (the internal tab-caption bar ``TabbedContent`` composes).
+    #: An earlier revision of this file added ``InterventionPanel Tabs {
+    #: height: auto; }`` alongside the ``TabbedContent`` rule below, by
+    #: (wrong) analogy — but ``textual.widgets.Tabs`` ships its OWN sensible
+    #: FIXED ``height: 2`` default (verified against the installed Textual
+    #: 8.2.8: ``Tabs.DEFAULT_CSS``), and overriding a widget that is NOT
+    #: designed for auto-sizing to ``height: auto`` resolved to a hugely
+    #: inflated value (~30 rows on an 80x24 screen, tui-coder's real-TTY
+    #: witness on #3311) — ballooning the whole panel (also ``height: auto``)
+    #: and pushing the FlowView/Composer off-screen. Every widget-STATE
+    #: assertion in the test suite stayed green throughout (the panel WAS
+    #: displayed, WAS focused — just enormous), which is why
+    #: ``test_pending_intervention_panel_does_not_swallow_the_screen`` /
+    #: ``test_tabs_bar_height_is_the_native_fixed_two_rows`` assert on
+    #: ``Widget.region`` (actual computed screen geometry) directly, not
+    #: widget state. Only ``TabbedContent`` itself (which DOES default to
+    #: ``height: auto`` — ``TabbedContent.DEFAULT_CSS`` — so overriding it is
+    #: a no-op override, kept for documentation clarity) needs a rule here.
     DEFAULT_CSS = """
     InterventionPanel {
         height: auto;
@@ -126,9 +145,6 @@ class InterventionPanel(Vertical):
         margin-top: 1;
     }
     InterventionPanel TabbedContent {
-        height: auto;
-    }
-    InterventionPanel Tabs {
         height: auto;
     }
     InterventionPanel .iv-pane-title {

@@ -1060,3 +1060,117 @@ async def test_resolve_updates_the_same_entry_no_new_entry_appended() -> None:
         assert entry_before.item.meta.get("_answer_label") == "Yes", (
             "the SAME entry object was not updated in place with the resolved answer"
         )
+
+
+# --- #3311 tui-coder real-TTY finding: panel must not swallow the screen ----
+# tui-coder's real-TTY witness found that ``InterventionPanel``'s OWN
+# ``DEFAULT_CSS`` carried an ``InterventionPanel Tabs { height: auto; }``
+# rule that overrode Textual's ``Tabs`` widget's own sensible fixed
+# ``height: 2`` default (``textual.widgets.Tabs.DEFAULT_CSS``, verified
+# against the installed Textual 8.2.8) — ``height: auto`` on ``Tabs`` (a
+# widget that is NOT designed for auto-sizing) resolved to a hugely inflated
+# value, and the panel's own ``height: auto`` then grew to match, pushing the
+# FlowView and Composer off-screen. EVERY widget-state assertion in this file
+# (``panel.display is True``, ``radio.has_focus``, tab labels, etc.) stayed
+# green throughout — none of them look at LAYOUT GEOMETRY, so this defect
+# slipped through all of them. These tests close that gap by asserting on
+# ``Widget.region`` (Textual's own computed screen-space rectangle) directly.
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("screen_size", [(80, 24), (100, 60)])
+async def test_pending_intervention_panel_does_not_swallow_the_screen(
+    screen_size: "tuple[int, int]",
+) -> None:
+    """Tier 2b: ★ real-TTY-witnessed regression guard (#3311) — with ONE
+    intervention pending, on TWO screen sizes: the panel's region must be a
+    SMALL FRACTION of the screen height (not the whole screen), and the
+    FlowView (conversation) + Composer (input row) must both be FULLY
+    CONTAINED on-screen (``0 <= y`` AND ``y + height <= screen_height`` —
+    BOTH bounds) with the FlowView NOT squashed to a hairline sliver.
+
+    ★co-vet correction (an earlier version of this test asserted only
+    ``region.height > 0`` and an upper-bound-only containment check
+    (``y + height <= screen_height``) — BOTH are insufficient: measured
+    directly against the actual pre-fix defect, the FlowView's region was
+    ``y=-8, height=1`` — height IS non-zero (1), and ``y + height = -7 <=
+    screen_height`` is trivially TRUE for a NEGATIVE ``y`` (pushed off the
+    TOP of the screen), so neither check alone would have caught it. The
+    Composer's defective region (``y=24, height=1`` on an 80x24 screen) WAS
+    caught by an upper-bound check (``24 + 1 = 25 > 24``), but relying on
+    that asymmetry across the two widgets is exactly the born-vacuous trap —
+    this version requires the LOWER bound (``y >= 0``) explicitly for both,
+    plus a not-squashed floor on the FlowView, so it cannot pass by
+    coincidence of which widget happened to be pushed which direction.
+
+    NON-VACUITY (falsification, verified locally against the actual pre-fix
+    ``InterventionPanel Tabs { height: auto; }`` rule, both screen sizes):
+    - 80x24: FlowView measured ``Region(x=0, y=-8, width=78, height=1)``
+      (``y >= 0`` fails) and Composer ``Region(x=2, y=24, width=76,
+      height=1)`` (``y + height = 25 > 24`` fails).
+    - 100x60: FlowView ``Region(x=0, y=-8, width=98, height=1)`` (``y >= 0``
+      fails), Composer ``Region(x=2, y=60, width=96, height=1)`` (``y +
+      height = 61 > 60`` fails).
+    A widget-state-only assertion (``panel.display is True``) would NOT have
+    caught any of this — the panel WAS displayed, just enormous."""
+    transport = RecordingTransport([_choice_intervention()], end=False)
+    app = TextualChatApp(transport=transport)
+
+    async with app.run_test(size=screen_size) as pilot:
+        await pilot.pause()
+        await pilot.pause()
+
+        panel = app.query_one(InterventionPanel)
+        flow = app.query_one(FlowView)
+        composer = app.query_one(Composer)
+
+        screen_height = app.size.height
+        assert panel.region.height < screen_height // 2, (
+            f"the pending-intervention panel's region ({panel.region!r}) "
+            f"consumes more than half the {screen_height}-row screen"
+        )
+        for name, widget in (("FlowView", flow), ("Composer", composer)):
+            region = widget.region
+            assert region.y >= 0, (
+                f"{name}'s region is pushed OFF the top of the screen "
+                f"(negative y); region={region!r}"
+            )
+            assert region.y + region.height <= screen_height, (
+                f"{name}'s region extends past the bottom of the "
+                f"{screen_height}-row screen; region={region!r}"
+            )
+        # The FlowView must not be merely "contained" but squashed to a
+        # hairline (the actual pre-fix defect measured height=1 while ALSO
+        # being off-screen — a not-squashed floor closes the case where a
+        # future regression keeps it on-screen but still crushes it).
+        assert flow.region.height >= 3, (
+            f"the FlowView (conversation) is squashed to a hairline while an "
+            f"intervention is pending; region={flow.region!r}"
+        )
+
+
+@pytest.mark.asyncio
+async def test_tabs_bar_height_is_the_native_fixed_two_rows() -> None:
+    """Tier 1: ★ direct witness for the root cause — the panel's internal
+    ``Tabs`` bar (the tab-caption row) must be Textual's OWN fixed
+    ``height: 2`` default, never stretched to ``auto``.
+
+    NON-VACUITY (falsification, verified locally): restoring the
+    ``InterventionPanel Tabs { height: auto; }`` rule makes the ``Tabs``
+    widget's own computed region height balloon (observed locally: from 2 to
+    over 30 rows on an 80x24 screen) instead of staying at 2."""
+    from textual.widgets import Tabs
+
+    transport = RecordingTransport([_choice_intervention()], end=False)
+    app = TextualChatApp(transport=transport)
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        await pilot.pause()
+
+        panel = app.query_one(InterventionPanel)
+        tabs_bar = panel.query_one(TabbedContent).query_one(Tabs)
+        assert tabs_bar.region.height == 2, (
+            f"the intervention panel's Tabs bar is not Textual's native fixed "
+            f"height (2) — got {tabs_bar.region.height}; region={tabs_bar.region!r}"
+        )
