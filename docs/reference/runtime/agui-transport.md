@@ -440,13 +440,26 @@ write, a category error: an INPUT written into the display/OUTPUT channel)
 that rides the SAME unified frame stream as an `EventFrame`
 (`_TURN_AND_ANSWER_EVENTS`, `transport/frames.py`) — the encode/decode is
 generic (`transport/agui/protocol.py`), so no wire changes were needed for the
-new event type. Either way every attached surface's event→display handler
+new event type. Every attached surface's event→display handler
 (`ConsoleChatRenderer.on_chat_event` / `InlineChatRenderer.on_chat_event` /
 `TextualChatApp._pump_frames`) renders the line, neutralizing at that render
-boundary (`renderer.user_submitted_display_message`). The submitting client
-renders its own line from that same event too (no separate local echo) —
-with 2+ clients attached, everyone sees every turn and every answer, not only
-the agent's replies to them.
+boundary (`renderer.user_submitted_display_message`) — **except the one
+client whose own terminal already showed it.** On the plain PromptSession
+loop (`--cui` / `chat.render_mode: plain` / non-TTY, `stream_client.py`), an
+interactive TTY's `prompt_session.prompt_async` leaves the typed line on
+screen the instant Enter is pressed — that already IS the echo. Re-rendering
+it again from the broadcast `user_submitted` event printed every LLM-round-
+trip turn's own line twice (#3287; a local `/quit` never reaches
+`submit_user_text`, so it never doubled — the asymmetry the bug report
+noticed). The fix is ownership, not suppression-by-default: `run_input_loop`
+records each line it hands to `submit_user_text` in a small FIFO
+(`own_submissions`, owned per client-loop-pair, never shared across clients),
+and `run_output_loop` skips re-rendering a `user_submitted` event only when
+its text matches THIS client's own queued line — every other attached
+client's turns (and this client's own turns when non-interactive, where
+nothing else echoes the line) still render normally. With 2+ clients
+attached, everyone still sees every OTHER client's turn and every answer, not
+only the agent's replies to them; each client just stops duplicating its own.
 
 ## AG-UI event coverage — reading the numbers honestly
 

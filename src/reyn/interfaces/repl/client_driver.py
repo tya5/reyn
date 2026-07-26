@@ -132,6 +132,22 @@ async def run_chat_client(
     reply_seen: asyncio.Event = asyncio.Event()
     reply_seen.set()
 
+    # #3287: on an interactive TTY, `prompt_session.prompt_async` below already
+    # leaves the typed line on the terminal the instant Enter is pressed — the
+    # user-line echo already happened there. Without this queue the broadcast
+    # `user_submitted` chat-event this same submission produces (see
+    # `run_output_loop`) renders it a SECOND time, printing every LLM-round-trip
+    # turn's own line twice (a local `/quit` never reaches `submit_user_text`,
+    # so it never doubled — the exact contrast the bug report noted). `None` on
+    # a non-TTY session leaves the event-driven render as the sole echo (there
+    # is nothing else on screen to duplicate it against — piped stdin is never
+    # echoed by the terminal). Owned by THIS client's own loop pair (never
+    # shared), so it only ever matches submissions this same process made —
+    # another attached client's turns still render normally (see both loops'
+    # docstrings in `stream_client.py`).
+    from collections import deque  # noqa: PLC0415
+    own_submissions: "deque[str] | None" = deque() if is_tty else None
+
     from prompt_toolkit import PromptSession  # noqa: PLC0415
     from prompt_toolkit.history import FileHistory  # noqa: PLC0415
     from prompt_toolkit.styles import Style  # noqa: PLC0415
@@ -140,13 +156,17 @@ async def run_chat_client(
         style=Style.from_dict({"bottom-toolbar": "noreverse bg:default"}),
     )
     inputs = asyncio.create_task(
-        run_input_loop(transport, prompt_session, renderer, reply_seen)
+        run_input_loop(
+            transport, prompt_session, renderer, reply_seen,
+            own_submissions=own_submissions,
+        )
     )
 
     outputs = asyncio.create_task(
         run_output_loop(
             transport, renderer, reply_seen,
             command_ui_region=read_model.has_command_ui_region,
+            own_submissions=own_submissions,
         )
     )
 

@@ -395,13 +395,26 @@ TUI の選択肢リージョン・A2A peer・上記の AG-UI HITL round-trip と
 書き込むのは category error だったため)。この event は同一の統一 frame stream に
 `EventFrame` として乗る(`_TURN_AND_ANSWER_EVENTS`、`transport/frames.py`)——
 encode/decode は汎用的(`transport/agui/protocol.py`)なので、新しい event type のために
-wire 側の変更は不要だった。いずれの経路でも、アタッチしているすべての surface の
+wire 側の変更は不要だった。アタッチしているすべての surface の
 event→display handler(`ConsoleChatRenderer.on_chat_event` /
 `InlineChatRenderer.on_chat_event` / `TextualChatApp._pump_frames`)がその行を描画し、
-その render 境界で neutralize する(`renderer.user_submitted_display_message`)。送信した
-クライアント自身も(別のローカルエコーではなく)同じ event から自分の行を描画する —
-2 クライアント以上がアタッチしていれば、全員がすべてのターンとすべての回答を見られる。
-agent からの返信だけではない。
+その render 境界で neutralize する(`renderer.user_submitted_display_message`)——
+**ただし自分の端末がすでにそれを表示していたクライアントを除く。** plain な
+PromptSession ループ(`--cui` / `chat.render_mode: plain` / non-TTY、
+`stream_client.py`)では、対話的な TTY の `prompt_session.prompt_async` が Enter を
+押した瞬間にその行を画面に残す——それ自体がすでに echo である。同じ送信から発生する
+broadcast の `user_submitted` event で再度描画すると、LLM round-trip を伴うすべての
+ターンで自分の行が二重に表示されてしまっていた(#3287。`/quit` は
+`submit_user_text` に到達しないため二重化しない——バグ報告が指摘した非対称性その
+もの)。修正は「デフォルトで抑制する」ではなく「所有権をはっきりさせる」こと:
+`run_input_loop` は `submit_user_text` に渡した行を小さな FIFO
+(`own_submissions`、クライアントの input/output ループのペアごとに保持し、他クライアント
+とは共有しない)に記録し、`run_output_loop` は `user_submitted` event のテキストが
+この FIFO の先頭と一致したときだけ再描画をスキップする。他のすべてのアタッチ済み
+クライアントのターン(および non-interactive で何も echo していない場合の自分自身の
+ターン)は今までどおり描画される。2 クライアント以上がアタッチしていても、互いに
+相手のすべてのターンとすべての回答は今までどおり見える——agent からの返信だけでは
+ない。変わるのは、各クライアントが自分自身の行を二重に描画しなくなる点だけである。
 
 ## AG-UI event coverage — 数字を正直に読む
 

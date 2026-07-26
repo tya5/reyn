@@ -95,7 +95,26 @@ async def run_input_loop(
     prompt_session: PromptSession,
     renderer: ChatRenderer,
     reply_seen: "asyncio.Event | None" = None,
+    *,
+    own_submissions: "deque[str] | None" = None,
 ) -> None:
+    """Drive the plain PromptSession input loop.
+
+    ``own_submissions`` (#3287): on an interactive TTY, ``prompt_session.
+    prompt_async`` itself leaves the typed line ("you > <text>") on the
+    terminal once Enter is pressed — that IS the user-line echo. Every
+    submitted line (this loop appends it here, right before handing it to
+    ``route_input_line``) is recorded so :func:`run_output_loop` can recognise
+    the broadcast ``user_submitted`` chat-event this same submission produces
+    and skip re-rendering it — otherwise the terminal's own echo and the
+    event-driven echo both land, printing the line twice. Callers pass
+    ``None`` (the non-interactive / piped path, where the terminal shows
+    nothing as input streams in — the event-driven render is then the ONLY
+    record of what was submitted, so it must not be suppressed) or a fresh
+    ``deque()`` owned by this client's own loop pair (never shared across
+    clients, so another attached client's submissions are never matched here
+    and always render — see ``run_output_loop``'s docstring).
+    """
     is_tty = sys.stdin.isatty()
     while True:
         # Piped / scripted mode: pace input by reply availability. Without
@@ -156,11 +175,15 @@ async def run_input_loop(
         if not transport.has_session():
             renderer.message(_simple_status("no agent attached; try :agents"))
             continue
-        await route_input_line(transport, text, reply_seen)
+        await route_input_line(transport, text, reply_seen, own_submissions=own_submissions)
 
 
 async def route_input_line(
-    transport: ClientTransport, text: str, reply_seen: "asyncio.Event | None"
+    transport: ClientTransport,
+    text: str,
+    reply_seen: "asyncio.Event | None",
+    *,
+    own_submissions: "deque[str] | None" = None,
 ) -> None:
     """Route one non-quit client line to the session via the transport.
 
@@ -181,6 +204,14 @@ async def route_input_line(
     so it is left on the normal slash/inbox path. The direct-delivery result is
     checked so a race where the intervention resolves between the head-check and
     the deliver falls back to a normal turn instead of being dropped.
+
+    ``own_submissions`` (#3287) is appended ONLY on the branch that actually
+    calls ``submit_user_text`` — that is the ONLY branch that produces a
+    ``user_submitted`` chat-event for ``run_output_loop`` to match against.  An
+    intervention answer takes the direct-delivery branch above and returns
+    before reaching it, so it is never queued (there is no matching
+    ``user_submitted`` event to consume it, and it would otherwise desync the
+    FIFO against a later ordinary turn).
     """
     if not text.startswith("/") and transport.pending_intervention_head() is not None:
         if await transport.answer_intervention_text(text):
@@ -193,6 +224,8 @@ async def route_input_line(
     # caller and never reach here.
     if reply_seen is not None and not text.startswith("/"):
         reply_seen.clear()
+    if own_submissions is not None:
+        own_submissions.append(text)
     await transport.submit_user_text(text)
 
 
@@ -202,7 +235,27 @@ async def run_output_loop(
     reply_seen: "asyncio.Event | None" = None,
     *,
     command_ui_region: bool = True,
+    own_submissions: "deque[str] | None" = None,
 ) -> None:
+    """Drain the transport's unified frame stream to the renderer.
+
+    ``own_submissions`` (#3287, paired with :func:`run_input_loop` /
+    :func:`route_input_line`'s param of the same name): a ``user_submitted``
+    chat-event is a BROADCAST — every attached client (this one included) gets
+    it, so a second attached client can still be relying on it as the only
+    render of a turn it didn't type itself. On an interactive TTY, THIS
+    client's own submissions are different: ``prompt_session.prompt_async``
+    already left the typed line on the terminal the instant Enter was
+    pressed, so re-rendering it from the broadcast event would print it
+    twice. The queue lets this loop recognise "this is the event for the line
+    my OWN input loop just showed" (FIFO head text match) without touching
+    events for anyone else's submissions, which still render normally — the
+    fix is about which surface owns the echo (the terminal, for this client's
+    own TTY-typed line) not about dropping the event universally. ``None``
+    (the default, and what non-interactive / piped / non-TTY sessions pass)
+    disables the check entirely, preserving the event-driven echo as the sole
+    record when nothing else showed the line.
+    """
     is_tty = sys.stdout.isatty()
     # Newest-first ring of recent agent replies so `/copy [N]` can grab the
     # latest (or an older) reply and pipe it to the system clipboard.
@@ -213,7 +266,19 @@ async def run_output_loop(
         # its two entry points; an outbox-only stream would silently drop these
         # (the A2 WaitingOn bug, designed out by the completeness gate).
         if frame.tag is FrameTag.EVENT:
-            renderer.on_chat_event(frame.event)
+            event = frame.event
+            if (
+                own_submissions
+                and getattr(event, "type", None) == "user_submitted"
+                and own_submissions[0] == (getattr(event, "data", None) or {}).get("text")
+            ):
+                # This client's own PromptSession prompt already echoed this
+                # exact line to the terminal — skip the redundant re-render
+                # (#3287) and consume the matched entry so the FIFO stays
+                # aligned with this client's own future submissions.
+                own_submissions.popleft()
+                continue
+            renderer.on_chat_event(event)
             continue
         msg = frame.message
         if msg.kind == "__end__":
