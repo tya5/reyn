@@ -364,4 +364,19 @@ def _snapshot(registry, config=None):
         # Always available (Session owns a PipelineRegistry from __init__) —
         # not a "not wired yet" seam like the two lines above.
         "pipelines": _session_pipelines(s),
+        # #3300 P2a: server-authoritative sent-queue state — the undispatched
+        # inbox queue + whether a turn is currently dispatched. Read straight
+        # off the session's public accessors (Session.queued_user_messages /
+        # Session.turn_active); this dict is the SAME snapshot both the local
+        # (in-process, read live every render tick) and remote (agui, via
+        # project_status -> STATE_SNAPSHOT/STATE_DELTA) clients derive their
+        # queue view from, so local ≡ remote by construction.
+        "queue": s.queued_user_messages(),
+        "turn_active": s.turn_active,
+        # The seq-gate token (#3300 P2a design-pass pin D) — a client merging
+        # the granular `user_submitted`/`turn_started` queue deltas seeds its
+        # last-applied-seq from this value on snapshot, so a stale delta
+        # (seq <= this) already reflected here can never resurrect a
+        # dispatched item regardless of arrival order.
+        "queue_seq": s.queue_seq,
     }

@@ -264,9 +264,18 @@ WaitingOn ラベル)は**read-model**であり、ファイルミラーではな�
 
 - `STATE_SNAPSHOT` — **接続時**に発行される、read-model 全体。フィールド: `attached_name`、
   `model`、`cost_agent`、`cost_total`、`agent_tokens`、`ctx_used`、`ctx_window`、
-  `waiting_on`。
+  `waiting_on`、`queue`、`turn_active`。
 - `STATE_DELTA` — **変更時**に発行され、変更されたキーのみを運ぶ。アイドルなストリームは
   delta を発行しない。
+
+`queue` と `turn_active`(#3300 P2a)は、サーバー権威の **sent-queue 状態**を publish する:
+`queue` は現在未 dispatch の inbox キュー(各 item は `{msg_id, chain_id, text}` —
+`Session.queued_user_messages()`)、`turn_active` は turn が現在 dispatch 中かどうか
+(`Session.turn_active`)。同じ snapshot+delta channel に乗せることで、client は
+**late-joiner-safe** になる: turn 途中で接続した(dispatch を引き起こした
+`turn_started` chat-event を見逃した)client も、部分的な event 由来の推測ではなく
+snapshot から正しい queue + turn-active 状態を得る。P2a はこの状態の publish のみで、
+sent-queue widget としての描画は P2b。
 
 client は snapshot から自身のステータスビューを seed し、各 delta をマージするため、
 remote のステータスパネルは常に server の値を反映する。
@@ -327,7 +336,7 @@ display 行のテキストである。
 | Custom `name`                        | Meaning                                          |
 |--------------------------------------|--------------------------------------------------|
 | `reyn.event.user_answered_intervention` | ユーザーが intervention に回答した              |
-| `reyn.event.user_submitted`          | ユーザーがターンを送信した(#3300 P1 C)— RAW text + chain_id + _msg_id + meta を運ぶ。各 surface がそれぞれの render 境界で neutralize する |
+| `reyn.event.user_submitted`          | ユーザーがターンを送信した(#3300 P1 C)— RAW text + chain_id + msg_id + seq + meta を運ぶ。各 surface がそれぞれの render 境界で neutralize する。`msg_id`/`seq` は #3300 P2a の sent-queue correlation id + order-race-gate token |
 
 ### `reyn.intervention.<kind>`
 

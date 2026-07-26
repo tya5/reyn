@@ -12,7 +12,7 @@ derived notification.
 
 Covers:
   A. ``Session.submit_user_text`` emits a ``user_submitted`` chat-event (NOT an
-     outbox frame) carrying the raw text + chain_id + _msg_id + meta — every
+     outbox frame) carrying the raw text + chain_id + msg_id + meta — every
      ``subscribe_chat_events`` subscriber (= every attached client, simulated
      here as two independent subscriptions) sees it. Reverting the
      ``self._chat_events.emit("user_submitted", ...)`` call added to
@@ -147,9 +147,12 @@ async def test_submit_user_text_no_outbox_user_echo(tmp_path, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_submit_user_text_carries_chain_id_and_msg_id(tmp_path, monkeypatch):
-    """Tier 2: the user_submitted event carries chain_id + _msg_id (the id
-    ``_put_inbox`` stamps) — load-bearing for a later phase (client learns its
-    own message id, for cancel-by-id)."""
+    """Tier 2: the user_submitted event carries chain_id + msg_id (the id
+    ``_put_inbox`` stamps, renamed from the internal `_msg_id` at this
+    wire/event boundary — #3300 P2a design-pass pin E: a leading underscore
+    on a field that reaches a remote client is a "private-looking public
+    name") — load-bearing for a later phase (client learns its own message
+    id, for cancel-by-id)."""
     monkeypatch.chdir(tmp_path)
     session = _make_session(tmp_path)
     sink = _EventSink()
@@ -159,7 +162,7 @@ async def test_submit_user_text_carries_chain_id_and_msg_id(tmp_path, monkeypatc
 
     ev = _user_submitted(sink)
     assert ev.data.get("chain_id")
-    assert ev.data.get("_msg_id")
+    assert ev.data.get("msg_id")
 
 
 @pytest.mark.asyncio
