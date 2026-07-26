@@ -53,8 +53,13 @@ def _make_budget_tracker(*, per_agent_tokens_hard: int | None = None):
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_stream_false_is_forced(monkeypatch):
-    """Tier 1: framework contract: stream=False must be passed to litellm regardless of caller input.
+async def test_stream_is_capability_gated_not_forced_false(monkeypatch):
+    """Tier 1: framework contract (#3288 ③a) — ``call_llm_tools`` no longer
+    forces ``stream=False`` unconditionally (the pre-③a Gemini #21041
+    workaround). The decision is now made INSIDE ``recorded_acompletion`` via
+    a litellm capability query (``_streaming_capable``): a genuinely
+    streaming+function-calling-capable model (real litellm capability data,
+    not a reyn hardcode) is called with ``stream=True``.
 
     Uses a capturing async function (not AsyncMock) to inspect kwargs.
     Framework boundary — intentional monkeypatch.
@@ -81,7 +86,10 @@ async def test_stream_false_is_forced(monkeypatch):
         tools=MINIMAL_TOOLS,
     )
 
-    assert captured.get("stream") is False
+    # MODEL ("gemini-2.5-flash-lite") supports both native streaming and
+    # function calling per litellm's own capability data → capability-gated
+    # ON, not the old unconditional False.
+    assert captured.get("stream") is True
 
 
 @pytest.mark.asyncio
