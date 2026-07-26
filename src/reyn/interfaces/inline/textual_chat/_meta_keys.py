@@ -28,4 +28,14 @@ RESULT_KIND_KEY = "_result_kind"
 #: frame's ``meta`` (carries ``result`` / ``error_message`` / ``error_kind``).
 RESULT_META_KEY = "_result"
 
-__all__ = ["RESULT_KIND_KEY", "RESULT_META_KEY"]
+#: A sentinel value for :data:`RESULT_KIND_KEY` marking a RUNNING tool row that
+#: was force-settled at the TURN BOUNDARY because no completion frame ever
+#: arrived — an orphan (#72). Distinct from a real completion frame's kind
+#: (``"tool_call_completed"`` / ``"tool_call_failed"``) so the presenter can
+#: render it NEUTRAL: neither a success nor a failure, just "no result ever
+#: came". Stamped by ``app.py``'s ``_sweep_orphaned_running_tools`` (the live
+#: path only — there is no restore-path equivalent: a persisted turn is, by
+#: definition, one that already settled).
+ORPHANED_RESULT_KIND = "_orphaned_no_result"
+
+__all__ = ["RESULT_KIND_KEY", "RESULT_META_KEY", "ORPHANED_RESULT_KIND"]

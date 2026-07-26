@@ -34,6 +34,7 @@ from reyn.interfaces.repl.renderer import (
     summarize_tool_result,
 )
 
+from ._meta_keys import ORPHANED_RESULT_KIND as _ORPHANED_RESULT_KIND
 from ._meta_keys import RESULT_KIND_KEY as _RESULT_KIND_KEY
 from ._meta_keys import RESULT_META_KEY as _RESULT_META_KEY
 
@@ -69,7 +70,12 @@ _SPINNER_SPEED = 8
 # The restore path (``restore.py``) stamps the SAME two keys onto its projected
 # frames so a restored tool turn coalesces identically — both modules import
 # the string values from ``_meta_keys`` (restore.py must stay textual-free, so
-# the constants live there rather than here).
+# the constants live there rather than here). A THIRD, orphan case (#72): when
+# the turn ends with a tool still RUNNING (its completion never arrived), the
+# app force-settles it at the turn boundary with ``_RESULT_KIND_KEY`` stamped
+# to the sentinel :data:`_ORPHANED_RESULT_KIND` rather than a real completion
+# kind — :func:`_tool_result_line` renders that as a NEUTRAL dim
+# ``⎿ (no result — turn ended)`` line, never a ``✗`` failure.
 
 # --- choice-intervention chip layout ---------------------------------------
 # A closed-set intervention (permission confirm / choice ``ask_user`` — anything
@@ -169,6 +175,11 @@ def _tool_result_line(msg: "OutboxMessage") -> "tuple[Text, str | None]":
     coral (``_CC_ERR``), matching the standalone failure row."""
     meta = msg.meta or {}
     result_meta = meta.get(_RESULT_META_KEY) or {}
+    if meta.get(_RESULT_KIND_KEY) == _ORPHANED_RESULT_KIND:
+        # Force-settled at the turn boundary (#72): the tool's report never
+        # arrived. NEUTRAL, not a failure — no ``✗``, no coral tint (the #3296
+        # don't-fabricate-a-failure lesson).
+        return Text("  ⎿ (no result — turn ended)", style=_CC_DIM), None
     if meta.get(_RESULT_KIND_KEY) == "tool_call_failed":
         err = (
             result_meta.get("error_message")
