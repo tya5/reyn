@@ -14,7 +14,9 @@ chrome the widgets in :mod:`~reyn.interfaces.inline.textual_chat.chrome`. This a
 wires them, drives the frame pump, and routes composer submissions back through
 the transport send seam. The running-blink gutter animates itself off
 textual-flowview's native ``FlowView(animation_fps=N)`` clock — there is no
-app-side blink timer.
+app-side blink timer. A RUNNING tool row additionally grows a live spinner +
+elapsed BODY, driven by a viewport-gated per-entry ``FlowView.animate_entry``
+that is stopped when the tool completes (Phase ②, #3283).
 
 This module is part of the TTY-only ``textual_chat`` package (imported lazily via
 :mod:`reyn.interfaces.repl.client_driver`); its ``textual`` / ``textual_flowview``
@@ -23,8 +25,9 @@ imports never reach an always-loaded module.
 from __future__ import annotations
 
 import logging
+import time
 from dataclasses import replace
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Callable
 
 from textual.app import App, ComposeResult
 from textual.containers import Horizontal
@@ -50,7 +53,13 @@ from .chrome import (
     status_line_text,
 )
 from .gutter import _RUNNING_FRAME_PERIOD, ReynGutter
-from .presenter import ReynPresenter, choice_chip_spans
+from .presenter import (
+    _RESULT_KIND_KEY,
+    _RESULT_META_KEY,
+    _RUNNING_SINCE_KEY,
+    ReynPresenter,
+    choice_chip_spans,
+)
 from .restore import project_restored_frames
 
 if TYPE_CHECKING:
@@ -150,6 +159,20 @@ class TextualChatApp(App):
     the frame from a monotonic clock — no app-side timer, no shared counter. The
     blink is additive: a frozen clock (``frame_period<=0``) leaves a static,
     correct amber gutter.
+
+    Phase ② (#3283) adds a LIVE BODY to a RUNNING tool row: while in flight the
+    row shows a spinner + an app-computed ``elapsed Ns`` under its ``tool(args)``
+    header, driven by a per-entry ``FlowView.animate_entry`` (viewport-gated: an
+    off-screen RUNNING tool neither spins nor recomputes). On completion the row
+    SETTLES IN PLACE — the per-entry animation is stopped and the result is
+    COALESCED into the SAME entry as a ``⎿ <result>`` sub-line (CC's
+    ``⏺ tool(args)`` + ``⎿ result`` block; the started + completed frames are ONE
+    row, not two). A completion with no matching started entry still appends its
+    own row, so nothing regresses. This composes with ①: ① animates the GUTTER
+    glyph off the always-on ``animation_fps`` clock, ② the tool BODY off a
+    per-entry timer. Tool frames carry no elapsed/progress (ADR finding D2), so
+    elapsed is computed from the app-side arrival time (``self._clock``); the
+    indicator is a spinner (indeterminate), NOT a progress bar.
 
     Phase 3 adds the bottom-chrome tab-drawer: below the composer, a
     :class:`StatusLine` + a focusable :class:`MenuBar`, and a
@@ -259,6 +282,15 @@ class TextualChatApp(App):
     #drawer Static { height: auto; padding: 1 0; }
     """
 
+    #: Per-entry BODY animation rate (Hz) for the live RUNNING-tool indicator
+    #: (Phase ②). Drives ``FlowView.animate_entry`` so the spinner + elapsed body
+    #: of an in-flight tool row re-presents at this cadence — but ONLY while the
+    #: entry is on screen (``animate_entry`` is viewport-gated: off-screen RUNNING
+    #: tools neither spin nor recompute). Matches the plain renderer's ~12fps
+    #: working spinner. Distinct from :data:`ANIMATION_FPS` (the always-on GUTTER
+    #: blink clock, Phase ①): ① animates the gutter glyph, ② the tool body.
+    RUNNING_BODY_FPS = 12.0
+
     def __init__(
         self,
         *,
@@ -266,18 +298,26 @@ class TextualChatApp(App):
         read_model: "ChatReadModel | None" = None,
         agent_name: str = "default",
         config=None,
+        clock: "Callable[[], float]" = time.monotonic,
+        presenter: "ReynPresenter | None" = None,
     ) -> None:
         super().__init__()
         self._transport = transport
         self._read_model = read_model
         self._agent_name = agent_name
         self._config = config
+        # App-side monotonic clock for the RUNNING-tool elapsed timer: tool frames
+        # carry no RUNNING-start timestamp (ADR finding D2), so elapsed is computed
+        # from when the started frame arrived here. Injectable so a test drives the
+        # live indicator deterministically; the presenter reads the SAME clock.
+        self._clock = clock
         self.conversation: "FlowModel[OutboxMessage]" = FlowModel()
         # One presenter instance, shared between the FlowView (which DRAWS entries)
         # and the choice-chip click handler (which asks it which body row the chips
         # landed on), so hit-testing measures the prompt head exactly as it was
-        # drawn.
-        self._presenter = ReynPresenter()
+        # drawn. Injectable (default a fresh one on the app clock) so a test can
+        # observe presentation.
+        self._presenter = presenter or ReynPresenter(clock=self._clock)
         # Running tool-call entries keyed by op_id (== the dispatcher's
         # deterministic args_hash, meta["op_id"]) so a later completion/failure
         # frame transitions the SAME entry RUNNING → SUCCESS/ERROR (CC parity).
@@ -291,7 +331,10 @@ class TextualChatApp(App):
         self._pane_selection_ids: "dict[str, list[str]]" = {}
 
     def compose(self) -> ComposeResult:
-        yield FlowView(
+        # Held so the frame pump can start/stop the per-entry BODY animation
+        # (``animate_entry``/``stop_entry_animation``) that drives a RUNNING tool
+        # row's live spinner + elapsed (Phase ②).
+        self._flow: "FlowView[OutboxMessage]" = FlowView(
             model=self.conversation,
             presenter=self._presenter,
             decorator=ReynGutter(frame_period=_RUNNING_FRAME_PERIOD),
@@ -302,6 +345,7 @@ class TextualChatApp(App):
             # re-invokes the time-based ReynGutter each tick (no app-side timer).
             animation_fps=self.ANIMATION_FPS,
         )
+        yield self._flow
         with Horizontal(id="inputrow"):
             yield Static("❯", id="inputgutter")
             yield Composer(
@@ -422,8 +466,10 @@ class TextualChatApp(App):
         frame to ``self.conversation`` (:func:`.restore.project_restored_frames`).
         Every restored entry is RESOLVED, never RUNNING: a completed tool result
         gets the SUCCESS/ERROR lifecycle state the live path's completion handler
-        (:meth:`_track_tool_state`) would have assigned, and user/agent rows keep
-        DEFAULT (their live state). A REMOTE read model returns an empty log
+        (:meth:`_coalesce_tool_result`) would have assigned, and user/agent rows
+        keep DEFAULT (their live state). Restore projects a standalone
+        ``tool_call_completed`` row (never a started+completed pair), so there is
+        nothing to coalesce here — it renders as its own settled result row. A REMOTE read model returns an empty log
         (frame-sufficiency: past turns are not on the wire) → this is a no-op and
         the pane starts blank, exactly as before. Fully guarded — a restore
         failure must never stop the app from mounting and pumping live frames."""
@@ -447,7 +493,7 @@ class TextualChatApp(App):
                     "textual chat: restore append failed for kind=%r", msg.kind
                 )
                 continue
-            # Resolved, never RUNNING — mirror _track_tool_state's terminal
+            # Resolved, never RUNNING — mirror the completion handler's terminal
             # transition for a settled tool result (SUCCESS unless the summary
             # marks a failure); non-tool rows keep DEFAULT.
             meta = msg.meta or {}
@@ -563,51 +609,137 @@ class TextualChatApp(App):
                 entry.set_state(EntryState.SUCCESS)
                 break
 
-    def _track_tool_state(self, msg: "OutboxMessage", entry: "Entry[OutboxMessage]") -> None:
-        """Drive the Phase-2 lifecycle state of tool-call / error rows.
+    def _ingest_frame(self, msg: "OutboxMessage") -> None:
+        """Fold one display frame into the retained model — appending a new entry,
+        or COALESCING a correlated tool result into its RUNNING started entry.
+
+        A ``tool_call_completed`` / ``tool_call_failed`` frame whose ``op_id``
+        matches a tracked RUNNING tool does NOT append a second row: it SETTLES the
+        started entry in place (:meth:`_coalesce_tool_result` — stop the ② live
+        spinner, fold the ``⎿ result`` into the same entry, go SUCCESS/ERROR), so a
+        call and its result read as ONE block (CC's ``⏺ tool(args)`` + ``⎿ result``,
+        the PoC's ``_present_tool_call`` grouping). Every OTHER frame — including a
+        completion with NO matching started entry (already settled / uncorrelated)
+        — is appended as its own entry and handed to :meth:`_apply_lifecycle_state`,
+        so nothing regresses for the plain-fallback turn sequence."""
+        kind = msg.kind
+        op_id = (msg.meta or {}).get("op_id")
+        if kind in ("tool_call_completed", "tool_call_failed") and op_id is not None:
+            started = self._running_tools.pop(op_id, None)
+            if started is not None:
+                self._coalesce_tool_result(started, msg)
+                return
+        entry = self.conversation.append(msg)
+        self._apply_lifecycle_state(msg, entry)
+
+    def _apply_lifecycle_state(
+        self, msg: "OutboxMessage", entry: "Entry[OutboxMessage]"
+    ) -> None:
+        """Drive the Phase-2 lifecycle state + Phase-② live body of a NEWLY appended
+        row (the non-coalesced path).
 
         A ``tool_call_started`` row (with an ``op_id`` correlation key) becomes
-        RUNNING (its gutter blinks amber off the native animation clock); the
-        matching ``tool_call_completed`` / ``tool_call_failed`` frame transitions
-        that SAME entry to SUCCESS/ERROR (its gutter goes amber → green/coral).
-        ``error`` rows go straight to ERROR. Frames without an ``op_id`` carry no
-        state (DEFAULT) — they append exactly as in Phase 1, so the plain-fallback
-        turn sequence is unchanged.
+        RUNNING (its gutter blinks amber off the native animation clock) AND grows
+        a LIVE body — a spinner + app-computed ``elapsed Ns`` — driven by
+        :meth:`_begin_running_indicator`; its matching completion later coalesces
+        into it (:meth:`_ingest_frame`). An UNCORRELATED ``tool_call_failed`` (no
+        tracked started) or an ``error`` row goes straight to ERROR (coral gutter +
+        tint). Frames without an ``op_id`` carry no state (DEFAULT) — they append
+        exactly as in Phase 1, so the plain-fallback turn sequence is unchanged.
 
-        ``_running_tools`` keys the RUNNING entry by ``op_id`` purely for this
-        RUNNING → SUCCESS/ERROR correlation (NOT for the blink — the blink is now
-        time-based in :class:`ReynGutter`, driven by the native animation tick)."""
+        ``_running_tools`` keys the RUNNING entry by ``op_id`` for the settle: it is
+        the handle the completion frame coalesces + stops the animation on. The
+        gutter blink itself is time-based in :class:`ReynGutter`, driven by the
+        native animation tick."""
         kind = msg.kind
-        meta = msg.meta or {}
-        op_id = meta.get("op_id")
-        if kind == "tool_call_started":
-            if op_id is not None:
-                entry.set_state(EntryState.RUNNING)
-                self._running_tools[op_id] = entry
-        elif kind == "tool_call_completed":
-            summary = summarize_tool_result(meta.get("tool"), meta.get("result"))
-            started = self._running_tools.pop(op_id, None) if op_id is not None else None
-            if started is not None:
-                started.set_state(
-                    EntryState.ERROR if summary.startswith("✗") else EntryState.SUCCESS
+        op_id = (msg.meta or {}).get("op_id")
+        if kind == "tool_call_started" and op_id is not None:
+            entry.set_state(EntryState.RUNNING)
+            self._running_tools[op_id] = entry
+            self._begin_running_indicator(entry)
+        elif kind in ("tool_call_failed", "error"):
+            entry.set_state(EntryState.ERROR)
+
+    def _coalesce_tool_result(
+        self, started: "Entry[OutboxMessage]", result_msg: "OutboxMessage"
+    ) -> None:
+        """Settle a RUNNING tool row IN PLACE with its result (② completion).
+
+        Stops the per-entry ② live-spinner animation (``stop_entry_animation`` — no
+        leaked timer survives completion), then folds the completion frame's kind +
+        meta into the started entry's item (stripping the :data:`_RUNNING_SINCE_KEY`
+        live marker and stashing the result under :data:`_RESULT_KIND_KEY` /
+        :data:`_RESULT_META_KEY`) so the presenter renders ``tool(args)`` + a
+        ``⎿ <result>`` sub-line in this SAME entry — no separate result row, no
+        lingering spinner. Finally sets the terminal state: ERROR (coral) on a
+        failure or a ``✗`` result summary, SUCCESS (green) otherwise. Each step is
+        guarded so a settle failure never kills the pump."""
+        try:
+            self._flow.stop_entry_animation(started)
+        except Exception:
+            logger.exception("textual chat: could not stop running-tool animation")
+        started_meta = started.item.meta or {}
+        result_meta = result_msg.meta or {}
+        merged = {k: v for k, v in started_meta.items() if k != _RUNNING_SINCE_KEY}
+        merged[_RESULT_KIND_KEY] = result_msg.kind
+        merged[_RESULT_META_KEY] = result_meta
+        try:
+            started.set_item(replace(started.item, meta=merged))
+        except Exception:
+            logger.exception("textual chat: could not coalesce tool result")
+        if result_msg.kind == "tool_call_failed":
+            started.set_state(EntryState.ERROR)
+        else:
+            summary = summarize_tool_result(
+                started_meta.get("tool"), result_meta.get("result")
+            )
+            started.set_state(
+                EntryState.ERROR if summary.startswith("✗") else EntryState.SUCCESS
+            )
+
+    def _begin_running_indicator(self, entry: "Entry[OutboxMessage]") -> None:
+        """Start the live spinner + elapsed body for a RUNNING tool entry (②).
+
+        Stamps the monotonic START time into the entry's item meta
+        (:data:`_RUNNING_SINCE_KEY`) — its presence is what makes the presenter
+        render the live indicator instead of the static ``tool(args)`` line — then
+        registers a viewport-gated per-entry animation (``FlowView.animate_entry``)
+        whose tick simply re-presents the body (``entry.update()``), so the spinner
+        frame + elapsed count advance with wall time while the row is ON SCREEN
+        (off-screen RUNNING tools are auto-paused by ``animate_entry`` — no spin,
+        no recompute). The animation is released by :meth:`_coalesce_tool_result`
+        on completion (and dropped automatically by flowview if the entry is
+        removed), so it never outlives the RUNNING state. Fully guarded: a live
+        indicator is cosmetic, so a failure to start it must never break the pump
+        (the row still shows its static state-coloured gutter).
+
+        Body re-present cadence: the per-entry ``animate_entry`` tick bumps the
+        entry revision (``entry.update()``); the re-present materializes on the
+        next viewport paint — immediately at up to ``RUNNING_BODY_FPS`` while the
+        conversation is scrolled (the on-screen band is fresh), and at least at the
+        native ``animation_fps`` gutter-tick cadence otherwise (that repaint
+        re-presents the bumped revision). So the spinner + elapsed always advance;
+        they are simply smoother in a scrolled conversation."""
+        try:
+            entry.set_item(
+                replace(
+                    entry.item,
+                    meta={**(entry.item.meta or {}), _RUNNING_SINCE_KEY: self._clock()},
                 )
-        elif kind == "tool_call_failed":
-            started = self._running_tools.pop(op_id, None) if op_id is not None else None
-            if started is not None:
-                started.set_state(EntryState.ERROR)
-            entry.set_state(EntryState.ERROR)
-        elif kind == "error":
-            entry.set_state(EntryState.ERROR)
+            )
+            self._flow.animate_entry(entry, 1.0 / self.RUNNING_BODY_FPS, lambda e: e.update())
+        except Exception:
+            logger.exception("textual chat: could not start running-tool indicator")
 
     async def _pump_frames(self) -> None:
         """Drain the transport frame stream into the retained model.
 
-        Display frames append to the model (skipping command-UI sentinels);
-        ``__end__`` stops the app (the session closed). Event frames are the
-        working-indicator path — consumed but not yet drawn. Each appended entry
-        is then handed to :meth:`_track_tool_state` for its Phase-2 lifecycle
-        colour. A single frame's presentation failure must not kill the pump, so
-        append is guarded.
+        Display frames fold into the model (skipping command-UI sentinels) via
+        :meth:`_ingest_frame` — appending a new entry, or COALESCING a correlated
+        tool result into its RUNNING started entry (② settle-in-place). ``__end__``
+        stops the app (the session closed). Event frames are the working-indicator
+        path — consumed but not yet drawn. A single frame's failure must not kill
+        the pump, so ingest is guarded.
         """
         try:
             async for frame in self._transport.frames():
@@ -619,17 +751,10 @@ class TextualChatApp(App):
                 if msg.kind in _SKIP_KINDS:
                     continue
                 try:
-                    entry = self.conversation.append(msg)
+                    self._ingest_frame(msg)
                 except Exception:
                     logger.exception(
-                        "textual chat: append failed for frame kind=%r", msg.kind
-                    )
-                    continue
-                try:
-                    self._track_tool_state(msg, entry)
-                except Exception:
-                    logger.exception(
-                        "textual chat: state tracking failed for kind=%r", msg.kind
+                        "textual chat: frame ingest failed for kind=%r", msg.kind
                     )
                 # F5b: refresh the always-visible status-values line (cost + ctx%)
                 # as each turn lands, so the running cost is legible in the Textual
