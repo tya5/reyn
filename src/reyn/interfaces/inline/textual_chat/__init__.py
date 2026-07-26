@@ -55,6 +55,10 @@ boundary and re-exports the public API):
   ``StatusLine``, ``MenuBar``, ``_MENU_TABS``, and the pure pane formatters
   (``pane_payload`` / ``status_line_text`` / ``build_drawer_pane``) that derive
   each pane's rows from its canonical source (input + bottom-chrome widgets).
+- :mod:`~reyn.interfaces.inline.textual_chat.intervention_panel` —
+  ``InterventionPanel``, the grouped panel widget (#3299 P1) an intervention's
+  interaction (closed-set select / free-text answer) is answered through —
+  the FlowView only ever shows a thin pending/answered placeholder.
 
 Import boundary (load-bearing): this package imports :mod:`textual` and
 :mod:`textual_flowview` at import time (through its submodules), so it must only
@@ -67,16 +71,17 @@ from __future__ import annotations
 from .app import TextualChatApp, run_textual_chat
 from .chrome import Composer, MenuBar, StatusLine
 from .gutter import ReynGutter
-from .presenter import ReynPresenter, _body_and_background, choice_chip_spans
+from .intervention_panel import InterventionPanel
+from .presenter import ReynPresenter, _body_and_background
 
 __all__ = [
     "Composer",
+    "InterventionPanel",
     "MenuBar",
     "ReynGutter",
     "ReynPresenter",
     "StatusLine",
     "TextualChatApp",
     "_body_and_background",
-    "choice_chip_spans",
     "run_textual_chat",
 ]

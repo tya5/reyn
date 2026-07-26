@@ -54,12 +54,12 @@ from .chrome import (
     status_line_text,
 )
 from .gutter import _RUNNING_FRAME_PERIOD, ReynGutter
+from .intervention_panel import InterventionPanel
 from .presenter import (
     _RESULT_KIND_KEY,
     _RESULT_META_KEY,
     _RUNNING_SINCE_KEY,
     ReynPresenter,
-    choice_chip_spans,
 )
 from .restore import project_restored_frames
 
@@ -83,12 +83,6 @@ _SKIP_KINDS = frozenset(
     }
 )
 
-# Re-affirmation shown when a free-text submit lands during a pending
-# choice-intervention but matches no option — the anti-black-hole hint (#3290).
-# The options are still rendered above as chips, so the hint re-affirms them
-# without echoing the (LLM-derived) labels back into the terminal.
-_CHOICE_HINT_TEXT = "Please choose one of the options above (or click a chip)."
-
 # Turn-end event types (#72): when one of these lands on the EVENT-tag frame
 # path, any tool row still RUNNING is a confirmed ORPHAN — its completion frame
 # can never arrive for THIS turn, since the turn itself just ended. Mirrors the
@@ -101,60 +95,8 @@ _CHOICE_HINT_TEXT = "Please choose one of the options above (or click a chip)."
 # turn-boundary signal is deterministic instead of guessed.
 _TURN_END_EVENT_TYPES = frozenset({"turn_settled", "turn_completed", "turn_cancelled"})
 
-
-def _match_choice_input(text: str, choices: "object") -> "str | None":
-    """Return the id of the ONE choice whose label, hotkey, or de-decorated
-    label equals ``text``.
-
-    Type-or-click parity for a pending choice-intervention (#3290): a free-text
-    submit that names an option (typing ``yes`` for the ``Yes`` chip) resolves
-    the same intervention a chip click would. Matching is trimmed and
-    case-insensitive against THREE forms: the raw choice ``label``, its
-    ``hotkey``, and a de-decorated label with the ``[`` ``]`` bracket
-    characters stripped — labels are conventionally hotkey-decorated
-    (``"[y]es"``, ``"[N]o"``, ``"[j]ust this path always"``), so without
-    de-decoration typing the FULL WORD (``"yes"``) never equals the raw
-    ``"[y]es"`` label and only the bare hotkey (``"y"``) would match (#3290
-    follow-up). The ``choice_id`` is the authoritative delivery key (never
-    itself matched, so a label-as-id confusion can't sneak in).
-
-    Returns ``None`` when nothing matches OR the match is ambiguous (two distinct
-    choices match) — the caller then keeps the intervention pending and hints,
-    never falling through to a new turn (the black-hole the seam guards against).
-
-    Distinct from :func:`reyn.user_intervention.match_choice` (hotkey-only,
-    case-sensitive — the stdin-bus contract): this is the TUI's forgiving
-    type-or-click affordance, so it is a separate seam, not that one reused.
-    ``choices`` are ``InterventionChoice``-shaped (``.id`` / ``.label`` /
-    ``.hotkey``); attributes are read defensively so a partial head cannot raise.
-    """
-    needle = text.strip().casefold()
-    if not needle:
-        return None
-    matched_ids: set[str] = set()
-    for choice in choices or ():
-        cid = getattr(choice, "id", None)
-        if cid is None:
-            continue
-        label = getattr(choice, "label", None)
-        raw_forms = (label, getattr(choice, "hotkey", None))
-        candidates = {
-            str(value).strip().casefold() for value in raw_forms if value is not None and str(value).strip()
-        }
-        if label is not None:
-            undecorated = str(label).replace("[", "").replace("]", "").strip().casefold()
-            if undecorated:
-                candidates.add(undecorated)
-        if needle in candidates:
-            matched_ids.add(str(cid))
-    if len(matched_ids) == 1:
-        return next(iter(matched_ids))
-    return None
-
-#: FlowView gutter column width (state-coloured marker). Shared by ``compose``
-#: (the ``FlowView(gutter_width=…)`` config) and the choice-chip click handler,
-#: which must reconstruct the presenter's body width (content − gutter) to know
-#: which ``event.x`` column a click landed on.
+#: FlowView gutter column width (state-coloured marker). Wired into
+#: ``compose``'s ``FlowView(gutter_width=…)`` config.
 _GUTTER_WIDTH = 2
 
 #: Sentinel for :meth:`TextualChatApp._pane_rows`'s optional ``snap`` argument —
@@ -223,15 +165,25 @@ class TextualChatApp(App):
     REMOTE read model returns an empty log (frame-sufficiency: past turns are not
     on the wire) → hydration is a no-op and the pane starts blank as before.
 
-    Phase 3.5 wires CHOICE interventions: a closed-set intervention (permission
-    confirm / choice ``ask_user`` — any ``kind="intervention"`` frame carrying
-    ``meta["choices"]``) is surfaced by the presenter as in-flow amber option
-    chips; a click on a chip (:meth:`on_flow_view_clicked`) delivers that
-    choice's id through ``transport.answer_intervention_choice`` and re-presents
-    the entry to a green resolved state. Free-text interventions keep taking the
-    composer answer path (:meth:`_submit`). This restores choice-intervention
-    reachability, which the free-text-only wiring had left unanswerable in the
-    Textual TTY.
+    #3299 P1 moves intervention interaction OUT of the FlowView into a grouped
+    :class:`~reyn.interfaces.inline.textual_chat.intervention_panel.InterventionPanel`
+    widget between the flow and the input row (atomic display-swap +
+    input-swap + chip-retire — see :meth:`_present_intervention`'s docstring):
+    a ``kind="intervention"`` frame arriving on the pump (:meth:`_ingest_frame`)
+    appends a THIN pending flow placeholder and populates + auto-focuses the
+    panel — a :class:`~textual.widgets.RadioSet` for a closed-set intervention
+    (``meta["choices"]``), a plain :class:`~textual.widgets.Input` otherwise.
+    Selecting/submitting in the panel (:meth:`on_intervention_panel_choice_selected`
+    / :meth:`on_intervention_panel_text_submitted`) delivers the answer through
+    the UNCHANGED transport funnel (``answer_intervention_choice`` /
+    ``answer_intervention_text``), resolves the flow entry to a basic
+    "✓ answered" record, hides the panel, and returns focus to the Composer.
+    ``Esc``/``Tab`` inside the panel (:meth:`on_intervention_panel_dismissed`)
+    return focus to the Composer WITHOUT answering — the intervention stays
+    pending (the #3300 sent-queue durably holds any new Composer submit while
+    it does; no black-hole guard is needed here, see the PR body). The
+    Composer itself is now EXCLUSIVELY for new turns — it no longer reads
+    ``pending_intervention_head()`` at all.
     """
 
     #: FlowView animation frame rate (Hz) driving the native running-blink gutter.
@@ -335,16 +287,19 @@ class TextualChatApp(App):
         # live indicator deterministically; the presenter reads the SAME clock.
         self._clock = clock
         self.conversation: "FlowModel[OutboxMessage]" = FlowModel()
-        # One presenter instance, shared between the FlowView (which DRAWS entries)
-        # and the choice-chip click handler (which asks it which body row the chips
-        # landed on), so hit-testing measures the prompt head exactly as it was
-        # drawn. Injectable (default a fresh one on the app clock) so a test can
-        # observe presentation.
+        # One presenter instance the FlowView DRAWS entries with. Injectable
+        # (default a fresh one on the app clock) so a test can observe
+        # presentation.
         self._presenter = presenter or ReynPresenter(clock=self._clock)
         # Running tool-call entries keyed by op_id (== the dispatcher's
         # deterministic args_hash, meta["op_id"]) so a later completion/failure
         # frame transitions the SAME entry RUNNING → SUCCESS/ERROR (CC parity).
         self._running_tools: "dict[object, Entry[OutboxMessage]]" = {}
+        # The ONE pending intervention's flow entry (#3299 P1) — held so
+        # :meth:`_resolve_pending_intervention` can update it IN PLACE (basic
+        # placeholder → "✓ answered" record) once the panel delivers an answer.
+        # ``None`` when no intervention is pending.
+        self._pending_iv_entry: "Entry[OutboxMessage] | None" = None
         # Per-picker parallel id lists (class names / agent names), keyed by tab
         # id and kept in lock-step with the OptionList options a pane was last
         # refreshed with, so an ``OptionSelected.option_index`` maps back to the
@@ -369,6 +324,14 @@ class TextualChatApp(App):
             animation_fps=self.ANIMATION_FPS,
         )
         yield self._flow
+        # #3299 P1: the grouped intervention panel sits BETWEEN the flow and
+        # the input row (region order shared with the sibling #3300 queue arc:
+        # conversation / intervention panel / (queue, later) / input).
+        # Collapsed by default (``display=False`` — see
+        # ``InterventionPanel.on_mount``); shown + auto-focused only while an
+        # intervention is pending (:meth:`_present_intervention`).
+        self._iv_panel = InterventionPanel(id="intervention-panel")
+        yield self._iv_panel
         with Horizontal(id="inputrow"):
             yield Static("❯", id="inputgutter")
             yield Composer(
@@ -606,48 +569,81 @@ class TextualChatApp(App):
     def action_close_drawer(self) -> None:
         self._open_drawer(None)
 
-    async def on_flow_view_clicked(self, event: "FlowView.Clicked") -> None:
-        """Resolve a pending choice-intervention when an option chip is clicked.
+    def _present_intervention(
+        self, msg: "OutboxMessage", entry: "Entry[OutboxMessage]"
+    ) -> None:
+        """Route a newly-arrived intervention frame to the panel (#3299 P1).
 
-        A closed-set intervention (permission confirm / choice ``ask_user`` —
-        anything carrying ``meta["choices"]``) is surfaced by the presenter as
-        in-flow amber chips on the row below its prompt. A click that lands on a
-        chip delivers that choice's id through the transport's
-        ``answer_intervention_choice`` seam — the SAME funnel
-        (``InterventionHandler.deliver_answer_to``) every answer path (TUI
-        free-text, A2A peer, AG-UI HITL) shares — then the entry re-presents to
-        its green ``✓ resolved`` state (``EntryState.SUCCESS`` also greens the
-        gutter). This handler is the ONLY choice-answer path in the Textual TTY:
-        the free-text ``_submit`` path answers only no-choices interventions, so
-        without it a choice-intervention (a permission prompt) is UNANSWERABLE
-        here — this restores that permission-band reachability (F1)."""
-        entry = event.entry
-        msg = entry.item
+        The flow ``entry`` stays a THIN pending placeholder (the presenter
+        renders prompt + a dim "respond below" hint, never chips — see
+        :meth:`~reyn.interfaces.inline.textual_chat.presenter.ReynPresenter._present_intervention_pending`);
+        the interactive form (closed-set select / free-text input) lives
+        entirely in :attr:`_iv_panel`, populated + auto-focused here — a
+        pending intervention BLOCKS the turn, so it is answer-now. This is an
+        ATOMIC swap with the retired in-flow chips: display (this method) and
+        input (:meth:`on_intervention_panel_choice_selected` /
+        :meth:`on_intervention_panel_text_submitted`) moved together, so there
+        is never a moment where both the panel AND a chip/composer-match path
+        are live for the same intervention."""
+        self._pending_iv_entry = entry
         meta = msg.meta or {}
+        prompt = str(meta.get("prompt") or msg.text or "")
+        detail = meta.get("detail")
         choices = meta.get("choices")
-        if msg.kind != "intervention" or not choices or meta.get("_chosen_label"):
+        if choices:
+            self._iv_panel.show_choice(prompt=prompt, detail=detail, choices=choices)
+        else:
+            self._iv_panel.show_text(prompt=prompt, detail=detail)
+
+    def _resolve_pending_intervention(self, answer_label: str) -> None:
+        """Settle the pending intervention's flow entry + panel once an answer
+        has been delivered through the transport funnel.
+
+        Basic in P1 (the placeholder→resolved in-place ``set_item`` churn-zero
+        polish is P2): the SAME entry is updated in place to a green
+        ``✓ answered: <label>`` record (:meth:`ReynPresenter._present_intervention_pending`
+        reads the ``_answer_label`` meta key), the panel collapses, and focus
+        returns to the Composer — the resolved leg of the focus lifecycle
+        (pending → panel auto-focus, Esc/Tab → Composer, resolved → Composer)."""
+        entry = self._pending_iv_entry
+        self._pending_iv_entry = None
+        self._iv_panel.hide()
+        self.query_one(Composer).focus()
+        if entry is None:
             return
-        # Reconstruct the presenter's body width (content − gutter) so the chip
-        # geometry hit-tested here matches what was drawn.
-        body_width = max(
-            1, event.flow_view.scrollable_content_region.width - _GUTTER_WIDTH
-        )
-        if event.y != self._presenter.choice_chip_row(msg, body_width):
-            return  # click was on the prompt head / hint, not the chip row
-        for start, end, choice_id in choice_chip_spans(choices):
-            if start <= event.x < end:
-                await self._transport.answer_intervention_choice(choice_id)
-                label = next(
-                    (
-                        c.get("label")
-                        for c in choices
-                        if str(c.get("id", "")) == choice_id
-                    ),
-                    choice_id,
-                )
-                entry.set_item(replace(msg, meta={**meta, "_chosen_label": label}))
-                entry.set_state(EntryState.SUCCESS)
-                break
+        meta = entry.item.meta or {}
+        entry.set_item(replace(entry.item, meta={**meta, "_answer_label": answer_label}))
+        entry.set_state(EntryState.SUCCESS)
+
+    async def on_intervention_panel_choice_selected(
+        self, event: "InterventionPanel.ChoiceSelected"
+    ) -> None:
+        """A closed-set option was picked in the panel: deliver its id through
+        the UNCHANGED transport funnel (``answer_intervention_choice`` —
+        ``InterventionHandler.deliver_answer_to`` under the hood, the SAME
+        funnel every answer path — TUI, A2A peer, AG-UI HITL — shares). This is
+        the F1 permission-band reachability witness, restored through the
+        panel instead of a chip click."""
+        await self._transport.answer_intervention_choice(event.choice_id)
+        self._resolve_pending_intervention(event.label)
+
+    async def on_intervention_panel_text_submitted(
+        self, event: "InterventionPanel.TextSubmitted"
+    ) -> None:
+        """A free-text answer was submitted in the panel's Input: deliver it
+        through the UNCHANGED ``answer_intervention_text`` transport funnel."""
+        await self._transport.answer_intervention_text(event.text)
+        self._resolve_pending_intervention(event.text)
+
+    def on_intervention_panel_dismissed(
+        self, event: "InterventionPanel.Dismissed"
+    ) -> None:
+        """Esc/Tab inside the panel: return focus to the Composer WITHOUT
+        answering — the escape hatch of the focus lifecycle. The intervention
+        stays pending (the panel stays open); a new Composer submit durably
+        queues on the inbox rather than black-holing (#3300's sent-queue —
+        see the PR body for why #3299 needs no guard of its own here)."""
+        self.query_one(Composer).focus()
 
     def _ingest_frame(self, msg: "OutboxMessage") -> None:
         """Fold one display frame into the retained model — appending a new entry,
@@ -660,8 +656,10 @@ class TextualChatApp(App):
         call and its result read as ONE block (CC's ``⏺ tool(args)`` + ``⎿ result``,
         the PoC's ``_present_tool_call`` grouping). Every OTHER frame — including a
         completion with NO matching started entry (already settled / uncorrelated)
-        — is appended as its own entry and handed to :meth:`_apply_lifecycle_state`,
-        so nothing regresses for the plain-fallback turn sequence."""
+        — is appended as its own entry: an ``intervention`` frame routes to
+        :meth:`_present_intervention` (the panel, #3299 P1), everything else to
+        :meth:`_apply_lifecycle_state`, so nothing regresses for the
+        plain-fallback turn sequence."""
         kind = msg.kind
         op_id = (msg.meta or {}).get("op_id")
         if kind in ("tool_call_completed", "tool_call_failed") and op_id is not None:
@@ -670,7 +668,10 @@ class TextualChatApp(App):
                 self._coalesce_tool_result(started, msg)
                 return
         entry = self.conversation.append(msg)
-        self._apply_lifecycle_state(msg, entry)
+        if kind == "intervention":
+            self._present_intervention(msg, entry)
+        else:
+            self._apply_lifecycle_state(msg, entry)
 
     def _apply_lifecycle_state(
         self, msg: "OutboxMessage", entry: "Entry[OutboxMessage]"
@@ -911,42 +912,25 @@ class TextualChatApp(App):
         await self._submit(text)
 
     async def _submit(self, text: str) -> None:
-        """Route one submitted line through the transport send seam.
+        """Route one submitted line through the transport send seam as an
+        ordinary NEW turn.
 
-        A pending free-text intervention (no choices) takes the text answer path;
-        a pending CHOICE intervention takes the type-or-click parity path (match
-        the text to an option → answer that choice; no match → re-affirm the
-        options and keep the intervention pending — NEVER fall through to a new
-        turn, which the backend would black-hole while it waits for the choice
-        answer, #3290); everything else is an ordinary new turn. Errors are
-        contained and surfaced as an error frame the pump renders — a silent
-        input drop is the worst failure for a chat box.
-        """
+        #3299 P1: the Composer is now EXCLUSIVELY for new turns — it no longer
+        reads ``pending_intervention_head()`` at all. Answering a pending
+        intervention (closed-set select or free-text) happens ONLY through the
+        :class:`~reyn.interfaces.inline.textual_chat.intervention_panel.InterventionPanel`
+        (:meth:`on_intervention_panel_choice_selected` /
+        :meth:`on_intervention_panel_text_submitted`), never here. A Composer
+        submit that lands while an intervention is pending is NOT black-holed:
+        the backend turn stays busy awaiting the intervention, so
+        ``submit_user_text`` durably queues the line on the inbox (visible /
+        cancelable via the #3300 sent-queue once its P2/P3 land) rather than
+        losing it — this delegation was verified live (turn-owner-task /
+        inbox-durability trace) by the architect design pass for #3299, so P1
+        needs no hint/block guard of its own. Errors are contained and
+        surfaced as an error frame the pump renders — a silent input drop is
+        the worst failure for a chat box."""
         try:
-            head = self._transport.pending_intervention_head()
-            # A ``/``-prefixed line is never an intervention answer — it is a slash
-            # command (dispatched by the session turn loop), so it must take the
-            # normal submit path even while an intervention is pending (mirrors
-            # ``stream_client.submit_or_answer``'s guard). Without this, a
-            # picker-issued ``/model`` / ``/attach`` (or a typed slash) during a
-            # pending intervention would be mis-delivered as the answer text.
-            if head is not None and not text.startswith("/"):
-                choices = getattr(head, "choices", None)
-                if choices:
-                    # Closed-set (choice) intervention pending: type-or-click
-                    # parity. On an unambiguous match answer that choice; on no
-                    # match re-affirm the options and keep it pending — routing a
-                    # non-match to ``submit_user_text`` here is the #3290 black
-                    # hole (backend blocked on the choice, 0 events, UI lies).
-                    matched_id = _match_choice_input(text, choices)
-                    if matched_id is not None:
-                        await self._transport.answer_intervention_choice(matched_id)
-                    else:
-                        self._surface_choice_hint()
-                    return
-                # Free-text intervention (no choices) → deliver as the answer text.
-                await self._transport.answer_intervention_text(text)
-                return
             await self._transport.submit_user_text(text)
         except Exception as exc:
             logger.exception("textual chat: submit failed")
@@ -960,25 +944,6 @@ class TextualChatApp(App):
                 )
             except Exception:
                 pass
-
-    def _surface_choice_hint(self) -> None:
-        """Re-affirm the pending choice options after an unmatched free-text
-        submit — the #3290 anti-black-hole hint.
-
-        Injected as a ``kind="system"`` display frame (a dim lifecycle marker,
-        NOT an error) through the same ``put_display`` seam the pump drains, so it
-        lands in FIFO order below the still-rendered option chips. The
-        intervention is left pending — the user can click a chip or retype a
-        matching option — so free text is never black-holed into a blocked
-        backend."""
-        from reyn.runtime.outbox import OutboxMessage
-
-        try:
-            self._transport.put_display(
-                OutboxMessage(kind="system", text=_CHOICE_HINT_TEXT)
-            )
-        except Exception:
-            logger.exception("textual chat: choice hint surface failed")
 
 
 async def run_textual_chat(
