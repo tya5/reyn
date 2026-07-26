@@ -280,17 +280,28 @@ class ReynPresenter:
         Pending (no ``_answer_label`` meta yet): the neutralized prompt head
         plus a dim ``⋯ respond in the panel below`` hint — the "◆ needs you"
         amber gutter (kind-driven) already marks the row. Resolved
-        (``_answer_label`` set by the app once the panel delivers an answer):
-        the head plus a green ``✓ answered: <label>`` line (basic — the
-        placeholder→resolved in-place churn-zero polish is P2, not built
-        here)."""
+        (``_answer_label`` set by the app once the panel delivers an answer,
+        OR by the restore projection reading a persisted answer straight off
+        history — #3299 P4): the head plus a green ``✓ answered: <label>``
+        line (basic — the placeholder→resolved in-place churn-zero polish is
+        P2, not built here). ``_answer_label`` is neutralized at THIS call
+        site — the SAME leaf-neutralization discipline ``_intervention_head``
+        already applies to ``prompt``/``detail`` (#2770) — because a matched
+        CLOSED-SET choice's label is model-supplied / untrusted the same way
+        the prompt is; a live choice answer arrives here ALREADY neutralized
+        (``InterventionPanel`` neutralizes labels at tab-build time) so this
+        is idempotent for it, but a RESTORED answer arrives RAW (persisted
+        RAW by design — neutralize only at display boundaries, never at
+        write time), making this the ONE real neutralization boundary for the
+        restore path's answer text."""
         meta = item.meta or {}
         head = _intervention_head(item)
         head_h = self._measure(head, width)
         answer = meta.get("_answer_label")
         if answer is not None:
             resolved = Text.assemble(
-                ("  ✓ answered: ", _CC_DIM), (str(answer), f"bold {_CC_DONE}")
+                ("  ✓ answered: ", _CC_DIM),
+                (_neutralized_label(str(answer)), f"bold {_CC_DONE}"),
             )
             return Presentation(height=head_h + 1, renderable=Group(head, resolved))
         hint = Text(_PENDING_HINT, style=_CC_DIM)

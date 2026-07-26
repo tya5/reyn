@@ -61,6 +61,38 @@ so gutter colour and body agree either way. The ``system`` / ``summary``
 roles are Reyn-internal chrome (filtered at the LLM wire boundary), so both
 are skipped.
 
+**Answered intervention → ONE self-contained "Q→A" entry (#3299 P4).**
+``InterventionHandler.announce`` (``runtime/services/intervention_handler.py``)
+publishes an intervention's PROMPT only to the outbox — it never appends to
+history — so before this, only the ANSWER half existed in ``history.jsonl``
+(a ``role="user"`` entry stamped ``meta["intervention_id"]`` /
+``meta["intervention_kind"]`` by ``deliver_answer_to``). There was and is no
+separate "question" record to correlate the answer with, so — unlike the
+tool call/result coalesce above, which really does have two records — this
+does NOT correlate two entries: ``deliver_answer_to`` now folds the prompt
+(+ optional detail, + the resolved answer-display text — needed because a
+CLOSED-SET answer's own ``ChatMessage.content`` is an empty string; see
+``INTERVENTION_ANSWER_META_KEY``'s docstring) onto that SAME answer record
+(``INTERVENTION_PROMPT_META_KEY`` / ``INTERVENTION_DETAIL_META_KEY`` /
+``INTERVENTION_ANSWER_META_KEY``, :mod:`reyn.runtime.chat_message`). One
+history entry is already fully self-contained — this projection just reads
+it, with no join/correlation step and therefore no GUESSED-key risk (the
+#3287 / #3299 P2 defect class this arc hit twice before). It projects
+straight into the SAME ``kind="intervention"`` shape a LIVE resolved entry
+uses (``meta["prompt"]`` / ``meta["detail"]`` for the head,
+``meta["_answer_label"]`` for the "✓ answered: ..." line —
+``ReynPresenter._present_intervention_pending``'s RESOLVED branch, no
+presenter change needed), so a restored Q→A reads through the EXACT SAME
+render path — and hits the EXACT SAME neutralization boundary (the prompt /
+detail / a matched choice's label are all model-derived / untrusted; that
+presenter call site is where they get neutralized, never here) — a live
+resolved entry does. P5's out-of-order answering is safe by construction:
+each answer record carries its OWN question, so answering interventions in
+any order restores each with its correct pairing. An intervention that was
+NEVER answered leaves no history trace at all (``announce`` never appends)
+and so projects to nothing — the specified behavior (pinned by a dedicated
+test), not an accidental gap.
+
 **Recovery implication (truncate-falsify gate N/A for the typed flag too).**
 ``TOOL_STATUS_META_KEY`` is written straight into the persisted ``ChatMessage``
 at the SAME time ``content`` is (``router_loop.py``'s ``append_history_entry``
@@ -83,6 +115,9 @@ import json
 from typing import TYPE_CHECKING
 
 from reyn.runtime.chat_message import (
+    INTERVENTION_ANSWER_META_KEY,
+    INTERVENTION_DETAIL_META_KEY,
+    INTERVENTION_PROMPT_META_KEY,
     TOOL_ERROR_KIND_META_KEY,
     TOOL_ERROR_MESSAGE_META_KEY,
     TOOL_STATUS_ERROR,
@@ -177,6 +212,13 @@ def project_restored_frames(
     Oldest→newest, preserving conversation order. Mapping:
 
     - ``user`` (non-empty text)      → ``kind="user"``
+    - ``user`` carrying
+      ``meta[INTERVENTION_PROMPT_META_KEY]`` (#3299 P4) → a SINGLE
+      ``kind="intervention"`` frame (the RESOLVED Q→A shape — see the
+      dedicated docstring paragraph below), never a plain ``kind="user"``
+      row. An intervention that was never answered has no history entry at
+      all (``InterventionHandler.announce`` never appends to history) and so
+      projects to nothing — the specified behavior, not an omission.
     - ``assistant`` (non-empty text) → ``kind="agent"``
     - ``tool`` (a tool RESULT)       → a SINGLE ``kind="tool_call_started"``
       frame carrying the coalesced call+result shape (see the module
@@ -212,11 +254,46 @@ def project_restored_frames(
         if role in _SKIP_ROLES:
             continue
         if role == "user":
-            text = m.text
-            if text.strip():
+            meta = m.meta or {}
+            prompt = meta.get(INTERVENTION_PROMPT_META_KEY)
+            if prompt:
+                # #3299 P4: this history entry IS an answered intervention —
+                # ``InterventionHandler.deliver_answer_to`` folded the prompt
+                # (+ optional detail, + the resolved answer-display text) onto
+                # this SAME record (see chat_message.py's
+                # ``INTERVENTION_*_META_KEY`` docstrings — there is no
+                # separate "question" record to correlate with). Project it
+                # straight into the live ``kind="intervention"`` shape
+                # (``ReynPresenter._present_intervention_pending``'s RESOLVED
+                # branch — ``meta["prompt"]``/``meta["detail"]`` for the head,
+                # ``meta["_answer_label"]`` for the "✓ answered: ..." line) so
+                # a restored Q→A reads through the EXACT SAME render path —
+                # and the EXACT SAME neutralization boundary — a live resolved
+                # entry does. ALL THREE values are RAW here; neutralization
+                # happens only at that shared render call site, never here (a
+                # persisted record must stay the original, un-display-shaped
+                # value).  An intervention that was NEVER answered has no
+                # history trace at all (``announce`` never appends to
+                # history) — nothing to project, which is the specified
+                # behavior, not an omission.
                 frames.append(
-                    OutboxMessage(kind="user", text=text, meta={RESTORED_META_KEY: True})
+                    OutboxMessage(
+                        kind="intervention",
+                        text=str(prompt),
+                        meta={
+                            RESTORED_META_KEY: True,
+                            "prompt": prompt,
+                            "detail": meta.get(INTERVENTION_DETAIL_META_KEY),
+                            "_answer_label": meta.get(INTERVENTION_ANSWER_META_KEY, ""),
+                        },
+                    )
                 )
+            else:
+                text = m.text
+                if text.strip():
+                    frames.append(
+                        OutboxMessage(kind="user", text=text, meta={RESTORED_META_KEY: True})
+                    )
         elif role == "assistant":
             text = m.text
             if text.strip():
