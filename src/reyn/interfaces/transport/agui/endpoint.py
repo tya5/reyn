@@ -446,9 +446,10 @@ async def agui_submit(request: Request, agent_name: str):
         if text:
             # ADR-0039 multi-client input-broadcast fix: attribute this
             # submit the same way `_handle_answer` attributes a HITL grant
-            # (auth_user_id + connection id) — `submit_user_text` broadcasts
-            # a kind="user" frame via outbox_hub so every OTHER attached
-            # surface sees this client's turn, not just the agent's reply.
+            # (auth_user_id + connection id) — `submit_user_text` emits a
+            # `user_submitted` chat-event (#3300 P1 C) that every attached
+            # surface's event→display handler renders as this client's turn,
+            # not just the agent's reply.
             await session.submit_user_text(
                 text,
                 attribution={

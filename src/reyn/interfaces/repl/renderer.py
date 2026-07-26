@@ -29,6 +29,27 @@ def _meta_prefix(meta: dict) -> str:
     return ""
 
 
+def user_submitted_display_message(event) -> OutboxMessage:
+    """Build the display :class:`OutboxMessage` for a ``user_submitted``
+    chat-event — the ONE neutralize-at-display-boundary seam every surface's
+    ``on_chat_event`` (this module) / frame-pump handler
+    (``interfaces.inline.textual_chat.app``) calls to render the user-line echo
+    (#3300 P1 C).
+
+    ``session.submit_user_text`` (``runtime/session.py``) emits ``user_submitted``
+    carrying the RAW text (no neutralize — single source, the inbox path, stays
+    untouched) + ``meta`` (attribution, built server-side by
+    ``session._user_frame_meta``). Neutralization (ESC/control strip) happens
+    HERE, at render time, via the same ``core/present/guard.get_neutralizer
+    ("terminal")`` seam #2770 uses for intervention content — replacing the
+    removed ``_put_outbox`` echo's inline neutralize call.
+    """
+    from reyn.core.present.guard import get_neutralizer
+    data = event.data or {}
+    text, _ = get_neutralizer("terminal").neutralize(str(data.get("text", "")))
+    return OutboxMessage(kind="user", text=text, meta=dict(data.get("meta") or {}))
+
+
 _BANNER = """\
  ██████╗ ███████╗██╗   ██╗███╗  ██╗
  ██╔══██╗██╔════╝╚██╗ ██╔╝████╗ ██║
@@ -121,6 +142,8 @@ class ConsoleChatRenderer(ChatRenderer):
             self._thinking = True
         elif etype in ("turn_settled", "turn_completed", "turn_cancelled"):
             self._thinking = False
+        elif etype == "user_submitted":
+            self.message(user_submitted_display_message(event))
 
     def bottom_toolbar(self):
         if not self._thinking:
@@ -783,6 +806,14 @@ class InlineChatRenderer(ChatRenderer):
             # records the user's answer, regardless of which kind of
             # intervention it was.
             self._set_waiting_on(_WAITING_ON_THINKING)
+        elif etype == "user_submitted":
+            # #3300 P1 (C): only reachable when this renderer runs the shared
+            # plain PromptSession loop (``chat.render_mode: plain`` configured
+            # on an interactive TTY) — the default TTY path bypasses this
+            # renderer entirely for ``TextualChatApp`` (client_driver.py),
+            # which has its OWN ``user_submitted`` handler
+            # (``interfaces/inline/textual_chat/app.py``).
+            self.message(user_submitted_display_message(event))
 
     def bottom_toolbar(self):
         """Animated working indicator while a turn runs (spinner + elapsed).

@@ -154,9 +154,12 @@ _DISPLAY_KIND_EVENT: dict[str, str] = {
 }
 
 # EventFrame ``Event.type`` → AG-UI event type. turn_* → RUN_*; tool_* →
-# TOOL_CALL_*; ``user_answered_intervention`` is reyn-private → CUSTOM. Every
-# entry here is one of the eight ``renderer_chat_events()`` the transport
-# forwards; the completeness gate binds the two independently.
+# TOOL_CALL_*; ``user_answered_intervention`` / ``user_submitted`` (#3300 P1 C)
+# are reyn-private → CUSTOM (the ``_event_event_type`` default, not listed
+# below). Every entry in ``renderer_chat_events()`` — not just the ones
+# explicitly mapped here — round-trips losslessly via ``_reyn``; the
+# completeness gate binds the transport's forward-set to the renderer's
+# vocabulary independently of this table's non-CUSTOM selections.
 _EVENT_TYPE_EVENT: dict[str, str] = {
     "turn_started": RUN_STARTED,
     "turn_settled": RUN_FINISHED,

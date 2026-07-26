@@ -2,38 +2,41 @@
 
 With 2+ thin clients attached to one server (``reyn chat --connect``), the
 agent's replies already broadcast (``session.outbox`` -> ``outbox_hub`` fan-out,
-P6b-1), but the user's OWN turn did not: ``Session.submit_user_text`` only put
-the turn on the inbox (turn-drive), and the inline CUI's own scrollback echo was
-a LOCAL-ONLY ``transport.put_display`` injection that never rode the hub — a
-peer saw the agent's reply with no prompt (half a conversation, the dogfooded
-bug).
+P6b-1). The user's OWN turn used to ride the SAME outbox (a
+``self._put_outbox(OutboxMessage(kind="user", ...))`` call in
+``submit_user_text``) — #3300 P1 (C) replaced that outbox echo (a category
+error: an INPUT written into the display/OUTPUT channel, plus a double-write of
+the same text) with a ``user_submitted`` chat-event every attached surface's
+event→display handler renders — single source of truth = the inbox, echo =
+derived notification.
 
 Covers:
-  A. ``Session.submit_user_text`` now ALSO puts a ``kind="user"`` frame on
-     ``session.outbox`` -> every ``outbox_hub`` subscriber (= every attached
-     client, simulated here as two independent hub subscriptions) sees it.
-     Reverting the ``self._put_outbox(OutboxMessage(kind="user", ...))`` call
-     added to ``submit_user_text`` reproduces the bug directly: neither
-     subscription below would see a "user" frame at all.
+  A. ``Session.submit_user_text`` emits a ``user_submitted`` chat-event (NOT an
+     outbox frame) carrying the raw text + chain_id + _msg_id + meta — every
+     ``subscribe_chat_events`` subscriber (= every attached client, simulated
+     here as two independent subscriptions) sees it. Reverting the
+     ``self._chat_events.emit("user_submitted", ...)`` call added to
+     ``submit_user_text`` reproduces the bug directly: neither subscription
+     below would see a "user_submitted" event at all.
   B. ``InterventionHandler.deliver_answer_to`` — the ONE funnel every answer
      path (TUI free-text / TUI choice-region / A2A peer / AG-UI HITL) shares —
      broadcasts the SAME way for answer-path symmetry, using the DISPLAY text
      (raw / choice label), never the fenced history-bound copy: display and
      context are orthogonal sinks, so the external-source fence (FP-0050/#1862)
      is provably untouched (raw broadcast text vs. fenced history text, same
-     answer).
+     answer). Unaffected by the P1 (C) echo→event move (a separate mechanism).
 
 (Part C — the retired prompt_toolkit inline CUI's local double-echo suppression
 of ``_submit`` / ``_deliver_intervention_choice`` — was removed with that driver
-in the #3273 TUI-rebuild retirement; the outbox broadcast covered by Parts A/B
-is the sole surviving user-echo path.)
+in the #3273 TUI-rebuild retirement; the event broadcast covered by Part A is
+the sole surviving user-echo path.)
 
 Policy compliance (docs/deep-dives/contributing/testing.ja.md):
 - No unittest.mock / AsyncMock / patch usage — real Session / InterventionHandler
   / OutboxHub / InProcessTransport instances, or plain fakes (Fake > Mock).
-- Public surface observed: ``session.outbox_hub.subscribe()`` frames,
-  ``registry.repl_outbox`` (the only channel a local ``put_display`` echo could
-  reach), history dicts collected via an injected callback.
+- Public surface observed: ``session.subscribe_chat_events()`` callbacks,
+  ``session.outbox_hub.subscribe()`` frames (Part B, unaffected), history dicts
+  collected via an injected callback.
 - Each test docstring's first line declares its Tier.
 """
 from __future__ import annotations
@@ -62,7 +65,7 @@ from tests._support.agent_session import make_session
 
 
 def _make_session(tmp_path: Path, *, agent_name: str = "test_agent") -> Session:
-    """Minimal real Session — no router/registry needed for the outbox-only
+    """Minimal real Session — no router/registry needed for the chat-event
     invariants exercised here."""
     session = make_session(
         agent_name=agent_name,
@@ -74,76 +77,129 @@ def _make_session(tmp_path: Path, *, agent_name: str = "test_agent") -> Session:
     return session
 
 
+class _EventSink:
+    """A real (non-mock) chat-event subscriber — a plain callback collector,
+    standing in for one attached client's ``on_chat_event`` entry point."""
+
+    def __init__(self) -> None:
+        self.events: list = []
+
+    def __call__(self, event) -> None:
+        self.events.append(event)
+
+
+def _user_submitted(sink: _EventSink):
+    matches = [e for e in sink.events if e.type == "user_submitted"]
+    assert matches, "no user_submitted event observed"
+    return matches[0]
+
+
 async def _get(sub, timeout: float = 2.0) -> OutboxMessage:
     return await asyncio.wait_for(sub.get(), timeout=timeout)
 
 
 # ---------------------------------------------------------------------------
-# Part A — Session.submit_user_text broadcasts a kind="user" frame
+# Part A — Session.submit_user_text emits a user_submitted chat-event
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_submit_user_text_broadcasts_to_every_attached_surface(tmp_path, monkeypatch):
-    """Tier 2: submit_user_text puts a kind="user" frame on EVERY outbox_hub
-    subscriber, not just the inbox that drives the turn.
+async def test_submit_user_text_emits_user_submitted_to_every_subscriber(tmp_path, monkeypatch):
+    """Tier 2: submit_user_text emits a "user_submitted" chat-event to EVERY
+    chat-event subscriber, not just the inbox that drives the turn.
 
-    Two independent hub subscriptions stand in for two attached thin clients
+    Two independent subscriptions stand in for two attached thin clients
     (client A = the submitter, client B = a peer). Both must see the SAME
-    "user" frame — proving the fix closes the dogfooded half-conversation gap
-    (before this, a peer saw only the agent's eventual reply).
+    "user_submitted" event — proving the echo is a derived, fan-out
+    notification (ADR-0039), not a local-only side effect.
     """
     monkeypatch.chdir(tmp_path)
     session = _make_session(tmp_path)
 
-    client_a = session.outbox_hub.subscribe()
-    client_b = session.outbox_hub.subscribe()
+    sink_a, sink_b = _EventSink(), _EventSink()
+    session.subscribe_chat_events(sink_a)
+    session.subscribe_chat_events(sink_b)
 
     await session.submit_user_text("hello from client A")
 
-    msg_a = await _get(client_a)
-    msg_b = await _get(client_b)
+    ev_a, ev_b = _user_submitted(sink_a), _user_submitted(sink_b)
+    for ev in (ev_a, ev_b):
+        assert ev.data.get("text") == "hello from client A"
 
-    for msg in (msg_a, msg_b):
-        assert msg.kind == "user"
-        assert msg.text == "hello from client A"
+
+@pytest.mark.asyncio
+async def test_submit_user_text_no_outbox_user_echo(tmp_path, monkeypatch):
+    """Tier 2: the old outbox echo is GONE — a "user" kind frame no longer
+    rides ``session.outbox_hub`` after submit (single source = the
+    user_submitted event, not a parallel outbox write)."""
+    monkeypatch.chdir(tmp_path)
+    session = _make_session(tmp_path)
+    sub = session.outbox_hub.subscribe()
+
+    await session.submit_user_text("hello, no outbox echo")
+
+    # Public surface only (HubSubscription.get, no private-queue peeking): a
+    # short-timeout get that raises TimeoutError proves nothing arrived — the
+    # old outbox echo would have delivered a "user" frame here immediately.
+    with pytest.raises(asyncio.TimeoutError):
+        await asyncio.wait_for(sub.get(), timeout=0.2)
+
+
+@pytest.mark.asyncio
+async def test_submit_user_text_carries_chain_id_and_msg_id(tmp_path, monkeypatch):
+    """Tier 2: the user_submitted event carries chain_id + _msg_id (the id
+    ``_put_inbox`` stamps) — load-bearing for a later phase (client learns its
+    own message id, for cancel-by-id)."""
+    monkeypatch.chdir(tmp_path)
+    session = _make_session(tmp_path)
+    sink = _EventSink()
+    session.subscribe_chat_events(sink)
+
+    await session.submit_user_text("track my id")
+
+    ev = _user_submitted(sink)
+    assert ev.data.get("chain_id")
+    assert ev.data.get("_msg_id")
 
 
 @pytest.mark.asyncio
 async def test_submit_user_text_local_default_carries_no_attribution(tmp_path, monkeypatch):
     """Tier 2: a local/in-process submit (no ``attribution`` kwarg — the
     inline CUI's own ``ClientTransport.submit_user_text`` call shape) produces
-    a "user" frame with EMPTY meta — the single-client / operator case, so the
-    renderer's ``_meta_prefix`` shows the bare line (no ``[alice]`` prefix)."""
+    a "user_submitted" event with EMPTY meta — the single-client / operator
+    case, so the renderer's ``_meta_prefix`` shows the bare line (no
+    ``[alice]`` prefix)."""
     monkeypatch.chdir(tmp_path)
     session = _make_session(tmp_path)
-    sub = session.outbox_hub.subscribe()
+    sink = _EventSink()
+    session.subscribe_chat_events(sink)
 
     await session.submit_user_text("plain local turn")
 
-    msg = await _get(sub)
-    assert msg.kind == "user"
-    assert msg.meta == {}
+    ev = _user_submitted(sink)
+    assert ev.data.get("meta") == {}
 
 
 @pytest.mark.asyncio
-async def test_submit_user_text_remote_attribution_reaches_the_frame(tmp_path, monkeypatch):
+async def test_submit_user_text_remote_attribution_reaches_the_event(tmp_path, monkeypatch):
     """Tier 2: a remote (AG-UI POST) submit's ``attribution`` (auth_user_id +
     connection id — the P3 ``user_answered_intervention`` shape) lands in the
-    broadcast frame's ``meta``, so a multi-client renderer can show WHO typed
-    this turn."""
+    "user_submitted" event's ``meta``, so a multi-client renderer can show WHO
+    typed this turn."""
     monkeypatch.chdir(tmp_path)
     session = _make_session(tmp_path)
-    sub = session.outbox_hub.subscribe()
+    sink = _EventSink()
+    session.subscribe_chat_events(sink)
 
     await session.submit_user_text(
         "hi from the wire",
         attribution={"auth_user_id": "alice", "auth_connection_id": "conn-1"},
     )
 
-    msg = await _get(sub)
-    assert msg.meta.get("auth_user_id") == "alice"
-    assert msg.meta.get("auth_connection_id") == "conn-1"
+    ev = _user_submitted(sink)
+    meta = ev.data.get("meta") or {}
+    assert meta.get("auth_user_id") == "alice"
+    assert meta.get("auth_connection_id") == "conn-1"
 
 
 # ---------------------------------------------------------------------------

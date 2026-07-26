@@ -2802,33 +2802,38 @@ class Session:
         # PR14: every top-level user submission starts a fresh chain_id that
         # propagates through any agent_request / agent_response generated in
         # response. Logged in history meta + events.jsonl for cross-agent trace.
-        await self._put_inbox(
-            "user", {"text": text, "chain_id": _new_chain_id()},
+        chain_id = _new_chain_id()
+        msg_id = await self._put_inbox(
+            "user", {"text": text, "chain_id": chain_id},
         )
-        # ADR-0039 multi-client input-broadcast fix: put the user's OWN turn on
-        # `session.outbox` too (not just the inbox that drives the turn), so it
-        # rides the SAME `outbox_hub` fan-out (P6b-1) the agent's reply already
-        # broadcasts through. Before this, a 2nd+ thin client (`reyn chat
-        # --connect`) saw the agent's reply with no prompt (half a conversation)
-        # — the local scrollback echo was a LOCAL-ONLY `transport.put_display`
-        # injection that never reached the hub (since removed from the inline
-        # CUI's submit path; every client, including this submitting one, now
-        # renders its own line from THIS broadcast frame — single source of
-        # truth, no double-render).
+        # #3300 P1 (C): the user-line echo is DRIVEN BY a `user_submitted`
+        # chat-event, not a parallel `_put_outbox` write (removed — was a
+        # category error: a user INPUT written into the display/OUTPUT
+        # channel, plus a double-write of the same text). Single source of
+        # truth = the inbox above; the echo every attached client (including
+        # THIS submitting one, ADR-0039 multi-client) renders is a DERIVED
+        # notification off this event — `_TURN_AND_ANSWER_EVENTS`
+        # (transport/frames.py) lists "user_submitted" so
+        # `renderer_chat_events()` auto-forwards it over BOTH the in-process
+        # and the AG-UI/SSE transport (generic EventFrame encode/decode,
+        # transport/agui/protocol.py — no per-surface wiring needed there).
         #
-        # The DISPLAY copy is neutralized (ESC/control strip — same
-        # `core/present/guard.get_neutralizer("terminal")` seam #2770 uses for
-        # intervention content) because this text now reaches every attached
-        # peer's terminal, not only the operator's own (a new cross-client
-        # surface a purely-local echo never had). The INBOX copy above (what the
-        # agent/router actually reads) stays raw — display neutralization never
-        # touches conversation content.
-        from reyn.core.present.guard import get_neutralizer
-        await self._put_outbox(OutboxMessage(
-            kind="user",
-            text=get_neutralizer("terminal").neutralize(text)[0],
+        # The payload carries the RAW text (neutralization moves to the
+        # DISPLAY boundary — each surface's event→display handler calls the
+        # same `core/present/guard.get_neutralizer("terminal")` seam #2770
+        # uses for intervention content, via
+        # `renderer.user_submitted_display_message`) — the inbox copy above
+        # (what the agent/router actually reads) is unaffected either way,
+        # display neutralization never touches conversation content. `msg_id`
+        # (the id `_put_inbox` stamps) rides along — load-bearing for a later
+        # phase (client learns its own message id, for cancel-by-id).
+        self._chat_events.emit(
+            "user_submitted",
+            text=text,
+            chain_id=chain_id,
+            _msg_id=msg_id,
             meta=_user_frame_meta(attribution),
-        ))
+        )
 
     async def submit_agent_request(
         self, *, from_agent: str, request: str, depth: int, chain_id: str,

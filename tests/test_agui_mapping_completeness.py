@@ -6,7 +6,7 @@ renderer consumes has two halves:
 - **DisplayFrame kinds** — the ``OutboxMessage.kind`` literals the renderer's
   ``message`` / ``format_inline_message`` dispatch on (AST-scanned from the
   renderer source, NOT from the codec's own table — non-circular).
-- **EventFrame types** — the eight ``renderer_chat_events()`` the transport
+- **EventFrame types** — the ``renderer_chat_events()`` set the transport
   forwards (derived, not hand-listed).
 
 For EACH, the codec must round-trip it: ``encode_frame`` → SSE → ``decode_event``
@@ -136,7 +136,7 @@ def test_every_display_kind_round_trips_over_the_wire() -> None:
 
 
 def test_every_forwarded_chat_event_round_trips_over_the_wire() -> None:
-    """Tier 2: each of the eight renderer_chat_events encodes→decodes back to the
+    """Tier 2: each of the renderer_chat_events encodes→decodes back to the
     same event type and data. Unmapped / lossy ⇒ RED."""
     events = renderer_chat_events()
 
