@@ -8,6 +8,17 @@ parsing unchanged, no parallel chokepoint). When the proxy/endpoint does not ser
 `/v1/responses`, the routed call 405s → reyn raises a decision-enabling error
 (naming BOTH remedies) instead of a raw dead-end; #1676 still captures the raw 405.
 
+#3288 follow-up: the bridge is OpenAI-specific (some OpenAI reasoning models
+reject reasoning_effort+tools on /chat/completions; Gemini's reasoning_effort
+maps to a native thinking-budget param and does not need — or work well with,
+per #1652/② — the bridge). Pre-fix, `_routed_to_responses` had no provider
+check and fired for EVERY tools+reasoning_effort call, including Gemini's
+default-config primary reply, silently rewriting `gemini/...` to a
+`responses/`-prefixed string `_streaming_capable` cannot recognize —
+disabling streaming on the default configuration. The provider-gated tests
+below (`test_gemini_*`, `test_openai_reasoning_model_still_routed_*`) cover
+that fix; see `_requires_responses_bridge` in `src/reyn/llm/llm.py`.
+
 No mocks: real `recorded_acompletion`, a real async fake for `litellm.acompletion`
 (capturing the model / raising a litellm-shaped 405), monkeypatched.
 """
@@ -30,6 +41,7 @@ from reyn.llm.llm import (
 @pytest.fixture(autouse=True)
 def _reset_env(monkeypatch):
     monkeypatch.delenv("OPENAI_API_BASE", raising=False)  # no proxy → model unstripped
+    monkeypatch.delenv("LITELLM_API_BASE", raising=False)  # the var proxy_kwargs() actually reads
     yield
     set_llm_request_event_log(None)
 
@@ -162,3 +174,149 @@ def test_non_routed_405_is_not_wrapped(monkeypatch) -> None:
             purpose="main", recorder=None,
             extra_kwargs={"reasoning_effort": "low"},  # no tools → not routed
         ))
+
+
+# ── #3288 follow-up: the bridge is provider-gated (OpenAI only) ─────────────────
+
+
+def test_gemini_combo_is_not_routed_to_responses(monkeypatch) -> None:
+    """Tier 2: #3288 follow-up — a Gemini tools+reasoning_effort call (the
+    exact default-config primary-reply shape) is NOT routed through the
+    /v1/responses bridge: litellm.acompletion receives the model UNCHANGED.
+    Strip `_requires_responses_bridge` out of the `_routed_to_responses`
+    condition (back to the pre-fix `bool(tools and reasoning_effort)`) and the
+    `responses/` rewrite returns — this assertion goes RED."""
+    captured: dict = {}
+    monkeypatch.setattr(litellm, "acompletion", _capturing_acompletion(captured))
+
+    asyncio.run(recorded_acompletion(
+        model="gemini/gemini-2.5-flash-lite", messages=[{"role": "user", "content": "hi"}],
+        purpose="main", recorder=None,
+        extra_kwargs={"tools": [{"type": "function"}], "reasoning_effort": "low"},
+    ))
+    assert captured["model"] == "gemini/gemini-2.5-flash-lite", (
+        "Gemini must NOT be routed through the OpenAI-specific /v1/responses bridge"
+    )
+
+
+def test_openai_reasoning_model_still_routed_direct_path(monkeypatch) -> None:
+    """Tier 2: #3288 follow-up REGRESSION gate — the direct (non-proxy) path
+    for a genuine OpenAI reasoning model is still bridged after adding the
+    provider gate. This is the risk of the fix: getting the provider check
+    wrong un-bridges a model that genuinely needs /v1/responses, which then
+    405s with no decision-enabling error (see
+    `test_responses_405_raises_decision_enabling_error` above)."""
+    captured: dict = {}
+    monkeypatch.setattr(litellm, "acompletion", _capturing_acompletion(captured))
+
+    asyncio.run(recorded_acompletion(
+        model="openai/gpt-5.4", messages=[{"role": "user", "content": "hi"}],
+        purpose="main", recorder=None,
+        extra_kwargs={"tools": [{"type": "function"}], "reasoning_effort": "low"},
+    ))
+    assert captured["model"] == "openai/responses/gpt-5.4"
+
+
+def test_openai_reasoning_model_still_routed_proxy_path(monkeypatch) -> None:
+    """Tier 2: #3288 follow-up REGRESSION gate — the PROXY path (bare model
+    name post-strip, `custom_llm_provider` forced to "openai" on the wire by
+    `proxy_kwargs()`) is also still bridged. `_to_responses_model` has a
+    different branch for a bare (no-slash) model string than the direct path
+    above, so this is a distinct code path, not a duplicate of the direct-path
+    test. Also proves the provider gate is NOT fooled by (nor dependent on)
+    the proxy's forced `custom_llm_provider` — it derives the provider from
+    the model identity itself (`gpt-5.4` → openai), the same value it would
+    resolve to without a proxy configured at all."""
+    monkeypatch.setenv("LITELLM_API_BASE", "http://proxy.example:4000")
+    monkeypatch.setenv("OPENAI_API_KEY", "dummy")
+    captured: dict = {}
+    monkeypatch.setattr(litellm, "acompletion", _capturing_acompletion(captured))
+
+    asyncio.run(recorded_acompletion(
+        model="openai/gpt-5.4", messages=[{"role": "user", "content": "hi"}],
+        purpose="main", recorder=None,
+        extra_kwargs={"tools": [{"type": "function"}], "reasoning_effort": "low"},
+    ))
+    assert captured["model"] == "responses/gpt-5.4"
+
+
+def test_azure_reasoning_model_still_routed(monkeypatch) -> None:
+    """Tier 2: #3288 follow-up REGRESSION gate — co-vet finding (b) on PR
+    #3325: Azure is a first-class reyn provider (`credentials.py`'s
+    `"azure": "AZURE_API_KEY"`) that literally hosts OpenAI's reasoning
+    models, so it hits the SAME `/chat/completions` rejection this bridge
+    exists to route around. `azure/o1` already resolved through
+    `_to_responses_model` before this PR (no provider check existed), so
+    narrowing the gate to `openai` alone would have been a SILENT BEHAVIOR
+    CHANGE for Azure (un-bridging a model nobody verified doesn't need the
+    bridge). Strip `"azure"` out of `_responses_bridge_providers()` and this
+    assertion goes RED (falls back to the unbridged `azure/o1`)."""
+    captured: dict = {}
+    monkeypatch.setattr(litellm, "acompletion", _capturing_acompletion(captured))
+
+    asyncio.run(recorded_acompletion(
+        model="azure/o1", messages=[{"role": "user", "content": "hi"}],
+        purpose="main", recorder=None,
+        extra_kwargs={"tools": [{"type": "function"}], "reasoning_effort": "low"},
+    ))
+    assert captured["model"] == "azure/responses/o1"
+
+
+def test_openrouter_openai_prefixed_model_is_not_routed(monkeypatch) -> None:
+    """Tier 2: #3288 follow-up — documents the deliberate exclusion co-vet
+    finding (b) asked about: an OpenRouter-routed model whose OWN model name
+    happens to embed an `openai/` segment (`openrouter/openai/gpt-5`) is NOT
+    bridged. `litellm.get_llm_provider` resolves this string's PROVIDER as
+    `"openrouter"` (not `"openai"`) — correctly: the HTTP call lands on
+    OpenRouter's own completions endpoint, never OpenAI's `/v1/responses`,
+    regardless of the embedded `openai/` segment naming OpenRouter's upstream
+    model. Bridging it would target an endpoint OpenRouter doesn't serve."""
+    captured: dict = {}
+    monkeypatch.setattr(litellm, "acompletion", _capturing_acompletion(captured))
+
+    asyncio.run(recorded_acompletion(
+        model="openrouter/openai/gpt-5", messages=[{"role": "user", "content": "hi"}],
+        purpose="main", recorder=None,
+        extra_kwargs={"tools": [{"type": "function"}], "reasoning_effort": "low"},
+    ))
+    assert captured["model"] == "openrouter/openai/gpt-5"
+
+
+def test_gemini_405_via_proxy_is_not_wrapped_since_not_routed(monkeypatch) -> None:
+    """Tier 2: #3288 follow-up — a Gemini tools+reasoning_effort call that
+    405s (e.g. proxy quirk unrelated to /v1/responses) is NOT wrapped in
+    `ResponsesEndpointRequiredError`, since reyn never routed it through the
+    bridge in the first place (companion to `test_non_routed_405_is_not_wrapped`,
+    scoped to the provider-gate fix)."""
+    async def _raise_405(**_kwargs):
+        raise _FakeProviderError("Method Not Allowed", 405)
+    monkeypatch.setattr(litellm, "acompletion", _raise_405)
+
+    with pytest.raises(_FakeProviderError):
+        asyncio.run(recorded_acompletion(
+            model="gemini/gemini-2.5-flash-lite", messages=[{"role": "user", "content": "hi"}],
+            purpose="main", recorder=None,
+            extra_kwargs={"tools": [{"type": "function"}], "reasoning_effort": "low"},
+        ))
+
+
+def test_openai_reasoning_405_still_raises_decision_enabling_error_after_gate(
+    monkeypatch,
+) -> None:
+    """Tier 2: #3288 follow-up — gate #4: a genuinely-bridged OpenAI call that
+    405s (proxy doesn't serve /v1/responses) still raises the
+    decision-enabling `ResponsesEndpointRequiredError` after the provider gate
+    was added — the 405-wrap path is itself gated on `_routed_to_responses`,
+    so this confirms the provider gate didn't collaterally break it for the
+    provider it must still cover."""
+    async def _raise_405(**_kwargs):
+        raise _FakeProviderError("Method Not Allowed", 405)
+    monkeypatch.setattr(litellm, "acompletion", _raise_405)
+
+    with pytest.raises(ResponsesEndpointRequiredError) as ei:
+        asyncio.run(recorded_acompletion(
+            model="openai/gpt-5.4", messages=[{"role": "user", "content": "hi"}],
+            purpose="main", recorder=None,
+            extra_kwargs={"tools": [{"type": "function"}], "reasoning_effort": "low"},
+        ))
+    assert "/v1/responses" in str(ei.value)

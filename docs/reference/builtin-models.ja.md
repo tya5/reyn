@@ -133,10 +133,13 @@ answer 品質が落ちる可能性あり。
 
 ### ツールを伴う turn での reasoning（Responses-API bridge）
 
-**tools** を伴い、かつ reasoning-capable model に `reasoning_effort` が設定された
-turn は、litellm の Responses-API bridge（`responses/<model>`）を通ります。litellm
-の bridge は現状、model が返す `reasoning` output item を map できないため、call が
-次の error を raise します:
+**tools** を伴い、かつ **OpenAI または Azure** の reasoning-capable model に
+`reasoning_effort` が設定された turn は、litellm の Responses-API bridge
+（`responses/<model>`）を通ります。`reasoning_effort + tools` の組み合わせは
+これらの provider の `/v1/responses` でのみ有効で、`/v1/chat/completions` は
+この組み合わせを 405 で拒否するためです（#1678）。litellm の bridge は現状、
+model が返す `reasoning` output item を map できないため、call が次の error を
+raise します:
 
 ```
 litellm.APIConnectionError: OpenAIException -
@@ -148,25 +151,49 @@ item を chat-completions の形に map しないだけです。これは curren
 litellm release に存在し、released fix はありません。Reyn は provider 固有の回避を
 作りません。
 
-**発火する条件 — 狭い opt-in の組み合わせ。** 両方が成立する必要があります:
+**provider でゲートされる（#3288 follow-up）。** この bridge は Reyn が
+**OpenAI または Azure** と解決した model にのみ適用されます（transport/proxy
+routing ではなく、解決済み model identity に対する `litellm.get_llm_provider`
+query — `src/reyn/llm/llm.py` の `_requires_responses_bridge` を参照）。Azure
+が含まれるのは、Azure が reyn の一級 provider であり、OpenAI の reasoning
+model（`azure/o1`、`azure/o3-mini` 等）をそのままホストしているため、同じ
+`/chat/completions` 拒否に当たるからです。Gemini には適用されません —
+Gemini の `reasoning_effort` はネイティブの thinking-budget パラメータに
+map され、`/v1/chat/completions` だけで完結するためです。Gemini の
+tool-turn 上の reasoning はこの bridge を一切通らず、上記 error にも当たりません。
+また、model 名自体に `openai/` segment を含む OpenRouter 経由の model
+（例: `openrouter/openai/gpt-5`）にも適用されません — その call は
+OpenRouter 自身の completions endpoint に着地し、埋め込まれた segment に
+関わらず OpenAI の `/v1/responses` には一切到達しないためです。
+（この gate が入る前は、provider を問わず **すべての** `tools + reasoning_effort`
+組み合わせが bridge を通っており、Gemini のデフォルト model class で token
+streaming が黙って無効化されていました。streaming 側の fix は `_streaming_capable`
+の docstring を参照。）
+
+**発火する条件 — 狭い opt-in の組み合わせ。** すべてが成立する必要があります:
 
 1. **tool を伴う** purpose（例: router。その turn は常に tools を持つ）が
-   **reasoning-capable** model を指す — `model_class_by_purpose: router: strong`、
-   またはデフォルトの `model` class を capable model に設定。**かつ**
-2. その model に `reasoning_effort` が設定されている。
+   reasoning-capable model を指す。**かつ**
+2. その model に `reasoning_effort` が設定されている。**かつ**
+3. その model が **OpenAI または Azure** provider に解決される
+   （`model_class_by_purpose: router: strong` を OpenAI/Azure の reasoning
+   model に向ける、またはデフォルトの `model` class をそれに設定）。
 
 **影響を受けないパス:**
 
-- **デフォルト構成。** `standard` class（Gemini Flash Lite）は `reasoning_effort`
-  なしで tool turn を捌くので、bridge でなく `/v1/chat/completions` を通り error
-  なし。（Flash Lite は tool turn で reasoning-dormant でもある。）
+- **デフォルト構成。** `standard`/`light` class（Gemini Flash Lite。#1654 の
+  通り `reasoning_effort: low` がデフォルトで設定済み）が影響を受けないのは
+  `reasoning_effort` が未設定だからではなく、Gemini が bridge の対象である
+  OpenAI/Azure provider ではないためです。デフォルト構成の tool turn は通常通り
+  `/v1/chat/completions` を通ります。
 - **tool なしの chat + reasoning。** reasoning-capable model を tools *なし* で使うと
   `/v1/chat/completions` を通り、reasoning は survive して正常に round-trip します
   （`reasoning_content` / `thinking_blocks` として現れる）。
 
-**回避するには**、tool を伴う turn を担う reasoning-capable model に
-`reasoning_effort` を設定しない — または tool を伴う purpose を non-reasoning model
-に置く。tool なしの chat パスの reasoning は影響を受けません。
+**回避するには**、tool を伴う turn を担う OpenAI/Azure の reasoning-capable
+model に `reasoning_effort` を設定しない — または tool を伴う purpose を
+どちらの provider にも解決されない model に置く。tool なしの chat パスの
+reasoning は影響を受けません。
 
 ## Namespace + override semantics
 

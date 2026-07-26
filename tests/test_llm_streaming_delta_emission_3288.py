@@ -251,6 +251,43 @@ def test_silent_zero_delta_stream_logs_once_per_stream(monkeypatch, caplog) -> N
     assert result.usage.prompt_tokens == _USAGE["prompt_tokens"]
 
 
+def test_default_shaped_gemini_call_actually_enters_the_streaming_branch(monkeypatch) -> None:
+    """Tier 3a: #3288 follow-up — the actual goal of the provider-gate fix
+    (`src/reyn/llm/llm.py`'s `_requires_responses_bridge`): a default-shaped
+    call (tools + reasoning_effort attached, Gemini model — exactly what
+    `RouterLoop`'s primary reply sends under reyn.yaml's default model
+    classes) genuinely drives the streaming loop, witnessed via REAL chunk
+    consumption (`chunk_witness`), not merely that `_streaming_capable`
+    returns True in isolation (a terminal-state assertion that would pass
+    even if this call never reached the streaming branch at all — see
+    verification-hazards.md §10). Before the provider gate, this exact call
+    shape got silently rewritten to `responses/gemini-2.5-flash-lite`, which
+    `_streaming_capable` cannot recognize (unmapped in litellm's model map) —
+    reverting `_requires_responses_bridge` out of the `_routed_to_responses`
+    condition reproduces that and this assertion goes RED (chunk_witness stays
+    empty — the whole-collect fallback runs instead)."""
+    chunk_witness: list[int] = []
+    monkeypatch.setattr(litellm, "acompletion", _make_fake_acompletion(chunk_witness))
+
+    deltas: list[str] = []
+    result = asyncio.run(recorded_acompletion(
+        model="gemini/gemini-2.5-flash-lite", messages=[{"role": "user", "content": "hi"}],
+        purpose="main", recorder=None,
+        on_content_delta=deltas.append,
+        # The default-config primary-reply shape: tools attached AND
+        # reasoning_effort set (reyn.yaml's default model classes all carry
+        # reasoning_effort — see builtin_models.py).
+        extra_kwargs={"tools": [{"type": "function"}], "reasoning_effort": "low"},
+    ))
+
+    # Real per-chunk consumption off the async generator — proves the
+    # streaming branch was actually entered and driven, not just that the
+    # capability query returned True.
+    assert chunk_witness == [1, 1, 1]
+    assert deltas == [_CONTENT[: len(_CONTENT) // 2], _CONTENT[len(_CONTENT) // 2 :]]
+    assert result.choices[0].message.content == _CONTENT
+
+
 def test_silent_zero_delta_guard_does_not_fire_when_deltas_do(monkeypatch, caplog) -> None:
     """Tier 1: non-vacuity companion — the SAME guard does NOT fire on a
     normal stream where deltas DO arrive, proving the previous test's log

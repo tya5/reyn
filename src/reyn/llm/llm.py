@@ -1501,6 +1501,116 @@ class ResponsesEndpointRequiredError(Exception):
     so the operator isn't left with a raw 405."""
 
 
+def _responses_bridge_providers() -> "frozenset[str]":
+    """The litellm provider identities the #1678 ``/v1/responses`` bridge
+    applies to — see ``_requires_responses_bridge`` for why this is a set,
+    not a single literal.
+
+    Enum-referenced (``litellm.LlmProviders.OPENAI.value`` /
+    ``.AZURE.value``), not bare string literals — if litellm ever renames a
+    provider identity, the enum moves with it instead of silently going
+    stale here.
+
+    **This allowlist is PROVISIONAL** (owner direction: minimize
+    provider-dependent code in reyn). litellm's own model info already
+    declares the routing need per-MODEL, not per-provider —
+    ``litellm.get_model_info("o1-pro")["mode"] == "responses"`` — and
+    ``litellm.utils`` exposes a ``supports_reasoning`` capability query
+    alongside the ``supports_native_streaming`` / ``supports_function_calling``
+    ones ``_streaming_capable`` already uses. A follow-up should replace this
+    provider allowlist with that per-model ``mode`` declaration, which would
+    make Azure/OpenRouter case-by-case judgment (and tracking future
+    providers) unnecessary. Until that lands: if an Azure-routed reasoning
+    model 405s unexpectedly, this frozenset is the first place to check.
+    """
+    import litellm  # noqa: PLC0415
+
+    return frozenset({
+        litellm.LlmProviders.OPENAI.value,
+        litellm.LlmProviders.AZURE.value,
+    })
+
+
+def _requires_responses_bridge(model: str) -> bool:
+    """#3288 follow-up (issue #3288 comment thread, per-PR-coder root-cause;
+    provider-set widened per co-vet finding (b) on PR #3325): does ``model``
+    need the ``/v1/responses`` bridge for a ``reasoning_effort + tools`` call?
+
+    **PROVISIONAL — see ``_responses_bridge_providers``'s docstring.** This
+    decision is currently provider-based; a follow-up should switch it to a
+    per-model ``litellm.get_model_info(...)["mode"] == "responses"``
+    declaration instead (litellm already declares this per-model, not merely
+    per-provider), which would need no Azure/OpenRouter case-by-case judgment
+    and no tracking of future providers. Not done in this PR — #3325 fixes a
+    live default-config regression (streaming silently dead) and that fix
+    should not wait on the provider→model-mode replacement.
+
+    The #1678 bridge exists because SOME reasoning models reject
+    ``reasoning_effort + tools`` on ``/chat/completions`` and need
+    ``/v1/responses`` instead. It is NOT a universal requirement — e.g.
+    Gemini's ``reasoning_effort`` maps to a native "thinking budget" param
+    (see the #1650 comment above) and does not need (or support well —
+    #1652/②'s reasoning-continuity note) the bridge. Before this fix,
+    ``_routed_to_responses`` had no provider check, so it fired for EVERY
+    ``tools + reasoning_effort`` call, including Gemini's default-config
+    primary reply — silently rewriting ``gemini/...`` to
+    ``responses/gemini/...``, which ``_streaming_capable`` cannot recognize
+    (litellm's model map has no entry for the ``responses/`` marker), so
+    streaming was silently disabled on the default configuration.
+
+    **Provider boundary — why {openai, azure}, and where to look if you hit a
+    405 on an ``azure/o1``-shaped model**: Azure is a first-class reyn
+    provider (``credentials.py``'s ``"azure": "AZURE_API_KEY"``) whose
+    reasoning-model deployments (``azure/o1``, ``azure/o3-mini``, …) are
+    literally OpenAI's reasoning models, hosted by Azure — the SAME
+    ``/chat/completions`` rejection this bridge exists to route around
+    applies there too. Excluding azure would have been a SILENT BEHAVIOR
+    CHANGE for this PR: ``azure/o1`` already resolves through
+    ``_to_responses_model`` (``azure/o1`` → ``azure/responses/o1``), so it was
+    almost certainly bridged before this fix (no provider check existed) —
+    narrowing to ``openai`` alone would un-bridge it and could reintroduce the
+    405 this bridge exists to avoid, for a provider nobody verified doesn't
+    need it. Minimal change = keep Azure's existing (bridged) behavior. If a
+    genuine Azure reasoning-model 405 shows up in the future, this frozenset
+    is the first place to check — either Azure's ``/v1/responses`` support
+    changed, or a model isn't resolving to the ``azure`` provider the way
+    expected (verify with ``litellm.get_llm_provider``, not by inspection).
+
+    **Deliberately excluded: ``openrouter/openai/...``.** ``get_llm_provider``
+    resolves that model string to provider ``"openrouter"``, not
+    ``"openai"`` — correctly: the HTTP call actually lands on OpenRouter's own
+    completions endpoint, not OpenAI's ``/v1/responses``, regardless of the
+    ``openai/`` segment embedded in the OpenRouter model name. Bridging it
+    would target an endpoint OpenRouter doesn't serve.
+
+    Derives the provider from the resolved MODEL IDENTITY via
+    ``litellm.get_llm_provider``, queried WITHOUT an explicit
+    ``custom_llm_provider`` (``None``) — the SAME transport-independence
+    discipline ``_streaming_capable`` documents: reyn's proxy routing
+    (``proxy_kwargs()``) forces ``custom_llm_provider="openai"`` on the wire
+    for ALL models when an operator proxy is configured, so deriving "is this
+    OpenAI?" from that forced value would make every model look like OpenAI —
+    reproducing the exact bug this function fixes, one layer over. Capability
+    (and provider identity) is a property of the MODEL, not of the transport
+    used to reach it.
+
+    Any lookup failure (unmapped model name, litellm internal error) is
+    caught and treated as "does not require the bridge" — conservative in the
+    direction that matters here: it means an unrecognized model is never
+    force-routed through a bridge it may not need, at the cost of a genuinely
+    unmapped reasoning model needing an explicit ``openai/responses/...`` /
+    ``azure/responses/...`` model string (already supported — see
+    ``_to_responses_model``'s idempotent explicit-prefix path).
+    """
+    try:
+        import litellm  # noqa: PLC0415
+
+        _, provider, _, _ = litellm.get_llm_provider(model=model, custom_llm_provider=None)
+        return provider in _responses_bridge_providers()
+    except Exception:  # noqa: BLE001 — unknown provider → conservative "no bridge"
+        return False
+
+
 def _to_responses_model(model: str) -> str:
     """#1678: rewrite a resolved litellm model string to route through the OpenAI
     Responses API (``/v1/responses``) via the ``responses/`` bridge marker, which
@@ -1725,8 +1835,20 @@ async def recorded_acompletion(
     # parallel recorded_aresponses). An explicit operator prefix is preserved
     # (idempotent). ``_routed_to_responses`` gates the decision-enabling error
     # below so a normal 405 is unaffected.
+    #
+    # #3288 follow-up: this is a provider-scoped requirement (OpenAI + Azure —
+    # see ``_requires_responses_bridge``'s docstring for the boundary), not a
+    # universal one — gate it on the resolved model's PROVIDER, not merely on
+    # the tools+reasoning_effort SHAPE. Without the provider check, this fired
+    # for every reasoning-capable default model class (incl. Gemini, whose
+    # reasoning_effort maps to a native thinking-budget param, not a
+    # /v1/responses requirement), silently rewriting ``gemini/...`` to a
+    # ``responses/`` bridge string that ``_streaming_capable`` cannot
+    # recognize — disabling streaming on the default configuration.
     _routed_to_responses = bool(
-        base_kwargs.get("tools") and base_kwargs.get("reasoning_effort")
+        base_kwargs.get("tools")
+        and base_kwargs.get("reasoning_effort")
+        and _requires_responses_bridge(effective_model)
     )
     if _routed_to_responses:
         effective_model = _to_responses_model(effective_model)
@@ -1904,7 +2026,17 @@ async def recorded_acompletion(
         # (``_streaming_capable``), never a hardcoded provider check.
         # Unknown/uncertain capability → the existing whole-collect call
         # below (conservative fallback, byte-identical to pre-③a behavior).
-        if _streaming_capable(effective_model, has_tools=bool(call_kwargs.get("tools"))):
+        _capable = _streaming_capable(effective_model, has_tools=bool(call_kwargs.get("tools")))
+        # Permanent, one-line-per-call debug signal for the gate DECISION itself
+        # (not just "streamed but the callback never fired" — the #3288 follow-up
+        # gap: the gate silently deciding NOT to stream had no observable trace at
+        # all, which is why the default-config dark-streaming bug needed a live
+        # diagnostic run + code trace to find).
+        logger.debug(
+            "streaming gate: model=%s has_tools=%s capable=%s",
+            effective_model, bool(call_kwargs.get("tools")), _capable,
+        )
+        if _capable:
             return await _stream_and_reconstruct(effective_model, messages, call_kwargs)
         return await litellm.acompletion(model=effective_model, messages=messages, **call_kwargs)
 
