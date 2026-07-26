@@ -79,9 +79,9 @@ def _neutralized_label(label: str) -> str:
     ``meta["choices"]`` labels reach here RAW (``session._iv_meta`` copies
     ``choice.label`` verbatim; only the ``nodes`` render-model path is
     neutralized at the source). Route each label through the SAME terminal
-    neutralizer the old inline picker (``intervention_region.InterventionElement``)
-    and ``present``'s leaf seam use (ESC/control strip, FP-0054) before it reaches
-    the terminal, so a control/ESC sequence in a label can't drive the terminal.
+    neutralizer ``present``'s leaf seam uses (ESC/control strip, FP-0054) before
+    it reaches the terminal, so a control/ESC sequence in a label can't drive
+    the terminal.
     """
     from reyn.core.present.guard import get_neutralizer
 

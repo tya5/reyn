@@ -9,8 +9,9 @@ the prompt_toolkit choice region). This suite pins:
 
   1. Security (the core): an intervention (ask_user prompt / options) carrying a
      terminal control/ESC sequence is rendered NEUTRALIZED/inert — the sequence
-     is stripped — on BOTH the announce scrollback (text + nodes) AND the region
-     choice fragments. Falsify: drop the neutralizer → these go RED.
+     is stripped — on the announce scrollback (text + nodes). Falsify: drop the
+     neutralizer → these go RED. (The prompt_toolkit choice-region half was
+     retired with the old inline app in the #3273 TUI rebuild.)
   2. Rendering consistency: an intervention announcement draws through the SAME
      ``render_presentation_nodes`` primitive as ``present`` (the reuse seam), and
      Rich-markup-shaped leaf data survives as LITERAL text through the full
@@ -35,10 +36,6 @@ from rich.console import Console
 from reyn.core.events.event_store import EventStore
 from reyn.core.events.events import EventLog
 from reyn.core.events.state_log import StateLog
-from reyn.interfaces.inline.intervention_region import (
-    InterventionElement,
-    build_intervention_element,
-)
 from reyn.interfaces.repl.present_renderer import render_presentation_nodes
 from reyn.interfaces.repl.renderer import format_inline_message
 from reyn.runtime.outbox import OutboxMessage
@@ -230,53 +227,6 @@ async def test_intervention_draws_through_the_shared_present_primitive(tmp_path)
     intervention_render = _to_text(format_inline_message(msg))
     assert "round-trippable question" in present_body
     assert "round-trippable question" in intervention_render
-
-
-# ── 1b. Security — the region's choice fragments are neutralized ─────────────
-
-
-def test_region_element_neutralizes_choice_labels() -> None:
-    """Tier 2: an InterventionElement strips ESC/control from choice labels (which
-    reach the prompt_toolkit FormattedTextControl as raw fragments) — the region's
-    injection gap closed at the data boundary; the display rows are inert."""
-    el = InterventionElement(
-        "iv-1",
-        [("y", f"[y]es {ESC}"), ("n", "[n]o")],
-        lambda cid, label: None,
-    )
-    for row in el.lines():
-        assert "\x1b" not in row and "\x07" not in row and "\x00" not in row
-    assert any("INJECT" in row for row in el.lines())  # only control bytes stripped
-
-
-def test_region_element_forwards_neutralized_label_on_select() -> None:
-    """Tier 2: the label forwarded to on_choose (scrollback echo) is neutralized
-    too — the choice_id (match key) is unchanged so selection semantics hold."""
-    captured: list[tuple[str, str]] = []
-    el = InterventionElement(
-        "iv-1", [("y", f"[y]es {ESC}")], lambda cid, label: captured.append((cid, label)),
-    )
-    el.on_select(0)
-    [(cid, label)] = captured  # exactly one forward, unpacked
-    assert cid == "y"  # match key unchanged (never neutralized)
-    # Label control-stripped: the ESC lead byte is gone (so the trailing "[31m"
-    # bytes are inert literal text, never an escape sequence), payload survives.
-    assert "\x1b" not in label and "\x07" not in label and "\x00" not in label
-    assert "INJECT" in label
-
-
-def test_build_intervention_element_neutralizes_via_factory() -> None:
-    """Tier 2: the production factory (app.py's construction path) yields a
-    neutralized element for an LLM-derived closed-set intervention."""
-    from types import SimpleNamespace
-
-    iv = SimpleNamespace(
-        id="iv-2",
-        choices=[SimpleNamespace(id="a", label=f"choice {ESC}")],
-    )
-    el = build_intervention_element(iv, lambda cid, label: None)
-    assert el is not None
-    assert "\x1b" not in el.lines()[0]
 
 
 # ── 3. Semantics unchanged — the two-way pause still round-trips ─────────────

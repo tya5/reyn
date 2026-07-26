@@ -1,16 +1,18 @@
-"""Tier 2: inline app config-extraction helpers — _extract_cron_jobs,
-_extract_mcp_servers, _extract_hooks.
+"""Tier 2: status-snapshot config-extraction helpers — _extract_cron_jobs,
+_extract_mcp_servers, _extract_hooks, _extract_skills.
 
 Each helper is a pure config → list[dict] converter that backs the "More" status-bar
-expansion.  They must be graceful on None / absent / malformed config so startup
-with an incomplete reyn config can't crash the status bar.
+expansion (via ``interfaces/repl/status.py``'s ``_snapshot``).  They must be graceful
+on None / absent / malformed config so startup with an incomplete reyn config can't
+crash the status bar.
 """
 from __future__ import annotations
 
-from reyn.interfaces.inline.app import (
+from reyn.interfaces.repl.status import (
     _extract_cron_jobs,
     _extract_hooks,
     _extract_mcp_servers,
+    _extract_skills,
 )
 
 # ── helpers ────────────────────────────────────────────────────────────────
@@ -174,3 +176,31 @@ def test_hooks_multiple_entries_all_extracted() -> None:
     result = _extract_hooks(config)
     labels = {d["label"] for d in result}
     assert labels == {"alpha", "beta"}
+
+
+# ── _extract_skills ────────────────────────────────────────────────────────
+
+
+def test_skills_no_attr_returns_empty() -> None:
+    """Tier 2: config with no .skills attr → []."""
+    assert _extract_skills(object()) == []
+
+
+def test_skills_not_dict_returns_empty() -> None:
+    """Tier 2: config.skills is not a dict → []."""
+    config = _ns(skills=None)
+    assert _extract_skills(config) == []
+
+
+def test_skills_no_entries_key_returns_empty() -> None:
+    """Tier 2: config.skills dict without an 'entries' dict → []."""
+    config = _ns(skills={"other": 1})
+    assert _extract_skills(config) == []
+
+
+def test_skills_entries_extracted_by_name() -> None:
+    """Tier 2: config.skills['entries'] = {name: cfg} → one name dict per entry."""
+    config = _ns(skills={"entries": {"summarize": {}, "review": {}}})
+    result = _extract_skills(config)
+    names = {d["name"] for d in result}
+    assert names == {"summarize", "review"}

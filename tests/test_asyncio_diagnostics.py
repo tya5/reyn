@@ -31,7 +31,6 @@ from prompt_toolkit.application.current import create_app_session
 from prompt_toolkit.input import create_pipe_input
 from prompt_toolkit.output import DummyOutput
 
-import reyn.interfaces.inline.app as inline_app_mod
 import reyn.interfaces.repl.stream_client as stream_client_mod
 from reyn.core.events.asyncio_diagnostics import install_asyncio_exception_handler
 
@@ -135,9 +134,8 @@ def test_durable_capture_survives_prompt_toolkit_prompt_wait(
     Regression context (#2786): `Application.run_async` defaults to
     `set_exception_handler=True`, which swaps the loop's exception handler
     for its own for the whole call -- masking #2637's durable capture
-    installed by `install_asyncio_exception_handler`. `interfaces/repl/
-    repl.py`'s `prompt_session.prompt_async(...)` (and `interfaces/inline/
-    app.py`'s `Application.run_async(...)`) now both pass
+    installed by `install_asyncio_exception_handler`. The REPL's
+    `prompt_session.prompt_async(...)` now passes
     `set_exception_handler=False` so reyn's handler stays wired. This drives
     the exact call shape `repl.py` uses -- a real `PromptSession.prompt_async`
     with `set_exception_handler=False` on a headless pipe input/DummyOutput
@@ -207,28 +205,21 @@ def _call_passes_set_exception_handler_false(source: str, method_name: str) -> b
 
 
 def test_repl_prompt_call_sites_disable_prompt_toolkit_exception_handler() -> None:
-    """Tier 2b: both REPL prompt_toolkit entry points keep reyn's asyncio
+    """Tier 2b: the REPL prompt_toolkit entry point keeps reyn's asyncio
     exception handler wired by passing ``set_exception_handler=False``.
 
     The durable-capture test above hardcodes the parameter in its own driver,
     so it would stay green even if a future edit dropped the argument from the
-    production call sites -- i.e. it verifies the mechanism, not the wiring.
+    production call site -- i.e. it verifies the mechanism, not the wiring.
     This pins the wiring itself: if ``interfaces/repl/stream_client.py``'s
-    ``prompt_session.prompt_async(...)`` (the ``--cui`` / non-TTY path) or
-    ``interfaces/inline/app.py``'s ``app.run_async(...)`` (the default
-    interactive ``reyn chat`` path) loses the argument, prompt_toolkit's
-    default (``True``) silently re-masks #2637's capture -- exactly the #2786
-    regression -- and this goes RED. Reads the real module source (AST), no
-    mocks.
+    ``prompt_session.prompt_async(...)`` (the ``--cui`` / non-TTY path) loses
+    the argument, prompt_toolkit's default (``True``) silently re-masks #2637's
+    capture -- exactly the #2786 regression -- and this goes RED. Reads the real
+    module source (AST), no mocks.
     """
     stream_client_src = Path(stream_client_mod.__file__).read_text()
-    inline_src = Path(inline_app_mod.__file__).read_text()
 
     assert _call_passes_set_exception_handler_false(stream_client_src, "prompt_async"), (
         "stream_client.py's prompt_session.prompt_async(...) must pass "
-        "set_exception_handler=False (else prompt_toolkit re-masks #2637 capture)"
-    )
-    assert _call_passes_set_exception_handler_false(inline_src, "run_async"), (
-        "inline/app.py's app.run_async(...) must pass "
         "set_exception_handler=False (else prompt_toolkit re-masks #2637 capture)"
     )

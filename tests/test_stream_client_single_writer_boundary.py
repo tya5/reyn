@@ -10,9 +10,10 @@ transport.
 
 - ``stream_client`` is the fully-migrated reference client — it must import the
   transport seam AND none of the writer surface.
-- ``inline/app`` is the interactive input driver — its send side routes through
-  the transport; it likewise imports none of the writer surface (its status-bar
-  READS reach the registry duck-typed, a P3 read-model concern, not an import).
+- ``inline/textual_chat/app`` is the interactive input driver (the Textual chat
+  app that replaced the retired prompt_toolkit ``inline/app`` in the #3273 TUI
+  rebuild) — its send side routes through the transport; it likewise imports
+  none of the writer surface.
 """
 from __future__ import annotations
 
@@ -32,7 +33,7 @@ _FORBIDDEN_PREFIXES = (
 
 _CLIENT_MODULES = (
     "interfaces/repl/stream_client.py",
-    "interfaces/inline/app.py",
+    "interfaces/inline/textual_chat/app.py",
 )
 
 

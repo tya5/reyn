@@ -43,6 +43,7 @@ import uuid
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
+from reyn.interfaces.repl.status import _snapshot
 from reyn.interfaces.transport.agui.emitter import AgUiEmitter
 from reyn.interfaces.transport.agui.surface import (
     SurfaceManager,
@@ -280,8 +281,6 @@ async def agui_events(request: Request, agent_name: str):
     source.start()
 
     def _status_provider():
-        from reyn.interfaces.inline.app import _snapshot  # noqa: PLC0415
-
         return _snapshot(registry)
 
     emitter = AgUiEmitter(source.frames(), _status_provider)

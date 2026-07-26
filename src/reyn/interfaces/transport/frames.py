@@ -34,6 +34,8 @@ from enum import Enum
 from functools import lru_cache
 from typing import TYPE_CHECKING
 
+from reyn.interfaces.repl.status import _WAITING_ON_BY_EVENT
+
 if TYPE_CHECKING:
     from reyn.core.events.events import Event
     from reyn.runtime.outbox import OutboxMessage
@@ -68,17 +70,13 @@ def renderer_chat_events() -> frozenset[str]:
 
     Union of:
 
-    - ``_WAITING_ON_BY_EVENT.keys()`` (``interfaces/inline/app.py``) — the
+    - ``_WAITING_ON_BY_EVENT.keys()`` (``interfaces/repl/status.py``) — the
       tool-axis WaitingOn transition table (``tool_called`` / ``tool_returned``
       / ``tool_failed``); extending WaitingOn to a new axis is one new entry
       there and this set follows automatically.
     - :data:`_TURN_AND_ANSWER_EVENTS` — the turn-lifecycle + intervention-answer
       events ``renderer.on_chat_event`` branches on directly.
-
-    Deferred import avoids a module-load cycle (``app`` imports the renderer).
     """
-    from reyn.interfaces.inline.app import _WAITING_ON_BY_EVENT
-
     return frozenset(_WAITING_ON_BY_EVENT.keys()) | _TURN_AND_ANSWER_EVENTS
 
 

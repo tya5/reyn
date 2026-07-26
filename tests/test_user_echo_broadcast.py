@@ -22,10 +22,11 @@ Covers:
      context are orthogonal sinks, so the external-source fence (FP-0050/#1862)
      is provably untouched (raw broadcast text vs. fenced history text, same
      answer).
-  C. The inline CUI no longer double-echoes locally: `_submit` (the normal-turn
-     background task) and `_deliver_intervention_choice` (the choice-region
-     answer path) no longer write into ``registry.repl_outbox`` themselves —
-     the ONLY user-echo path left is the outbox broadcast.
+
+(Part C — the retired prompt_toolkit inline CUI's local double-echo suppression
+of ``_submit`` / ``_deliver_intervention_choice`` — was removed with that driver
+in the #3273 TUI-rebuild retirement; the outbox broadcast covered by Parts A/B
+is the sole surviving user-echo path.)
 
 Policy compliance (docs/deep-dives/contributing/testing.ja.md):
 - No unittest.mock / AsyncMock / patch usage — real Session / InterventionHandler
@@ -39,7 +40,6 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 
@@ -48,8 +48,6 @@ from reyn.config.chat import ThreatScanConfig
 from reyn.core.events.event_store import EventStore
 from reyn.core.events.events import EventLog
 from reyn.core.events.state_log import StateLog
-from reyn.interfaces.inline.app import _deliver_intervention_choice, _submit
-from reyn.interfaces.transport.in_process import InProcessTransport
 from reyn.runtime.outbox import OutboxMessage
 from reyn.runtime.services.intervention_handler import InterventionHandler
 from reyn.runtime.services.intervention_registry import InterventionRegistry
@@ -324,76 +322,3 @@ async def test_unresolved_unknown_choice_does_not_broadcast_user_frame(tmp_path,
     assert resolved is True  # consumed (re-prompt hint), but NOT answered
     assert not iv.future.done()
     assert [m.kind for m in outbox] == ["status"]
-
-
-# ---------------------------------------------------------------------------
-# Part C — inline CUI: no local double-echo left
-# ---------------------------------------------------------------------------
-
-
-def _tx(registry) -> InProcessTransport:
-    return InProcessTransport(registry, intervention_channel="tui")
-
-
-class _CountingSession:
-    """Fake session: records submitted text, no head intervention pending."""
-
-    def __init__(self) -> None:
-        self.submitted: list[str] = []
-        self.interventions = SimpleNamespace(head=lambda: None)
-
-    async def submit_user_text(self, text: str) -> None:
-        self.submitted.append(text)
-
-
-@pytest.mark.asyncio
-async def test_submit_no_longer_locally_echoes_the_users_line() -> None:
-    """Tier 2: `_submit` (the inline CUI's normal-turn background task) only
-    calls `transport.submit_user_text` — it does not ALSO inject a local
-    "user" echo via `put_display` (the removed injection this fix deletes
-    from `_do_submit`). `registry.repl_outbox` is the ONLY channel a local
-    `put_display` call could reach; it must stay empty — the user's own line
-    now reaches this client SOLELY via the outbox broadcast (Part A), not a
-    second, local-only write.
-    """
-    session = _CountingSession()
-    registry = SimpleNamespace(
-        attached_session=lambda: session,
-        repl_outbox=asyncio.Queue(),
-    )
-    await _submit(_tx(registry), "hello")
-
-    assert session.submitted == ["hello"]
-    assert registry.repl_outbox.empty(), (
-        "a local put_display echo would double-render this client's own line "
-        "once the broadcast frame from submit_user_text also arrives"
-    )
-
-
-class _ChoiceAnsweringSession:
-    def __init__(self, delivered: bool) -> None:
-        self._delivered = delivered
-        self.interventions = SimpleNamespace(head=lambda: None)
-
-    async def answer_oldest_intervention_choice(self, choice_id: str) -> bool:
-        return self._delivered
-
-
-@pytest.mark.asyncio
-async def test_deliver_intervention_choice_no_longer_locally_echoes() -> None:
-    """Tier 2: `_deliver_intervention_choice` no longer puts a local
-    kind="system" "answered: <label>" echo on success — that was a LOCAL-ONLY
-    injection that never reached a peer thin client.
-    `InterventionHandler.deliver_answer_to` (Part B) now broadcasts a
-    kind="user" frame via the session outbox for every resolved answer, so
-    re-adding this local echo would double-render. `registry.repl_outbox` (the
-    only channel `put_display` could reach) stays empty after a successful
-    delivery.
-    """
-    registry = SimpleNamespace(
-        attached_session=lambda: _ChoiceAnsweringSession(delivered=True),
-        repl_outbox=asyncio.Queue(),
-    )
-    await _deliver_intervention_choice(_tx(registry), "yes", "Yes")
-
-    assert registry.repl_outbox.empty()

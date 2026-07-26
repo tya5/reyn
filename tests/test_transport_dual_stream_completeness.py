@@ -17,7 +17,7 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-from reyn.interfaces.inline.app import _WAITING_ON_BY_EVENT
+from reyn.interfaces.repl.status import _WAITING_ON_BY_EVENT
 from reyn.interfaces.transport.frames import renderer_chat_events
 
 _RENDERER = (

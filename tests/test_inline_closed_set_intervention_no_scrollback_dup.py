@@ -7,7 +7,7 @@ Root cause: a closed-set intervention (`choices` non-empty) is rendered TWICE
 in the inline CUI — once permanently to terminal scrollback
 (`InterventionHandler.announce` -> `kind="intervention"` OutboxMessage) and
 once as a LIVE selectable region above the input
-(`inline/app.py`'s `_sync_region` + `build_intervention_element`, driven by
+(rendered by the Textual chat app, driven by
 the SAME `meta["choices"]`). The live region correctly clears once answered,
 but printed terminal scrollback cannot be un-printed or collapsed after the
 fact — so the full prompt+choices block sits there looking permanently
