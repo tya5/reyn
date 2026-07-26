@@ -191,16 +191,127 @@ class LLMReplay:
 
         Replay mode: look up by key; raise ``MissingFixture`` on miss.
         Record mode: forward to real LLM; save response; return response.
+
+        #3288 ③a: the fixture format is unchanged (always a whole
+        ``ModelResponse``) — a ``stream=True`` caller (reyn's
+        capability-gated streaming loop in ``recorded_acompletion``) is
+        served the SAME recorded/replayed response, wrapped into a small
+        synthetic multi-chunk stream (see ``_synthetic_stream``) rather than
+        by recording/replaying real provider chunks. This keeps every
+        existing fixture valid for both the streaming and non-streaming
+        code paths — reconstructing the synthetic stream must yield the
+        byte-identical response, which doubles as a live stream≡whole
+        equivalence check across the whole fixture-based test suite.
         """
         tools: list[dict] | None = kwargs.get("tools")
         tool_choice: str | None = kwargs.get("tool_choice")
         key = self.key(model, messages, tools=tools, tool_choice=tool_choice)
+        stream = bool(kwargs.get("stream"))
 
         if self.mode == "replay":
-            return self._replay(key, model, messages)
+            response = self._replay(key, model, messages)
+        else:
+            # record mode: always fetch/store the WHOLE response — strip
+            # ``stream``/``stream_options`` from the forwarded call so the
+            # real LLM call + fixture format are unaffected by what THIS
+            # call happened to request.
+            record_kwargs = {
+                k: v for k, v in kwargs.items() if k not in ("stream", "stream_options")
+            }
+            response = await self._record(key, model, messages, record_kwargs)
 
-        # record mode
-        return await self._record(key, model, messages, kwargs)
+        if stream:
+            return self._synthetic_stream(response)
+        return response
+
+    @staticmethod
+    def _synthetic_stream(response: Any):
+        """Wrap a whole ``ModelResponse`` into a small async-iterable of
+        ``ModelResponseStream`` chunks reconstructing to the SAME response.
+
+        Splits text content and (per tool_call) argument strings across two
+        chunks each when long enough — exercising the SAME delta-accumulation
+        path (content concatenation, per-index tool_call argument
+        accumulation) a real provider stream would, instead of a single
+        pass-through chunk. Usage is attached on the terminal chunk so
+        ``litellm.stream_chunk_builder``'s reconstruction carries the exact
+        recorded/real usage (no token-count re-estimate drift).
+        """
+        from litellm.types.utils import (
+            ChatCompletionDeltaToolCall,
+            Delta,
+            Function,
+            ModelResponseStream,
+            StreamingChoices,
+        )
+
+        async def _gen():
+            message = response.choices[0].message
+            model_name = getattr(response, "model", None) or "replay"
+
+            def _chunk(delta: Delta, finish_reason: str | None = None) -> ModelResponseStream:
+                return ModelResponseStream(
+                    id=getattr(response, "id", "replay-stream"),
+                    created=getattr(response, "created", 0) or 0,
+                    model=model_name,
+                    object="chat.completion.chunk",
+                    choices=[StreamingChoices(index=0, delta=delta, finish_reason=finish_reason)],
+                )
+
+            content = message.content
+            if content:
+                mid = len(content) // 2
+                if mid > 0:
+                    yield _chunk(Delta(role="assistant", content=content[:mid]))
+                    yield _chunk(Delta(content=content[mid:]))
+                else:
+                    yield _chunk(Delta(role="assistant", content=content))
+            elif not (message.tool_calls or []):
+                yield _chunk(Delta(role="assistant"))
+
+            # #3288 co-vet BLOCK fix: each PARALLEL tool_call gets its OWN
+            # ``index`` (enumerate), not a shared ``index=0``.
+            # ``stream_chunk_builder`` accumulates tool_call deltas PER
+            # INDEX — every chunk claiming index=0 makes it merge N parallel
+            # tool calls into ONE (arguments concatenated into invalid JSON,
+            # silently — no exception). reyn does emit parallel tool calls,
+            # so this must round-trip them distinctly, matching the index a
+            # real provider stream assigns per parallel call.
+            for tc_index, tc in enumerate(message.tool_calls or []):
+                args = tc.function.arguments or ""
+                mid = len(args) // 2
+                if mid > 0:
+                    yield _chunk(Delta(tool_calls=[
+                        ChatCompletionDeltaToolCall(
+                            id=tc.id, index=tc_index, type="function",
+                            function=Function(name=tc.function.name, arguments=args[:mid]),
+                        ),
+                    ]))
+                    yield _chunk(Delta(tool_calls=[
+                        ChatCompletionDeltaToolCall(
+                            index=tc_index, function=Function(arguments=args[mid:]),
+                        ),
+                    ]))
+                else:
+                    yield _chunk(Delta(tool_calls=[
+                        ChatCompletionDeltaToolCall(
+                            id=tc.id, index=tc_index, type="function",
+                            function=Function(name=tc.function.name, arguments=args),
+                        ),
+                    ]))
+
+            finish_reason = None
+            try:
+                finish_reason = response.choices[0].finish_reason
+            except Exception:
+                pass
+            last = _chunk(Delta(), finish_reason=finish_reason)
+            usage = getattr(response, "usage", None)
+            if usage is not None:
+                last.usage = usage
+            yield last
+
+        return _gen()
 
     def _replay(self, key: str, model: str, messages: list[dict]) -> Any:
         """Return a reconstructed ``ModelResponse`` from the fixture."""

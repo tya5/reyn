@@ -1553,6 +1553,58 @@ def _emit_chat_cost_events(model: str, usage: "TokenUsage | None") -> None:
         pass
 
 
+# ---------------------------------------------------------------------------
+# #3288 ③a: capability-gated streaming (core LLM streaming loop)
+# ---------------------------------------------------------------------------
+
+
+def _streaming_capable(model: str, has_tools: bool) -> bool:
+    """Capability-gated streaming decision (#3288 ③a) — a litellm inline
+    capability query, mirroring the existing ``litellm.supports_response_schema``
+    precedent (``router_loop.py``'s structured-output precheck). NEVER a
+    hardcoded provider/model-name check (owner design principle) — this is
+    the ONLY place ③a decides whether a given call streams.
+
+    Two capability axes, composed conservatively:
+
+    - ``litellm.utils.supports_native_streaming``: can this model stream at
+      all? False only for the handful of reasoning-only endpoints (e.g.
+      ``o1-pro`` / ``gpt-5-pro``) that reject ``stream=True`` outright;
+      ``None``/unset in litellm's model map is treated by litellm itself as
+      an optimistic True default.
+    - IF ``tools`` are attached to this call: additionally require
+      ``litellm.supports_function_calling`` — the historical Gemini
+      streaming+tools bug (litellm#21041, fixed upstream since) only bites
+      the streaming+tools COMBINATION, so a tools-bearing call needs both
+      axes to hold, not just plain-text streaming.
+
+    Queried WITHOUT an explicit ``custom_llm_provider`` (``None`` → litellm
+    infers the provider from the bare model name). This matters: reyn's proxy
+    routing (``proxy_kwargs()``) forces ``custom_llm_provider="openai"`` on
+    the wire for ALL models when an operator proxy is configured — passing
+    that routing artifact into the capability query would misresolve e.g.
+    ``gemini-2.5-flash`` as an unmapped "openai" model and always report
+    "no capability" for the very providers this feature targets. Capability
+    is a property of the MODEL, not of the transport used to reach it.
+
+    Any lookup failure (unmapped model name, litellm internal error) is
+    caught and treated as "unknown" — returns False (whole-collect
+    fallback). Conservative by construction, never an optimistic guess.
+    """
+    try:
+        import litellm  # noqa: PLC0415
+        from litellm.utils import supports_native_streaming  # noqa: PLC0415
+        if not supports_native_streaming(model=model, custom_llm_provider=None):
+            return False
+        if has_tools and not litellm.supports_function_calling(
+            model=model, custom_llm_provider=None,
+        ):
+            return False
+        return True
+    except Exception:  # noqa: BLE001 — unknown capability → conservative fallback
+        return False
+
+
 async def recorded_acompletion(
     *,
     model: str,
@@ -1693,6 +1745,82 @@ async def recorded_acompletion(
     except Exception:  # noqa: BLE001
         pass
 
+    async def _stream_and_reconstruct(model: str, msgs: list, call_kwargs: dict) -> object:
+        """#3288 ③a streaming loop: call litellm with ``stream=True``, drain
+        the async chunk stream, and reconstruct the SAME raw-response shape
+        ``litellm.acompletion(..., stream=False)`` would have returned — so
+        this chokepoint's callers (``msg = response.choices[0].message``,
+        ``_extract_usage(response)`` below) see NO behavioral difference
+        (③a is an internal optimization, not a caller-visible change; ③b/c/d
+        are later phases that change what callers see). Nested INSIDE
+        ``recorded_acompletion`` (not module-level) so its
+        ``litellm.acompletion`` call stays within the #1190 AST-guarded
+        chokepoint span — no second completion call-site.
+
+        Reconstruction uses litellm's OWN ``stream_chunk_builder`` (content
+        deltas concatenated; tool_call argument deltas accumulated PER
+        INDEX, the documented shape multi-argument tool calls arrive in;
+        usage summed across chunks) rather than a hand-rolled accumulator —
+        litellm's tested, canonical stream-to-response reconstruction,
+        reused instead of duplicated.
+
+        ★usage/cost single-emission (#3288 ③a architect gate): this
+        function returns ONE reconstructed response with ONE ``.usage``;
+        the enclosing ``recorded_acompletion`` calls
+        ``recorder.record_llm(...)`` exactly once against it below,
+        IDENTICAL to the whole-collect path — usage is summed HERE, across
+        chunks, never emitted per-chunk. ``budget.py`` (the cost band,
+        ``record_llm`` at budget.py:1135) is untouched by ③a.
+
+        ``stream_options={"include_usage": True}`` is added ONLY when
+        litellm's own supported-params query confirms the model accepts it
+        (an OpenAI-specific param; Gemini/Anthropic reject it) — again a
+        capability query, not a provider check. Its absence is harmless:
+        ``stream_chunk_builder`` falls back to a token-count estimate for
+        usage, the same graceful degradation litellm's own non-Reyn callers
+        rely on.
+        """
+        stream_kwargs = dict(call_kwargs)
+        stream_kwargs.pop("stream", None)
+        stream_kwargs.pop("stream_options", None)
+        stream_kwargs["stream"] = True
+        try:
+            _supported_params = litellm.get_supported_openai_params(model=model) or []
+        except Exception:  # noqa: BLE001 — params query is best-effort
+            _supported_params = []
+        if "stream_options" in _supported_params:
+            stream_kwargs["stream_options"] = {"include_usage": True}
+
+        chunk_stream = await litellm.acompletion(model=model, messages=msgs, **stream_kwargs)
+        if not hasattr(chunk_stream, "__aiter__"):
+            # Defensive: the callee did not honor stream=True (returned an
+            # already-complete response synchronously instead of an async
+            # chunk iterator) — accept it as the final response rather than
+            # crashing. Real litellm ALWAYS returns an async-iterable
+            # (CustomStreamWrapper) here, so this never fires against
+            # production litellm — but it DOES fire routinely in this
+            # repo's own tests: many pre-③a test doubles stub
+            # ``litellm.acompletion`` with a plain async function that
+            # returns a flat response regardless of the ``stream`` kwarg
+            # (they never had to branch on it before ③a, since streaming
+            # was previously hardcoded off). Such a test silently exercises
+            # this fallback (whole-collect), NOT the streaming
+            # reconstruction path below, even though the call requested
+            # ``stream=True`` — a test that wants to prove IT specifically
+            # exercised the streaming reconstruction must witness real
+            # chunk consumption (e.g. a counter incremented while iterating
+            # the async generator), not just that ``stream=True`` was
+            # passed in the call kwargs.
+            return chunk_stream
+        chunks = [chunk async for chunk in chunk_stream]
+        reconstructed = litellm.stream_chunk_builder(chunks, messages=msgs)
+        if reconstructed is None:
+            # No chunks at all (degenerate empty stream) — degrade to the
+            # whole-collect call rather than surface None to a caller that
+            # expects a message-bearing response object.
+            return await litellm.acompletion(model=model, messages=msgs, **call_kwargs)
+        return reconstructed
+
     async def _once(rf: dict | None) -> object:
         call_kwargs = dict(base_kwargs)
         if rf is not None:
@@ -1711,6 +1839,15 @@ async def recorded_acompletion(
             return await _single_deployment_router(effective_model).acompletion(
                 model=effective_model, messages=messages, **router_kwargs
             )
+        # #3288 ③a: capability-gated streaming loop, INSIDE the single #1190
+        # funnel (the two ``litellm.acompletion`` call sites remain exactly
+        # this one and the Router branch above — no second completion
+        # call-site was added). The decision is a litellm capability query
+        # (``_streaming_capable``), never a hardcoded provider check.
+        # Unknown/uncertain capability → the existing whole-collect call
+        # below (conservative fallback, byte-identical to pre-③a behavior).
+        if _streaming_capable(effective_model, has_tools=bool(call_kwargs.get("tools"))):
+            return await _stream_and_reconstruct(effective_model, messages, call_kwargs)
         return await litellm.acompletion(model=effective_model, messages=messages, **call_kwargs)
 
     # response_format fallback (predates #1212): on a provider that rejects
@@ -1819,8 +1956,12 @@ async def call_llm_tools(
     """Tool-use variant of call_llm. Returns raw assistant message.
 
     Forces gemini-safe settings:
-      - stream=False (Gemini #21041 streaming+tools bug)
       - thinking disabled (Gemini #17949 multi-turn parallel + thinking bug)
+
+    Streaming (#3288 ③a) is decided per-call by ``recorded_acompletion`` via
+    a litellm capability query (see ``_streaming_capable``) — NOT forced off
+    here. The historical Gemini streaming+tools bug (litellm#21041) is
+    absorbed by that capability check, not by this function.
 
     budget: optional BudgetTracker. When provided, check_pre_llm is called
       before the LLM call (raises BudgetExceeded if refused) and record_llm
@@ -1940,11 +2081,16 @@ async def call_llm_tools(
         **({} if not tools else {"tool_choice": tool_choice}),
         # spec.kwargs passthrough (operator-declared, e.g. temperature)
         **spec_kwargs,
-        # Gemini-safe forced settings override spec_kwargs:
-        "stream": False,             # Gemini #21041: streaming + tools bug
         # No thinking kwargs: disabled by default on all providers
         **extra,
     }
+    # #3288 ③a: no ``stream`` key set here — the decision (capability-gated,
+    # never a hardcoded "Gemini doesn't stream") is made INSIDE
+    # ``recorded_acompletion`` (the #1190 single funnel), which reconstructs
+    # the SAME raw-response shape when it streams, so this function's
+    # ``msg = response.choices[0].message`` extraction below is unaffected
+    # either way. Was: unconditional ``"stream": False`` (Gemini litellm#21041
+    # streaming+tools bug) — replaced by a per-call litellm capability query.
     # #2210: an EXPLICIT timeout (the kernel path threads `safety.timeout.llm_call_seconds`
     # via the LLMCallRecorder) WINS and is used as-is — zero kernel regression. Only the
     # router path, which passes no `timeout`, falls back to the ambient per-LLM-call policy
