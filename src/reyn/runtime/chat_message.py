@@ -33,6 +33,50 @@ TOOL_STATUS_ERROR = "error"
 TOOL_ERROR_KIND_META_KEY = "error_kind"
 TOOL_ERROR_MESSAGE_META_KEY = "error_message"
 
+# #3299 P4: the intervention PROMPT + resolved ANSWER, stamped on the
+# ``role="user"`` history entry ``InterventionHandler.deliver_answer_to``
+# already appends (mirroring ``intervention_id`` / ``intervention_kind``
+# alongside it). ``InterventionHandler.announce`` never writes to history —
+# it only publishes to the outbox — so before this, the QUESTION half of an
+# answered intervention did not exist anywhere in ``history.jsonl``; the TUI
+# restore projection (``interfaces/inline/textual_chat/restore.py``) could
+# not show it after a restart. Rather than inventing a correlation key to
+# join a separate prompt record (there is no such record, and P5's
+# out-of-order answering makes any GUESSED key a repeat of the #3287/#3299 P2
+# "guessed correlation key" defect class), the prompt is folded onto the
+# SAME answer record — one history entry is now fully self-contained, no
+# correlation needed at all.
+#
+# ★Untrusted / RAW (#2770 discipline: "the single truth is RAW, neutralize at
+# each display boundary"): ``ask_user`` prompts/suggestions come straight
+# from a model tool-call, and a selected CHOICE's label is one of those
+# model-supplied options too. These three values are stored EXACTLY as
+# ``UserIntervention`` carried them (no neutralization at write time) — a
+# consumer (restore projection, any future surface) MUST neutralize before
+# rendering, never persist a display-shaped (already-neutralized) copy, or
+# the audit/restore record stops being the original. The live TUI path's
+# equivalent leaf (``intervention_handler._neutralize_terminal`` /
+# ``presenter._neutralized_label``) neutralizes at ITS OWN render call site,
+# not at persist time — this mirrors that discipline for the restore path.
+#
+# These NEVER reach the LLM: ``RouterHistoryBuffer._serialise_turn`` builds
+# the wire dict from ``role`` / ``content`` / ``tool_calls`` / ``tool_call_id``
+# / ``name`` (+ the ``reasoning`` meta sub-key) only — arbitrary ``meta`` keys
+# (these three included) are never copied into the payload. So this addition
+# costs zero LLM context / tokens; it only grows the PERSISTED
+# ``history.jsonl`` (something that was already visible via the outbox
+# ``announce`` — this makes it durable, not newly exposed).
+INTERVENTION_PROMPT_META_KEY = "intervention_prompt"
+INTERVENTION_DETAIL_META_KEY = "intervention_detail"
+#: The resolved answer's DISPLAY text — a matched CHOICE's ``label`` (model-
+#: supplied, RAW/untrusted) or the raw free-text answer. Needed because a
+#: choice-selected answer's own ``ChatMessage.content`` is an EMPTY string
+#: (``InterventionHandler.deliver_answer_to`` passes ``text=""`` through the
+#: choice-id-override path — the choice id, not a label, is what the wire
+#: transport carries) — so ``m.text`` alone cannot reconstruct "what was
+#: answered" for a closed-set intervention; this key always carries it.
+INTERVENTION_ANSWER_META_KEY = "intervention_answer"
+
 
 @dataclass(init=False)
 class ChatMessage:

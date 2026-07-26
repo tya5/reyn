@@ -20,6 +20,11 @@ from contextvars import ContextVar
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Awaitable, Callable
 
+from reyn.runtime.chat_message import (
+    INTERVENTION_ANSWER_META_KEY,
+    INTERVENTION_DETAIL_META_KEY,
+    INTERVENTION_PROMPT_META_KEY,
+)
 from reyn.runtime.outbox import OutboxMessage
 from reyn.user_intervention import (
     InterventionAnswer,
@@ -288,12 +293,28 @@ class InterventionHandler:
         if external_source and self._threat_scan is not None:
             from reyn.security.content_guard import fence_if_enabled
             history_text = fence_if_enabled(text, self._threat_scan)
+        # #3299 P4: fold the QUESTION + resolved answer-display-text onto this
+        # SAME history record (see INTERVENTION_*_META_KEY docstrings in
+        # chat_message.py) — ``announce`` never appends to history, so this is
+        # the ONLY place the prompt can be persisted, and a self-contained
+        # record needs no correlation key even under P5's out-of-order
+        # answering. RAW (untrusted) — neutralize at the display boundary,
+        # never here. ``answer_label`` mirrors the ``display_text`` computed
+        # below (a matched choice's label, else the raw answer text) because a
+        # choice-selected answer's OWN ``history_text`` is empty (the
+        # choice-id-override path passes ``text=""``) — this key is the only
+        # place "what was answered" survives for a closed-set intervention.
+        answer_label = choice.label if choice is not None else text
         meta = {
             "answered_actor": iv.actor or "",
             "answered_run_id": iv.run_id or "",
             "intervention_id": iv.id,
             "intervention_kind": iv.kind,
+            INTERVENTION_PROMPT_META_KEY: iv.prompt,
+            INTERVENTION_ANSWER_META_KEY: answer_label,
         }
+        if iv.detail:
+            meta[INTERVENTION_DETAIL_META_KEY] = iv.detail
         if external_source:
             # #1827 S4: seam-agnostic untrusted-source taint marker. While this
             # external (A2A / webhook peer) answer is live in context, the agent
