@@ -93,10 +93,19 @@ class ChatReadModel(ABC):
         """Filesystem path for the input-history file."""
 
     @abstractmethod
-    def conversation_history(self, *, limit: "int | None" = None) -> "list[ChatMessage]":
+    def conversation_history(
+        self,
+        *,
+        limit: "int | None" = None,
+        agent: "str | None" = None,
+        session_id: "str | None" = None,
+    ) -> "list[ChatMessage]":
         """Recent persisted CONVERSATION turns (the ``ChatMessage`` log loaded
         from ``history.jsonl``), oldest→newest, for the Textual app's
-        restore-on-restart hydration (#3273 Phase 5).
+        restore-on-restart hydration (#3273 Phase 5) AND its session-switch
+        reset-and-rehydrate (#3310 N2 — the same seam, generalized to target
+        an arbitrary session rather than only "whichever one is currently
+        attached").
 
         This is the DURABLE conversation log (assistant text + tool results), NOT
         the input-history file :attr:`history_path` (↑-recall) and NOT the P6
@@ -105,12 +114,25 @@ class ChatReadModel(ABC):
         equivalent — whatever survives in ``history.jsonl``; turns rotated out are
         simply not restored, exactly like ``--resume``).
 
+        ``agent`` / ``session_id`` (#3310 N2): when BOTH are omitted (``None``),
+        behavior is BYTE-IDENTICAL to pre-N2 — the currently attached session.
+        When given, they target that specific ``(agent, session_id)`` instead —
+        the read a client uses on a ``session_attached`` switch-barrier to
+        rehydrate the NEWLY focused session (which may never have been
+        attached in THIS client run) rather than whichever session used to be
+        attached. No new ``history.jsonl`` path literal is introduced by this:
+        the accessor still resolves through the SAME per-session ``Session``
+        object (via the registry's own session-lookup SSoT), just keyed by the
+        caller's (agent, session_id) instead of "whichever is attached".
+
         **Frame-sufficiency boundary.** Like every other session-local read
         (dropdown expansions, the rewind picker), the past-turn log is NOT
         projected onto the AG-UI wire — a REMOTE client holds no session and
         cannot enumerate it. The remote impl therefore degrades gracefully to an
-        empty list (never a fabricated turn); cross-session restore is a
-        LOCAL-attach affordance today."""
+        empty list (never a fabricated turn) REGARDLESS of ``agent``/
+        ``session_id`` — remote switch-hydrate is #3310 N3's job, not this
+        method's; passing a target here on a remote client is accepted but
+        inert."""
 
 
 class RegistryReadModel(ChatReadModel):
@@ -153,13 +175,35 @@ class RegistryReadModel(ChatReadModel):
             )
         return s.workspace_dir / ".input_history"
 
-    def conversation_history(self, *, limit: "int | None" = None):
-        # The attached Session's ``history`` list IS the ChatMessage log loaded
-        # from ``history.jsonl`` by ``Session.load_history`` at attach time — read
-        # it straight (no audit-event path). Return a shallow copy so a caller can
+    def conversation_history(
+        self,
+        *,
+        limit: "int | None" = None,
+        agent: "str | None" = None,
+        session_id: "str | None" = None,
+    ):
+        # The Session's ``history`` list IS the ChatMessage log loaded from
+        # ``history.jsonl`` by ``Session.load_history`` at load time — read it
+        # straight (no audit-event path). Return a shallow copy so a caller can
         # not mutate the live session history. ``None`` = whole log (resume-
         # equivalent); a positive ``limit`` keeps the most-recent N.
-        s = self._attached()
+        #
+        # #3310 N2: ``agent`` given → resolve THAT session (not necessarily the
+        # attached one) via ``AgentRegistry.get_session`` — the same
+        # non-loading session-store accessor every other registry call site
+        # uses (FP-0043 Stage 3), never a duplicated ``history.jsonl`` path
+        # literal. By the time a client processes the ``session_attached``
+        # barrier the target session is already loaded (``attach``/
+        # ``attach_session`` both ``get_or_load``/require-existing BEFORE
+        # announcing), so this is never a cold miss for a switch-driven call.
+        if agent is not None:
+            s = (
+                self._registry.get_session(agent, session_id)
+                if session_id is not None
+                else self._registry.get_session(agent)
+            )
+        else:
+            s = self._attached()
         if s is None:
             return []
         history = list(getattr(s, "history", []) or [])
@@ -256,11 +300,19 @@ class RemoteReadModel(ChatReadModel):
         base.mkdir(parents=True, exist_ok=True)
         return base / "remote-input-history"
 
-    def conversation_history(self, *, limit: "int | None" = None):
+    def conversation_history(
+        self,
+        *,
+        limit: "int | None" = None,
+        agent: "str | None" = None,
+        session_id: "str | None" = None,
+    ):
         # Frame-sufficiency: a remote client holds no session and the past-turn
         # ChatMessage log is NOT projected onto the wire (like the dropdown
         # expansions / rewind picker). Degrade gracefully to empty — never a
-        # fabricated turn. Restore-on-restart is a local-attach affordance today.
+        # fabricated turn, regardless of a targeted (agent, session_id) — remote
+        # switch-hydrate is #3310 N3's job, not this accessor's. Restore-on-
+        # restart / switch-rehydrate is a local-attach affordance today.
         return []
 
 

@@ -169,6 +169,28 @@ class TextualChatApp(App):
     REMOTE read model returns an empty log (frame-sufficiency: past turns are not
     on the wire) → hydration is a no-op and the pane starts blank as before.
 
+    #3310 N2 reuses that SAME hydrate seam for a session SWITCH, not just a
+    restart. N1 (#3321) added a ``session_attached`` chat-event — an
+    ``EventFrame`` the registry puts directly on ``repl_outbox`` at the attach
+    seam, with NO ``await`` between the ``self._attached`` flip and the put —
+    so it is a stream BARRIER: everything on the frame stream before it
+    belongs to the OLD attached session, everything after to the NEW one, by
+    construction. :meth:`_handle_session_attached_event` consumes it: a cached
+    FlowView cannot be the source of truth here (while THIS client was on some
+    OTHER session, the registry forwarder DROPPED this session's frames
+    entirely — a cache would be missing everything that happened meanwhile
+    and would hold tool rows stuck RUNNING), so the response is reconnect-
+    shaped, not cache-shaped — reset EVERY per-session client state
+    (conversation, running-tool tracking, pending-intervention tabs, the
+    sent-queue view/widget, streaming-reply tracking) and rehydrate the model
+    from the NEW session's ``history.jsonl`` via :meth:`_hydrate_from_history`,
+    now generalized to target an arbitrary ``(agent, session_id)`` instead of
+    only "whichever session is attached". A tool that completed while
+    detached resolves correctly (never RUNNING) because the restore path
+    always projects a resolved state; a pending intervention for the NEW
+    session is not re-fetched here — the registry already re-announces it on
+    attach, so the client only has to forget the OLD one.
+
     #3299 P1 moved intervention interaction OUT of the FlowView into a grouped
     :class:`~reyn.interfaces.inline.textual_chat.intervention_panel.InterventionPanel`
     widget between the flow and the input row (atomic display-swap +
@@ -293,6 +315,29 @@ class TextualChatApp(App):
     #: working spinner. Distinct from :data:`ANIMATION_FPS` (the always-on GUTTER
     #: blink clock, Phase ①): ① animates the gutter glyph, ② the tool body.
     RUNNING_BODY_FPS = 12.0
+
+    #: Per-session ``dict``-valued client state that resets uniformly (a
+    #: plain ``.clear()``) on a session switch (#3310 N2,
+    #: :meth:`_handle_session_attached_event`). Declared here — never
+    #: enumerated ad hoc inside the reset method — so a FUTURE per-session
+    #: dict added to :meth:`__init__` is reset BY CONSTRUCTION the moment
+    #: its name is added to this tuple, rather than by a human remembering
+    #: to also touch the reset method. This is not a hypothetical: the
+    #: exact omission class hit TWICE in this arc — ``_streaming_replies``
+    #: was flagged as a likely-forgotten addition during the #3310 design
+    #: pass (#3288 ③c landed after the design table was written), and
+    #: ``_pending_own_cancels`` (#3300 Y-client) was found missing from
+    #: that SAME design table only while writing this PR's gates. State
+    #: that needs a NON-``.clear()`` reset (a fresh instance, a widget
+    #: method, a follow-on hydrate) stays explicit in the reset method
+    #: below — this tuple covers only the "just empty the dict" shape.
+    _PER_SESSION_DICT_STATE: "tuple[str, ...]" = (
+        "_running_tools",
+        "_pending_ivs",
+        "_queue_item_meta",
+        "_streaming_replies",
+        "_pending_own_cancels",
+    )
 
     def __init__(
         self,
@@ -551,31 +596,53 @@ class TextualChatApp(App):
         self.query_one("#drawer", ContentSwitcher).display = False
         self.query_one(Composer).focus()
 
-    def _hydrate_from_history(self) -> None:
-        """Restore-on-restart (#3273 Phase 5): project the persisted conversation
-        log into the retained model so a restart shows the PREVIOUS conversation.
+    def _hydrate_from_history(
+        self, *, agent: "str | None" = None, session_id: "str | None" = None
+    ) -> None:
+        """Restore-on-restart (#3273 Phase 5) AND session-switch reset+rehydrate
+        (#3310 N2): project a persisted conversation log into the retained
+        model so the pane shows that session's PREVIOUS conversation instead
+        of whatever was left over from before.
 
-        Reads the durable ``ChatMessage`` log via the read-model seam
-        (:meth:`~reyn.interfaces.repl.read_model.ChatReadModel.conversation_history`
-        — ``history.jsonl``, NOT the P6 audit-event log) and appends each projected
-        frame to ``self.conversation`` (:func:`.restore.project_restored_frames`).
-        Every restored entry is RESOLVED, never RUNNING: a restored tool turn is
-        already projected into the SAME coalesced ``tool_call_started`` shape
-        the live path's :meth:`_coalesce_tool_result` settles a completed tool
-        into (call header + folded result, one entry — see
+        Two call shapes:
+
+        - No args (:meth:`on_mount`'s original Phase-5 call): hydrates the
+          CURRENTLY ATTACHED session, byte-identical to pre-N2 behavior.
+        - ``agent``/``session_id`` given (:meth:`_handle_session_attached_event`,
+          called AFTER :meth:`self.conversation`'s ``clear()``): hydrates that
+          SPECIFIC (possibly never-before-attached-in-this-client-run) session
+          instead — the same read-model seam
+          (:meth:`~reyn.interfaces.repl.read_model.ChatReadModel.conversation_history`
+          — ``history.jsonl``, NOT the P6 audit-event log), just targeted.
+
+        Appends each projected frame to ``self.conversation``
+        (:func:`.restore.project_restored_frames`). Every restored entry is
+        RESOLVED, never RUNNING: a restored tool turn is already projected into
+        the SAME coalesced ``tool_call_started`` shape the live path's
+        :meth:`_coalesce_tool_result` settles a completed tool into (call
+        header + folded result, one entry — see
         ``restore.project_restored_frames``'s docstring), so this method just
         derives the terminal SUCCESS/ERROR state from the coalesced result
         (the ``if msg.kind == "tool_call_completed"`` branch a pre-coalesce
         restore shape would have hit no longer fires for tool rows; user/agent
-        rows keep DEFAULT, their live state). A REMOTE read model returns an
-        empty log (frame-sufficiency: past turns are not on the wire) → this is
-        a no-op and the pane starts blank, exactly as before. Fully guarded — a
-        restore failure must never stop the app from mounting and pumping live
-        frames."""
+        rows keep DEFAULT, their live state) — which is also what makes a tool
+        that completed while this client was detached (#3310's "orphan gate")
+        resolve correctly rather than replaying as RUNNING: the completion
+        already landed in ``history.jsonl`` before this read, so it projects
+        straight to its settled state. A REMOTE read model returns an empty log
+        (frame-sufficiency: past turns are not on the wire) → this is a no-op
+        either way, and the pane starts/stays blank (remote switch-rehydrate is
+        #3310 N3's job). Fully guarded — a restore failure must never stop the
+        app from mounting/resetting and pumping live frames."""
         if self._read_model is None:
             return
         try:
-            messages = self._read_model.conversation_history()
+            if agent is not None or session_id is not None:
+                messages = self._read_model.conversation_history(
+                    agent=agent, session_id=session_id
+                )
+            else:
+                messages = self._read_model.conversation_history()
         except Exception:
             logger.exception("textual chat: conversation-history read failed")
             return
@@ -1023,6 +1090,139 @@ class TextualChatApp(App):
                 # a late-joining client).
                 self._queue_item_meta[msg_id] = dict(item.get("meta") or {})
 
+    def _handle_session_attached_event(self, event) -> None:
+        """The session-switch reset barrier (#3310 N2, consuming N1's
+        ``session_attached`` chat-event, ``{agent, session_id}``).
+
+        ★Design thesis (architect deep-dive, issue #3310 §1): a cached
+        FlowView cannot be the source of truth after a switch — while THIS
+        session was detached, the registry forwarder DROPPED its frames
+        (``registry.py``'s "durable narration is in history.jsonl" branch),
+        so any client-side cache is stale-by-construction (missing frames,
+        tool rows stuck RUNNING). v1 is therefore reconnect-shaped, not
+        cache-shaped: reset EVERY per-session client state, then rehydrate
+        from the durable sources exactly like a fresh reconnect would
+        (:meth:`_hydrate_from_history`, the #3305-shaped queue reseed below).
+
+        Resets, one independent state at a time (per-state test coverage,
+        #3310 gate 3 — folding several clears into one test would repeat the
+        #3302/#3308 sibling-guard-site mistake this repo already learned
+        from):
+
+        - ``self.conversation`` (the retained FlowModel) — cleared, then
+          rehydrated from the NEW session's ``history.jsonl`` below. This is
+          the ★staleness-gate state: the frames the OLD session produced
+          while this client was on some OTHER session are NOT re-derived
+          from an in-memory cache (there is none) — they come back because
+          they are durable, not because anything was retained live.
+        - :attr:`_running_tools` — a RUNNING marker is per-session op-id
+          state; the new session's own in-flight tools (if any) are not
+          replayed here (frame-sufficiency: a truly still-running tool has
+          no completed row in ``history.jsonl`` yet either — same rule live
+          frames already follow for a mid-flight tool this client just
+          joined).
+        - :attr:`_pending_ivs` — forgotten, not re-fetched: the server side
+          already re-announces every pending intervention on attach
+          (``registry.py``'s ``attach``/``attach_session``, both replay
+          ``_interventions.list_active()`` — ground-truthed during the N1
+          design pass), so the client only needs to stop tracking the OLD
+          session's entries; the new ones arrive as ordinary ``intervention``
+          frames right after this barrier. Paired with
+          :meth:`InterventionPanel.collapse_all` so every OLD tab (post-P5
+          the panel is tabbed, #3308) actually closes rather than lingering
+          empty.
+        - :attr:`_queue_view` / :attr:`_queue_seeded` — a FRESH
+          ``RemoteQueueView()``, immediately re-seeded from the NEW session's
+          OWN snapshot right here (:meth:`_seed_queue_view`) rather than
+          deferred to "whenever the next frame happens to arrive" — the
+          identical PROJECTION the #3305 reconnect-reseed/mount-time seed
+          use, just called eagerly instead of gated on
+          :attr:`_queue_seeded`. ★Found during gate-writing (not in the
+          architect's table): deferring to the generic first-frame gate
+          (leaving ``_queue_seeded = False`` and letting the ordinary
+          "seed on first frame" check in :meth:`_pump_frames` catch it) is
+          NOT equivalent here — that check runs BEFORE a frame is
+          dispatched, so it would need a frame AFTER this barrier to ever
+          fire; a session with an already-queued item but no OTHER pending
+          activity would show an empty sent-queue region until something
+          else happened to arrive. Seeding eagerly here closes that gap;
+          :attr:`_queue_seeded` is still set True (never left False) so the
+          generic check is correctly a no-op for this same barrier frame.
+        - :attr:`_queue_item_meta` — cleared (keyed by msg_id, which is
+          per-submission; an old session's entries are meaningless once its
+          queue view is gone too).
+        - the :class:`SentQueue` widget's rows — :meth:`SentQueue.clear_all`
+          (a new method this PR adds; the widget had no server delta of its
+          own for "the whole displayed session changed").
+        - :attr:`_streaming_replies` (#3288 ③c) — ★explicitly flagged by the
+          architect as the state most likely to be forgotten by a LATER
+          phase; cleared here since it already exists.
+        - :attr:`_pending_own_cancels` (#3300 Y-client) — an addition beyond
+          the architect's enumerated table (found verifying it against this
+          file): keyed by msg_id and normally popped once the matching
+          ``inbox_cancel`` delta confirms a client-issued cancel. A switch
+          before that confirmation would otherwise leave a stale entry that
+          could later restore OLD-session cancelled text into the composer
+          if a delta for that same msg_id ever arrived under a DIFFERENT
+          attached session — clearing it here removes that (admittedly
+          narrow) cross-session leak.
+        - :attr:`_pane_selection_ids` is intentionally NOT reset here — the
+          architect's design pass confirmed it is fine as-is: each drawer
+          pane rebuilds it from a fresh snapshot on every open
+          (:meth:`_refresh_pane`), so a stale entry can never be read before
+          being overwritten.
+        - ``_iv_current_key`` (named in the issue's original enumeration) no
+          longer exists in this file: #3308 (P5) replaced the single-slot
+          re-route it belonged to with per-intervention TABS, so
+          :attr:`_pending_ivs` + :meth:`InterventionPanel.collapse_all` are
+          the whole of the intervention reset today.
+
+        ★Structural fix (co-vet review, #3323): a hand-typed list of
+        ``.clear()`` calls has now been forgotten TWICE in this arc's short
+        history — ``_streaming_replies`` (flagged as at-risk by the design
+        pass) and ``_pending_own_cancels`` (found only while writing this
+        PR's gates) both landed in ``__init__`` without their owning design
+        table being updated. Every plain-``.clear()``-shaped state above
+        (``_running_tools`` / ``_pending_ivs`` / ``_queue_item_meta`` /
+        ``_streaming_replies`` / ``_pending_own_cancels``) is therefore
+        declared ONCE, in :attr:`_PER_SESSION_DICT_STATE`, and this method
+        iterates that tuple instead of re-listing each name — adding a
+        FUTURE per-session dict to ``__init__`` and this tuple is now the
+        only step required; there is no second call site to forget. State
+        needing a non-``.clear()`` reset (``_queue_view``'s fresh instance,
+        the panel/widget's own methods, the hydrate call) stays explicit
+        below, since a uniform loop cannot express those shapes.
+
+        Runs the reset UNGUARDED (a `try`/`except` around clearing plain
+        dicts/lists would only hide a real bug) but the follow-on hydrate
+        call is internally guarded, same as the mount-time call."""
+        data = event.data or {}
+        agent = data.get("agent")
+        session_id = data.get("session_id")
+        self.conversation.clear()
+        # Data-driven over :attr:`_PER_SESSION_DICT_STATE` — see that
+        # attribute's docstring — instead of a hand-written list of
+        # ``.clear()`` calls, so a FUTURE dict-valued per-session addition
+        # is reset the moment it is registered there, not only when a
+        # human also remembers to edit this method.
+        for attr_name in self._PER_SESSION_DICT_STATE:
+            getattr(self, attr_name).clear()
+        self._iv_panel.collapse_all()
+        self._queue_view = RemoteQueueView()
+        self._sent_queue.clear_all()
+        if agent:
+            self._agent_name = agent
+        # Eager reseed (see the ``_queue_view``/``_queue_seeded`` bullet
+        # above): seed the fresh view from the NEW session's snapshot right
+        # now, rather than deferring to the generic "first frame" check —
+        # which would need ANOTHER frame after this barrier to ever fire.
+        try:
+            self._seed_queue_view()
+        except Exception:
+            logger.exception("textual chat: switch queue-view reseed failed")
+        self._queue_seeded = True
+        self._hydrate_from_history(agent=agent, session_id=session_id)
+
     def _handle_user_submitted_event(self, event) -> None:
         """MATERIALIZE exit (#3300 P2b, sent-queue exit contract §6a): a
         ``user_submitted`` delta appears in the sent-queue region — NOT
@@ -1284,6 +1484,15 @@ class TextualChatApp(App):
         (:meth:`_handle_intervention_answer_event`) renders straight to the
         flow, unlike ``user_submitted`` — an intervention answer was never a
         queued inbox item, so there is no sent-queue stage to promote through.
+
+        #3310 N2: ``session_attached`` (:meth:`_handle_session_attached_event`)
+        is the switch-reset BARRIER — everything on this stream before it
+        belongs to the OLD attached session, everything after to the NEW one
+        (N1's no-await critical-section guarantee at the registry seam). On
+        receipt, every per-session client state is reset and the NEW session
+        is rehydrated from ``history.jsonl`` — v1 is reconnect-shaped, not
+        cache-shaped (a cached FlowView would be stale-by-construction: the
+        forwarder drops a detached session's frames entirely).
         """
         try:
             async for frame in self._transport.frames():
@@ -1295,7 +1504,14 @@ class TextualChatApp(App):
                     self._queue_seeded = True
                 if frame.tag is FrameTag.EVENT:
                     etype = getattr(frame.event, "type", None)
-                    if etype == "user_submitted":
+                    if etype == "session_attached":
+                        try:
+                            self._handle_session_attached_event(frame.event)
+                        except Exception:
+                            logger.exception(
+                                "textual chat: session_attached reset+hydrate failed"
+                            )
+                    elif etype == "user_submitted":
                         try:
                             self._handle_user_submitted_event(frame.event)
                         except Exception:
