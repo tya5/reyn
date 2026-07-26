@@ -42,7 +42,7 @@ from typing import AsyncIterator
 
 import pytest
 from textual.app import App, ComposeResult
-from textual.widgets import Input, RadioButton, RadioSet
+from textual.widgets import Input, RadioButton, RadioSet, Static
 from textual_flowview import EntryState, FlowView
 
 from reyn.interfaces.inline.textual_chat import Composer, TextualChatApp
@@ -474,3 +474,112 @@ async def test_bracket_decorated_option_labels_render_intact() -> None:
             "[r]ecursive under '/tmp/project' always",
             "[N]o",
         ], f"long/bracket-decorated label(s) dropped a character; got {rendered_long!r}"
+
+
+# --- panel neutralize-guard witnesses (3 independently-witnessed surfaces) --
+# The panel is a NEW rendering surface for LLM-derived text that only ever
+# reached the flow entry before #3299 P1: the choice LABEL, the title/prompt,
+# and the detail. Each of the three is neutralized at its own call site in
+# ``InterventionPanel`` (``show_choice`` for the label, ``_set_head`` for
+# prompt/detail) — a malicious LLM-controlled choice label / prompt / detail
+# could otherwise drive the terminal (CSI color codes, OSC title-set) since
+# Textual's own ``Content`` constructor does NOT strip ESC (0x1B) — only a
+# narrow control-code set (BEL/BS/VT/FF/CR). Each test below is scoped to
+# assert ONLY the ESC byte's absence (the byte Content's own stripping never
+# removes), so each is a genuine, independent witness of ITS site's
+# ``_neutralized_label`` call — reverting any ONE call (verified locally,
+# see each docstring) flips ONLY that site's assertion RED, never the other
+# two silently covering for it.
+_ESC_OSC_PAYLOAD = "\x1b[31mRED\x1b]0;pwn\x07"
+
+
+class _PanelOnlyApp(App):
+    def compose(self) -> ComposeResult:
+        yield InterventionPanel(id="panel")
+
+
+@pytest.mark.asyncio
+async def test_panel_choice_label_neutralizes_raw_esc_osc() -> None:
+    """Tier 2c: the panel's RadioButton LABEL surface is independently
+    neutralized. A closed-set intervention choice carrying a raw ESC/OSC
+    payload as its label (a malicious/compromised LLM-derived label — this is
+    NOT hypothetical: ``meta["choices"]`` labels reach the panel RAW, copied
+    verbatim by ``session._iv_meta``) must not leak the raw ESC byte into the
+    mounted ``RadioButton.label`` Textual actually renders.
+
+    NON-VACUITY (falsification, verified locally): reverting ONLY the
+    ``_neutralized_label`` call around the label in
+    ``InterventionPanel.show_choice`` (i.e. mounting
+    ``RadioButton(Content(str(c.get("label", ""))))`` instead of
+    ``RadioButton(Content(_neutralized_label(...)))``) makes this assertion
+    FAIL — ``Content``'s own control-code stripping does not remove ESC
+    (0x1B), only BEL/BS/VT/FF/CR, so the raw ESC survives all the way into
+    the rendered label unless THIS site's neutralize call does the work.
+    Reverting the title/detail neutralize (the other two sites) does NOT
+    affect this assertion — the label survives its own site's guard alone."""
+    app = _PanelOnlyApp()
+    async with app.run_test() as pilot:
+        panel = app.query_one(InterventionPanel)
+        panel.show_choice(
+            prompt="Proceed?",
+            detail=None,
+            choices=[{"id": "x", "label": _ESC_OSC_PAYLOAD, "hotkey": "x"}],
+        )
+        await pilot.pause()
+        radio = panel.query_one("#iv-panel-choices", RadioSet)
+        (only_button,) = radio.query(RadioButton)
+        rendered_label = only_button.label.plain
+        assert "\x1b" not in rendered_label, (
+            f"raw ESC leaked into the panel's RadioButton label: {rendered_label!r}"
+        )
+        assert "RED" in rendered_label
+
+
+@pytest.mark.asyncio
+async def test_panel_title_neutralizes_raw_esc_osc() -> None:
+    """Tier 2c: the panel's TITLE/prompt surface is independently neutralized.
+    An intervention prompt carrying a raw ESC/OSC payload must not leak into
+    the mounted ``#iv-panel-title`` Static's rendered content.
+
+    NON-VACUITY (falsification, verified locally): reverting ONLY the
+    ``_neutralized_label`` call around ``prompt`` in
+    ``InterventionPanel._set_head`` (passing ``Content(prompt)`` directly)
+    makes this assertion FAIL, for the same reason as the label site —
+    ``Content`` does not strip ESC on its own. Reverting the label or detail
+    neutralize (the other two sites) does NOT affect this assertion."""
+    app = _PanelOnlyApp()
+    async with app.run_test() as pilot:
+        panel = app.query_one(InterventionPanel)
+        panel.show_text(prompt=_ESC_OSC_PAYLOAD, detail=None)
+        await pilot.pause()
+        title = panel.query_one("#iv-panel-title", Static)
+        rendered = title.content.plain
+        assert "\x1b" not in rendered, (
+            f"raw ESC leaked into the panel's title: {rendered!r}"
+        )
+        assert "RED" in rendered
+
+
+@pytest.mark.asyncio
+async def test_panel_detail_neutralizes_raw_esc_osc() -> None:
+    """Tier 2c: the panel's DETAIL surface is independently neutralized. An
+    intervention detail carrying a raw ESC/OSC payload must not leak into the
+    mounted ``#iv-panel-detail`` Static's rendered content.
+
+    NON-VACUITY (falsification, verified locally): reverting ONLY the
+    ``_neutralized_label`` call around ``detail`` in
+    ``InterventionPanel._set_head`` (passing ``Content(detail or "")``
+    directly) makes this assertion FAIL, for the same reason as the label and
+    title sites. Reverting the label or title neutralize (the other two
+    sites) does NOT affect this assertion."""
+    app = _PanelOnlyApp()
+    async with app.run_test() as pilot:
+        panel = app.query_one(InterventionPanel)
+        panel.show_text(prompt="Proceed?", detail=_ESC_OSC_PAYLOAD)
+        await pilot.pause()
+        detail = panel.query_one("#iv-panel-detail", Static)
+        rendered = detail.content.plain
+        assert "\x1b" not in rendered, (
+            f"raw ESC leaked into the panel's detail: {rendered!r}"
+        )
+        assert "RED" in rendered
