@@ -1501,6 +1501,52 @@ class ResponsesEndpointRequiredError(Exception):
     so the operator isn't left with a raw 405."""
 
 
+def _requires_responses_bridge(model: str) -> bool:
+    """#3288 follow-up (issue #3288 comment thread, per-PR-coder root-cause):
+    is ``model`` an OpenAI reasoning model that needs the ``/v1/responses``
+    bridge for a ``reasoning_effort + tools`` call?
+
+    The #1678 bridge exists because SOME OpenAI reasoning models reject
+    ``reasoning_effort + tools`` on ``/chat/completions`` and need
+    ``/v1/responses`` instead. It is NOT a universal requirement — e.g.
+    Gemini's ``reasoning_effort`` maps to a native "thinking budget" param
+    (see the #1650 comment above) and does not need (or support well —
+    #1652/②'s reasoning-continuity note) the bridge. Before this fix,
+    ``_routed_to_responses`` had no provider check, so it fired for EVERY
+    ``tools + reasoning_effort`` call, including Gemini's default-config
+    primary reply — silently rewriting ``gemini/...`` to
+    ``responses/gemini/...``, which ``_streaming_capable`` cannot recognize
+    (litellm's model map has no entry for the ``responses/`` marker), so
+    streaming was silently disabled on the default configuration.
+
+    Derives the provider from the resolved MODEL IDENTITY via
+    ``litellm.get_llm_provider``, queried WITHOUT an explicit
+    ``custom_llm_provider`` (``None``) — the SAME transport-independence
+    discipline ``_streaming_capable`` documents: reyn's proxy routing
+    (``proxy_kwargs()``) forces ``custom_llm_provider="openai"`` on the wire
+    for ALL models when an operator proxy is configured, so deriving "is this
+    OpenAI?" from that forced value would make every model look like OpenAI —
+    reproducing the exact bug this function fixes, one layer over. Capability
+    (and provider identity) is a property of the MODEL, not of the transport
+    used to reach it.
+
+    Any lookup failure (unmapped model name, litellm internal error) is
+    caught and treated as "not OpenAI" — conservative in the direction that
+    matters here: it means an unrecognized model is never force-routed
+    through a bridge it may not need, at the cost of a genuinely unmapped
+    OpenAI reasoning model needing an explicit ``openai/responses/...`` model
+    string (already supported — see ``_to_responses_model``'s idempotent
+    explicit-prefix path).
+    """
+    try:
+        import litellm  # noqa: PLC0415
+
+        _, provider, _, _ = litellm.get_llm_provider(model=model, custom_llm_provider=None)
+        return provider == "openai"
+    except Exception:  # noqa: BLE001 — unknown provider → conservative "no bridge"
+        return False
+
+
 def _to_responses_model(model: str) -> str:
     """#1678: rewrite a resolved litellm model string to route through the OpenAI
     Responses API (``/v1/responses``) via the ``responses/`` bridge marker, which
@@ -1725,8 +1771,19 @@ async def recorded_acompletion(
     # parallel recorded_aresponses). An explicit operator prefix is preserved
     # (idempotent). ``_routed_to_responses`` gates the decision-enabling error
     # below so a normal 405 is unaffected.
+    #
+    # #3288 follow-up: this is an OpenAI-specific requirement — gate it on the
+    # resolved model's PROVIDER (``_requires_responses_bridge``), not merely on
+    # the tools+reasoning_effort SHAPE. Without the provider check, this fired
+    # for every reasoning-capable default model class (incl. Gemini, whose
+    # reasoning_effort maps to a native thinking-budget param, not a
+    # /v1/responses requirement), silently rewriting ``gemini/...`` to a
+    # ``responses/`` bridge string that ``_streaming_capable`` cannot
+    # recognize — disabling streaming on the default configuration.
     _routed_to_responses = bool(
-        base_kwargs.get("tools") and base_kwargs.get("reasoning_effort")
+        base_kwargs.get("tools")
+        and base_kwargs.get("reasoning_effort")
+        and _requires_responses_bridge(effective_model)
     )
     if _routed_to_responses:
         effective_model = _to_responses_model(effective_model)
@@ -1904,7 +1961,17 @@ async def recorded_acompletion(
         # (``_streaming_capable``), never a hardcoded provider check.
         # Unknown/uncertain capability → the existing whole-collect call
         # below (conservative fallback, byte-identical to pre-③a behavior).
-        if _streaming_capable(effective_model, has_tools=bool(call_kwargs.get("tools"))):
+        _capable = _streaming_capable(effective_model, has_tools=bool(call_kwargs.get("tools")))
+        # Permanent, one-line-per-call debug signal for the gate DECISION itself
+        # (not just "streamed but the callback never fired" — the #3288 follow-up
+        # gap: the gate silently deciding NOT to stream had no observable trace at
+        # all, which is why the default-config dark-streaming bug needed a live
+        # diagnostic run + code trace to find).
+        logger.debug(
+            "streaming gate: model=%s has_tools=%s capable=%s",
+            effective_model, bool(call_kwargs.get("tools")), _capable,
+        )
+        if _capable:
             return await _stream_and_reconstruct(effective_model, messages, call_kwargs)
         return await litellm.acompletion(model=effective_model, messages=messages, **call_kwargs)
 
