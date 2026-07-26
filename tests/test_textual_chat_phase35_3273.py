@@ -7,6 +7,14 @@ Textual TTY. The free-text-only wiring left choice interventions unanswerable
 (the only ``answer_intervention_choice`` caller lived in the dead old app), a
 permission-band functional regression this restores.
 
+Also pins the #3290 anti-black-hole fix (part of #3273): a free-text submit
+landing during a pending CHOICE intervention must NEVER fall through to
+``submit_user_text`` (the backend is blocked waiting for the choice answer, so
+that submit is a permanent black hole — 0 events, the UI optimistically lies
+that the text was sent). Instead: type-or-click parity — matching text answers
+the choice; non-matching text keeps the intervention pending and re-affirms the
+options.
+
 Gates:
 
 - **choice REACHABLE** (Tier 2b): a choice-intervention frame surfaces as
@@ -14,13 +22,18 @@ Gates:
   through ``transport.answer_intervention_choice`` and the entry re-presents to
   its resolved (``EntryState.SUCCESS``) state. Non-vacuous: the second option is
   chosen (so a first-option shortcut would fail), the specific id is asserted,
-  and the SAME pending choice-intervention is shown to be UNANSWERABLE via the
-  free-text composer path (which starts a new turn instead) — the pre-fix gap.
+  and no answer is delivered before the click.
+- **black-hole gone + type-or-click parity** (Tier 2b, #3290): with a choice
+  intervention pending, typing an option's label answers that choice via
+  ``answer_intervention_choice`` (never ``submit_user_text``); typing a
+  non-matching line keeps the intervention pending and surfaces a hint, and
+  STILL never reaches ``submit_user_text``.
 - **free-text still works** (Tier 2b): a no-choices intervention still routes a
   composer submit to ``answer_intervention_text`` (regression guard).
 
 All use real instances (a concrete recording :class:`ClientTransport`, a real
-mounted :class:`TextualChatApp`, real :class:`OutboxMessage`) — no mocks — per
+mounted :class:`TextualChatApp`, real :class:`OutboxMessage`,
+:class:`UserIntervention` / :class:`InterventionChoice` heads) — no mocks — per
 the testing policy.
 """
 from __future__ import annotations
@@ -36,9 +49,11 @@ from reyn.interfaces.inline.textual_chat import (
     TextualChatApp,
     choice_chip_spans,
 )
+from reyn.interfaces.inline.textual_chat.app import _match_choice_input
 from reyn.interfaces.transport.client_transport import ClientTransport
 from reyn.interfaces.transport.frames import DisplayFrame
 from reyn.runtime.outbox import OutboxMessage
+from reyn.user_intervention import InterventionChoice, UserIntervention
 
 _GUTTER_WIDTH = 2
 
@@ -71,6 +86,7 @@ class RecordingTransport(ClientTransport):
         self.submitted: list[str] = []
         self.answered_choice: list[str] = []
         self.answered_text: list[str] = []
+        self.displayed: list[OutboxMessage] = []
 
     def start(self) -> None:  # pragma: no cover - trivial
         pass
@@ -104,6 +120,7 @@ class RecordingTransport(ClientTransport):
         return self._head
 
     def put_display(self, msg: "OutboxMessage") -> None:
+        self.displayed.append(msg)
         self._messages.append(msg)
 
     async def cancel_inflight(self) -> None:  # pragma: no cover - trivial
@@ -134,6 +151,23 @@ def _choice_intervention() -> OutboxMessage:
                 {"component": "list", "items": ["Yes", "No", "Always"]},
             ],
         },
+    )
+
+
+def _choice_head() -> UserIntervention:
+    """A real pending CHOICE-intervention head (Yes / No / Always), matching the
+    ``choices`` of :func:`_choice_intervention`. This is the shape
+    ``transport.pending_intervention_head`` returns for a permission confirm —
+    a real :class:`UserIntervention`, not a stand-in, so ``_submit`` reads the
+    same ``.choices`` (``.id`` / ``.label`` / ``.hotkey``) production reads."""
+    return UserIntervention(
+        kind="permission.write",
+        prompt="Allow write to /etc/hosts?",
+        choices=[
+            InterventionChoice(id="yes", label="Yes", hotkey="y"),
+            InterventionChoice(id="no", label="No", hotkey="n"),
+            InterventionChoice(id="always", label="Always", hotkey="A"),
+        ],
     )
 
 
@@ -209,19 +243,49 @@ async def test_choice_click_off_the_chip_row_does_not_answer() -> None:
 
 
 @pytest.mark.asyncio
-async def test_choice_intervention_unanswerable_via_free_text_path() -> None:
-    """Tier 2b: the pre-fix gap witness — a pending CHOICE intervention is NOT
-    answered by the free-text composer path. With the choice-intervention head
-    pending, a composer submit starts a NEW TURN (``submit_user_text``) rather
-    than answering the intervention, so without the click wiring the choice would
-    never be delivered. Pairs with the reachability test to show the click path
-    is the only thing that closes the gap."""
+async def test_choice_free_text_match_answers_choice_not_new_turn() -> None:
+    """Tier 2b: type-or-click parity (#3290) — with a choice-intervention
+    pending, typing an option's LABEL ("yes", case-insensitive) answers the Yes
+    chip via ``answer_intervention_choice`` and NEVER starts a new turn.
 
-    class _ChoiceHead:
-        choices = [object(), object()]  # non-empty → NOT a free-text intervention
-
+    Non-vacuous (black-hole gone): the pre-fix code fell straight through to
+    ``submit_user_text`` for ANY choice-head submit — the #3290 black hole
+    (backend blocked on the choice, 0 events). Asserting ``submitted == []`` is
+    exactly what neutering the new choice branch (reverting to the fall-through)
+    flips RED. The delivered id is the Yes chip's ``id`` ("yes"), not the first
+    chip index nor the label string — a label-as-id confusion fails."""
     transport = RecordingTransport(
-        [_choice_intervention()], end=False, head=_ChoiceHead()
+        [_choice_intervention()], end=False, head=_choice_head()
+    )
+    app = TextualChatApp(transport=transport)
+
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        app.query_one(Composer).focus()
+        await pilot.pause()
+        await pilot.press("y", "e", "s")
+        await pilot.press("enter")
+        await pilot.pause()
+
+    assert transport.answered_choice == ["yes"], (
+        f"typed option not routed to the choice; got {transport.answered_choice}"
+    )
+    assert transport.submitted == []  # never black-holed into a new turn
+    assert transport.answered_text == []
+
+
+@pytest.mark.asyncio
+async def test_choice_free_text_no_match_keeps_pending_and_hints() -> None:
+    """Tier 2b: the anti-black-hole no-match leg (#3290) — with a choice
+    intervention pending, a free-text line that matches NO option does NOT reach
+    ``submit_user_text`` (the black hole); it surfaces a hint and keeps the
+    intervention pending so the user can still click a chip or retype.
+
+    Non-vacuous: ``submitted == []`` is what the pre-fix fall-through violated,
+    and a ``kind="system"`` hint frame is asserted present — so the input was
+    neither delivered as a choice nor dropped silently."""
+    transport = RecordingTransport(
+        [_choice_intervention()], end=False, head=_choice_head()
     )
     app = TextualChatApp(transport=transport)
 
@@ -233,11 +297,62 @@ async def test_choice_intervention_unanswerable_via_free_text_path() -> None:
         await pilot.press("enter")
         await pilot.pause()
 
-    # A choice-intervention is pending, yet the text submit went to a new turn,
-    # NOT to any intervention-answer seam.
-    assert transport.submitted == ["hi"]
+    assert transport.submitted == []  # #3290: not black-holed into a blocked backend
     assert transport.answered_choice == []
     assert transport.answered_text == []
+    hints = [m for m in transport.displayed if m.kind == "system"]
+    assert hints, "no re-affirm hint surfaced for the unmatched choice submit"
+
+
+@pytest.mark.asyncio
+async def test_slash_command_during_choice_intervention_takes_normal_path() -> None:
+    """Tier 2b: the ``/``-guard survives (#3290 regression) the restructured
+    branch — a ``/``-prefixed line submitted while a CHOICE intervention is
+    pending is a slash command, so it routes to ``submit_user_text`` (the session
+    turn loop dispatches it), NOT to the choice-answer seam nor the hint."""
+    transport = RecordingTransport(
+        [_choice_intervention()], end=False, head=_choice_head()
+    )
+    app = TextualChatApp(transport=transport)
+
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        app.query_one(Composer).focus()
+        await pilot.pause()
+        await pilot.press("slash", "m", "o", "d", "e", "l")
+        await pilot.press("enter")
+        await pilot.pause()
+
+    assert transport.submitted == ["/model"]
+    assert transport.answered_choice == []
+    assert transport.answered_text == []
+
+
+def test_match_choice_input_label_hotkey_case_and_ambiguity() -> None:
+    """Tier 1: the ``_match_choice_input`` contract — trimmed, case-insensitive
+    match against BOTH label and hotkey; the ``choice_id`` (never itself matched)
+    is returned; ambiguity and no-match both return ``None``."""
+    choices = [
+        InterventionChoice(id="yes", label="Yes", hotkey="y"),
+        InterventionChoice(id="no", label="No", hotkey="n"),
+        InterventionChoice(id="always", label="Always", hotkey="A"),
+    ]
+    # Label match, case-insensitive + trimmed.
+    assert _match_choice_input("yes", choices) == "yes"
+    assert _match_choice_input("  YES  ", choices) == "yes"
+    # Hotkey match, case-insensitive (hotkey "A" for Always).
+    assert _match_choice_input("a", choices) == "always"
+    # The id itself is NOT a match key (would confuse label-vs-id).
+    assert _match_choice_input("no", choices) == "no"
+    # No match / empty → None (caller keeps pending + hints, never black-holes).
+    assert _match_choice_input("maybe", choices) is None
+    assert _match_choice_input("   ", choices) is None
+    # Ambiguity → None: two distinct choices sharing the same label.
+    dup = [
+        InterventionChoice(id="a", label="Go", hotkey="g"),
+        InterventionChoice(id="b", label="Go", hotkey="h"),
+    ]
+    assert _match_choice_input("go", dup) is None
 
 
 @pytest.mark.asyncio
