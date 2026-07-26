@@ -11,8 +11,10 @@ presentation is the
 state-coloured gutter the
 :class:`~reyn.interfaces.inline.textual_chat.gutter.ReynGutter`'s, and the bottom
 chrome the widgets in :mod:`~reyn.interfaces.inline.textual_chat.chrome`. This app
-wires them, drives the frame pump + blink timer, and routes composer submissions
-back through the transport send seam.
+wires them, drives the frame pump, and routes composer submissions back through
+the transport send seam. The running-blink gutter animates itself off
+textual-flowview's native ``FlowView(animation_fps=N)`` clock — there is no
+app-side blink timer.
 
 This module is part of the TTY-only ``textual_chat`` package (imported lazily via
 :mod:`reyn.interfaces.repl.client_driver`); its ``textual`` / ``textual_flowview``
@@ -47,13 +49,11 @@ from .chrome import (
     pane_payload,
     status_line_text,
 )
-from .gutter import ReynGutter
+from .gutter import _RUNNING_FRAME_PERIOD, ReynGutter
 from .presenter import ReynPresenter, choice_chip_spans
 from .restore import project_restored_frames
 
 if TYPE_CHECKING:
-    from textual.timer import Timer
-
     from reyn.interfaces.repl.read_model import ChatReadModel
     from reyn.interfaces.transport.client_transport import ClientTransport
     from reyn.runtime.outbox import OutboxMessage
@@ -98,9 +98,12 @@ class TextualChatApp(App):
 
     Phase 2 adds state-coloured gutters: a tool-call row transitions RUNNING →
     SUCCESS/ERROR (amber → green/coral) as its correlated frames arrive, a
-    failed row is tinted coral edge-to-edge, and RUNNING rows blink via an
-    app-side timer (:meth:`_advance_blink`). The blink is additive — neutering
-    the timer leaves a static, correct gutter.
+    failed row is tinted coral edge-to-edge, and RUNNING rows blink. The blink is
+    NATIVE: ``FlowView(animation_fps=N)`` re-invokes the time-based
+    :class:`ReynGutter` decorator on each animation tick, and the decorator picks
+    the frame from a monotonic clock — no app-side timer, no shared counter. The
+    blink is additive: a frozen clock (``frame_period<=0``) leaves a static,
+    correct amber gutter.
 
     Phase 3 adds the bottom-chrome tab-drawer: below the composer, a
     :class:`StatusLine` + a focusable :class:`MenuBar`, and a
@@ -139,8 +142,14 @@ class TextualChatApp(App):
     Textual TTY.
     """
 
-    #: Seconds between running-blink frames (app-side; textual-flowview unmodified).
-    BLINK_INTERVAL = 0.5
+    #: FlowView animation frame rate (Hz) driving the native running-blink gutter.
+    #: Set to ``1 / <blink frame period>`` so textual-flowview's own animation tick
+    #: re-invokes the time-based :class:`ReynGutter` at least once per frame — the
+    #: visible blink cadence matches the pre-native 0.5s app-side timer. ``fps>0``
+    #: means the clock is always-on (no idle-pause); the idle tick is a viewport-
+    #: gated gutter re-derive measured at ~0.003% of one core, so always-on is
+    #: accepted over per-entry toggling (see #3283 ①).
+    ANIMATION_FPS = 1.0 / _RUNNING_FRAME_PERIOD
 
     BINDINGS = [
         # Global fallback so Esc closes the drawer even when focus is INSIDE it
@@ -227,9 +236,6 @@ class TextualChatApp(App):
         # deterministic args_hash, meta["op_id"]) so a later completion/failure
         # frame transitions the SAME entry RUNNING → SUCCESS/ERROR (CC parity).
         self._running_tools: "dict[object, Entry[OutboxMessage]]" = {}
-        # Shared blink frame counter read by ReynGutter; advanced by the timer.
-        self._blink_count = 0
-        self._blink_timer: "Timer | None" = None
         # Per-picker parallel id lists (class names / agent names), keyed by tab
         # id and kept in lock-step with the OptionList options a pane was last
         # refreshed with, so an ``OptionSelected.option_index`` maps back to the
@@ -242,10 +248,13 @@ class TextualChatApp(App):
         yield FlowView(
             model=self.conversation,
             presenter=self._presenter,
-            decorator=ReynGutter(blink_frame=lambda: self._blink_count),
+            decorator=ReynGutter(frame_period=_RUNNING_FRAME_PERIOD),
             gutter_width=_GUTTER_WIDTH,
             spacing=1,
             anchor=Anchor.STICKY_BOTTOM,
+            # Native running-blink: FlowView owns the animation clock and
+            # re-invokes the time-based ReynGutter each tick (no app-side timer).
+            animation_fps=self.ANIMATION_FPS,
         )
         with Horizontal(id="inputrow"):
             yield Static("❯", id="inputgutter")
@@ -346,14 +355,10 @@ class TextualChatApp(App):
         # same presenter/gutter path a live frame does. Must run before
         # ``run_worker`` so the prior turns sit ABOVE the first live frame.
         self._hydrate_from_history()
-        # The running-blink timer starts PAUSED and is resumed only while a
-        # tool call is RUNNING (and paused again when none remain) — it never
-        # spins on an idle conversation. The blink is app-side + ADDITIVE:
-        # neutering ``_advance_blink`` freezes the frame to a static gutter
-        # without affecting correctness (see the Phase-2 strip gate).
-        self._blink_timer = self.set_interval(
-            self.BLINK_INTERVAL, self._advance_blink, pause=True
-        )
+        # The running-blink gutter animates off FlowView's NATIVE animation clock
+        # (``animation_fps`` wired in :meth:`compose`), not an app-side timer — so
+        # there is nothing to start/pause here. The blink is ADDITIVE: a frozen
+        # clock leaves a static, correct amber gutter (see the Phase-2 strip gate).
         self.run_worker(self._pump_frames(), name="frames", exclusive=True)
         # Drawer starts collapsed — the default chrome is just the two slim rows
         # (status-values line + menu row). It only becomes visible when a menu
@@ -512,26 +517,20 @@ class TextualChatApp(App):
                 entry.set_state(EntryState.SUCCESS)
                 break
 
-    def _advance_blink(self) -> None:
-        """One blink tick: advance the shared frame counter and redraw ONLY the
-        running entries' gutters (``set_metadata`` is flowview's gutter-only
-        redraw primitive — it never re-presents the body). Pauses itself when no
-        entry is RUNNING, so the timer does not spin on an idle conversation."""
-        self._blink_count += 1
-        for entry in list(self._running_tools.values()):
-            entry.set_metadata("_blink", self._blink_count)
-        if not self._running_tools and self._blink_timer is not None:
-            self._blink_timer.pause()
-
     def _track_tool_state(self, msg: "OutboxMessage", entry: "Entry[OutboxMessage]") -> None:
         """Drive the Phase-2 lifecycle state of tool-call / error rows.
 
         A ``tool_call_started`` row (with an ``op_id`` correlation key) becomes
-        RUNNING and starts blinking; the matching ``tool_call_completed`` /
-        ``tool_call_failed`` frame transitions that SAME entry to SUCCESS/ERROR
-        (its gutter goes amber → green/coral). ``error`` rows go straight to
-        ERROR. Frames without an ``op_id`` carry no state (DEFAULT) — they append
-        exactly as in Phase 1, so the plain-fallback turn sequence is unchanged."""
+        RUNNING (its gutter blinks amber off the native animation clock); the
+        matching ``tool_call_completed`` / ``tool_call_failed`` frame transitions
+        that SAME entry to SUCCESS/ERROR (its gutter goes amber → green/coral).
+        ``error`` rows go straight to ERROR. Frames without an ``op_id`` carry no
+        state (DEFAULT) — they append exactly as in Phase 1, so the plain-fallback
+        turn sequence is unchanged.
+
+        ``_running_tools`` keys the RUNNING entry by ``op_id`` purely for this
+        RUNNING → SUCCESS/ERROR correlation (NOT for the blink — the blink is now
+        time-based in :class:`ReynGutter`, driven by the native animation tick)."""
         kind = msg.kind
         meta = msg.meta or {}
         op_id = meta.get("op_id")
@@ -539,8 +538,6 @@ class TextualChatApp(App):
             if op_id is not None:
                 entry.set_state(EntryState.RUNNING)
                 self._running_tools[op_id] = entry
-                if self._blink_timer is not None:
-                    self._blink_timer.resume()
         elif kind == "tool_call_completed":
             summary = summarize_tool_result(meta.get("tool"), meta.get("result"))
             started = self._running_tools.pop(op_id, None) if op_id is not None else None
@@ -548,19 +545,13 @@ class TextualChatApp(App):
                 started.set_state(
                     EntryState.ERROR if summary.startswith("✗") else EntryState.SUCCESS
                 )
-            self._maybe_pause_blink()
         elif kind == "tool_call_failed":
             started = self._running_tools.pop(op_id, None) if op_id is not None else None
             if started is not None:
                 started.set_state(EntryState.ERROR)
             entry.set_state(EntryState.ERROR)
-            self._maybe_pause_blink()
         elif kind == "error":
             entry.set_state(EntryState.ERROR)
-
-    def _maybe_pause_blink(self) -> None:
-        if not self._running_tools and self._blink_timer is not None:
-            self._blink_timer.pause()
 
     async def _pump_frames(self) -> None:
         """Drain the transport frame stream into the retained model.
