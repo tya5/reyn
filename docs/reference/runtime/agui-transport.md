@@ -351,6 +351,7 @@ is the event's data object.
 | Custom `name`                        | Meaning                                          |
 |--------------------------------------|--------------------------------------------------|
 | `reyn.event.user_answered_intervention` | the user answered an intervention             |
+| `reyn.event.user_submitted`          | a user turn was submitted (#3300 P1 C) — RAW text + chain_id + _msg_id + meta; each surface neutralizes at its render boundary |
 
 ### `reyn.intervention.<kind>`
 
@@ -394,16 +395,24 @@ client reads its status bar / intervention region / task poll through the
 read-model: a `RegistryReadModel` off the local session, or a `RemoteReadModel`
 off the `STATE_*` view above.
 
-**Local ≡ remote holds for INPUT too, symmetric with output.** A submitted turn
-(`Session.submit_user_text`) and a resolved intervention answer
-(`InterventionHandler.deliver_answer_to` — the one funnel every answer path
-shares: TUI free-text, TUI choice-region, an A2A peer, and the AG-UI HITL
-round-trip above) each put a `kind="user"` frame on the SAME `session.outbox`
-the agent's reply rides, so it fans out through the identical `OutboxHub`
-broadcast to every attached surface. The submitting client renders its own
-line from that broadcast frame too (no separate local echo) — with 2+ clients
-attached, everyone sees every turn and every answer, not only the agent's
-replies to them.
+**Local ≡ remote holds for INPUT too, symmetric with output.** A resolved
+intervention answer (`InterventionHandler.deliver_answer_to` — the one funnel
+every answer path shares: TUI free-text, TUI choice-region, an A2A peer, and
+the AG-UI HITL round-trip above) puts a `kind="user"` frame on
+`session.outbox`, fanning out through `OutboxHub` to every attached surface.
+A submitted turn (`Session.submit_user_text`) instead emits a
+`user_submitted` chat-event (#3300 P1 C — replacing an earlier outbox-echo
+write, a category error: an INPUT written into the display/OUTPUT channel)
+that rides the SAME unified frame stream as an `EventFrame`
+(`_TURN_AND_ANSWER_EVENTS`, `transport/frames.py`) — the encode/decode is
+generic (`transport/agui/protocol.py`), so no wire changes were needed for the
+new event type. Either way every attached surface's event→display handler
+(`ConsoleChatRenderer.on_chat_event` / `InlineChatRenderer.on_chat_event` /
+`TextualChatApp._pump_frames`) renders the line, neutralizing at that render
+boundary (`renderer.user_submitted_display_message`). The submitting client
+renders its own line from that same event too (no separate local echo) —
+with 2+ clients attached, everyone sees every turn and every answer, not only
+the agent's replies to them.
 
 ## AG-UI event coverage — reading the numbers honestly
 

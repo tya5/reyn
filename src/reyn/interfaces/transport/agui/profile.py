@@ -130,6 +130,13 @@ CUSTOM_PROFILE: dict[str, CustomName] = _entries(
         "reyn.event.user_answered_intervention", EVENT_NS, "the event data object",
         "the user answered an intervention (working-indicator axis)",
     ),
+    CustomName(
+        "reyn.event.user_submitted", EVENT_NS, "the event data object",
+        "a user turn was submitted (#3300 P1 C) — carries the RAW text + "
+        "chain_id + _msg_id + meta; each surface's event→display handler "
+        "renders the echo and neutralizes at that render boundary "
+        "(replaces the earlier kind=\"user\" outbox-echo write)",
+    ),
 )
 
 

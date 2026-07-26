@@ -327,6 +327,7 @@ display 行のテキストである。
 | Custom `name`                        | Meaning                                          |
 |--------------------------------------|--------------------------------------------------|
 | `reyn.event.user_answered_intervention` | ユーザーが intervention に回答した              |
+| `reyn.event.user_submitted`          | ユーザーがターンを送信した(#3300 P1 C)— RAW text + chain_id + _msg_id + meta を運ぶ。各 surface がそれぞれの render 境界で neutralize する |
 
 ### `reyn.intervention.<kind>`
 
@@ -355,15 +356,23 @@ transport が加えるのは wire framing のみであり、新しい render sem
 そのため remote レンダラーの display バイト列と working-indicator の遷移は、ローカルの
 ものと同一である。
 
-**Local ≡ remote は input についても output と対称に成り立つ。** 送信されたターン
-(`Session.submit_user_text`)と解決された intervention への回答
-(`InterventionHandler.deliver_answer_to` — TUI の自由記述回答・TUI の選択肢リージョン・
-A2A peer・上記の AG-UI HITL round-trip という全ての回答経路が共有する単一の funnel)は
-それぞれ、agent の返信が乗るのと同じ `session.outbox` に `kind="user"` の frame を置く
-ため、同一の `OutboxHub` ブロードキャストを経由して、アタッチしているすべての surface へ
-fan-out される。送信したクライアント自身も(別のローカルエコーではなく)そのブロードキャ
-スト frame から自分の行を描画する — 2 クライアント以上がアタッチしていれば、全員が
-すべてのターンとすべての回答を見られる。agent からの返信だけではない。
+**Local ≡ remote は input についても output と対称に成り立つ。** 解決された
+intervention への回答(`InterventionHandler.deliver_answer_to` — TUI の自由記述回答・
+TUI の選択肢リージョン・A2A peer・上記の AG-UI HITL round-trip という全ての回答経路が
+共有する単一の funnel)は `session.outbox` に `kind="user"` の frame を置き、`OutboxHub`
+を経由してアタッチしているすべての surface へ fan-out される。送信されたターン
+(`Session.submit_user_text`)は代わりに `user_submitted` という chat-event を emit する
+(#3300 P1 C — 以前の outbox-echo write を置き換えた。INPUT を display/OUTPUT channel に
+書き込むのは category error だったため)。この event は同一の統一 frame stream に
+`EventFrame` として乗る(`_TURN_AND_ANSWER_EVENTS`、`transport/frames.py`)——
+encode/decode は汎用的(`transport/agui/protocol.py`)なので、新しい event type のために
+wire 側の変更は不要だった。いずれの経路でも、アタッチしているすべての surface の
+event→display handler(`ConsoleChatRenderer.on_chat_event` /
+`InlineChatRenderer.on_chat_event` / `TextualChatApp._pump_frames`)がその行を描画し、
+その render 境界で neutralize する(`renderer.user_submitted_display_message`)。送信した
+クライアント自身も(別のローカルエコーではなく)同じ event から自分の行を描画する —
+2 クライアント以上がアタッチしていれば、全員がすべてのターンとすべての回答を見られる。
+agent からの返信だけではない。
 
 ## AG-UI event coverage — 数字を正直に読む
 

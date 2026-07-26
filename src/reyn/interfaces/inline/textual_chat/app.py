@@ -834,14 +834,33 @@ class TextualChatApp(App):
         path — consumed but not drawn, EXCEPT for the turn-end subset
         (:data:`_TURN_END_EVENT_TYPES`), which triggers
         :meth:`_sweep_orphaned_running_tools` (#72: force-settle any tool still
-        RUNNING when its turn ends — a confirmed orphan). A single frame's
-        failure must not kill the pump, so ingest is guarded.
+        RUNNING when its turn ends — a confirmed orphan), and ``user_submitted``
+        (#3300 P1 C), which IS drawn — it materializes the submitting/peer
+        client's own user line (the removed ``_put_outbox`` echo's replacement)
+        via the same neutralize-at-render-time seam the plain renderer uses
+        (:func:`~reyn.interfaces.repl.renderer.user_submitted_display_message`).
+        In Phase C this appends straight to the flow like any other display
+        frame — the sent-queue staging (materialize → promote on
+        ``turn_started``) is Phase B, not built here. A single frame's failure
+        must not kill the pump, so ingest is guarded.
         """
         try:
             async for frame in self._transport.frames():
                 if frame.tag is FrameTag.EVENT:
                     etype = getattr(frame.event, "type", None)
-                    if etype in _TURN_END_EVENT_TYPES:
+                    if etype == "user_submitted":
+                        from reyn.interfaces.repl.renderer import (  # noqa: PLC0415
+                            user_submitted_display_message,
+                        )
+                        try:
+                            self._ingest_frame(
+                                user_submitted_display_message(frame.event)
+                            )
+                        except Exception:
+                            logger.exception(
+                                "textual chat: user_submitted ingest failed"
+                            )
+                    elif etype in _TURN_END_EVENT_TYPES:
                         try:
                             self._sweep_orphaned_running_tools()
                         except Exception:

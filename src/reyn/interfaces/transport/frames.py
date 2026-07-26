@@ -59,6 +59,12 @@ _TURN_AND_ANSWER_EVENTS = frozenset(
         "turn_completed",
         "turn_cancelled",
         "user_answered_intervention",
+        # #3300 P1 (C): the user-line echo, driven by an event instead of a
+        # parallel outbox write (session.submit_user_text). Carries raw text +
+        # chain_id + _msg_id + attribution meta; each surface's
+        # event→display handler neutralizes at render time (see
+        # ``reyn.interfaces.repl.renderer.user_submitted_display_message``).
+        "user_submitted",
     }
 )
 
@@ -74,8 +80,8 @@ def renderer_chat_events() -> frozenset[str]:
       tool-axis WaitingOn transition table (``tool_called`` / ``tool_returned``
       / ``tool_failed``); extending WaitingOn to a new axis is one new entry
       there and this set follows automatically.
-    - :data:`_TURN_AND_ANSWER_EVENTS` — the turn-lifecycle + intervention-answer
-      events ``renderer.on_chat_event`` branches on directly.
+    - :data:`_TURN_AND_ANSWER_EVENTS` — the turn-lifecycle / intervention-answer
+      / user-submitted events ``renderer.on_chat_event`` branches on directly.
     """
     return frozenset(_WAITING_ON_BY_EVENT.keys()) | _TURN_AND_ANSWER_EVENTS
 
