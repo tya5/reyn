@@ -61,7 +61,7 @@ dependencies = [
     # LAZILY on the TTY path only, so the plain / --cui / non-TTY / CI paths never
     # touch textual or flowview and stay green even if flowview fails to resolve.
     "textual>=0.80",
-    "textual-flowview @ git+https://github.com/tya5/textual-flowview.git@15a942c27bdb82ddfe7f550f0f35d121c63440c8",
+    "textual-flowview @ git+https://github.com/tya5/textual-flowview.git@319cf9e6ca761beb7c0ccad572b879e455427753",
     "numpy>=1.24",           # RAG index backend cosine similarity (ADR-0033)
     "croniter>=2.0",         # cron expression parsing for FP-0009 Component B
     "charset-normalizer>=3.0",  # #1452 file__read encoding detection (MIT, pure-python)
