@@ -75,6 +75,11 @@ class RecordingTransport(ClientTransport):
         self.answered_choice: list[str] = []
         self.answered_text: list[str] = []
         self.displayed: list[OutboxMessage] = []
+        # (choice_id | text, intervention_id) pairs — records the id an answer
+        # was targeted at (#3299 P2 R1 by-id delivery), ``None`` when the
+        # caller left it head-targeted.
+        self.answered_choice_ids: "list[str | None]" = []
+        self.answered_text_ids: "list[str | None]" = []
 
     def start(self) -> None:  # pragma: no cover - trivial
         pass
@@ -93,12 +98,18 @@ class RecordingTransport(ClientTransport):
     async def submit_user_text(self, text: str) -> None:
         self.submitted.append(text)
 
-    async def answer_intervention_text(self, text: str) -> bool:
+    async def answer_intervention_text(
+        self, text: str, *, intervention_id: "str | None" = None
+    ) -> bool:
         self.answered_text.append(text)
+        self.answered_text_ids.append(intervention_id)
         return True
 
-    async def answer_intervention_choice(self, choice_id: str) -> bool:
+    async def answer_intervention_choice(
+        self, choice_id: str, *, intervention_id: "str | None" = None
+    ) -> bool:
         self.answered_choice.append(choice_id)
+        self.answered_choice_ids.append(intervention_id)
         return True
 
     def has_session(self) -> bool:
@@ -155,12 +166,44 @@ def _free_text_intervention() -> OutboxMessage:
     )
 
 
+def _second_choice_intervention() -> OutboxMessage:
+    """A second, distinct closed-set intervention (different id) — used by the
+    multi-pending tests (#3299 P2) to exercise TWO simultaneously-outstanding
+    interventions, which ``outstanding_interventions`` supports by design."""
+    return OutboxMessage(
+        kind="intervention",
+        text="Overwrite existing file?\n  Yes / No",
+        meta={
+            "intervention_id": "iv-2",
+            "intervention_kind": "confirm",
+            "prompt": "Overwrite existing file?",
+            "choices": [
+                {"id": "yes", "label": "Yes", "hotkey": "y"},
+                {"id": "no", "label": "No", "hotkey": "n"},
+            ],
+            "nodes": [
+                {"component": "text", "text": "Overwrite existing file?"},
+                {"component": "list", "items": ["Yes", "No"]},
+            ],
+        },
+    )
+
+
 def _iv_entry(app: TextualChatApp):
     entries = [
         e for e in app.query_one(FlowView).entries if e.item.kind == "intervention"
     ]
     assert len(entries) == 1, f"expected one intervention entry, got {len(entries)}"
     return entries[0]
+
+
+def _iv_entries(app: TextualChatApp):
+    """All intervention flow entries, keyed by their ``intervention_id`` meta."""
+    return {
+        e.item.meta.get("intervention_id"): e
+        for e in app.query_one(FlowView).entries
+        if e.item.kind == "intervention"
+    }
 
 
 @pytest.mark.asyncio
@@ -187,11 +230,9 @@ async def test_choice_intervention_panel_selection_delivers_correct_choice_id() 
         # No answer is delivered until the user acts.
         assert transport.answered_choice == []
 
-        # Move the highlight to the SECOND option ("No") and select it. The
-        # RadioSet starts with NO highlighted button (index -1), so the FIRST
-        # "down" only highlights index 0 ("Yes") — a second "down" is needed to
-        # reach index 1 ("No"), verified against this RadioSet's own behavior.
-        await pilot.press("down")
+        # #3299 P2 owner decision (A): the panel pre-highlights the FIRST
+        # option on appear, so ONE "down" now reaches the SECOND option ("No")
+        # — two would have been needed pre-P2 (index -1 → 0 → 1).
         await pilot.press("down")
         await pilot.press("enter")
         await pilot.pause()
@@ -200,10 +241,14 @@ async def test_choice_intervention_panel_selection_delivers_correct_choice_id() 
         assert transport.answered_choice == ["no"], (
             f"choice not delivered; got {transport.answered_choice}"
         )
-        # Resolved reflection: green SUCCESS gutter + panel collapsed + focus
-        # returned to the Composer.
+        assert transport.answered_choice_ids == ["iv-1"], (
+            "answer not delivered BY ID (#3299 P2 R1)"
+        )
+        # Resolved reflection: DEFAULT gutter (#3299 P2 §5 — not SUCCESS, an
+        # answered intervention is neither an outcome nor a failure) + panel
+        # collapsed + focus returned to the Composer.
         resolved = _iv_entry(app)
-        assert resolved.state is EntryState.SUCCESS
+        assert resolved.state is EntryState.DEFAULT
         assert resolved.item.meta.get("_answer_label") == "No"
         assert panel.display is False, "panel did not collapse after resolving"
         assert app.query_one(Composer).has_focus, (
@@ -235,6 +280,7 @@ async def test_free_text_intervention_answered_via_panel_input() -> None:
         await pilot.pause()
 
     assert transport.answered_text == ["ok"]
+    assert transport.answered_text_ids == ["iv-2"]
     assert transport.submitted == []
     assert transport.answered_choice == []
 
@@ -583,3 +629,259 @@ async def test_panel_detail_neutralizes_raw_esc_osc() -> None:
             f"raw ESC leaked into the panel's detail: {rendered!r}"
         )
         assert "RED" in rendered
+
+
+# --- #3299 P2: multi-pending by-id delivery + re-route ----------------------
+# The architect's self-review finding (P1 merge): the panel was SINGLE-slot
+# (a second pending intervention silently overwrote the first's entry handle)
+# and delivery was HEAD-targeted (``answer_intervention_choice`` carries no
+# id) — but ``outstanding_interventions`` legitimately holds MULTIPLE pending
+# entries (e.g. restore's FIFO re-enqueue), so a stale head could receive an
+# answer the user actually gave to a DIFFERENT, currently-displayed
+# intervention. P2 fixes both: every pending intervention gets its OWN
+# tracked flow entry (never overwritten), and an answer is delivered BY ID to
+# whichever intervention the panel is showing.
+
+
+@pytest.mark.asyncio
+async def test_second_pending_intervention_does_not_overwrite_the_first() -> None:
+    """Tier 2b: with TWO interventions pending, the panel keeps showing the
+    FIRST (the architect's overwrite finding) — its flow entry is not
+    orphaned, and the second gets its own placeholder entry too. Non-vacuous:
+    pre-P2 the single ``_pending_iv_entry`` slot was overwritten by the
+    second arrival (verified against the P1 source removed in this PR)."""
+    transport = RecordingTransport(
+        [_choice_intervention(), _second_choice_intervention()], end=False
+    )
+    app = TextualChatApp(transport=transport)
+
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        await pilot.pause()
+
+        entries = _iv_entries(app)
+        assert set(entries) == {"iv-1", "iv-2"}, (
+            f"expected both pending interventions to get their own flow entry, got {set(entries)}"
+        )
+        # The panel still shows the FIRST (iv-1's prompt), not overwritten by
+        # the second arrival.
+        title = app.query_one(InterventionPanel).query_one("#iv-panel-title", Static)
+        assert "hosts" in title.content.plain, (
+            f"panel switched away from the first pending intervention; title={title.content.plain!r}"
+        )
+
+
+@pytest.mark.asyncio
+async def test_multi_pending_answer_targets_the_displayed_intervention_by_id() -> None:
+    """Tier 2b: ★non-vacuity witness for the mis-delivery fix — with TWO
+    interventions pending, answering the one the panel DISPLAYS delivers to
+    THAT intervention's id, and resolving it re-routes the panel to the
+    other (FIFO), which then also delivers by its own id.
+
+    The re-route does NOT pre-highlight (#3299 P2 co-vet safety fix,
+    architect-agreed "safe side" call): a bare ``Enter`` right after the
+    re-route must answer NOTHING — only after the user explicitly navigates
+    (``Down``) does ``Enter`` deliver. Without this, a user's muscle-memory
+    double-``Enter`` (answer the first, reflexively press Enter again) would
+    silently confirm a DEFAULT option on the second intervention the user
+    never actually looked at — an accidental permission grant, since an
+    intervention can be a permission gate.
+
+    NON-VACUITY (falsification):
+    - stripping ``intervention_id=`` from
+      ``TextualChatApp.on_intervention_panel_choice_selected`` /
+      ``on_intervention_panel_text_submitted`` (reverting to
+      head-targeted-only delivery) flips ``transport.answered_choice_ids`` to
+      ``[None, None]`` instead of ``["iv-1", "iv-2"]``.
+    - reverting ``_show_intervention``'s ``initial=False`` on re-route back
+      to always pre-highlighting makes the bare-Enter-after-re-route
+      assertion below FAIL (it would deliver "yes" instead of nothing) —
+      verified locally."""
+    transport = RecordingTransport(
+        [_choice_intervention(), _second_choice_intervention()], end=False
+    )
+    app = TextualChatApp(transport=transport)
+
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        await pilot.pause()
+
+        # Answer the FIRST (displayed) intervention — pre-highlighted first
+        # option ("Yes", #3299 P2 owner decision (A)), so a blind Enter
+        # answers it.
+        await pilot.press("enter")
+        await pilot.pause()
+        await pilot.pause()
+
+        assert transport.answered_choice == ["yes"]
+        assert transport.answered_choice_ids == ["iv-1"], (
+            f"first answer not targeted at iv-1; got {transport.answered_choice_ids}"
+        )
+        entries = _iv_entries(app)
+        assert entries["iv-1"].item.meta.get("_answer_label") == "Yes"
+        assert entries["iv-2"].item.meta.get("_answer_label") is None, (
+            "the second (still-pending) intervention's entry must not be touched"
+        )
+
+        # The panel re-routed to the SECOND (still pending) intervention —
+        # never left blank/orphaned.
+        panel = app.query_one(InterventionPanel)
+        assert panel.display is True, "panel went blank instead of re-routing to the next pending intervention"
+        title = panel.query_one("#iv-panel-title", Static)
+        assert "Overwrite" in title.content.plain
+
+        # ★co-vet safety fix: the re-route must NOT pre-highlight — a bare
+        # Enter (the user's muscle-memory reflex right after answering the
+        # first intervention) delivers NOTHING to the second, un-requested
+        # intervention.
+        await pilot.press("enter")
+        await pilot.pause()
+        await pilot.pause()
+
+        assert transport.answered_choice == ["yes"], (
+            "a bare Enter right after the re-route must not answer the "
+            "un-requested second intervention (accidental-grant risk)"
+        )
+        entries = _iv_entries(app)
+        assert entries["iv-2"].item.meta.get("_answer_label") is None, (
+            "the second intervention must still be unanswered after a bare Enter"
+        )
+        assert panel.display is True, "panel must stay open — the bare Enter must not have resolved anything"
+
+        # Only EXPLICIT navigation (Down highlights index 0, "Yes") then
+        # Enter delivers.
+        await pilot.press("down")
+        await pilot.press("enter")
+        await pilot.pause()
+        await pilot.pause()
+
+        assert transport.answered_choice == ["yes", "yes"]
+        assert transport.answered_choice_ids == ["iv-1", "iv-2"], (
+            f"second answer not targeted at iv-2; got {transport.answered_choice_ids}"
+        )
+        entries = _iv_entries(app)
+        assert entries["iv-2"].item.meta.get("_answer_label") == "Yes"
+        assert panel.display is False, "panel did not collapse once both resolved"
+        assert app.query_one(Composer).has_focus
+
+
+# --- #3299 P2: auto-focus (A) — blind Enter answers the first option --------
+
+
+@pytest.mark.asyncio
+async def test_blind_enter_answers_the_first_option_no_arrow_needed() -> None:
+    """Tier 2b: owner decision (A), uniform across all closed-set
+    interventions — on panel appear the FIRST option is pre-highlighted, so a
+    bare ``Enter`` (no ``Down`` first) answers it immediately.
+
+    NON-VACUITY (falsification): reverting the ``radio.action_next_button()``
+    pre-highlight call in ``InterventionPanel.show_choice`` leaves
+    ``RadioSet._selected`` unset (``-1``), so ``action_toggle_button`` (bound
+    to Enter) is a no-op and NOTHING is delivered — this assertion would fail
+    with an empty ``transport.answered_choice``, verified locally."""
+    transport = RecordingTransport([_choice_intervention()], end=False)
+    app = TextualChatApp(transport=transport)
+
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        await pilot.pause()
+
+        radio = app.query_one(InterventionPanel).query_one("#iv-panel-choices", RadioSet)
+        assert radio.has_focus
+
+        await pilot.press("enter")  # no "down" first
+        await pilot.pause()
+        await pilot.pause()
+
+    assert transport.answered_choice == ["yes"], (
+        f"a blind Enter did not answer the pre-highlighted FIRST option; got {transport.answered_choice}"
+    )
+
+
+# --- #3299 P2 §5: pending EntryState is DEFAULT, never RUNNING/SUCCESS/ERROR
+
+
+@pytest.mark.asyncio
+async def test_pending_intervention_entry_state_is_default_with_dim_awaiting_glyph() -> None:
+    """Tier 2b: a PENDING intervention's flow entry stays ``EntryState.DEFAULT``
+    (never ``RUNNING`` — would wrongly trip the #72 orphan-sweep + the ②
+    live-spinner, an intervention is not a tool; never ``SUCCESS``/``ERROR`` —
+    they imply an outcome, the #3296 don't-fabricate-a-classification lesson).
+    The gutter distinguishes "awaiting" from an ordinary DEFAULT row with a
+    dim kind-driven glyph instead of the state color.
+
+    NON-VACUITY (falsification): reverting the ``kind == "intervention"``
+    branch in ``gutter._gutter_glyph_color`` makes the pending glyph fall
+    through to the ordinary (non-dim, "◆ needs you") intervention glyph
+    regardless of pending/resolved — this assertion (dim colour while
+    pending) would then fail, verified locally."""
+    from textual_flowview import EntryState as _EntryState
+
+    from reyn.interfaces.inline.textual_chat.gutter import ReynGutter
+    from reyn.interfaces.repl.renderer import _CC_DIM
+
+    transport = RecordingTransport([_choice_intervention()], end=False)
+    app = TextualChatApp(transport=transport)
+
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        await pilot.pause()
+
+        entry = _iv_entry(app)
+        assert entry.state is _EntryState.DEFAULT
+        assert entry.state not in (
+            _EntryState.RUNNING,
+            _EntryState.SUCCESS,
+            _EntryState.ERROR,
+        )
+        gutter = ReynGutter()
+        rendered = gutter.decorate(entry, width=2, height=1)
+        assert rendered.style == _CC_DIM, (
+            f"pending intervention gutter glyph is not dim; style={rendered.style!r}"
+        )
+
+
+# --- #3299 P2 §4: placeholder→resolved is the SAME entry, churn-zero --------
+
+
+@pytest.mark.asyncio
+async def test_resolve_updates_the_same_entry_no_new_entry_appended() -> None:
+    """Tier 2b: ★non-vacuity witness for the churn-zero contract — resolving a
+    pending intervention updates the SAME flow entry object in place; the SET
+    of intervention entry objects is unchanged (identity-preserved) and the
+    content becomes the Q→A record — never a second, additional entry.
+
+    NON-VACUITY (falsification): if ``_resolve_pending_intervention`` APPENDED
+    a new entry instead of ``entry.set_item(...)``-ing the tracked one (the
+    owner's original "解凍後に別の flow entry が出る" churn complaint), the
+    identity-set below would gain a SECOND, different entry object rather than
+    staying exactly the one entry seen before resolving — this assertion
+    would fail."""
+    transport = RecordingTransport([_choice_intervention()], end=False)
+    app = TextualChatApp(transport=transport)
+
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        await pilot.pause()
+
+        before = {
+            id(e) for e in app.query_one(FlowView).entries if e.item.kind == "intervention"
+        }
+        entry_before = next(
+            e for e in app.query_one(FlowView).entries if e.item.kind == "intervention"
+        )
+
+        await pilot.press("enter")  # blind Enter answers the pre-highlighted "Yes"
+        await pilot.pause()
+        await pilot.pause()
+
+        after = {
+            id(e) for e in app.query_one(FlowView).entries if e.item.kind == "intervention"
+        }
+        assert after == before, (
+            "resolving changed the SET of intervention flow-entry objects — "
+            "churn regressed (a new entry was appended instead of updating in place)"
+        )
+        assert entry_before.item.meta.get("_answer_label") == "Yes", (
+            "the SAME entry object was not updated in place with the resolved answer"
+        )

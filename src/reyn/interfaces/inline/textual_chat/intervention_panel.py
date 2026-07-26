@@ -149,12 +149,35 @@ class InterventionPanel(Vertical):
         detail_widget.display = bool(detail)
 
     def show_choice(
-        self, *, prompt: str, detail: "str | None", choices: "list[dict]"
+        self,
+        *,
+        prompt: str,
+        detail: "str | None",
+        choices: "list[dict]",
+        pre_highlight: bool = True,
     ) -> None:
         """Populate + show the panel for a closed-set intervention, auto-
         focusing the :class:`RadioSet` (native ``↑``/``↓``/``Enter``
         selection) — a pending intervention blocks the turn, so it is
-        answer-now."""
+        answer-now.
+
+        ``pre_highlight`` (#3299 P2 co-vet fix): whether index 0 is
+        highlighted so a blind ``Enter`` answers it (owner decision (A)).
+        The caller (:meth:`~reyn.interfaces.inline.textual_chat.app.TextualChatApp._show_intervention`)
+        passes ``True`` ONLY for the panel's hidden→shown transition (a
+        genuinely NEW intervention the user is looking at for the first
+        time); the multi-pending FIFO re-route (the panel already visible,
+        swapping in the NEXT queued intervention while still focused) passes
+        ``False``. Without this distinction a SECOND blind ``Enter`` — the
+        user's muscle-memory reflex after answering the first — would
+        confirm a DEFAULT option (often "Yes"/"Allow") on an intervention the
+        user never actually looked at, which is an accidental permission
+        grant, not a UX shortcut (an intervention can be a permission gate;
+        the pre-highlight's whole premise — "the user saw it and can accept
+        the default" — does not hold for an interaction they never
+        requested). This is a DETERMINISTIC identity check (which call this
+        is), never a time-based debounce (a machine-speed heuristic a strip
+        test cannot verify deterministically)."""
         self._set_head(prompt, detail)
         radio = self.query_one("#iv-panel-choices", RadioSet)
         for child in list(radio.children):
@@ -186,6 +209,40 @@ class InterventionPanel(Vertical):
             # as-is (no markup parsing), so the full literal label always
             # renders intact.
             radio.mount(RadioButton(Content(label)))
+        # #3299 P2 — owner decision (A), uniform ONLY for the hidden→shown
+        # transition (see ``pre_highlight``'s docstring above for the
+        # re-route safety rationale): pre-highlight the FIRST option so a
+        # blind ``Enter`` answers it immediately (no extra arrow keypress
+        # first). ``RadioSet`` only auto-selects index 0 in its OWN
+        # ``_on_mount`` (fired once, when this widget mounted with ZERO
+        # children — the buttons above are mounted dynamically, later, so
+        # that native behavior never fires for them); its OWN
+        # highlight-advance action (``action_next_button``, bound to the Down
+        # key) reproduces that native "select the first enabled button"
+        # behavior — but only from an UNSET anchor (``RadioSet._selected is
+        # None``).
+        #
+        # The highlight is ALWAYS reset first (regardless of
+        # ``pre_highlight``): a re-route reuses this same widget instance, so
+        # a stale highlight index from the PREVIOUS intervention would
+        # otherwise survive the children-swap above — either advancing past
+        # index 0 (if we then pre-highlighted) or, worse, leaving a STALE
+        # highlighted button from the FIRST intervention visible/actionable
+        # on the SECOND one's fresh button set (if we didn't reset at all).
+        # Resetting first, then conditionally re-highlighting, makes every
+        # ``show_choice`` call behave identically regardless of history.
+        # Pre-highlighting only ever moves the HIGHLIGHT
+        # (``RadioSet.pressed_index`` stays -1, nothing is answered yet) — the
+        # user's own ``Enter``/``Space`` still does the actual
+        # toggle-and-deliver; when ``pre_highlight`` is False, that first
+        # ``Enter``/``Space`` is a no-op (``_selected`` stays unset) until the
+        # user explicitly navigates (``Down``/``Up``) — the SAME safe
+        # unset-until-navigated behavior :meth:`show_text`'s ``Input`` already
+        # has (empty by default, ``on_input_submitted`` no-ops on empty text).
+        if self._choice_ids:
+            radio._selected = None
+            if pre_highlight:
+                radio.action_next_button()
         radio.display = True
         self.query_one("#iv-panel-input", Input).display = False
         self.display = True

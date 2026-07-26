@@ -162,18 +162,28 @@ class AgUiTransport(ClientTransport):
     async def submit_user_text(self, text: str) -> None:
         await self._send({"type": "user_message", "text": text})
 
-    async def answer_intervention_text(self, text: str) -> bool:
+    async def answer_intervention_text(
+        self, text: str, *, intervention_id: "str | None" = None
+    ) -> bool:
         # P3 HITL answer: POST a TOOL_CALL_RESULT correlated to the pending
         # intervention BY ID (toolCallId, R1). The server re-authorizes at
         # delivery (identity + active-driver) and resolves by id; a rejected or
         # unroutable answer returns False so the caller falls back to a turn.
-        iv_id = self._pending_intervention_id
+        # #3299 P2: an explicit ``intervention_id`` (the client's own tracked
+        # id) is used as-is instead of the single ``_pending_intervention_id``
+        # slot — this wire transport still tracks only one frontend-tool at a
+        # time (a wider multi-pending wire protocol is out of this PR's scope,
+        # confined to ``interfaces/inline/textual_chat/``), but an explicit id
+        # is honored rather than silently overridden by the slot.
+        iv_id = intervention_id if intervention_id is not None else self._pending_intervention_id
         if iv_id is None:
             return False
         return await self._post_answer(iv_id, text=text)
 
-    async def answer_intervention_choice(self, choice_id: str) -> bool:
-        iv_id = self._pending_intervention_id
+    async def answer_intervention_choice(
+        self, choice_id: str, *, intervention_id: "str | None" = None
+    ) -> bool:
+        iv_id = intervention_id if intervention_id is not None else self._pending_intervention_id
         if iv_id is None:
             return False
         return await self._post_answer(iv_id, choice_id=choice_id)
