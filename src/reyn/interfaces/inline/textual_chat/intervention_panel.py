@@ -1,39 +1,72 @@
-"""``InterventionPanel`` — the grouped panel widget for intervention answers.
+"""``InterventionPanel`` — the tab-ified grouped panel widget for intervention
+answers.
 
-#3299 P1 moves intervention interaction OUT of the FlowView (which was
-append-only history rendering the interaction as in-flow clickable chips) and
-INTO a bordered panel widget sitting between the flow and the input row. This
-is an ATOMIC swap (display + input + chip-retire together — see the app/
-presenter module docstrings for the coupling rationale): the panel is now the
-ONLY place a pending intervention is answered.
+#3299 P1 moved intervention interaction OUT of the FlowView and INTO a
+bordered panel widget between the flow and the input row. P1/P2 gave the
+panel a SINGLE form that either showed the head-of-queue intervention (P1) or
+re-routed in place to the next queued one on resolve (P2, FIFO). #3308 (P5)
+replaces that single-form re-route with a :class:`~textual.widgets.TabbedContent`:
+every PENDING intervention gets its own :class:`~textual.widgets.TabPane`
+(title + optional detail + its own :class:`~textual.widgets.RadioSet` /
+:class:`~textual.widgets.Input`), added the moment its frame arrives
+(:meth:`add_pending`) and never swapped out from under the user.
 
-The panel shows a title (the intervention prompt) + optional detail, and one
-of two native Textual forms:
+This is a STRUCTURAL fix for an accident the P2 re-route could still produce:
+resolving the displayed intervention re-populated the SAME form in place, so
+a user's muscle-memory second ``Enter`` right after answering could land on
+an unread SECOND intervention's default option — an accidental permission
+grant, since an intervention can be a permission gate (P2's ``pre_highlight``
+flag suppressed the immediate symptom, but the re-route itself remained).
+With tabs, answering a tab never moves the ACTIVE tab (Textual's own
+``TabbedContent.add_pane`` only auto-activates a newly added pane when the
+content was previously EMPTY — verified against the installed Textual
+8.2.8, see :meth:`add_pending`'s docstring), so a second ``Enter`` after
+resolving lands on the SAME (now-inert, ✓-marked) tab and delivers nothing.
 
-- **closed-set** (the frame carries ``meta["choices"]``) — a
-  :class:`~textual.widgets.RadioSet` of the options, native ``↑``/``↓`` +
-  ``Enter`` selection.
-- **free-text** (no choices) — a plain :class:`~textual.widgets.Input`.
+**Invariant** (the one that must never regress): the ACTIVE tab moves ONLY
+on an explicit user navigation (``Left``/``Right`` or a tab click) or on the
+panel's hidden→shown transition (the first pending intervention while the
+panel was idle). A new arrival while another intervention is already showing
+is added as an inert background tab — never stealing the active selection.
+
+**Answered tabs are never removed** — they stay, labelled with a ``✓``
+prefix, their form ``disabled``, until the LAST pending intervention resolves
+(:meth:`collapse_all`, called by the app once ``_pending_ivs`` is empty). The
+Q→A record itself lives in the flow entry (churn-zero, #3299 P2 §4), so
+nothing is lost when the panel eventually collapses.
+
+**Keymap** (co-vet-corrected, #3308 issue comment — the original "no
+conflict" claim was wrong): ``RadioSet`` already binds ``left``/``right`` as
+aliases for ``up``/``down`` (Textual 8.2.8, ``down,right → next_button`` /
+``up,left → previous_button``), so a naive ancestor binding on this panel for
+``Left``/``Right`` would never fire while focus is inside a focused
+``RadioSet`` — the focused widget's OWN binding wins in Textual's normal
+focused-widget-outward walk. The fix is Textual's PRIORITY bindings
+(``Binding(..., priority=True)``): ``App._check_bindings`` runs a priority
+pass FIRST, checked from the outermost ancestor down to the focused widget
+(``textual/app.py`` ~L3966-3988, ~L4136; ``textual/screen.py`` ~L407-455),
+and only ``priority=True`` bindings participate in that pass — so a
+priority binding on THIS panel is matched before the walk ever reaches the
+focused ``RadioSet``'s own (non-priority) binding for the same key. Declared
+here (not on ``RadioSet``/``TabbedContent`` themselves, which stay untouched)
+as ``action_prev_tab``/``action_next_tab``. ``RadioSet`` option navigation is
+now ``Up``/``Down`` only (its own ``Left``/``Right`` aliases are shadowed by
+this priority binding whenever focus is inside this panel — a deliberate,
+uniform loss of a redundant alias, not a functional regression, since
+``Up``/``Down`` already do the same thing).
+
+``Esc``/``Tab`` (unchanged from P1/P2): return focus to the Composer WITHOUT
+answering. Declared as widget-level (non-priority) ``BINDINGS`` so Textual's
+ordinary focused-widget-outward resolution finds them on this ancestor before
+``Screen``'s default ``tab``→``focus_next``.
 
 Selecting an option / submitting text posts a message
-(:class:`InterventionPanel.ChoiceSelected` / :class:`InterventionPanel.TextSubmitted`)
-that the app relays through the UNCHANGED transport funnel
-(``answer_intervention_choice`` / ``answer_intervention_text`` —
-``InterventionHandler.deliver_answer_to`` under the hood, the SAME funnel
-every answer path shares). This widget never touches the transport itself —
-that seam stays in exactly one place (the app), matching every other send
-path in this package.
-
-Focus lifecycle (mirrors the Phase-3 drawer's deterministic focus-flow): a
-pending intervention auto-focuses the panel's form (blocking — answer now);
-``Esc``/``Tab`` return focus to the Composer WITHOUT answering (an escape
-hatch — the intervention stays pending, the panel stays open); a resolved
-answer collapses the panel and returns focus to the Composer. ``Esc``/``Tab``
-are declared as widget-level ``BINDINGS`` (not raw ``_on_key`` interception)
-so Textual's own focused-widget-outward binding-chain resolution finds them
-on this ancestor before falling through to ``Screen``'s default
-``tab``→``focus_next`` (neither ``RadioSet`` nor ``Input`` bind ``escape`` or
-``tab`` themselves, so nothing upstream swallows the key first).
+(:class:`InterventionPanel.ChoiceSelected` / :class:`InterventionPanel.TextSubmitted`),
+each carrying the ``key`` identifying WHICH pane/intervention it came from
+(the same key :class:`~reyn.interfaces.inline.textual_chat.app.TextualChatApp`
+tracks in ``_pending_ivs``) — the app relays it through the UNCHANGED
+transport funnel (``answer_intervention_choice`` / ``answer_intervention_text``,
+targeted by id). This widget never touches the transport itself.
 
 This module is part of the TTY-only ``textual_chat`` package (imported lazily
 via :mod:`reyn.interfaces.repl.client_driver`); its ``textual`` imports never
@@ -43,23 +76,47 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Vertical
 from textual.content import Content
 from textual.message import Message
-from textual.widgets import Input, RadioButton, RadioSet, Static
+from textual.widgets import (
+    Input,
+    RadioButton,
+    RadioSet,
+    Static,
+    TabbedContent,
+    TabPane,
+    Tabs,
+)
 
 from .presenter import _neutralized_label
 
 if TYPE_CHECKING:
-    pass
+    from textual.widget import Widget
+
+#: Tab-bar labels are kept compact — the full (neutralized) prompt is still
+#: the pane BODY's title Static, this is only the tab strip's short caption.
+#: A long LLM-authored prompt would otherwise blow out the tab bar.
+_TAB_LABEL_MAX = 28
+
+
+def _tab_label(prompt: str, *, answered: bool) -> Content:
+    """The tab-bar caption for one intervention — ``Content(...)`` (the
+    LITERAL constructor, never a bare ``str``, #3299's bracket-eating markup
+    bug — see :meth:`InterventionPanel.add_pending`'s neutralization note),
+    ✓-prefixed once answered (#3308 §4)."""
+    head = prompt
+    if len(head) > _TAB_LABEL_MAX:
+        head = head[: _TAB_LABEL_MAX - 1] + "…"
+    return Content(("✓ " if answered else "") + head)
 
 
 class InterventionPanel(Vertical):
-    """Bordered panel between the FlowView and the input row, surfacing the
-    ONE pending intervention as a focusable form. Collapsed (``display=False``)
-    when nothing is pending — the default state until :meth:`show_choice` /
-    :meth:`show_text` is called."""
+    """Bordered panel between the FlowView and the input row. One TabPane per
+    PENDING intervention (#3308); collapsed (``display=False``) only while
+    NOTHING is pending — the default state until the first :meth:`add_pending`."""
 
     DEFAULT_CSS = """
     InterventionPanel {
@@ -68,11 +125,17 @@ class InterventionPanel(Vertical):
         padding: 0 1;
         margin-top: 1;
     }
-    InterventionPanel #iv-panel-title {
+    InterventionPanel TabbedContent {
+        height: auto;
+    }
+    InterventionPanel Tabs {
+        height: auto;
+    }
+    InterventionPanel .iv-pane-title {
         text-style: bold;
         color: $warning;
     }
-    InterventionPanel #iv-panel-detail {
+    InterventionPanel .iv-pane-detail {
         color: $text-muted;
     }
     InterventionPanel RadioSet {
@@ -82,205 +145,250 @@ class InterventionPanel(Vertical):
     }
     """
 
-    #: Declared here (not raw ``_on_key``) so Textual's binding-chain
-    #: resolution — which walks from the FOCUSED widget (the RadioSet/Input
-    #: inside this panel) outward through its ancestors — finds this binding
-    #: on the panel before it ever reaches ``Screen``'s own default
-    #: ``tab``→``focus_next`` (see the module docstring).
+    #: ``Esc``/``Tab`` stay ordinary (non-priority) bindings — the escape
+    #: hatch, unchanged from P1/P2. ``Left``/``Right`` are PRIORITY bindings
+    #: (see the module docstring's keymap section for why plain ancestor
+    #: bindings cannot work here): they switch the active tab even while
+    #: focus is inside a pane's ``RadioSet``/``Input``.
     BINDINGS = [
         Binding("escape", "dismiss_panel", "Back to composer", show=False),
         Binding("tab", "dismiss_panel", "Back to composer", show=False),
+        Binding(
+            "left", "prev_tab", "Previous intervention", show=False, priority=True
+        ),
+        Binding(
+            "right", "next_tab", "Next intervention", show=False, priority=True
+        ),
     ]
 
     class ChoiceSelected(Message):
-        """A closed-set option was picked — ``choice_id`` is the authoritative
-        delivery key for ``transport.answer_intervention_choice``; ``label`` is
-        carried alongside for the resolved flow-entry record (basic in P1 — the
-        placeholder→resolved in-place churn-zero contract is P2)."""
+        """A closed-set option was picked in the tab identified by ``key`` —
+        ``choice_id`` is the authoritative delivery key for
+        ``transport.answer_intervention_choice``; ``label`` is carried
+        alongside for the resolved flow-entry record."""
 
-        def __init__(self, choice_id: str, label: str) -> None:
+        def __init__(self, key: object, choice_id: str, label: str) -> None:
+            self.key = key
             self.choice_id = choice_id
             self.label = label
             super().__init__()
 
     class TextSubmitted(Message):
-        """A free-text answer was submitted in the panel's Input."""
+        """A free-text answer was submitted in the tab identified by ``key``."""
 
-        def __init__(self, text: str) -> None:
+        def __init__(self, key: object, text: str) -> None:
+            self.key = key
             self.text = text
             super().__init__()
 
     class Dismissed(Message):
         """``Esc``/``Tab`` pressed inside the panel — the app returns focus to
-        the Composer. The intervention itself is NOT answered: it stays
-        pending and the panel stays open (the escape hatch is focus-only)."""
+        the Composer. No intervention is answered: every pending tab stays
+        exactly as it was (the escape hatch is focus-only)."""
 
-    def compose(self):
-        yield Static("", id="iv-panel-title")
-        yield Static("", id="iv-panel-detail")
-        yield RadioSet(id="iv-panel-choices")
-        yield Input(id="iv-panel-input", placeholder="Type your answer…")
+    def compose(self) -> ComposeResult:
+        yield TabbedContent(id="iv-tabs")
 
     def on_mount(self) -> None:
         self.display = False
-        self._choice_ids: "list[str]" = []
-        self._choice_labels: "list[str]" = []
-        self.query_one("#iv-panel-choices", RadioSet).display = False
-        self.query_one("#iv-panel-input", Input).display = False
+        self._pane_ids: "dict[object, str]" = {}
+        self._key_by_pane: "dict[str, object]" = {}
+        self._choice_ids: "dict[str, list[str]]" = {}
+        self._choice_labels: "dict[str, list[str]]" = {}
+        self._prompts: "dict[str, str]" = {}
+        self._answered: "set[str]" = set()
+        self._next_pane_num = 0
 
-    def _set_head(self, prompt: str, detail: "str | None") -> None:
-        # ``_neutralized_label`` (the SAME terminal-neutralization boundary the
-        # flow entry's prompt head uses, presenter.py's ``_intervention_head``)
-        # strips control/ESC sequences from this LLM-derived text before it
-        # reaches the widget — the panel is a NEW rendering surface for
-        # ``prompt``/``detail`` (they previously only ever reached the flow
-        # entry), so it must apply the same boundary.
-        #
-        # Then ``Content(...)`` (literal), never a bare ``str`` —
-        # ``Static.update`` markup-parses a ``str`` by default too, so a
-        # prompt/detail containing a literal ``[...]`` (e.g. a bracketed path)
-        # would suffer the SAME character-eating bug the option labels had
-        # (see :meth:`show_choice`'s ``Content(label)`` fix).
-        self.query_one("#iv-panel-title", Static).update(
-            Content(_neutralized_label(prompt))
-        )
-        detail_widget = self.query_one("#iv-panel-detail", Static)
-        detail_widget.update(Content(_neutralized_label(detail or "")))
-        detail_widget.display = bool(detail)
-
-    def show_choice(
+    def add_pending(
         self,
+        key: object,
         *,
         prompt: str,
         detail: "str | None",
-        choices: "list[dict]",
-        pre_highlight: bool = True,
+        choices: "list[dict] | None",
     ) -> None:
-        """Populate + show the panel for a closed-set intervention, auto-
-        focusing the :class:`RadioSet` (native ``↑``/``↓``/``Enter``
-        selection) — a pending intervention blocks the turn, so it is
-        answer-now.
+        """Add ONE new tab for a newly-arrived pending intervention (#3308).
 
-        ``pre_highlight`` (#3299 P2 co-vet fix): whether index 0 is
-        highlighted so a blind ``Enter`` answers it (owner decision (A)).
-        The caller (:meth:`~reyn.interfaces.inline.textual_chat.app.TextualChatApp._show_intervention`)
-        passes ``True`` ONLY for the panel's hidden→shown transition (a
-        genuinely NEW intervention the user is looking at for the first
-        time); the multi-pending FIFO re-route (the panel already visible,
-        swapping in the NEXT queued intervention while still focused) passes
-        ``False``. Without this distinction a SECOND blind ``Enter`` — the
-        user's muscle-memory reflex after answering the first — would
-        confirm a DEFAULT option (often "Yes"/"Allow") on an intervention the
-        user never actually looked at, which is an accidental permission
-        grant, not a UX shortcut (an intervention can be a permission gate;
-        the pre-highlight's whole premise — "the user saw it and can accept
-        the default" — does not hold for an interaction they never
-        requested). This is a DETERMINISTIC identity check (which call this
-        is), never a time-based debounce (a machine-speed heuristic a strip
-        test cannot verify deterministically)."""
-        self._set_head(prompt, detail)
-        radio = self.query_one("#iv-panel-choices", RadioSet)
-        for child in list(radio.children):
-            child.remove()
-        self._choice_ids = [str(c.get("id", "")) for c in choices]
-        # Neutralized at THIS boundary (the SAME terminal neutralizer the
-        # retired chip path applied to a label before drawing it, and the flow
-        # entry still applies to its own head) — ``meta["choices"]`` labels
-        # reach here RAW (``session._iv_meta`` copies ``choice.label``
-        # verbatim). ``_choice_labels`` is also what ``ChoiceSelected`` carries
-        # for the resolved flow-entry record, so neutralizing here covers both
-        # this widget's own RadioButton AND that downstream record.
-        self._choice_labels = [
-            _neutralized_label(str(c.get("label", ""))) for c in choices
-        ]
-        for label in self._choice_labels:
-            # ``Content(label)`` (the LITERAL constructor), never a bare
-            # ``str`` — ``RadioButton``/``ToggleButton`` internally builds its
-            # label via ``Content.from_text(label)`` with markup parsing ON by
-            # default for a plain ``str``. Real choice labels are
-            # conventionally hotkey-bracket-decorated (``"[y]es"``,
-            # ``"[j]ust this path always"``, ``"[r]ecursive under …"`` — see
-            # ``reyn.intervention_choices``), and Textual's markup parser reads
-            # a leading ``[y]`` as an (unknown, unclosed) STYLE TAG — which is
-            # stripped from the rendered text, eating the bracket AND the
-            # hotkey letter (``"[y]es"`` → ``"es"``, ``"[j]ust…"`` → ``"ust…"``
-            # — the #3299 first-character-dropped display bug). ``Content`` is
-            # one of ``RadioButton``'s accepted input types and is returned
-            # as-is (no markup parsing), so the full literal label always
-            # renders intact.
-            radio.mount(RadioButton(Content(label)))
-        # #3299 P2 — owner decision (A), uniform ONLY for the hidden→shown
-        # transition (see ``pre_highlight``'s docstring above for the
-        # re-route safety rationale): pre-highlight the FIRST option so a
-        # blind ``Enter`` answers it immediately (no extra arrow keypress
-        # first). ``RadioSet`` only auto-selects index 0 in its OWN
-        # ``_on_mount`` (fired once, when this widget mounted with ZERO
-        # children — the buttons above are mounted dynamically, later, so
-        # that native behavior never fires for them); its OWN
-        # highlight-advance action (``action_next_button``, bound to the Down
-        # key) reproduces that native "select the first enabled button"
-        # behavior — but only from an UNSET anchor (``RadioSet._selected is
-        # None``).
-        #
-        # The highlight is ALWAYS reset first (regardless of
-        # ``pre_highlight``): a re-route reuses this same widget instance, so
-        # a stale highlight index from the PREVIOUS intervention would
-        # otherwise survive the children-swap above — either advancing past
-        # index 0 (if we then pre-highlighted) or, worse, leaving a STALE
-        # highlighted button from the FIRST intervention visible/actionable
-        # on the SECOND one's fresh button set (if we didn't reset at all).
-        # Resetting first, then conditionally re-highlighting, makes every
-        # ``show_choice`` call behave identically regardless of history.
-        # Pre-highlighting only ever moves the HIGHLIGHT
-        # (``RadioSet.pressed_index`` stays -1, nothing is answered yet) — the
-        # user's own ``Enter``/``Space`` still does the actual
-        # toggle-and-deliver; when ``pre_highlight`` is False, that first
-        # ``Enter``/``Space`` is a no-op (``_selected`` stays unset) until the
-        # user explicitly navigates (``Down``/``Up``) — the SAME safe
-        # unset-until-navigated behavior :meth:`show_text`'s ``Input`` already
-        # has (empty by default, ``on_input_submitted`` no-ops on empty text).
-        if self._choice_ids:
-            radio._selected = None
-            if pre_highlight:
-                radio.action_next_button()
-        radio.display = True
-        self.query_one("#iv-panel-input", Input).display = False
+        Textual's own ``TabbedContent.add_pane`` semantics give the "only
+        auto-focus while idle" invariant for free (verified directly against
+        the installed Textual 8.2.8: ``add_pane`` activates the added pane
+        ONLY when the ``TabbedContent`` was previously empty — ``active ==
+        ""`` — never on a SUBSEQUENT add): the panel's hidden→shown
+        transition activates the new tab; an arrival while another
+        intervention is already showing is added WITHOUT moving the active
+        selection — never stealing focus/selection from a tab the user is
+        already looking at, the F1-class accident this PR closes structurally."""
+        pane_id = f"iv-pane-{self._next_pane_num}"
+        self._next_pane_num += 1
+        self._pane_ids[key] = pane_id
+        self._key_by_pane[pane_id] = key
+        # THREE INDEPENDENT neutralization call sites (#3308 AC7) — the tab
+        # label, the pane title, and the pane detail are three separate
+        # LLM-derived-text rendering surfaces (``meta["prompt"]``/``["detail"]``
+        # reach here RAW, copied verbatim by ``session._iv_meta``); each is
+        # neutralized at ITS OWN call site (not shared/reused) so a strip of
+        # any ONE site flips only that site's witness test RED, never the
+        # other two silently covering for it (the SAME per-site discipline
+        # P1's ``_set_head`` used for prompt vs. detail).
+        tab_label_text = _neutralized_label(prompt)
+        # Stashed for :meth:`mark_answered`'s ✓-relabel — reusing this
+        # ALREADY-neutralized value there is not a fourth witness site, just
+        # reuse of a value this same call already produced.
+        self._prompts[pane_id] = tab_label_text
+        title_text = _neutralized_label(prompt)
+        body: "list[Widget]" = [Static(Content(title_text), classes="iv-pane-title")]
+        if detail:
+            detail_text = _neutralized_label(detail)
+            body.append(Static(Content(detail_text), classes="iv-pane-detail"))
+        if choices:
+            self._choice_ids[pane_id] = [str(c.get("id", "")) for c in choices]
+            # ``Content(label)`` (LITERAL), never a bare ``str`` — see
+            # ``RadioButton``/``ToggleButton``'s markup-parse-on-bare-str
+            # behavior and the #3299 bracket-eating bug this avoids.
+            self._choice_labels[pane_id] = [
+                _neutralized_label(str(c.get("label", ""))) for c in choices
+            ]
+            radio = RadioSet(
+                *(RadioButton(Content(label)) for label in self._choice_labels[pane_id])
+            )
+            body.append(radio)
+        else:
+            body.append(Input(placeholder="Type your answer…"))
+        tabs = self.query_one(TabbedContent)
+        tabs.add_pane(TabPane(_tab_label(tab_label_text, answered=False), *body, id=pane_id))
         self.display = True
-        self.call_after_refresh(radio.focus)
 
-    def show_text(self, *, prompt: str, detail: "str | None") -> None:
-        """Populate + show the panel for a free-text intervention, auto-
-        focusing the :class:`Input`."""
-        self._set_head(prompt, detail)
-        self.query_one("#iv-panel-choices", RadioSet).display = False
-        text_input = self.query_one("#iv-panel-input", Input)
-        text_input.value = ""
-        text_input.display = True
-        self.display = True
-        self.call_after_refresh(text_input.focus)
+    def mark_answered(self, key: object, answer_label: str) -> None:
+        """Mark ``key``'s tab ✓-answered and inert its form (#3308 §4 — a
+        second, muscle-memory ``Enter``/``Space`` on this tab must be a
+        visible no-op, not rely solely on the server's typed reject). The tab
+        STAYS mounted — never removed until :meth:`collapse_all`."""
+        pane_id = self._pane_ids.get(key)
+        if pane_id is None:
+            return
+        self._answered.add(pane_id)
+        tabs = self.query_one(TabbedContent)
+        try:
+            pane = tabs.get_pane(pane_id)
+        except Exception:
+            return
+        for control in pane.query(RadioSet):
+            control.disabled = True
+        for control in pane.query(Input):
+            control.disabled = True
+        tab = tabs.get_tab(pane_id)
+        tab.label = _tab_label(self._prompts.get(pane_id, ""), answered=True)
+        # Disabling the focused control moves Textual's focus elsewhere
+        # (verified empirically: a focused widget going ``disabled`` auto-
+        # blurs to the app's next focusable widget) — if that would carry
+        # focus OUT of this panel entirely while OTHER interventions remain
+        # pending, the Left/Right priority binding (#3308 AC8) would no
+        # longer be in the focused widget's ancestor chain at all. Re-anchor
+        # focus on the panel's own ``Tabs`` bar instead (still inside this
+        # panel, and itself Left/Right-navigable) — but ONLY when the
+        # answered pane was the ACTIVE one (an answer delivered from a
+        # background tab, #3308 AC3's out-of-order case, never had focus to
+        # begin with and must not steal it).
+        if tabs.active == pane_id:
+            tabs.query_one(Tabs).focus()
 
-    def hide(self) -> None:
-        """Collapse the panel (the intervention resolved)."""
+    def collapse_all(self) -> None:
+        """Collapse the whole panel — called by the app ONLY once every
+        pending intervention has resolved (#3308 §4): the Q→A record already
+        lives in the flow entry (churn-zero, #3299 P2 §4), so nothing is lost
+        when the tab strip itself goes away."""
+        self.query_one(TabbedContent).clear_panes()
         self.display = False
-        self._choice_ids = []
-        self._choice_labels = []
+        self._pane_ids.clear()
+        self._key_by_pane.clear()
+        self._choice_ids.clear()
+        self._choice_labels.clear()
+        self._prompts.clear()
+        self._answered.clear()
 
     def on_radio_set_changed(self, event: "RadioSet.Changed") -> None:
+        pane = next(
+            (a for a in event.radio_set.ancestors if isinstance(a, TabPane)), None
+        )
+        if pane is None or pane.id is None:
+            return
+        pane_id = pane.id
         index = event.radio_set.pressed_index
-        if 0 <= index < len(self._choice_ids):
+        ids = self._choice_ids.get(pane_id, [])
+        labels = self._choice_labels.get(pane_id, [])
+        if 0 <= index < len(ids):
             event.stop()
-            self.post_message(
-                self.ChoiceSelected(self._choice_ids[index], self._choice_labels[index])
-            )
+            key = self._key_by_pane.get(pane_id)
+            self.post_message(self.ChoiceSelected(key, ids[index], labels[index]))
 
     def on_input_submitted(self, event: "Input.Submitted") -> None:
+        pane = next(
+            (a for a in event.input.ancestors if isinstance(a, TabPane)), None
+        )
+        if pane is None or pane.id is None:
+            return
         text = event.value.strip()
         if text:
             event.stop()
-            self.post_message(self.TextSubmitted(text))
+            key = self._key_by_pane.get(pane.id)
+            self.post_message(self.TextSubmitted(key, text))
+
+    def on_tabbed_content_tab_activated(
+        self, event: "TabbedContent.TabActivated"
+    ) -> None:
+        """Fires uniformly on the panel's hidden→shown transition AND on
+        every explicit tab switch (verified against the installed Textual
+        8.2.8 — ``add_pane``'s auto-activation of the first pane posts this
+        SAME message) — focuses the newly-active pane's form.
+
+        Pre-highlighting the FIRST option (owner decision (A), #3308 §5:
+        uniform on first show AND every tab switch) needs NO extra code
+        here: unlike P1/P2's single re-routed form (one ``RadioSet`` reused
+        across different interventions, needing an explicit reset+re-highlight
+        dance on each swap), #3308 gives every pending intervention its OWN
+        ``RadioSet`` instance, created once in :meth:`add_pending` — Textual's
+        OWN ``RadioSet._on_mount`` unconditionally pre-highlights index 0 the
+        moment that instance is constructed (verified against the installed
+        Textual 8.2.8), and that highlight persists whether or not the tab is
+        currently active. Re-deriving it here would RACE against that native
+        mount-time highlight (observed empirically: double-calling
+        ``action_next_button()`` after mount could advance PAST index 0).
+
+        An already-ANSWERED tab (its form ``disabled`` by :meth:`mark_answered`)
+        is left alone — nothing to focus, its selection is the historical
+        answer."""
+        pane = event.pane
+        if pane.id is None or pane.id in self._answered:
+            return
+        radios = list(pane.query(RadioSet))
+        if radios:
+            self.call_after_refresh(radios[0].focus)
+            return
+        inputs = list(pane.query(Input))
+        if inputs:
+            self.call_after_refresh(inputs[0].focus)
 
     def action_dismiss_panel(self) -> None:
         self.post_message(self.Dismissed())
+
+    def action_prev_tab(self) -> None:
+        self._cycle_tab(-1)
+
+    def action_next_tab(self) -> None:
+        self._cycle_tab(+1)
+
+    def _cycle_tab(self, delta: int) -> None:
+        """Move the active tab by ``delta`` positions, wrapping — the
+        priority-binding-driven Left/Right cycle (#3308). Cycles through
+        EVERY tab (answered or not): reviewing a resolved answer is not
+        blocked, only re-answering it is (the form is ``disabled``)."""
+        tabs = self.query_one(TabbedContent)
+        order = list(self._pane_ids.values())
+        if not order:
+            return
+        current = tabs.active
+        idx = order.index(current) if current in order else 0
+        tabs.active = order[(idx + delta) % len(order)]
 
 
 __all__ = ["InterventionPanel"]

@@ -1,35 +1,48 @@
-"""#3299 P1: intervention interaction moved into the grouped InterventionPanel.
+"""#3299 P1/P2/P5 (#3308): intervention interaction in a TAB-IFIED grouped panel.
 
-Retargets the Phase-3.5 chip/match tests (#3273, ``test_textual_chat_phase35_3273.py``)
-to the new panel-widget path — the ATOMIC display-swap + input-swap +
-chip-retire this PR lands. The chip surface (``choice_chip_spans`` /
-``_present_intervention_choice`` / ``on_flow_view_clicked`` /
-``_match_choice_input`` / ``_surface_choice_hint`` / ``_CHOICE_*``) is retired
-(grep-zero in ``src/``, see the PR body); a closed-set intervention is now
-answered by SELECTING a :class:`~textual.widgets.RadioSet` option in the panel
-(never a free-text label match — the #3290 type-or-click matching algorithm is
-retired along with the Composer intervention-answer path it served, not
-retargeted: the Composer is now exclusively for new turns), and a free-text
-intervention by submitting the panel's own :class:`~textual.widgets.Input`.
+Retargets the Phase-3.5 chip/match tests (#3273) to the panel-widget path
+(P1), then the P2 by-id multi-pending fixes, then #3308 (P5)'s tab-ify: one
+:class:`~textual.widgets.TabPane` per PENDING intervention instead of a
+single re-routing form. The chip surface is retired (grep-zero, unchanged
+since P1); a closed-set intervention is answered by SELECTING a
+:class:`~textual.widgets.RadioSet` option in its OWN tab, and a free-text one
+by submitting its OWN tab's :class:`~textual.widgets.Input`.
 
-Gates pinned here (per the architect's P1 scope ruling):
+Gates pinned here (#3308 acceptance conditions, numbered to match the issue):
 
-- **F1 permission-band reachability**: a real closed-set intervention frame
-  populates the panel; selecting the SECOND RadioButton delivers exactly that
-  option's ``choice_id`` through ``transport.answer_intervention_choice`` — the
-  UNCHANGED transport funnel every answer path shares.
-- **free-text reachability**: a free-text intervention's panel Input, once
-  submitted, delivers through ``transport.answer_intervention_text``.
-- **no-double-display / no-double-input (retire non-vacuity)**: the flow entry
-  never renders chips (the presenter's chip-drawing symbols are gone — a
-  direct grep-zero check — and the rendered flow-entry presentation carries
-  only the prompt + a "respond in the panel below" hint, not the option
-  labels); a Composer submit during a pending intervention is ALWAYS a new
-  turn (``submit_user_text``), never an intervention answer.
-- **focus-return**: Esc/Tab inside the panel returns focus to the Composer.
-- **neutralization regression**: an LLM-derived choice label carrying raw
-  terminal control sequences is still neutralized before it reaches the
-  rendered flow-entry head (moved off the old chip-rendering path).
+1. **Enter-twice delivers exactly one answer** — answering a tab does not
+   change the active tab, so a muscle-memory second ``Enter`` lands on the
+   SAME (now ✓-answered, inert) tab and delivers nothing to an unread other
+   pending intervention. (Migrates the P2 F1-interim test's property (a),
+   per the #3308 co-vet correction: the interim MECHANISM — re-route
+   suppressing pre-highlight — is retired, but this SAFETY PROPERTY is not.)
+2. **A new arrival never steals the active tab** — Textual's own
+   ``TabbedContent.add_pane`` auto-activates a pane ONLY when the content was
+   previously empty; a second arrival while a tab is already showing is
+   added inert, in the background.
+3. **Out-of-order answering + by-id delivery** — Left/Right lets the user
+   pick ANY pending tab; the answer is delivered targeted at THAT
+   intervention's id, never head-of-queue. (Migrates the P2 F1-interim
+   test's property (b), the by-id witness.)
+4. **Answered tabs stay** (✓-labelled, form disabled) until every pending
+   intervention resolves, at which point the whole panel collapses.
+5. **Pre-highlight (owner decision (A)) is unconditional** — the first
+   option is pre-highlighted on the panel's initial show AND on every
+   explicit tab switch alike (no re-route-vs-initial distinction anymore).
+6. **Churn-zero** — resolving updates the SAME flow entry in place.
+7. **Neutralization** — the tab label, the pane title, and the pane detail
+   are THREE INDEPENDENT LLM-derived-text rendering surfaces, each stripped
+   of raw ESC/OSC at its own call site.
+8. **Left/Right switch tabs even with a RadioSet focused** — Textual's own
+   ``RadioSet`` binds ``left``/``right`` as ``up``/``down`` aliases, so a
+   naive ancestor binding could never fire while a RadioSet has focus; the
+   panel uses a ``priority=True`` binding (Textual's priority pass runs
+   outermost-ancestor-first, before the focused widget's own bindings) to
+   win regardless.
+
+Plus the surviving P1 gates: free-text reachability, no-double-display
+(flow entry never renders chips), focus-return (Esc/Tab), the bracket-
+decorated-label display-bug regression, and the pending-state dim gutter.
 
 All use real instances (a concrete recording :class:`ClientTransport`, a real
 mounted :class:`TextualChatApp`, real :class:`OutboxMessage`) — no mocks — per
@@ -42,7 +55,7 @@ from typing import AsyncIterator
 
 import pytest
 from textual.app import App, ComposeResult
-from textual.widgets import Input, RadioButton, RadioSet, Static
+from textual.widgets import Input, RadioButton, RadioSet, Static, Tab, TabbedContent, TabPane
 from textual_flowview import EntryState, FlowView
 
 from reyn.interfaces.inline.textual_chat import Composer, TextualChatApp
@@ -168,7 +181,7 @@ def _free_text_intervention() -> OutboxMessage:
 
 def _second_choice_intervention() -> OutboxMessage:
     """A second, distinct closed-set intervention (different id) — used by the
-    multi-pending tests (#3299 P2) to exercise TWO simultaneously-outstanding
+    multi-pending tests to exercise TWO simultaneously-outstanding
     interventions, which ``outstanding_interventions`` supports by design."""
     return OutboxMessage(
         kind="intervention",
@@ -183,6 +196,29 @@ def _second_choice_intervention() -> OutboxMessage:
             ],
             "nodes": [
                 {"component": "text", "text": "Overwrite existing file?"},
+                {"component": "list", "items": ["Yes", "No"]},
+            ],
+        },
+    )
+
+
+def _third_choice_intervention() -> OutboxMessage:
+    """A THIRD, distinct closed-set intervention — used by the out-of-order
+    (#3308 AC3) test to exercise three simultaneously-outstanding
+    interventions."""
+    return OutboxMessage(
+        kind="intervention",
+        text="Delete the branch?\n  Yes / No",
+        meta={
+            "intervention_id": "iv-3",
+            "intervention_kind": "confirm",
+            "prompt": "Delete the branch?",
+            "choices": [
+                {"id": "yes", "label": "Yes", "hotkey": "y"},
+                {"id": "no", "label": "No", "hotkey": "n"},
+            ],
+            "nodes": [
+                {"component": "text", "text": "Delete the branch?"},
                 {"component": "list", "items": ["Yes", "No"]},
             ],
         },
@@ -206,14 +242,42 @@ def _iv_entries(app: TextualChatApp):
     }
 
 
+def _tabs(panel: InterventionPanel) -> TabbedContent:
+    return panel.query_one(TabbedContent)
+
+
+def _active_pane(panel: InterventionPanel) -> TabPane:
+    tabs = _tabs(panel)
+    return tabs.get_pane(tabs.active)
+
+
+def _pane_title(pane: TabPane) -> str:
+    return pane.query_one(".iv-pane-title", Static).content.plain
+
+
+def _tab_labels(panel: InterventionPanel) -> "list[str]":
+    """Every tab-bar caption, in insertion order (public ``Tab.label_text``,
+    not private state)."""
+    return [tab.label_text for tab in panel.query(Tab)]
+
+
+def _pane_ids_in_order(panel: InterventionPanel) -> "list[str]":
+    """Every mounted pane's id, in insertion (DOM) order — from the public
+    ``TabPane.id`` directly (``Tab.id`` is a DIFFERENT, internally-prefixed
+    id namespace — ``--content-tab-<pane id>`` — not usable with
+    ``TabbedContent.get_pane``), never from the panel's private
+    ``_pane_ids`` lookup table."""
+    return [pane.id for pane in panel.query(TabPane) if pane.id is not None]
+
+
 @pytest.mark.asyncio
 async def test_choice_intervention_panel_selection_delivers_correct_choice_id() -> None:
     """Tier 2b: F1 permission-band reachability — a closed-set intervention
-    frame populates the panel's RadioSet; selecting the SECOND option delivers
+    frame populates a tab's RadioSet; selecting the SECOND option delivers
     that option's ``choice_id`` ("no") through ``answer_intervention_choice``,
-    and the flow entry resolves to SUCCESS. Non-vacuous: the SECOND option is
-    chosen (a first-option shortcut would fail) and the exact id is asserted;
-    no answer is delivered before the selection."""
+    and the flow entry resolves. Non-vacuous: the SECOND option is chosen (a
+    first-option shortcut would fail) and the exact id is asserted; no answer
+    is delivered before the selection."""
     transport = RecordingTransport([_choice_intervention()], end=False)
     app = TextualChatApp(transport=transport)
 
@@ -223,16 +287,15 @@ async def test_choice_intervention_panel_selection_delivers_correct_choice_id() 
 
         panel = app.query_one(InterventionPanel)
         assert panel.display is True, "panel did not show for a pending intervention"
-        radio = panel.query_one("#iv-panel-choices", RadioSet)
-        assert radio.display is True
-        assert radio.has_focus, "panel did not auto-focus the RadioSet"
+        pane = _active_pane(panel)
+        radio = pane.query_one(RadioSet)
+        assert radio.has_focus, "panel did not auto-focus the tab's RadioSet"
 
         # No answer is delivered until the user acts.
         assert transport.answered_choice == []
 
         # #3299 P2 owner decision (A): the panel pre-highlights the FIRST
-        # option on appear, so ONE "down" now reaches the SECOND option ("No")
-        # — two would have been needed pre-P2 (index -1 → 0 → 1).
+        # option on appear, so ONE "down" now reaches the SECOND option ("No").
         await pilot.press("down")
         await pilot.press("enter")
         await pilot.pause()
@@ -244,9 +307,8 @@ async def test_choice_intervention_panel_selection_delivers_correct_choice_id() 
         assert transport.answered_choice_ids == ["iv-1"], (
             "answer not delivered BY ID (#3299 P2 R1)"
         )
-        # Resolved reflection: DEFAULT gutter (#3299 P2 §5 — not SUCCESS, an
-        # answered intervention is neither an outcome nor a failure) + panel
-        # collapsed + focus returned to the Composer.
+        # Resolved reflection: DEFAULT gutter (#3299 P2 §5) + panel collapsed
+        # (the only pending intervention resolved) + focus back to Composer.
         resolved = _iv_entry(app)
         assert resolved.state is EntryState.DEFAULT
         assert resolved.item.meta.get("_answer_label") == "No"
@@ -258,10 +320,9 @@ async def test_choice_intervention_panel_selection_delivers_correct_choice_id() 
 
 @pytest.mark.asyncio
 async def test_free_text_intervention_answered_via_panel_input() -> None:
-    """Tier 2b: a free-text intervention (no choices) populates the panel's
+    """Tier 2b: a free-text intervention (no choices) populates its tab's
     Input (auto-focused); submitting delivers the text through
-    ``answer_intervention_text``. Regression retarget of the #3273 Composer
-    free-text test — the answer path moved from the Composer to the panel."""
+    ``answer_intervention_text``."""
     transport = RecordingTransport([_free_text_intervention()], end=False)
     app = TextualChatApp(transport=transport)
 
@@ -270,9 +331,9 @@ async def test_free_text_intervention_answered_via_panel_input() -> None:
         await pilot.pause()
 
         panel = app.query_one(InterventionPanel)
-        text_input = panel.query_one("#iv-panel-input", Input)
-        assert text_input.display is True
-        assert text_input.has_focus, "panel did not auto-focus the Input"
+        pane = _active_pane(panel)
+        text_input = pane.query_one(Input)
+        assert text_input.has_focus, "panel did not auto-focus the tab's Input"
 
         await pilot.press("o", "k")
         await pilot.press("enter")
@@ -288,13 +349,10 @@ async def test_free_text_intervention_answered_via_panel_input() -> None:
 @pytest.mark.asyncio
 async def test_composer_submit_during_pending_intervention_is_always_a_new_turn() -> None:
     """Tier 2b: no-double-input — the Composer no longer special-cases a
-    pending intervention at all (#3299 P1: it no longer reads
-    ``pending_intervention_head()``). A Composer submit while a closed-set
+    pending intervention at all. A Composer submit while a closed-set
     intervention is pending is ALWAYS routed to ``submit_user_text`` — never
     ``answer_intervention_choice`` / ``answer_intervention_text`` — even when
-    the text happens to name an option. This is the atomic-swap witness: if
-    the retired Composer-side matching were still live (a half-swap), this
-    would instead deliver a choice answer."""
+    the text happens to name an option."""
     transport = RecordingTransport([_choice_intervention()], end=False)
     app = TextualChatApp(transport=transport)
 
@@ -313,8 +371,7 @@ async def test_composer_submit_during_pending_intervention_is_always_a_new_turn(
 
 def test_chip_drawing_symbols_are_retired() -> None:
     """Tier 1: retire grep-zero (non-vacuity witness) — the presenter module no
-    longer defines the chip-drawing surface at all. This would fail RED if the
-    chip path were still live alongside the panel (double-display)."""
+    longer defines the chip-drawing surface at all."""
     from reyn.interfaces.inline.textual_chat import presenter as presenter_module
 
     for name in (
@@ -341,11 +398,7 @@ def test_chip_drawing_symbols_are_retired() -> None:
 async def test_pending_intervention_flow_entry_has_no_chip_options_rendered() -> None:
     """Tier 2b: no-double-display — the flow entry for a pending intervention
     renders ONLY the prompt head + a dim hint pointing at the panel, never the
-    option labels (which live exclusively in the panel's RadioSet now).
-    Non-vacuous: the pre-#3299 chip presentation rendered every option label
-    inline (``[ 1 · Yes ]`` etc.) — asserting none of those labels appear in
-    the flow-entry rendering is exactly what a surviving chip branch would
-    violate."""
+    option labels (which live exclusively in a tab's RadioSet now)."""
     from rich.console import Console
 
     transport = RecordingTransport([_choice_intervention()], end=False)
@@ -364,9 +417,6 @@ async def test_pending_intervention_flow_entry_has_no_chip_options_rendered() ->
 
     assert "Allow write to /etc/hosts?" in rendered
     assert "respond in the panel below" in rendered
-    # The old chip layout rendered every option as ``[ n · label ]`` inline —
-    # asserting that shape is absent is exactly what a surviving chip branch
-    # would violate.
     assert "[ 1 ·" not in rendered and "[ 2 ·" not in rendered, (
         "chip-shaped option markup leaked into the pending flow entry"
     )
@@ -376,7 +426,7 @@ async def test_pending_intervention_flow_entry_has_no_chip_options_rendered() ->
 async def test_escape_and_tab_from_panel_return_focus_to_composer() -> None:
     """Tier 2b: focus-return — Esc/Tab inside the panel return focus to the
     Composer WITHOUT answering; the intervention stays pending (the panel
-    stays open, mirroring the Phase-3 drawer's deterministic focus-flow)."""
+    stays open)."""
     transport = RecordingTransport([_choice_intervention()], end=False)
     app = TextualChatApp(transport=transport)
 
@@ -384,7 +434,8 @@ async def test_escape_and_tab_from_panel_return_focus_to_composer() -> None:
         await pilot.pause()
         await pilot.pause()
         panel = app.query_one(InterventionPanel)
-        assert panel.query_one("#iv-panel-choices", RadioSet).has_focus
+        pane = _active_pane(panel)
+        assert pane.query_one(RadioSet).has_focus
 
         await pilot.press("escape")
         await pilot.pause()
@@ -395,7 +446,7 @@ async def test_escape_and_tab_from_panel_return_focus_to_composer() -> None:
         assert transport.answered_text == []
 
         # Re-focus the panel to exercise Tab too.
-        panel.query_one("#iv-panel-choices", RadioSet).focus()
+        _active_pane(panel).query_one(RadioSet).focus()
         await pilot.pause()
         await pilot.press("tab")
         await pilot.pause()
@@ -407,14 +458,7 @@ async def test_escape_and_tab_from_panel_return_focus_to_composer() -> None:
 
 def test_choice_labels_are_neutralized_before_rendering() -> None:
     """Tier 2c: an LLM-derived choice LABEL carrying raw terminal control
-    sequences must not leak into the flow entry's rendering — retargeted off
-    the retired chip path onto :meth:`ReynPresenter._present_intervention_pending`,
-    which renders the prompt head (labels themselves now live only in the
-    panel's RadioSet, built by :meth:`InterventionPanel.show_choice` from the
-    SAME raw ``meta["choices"]`` — Textual's own :class:`RadioButton` renders
-    its label through Rich markup, not raw ANSI passthrough, so the injection
-    surface pinned here is the flow-entry head, matching the original test's
-    payload and assertions).
+    sequences must not leak into the flow entry's rendering.
 
     NON-VACUITY (falsification): neutering ``presenter._neutralized_label`` to
     identity makes the raw ``\\x1b`` leak into the rendered head and flips this
@@ -452,31 +496,14 @@ def test_choice_labels_are_neutralized_before_rendering() -> None:
 
 @pytest.mark.asyncio
 async def test_bracket_decorated_option_labels_render_intact() -> None:
-    """Tier 1: the panel's RadioButton must expose the FULL literal option
-    label — the real-TTY-witnessed display bug where the FIRST character of
-    every option label was dropped ("Yes" → "es", "No" → "o", "just this path
-    always" → "ust this path always", "recursive under '...' always" →
-    "ecursive under '...' always").
-
-    Root cause: real choice labels are conventionally hotkey-bracket-decorated
-    (``reyn.intervention_choices.generic_yn_choices`` / ``file_access_choices``
-    — ``"[y]es"``, ``"[A]lways"``, ``"[n]o"``, ``"[N]ever"``,
-    ``"[j]ust this path always"``, ``"[r]ecursive under '...' always"``).
-    ``RadioButton``/``ToggleButton`` builds its label via
-    ``Content.from_text(label)`` with Textual MARKUP PARSING ON by default for
-    a plain ``str`` — it reads a leading ``[y]`` as an (unknown, unclosed)
-    style tag and strips it from the rendered text, eating the bracket AND
-    the enclosed hotkey letter.
-
-    Asserts on the PUBLIC ``RadioButton.label`` (the widget's own exposed
-    rendered label, not private state) for the REAL ``InterventionChoice``
-    factories — the standard yes/no/always/never set AND the longer
-    bracket-decorated labels (``file_access_choices``).
+    """Tier 1: a tab's RadioButton must expose the FULL literal option label —
+    the real-TTY-witnessed display bug where the FIRST character of every
+    option label was dropped ("Yes" → "es", "No" → "o", etc).
 
     NON-VACUITY (falsification): on the pre-fix code (``RadioButton(label)``
     with a bare ``str``) this assertion FAILS — every label above renders with
     its first character (and the ``[x]`` bracket) missing. Verified locally by
-    reverting the ``Content(label)`` fix in ``InterventionPanel.show_choice``.
+    reverting the ``Content(label)`` fix in ``InterventionPanel.add_pending``.
     """
 
     class _PanelHost(App):
@@ -490,7 +517,8 @@ async def test_bracket_decorated_option_labels_render_intact() -> None:
     async with app.run_test() as pilot:
         panel = app.query_one(InterventionPanel)
 
-        panel.show_choice(
+        panel.add_pending(
+            "k1",
             prompt="Proceed?",
             detail=None,
             choices=[
@@ -498,13 +526,14 @@ async def test_bracket_decorated_option_labels_render_intact() -> None:
             ],
         )
         await pilot.pause()
-        radio = panel.query_one("#iv-panel-choices", RadioSet)
+        radio = _active_pane(panel).query_one(RadioSet)
         rendered_yn = [rb.label.plain for rb in radio.query(RadioButton)]
         assert rendered_yn == ["[y]es", "[A]lways", "[n]o", "[N]ever"], (
             f"bracket-decorated label(s) dropped a character; got {rendered_yn!r}"
         )
 
-        panel.show_choice(
+        panel.add_pending(
+            "k2",
             prompt="Grant file access?",
             detail=None,
             choices=[
@@ -512,8 +541,11 @@ async def test_bracket_decorated_option_labels_render_intact() -> None:
             ],
         )
         await pilot.pause()
-        radio = panel.query_one("#iv-panel-choices", RadioSet)
-        rendered_long = [rb.label.plain for rb in radio.query(RadioButton)]
+        # k2 arrives while k1 is already showing — it does NOT become active
+        # (#3308 AC2), so query its pane directly by id rather than "active".
+        pane2 = _tabs(panel).get_pane(_pane_ids_in_order(panel)[1])
+        radio2 = pane2.query_one(RadioSet)
+        rendered_long = [rb.label.plain for rb in radio2.query(RadioButton)]
         assert rendered_long == [
             "[y]es",
             "[j]ust this path always",
@@ -523,19 +555,11 @@ async def test_bracket_decorated_option_labels_render_intact() -> None:
 
 
 # --- panel neutralize-guard witnesses (3 independently-witnessed surfaces) --
-# The panel is a NEW rendering surface for LLM-derived text that only ever
-# reached the flow entry before #3299 P1: the choice LABEL, the title/prompt,
-# and the detail. Each of the three is neutralized at its own call site in
-# ``InterventionPanel`` (``show_choice`` for the label, ``_set_head`` for
-# prompt/detail) — a malicious LLM-controlled choice label / prompt / detail
-# could otherwise drive the terminal (CSI color codes, OSC title-set) since
-# Textual's own ``Content`` constructor does NOT strip ESC (0x1B) — only a
-# narrow control-code set (BEL/BS/VT/FF/CR). Each test below is scoped to
-# assert ONLY the ESC byte's absence (the byte Content's own stripping never
-# removes), so each is a genuine, independent witness of ITS site's
-# ``_neutralized_label`` call — reverting any ONE call (verified locally,
-# see each docstring) flips ONLY that site's assertion RED, never the other
-# two silently covering for it.
+# #3308: the tab-ified panel has THREE separate LLM-derived-text rendering
+# surfaces — the tab-bar LABEL, the pane TITLE, and the pane DETAIL — each
+# neutralized at its OWN call site in ``InterventionPanel.add_pending`` (see
+# that method's docstring). Each test below is scoped to assert ONLY the ESC
+# byte's absence, so each is a genuine, independent witness of ITS site.
 _ESC_OSC_PAYLOAD = "\x1b[31mRED\x1b]0;pwn\x07"
 
 
@@ -546,33 +570,26 @@ class _PanelOnlyApp(App):
 
 @pytest.mark.asyncio
 async def test_panel_choice_label_neutralizes_raw_esc_osc() -> None:
-    """Tier 2c: the panel's RadioButton LABEL surface is independently
-    neutralized. A closed-set intervention choice carrying a raw ESC/OSC
-    payload as its label (a malicious/compromised LLM-derived label — this is
-    NOT hypothetical: ``meta["choices"]`` labels reach the panel RAW, copied
-    verbatim by ``session._iv_meta``) must not leak the raw ESC byte into the
-    mounted ``RadioButton.label`` Textual actually renders.
+    """Tier 2c: the tab's RadioButton LABEL surface is independently
+    neutralized.
 
     NON-VACUITY (falsification, verified locally): reverting ONLY the
     ``_neutralized_label`` call around the label in
-    ``InterventionPanel.show_choice`` (i.e. mounting
-    ``RadioButton(Content(str(c.get("label", ""))))`` instead of
-    ``RadioButton(Content(_neutralized_label(...)))``) makes this assertion
-    FAIL — ``Content``'s own control-code stripping does not remove ESC
-    (0x1B), only BEL/BS/VT/FF/CR, so the raw ESC survives all the way into
-    the rendered label unless THIS site's neutralize call does the work.
-    Reverting the title/detail neutralize (the other two sites) does NOT
-    affect this assertion — the label survives its own site's guard alone."""
+    ``InterventionPanel.add_pending`` makes this assertion FAIL — ``Content``'s
+    own control-code stripping does not remove ESC (0x1B). Reverting the
+    tab-label/title/detail neutralize (the other sites) does NOT affect this
+    assertion — the label survives its own site's guard alone."""
     app = _PanelOnlyApp()
     async with app.run_test() as pilot:
         panel = app.query_one(InterventionPanel)
-        panel.show_choice(
+        panel.add_pending(
+            "k",
             prompt="Proceed?",
             detail=None,
             choices=[{"id": "x", "label": _ESC_OSC_PAYLOAD, "hotkey": "x"}],
         )
         await pilot.pause()
-        radio = panel.query_one("#iv-panel-choices", RadioSet)
+        radio = _active_pane(panel).query_one(RadioSet)
         (only_button,) = radio.query(RadioButton)
         rendered_label = only_button.label.plain
         assert "\x1b" not in rendered_label, (
@@ -582,24 +599,40 @@ async def test_panel_choice_label_neutralizes_raw_esc_osc() -> None:
 
 
 @pytest.mark.asyncio
-async def test_panel_title_neutralizes_raw_esc_osc() -> None:
-    """Tier 2c: the panel's TITLE/prompt surface is independently neutralized.
-    An intervention prompt carrying a raw ESC/OSC payload must not leak into
-    the mounted ``#iv-panel-title`` Static's rendered content.
+async def test_panel_tab_label_neutralizes_raw_esc_osc() -> None:
+    """Tier 2c: the tab-BAR CAPTION surface is independently neutralized —
+    NEW in #3308 (P1/P2 had no tab bar at all).
 
     NON-VACUITY (falsification, verified locally): reverting ONLY the
-    ``_neutralized_label`` call around ``prompt`` in
-    ``InterventionPanel._set_head`` (passing ``Content(prompt)`` directly)
-    makes this assertion FAIL, for the same reason as the label site —
-    ``Content`` does not strip ESC on its own. Reverting the label or detail
-    neutralize (the other two sites) does NOT affect this assertion."""
+    ``tab_label_text = _neutralized_label(prompt)`` call in
+    ``InterventionPanel.add_pending`` (passing the raw ``prompt`` to
+    ``_tab_label`` instead) makes this assertion FAIL. Reverting the title or
+    detail neutralize (the other two sites) does NOT affect this assertion."""
     app = _PanelOnlyApp()
     async with app.run_test() as pilot:
         panel = app.query_one(InterventionPanel)
-        panel.show_text(prompt=_ESC_OSC_PAYLOAD, detail=None)
+        panel.add_pending("k", prompt=_ESC_OSC_PAYLOAD, detail=None, choices=None)
         await pilot.pause()
-        title = panel.query_one("#iv-panel-title", Static)
-        rendered = title.content.plain
+        (label,) = _tab_labels(panel)
+        assert "\x1b" not in label, f"raw ESC leaked into the tab label: {label!r}"
+        assert "RED" in label
+
+
+@pytest.mark.asyncio
+async def test_panel_title_neutralizes_raw_esc_osc() -> None:
+    """Tier 2c: the pane TITLE surface is independently neutralized.
+
+    NON-VACUITY (falsification, verified locally): reverting ONLY the
+    ``title_text = _neutralized_label(prompt)`` call in
+    ``InterventionPanel.add_pending`` (passing ``Content(prompt)`` directly)
+    makes this assertion FAIL. Reverting the tab-label or detail neutralize
+    (the other two sites) does NOT affect this assertion."""
+    app = _PanelOnlyApp()
+    async with app.run_test() as pilot:
+        panel = app.query_one(InterventionPanel)
+        panel.add_pending("k", prompt=_ESC_OSC_PAYLOAD, detail=None, choices=None)
+        await pilot.pause()
+        rendered = _pane_title(_active_pane(panel))
         assert "\x1b" not in rendered, (
             f"raw ESC leaked into the panel's title: {rendered!r}"
         )
@@ -608,22 +641,21 @@ async def test_panel_title_neutralizes_raw_esc_osc() -> None:
 
 @pytest.mark.asyncio
 async def test_panel_detail_neutralizes_raw_esc_osc() -> None:
-    """Tier 2c: the panel's DETAIL surface is independently neutralized. An
-    intervention detail carrying a raw ESC/OSC payload must not leak into the
-    mounted ``#iv-panel-detail`` Static's rendered content.
+    """Tier 2c: the pane DETAIL surface is independently neutralized.
 
     NON-VACUITY (falsification, verified locally): reverting ONLY the
-    ``_neutralized_label`` call around ``detail`` in
-    ``InterventionPanel._set_head`` (passing ``Content(detail or "")``
-    directly) makes this assertion FAIL, for the same reason as the label and
-    title sites. Reverting the label or title neutralize (the other two
-    sites) does NOT affect this assertion."""
+    ``detail_text = _neutralized_label(detail)`` call in
+    ``InterventionPanel.add_pending`` (passing ``Content(detail)`` directly)
+    makes this assertion FAIL. Reverting the tab-label or title neutralize
+    (the other two sites) does NOT affect this assertion."""
     app = _PanelOnlyApp()
     async with app.run_test() as pilot:
         panel = app.query_one(InterventionPanel)
-        panel.show_text(prompt="Proceed?", detail=_ESC_OSC_PAYLOAD)
+        panel.add_pending(
+            "k", prompt="Proceed?", detail=_ESC_OSC_PAYLOAD, choices=None
+        )
         await pilot.pause()
-        detail = panel.query_one("#iv-panel-detail", Static)
+        detail = _active_pane(panel).query_one(".iv-pane-detail", Static)
         rendered = detail.content.plain
         assert "\x1b" not in rendered, (
             f"raw ESC leaked into the panel's detail: {rendered!r}"
@@ -631,25 +663,63 @@ async def test_panel_detail_neutralizes_raw_esc_osc() -> None:
         assert "RED" in rendered
 
 
-# --- #3299 P2: multi-pending by-id delivery + re-route ----------------------
-# The architect's self-review finding (P1 merge): the panel was SINGLE-slot
-# (a second pending intervention silently overwrote the first's entry handle)
-# and delivery was HEAD-targeted (``answer_intervention_choice`` carries no
-# id) — but ``outstanding_interventions`` legitimately holds MULTIPLE pending
-# entries (e.g. restore's FIFO re-enqueue), so a stale head could receive an
-# answer the user actually gave to a DIFFERENT, currently-displayed
-# intervention. P2 fixes both: every pending intervention gets its OWN
-# tracked flow entry (never overwritten), and an answer is delivered BY ID to
-# whichever intervention the panel is showing.
+# --- #3308 (#3299 P5): tab-ify — one tab per pending, no re-route -----------
 
 
 @pytest.mark.asyncio
-async def test_second_pending_intervention_does_not_overwrite_the_first() -> None:
-    """Tier 2b: with TWO interventions pending, the panel keeps showing the
-    FIRST (the architect's overwrite finding) — its flow entry is not
-    orphaned, and the second gets its own placeholder entry too. Non-vacuous:
-    pre-P2 the single ``_pending_iv_entry`` slot was overwritten by the
-    second arrival (verified against the P1 source removed in this PR)."""
+async def test_second_enter_after_answering_does_not_deliver_to_unread_second() -> None:
+    """Tier 2b: ★AC1 — with TWO interventions pending, answering the FIRST
+    (bare Enter, pre-highlighted "Yes") does NOT move the active tab, so a
+    muscle-memory SECOND bare ``Enter`` lands on the SAME (now ✓-answered,
+    disabled) tab and delivers NOTHING to the still-unread second
+    intervention. Migrates the retired P2 F1-interim test's safety property
+    (a) onto the tab-ified structure (#3308 co-vet correction: the interim
+    MECHANISM is retired, this PROPERTY is not).
+
+    NON-VACUITY (falsification): if ``InterventionPanel.mark_answered``
+    stopped disabling the tab's ``RadioSet`` (reverting the
+    ``control.disabled = True`` loop), the second bare ``Enter`` would still
+    land on the same (still-enabled, still-selected) RadioSet and could
+    re-post a ``Changed``/toggle — verified locally that stripping the
+    disable loop flips ``transport.answered_choice`` to length 2 instead of
+    staying at 1."""
+    transport = RecordingTransport(
+        [_choice_intervention(), _second_choice_intervention()], end=False
+    )
+    app = TextualChatApp(transport=transport)
+
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        await pilot.pause()
+
+        await pilot.press("enter")  # answers iv-1 ("Yes", pre-highlighted)
+        await pilot.pause()
+        await pilot.pause()
+
+        assert transport.answered_choice == ["yes"]
+        assert transport.answered_choice_ids == ["iv-1"]
+
+        # Muscle-memory second bare Enter — must be a no-op.
+        await pilot.press("enter")
+        await pilot.pause()
+        await pilot.pause()
+
+        assert transport.answered_choice == ["yes"], (
+            "a second bare Enter delivered an unrequested answer — "
+            f"got {transport.answered_choice}"
+        )
+        entries = _iv_entries(app)
+        assert entries["iv-2"].item.meta.get("_answer_label") is None, (
+            "the second (still-pending) intervention must remain unanswered"
+        )
+
+
+@pytest.mark.asyncio
+async def test_new_pending_intervention_does_not_steal_the_active_tab() -> None:
+    """Tier 2b: ★AC2 — with the panel already showing the FIRST intervention,
+    a SECOND arriving does not move the active tab; the first stays active
+    and answerable by a bare Enter. Migrates the retired P2 F1-interim test's
+    coverage of "the second intervention's entry must not be touched"."""
     transport = RecordingTransport(
         [_choice_intervention(), _second_choice_intervention()], end=False
     )
@@ -663,40 +733,120 @@ async def test_second_pending_intervention_does_not_overwrite_the_first() -> Non
         assert set(entries) == {"iv-1", "iv-2"}, (
             f"expected both pending interventions to get their own flow entry, got {set(entries)}"
         )
-        # The panel still shows the FIRST (iv-1's prompt), not overwritten by
-        # the second arrival.
-        title = app.query_one(InterventionPanel).query_one("#iv-panel-title", Static)
-        assert "hosts" in title.content.plain, (
-            f"panel switched away from the first pending intervention; title={title.content.plain!r}"
+        panel = app.query_one(InterventionPanel)
+        assert "hosts" in _pane_title(_active_pane(panel)), (
+            "a new arrival stole the active tab from the first pending intervention"
         )
+
+        await pilot.press("enter")
+        await pilot.pause()
+        await pilot.pause()
+
+        assert transport.answered_choice_ids == ["iv-1"], (
+            f"bare Enter did not answer the still-active FIRST tab; got {transport.answered_choice_ids}"
+        )
+        entries = _iv_entries(app)
+        assert entries["iv-2"].item.meta.get("_answer_label") is None
 
 
 @pytest.mark.asyncio
-async def test_multi_pending_answer_targets_the_displayed_intervention_by_id() -> None:
-    """Tier 2b: ★non-vacuity witness for the mis-delivery fix — with TWO
-    interventions pending, answering the one the panel DISPLAYS delivers to
-    THAT intervention's id, and resolving it re-routes the panel to the
-    other (FIFO), which then also delivers by its own id.
+async def test_out_of_order_answer_targets_the_selected_tab_by_id() -> None:
+    """Tier 2b: ★AC3 — with THREE interventions pending, Left/Right selects
+    the THIRD tab directly and answers it; the other two stay untouched.
+    Migrates the retired P2 F1-interim test's by-id witness (b) onto
+    out-of-order selection instead of FIFO re-route."""
+    transport = RecordingTransport(
+        [
+            _choice_intervention(),
+            _second_choice_intervention(),
+            _third_choice_intervention(),
+        ],
+        end=False,
+    )
+    app = TextualChatApp(transport=transport)
 
-    The re-route does NOT pre-highlight (#3299 P2 co-vet safety fix,
-    architect-agreed "safe side" call): a bare ``Enter`` right after the
-    re-route must answer NOTHING — only after the user explicitly navigates
-    (``Down``) does ``Enter`` deliver. Without this, a user's muscle-memory
-    double-``Enter`` (answer the first, reflexively press Enter again) would
-    silently confirm a DEFAULT option on the second intervention the user
-    never actually looked at — an accidental permission grant, since an
-    intervention can be a permission gate.
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        await pilot.pause()
 
-    NON-VACUITY (falsification):
-    - stripping ``intervention_id=`` from
-      ``TextualChatApp.on_intervention_panel_choice_selected`` /
-      ``on_intervention_panel_text_submitted`` (reverting to
-      head-targeted-only delivery) flips ``transport.answered_choice_ids`` to
-      ``[None, None]`` instead of ``["iv-1", "iv-2"]``.
-    - reverting ``_show_intervention``'s ``initial=False`` on re-route back
-      to always pre-highlighting makes the bare-Enter-after-re-route
-      assertion below FAIL (it would deliver "yes" instead of nothing) —
-      verified locally."""
+        assert set(_iv_entries(app)) == {"iv-1", "iv-2", "iv-3"}
+
+        await pilot.press("right")
+        await pilot.press("right")
+        await pilot.pause()
+        panel = app.query_one(InterventionPanel)
+        assert "branch" in _pane_title(_active_pane(panel)), (
+            "Left/Right did not reach the third pending intervention's tab"
+        )
+
+        await pilot.press("enter")  # pre-highlighted "Yes" on the THIRD tab
+        await pilot.pause()
+        await pilot.pause()
+
+        assert transport.answered_choice_ids == ["iv-3"], (
+            f"answer not targeted at the selected THIRD intervention; got {transport.answered_choice_ids}"
+        )
+        entries = _iv_entries(app)
+        assert entries["iv-3"].item.meta.get("_answer_label") == "Yes"
+        assert entries["iv-1"].item.meta.get("_answer_label") is None
+        assert entries["iv-2"].item.meta.get("_answer_label") is None
+
+
+@pytest.mark.asyncio
+async def test_answered_tab_stays_visible_until_all_resolve() -> None:
+    """Tier 2b: ★AC4 — an answered tab is ✓-labelled and its form disabled,
+    but it STAYS mounted (never removed); the panel itself collapses only
+    once every pending intervention has resolved.
+
+    NON-VACUITY (falsification): if ``mark_answered`` removed the pane
+    (``tabs.remove_pane``) instead of disabling it in place, the ✓-labelled
+    "hosts" tab would be GONE from the tab bar entirely after answering it —
+    verified locally."""
+    transport = RecordingTransport(
+        [_choice_intervention(), _second_choice_intervention()], end=False
+    )
+    app = TextualChatApp(transport=transport)
+
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        await pilot.pause()
+        panel = app.query_one(InterventionPanel)
+
+        await pilot.press("enter")  # answers iv-1
+        await pilot.pause()
+        await pilot.pause()
+
+        labels = _tab_labels(panel)
+        assert any(label.startswith("✓") and "hosts" in label for label in labels), (
+            f"answered tab was removed instead of staying ✓-labelled; got {labels!r}"
+        )
+        assert any("Overwrite" in label and not label.startswith("✓") for label in labels), (
+            f"the still-pending second tab is missing; got {labels!r}"
+        )
+        first_pane = _tabs(panel).get_pane(_pane_ids_in_order(panel)[0])
+        assert first_pane.query_one(RadioSet).disabled is True, (
+            "answered tab's form was not disabled"
+        )
+        assert panel.display is True, "panel collapsed with a pending intervention still unanswered"
+
+        await pilot.press("right")
+        await pilot.press("enter")  # answers iv-2, the LAST pending one
+        await pilot.pause()
+        await pilot.pause()
+
+        assert panel.display is False, "panel did not collapse once every intervention resolved"
+        assert app.query_one(Composer).has_focus
+
+
+@pytest.mark.asyncio
+async def test_prehighlight_uniform_on_initial_show_and_tab_switch() -> None:
+    """Tier 2b: ★AC5 — the first option is pre-highlighted BOTH on the
+    panel's initial show (bare Enter answers "Yes" on iv-1) AND after
+    switching to a fresh tab (bare Enter, no Down first, answers "Yes" on
+    iv-2 too) — owner decision (A), now unconditional (#3308 retires the P2
+    ``initial``/re-route distinction entirely: the active tab never moves
+    except by explicit navigation, so there is no "unread re-route" case left
+    to guard against)."""
     transport = RecordingTransport(
         [_choice_intervention(), _second_choice_intervention()], end=False
     )
@@ -706,96 +856,66 @@ async def test_multi_pending_answer_targets_the_displayed_intervention_by_id() -
         await pilot.pause()
         await pilot.pause()
 
-        # Answer the FIRST (displayed) intervention — pre-highlighted first
-        # option ("Yes", #3299 P2 owner decision (A)), so a blind Enter
-        # answers it.
-        await pilot.press("enter")
+        await pilot.press("enter")  # initial show pre-highlight
         await pilot.pause()
         await pilot.pause()
-
         assert transport.answered_choice == ["yes"]
-        assert transport.answered_choice_ids == ["iv-1"], (
-            f"first answer not targeted at iv-1; got {transport.answered_choice_ids}"
-        )
-        entries = _iv_entries(app)
-        assert entries["iv-1"].item.meta.get("_answer_label") == "Yes"
-        assert entries["iv-2"].item.meta.get("_answer_label") is None, (
-            "the second (still-pending) intervention's entry must not be touched"
-        )
 
-        # The panel re-routed to the SECOND (still pending) intervention —
-        # never left blank/orphaned.
-        panel = app.query_one(InterventionPanel)
-        assert panel.display is True, "panel went blank instead of re-routing to the next pending intervention"
-        title = panel.query_one("#iv-panel-title", Static)
-        assert "Overwrite" in title.content.plain
+        await pilot.press("right")  # switch to the (still pending) iv-2 tab
+        await pilot.pause()
 
-        # ★co-vet safety fix: the re-route must NOT pre-highlight — a bare
-        # Enter (the user's muscle-memory reflex right after answering the
-        # first intervention) delivers NOTHING to the second, un-requested
-        # intervention.
-        await pilot.press("enter")
+        await pilot.press("enter")  # tab-switch pre-highlight, no Down first
         await pilot.pause()
         await pilot.pause()
 
-        assert transport.answered_choice == ["yes"], (
-            "a bare Enter right after the re-route must not answer the "
-            "un-requested second intervention (accidental-grant risk)"
+        assert transport.answered_choice == ["yes", "yes"], (
+            f"bare Enter after a tab switch did not answer the pre-highlighted "
+            f"first option; got {transport.answered_choice}"
         )
-        entries = _iv_entries(app)
-        assert entries["iv-2"].item.meta.get("_answer_label") is None, (
-            "the second intervention must still be unanswered after a bare Enter"
-        )
-        assert panel.display is True, "panel must stay open — the bare Enter must not have resolved anything"
-
-        # Only EXPLICIT navigation (Down highlights index 0, "Yes") then
-        # Enter delivers.
-        await pilot.press("down")
-        await pilot.press("enter")
-        await pilot.pause()
-        await pilot.pause()
-
-        assert transport.answered_choice == ["yes", "yes"]
-        assert transport.answered_choice_ids == ["iv-1", "iv-2"], (
-            f"second answer not targeted at iv-2; got {transport.answered_choice_ids}"
-        )
-        entries = _iv_entries(app)
-        assert entries["iv-2"].item.meta.get("_answer_label") == "Yes"
-        assert panel.display is False, "panel did not collapse once both resolved"
-        assert app.query_one(Composer).has_focus
-
-
-# --- #3299 P2: auto-focus (A) — blind Enter answers the first option --------
+        assert transport.answered_choice_ids == ["iv-1", "iv-2"]
 
 
 @pytest.mark.asyncio
-async def test_blind_enter_answers_the_first_option_no_arrow_needed() -> None:
-    """Tier 2b: owner decision (A), uniform across all closed-set
-    interventions — on panel appear the FIRST option is pre-highlighted, so a
-    bare ``Enter`` (no ``Down`` first) answers it immediately.
+async def test_left_right_switch_tabs_even_with_radioset_focused() -> None:
+    """Tier 1: ★AC8 — Left/Right switch the ACTIVE TAB even while a
+    ``RadioSet`` has focus, via a ``priority=True`` binding on the panel
+    (Textual's priority pass runs BEFORE the focused-widget-outward walk that
+    would otherwise let ``RadioSet``'s own ``left``/``right`` = prev/next-
+    option aliases win).
 
-    NON-VACUITY (falsification): reverting the ``radio.action_next_button()``
-    pre-highlight call in ``InterventionPanel.show_choice`` leaves
-    ``RadioSet._selected`` unset (``-1``), so ``action_toggle_button`` (bound
-    to Enter) is a no-op and NOTHING is delivered — this assertion would fail
-    with an empty ``transport.answered_choice``, verified locally."""
-    transport = RecordingTransport([_choice_intervention()], end=False)
+    NON-VACUITY (falsification, verified locally): removing ``priority=True``
+    from the panel's ``left``/``right`` ``Binding`` entries makes the active
+    tab stay UNCHANGED after ``Right`` — the key is instead consumed by the
+    focused ``RadioSet``'s own ``next_button`` action (moving its highlight,
+    not the tab) — flipping the assertion below RED."""
+    transport = RecordingTransport(
+        [_choice_intervention(), _second_choice_intervention()], end=False
+    )
     app = TextualChatApp(transport=transport)
 
     async with app.run_test(size=(100, 30)) as pilot:
         await pilot.pause()
         await pilot.pause()
-
-        radio = app.query_one(InterventionPanel).query_one("#iv-panel-choices", RadioSet)
+        panel = app.query_one(InterventionPanel)
+        tabs = _tabs(panel)
+        active_before = tabs.active
+        radio = _active_pane(panel).query_one(RadioSet)
         assert radio.has_focus
 
-        await pilot.press("enter")  # no "down" first
-        await pilot.pause()
+        await pilot.press("right")
         await pilot.pause()
 
-    assert transport.answered_choice == ["yes"], (
-        f"a blind Enter did not answer the pre-highlighted FIRST option; got {transport.answered_choice}"
-    )
+        assert tabs.active != active_before, (
+            "Right did not switch the active tab while a RadioSet had focus"
+        )
+        assert "Overwrite" in _pane_title(_active_pane(panel))
+        # The FIRST tab's own RadioSet selection must be untouched by the
+        # Right keypress (it must have been consumed as a TAB switch, not a
+        # RadioSet next-option action).
+        first_pane = tabs.get_pane(_pane_ids_in_order(panel)[0])
+        assert first_pane.query_one(RadioSet).pressed_index == -1, (
+            "Right moved the RadioSet's own highlight instead of switching tabs"
+        )
 
 
 # --- #3299 P2 §5: pending EntryState is DEFAULT, never RUNNING/SUCCESS/ERROR
@@ -846,16 +966,16 @@ async def test_pending_intervention_entry_state_is_default_with_dim_awaiting_gly
 
 @pytest.mark.asyncio
 async def test_resolve_updates_the_same_entry_no_new_entry_appended() -> None:
-    """Tier 2b: ★non-vacuity witness for the churn-zero contract — resolving a
-    pending intervention updates the SAME flow entry object in place; the SET
-    of intervention entry objects is unchanged (identity-preserved) and the
-    content becomes the Q→A record — never a second, additional entry.
+    """Tier 2b: ★AC6 — non-vacuity witness for the churn-zero contract —
+    resolving a pending intervention updates the SAME flow entry object in
+    place; the SET of intervention entry objects is unchanged (identity-
+    preserved) and the content becomes the Q→A record — never a second,
+    additional entry.
 
-    NON-VACUITY (falsification): if ``_resolve_pending_intervention`` APPENDED
-    a new entry instead of ``entry.set_item(...)``-ing the tracked one (the
-    owner's original "解凍後に別の flow entry が出る" churn complaint), the
-    identity-set below would gain a SECOND, different entry object rather than
-    staying exactly the one entry seen before resolving — this assertion
+    NON-VACUITY (falsification): if ``_resolve_intervention`` APPENDED a new
+    entry instead of ``entry.set_item(...)``-ing the tracked one, the
+    identity-set below would gain a SECOND, different entry object rather
+    than staying exactly the one entry seen before resolving — this assertion
     would fail."""
     transport = RecordingTransport([_choice_intervention()], end=False)
     app = TextualChatApp(transport=transport)

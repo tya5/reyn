@@ -168,39 +168,48 @@ class TextualChatApp(App):
     REMOTE read model returns an empty log (frame-sufficiency: past turns are not
     on the wire) → hydration is a no-op and the pane starts blank as before.
 
-    #3299 P1 moves intervention interaction OUT of the FlowView into a grouped
+    #3299 P1 moved intervention interaction OUT of the FlowView into a grouped
     :class:`~reyn.interfaces.inline.textual_chat.intervention_panel.InterventionPanel`
     widget between the flow and the input row (atomic display-swap +
-    input-swap + chip-retire — see :meth:`_present_intervention`'s docstring):
-    a ``kind="intervention"`` frame arriving on the pump (:meth:`_ingest_frame`)
-    appends a THIN pending flow placeholder and, if the panel is idle, populates
-    + auto-focuses it — a :class:`~textual.widgets.RadioSet` for a closed-set
-    intervention (``meta["choices"]``), a plain :class:`~textual.widgets.Input`
-    otherwise. Only this hidden→shown transition pre-highlights the RadioSet's
-    FIRST option (#3299 P2 owner decision (A): a blind ``Enter`` answers it) —
-    the multi-pending FIFO re-route (:meth:`_resolve_pending_intervention`
-    swapping in the NEXT queued intervention while the panel stays visible)
-    does NOT pre-highlight (#3299 P2 co-vet fix, see :meth:`_show_intervention`'s
-    ``initial`` docstring: pre-highlighting an intervention the user never
-    actually looked at risks a muscle-memory second ``Enter`` confirming a
-    default option — an accidental permission grant, since an intervention can
-    be a permission gate). Selecting/submitting in the panel
+    input-swap + chip-retire — see :meth:`_present_intervention`'s docstring).
+    P2 gave the panel FIFO re-route (resolving the displayed intervention
+    swapped the next queued one into the SAME form); #3308 (P5) replaces that
+    re-route with TABS — one :class:`~textual.widgets.TabPane` per PENDING
+    intervention, added the moment its frame arrives
+    (:meth:`_present_intervention` → ``InterventionPanel.add_pending``) and
+    never swapped out from under the user. A ``kind="intervention"`` frame
+    arriving on the pump (:meth:`_ingest_frame`) appends a THIN pending flow
+    placeholder and adds a new tab to the panel — a
+    :class:`~textual.widgets.RadioSet` for a closed-set intervention
+    (``meta["choices"]``), a plain :class:`~textual.widgets.Input` otherwise.
+    The panel's OWN ``TabbedContent`` semantics give the "only steal focus
+    while idle" invariant for free: a new tab auto-activates only when the
+    panel was hidden (nothing pending before this arrival); while another
+    intervention is already showing, the new tab is added WITHOUT moving the
+    active selection (never stealing it from a tab the user is already
+    looking at — the F1-class accident class this PR closes structurally,
+    see the panel module's docstring). Pre-highlighting the RadioSet's FIRST
+    option (#3299 P2 owner decision (A): a blind ``Enter`` answers it) is now
+    UNCONDITIONAL on every tab activation — first show AND every explicit
+    tab switch alike (#3308 §5) — since the P2 re-route accident this
+    conditional once guarded against no longer exists (the active tab never
+    moves except by explicit user navigation). Selecting/submitting in a tab
     (:meth:`on_intervention_panel_choice_selected` /
     :meth:`on_intervention_panel_text_submitted`) delivers the answer through
     the UNCHANGED transport funnel (``answer_intervention_choice`` /
-    ``answer_intervention_text``) — targeted at the id of the intervention the
-    panel is CURRENTLY DISPLAYING (#3299 P2, R1 by-id delivery: with
-    ``outstanding_interventions`` holding multiple pending entries, the head is
-    not necessarily the one on screen — see :meth:`_present_intervention` /
-    :meth:`_resolve_pending_intervention`) — resolves that SAME flow entry
-    in place to a "✓ answered" record (:meth:`_resolve_pending_intervention`),
-    and either re-populates the panel with the NEXT pending intervention (FIFO)
-    or hides it and returns focus to the Composer. ``Esc``/``Tab`` inside the
+    ``answer_intervention_text``) targeted at THAT tab's intervention id
+    (#3299 P2, R1 by-id delivery — the message itself carries which pending
+    entry it came from, so there is no ambiguous "currently displayed" state
+    to track at the app level anymore), resolves that SAME flow entry in
+    place to a "✓ answered" record (:meth:`_resolve_intervention`) and marks
+    the tab ✓-answered + inert — but the tab STAYS (never removed) until
+    EVERY pending intervention has resolved, at which point the whole panel
+    collapses (:meth:`_resolve_intervention`). ``Esc``/``Tab`` inside the
     panel (:meth:`on_intervention_panel_dismissed`) return focus to the
-    Composer WITHOUT answering — the intervention stays pending (the #3300
-    sent-queue durably holds any new Composer submit while it does; no
-    black-hole guard is needed here, see the PR body). The Composer itself is
-    now EXCLUSIVELY for new turns — it no longer reads
+    Composer WITHOUT answering — no intervention's state changes (the #3300
+    sent-queue durably holds any new Composer submit while any stay pending;
+    no black-hole guard is needed here, see the PR body). The Composer itself
+    is now EXCLUSIVELY for new turns — it no longer reads
     ``pending_intervention_head()`` at all.
     """
 
@@ -319,17 +328,15 @@ class TextualChatApp(App):
         # multi-entry structure by design, e.g. restore's FIFO re-enqueue),
         # keyed by intervention id (falling back to a synthetic per-entry key
         # when a frame carries no id, so tracking never breaks — delivery then
-        # stays head-targeted for that entry, matching pre-P2 behavior).
-        # Each value is ``(entry, msg, intervention_id | None)`` — the flow
-        # entry :meth:`_resolve_pending_intervention` updates IN PLACE, the
-        # original frame (to re-populate the panel if this becomes the
-        # DISPLAYED one later), and the real id to target at the transport
-        # (``None`` disables by-id targeting for that entry).
-        self._pending_ivs: "dict[object, tuple[Entry[OutboxMessage], OutboxMessage, str | None]]" = {}
-        # The key (in ``_pending_ivs``) of the intervention the panel is
-        # CURRENTLY DISPLAYING — ``None`` when the panel is idle. Answers
-        # always target THIS one (by-id, #3299 P2 R1), never "the head".
-        self._iv_current_key: "object | None" = None
+        # falls back to head-targeted for that entry, matching pre-P2
+        # behavior). Each value is ``(entry, intervention_id | None)`` — the
+        # flow entry :meth:`_resolve_intervention` updates IN PLACE, and the
+        # real id to target at the transport (``None`` disables by-id
+        # targeting for that entry). #3308 (P5) drops the THIRD P2 tuple slot
+        # (the original frame, kept only to re-populate a re-routed panel) —
+        # tabs never re-populate, each pending intervention keeps its own
+        # tab for its whole pending lifetime, so there is nothing to replay.
+        self._pending_ivs: "dict[object, tuple[Entry[OutboxMessage], str | None]]" = {}
         # #3300 P2b: the client-side sent-queue model — the SAME seq-gated
         # merge P2a built (``RemoteQueueView``, reused as-is, not
         # reinvented) driving BOTH the local and remote transport, since the
@@ -635,83 +642,43 @@ class TextualChatApp(App):
     def _present_intervention(
         self, msg: "OutboxMessage", entry: "Entry[OutboxMessage]"
     ) -> None:
-        """Route a newly-arrived intervention frame to the panel (#3299 P1/P2).
+        """Route a newly-arrived intervention frame to the panel (#3299 P1/P2,
+        tab-ified #3308 P5).
 
         The flow ``entry`` stays a THIN pending placeholder (the presenter
         renders prompt + a dim "respond below" hint, never chips — see
         :meth:`~reyn.interfaces.inline.textual_chat.presenter.ReynPresenter._present_intervention_pending`);
         the interactive form (closed-set select / free-text input) lives
-        entirely in :attr:`_iv_panel`.
+        entirely in its OWN tab inside :attr:`_iv_panel`.
 
-        Multi-pending (#3299 P2): ``outstanding_interventions`` can hold
-        SEVERAL pending entries at once (e.g. restore's FIFO re-enqueue), so
-        every arriving intervention is tracked in :attr:`_pending_ivs`
-        (keyed by its id) regardless of display order. Only when the panel is
-        currently IDLE (no intervention displayed) does this one populate +
-        auto-focus it; otherwise it queues behind whichever intervention the
-        panel already shows, and is displayed later by
-        :meth:`_resolve_pending_intervention`'s re-route. This is still an
-        ATOMIC swap with the retired in-flow chips: display and input
-        (:meth:`on_intervention_panel_choice_selected` /
+        Multi-pending (#3299 P2, tab-ified #3308): ``outstanding_interventions``
+        can hold SEVERAL pending entries at once (e.g. restore's FIFO
+        re-enqueue), so every arriving intervention is tracked in
+        :attr:`_pending_ivs` (keyed by its id) AND gets its own tab
+        (``InterventionPanel.add_pending``) regardless of display order. The
+        panel's own ``TabbedContent`` auto-activates a new tab ONLY when it
+        was previously empty (verified against the installed Textual 8.2.8 —
+        see the panel module's docstring), so an arrival while another
+        intervention is already showing never steals the active tab. This is
+        still an ATOMIC swap with the retired in-flow chips: display and
+        input (:meth:`on_intervention_panel_choice_selected` /
         :meth:`on_intervention_panel_text_submitted`) moved together, so there
         is never a moment where both the panel AND a chip/composer-match path
         are live for the same intervention."""
         meta = msg.meta or {}
         iv_id = meta.get("intervention_id")
         key: object = iv_id if iv_id else id(entry)
-        self._pending_ivs[key] = (entry, msg, iv_id)
-        if self._iv_current_key is None:
-            # The panel is IDLE — this is the hidden→shown transition, the
-            # ONLY case that pre-highlights (#3299 P2 co-vet fix, see
-            # ``_show_intervention``'s ``initial`` docstring).
-            self._show_intervention(key, initial=True)
-
-    def _show_intervention(self, key: object, *, initial: bool) -> None:
-        """Populate + auto-focus the panel with the intervention tracked under
-        ``key``, marking it the CURRENTLY DISPLAYED one — the target of the
-        next answer (#3299 P2, R1 by-id delivery).
-
-        ``initial`` (#3299 P2 co-vet fix, architect-agreed "safe side" call):
-        whether this is the panel's hidden→shown transition (``True`` — the
-        ONLY caller is :meth:`_present_intervention` when the panel was
-        idle) or the multi-pending FIFO re-route
-        (:meth:`_resolve_pending_intervention` swapping in the next queued
-        intervention while the panel stays visible/focused, ``False``).
-        Threaded straight to ``InterventionPanel.show_choice``'s
-        ``pre_highlight`` — a re-route must NOT pre-highlight index 0: the
-        panel was already focused for a DIFFERENT intervention the user
-        actually looked at, so a muscle-memory second ``Enter`` after
-        answering that first one must not confirm a default option (often
-        "Yes"/"Allow") on the second intervention the user never requested
-        (an accidental permission grant, not a UX shortcut — deterministic on
-        the CALL SITE, not a timing heuristic)."""
-        entry, msg, _iv_id = self._pending_ivs[key]
-        self._iv_current_key = key
-        meta = msg.meta or {}
+        self._pending_ivs[key] = (entry, iv_id)
         prompt = str(meta.get("prompt") or msg.text or "")
         detail = meta.get("detail")
         choices = meta.get("choices")
-        if choices:
-            self._iv_panel.show_choice(
-                prompt=prompt, detail=detail, choices=choices, pre_highlight=initial
-            )
-        else:
-            self._iv_panel.show_text(prompt=prompt, detail=detail)
+        self._iv_panel.add_pending(key, prompt=prompt, detail=detail, choices=choices)
 
-    def _current_intervention_id(self) -> "str | None":
-        """The real ``intervention_id`` of the panel's CURRENTLY DISPLAYED
-        intervention (``None`` if unknown/untracked — the transport then falls
-        back to head-targeted delivery, matching pre-P2 behavior for a frame
-        that carried no id)."""
-        if self._iv_current_key is None:
-            return None
-        return self._pending_ivs[self._iv_current_key][2]
-
-    def _resolve_pending_intervention(self, answer_label: str) -> None:
-        """Settle the CURRENTLY DISPLAYED intervention's flow entry + panel
-        once an answer has been delivered through the transport funnel, then
-        re-route the panel to the NEXT pending intervention if one is queued
-        (#3299 P2 FIFO re-route) — never blank/lose it.
+    def _resolve_intervention(self, key: object, answer_label: str) -> None:
+        """Settle intervention ``key``'s flow entry + tab once an answer has
+        been delivered through the transport funnel (#3308 — replaces P2's
+        single-form FIFO re-route: the tab STAYS, ✓-marked and inert, rather
+        than being swapped out for the next pending one).
 
         The SAME entry is updated in place (churn-zero, #3299 P2 §4) to a
         ``✓ answered: <label>`` record
@@ -721,62 +688,63 @@ class TextualChatApp(App):
         neither an outcome to celebrate nor a failure, the #3296
         don't-fabricate-a-classification lesson) and not ``RUNNING`` (would
         trip the #72 orphan-sweep + the ② live-spinner, and an intervention is
-        not a tool). If no other intervention is pending, the panel hides and
-        focus returns to the Composer — the resolved leg of the focus
-        lifecycle (pending → panel auto-focus, Esc/Tab → Composer, resolved →
-        Composer)."""
-        key = self._iv_current_key
-        self._iv_current_key = None
-        self._iv_panel.hide()
-        resolved = self._pending_ivs.pop(key, None) if key is not None else None
+        not a tool). Only once EVERY pending intervention has resolved does
+        the panel collapse and focus return to the Composer — the resolved
+        leg of the focus lifecycle (pending → panel auto-focus, Esc/Tab →
+        Composer, all-resolved → Composer)."""
+        self._iv_panel.mark_answered(key, answer_label)
+        resolved = self._pending_ivs.pop(key, None)
         if resolved is not None:
-            entry, _msg, _iv_id = resolved
+            entry, _iv_id = resolved
             meta = entry.item.meta or {}
             entry.set_item(replace(entry.item, meta={**meta, "_answer_label": answer_label}))
             entry.set_state(EntryState.DEFAULT)
         if self._pending_ivs:
-            # FIFO re-route (#3299 P2) — ``initial=False``: no pre-highlight
-            # (see ``_show_intervention``'s docstring for why).
-            self._show_intervention(next(iter(self._pending_ivs)), initial=False)
-        else:
-            self.query_one(Composer).focus()
+            # Other tabs are still pending — the panel (and whichever tab was
+            # active) stays exactly as it was; no re-route (#3308).
+            return
+        self._iv_panel.collapse_all()
+        self.query_one(Composer).focus()
 
     async def on_intervention_panel_choice_selected(
         self, event: "InterventionPanel.ChoiceSelected"
     ) -> None:
-        """A closed-set option was picked in the panel: deliver its id through
+        """A closed-set option was picked in one tab: deliver its id through
         the UNCHANGED transport funnel (``answer_intervention_choice`` —
         ``InterventionHandler.deliver_answer_to`` under the hood, the SAME
         funnel every answer path — TUI, A2A peer, AG-UI HITL — shares),
-        targeted at the CURRENTLY DISPLAYED intervention's id (#3299 P2, R1 —
-        never the head, which a second pending intervention could have made
-        stale between display and answer). This is the F1 permission-band
+        targeted at THAT tab's intervention id (#3299 P2, R1 — the event
+        itself carries ``event.key``, identifying exactly which pending
+        intervention this is; #3308 removes the need for an app-level
+        "currently displayed" key entirely). This is the F1 permission-band
         reachability witness, restored through the panel instead of a chip
         click."""
+        _entry, iv_id = self._pending_ivs.get(event.key, (None, None))
         await self._transport.answer_intervention_choice(
-            event.choice_id, intervention_id=self._current_intervention_id()
+            event.choice_id, intervention_id=iv_id
         )
-        self._resolve_pending_intervention(event.label)
+        self._resolve_intervention(event.key, event.label)
 
     async def on_intervention_panel_text_submitted(
         self, event: "InterventionPanel.TextSubmitted"
     ) -> None:
-        """A free-text answer was submitted in the panel's Input: deliver it
+        """A free-text answer was submitted in one tab's Input: deliver it
         through the UNCHANGED ``answer_intervention_text`` transport funnel,
-        targeted at the CURRENTLY DISPLAYED intervention's id (#3299 P2, R1)."""
-        await self._transport.answer_intervention_text(
-            event.text, intervention_id=self._current_intervention_id()
-        )
-        self._resolve_pending_intervention(event.text)
+        targeted at THAT tab's intervention id (#3299 P2, R1; #3308 by
+        ``event.key``, same as the choice path)."""
+        _entry, iv_id = self._pending_ivs.get(event.key, (None, None))
+        await self._transport.answer_intervention_text(event.text, intervention_id=iv_id)
+        self._resolve_intervention(event.key, event.text)
 
     def on_intervention_panel_dismissed(
         self, event: "InterventionPanel.Dismissed"
     ) -> None:
         """Esc/Tab inside the panel: return focus to the Composer WITHOUT
-        answering — the escape hatch of the focus lifecycle. The intervention
-        stays pending (the panel stays open); a new Composer submit durably
-        queues on the inbox rather than black-holing (#3300's sent-queue —
-        see the PR body for why #3299 needs no guard of its own here)."""
+        answering — the escape hatch of the focus lifecycle. Every pending
+        intervention stays exactly as it was (the panel stays open); a new
+        Composer submit durably queues on the inbox rather than black-holing
+        (#3300's sent-queue — see the PR body for why #3299 needs no guard of
+        its own here)."""
         self.query_one(Composer).focus()
 
     def _ingest_frame(self, msg: "OutboxMessage") -> None:
