@@ -9,8 +9,27 @@ transports feed off the identical frame source, *local ≡ remote by constructio
 (D2) — the emitter adds only wire framing, never new render semantics.
 
 On connect it replays the reconnect snapshots (A4): ``MESSAGES_SNAPSHOT`` (the
-display backlog) then ``STATE_SNAPSHOT`` (the status read-model). It then streams
-each frame as its AG-UI **wire sequence** (:func:`encode_frame_wire_streaming` —
+display backlog) then ``STATE_SNAPSHOT`` (the status read-model).
+
+**Session-switch parity (#3310 N3).** A session switch is treated as a
+*logical reconnect*: right after a ``session_attached`` chat-event (#3310 N1,
+carrying ``{agent, session_id}``) is forwarded on the wire, this emitter
+re-fires the SAME reconnect protocol — ``MESSAGES_SNAPSHOT`` (the NEW
+session's backlog, resolved via the caller-supplied ``backlog_provider``) then
+``STATE_SNAPSHOT`` — so connect-time and switch-time are one code path
+(:meth:`_reconnect_snapshot_chunks`). Without this, a remote client has no way
+to obtain a switched-to session's scrollback at all: the read-model's
+``conversation_history`` is deliberately empty for a remote client
+(frame-sufficiency, ``read_model.py``), and this emitter's own backlog is
+otherwise fixed at connection time. The barrier ordering is load-bearing: the
+re-fire happens strictly AFTER the ``session_attached`` frame is forwarded
+(never before), so a client that resets its view on that barrier never has the
+reset race the very state this re-fire just delivered. The per-connection
+``TextStreamTracker`` and ``waiting_on`` label are reset at the same point — a
+new session owns neither the old one's in-flight streamed-text bracketing nor
+its WaitingOn state.
+
+It then streams each frame as its AG-UI **wire sequence** (:func:`encode_frame_wire_streaming` —
 a whole text message is the canonical ``TEXT_MESSAGE_START`` → ``…_CONTENT`` →
 ``…_END`` triplet, P4; a message that streamed (#3288 ③b/③d, ``agent_delta``
 chat-events) instead gets a REAL multi-CONTENT sequence — one ``TEXT_MESSAGE_START``
@@ -69,14 +88,20 @@ class AgUiEmitter:
         status_provider: "Callable[[], dict | None]",
         *,
         backlog: "list[Frame] | None" = None,
+        backlog_provider: "Callable[[str, str], list[Frame]] | None" = None,
     ) -> None:
         # ``frames`` is the unified frame stream (e.g. an InProcessTransport's
         # ``frames()``); ``status_provider`` returns the CUI status snapshot dict
         # (or None when no session is attached); ``backlog`` is the display
-        # history replayed on connect for reconnect (A4).
+        # history replayed on connect for reconnect (A4). ``backlog_provider``
+        # (#3310 N3) is called with ``(agent, session_id)`` off a mid-stream
+        # ``session_attached`` chat-event to fetch the switched-to session's
+        # backlog for the re-fire; ``None`` means this connection never
+        # switches sessions (byte-identical to pre-N3 behavior).
         self._frames = frames
         self._status_provider = status_provider
         self._backlog = list(backlog or [])
+        self._backlog_provider = backlog_provider
         self._model = StatusModel()
         self._waiting_on: str | None = None
         # #3288 ③d: one tracker per connection so a streamed reply's
@@ -88,10 +113,20 @@ class AgUiEmitter:
     def _project(self) -> dict:
         return project_status(self._status_provider(), waiting_on=self._waiting_on)
 
+    def _reconnect_snapshot_chunks(self, backlog: "list[Frame]") -> "list[str]":
+        """The shared reconnect protocol (A4): backlog display, then full
+        status — used identically at connect (``stream()`` start) and at a
+        mid-stream session switch (#3310 N3), so the two are ONE code path,
+        not a byte-identical-by-hand duplicate."""
+        return [
+            to_sse(encode_messages_snapshot(backlog)),
+            to_sse(encode_state_snapshot(self._model.snapshot(self._project()))),
+        ]
+
     async def stream(self) -> AsyncIterator[str]:
         # Reconnect snapshots first (A4): backlog display, then full status.
-        yield to_sse(encode_messages_snapshot(self._backlog))
-        yield to_sse(encode_state_snapshot(self._model.snapshot(self._project())))
+        for chunk in self._reconnect_snapshot_chunks(self._backlog):
+            yield chunk
 
         async for frame in self._frames:
             # Control sentinels in CONTROL_FILTER_KINDS are NOT forwarded on the
@@ -140,6 +175,21 @@ class AgUiEmitter:
                         encode_intervention_tool_result(edata["intervention_id"], "answered")
                     )
                 self._waiting_on = _waiting_on_after(etype, edata, self._waiting_on)
+                # #3310 N3: logical-reconnect re-fire, STRICTLY after the
+                # session_attached frame was forwarded above (never before —
+                # the barrier ordering is the whole point: a client resets its
+                # view on that barrier, and must never see the reset race the
+                # state this re-fire is about to deliver). A new session owns
+                # neither the old one's in-flight streamed-text bracketing nor
+                # its WaitingOn label, so both are reset before the re-fire.
+                if etype == "session_attached" and self._backlog_provider is not None:
+                    self._text_stream = TextStreamTracker()
+                    self._waiting_on = None
+                    new_backlog = self._backlog_provider(
+                        str(edata.get("agent", "")), str(edata.get("session_id", ""))
+                    )
+                    for chunk in self._reconnect_snapshot_chunks(new_backlog):
+                        yield chunk
             delta = self._model.delta(self._project())
             if delta:
                 yield to_sse(encode_state_delta(delta))

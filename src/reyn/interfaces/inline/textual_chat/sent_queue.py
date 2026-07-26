@@ -155,6 +155,19 @@ class SentQueue(Vertical):
         self._clamp_selection()
         self._apply_highlight()
 
+    def clear_all(self) -> None:
+        """Remove every queued row unconditionally (#3310 N2 session-switch
+        reset barrier) — the widget-level exit that has no server delta of
+        its own to ride: a switch discards ALL of the OLD session's queued
+        rows client-side (the new session's own queue, if any, is reseeded
+        from its snapshot immediately after — the SAME "seed on first frame"
+        path a fresh :class:`~reyn.interfaces.transport.agui.state.RemoteQueueView`
+        drives, #3305-shaped). Reuses :meth:`remove_item` per row so the
+        collapse-when-empty / selection-clamp invariants stay in ONE place
+        rather than being re-derived here."""
+        for msg_id in list(self._rows):
+            self.remove_item(msg_id)
+
     def rendered_texts(self) -> "list[str]":
         """The currently-queued rows' rendered text, oldest first — the
         public read a caller (a test, or a future consumer) uses to inspect
