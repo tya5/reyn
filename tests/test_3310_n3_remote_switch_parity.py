@@ -44,6 +44,24 @@ Gates:
    fresh read of that session's live history at switch time — never a set of
    previously-delivered frame/message ids consulted before forwarding.
 
+★co-vet follow-up on this PR (#3322):
+
+(a) The announce is enqueued onto this connection's queue BEFORE
+``_bind(target)`` makes the new session's chat-event subscriber live (moved,
+2-line reorder) — a chat-event the new session emits synchronously cannot
+reach the queue before its subscriber exists, so "barrier precedes any of the
+new session's own frames" holds BY CONSTRUCTION, not merely because there is
+currently no ``await`` between the two steps. Witnessed by an adversary that
+floods the target session's OWN chat-event stream starting the instant the
+switch is triggered (``test_switch_announce_precedes_any_new_session_chat_event``).
+
+(b) The strip-falsify RED for gate 1 is bounded and assertion-based, not a
+120s-timeout hang: collection helpers below (``_collect_sse_within`` /
+``_collect_frames_within``) read for a fixed wall-clock window rather than
+awaiting a stream that — when the fix is absent — never terminates (the
+connection is permanently stranded on the old session), so a broken build
+fails FAST with an assertion naming what did/did not arrive.
+
 Real ``AgentRegistry`` + real ``Session`` (``tests._support.agent_session
 .make_session``), the real ``_SessionFrameSource`` / ``AgUiEmitter`` /
 ``AgUiTransport`` / SSE codec — no mocks.
@@ -115,8 +133,32 @@ def _texts(msgs: "list[OutboxMessage]") -> "list[str]":
     return [f"{m.kind}:{m.text}" for m in msgs]
 
 
-async def _run_emitter_to_frames(emitter: AgUiEmitter) -> "list":
-    sse = "".join([chunk async for chunk in emitter.stream()])
+async def _collect_within(agen, *, window: float) -> "list":
+    """Collect items off an async generator for a BOUNDED wall-clock window,
+    never awaiting past it (co-vet #3322 (b)). When a switch-follow mechanism
+    is broken the underlying stream can be permanently stranded and simply
+    never terminate; collecting unboundedly turns that structural break into
+    a slow, undiagnosable CI-timeout hang. Bounding here means a broken build
+    fails FAST, and the caller's own assertions — pointed at whatever WAS
+    collected in the window — name exactly what's missing."""
+    out: list = []
+    it = agen.__aiter__()
+    loop = asyncio.get_event_loop()
+    deadline = loop.time() + window
+    while True:
+        remaining = deadline - loop.time()
+        if remaining <= 0:
+            break
+        try:
+            item = await asyncio.wait_for(it.__anext__(), timeout=remaining)
+        except (asyncio.TimeoutError, StopAsyncIteration):
+            break
+        out.append(item)
+    return out
+
+
+async def _run_emitter_to_frames(emitter: AgUiEmitter, *, window: float = 3.0) -> "list":
+    sse = "".join(await _collect_within(emitter.stream(), window=window))
 
     async def _noop_send(_payload):
         return None
@@ -152,21 +194,30 @@ async def test_remote_switch_has_no_scrollback_without_the_refire(tmp_path) -> N
 
         switch_task = asyncio.create_task(_switch())
         try:
-            frames = await asyncio.wait_for(_run_emitter_to_frames(emitter), timeout=5.0)
+            frames = await _run_emitter_to_frames(emitter, window=3.0)
         finally:
             await switch_task
             source.close()
 
         # The barrier DID arrive (N3's re-subscription is independent of the
         # re-fire) ...
-        assert any(
-            isinstance(f, EventFrame) and getattr(f.event, "type", "") == "session_attached"
-            for f in frames
+        barrier_frames = [
+            f for f in frames
+            if isinstance(f, EventFrame) and getattr(f.event, "type", "") == "session_attached"
+        ]
+        assert barrier_frames, (
+            f"expected a session_attached EventFrame within the collection "
+            f"window; none arrived. Collected {len(frames)} frame(s): {frames!r}"
         )
         # ... but no DisplayFrame carrying B's content is anywhere on the wire —
         # RED: a remote client here has no way to obtain B's scrollback at all.
-        assert not any(
-            isinstance(f, DisplayFrame) and "b's own reply" in f.message.text for f in frames
+        b_content_frames = [
+            f for f in frames
+            if isinstance(f, DisplayFrame) and "b's own reply" in f.message.text
+        ]
+        assert not b_content_frames, (
+            f"expected NO display frame carrying B's content (pre-refire "
+            f"wiring has nothing to send it); got {b_content_frames!r}"
         )
     finally:
         for task in reg.running_tasks():
@@ -219,7 +270,7 @@ async def test_remote_switch_parity_a_b_a_with_staleness(tmp_path) -> None:
 
         drive_task = asyncio.create_task(_drive())
         try:
-            frames = await asyncio.wait_for(_run_emitter_to_frames(emitter), timeout=5.0)
+            frames = await _run_emitter_to_frames(emitter, window=3.0)
         finally:
             await drive_task
             source.close()
@@ -234,13 +285,94 @@ async def test_remote_switch_parity_a_b_a_with_staleness(tmp_path) -> None:
         # show after landing back on A) — same SSoT, direct read, no wire.
         local_view = session_backlog_frames(reg, "alpha", _DEFAULT_SID)
         local_texts = _texts([f.message for f in local_view])
+        remote_texts = _texts(remote_view)
 
-        assert _texts(remote_view) == local_texts
+        assert remote_texts == local_texts, (
+            f"remote reconstruction (A->B->A over the wire) diverged from "
+            f"the local oracle (a direct hydrate off session_a.history):\n"
+            f"remote={remote_texts!r}\nlocal={local_texts!r}"
+        )
         # Sanity: the staleness content genuinely made it through, on BOTH sides.
-        assert any("are you there A" in t for t in local_texts)
-        assert any("are you there A" in t for t in _texts(remote_view))
+        assert any("are you there A" in t for t in local_texts), (
+            f"the local oracle itself is missing the staleness content — "
+            f"local={local_texts!r}"
+        )
+        assert any("are you there A" in t for t in remote_texts), (
+            f"the remote reconstruction is missing the staleness content "
+            f"('are you there A', appended to session_a.history WHILE the "
+            f"connection was on B) — remote={remote_texts!r}"
+        )
         # And B's content is NOT mixed into the final (post switch-back) view.
-        assert not any("hello B" in t for t in _texts(remote_view))
+        assert not any("hello B" in t for t in remote_texts), (
+            f"B's content leaked into the post switch-back remote view — "
+            f"remote={remote_texts!r}"
+        )
+    finally:
+        for task in reg.running_tasks():
+            task.cancel()
+
+
+@pytest.mark.asyncio
+async def test_switch_announce_precedes_any_new_session_chat_event(tmp_path) -> None:
+    """Tier 2: ★co-vet #3322 (a). The ``session_attached`` announce reaches
+    this connection's own frame queue BEFORE the target session's chat-event
+    subscriber goes live — never after.
+
+    An adversary floods session B's OWN chat-event stream with real
+    ``turn_started`` events (a type in the renderer-forwarded set) starting
+    the INSTANT the switch request is queued. Such an event can only ever
+    reach ``_q`` once B's subscriber is live (``add_subscriber`` does not
+    replay past emits) — so if even ONE adversary event lands in ``_q``, its
+    position relative to the barrier is a direct witness of whether the
+    announce-before-subscribe ordering holds, independent of whether there
+    happens to be a real scheduling gap between the two steps today."""
+    reg = _registry(tmp_path)
+    try:
+        session_a = await reg.attach("alpha")
+        sid_b = reg.spawn_session("alpha", presentation_consumer=None, intervention_bridge=None)
+        session_b = reg.get_session("alpha", sid_b)
+
+        source = _SessionFrameSource(session_a, registry=reg, agent_name="alpha")
+        source.start()
+
+        async def _adversary() -> None:
+            for _ in range(200):
+                session_b._chat_events.emit("turn_started")
+                await asyncio.sleep(0)
+
+        adversary_task = asyncio.create_task(_adversary())
+        await session_a._put_outbox(
+            OutboxMessage(kind="__session_switch_request__", text=sid_b)
+        )
+        await adversary_task
+
+        try:
+            collected = await _collect_within(source.frames(), window=2.0)
+        finally:
+            source.close()
+
+        barrier_positions = [
+            i for i, f in enumerate(collected)
+            if isinstance(f, EventFrame) and getattr(f.event, "type", "") == "session_attached"
+        ]
+        adversary_positions = [
+            i for i, f in enumerate(collected)
+            if isinstance(f, EventFrame) and getattr(f.event, "type", "") == "turn_started"
+        ]
+        assert barrier_positions, (
+            f"the session_attached barrier never reached this connection's "
+            f"queue within the collection window; collected "
+            f"{len(collected)} frame(s): {collected!r}"
+        )
+        (barrier_pos,) = barrier_positions
+        if adversary_positions:
+            assert barrier_pos < adversary_positions[0], (
+                f"an adversary turn_started event from the NEW session "
+                f"landed in the queue at position {adversary_positions[0]}, "
+                f"BEFORE the session_attached barrier at position "
+                f"{barrier_pos} — a client that resets its view on the "
+                f"barrier would still miss this frame"
+            )
     finally:
         for task in reg.running_tasks():
             task.cancel()
@@ -277,9 +409,7 @@ async def test_barrier_precedes_refire_on_the_wire(tmp_path) -> None:
 
         switch_task = asyncio.create_task(_switch())
         try:
-            sse = "".join(
-                [chunk async for chunk in emitter.stream()]
-            )
+            sse = "".join(await _collect_within(emitter.stream(), window=3.0))
         finally:
             await switch_task
             source.close()
@@ -303,9 +433,19 @@ async def test_barrier_precedes_refire_on_the_wire(tmp_path) -> None:
         # single-element tuple IS the "exactly one" assertion (raises on 0 or
         # 2+ matches) — a behavioral check on the extracted value, not a
         # ``len(...) == N`` format pin.
+        assert barrier_positions, (
+            f"expected exactly one session_attached CUSTOM event on the "
+            f"wire; found none among {len(events)} event(s): {events!r}"
+        )
         (barrier_pos,) = barrier_positions
         switch_messages_pos = snapshot_positions[len(snapshot_positions) // 2]
-        assert barrier_pos < switch_messages_pos
+        assert barrier_pos < switch_messages_pos, (
+            f"the switch re-fire (MESSAGES_SNAPSHOT/STATE_SNAPSHOT at "
+            f"position {switch_messages_pos}) landed BEFORE the "
+            f"session_attached barrier (position {barrier_pos}) — a client "
+            f"resetting on the barrier would race the very state this "
+            f"re-fire just delivered"
+        )
     finally:
         for task in reg.running_tasks():
             task.cancel()

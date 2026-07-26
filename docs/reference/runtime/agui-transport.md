@@ -171,15 +171,23 @@ untouched and not involved):
   `__session_switch_request__` sentinel the registry forwarder consumes for
   the local REPL (both are subscribers of the same session's `outbox_hub`
   fan-out — see *the control-sentinel dispositions* above). On seeing it, it
-  re-points itself at the target session (`registry.get_session`) and
-  synthesizes a `session_attached` `EventFrame` onto this connection's own
-  queue — the SAME vocabulary N1 defined, an independent per-connection
-  equivalent since `repl_outbox` never reaches a remote surface. It never
-  calls `registry.attach_session` itself, so it cannot race or double-apply
-  that side effect — it only re-points THIS connection's own view. A
-  registry-less construction (every pre-N3 unit test) degrades byte-identically:
-  the sentinel falls through to the generic `DisplayFrame` path, where
-  `CONTROL_FILTER_KINDS` already drops it silently.
+  **enqueues the `session_attached` `EventFrame` onto this connection's own
+  queue BEFORE re-pointing itself at the target session** (`registry.get_session`
+  + subscribing to the new session's chat-events) — the SAME vocabulary N1
+  defined, an independent per-connection equivalent since `repl_outbox` never
+  reaches a remote surface. This ordering (announce, then subscribe) is
+  load-bearing, not incidental: the new session's chat-event subscriber does
+  not exist yet when the announce is enqueued, so a chat-event the new
+  session emits cannot possibly reach this connection's queue ahead of the
+  barrier — true BY CONSTRUCTION regardless of whether an `await` is ever
+  later introduced between the two steps (witnessed by
+  `test_switch_announce_precedes_any_new_session_chat_event`, an adversary
+  that floods the target session's own chat-event stream the instant the
+  switch is triggered). It never calls `registry.attach_session` itself, so
+  it cannot race or double-apply that side effect — it only re-points THIS
+  connection's own view. A registry-less construction (every pre-N3 unit test)
+  degrades byte-identically: the sentinel falls through to the generic
+  `DisplayFrame` path, where `CONTROL_FILTER_KINDS` already drops it silently.
 - `AgUiEmitter`, on observing a `session_attached` `EventFrame` flow through
   `stream()`, re-fires the SAME reconnect protocol it uses at connect
   (`_reconnect_snapshot_chunks`: `MESSAGES_SNAPSHOT` then `STATE_SNAPSHOT`)

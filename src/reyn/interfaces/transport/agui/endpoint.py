@@ -228,7 +228,19 @@ class _SessionFrameSource:
     every existing unit test builds this class) degrades to the pre-N3
     behavior byte-identically: the sentinel falls through to the generic
     ``DisplayFrame`` path, where the emitter's ``CONTROL_FILTER_KINDS``
-    already silently drops it (a fail-safe, per ``protocol.py``)."""
+    already silently drops it (a fail-safe, per ``protocol.py``).
+
+    ★No per-client "which frames has this connection already seen"
+    bookkeeping (design constraint, #3310 issue thread — rejected as state
+    that has to be kept correct forever). The switch-follow above is
+    re-subscription only: WHICH session's ``outbox_hub``/``chat_events`` this
+    source currently reads from (:attr:`_session`, replaced wholesale on a
+    switch), plus a FRESH read of that session's live ``history`` at
+    switch-time (the emitter's ``backlog_provider``) — never a set of
+    previously-delivered frame or message ids consulted before forwarding.
+    A future change that needs to track "have I already sent X" to this
+    connection is out of scope for this mechanism; do not bolt it on here —
+    it would reintroduce exactly the state class this design avoided."""
 
     def __init__(self, session, *, registry=None, agent_name: str = "") -> None:
         self._registry = registry
@@ -316,11 +328,24 @@ class _SessionFrameSource:
                     old_session = self._session
                     self._unbind(old_session)
                     sub.close()
-                    self._bind(target)
-                    # Barrier: the SAME session_attached vocabulary #3310 N1
-                    # emits at the registry seam — this connection's own
-                    # independent equivalent, since registry.repl_outbox
-                    # never reaches a remote surface.
+                    # ★Barrier ordering (co-vet #3310 N3 (a)): the announce
+                    # is enqueued BEFORE ``_bind(target)`` makes the new
+                    # session's chat-event subscriber live. ``_bind`` calls
+                    # ``add_subscriber`` synchronously, and ``_on_chat_event``
+                    # is itself synchronous (``_q.put_nowait`` — no await),
+                    # so a chat-event the new session emits CANNOT reach
+                    # ``_q`` before its subscriber exists. Emitting the
+                    # announce first, THEN subscribing, therefore makes
+                    # "barrier before any of the new session's own frames"
+                    # hold BY CONSTRUCTION regardless of whether an ``await``
+                    # is ever later introduced between the two steps — not
+                    # merely true today because there happens to be none
+                    # (the SAME barrier property N1 built for
+                    # ``AgentRegistry.attach``/``attach_session``, applied
+                    # here to the ORDER of two synchronous calls rather than
+                    # a flip + a queue put). The announce payload depends
+                    # only on ``self._agent_name``/``msg.text``, never on
+                    # ``_bind``'s result, so reordering is free.
                     self._q.put_nowait(
                         EventFrame(
                             Event(
@@ -329,6 +354,7 @@ class _SessionFrameSource:
                             )
                         )
                     )
+                    self._bind(target)
                     return True
                 continue  # registry-less / unknown / no-op sid: drop silently
             self._q.put_nowait(DisplayFrame(msg))
