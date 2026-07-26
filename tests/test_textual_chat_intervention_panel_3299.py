@@ -676,13 +676,20 @@ async def test_second_enter_after_answering_does_not_deliver_to_unread_second() 
     (a) onto the tab-ified structure (#3308 co-vet correction: the interim
     MECHANISM is retired, this PROPERTY is not).
 
-    NON-VACUITY (falsification): if ``InterventionPanel.mark_answered``
-    stopped disabling the tab's ``RadioSet`` (reverting the
-    ``control.disabled = True`` loop), the second bare ``Enter`` would still
-    land on the same (still-enabled, still-selected) RadioSet and could
-    re-post a ``Changed``/toggle — verified locally that stripping the
-    disable loop flips ``transport.answered_choice`` to length 2 instead of
-    staying at 1."""
+    NON-VACUITY (falsification, verified locally): the disable loop itself is
+    independently witnessed by
+    ``test_answered_tab_stays_visible_until_all_resolve``'s focus-refusal
+    probe, not by THIS test's keyboard replay — after answering,
+    ``mark_answered`` also moves focus onto the panel's ``Tabs`` bar
+    (:meth:`InterventionPanel.mark_answered`'s docstring), so a keyboard-only
+    Down+Enter probe here lands on the Tabs bar, not the (still technically
+    reachable-by-direct-``.focus()``) RadioSet — stripping ``disabled = True``
+    alone does NOT flip this specific test RED (confirmed by trial: the focus
+    re-anchor already blocks the keyboard path on its own). What THIS test
+    demonstrates instead is the observable end-to-end behavior a user
+    actually experiences: neither a repeat bare ``Enter`` (RadioSet doesn't
+    re-post ``Changed`` for re-toggling an already-selected button — true
+    regardless of ``disabled``) nor Down+Enter re-delivers after resolving."""
     transport = RecordingTransport(
         [_choice_intervention(), _second_choice_intervention()], end=False
     )
@@ -713,13 +720,36 @@ async def test_second_enter_after_answering_does_not_deliver_to_unread_second() 
             "the second (still-pending) intervention must remain unanswered"
         )
 
+        # Stronger probe: navigate WITHIN the answered tab (Down then Enter,
+        # picking a DIFFERENT option) — this is what the disabled form must
+        # actually block (the bare-Enter-alone case above is a no-op even
+        # without disabling, since RadioSet itself doesn't re-fire ``Changed``
+        # for re-toggling the SAME already-selected button).
+        await pilot.press("down")
+        await pilot.press("enter")
+        await pilot.pause()
+        await pilot.pause()
+
+        assert transport.answered_choice == ["yes"], (
+            "navigating within the answered (disabled) tab still delivered — "
+            f"got {transport.answered_choice}"
+        )
+
 
 @pytest.mark.asyncio
 async def test_new_pending_intervention_does_not_steal_the_active_tab() -> None:
     """Tier 2b: ★AC2 — with the panel already showing the FIRST intervention,
     a SECOND arriving does not move the active tab; the first stays active
     and answerable by a bare Enter. Migrates the retired P2 F1-interim test's
-    coverage of "the second intervention's entry must not be touched"."""
+    coverage of "the second intervention's entry must not be touched".
+
+    NON-VACUITY (falsification, verified locally): temporarily adding
+    ``self.call_after_refresh(lambda: setattr(tabs, "active", pane_id))``
+    at the end of ``InterventionPanel.add_pending`` (force-stealing the
+    active tab on every arrival, deferred past the new pane's own mount so
+    the force actually takes effect) flips the assertion below RED — the
+    active pane becomes the SECOND ("Overwrite existing file?") instead of
+    staying on the first ("...hosts?")."""
     transport = RecordingTransport(
         [_choice_intervention(), _second_choice_intervention()], end=False
     )
@@ -754,7 +784,12 @@ async def test_out_of_order_answer_targets_the_selected_tab_by_id() -> None:
     """Tier 2b: ★AC3 — with THREE interventions pending, Left/Right selects
     the THIRD tab directly and answers it; the other two stay untouched.
     Migrates the retired P2 F1-interim test's by-id witness (b) onto
-    out-of-order selection instead of FIFO re-route."""
+    out-of-order selection instead of FIFO re-route.
+
+    NON-VACUITY (falsification, verified locally): reverting
+    ``on_intervention_panel_choice_selected``'s ``intervention_id=iv_id`` to
+    ``intervention_id=None`` flips ``transport.answered_choice_ids`` to
+    ``[None]`` instead of ``["iv-3"]``."""
     transport = RecordingTransport(
         [
             _choice_intervention(),
@@ -800,8 +835,12 @@ async def test_answered_tab_stays_visible_until_all_resolve() -> None:
 
     NON-VACUITY (falsification): if ``mark_answered`` removed the pane
     (``tabs.remove_pane``) instead of disabling it in place, the ✓-labelled
-    "hosts" tab would be GONE from the tab bar entirely after answering it —
-    verified locally."""
+    "hosts" tab would be GONE from the tab bar entirely after answering it.
+    Separately, if the ``control.disabled = True`` loop were removed, the
+    ``.disabled is True`` assertion below fails directly, and the focus-
+    refusal probe (a disabled widget's ``.focus()`` is a no-op, verified
+    against the installed Textual 8.2.8) would instead succeed. Both
+    verified locally by trial-reverting each independently."""
     transport = RecordingTransport(
         [_choice_intervention(), _second_choice_intervention()], end=False
     )
@@ -824,8 +863,17 @@ async def test_answered_tab_stays_visible_until_all_resolve() -> None:
             f"the still-pending second tab is missing; got {labels!r}"
         )
         first_pane = _tabs(panel).get_pane(_pane_ids_in_order(panel)[0])
-        assert first_pane.query_one(RadioSet).disabled is True, (
-            "answered tab's form was not disabled"
+        first_radio = first_pane.query_one(RadioSet)
+        assert first_radio.disabled is True, "answered tab's form was not disabled"
+        # A disabled widget REFUSES focus outright (verified against the
+        # installed Textual 8.2.8: ``Widget.focus()`` on a ``disabled``
+        # widget is a no-op) — the strongest available falsifiable probe
+        # that the answered form is genuinely inert, independent of
+        # whatever keyboard path might otherwise reach it.
+        first_radio.focus()
+        await pilot.pause()
+        assert app.focused is not first_radio, (
+            "the answered tab's disabled RadioSet accepted focus — not inert"
         )
         assert panel.display is True, "panel collapsed with a pending intervention still unanswered"
 
@@ -846,7 +894,14 @@ async def test_prehighlight_uniform_on_initial_show_and_tab_switch() -> None:
     iv-2 too) — owner decision (A), now unconditional (#3308 retires the P2
     ``initial``/re-route distinction entirely: the active tab never moves
     except by explicit navigation, so there is no "unread re-route" case left
-    to guard against)."""
+    to guard against).
+
+    NON-VACUITY (falsification, verified locally): removing the
+    focus-follows-activation body of
+    ``InterventionPanel.on_tabbed_content_tab_activated`` (never focusing the
+    newly-active pane's RadioSet/Input) flips even the FIRST assertion below
+    RED — a bare Enter delivers nothing at all once focus never lands on any
+    form."""
     transport = RecordingTransport(
         [_choice_intervention(), _second_choice_intervention()], end=False
     )
