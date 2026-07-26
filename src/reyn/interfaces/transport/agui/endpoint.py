@@ -43,6 +43,8 @@ import uuid
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
+from reyn.core.events.events import Event
+from reyn.interfaces.inline.textual_chat.restore import project_restored_frames
 from reyn.interfaces.repl.status import _snapshot
 from reyn.interfaces.transport.agui.emitter import AgUiEmitter
 from reyn.interfaces.transport.agui.surface import (
@@ -181,38 +183,119 @@ async def _drive_fail_close(agent_name: str, manager: SurfaceManager, registry) 
         raise
 
 
+def session_backlog_frames(registry, name: str, sid: str) -> "list[Frame]":
+    """A session's scrollback, projected to the wire ``Frame`` shape (#3310 N3).
+
+    Projects through the SAME restore projection (resolved-only,
+    tool-coalesced) local restore-on-restart uses (#3273 Phase 5) — one shared
+    SSoT, not a second display-shaping implementation. ``session.history`` is
+    the in-memory ``ChatMessage`` log ``load_history()`` populated from
+    ``history.jsonl`` at session construction — authoritative-at-read, not
+    WAL-derived (see ``restore.py``'s own recovery-gate note). Used both as
+    this endpoint's ``AgUiEmitter`` backlog-provider (a switch re-fire) and
+    directly by tests to build the "what a local hydrate would show" oracle.
+    """
+    target = registry.get_session(name, sid)
+    if target is None:
+        return []
+    history = list(getattr(target, "history", []) or [])
+    return [DisplayFrame(m) for m in project_restored_frames(history)]
+
+
 class _SessionFrameSource:
     """Per-connection unified frame stream off a session (server analogue of
     :class:`InProcessTransport`): fan out ``session.outbox`` as DisplayFrames and
     the renderer-relevant ``session.chat_events`` subset as EventFrames onto one
-    ordered queue."""
+    ordered queue.
 
-    def __init__(self, session) -> None:
-        self._session = session
+    **Session-switch follow (#3310 N3).** This source is bound to ONE session
+    object at construction, but a remote client can switch which of the
+    agent's sessions it is viewing (``/session switch <sid>``, the same
+    ``__session_switch_request__`` sentinel ``registry._forwarder`` consumes
+    for the local REPL — see ``interfaces/slash/session.py``). This source
+    ALSO sees that sentinel (it fans out off ``session.outbox_hub``, the same
+    hub the registry forwarder subscribes to) and, when ``registry`` +
+    ``agent_name`` are supplied, reacts to it independently: it re-points
+    itself at the target session (:meth:`_peek_session`'s public counterpart,
+    ``registry.get_session``) and synthesizes the SAME ``session_attached``
+    chat-event #3310 N1 emits on ``repl_outbox`` — the barrier the emitter
+    (``AgUiEmitter``) uses to re-fire the reconnect protocol for the new
+    session (its ``backlog_provider``). This is a PARALLEL, independent
+    reaction to a message the registry's own forwarder already handles for
+    the local REPL — it never calls ``registry.attach_session`` itself, so it
+    cannot race or double-apply that side effect; it only re-points THIS
+    connection's own view. A registry-less / agent_name-less construction (as
+    every existing unit test builds this class) degrades to the pre-N3
+    behavior byte-identically: the sentinel falls through to the generic
+    ``DisplayFrame`` path, where the emitter's ``CONTROL_FILTER_KINDS``
+    already silently drops it (a fail-safe, per ``protocol.py``).
+
+    ★No per-client "which frames has this connection already seen"
+    bookkeeping (design constraint, #3310 issue thread — rejected as state
+    that has to be kept correct forever). The switch-follow above is
+    re-subscription only: WHICH session's ``outbox_hub``/``chat_events`` this
+    source currently reads from (:attr:`_session`, replaced wholesale on a
+    switch), plus a FRESH read of that session's live ``history`` at
+    switch-time (the emitter's ``backlog_provider``) — never a set of
+    previously-delivered frame or message ids consulted before forwarding.
+    A future change that needs to track "have I already sent X" to this
+    connection is out of scope for this mechanism; do not bolt it on here —
+    it would reintroduce exactly the state class this design avoided."""
+
+    def __init__(self, session, *, registry=None, agent_name: str = "") -> None:
+        self._registry = registry
+        self._agent_name = agent_name
         self._q: "asyncio.Queue[Frame]" = asyncio.Queue()
         self._forward = renderer_chat_events()
+        self._drain_task: "asyncio.Task | None" = None
+        self._sub = None
+        self._session = None
+        self._events = None
+        self._bind(session)
+
+    def _bind(self, session) -> None:
+        """Point this source at ``session``'s own chat-event stream (the
+        outbox-hub subscription is (re)established per drain iteration,
+        see :meth:`_drain_outbox`)."""
+        self._session = session
         self._events = getattr(session, "chat_events", None) or getattr(
             session, "_chat_events", None
         )
-        self._drain_task: "asyncio.Task | None" = None
-        self._sub = None
+        if self._events is not None:
+            self._events.add_subscriber(self._on_chat_event)
+
+    def _unbind(self, session) -> None:
+        events = getattr(session, "chat_events", None) or getattr(
+            session, "_chat_events", None
+        )
+        if events is not None:
+            events.remove_subscriber(self._on_chat_event)
 
     def _on_chat_event(self, event) -> None:
         if getattr(event, "type", None) in self._forward:
             self._q.put_nowait(EventFrame(event))
 
     def start(self) -> None:
-        if self._events is not None:
-            self._events.add_subscriber(self._on_chat_event)
         self._drain_task = asyncio.create_task(self._drain_outbox())
 
     def close(self) -> None:
-        if self._events is not None:
-            self._events.remove_subscriber(self._on_chat_event)
+        self._unbind(self._session)
         if self._sub is not None:
             self._sub.close()
         if self._drain_task is not None:
             self._drain_task.cancel()
+
+    def _resolve_switch_target(self, sid: str):
+        """The target session for a ``__session_switch_request__`` sentinel,
+        or ``None`` when this source is registry-less (pre-N3 degrade), the
+        sid names no loaded session, or the sid is already the current one
+        (a no-op switch)."""
+        if self._registry is None or not sid:
+            return None
+        target = self._registry.get_session(self._agent_name, sid)
+        if target is None or target is self._session:
+            return None
+        return target
 
     async def _drain_outbox(self) -> None:
         # ADR-0039 P6b: subscribe to the session's outbox *hub* (a bounded
@@ -222,15 +305,61 @@ class _SessionFrameSource:
         # resolved by the hub's single-drain fan-out). A stuck SSE reader is
         # disconnect-slow'd by the hub — ``get()`` then returns ``None`` and we
         # end this surface's stream with a synthetic terminal frame.
-        self._sub = self._session.outbox_hub.subscribe(maxsize=DEFAULT_SURFACE_MAXSIZE)
+        #
+        # #3310 N3: the outer loop re-subscribes to a NEW session's hub after
+        # a switch (the inner loop returns ``True``); a genuine end/disconnect
+        # returns ``False`` and this task exits.
         while True:
-            msg = await self._sub.get()
+            self._sub = self._session.outbox_hub.subscribe(maxsize=DEFAULT_SURFACE_MAXSIZE)
+            switched = await self._drain_one_session()
+            if not switched:
+                return
+
+    async def _drain_one_session(self) -> bool:
+        sub = self._sub
+        while True:
+            msg = await sub.get()
             if msg is None:
                 self._q.put_nowait(DisplayFrame(OutboxMessage(kind="__end__", text="")))
-                return
+                return False
+            if msg.kind == "__session_switch_request__":
+                target = self._resolve_switch_target(msg.text)
+                if target is not None:
+                    old_session = self._session
+                    self._unbind(old_session)
+                    sub.close()
+                    # ★Barrier ordering (co-vet #3310 N3 (a)): the announce
+                    # is enqueued BEFORE ``_bind(target)`` makes the new
+                    # session's chat-event subscriber live. ``_bind`` calls
+                    # ``add_subscriber`` synchronously, and ``_on_chat_event``
+                    # is itself synchronous (``_q.put_nowait`` — no await),
+                    # so a chat-event the new session emits CANNOT reach
+                    # ``_q`` before its subscriber exists. Emitting the
+                    # announce first, THEN subscribing, therefore makes
+                    # "barrier before any of the new session's own frames"
+                    # hold BY CONSTRUCTION regardless of whether an ``await``
+                    # is ever later introduced between the two steps — not
+                    # merely true today because there happens to be none
+                    # (the SAME barrier property N1 built for
+                    # ``AgentRegistry.attach``/``attach_session``, applied
+                    # here to the ORDER of two synchronous calls rather than
+                    # a flip + a queue put). The announce payload depends
+                    # only on ``self._agent_name``/``msg.text``, never on
+                    # ``_bind``'s result, so reordering is free.
+                    self._q.put_nowait(
+                        EventFrame(
+                            Event(
+                                type="session_attached",
+                                data={"agent": self._agent_name, "session_id": msg.text},
+                            )
+                        )
+                    )
+                    self._bind(target)
+                    return True
+                continue  # registry-less / unknown / no-op sid: drop silently
             self._q.put_nowait(DisplayFrame(msg))
             if msg.kind == "__end__":
-                return
+                return False
 
     async def frames(self):
         while True:
@@ -277,13 +406,18 @@ async def agui_events(request: Request, agent_name: str):
     )
     _ensure_fail_close_driver(agent_name, manager, registry)
 
-    source = _SessionFrameSource(session)
+    source = _SessionFrameSource(session, registry=registry, agent_name=agent_name)
     source.start()
 
     def _status_provider():
         return _snapshot(registry)
 
-    emitter = AgUiEmitter(source.frames(), _status_provider)
+    def _backlog_provider(name: str, sid: str) -> "list[Frame]":
+        return session_backlog_frames(registry, name, sid)
+
+    emitter = AgUiEmitter(
+        source.frames(), _status_provider, backlog_provider=_backlog_provider
+    )
 
     async def gen():
         try:
@@ -487,4 +621,5 @@ __all__ = [
     "router",
     "authenticate_request",
     "AGUI_OPERATOR_CHANNEL",
+    "session_backlog_frames",
 ]
