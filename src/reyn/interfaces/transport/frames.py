@@ -61,9 +61,11 @@ _TURN_AND_ANSWER_EVENTS = frozenset(
         "user_answered_intervention",
         # #3300 P1 (C): the user-line echo, driven by an event instead of a
         # parallel outbox write (session.submit_user_text). Carries raw text +
-        # chain_id + _msg_id + attribution meta; each surface's
+        # chain_id + msg_id + attribution meta; each surface's
         # event→display handler neutralizes at render time (see
         # ``reyn.interfaces.repl.renderer.user_submitted_display_message``).
+        # #3300 P2a: also carries `seq` (the sent-queue order-race-gate
+        # token, see ``Session._bump_queue_seq``).
         "user_submitted",
     }
 )

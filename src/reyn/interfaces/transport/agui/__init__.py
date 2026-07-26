@@ -45,6 +45,7 @@ from reyn.interfaces.transport.agui.protocol import (
     to_sse,
 )
 from reyn.interfaces.transport.agui.state import (
+    RemoteQueueView,
     RemoteStatusView,
     StatusModel,
     project_status,
@@ -75,6 +76,7 @@ __all__ = [
     "intervention_tool_name",
     "parse_sse_blocks",
     "to_sse",
+    "RemoteQueueView",
     "RemoteStatusView",
     "StatusModel",
     "project_status",

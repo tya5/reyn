@@ -275,9 +275,19 @@ state, and only the render-relevant subset is streamed.
 
 - `STATE_SNAPSHOT` — emitted **on connect**, the full read-model. Fields:
   `attached_name`, `model`, `cost_agent`, `cost_total`, `agent_tokens`,
-  `ctx_used`, `ctx_window`, `waiting_on`.
+  `ctx_used`, `ctx_window`, `waiting_on`, `queue`, `turn_active`.
 - `STATE_DELTA` — emitted **on change**, carrying only the changed keys. An idle
   stream emits no deltas.
+
+`queue` and `turn_active` (#3300 P2a) publish the server-authoritative
+**sent-queue state**: `queue` is the current undispatched inbox queue (each
+item `{msg_id, chain_id, text}` — `Session.queued_user_messages()`), and
+`turn_active` is whether a turn is currently dispatched
+(`Session.turn_active`). Riding the same snapshot+delta channel makes a client
+**late-joiner-safe**: connecting mid-turn (having missed the `turn_started`
+chat-event that dispatched the in-flight item) still gets the correct queue +
+turn-active state from the snapshot, not a partial event-derived guess. P2a
+publishes this state only — rendering it as a sent-queue widget is P2b.
 
 The client seeds its status view from the snapshot and merges each delta, so the
 remote status panel always reflects the server's values.
@@ -351,7 +361,7 @@ is the event's data object.
 | Custom `name`                        | Meaning                                          |
 |--------------------------------------|--------------------------------------------------|
 | `reyn.event.user_answered_intervention` | the user answered an intervention             |
-| `reyn.event.user_submitted`          | a user turn was submitted (#3300 P1 C) — RAW text + chain_id + _msg_id + meta; each surface neutralizes at its render boundary |
+| `reyn.event.user_submitted`          | a user turn was submitted (#3300 P1 C) — RAW text + chain_id + msg_id + seq + meta; each surface neutralizes at its render boundary. `msg_id`/`seq` are the #3300 P2a sent-queue correlation id + order-race-gate token |
 
 ### `reyn.intervention.<kind>`
 

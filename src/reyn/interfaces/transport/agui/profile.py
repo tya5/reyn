@@ -133,9 +133,10 @@ CUSTOM_PROFILE: dict[str, CustomName] = _entries(
     CustomName(
         "reyn.event.user_submitted", EVENT_NS, "the event data object",
         "a user turn was submitted (#3300 P1 C) — carries the RAW text + "
-        "chain_id + _msg_id + meta; each surface's event→display handler "
+        "chain_id + msg_id + seq + meta; each surface's event→display handler "
         "renders the echo and neutralizes at that render boundary "
-        "(replaces the earlier kind=\"user\" outbox-echo write)",
+        "(replaces the earlier kind=\"user\" outbox-echo write); msg_id/seq "
+        "are the #3300 P2a sent-queue correlation id + order-race-gate token",
     ),
 )
 
