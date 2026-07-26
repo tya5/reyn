@@ -1796,9 +1796,21 @@ async def recorded_acompletion(
             # Defensive: the callee did not honor stream=True (returned an
             # already-complete response synchronously instead of an async
             # chunk iterator) — accept it as the final response rather than
-            # crashing. Real litellm always returns an async-iterable
-            # (CustomStreamWrapper) here; this only fires against a
-            # non-compliant transport, never against production litellm.
+            # crashing. Real litellm ALWAYS returns an async-iterable
+            # (CustomStreamWrapper) here, so this never fires against
+            # production litellm — but it DOES fire routinely in this
+            # repo's own tests: many pre-③a test doubles stub
+            # ``litellm.acompletion`` with a plain async function that
+            # returns a flat response regardless of the ``stream`` kwarg
+            # (they never had to branch on it before ③a, since streaming
+            # was previously hardcoded off). Such a test silently exercises
+            # this fallback (whole-collect), NOT the streaming
+            # reconstruction path below, even though the call requested
+            # ``stream=True`` — a test that wants to prove IT specifically
+            # exercised the streaming reconstruction must witness real
+            # chunk consumption (e.g. a counter incremented while iterating
+            # the async generator), not just that ``stream=True`` was
+            # passed in the call kwargs.
             return chunk_stream
         chunks = [chunk async for chunk in chunk_stream]
         reconstructed = litellm.stream_chunk_builder(chunks, messages=msgs)

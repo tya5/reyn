@@ -269,23 +269,33 @@ class LLMReplay:
             elif not (message.tool_calls or []):
                 yield _chunk(Delta(role="assistant"))
 
-            for tc in (message.tool_calls or []):
+            # #3288 co-vet BLOCK fix: each PARALLEL tool_call gets its OWN
+            # ``index`` (enumerate), not a shared ``index=0``.
+            # ``stream_chunk_builder`` accumulates tool_call deltas PER
+            # INDEX — every chunk claiming index=0 makes it merge N parallel
+            # tool calls into ONE (arguments concatenated into invalid JSON,
+            # silently — no exception). reyn does emit parallel tool calls,
+            # so this must round-trip them distinctly, matching the index a
+            # real provider stream assigns per parallel call.
+            for tc_index, tc in enumerate(message.tool_calls or []):
                 args = tc.function.arguments or ""
                 mid = len(args) // 2
                 if mid > 0:
                     yield _chunk(Delta(tool_calls=[
                         ChatCompletionDeltaToolCall(
-                            id=tc.id, index=0, type="function",
+                            id=tc.id, index=tc_index, type="function",
                             function=Function(name=tc.function.name, arguments=args[:mid]),
                         ),
                     ]))
                     yield _chunk(Delta(tool_calls=[
-                        ChatCompletionDeltaToolCall(index=0, function=Function(arguments=args[mid:])),
+                        ChatCompletionDeltaToolCall(
+                            index=tc_index, function=Function(arguments=args[mid:]),
+                        ),
                     ]))
                 else:
                     yield _chunk(Delta(tool_calls=[
                         ChatCompletionDeltaToolCall(
-                            id=tc.id, index=0, type="function",
+                            id=tc.id, index=tc_index, type="function",
                             function=Function(name=tc.function.name, arguments=args),
                         ),
                     ]))

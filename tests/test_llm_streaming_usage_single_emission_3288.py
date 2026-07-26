@@ -39,41 +39,62 @@ class _Recorder:
         self.calls.append(kw)
 
 
-async def _fake_streaming_acompletion(model: str, messages: list, **kw: Any) -> Any:
-    """A real, scripted stand-in for litellm.acompletion's stream=True
-    contract: FIVE chunks, usage attached only to the terminal one — the
-    shape a real provider stream arrives in (usage is a terminal-chunk or
-    cross-chunk phenomenon, never available per-chunk up front)."""
-    assert kw.get("stream") is True, "this fixture only models the streaming call shape"
+def _make_fake_streaming_acompletion(chunk_witness: "list[int] | None" = None):
+    """Factory for a real, scripted stand-in for litellm.acompletion's
+    stream=True contract: FIVE chunks, usage attached only to the terminal
+    one — the shape a real provider stream arrives in (usage is a
+    terminal-chunk or cross-chunk phenomenon, never available per-chunk up
+    front). ``chunk_witness`` (optional): incremented for each chunk
+    actually pulled off the generator — proves the test exercised the real
+    per-chunk streaming loop, not the non-aiter-able defensive fallback (see
+    ``_stream_and_reconstruct``'s docstring)."""
+    async def _fake_streaming_acompletion(model: str, messages: list, **kw: Any) -> Any:
+        assert kw.get("stream") is True, "this fixture only models the streaming call shape"
 
-    def _chunk(delta: Delta, finish_reason: str | None = None) -> ModelResponseStream:
-        return ModelResponseStream(
-            id="resp-1", created=1, model=model, object="chat.completion.chunk",
-            choices=[StreamingChoices(index=0, delta=delta, finish_reason=finish_reason)],
-        )
+        def _chunk(delta: Delta, finish_reason: str | None = None) -> ModelResponseStream:
+            return ModelResponseStream(
+                id="resp-1", created=1, model=model, object="chat.completion.chunk",
+                choices=[StreamingChoices(index=0, delta=delta, finish_reason=finish_reason)],
+            )
 
-    async def _gen():
-        yield _chunk(Delta(role="assistant", content="Hel"))
-        yield _chunk(Delta(content="lo "))
-        yield _chunk(Delta(content="there"))
-        last = _chunk(Delta(), finish_reason="stop")
-        last.usage = Usage(prompt_tokens=20, completion_tokens=8, total_tokens=28)
-        yield last
+        async def _gen():
+            last = _chunk(Delta(), finish_reason="stop")
+            last.usage = Usage(prompt_tokens=20, completion_tokens=8, total_tokens=28)
+            pieces = [
+                _chunk(Delta(role="assistant", content="Hel")),
+                _chunk(Delta(content="lo ")),
+                _chunk(Delta(content="there")),
+                last,
+            ]
+            for piece in pieces:
+                if chunk_witness is not None:
+                    chunk_witness.append(1)
+                yield piece
 
-    return _gen()
+        return _gen()
+
+    return _fake_streaming_acompletion
 
 
 def test_usage_recorded_exactly_once_when_streamed(monkeypatch) -> None:
     """Tier 2: record_llm fires exactly once per recorded_acompletion call,
     even though usage arrived split across streamed chunks (summed inside
     the chokepoint, not per-chunk)."""
-    monkeypatch.setattr(litellm, "acompletion", _fake_streaming_acompletion)
+    chunk_witness: list[int] = []
+    monkeypatch.setattr(litellm, "acompletion", _make_fake_streaming_acompletion(chunk_witness))
 
     rec = _Recorder()
     response = asyncio.run(recorded_acompletion(
         model="gpt-4o-mini", messages=[{"role": "user", "content": "hi"}],
         purpose="main", recorder=rec, agent="a1",
     ))
+    # Witness: all 4 scripted chunks were actually consumed — the usage
+    # summation this test pins genuinely ran across chunks, not via the
+    # fallback silently accepting a single flat response.
+    assert chunk_witness == [1, 1, 1, 1], (
+        f"expected all 4 scripted chunks consumed, got {len(chunk_witness)} — "
+        "this must exercise the real streaming loop, not the fallback."
+    )
 
     # ★ the gate: exactly ONE record_llm call tagged "main", not N (one per
     # chunk, which would show up as multiple "main" entries) and not zero
