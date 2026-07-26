@@ -450,13 +450,21 @@ async def agui_submit(request: Request, agent_name: str):
             # `user_submitted` chat-event (#3300 P1 C) that every attached
             # surface's event→display handler renders as this client's turn,
             # not just the agent's reply.
-            await session.submit_user_text(
+            msg_id = await session.submit_user_text(
                 text,
                 attribution={
                     "auth_user_id": identity.user_id,
                     "auth_connection_id": connection_id,
                 },
             )
+            # #3287: echo the assigned msg_id back to the SUBMITTING client —
+            # the SAME correlation id the broadcast user_submitted event above
+            # carries — so it can recognise its own echo BY ID (never a
+            # same-text match, which a second client submitting an identical
+            # line would defeat) and skip re-rendering a line its own input
+            # surface already showed. See `AgUiTransport.submit_user_text` /
+            # `remote_client.py`'s `send`.
+            return JSONResponse({"status": "ok", "msg_id": msg_id})
     elif ptype == "cancel_inflight":
         cancel_fn = getattr(session, "cancel_inflight", None)
         if callable(cancel_fn):

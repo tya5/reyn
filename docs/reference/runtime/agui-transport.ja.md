@@ -19,7 +19,11 @@ Reyn のチャットクライアントはストリームを消費する UI で�
   `event: <TYPE>\ndata: <json>\n\n` である。
 - `POST /agui/chat/{agent}` — client→server のチャンネル。Body は JSON object で、サポート
   されるメッセージ type は以下の通り:
-  - `{"type": "user_message", "text": "..."}` — ターンを submit する。
+  - `{"type": "user_message", "text": "..."}` — ターンを submit する。レスポンス body は
+    `{"status": "ok", "msg_id": "..."}`(#3287)——broadcast される
+    `reyn.event.user_submitted` が運ぶのと同じ correlation id であり、送信した
+    クライアント自身がこの id で自分の echo を認識できる(下記「Local ≡ remote は
+    input についても」参照)。
   - `{"type": "TOOL_CALL_RESULT", "toolCallId": "<intervention-id>", "text": "..."}` または
     `{..., "choiceId": "<id>"}` — pending 中の intervention に回答する(HITL の round-trip;
     下記「Human-in-the-loop answering」参照)。
@@ -395,13 +399,72 @@ TUI の選択肢リージョン・A2A peer・上記の AG-UI HITL round-trip と
 書き込むのは category error だったため)。この event は同一の統一 frame stream に
 `EventFrame` として乗る(`_TURN_AND_ANSWER_EVENTS`、`transport/frames.py`)——
 encode/decode は汎用的(`transport/agui/protocol.py`)なので、新しい event type のために
-wire 側の変更は不要だった。いずれの経路でも、アタッチしているすべての surface の
+wire 側の変更は不要だった。アタッチしているすべての surface の
 event→display handler(`ConsoleChatRenderer.on_chat_event` /
 `InlineChatRenderer.on_chat_event` / `TextualChatApp._pump_frames`)がその行を描画し、
-その render 境界で neutralize する(`renderer.user_submitted_display_message`)。送信した
-クライアント自身も(別のローカルエコーではなく)同じ event から自分の行を描画する —
-2 クライアント以上がアタッチしていれば、全員がすべてのターンとすべての回答を見られる。
-agent からの返信だけではない。
+その render 境界で neutralize する(`renderer.user_submitted_display_message`)——
+**ただし自分の端末がすでにそれを表示していたクライアントを除く。** plain な
+PromptSession ループ(`--cui` / `chat.render_mode: plain` / non-TTY、
+`stream_client.py`)では、対話的な TTY の `prompt_session.prompt_async` が Enter を
+押した瞬間にその行を画面に残す——それ自体がすでに echo である。同じ送信から発生する
+broadcast の `user_submitted` event で再度描画すると、LLM round-trip を伴うすべての
+ターンで自分の行が二重に表示されてしまっていた(#3287。`/quit` は
+`submit_user_text` に到達しないため二重化しない——バグ報告が指摘した非対称性その
+もの)。修正は「デフォルトで抑制する」ではなく「所有権をはっきりさせる」こと、
+そして transport の形ごとに**異なる 2 つの correlation 機構**を使う——どちらも
+テキストではない:
+
+- **ローカル(`InProcessTransport`)**: `route_input_line` は自身の
+  `transport.submit_user_text` 呼び出しが**返す** `msg_id`(`user_submitted` の
+  `msg_id` フィールドが運ぶのと同じ correlation id、#3300 P2a)を小さな set
+  (`own_submissions`、クライアントの input/output ループのペアごとに保持し、
+  他クライアントとは共有しない)に記録し、`run_output_loop` は `user_submitted`
+  event の `msg_id` がこの set 内のエントリと一致したときだけ再描画をスキップ
+  する。`ClientTransport.submit_user_text` はそのため割り当てられた `msg_id`
+  を返す(以前は `None` だった)——`InProcessTransport` は
+  `Session.submit_user_text` 自身の戻り値をそのまま返す(同一タスク内なので
+  race フリー: chat-event の emit から呼び出し元へ id が届くまでの間に何も
+  yield しない)。
+- **リモート(`AgUiTransport`)**: 代わりに broadcast event の
+  `meta.auth_connection_id` を、クライアント自身の `connection_id` と比較する
+  (`remote_client.py` が起動時、submit よりも**前に** `uuid.uuid4()` で生成し、
+  すべての POST に載せる id。AG-UI エンドポイントの `user_message` ハンドラは
+  既にすべての submit にこの id を attribution として付与している——#3300 が
+  マルチクライアント表示のために用意した既存の配線、`endpoint.py` →
+  `session.py` の `meta` → broadcast event、という wire 形状は変わっていない)。
+  この id は事前に分かっており、**他のどのチャンネルにも依存しない**——詳細は
+  下記「race を狭めるのではなく閉じる」を参照。
+
+いずれの機構でも、他のすべてのアタッチ済みクライアントのターン(および
+non-interactive で何も echo していない場合の自分自身のターン)は今までどおり
+描画される。2 クライアント以上がアタッチしていても、互いに相手のすべてのターンと
+すべての回答は今までどおり見える——agent からの返信だけではない。変わるのは、
+各クライアントが自分自身の行を二重に描画しなくなる点だけである。
+
+相関は**テキストではなく identity**で行う——初期版はテキストで一致させており、
+レビューで指摘された(#3309 の co-vet finding F1)。2 つのアタッチ済みクライアント
+が同一の短い文字列(例えば両方とも "yes" と回答する)を送信すると、テキスト
+一致ではクロスマッチしてしまう——他方のクライアントのターンを誤って抑制し、
+その一方で自分自身のターンが後で二重に描画される、という形でバグが別の入口から
+再発する。`msg_id`(#3300 P2a)と `auth_connection_id`(#3300、マルチクライアント
+attribution)はどちらも**まさに identity フィールドとして**追加されたもの
+(コンテンツから form-sniff したものでは決してない)なので、テキストが同一でも
+2 つの異なる submission が衝突することはない。
+
+**race を狭めるのではなく閉じる(#3309 の co-vet finding F2)**: 初期版は
+remote 経路でも `msg_id` を使い、POST レスポンス body から読み取っていた——だが
+この id は POST が返って初めて見えるようになる一方、server は同じ submission
+の SSE broadcast を独立した events 接続経由で、その間にすでに push している
+可能性がある——2 つのチャンネル間の network 到達順序に起因する race である。
+レビュアーが指摘した通り、これは不要だった: `meta.auth_connection_id` は
+クライアント自身の identity であり、submit が起きる**前から**分かっている——
+これで一致させれば、解決すべき第 2 のチャンネルはそもそも存在せず、race を
+「許容された残存事項として文書化する」のではなく構造的に閉じられる。`msg_id`
+は remote 経路でも別の理由で load-bearing であり続ける——#3300 Y-client
+(cancel-by-id)は transport に関わらずクライアントが自分の message id を
+知る必要があるため、`AgUiTransport.submit_user_text` は引き続きそれを返す。
+ただ remote の echo-suppression がそれで相関を取ることはもうない、という
+だけである。
 
 ## AG-UI event coverage — 数字を正直に読む
 

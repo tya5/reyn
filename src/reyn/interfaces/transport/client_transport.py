@@ -49,8 +49,34 @@ class ClientTransport(ABC):
         """Yield the unified, ordered, tagged frame stream (display + event)."""
 
     @abstractmethod
-    async def submit_user_text(self, text: str) -> None:
-        """Submit a user turn (the ordinary new-turn path)."""
+    async def submit_user_text(self, text: str) -> str:
+        """Submit a user turn (the ordinary new-turn path).
+
+        Returns the server-assigned ``msg_id`` — the SAME correlation id the
+        broadcast ``user_submitted`` chat-event carries (#3300 P2a). Two
+        independent things read it (#3287/#3309):
+
+        - the LOCAL (in-process) plain-loop client, whose own terminal already
+          rendered this line (``prompt_session.prompt_async``'s echo) and uses
+          this id to recognise its own broadcast event and skip re-rendering
+          it — never by a same-text match, which would false-positive against
+          a different client's identical-text submission (co-vet finding F1
+          on #3309);
+        - #3300 Y-client (cancel-by-id), which needs the client to learn its
+          own message id at all, regardless of transport.
+
+        The REMOTE (AG-UI) client does NOT use this id for its own echo
+        suppression — the id only becomes available once this call returns,
+        racing the SSE broadcast for the same submission over the independent
+        events connection (F2); it instead matches ``meta.auth_connection_id``
+        on the broadcast event against its own ``connection_id`` (known
+        up-front, no cross-channel race — see ``client_driver.run_chat_client``
+        / ``stream_client.run_output_loop``).
+
+        An implementation with no attached session (nothing was actually
+        submitted) returns ``""`` — never ``None`` — so a caller can treat "no
+        id" uniformly with a plain falsy/membership check.
+        """
 
     @abstractmethod
     async def answer_intervention_text(

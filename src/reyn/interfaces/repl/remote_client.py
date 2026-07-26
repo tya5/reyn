@@ -129,17 +129,41 @@ async def run_remote_repl(
         # refreshes it for every accepted POST, not just ``type: heartbeat``).
         last_send = [0.0]
 
-        async def send(payload: dict) -> bool:
-            """POST one client→server message; True iff the server accepted it
-            (2xx). A rejected HITL answer (403/409) returns False so the client
-            falls back to an ordinary turn instead of silently dropping input."""
+        async def send(payload: dict) -> "dict | None":
+            """POST one client→server message; the parsed JSON response body on
+            a 2xx accept (always a truthy dict, even if the body itself parsed
+            empty — see below), ``None`` if the server rejected it (403/409/…)
+            or the POST itself failed. A rejected HITL answer therefore still
+            reads as falsy exactly like the old bool contract (``if accepted:``
+            / ``bool(accepted)`` at every existing call site are unaffected by
+            this widened return type).
+            ``submit_user_text`` (#3287) additionally reads ``resp["msg_id"]``
+            here — the server's echo of the SAME correlation id its broadcast
+            ``user_submitted`` chat-event carries (#3300 P2a). This id is
+            NOT what closes remote own-echo suppression, though (#3309 F2):
+            it only becomes visible once this await returns, and the server
+            may already have pushed the SSE broadcast for the same submission
+            over the OTHER connection (the events stream) in the interim — a
+            cross-channel race a POST-ack-timed id cannot avoid. Remote
+            suppression instead matches on `own_connection_id`
+            (`run_chat_client`/`run_output_loop`), known up-front and
+            independent of this response entirely; `msg_id` here stays
+            load-bearing for a DIFFERENT reason — #3300 Y-client (cancel-by-id)
+            needs the client to learn its own message id, per
+            ``session.py``'s ``submit_user_text`` docstring.
+            """
             last_send[0] = time.monotonic()
             try:
                 resp = await client.post(submit_url, params=params, json=payload)
             except Exception:  # noqa: BLE001 — a transport error is a non-delivery
                 logger.warning("remote send failed for %r", payload.get("type"))
-                return False
-            return resp.status_code < 300
+                return None
+            if resp.status_code >= 300:
+                return None
+            try:
+                return resp.json()
+            except Exception:  # noqa: BLE001 — an empty/non-JSON 2xx body is still an accept
+                return {"status": "ok"}
 
         async def heartbeat() -> None:
             while True:
@@ -179,6 +203,14 @@ async def run_remote_repl(
                         agent_name=agent_name,
                         is_tty=sys.stdin.isatty(),
                         config=config,
+                        # #3287/#3309 F2: THIS client's own connection_id
+                        # (minted above, BEFORE any submit, and stamped on
+                        # every POST) — the server echoes it back into every
+                        # user_submitted broadcast's meta.auth_connection_id,
+                        # so run_output_loop can recognise "this is MY OWN
+                        # remote submission" by identity, with no dependency
+                        # on the POST-ack racing the SSE broadcast.
+                        own_connection_id=connection_id,
                     )
                 finally:
                     hb.cancel()
