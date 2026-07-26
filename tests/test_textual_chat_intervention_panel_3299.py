@@ -678,13 +678,25 @@ async def test_multi_pending_answer_targets_the_displayed_intervention_by_id() -
     THAT intervention's id, and resolving it re-routes the panel to the
     other (FIFO), which then also delivers by its own id.
 
-    NON-VACUITY (falsification): stripping ``intervention_id=`` from
-    ``TextualChatApp.on_intervention_panel_choice_selected`` /
-    ``on_intervention_panel_text_submitted`` (reverting to head-targeted-only
-    delivery) flips ``transport.answered_choice_ids`` to ``[None, None]``
-    instead of ``["iv-1", "iv-2"]`` — the exact shape a production
-    mis-delivery bug (answer routed to a stale head instead of the displayed
-    intervention) would leave behind."""
+    The re-route does NOT pre-highlight (#3299 P2 co-vet safety fix,
+    architect-agreed "safe side" call): a bare ``Enter`` right after the
+    re-route must answer NOTHING — only after the user explicitly navigates
+    (``Down``) does ``Enter`` deliver. Without this, a user's muscle-memory
+    double-``Enter`` (answer the first, reflexively press Enter again) would
+    silently confirm a DEFAULT option on the second intervention the user
+    never actually looked at — an accidental permission grant, since an
+    intervention can be a permission gate.
+
+    NON-VACUITY (falsification):
+    - stripping ``intervention_id=`` from
+      ``TextualChatApp.on_intervention_panel_choice_selected`` /
+      ``on_intervention_panel_text_submitted`` (reverting to
+      head-targeted-only delivery) flips ``transport.answered_choice_ids`` to
+      ``[None, None]`` instead of ``["iv-1", "iv-2"]``.
+    - reverting ``_show_intervention``'s ``initial=False`` on re-route back
+      to always pre-highlighting makes the bare-Enter-after-re-route
+      assertion below FAIL (it would deliver "yes" instead of nothing) —
+      verified locally."""
     transport = RecordingTransport(
         [_choice_intervention(), _second_choice_intervention()], end=False
     )
@@ -718,6 +730,27 @@ async def test_multi_pending_answer_targets_the_displayed_intervention_by_id() -
         title = panel.query_one("#iv-panel-title", Static)
         assert "Overwrite" in title.content.plain
 
+        # ★co-vet safety fix: the re-route must NOT pre-highlight — a bare
+        # Enter (the user's muscle-memory reflex right after answering the
+        # first intervention) delivers NOTHING to the second, un-requested
+        # intervention.
+        await pilot.press("enter")
+        await pilot.pause()
+        await pilot.pause()
+
+        assert transport.answered_choice == ["yes"], (
+            "a bare Enter right after the re-route must not answer the "
+            "un-requested second intervention (accidental-grant risk)"
+        )
+        entries = _iv_entries(app)
+        assert entries["iv-2"].item.meta.get("_answer_label") is None, (
+            "the second intervention must still be unanswered after a bare Enter"
+        )
+        assert panel.display is True, "panel must stay open — the bare Enter must not have resolved anything"
+
+        # Only EXPLICIT navigation (Down highlights index 0, "Yes") then
+        # Enter delivers.
+        await pilot.press("down")
         await pilot.press("enter")
         await pilot.pause()
         await pilot.pause()

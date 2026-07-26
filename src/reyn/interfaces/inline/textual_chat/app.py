@@ -174,10 +174,17 @@ class TextualChatApp(App):
     input-swap + chip-retire — see :meth:`_present_intervention`'s docstring):
     a ``kind="intervention"`` frame arriving on the pump (:meth:`_ingest_frame`)
     appends a THIN pending flow placeholder and, if the panel is idle, populates
-    + auto-focuses it — a :class:`~textual.widgets.RadioSet` (pre-highlighting
-    its FIRST option, #3299 P2 owner decision (A): a blind ``Enter`` answers it)
-    for a closed-set intervention (``meta["choices"]``), a plain
-    :class:`~textual.widgets.Input` otherwise. Selecting/submitting in the panel
+    + auto-focuses it — a :class:`~textual.widgets.RadioSet` for a closed-set
+    intervention (``meta["choices"]``), a plain :class:`~textual.widgets.Input`
+    otherwise. Only this hidden→shown transition pre-highlights the RadioSet's
+    FIRST option (#3299 P2 owner decision (A): a blind ``Enter`` answers it) —
+    the multi-pending FIFO re-route (:meth:`_resolve_pending_intervention`
+    swapping in the NEXT queued intervention while the panel stays visible)
+    does NOT pre-highlight (#3299 P2 co-vet fix, see :meth:`_show_intervention`'s
+    ``initial`` docstring: pre-highlighting an intervention the user never
+    actually looked at risks a muscle-memory second ``Enter`` confirming a
+    default option — an accidental permission grant, since an intervention can
+    be a permission gate). Selecting/submitting in the panel
     (:meth:`on_intervention_panel_choice_selected` /
     :meth:`on_intervention_panel_text_submitted`) delivers the answer through
     the UNCHANGED transport funnel (``answer_intervention_choice`` /
@@ -654,12 +661,30 @@ class TextualChatApp(App):
         key: object = iv_id if iv_id else id(entry)
         self._pending_ivs[key] = (entry, msg, iv_id)
         if self._iv_current_key is None:
-            self._show_intervention(key)
+            # The panel is IDLE — this is the hidden→shown transition, the
+            # ONLY case that pre-highlights (#3299 P2 co-vet fix, see
+            # ``_show_intervention``'s ``initial`` docstring).
+            self._show_intervention(key, initial=True)
 
-    def _show_intervention(self, key: object) -> None:
+    def _show_intervention(self, key: object, *, initial: bool) -> None:
         """Populate + auto-focus the panel with the intervention tracked under
         ``key``, marking it the CURRENTLY DISPLAYED one — the target of the
-        next answer (#3299 P2, R1 by-id delivery)."""
+        next answer (#3299 P2, R1 by-id delivery).
+
+        ``initial`` (#3299 P2 co-vet fix, architect-agreed "safe side" call):
+        whether this is the panel's hidden→shown transition (``True`` — the
+        ONLY caller is :meth:`_present_intervention` when the panel was
+        idle) or the multi-pending FIFO re-route
+        (:meth:`_resolve_pending_intervention` swapping in the next queued
+        intervention while the panel stays visible/focused, ``False``).
+        Threaded straight to ``InterventionPanel.show_choice``'s
+        ``pre_highlight`` — a re-route must NOT pre-highlight index 0: the
+        panel was already focused for a DIFFERENT intervention the user
+        actually looked at, so a muscle-memory second ``Enter`` after
+        answering that first one must not confirm a default option (often
+        "Yes"/"Allow") on the second intervention the user never requested
+        (an accidental permission grant, not a UX shortcut — deterministic on
+        the CALL SITE, not a timing heuristic)."""
         entry, msg, _iv_id = self._pending_ivs[key]
         self._iv_current_key = key
         meta = msg.meta or {}
@@ -667,7 +692,9 @@ class TextualChatApp(App):
         detail = meta.get("detail")
         choices = meta.get("choices")
         if choices:
-            self._iv_panel.show_choice(prompt=prompt, detail=detail, choices=choices)
+            self._iv_panel.show_choice(
+                prompt=prompt, detail=detail, choices=choices, pre_highlight=initial
+            )
         else:
             self._iv_panel.show_text(prompt=prompt, detail=detail)
 
@@ -708,7 +735,9 @@ class TextualChatApp(App):
             entry.set_item(replace(entry.item, meta={**meta, "_answer_label": answer_label}))
             entry.set_state(EntryState.DEFAULT)
         if self._pending_ivs:
-            self._show_intervention(next(iter(self._pending_ivs)))
+            # FIFO re-route (#3299 P2) — ``initial=False``: no pre-highlight
+            # (see ``_show_intervention``'s docstring for why).
+            self._show_intervention(next(iter(self._pending_ivs)), initial=False)
         else:
             self.query_one(Composer).focus()
 
