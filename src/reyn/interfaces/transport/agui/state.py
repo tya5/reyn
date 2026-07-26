@@ -199,6 +199,22 @@ class RemoteQueueView:
         self._last_seq = seq
         return True
 
+    def apply_inbox_cancel(self, *, msg_id: str, seq: int) -> bool:
+        """Apply a cancel-by-id delta (#3300 P3 Y-server) — removes the
+        queued item BY ITS OWN msg_id (unlike ``apply_turn_started``, which
+        matches by ``chain_id``: a cancel targets one specific queued item,
+        never a whole chain). Returns ``False`` (no-op) if the seq gate
+        rejects it as already reflected by a prior snapshot/delta — same
+        order-race protocol as ``apply_user_submitted``/``apply_turn_started``
+        (design-pass pin D): exclusive with a ``turn_started`` for the same
+        item (the server guarantees only one of the two ever fires,
+        issue #3300 owner addendum §6a), so no double-removal ambiguity."""
+        if seq <= self._last_seq:
+            return False
+        self.items.pop(msg_id, None)
+        self._last_seq = seq
+        return True
+
     def apply_turn_active(self, turn_active: bool) -> None:
         """Apply a plain turn-active flip (e.g. from a ``turn_settled``
         chat-event or a ``STATE_DELTA``'s ``turn_active`` key) — not

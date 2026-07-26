@@ -1200,6 +1200,19 @@ class Session:
         # STATE_SNAPSHOT always seeds the client's last-applied seq before any
         # delta is merged.
         self._queue_seq: int = 0
+        # #3300 P3 (Y-server): msg_ids cancelled via `cancel_queued` while still
+        # sitting in the (durable) `asyncio.Queue`, whose entry cannot be removed
+        # in place (no such API) — skip-at-consume set. `_consume_inbox`/
+        # `_drain_to_wake` discard a dequeued item whose msg_id is here instead
+        # of dispatching it. The item's snapshot.inbox entry + WAL `inbox_cancel`
+        # tombstone are recorded SYNCHRONOUSLY at cancel time (independent of
+        # this deferred physical dequeue) — see `cancel_queued` /
+        # `SnapshotJournal.cancel_inbox`. In-memory only: a crash before the
+        # dequeue leaves no stale Queue entry to skip (a fresh process starts
+        # with an empty asyncio.Queue and repopulates it from the recovered
+        # snapshot, which already excludes the cancelled item — see
+        # `restore_state`).
+        self._cancelled_msg_ids: "set[str]" = set()
         self._turn_owner_task: "asyncio.Task | None" = None  # lets await_quiescent skip its wait when called re-entrantly from the owning task
         # #2242: True only for the window between cancel_inflight() calling
         # `_turn_owner_task.cancel()` and run_one_iteration observing the
@@ -4806,11 +4819,97 @@ class Session:
             if item.get("kind") == "user"
         ]
 
-    async def _consume_inbox(self) -> tuple[str, dict]:
+    async def cancel_queued(self, msg_id: str) -> bool:
+        """#3300 P3 (Y-server): cancel-by-id for an UNDISPATCHED (queued) user
+        message — server-authoritative, WAL-durable. A DIFFERENT intent from
+        :meth:`cancel_inflight` (which stops the currently RUNNING turn) —
+        never escalated between the two.
+
+        Three owner-ratified semantics (issue #3300 architect design pass):
+
+        - **queued (undispatched) → removed.** If ``msg_id`` is still in the
+          inbox (``SnapshotJournal.cancel_inbox`` finds it in
+          ``snapshot.inbox``), it is synchronously pruned from the snapshot
+          AND a WAL ``inbox_cancel`` tombstone is recorded (★§1 below); its
+          msg_id is recorded for skip-at-consume (the physical
+          ``asyncio.Queue`` entry cannot be removed in place — no such API —
+          so it is discarded, never dispatched, whenever it is eventually
+          dequeued: see ``_consume_inbox``/``_drain_to_wake``); and an
+          ``inbox_cancel`` chat-event delta is emitted, seq-stamped like
+          ``user_submitted``/``turn_started`` (the sent-queue order-race-gate
+          token, ``_bump_queue_seq``) — the server-authoritative removal
+          signal every attached client (local + remote/agui) applies to its
+          sent-queue view.
+        - **already DISPATCHED → no-op.** If ``msg_id`` is absent from
+          ``snapshot.inbox`` (``consume_inbox`` already pruned it when the
+          turn dispatched), this returns ``False`` — a no-op. Cancelling an
+          already-running (or completed) turn is deliberately NOT escalated
+          to :meth:`cancel_inflight` — that is a distinct user intent this
+          method never invokes.
+        - **idempotent.** A second cancel of the same ``msg_id`` finds it
+          already absent (pruned by the first call) → no-op — safe for an
+          at-most-once reconnect retry (a client that is unsure whether its
+          first cancel POST landed can safely resend).
+
+        ★§1 (CLAUDE.md recovery-feature PR gate / architect design-pass
+        contract correction — the load-bearing point): the inbox is
+        snapshot-backed, not purely WAL-event-derived (``restore_all`` loads
+        ``snapshot.json`` and replays only the WAL tail above its
+        ``applied_seq``). A WAL ``inbox_cancel`` tombstone ALONE would not
+        survive truncation below this item's ``inbox_put`` event — the
+        snapshot would still hold it, resurrecting it on restore. Pruning the
+        snapshot HERE, synchronously, at cancel-record time (via
+        ``SnapshotJournal.cancel_inbox``, mirroring ``consume_inbox``'s
+        shape) is what makes cancellation survive that truncation — see
+        ``tests/test_3300_p3_cancel_by_id.py``'s truncate-falsify gate (and
+        its strip-falsify: skipping the snapshot-prune resurrects the
+        "cancelled" item post-truncation).
+
+        ★F (no-await critical section, design-pass pin F): the queued/
+        dispatched judgement, the cancelled-set record, the snapshot
+        mutation + WAL tombstone (``cancel_inbox``), and the delta emit
+        (``EventLog.emit`` — a plain synchronous call) all happen with NO
+        real ``await`` suspension in between — ``cancel_inbox`` is
+        ``async def`` for call-site symmetry with ``append_inbox``/
+        ``consume_inbox`` but is internally fully synchronous (the same
+        ``_wal_append_nowait``/``save_nowait`` fire-and-forget pair those
+        use), so awaiting it never yields control back to the event loop.
+        This is what makes the "queued XOR dispatched" exit exclusive: no
+        other task — in particular the dispatcher's own dequeue-then-promote
+        sequence in ``_drain_to_wake``/``run_one_iteration`` (which, for a
+        ``kind=="user"`` trigger, likewise has no suspension between its own
+        dequeue and its ``turn_started`` emit) — can interleave between this
+        method's "still queued?" check and its commit. See
+        ``tests/test_3300_p3_cancel_by_id.py``'s cancel-during-dequeue race
+        test.
+        """
+        cancelled = await self._journal.cancel_inbox(msg_id=msg_id)
+        if not cancelled:
+            return False
+        self._cancelled_msg_ids.add(msg_id)
+        self._chat_events.emit(
+            "inbox_cancel", msg_id=msg_id, seq=self._bump_queue_seq(),
+        )
+        return True
+
+    async def _consume_inbox(self) -> "tuple[str, dict] | None":
         """Wait for next inbox message; on receive, record `inbox_consume`
-        via journal (skipped for shutdown signals which are out-of-band)."""
+        via journal (skipped for shutdown signals which are out-of-band).
+
+        #3300 P3 (Y-server) skip-at-consume: if the dequeued item's msg_id was
+        already cancelled (``Session.cancel_queued`` — its snapshot.inbox entry
+        + WAL ``inbox_cancel`` tombstone were already recorded synchronously at
+        cancel time), this discards the physical ``asyncio.Queue`` entry
+        WITHOUT recording a redundant ``inbox_consume`` (the item is already
+        gone from the snapshot) and returns ``None`` — the caller
+        (``_drain_to_wake``) must treat this as "nothing dequeued yet" and
+        loop again, never dispatching a turn for a cancelled item.
+        """
         kind, payload = await self.inbox.get()
         msg_id = payload.get("_msg_id") if isinstance(payload, dict) else None
+        if kind != "shutdown" and msg_id in self._cancelled_msg_ids:
+            self._cancelled_msg_ids.discard(msg_id)
+            return None
         if kind != "shutdown":
             await self._journal.consume_inbox(msg_id=msg_id)
         return kind, payload
@@ -4941,7 +5040,13 @@ class Session:
             # (a) Blocking wait — preserves the idle-sleep property exactly
             # as the previous single-get path did.  Also records
             # inbox_consume via _consume_inbox (journaled, P6-clean).
-            kind0, p0 = await self._consume_inbox()
+            # #3300 P3 (Y-server): `None` means the dequeued item was
+            # cancelled (skip-at-consume) — loop again without treating it
+            # as a trigger or ride-along.
+            step = await self._consume_inbox()
+            if step is None:
+                continue
+            kind0, p0 = step
 
             # (b) Shutdown sentinel: propagate immediately regardless of any
             # already-accumulated ride-alongs.
@@ -4977,6 +5082,12 @@ class Session:
                 msg_id_nb = (
                     p_nb.get("_msg_id") if isinstance(p_nb, dict) else None
                 )
+                # #3300 P3 (Y-server) skip-at-consume: same discard as the
+                # blocking path above — a cancelled item is never dispatched
+                # and never gets a redundant inbox_consume.
+                if kind_nb != "shutdown" and msg_id_nb in self._cancelled_msg_ids:
+                    self._cancelled_msg_ids.discard(msg_id_nb)
+                    continue
                 if kind_nb != "shutdown":
                     await self._journal.consume_inbox(msg_id=msg_id_nb)
 

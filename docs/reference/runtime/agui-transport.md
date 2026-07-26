@@ -24,6 +24,16 @@ A2A; tools are MCP; observability export is OTEL. Those are separate surfaces.)
     round-trip; see "Human-in-the-loop answering" below).
   - `{"type": "cancel_inflight"}` — cooperatively cancel the in-flight turn (the
     Ctrl-C seam).
+  - `{"type": "cancel_queued", "msg_id": "..."}` — cancel-by-id an UNDISPATCHED
+    (queued, not-yet-running) inbox message (#3300 P3). A DIFFERENT intent from
+    `cancel_inflight` above: this targets one specific queued item that has not
+    started a turn yet, never the currently-running turn. Server-side semantics
+    (`Session.cancel_queued`): queued → removed (WAL `inbox_cancel` tombstone +
+    synchronous snapshot-prune, then an `inbox_cancel` chat-event delta, see
+    "STATE_* — the status read-model" and `reyn.event.inbox_cancel` below);
+    already dispatched → a no-op (never escalated to `cancel_inflight`);
+    idempotent (a second cancel of the same id is a no-op, safe for an
+    at-most-once retry).
   - `{"type": "heartbeat"}` — a liveness keepalive.
 
   An input type the server does not model is a **graceful no-op** (a `200` ack),
@@ -289,6 +299,16 @@ chat-event that dispatched the in-flight item) still gets the correct queue +
 turn-active state from the snapshot, not a partial event-derived guess. P2a
 publishes this state only — rendering it as a sent-queue widget is P2b.
 
+An item leaves `queue` via one of two mutually-exclusive granular chat-event
+deltas on the same snapshot+delta channel — `turn_started` (dispatched; see
+"Working-indicator path" below) or `inbox_cancel` (cancelled by id via the
+`cancel_queued` client message above, #3300 P3): the server's own atomic
+queued/dispatched judgement guarantees exactly one of the two ever fires for a
+given item, never both. `inbox_cancel` carries `msg_id` + `seq` (the same
+order-race-gate token `user_submitted`/`turn_started` carry — see
+`reyn.event.inbox_cancel` below); a client merging the granular deltas removes
+the item by `msg_id` (unlike `turn_started`, which matches by `chain_id`).
+
 The client seeds its status view from the snapshot and merges each delta, so the
 remote status panel always reflects the server's values.
 
@@ -362,6 +382,7 @@ is the event's data object.
 |--------------------------------------|--------------------------------------------------|
 | `reyn.event.user_answered_intervention` | the user answered an intervention             |
 | `reyn.event.user_submitted`          | a user turn was submitted (#3300 P1 C) — RAW text + chain_id + msg_id + seq + meta; each surface neutralizes at its render boundary. `msg_id`/`seq` are the #3300 P2a sent-queue correlation id + order-race-gate token |
+| `reyn.event.inbox_cancel`            | an UNDISPATCHED queued user message was cancelled by id (#3300 P3, via the `cancel_queued` client message) — carries `msg_id` + `seq`; the server-authoritative sent-queue removal signal (never a client-local "cancel succeeded" response), exclusive with `turn_started` for the same `msg_id` |
 
 ### `reyn.intervention.<kind>`
 

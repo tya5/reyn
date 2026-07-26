@@ -217,6 +217,15 @@ class AgUiTransport(ClientTransport):
     async def cancel_inflight(self) -> None:
         await self._send({"type": "cancel_inflight"})
 
+    async def cancel_queued(self, msg_id: str) -> bool:
+        # #3300 P3 (Y-server) remote parity: POST the cancel-by-id op; the
+        # server's response is HTTP-accepted (2xx), not the cancel's own
+        # queued/no-op result — the client observes the actual outcome via
+        # the server-authoritative `inbox_cancel` chat-event delta (never a
+        # client-local "cancel succeeded" inference), same as every other
+        # queue-affecting mutation on this transport.
+        return bool(await self._send({"type": "cancel_queued", "msg_id": msg_id}))
+
     async def shutdown(self) -> None:
         # Client-LOCAL disconnect only (A3). A client can never tear down the
         # single-writer server — no shutdown is sent over the wire (closing the

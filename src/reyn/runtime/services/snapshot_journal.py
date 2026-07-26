@@ -211,6 +211,56 @@ class SnapshotJournal:
         ]
         self.save_nowait()
 
+    async def cancel_inbox(self, *, msg_id: str) -> bool:
+        """Cancel-by-id (#3300 P3 Y-server): append ``inbox_cancel`` to WAL and
+        prune the snapshot entry, IFF ``msg_id`` is still present (undispatched).
+
+        Returns ``True`` iff ``msg_id`` was found in ``snapshot.inbox`` and
+        removed (the queued→cancelled transition actually happened); ``False``
+        when absent — already dispatched (``consume_inbox`` already pruned it),
+        already cancelled by a prior call (idempotent), or unknown. The caller
+        (``Session.cancel_queued``) uses this boolean to decide whether to also
+        emit the ``inbox_cancel`` chat-event delta and record the msg_id for
+        skip-at-consume.
+
+        ★§1 (CLAUDE.md recovery-feature gate / architect design-pass contract
+        correction): the inbox is snapshot-backed (see module docstring +
+        ``append_inbox``/``consume_inbox`` above), NOT purely WAL-event-derived
+        — ``restore_all`` loads ``snapshot.json`` and replays only the WAL TAIL
+        above its ``applied_seq``. A WAL ``inbox_cancel`` tombstone ALONE would
+        therefore NOT survive a truncation below this item's ``inbox_put``
+        event: replay would never see either event, and a snapshot that still
+        held the (never-pruned) item would resurrect it. Pruning
+        ``self._snapshot.inbox`` HERE, synchronously, at cancel-record time —
+        exactly mirroring ``consume_inbox``'s shape — closes that window
+        unconditionally (see ``tests/test_3300_p3_cancel_by_id.py``'s
+        truncate-falsify gate).
+
+        ★F (no-await critical section, #3300 P3 design-pass pin F): this
+        method is ``async def`` for call-site symmetry with ``append_inbox``/
+        ``consume_inbox`` but is internally FULLY SYNCHRONOUS — the presence
+        check, the WAL tombstone (``_wal_append_nowait``, fire-and-forget, no
+        internal await), the snapshot prune (a plain list comprehension), and
+        ``save_nowait`` (also fire-and-forget) never suspend. Awaiting this
+        coroutine therefore never yields control back to the event loop, so no
+        other task can interleave between the presence check and the commit —
+        this is what makes ``Session.cancel_queued``'s "queued XOR dispatched"
+        decision atomic (see that method's docstring for the full contract).
+        """
+        if self._state_log is None or msg_id is None:
+            return False
+        found = any(m.get("id") == msg_id for m in self._snapshot.inbox)
+        if not found:
+            return False
+        self._wal_append_nowait(
+            "inbox_cancel", agent=self._agent_name, msg_id=msg_id,
+        )
+        self._snapshot.inbox = [
+            m for m in self._snapshot.inbox if m.get("id") != msg_id
+        ]
+        self.save_nowait()
+        return True
+
     async def record_chain_register(self, *, chain_id: str, fields: dict) -> None:
         """Append ``chain_register`` to WAL and create the pending_chains entry.
 
