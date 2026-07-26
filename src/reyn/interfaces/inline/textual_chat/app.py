@@ -464,15 +464,19 @@ class TextualChatApp(App):
         (:meth:`~reyn.interfaces.repl.read_model.ChatReadModel.conversation_history`
         — ``history.jsonl``, NOT the P6 audit-event log) and appends each projected
         frame to ``self.conversation`` (:func:`.restore.project_restored_frames`).
-        Every restored entry is RESOLVED, never RUNNING: a completed tool result
-        gets the SUCCESS/ERROR lifecycle state the live path's completion handler
-        (:meth:`_coalesce_tool_result`) would have assigned, and user/agent rows
-        keep DEFAULT (their live state). Restore projects a standalone
-        ``tool_call_completed`` row (never a started+completed pair), so there is
-        nothing to coalesce here — it renders as its own settled result row. A REMOTE read model returns an empty log
-        (frame-sufficiency: past turns are not on the wire) → this is a no-op and
-        the pane starts blank, exactly as before. Fully guarded — a restore
-        failure must never stop the app from mounting and pumping live frames."""
+        Every restored entry is RESOLVED, never RUNNING: a restored tool turn is
+        already projected into the SAME coalesced ``tool_call_started`` shape
+        the live path's :meth:`_coalesce_tool_result` settles a completed tool
+        into (call header + folded result, one entry — see
+        ``restore.project_restored_frames``'s docstring), so this method just
+        derives the terminal SUCCESS/ERROR state from the coalesced result
+        (the ``if msg.kind == "tool_call_completed"`` branch a pre-coalesce
+        restore shape would have hit no longer fires for tool rows; user/agent
+        rows keep DEFAULT, their live state). A REMOTE read model returns an
+        empty log (frame-sufficiency: past turns are not on the wire) → this is
+        a no-op and the pane starts blank, exactly as before. Fully guarded — a
+        restore failure must never stop the app from mounting and pumping live
+        frames."""
         if self._read_model is None:
             return
         try:
@@ -497,7 +501,20 @@ class TextualChatApp(App):
             # transition for a settled tool result (SUCCESS unless the summary
             # marks a failure); non-tool rows keep DEFAULT.
             meta = msg.meta or {}
-            if msg.kind == "tool_call_completed":
+            if msg.kind == "tool_call_started" and _RESULT_KIND_KEY in meta:
+                result_meta = meta.get(_RESULT_META_KEY) or {}
+                if meta[_RESULT_KIND_KEY] == "tool_call_failed":
+                    entry.set_state(EntryState.ERROR)
+                else:
+                    summary = summarize_tool_result(
+                        meta.get("tool"), result_meta.get("result")
+                    )
+                    entry.set_state(
+                        EntryState.ERROR
+                        if summary.startswith("✗")
+                        else EntryState.SUCCESS
+                    )
+            elif msg.kind == "tool_call_completed":
                 summary = summarize_tool_result(meta.get("tool"), meta.get("result"))
                 entry.set_state(
                     EntryState.ERROR if summary.startswith("✗") else EntryState.SUCCESS
