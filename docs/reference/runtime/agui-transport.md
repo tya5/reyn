@@ -18,7 +18,11 @@ A2A; tools are MCP; observability export is OTEL. Those are separate surfaces.)
   is `event: <TYPE>\ndata: <json>\n\n`.
 - `POST /agui/chat/{agent}` — the client→server channel. Body is a JSON object;
   the supported message types are:
-  - `{"type": "user_message", "text": "..."}` — submit a turn.
+  - `{"type": "user_message", "text": "..."}` — submit a turn. The response
+    body is `{"status": "ok", "msg_id": "..."}` (#3287) — the same correlation
+    id the broadcast `reyn.event.user_submitted` carries, letting the
+    submitting client recognise its own echo BY ID (see "Local ≡ remote holds
+    for INPUT too" below).
   - `{"type": "TOOL_CALL_RESULT", "toolCallId": "<intervention-id>", "text": "..."}`
     or `{..., "choiceId": "<id>"}` — answer a pending intervention (the HITL
     round-trip; see "Human-in-the-loop answering" below).
@@ -451,15 +455,43 @@ screen the instant Enter is pressed — that already IS the echo. Re-rendering
 it again from the broadcast `user_submitted` event printed every LLM-round-
 trip turn's own line twice (#3287; a local `/quit` never reaches
 `submit_user_text`, so it never doubled — the asymmetry the bug report
-noticed). The fix is ownership, not suppression-by-default: `run_input_loop`
-records each line it hands to `submit_user_text` in a small FIFO
-(`own_submissions`, owned per client-loop-pair, never shared across clients),
-and `run_output_loop` skips re-rendering a `user_submitted` event only when
-its text matches THIS client's own queued line — every other attached
-client's turns (and this client's own turns when non-interactive, where
-nothing else echoes the line) still render normally. With 2+ clients
-attached, everyone still sees every OTHER client's turn and every answer, not
-only the agent's replies to them; each client just stops duplicating its own.
+noticed). The fix is ownership, not suppression-by-default: `route_input_line`
+records the `msg_id` its `transport.submit_user_text` call RETURNS (the SAME
+correlation id `user_submitted`'s `msg_id` field carries, #3300 P2a) in a
+small set (`own_submissions`, owned per client-loop-pair, never shared across
+clients), and `run_output_loop` skips re-rendering a `user_submitted` event
+only when its `msg_id` matches an entry in THIS client's own set — every
+other attached client's turns (and this client's own turns when
+non-interactive, where nothing else echoes the line) still render normally.
+With 2+ clients attached, everyone still sees every OTHER client's turn and
+every answer, not only the agent's replies to them; each client just stops
+duplicating its own.
+
+Correlation is by **id, never by text** — an earlier revision matched by
+text and was caught in review (co-vet finding on #3309): two attached
+clients submitting the identical short line (e.g. both answering "yes")
+would cross-match, simultaneously swallowing the OTHER client's turn and
+leaving THIS client's own turn to double-print later, reintroducing the bug
+through a different door. `msg_id` was added by #3300 P2a SPECIFICALLY as a
+correlation id (never form-sniffed from content), so two different
+submissions never collide even with identical text.
+
+`ClientTransport.submit_user_text` therefore returns the assigned `msg_id`
+(previously `None`) — `InProcessTransport` returns `Session.submit_user_text`'s
+own return value directly (same-task, race-free: nothing yields between the
+chat-event emit and the id reaching the caller); the AG-UI endpoint's
+`user_message` handler echoes `msg_id` in the POST's JSON response body, and
+`AgUiTransport.submit_user_text` reads it from there. **Residual, honestly
+bounded, not silently assumed closed**: over the wire, the id only becomes
+visible to the remote client once its POST response returns, and the
+server may have already pushed the SSE broadcast for the same submission
+over the independent events connection in the interim — a narrow
+network-ordering race, distinct from (and strictly narrower than) the
+same-text collision this id-based scheme closes outright for the
+same-process local path. Closing it fully would need a client-supplied
+idempotency token honored by the server as the `msg_id` itself — a larger
+protocol change than this fix's scope, left for a future PR if the race is
+ever observed in practice.
 
 ## AG-UI event coverage — reading the numbers honestly
 

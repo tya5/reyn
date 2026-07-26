@@ -128,10 +128,11 @@ class InProcessTransport(ClientTransport):
         s = self._attached()
         return s.interventions.head() if s is not None else None
 
-    async def submit_user_text(self, text: str) -> None:
+    async def submit_user_text(self, text: str) -> str:
         s = self._attached()
-        if s is not None:
-            await s.submit_user_text(text)
+        if s is None:
+            return ""
+        return await s.submit_user_text(text)
 
     async def answer_intervention_text(
         self, text: str, *, intervention_id: "str | None" = None

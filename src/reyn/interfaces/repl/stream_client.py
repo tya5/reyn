@@ -96,24 +96,27 @@ async def run_input_loop(
     renderer: ChatRenderer,
     reply_seen: "asyncio.Event | None" = None,
     *,
-    own_submissions: "deque[str] | None" = None,
+    own_submissions: "set[str] | None" = None,
 ) -> None:
     """Drive the plain PromptSession input loop.
 
     ``own_submissions`` (#3287): on an interactive TTY, ``prompt_session.
     prompt_async`` itself leaves the typed line ("you > <text>") on the
     terminal once Enter is pressed — that IS the user-line echo. Every
-    submitted line (this loop appends it here, right before handing it to
-    ``route_input_line``) is recorded so :func:`run_output_loop` can recognise
-    the broadcast ``user_submitted`` chat-event this same submission produces
-    and skip re-rendering it — otherwise the terminal's own echo and the
-    event-driven echo both land, printing the line twice. Callers pass
-    ``None`` (the non-interactive / piped path, where the terminal shows
-    nothing as input streams in — the event-driven render is then the ONLY
-    record of what was submitted, so it must not be suppressed) or a fresh
-    ``deque()`` owned by this client's own loop pair (never shared across
-    clients, so another attached client's submissions are never matched here
-    and always render — see ``run_output_loop``'s docstring).
+    submitted line is handed to :func:`route_input_line`, which records the
+    ``msg_id`` the transport's ``submit_user_text`` assigns (the SAME
+    correlation id — #3300 P2a — the broadcast ``user_submitted`` chat-event
+    carries) into this set, so :func:`run_output_loop` can recognise that
+    event BY ID and skip re-rendering it — otherwise the terminal's own echo
+    and the event-driven echo both land, printing the line twice. Correlating
+    by id rather than by text avoids a same-text collision misfire (e.g. two
+    attached clients both typing "yes") that a text match cannot distinguish.
+    Callers pass ``None`` (the non-interactive / piped path, where the
+    terminal shows nothing as input streams in — the event-driven render is
+    then the ONLY record of what was submitted, so it must not be suppressed)
+    or a fresh ``set()`` owned by this client's own loop pair (never shared
+    across clients, so another attached client's submissions are never
+    matched here and always render — see ``run_output_loop``'s docstring).
     """
     is_tty = sys.stdin.isatty()
     while True:
@@ -183,7 +186,7 @@ async def route_input_line(
     text: str,
     reply_seen: "asyncio.Event | None",
     *,
-    own_submissions: "deque[str] | None" = None,
+    own_submissions: "set[str] | None" = None,
 ) -> None:
     """Route one non-quit client line to the session via the transport.
 
@@ -205,13 +208,17 @@ async def route_input_line(
     checked so a race where the intervention resolves between the head-check and
     the deliver falls back to a normal turn instead of being dropped.
 
-    ``own_submissions`` (#3287) is appended ONLY on the branch that actually
+    ``own_submissions`` (#3287) is populated ONLY on the branch that actually
     calls ``submit_user_text`` — that is the ONLY branch that produces a
-    ``user_submitted`` chat-event for ``run_output_loop`` to match against.  An
+    ``user_submitted`` chat-event for ``run_output_loop`` to match against. An
     intervention answer takes the direct-delivery branch above and returns
-    before reaching it, so it is never queued (there is no matching
-    ``user_submitted`` event to consume it, and it would otherwise desync the
-    FIFO against a later ordinary turn).
+    before reaching it, so nothing is added for it (there is no matching
+    ``user_submitted`` event to ever consume such an entry). The transport's
+    ``submit_user_text`` return value is the server-assigned ``msg_id`` — the
+    SAME id the broadcast event carries — added to the set verbatim; an empty
+    string (no session attached / a non-conforming transport) is never added,
+    so it can never accidentally match an event whose own ``msg_id`` also
+    reads empty/missing.
     """
     if not text.startswith("/") and transport.pending_intervention_head() is not None:
         if await transport.answer_intervention_text(text):
@@ -224,9 +231,9 @@ async def route_input_line(
     # caller and never reach here.
     if reply_seen is not None and not text.startswith("/"):
         reply_seen.clear()
-    if own_submissions is not None:
-        own_submissions.append(text)
-    await transport.submit_user_text(text)
+    msg_id = await transport.submit_user_text(text)
+    if own_submissions is not None and msg_id:
+        own_submissions.add(msg_id)
 
 
 async def run_output_loop(
@@ -235,7 +242,7 @@ async def run_output_loop(
     reply_seen: "asyncio.Event | None" = None,
     *,
     command_ui_region: bool = True,
-    own_submissions: "deque[str] | None" = None,
+    own_submissions: "set[str] | None" = None,
 ) -> None:
     """Drain the transport's unified frame stream to the renderer.
 
@@ -247,14 +254,23 @@ async def run_output_loop(
     client's own submissions are different: ``prompt_session.prompt_async``
     already left the typed line on the terminal the instant Enter was
     pressed, so re-rendering it from the broadcast event would print it
-    twice. The queue lets this loop recognise "this is the event for the line
-    my OWN input loop just showed" (FIFO head text match) without touching
-    events for anyone else's submissions, which still render normally — the
-    fix is about which surface owns the echo (the terminal, for this client's
-    own TTY-typed line) not about dropping the event universally. ``None``
-    (the default, and what non-interactive / piped / non-TTY sessions pass)
-    disables the check entirely, preserving the event-driven echo as the sole
-    record when nothing else showed the line.
+    twice. The set lets this loop recognise "this is the event for the line
+    my OWN input loop just showed" — matched by ``msg_id`` (the #3300 P2a
+    correlation id the event carries), NOT by text, so two attached clients
+    submitting the SAME text (e.g. both typing "yes") never cross-match: a
+    text match would let client A's broadcast satisfy client A's queue check
+    for client B's identical-text turn (or vice-versa, depending on arrival
+    order), simultaneously swallowing the OTHER client's line and leaving
+    THIS client's own line unswallowed later (the original bug, reintroduced
+    by a different route) — a real, order-dependent failure mode a plain
+    string match cannot avoid (see ``tests/test_stream_client_own_echo_3287.py``
+    ``test_same_text_two_clients_does_not_cross_match_by_id``). Events for
+    anyone else's submissions still render normally — the fix is about which
+    surface owns the echo (the terminal, for this client's own TTY-typed
+    line) not about dropping the event universally. ``None`` (the default,
+    and what non-interactive / piped / non-TTY sessions pass) disables the
+    check entirely, preserving the event-driven echo as the sole record when
+    nothing else showed the line.
     """
     is_tty = sys.stdout.isatty()
     # Newest-first ring of recent agent replies so `/copy [N]` can grab the
@@ -267,17 +283,16 @@ async def run_output_loop(
         # (the A2 WaitingOn bug, designed out by the completeness gate).
         if frame.tag is FrameTag.EVENT:
             event = frame.event
-            if (
-                own_submissions
-                and getattr(event, "type", None) == "user_submitted"
-                and own_submissions[0] == (getattr(event, "data", None) or {}).get("text")
-            ):
-                # This client's own PromptSession prompt already echoed this
-                # exact line to the terminal — skip the redundant re-render
-                # (#3287) and consume the matched entry so the FIFO stays
-                # aligned with this client's own future submissions.
-                own_submissions.popleft()
-                continue
+            if own_submissions and getattr(event, "type", None) == "user_submitted":
+                event_msg_id = (getattr(event, "data", None) or {}).get("msg_id")
+                if event_msg_id and event_msg_id in own_submissions:
+                    # This client's own PromptSession prompt already echoed
+                    # this exact submission (matched BY ID, #3287) to the
+                    # terminal — skip the redundant re-render and consume the
+                    # matched id so the set can't accidentally match a LATER,
+                    # unrelated event (ids are never reused).
+                    own_submissions.discard(event_msg_id)
+                    continue
             renderer.on_chat_event(event)
             continue
         msg = frame.message

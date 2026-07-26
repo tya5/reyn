@@ -129,17 +129,40 @@ async def run_remote_repl(
         # refreshes it for every accepted POST, not just ``type: heartbeat``).
         last_send = [0.0]
 
-        async def send(payload: dict) -> bool:
-            """POST one client→server message; True iff the server accepted it
-            (2xx). A rejected HITL answer (403/409) returns False so the client
-            falls back to an ordinary turn instead of silently dropping input."""
+        async def send(payload: dict) -> "dict | None":
+            """POST one client→server message; the parsed JSON response body on
+            a 2xx accept (always a truthy dict, even if the body itself parsed
+            empty — see below), ``None`` if the server rejected it (403/409/…)
+            or the POST itself failed. A rejected HITL answer therefore still
+            reads as falsy exactly like the old bool contract (``if accepted:``
+            / ``bool(accepted)`` at every existing call site are unaffected by
+            this widened return type).
+            ``submit_user_text`` (#3287) additionally reads ``resp["msg_id"]``
+            here — the server's echo of the SAME correlation id its broadcast
+            ``user_submitted`` chat-event carries (#3300 P2a) — so the client
+            can recognise its own broadcast echo BY ID rather than a same-text
+            match. NOTE (residual, documented rather than silently assumed
+            closed): the id only becomes visible to submit_user_text once this
+            await returns; the server may already have pushed the SSE
+            broadcast for it over the OTHER connection (the events stream) in
+            the interim, in which case run_output_loop renders it before the
+            id lands in `own_submissions` — a narrow network-ordering race
+            distinct from (and strictly narrower than) the same-text collision
+            this id-based scheme closes for the local, single-process path
+            (see `stream_client.py` / `agui-transport.md`).
+            """
             last_send[0] = time.monotonic()
             try:
                 resp = await client.post(submit_url, params=params, json=payload)
             except Exception:  # noqa: BLE001 — a transport error is a non-delivery
                 logger.warning("remote send failed for %r", payload.get("type"))
-                return False
-            return resp.status_code < 300
+                return None
+            if resp.status_code >= 300:
+                return None
+            try:
+                return resp.json()
+            except Exception:  # noqa: BLE001 — an empty/non-JSON 2xx body is still an accept
+                return {"status": "ok"}
 
         async def heartbeat() -> None:
             while True:

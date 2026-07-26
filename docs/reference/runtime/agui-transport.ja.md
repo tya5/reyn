@@ -19,7 +19,11 @@ Reyn のチャットクライアントはストリームを消費する UI で�
   `event: <TYPE>\ndata: <json>\n\n` である。
 - `POST /agui/chat/{agent}` — client→server のチャンネル。Body は JSON object で、サポート
   されるメッセージ type は以下の通り:
-  - `{"type": "user_message", "text": "..."}` — ターンを submit する。
+  - `{"type": "user_message", "text": "..."}` — ターンを submit する。レスポンス body は
+    `{"status": "ok", "msg_id": "..."}`(#3287)——broadcast される
+    `reyn.event.user_submitted` が運ぶのと同じ correlation id であり、送信した
+    クライアント自身がこの id で自分の echo を認識できる(下記「Local ≡ remote は
+    input についても」参照)。
   - `{"type": "TOOL_CALL_RESULT", "toolCallId": "<intervention-id>", "text": "..."}` または
     `{..., "choiceId": "<id>"}` — pending 中の intervention に回答する(HITL の round-trip;
     下記「Human-in-the-loop answering」参照)。
@@ -407,14 +411,41 @@ broadcast の `user_submitted` event で再度描画すると、LLM round-trip �
 ターンで自分の行が二重に表示されてしまっていた(#3287。`/quit` は
 `submit_user_text` に到達しないため二重化しない——バグ報告が指摘した非対称性その
 もの)。修正は「デフォルトで抑制する」ではなく「所有権をはっきりさせる」こと:
-`run_input_loop` は `submit_user_text` に渡した行を小さな FIFO
-(`own_submissions`、クライアントの input/output ループのペアごとに保持し、他クライアント
-とは共有しない)に記録し、`run_output_loop` は `user_submitted` event のテキストが
-この FIFO の先頭と一致したときだけ再描画をスキップする。他のすべてのアタッチ済み
-クライアントのターン(および non-interactive で何も echo していない場合の自分自身の
-ターン)は今までどおり描画される。2 クライアント以上がアタッチしていても、互いに
-相手のすべてのターンとすべての回答は今までどおり見える——agent からの返信だけでは
-ない。変わるのは、各クライアントが自分自身の行を二重に描画しなくなる点だけである。
+`route_input_line` は自身の `transport.submit_user_text` 呼び出しが**返す**
+`msg_id`(`user_submitted` の `msg_id` フィールドが運ぶのと同じ correlation id、
+#3300 P2a)を小さな set(`own_submissions`、クライアントの input/output ループの
+ペアごとに保持し、他クライアントとは共有しない)に記録し、`run_output_loop` は
+`user_submitted` event の `msg_id` がこの set 内のエントリと一致したときだけ
+再描画をスキップする。他のすべてのアタッチ済みクライアントのターン(および
+non-interactive で何も echo していない場合の自分自身のターン)は今までどおり
+描画される。2 クライアント以上がアタッチしていても、互いに相手のすべてのターンと
+すべての回答は今までどおり見える——agent からの返信だけではない。変わるのは、
+各クライアントが自分自身の行を二重に描画しなくなる点だけである。
+
+相関は**テキストではなく id**で行う——初期版はテキストで一致させており、レビューで
+指摘された(#3309 の co-vet finding)。2 つのアタッチ済みクライアントが同一の短い
+文字列(例えば両方とも "yes" と回答する)を送信すると、テキスト一致では
+クロスマッチしてしまう——他方のクライアントのターンを誤って抑制し、その一方で
+自分自身のターンが後で二重に描画される、という形でバグが別の入口から再発する。
+`msg_id` は #3300 P2a が**まさに correlation id として**追加したもの(コンテンツから
+form-sniff したものでは決してない)なので、テキストが同一でも 2 つの異なる
+submission が衝突することはない。
+
+`ClientTransport.submit_user_text` はそのため割り当てられた `msg_id` を返す
+(以前は `None` だった)——`InProcessTransport` は `Session.submit_user_text` 自身の
+戻り値をそのまま返す(同一タスク内なので race フリー: chat-event の emit から
+呼び出し元へ id が届くまでの間に何も yield しない)。AG-UI エンドポイントの
+`user_message` ハンドラは POST の JSON レスポンス body に `msg_id` を echo し、
+`AgUiTransport.submit_user_text` はそこから読み取る。**残存する制約(正直に明記する
+——暗黙に解決済みとは扱わない)**: wire 越しでは、POST のレスポンスが返って初めて
+リモートクライアントに id が見えるようになるが、その間に server が同じ submission
+の SSE broadcast を独立した events 接続経由ですでに push している可能性がある——
+これは同一プロセス内のローカルパスをこの id ベースの方式が完全に閉じる
+「同一テキストの衝突」とは異なる(そしてそれよりも狭い)、network の到達順序に
+起因する race である。これを完全に閉じるには、server が `msg_id` そのものとして
+尊重するクライアント供給の idempotency token が必要になる——このバグ修正の scope
+を超える、より大きな protocol 変更であり、実運用で race が観測された場合の
+将来の PR に委ねる。
 
 ## AG-UI event coverage — 数字を正直に読む
 

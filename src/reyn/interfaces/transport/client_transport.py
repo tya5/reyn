@@ -49,8 +49,19 @@ class ClientTransport(ABC):
         """Yield the unified, ordered, tagged frame stream (display + event)."""
 
     @abstractmethod
-    async def submit_user_text(self, text: str) -> None:
-        """Submit a user turn (the ordinary new-turn path)."""
+    async def submit_user_text(self, text: str) -> str:
+        """Submit a user turn (the ordinary new-turn path).
+
+        Returns the server-assigned ``msg_id`` — the SAME correlation id the
+        broadcast ``user_submitted`` chat-event carries (#3300 P2a) — so a
+        caller that already rendered this line some other way (e.g. the
+        plain PromptSession loop's own terminal echo, #3287) can recognise
+        its own broadcast echo BY ID and skip re-rendering it, without a
+        same-text collision false-positive against a different client's
+        submission. An implementation with no attached session (nothing was
+        actually submitted) returns ``""`` — never ``None`` — so a caller can
+        treat "no id" uniformly with a plain falsy/membership check.
+        """
 
     @abstractmethod
     async def answer_intervention_text(
