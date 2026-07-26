@@ -129,6 +129,14 @@ The AG-UI spec mandates the text lifecycle **`TEXT_MESSAGE_START` → one or mor
 `TEXT_MESSAGE_CONTENT` → `TEXT_MESSAGE_END`, all correlated by a `messageId`**; a
 bare `TEXT_MESSAGE_CONTENT` is invalid (a strict generic client drops it).
 
+Streaming applies to the **narrative reply call path only**. `RouterLoop` has
+three production call sites for `call_llm_tools`, but only the primary reply
+(`run_loop`) passes `on_content_delta`; `_run_structured_answer_turn` (a
+schema-constrained turn whose output is parsed with `json.loads` — partial
+JSON is unparseable, so streaming it would be meaningless) and
+`_force_close_call` (a terminal wrap-up, not body content) both omit it
+intentionally.
+
 **A message that never streamed** (no provider capability, ADR-0039 P3a/③a) rides
 the wire as the plain whole-message triplet, with a generated per-message id
 (reyn's outbox has no stable message id) and the single CONTENT's `delta`

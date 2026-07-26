@@ -128,6 +128,15 @@ AG-UI 仕様は、text lifecycle として**`TEXT_MESSAGE_START` → 1 つ以上
 必須としている。裸の `TEXT_MESSAGE_CONTENT` は不正である(厳格な汎用クライアントはそれを
 破棄する)。
 
+streaming が適用されるのは**narrative reply 経路のみ**である。`RouterLoop`
+から `call_llm_tools` を呼ぶプロダクション経路は 3 つあるが、
+`on_content_delta` を渡すのは primary reply(`run_loop`)だけである。
+**structured-answer turn(`_run_structured_answer_turn`)は意図的に
+非-streaming**——出力を `json.loads` でパースする schema 制約付きターンで
+あるため、部分 JSON を stream しても解析不能で無意味である。**force-close
+の wrap-up 呼び出し(`_force_close_call`)も非-streaming**である(本文では
+なく終端の締めであるため)。
+
 **一度もストリーミングしなかったメッセージ**(provider capability なし、ADR-0039 P3a/③a)
 は、この triplet に plain な whole-message としてワイヤーに乗る——メッセージごとに生成
 される id を伴い(reyn の outbox には安定した message id がない)、単一の CONTENT の
