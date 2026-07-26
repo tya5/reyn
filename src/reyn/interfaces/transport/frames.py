@@ -18,14 +18,20 @@ A frame carries its :class:`FrameTag` so the consuming client dispatches to the
 renderer's two entry points (``message`` for display, ``on_chat_event`` for
 event) at the consuming end — one stream in, two renderer entry points out.
 
-The forward-set (:func:`renderer_chat_events`) is **DERIVED** from the
+The forward-set (:func:`renderer_chat_events`) is mostly **DERIVED** from the
 renderer's own vocabulary — ``_WAITING_ON_BY_EVENT`` (the tool-axis table) plus
 the turn / intervention-answer events ``on_chat_event`` handles — never
 hand-listed. The dual-stream completeness gate
 (``tests/test_transport_dual_stream_completeness.py``) binds the transport's
 coverage to that vocabulary so a renderer event the transport does not forward
 fails CI instead of silently vanishing on the wire (the A2 dual-stream bug,
-designed out).
+designed out). The ONE deliberate exception is :data:`_STREAMING_EVENTS`
+(#3288 ③b, ``agent_delta``) — forwarded ahead of any renderer consumer, by
+design: the completeness gate only requires ``consumed ⊆ forwarded``, never
+the reverse, so a forwarded-but-not-yet-consumed event is legal, and an EVENT
+frame with no handler is silently dropped (not rendered) at the consuming
+end — the mechanism a later phase (③c) plugs a consumer into without ever
+risking a "vanished on the wire" regression in the meantime.
 """
 from __future__ import annotations
 
@@ -79,10 +85,28 @@ _TURN_AND_ANSWER_EVENTS = frozenset(
 )
 
 
+# #3288 ③b: streamed LLM content-delta chat-events — the owner-ratified L4
+# replacement (issue #3288 comment thread): a partial rides a chat-event
+# (never an ``OutboxMessage`` kind, which the closed display vocabulary would
+# have to register — the category error the owner's decision designs out).
+# UNLIKE :data:`_TURN_AND_ANSWER_EVENTS` above, this is forwarded AHEAD OF any
+# consumer — no renderer branches on ``"agent_delta"`` yet (③c adds the
+# textual_chat coalescing handler as a later phase; the plain/repl renderer
+# may never consume it at all). This is legal per the dual-stream
+# completeness gate's actual direction (``tests/test_transport_dual_stream_completeness.py``:
+# ``consumed ⊆ forwarded``, never the reverse) — a forwarded event nobody
+# consumes yet is not a coverage gap, and a surface with no handler for an
+# EVENT frame consumes-but-drops it (never renders it), unlike an unknown
+# DISPLAY kind (which a presenter renders generically) — see the ③b PR body
+# for the frame-level witness of that "no visible-garbage window" property.
+_STREAMING_EVENTS = frozenset({"agent_delta"})
+
+
 @lru_cache(maxsize=1)
 def renderer_chat_events() -> frozenset[str]:
-    """The exact set of chat-event types the renderer consumes — the transport's
-    forward-set, DERIVED from the renderer's vocabulary, never hand-listed.
+    """The set of chat-event types the transport forwards onto the unified
+    frame stream (both ``InProcessTransport`` and the AG-UI endpoint filter
+    against this).
 
     Union of:
 
@@ -91,9 +115,15 @@ def renderer_chat_events() -> frozenset[str]:
       / ``tool_failed``); extending WaitingOn to a new axis is one new entry
       there and this set follows automatically.
     - :data:`_TURN_AND_ANSWER_EVENTS` — the turn-lifecycle / intervention-answer
-      / user-submitted events ``renderer.on_chat_event`` branches on directly.
+      / user-submitted events ``renderer.on_chat_event`` branches on directly
+      (DERIVED from the renderer's own vocabulary, never hand-listed for this
+      half — see ``tests/test_transport_dual_stream_completeness.py``).
+    - :data:`_STREAMING_EVENTS` (#3288 ③b) — the ONE deliberate exception to
+      "derived, not hand-listed": forwarded ahead of any renderer consumer, so
+      an unconsuming surface silently drops it (opt-in draw) instead of it
+      vanishing on the wire before a later phase adds the consumer.
     """
-    return frozenset(_WAITING_ON_BY_EVENT.keys()) | _TURN_AND_ANSWER_EVENTS
+    return frozenset(_WAITING_ON_BY_EVENT.keys()) | _TURN_AND_ANSWER_EVENTS | _STREAMING_EVENTS
 
 
 @dataclass(frozen=True)

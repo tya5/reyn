@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import functools
 import json
+import logging
 import os
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
@@ -31,6 +32,8 @@ from reyn.services.turn_budget import wrap_up_system_prompt
 
 if TYPE_CHECKING:
     pass
+
+logger = logging.getLogger(__name__)
 
 
 def _resolve_tool_use_scheme(name: "str | None" = None):
@@ -1255,6 +1258,34 @@ class RouterLoop:
         start of each ``run()`` like ``total_usage``."""
         return self._last_call_usage
 
+    def _emit_agent_delta(self, text: str) -> None:
+        """#3288 ③b: forward one streamed content-delta chunk as a chat-event
+        — the owner-ratified L4 replacement (issue #3288 comment thread): a
+        partial rides ``host.events`` (the SAME chat-event channel
+        ``user_submitted`` / ``router_represent_round`` already use), NEVER
+        ``host.put_outbox`` — ``OutboxMessage.__post_init__`` validates
+        ``kind`` against the closed display vocabulary, so an
+        ``agent_delta`` OutboxMessage would either raise (unregistered) or
+        require registering it there, which is exactly the outbox-kind
+        design the owner's decision replaces. Routing through ``host.events``
+        instead means a surface with no ``agent_delta`` handler consumes-but-
+        drops it (EVENT-frame semantics, ``frames.py``) rather than the
+        default generic-row rendering an unknown DISPLAY kind gets — the
+        "no visible-garbage window" invariant.
+
+        Never touches history or the terminal ``kind="agent"`` OutboxMessage
+        — those are unchanged, emitted exactly as before this turn's call
+        returns (L9 whole-persist: the completed full text is what gets
+        appended to history and put on the outbox, exactly once).
+
+        Best-effort: a failing chat-event emit must never abort the
+        in-flight LLM call it is merely narrating.
+        """
+        try:
+            self.host.events.emit("agent_delta", text=text, chain_id=self.chain_id)
+        except Exception:  # noqa: BLE001 — narration must never break the turn
+            logger.exception("router: agent_delta chat-event emit failed")
+
     async def run(self, user_text: str, history: list[dict]) -> TokenUsage:
         """Process one user utterance end-to-end. Emits to host.put_outbox.
 
@@ -1906,6 +1937,10 @@ class RouterLoop:
                         # #1683: chat path emits llm_called + llm_response_received
                         # so the TUI cost tab updates (kernel emits via LLMCallRecorder).
                         emit_cost_events=True,
+                        # #3288 ③b: forward streamed content-deltas as chat-events
+                        # (③a's capability gate decides whether this ever fires —
+                        # a non-streaming call never invokes it).
+                        on_content_delta=self._emit_agent_delta,
                     )
                 # Record the fresh result for future resume hit. Defensive:
                 # never let recording failure break the loop. NOT for a
