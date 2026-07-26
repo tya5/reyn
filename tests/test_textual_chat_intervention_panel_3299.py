@@ -41,13 +41,15 @@ import asyncio
 from typing import AsyncIterator
 
 import pytest
-from textual.widgets import Input, RadioSet
+from textual.app import App, ComposeResult
+from textual.widgets import Input, RadioButton, RadioSet
 from textual_flowview import EntryState, FlowView
 
 from reyn.interfaces.inline.textual_chat import Composer, TextualChatApp
 from reyn.interfaces.inline.textual_chat.intervention_panel import InterventionPanel
 from reyn.interfaces.transport.client_transport import ClientTransport
 from reyn.interfaces.transport.frames import DisplayFrame
+from reyn.intervention_choices import file_access_choices, generic_yn_choices
 from reyn.runtime.outbox import OutboxMessage
 
 _GUTTER_WIDTH = 2
@@ -400,3 +402,75 @@ def test_choice_labels_are_neutralized_before_rendering() -> None:
     assert "\x1b" not in rendered, f"raw ESC leaked into the flow-entry head: {rendered!r}"
     assert "\x07" not in rendered, f"raw BEL leaked into the flow-entry head: {rendered!r}"
     assert "DANGER" in rendered
+
+
+@pytest.mark.asyncio
+async def test_bracket_decorated_option_labels_render_intact() -> None:
+    """Tier 1: the panel's RadioButton must expose the FULL literal option
+    label — the real-TTY-witnessed display bug where the FIRST character of
+    every option label was dropped ("Yes" → "es", "No" → "o", "just this path
+    always" → "ust this path always", "recursive under '...' always" →
+    "ecursive under '...' always").
+
+    Root cause: real choice labels are conventionally hotkey-bracket-decorated
+    (``reyn.intervention_choices.generic_yn_choices`` / ``file_access_choices``
+    — ``"[y]es"``, ``"[A]lways"``, ``"[n]o"``, ``"[N]ever"``,
+    ``"[j]ust this path always"``, ``"[r]ecursive under '...' always"``).
+    ``RadioButton``/``ToggleButton`` builds its label via
+    ``Content.from_text(label)`` with Textual MARKUP PARSING ON by default for
+    a plain ``str`` — it reads a leading ``[y]`` as an (unknown, unclosed)
+    style tag and strips it from the rendered text, eating the bracket AND
+    the enclosed hotkey letter.
+
+    Asserts on the PUBLIC ``RadioButton.label`` (the widget's own exposed
+    rendered label, not private state) for the REAL ``InterventionChoice``
+    factories — the standard yes/no/always/never set AND the longer
+    bracket-decorated labels (``file_access_choices``).
+
+    NON-VACUITY (falsification): on the pre-fix code (``RadioButton(label)``
+    with a bare ``str``) this assertion FAILS — every label above renders with
+    its first character (and the ``[x]`` bracket) missing. Verified locally by
+    reverting the ``Content(label)`` fix in ``InterventionPanel.show_choice``.
+    """
+
+    class _PanelHost(App):
+        def compose(self) -> ComposeResult:
+            yield InterventionPanel(id="panel")
+
+    yn_choices = generic_yn_choices()
+    long_choices = file_access_choices("/tmp/project")
+
+    app = _PanelHost()
+    async with app.run_test() as pilot:
+        panel = app.query_one(InterventionPanel)
+
+        panel.show_choice(
+            prompt="Proceed?",
+            detail=None,
+            choices=[
+                {"id": c.id, "label": c.label, "hotkey": c.hotkey} for c in yn_choices
+            ],
+        )
+        await pilot.pause()
+        radio = panel.query_one("#iv-panel-choices", RadioSet)
+        rendered_yn = [rb.label.plain for rb in radio.query(RadioButton)]
+        assert rendered_yn == ["[y]es", "[A]lways", "[n]o", "[N]ever"], (
+            f"bracket-decorated label(s) dropped a character; got {rendered_yn!r}"
+        )
+
+        panel.show_choice(
+            prompt="Grant file access?",
+            detail=None,
+            choices=[
+                {"id": c.id, "label": c.label, "hotkey": c.hotkey} for c in long_choices
+            ],
+        )
+        await pilot.pause()
+        radio = panel.query_one("#iv-panel-choices", RadioSet)
+        rendered_long = [rb.label.plain for rb in radio.query(RadioButton)]
+        assert rendered_long == [
+            "[y]es",
+            "[j]ust this path always",
+            "[r]ecursive under '/tmp/project' always",
+            "[N]o",
+        ], f"long/bracket-decorated label(s) dropped a character; got {rendered_long!r}"

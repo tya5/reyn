@@ -45,8 +45,11 @@ from typing import TYPE_CHECKING
 
 from textual.binding import Binding
 from textual.containers import Vertical
+from textual.content import Content
 from textual.message import Message
 from textual.widgets import Input, RadioButton, RadioSet, Static
+
+from .presenter import _neutralized_label
 
 if TYPE_CHECKING:
     pass
@@ -126,9 +129,23 @@ class InterventionPanel(Vertical):
         self.query_one("#iv-panel-input", Input).display = False
 
     def _set_head(self, prompt: str, detail: "str | None") -> None:
-        self.query_one("#iv-panel-title", Static).update(prompt)
+        # ``_neutralized_label`` (the SAME terminal-neutralization boundary the
+        # flow entry's prompt head uses, presenter.py's ``_intervention_head``)
+        # strips control/ESC sequences from this LLM-derived text before it
+        # reaches the widget — the panel is a NEW rendering surface for
+        # ``prompt``/``detail`` (they previously only ever reached the flow
+        # entry), so it must apply the same boundary.
+        #
+        # Then ``Content(...)`` (literal), never a bare ``str`` —
+        # ``Static.update`` markup-parses a ``str`` by default too, so a
+        # prompt/detail containing a literal ``[...]`` (e.g. a bracketed path)
+        # would suffer the SAME character-eating bug the option labels had
+        # (see :meth:`show_choice`'s ``Content(label)`` fix).
+        self.query_one("#iv-panel-title", Static).update(
+            Content(_neutralized_label(prompt))
+        )
         detail_widget = self.query_one("#iv-panel-detail", Static)
-        detail_widget.update(detail or "")
+        detail_widget.update(Content(_neutralized_label(detail or "")))
         detail_widget.display = bool(detail)
 
     def show_choice(
@@ -143,9 +160,32 @@ class InterventionPanel(Vertical):
         for child in list(radio.children):
             child.remove()
         self._choice_ids = [str(c.get("id", "")) for c in choices]
-        self._choice_labels = [str(c.get("label", "")) for c in choices]
+        # Neutralized at THIS boundary (the SAME terminal neutralizer the
+        # retired chip path applied to a label before drawing it, and the flow
+        # entry still applies to its own head) — ``meta["choices"]`` labels
+        # reach here RAW (``session._iv_meta`` copies ``choice.label``
+        # verbatim). ``_choice_labels`` is also what ``ChoiceSelected`` carries
+        # for the resolved flow-entry record, so neutralizing here covers both
+        # this widget's own RadioButton AND that downstream record.
+        self._choice_labels = [
+            _neutralized_label(str(c.get("label", ""))) for c in choices
+        ]
         for label in self._choice_labels:
-            radio.mount(RadioButton(label))
+            # ``Content(label)`` (the LITERAL constructor), never a bare
+            # ``str`` — ``RadioButton``/``ToggleButton`` internally builds its
+            # label via ``Content.from_text(label)`` with markup parsing ON by
+            # default for a plain ``str``. Real choice labels are
+            # conventionally hotkey-bracket-decorated (``"[y]es"``,
+            # ``"[j]ust this path always"``, ``"[r]ecursive under …"`` — see
+            # ``reyn.intervention_choices``), and Textual's markup parser reads
+            # a leading ``[y]`` as an (unknown, unclosed) STYLE TAG — which is
+            # stripped from the rendered text, eating the bracket AND the
+            # hotkey letter (``"[y]es"`` → ``"es"``, ``"[j]ust…"`` → ``"ust…"``
+            # — the #3299 first-character-dropped display bug). ``Content`` is
+            # one of ``RadioButton``'s accepted input types and is returned
+            # as-is (no markup parsing), so the full literal label always
+            # renders intact.
+            radio.mount(RadioButton(Content(label)))
         radio.display = True
         self.query_one("#iv-panel-input", Input).display = False
         self.display = True
