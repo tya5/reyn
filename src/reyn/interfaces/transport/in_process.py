@@ -159,6 +159,15 @@ class InProcessTransport(ClientTransport):
         if callable(cancel_fn):
             await cancel_fn()
 
+    async def cancel_queued(self, msg_id: str) -> bool:
+        s = self._attached()
+        if s is None:
+            return False
+        cancel_fn = getattr(s, "cancel_queued", None)
+        if callable(cancel_fn):
+            return bool(await cancel_fn(msg_id))
+        return False
+
     async def shutdown(self) -> None:
         await self._registry.shutdown()
 

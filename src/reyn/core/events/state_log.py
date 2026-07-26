@@ -9,7 +9,9 @@ Event kinds recorded (state-mutating only; processing internals
 like LLM calls live in the audit log under `.reyn/events/`):
 
   inbox_put           — message put on agent X's inbox
-  inbox_consume       — message removed from agent X's inbox
+  inbox_consume       — message removed from agent X's inbox (dispatched)
+  inbox_cancel        — message removed from agent X's inbox (cancelled,
+                        never dispatched — #3300 P3 Y-server)
   chain_register      — new pending_chain created on agent X
   chain_update        — pending_chain's waiting_on shrunk
   chain_resolve       — pending_chain completed
@@ -53,6 +55,11 @@ WAL_EVENT_KINDS = (
     # Existing PR21 — inbox and chain lifecycle
     "inbox_put",
     "inbox_consume",
+    # NEW (#3300 P3 Y-server) — cancel-by-id tombstone for an UNDISPATCHED
+    # inbox item. Symmetric with `inbox_consume` (both remove an item from
+    # the snapshot inbox) but distinguishes WHY: cancelled (never ran) vs
+    # dispatched (ran). See `SnapshotJournal.cancel_inbox`.
+    "inbox_cancel",
     "chain_register",
     "chain_update",
     "chain_resolve",
