@@ -80,6 +80,15 @@ def _gutter_glyph_color(msg: "OutboxMessage") -> "tuple[str, str]":
         return "⎿", _CC_DIM
     if kind == "tool_call_failed":
         return "⎿", _CC_ERR
+    if kind == "intervention" and not (msg.meta or {}).get("_answer_label"):
+        # #3299 P2 §5: a PENDING intervention stays EntryState.DEFAULT (never
+        # RUNNING/SUCCESS/ERROR — see ``TextualChatApp._resolve_pending_intervention``),
+        # so the only way to distinguish "awaiting an answer" from an ordinary
+        # DEFAULT row is a kind-driven glyph swap here: a dim "awaiting" marker
+        # instead of the kind's normal (amber, "needs you") glyph. Once resolved
+        # (``_answer_label`` set), this falls through to the normal kind glyph
+        # below — no special-casing needed for the permanent Q→A record.
+        return "⋯", _CC_DIM
     line = _KIND_LINE.get(kind)
     if line is None:
         return "", _CC_DIM

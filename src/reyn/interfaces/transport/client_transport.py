@@ -53,12 +53,26 @@ class ClientTransport(ABC):
         """Submit a user turn (the ordinary new-turn path)."""
 
     @abstractmethod
-    async def answer_intervention_text(self, text: str) -> bool:
-        """Deliver ``text`` to the oldest pending intervention; True iff delivered."""
+    async def answer_intervention_text(
+        self, text: str, *, intervention_id: "str | None" = None
+    ) -> bool:
+        """Deliver ``text`` to a pending intervention; True iff delivered.
+
+        ``intervention_id`` (#3299 P2, R1 id-targeted delivery): when given,
+        the answer is delivered to EXACTLY that intervention — never a
+        head-of-queue fallback, since with ``outstanding_interventions``
+        holding multiple pending entries the head is not necessarily the one
+        the caller displayed. ``None`` (the default) preserves the pre-P2
+        oldest-pending behavior for callers that never track an id (kept for
+        API stability, not a supported new-caller pattern)."""
 
     @abstractmethod
-    async def answer_intervention_choice(self, choice_id: str) -> bool:
-        """Deliver a chosen ``choice_id`` to the oldest intervention; True iff delivered."""
+    async def answer_intervention_choice(
+        self, choice_id: str, *, intervention_id: "str | None" = None
+    ) -> bool:
+        """Deliver a chosen ``choice_id`` to a pending intervention; True iff
+        delivered. ``intervention_id`` semantics mirror
+        :meth:`answer_intervention_text` (#3299 P2, R1)."""
 
     @abstractmethod
     def has_session(self) -> bool:

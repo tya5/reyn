@@ -133,16 +133,32 @@ class InProcessTransport(ClientTransport):
         if s is not None:
             await s.submit_user_text(text)
 
-    async def answer_intervention_text(self, text: str) -> bool:
+    async def answer_intervention_text(
+        self, text: str, *, intervention_id: "str | None" = None
+    ) -> bool:
         s = self._attached()
         if s is None:
             return False
+        if intervention_id is not None:
+            # #3299 P2 (R1): deliver BY ID through the existing id-aware
+            # session funnel — never the head, which a second queued
+            # intervention could have displaced since the caller's copy was
+            # displayed (the multi-pending mis-delivery this closes).
+            return bool(await s.answer_intervention_by_id(intervention_id, text))
         return bool(await s.answer_oldest_intervention_text(text))
 
-    async def answer_intervention_choice(self, choice_id: str) -> bool:
+    async def answer_intervention_choice(
+        self, choice_id: str, *, intervention_id: "str | None" = None
+    ) -> bool:
         s = self._attached()
         if s is None:
             return False
+        if intervention_id is not None:
+            return bool(
+                await s.answer_intervention_by_id(
+                    intervention_id, "", choice_id_override=choice_id
+                )
+            )
         return bool(await s.answer_oldest_intervention_choice(choice_id))
 
     def put_display(self, msg: "OutboxMessage") -> None:

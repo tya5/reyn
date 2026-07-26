@@ -186,6 +186,27 @@ class InterventionPanel(Vertical):
             # as-is (no markup parsing), so the full literal label always
             # renders intact.
             radio.mount(RadioButton(Content(label)))
+        # #3299 P2 — owner decision (A), uniform: pre-highlight the FIRST
+        # option so a blind ``Enter`` answers it immediately (no extra arrow
+        # keypress first). ``RadioSet`` only auto-selects index 0 in its OWN
+        # ``_on_mount`` (fired once, when this widget mounted with ZERO
+        # children — the buttons above are mounted dynamically, later, so that
+        # native behavior never fires for them); its OWN highlight-advance
+        # action (``action_next_button``, bound to the Down key) reproduces
+        # that native "select the first enabled button" behavior — but only
+        # from an UNSET anchor (``RadioSet._selected is None``): a SECOND
+        # ``show_choice`` call (the P2 multi-pending re-route showing the next
+        # queued intervention) reuses this same widget instance, so its
+        # highlight index from the PREVIOUS intervention survives the
+        # children-swap above and would advance past index 0 instead of
+        # landing on it. Resetting the highlight first makes every
+        # ``show_choice`` call behave identically regardless of history.
+        # This only moves the HIGHLIGHT (``RadioSet.pressed_index`` stays -1,
+        # nothing is answered yet) — the user's own ``Enter``/``Space`` still
+        # does the actual toggle-and-deliver.
+        if self._choice_ids:
+            radio._selected = None
+            radio.action_next_button()
         radio.display = True
         self.query_one("#iv-panel-input", Input).display = False
         self.display = True
