@@ -1077,6 +1077,29 @@ class TextualChatApp(App):
             text = _neutralized_label(str(item.get("text", "")))
             self._ingest_frame(OutboxMessage(kind="user", text=text, meta=meta))
 
+    def _handle_intervention_answer_event(self, event) -> None:
+        """Render an ``intervention_answer_submitted`` chat-event as a flow
+        entry (#3300 — the last outbox `kind="user"` broadcast site,
+        ``InterventionHandler.deliver_answer_to``, migrated to a chat-event).
+
+        Unlike ``user_submitted`` (which stages in the sent-queue region
+        first, :meth:`_handle_user_submitted_event`), an intervention answer
+        has no queue/dispatch lifecycle to stage through — it renders
+        straight to the flow, same as before this event-ify (when it arrived
+        as a DISPLAY frame). The payload carries RAW text; this is the
+        surface's OWN neutralize-at-render-boundary call (the SAME
+        ``_neutralized_label`` seam :meth:`_handle_turn_started_event` uses
+        for the analogous ``user_submitted`` promotion), so a control/ESC
+        byte in an answer (free-text or an LLM-derived choice label) cannot
+        reach this TTY.
+        """
+        from reyn.runtime.outbox import OutboxMessage  # noqa: PLC0415
+
+        data = event.data or {}
+        text = _neutralized_label(str(data.get("text", "")))
+        meta = dict(data.get("meta") or {})
+        self._ingest_frame(OutboxMessage(kind="user", text=text, meta=meta))
+
     def _handle_inbox_cancel_event(self, event) -> None:
         """REMOVE exit (#3300 Y-client, sent-queue exit contract §6a): an
         ``inbox_cancel`` delta removes the matching queued item from the
@@ -1256,6 +1279,11 @@ class TextualChatApp(App):
         cancelable — while queued on a busy one). The queue model is seeded
         once, on the first frame (:meth:`_seed_queue_view`). A single frame's
         failure must not kill the pump, so ingest is guarded.
+
+        #3300 (event-ify the intervention-answer echo): ``intervention_answer_submitted``
+        (:meth:`_handle_intervention_answer_event`) renders straight to the
+        flow, unlike ``user_submitted`` — an intervention answer was never a
+        queued inbox item, so there is no sent-queue stage to promote through.
         """
         try:
             async for frame in self._transport.frames():
@@ -1287,6 +1315,14 @@ class TextualChatApp(App):
                         except Exception:
                             logger.exception(
                                 "textual chat: inbox_cancel ingest failed"
+                            )
+                    elif etype == "intervention_answer_submitted":
+                        try:
+                            self._handle_intervention_answer_event(frame.event)
+                        except Exception:
+                            logger.exception(
+                                "textual chat: intervention_answer_submitted "
+                                "ingest failed"
                             )
                     elif etype == "agent_delta":
                         try:
