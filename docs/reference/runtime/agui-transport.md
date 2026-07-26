@@ -130,8 +130,16 @@ The AG-UI spec mandates the text lifecycle **`TEXT_MESSAGE_START` → one or mor
 bare `TEXT_MESSAGE_CONTENT` is invalid (a strict generic client drops it). A whole
 reyn text message therefore rides the wire as that triplet, with a generated
 per-message id (reyn's outbox has no stable message id) and the CONTENT `delta`
-carrying the full message text (reyn is whole-message; token-streaming is out of
-scope).
+carrying the full message text — this STANDARD triplet stays whole-message (one
+CONTENT event per completed reply, never split into per-token frames).
+
+Token-level streaming DOES now exist on a SEPARATE channel: `reyn.event.agent_delta`
+(#3288 ③b, see below) carries the LLM's raw per-chunk deltas as they arrive,
+purely as an additive, non-persistent notification — the standard
+`TEXT_MESSAGE_CONTENT` triplet above is unaffected (still one whole-text CONTENT
+event, emitted after the delta stream completes) and no shipped generic-client
+surface consumes `agent_delta` yet (a later phase, ③d, is expected to fold it
+into a real multi-CONTENT triplet for the standard surface).
 
 Only the **CONTENT** event carries the `_reyn` reconstruction block; the START and
 END events are generic scaffold that the reyn client decodes to `None` and
@@ -379,14 +387,18 @@ A reyn display frame with no standard AG-UI analog. `value` is `{"text": <string
 
 ### `reyn.event.<etype>`
 
-A reyn chat-event (working-indicator axis) with no standard AG-UI analog. `value`
-is the event's data object.
+A reyn chat-event with no standard AG-UI analog. `value` is the event's data
+object. Most members are the working-indicator axis (turn-lifecycle /
+tool-call / user-submitted / cancel); `agent_delta` (#3288 ③b) is a SEPARATE
+streaming-notification axis — see its row below and the `_STREAMING_EVENTS`
+comment in `frames.py` for why it is forwarded ahead of any renderer consumer.
 
 | Custom `name`                        | Meaning                                          |
 |--------------------------------------|--------------------------------------------------|
 | `reyn.event.user_answered_intervention` | the user answered an intervention             |
 | `reyn.event.user_submitted`          | a user turn was submitted (#3300 P1 C) — RAW text + chain_id + msg_id + seq + meta; each surface neutralizes at its render boundary. `msg_id`/`seq` are the #3300 P2a sent-queue correlation id + order-race-gate token |
 | `reyn.event.inbox_cancel`            | an UNDISPATCHED queued user message was cancelled by id (#3300 P3, via the `cancel_queued` client message) — carries `msg_id` + `seq`; the server-authoritative sent-queue removal signal (never a client-local "cancel succeeded" response), exclusive with `turn_started` for the same `msg_id` |
+| `reyn.event.agent_delta`             | one streamed LLM content-delta chunk (#3288 ③b) — carries `text` (the raw per-chunk delta) + `chain_id`. NON-PERSISTENT and purely additive: the single source of truth stays the completed full-text `reyn.display.agent`-mapped `TEXT_MESSAGE_CONTENT` frame (`kind="agent"`), emitted exactly once at turn end (whole-persist, L9, is unaffected). Forwarded even though no shipped renderer consumes it yet — a client with no handler ignores it (skipped, not fatal), same as any unknown `CUSTOM` name; a future phase (③c local / ③d AG-UI generic multi-CONTENT) adds a consumer without requiring a wire change here |
 
 ### `reyn.intervention.<kind>`
 
