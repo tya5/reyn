@@ -123,28 +123,50 @@ renderable display kinds):
   fail-safe for a future tap-point change, not a live wire kind. (Remote
   attach-label sync is designed separately, not via this legacy sentinel.)
 
-#### Text lifecycle (the conforming triplet)
+#### Text lifecycle (the conforming triplet, plain and streamed)
 
 The AG-UI spec mandates the text lifecycle **`TEXT_MESSAGE_START` → one or more
 `TEXT_MESSAGE_CONTENT` → `TEXT_MESSAGE_END`, all correlated by a `messageId`**; a
-bare `TEXT_MESSAGE_CONTENT` is invalid (a strict generic client drops it). A whole
-reyn text message therefore rides the wire as that triplet, with a generated
-per-message id (reyn's outbox has no stable message id) and the CONTENT `delta`
-carrying the full message text — this STANDARD triplet stays whole-message (one
-CONTENT event per completed reply, never split into per-token frames).
+bare `TEXT_MESSAGE_CONTENT` is invalid (a strict generic client drops it).
 
-Token-level streaming DOES now exist on a SEPARATE channel: `reyn.event.agent_delta`
-(#3288 ③b, see below) carries the LLM's raw per-chunk deltas as they arrive,
-purely as an additive, non-persistent notification — the standard
-`TEXT_MESSAGE_CONTENT` triplet above is unaffected (still one whole-text CONTENT
-event, emitted after the delta stream completes) and no shipped generic-client
-surface consumes `agent_delta` yet (a later phase, ③d, is expected to fold it
-into a real multi-CONTENT triplet for the standard surface).
+**A message that never streamed** (no provider capability, ADR-0039 P3a/③a) rides
+the wire as the plain whole-message triplet, with a generated per-message id
+(reyn's outbox has no stable message id) and the single CONTENT's `delta`
+carrying the full message text. Only the **CONTENT** event carries the `_reyn`
+reconstruction block; START/END are generic scaffold the reyn client decodes to
+`None` and ignores — the reconstruction invariant is **one frame ⇄ one
+`_reyn`-bearing event**.
 
-Only the **CONTENT** event carries the `_reyn` reconstruction block; the START and
-END events are generic scaffold that the reyn client decodes to `None` and
-ignores. So the reconstruction invariant stays **one frame ⇄ one `_reyn`-bearing
-event**, and the reyn client rebuilds exactly one display frame per message.
+**A message that DID stream** (#3288 ③b emits `reyn.event.agent_delta` for each
+raw LLM content-delta as it arrives; #3288 ③d maps it onto the STANDARD text
+surface) instead gets a REAL multi-CONTENT sequence: `TEXT_MESSAGE_START` at the
+first delta, one genuine `TEXT_MESSAGE_CONTENT` per delta (each carrying its OWN
+`_reyn`, reconstructing that exact `agent_delta` chat-event — so a reyn client's
+in-flight rendering, if any, is identical whether the frames arrived in-process
+or over this wire), then `TEXT_MESSAGE_END` at completion. ★The completion is
+mapped to **END ONLY — never a second CONTENT re-sending the full text** (a
+client that rendered the deltas live would double-render the body). The END
+instead carries its OWN `_reyn`, holding the completion's FULL persisted text —
+the **sole reconstruction authority** for a streamed message; a reyn client never
+reconstructs by concatenating deltas (they are non-persistent, derived,
+live-only narration — the reconnect `MESSAGES_SNAPSHOT` backlog, built only from
+persisted `OutboxMessage`s, never reads one either). This is also what closes the
+**late-joiner window**: a connection's per-connection `TextStreamTracker` state
+(`interfaces/transport/agui/emitter.py`) reflects only what THAT connection
+personally observed — a connection that witnessed zero deltas for a chain (never
+connected during the stream, or connected right as it finished) instead gets the
+unchanged plain whole-message triplet for the SAME completion frame (full text
+on CONTENT), so either way the client ends up with the complete, persisted text.
+No per-client "which deltas did you receive" bookkeeping is kept (rejected in the
+issue #3288 ③d design thread — it would add state for no benefit over reading the
+authoritative completion).
+
+So the reconstruction invariant is **re-decided for a streamed message
+specifically**: N `agent_delta` CONTENT events each carry their OWN `_reyn` (one
+per delta), and the terminal END carries a further, DISTINCT `_reyn` (the
+completion). N+1 `_reyn`-bearing events, not 1 — but the client's reconstruction
+authority is always the LAST one. A message that never streamed is unaffected by
+any of this (the plain triplet above, unchanged).
 
 #### Reasoning lifecycle (the conforming triplet)
 
@@ -392,13 +414,22 @@ object. Most members are the working-indicator axis (turn-lifecycle /
 tool-call / user-submitted / cancel); `agent_delta` (#3288 ③b) is a SEPARATE
 streaming-notification axis — see its row below and the `_STREAMING_EVENTS`
 comment in `frames.py` for why it is forwarded ahead of any renderer consumer.
+★This `CUSTOM` mapping is what `encode_frame`/`encode_frame_wire` (the plain,
+non-streaming codec path) produce for an `agent_delta` `EventFrame` — the AG-UI
+emitter's actual production call site (`emitter.py`) instead runs every frame
+through `encode_frame_wire_streaming`, which maps `agent_delta` onto the
+STANDARD `TEXT_MESSAGE_CONTENT` surface (#3288 ③d — see *Text lifecycle* above),
+never this `CUSTOM` name, on the wire a real client receives. This row documents
+what the plain codec functions do in isolation (still exercised directly by
+`tests/test_agent_delta_chat_event_3288.py`), not what ships on the connected
+wire.
 
 | Custom `name`                        | Meaning                                          |
 |--------------------------------------|--------------------------------------------------|
 | `reyn.event.user_answered_intervention` | the user answered an intervention             |
 | `reyn.event.user_submitted`          | a user turn was submitted (#3300 P1 C) — RAW text + chain_id + msg_id + seq + meta; each surface neutralizes at its render boundary. `msg_id`/`seq` are the #3300 P2a sent-queue correlation id + order-race-gate token |
 | `reyn.event.inbox_cancel`            | an UNDISPATCHED queued user message was cancelled by id (#3300 P3, via the `cancel_queued` client message) — carries `msg_id` + `seq`; the server-authoritative sent-queue removal signal (never a client-local "cancel succeeded" response), exclusive with `turn_started` for the same `msg_id` |
-| `reyn.event.agent_delta`             | one streamed LLM content-delta chunk (#3288 ③b) — carries `text` (the raw per-chunk delta) + `chain_id`. NON-PERSISTENT and purely additive: the single source of truth stays the completed full-text `reyn.display.agent`-mapped `TEXT_MESSAGE_CONTENT` frame (`kind="agent"`), emitted exactly once at turn end (whole-persist, L9, is unaffected). Forwarded even though no shipped renderer consumes it yet — a client with no handler ignores it (skipped, not fatal), same as any unknown `CUSTOM` name; a future phase (③c local / ③d AG-UI generic multi-CONTENT) adds a consumer without requiring a wire change here |
+| `reyn.event.agent_delta`             | one streamed LLM content-delta chunk (#3288 ③b) — carries `text` (the raw per-chunk delta) + `chain_id`. The plain codec's `CUSTOM` mapping (see the note above); on the actual AG-UI wire (`encode_frame_wire_streaming`, #3288 ③d) this rides `TEXT_MESSAGE_CONTENT` instead — see *Text lifecycle* above for the full streamed-message contract (END-only completion, reconstruction authority, late-joiner closure) |
 
 ### `reyn.intervention.<kind>`
 
@@ -543,7 +574,7 @@ loss.
 | State      | 3                | 3           | **complete** |
 | Lifecycle  | 5                | 3           | **intentional-scope** — the 2 Step events fold into the `STATE_*` read-model's `waiting_on` field instead of a separate standard event (see *STATE_\* — the status read-model* above) |
 | Tool       | 5                | 3           | **complete for the HITL round-trip** — `TOOL_CALL_START` + `TOOL_CALL_END` (with a standard `status` field) + `TOOL_CALL_RESULT` (the intervention frontend-tool answer round-trip); the `TOOL_CALL_ARGS`/`_CHUNK` pair is **intentional-scope** (a tool call is already complete by the time reyn emits it — there is no in-flight args stream to chunk) |
-| Text       | 4                | 3           | **conforming triplet** — a whole message rides `TEXT_MESSAGE_START` → `TEXT_MESSAGE_CONTENT` → `TEXT_MESSAGE_END`, correlated by `messageId`; only the streaming `TEXT_MESSAGE_CHUNK` is unmapped (**intentional-scope** — reyn's outbox delivers whole messages, not token deltas) |
+| Text       | 4                | 3           | **conforming triplet, plain and streamed** — a whole message rides `TEXT_MESSAGE_START` → `TEXT_MESSAGE_CONTENT` → `TEXT_MESSAGE_END`, correlated by `messageId`; a message that streamed (#3288 ③a/③b/③d) rides the SAME triplet with a REAL per-delta `TEXT_MESSAGE_CONTENT` for each chunk (see *Text lifecycle* above) — only the condensed single-event `TEXT_MESSAGE_CHUNK` variant is unmapped (**intentional-scope** — the triplet form already covers streaming; reyn has no use for the alternate condensed encoding) |
 | Special    | 2                | 1           | **intentional-scope** — reyn-private payloads are always structured (`CUSTOM`); the standard `RAW` passthrough event has no reyn use case |
 | Activity   | 2                | 0           | **intentional-scope** — reyn has no direct analog; the same information is already carried by the frame stream + `STATE_*` |
 | Reasoning  | 7                | 3           | **standard-mapped** — a whole reasoning message rides `REASONING_MESSAGE_START` → `REASONING_MESSAGE_CONTENT` → `REASONING_MESSAGE_END`, correlated by `messageId`; the outer `REASONING_START`/`REASONING_END` context wrapper and the streaming `REASONING_MESSAGE_CHUNK`/`REASONING_ENCRYPTED_VALUE` variants are **intentional-scope** (reyn is whole-message; no encrypted CoT) |

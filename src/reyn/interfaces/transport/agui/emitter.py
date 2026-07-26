@@ -10,12 +10,17 @@ transports feed off the identical frame source, *local ≡ remote by constructio
 
 On connect it replays the reconnect snapshots (A4): ``MESSAGES_SNAPSHOT`` (the
 display backlog) then ``STATE_SNAPSHOT`` (the status read-model). It then streams
-each frame as its AG-UI **wire sequence** (:func:`encode_frame_wire` — a whole
-text message is the canonical ``TEXT_MESSAGE_START`` → ``…_CONTENT`` →
-``…_END`` triplet, P4; every other frame is a single event), and after each frame
-emits a ``STATE_DELTA`` when the projected status changed — the current WaitingOn
-label is tracked off the chat-event stream so the remote status panel follows
-Thinking / Running / Waiting-for-you without a second source.
+each frame as its AG-UI **wire sequence** (:func:`encode_frame_wire_streaming` —
+a whole text message is the canonical ``TEXT_MESSAGE_START`` → ``…_CONTENT`` →
+``…_END`` triplet, P4; a message that streamed (#3288 ③b/③d, ``agent_delta``
+chat-events) instead gets a REAL multi-CONTENT sequence — one ``TEXT_MESSAGE_START``
+at the first delta, one ``TEXT_MESSAGE_CONTENT`` per delta, one ``TEXT_MESSAGE_END``
+at completion carrying the completion's full text — via a ``TextStreamTracker``
+this emitter owns, scoped to THIS connection; every other frame is a single
+event), and after each frame emits a ``STATE_DELTA`` when the projected status
+changed — the current WaitingOn label is tracked off the chat-event stream so the
+remote status panel follows Thinking / Running / Waiting-for-you without a
+second source.
 """
 from __future__ import annotations
 
@@ -23,7 +28,8 @@ from typing import AsyncIterator, Callable
 
 from reyn.interfaces.transport.agui.protocol import (
     CONTROL_FILTER_KINDS,
-    encode_frame_wire,
+    TextStreamTracker,
+    encode_frame_wire_streaming,
     encode_intervention_tool_result,
     encode_intervention_tool_start,
     encode_messages_snapshot,
@@ -73,6 +79,11 @@ class AgUiEmitter:
         self._backlog = list(backlog or [])
         self._model = StatusModel()
         self._waiting_on: str | None = None
+        # #3288 ③d: one tracker per connection so a streamed reply's
+        # START/END bracketing reflects exactly what THIS connection
+        # personally observed (the late-joiner-closing mechanism — see
+        # ``TextStreamTracker``'s docstring, protocol.py).
+        self._text_stream = TextStreamTracker()
 
     def _project(self) -> dict:
         return project_status(self._status_provider(), waiting_on=self._waiting_on)
@@ -102,11 +113,13 @@ class AgUiEmitter:
                     return
                 continue
             # A whole text message expands to the AG-UI START→CONTENT→END triplet
-            # (conformance); every other frame is a single event. Only the
-            # _reyn-bearing event round-trips to the reyn client — START/END are
+            # (conformance); a message that streamed (#3288 ③d) instead gets a
+            # real multi-CONTENT sequence via the per-connection tracker; every
+            # other frame is a single event. Only the _reyn-bearing event(s)
+            # round-trip to the reyn client — non-reconstructing START/END are
             # generic scaffold. An ``intervention`` kind is CUSTOM (a single
             # event), so the triplet never disturbs the frontend-tool path below.
-            for event in encode_frame_wire(frame):
+            for event in encode_frame_wire_streaming(frame, self._text_stream):
                 yield to_sse(event)
             # HITL frontend-tool lifecycle (ADR-0039 P3, R4). An intervention
             # rides the wire in TWO representations: the DisplayFrame above (the

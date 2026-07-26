@@ -20,6 +20,28 @@ Design (the load-bearing invariants this module carries):
   foreign event with no ``_reyn`` block decodes to ``None`` (ignore-unknown /
   graceful degrade — the generic-client contract).
 
+- **Re-decided invariant (#3288 ③d): "1 frame ⇄ 1 ``_reyn``-bearing event"
+  now holds ONLY for a non-streamed whole message.** ③b introduced
+  ``agent_delta`` chat-events (token-level LLM deltas); ③d gives them a REAL
+  multi-CONTENT wire lifecycle via :func:`encode_frame_wire_streaming` (used
+  by :class:`~reyn.interfaces.transport.agui.emitter.AgUiEmitter` in place of
+  :func:`encode_frame_wire`). For a message that streamed: N ``agent_delta``
+  EventFrames each become their OWN ``TEXT_MESSAGE_CONTENT``, each carrying
+  its OWN ``_reyn`` (so a reyn client reconstructs the exact same per-chunk
+  ``agent_delta`` EventFrame it would get in-process); the terminal
+  ``kind="agent"`` completion then maps to ``TEXT_MESSAGE_END`` ONLY — never
+  a second CONTENT re-sending the full text (a client that accumulated the
+  deltas would render the body twice) — but that END carries its OWN
+  ``_reyn``, holding the completion's FULL text. So a streamed message has
+  N+1 ``_reyn``-bearing wire events, not 1. The reyn client's
+  **reconstruction AUTHORITY is always the LAST one** (the END's full
+  text) — NEVER a concatenation of the N deltas, which are non-persistent,
+  derived, live-only narration; the restore/reconnect (``MESSAGES_SNAPSHOT``)
+  path never reads a delta, only the persisted completion. A message that
+  never streamed (no capability, or the connection never observed a delta
+  for it) is untouched: the plain :func:`encode_frame_wire` triplet, CONTENT
+  carries ``_reyn``, START/END are scaffold — byte-identical to pre-③d.
+
 - **The mapping is a table, derived, not hand-listed at the call site.** The
   ``kind``/``type`` → AG-UI-event-type tables (:data:`_DISPLAY_KIND_EVENT` /
   :data:`_EVENT_TYPE_EVENT`) are the single source the completeness gate reads;
@@ -40,8 +62,13 @@ stock AG-UI client with zero reyn knowledge renders a functional chat:
   (reyn's outbox has no stable message id). Only the CONTENT event carries the
   ``_reyn`` reconstruction block — START/END are generic scaffold the reyn client
   decodes to ``None`` — so the invariant stays **1 frame ⇄ 1 ``_reyn``-bearing
-  event** and reyn bit-identity is unchanged. (Token-streaming is out of scope;
-  reyn is whole-message.)
+  event** and reyn bit-identity is unchanged, for a message that never streamed.
+  **A message that DID stream (#3288 ③d)** rides
+  :func:`encode_frame_wire_streaming` instead: a real per-chunk
+  ``TEXT_MESSAGE_CONTENT`` for every ``agent_delta``, bracketed by ONE
+  ``TEXT_MESSAGE_START`` (at the first delta) and ONE ``TEXT_MESSAGE_END`` (at
+  completion, carrying the completion's ``_reyn`` — see the module docstring's
+  re-decided invariant above) — never a second full-text CONTENT.
 - **Standard ``messages`` array.** ``MESSAGES_SNAPSHOT`` carries a standard
   ``[{role, content}]`` array of **conversation turns only** (``agent`` →
   ``assistant``, ``user`` → ``user``); reyn chrome (status / error / present /
@@ -347,6 +374,144 @@ def encode_frame_wire(frame: Frame) -> "list[AgUiEvent]":
     return [start, event, end]
 
 
+# Turn-lifecycle etypes that terminate a chain's stream even when it never
+# reaches a ``kind="agent"`` completion (e.g. a mid-stream cancel emits
+# ``kind="system"`` "turn interrupted" instead, router_loop.py:2422-2427).
+# Defensive-only: closes a dangling stream (START+CONTENT sent, no END yet) so
+# a strict generic client never sees a message left permanently open — the
+# "Spec validity" gate applies to this edge just as much as the happy path.
+_TURN_TERMINAL_ETYPES: "frozenset[str]" = frozenset(
+    {"turn_settled", "turn_completed", "turn_cancelled"}
+)
+
+
+class TextStreamTracker:
+    """Per-connection state correlating a streamed reply's ``agent_delta``
+    chat-events with its terminal ``kind="agent"`` completion (#3288 ③d),
+    keyed by ``chain_id`` — the turn-correlation id both carry
+    (``RouterLoop._emit_agent_delta`` stamps it on every delta;
+    ``RouterLoop.run``'s terminal ``put_outbox(meta={"chain_id": ...})`` stamps
+    the SAME id on the completion, ``router_loop.py``).
+
+    Owned one-per-connection by :class:`~reyn.interfaces.transport.agui.emitter.AgUiEmitter`
+    — so it reflects exactly what THIS connection personally observed. A
+    connection that witnesses at least one delta for a chain_id maps that
+    chain's completion to END-only; a connection that never witnessed a delta
+    for it (never connected, or connected after the whole turn already
+    finished) gets the unchanged plain whole-message triplet instead — which
+    is how the late-joiner window closes without any additional per-client
+    "which deltas did you receive" bookkeeping (explicitly rejected, issue
+    #3288 ③d design thread): whichever branch fires, the reyn client ends up
+    calling the SAME renderer entry point with the SAME persisted full text.
+    """
+
+    def __init__(self) -> None:
+        self._message_id_by_chain: "dict[str, str]" = {}
+
+    def begin_delta(self, chain_id: str) -> "tuple[str, bool]":
+        """Registers one delta for ``chain_id``; returns ``(messageId,
+        is_first_delta_for_this_chain)``."""
+        is_first = chain_id not in self._message_id_by_chain
+        message_id = self._message_id_by_chain.setdefault(chain_id, _new_message_id())
+        return message_id, is_first
+
+    def end_stream(self, chain_id: str) -> "str | None":
+        """Pops and returns the streamed ``messageId`` for ``chain_id`` — or
+        ``None`` when this connection never observed a delta for it (a plain
+        whole-message reply, or a chain this connection joined too late to
+        see any delta of)."""
+        return self._message_id_by_chain.pop(chain_id, None)
+
+
+def encode_frame_wire_streaming(
+    frame: Frame, tracker: TextStreamTracker
+) -> "list[AgUiEvent]":
+    """Encode one ``Frame`` to its AG-UI wire sequence WITH generic
+    multi-CONTENT text streaming (#3288 ③d — see the module docstring's
+    re-decided invariant for the full contract).
+
+    - An ``agent_delta`` ``EventFrame`` (③b) becomes a real
+      ``TEXT_MESSAGE_CONTENT``: the FIRST one observed for a ``chain_id`` (on
+      THIS connection, via ``tracker``) is preceded by a ``TEXT_MESSAGE_START``
+      so a strict generic client accepts it (ADR-0039 P4); every delta CONTENT
+      carries its own ``_reyn`` block.
+    - A ``kind="agent"`` completion ``DisplayFrame`` whose ``chain_id`` has an
+      active stream on ``tracker`` maps to ``TEXT_MESSAGE_END`` ONLY — never a
+      second CONTENT re-sending the full text. The END carries the
+      completion's OWN ``_reyn`` (the full text) — the sole reconstruction
+      authority for a streamed message; this is what closes the late-joiner
+      window (a connection that saw only some/no deltas for this chain still
+      gets the full text off THIS event, or off the plain fallback below).
+    - A ``kind="agent"`` completion whose ``chain_id`` was never streamed on
+      THIS connection (``tracker.end_stream`` returns ``None``) falls straight
+      through to the unchanged :func:`encode_frame_wire` triplet — byte-identical
+      to pre-③d.
+    - A turn-terminal event (``turn_settled``/``turn_completed``/``turn_cancelled``)
+      that arrives while a stream is still active for its ``chain_id`` (a
+      mid-stream cancel never reaches a ``kind="agent"`` completion) closes the
+      dangling stream defensively with a bare ``TEXT_MESSAGE_END`` (no ``_reyn``
+      — no full text exists to attach) ahead of that event's own encoding, so a
+      strict generic client never sees a message left permanently open.
+    - Every other frame is unaffected: :func:`encode_frame_wire` unchanged.
+    """
+    if isinstance(frame, EventFrame) and getattr(frame.event, "type", "") == "agent_delta":
+        edata = dict(getattr(frame.event, "data", {}) or {})
+        chain_id = str(edata.get("chain_id") or "")
+        text = str(edata.get("text") or "")
+        message_id, is_first = tracker.begin_delta(chain_id)
+        events: "list[AgUiEvent]" = []
+        if is_first:
+            events.append(
+                AgUiEvent(
+                    type=TEXT_MESSAGE_START,
+                    data={"messageId": message_id, "role": "assistant"},
+                )
+            )
+        reyn = {"frame": "event", "type": "agent_delta", "data": edata}
+        events.append(
+            AgUiEvent(
+                type=TEXT_MESSAGE_CONTENT,
+                data={
+                    "messageId": message_id,
+                    "role": "assistant",
+                    "delta": text,
+                    _REYN: reyn,
+                },
+            )
+        )
+        return events
+    if isinstance(frame, DisplayFrame) and frame.message.kind == "agent":
+        chain_id = str((frame.message.meta or {}).get("chain_id") or "")
+        message_id = tracker.end_stream(chain_id)
+        if message_id is not None:
+            msg = frame.message
+            reyn = {
+                "frame": "display",
+                "kind": msg.kind,
+                "text": msg.text,
+                "meta": dict(msg.meta or {}),
+            }
+            return [
+                AgUiEvent(
+                    type=TEXT_MESSAGE_END,
+                    data={"messageId": message_id, _REYN: reyn},
+                )
+            ]
+        return encode_frame_wire(frame)
+    if isinstance(frame, EventFrame) and getattr(frame.event, "type", "") in _TURN_TERMINAL_ETYPES:
+        edata = dict(getattr(frame.event, "data", {}) or {})
+        chain_id = str(edata.get("chain_id") or "")
+        message_id = tracker.end_stream(chain_id)
+        events = encode_frame_wire(frame)
+        if message_id is not None:
+            events = [
+                AgUiEvent(type=TEXT_MESSAGE_END, data={"messageId": message_id}),
+                *events,
+            ]
+        return events
+    return encode_frame_wire(frame)
+
+
 def encode_state_snapshot(snapshot: dict) -> AgUiEvent:
     """STATE_SNAPSHOT — the full status read-model, emitted on connect (A4)."""
     return AgUiEvent(
@@ -554,6 +719,8 @@ __all__ = [
     "CONTROL_FILTER_KINDS",
     "encode_frame",
     "encode_frame_wire",
+    "TextStreamTracker",
+    "encode_frame_wire_streaming",
     "encode_state_snapshot",
     "encode_state_delta",
     "encode_messages_snapshot",
