@@ -1510,6 +1510,18 @@ def _responses_bridge_providers() -> "frozenset[str]":
     ``.AZURE.value``), not bare string literals — if litellm ever renames a
     provider identity, the enum moves with it instead of silently going
     stale here.
+
+    **This allowlist is PROVISIONAL** (owner direction: minimize
+    provider-dependent code in reyn). litellm's own model info already
+    declares the routing need per-MODEL, not per-provider —
+    ``litellm.get_model_info("o1-pro")["mode"] == "responses"`` — and
+    ``litellm.utils`` exposes a ``supports_reasoning`` capability query
+    alongside the ``supports_native_streaming`` / ``supports_function_calling``
+    ones ``_streaming_capable`` already uses. A follow-up should replace this
+    provider allowlist with that per-model ``mode`` declaration, which would
+    make Azure/OpenRouter case-by-case judgment (and tracking future
+    providers) unnecessary. Until that lands: if an Azure-routed reasoning
+    model 405s unexpectedly, this frozenset is the first place to check.
     """
     import litellm  # noqa: PLC0415
 
@@ -1523,6 +1535,15 @@ def _requires_responses_bridge(model: str) -> bool:
     """#3288 follow-up (issue #3288 comment thread, per-PR-coder root-cause;
     provider-set widened per co-vet finding (b) on PR #3325): does ``model``
     need the ``/v1/responses`` bridge for a ``reasoning_effort + tools`` call?
+
+    **PROVISIONAL — see ``_responses_bridge_providers``'s docstring.** This
+    decision is currently provider-based; a follow-up should switch it to a
+    per-model ``litellm.get_model_info(...)["mode"] == "responses"``
+    declaration instead (litellm already declares this per-model, not merely
+    per-provider), which would need no Azure/OpenRouter case-by-case judgment
+    and no tracking of future providers. Not done in this PR — #3325 fixes a
+    live default-config regression (streaming silently dead) and that fix
+    should not wait on the provider→model-mode replacement.
 
     The #1678 bridge exists because SOME reasoning models reject
     ``reasoning_effort + tools`` on ``/chat/completions`` and need
