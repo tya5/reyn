@@ -2855,8 +2855,19 @@ class Session:
         # propagates through any agent_request / agent_response generated in
         # response. Logged in history meta + events.jsonl for cross-agent trace.
         chain_id = _new_chain_id()
+        # #3300 P2b co-vet fix: computed ONCE and stored on the inbox payload
+        # too (additively — router/history readers only ever read
+        # payload["text"]/["chain_id"], never assert an exact key set), not
+        # just emitted on the event below. Without this, `meta` only ever
+        # reaches a LIVE delta subscriber — a client that instead seeds its
+        # queue view from the connect STATE_SNAPSHOT (`queued_user_messages()`
+        # below, #3300 P2a/P2b) would see attribution silently dropped for
+        # any item that was already queued at connect time (a remote peer's
+        # submit rendering as a plain, unattributed operator line once
+        # promoted — an ADR-0039 regression for the late-joiner path).
+        meta = _user_frame_meta(attribution)
         msg_id = await self._put_inbox(
-            "user", {"text": text, "chain_id": chain_id},
+            "user", {"text": text, "chain_id": chain_id, "meta": meta},
         )
         # #3300 P1 (C): the user-line echo is DRIVEN BY a `user_submitted`
         # chat-event, not a parallel `_put_outbox` write (removed — was a
@@ -2897,7 +2908,7 @@ class Session:
             chain_id=chain_id,
             msg_id=msg_id,
             seq=self._bump_queue_seq(),
-            meta=_user_frame_meta(attribution),
+            meta=meta,
         )
 
     async def submit_agent_request(
@@ -4772,16 +4783,24 @@ class Session:
         ``pipeline_result`` inbox items are internal wake triggers, never
         rendered as a queued user message).
 
-        Each item: ``{"msg_id": str, "chain_id": str | None, "text": str | None}``
-        — ``msg_id``/``chain_id`` are the correlation ids a client matches
-        against the ``user_submitted`` (enqueue) / ``turn_started`` (dispatch)
-        chat-event deltas to keep its queue model in sync.
+        Each item: ``{"msg_id": str, "chain_id": str | None, "text": str | None,
+        "meta": dict}`` — ``msg_id``/``chain_id`` are the correlation ids a
+        client matches against the ``user_submitted`` (enqueue) /
+        ``turn_started`` (dispatch) chat-event deltas to keep its queue model
+        in sync. ``meta`` (#3300 P2b co-vet fix) is the SAME ADR-0039
+        attribution ``submit_user_text`` stamps on the ``user_submitted``
+        event (``_user_frame_meta`` — now ALSO stored on the inbox payload,
+        see ``submit_user_text``) — carrying it here is what lets a client
+        that seeds its queue view from THIS snapshot (rather than only the
+        live delta) still render the correct ``[actor]`` prefix once the
+        item promotes to a flow entry.
         """
         return [
             {
                 "msg_id": item.get("id"),
                 "chain_id": item.get("payload", {}).get("chain_id"),
                 "text": item.get("payload", {}).get("text"),
+                "meta": item.get("payload", {}).get("meta") or {},
             }
             for item in self.journal.snapshot.inbox
             if item.get("kind") == "user"
