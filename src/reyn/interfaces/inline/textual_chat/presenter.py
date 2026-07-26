@@ -26,7 +26,6 @@ from reyn.interfaces.repl.renderer import (
     _CC_ERR,
     _CC_TEXT,
     _CC_USER_BG,
-    _CC_WARN,
     _KIND_LINE,
     _SPINNER,
     _body_renderable,
@@ -77,43 +76,17 @@ _SPINNER_SPEED = 8
 # kind — :func:`_tool_result_line` renders that as a NEUTRAL dim
 # ``⎿ (no result — turn ended)`` line, never a ``✗`` failure.
 
-# --- choice-intervention chip layout ---------------------------------------
-# A closed-set intervention (permission confirm / choice ``ask_user`` — anything
-# carrying ``meta["choices"]``) is surfaced IN FLOW as clickable option chips on
-# a single row below the prompt, mirroring the PoC's ``ask_user`` affordance and
-# the old inline region's cursor+Enter picker. Selecting a chip resolves the
-# intervention through ``transport.answer_intervention_choice`` (see
-# ``TextualChatApp.on_flow_view_clicked``); the chip geometry here is the SINGLE
-# source of truth both the presenter (draw) and the app (hit-test) read, so a
-# click always maps to the chip that was drawn.
-_CHOICE_INDENT = 2  # leading pad before the first chip (cols)
-_CHOICE_GAP = 2  # gap between chips (cols)
-_CHOICE_HINT = "  ↑ click an option"
-
-
-def _choice_chip(index: int, label: str) -> str:
-    """The rendered text of one option chip (``[ 1 · Yes ]``)."""
-    return f"[ {index + 1} · {label} ]"
-
-
-def choice_chip_spans(
-    choices: "list[dict]",
-) -> "list[tuple[int, int, str]]":
-    """``(start_col, end_col, choice_id)`` per chip on the chip row.
-
-    Shared by the presenter (which DRAWS the chips) and the app click handler
-    (which HIT-TESTS a click's column against these spans), so the two never
-    disagree about where a chip is. ``choice_id`` is the authoritative match key
-    delivered to ``answer_intervention_choice`` — never displayed, so it is not
-    neutralized here (only the visible label is, in :func:`_neutralized_label`).
-    """
-    spans: "list[tuple[int, int, str]]" = []
-    col = _CHOICE_INDENT
-    for i, choice in enumerate(choices):
-        text = _choice_chip(i, _neutralized_label(choice.get("label", "")))
-        spans.append((col, col + len(text), str(choice.get("id", ""))))
-        col += len(text) + _CHOICE_GAP
-    return spans
+# --- intervention pending / resolved flow entry -----------------------------
+# #3299 P1: an intervention's INTERACTION (closed-set select / free-text
+# answer) moved OUT of the FlowView into the grouped
+# ``InterventionPanel`` widget between the flow and the input row — the
+# FlowView is append-only history, and a mutable interactive control (the old
+# in-flow clickable chips) fought that. The flow entry for an intervention is
+# now a THIN pending placeholder (prompt head + a dim hint pointing at the
+# panel) while pending, and a basic resolved "answered" record once the panel
+# delivers an answer (the placeholder→resolved IN-PLACE churn-zero contract —
+# same entry, ``set_item`` — is P2 polish; this is deliberately basic).
+_PENDING_HINT = "  ⋯ respond in the panel below"
 
 
 def _neutralized_label(label: str) -> str:
@@ -131,15 +104,17 @@ def _neutralized_label(label: str) -> str:
     return get_neutralizer("terminal").neutralize(label)[0]
 
 
-def _choice_head(msg: "OutboxMessage") -> RenderableType:
-    """The prompt head of a choice-intervention entry (prompt + optional detail).
+def _intervention_head(msg: "OutboxMessage") -> RenderableType:
+    """The prompt head of an intervention entry (prompt + optional detail),
+    shared by BOTH closed-set and free-text interventions.
 
     Built from the STRUCTURED ``meta`` fields (``prompt`` / ``detail``, added by
-    ``session._iv_meta`` for exactly this "TUI renderers build chips without
-    re-parsing the text" use) rather than the ``nodes`` render-model, because the
-    ``nodes`` list already embeds the choice labels as a bullet list — rendering
-    it would DOUBLE the options (once as a list, once as chips). Leaves are
-    neutralized at this boundary (the structured fields are copied raw by
+    ``session._iv_meta`` for exactly this "TUI renderers build a head without
+    re-parsing the text" use) rather than the ``nodes`` render-model — the
+    ``nodes`` list already embeds any choice labels as a bullet list, and the
+    interactive form itself now lives in the :class:`InterventionPanel`
+    (#3299 P1), so the flow entry never needs to re-render the options. Leaves
+    are neutralized at this boundary (the structured fields are copied raw by
     ``_iv_meta``)."""
     meta = msg.meta or {}
     prompt = _neutralized_label(str(meta.get("prompt") or msg.text or " "))
@@ -231,9 +206,8 @@ def _body_and_background(msg: "OutboxMessage") -> "tuple[RenderableType, str | N
     if kind == "presentation":
         from reyn.interfaces.repl.present_renderer import render_presentation_nodes
         return render_presentation_nodes(meta.get("nodes", [])), None
-    if kind == "intervention" and meta.get("nodes") is not None:
-        from reyn.interfaces.repl.present_renderer import render_presentation_nodes
-        return render_presentation_nodes(meta["nodes"]), None
+    # kind == "intervention" is intercepted earlier, in ``ReynPresenter.present``
+    # (the pending/resolved placeholder — #3299 P1), so it never reaches here.
     if kind == "tool_call_started":
         head = _tool_head(msg)
         if meta.get(_RESULT_KIND_KEY) is not None:
@@ -293,46 +267,34 @@ class ReynPresenter:
             1,
         )
 
-    def choice_chip_row(self, item: "OutboxMessage", width: int) -> int:
-        """The body row (0-based) the option chips are drawn on at ``width``.
-
-        The prompt head may wrap to several rows, so the chip row is not fixed —
-        the app click handler calls this (with the SAME ``width`` the presenter
-        drew at, ``FlowView._body_width()``) to know which ``event.y`` is the chip
-        row before hit-testing the column against :func:`choice_chip_spans`.
-        Recomputed (not stashed) so no client-side state is threaded through the
-        immutable frame."""
-        return self._measure(_choice_head(item), width)
-
-    def _present_intervention_choice(
+    def _present_intervention_pending(
         self, item: "OutboxMessage", width: int
     ) -> Presentation:
-        """Present a closed-set intervention as clickable option chips.
+        """Present an intervention as a THIN flow entry (#3299 P1) — the
+        interactive form (closed-set select / free-text input) lives entirely
+        in the :class:`~reyn.interfaces.inline.textual_chat.intervention_panel.InterventionPanel`
+        widget below the flow (``TextualChatApp._present_intervention``
+        populates + focuses it), so the flow entry itself never renders chips
+        or an input.
 
-        Pending: the neutralized prompt head, an amber (``_CC_WARN``) chip row of
-        ``[ n · label ]`` options, and a click hint — the "◆ needs you" amber
-        gutter (kind-driven) already marks the row. Resolved (``_chosen_label``
-        set by the click handler): the head plus a green ``✓ resolved: <label>``
-        line, matching the PoC's resolved state (the gutter also goes green via
-        ``EntryState.SUCCESS``)."""
+        Pending (no ``_answer_label`` meta yet): the neutralized prompt head
+        plus a dim ``⋯ respond in the panel below`` hint — the "◆ needs you"
+        amber gutter (kind-driven) already marks the row. Resolved
+        (``_answer_label`` set by the app once the panel delivers an answer):
+        the head plus a green ``✓ answered: <label>`` line (basic — the
+        placeholder→resolved in-place churn-zero polish is P2, not built
+        here)."""
         meta = item.meta or {}
-        head = _choice_head(item)
+        head = _intervention_head(item)
         head_h = self._measure(head, width)
-        chosen = meta.get("_chosen_label")
-        if chosen is not None:
+        answer = meta.get("_answer_label")
+        if answer is not None:
             resolved = Text.assemble(
-                ("  ✓ resolved: ", _CC_DIM), (str(chosen), f"bold {_CC_DONE}")
+                ("  ✓ answered: ", _CC_DIM), (str(answer), f"bold {_CC_DONE}")
             )
             return Presentation(height=head_h + 1, renderable=Group(head, resolved))
-        chips = Text(" " * _CHOICE_INDENT)
-        for i, choice in enumerate(meta.get("choices", [])):
-            chips.append(
-                _choice_chip(i, _neutralized_label(choice.get("label", ""))),
-                style=f"bold {_CC_WARN}",
-            )
-            chips.append(" " * _CHOICE_GAP)
-        hint = Text(_CHOICE_HINT, style=_CC_DIM)
-        return Presentation(height=head_h + 2, renderable=Group(head, chips, hint))
+        hint = Text(_PENDING_HINT, style=_CC_DIM)
+        return Presentation(height=head_h + 1, renderable=Group(head, hint))
 
     def _present_running_tool(
         self, item: "OutboxMessage", width: int
@@ -354,8 +316,8 @@ class ReynPresenter:
 
     async def present(self, item: "OutboxMessage", width: int) -> Presentation:
         meta = item.meta or {}
-        if item.kind == "intervention" and meta.get("choices"):
-            return self._present_intervention_choice(item, width)
+        if item.kind == "intervention":
+            return self._present_intervention_pending(item, width)
         if item.kind == "tool_call_started" and meta.get(_RUNNING_SINCE_KEY) is not None:
             return self._present_running_tool(item, width)
         body, background = _body_and_background(item)

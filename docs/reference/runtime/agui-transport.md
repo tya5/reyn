@@ -397,8 +397,11 @@ off the `STATE_*` view above.
 
 **Local ≡ remote holds for INPUT too, symmetric with output.** A resolved
 intervention answer (`InterventionHandler.deliver_answer_to` — the one funnel
-every answer path shares: TUI free-text, TUI choice-region, an A2A peer, and
-the AG-UI HITL round-trip above) puts a `kind="user"` frame on
+every answer path shares: TUI free-text, the Textual TUI's grouped
+intervention panel (`reyn.interfaces.inline.textual_chat.intervention_panel`,
+#3299 P1 — a closed-set `RadioSet` / free-text `Input` between the
+conversation and the input row, replacing the earlier in-flow chip surface),
+an A2A peer, and the AG-UI HITL round-trip above) puts a `kind="user"` frame on
 `session.outbox`, fanning out through `OutboxHub` to every attached surface.
 A submitted turn (`Session.submit_user_text`) instead emits a
 `user_submitted` chat-event (#3300 P1 C — replacing an earlier outbox-echo
