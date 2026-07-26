@@ -26,10 +26,16 @@ Gates covered here (#3310's acceptance list):
    switch back to A — the away-produced frames are present.
 2. orphan gate: a tool that completed while away renders resolved, never
    RUNNING, after switching back (hydrate's resolved projection).
-3. Per-state reset: one independent test per state (``_running_tools``,
-   ``_pending_ivs``/panel tabs, the sent-queue view/widget/`_queue_item_meta`,
-   ``_streaming_replies``), each with its OWN discriminating witness (never
-   folded into a shared test — the #3302/#3308 sibling-guard-site lesson).
+3. Per-state reset: one independent test per state — ``_running_tools``,
+   ``_pending_ivs`` (SEPARATE from ``InterventionPanel.collapse_all()``,
+   which gets its OWN test: a co-vet finding on #3323 caught the original
+   single combined test discriminating only ``collapse_all()``, leaving
+   ``_pending_ivs.clear()`` un-witnessed — "either clear alone" left it
+   GREEN), the sent-queue view/widget/``_queue_item_meta``,
+   ``_streaming_replies`` — each with its OWN discriminating witness that
+   goes RED when ONLY that state's clear is stripped (never folded into a
+   shared test — the #3302/#3308 sibling-guard-site lesson, reconfirmed
+   the hard way here for ``_pending_ivs``).
 4. Unvisited session: switching to a session never seen in THIS client run
    shows its history, not a blank pane.
 5. Barrier consumption: an ordinary frame delivered immediately after the
@@ -83,6 +89,13 @@ class QueueTransport(ClientTransport):
     def __init__(self) -> None:
         self._queue: "asyncio.Queue" = asyncio.Queue()
         self.submitted: "list[str]" = []
+        # (choice_id, intervention_id) pairs — records which id an answer
+        # was actually TARGETED at, the public observable
+        # ``test_reset_pending_interventions_...`` uses to discriminate
+        # ``_pending_ivs.clear()`` independently of the panel's own
+        # ``collapse_all()`` (mirrors ``RecordingTransport.answered_choice_ids``
+        # in ``tests/test_textual_chat_intervention_panel_3299.py``).
+        self.answered_choice_ids: "list[str | None]" = []
 
     def start(self) -> None:  # pragma: no cover - trivial
         pass
@@ -112,7 +125,8 @@ class QueueTransport(ClientTransport):
     async def answer_intervention_choice(
         self, choice_id: str, *, intervention_id: "str | None" = None
     ) -> bool:
-        return False
+        self.answered_choice_ids.append(intervention_id)
+        return True
 
     def has_session(self) -> bool:
         return True
@@ -399,11 +413,21 @@ async def test_reset_running_tools_stale_op_id_does_not_silently_coalesce(
 
 @pytest.mark.asyncio
 async def test_reset_pending_interventions_closes_all_tabs(tmp_path, monkeypatch) -> None:
-    """Tier 2: ``_pending_ivs`` / panel-tabs witness. A pending intervention on
-    alpha opens the panel with one tab; switching away must close the whole
-    panel (``InterventionPanel.collapse_all`` — the whole panel, panel.display
-    False, zero mounted ``TabPane``s), never leaving alpha's stale tab
-    lingering behind the new session's own (server-re-announced) ones."""
+    """Tier 2: ``InterventionPanel.collapse_all()`` witness. A pending
+    intervention on alpha opens the panel with one tab; switching away must
+    close the whole panel (``panel.display`` False, zero mounted
+    ``TabPane``s), never leaving alpha's stale tab lingering behind the new
+    session's own (server-re-announced) ones.
+
+    ★Scope note (co-vet finding on #3323): this test discriminates
+    ``collapse_all()`` specifically — the panel's OWN internal tab-tracking
+    dicts (``_pane_ids``/``_key_by_pane``/etc., cleared inside
+    ``collapse_all`` itself) are what drive ``panel.display``/``TabPane``
+    count, independent of the APP's ``_pending_ivs`` dict. Stripping ONLY
+    ``self._pending_ivs.clear()`` in the app (leaving ``collapse_all()`` in
+    place) does NOT turn this test RED — that is a SEPARATE state with its
+    own witness below (``test_reset_pending_ivs_stale_key_answer_not_targeted``),
+    not folded in here (per-state independence, #3302/#3308 lesson)."""
     monkeypatch.chdir(tmp_path)
     reg = _registry(tmp_path)
     try:
@@ -439,6 +463,84 @@ async def test_reset_pending_interventions_closes_all_tabs(tmp_path, monkeypatch
             assert panel.display is False, "switch must collapse the whole panel"
             assert list(panel.query(TabPane)) == [], (
                 "switch must close every pending tab from the OLD session"
+            )
+    finally:
+        await asyncio.wait_for(reg.shutdown(), timeout=5.0)
+
+
+@pytest.mark.asyncio
+async def test_reset_pending_ivs_stale_key_answer_not_targeted(tmp_path, monkeypatch) -> None:
+    """Tier 2: ★``_pending_ivs`` witness, INDEPENDENT of
+    ``InterventionPanel.collapse_all()`` (co-vet finding on #3323: the panel
+    test above discriminates ``collapse_all()`` only — stripping
+    ``_pending_ivs.clear()`` alone left that test GREEN, a genuine
+    cross-masking gap).
+
+    Scenario: a pending intervention on alpha (``intervention_id="iv-old"``)
+    populates ``app._pending_ivs["iv-old"]``. The switch to beta happens —
+    THEN, simulating a click that was ALREADY in flight before the switch
+    (a real Textual race: the panel message for a click on the OLD tab can
+    still be QUEUED for delivery even after ``collapse_all()`` has already
+    removed that tab from the DOM), this test delivers
+    ``InterventionPanel.ChoiceSelected(key="iv-old", ...)`` directly to the
+    app's OWN handler — exercising the EXACT same lookup
+    (``on_intervention_panel_choice_selected``) that the panel's TabPane
+    button would trigger.
+
+    If ``_pending_ivs`` were NOT cleared on switch, this lookup finds the
+    STALE ``(entry, "iv-old")`` tuple and delivers the answer TARGETED at
+    alpha's own intervention id — over THIS client's transport, which now
+    routes to beta. That is a cross-session misdelivery: an answer meant
+    for (or at least keyed to) alpha's intervention lands on a call the
+    server associates with beta's connection. With ``_pending_ivs``
+    correctly cleared, the stale key resolves to nothing and the answer is
+    delivered UNTARGETED (``intervention_id=None``, the documented pre-P2
+    head-of-queue fallback) instead of silently misrouted — the
+    discriminating, PUBLIC observable is
+    ``transport.answered_choice_ids``, never a private ``app._pending_ivs``
+    read."""
+    monkeypatch.chdir(tmp_path)
+    reg = _registry(tmp_path)
+    try:
+        await reg.attach("alpha")
+        transport = QueueTransport()
+        app = TextualChatApp(
+            transport=transport, read_model=RegistryReadModel(reg), agent_name="alpha",
+        )
+        async with app.run_test(size=(100, 30)) as pilot:
+            await _settle(pilot)
+
+            transport.push_display(OutboxMessage(
+                kind="intervention",
+                text="Allow write to /etc/hosts?",
+                meta={
+                    "intervention_id": "iv-old",
+                    "prompt": "Allow write to /etc/hosts?",
+                    "choices": [{"id": "yes", "label": "Yes"}, {"id": "no", "label": "No"}],
+                },
+            ))
+            await _settle(pilot)
+
+            await reg.attach("beta")
+            transport.push_event(
+                "session_attached", {"agent": "beta", "session_id": _DEFAULT_SID}
+            )
+            await _settle(pilot)
+
+            # Simulates a click delivered AFTER the switch for a tab that
+            # existed BEFORE it — driving the app's real handler directly
+            # (the same code path a real Textual message dispatch would
+            # invoke), not a synthetic private-state read.
+            await app.on_intervention_panel_choice_selected(
+                InterventionPanel.ChoiceSelected(key="iv-old", choice_id="yes", label="Yes")
+            )
+            await _settle(pilot)
+
+            assert transport.answered_choice_ids == [None], (
+                "a late-arriving answer for a PRE-switch intervention key "
+                "must not resolve to that stale intervention_id (would "
+                "cross-session-misdeliver over the NOW-beta-routed "
+                f"transport): {transport.answered_choice_ids!r}"
             )
     finally:
         await asyncio.wait_for(reg.shutdown(), timeout=5.0)
@@ -604,7 +706,19 @@ async def test_reset_queue_view_reseeds_from_new_sessions_own_queue(
     beta's already-queued item would never render (there is no OTHER trigger
     that would show it — nothing else happens on beta in this scenario) —
     this is the #3305-shaped reconnect-reseed, witnessed here for the SWITCH
-    path specifically."""
+    path specifically.
+
+    ★Non-vacuity guard (found while strip-falsifying the WHOLE
+    ``session_attached`` handler for #3323 co-vet re-review): the very
+    generic "seed on the first frame the pump EVER processes" check
+    (:meth:`TextualChatApp._pump_frames`) would ALSO explain a green result
+    here if the ``session_attached`` frame below happened to be the first
+    frame this app's pump ever sees — masking the eager-reseed-on-switch
+    behavior this test means to isolate. A harmless benign frame is pushed
+    and settled FIRST so that generic check has already fired (on alpha,
+    where it is a no-op) before the switch — the ONLY remaining path that
+    can populate the queue view for beta is the eager reseed inside
+    :meth:`_handle_session_attached_event` itself."""
     monkeypatch.chdir(tmp_path)
     reg = _registry_with_wal(tmp_path)
     try:
@@ -630,6 +744,15 @@ async def test_reset_queue_view_reseeds_from_new_sessions_own_queue(
             transport=transport, read_model=RegistryReadModel(reg), agent_name="alpha",
         )
         async with app.run_test(size=(100, 30)) as pilot:
+            await _settle(pilot)
+
+            # Non-vacuity guard (see docstring): a harmless frame on alpha,
+            # settled BEFORE the switch, so the generic "seed on first frame
+            # the pump ever processes" check has already fired here (on
+            # alpha) rather than on the session_attached frame below — the
+            # ONLY remaining seed path for beta is the eager reseed inside
+            # the switch handler itself.
+            transport.push_display(OutboxMessage(kind="user", text="alpha noop"))
             await _settle(pilot)
 
             # NOTE: flips ``registry._attached`` directly rather than calling

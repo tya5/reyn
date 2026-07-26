@@ -316,6 +316,29 @@ class TextualChatApp(App):
     #: blink clock, Phase ①): ① animates the gutter glyph, ② the tool body.
     RUNNING_BODY_FPS = 12.0
 
+    #: Per-session ``dict``-valued client state that resets uniformly (a
+    #: plain ``.clear()``) on a session switch (#3310 N2,
+    #: :meth:`_handle_session_attached_event`). Declared here — never
+    #: enumerated ad hoc inside the reset method — so a FUTURE per-session
+    #: dict added to :meth:`__init__` is reset BY CONSTRUCTION the moment
+    #: its name is added to this tuple, rather than by a human remembering
+    #: to also touch the reset method. This is not a hypothetical: the
+    #: exact omission class hit TWICE in this arc — ``_streaming_replies``
+    #: was flagged as a likely-forgotten addition during the #3310 design
+    #: pass (#3288 ③c landed after the design table was written), and
+    #: ``_pending_own_cancels`` (#3300 Y-client) was found missing from
+    #: that SAME design table only while writing this PR's gates. State
+    #: that needs a NON-``.clear()`` reset (a fresh instance, a widget
+    #: method, a follow-on hydrate) stays explicit in the reset method
+    #: below — this tuple covers only the "just empty the dict" shape.
+    _PER_SESSION_DICT_STATE: "tuple[str, ...]" = (
+        "_running_tools",
+        "_pending_ivs",
+        "_queue_item_meta",
+        "_streaming_replies",
+        "_pending_own_cancels",
+    )
+
     def __init__(
         self,
         *,
@@ -1154,6 +1177,22 @@ class TextualChatApp(App):
           :attr:`_pending_ivs` + :meth:`InterventionPanel.collapse_all` are
           the whole of the intervention reset today.
 
+        ★Structural fix (co-vet review, #3323): a hand-typed list of
+        ``.clear()`` calls has now been forgotten TWICE in this arc's short
+        history — ``_streaming_replies`` (flagged as at-risk by the design
+        pass) and ``_pending_own_cancels`` (found only while writing this
+        PR's gates) both landed in ``__init__`` without their owning design
+        table being updated. Every plain-``.clear()``-shaped state above
+        (``_running_tools`` / ``_pending_ivs`` / ``_queue_item_meta`` /
+        ``_streaming_replies`` / ``_pending_own_cancels``) is therefore
+        declared ONCE, in :attr:`_PER_SESSION_DICT_STATE`, and this method
+        iterates that tuple instead of re-listing each name — adding a
+        FUTURE per-session dict to ``__init__`` and this tuple is now the
+        only step required; there is no second call site to forget. State
+        needing a non-``.clear()`` reset (``_queue_view``'s fresh instance,
+        the panel/widget's own methods, the hydrate call) stays explicit
+        below, since a uniform loop cannot express those shapes.
+
         Runs the reset UNGUARDED (a `try`/`except` around clearing plain
         dicts/lists would only hide a real bug) but the follow-on hydrate
         call is internally guarded, same as the mount-time call."""
@@ -1161,14 +1200,16 @@ class TextualChatApp(App):
         agent = data.get("agent")
         session_id = data.get("session_id")
         self.conversation.clear()
-        self._running_tools.clear()
-        self._pending_ivs.clear()
+        # Data-driven over :attr:`_PER_SESSION_DICT_STATE` — see that
+        # attribute's docstring — instead of a hand-written list of
+        # ``.clear()`` calls, so a FUTURE dict-valued per-session addition
+        # is reset the moment it is registered there, not only when a
+        # human also remembers to edit this method.
+        for attr_name in self._PER_SESSION_DICT_STATE:
+            getattr(self, attr_name).clear()
         self._iv_panel.collapse_all()
         self._queue_view = RemoteQueueView()
-        self._queue_item_meta.clear()
         self._sent_queue.clear_all()
-        self._streaming_replies.clear()
-        self._pending_own_cancels.clear()
         if agent:
             self._agent_name = agent
         # Eager reseed (see the ``_queue_view``/``_queue_seeded`` bullet
