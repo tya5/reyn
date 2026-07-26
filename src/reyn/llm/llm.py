@@ -1837,6 +1837,7 @@ async def recorded_acompletion(
             # passed in the call kwargs.
             return chunk_stream
         chunks = []
+        _delta_fired = False
         async for chunk in chunk_stream:
             chunks.append(chunk)
             if on_content_delta is not None:
@@ -1846,6 +1847,7 @@ async def recorded_acompletion(
                 except Exception:  # noqa: BLE001 — malformed/empty chunk shape
                     _delta_text = None
                 if _delta_text:
+                    _delta_fired = True
                     try:
                         on_content_delta(_delta_text)
                     except Exception:  # noqa: BLE001 — a display-event emit must never break the LLM call
@@ -1853,6 +1855,22 @@ async def recorded_acompletion(
                             "recorded_acompletion: on_content_delta callback raised; "
                             "continuing the stream"
                         )
+        # #3288 ③b co-vet fix: a silent functional-dead-mode guard. If the
+        # provider streamed at least one chunk AND a callback was supplied,
+        # but NOT ONE chunk ever exposed a non-empty delta.content (e.g. a
+        # provider whose chunk shape this parsing doesn't match), every turn
+        # would silently produce ZERO delta notifications forever — L9 still
+        # surfaces the final text via the reconstructed whole response below,
+        # so nothing user-visible breaks and nobody would ever notice.
+        # ONE debug log per STREAM (not per chunk, which would be noise) is
+        # cheap and makes that silent mode observable.
+        if on_content_delta is not None and chunks and not _delta_fired:
+            logger.debug(
+                "recorded_acompletion: streamed %d chunk(s) but on_content_delta "
+                "never fired — the provider's chunk shape may not expose "
+                "delta.content the way this parsing expects",
+                len(chunks),
+            )
         reconstructed = litellm.stream_chunk_builder(chunks, messages=msgs)
         if reconstructed is None:
             # No chunks at all (degenerate empty stream) — degrade to the

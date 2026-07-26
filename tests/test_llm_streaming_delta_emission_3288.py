@@ -165,3 +165,110 @@ def test_call_llm_tools_forwards_on_content_delta_through_to_the_stream(monkeypa
     assert chunk_witness == [1, 1, 1]
     assert deltas == [_CONTENT[: len(_CONTENT) // 2], _CONTENT[len(_CONTENT) // 2 :]]
     assert result.content == _CONTENT
+
+
+def _make_fake_acompletion_no_content_deltas(chunk_witness: "list[int] | None" = None):
+    """Co-vet recommendation (c): a real, scripted stand-in whose streaming
+    branch yields chunks that NEVER carry ``delta.content`` (only role/
+    tool_call/usage-only chunks) — simulating a provider chunk shape this
+    parsing does not recognize. Content still reaches the FINAL reconstructed
+    response via ``stream_chunk_builder``'s own accumulation from
+    ``ChatCompletionDeltaToolCall``-free plain chunks is not exercised here;
+    this fake targets ONLY the "delta never observed" silent-dead-mode guard,
+    not stream≡whole equivalence (already covered elsewhere)."""
+
+    async def _fake_acompletion(model: str, messages: list, **kw: Any) -> Any:
+        if not kw.get("stream"):
+            return litellm.ModelResponse(
+                id="resp-2", created=1, model=model, object="chat.completion",
+                choices=[{
+                    "index": 0, "finish_reason": "stop",
+                    "message": {"role": "assistant", "content": _CONTENT},
+                }],
+                usage=dict(_USAGE),
+            )
+
+        def _chunk(delta: Delta, finish_reason: "str | None" = None) -> ModelResponseStream:
+            return ModelResponseStream(
+                id="resp-2", created=1, model=model, object="chat.completion.chunk",
+                choices=[StreamingChoices(index=0, delta=delta, finish_reason=finish_reason)],
+            )
+
+        async def _gen():
+            # A role-only chunk (no content) and a terminal usage-only chunk —
+            # neither ever exposes delta.content, but chunks ARE consumed.
+            pieces = [_chunk(Delta(role="assistant"))]
+            last = _chunk(Delta(), finish_reason="stop")
+            last.usage = Usage(**_USAGE)
+            pieces.append(last)
+            for piece in pieces:
+                if chunk_witness is not None:
+                    chunk_witness.append(1)
+                yield piece
+
+        return _gen()
+
+    return _fake_acompletion
+
+
+def test_silent_zero_delta_stream_logs_once_per_stream(monkeypatch, caplog) -> None:
+    """Tier 1: co-vet fix (recommendation (c)) — when a stream produces at
+    least one chunk but ``on_content_delta`` never fires (no chunk exposed
+    ``delta.content``), exactly ONE debug log line is emitted for the whole
+    stream (not per chunk) — the cheap observability guard against a silent
+    functional-dead-mode where deltas quietly never happen for a given
+    provider's chunk shape while L9's final text keeps working, masking it."""
+    import logging
+
+    chunk_witness: list[int] = []
+    monkeypatch.setattr(
+        litellm, "acompletion", _make_fake_acompletion_no_content_deltas(chunk_witness),
+    )
+
+    deltas: list[str] = []
+    with caplog.at_level(logging.DEBUG, logger="reyn.llm.llm"):
+        result = asyncio.run(recorded_acompletion(
+            model="gpt-4o-mini", messages=[{"role": "user", "content": "hi"}],
+            purpose="main", recorder=None,
+            on_content_delta=deltas.append,
+        ))
+
+    assert chunk_witness == [1, 1]  # both scripted chunks really consumed
+    assert deltas == []  # the callback genuinely never fired
+    guard_records = [
+        r for r in caplog.records
+        if "on_content_delta never fired" in r.message
+    ]
+    # Exactly one record for the whole stream — tuple-unpack (not a chunk
+    # count of 1 or per-chunk repeats) raises if there are zero or more than
+    # one, the behavioral idiom for "exactly once" (see testing.md's
+    # len(...) == N → behavioral-assertion fix idiom).
+    (only_guard_record,) = guard_records
+    assert "2 chunk(s)" in only_guard_record.message
+    # L9 is unaffected: the reconstruction still returns a valid response
+    # object (content is empty here only because THIS fake's chunks never
+    # carried any — the guard's job is observability, not content recovery).
+    assert result.usage.prompt_tokens == _USAGE["prompt_tokens"]
+
+
+def test_silent_zero_delta_guard_does_not_fire_when_deltas_do(monkeypatch, caplog) -> None:
+    """Tier 1: non-vacuity companion — the SAME guard does NOT fire on a
+    normal stream where deltas DO arrive, proving the previous test's log
+    line is specifically about the zero-delta case, not emitted on every
+    stream unconditionally."""
+    import logging
+
+    monkeypatch.setattr(litellm, "acompletion", _make_fake_acompletion())
+
+    with caplog.at_level(logging.DEBUG, logger="reyn.llm.llm"):
+        asyncio.run(recorded_acompletion(
+            model="gpt-4o-mini", messages=[{"role": "user", "content": "hi"}],
+            purpose="main", recorder=None,
+            on_content_delta=lambda _t: None,
+        ))
+
+    guard_records = [
+        r for r in caplog.records
+        if "on_content_delta never fired" in r.message
+    ]
+    assert guard_records == []
