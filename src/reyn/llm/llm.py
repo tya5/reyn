@@ -10,7 +10,7 @@ import weakref
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
-from typing import TYPE_CHECKING, Coroutine, NamedTuple, TypeVar, Union
+from typing import TYPE_CHECKING, Callable, Coroutine, NamedTuple, TypeVar, Union
 
 logger = logging.getLogger(__name__)
 from reyn.llm.credentials import check_model_credentials
@@ -1617,6 +1617,7 @@ async def recorded_acompletion(
     extra_kwargs: dict | None = None,
     emit_cost_events: bool = False,  # #1683: chat path opts in (kernel emits via LLMCallRecorder)
     routing: dict | None = None,  # #309: per-class api_base/provider; None → global proxy_kwargs()
+    on_content_delta: "Callable[[str], None] | None" = None,  # #3288 ③b: opt-in per-chunk content-delta callback (see _stream_and_reconstruct)
 ) -> object:
     """Single cost-observability chokepoint for ALL ``litellm.acompletion`` calls (#1190).
 
@@ -1632,6 +1633,17 @@ async def recorded_acompletion(
     is called ONLY inside this function, so no LLM call can bypass recording.
     Replay-safe: the call still bottoms out at ``litellm.acompletion``, which
     ``LLMReplay`` monkeypatches.
+
+    ``on_content_delta`` (#3288 ③b): an OPT-IN, per-call callback invoked
+    SYNCHRONOUSLY with each non-empty content-delta string as ``_stream_and_reconstruct``
+    (③a) drains the chunk stream — never invoked on the whole-collect (non-streaming)
+    path, so it is capability-gated by construction (see ``_streaming_capable``: no
+    capability ⇒ no streaming ⇒ this callback never fires). ``None`` (every caller
+    except ``RouterLoop``'s primary reply call) is byte-identical to today. A raising
+    callback is caught and logged — a broken display-event emit must never break the
+    LLM call it is merely narrating. The reconstructed WHOLE response (below) is
+    unaffected either way — this is purely an additional notification channel, not a
+    change to what this function returns or records.
     """
     # perf: litellm's own import is ~1.5s and is kept off the chat startup
     # path (input box renders before any LLM use). ``ensure_litellm_ready``
@@ -1779,6 +1791,18 @@ async def recorded_acompletion(
         ``stream_chunk_builder`` falls back to a token-count estimate for
         usage, the same graceful degradation litellm's own non-Reyn callers
         rely on.
+
+        #3288 ③b: ``on_content_delta`` (the enclosing ``recorded_acompletion``'s
+        parameter, closed over here) is invoked ONCE PER CHUNK that carries a
+        non-empty ``delta.content``, with that chunk's raw text — BEFORE the
+        chunk is appended to ``chunks`` below, so it fires against REAL,
+        individually-drained chunks (never a synthesized/batched replay of the
+        reconstructed whole). A callback failure is caught and logged, never
+        allowed to abort the stream — the callback narrates the call, it does
+        not gate it. tool_call-only chunks (no ``content``) are silently
+        skipped — ③b carries TEXT deltas only; tool-call argument streaming is
+        out of scope (unchanged: tool_calls are read from the reconstructed
+        whole response, same as ③a).
         """
         stream_kwargs = dict(call_kwargs)
         stream_kwargs.pop("stream", None)
@@ -1812,7 +1836,23 @@ async def recorded_acompletion(
             # the async generator), not just that ``stream=True`` was
             # passed in the call kwargs.
             return chunk_stream
-        chunks = [chunk async for chunk in chunk_stream]
+        chunks = []
+        async for chunk in chunk_stream:
+            chunks.append(chunk)
+            if on_content_delta is not None:
+                _delta_text = None
+                try:
+                    _delta_text = chunk.choices[0].delta.content
+                except Exception:  # noqa: BLE001 — malformed/empty chunk shape
+                    _delta_text = None
+                if _delta_text:
+                    try:
+                        on_content_delta(_delta_text)
+                    except Exception:  # noqa: BLE001 — a display-event emit must never break the LLM call
+                        logger.exception(
+                            "recorded_acompletion: on_content_delta callback raised; "
+                            "continuing the stream"
+                        )
         reconstructed = litellm.stream_chunk_builder(chunks, messages=msgs)
         if reconstructed is None:
             # No chunks at all (degenerate empty stream) — degrade to the
@@ -1952,6 +1992,7 @@ async def call_llm_tools(
     event_log: "EventLog | None" = None,
     emit_cost_events: bool = False,  # #1683: forwarded to recorded_acompletion (chat opts in)
     response_format: "dict | None" = None,  # 0062: RouterLoop's separate no-tools structured-answer turn ONLY — every op-loop tool-decision call leaves this None (ADR-0035 D2 separate-decide preserved: never combined with a non-empty `tools`)
+    on_content_delta: "Callable[[str], None] | None" = None,  # #3288 ③b: forwarded to recorded_acompletion — see its docstring
 ) -> LLMToolCallResult:
     """Tool-use variant of call_llm. Returns raw assistant message.
 
@@ -1974,6 +2015,10 @@ async def call_llm_tools(
     call must never silently degrade to free-form text; a provider rejection
     surfaces as-is for the caller (``RouterLoop._run_structured_answer_turn``)
     to classify.
+
+    ``on_content_delta`` (#3288 ③b): forwarded verbatim to ``recorded_acompletion``
+    — see its docstring. ``None`` (every call site except ``RouterLoop``'s
+    primary reply call) is byte-identical to before ③b.
     """
     # Normalize model to ModelSpec — accept both str (backward compat) and ModelSpec.
     spec: ModelSpec = model if isinstance(model, ModelSpec) else ModelSpec(model=model, kwargs={})
@@ -2129,6 +2174,7 @@ async def call_llm_tools(
             emit_cost_events=emit_cost_events,  # #1683: chat opts in
             routing=_routing,  # #309 per-class api_base/provider (else global wins)
             response_format=response_format,  # 0062: None for every op-loop tool call
+            on_content_delta=on_content_delta,  # #3288 ③b: forwarded straight through
         )
 
     # #2210 HIGH layer: when the per-call HTTP timeout + the Router/Reyn retries are ALL
