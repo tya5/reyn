@@ -205,6 +205,18 @@ def project_remote_snapshot(values: "dict | None") -> dict:
         "visibility_items": [],
         "hook_items": [],
         "pipelines": [],
+        # #3300 P2b: the server-authoritative sent-queue state IS on the wire
+        # (state.py's ``_WIRE_KEYS`` / ``project_status``, folded in by P2a) —
+        # project it through unlike the session-local keys above, so
+        # ``ChatReadModel.snapshot()`` returns queue info uniformly for BOTH
+        # local (``RegistryReadModel``, straight off ``_snapshot()``) and
+        # remote clients (local ≡ remote by construction, the read-model's own
+        # governing rule — see the module docstring). This is what lets the
+        # Textual sent-queue widget seed its ``RemoteQueueView`` baseline from
+        # ONE seam (``read_model.snapshot()``) regardless of transport.
+        "queue": v.get("queue", []),
+        "turn_active": v.get("turn_active", False),
+        "queue_seq": v.get("queue_seq", 0),
     }
 
 

@@ -12,9 +12,14 @@ time — this file proves that per surface:
 - ``InlineChatRenderer.on_chat_event`` (the ``chat.render_mode: plain``-on-a-
   TTY fallback — reachable only when the Textual app is bypassed).
 - ``TextualChatApp._pump_frames`` (the default interactive-TTY surface,
-  ``interfaces/inline/textual_chat/app.py``) — appends the echo straight to
-  the retained conversation model via the SAME
-  ``user_submitted_display_message`` seam.
+  ``interfaces/inline/textual_chat/app.py``) — #3300 P2b REPLACES the direct-
+  to-flow append this file originally pinned with the sent-queue "upward
+  conveyor": a ``user_submitted`` event now MATERIALIZES in the sent-queue
+  region (not the flow) and only PROMOTES to a flow entry on a matching
+  ``turn_started``. The two TextualChatApp tests below are retargeted to that
+  lifecycle (mirrors how #3299 P1's test file retargeted the #3273 chip tests
+  to the new panel path); the full materialize/promote/neutralize/live-update
+  gate suite lives in ``tests/test_3300_p2b_sentqueue_render.py``.
 
 Also covers the cross-cutting invariants the design pass called out:
 ordering (echo precedes the agent's turn) and multi-client (every attached
@@ -363,43 +368,36 @@ async def test_multi_client_each_subscriber_gets_its_own_echo_no_double_render(
 
 
 @pytest.mark.asyncio
-async def test_textual_chat_app_renders_user_submitted_event() -> None:
-    """Tier 2b: TextualChatApp._pump_frames appends a "user" entry to the
-    retained conversation model from a "user_submitted" EVENT frame — the
-    Textual surface's replacement for the removed outbox echo. In Phase C
-    this is a normal flow entry (the sent-queue staging is Phase B)."""
+async def test_textual_chat_app_materializes_user_submitted_in_sent_queue() -> None:
+    """Tier 2b: #3300 P2b — a "user_submitted" EVENT frame MATERIALIZES in the
+    sent-queue region, NOT as a flow entry (that direct-to-flow behavior was
+    P1 C's; P2b replaces it with the sent-queue "upward conveyor" — see
+    ``tests/test_3300_p2b_sentqueue_render.py`` for the full materialize/
+    promote/neutralize/live-update gate suite)."""
+    from reyn.interfaces.inline.textual_chat.sent_queue import SentQueue
+
     transport = QueueTransport()
     app = TextualChatApp(transport=transport)
     async with app.run_test(size=(100, 30)) as pilot:
         await pilot.pause()
         await transport.push_event(
-            Event(type="user_submitted", data={"text": "hi from textual", "meta": {}})
+            Event(
+                type="user_submitted",
+                data={
+                    "text": "hi from textual", "meta": {},
+                    "msg_id": "m1", "chain_id": "c1", "seq": 1,
+                },
+            )
         )
         await pilot.pause()
 
         entries = app.query_one(FlowView).entries
-        (entry,) = [e for e in entries if e.item.kind == "user"]
-        assert entry.item.text == "hi from textual"
-
-
-@pytest.mark.asyncio
-async def test_textual_chat_app_neutralizes_at_render() -> None:
-    """Tier 2b: a raw ESC/control sequence submitted via the event does not
-    reach TextualChatApp's retained model — same neutralize-at-display seam
-    every surface calls (``user_submitted_display_message``)."""
-    transport = QueueTransport()
-    app = TextualChatApp(transport=transport)
-    async with app.run_test(size=(100, 30)) as pilot:
-        await pilot.pause()
-        await transport.push_event(
-            Event(type="user_submitted", data={"text": _RAW_ESC, "meta": {}})
+        assert not [e for e in entries if e.item.kind == "user"], (
+            "a bare user_submitted must NOT append a flow entry (P1 C's "
+            "behavior) — it stages in the sent-queue until dispatched"
         )
-        await pilot.pause()
-
-        entries = app.query_one(FlowView).entries
-        (entry,) = [e for e in entries if e.item.kind == "user"]
-        assert "\x1b" not in entry.item.text
-        assert "danger" in entry.item.text
+        sent_queue = app.query_one(SentQueue)
+        assert "hi from textual" in sent_queue.rendered_texts()[0]
 
 
 @pytest.mark.asyncio

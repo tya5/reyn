@@ -41,6 +41,7 @@ from textual_flowview import (
 )
 
 from reyn.interfaces.repl.renderer import summarize_tool_result
+from reyn.interfaces.transport.agui.state import RemoteQueueView
 from reyn.interfaces.transport.frames import FrameTag
 
 from ._meta_keys import ORPHANED_RESULT_KIND as _ORPHANED_RESULT_KIND
@@ -60,8 +61,10 @@ from .presenter import (
     _RESULT_META_KEY,
     _RUNNING_SINCE_KEY,
     ReynPresenter,
+    _neutralized_label,
 )
 from .restore import project_restored_frames
+from .sent_queue import SentQueue
 
 if TYPE_CHECKING:
     from reyn.interfaces.repl.read_model import ChatReadModel
@@ -300,6 +303,25 @@ class TextualChatApp(App):
         # placeholder → "✓ answered" record) once the panel delivers an answer.
         # ``None`` when no intervention is pending.
         self._pending_iv_entry: "Entry[OutboxMessage] | None" = None
+        # #3300 P2b: the client-side sent-queue model — the SAME seq-gated
+        # merge P2a built (``RemoteQueueView``, reused as-is, not
+        # reinvented) driving BOTH the local and remote transport, since the
+        # read-model now projects queue/turn_active/queue_seq uniformly for
+        # each (``ChatReadModel.snapshot()``, see ``read_model.py``). Seeded
+        # once from a fresh snapshot on the FIRST frame the pump processes
+        # (:meth:`_seed_queue_view`) — by then a remote connection's
+        # connect-time STATE_SNAPSHOT has already been applied to the
+        # transport (emitter.py's "Reconnect snapshots first (A4)"), so the
+        # baseline is late-joiner-correct; a local read is always live so an
+        # early seed is harmless there.
+        self._queue_view = RemoteQueueView()
+        self._queue_seeded = False
+        # A queued item's ``meta`` (attribution) — ``RemoteQueueView.items``
+        # deliberately carries only msg_id/chain_id/text (P2a's contract,
+        # reused unmodified); this side table keeps the meta a promoted item
+        # needs to render as a proper flow entry, keyed by msg_id and popped
+        # on promotion.
+        self._queue_item_meta: "dict[str, dict]" = {}
         # Per-picker parallel id lists (class names / agent names), keyed by tab
         # id and kept in lock-step with the OptionList options a pane was last
         # refreshed with, so an ``OptionSelected.option_index`` maps back to the
@@ -326,12 +348,20 @@ class TextualChatApp(App):
         yield self._flow
         # #3299 P1: the grouped intervention panel sits BETWEEN the flow and
         # the input row (region order shared with the sibling #3300 queue arc:
-        # conversation / intervention panel / (queue, later) / input).
+        # conversation / intervention panel / sent-queue / input).
         # Collapsed by default (``display=False`` — see
         # ``InterventionPanel.on_mount``); shown + auto-focused only while an
         # intervention is pending (:meth:`_present_intervention`).
         self._iv_panel = InterventionPanel(id="intervention-panel")
         yield self._iv_panel
+        # #3300 P2b: the sent-queue region sits BETWEEN the intervention
+        # panel and the input row (region order: conversation / intervention
+        # panel / sent-queue / input — pinned by the architect design pass so
+        # the sibling #3299/#3300 P1 coders never collide on this zone).
+        # Collapsed by default (``display=False`` — see ``SentQueue.on_mount``);
+        # shown while at least one message is queued, undispatched.
+        self._sent_queue = SentQueue(id="sent-queue")
+        yield self._sent_queue
         with Horizontal(id="inputrow"):
             yield Static("❯", id="inputgutter")
             yield Composer(
@@ -825,6 +855,85 @@ class TextualChatApp(App):
         except Exception:
             logger.exception("textual chat: could not start running-tool indicator")
 
+    def _seed_queue_view(self) -> None:
+        """Seed :attr:`_queue_view` from a fresh read-model snapshot — called
+        once, on the FIRST frame the pump processes (#3300 P2b).
+
+        The read-model projects ``queue``/``turn_active``/``queue_seq``
+        uniformly for local and remote (``read_model.py``'s
+        ``project_remote_snapshot`` mirrors ``interfaces/repl/status.py``'s
+        ``_snapshot()``), so ONE call seeds the seq-gate baseline correctly
+        for either transport: local is always live (no wire delay), and for
+        remote the connect-time ``STATE_SNAPSHOT`` has already reached the
+        transport by the time frame #1 is yielded (emitter.py's "Reconnect
+        snapshots first (A4)"), so this is late-joiner-correct. Any item the
+        snapshot already carries (a submission from BEFORE this client
+        attached) is rendered into the sent-queue region immediately."""
+        snap = self._snapshot() or {}
+        self._queue_view.apply_snapshot(
+            queue=snap.get("queue", []),
+            turn_active=snap.get("turn_active", False),
+            queue_seq=snap.get("queue_seq", 0),
+        )
+        for item in self._queue_view.queue():
+            msg_id = item.get("msg_id")
+            if msg_id:
+                self._sent_queue.show_item(msg_id, str(item.get("text", "")))
+
+    def _handle_user_submitted_event(self, event) -> None:
+        """MATERIALIZE exit (#3300 P2b, sent-queue exit contract §6a): a
+        ``user_submitted`` delta appears in the sent-queue region — NOT
+        immediately as a flow entry (that was P1 C's behavior; P2b replaces
+        it with this staging step). Applies the seq-gate
+        (:meth:`RemoteQueueView.apply_user_submitted`) before rendering, so a
+        stale/already-superseded delta is a no-op."""
+        data = event.data or {}
+        msg_id = data.get("msg_id")
+        chain_id = data.get("chain_id")
+        text = str(data.get("text", ""))
+        seq = data.get("seq", 0)
+        applied = self._queue_view.apply_user_submitted(
+            msg_id=msg_id, chain_id=chain_id, text=text, seq=seq,
+        )
+        if applied and msg_id:
+            self._queue_item_meta[msg_id] = dict(data.get("meta") or {})
+            self._sent_queue.show_item(msg_id, text)
+
+    def _handle_turn_started_event(self, event) -> None:
+        """PROMOTE exit (#3300 P2b, sent-queue exit contract §6a): a
+        ``turn_started`` delta whose ``chain_id`` matches a queued item
+        removes it from the sent-queue region and appends it as a flow entry
+        (the user line) — the dispatch promotion. ``turn_started`` fires for
+        EVERY turn kind, not only ``user`` ones (session.py: "harmless for
+        non-queue turns"), so a non-matching chain_id is correctly a no-op
+        here (nothing queued for it).
+
+        The pre-call match snapshot is load-bearing: ``apply_turn_started``
+        returns ``True`` whenever the seq-gate ACCEPTS the delta, regardless
+        of whether any item actually matched — checking membership only
+        AFTER the call would miss the case where nothing matched (never
+        promote), and re-checking on a stale/rejected delta (``False``) would
+        double-promote an item this app already promoted once."""
+        data = event.data or {}
+        chain_id = data.get("chain_id")
+        seq = data.get("seq", 0)
+        matches = [
+            item for item in self._queue_view.queue()
+            if item.get("chain_id") == chain_id
+        ]
+        applied = self._queue_view.apply_turn_started(chain_id=chain_id, seq=seq)
+        if not applied:
+            return
+        from reyn.runtime.outbox import OutboxMessage  # noqa: PLC0415
+
+        for item in matches:
+            msg_id = item.get("msg_id")
+            if msg_id:
+                self._sent_queue.remove_item(msg_id)
+            meta = self._queue_item_meta.pop(msg_id, {}) if msg_id else {}
+            text = _neutralized_label(str(item.get("text", "")))
+            self._ingest_frame(OutboxMessage(kind="user", text=text, meta=meta))
+
     async def _pump_frames(self) -> None:
         """Drain the transport frame stream into the retained model.
 
@@ -835,31 +944,41 @@ class TextualChatApp(App):
         path — consumed but not drawn, EXCEPT for the turn-end subset
         (:data:`_TURN_END_EVENT_TYPES`), which triggers
         :meth:`_sweep_orphaned_running_tools` (#72: force-settle any tool still
-        RUNNING when its turn ends — a confirmed orphan), and ``user_submitted``
-        (#3300 P1 C), which IS drawn — it materializes the submitting/peer
-        client's own user line (the removed ``_put_outbox`` echo's replacement)
-        via the same neutralize-at-render-time seam the plain renderer uses
-        (:func:`~reyn.interfaces.repl.renderer.user_submitted_display_message`).
-        In Phase C this appends straight to the flow like any other display
-        frame — the sent-queue staging (materialize → promote on
-        ``turn_started``) is Phase B, not built here. A single frame's failure
-        must not kill the pump, so ingest is guarded.
+        RUNNING when its turn ends — a confirmed orphan).
+
+        #3300 P2b: ``user_submitted`` (:meth:`_handle_user_submitted_event`)
+        and ``turn_started`` (:meth:`_handle_turn_started_event`) drive the
+        sent-queue "upward conveyor" — materialize into the sent-queue region,
+        then promote to a flow entry on dispatch. This REPLACES P1 C's
+        "append the user_submitted echo straight to the flow": a submission
+        now stages in the sent-queue first (near-instant promotion on an idle
+        server, durably visible while queued on a busy one). The queue model
+        is seeded once, on the first frame (:meth:`_seed_queue_view`). A
+        single frame's failure must not kill the pump, so ingest is guarded.
         """
         try:
             async for frame in self._transport.frames():
+                if not self._queue_seeded:
+                    try:
+                        self._seed_queue_view()
+                    except Exception:
+                        logger.exception("textual chat: queue-view seed failed")
+                    self._queue_seeded = True
                 if frame.tag is FrameTag.EVENT:
                     etype = getattr(frame.event, "type", None)
                     if etype == "user_submitted":
-                        from reyn.interfaces.repl.renderer import (  # noqa: PLC0415
-                            user_submitted_display_message,
-                        )
                         try:
-                            self._ingest_frame(
-                                user_submitted_display_message(frame.event)
-                            )
+                            self._handle_user_submitted_event(frame.event)
                         except Exception:
                             logger.exception(
                                 "textual chat: user_submitted ingest failed"
+                            )
+                    elif etype == "turn_started":
+                        try:
+                            self._handle_turn_started_event(frame.event)
+                        except Exception:
+                            logger.exception(
+                                "textual chat: turn_started queue-promote failed"
                             )
                     elif etype in _TURN_END_EVENT_TYPES:
                         try:
@@ -923,9 +1042,10 @@ class TextualChatApp(App):
         :meth:`on_intervention_panel_text_submitted`), never here. A Composer
         submit that lands while an intervention is pending is NOT black-holed:
         the backend turn stays busy awaiting the intervention, so
-        ``submit_user_text`` durably queues the line on the inbox (visible /
-        cancelable via the #3300 sent-queue once its P2/P3 land) rather than
-        losing it — this delegation was verified live (turn-owner-task /
+        ``submit_user_text`` durably queues the line on the inbox — visible in
+        the sent-queue region (#3300 P2b, this module) and, once P3 Y lands,
+        cancelable there too — rather than losing it. This delegation was
+        verified live (turn-owner-task /
         inbox-durability trace) by the architect design pass for #3299, so P1
         needs no hint/block guard of its own. Errors are contained and
         surfaced as an error frame the pump renders — a silent input drop is
