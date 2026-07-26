@@ -32,18 +32,27 @@ completed tool into (``app.py``'s ``_coalesce_tool_result``): a single
 ``kind="tool_call_started"`` frame whose ``meta`` carries both the ORIGINAL
 tool call (``tool`` / ``args``, correlated from the preceding assistant
 message's ``tool_calls`` by ``tool_call_id``) and the result, stashed under
-``RESULT_KIND_KEY`` / ``RESULT_META_KEY`` (:mod:`._meta_keys`). The presenter's
-existing ``tool_call_started`` branch renders this as ONE block —
-``⏺ tool(args)`` + ``⎿ result`` — with no presenter change needed, so a
+``RESULT_KIND_KEY`` / ``RESULT_META_KEY`` (:mod:`._meta_keys`). ``RESULT_KIND_KEY``
+is ``"tool_call_completed"`` for a genuine success, or ``"tool_call_failed"``
+when the persisted result string matches the tool-result renderer's failure
+contract (:func:`_detect_failure` — a raised-exception failure never reaches
+here, since that already produces a distinct ``ChatMessage``; a STRUCTURED
+failure like ``file__read`` on a missing path is a normal ``role="tool"``
+message whose text renders as ``"Error (<kind>): <message>"`` /
+``"Error: <text>"``, the ONLY two shapes the renderer ever emits for a
+failure), so a restored failed tool tints coral exactly like a live one — #73.
+The presenter's existing ``tool_call_started`` branch renders this as ONE
+block — ``⏺ tool(args)`` + ``⎿ result`` — with no presenter change needed, so a
 restored tool turn is visually identical to a live settled one (no orphan
 ``⎿``-only row). An uncorrelated result (no matching ``tool_call_id`` — e.g.
 truncated history) still projects to the same coalesced shape with just the
 tool name as header (empty args) — it never regresses to an orphan row. The
 caller (``_hydrate_from_history``) gives the entry the SUCCESS/ERROR lifecycle
-state the live path's completion handler would have, derived from the SAME
-``summarize_tool_result`` the presenter reads, so gutter colour and body
-agree. The ``system`` / ``summary`` roles are Reyn-internal chrome (filtered
-at the LLM wire boundary), so both are skipped.
+state the live path's completion handler would have: ``ERROR`` directly when
+``RESULT_KIND_KEY=="tool_call_failed"``, else derived from the SAME
+``summarize_tool_result`` the presenter reads — so gutter colour and body
+agree either way. The ``system`` / ``summary`` roles are Reyn-internal chrome
+(filtered at the LLM wire boundary), so both are skipped.
 
 This module imports only :class:`~reyn.runtime.outbox.OutboxMessage` and the
 plain ``str`` constants in :mod:`._meta_keys` (no ``textual`` /
@@ -53,6 +62,7 @@ mounting the app.
 from __future__ import annotations
 
 import json
+import re
 from typing import TYPE_CHECKING
 
 from ._meta_keys import RESULT_KIND_KEY, RESULT_META_KEY
@@ -76,6 +86,41 @@ RESTORED_META_KEY = "_restored"
 #: conversation (operator legibility — the Product-Think lens). Emitted once,
 #: only when there is at least one restored turn.
 _RESUME_DIVIDER = "⤺ resumed previous conversation"
+
+# A persisted ``role="tool"`` failure is NEVER JSON — the LLM-visible tool-result
+# renderer (``reyn.core.offload.seam`` / ``router_loop.py``'s tool-result assembly)
+# writes a genuine failure as one of exactly two plain-string shapes and nothing
+# else: ``f"Error ({kind}): {message}"`` for a dispatch-envelope error
+# (``{"status": "error", "error": {"kind": ..., "message": ...}}``), or
+# ``f"Error: {text}"`` for an MCP ``isError``. Per that module's own docstring,
+# "Success and error are syntactically distinguishable with no status field" —
+# these two literal PREFIXES are the renderer's documented, exhaustive failure
+# contract, not a substring guess: a benign result that merely CONTAINS the word
+# "error" elsewhere in its body does not start with either prefix and is left
+# alone (a successful grep for the word "error" is unaffected).
+_ERROR_KIND_RE = re.compile(r"^Error \(([^)]*)\): ", re.DOTALL)
+_ERROR_PLAIN_PREFIX = "Error: "
+
+
+def _detect_failure(text: str) -> "dict[str, str] | None":
+    """Read a persisted tool-result string against the renderer's failure
+    contract (see the module comment above ``_ERROR_KIND_RE``).
+
+    Returns a dict for :data:`~._meta_keys.RESULT_META_KEY` — either
+    ``{"error_kind": ..., "error_message": ...}`` (dispatch-envelope error) or
+    ``{"error_message": ...}`` (MCP ``isError``) — or ``None`` when ``text``
+    does not match either prefix (a success, including one whose body happens
+    to mention "error" mid-text).
+    """
+    kind_match = _ERROR_KIND_RE.match(text)
+    if kind_match:
+        return {
+            "error_kind": kind_match.group(1) or "error",
+            "error_message": text[kind_match.end():],
+        }
+    if text.startswith(_ERROR_PLAIN_PREFIX):
+        return {"error_message": text[len(_ERROR_PLAIN_PREFIX):]}
+    return None
 
 
 def _correlated_calls(messages: "list[ChatMessage]") -> "dict[str, dict]":
@@ -126,7 +171,12 @@ def project_restored_frames(
       preceding assistant message's ``tool_calls`` by ``tool_call_id``,
       falling back to ``m.name`` / empty args when uncorrelated) plus
       ``RESULT_KIND_KEY="tool_call_completed"`` and
-      ``RESULT_META_KEY={"result": m.text}``.
+      ``RESULT_META_KEY={"result": m.text}`` for a SUCCESS, or
+      ``RESULT_KIND_KEY="tool_call_failed"`` and
+      ``RESULT_META_KEY={"error_kind": ..., "error_message": ...}`` (or just
+      ``{"error_message": ...}``) for a FAILURE — detected by matching ``m.text``
+      against the tool-result renderer's exhaustive failure contract
+      (:func:`_detect_failure`; #73).
     - ``system`` / ``summary``       → skipped (internal chrome)
 
     An assistant message carrying ONLY ``tool_calls`` (empty text) produces no
@@ -162,6 +212,13 @@ def project_restored_frames(
         elif role == "tool":
             call = calls_by_id.get(m.tool_call_id or "", {})
             tool_name = call.get("name") or m.name
+            failure = _detect_failure(m.text)
+            if failure is not None:
+                result_kind = "tool_call_failed"
+                result_meta: "dict[str, object]" = dict(failure)
+            else:
+                result_kind = "tool_call_completed"
+                result_meta = {"result": m.text}
             frames.append(
                 OutboxMessage(
                     kind="tool_call_started",
@@ -170,8 +227,8 @@ def project_restored_frames(
                         RESTORED_META_KEY: True,
                         "tool": tool_name,
                         "args": call.get("args") or {},
-                        RESULT_KIND_KEY: "tool_call_completed",
-                        RESULT_META_KEY: {"result": m.text},
+                        RESULT_KIND_KEY: result_kind,
+                        RESULT_META_KEY: result_meta,
                     },
                 )
             )

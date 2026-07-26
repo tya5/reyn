@@ -244,6 +244,86 @@ def test_projection_uncorrelated_tool_result_still_yields_header() -> None:
     assert tool.meta.get(RESULT_META_KEY) == {"result": "orphaned result"}
 
 
+def test_projection_dispatch_envelope_failure_classified_as_tool_call_failed() -> None:
+    """Tier 1: a FAILED structured tool result (#73) — the persisted ``m.text``
+    for a dispatch-envelope error (e.g. ``file__read`` on a missing path) is
+    NEVER JSON; it is the plain string ``"Error (<kind>): <message>"`` produced
+    by the tool-result renderer (``reyn.core.offload.seam`` / ``router_loop.py``
+    — grounded by direct inspection, not guessed). The projection must classify
+    this as ``RESULT_KIND_KEY="tool_call_failed"`` (not ``"tool_call_completed"``)
+    so the presenter's failure branch (``_tool_result_line`` /
+    ``_body_and_background`` in ``presenter.py``) tints the row coral, exactly
+    matching the LIVE rendering of the same failure.
+
+    Non-vacuity: the OLD code passed ``{"result": m.text}`` (the raw string)
+    through unconditionally — ``summarize_tool_result`` only recognises
+    failure on a DICT carrying an ``error``/``error_message`` key
+    (``renderer.py::_summarize_result``), so handing it a bare string can
+    never produce a ``✗``-prefixed summary. That is asserted directly below."""
+    from reyn.interfaces.repl.renderer import summarize_tool_result
+
+    failure_text = "Error (not_found): file not found: missing.py"
+    frames = project_restored_frames([
+        ChatMessage(
+            role="tool", content=failure_text, name="file__read",
+            tool_call_id="missing_call",
+        ),
+    ])
+    tool = next(f for f in frames if f.kind == "tool_call_started")
+    assert tool.meta.get(RESULT_KIND_KEY) == "tool_call_failed", (
+        f"a rendered tool failure must classify as tool_call_failed, got "
+        f"meta={tool.meta}"
+    )
+    result_meta = tool.meta.get(RESULT_META_KEY)
+    assert result_meta == {
+        "error_kind": "not_found",
+        "error_message": "file not found: missing.py",
+    }
+
+    # Non-vacuity: the OLD behaviour (raw string fed to summarize_tool_result)
+    # never detects a failure — proving the fix actually changed the outcome.
+    old_summary = summarize_tool_result("file__read", failure_text)
+    assert not old_summary.startswith("✗"), (
+        "sanity check failed: the OLD string-based summary already looked "
+        "like a failure, so this test would not prove the fix changed anything"
+    )
+
+
+def test_projection_mcp_iserror_failure_classified_as_tool_call_failed() -> None:
+    """Tier 1: the second (and only other) failure shape the renderer emits —
+    an MCP ``isError`` result — persists as the plain string
+    ``"Error: <text>"`` (no ``(<kind>)`` segment). The projection must still
+    classify this as ``tool_call_failed``, carrying just ``error_message``."""
+    frames = project_restored_frames([
+        ChatMessage(
+            role="tool", content="Error: connection refused", name="mcp__ping",
+            tool_call_id="missing_call",
+        ),
+    ])
+    tool = next(f for f in frames if f.kind == "tool_call_started")
+    assert tool.meta.get(RESULT_KIND_KEY) == "tool_call_failed"
+    assert tool.meta.get(RESULT_META_KEY) == {"error_message": "connection refused"}
+
+
+def test_projection_success_mentioning_error_word_not_misclassified() -> None:
+    """Tier 1: no false positive — a SUCCESSFUL tool result whose own body
+    happens to contain the substring "error" (e.g. a grep result) must NOT be
+    misclassified as a failure. Only the renderer's exact failure PREFIXES
+    (``"Error ("`` / ``"Error: "``) trigger ``tool_call_failed``; a mid-body
+    mention does not (this is the substring-heuristic the brief explicitly
+    forbids inventing)."""
+    benign_text = "3 matches for 'error handling' in src/foo.py"
+    frames = project_restored_frames([
+        ChatMessage(
+            role="tool", content=benign_text, name="grep__search",
+            tool_call_id="missing_call",
+        ),
+    ])
+    tool = next(f for f in frames if f.kind == "tool_call_started")
+    assert tool.meta.get(RESULT_KIND_KEY) == "tool_call_completed"
+    assert tool.meta.get(RESULT_META_KEY) == {"result": benign_text}
+
+
 def test_projection_empty_log_yields_no_frames_no_divider() -> None:
     """Tier 1: a first-ever run (empty log) projects to nothing — no divider, so
     the pane stays blank (resume-equivalent: nothing to restore)."""
@@ -313,6 +393,36 @@ async def test_restored_entries_render_resolved_never_running() -> None:
         )
         tool = next(e for e in entries if e.item.kind == "tool_call_started")
         assert tool.state is EntryState.SUCCESS, "restored tool result not resolved to SUCCESS"
+
+
+@pytest.mark.asyncio
+async def test_restored_failed_tool_resolves_to_error_state() -> None:
+    """Tier 2: end-to-end witness for #73 — a persisted FAILED structured tool
+    result (``"Error (not_found): ..."``) hydrates to ``EntryState.ERROR`` (the
+    same coral-tinted terminal state the LIVE completion handler assigns a
+    raised/reported failure), not ``SUCCESS``. ``app.py``'s
+    ``_hydrate_from_history`` already branches on
+    ``meta[RESULT_KIND_KEY] == "tool_call_failed"`` to set ``ERROR`` directly
+    (verified by reading the source — no app.py change was needed for this
+    fix); this test proves the WHOLE path (projection → hydration) delivers
+    the correct end state, not just the projection in isolation."""
+    log = [
+        ChatMessage(
+            role="tool", content="Error (not_found): file not found: missing.py",
+            name="file__read", tool_call_id="missing_call",
+        ),
+    ]
+    app = TextualChatApp(
+        transport=ScriptedTransport(), read_model=_HistoryReadModel(log)
+    )
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        await pilot.pause()
+        entries = _entries(app)
+        tool = next(e for e in entries if e.item.kind == "tool_call_started")
+        assert tool.state is EntryState.ERROR, (
+            f"a restored FAILED tool must resolve to ERROR, got {tool.state}"
+        )
 
 
 @pytest.mark.asyncio
