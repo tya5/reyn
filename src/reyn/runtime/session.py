@@ -1191,6 +1191,15 @@ class Session:
         # Turn-idle event for quiescence; lets a global rewind await_quiescent before the reset-record append (ADR-0038 Stage 1c, see session-construction.md#family-2-recovery-wal-journal)
         self._turn_idle = asyncio.Event()
         self._turn_idle.set()
+        # #3300 P2a: monotonic sent-queue-mutation counter — an order-race gate
+        # for a client merging the granular `user_submitted`/`turn_started`
+        # queue deltas (see `_bump_queue_seq` for the full rationale). In-memory
+        # only, deliberately not WAL-durable: it is a client read-model
+        # liveness aid (resolves snapshot/delta interleaving), not recovery
+        # state — a restart safely resumes from 0 because a fresh connection's
+        # STATE_SNAPSHOT always seeds the client's last-applied seq before any
+        # delta is merged.
+        self._queue_seq: int = 0
         self._turn_owner_task: "asyncio.Task | None" = None  # lets await_quiescent skip its wait when called re-entrantly from the owning task
         # #2242: True only for the window between cancel_inflight() calling
         # `_turn_owner_task.cancel()` and run_one_iteration observing the
@@ -1653,6 +1662,49 @@ class Session:
         this surface.
         """
         return self._router_loop_agent_replies
+
+    @property
+    def turn_active(self) -> bool:
+        """Read-only accessor: True while a turn is dispatched and in flight,
+        False when idle (#3300 P2a).
+
+        Exposes ``_turn_idle`` (ADR-0038 Stage 1c, cleared at turn-dispatch
+        :meth:`run_one_iteration`, set in that turn's ``finally``) as a
+        public read — this is surfacing EXISTING state, not a new authority.
+        A client (in-process or remote/agui) uses this alongside
+        :meth:`queued_user_messages` to render whether the next queued
+        message will dispatch immediately (idle) or wait (busy).
+        """
+        return not self._turn_idle.is_set()
+
+    def _bump_queue_seq(self) -> int:
+        """Advance + return the sent-queue mutation seq counter (#3300 P2a).
+
+        Called once per queue-affecting mutation — a ``user`` item entering
+        the inbox (``submit_user_text``) or leaving it (dispatch,
+        ``turn_started``) — and the returned value is stamped onto that
+        mutation's chat-event (``seq=``). A client merging the granular
+        ``user_submitted``/``turn_started`` deltas keeps the highest ``seq``
+        it has applied (seeded from ``STATE_SNAPSHOT``'s ``queue_seq``) and
+        discards any delta whose ``seq`` is not strictly greater — this is
+        the order-race gate: a stale/duplicate ``user_submitted`` for an
+        item ALREADY dispatched (whose ``turn_started`` carries a higher
+        seq, itself ≤ a snapshot taken after that dispatch) can never
+        resurrect the item in the client's queue model, regardless of the
+        arrival order of the snapshot read vs. the delta delivery. Every
+        turn (not only ``kind=="user"``) bumps this counter at
+        ``turn_started`` — harmless for non-queue turns (nothing in the
+        client's queue model matches their ``chain_id``), and keeps the
+        counter a single, simple, strictly-monotonic sequence.
+        """
+        self._queue_seq += 1
+        return self._queue_seq
+
+    @property
+    def queue_seq(self) -> int:
+        """Read-only accessor for the current queue-mutation seq counter
+        (#3300 P2a) — see :meth:`_bump_queue_seq`."""
+        return self._queue_seq
 
     @property
     def router_host(self):
@@ -2827,11 +2879,24 @@ class Session:
         # display neutralization never touches conversation content. `msg_id`
         # (the id `_put_inbox` stamps) rides along — load-bearing for a later
         # phase (client learns its own message id, for cancel-by-id).
+        #
+        # #3300 P2a design-pass pin (E): the field is named `msg_id` (not
+        # `_msg_id`) HERE, at the wire/event boundary — this event reaches a
+        # remote agui client via the generic EventFrame encode (no per-field
+        # allowlist), so its key names are a PUBLIC wire contract the moment
+        # they're emitted. The leading underscore stays on the INTERNAL inbox
+        # payload key (`_put_inbox`/`_consume_inbox`/snapshot_journal.py —
+        # never wire-facing) — this emit call is the one boundary that maps
+        # between the two. `seq` is the sent-queue mutation counter
+        # (`_bump_queue_seq`) — the order-race gate a client merging this
+        # event with `turn_started` and a `STATE_SNAPSHOT` queue baseline
+        # uses to resolve any interleaving (see `_bump_queue_seq` docstring).
         self._chat_events.emit(
             "user_submitted",
             text=text,
             chain_id=chain_id,
-            _msg_id=msg_id,
+            msg_id=msg_id,
+            seq=self._bump_queue_seq(),
             meta=_user_frame_meta(attribution),
         )
 
@@ -4693,6 +4758,35 @@ class Session:
         await self.inbox.put((kind, full_payload))
         return msg_id
 
+    def queued_user_messages(self) -> "list[dict]":
+        """Read-only accessor: the current UNDISPATCHED ``kind=="user"`` inbox
+        queue — the server-authoritative sent-queue state a client renders
+        (#3300 P2a; rendering itself is P2b).
+
+        Reads ``self._journal.snapshot.inbox`` — the SAME snapshot-backed,
+        WAL-durable list ``append_inbox``/``consume_inbox``
+        (``runtime/services/snapshot_journal.py``) keep current, so this is
+        exposure of existing server-authoritative state, not a new one. Only
+        ``kind=="user"`` items are surfaced (the sent-queue concept covers
+        top-level user submissions; ``agent_request``/``agent_response``/
+        ``pipeline_result`` inbox items are internal wake triggers, never
+        rendered as a queued user message).
+
+        Each item: ``{"msg_id": str, "chain_id": str | None, "text": str | None}``
+        — ``msg_id``/``chain_id`` are the correlation ids a client matches
+        against the ``user_submitted`` (enqueue) / ``turn_started`` (dispatch)
+        chat-event deltas to keep its queue model in sync.
+        """
+        return [
+            {
+                "msg_id": item.get("id"),
+                "chain_id": item.get("payload", {}).get("chain_id"),
+                "text": item.get("payload", {}).get("text"),
+            }
+            for item in self.journal.snapshot.inbox
+            if item.get("kind") == "user"
+        ]
+
     async def _consume_inbox(self) -> tuple[str, dict]:
         """Wait for next inbox message; on receive, record `inbox_consume`
         via journal (skipped for shutdown signals which are out-of-band)."""
@@ -5065,10 +5159,18 @@ class Session:
         # trigger is consumed and before dispatch, so slice 5b can attach the
         # turn_start hook here. chain_id from the payload (may be absent for
         # non-user triggers — that is fine, kind alone identifies the turn type).
+        # #3300 P2a: `seq` is the sent-queue mutation counter
+        # (`_bump_queue_seq`) — for a `kind=="user"` turn this is the
+        # DISPATCH mutation (the item leaves the undispatched queue), the
+        # order-race-gate counterpart to `user_submitted`'s enqueue `seq`
+        # (see that emit's comment + `_bump_queue_seq` docstring). Bumped
+        # for every turn kind (not only "user") to keep the counter a
+        # single strictly-monotonic sequence; harmless for non-queue turns.
         self._chat_events.emit(
             "turn_started",
             kind=kind,
             chain_id=payload.get("chain_id"),
+            seq=self._bump_queue_seq(),
         )
         # #1800 slice 5b: turn_start lifecycle hooks.
         await self._hook_dispatcher.dispatch(
