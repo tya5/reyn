@@ -139,17 +139,18 @@ async def run_remote_repl(
             this widened return type).
             ``submit_user_text`` (#3287) additionally reads ``resp["msg_id"]``
             here — the server's echo of the SAME correlation id its broadcast
-            ``user_submitted`` chat-event carries (#3300 P2a) — so the client
-            can recognise its own broadcast echo BY ID rather than a same-text
-            match. NOTE (residual, documented rather than silently assumed
-            closed): the id only becomes visible to submit_user_text once this
-            await returns; the server may already have pushed the SSE
-            broadcast for it over the OTHER connection (the events stream) in
-            the interim, in which case run_output_loop renders it before the
-            id lands in `own_submissions` — a narrow network-ordering race
-            distinct from (and strictly narrower than) the same-text collision
-            this id-based scheme closes for the local, single-process path
-            (see `stream_client.py` / `agui-transport.md`).
+            ``user_submitted`` chat-event carries (#3300 P2a). This id is
+            NOT what closes remote own-echo suppression, though (#3309 F2):
+            it only becomes visible once this await returns, and the server
+            may already have pushed the SSE broadcast for the same submission
+            over the OTHER connection (the events stream) in the interim — a
+            cross-channel race a POST-ack-timed id cannot avoid. Remote
+            suppression instead matches on `own_connection_id`
+            (`run_chat_client`/`run_output_loop`), known up-front and
+            independent of this response entirely; `msg_id` here stays
+            load-bearing for a DIFFERENT reason — #3300 Y-client (cancel-by-id)
+            needs the client to learn its own message id, per
+            ``session.py``'s ``submit_user_text`` docstring.
             """
             last_send[0] = time.monotonic()
             try:
@@ -202,6 +203,14 @@ async def run_remote_repl(
                         agent_name=agent_name,
                         is_tty=sys.stdin.isatty(),
                         config=config,
+                        # #3287/#3309 F2: THIS client's own connection_id
+                        # (minted above, BEFORE any submit, and stamped on
+                        # every POST) — the server echoes it back into every
+                        # user_submitted broadcast's meta.auth_connection_id,
+                        # so run_output_loop can recognise "this is MY OWN
+                        # remote submission" by identity, with no dependency
+                        # on the POST-ack racing the SSE broadcast.
+                        own_connection_id=connection_id,
                     )
                 finally:
                     hb.cancel()

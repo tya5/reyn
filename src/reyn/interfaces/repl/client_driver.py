@@ -91,6 +91,7 @@ async def run_chat_client(
     agent_name: str,
     is_tty: bool,
     config=None,
+    own_connection_id: "str | None" = None,
 ) -> None:
     """Input-driver selection + (plain) banner/output loop + wait + teardown.
 
@@ -104,6 +105,14 @@ async def run_chat_client(
     A non-TTY session (``--cui`` / piped / CI / no real terminal) always resolves
     to ``plain`` regardless of mode. This is the SAME selection ``run_repl`` made
     locally — now applied identically to the remote path.
+
+    ``own_connection_id`` (#3287/#3309 F2): the REMOTE call site's own
+    ``connection_id`` (``remote_client.py`` mints it client-side, before any
+    submit, and sends it on every POST) — ``None`` for the local path (no such
+    concept; ``InProcessTransport`` correlates the own-echo suppression by
+    ``msg_id`` instead, see below). Passed through to :func:`run_output_loop`
+    only when ``is_tty`` (nothing else has shown the line otherwise, so the
+    event-driven render must stay the sole record).
 
     The caller owns transport lifecycle (``start``/``close`` or the httpx SSE
     context) and any cost summary; this function only drives the loop(s) and
@@ -134,21 +143,38 @@ async def run_chat_client(
 
     # #3287: on an interactive TTY, `prompt_session.prompt_async` below already
     # leaves the typed line on the terminal the instant Enter is pressed — the
-    # user-line echo already happened there. Without this set the broadcast
-    # `user_submitted` chat-event this same submission produces (see
+    # user-line echo already happened there. Without suppressing it, the
+    # broadcast `user_submitted` chat-event this same submission produces (see
     # `run_output_loop`) renders it a SECOND time, printing every LLM-round-trip
     # turn's own line twice (a local `/quit` never reaches `submit_user_text`,
-    # so it never doubled — the exact contrast the bug report noted). `None` on
-    # a non-TTY session leaves the event-driven render as the sole echo (there
-    # is nothing else on screen to duplicate it against — piped stdin is never
-    # echoed by the terminal). Owned by THIS client's own loop pair (never
-    # shared), so it only ever matches submissions this same process made —
-    # another attached client's turns still render normally (see both loops'
-    # docstrings in `stream_client.py`). Correlated by `msg_id` (the transport's
-    # `submit_user_text` return value), never by text — a same-text collision
-    # between two attached clients (both typing "yes") would otherwise misfire
-    # (co-vet finding on #3309, F1).
-    own_submissions: "set[str] | None" = set() if is_tty else None
+    # so it never doubled — the exact contrast the bug report noted). `None`
+    # (own_submissions AND own_connection_id) on a non-TTY session leaves the
+    # event-driven render as the sole echo (there is nothing else on screen to
+    # duplicate it against — piped stdin is never echoed by the terminal).
+    #
+    # TWO correlation mechanisms, one per transport shape, never text (a
+    # same-text collision between two attached clients both typing "yes" would
+    # misfire — co-vet finding on #3309, F1):
+    #   - `own_connection_id` (F2): when the caller passes one (the REMOTE
+    #     path — `remote_client.py` mints its own `connection_id` client-side,
+    #     BEFORE any submit, and stamps it on every POST; the server echoes it
+    #     straight back into the broadcast event's `meta.auth_connection_id`,
+    #     #3300's existing attribution plumbing) `run_output_loop` matches on
+    #     that field directly — structurally race-free because the id is known
+    #     up-front, with no dependency on the POST-ack/SSE-broadcast arrival
+    #     order at all (closing the residual race an earlier revision of this
+    #     fix could only document, not eliminate).
+    #   - `own_submissions` (msg_id set, #3287/F1): the LOCAL path
+    #     (`InProcessTransport`) has no connection-id concept, so it keeps the
+    #     msg_id-based set instead — also race-free (same-task, no yield point
+    #     between the chat-event emit and the id reaching the caller).
+    # Only one is ever active per session (the other stays `None`) — never
+    # shared across clients either way, so another attached client's turns
+    # always render normally (see both loops' docstrings in `stream_client.py`).
+    own_connection_id = own_connection_id if is_tty else None
+    own_submissions: "set[str] | None" = (
+        set() if (is_tty and own_connection_id is None) else None
+    )
 
     from prompt_toolkit import PromptSession  # noqa: PLC0415
     from prompt_toolkit.history import FileHistory  # noqa: PLC0415
@@ -169,6 +195,7 @@ async def run_chat_client(
             transport, renderer, reply_seen,
             command_ui_region=read_model.has_command_ui_region,
             own_submissions=own_submissions,
+            own_connection_id=own_connection_id,
         )
     )
 

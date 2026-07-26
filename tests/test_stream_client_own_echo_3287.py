@@ -34,6 +34,24 @@ shared, so this client's set only ever contains ids IT assigned. The
 regression test below drives exactly that scenario: same text, two clients,
 the OTHER client's broadcast arriving first.
 
+**Co-vet finding F2 (same review round)**: F1's fix still left a REMOTE-only
+gap, documented rather than closed: the msg_id only becomes visible to the
+AG-UI client once its POST response returns, and the server may already have
+pushed the SSE broadcast for the same submission over the INDEPENDENT events
+connection in the interim — a network-ordering race between the two
+channels. The reviewer pointed out this is unnecessary: the broadcast
+``user_submitted`` event's ``meta.auth_connection_id`` (already wired by
+#3300 for multi-client attribution — ``endpoint.py`` stamps it from the
+POST's own query param, ``session.py`` copies ``meta`` verbatim onto the
+event) is the client's OWN ``connection_id``, known client-side BEFORE any
+submit even happens (``remote_client.py`` mints it with ``uuid.uuid4()`` at
+startup). Matching on connection identity needs no second channel to
+resolve, closing the race structurally rather than narrowing it. The tests
+below drive: (1) suppression firing from ``meta.auth_connection_id`` alone,
+with no ``own_submissions`` populated at all — proving the identity check
+does not depend on msg_id timing; (2) a DIFFERENT connection_id (another
+attached remote client) still rendering normally.
+
 Policy compliance (docs/deep-dives/contributing/testing.md):
 - No unittest.mock/MagicMock/AsyncMock/patch on a collaborator. Renderer and
   transport doubles below are REAL instances of the actual base classes /a
@@ -139,8 +157,13 @@ class _QueueTransport(ClientTransport):
         pass
 
 
-def _user_submitted_event(text: str, msg_id: str) -> Event:
-    return Event(type="user_submitted", data={"text": text, "meta": {}, "msg_id": msg_id})
+def _user_submitted_event(
+    text: str, msg_id: str, *, auth_connection_id: "str | None" = None
+) -> Event:
+    meta = {"auth_connection_id": auth_connection_id} if auth_connection_id else {}
+    return Event(
+        type="user_submitted", data={"text": text, "meta": meta, "msg_id": msg_id}
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -258,6 +281,70 @@ async def test_own_submissions_none_preserves_the_event_as_sole_echo() -> None:
     await asyncio.gather(task, return_exceptions=True)
 
     assert "user_submitted" in [e.type for e in renderer.events]
+
+
+# ---------------------------------------------------------------------------
+# run_output_loop: F2 — remote (AG-UI) own-echo suppression by connection
+# identity, structurally race-free (no dependency on msg_id / POST-ack timing)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_connection_id_suppresses_with_no_msg_id_correlation_at_all() -> None:
+    """Tier 2: co-vet F2 regression (#3309) — a user_submitted event whose
+    meta.auth_connection_id matches THIS client's own connection_id is
+    suppressed via own_connection_id ALONE. own_submissions is deliberately
+    left empty/unpopulated (None) to prove the connection-identity check does
+    not depend on ever learning a msg_id via the submit_user_text return value
+    — i.e. no dependency on the POST-ack racing the SSE broadcast at all
+    (unlike a msg_id-only scheme, which needs the id to have already arrived
+    to match)."""
+    transport = _QueueTransport()
+    renderer = _Recorder()
+    await transport.push(
+        EventFrame(_user_submitted_event("hello", "m-999", auth_connection_id="conn-mine"))
+    )
+
+    task = asyncio.create_task(
+        run_output_loop(
+            transport, renderer, own_submissions=None, own_connection_id="conn-mine",
+        )
+    )
+    await asyncio.sleep(0.05)
+    task.cancel()
+    await asyncio.gather(task, return_exceptions=True)
+
+    assert "user_submitted" not in [e.type for e in renderer.events], (
+        "an event carrying THIS client's own connection_id must be "
+        "suppressed without ever needing a matching msg_id in own_submissions"
+    )
+
+
+@pytest.mark.asyncio
+async def test_connection_id_mismatch_still_renders_another_clients_turn() -> None:
+    """Tier 2: co-vet F2 — a user_submitted event whose meta.auth_connection_id
+    belongs to a DIFFERENT attached remote client still renders normally (the
+    ADR-0039 multi-client invariant, now proven for the connection-identity
+    correlation path specifically, mirroring the msg_id-path equivalent
+    above)."""
+    transport = _QueueTransport()
+    renderer = _Recorder()
+    await transport.push(
+        EventFrame(_user_submitted_event("yes", "m-theirs", auth_connection_id="conn-theirs"))
+    )
+
+    task = asyncio.create_task(
+        run_output_loop(
+            transport, renderer, own_submissions=None, own_connection_id="conn-mine",
+        )
+    )
+    await asyncio.sleep(0.05)
+    task.cancel()
+    await asyncio.gather(task, return_exceptions=True)
+
+    assert "user_submitted" in [e.type for e in renderer.events], (
+        "another client's turn (a different connection_id) must still render"
+    )
 
 
 # ---------------------------------------------------------------------------

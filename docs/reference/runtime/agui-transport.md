@@ -455,43 +455,58 @@ screen the instant Enter is pressed — that already IS the echo. Re-rendering
 it again from the broadcast `user_submitted` event printed every LLM-round-
 trip turn's own line twice (#3287; a local `/quit` never reaches
 `submit_user_text`, so it never doubled — the asymmetry the bug report
-noticed). The fix is ownership, not suppression-by-default: `route_input_line`
-records the `msg_id` its `transport.submit_user_text` call RETURNS (the SAME
-correlation id `user_submitted`'s `msg_id` field carries, #3300 P2a) in a
-small set (`own_submissions`, owned per client-loop-pair, never shared across
-clients), and `run_output_loop` skips re-rendering a `user_submitted` event
-only when its `msg_id` matches an entry in THIS client's own set — every
-other attached client's turns (and this client's own turns when
-non-interactive, where nothing else echoes the line) still render normally.
-With 2+ clients attached, everyone still sees every OTHER client's turn and
-every answer, not only the agent's replies to them; each client just stops
-duplicating its own.
+noticed). The fix is ownership, not suppression-by-default, and uses TWO
+DIFFERENT correlation mechanisms — one per transport shape, neither by text:
 
-Correlation is by **id, never by text** — an earlier revision matched by
-text and was caught in review (co-vet finding on #3309): two attached
+- **Local (`InProcessTransport`)**: `route_input_line` records the `msg_id`
+  its `transport.submit_user_text` call RETURNS (the SAME correlation id
+  `user_submitted`'s `msg_id` field carries, #3300 P2a) in a small set
+  (`own_submissions`, owned per client-loop-pair, never shared across
+  clients); `run_output_loop` skips re-rendering a `user_submitted` event
+  only when its `msg_id` matches an entry in THIS client's own set.
+  `ClientTransport.submit_user_text` returns the assigned `msg_id`
+  (previously `None`) — `InProcessTransport` returns `Session.submit_user_text`'s
+  own return value directly, same-task and race-free (nothing yields between
+  the chat-event emit and the id reaching the caller).
+- **Remote (`AgUiTransport`)**: matches the broadcast event's
+  `meta.auth_connection_id` against the client's OWN `connection_id` instead
+  (`remote_client.py` mints it client-side with `uuid.uuid4()` BEFORE any
+  submit and stamps it on every POST; the AG-UI endpoint's `user_message`
+  handler already attributes every submit with it — #3300's existing
+  multi-client display plumbing, `endpoint.py` → `session.py`'s `meta` →
+  the broadcast event, unchanged wire shape). Known up-front, with **no
+  dependency on any other channel** — see "closing the race" below.
+
+Either mechanism: every other attached client's turns (and this client's own
+turns when non-interactive, where nothing else echoes the line) still render
+normally. With 2+ clients attached, everyone still sees every OTHER client's
+turn and every answer, not only the agent's replies to them; each client
+just stops duplicating its own.
+
+Correlation is by **identity, never by text** — an earlier revision matched
+by text and was caught in review (co-vet finding F1 on #3309): two attached
 clients submitting the identical short line (e.g. both answering "yes")
 would cross-match, simultaneously swallowing the OTHER client's turn and
 leaving THIS client's own turn to double-print later, reintroducing the bug
-through a different door. `msg_id` was added by #3300 P2a SPECIFICALLY as a
-correlation id (never form-sniffed from content), so two different
-submissions never collide even with identical text.
+through a different door. `msg_id` (#3300 P2a) and `auth_connection_id`
+(#3300, multi-client attribution) were both added SPECIFICALLY as identity
+fields — never form-sniffed from content — so two different submissions
+never collide even with identical text.
 
-`ClientTransport.submit_user_text` therefore returns the assigned `msg_id`
-(previously `None`) — `InProcessTransport` returns `Session.submit_user_text`'s
-own return value directly (same-task, race-free: nothing yields between the
-chat-event emit and the id reaching the caller); the AG-UI endpoint's
-`user_message` handler echoes `msg_id` in the POST's JSON response body, and
-`AgUiTransport.submit_user_text` reads it from there. **Residual, honestly
-bounded, not silently assumed closed**: over the wire, the id only becomes
-visible to the remote client once its POST response returns, and the
-server may have already pushed the SSE broadcast for the same submission
-over the independent events connection in the interim — a narrow
-network-ordering race, distinct from (and strictly narrower than) the
-same-text collision this id-based scheme closes outright for the
-same-process local path. Closing it fully would need a client-supplied
-idempotency token honored by the server as the `msg_id` itself — a larger
-protocol change than this fix's scope, left for a future PR if the race is
-ever observed in practice.
+**Closing the race, not just narrowing it (co-vet finding F2 on #3309)**: an
+earlier revision used `msg_id` for the remote path too, reading it from the
+POST response body — but that id only becomes visible once the POST
+returns, and the server may already have pushed the SSE broadcast for the
+same submission over the INDEPENDENT events connection in the interim, a
+network-ordering race between the two channels. The reviewer pointed out
+this is unnecessary: `meta.auth_connection_id` is the client's own identity,
+known BEFORE the submit even happens — matching on it needs no second
+channel to resolve at all, closing the race structurally rather than
+documenting it as an accepted residual. `msg_id` remains load-bearing for a
+different reason on the remote path: #3300 Y-client (cancel-by-id) needs the
+client to learn its own message id regardless of transport, so
+`AgUiTransport.submit_user_text` still returns it — it is simply no longer
+what remote echo-suppression correlates on.
 
 ## AG-UI event coverage — reading the numbers honestly
 

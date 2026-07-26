@@ -243,33 +243,52 @@ async def run_output_loop(
     *,
     command_ui_region: bool = True,
     own_submissions: "set[str] | None" = None,
+    own_connection_id: "str | None" = None,
 ) -> None:
     """Drain the transport's unified frame stream to the renderer.
 
-    ``own_submissions`` (#3287, paired with :func:`run_input_loop` /
-    :func:`route_input_line`'s param of the same name): a ``user_submitted``
-    chat-event is a BROADCAST — every attached client (this one included) gets
-    it, so a second attached client can still be relying on it as the only
-    render of a turn it didn't type itself. On an interactive TTY, THIS
-    client's own submissions are different: ``prompt_session.prompt_async``
-    already left the typed line on the terminal the instant Enter was
-    pressed, so re-rendering it from the broadcast event would print it
-    twice. The set lets this loop recognise "this is the event for the line
-    my OWN input loop just showed" — matched by ``msg_id`` (the #3300 P2a
-    correlation id the event carries), NOT by text, so two attached clients
-    submitting the SAME text (e.g. both typing "yes") never cross-match: a
-    text match would let client A's broadcast satisfy client A's queue check
-    for client B's identical-text turn (or vice-versa, depending on arrival
-    order), simultaneously swallowing the OTHER client's line and leaving
-    THIS client's own line unswallowed later (the original bug, reintroduced
-    by a different route) — a real, order-dependent failure mode a plain
-    string match cannot avoid (see ``tests/test_stream_client_own_echo_3287.py``
-    ``test_same_text_two_clients_does_not_cross_match_by_id``). Events for
-    anyone else's submissions still render normally — the fix is about which
-    surface owns the echo (the terminal, for this client's own TTY-typed
-    line) not about dropping the event universally. ``None`` (the default,
-    and what non-interactive / piped / non-TTY sessions pass) disables the
-    check entirely, preserving the event-driven echo as the sole record when
+    A ``user_submitted`` chat-event is a BROADCAST — every attached client
+    (this one included) gets it, so a second attached client can still be
+    relying on it as the only render of a turn it didn't type itself. On an
+    interactive TTY, THIS client's own submissions are different:
+    ``prompt_session.prompt_async`` already left the typed line on the
+    terminal the instant Enter was pressed, so re-rendering it from the
+    broadcast event would print it twice (#3287). Two DIFFERENT correlation
+    mechanisms recognise "this is the event for the line my OWN input loop
+    just showed" — never by TEXT, so two attached clients submitting the SAME
+    text (e.g. both typing "yes") never cross-match: a text match would let
+    client A's broadcast satisfy client A's queue check for client B's
+    identical-text turn (or vice-versa, depending on arrival order),
+    simultaneously swallowing the OTHER client's line and leaving THIS
+    client's own line unswallowed later (the original bug, reintroduced by a
+    different route — co-vet finding F1 on #3309; see
+    ``tests/test_stream_client_own_echo_3287.py``
+    ``test_same_text_two_clients_does_not_cross_match_by_id``):
+
+    - ``own_connection_id`` (F2, checked FIRST): the caller's own
+      ``connection_id`` — for the AG-UI remote path, minted client-side
+      (``remote_client.py``) BEFORE any submit and stamped on every POST; the
+      server echoes it straight back into the broadcast event's
+      ``meta.auth_connection_id`` (the SAME attribution field #3300 already
+      wired for multi-client display). Matched directly against the event's
+      ``meta.auth_connection_id`` — structurally race-free, since the id is
+      known up-front and this check has NO dependency on any OTHER channel
+      (in particular, none on the POST-ack that returns ``submit_user_text``'s
+      ``msg_id`` racing the SSE broadcast — the residual gap an earlier
+      revision of this fix could only document, not eliminate).
+    - ``own_submissions`` (a ``msg_id`` set, F1): the LOCAL path
+      (``InProcessTransport``) has no connection-id concept, so it correlates
+      by the ``msg_id`` its ``submit_user_text`` call returns instead — also
+      race-free (same-task, no yield point between the chat-event emit and
+      the id reaching the caller).
+
+    Only one of the two is ever non-``None`` for a given session (see
+    ``client_driver.run_chat_client``). Events for anyone else's submissions
+    still render normally either way — the fix is about which surface owns
+    the echo (the terminal, for this client's own TTY-typed line) not about
+    dropping the event universally. Both ``None`` (the default, and what
+    non-interactive / piped / non-TTY sessions pass) disables the check
+    entirely, preserving the event-driven echo as the sole record when
     nothing else showed the line.
     """
     is_tty = sys.stdout.isatty()
@@ -283,16 +302,26 @@ async def run_output_loop(
         # (the A2 WaitingOn bug, designed out by the completeness gate).
         if frame.tag is FrameTag.EVENT:
             event = frame.event
-            if own_submissions and getattr(event, "type", None) == "user_submitted":
-                event_msg_id = (getattr(event, "data", None) or {}).get("msg_id")
-                if event_msg_id and event_msg_id in own_submissions:
-                    # This client's own PromptSession prompt already echoed
-                    # this exact submission (matched BY ID, #3287) to the
-                    # terminal — skip the redundant re-render and consume the
-                    # matched id so the set can't accidentally match a LATER,
-                    # unrelated event (ids are never reused).
-                    own_submissions.discard(event_msg_id)
-                    continue
+            if getattr(event, "type", None) == "user_submitted":
+                data = getattr(event, "data", None) or {}
+                if own_connection_id is not None:
+                    meta = data.get("meta") or {}
+                    if meta.get("auth_connection_id") == own_connection_id:
+                        # This client's own remote submission (matched BY
+                        # CONNECTION IDENTITY, #3309 F2) — its own POST already
+                        # produced the terminal echo, no wait on any other
+                        # channel needed. Skip the redundant re-render.
+                        continue
+                elif own_submissions:
+                    event_msg_id = data.get("msg_id")
+                    if event_msg_id and event_msg_id in own_submissions:
+                        # This client's own PromptSession prompt already
+                        # echoed this exact submission (matched BY ID, #3287)
+                        # to the terminal — skip the redundant re-render and
+                        # consume the matched id so the set can't accidentally
+                        # match a LATER, unrelated event (ids never reused).
+                        own_submissions.discard(event_msg_id)
+                        continue
             renderer.on_chat_event(event)
             continue
         msg = frame.message
