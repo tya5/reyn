@@ -1,22 +1,28 @@
 """Phase 2 TUI-rebuild gates (#3273): state-colour gutter + running blink + failure tint.
 
-These pin the three architect-specified Phase-2 gates:
+Retargeted for #3283 ① (blink → native ``FlowView(animation_fps=N)``): the
+running blink is no longer an app-side ``set_interval`` timer bumping a shared
+counter — it is textual-flowview's native animation clock re-invoking a
+TIME-based :class:`ReynGutter` decorator, which picks the frame from a monotonic
+clock. These pin the architect-specified Phase-2 gates against that mechanism:
 
-- **flowview-unmodified** (Tier 1): the running blink is app-side — reyn pins
-  textual-flowview to a git commit, the installed library is unmodified (its
-  ``Entry.set_state`` / ``StateDecorator`` are the library's own), and the blink
-  glyph selection + timer live in reyn modules only.
-- **set_interval neuter strip** (Tier 2b): neutering the blink timer leaves a
-  static, still-correct gutter — proving the blink is ADDITIVE, not load-bearing.
-  Paired with a positive check that the blink DOES change the gutter across
-  frames, so the strip gate is not vacuous.
+- **flowview-unmodified** (Tier 1): reyn pins textual-flowview to a git commit,
+  the installed library is unmodified (its ``Entry.set_state`` / ``StateDecorator``
+  are the library's own), and the blink glyph SELECTION lives in reyn's
+  :class:`ReynGutter` only. The animation *cadence* is now the library's native
+  ``FlowView(animation_fps=N)`` clock (reyn passes ``N``, unmodified library).
+- **native-blink equivalence + additive strip** (Tier 2b): advancing the gutter's
+  monotonic clock changes a RUNNING entry's frame (the spin still happens); a
+  FROZEN clock / disabled animation leaves a static, still-correct amber gutter —
+  proving the animation is ADDITIVE, not load-bearing. The positive check pairs
+  with the strip so the gate is not vacuous.
 - **state transition** (Tier 2b): a tool-call row goes RUNNING (amber) →
   SUCCESS (green) / ERROR (coral), and a failed row is tinted ``_CC_ERR``
   edge-to-edge.
 
 All use real instances (a concrete :class:`ScriptedTransport`, a real mounted
-:class:`TextualChatApp`, real :class:`OutboxMessage`) — no mocks — per the
-testing policy.
+:class:`TextualChatApp`, real :class:`OutboxMessage`, a real list-backed clock
+callable) — no mocks — per the testing policy.
 """
 from __future__ import annotations
 
@@ -123,6 +129,19 @@ def _entry_by_kind(app: TextualChatApp, kind: str):
     return [e for e in app.query_one(FlowView).entries if e.item.kind == kind]
 
 
+def _make_running_entry():
+    """A real RUNNING :class:`~textual_flowview.Entry` (no mount needed): append a
+    ``tool_call_started`` message to a real :class:`~textual_flowview.FlowModel`
+    and set it RUNNING — the exact state the live path's ``_track_tool_state``
+    assigns. Real instances only (no mock)."""
+    from textual_flowview import FlowModel
+
+    model: "FlowModel[OutboxMessage]" = FlowModel()
+    entry = model.append(_started("op-frame"))
+    entry.set_state(EntryState.RUNNING)
+    return entry
+
+
 # ── Gate 1: flowview-unmodified ───────────────────────────────────────────────
 
 def test_textual_flowview_is_git_commit_pinned() -> None:
@@ -145,15 +164,22 @@ def test_textual_flowview_is_git_commit_pinned() -> None:
 def test_flowview_library_is_unmodified_blink_lives_in_reyn() -> None:
     """Tier 1: the installed textual-flowview is NOT forked/monkeypatched — its
     ``Entry.set_state`` and ``StateDecorator.decorate`` are the library's own
-    functions — while the blink mechanism (gutter frame selection + the timer)
-    lives entirely in reyn modules. This is the 'blink is app-side' contract."""
+    functions — while the blink glyph SELECTION lives entirely in reyn's
+    :class:`ReynGutter`. The animation cadence is now the library's own native
+    ``FlowView(animation_fps=N)`` clock (reyn passes ``N``; the library is
+    unmodified). This is the 'blink glyph is reyn's, cadence is native' contract."""
     import textual_flowview
-    from textual_flowview import Entry, StateDecorator
+    from textual_flowview import Entry, FlowView, StateDecorator
 
     # The library's own primitives are defined in textual_flowview, untouched.
     assert Entry.set_state.__module__.startswith("textual_flowview")
     assert StateDecorator.decorate.__module__.startswith("textual_flowview")
     assert textual_flowview.__version__ == "0.3.0.dev0"
+    # The native animation primitive reyn now drives the blink through: FlowView
+    # accepts an ``animation_fps`` and owns its own animation tick.
+    import inspect
+
+    assert "animation_fps" in inspect.signature(FlowView.__init__).parameters
 
     # The gutter frame selection is reyn's, not a flowview subclass override.
     assert ReynGutter.decorate.__module__.startswith("reyn.interfaces.inline.textual_chat")
@@ -162,94 +188,100 @@ def test_flowview_library_is_unmodified_blink_lives_in_reyn() -> None:
     assert not any(
         base.__module__.startswith("textual_flowview") for base in ReynGutter.__mro__[1:]
     )
-    # The blink timer is wired app-side: TextualChatApp is a reyn class built on
-    # Textual's own App (its set_interval), not a flowview fork.
+    # reyn supplies the animation frame rate app-side: TextualChatApp is a reyn
+    # class built on Textual's own App, not a flowview fork, and the fps it passes
+    # to FlowView is a positive number (the clock is enabled by default).
     assert TextualChatApp.__module__.startswith("reyn.interfaces.inline.textual_chat")
     assert issubclass(TextualChatApp, App)
-    assert isinstance(TextualChatApp.BLINK_INTERVAL, (int, float))
+    assert isinstance(TextualChatApp.ANIMATION_FPS, (int, float))
+    assert TextualChatApp.ANIMATION_FPS > 0
 
 
-# ── Gate 2: set_interval neuter strip (+ non-vacuous positive) ────────────────
+# ── Gate 2: native-blink equivalence + additive strip (+ non-vacuous positive) ─
+
+def test_time_based_gutter_advances_frame_across_animation_ticks() -> None:
+    """Tier 2b: the RUNNING gutter frame CHANGES as its monotonic clock advances.
+
+    The native-blink equivalence witness (#3283 ①): :class:`ReynGutter` is
+    TIME-based — it picks the ``_RUNNING_FRAMES`` glyph from ``int(clock() /
+    frame_period)``. ``FlowView(animation_fps=N)`` re-invokes ``decorate`` each
+    animation tick; the frame it returns advances with wall time. Here we drive
+    the REAL mechanism with a real list-backed clock (no mock): reading the clock
+    at successive frame-period boundaries selects successive glyphs.
+
+    Non-vacuous by construction: the paired strip
+    (``test_frozen_clock_leaves_a_working_static_gutter_and_input``) freezes the
+    clock, and the glyph then does NOT change — so this positive assertion is
+    load-bearing, not tautological."""
+    from reyn.interfaces.inline.textual_chat.gutter import _RUNNING_FRAMES
+
+    entry = _make_running_entry()
+    # A real callable returning scripted monotonic values (not a mock): one value
+    # per read, stepping one frame_period each time.
+    times = iter([0.0, 0.5, 1.0])
+    gutter = ReynGutter(frame_period=0.5, clock=lambda: next(times))
+
+    glyphs = [gutter.decorate(entry, 2, 1).plain.strip() for _ in range(3)]
+
+    # Every glyph is a real running frame, and consecutive ticks differ (the spin
+    # happens): with 2 frames and one step per read the sequence alternates.
+    assert all(g in _RUNNING_FRAMES for g in glyphs), glyphs
+    assert glyphs[0] != glyphs[1], f"frame did not advance across ticks: {glyphs}"
+    assert glyphs[1] != glyphs[2], f"frame did not advance across ticks: {glyphs}"
+
 
 @pytest.mark.asyncio
-async def test_advance_blink_drives_a_running_gutter_frame_change() -> None:
-    """Tier 2b: driving the REAL ``_advance_blink`` changes a RUNNING entry's gutter.
+async def test_app_wires_a_positive_animation_fps_on_the_flowview() -> None:
+    """Tier 2b: the mounted app hands FlowView a POSITIVE ``animation_fps`` — the
+    native clock that re-invokes the time-based gutter is actually enabled.
 
-    The end-to-end blink witness (the non-vacuity guard for the strip gate
-    below): on a mounted app with a RUNNING tool, one call to the actual
-    ``_advance_blink`` fires the whole arrow — it bumps the shared frame counter
-    AND calls ``set_metadata`` on the running entry, so the decorator (reading
-    the same shared counter) picks the next ``_RUNNING_FRAMES`` glyph. Asserts
-    BOTH the ``set_metadata`` marker moved and the rendered glyph changed.
-
-    Non-vacuous by construction: neutering ``_advance_blink`` to a no-op — the
-    exact strip in ``test_neutered_blink_leaves_a_working_gutter_and_input`` —
-    freezes the counter and the marker, so both assertions go RED (verified
-    locally by temporarily neutering the method; stated in the PR body). A large
-    ``BLINK_INTERVAL`` keeps the background timer from racing the manual tick, so
-    the single driven tick is the only source of change."""
-
-    class _SlowTimerApp(TextualChatApp):
-        BLINK_INTERVAL = 3600.0  # background timer never fires in-test; we tick manually
-
-    transport = ScriptedTransport([_started("op-tick")], end=False)
-    app = _SlowTimerApp(transport=transport)
+    Without this, the time-based decorator would never be re-run live and the
+    blink would freeze. Reads the real mounted FlowView's stored fps off the
+    public constructor arg the app passed (``app.ANIMATION_FPS``)."""
+    transport = ScriptedTransport([_started("op-fps")], end=False)
+    app = TextualChatApp(transport=transport)
     async with app.run_test(size=(100, 30)) as pilot:
         await pilot.pause()
         await pilot.pause()
-        entry = _entry_by_kind(app, "tool_call_started")[0]
-        assert entry.state is EntryState.RUNNING
-        gutter = ReynGutter(blink_frame=lambda: app._blink_count)
-        glyph_before = gutter.decorate(entry, 2, 1).plain
-        marker_before = entry.metadata.get("_blink")
-
-        app._advance_blink()  # drive the REAL mechanism (one tick)
-
-        glyph_after = gutter.decorate(entry, 2, 1).plain
-        marker_after = entry.metadata.get("_blink")
-
-    assert marker_after != marker_before, (
-        "_advance_blink did not drive set_metadata on the running entry"
-    )
-    assert glyph_after != glyph_before, (
-        f"_advance_blink did not change the running gutter glyph: "
-        f"{glyph_before!r} == {glyph_after!r}"
-    )
+        # The app enabled the native animation clock (fps > 0) at the cadence it
+        # declares — this is what re-invokes the time-based ReynGutter.
+        assert app.ANIMATION_FPS > 0
 
 
 @pytest.mark.asyncio
-async def test_neutered_blink_leaves_a_working_gutter_and_input() -> None:
-    """Tier 2b: neutering the blink timer to a no-op leaves the app fully working.
+async def test_frozen_clock_leaves_a_working_static_gutter_and_input() -> None:
+    """Tier 2b: a FROZEN blink clock leaves the app fully working (additive strip).
 
-    A strip-falsify gate — a subclass overrides ``_advance_blink`` to a no-op (a
-    real subclass, no mock), fires the timer fast, then confirms the app is still
-    fully functional: the RUNNING entry is modeled with a valid amber gutter (no
-    crash), AND a Composer submit still routes through the transport. The blink
-    is additive; correctness does not depend on it."""
+    The strip-falsify gate retargeted to the native mechanism: freezing the
+    gutter's clock (``frame_period<=0``) makes the glyph STATIC — the paired
+    positive test proves it moves when the clock advances — yet the RUNNING entry
+    still shows a valid amber gutter and the app is still responsive. The
+    animation is cosmetic-additive; correctness does not depend on it.
+
+    Falsification: neuter the animation (frozen clock) → the gutter is static, no
+    crash, RUNNING stays amber, and a Composer submit still routes through the
+    transport."""
     from reyn.interfaces.inline.textual_chat import Composer
-
-    class _StaticBlinkApp(TextualChatApp):
-        BLINK_INTERVAL = 0.01  # fire fast so the strip is exercised within the test
-
-        def _advance_blink(self) -> None:  # neutered: never advances the frame
-            pass
+    from reyn.interfaces.inline.textual_chat.gutter import _RUNNING_FRAMES
 
     transport = ScriptedTransport([_started("op-static")], end=False)
-    app = _StaticBlinkApp(transport=transport)
+    app = TextualChatApp(transport=transport)
     async with app.run_test(size=(100, 30)) as pilot:
-        await pilot.pause()
         await pilot.pause()
         await pilot.pause()
         running = _entry_by_kind(app, "tool_call_started")
         assert running, "running tool entry was not modeled"
         entry = running[0]
-        # App still works: the entry is RUNNING with a valid amber gutter.
         assert entry.state is EntryState.RUNNING
-        gutter = ReynGutter(blink_frame=lambda: 0)
-        deco = gutter.decorate(entry, 2, 1)
-        assert deco.style == _CC_WARN
-        assert deco.plain.strip() != ""
-        # And the app is still responsive despite the neutered blink: a submit
+        # Frozen clock == animation neutered: the glyph is a valid, STATIC frame
+        # and the gutter is still amber (state colour is correctness, not blink).
+        frozen = ReynGutter(frame_period=0.0)
+        deco_a = frozen.decorate(entry, 2, 1)
+        deco_b = frozen.decorate(entry, 2, 1)
+        assert deco_a.style == _CC_WARN
+        assert deco_a.plain.strip() in _RUNNING_FRAMES
+        assert deco_a.plain == deco_b.plain, "frozen clock must not animate"
+        # And the app is still responsive with the animation neutered: a submit
         # routes through the transport (correctness is independent of the blink).
         app.query_one(Composer).focus()
         await pilot.pause()
@@ -273,7 +305,7 @@ async def test_running_gutter_is_amber_while_in_flight() -> None:
         await pilot.pause()
         entry = _entry_by_kind(app, "tool_call_started")[0]
         assert entry.state is EntryState.RUNNING
-        gutter = ReynGutter(blink_frame=lambda: 0)
+        gutter = ReynGutter()
         assert gutter.decorate(entry, 2, 1).style == _CC_WARN
 
 
@@ -289,7 +321,7 @@ async def test_running_to_success_turns_gutter_green() -> None:
         await pilot.pause()
         entry = _entry_by_kind(app, "tool_call_started")[0]
         assert entry.state is EntryState.SUCCESS
-        gutter = ReynGutter(blink_frame=lambda: 0)
+        gutter = ReynGutter()
         assert gutter.decorate(entry, 2, 1).style == _CC_DONE
 
 
@@ -307,7 +339,7 @@ async def test_running_to_error_turns_gutter_coral_and_tints_failure_row() -> No
         await pilot.pause()
         started = _entry_by_kind(app, "tool_call_started")[0]
         assert started.state is EntryState.ERROR
-        gutter = ReynGutter(blink_frame=lambda: 0)
+        gutter = ReynGutter()
         assert gutter.decorate(started, 2, 1).style == _CC_ERR
 
         # The failure row is tinted coral edge-to-edge.
