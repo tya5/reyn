@@ -23,8 +23,10 @@ Phase 4 wires every pane to its CANONICAL reyn source (no placeholders):
   status snapshot the plain path's status bar reads (``usage`` / ``cost_agent`` /
   ``cost_total`` / ``ctx_used`` / ``ctx_window``).
 - **Menu** — the full slash-command registry (:data:`reyn.interfaces.slash.REGISTRY`).
-- **Help** — the app's declarative ``BINDINGS`` plus the imperative navigation
-  keys each widget owns (:data:`COMPOSER_KEYS` / :data:`MENUBAR_KEYS`).
+- **Help** — the app's declarative ``BINDINGS`` plus the imperative/declarative
+  navigation keys each widget owns (:data:`COMPOSER_KEYS` /
+  :data:`MENUBAR_KEYS` / :data:`SENTQUEUE_KEYS` — the sent-queue's own
+  select/cancel/back-to-composer keys, #3300 Y-client).
 
 Every ENUMERATING pane (Model / Agent / Menu) derives its full set from the
 canonical registry — never a hand-curated subset — so a newly-configured model
@@ -118,7 +120,7 @@ class Composer(TextArea):
             row, _ = self.cursor_location
             if row <= 0:
                 sent_queue = self.app.query(SentQueue)
-                if sent_queue and not sent_queue.first().is_empty():
+                if sent_queue and sent_queue.first().has_items():
                     event.stop()
                     event.prevent_default()
                     sent_queue.first().focus()
@@ -166,6 +168,7 @@ COMPOSER_KEYS: "list[tuple[str, str]]" = [
     ("enter", "send"),
     ("shift+enter", "newline"),
     ("↓", "focus menu"),
+    ("↑", "focus sent queue"),
 ]
 
 #: The menu row's navigation keys (imperative ``MenuBar._on_key`` overrides).
@@ -173,6 +176,16 @@ MENUBAR_KEYS: "list[tuple[str, str]]" = [
     ("← →", "move"),
     ("enter", "open"),
     ("↑ / esc", "close"),
+]
+
+#: The sent-queue region's navigation keys (#3300 Y-client,
+#: ``SentQueue.BINDINGS`` — declarative, but the Help pane still sources them
+#: from HERE, the same single-source-of-truth convention ``MENUBAR_KEYS``
+#: uses, rather than re-deriving prose from the ``Binding`` objects).
+SENTQUEUE_KEYS: "list[tuple[str, str]]" = [
+    ("↑ / ↓", "select queued message"),
+    ("enter", "cancel selected"),
+    ("esc / tab", "back to composer"),
 ]
 
 
@@ -271,16 +284,19 @@ def help_pane_lines(
     *,
     composer_keys: "Sequence[tuple[str, str]]" = tuple(COMPOSER_KEYS),
     menubar_keys: "Sequence[tuple[str, str]]" = tuple(MENUBAR_KEYS),
+    sentqueue_keys: "Sequence[tuple[str, str]]" = tuple(SENTQUEUE_KEYS),
 ) -> list[str]:
     """The Help readout — the app's declarative ``BINDINGS`` (passed as
-    ``(key, description)`` pairs) plus the imperative composer/menu navigation keys
-    each widget owns. Not a registry-enumeration pane: key handling is split
-    between declarative ``BINDINGS`` and imperative ``_on_key`` overrides, so the
-    keys are sourced from where they are DEFINED (the widgets' key constants + the
+    ``(key, description)`` pairs) plus the imperative composer/menu navigation
+    keys and the sent-queue's own navigation keys (#3300 Y-client) each widget
+    owns. Not a registry-enumeration pane: key handling is split between
+    declarative ``BINDINGS`` and imperative ``_on_key`` overrides, so the keys
+    are sourced from where they are DEFINED (the widgets' key constants + the
     app's BINDINGS) rather than a single enumerable table."""
     lines = ["Shortcuts"]
     lines += [f"  {key}  {desc}" for key, desc in composer_keys]
     lines += [f"  {key}  {desc}" for key, desc in menubar_keys]
+    lines += [f"  {key}  {desc}" for key, desc in sentqueue_keys]
     lines += [f"  {key}  {desc}" for key, desc in app_bindings]
     return lines
 

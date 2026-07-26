@@ -23,11 +23,24 @@ covers the REMAINING client half, scoped to
    sent-queue) focuses the queue region; ``↑``/``↓`` move the highlighted
    row; ``Enter`` fires the cancel; ``Escape``/``Tab`` return to the
    composer.
+5. **``DOMNode.is_empty`` non-collision** (co-vet finding on #3314) —
+   ``SentQueue`` exposes its own empty/non-empty state as ``has_items()``,
+   never a same-named ``is_empty`` method: Textual's base
+   ``DOMNode.is_empty`` is a PROPERTY the ``:empty`` CSS pseudo-class hook
+   (``textual/widget.py``) reads as ``widget.is_empty`` — a same-named
+   method override would make that read return an always-truthy bound
+   method, permanently flipping ``:empty`` ON for this widget.
+6. **Help-pane discoverability** (co-vet finding on #3314) — the new
+   composer/sent-queue keys are sourced into the Help pane from
+   ``chrome.py``'s ``COMPOSER_KEYS``/``SENTQUEUE_KEYS`` constants, the SAME
+   single source of truth ``MENUBAR_KEYS`` already uses (no second,
+   undiscoverable hardcoding).
 
 Real ``TextualChatApp`` + a real minimal ``ClientTransport`` throughout — no
 ``unittest.mock``. Renders/state observed via the PUBLIC surface
-(``SentQueue.rendered_texts()``/``selected_msg_id()``, ``Composer.text``/
-``cursor_location``, ``FlowView.entries``), never private state.
+(``SentQueue.rendered_texts()``/``selected_msg_id()``/``has_items()``,
+``Composer.text``/``cursor_location``, ``FlowView.entries``), never private
+state.
 """
 from __future__ import annotations
 
@@ -38,7 +51,12 @@ import pytest
 from textual_flowview import FlowView
 
 from reyn.interfaces.inline.textual_chat import TextualChatApp
-from reyn.interfaces.inline.textual_chat.chrome import Composer
+from reyn.interfaces.inline.textual_chat.chrome import (
+    COMPOSER_KEYS,
+    SENTQUEUE_KEYS,
+    Composer,
+    help_pane_lines,
+)
 from reyn.interfaces.inline.textual_chat.sent_queue import SentQueue
 from reyn.interfaces.transport.client_transport import ClientTransport
 from reyn.interfaces.transport.frames import EventFrame
@@ -136,18 +154,18 @@ async def test_cancel_removes_row_only_on_inbox_cancel_delta_not_on_call_return(
         )
         await pilot.pause()
         sent_queue = app.query_one(SentQueue)
-        assert not sent_queue.is_empty()
+        assert sent_queue.has_items()
 
         await app.on_sent_queue_cancelled(SentQueue.Cancelled("m1"))
         assert transport.cancel_calls == ["m1"]
-        assert not sent_queue.is_empty(), (
+        assert sent_queue.has_items(), (
             "the row must NOT be removed by the cancel_queued call's return "
             "value alone — only the inbox_cancel delta removes it"
         )
 
         await transport.push_event(_inbox_cancel(msg_id="m1", seq=2))
         await pilot.pause()
-        assert sent_queue.is_empty(), "the inbox_cancel delta must remove the row"
+        assert not sent_queue.has_items(), "the inbox_cancel delta must remove the row"
 
 
 @pytest.mark.asyncio
@@ -171,7 +189,7 @@ async def test_strip_inbox_cancel_handler_leaves_row_stale(monkeypatch) -> None:
         await pilot.pause()
 
         sent_queue = app.query_one(SentQueue)
-        assert not sent_queue.is_empty(), "stripped handler should leave the row stale"
+        assert sent_queue.has_items(), "stripped handler should leave the row stale"
 
 
 @pytest.mark.asyncio
@@ -270,7 +288,7 @@ async def test_non_canceller_client_applies_only_removal_no_restore() -> None:
         await pilot.pause()
 
         sent_queue = app.query_one(SentQueue)
-        assert sent_queue.is_empty(), "the peer's cancel delta still removes the row here"
+        assert not sent_queue.has_items(), "the peer's cancel delta still removes the row here"
         assert composer.text == "my own untouched draft", (
             "a non-canceller client must not restore any text into its composer"
         )
@@ -440,3 +458,80 @@ async def test_enter_on_highlighted_row_cancels_it_and_escape_returns_focus() ->
         await pilot.pause()
         composer = app.query_one(Composer)
         assert composer.has_focus
+
+
+# ---------------------------------------------------------------------------
+# 5. ``DOMNode.is_empty`` non-collision witness (co-vet finding on #3314)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_sent_queue_does_not_shadow_domnode_is_empty_property() -> None:
+    """Tier 2b: ★``SentQueue`` must NOT override Textual's base
+    ``DOMNode.is_empty`` PROPERTY with a same-named method — the ``:empty``
+    CSS pseudo-class hook (``textual/widget.py``'s
+    ``"empty": lambda widget: widget.is_empty``) reads it as a property; a
+    method override would make that read return an always-truthy bound
+    method, permanently flipping ``:empty`` ON for this widget regardless of
+    its actual content. Reads the SAME attribute Textual's pseudo-class
+    evaluator reads (``widget.is_empty``, no call parens) and asserts it is
+    a real ``bool``, not a bound method — the exact collision shape the
+    co-vet finding described."""
+    transport = QueueTransport()
+    app = TextualChatApp(transport=transport)
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        sent_queue = app.query_one(SentQueue)
+        assert isinstance(sent_queue.is_empty, bool), (
+            "SentQueue.is_empty must stay Textual's base DOMNode property "
+            "(a bool) — a same-named method override would make this a "
+            "bound method (always truthy), permanently flipping the "
+            "':empty' CSS pseudo-class ON"
+        )
+
+        await transport.push_event(
+            _user_submitted(msg_id="m1", chain_id="c1", text="queued", seq=1)
+        )
+        await pilot.pause()
+        assert sent_queue.is_empty is False, (
+            "the base property should correctly read 'has children' once a "
+            "row is mounted"
+        )
+
+
+# ---------------------------------------------------------------------------
+# 6. Help-pane discoverability (co-vet finding on #3314)
+# ---------------------------------------------------------------------------
+
+
+def test_help_pane_lists_composer_up_arrow_and_sentqueue_keys() -> None:
+    """Tier 2b: the new composer ``↑`` binding and the sent-queue's own keys
+    (↑/↓ move, Enter cancel, Esc/Tab back to composer) must be DISCOVERABLE
+    through the Help pane — ``chrome.py``'s own module docstring states the
+    Help pane sources composer/menu keys from ``COMPOSER_KEYS``/
+    ``MENUBAR_KEYS`` "rather than re-hardcoding a second copy"; the new
+    sent-queue keys must follow the SAME single-source-of-truth convention
+    (``SENTQUEUE_KEYS``), not go undocumented. Pure-function pane formatter —
+    no widget mount needed."""
+    lines = help_pane_lines()
+    assert any("focus sent queue" in line for line in lines), (
+        "composer's new '↑ -> focus sent queue' binding is missing from "
+        "COMPOSER_KEYS / the Help pane"
+    )
+    assert any("cancel" in line.lower() for line in lines), (
+        "the sent-queue's cancel binding is missing from SENTQUEUE_KEYS / "
+        "the Help pane"
+    )
+
+
+def test_composer_keys_and_sentqueue_keys_are_the_single_source_help_reads() -> None:
+    """Tier 2b: non-vacuity — the Help pane's composer/sent-queue rows are
+    EXACTLY ``COMPOSER_KEYS``/``SENTQUEUE_KEYS`` (not a hand-duplicated
+    copy): every entry in each constant appears verbatim in the rendered
+    Help lines."""
+    lines = help_pane_lines()
+    for key, desc in (*COMPOSER_KEYS, *SENTQUEUE_KEYS):
+        assert any(key in line and desc in line for line in lines), (
+            f"({key!r}, {desc!r}) from COMPOSER_KEYS/SENTQUEUE_KEYS is not "
+            "rendered verbatim in the Help pane"
+        )

@@ -161,8 +161,18 @@ class SentQueue(Vertical):
         displayed content without reaching into private widget state."""
         return [str(row.content) for row in self._rows.values()]
 
-    def is_empty(self) -> bool:
-        return not self._rows
+    def has_items(self) -> bool:
+        """Whether at least one queued row is currently shown.
+
+        Named to avoid ``DOMNode.is_empty`` (a base Textual PROPERTY, "are
+        there no displayed children?", read by the ``:empty`` CSS
+        pseudo-class hook — ``textual/widget.py``'s
+        ``"empty": lambda widget: widget.is_empty``). A same-named METHOD
+        override would make that lookup evaluate to a bound method — always
+        truthy — turning ``:empty`` permanently ON for this widget, a live
+        foot-gun independent of whether current CSS happens to use
+        ``:empty`` yet (co-vet finding on #3314)."""
+        return bool(self._rows)
 
     def selected_msg_id(self) -> "str | None":
         """The currently-highlighted row's ``msg_id`` — the public read a
