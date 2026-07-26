@@ -149,13 +149,56 @@ This event is NOT an `OutboxMessage` display kind — the owner-ratified reason
 is the same as #3288 ③b's `agent_delta`: a state transition rides an `EventFrame`
 (opt-in draw — a surface with no handler drops it silently, never a garbage
 row), where registering a closed-vocabulary display kind for it would be a
-category error. As of this PR the client-side reset (a per-session display
-cache the client swaps on this barrier) is NOT yet implemented — that is N2,
-a separate PR — and the AG-UI/SSE remote transport does not yet re-emit this
-event on the wire (remote parity is N3, also separate); locally,
-`InProcessTransport` forwards it today with no consumer, which is legal per
-the dual-stream completeness gate's one-way direction (forwarded ⊇ consumed
-is fine; consumed ⊆ forwarded is what is enforced).
+category error. Client-side reset (a per-session display cache the client
+swaps on this barrier) is N2, a separate PR; locally, `InProcessTransport`
+forwards this event today, legal per the dual-stream completeness gate's
+one-way direction (forwarded ⊇ consumed is fine; consumed ⊆ forwarded is what
+is enforced) whether or not a given surface has a handler yet.
+
+**Remote parity (#3310 N3).** `registry.repl_outbox` (above) is a LOCAL-only
+bus — the AG-UI/SSE `_SessionFrameSource` never drains it; it reads a
+session's own `outbox_hub`/`chat_events` directly, bound to ONE session
+object for the SSE connection's lifetime. A remote client that switched
+sessions therefore had NO way to obtain the new session's scrollback at all:
+the remote read-model's `conversation_history` is deliberately empty
+(frame-sufficiency, `read_model.py`) and the emitter's `MESSAGES_SNAPSHOT`
+backlog was otherwise fixed at connect time. N3 closes this by treating a
+switch as a **logical reconnect**, entirely within the remote transport
+(the registry's own `attach`/`attach_session` + `repl_outbox` barrier are
+untouched and not involved):
+
+- `_SessionFrameSource` (`endpoint.py`) independently observes the SAME
+  `__session_switch_request__` sentinel the registry forwarder consumes for
+  the local REPL (both are subscribers of the same session's `outbox_hub`
+  fan-out — see *the control-sentinel dispositions* above). On seeing it, it
+  re-points itself at the target session (`registry.get_session`) and
+  synthesizes a `session_attached` `EventFrame` onto this connection's own
+  queue — the SAME vocabulary N1 defined, an independent per-connection
+  equivalent since `repl_outbox` never reaches a remote surface. It never
+  calls `registry.attach_session` itself, so it cannot race or double-apply
+  that side effect — it only re-points THIS connection's own view. A
+  registry-less construction (every pre-N3 unit test) degrades byte-identically:
+  the sentinel falls through to the generic `DisplayFrame` path, where
+  `CONTROL_FILTER_KINDS` already drops it silently.
+- `AgUiEmitter`, on observing a `session_attached` `EventFrame` flow through
+  `stream()`, re-fires the SAME reconnect protocol it uses at connect
+  (`_reconnect_snapshot_chunks`: `MESSAGES_SNAPSHOT` then `STATE_SNAPSHOT`)
+  — STRICTLY after the barrier event is forwarded, never before, so a client
+  that resets its view on the barrier never sees the reset race the state
+  the re-fire is about to deliver. The new backlog is resolved via a
+  caller-supplied `backlog_provider(agent, session_id)`; the endpoint wires
+  `session_backlog_frames`, which projects the target session's in-memory
+  `history` (`ChatMessage` list) through the SAME `project_restored_frames`
+  SSoT local restore-on-restart uses (#3273 P5) — read fresh at switch time,
+  never cached, so content that accrued in the other session while this
+  connection was elsewhere is included (no staleness). The per-connection
+  `TextStreamTracker` and `waiting_on` label are reset at the same point.
+- No per-client "which frames have I already seen" bookkeeping was
+  introduced: the mechanism is re-subscription (which session a connection
+  currently reads from) plus a fresh history read at switch time — never a
+  set of previously-delivered frame/message ids consulted before forwarding.
+- An ordinary connection that never switches sessions is unaffected — the
+  re-fire is dormant with no `session_attached` event ever flowing through.
 
 #### Text lifecycle (the conforming triplet, plain and streamed)
 
@@ -409,6 +452,13 @@ On connect (or reconnect) the server replays, before any live event:
 
 Live events (and `STATE_DELTA`s) follow.
 
+**Session switch = the same protocol, mid-stream (#3310 N3).** A session
+switch on an already-connected AG-UI stream re-fires this EXACT pair
+(`AgUiEmitter._reconnect_snapshot_chunks`), strictly after the
+`reyn.event.session_attached` barrier is forwarded — see *the session-switch
+barrier* above. Connect-time and switch-time are one code path, not two
+byte-identical-by-hand copies.
+
 The `MESSAGES_SNAPSHOT` `messages` field is a **standard `[{role, content}]`
 array of conversation turns only** — `agent` → `assistant`, `user` → `user` — the
 shape a generic client expects. reyn chrome (status / error / present /
@@ -473,7 +523,7 @@ wire.
 | Custom `name`                        | Meaning                                          |
 |--------------------------------------|--------------------------------------------------|
 | `reyn.event.user_answered_intervention` | the user answered an intervention (working-indicator axis only — carries NO display text; see `reyn.event.intervention_answer_submitted` below for the echo) |
-| `reyn.event.session_attached`        | a session/agent switch just happened (#3310 N1) — carries `{agent, session_id}`, the identity a client keys its display/reset cache on. Emitted at the registry attach seam (`AgentRegistry.attach`/`attach_session`), put directly on `repl_outbox` as a stream BARRIER — see *the session-switch barrier* above. ★Local transport only in this PR: `InProcessTransport` forwards it; the AG-UI/SSE `_SessionFrameSource` reads a session's own outbox/chat-events and does not yet re-emit it on the remote wire (remote parity is N3, a separate PR) — this profile entry keeps the codec/completeness gates honest ahead of that wiring, the same forward-ahead-of-consumer shape as `agent_delta` below |
+| `reyn.event.session_attached`        | a session/agent switch just happened (#3310 N1) — carries `{agent, session_id}`, the identity a client keys its display/reset cache on. Locally, emitted at the registry attach seam (`AgentRegistry.attach`/`attach_session`), put directly on `repl_outbox` as a stream BARRIER — see *the session-switch barrier* above. Remotely (#3310 N3), `_SessionFrameSource` synthesizes an independent per-connection equivalent when it observes a `/session switch` on the session backing THIS connection, and `AgUiEmitter` re-fires `MESSAGES_SNAPSHOT`/`STATE_SNAPSHOT` for the new session right after forwarding it — see *Remote parity* above |
 | `reyn.event.user_submitted`          | a user turn was submitted (#3300 P1 C) — RAW text + chain_id + msg_id + seq + meta; each surface neutralizes at its render boundary. `msg_id`/`seq` are the #3300 P2a sent-queue correlation id + order-race-gate token |
 | `reyn.event.intervention_answer_submitted` | an intervention answer was resolved (#3300, event-ifying the LAST outbox `kind="user"` broadcast site — `InterventionHandler.deliver_answer_to`) — RAW text (the raw answer, or the matched choice's label) + `intervention_id` + meta; each surface neutralizes at its render boundary, following the `user_submitted` precedent exactly. Unlike `user_submitted`, this has no sent-queue staging step — an intervention answer was never a queued inbox item, so it renders straight to the flow |
 | `reyn.event.inbox_cancel`            | an UNDISPATCHED queued user message was cancelled by id (#3300 P3, via the `cancel_queued` client message) — carries `msg_id` + `seq`; the server-authoritative sent-queue removal signal (never a client-local "cancel succeeded" response), exclusive with `turn_started` for the same `msg_id` |

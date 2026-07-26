@@ -1,0 +1,343 @@
+"""Tier 2: #3310 N3 — remote (AG-UI) parity for session switch.
+
+N1 (#3321) gave the LOCAL registry seam a ``session_attached`` barrier
+chat-event on ``repl_outbox``. A REMOTE AG-UI client never sees it: the
+emitter's per-connection ``_SessionFrameSource`` reads a session's own
+``outbox_hub``/``chat_events`` directly (never ``registry.repl_outbox``), and
+is bound to ONE session object for the SSE connection's lifetime — so a
+switch left it stranded on the OLD session, and even if it followed, the
+emitter's ``MESSAGES_SNAPSHOT`` backlog is fixed at connect time (#3288/#3300
+era design). Two premises, both re-verified here structurally by construction
+(not merely asserted): a remote client that switches sessions had NO way to
+obtain the new session's scrollback at all.
+
+The fix (this PR): ``_SessionFrameSource`` independently detects the SAME
+``__session_switch_request__`` sentinel the registry forwarder consumes
+(fan-out off ``session.outbox_hub`` — both are subscribers), re-points itself
+at the target session, and synthesizes a ``session_attached`` EventFrame onto
+its OWN per-connection queue. ``AgUiEmitter``, on observing that EventFrame,
+treats the switch as a *logical reconnect*: it re-fires the SAME
+``MESSAGES_SNAPSHOT``/``STATE_SNAPSHOT`` protocol it uses at connect
+(:meth:`AgUiEmitter._reconnect_snapshot_chunks`), sourcing the new backlog from
+a caller-supplied ``backlog_provider`` — here, ``session_backlog_frames``,
+which projects a session's in-memory ``ChatMessage`` history through the SAME
+``project_restored_frames`` SSoT local restore-on-restart uses (#3273 P5).
+
+Gates:
+
+1. ★Remote parity (+staleness): A -> B -> A over the real server pipeline
+   (``_SessionFrameSource`` + ``AgUiEmitter`` + real SSE text + real
+   ``AgUiTransport`` decode) reconstructs the SAME view a local hydrate
+   (``project_restored_frames`` read straight off ``session.history``) would
+   — including content that entered B's history while the connection was
+   elsewhere (no caching: the backlog is read fresh at switch time). Strip
+   the re-fire (``backlog_provider=None``) -> the remote view is missing the
+   scrollback after a switch -> RED (asserted directly below).
+2. Re-fire ordering: the switch's ``session_attached`` SSE event precedes its
+   ``MESSAGES_SNAPSHOT``/``STATE_SNAPSHOT`` re-fire, never the reverse.
+3. Connect path unchanged: an ordinary single-session connection (no switch
+   ever occurs) emits byte-identical SSE text whether or not
+   ``backlog_provider`` is wired — the re-fire is dormant unless a
+   ``session_attached`` event actually flows through.
+4. No per-client "which frames have I already seen" bookkeeping: the fix is
+   re-subscription (WHICH session a connection currently reads from) plus a
+   fresh read of that session's live history at switch time — never a set of
+   previously-delivered frame/message ids consulted before forwarding.
+
+Real ``AgentRegistry`` + real ``Session`` (``tests._support.agent_session
+.make_session``), the real ``_SessionFrameSource`` / ``AgUiEmitter`` /
+``AgUiTransport`` / SSE codec — no mocks.
+"""
+from __future__ import annotations
+
+import asyncio
+
+import pytest
+
+from reyn.interfaces.transport.agui.client import AgUiTransport
+from reyn.interfaces.transport.agui.emitter import AgUiEmitter
+from reyn.interfaces.transport.agui.endpoint import (
+    _SessionFrameSource,
+    session_backlog_frames,
+)
+from reyn.interfaces.transport.agui.protocol import parse_sse_blocks
+from reyn.interfaces.transport.frames import DisplayFrame, EventFrame
+from reyn.runtime.budget.budget import BudgetTracker, CostConfig
+from reyn.runtime.chat_message import ChatMessage
+from reyn.runtime.outbox import OutboxMessage
+from reyn.runtime.profile import AgentProfile
+from reyn.runtime.registry import _DEFAULT_SID, AgentRegistry
+from tests._support.agent_session import make_session
+
+
+def _registry(tmp_path):
+    shared = BudgetTracker(CostConfig())
+
+    def factory(profile: AgentProfile):
+        agent_dir = tmp_path / ".reyn" / "agents" / profile.name
+        agent_dir.mkdir(parents=True, exist_ok=True)
+        return make_session(
+            agent_name=profile.name,
+            agent_role=profile.role,
+            output_language="en",
+            budget_tracker=shared,
+            snapshot_path=agent_dir / "state" / "snapshot.json",
+        )
+
+    reg = AgentRegistry(project_root=tmp_path, session_factory=factory)
+    reg.create("alpha")
+    return reg
+
+
+async def _pump(n: int = 30) -> None:
+    for _ in range(n):
+        await asyncio.sleep(0.01)
+
+
+async def _sse_lines(text):
+    for line in text.split("\n"):
+        yield line
+
+
+def _apply_client_side(events: "list", *, on_display, on_reset) -> None:
+    """The minimal client-side reaction any compliant consumer (N2's actual
+    implementation, or this test's stand-in) applies: clear on the barrier,
+    append display text otherwise. Proves the WIRE carries the right frames
+    in the right order — not a re-implementation of N2's own reset logic."""
+    for frame in events:
+        if isinstance(frame, EventFrame) and getattr(frame.event, "type", "") == "session_attached":
+            on_reset()
+        elif isinstance(frame, DisplayFrame):
+            on_display(frame.message)
+
+
+def _texts(msgs: "list[OutboxMessage]") -> "list[str]":
+    return [f"{m.kind}:{m.text}" for m in msgs]
+
+
+async def _run_emitter_to_frames(emitter: AgUiEmitter) -> "list":
+    sse = "".join([chunk async for chunk in emitter.stream()])
+
+    async def _noop_send(_payload):
+        return None
+
+    transport = AgUiTransport(_sse_lines(sse), _noop_send)
+    return [f async for f in transport.frames()]
+
+
+@pytest.mark.asyncio
+async def test_remote_switch_has_no_scrollback_without_the_refire(tmp_path) -> None:
+    """Tier 2: premise check — with ``backlog_provider=None`` (the pre-N3
+    shape), a switch's ``session_attached`` event reaches the wire (N3's
+    re-subscription still works) but NO backlog follows it: the remote view
+    is provably missing the scrollback, the exact gap this PR closes."""
+    reg = _registry(tmp_path)
+    try:
+        session_a = await reg.attach("alpha")
+        sid_b = reg.spawn_session("alpha", presentation_consumer=None, intervention_bridge=None)
+        session_b = reg.get_session("alpha", sid_b)
+        session_b.history.append(ChatMessage(role="assistant", content="b's own reply"))
+
+        source = _SessionFrameSource(session_a, registry=reg, agent_name="alpha")
+        source.start()
+        emitter = AgUiEmitter(source.frames(), lambda: None)  # no backlog_provider
+
+        async def _switch() -> None:
+            await _pump(2)
+            await session_a._put_outbox(
+                OutboxMessage(kind="__session_switch_request__", text=sid_b)
+            )
+            await _pump(5)
+            await session_b._put_outbox(OutboxMessage(kind="__end__", text=""))
+
+        switch_task = asyncio.create_task(_switch())
+        try:
+            frames = await asyncio.wait_for(_run_emitter_to_frames(emitter), timeout=5.0)
+        finally:
+            await switch_task
+            source.close()
+
+        # The barrier DID arrive (N3's re-subscription is independent of the
+        # re-fire) ...
+        assert any(
+            isinstance(f, EventFrame) and getattr(f.event, "type", "") == "session_attached"
+            for f in frames
+        )
+        # ... but no DisplayFrame carrying B's content is anywhere on the wire —
+        # RED: a remote client here has no way to obtain B's scrollback at all.
+        assert not any(
+            isinstance(f, DisplayFrame) and "b's own reply" in f.message.text for f in frames
+        )
+    finally:
+        for task in reg.running_tasks():
+            task.cancel()
+
+
+@pytest.mark.asyncio
+async def test_remote_switch_parity_a_b_a_with_staleness(tmp_path) -> None:
+    """Tier 2: ★A -> B -> A over the real wire reconstructs the SAME view a
+    local hydrate would, INCLUDING content B accrued while this connection was
+    elsewhere (staleness gate — no cache, backlog read fresh at switch time)."""
+    reg = _registry(tmp_path)
+    try:
+        session_a = await reg.attach("alpha")
+        session_a.history.append(ChatMessage(role="user", content="hello A"))
+        session_a.history.append(ChatMessage(role="assistant", content="hi, I'm A"))
+
+        sid_b = reg.spawn_session("alpha", presentation_consumer=None, intervention_bridge=None)
+        session_b = reg.get_session("alpha", sid_b)
+        # B's content exists BEFORE the connection ever switches to it — and
+        # more arrives on ``session_b`` while the connection is still on A,
+        # simulating "B had a turn while I was away" (no live subscriber
+        # needed for this to reach the switch-time backlog fetch, since the
+        # fetch reads ``session.history`` fresh, not a cached copy).
+        session_b.history.append(ChatMessage(role="user", content="hello B"))
+        session_b.history.append(ChatMessage(role="assistant", content="hi, I'm B"))
+
+        source = _SessionFrameSource(session_a, registry=reg, agent_name="alpha")
+        source.start()
+
+        def _backlog_provider(name: str, sid: str):
+            return session_backlog_frames(reg, name, sid)
+
+        emitter = AgUiEmitter(source.frames(), lambda: None, backlog_provider=_backlog_provider)
+
+        async def _drive() -> None:
+            await _pump(2)
+            await session_a._put_outbox(
+                OutboxMessage(kind="__session_switch_request__", text=sid_b)
+            )
+            await _pump(5)
+            # A's history grows a SECOND turn while the connection is on B —
+            # switching back to A must show it (fresh read, not stale cache).
+            session_a.history.append(ChatMessage(role="user", content="are you there A"))
+            await session_b._put_outbox(
+                OutboxMessage(kind="__session_switch_request__", text=_DEFAULT_SID)
+            )
+            await _pump(5)
+            await session_a._put_outbox(OutboxMessage(kind="__end__", text=""))
+
+        drive_task = asyncio.create_task(_drive())
+        try:
+            frames = await asyncio.wait_for(_run_emitter_to_frames(emitter), timeout=5.0)
+        finally:
+            await drive_task
+            source.close()
+
+        remote_view: "list[OutboxMessage]" = []
+        _apply_client_side(
+            frames, on_display=remote_view.append, on_reset=remote_view.clear
+        )
+
+        # The LOCAL oracle: a hydrate straight off session_a's CURRENT history
+        # (what a local client's ``_hydrate_from_history``-style reset would
+        # show after landing back on A) — same SSoT, direct read, no wire.
+        local_view = session_backlog_frames(reg, "alpha", _DEFAULT_SID)
+        local_texts = _texts([f.message for f in local_view])
+
+        assert _texts(remote_view) == local_texts
+        # Sanity: the staleness content genuinely made it through, on BOTH sides.
+        assert any("are you there A" in t for t in local_texts)
+        assert any("are you there A" in t for t in _texts(remote_view))
+        # And B's content is NOT mixed into the final (post switch-back) view.
+        assert not any("hello B" in t for t in _texts(remote_view))
+    finally:
+        for task in reg.running_tasks():
+            task.cancel()
+
+
+@pytest.mark.asyncio
+async def test_barrier_precedes_refire_on_the_wire(tmp_path) -> None:
+    """Tier 2: ★ordering gate. The switch's ``session_attached`` SSE event is
+    emitted strictly BEFORE its MESSAGES_SNAPSHOT/STATE_SNAPSHOT re-fire —
+    never after (a client that resets its view on the barrier must never see
+    the reset race the very state the re-fire is about to deliver)."""
+    reg = _registry(tmp_path)
+    try:
+        session_a = await reg.attach("alpha")
+        sid_b = reg.spawn_session("alpha", presentation_consumer=None, intervention_bridge=None)
+        session_b = reg.get_session("alpha", sid_b)
+        session_b.history.append(ChatMessage(role="assistant", content="b's reply"))
+
+        source = _SessionFrameSource(session_a, registry=reg, agent_name="alpha")
+        source.start()
+
+        def _backlog_provider(name: str, sid: str):
+            return session_backlog_frames(reg, name, sid)
+
+        emitter = AgUiEmitter(source.frames(), lambda: None, backlog_provider=_backlog_provider)
+
+        async def _switch() -> None:
+            await _pump(2)
+            await session_a._put_outbox(
+                OutboxMessage(kind="__session_switch_request__", text=sid_b)
+            )
+            await _pump(5)
+            await session_b._put_outbox(OutboxMessage(kind="__end__", text=""))
+
+        switch_task = asyncio.create_task(_switch())
+        try:
+            sse = "".join(
+                [chunk async for chunk in emitter.stream()]
+            )
+        finally:
+            await switch_task
+            source.close()
+
+        # Raw SSE event order (server-encoded, pre-client-decode) — the
+        # sequence a strip (emitting the re-fire before the barrier) would
+        # invert. CUSTOM-event ``name`` is the reliable signal for the
+        # session_attached barrier (protocol.py's CUSTOM encoding shape:
+        # ``{"name": f"reyn.event.{etype}", "value": edata}``).
+        events = parse_sse_blocks(sse.split("\n"))
+        barrier_positions = [
+            i for i, ev in enumerate(events)
+            if ev.type == "CUSTOM" and ev.data.get("name") == "reyn.event.session_attached"
+        ]
+        snapshot_positions = [
+            i for i, ev in enumerate(events) if ev.type in ("MESSAGES_SNAPSHOT", "STATE_SNAPSHOT")
+        ]
+        # There are TWO of each: the initial connect (no barrier before it)
+        # and the switch re-fire (barrier before it). The switch instance is
+        # the SECOND occurrence of each on the wire. Unpacking into a
+        # single-element tuple IS the "exactly one" assertion (raises on 0 or
+        # 2+ matches) — a behavioral check on the extracted value, not a
+        # ``len(...) == N`` format pin.
+        (barrier_pos,) = barrier_positions
+        switch_messages_pos = snapshot_positions[len(snapshot_positions) // 2]
+        assert barrier_pos < switch_messages_pos
+    finally:
+        for task in reg.running_tasks():
+            task.cancel()
+
+
+@pytest.mark.asyncio
+async def test_connect_path_unaffected_by_backlog_provider_wiring(tmp_path) -> None:
+    """Tier 2: connect path unchanged — an ordinary connection that NEVER
+    switches sessions emits the SAME SSE event sequence whether or not
+    ``backlog_provider`` is wired (the re-fire is dormant with no
+    ``session_attached`` event ever flowing through it)."""
+
+    async def _frames():
+        yield DisplayFrame(OutboxMessage(kind="agent", text="hello"))
+        yield DisplayFrame(OutboxMessage(kind="__end__", text=""))
+
+    without = AgUiEmitter(_frames(), lambda: None)
+    with_provider = AgUiEmitter(_frames(), lambda: None, backlog_provider=lambda a, s: [])
+
+    sse_without = "".join([c async for c in without.stream()])
+    sse_with = "".join([c async for c in with_provider.stream()])
+
+    # Compare structurally, ignoring the per-stream random ``messageId`` (a
+    # UUID minted fresh by EACH ``AgUiEmitter`` instance — never a
+    # ``backlog_provider`` effect, since neither stream here ever produces a
+    # ``session_attached`` event to re-fire on): same event types, same
+    # payload for every OTHER key.
+    def _normalized(sse: str) -> "list[tuple[str, dict]]":
+        out = []
+        for ev in parse_sse_blocks(sse.split("\n")):
+            data = {k: v for k, v in ev.data.items() if k != "messageId"}
+            out.append((ev.type, data))
+        return out
+
+    assert _normalized(sse_without) == _normalized(sse_with)
