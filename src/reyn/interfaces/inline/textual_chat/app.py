@@ -382,6 +382,22 @@ class TextualChatApp(App):
         # drawer refresh (:meth:`_refresh_pane`) from the SAME snapshot that built
         # the rows, so the option row and its id never drift.
         self._pane_selection_ids: "dict[str, list[str]]" = {}
+        # #3288 ③c: in-flight streamed reply, keyed by ``chain_id`` — the SAME
+        # authoritative correlation id ``RouterLoop._emit_agent_delta`` stamps
+        # on every ``agent_delta`` chat-event AND the one the terminal
+        # ``kind="agent"`` OutboxMessage carries in its ``meta["chain_id"]``
+        # (never a guessed key — text-match correlation was tried and
+        # reverted earlier in this arc, issue #3288/#3309). Each value is
+        # ``(entry, accumulated_text)``: the FIRST delta for a chain_id
+        # appends ONE new flow entry; every SUBSEQUENT delta for that SAME
+        # chain_id updates that SAME entry in place
+        # (:meth:`_handle_agent_delta_event`) rather than appending a second
+        # row. The terminal completion (:meth:`_ingest_frame`'s ``kind ==
+        # "agent"`` branch) pops this entry and finalizes it with the
+        # authoritative full text — the ONLY place a streamed reply's entry
+        # is removed from this map, so a chain_id can never leak past its
+        # turn's completion.
+        self._streaming_replies: "dict[str, tuple[Entry[OutboxMessage], str]]" = {}
 
     def compose(self) -> ComposeResult:
         # Held so the frame pump can start/stop the per-entry BODY animation
@@ -769,18 +785,31 @@ class TextualChatApp(App):
         started entry in place (:meth:`_coalesce_tool_result` — stop the ② live
         spinner, fold the ``⎿ result`` into the same entry, go SUCCESS/ERROR), so a
         call and its result read as ONE block (CC's ``⏺ tool(args)`` + ``⎿ result``,
-        the PoC's ``_present_tool_call`` grouping). Every OTHER frame — including a
+        the PoC's ``_present_tool_call`` grouping). A ``kind="agent"`` completion
+        whose ``meta["chain_id"]`` matches an in-flight streamed reply
+        (:attr:`_streaming_replies`, #3288 ③c) does not append a second entry
+        either: it FINALIZES the same entry the deltas coalesced into, with the
+        completion's authoritative full text (L9 whole-persist's source of
+        truth), and pops the tracked chain_id. Every OTHER frame — including a
         completion with NO matching started entry (already settled / uncorrelated)
         — is appended as its own entry: an ``intervention`` frame routes to
         :meth:`_present_intervention` (the panel, #3299 P1), everything else to
         :meth:`_apply_lifecycle_state`, so nothing regresses for the
         plain-fallback turn sequence."""
         kind = msg.kind
-        op_id = (msg.meta or {}).get("op_id")
+        meta = msg.meta or {}
+        op_id = meta.get("op_id")
         if kind in ("tool_call_completed", "tool_call_failed") and op_id is not None:
             started = self._running_tools.pop(op_id, None)
             if started is not None:
                 self._coalesce_tool_result(started, msg)
+                return
+        if kind == "agent":
+            chain_id = meta.get("chain_id")
+            streaming = self._streaming_replies.pop(chain_id, None) if chain_id else None
+            if streaming is not None:
+                entry, _partial_text = streaming
+                entry.set_item(replace(entry.item, text=msg.text, meta=meta))
                 return
         entry = self.conversation.append(msg)
         if kind == "intervention":
@@ -1058,6 +1087,64 @@ class TextualChatApp(App):
         if cancelled_text is not None:
             self._restore_cancelled_text(cancelled_text)
 
+    def _handle_agent_delta_event(self, event) -> None:
+        """Coalesce one streamed content-delta chunk into a SINGLE FlowView
+        entry per reply (#3288 ③c — the L7 consumer this arc's ③b/③d phases
+        deliberately left unbuilt: ③b's own gate is "an ``agent_delta`` with
+        no consumer draws nothing", and this method IS that consumer,
+        landing now).
+
+        Correlates on ``chain_id`` — the authoritative id ``RouterLoop.
+        _emit_agent_delta`` stamps on every delta and the terminal
+        ``kind="agent"`` OutboxMessage carries in its own meta — never a
+        guessed key (text-match correlation was tried and reverted earlier
+        in this arc, #3309).
+
+        First delta for a ``chain_id``: appends ONE new ``kind="agent"``
+        flow entry seeded with that delta's text (renders through the SAME
+        presenter path a terminal agent reply does — plain markdown body,
+        no special-cased streaming style). Every SUBSEQUENT delta for the
+        SAME ``chain_id`` accumulates onto the tracked text and updates
+        that SAME entry in place (``Entry.set_item`` — bumps the revision,
+        re-presents on the next viewport paint), never appending a second
+        row. This entry is finalized (and popped from
+        :attr:`_streaming_replies`) by the terminal completion frame in
+        :meth:`_ingest_frame`, never here — so a chain_id's tracked partial
+        never contests with the authoritative completed text (L9
+        whole-persist stays the completion's job).
+
+        A late-joining connection that only receives the TAIL of a stream
+        (the mid-stream-join case #3288 ③d proved on the wire, handed off
+        to ③c to close on the render side) is handled by this SAME code
+        path: whichever deltas this client actually receives seed/update
+        ONE entry exactly as above, and the terminal completion finalizes
+        it — no separate branch needed, since the coalesce is keyed by
+        chain_id, not by "have we seen the FIRST delta".
+
+        Best-effort: a malformed/empty delta (no ``chain_id`` or empty
+        ``text``) is silently dropped rather than crashing the pump — the
+        emitting side (``RouterLoop``) never emits invalid deltas, so this
+        is defensive only.
+        """
+        data = event.data or {}
+        chain_id = data.get("chain_id")
+        text = str(data.get("text", ""))
+        if not chain_id or not text:
+            return
+        existing = self._streaming_replies.get(chain_id)
+        if existing is None:
+            from reyn.runtime.outbox import OutboxMessage  # noqa: PLC0415
+
+            entry = self.conversation.append(
+                OutboxMessage(kind="agent", text=text, meta={"chain_id": chain_id})
+            )
+            self._streaming_replies[chain_id] = (entry, text)
+            return
+        entry, accumulated = existing
+        accumulated += text
+        entry.set_item(replace(entry.item, text=accumulated))
+        self._streaming_replies[chain_id] = (entry, accumulated)
+
     def _restore_cancelled_text(self, text: str) -> None:
         """Restore a cancelled submission's text into the composer (#3300
         Y-client, owner-ratified detail): prepended at the HEAD even when the
@@ -1131,6 +1218,12 @@ class TextualChatApp(App):
         :meth:`_sweep_orphaned_running_tools` (#72: force-settle any tool still
         RUNNING when its turn ends — a confirmed orphan).
 
+        #3288 ③c: ``agent_delta`` (:meth:`_handle_agent_delta_event`) coalesces
+        streamed reply chunks into ONE flow entry per ``chain_id`` — see that
+        method's docstring and :attr:`_streaming_replies`. The entry it
+        maintains is finalized by the terminal ``kind="agent"`` DISPLAY frame
+        in :meth:`_ingest_frame`, never appended a second time.
+
         #3300 P2b/Y-client: ``user_submitted`` (:meth:`_handle_user_submitted_event`),
         ``turn_started`` (:meth:`_handle_turn_started_event`), and
         ``inbox_cancel`` (:meth:`_handle_inbox_cancel_event`) drive the
@@ -1174,6 +1267,13 @@ class TextualChatApp(App):
                         except Exception:
                             logger.exception(
                                 "textual chat: inbox_cancel ingest failed"
+                            )
+                    elif etype == "agent_delta":
+                        try:
+                            self._handle_agent_delta_event(frame.event)
+                        except Exception:
+                            logger.exception(
+                                "textual chat: agent_delta coalesce failed"
                             )
                     elif etype in _TURN_END_EVENT_TYPES:
                         try:

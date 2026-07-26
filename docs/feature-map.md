@@ -284,6 +284,19 @@ Config-gated `litellm.Router` slot-in for provider-resilience. Default OFF (`llm
 
 > **Differentiation vs general agents:** provider-resilience is delegated entirely to litellm.Router (Retry-After, jitter, cooldown, cross-model fallback chain, credential rotation) rather than re-implemented — the on/off gate keeps the direct path byte-identical, so replay and cost-recording work unchanged whether or not the Router is active.
 
+#### LLM token streaming
+
+Capability-gated, provider-agnostic token streaming from the LLM call through to the rendered reply (#3288, phases ③a–③d). Streaming is a rendering optimization only — history/persistence and the final reconstructed result are byte-identical to the non-streaming path (stream ≡ whole equivalence).
+
+| Feature | Description | Documentation |
+|---------|-------------|---------------|
+| Capability-gated streaming loop | `recorded_acompletion` streams only when the resolved provider/model declares streaming capability (a `litellm` inline capability query, never a hardcoded per-provider allow/deny list); usage is chunk-summed and emitted once through the existing single-chokepoint `record_llm`, never per-chunk | [AG-UI transport](reference/runtime/agui-transport.md) |
+| `agent_delta` chat-event | Each streamed content-delta chunk rides a `agent_delta` chat-event (correlated by `chain_id`), never an `OutboxMessage` display kind — the completed reply still persists exactly once via the terminal `kind="agent"` outbox message (L9 whole-persist unchanged) | [AG-UI transport § reyn.event.\<etype\>](reference/runtime/agui-transport.md) |
+| AG-UI generic multi-CONTENT | On the AG-UI wire, a streamed reply rides a REAL `TEXT_MESSAGE_START` → N `TEXT_MESSAGE_CONTENT` → `TEXT_MESSAGE_END` sequence (never a re-sent full-text CONTENT at completion, which would double-render on an accumulating generic client); a mid-stream-joining connection is closed by the snapshot/restore path always supplying the authoritative full text, never the deltas | [AG-UI transport § Text lifecycle](reference/runtime/agui-transport.md) |
+| Textual TUI streamed-reply coalescing | The Textual TUI's L7 pump coalesces N deltas for one reply into exactly ONE `FlowView` entry (keyed by `chain_id`, updated in place via `Entry.set_item`), finalized by the terminal completion frame rather than appended a second time — the plain/repl renderer has no consumer and silently drops `agent_delta` (opt-in draw, no visible-garbage window) | [AG-UI transport § Textual TUI streamed-reply rendering](reference/runtime/agui-transport.md) |
+
+> **Differentiation vs general agents:** streaming is layered onto the SAME single-chokepoint `recorded_acompletion` call, the SAME `OutboxHub`/chat-event fan-out, and the SAME `FlowView` render model every other frame uses — no parallel streaming-only pipeline, no per-provider hardcoding, and no risk of a streamed reply diverging from its non-streamed reconstruction.
+
 ---
 
 ### Control IR Ops

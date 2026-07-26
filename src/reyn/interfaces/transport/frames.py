@@ -30,8 +30,11 @@ designed out). The ONE deliberate exception is :data:`_STREAMING_EVENTS`
 design: the completeness gate only requires ``consumed ⊆ forwarded``, never
 the reverse, so a forwarded-but-not-yet-consumed event is legal, and an EVENT
 frame with no handler is silently dropped (not rendered) at the consuming
-end — the mechanism a later phase (③c) plugs a consumer into without ever
-risking a "vanished on the wire" regression in the meantime.
+end — the mechanism ③c later plugged a consumer into
+(``TextualChatApp._handle_agent_delta_event``) without ever having risked a
+"vanished on the wire" regression in the meantime. The plain/repl renderer
+still has no ``agent_delta`` branch — the completeness gate does not require
+one (``consumed ⊆ forwarded``, never the reverse).
 """
 from __future__ import annotations
 
@@ -89,11 +92,11 @@ _TURN_AND_ANSWER_EVENTS = frozenset(
 # replacement (issue #3288 comment thread): a partial rides a chat-event
 # (never an ``OutboxMessage`` kind, which the closed display vocabulary would
 # have to register — the category error the owner's decision designs out).
-# UNLIKE :data:`_TURN_AND_ANSWER_EVENTS` above, this is forwarded AHEAD OF any
-# consumer — no renderer branches on ``"agent_delta"`` yet (③c adds the
-# textual_chat coalescing handler as a later phase; the plain/repl renderer
-# may never consume it at all). This is legal per the dual-stream
-# completeness gate's actual direction (``tests/test_transport_dual_stream_completeness.py``:
+# UNLIKE :data:`_TURN_AND_ANSWER_EVENTS` above, this was forwarded AHEAD OF
+# any consumer — ③c has since added the textual_chat coalescing handler
+# (``TextualChatApp._handle_agent_delta_event``), but the plain/repl renderer
+# still branches on nothing for it (and may never). This is legal per the
+# dual-stream completeness gate's actual direction (``tests/test_transport_dual_stream_completeness.py``:
 # ``consumed ⊆ forwarded``, never the reverse) — a forwarded event nobody
 # consumes yet is not a coverage gap, and a surface with no handler for an
 # EVENT frame consumes-but-drops it (never renders it), unlike an unknown
@@ -119,9 +122,13 @@ def renderer_chat_events() -> frozenset[str]:
       (DERIVED from the renderer's own vocabulary, never hand-listed for this
       half — see ``tests/test_transport_dual_stream_completeness.py``).
     - :data:`_STREAMING_EVENTS` (#3288 ③b) — the ONE deliberate exception to
-      "derived, not hand-listed": forwarded ahead of any renderer consumer, so
-      an unconsuming surface silently drops it (opt-in draw) instead of it
-      vanishing on the wire before a later phase adds the consumer.
+      "derived, not hand-listed": forwarded ahead of any consumer in THIS
+      (plain/repl) renderer, which still has no ``agent_delta`` branch and
+      may never — an unconsuming surface silently drops it (opt-in draw)
+      rather than it vanishing on the wire. ③c has since added the actual
+      consumer in a DIFFERENT surface (``TextualChatApp._handle_agent_delta_event``,
+      ``interfaces/inline/textual_chat/app.py``), proving the forward-ahead
+      design worked: the consumer landed with zero changes needed here.
     """
     return frozenset(_WAITING_ON_BY_EVENT.keys()) | _TURN_AND_ANSWER_EVENTS | _STREAMING_EVENTS
 
