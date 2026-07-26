@@ -48,6 +48,7 @@ private state.
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
 from typing import AsyncIterator
 
 import pytest
@@ -55,6 +56,7 @@ from textual_flowview import FlowView
 
 from reyn.interfaces.inline.textual_chat import TextualChatApp
 from reyn.interfaces.inline.textual_chat.sent_queue import SentQueue
+from reyn.interfaces.repl.read_model import ChatReadModel
 from reyn.interfaces.transport.agui.state import RemoteQueueView
 from reyn.interfaces.transport.client_transport import ClientTransport
 from reyn.interfaces.transport.frames import EventFrame
@@ -125,6 +127,45 @@ def _turn_started(*, chain_id: str, seq: int) -> Event:
 
 def _flow_user_entries(app: TextualChatApp):
     return [e for e in app.query_one(FlowView).entries if e.item.kind == "user"]
+
+
+class _SnapshotSeededReadModel(ChatReadModel):
+    """A real, minimal :class:`ChatReadModel` whose :meth:`snapshot` returns a
+    FIXED status dict carrying one already-queued, ATTRIBUTED item — standing
+    in for "this client connected while a peer's submit was already sitting
+    in the server-authoritative queue" (the connect ``STATE_SNAPSHOT``/
+    ``queued_user_messages()`` path, #3300 P2a/P2b), without needing a real
+    remote transport. Every other accessor degrades to the same graceful
+    empty/None ``RemoteReadModel`` uses — this read-model's only job is the
+    ``queue``/``turn_active``/``queue_seq`` snapshot shape."""
+
+    def __init__(self, queue_item: dict) -> None:
+        self._queue_item = queue_item
+
+    def snapshot(self, config=None):
+        return {
+            "queue": [self._queue_item], "turn_active": False, "queue_seq": 1,
+        }
+
+    def intervention_head(self):
+        return None
+
+    def pending_command_ui(self):
+        return None
+
+    def clear_pending_command_ui(self) -> None:
+        return None
+
+    @property
+    def has_command_ui_region(self) -> bool:
+        return False
+
+    @property
+    def history_path(self) -> Path:
+        return Path("/dev/null")
+
+    def conversation_history(self, *, limit: "int | None" = None):
+        return []
 
 
 # ---------------------------------------------------------------------------
@@ -383,3 +424,100 @@ def test_reconnect_reseed_witness_strip_without_reseed_resurrects(monkeypatch) -
     assert [i["msg_id"] for i in view.queue()] == ["m2"], (
         "ghost item resurrected — proves the reseed line matters"
     )
+
+
+# ---------------------------------------------------------------------------
+# 5. ★Snapshot-seeded attribution (co-vet finding) — ADR-0039 parity for the
+#    late-joiner path
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_snapshot_seeded_item_keeps_attribution_after_promotion() -> None:
+    """Tier 2b: a client that connects while a PEER's attributed submit is
+    already sitting in the server-authoritative queue (the connect
+    ``STATE_SNAPSHOT`` / ``queued_user_messages()`` path, not a live delta)
+    must still render the correct ``[actor]`` attribution once that item
+    promotes to a flow entry — the SAME ADR-0039 provenance a live
+    ``user_submitted`` delta already carries (``meta["actor"]``,
+    ``renderer._meta_prefix``'s vocabulary). Regression coverage for the
+    co-vet finding: ``queued_user_messages()`` (session.py) now projects
+    ``meta`` alongside msg_id/chain_id/text, and the sent-queue's snapshot
+    seed (``TextualChatApp._seed_queue_view``) carries it into the SAME
+    ``_queue_item_meta`` side table the live delta path populates."""
+    read_model = _SnapshotSeededReadModel(
+        {
+            "msg_id": "m1", "chain_id": "c1", "text": "peer's queued line",
+            "meta": {"actor": "alice", "auth_user_id": "alice"},
+        }
+    )
+    transport = QueueTransport()
+    app = TextualChatApp(transport=transport, read_model=read_model)
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        # The queue view is seeded on the FIRST frame the pump processes
+        # (:meth:`TextualChatApp._seed_queue_view`) — a harmless, unhandled
+        # event type triggers that seed without mutating any state, so the
+        # snapshot-seeded item's pre-promotion visibility can be observed
+        # before the (separate) turn_started frame promotes it.
+        await transport.push_event(Event(type="__noop__", data={}))
+        await pilot.pause()
+        sent_queue = app.query_one(SentQueue)
+        assert "peer's queued line" in sent_queue.rendered_texts()[0]
+
+        await transport.push_event(_turn_started(chain_id="c1", seq=2))
+        await pilot.pause()
+
+        (entry,) = _flow_user_entries(app)
+        assert entry.item.text == "peer's queued line"
+        assert entry.item.meta.get("actor") == "alice", (
+            "a snapshot-seeded item lost its ADR-0039 attribution on "
+            "promotion — it must render like a delta-path item, not a "
+            "plain unattributed operator line"
+        )
+
+
+@pytest.mark.asyncio
+async def test_strip_snapshot_meta_carry_loses_attribution(monkeypatch) -> None:
+    """Tier 2b: non-vacuity — neutering the snapshot-seed's meta-carry (the
+    ``self._queue_item_meta[msg_id] = dict(item.get("meta") or {})`` line in
+    ``_seed_queue_view``, patched here to drop it) reproduces the co-vet
+    finding: the promoted item's meta is empty and the ``[actor]``
+    attribution is lost, proving the positive test above is not vacuous."""
+    from reyn.interfaces.inline.textual_chat import app as app_module
+
+    def _seed_without_meta_carry(self) -> None:
+        snap = self._snapshot() or {}
+        self._queue_view.apply_snapshot(
+            queue=snap.get("queue", []),
+            turn_active=snap.get("turn_active", False),
+            queue_seq=snap.get("queue_seq", 0),
+        )
+        for item in self._queue_view.queue():
+            msg_id = item.get("msg_id")
+            if msg_id:
+                self._sent_queue.show_item(msg_id, str(item.get("text", "")))
+                # BUG under test: the meta-carry line is dropped.
+
+    monkeypatch.setattr(
+        app_module.TextualChatApp, "_seed_queue_view", _seed_without_meta_carry,
+    )
+
+    read_model = _SnapshotSeededReadModel(
+        {
+            "msg_id": "m1", "chain_id": "c1", "text": "peer's queued line",
+            "meta": {"actor": "alice", "auth_user_id": "alice"},
+        }
+    )
+    transport = QueueTransport()
+    app = TextualChatApp(transport=transport, read_model=read_model)
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        await transport.push_event(_turn_started(chain_id="c1", seq=2))
+        await pilot.pause()
+
+        (entry,) = _flow_user_entries(app)
+        assert entry.item.meta.get("actor") is None, (
+            "the broken (meta-carry-stripped) seed should reproduce the "
+            "misattribution — an empty meta on the promoted entry"
+        )

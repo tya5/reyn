@@ -316,11 +316,17 @@ class TextualChatApp(App):
         # early seed is harmless there.
         self._queue_view = RemoteQueueView()
         self._queue_seeded = False
-        # A queued item's ``meta`` (attribution) — ``RemoteQueueView.items``
-        # deliberately carries only msg_id/chain_id/text (P2a's contract,
-        # reused unmodified); this side table keeps the meta a promoted item
-        # needs to render as a proper flow entry, keyed by msg_id and popped
-        # on promotion.
+        # A queued item's ``meta`` (ADR-0039 attribution) — ``apply_user_submitted``
+        # deliberately stores only msg_id/chain_id/text on
+        # ``RemoteQueueView.items`` (P2a's delta contract, reused unmodified,
+        # not reinvented); this side table is what carries a promoted item's
+        # meta into its flow entry, keyed by msg_id and popped on promotion.
+        # Populated from TWO sources: the live ``user_submitted`` delta
+        # (:meth:`_handle_user_submitted_event`) and, for an item already
+        # queued at connect time, the snapshot seed (:meth:`_seed_queue_view`
+        # — ``queued_user_messages()`` now projects ``meta`` too, #3300 P2b
+        # co-vet fix, so a late-joiner's promoted item is attributed exactly
+        # like a delta-path one).
         self._queue_item_meta: "dict[str, dict]" = {}
         # Per-picker parallel id lists (class names / agent names), keyed by tab
         # id and kept in lock-step with the OptionList options a pane was last
@@ -879,6 +885,15 @@ class TextualChatApp(App):
             msg_id = item.get("msg_id")
             if msg_id:
                 self._sent_queue.show_item(msg_id, str(item.get("text", "")))
+                # #3300 P2b co-vet fix: a snapshot-seeded item's ``meta``
+                # (ADR-0039 attribution — carried through by
+                # ``RemoteQueueView.apply_snapshot``'s ``dict(item)`` copy,
+                # since ``queued_user_messages()`` now projects it) must land
+                # in the SAME side table the delta path uses, or a promoted
+                # snapshot-seeded item loses its ``[actor]`` prefix (a peer's
+                # queued message misattributing as a plain operator line for
+                # a late-joining client).
+                self._queue_item_meta[msg_id] = dict(item.get("meta") or {})
 
     def _handle_user_submitted_event(self, event) -> None:
         """MATERIALIZE exit (#3300 P2b, sent-queue exit contract §6a): a
