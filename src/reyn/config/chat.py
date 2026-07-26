@@ -478,11 +478,41 @@ class ReasoningConfig:
     recent_turns: int = 3
 
 
+# #3273 (#3285/#3286): the interactive chat renderer/driver selection. The
+# Textual conversation-pane app has two driver modes; ``plain`` forces the
+# ConsoleChatRenderer path even on a TTY.
+#
+# - ``alt-screen`` (DEFAULT): full-screen Textual (alt-screen driver). Sidesteps
+#   the two upstream inline-driver bugs — stale frames stacking on resize (#3285)
+#   and the pane collapsing to ~1 line (#3286) — and auto-saves/restores terminal
+#   scrollback on enter/exit.
+# - ``inline``: the legacy bounded inline driver, kept as an escape hatch for
+#   users who prefer their pre-launch scrollback preserved in place above the
+#   region. CAVEAT: this mode still carries the upstream Textual inline-driver
+#   bugs #3285/#3286 (resize stacking + pane collapse); it is not the recommended
+#   default and will improve only when those land upstream.
+# - ``plain``: force the plain ConsoleChatRenderer (no Textual), equivalent to
+#   ``--cui``.
+# - ``auto``: resolve to ``alt-screen`` on a real TTY (identical to ``alt-screen``
+#   given the TTY guard, which falls any interactive mode back to ``plain`` off a
+#   TTY); provided as the Codex-style ``auto/always/never`` affordance.
+CHAT_RENDER_MODES = ("alt-screen", "inline", "plain", "auto")
+
+
 @dataclass
 class ChatConfig:
-    """`chat:` — chat-session-specific runtime knobs."""
+    """`chat:` — chat-session-specific runtime knobs.
+
+    ``render_mode`` (#3273): selects the interactive chat renderer/driver —
+    ``alt-screen`` (default, full-screen), ``inline`` (legacy bounded driver,
+    carries upstream bugs #3285/#3286), ``plain`` (force ConsoleChatRenderer),
+    or ``auto`` (resolve to alt-screen on a TTY). A non-TTY session always falls
+    back to ``plain`` regardless of this value (the interactive Textual drivers
+    need a real terminal).
+    """
     compaction: CompactionConfig = field(default_factory=CompactionConfig)
     reasoning: ReasoningConfig = field(default_factory=ReasoningConfig)
+    render_mode: Literal["alt-screen", "inline", "plain", "auto"] = "alt-screen"
 
 
 @dataclass
@@ -533,15 +563,33 @@ def _build_reasoning_config(raw: object) -> ReasoningConfig:
     )
 
 
+def _build_render_mode(raw: object) -> str:
+    """#3273: parse ``chat.render_mode``. Unknown / non-str → default (warn)."""
+    default = ChatConfig().render_mode
+    if raw is None:
+        return default
+    mode = str(raw)
+    if mode not in CHAT_RENDER_MODES:
+        import logging
+        logging.getLogger(__name__).warning(
+            "chat.render_mode=%r is not one of %s; using %r",
+            mode, CHAT_RENDER_MODES, default,
+        )
+        return default
+    return mode
+
+
 def _build_chat_config(raw: object) -> ChatConfig:
     if not isinstance(raw, dict):
         return ChatConfig()
     # #1652: reasoning parses independently of compaction (a chat: block with
     # only `reasoning:` and no `compaction:` must still honour it).
     reasoning = _build_reasoning_config(raw.get("reasoning"))
+    # #3273: render_mode parses independently of compaction too.
+    render_mode = _build_render_mode(raw.get("render_mode"))
     compaction_raw = raw.get("compaction") or {}
     if not isinstance(compaction_raw, dict):
-        return ChatConfig(reasoning=reasoning)
+        return ChatConfig(reasoning=reasoning, render_mode=render_mode)  # type: ignore[arg-type]
     # #1128: head_size/tail_size (step 3) + trigger_total_tokens/min_compact_batch
     # (PR-a, axis-1 removal) were removed — head/tail sizing is token-budget via
     # component_weights and auto-compaction is window-relative (no turn-count
@@ -618,7 +666,9 @@ def _build_chat_config(raw: object) -> ChatConfig:
         ),
         section_token_caps=section,
     )
-    return ChatConfig(compaction=compaction, reasoning=reasoning)
+    return ChatConfig(
+        compaction=compaction, reasoning=reasoning, render_mode=render_mode,  # type: ignore[arg-type]
+    )
 
 
 def _build_phase_act_results_compaction_config(
