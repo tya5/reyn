@@ -381,3 +381,133 @@ def test_phase4_wiring_imports_stay_tty_only() -> None:
     )
     assert proc.returncode == 0, f"stdout={proc.stdout}\nstderr={proc.stderr}"
     assert "ISOLATION_OK" in proc.stdout, f"stdout={proc.stdout}\nstderr={proc.stderr}"
+
+
+# ── History drawer pane (#3302 fix-class): OptionList markup + neutralize ────
+# The History tab (``chrome.py``'s ``_LIST_PANES``) is the ONE drawer pane
+# whose rows are live conversation content — unlike Model/Agent/Menu
+# (operator/config-derived identifiers, out of scope — see the PR body), a
+# History row is LLM-/user-derived text reaching an ``OptionList``, which
+# markup-parses a bare ``str`` option exactly like ``Static``/``RadioButton``
+# do (verified live against the installed Textual 8.2.8:
+# ``OptionList("[y]es")`` renders as ``"es"`` — the SAME #3302 bracket-eating
+# class through a different widget). Two independent guards:
+#
+# - fidelity (``Content`` wrap, ``chrome._history_option_content``) — applied
+#   at TWO separate call sites (the initial ``build_drawer_pane`` construction
+#   at ``compose`` time, and ``TextualChatApp._refresh_pane``'s re-derive on
+#   every drawer open) — each gets its OWN witness below, so a fix landing at
+#   only one site cannot hide behind the other's green.
+# - neutralize (ESC/control strip, ``_neutralized_label``) — applied ONCE,
+#   upstream, in ``_history_turns`` — both consumers read that single output,
+#   so one witness covers both call sites for this half.
+
+
+def _history_option_plain(option_list, index: int) -> str:
+    """The rendered text of an ``OptionList`` row AFTER Textual's own
+    markup-parse (``OptionList._get_visual`` → ``textual.visual.visualize``)
+    — never ``option.prompt`` (the pre-render original, which stays intact
+    even when the render pipeline eats a bracket). Mirrors how the
+    intervention-panel tests read ``RadioButton.label.plain`` for the same
+    reason. Goes through the widget's own visual-cache accessor rather than
+    a full strip render (``OptionList._get_option_render``), which raises on
+    the currently-installed Textual/rich combination for unrelated reasons —
+    ``_get_visual(...).plain`` is the narrowest slice of the SAME production
+    call path that still observes the actual markup-parse outcome."""
+    option = option_list.get_option_at_index(index)
+    return option_list._get_visual(option).plain
+
+
+@pytest.mark.asyncio
+async def test_history_pane_initial_build_preserves_bracket_labels() -> None:
+    """Tier 1: the History pane's INITIAL build (``chrome.build_drawer_pane``,
+    the ``compose``-time call) must not markup-parse conversation text.
+
+    NON-VACUITY (falsification, verified locally): reverting ONLY
+    ``build_drawer_pane``'s ``Content`` wrap for the History tab (passing the
+    bare ``rows`` straight to ``OptionList`` unconditionally) makes this
+    assertion FAIL — ``"you · [y]es I did it"`` renders as
+    ``"you · es I did it"``, reproducing the #3302 defect through a
+    different widget. Reverting ONLY the REFRESH path's wrap (the sibling
+    test below) does NOT affect this assertion — this exercises compose-time
+    construction only, never ``_refresh_pane``."""
+    from textual.app import App, ComposeResult
+    from textual.widgets import OptionList
+
+    from reyn.interfaces.inline.textual_chat.chrome import build_drawer_pane
+
+    class _PaneHost(App):
+        def compose(self) -> ComposeResult:
+            yield build_drawer_pane("history", ["you · [y]es I did it"])
+
+    app = _PaneHost()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        ol = app.query_one(OptionList)
+        rendered = _history_option_plain(ol, 0)
+    assert rendered == "you · [y]es I did it", (
+        f"bracket-decorated History row dropped a character at initial build: {rendered!r}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_history_pane_refresh_preserves_bracket_labels() -> None:
+    """Tier 2: the History pane's REFRESH path (``TextualChatApp._refresh_pane``,
+    re-invoked every time the drawer is opened) must not markup-parse
+    conversation text either — a SEPARATE call site from the initial build.
+
+    NON-VACUITY (falsification, verified locally): reverting ONLY
+    ``_refresh_pane``'s ``Content`` wrap (calling ``child.add_options(rows)``
+    with the bare ``rows`` unconditionally) makes this assertion FAIL
+    identically. Reverting ONLY the INITIAL build's wrap (the sibling test
+    above) does NOT affect this assertion — opening the drawer ALWAYS
+    re-derives via ``_refresh_pane`` (``_open_drawer`` calls it
+    unconditionally), so a fix landing at only the initial-build site would
+    still leave the exploit reachable on every real open."""
+    from textual.widgets import OptionList
+
+    from reyn.interfaces.inline.textual_chat import TextualChatApp
+
+    app = TextualChatApp(
+        transport=ScriptedTransport(), read_model=_SnapshotReadModel(_SNAP)
+    )
+    app.conversation.append(OutboxMessage(kind="user", text="[y]es I did it"))
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        app._open_drawer("history")
+        await pilot.pause()
+        ol = app.query_one("#history", OptionList)
+        rendered = _history_option_plain(ol, 0)
+    assert "[y]es I did it" in rendered, (
+        f"bracket-decorated History row dropped a character on refresh: {rendered!r}"
+    )
+
+
+def test_history_turns_neutralizes_raw_esc_osc() -> None:
+    """Tier 1: a conversation turn carrying raw terminal control sequences
+    must not leak into the History pane's row text — the SAME
+    ``core.present.guard.get_neutralizer("terminal")`` seam every other
+    #3302-class site uses. Both the initial-build and refresh consumers read
+    this SAME ``_history_turns()`` output, so this one witness covers both
+    call sites for the neutralize half (unlike fidelity, which is guarded
+    separately at each widget-construction site, above).
+
+    NON-VACUITY (falsification, verified locally): reverting ONLY the
+    ``_neutralized_label`` call in ``_history_turns`` (reading the raw
+    ``msg.text`` directly) makes this assertion FAIL — the raw ``\\x1b``
+    survives into the row string. Reverting either fidelity wrap above does
+    NOT affect this assertion — neutralize is checked here purely at the
+    string level, before any widget is involved."""
+    from reyn.interfaces.inline.textual_chat import TextualChatApp
+
+    app = TextualChatApp(
+        transport=ScriptedTransport(), read_model=_SnapshotReadModel(_SNAP)
+    )
+    payload = "\x1b[31mDANGER\x1b]0;pwn\x07"
+    app.conversation.append(OutboxMessage(kind="user", text=payload))
+    rows = app._history_turns()
+    assert rows, "the appended turn produced no History row at all"
+    blob = " ".join(rows)
+    assert "\x1b" not in blob, f"raw ESC leaked into the History row: {blob!r}"
+    assert "\x07" not in blob, f"raw BEL leaked into the History row: {blob!r}"
+    assert "DANGER" in blob
