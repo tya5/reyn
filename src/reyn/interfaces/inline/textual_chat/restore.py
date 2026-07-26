@@ -32,21 +32,48 @@ completed tool into (``app.py``'s ``_coalesce_tool_result``): a single
 ``kind="tool_call_started"`` frame whose ``meta`` carries both the ORIGINAL
 tool call (``tool`` / ``args``, correlated from the preceding assistant
 message's ``tool_calls`` by ``tool_call_id``) and the result, stashed under
-``RESULT_KIND_KEY`` / ``RESULT_META_KEY`` (:mod:`._meta_keys`). The presenter's
-existing ``tool_call_started`` branch renders this as ONE block —
-``⏺ tool(args)`` + ``⎿ result`` — with no presenter change needed, so a
-restored tool turn is visually identical to a live settled one (no orphan
-``⎿``-only row). An uncorrelated result (no matching ``tool_call_id`` — e.g.
-truncated history) still projects to the same coalesced shape with just the
-tool name as header (empty args) — it never regresses to an orphan row. The
-caller (``_hydrate_from_history``) gives the entry the SUCCESS/ERROR lifecycle
-state the live path's completion handler would have, derived from the SAME
-``summarize_tool_result`` the presenter reads, so gutter colour and body
-agree. The ``system`` / ``summary`` roles are Reyn-internal chrome (filtered
-at the LLM wire boundary), so both are skipped.
+``RESULT_KIND_KEY`` / ``RESULT_META_KEY`` (:mod:`._meta_keys`). ``RESULT_KIND_KEY``
+is ``"tool_call_completed"`` for a genuine success, or ``"tool_call_failed"``
+when the persisted ``ChatMessage.meta`` carries the TYPED
+``TOOL_STATUS_META_KEY == TOOL_STATUS_ERROR`` flag (:mod:`reyn.runtime.chat_message`;
+#73) — a raised-exception failure never reaches here, since that already
+produces a distinct ``ChatMessage``. That flag is stamped at PERSIST time by
+``router_loop.py``'s tool-result assembly, the ONE place that already knows
+the success/failure classification (a dispatch-envelope
+``{"status":"error",...}`` or an MCP ``isError`` result) — this projection
+reads it directly rather than re-deriving it from the rendered result STRING
+(a display string is a renderer/formatting concern, not a stable data
+contract: a legitimate success payload can itself start with the word
+"Error"). A pre-#73 persisted history has no such flag at all — ABSENCE is
+read as success/completed (never inferred as failure), so old history reads
+exactly as it always has. So a restored failed tool tints coral exactly like
+a live one. The presenter's existing ``tool_call_started`` branch renders
+this as ONE block — ``⏺ tool(args)`` + ``⎿ result`` — with no presenter
+change needed, so a restored tool turn is visually identical to a live
+settled one (no orphan ``⎿``-only row). An uncorrelated result (no matching
+``tool_call_id`` — e.g. truncated history) still projects to the same
+coalesced shape with just the tool name as header (empty args) — it never
+regresses to an orphan row. The caller (``_hydrate_from_history``) gives the
+entry the SUCCESS/ERROR lifecycle state the live path's completion handler
+would have: ``ERROR`` directly when ``RESULT_KIND_KEY=="tool_call_failed"``,
+else derived from the SAME ``summarize_tool_result`` the presenter reads —
+so gutter colour and body agree either way. The ``system`` / ``summary``
+roles are Reyn-internal chrome (filtered at the LLM wire boundary), so both
+are skipped.
 
-This module imports only :class:`~reyn.runtime.outbox.OutboxMessage` and the
-plain ``str`` constants in :mod:`._meta_keys` (no ``textual`` /
+**Recovery implication (truncate-falsify gate N/A for the typed flag too).**
+``TOOL_STATUS_META_KEY`` is written straight into the persisted ``ChatMessage``
+at the SAME time ``content`` is (``router_loop.py``'s ``append_history_entry``
+call) — it is authoritative-at-write, exactly like the rest of the message,
+NOT WAL-event-reconstructed derived state. The CLAUDE.md recovery-feature
+truncate-falsify gate therefore does not apply to it any more than it applies
+to ``content`` or ``tool_call_id`` (see the "Non-authoritative projection"
+note above) — there is no WAL-derived reconstruction step in between that
+could silently drop the flag.
+
+This module imports only :class:`~reyn.runtime.outbox.OutboxMessage`, the
+plain ``str`` constants in :mod:`._meta_keys`, and the plain ``str`` /
+``dataclass`` constants in :mod:`reyn.runtime.chat_message` (no ``textual`` /
 ``textual_flowview``): the projection is pure and unit-testable without
 mounting the app.
 """
@@ -54,6 +81,13 @@ from __future__ import annotations
 
 import json
 from typing import TYPE_CHECKING
+
+from reyn.runtime.chat_message import (
+    TOOL_ERROR_KIND_META_KEY,
+    TOOL_ERROR_MESSAGE_META_KEY,
+    TOOL_STATUS_ERROR,
+    TOOL_STATUS_META_KEY,
+)
 
 from ._meta_keys import RESULT_KIND_KEY, RESULT_META_KEY
 
@@ -76,6 +110,30 @@ RESTORED_META_KEY = "_restored"
 #: conversation (operator legibility — the Product-Think lens). Emitted once,
 #: only when there is at least one restored turn.
 _RESUME_DIVIDER = "⤺ resumed previous conversation"
+
+
+def _failure_meta(m: "ChatMessage") -> "dict[str, object] | None":
+    """Read the TYPED failure classification off a ``role="tool"`` message's
+    persisted ``meta`` (#73, Option C) — never re-derive it by sniffing
+    ``m.text``. ``router_loop.py``'s tool-result assembly stamps
+    ``TOOL_STATUS_META_KEY=TOOL_STATUS_ERROR`` (+ ``error_message`` /
+    ``error_kind``) at PERSIST time, from the SAME classification the LIVE
+    path already has (a dispatch-envelope ``{"status":"error",...}`` or an
+    MCP ``isError`` result) — this is a typed, discriminated field, not a
+    string shape a display renderer happens to produce.
+
+    Returns ``None`` when the flag is absent (a SUCCESS, or a pre-#73
+    persisted history that never had this field — absence is read as
+    success/completed, never inferred as failure)."""
+    meta = m.meta or {}
+    if meta.get(TOOL_STATUS_META_KEY) != TOOL_STATUS_ERROR:
+        return None
+    result_meta: "dict[str, object]" = {}
+    error_kind = meta.get(TOOL_ERROR_KIND_META_KEY)
+    if error_kind is not None:
+        result_meta["error_kind"] = error_kind
+    result_meta["error_message"] = meta.get(TOOL_ERROR_MESSAGE_META_KEY, "")
+    return result_meta
 
 
 def _correlated_calls(messages: "list[ChatMessage]") -> "dict[str, dict]":
@@ -126,7 +184,13 @@ def project_restored_frames(
       preceding assistant message's ``tool_calls`` by ``tool_call_id``,
       falling back to ``m.name`` / empty args when uncorrelated) plus
       ``RESULT_KIND_KEY="tool_call_completed"`` and
-      ``RESULT_META_KEY={"result": m.text}``.
+      ``RESULT_META_KEY={"result": m.text}`` for a SUCCESS (including a
+      pre-#73 persisted history with no typed failure flag at all), or
+      ``RESULT_KIND_KEY="tool_call_failed"`` and
+      ``RESULT_META_KEY={"error_kind": ..., "error_message": ...}`` (or just
+      ``{"error_message": ...}``) for a FAILURE — read directly off the
+      persisted ``meta[TOOL_STATUS_META_KEY]`` typed flag (:func:`_failure_meta`;
+      #73), never re-derived from ``m.text``.
     - ``system`` / ``summary``       → skipped (internal chrome)
 
     An assistant message carrying ONLY ``tool_calls`` (empty text) produces no
@@ -162,6 +226,13 @@ def project_restored_frames(
         elif role == "tool":
             call = calls_by_id.get(m.tool_call_id or "", {})
             tool_name = call.get("name") or m.name
+            failure = _failure_meta(m)
+            if failure is not None:
+                result_kind = "tool_call_failed"
+                result_meta: "dict[str, object]" = failure
+            else:
+                result_kind = "tool_call_completed"
+                result_meta = {"result": m.text}
             frames.append(
                 OutboxMessage(
                     kind="tool_call_started",
@@ -170,8 +241,8 @@ def project_restored_frames(
                         RESTORED_META_KEY: True,
                         "tool": tool_name,
                         "args": call.get("args") or {},
-                        RESULT_KIND_KEY: "tool_call_completed",
-                        RESULT_META_KEY: {"result": m.text},
+                        RESULT_KIND_KEY: result_kind,
+                        RESULT_META_KEY: result_meta,
                     },
                 )
             )

@@ -15,6 +15,24 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Literal
 
+# #73: typed (not form-sniffed) tool-outcome classification, stamped on a
+# ``role="tool"`` message's ``meta`` at PERSIST time by the ONE place that
+# already knows the classification (``router_loop.py``'s tool-result
+# assembly — a dispatch-envelope ``{"status":"error",...}`` or an MCP
+# ``isError`` result). A consumer (e.g. the TUI restore projection,
+# ``interfaces/inline/textual_chat/restore.py``) reads these keys directly —
+# it must NEVER re-derive the classification by sniffing the rendered
+# ``content`` string (that string's shape is a renderer/display concern, not
+# a stable data contract, and a success payload can legitimately start with
+# the same words an error message would). ABSENCE of ``TOOL_STATUS_META_KEY``
+# (e.g. a pre-#73 persisted history) means "unknown" — a reader must treat
+# that as success/completed (today's existing behavior), never infer failure
+# from its absence or from the content string.
+TOOL_STATUS_META_KEY = "tool_status"
+TOOL_STATUS_ERROR = "error"
+TOOL_ERROR_KIND_META_KEY = "error_kind"
+TOOL_ERROR_MESSAGE_META_KEY = "error_message"
+
 
 @dataclass(init=False)
 class ChatMessage:
