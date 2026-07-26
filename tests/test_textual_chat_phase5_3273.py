@@ -244,35 +244,47 @@ def test_projection_uncorrelated_tool_result_still_yields_header() -> None:
     assert tool.meta.get(RESULT_META_KEY) == {"result": "orphaned result"}
 
 
-def test_projection_dispatch_envelope_failure_classified_as_tool_call_failed() -> None:
-    """Tier 1: a FAILED structured tool result (#73) — the persisted ``m.text``
-    for a dispatch-envelope error (e.g. ``file__read`` on a missing path) is
-    NEVER JSON; it is the plain string ``"Error (<kind>): <message>"`` produced
-    by the tool-result renderer (``reyn.core.offload.seam`` / ``router_loop.py``
-    — grounded by direct inspection, not guessed). The projection must classify
-    this as ``RESULT_KIND_KEY="tool_call_failed"`` (not ``"tool_call_completed"``)
-    so the presenter's failure branch (``_tool_result_line`` /
-    ``_body_and_background`` in ``presenter.py``) tints the row coral, exactly
-    matching the LIVE rendering of the same failure.
+def test_projection_typed_dispatch_envelope_failure_classified_as_tool_call_failed() -> None:
+    """Tier 1: a FAILED structured tool result (#73, Option C — co-vet-directed
+    pivot from an earlier string-prefix approach) — the KNOWN success/failure
+    classification is stamped as a TYPED flag on the persisted ``ChatMessage.meta``
+    at write time (``router_loop.py``'s tool-result assembly:
+    ``TOOL_STATUS_META_KEY=TOOL_STATUS_ERROR`` + ``error_kind``/``error_message``),
+    NOT re-derived from the rendered result string. The projection must read that
+    flag directly and classify as ``RESULT_KIND_KEY="tool_call_failed"`` so the
+    presenter's failure branch (``_tool_result_line`` / ``_body_and_background``
+    in ``presenter.py``) tints the row coral, exactly matching the LIVE
+    rendering of the same failure.
 
     Non-vacuity: the OLD code passed ``{"result": m.text}`` (the raw string)
-    through unconditionally — ``summarize_tool_result`` only recognises
-    failure on a DICT carrying an ``error``/``error_message`` key
-    (``renderer.py::_summarize_result``), so handing it a bare string can
-    never produce a ``✗``-prefixed summary. That is asserted directly below."""
+    through unconditionally regardless of any meta — ``summarize_tool_result``
+    only recognises failure on a DICT carrying an ``error``/``error_message``
+    key (``renderer.py::_summarize_result``), so a bare string could never
+    produce a ``✗``-prefixed summary. That is asserted directly below."""
     from reyn.interfaces.repl.renderer import summarize_tool_result
+    from reyn.runtime.chat_message import (
+        TOOL_ERROR_KIND_META_KEY,
+        TOOL_ERROR_MESSAGE_META_KEY,
+        TOOL_STATUS_ERROR,
+        TOOL_STATUS_META_KEY,
+    )
 
     failure_text = "Error (not_found): file not found: missing.py"
     frames = project_restored_frames([
         ChatMessage(
             role="tool", content=failure_text, name="file__read",
             tool_call_id="missing_call",
+            meta={
+                TOOL_STATUS_META_KEY: TOOL_STATUS_ERROR,
+                TOOL_ERROR_KIND_META_KEY: "not_found",
+                TOOL_ERROR_MESSAGE_META_KEY: "file not found: missing.py",
+            },
         ),
     ])
     tool = next(f for f in frames if f.kind == "tool_call_started")
     assert tool.meta.get(RESULT_KIND_KEY) == "tool_call_failed", (
-        f"a rendered tool failure must classify as tool_call_failed, got "
-        f"meta={tool.meta}"
+        f"a typed-failure-flagged tool message must classify as tool_call_failed, "
+        f"got meta={tool.meta}"
     )
     result_meta = tool.meta.get(RESULT_META_KEY)
     assert result_meta == {
@@ -280,8 +292,9 @@ def test_projection_dispatch_envelope_failure_classified_as_tool_call_failed() -
         "error_message": "file not found: missing.py",
     }
 
-    # Non-vacuity: the OLD behaviour (raw string fed to summarize_tool_result)
-    # never detects a failure — proving the fix actually changed the outcome.
+    # Non-vacuity: the OLD behaviour (raw string fed to summarize_tool_result,
+    # ignoring meta entirely) never detects a failure — proving the fix
+    # actually changed the outcome, not merely re-asserted the input shape.
     old_summary = summarize_tool_result("file__read", failure_text)
     assert not old_summary.startswith("✗"), (
         "sanity check failed: the OLD string-based summary already looked "
@@ -289,15 +302,25 @@ def test_projection_dispatch_envelope_failure_classified_as_tool_call_failed() -
     )
 
 
-def test_projection_mcp_iserror_failure_classified_as_tool_call_failed() -> None:
-    """Tier 1: the second (and only other) failure shape the renderer emits —
-    an MCP ``isError`` result — persists as the plain string
-    ``"Error: <text>"`` (no ``(<kind>)`` segment). The projection must still
-    classify this as ``tool_call_failed``, carrying just ``error_message``."""
+def test_projection_typed_mcp_iserror_failure_classified_as_tool_call_failed() -> None:
+    """Tier 1: the second failure shape ``router_loop.py`` stamps — an MCP
+    ``isError`` result — carries only ``error_message`` (no ``error_kind``).
+    The projection must still classify this as ``tool_call_failed`` off the
+    typed flag, carrying just ``error_message``."""
+    from reyn.runtime.chat_message import (
+        TOOL_ERROR_MESSAGE_META_KEY,
+        TOOL_STATUS_ERROR,
+        TOOL_STATUS_META_KEY,
+    )
+
     frames = project_restored_frames([
         ChatMessage(
             role="tool", content="Error: connection refused", name="mcp__ping",
             tool_call_id="missing_call",
+            meta={
+                TOOL_STATUS_META_KEY: TOOL_STATUS_ERROR,
+                TOOL_ERROR_MESSAGE_META_KEY: "connection refused",
+            },
         ),
     ])
     tool = next(f for f in frames if f.kind == "tool_call_started")
@@ -305,23 +328,44 @@ def test_projection_mcp_iserror_failure_classified_as_tool_call_failed() -> None
     assert tool.meta.get(RESULT_META_KEY) == {"error_message": "connection refused"}
 
 
-def test_projection_success_mentioning_error_word_not_misclassified() -> None:
-    """Tier 1: no false positive — a SUCCESSFUL tool result whose own body
-    happens to contain the substring "error" (e.g. a grep result) must NOT be
-    misclassified as a failure. Only the renderer's exact failure PREFIXES
-    (``"Error ("`` / ``"Error: "``) trigger ``tool_call_failed``; a mid-body
-    mention does not (this is the substring-heuristic the brief explicitly
-    forbids inventing)."""
-    benign_text = "3 matches for 'error handling' in src/foo.py"
+def test_projection_success_payload_starting_with_error_word_not_misclassified() -> None:
+    """Tier 1: THE false positive Option B (an earlier, since-abandoned
+    string-prefix approach) could not close, and the reason for the #73
+    co-vet pivot to a typed flag — a SUCCESSFUL tool result whose own payload
+    literally STARTS WITH "Error:" (e.g. ``file__read`` of a log file whose
+    first line happens to be an "Error: ..." message) carries NO typed
+    ``TOOL_STATUS_META_KEY`` (persist time correctly classified it as a
+    success), so the projection must NOT classify it as a failure — the
+    result string's own content is irrelevant to the classification."""
+    log_first_line = "Error: disk full at 03:14, retrying write"
     frames = project_restored_frames([
         ChatMessage(
-            role="tool", content=benign_text, name="grep__search",
+            role="tool", content=log_first_line, name="file__read",
             tool_call_id="missing_call",
         ),
     ])
     tool = next(f for f in frames if f.kind == "tool_call_started")
+    assert tool.meta.get(RESULT_KIND_KEY) == "tool_call_completed", (
+        "a SUCCESS whose payload starts with the word 'Error:' must not be "
+        f"misclassified as a failure, got meta={tool.meta}"
+    )
+    assert tool.meta.get(RESULT_META_KEY) == {"result": log_first_line}
+
+
+def test_projection_pre73_history_with_no_typed_flag_reads_as_success() -> None:
+    """Tier 1: backward-compat — a pre-#73 persisted ``ChatMessage`` has no
+    ``TOOL_STATUS_META_KEY`` at all (the field did not exist yet). Its ABSENCE
+    must be read as success/completed (today's existing behavior before this
+    fix), never inferred as failure from the string or from anything else."""
+    frames = project_restored_frames([
+        ChatMessage(
+            role="tool", content="Read 42 lines", name="file__read",
+            tool_call_id="missing_call", meta={},
+        ),
+    ])
+    tool = next(f for f in frames if f.kind == "tool_call_started")
     assert tool.meta.get(RESULT_KIND_KEY) == "tool_call_completed"
-    assert tool.meta.get(RESULT_META_KEY) == {"result": benign_text}
+    assert tool.meta.get(RESULT_META_KEY) == {"result": "Read 42 lines"}
 
 
 def test_projection_empty_log_yields_no_frames_no_divider() -> None:
@@ -397,19 +441,32 @@ async def test_restored_entries_render_resolved_never_running() -> None:
 
 @pytest.mark.asyncio
 async def test_restored_failed_tool_resolves_to_error_state() -> None:
-    """Tier 2: end-to-end witness for #73 — a persisted FAILED structured tool
-    result (``"Error (not_found): ..."``) hydrates to ``EntryState.ERROR`` (the
-    same coral-tinted terminal state the LIVE completion handler assigns a
-    raised/reported failure), not ``SUCCESS``. ``app.py``'s
-    ``_hydrate_from_history`` already branches on
+    """Tier 2: end-to-end witness for #73 (Option C) — a persisted FAILED
+    structured tool result, classified via the TYPED ``TOOL_STATUS_META_KEY``
+    flag stamped in ``meta`` (as ``router_loop.py`` would at persist time),
+    hydrates to ``EntryState.ERROR`` (the same coral-tinted terminal state the
+    LIVE completion handler assigns a raised/reported failure), not
+    ``SUCCESS``. ``app.py``'s ``_hydrate_from_history`` already branches on
     ``meta[RESULT_KIND_KEY] == "tool_call_failed"`` to set ``ERROR`` directly
     (verified by reading the source — no app.py change was needed for this
     fix); this test proves the WHOLE path (projection → hydration) delivers
     the correct end state, not just the projection in isolation."""
+    from reyn.runtime.chat_message import (
+        TOOL_ERROR_KIND_META_KEY,
+        TOOL_ERROR_MESSAGE_META_KEY,
+        TOOL_STATUS_ERROR,
+        TOOL_STATUS_META_KEY,
+    )
+
     log = [
         ChatMessage(
             role="tool", content="Error (not_found): file not found: missing.py",
             name="file__read", tool_call_id="missing_call",
+            meta={
+                TOOL_STATUS_META_KEY: TOOL_STATUS_ERROR,
+                TOOL_ERROR_KIND_META_KEY: "not_found",
+                TOOL_ERROR_MESSAGE_META_KEY: "file not found: missing.py",
+            },
         ),
     ]
     app = TextualChatApp(
@@ -531,6 +588,74 @@ async def test_retention_is_resume_equivalent(tmp_path, monkeypatch) -> None:
         assert [m.text for m in recent] == ["turn-3", "turn-4"], (
             "limit must keep the most-recent N turns (resume-equivalent)"
         )
+    finally:
+        await asyncio.wait_for(reg.shutdown(), timeout=5.0)
+
+
+@pytest.mark.asyncio
+async def test_typed_failure_flag_round_trips_through_disk_history(tmp_path, monkeypatch) -> None:
+    """Tier 2: #73 round-trip — persist a FAILED tool result (the typed
+    ``TOOL_STATUS_META_KEY`` flag stamped in ``meta``, as ``router_loop.py``
+    would), drop the in-memory history and reload from ``history.jsonl`` on
+    disk (a REAL JSON round trip, not a same-process value), then project.
+    The typed flag must survive serialization and still classify as
+    ``tool_call_failed``. A SUCCESS whose payload happens to start with the
+    word ``"Error:"`` (no typed flag) must round-trip and project as
+    ``tool_call_completed`` — the exact false positive an earlier
+    string-prefix approach (Option B) could not close."""
+    from reyn.runtime.chat_message import (
+        TOOL_ERROR_KIND_META_KEY,
+        TOOL_ERROR_MESSAGE_META_KEY,
+        TOOL_STATUS_ERROR,
+        TOOL_STATUS_META_KEY,
+    )
+
+    monkeypatch.chdir(tmp_path)  # isolate the session's cwd-relative workspace/history.jsonl
+    reg = _registry(tmp_path)
+    try:
+        session = await reg.attach("solo")
+        session._append_history(ChatMessage(
+            role="tool", content="Error (not_found): file not found: missing.py",
+            name="file__read", tool_call_id="call_fail",
+            meta={
+                TOOL_STATUS_META_KEY: TOOL_STATUS_ERROR,
+                TOOL_ERROR_KIND_META_KEY: "not_found",
+                TOOL_ERROR_MESSAGE_META_KEY: "file not found: missing.py",
+            },
+        ))
+        session._append_history(ChatMessage(
+            role="tool", content="Error: disk full at 03:14, retrying write",
+            name="file__read", tool_call_id="call_ok",
+        ))
+
+        # REAL disk round trip: drop the in-memory list, reload from history.jsonl.
+        session.history.clear()
+        session.load_history()
+
+        rm = RegistryReadModel(reg)
+        restored = rm.conversation_history()
+        frames = project_restored_frames(restored)
+        tool_frames = [f for f in frames if f.kind == "tool_call_started"]
+        # Unpacking (not a ``len(...) == N`` size pin) both proves exactly two
+        # tool frames restored AND binds them for the behavioral assertions below —
+        # a short/long list raises ValueError here rather than needing a count check.
+        failed, success = tool_frames
+        assert failed.meta.get(RESULT_KIND_KEY) == "tool_call_failed", (
+            "the typed failure flag did not survive the disk round trip: "
+            f"meta={failed.meta}"
+        )
+        assert failed.meta.get(RESULT_META_KEY) == {
+            "error_kind": "not_found",
+            "error_message": "file not found: missing.py",
+        }
+
+        assert success.meta.get(RESULT_KIND_KEY) == "tool_call_completed", (
+            "a SUCCESS whose payload starts with 'Error:' must round-trip as "
+            f"completed, not failed: meta={success.meta}"
+        )
+        assert success.meta.get(RESULT_META_KEY) == {
+            "result": "Error: disk full at 03:14, retrying write"
+        }
     finally:
         await asyncio.wait_for(reg.shutdown(), timeout=5.0)
 

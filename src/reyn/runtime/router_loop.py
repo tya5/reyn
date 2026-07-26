@@ -3077,6 +3077,12 @@ class RouterLoop:
             unwrap_dispatch_envelope,
         )
         from reyn.core.offload.seam import build_offload_body, render_tool_result
+        from reyn.runtime.chat_message import (
+            TOOL_ERROR_KIND_META_KEY,
+            TOOL_ERROR_MESSAGE_META_KEY,
+            TOOL_STATUS_ERROR,
+            TOOL_STATUS_META_KEY,
+        )
         for tc, r in zip(result.tool_calls, result.tool_results):
             # B41-NF-W7-1: _post_text → appended outside the body.
             post_text: str | None = None
@@ -3110,11 +3116,20 @@ class RouterLoop:
             # Error path (plain string, never JSON): a dispatch-envelope error carries
             # ``error.kind``/``.message`` (``permission_denied`` vs ``not_found`` imply different
             # recovery); an MCP ``isError`` carries its description in the content text.
+            # #73 co-vet (Option C): the success/failure classification is KNOWN right here —
+            # ``r``/``canonical`` already discriminate error from success — so it is captured into
+            # typed ``_tool_error_*`` locals and stamped onto the persisted ``_tool_meta`` below
+            # (NEVER re-derived downstream by sniffing the rendered string; restore.py reads this
+            # typed field directly, matching reyn's typed-over-form-sniffed convention).
             scan_target: str
+            _tool_error_kind: "str | None" = None
+            _tool_error_message: "str | None" = None
             if (isinstance(r, dict) and r.get("status") == "error"
                     and isinstance(r.get("error"), dict)):
                 _err = r["error"]
-                content_str = f"Error ({_err.get('kind', 'error')}): {_err.get('message', '')}"
+                _tool_error_kind = str(_err.get("kind") or "error")
+                _tool_error_message = str(_err.get("message") or "")
+                content_str = f"Error ({_tool_error_kind}): {_tool_error_message}"
                 scan_target = content_str
             else:
                 # Unwrap dispatch-envelope layers ({status, data} with nothing else) until the op
@@ -3134,6 +3149,7 @@ class RouterLoop:
                         scan_target = f"Error: {text_full}"
                         text = _cap(text_full) if _cap is not None else text_full
                         content_str = f"Error: {text}"
+                        _tool_error_message = text_full
                     else:
                         frontmatter, text, built_media, content_type = build_offload_body(
                             canonical, save_fn=_save_fn,
@@ -3227,6 +3243,15 @@ class RouterLoop:
             }
             if external_source:
                 _tool_meta["external_source"] = True
+            # #73 (Option C, co-vet-directed): stamp the ALREADY-KNOWN success/failure
+            # classification as a typed field — never re-derived downstream from the
+            # rendered ``content_str`` (a display string is not a stable data contract;
+            # a legitimate success payload can itself start with the word "Error").
+            if _tool_error_message is not None:
+                _tool_meta[TOOL_STATUS_META_KEY] = TOOL_STATUS_ERROR
+                _tool_meta[TOOL_ERROR_MESSAGE_META_KEY] = _tool_error_message
+                if _tool_error_kind is not None:
+                    _tool_meta[TOOL_ERROR_KIND_META_KEY] = _tool_error_kind
             if _append_entry is not None:
                 _append_entry(
                     role="tool",
