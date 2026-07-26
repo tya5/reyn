@@ -187,6 +187,55 @@ rather than treating the gate's earlier green run as the final word; that
 issue-state read is the only thing that actually observes what happened at
 merge time.
 
+## 10. Born-vacuous: a live mechanism behind a gate that only inspects the terminal state
+
+Distinct from §6 (an *empty set* makes the assertion never run) and §7 (a
+*faked collaborator* removes the loud-failure backstop): here the set is
+non-empty and the collaborator is real, but the **assertion only inspects
+the terminal state, an adjacent path, or mere existence** — so killing the
+live mechanism entirely still leaves the gate green. Three independent
+instances, all measured the same session (#3288/#3299 streaming + panel
+arc):
+
+- **Terminal-state-only assertion** (#3288 ③c). The gate asserted "N deltas
+  → exactly one entry whose content is the full text" — but only *after*
+  the completion frame arrived. The completion frame alone creates that
+  one-entry, full-text result regardless of whether delta-coalescing ever
+  ran, so the gate passed with **zero deltas delivered**. Fix: assert a
+  **mid-stream cross-section** — before completion arrives, exactly one
+  entry exists and its content is *partial*. Zero deltas then produces zero
+  entries at that cross-section ⇒ RED, and the arrival witness is
+  *subsumed* by the gate itself instead of needing a separate positive
+  control.
+- **Positive control on a different delivery path** (#3288 ③b). A
+  positive-control witness was injected via `_queue.put`, bypassing the
+  `push_event` path the production code actually uses — so breaking
+  `push_event` left the witness passing and the gate vacuous; it proved
+  only that a *neighbouring* path was alive, not the one under test. Fix:
+  the positive control must traverse the **same delivery path** as the
+  thing being verified. (Worth naming honestly: this wrong prescription
+  came from the reviewer in the first pass, and was only caught when the
+  coder's deviation from it was surfaced for a ruling instead of being
+  silently accepted — a reviewer's gate design is not exempt from this
+  hazard.)
+- **Existence check instead of the real property** (#3299 P5). A layout
+  gate asserted `region.height > 0` and `display` truthiness, and stayed
+  green on a build where the intervention panel had visually taken over
+  the whole screen — the widgets were not zero-height, they were **pushed
+  off-screen** (composer at `y=25` on a 24-row screen; flowview at `y=-8,
+  h=1`). An upper-bound-only containment check (`y + h <= screen_height`)
+  is equally useless — trivially true for any negative `y`. Fix:
+  **bidirectional** containment (`y >= 0` AND `y + h <= screen_height`)
+  plus a not-squashed floor on height, parametrized over at least two
+  terminal sizes. Related corollary: an `ImportError`-based RED proves a
+  reference vanished, not that the value it named ever reached the
+  rendered output — existence of a symbol is not existence of the effect.
+
+**Apply**: before shipping any gate, apply it to the known-broken build (the
+one the mechanism, if absent, would produce) and confirm it goes RED. A
+gate that has never been seen failing on a real defect — only ever seen
+green — is unproven, no matter how plausible its assertion reads.
+
 ## See also
 
 - [Testing policy](testing.md) — Tier model, Mock vs Fake, decision flow.

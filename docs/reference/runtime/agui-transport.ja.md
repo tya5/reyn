@@ -121,20 +121,48 @@ display kind を誤って落としてしまう):
   tap-point 変更に対する fail-safe であり、live なワイヤー kind ではない(リモートの
   attach-label 同期はこのレガシーセンチネル経由ではなく別途設計される)。
 
-#### Text lifecycle(適合する triplet)
+#### Text lifecycle(適合する triplet — plain と streamed)
 
 AG-UI 仕様は、text lifecycle として**`TEXT_MESSAGE_START` → 1 つ以上の
 `TEXT_MESSAGE_CONTENT` → `TEXT_MESSAGE_END`、すべて `messageId` で相関付けられる**ことを
 必須としている。裸の `TEXT_MESSAGE_CONTENT` は不正である(厳格な汎用クライアントはそれを
-破棄する)。したがって reyn のテキストメッセージ 1 件はこの triplet としてワイヤーに乗り、
-メッセージごとに生成される id を伴い(reyn の outbox には安定した message id がない)、
-CONTENT の `delta` がメッセージ全文を運ぶ(reyn は whole-message であり、トークン
-ストリーミングは scope 外である)。
+破棄する)。
 
-`_reyn` 再構成ブロックを運ぶのは **CONTENT** イベントのみである。START と END イベントは
-汎用のスキャフォールドであり、reyn client はそれらを `None` にデコードして無視する。その
-ため再構成の invariant は**1 フレーム ⇄ 1 つの `_reyn` 保持イベント**のままであり、reyn
-client はメッセージごとにちょうど 1 つの display frame を再構築する。
+**一度もストリーミングしなかったメッセージ**(provider capability なし、ADR-0039 P3a/③a)
+は、この triplet に plain な whole-message としてワイヤーに乗る——メッセージごとに生成
+される id を伴い(reyn の outbox には安定した message id がない)、単一の CONTENT の
+`delta` がメッセージ全文を運ぶ。`_reyn` 再構成ブロックを運ぶのは **CONTENT** イベントのみ
+であり、START/END は汎用のスキャフォールドで reyn client はそれらを `None` にデコードして
+無視する——再構成の invariant は**1 フレーム ⇄ 1 つの `_reyn` 保持イベント**である。
+
+**実際にストリーミングしたメッセージ**(#3288 ③b が raw な LLM の content-delta を届く
+たびに `reyn.event.agent_delta` を emit し、#3288 ③d がそれを標準の text surface に
+マップする)は代わりに**本物の multi-CONTENT シーケンス**を得る: 最初の delta で
+`TEXT_MESSAGE_START`、delta ごとに 1 つの本物の `TEXT_MESSAGE_CONTENT`(それぞれが自分
+自身の `_reyn` を運び、その正確な `agent_delta` chat-event を再構成する——そのため reyn
+client のインフライトな描画は、フレームが in-process で届いたのかこのワイヤー経由で届いた
+のかによらず同一である)、そして完了時に `TEXT_MESSAGE_END`。★完了は **END のみ**に
+マップされる——全文を再送する 2 つ目の CONTENT は**決して**発行しない(delta をライブ描画
+していた client がボディを二重描画してしまうため)。END は代わりに自分自身の `_reyn` を
+運び、その完了時点での永続化済み全文を保持する——これがストリーミングされたメッセージの
+**唯一の再構成 authority** である。reyn client は delta を連結して再構成することは決して
+ない(delta は非永続的で、派生的な、live-only の narration にすぎない——再接続時の
+`MESSAGES_SNAPSHOT` backlog は永続化された `OutboxMessage` からのみ構築されるため、delta
+を読むこともない)。これは**late-joiner window** を閉じるものでもある: 各 connection ごと
+の `TextStreamTracker` 状態(`interfaces/transport/agui/emitter.py`)はその connection が
+実際に観測した delta のみを反映する——ある chain の delta を一つも観測しなかった
+connection(ストリーム中に接続していなかった、あるいは終了直前に接続した)は、同じ完了
+フレームに対して代わりに変更されない plain な whole-message triplet(全文が CONTENT に
+乗る)を得る——いずれにせよ client は完全な永続化済みテキストに到達する。「どの delta を
+受け取ったか」というクライアントごとの bookkeeping は一切保持されない(issue #3288 ③d の
+設計スレッドで却下——権威ある完了を読むことに対して利益なくして状態を追加するだけになる)。
+
+つまり再構成の invariant は**ストリーミングされたメッセージについてのみ再決定される**:
+N 個の `agent_delta` CONTENT イベントはそれぞれ自分自身の `_reyn`(delta ごとに 1 つ)を
+運び、終端の END はさらに別の、DISTINCT な `_reyn`(完了)を運ぶ。1 つではなく N+1 個の
+`_reyn` 保持イベントだが、client の再構成 authority は常に最後の 1 つである。一度もストリ
+ーミングしなかったメッセージはこれらの影響を受けない(上記の plain な triplet のまま
+変わらない)。
 
 #### Reasoning lifecycle(適合する triplet)
 
@@ -353,14 +381,29 @@ display 行のテキストである。
 
 ### `reyn.event.<etype>`
 
-標準的な AG-UI 対応物を持たない reyn の chat-event(working-indicator 軸)。`value` は
-そのイベントのデータオブジェクトである。
+標準的な AG-UI 対応物を持たない reyn の chat-event。`value` はそのイベントのデータ
+オブジェクトである。ほとんどのメンバーは working-indicator 軸(turn-lifecycle /
+tool-call / user-submitted / cancel)だが、`agent_delta`(#3288 ③b)は**別系統の
+streaming-notification 軸**である——下記の行、および `frames.py` の
+`_STREAMING_EVENTS` コメント(なぜレンダラー consumer に先行して forward されたか)を
+参照。plain/repl レンダラーは今も `agent_delta` の分岐を持たない(将来も持たない可能性が
+ある)。Textual TUI(`interfaces/inline/textual_chat`)が #3288 ③c 時点でこれを消費する
+唯一の surface である。★この `CUSTOM` マッピングは(plain な非ストリーミング codec
+経路である)`encode_frame`/`encode_frame_wire` が `agent_delta` の `EventFrame` に対して
+生成するものである——AG-UI emitter の実際の本番呼び出し箇所(`emitter.py`)は代わりに
+すべてのフレームを `encode_frame_wire_streaming` に通し、`agent_delta` を(この `CUSTOM`
+name ではなく)標準の `TEXT_MESSAGE_CONTENT` surface にマップする(#3288 ③d — 上記
+*Text lifecycle* 参照)——実際に client が受け取るワイヤー上ではこの `CUSTOM` name は
+現れない。この行が記述しているのは plain codec 関数が単体で行うこと
+(`tests/test_agent_delta_chat_event_3288.py` が直接検証する)であり、接続済みの
+ワイヤー上で起きることではない。
 
 | Custom `name`                        | Meaning                                          |
 |--------------------------------------|--------------------------------------------------|
 | `reyn.event.user_answered_intervention` | ユーザーが intervention に回答した              |
 | `reyn.event.user_submitted`          | ユーザーがターンを送信した(#3300 P1 C)— RAW text + chain_id + msg_id + seq + meta を運ぶ。各 surface がそれぞれの render 境界で neutralize する。`msg_id`/`seq` は #3300 P2a の sent-queue correlation id + order-race-gate token |
 | `reyn.event.inbox_cancel`            | 未 dispatch の queued user メッセージが id 指定でキャンセルされた(#3300 P3、`cancel_queued` client message 経由)— `msg_id` と `seq` を運ぶ。サーバー権威の sent-queue 除去シグナルであり(client-local な「キャンセル成功」応答ではない)、同じ `msg_id` について `turn_started` と排他である |
+| `reyn.event.agent_delta`             | ストリーミングされた LLM content-delta チャンク 1 件(#3288 ③b)— `text`(raw な per-chunk delta)と `chain_id` を運ぶ。plain codec の `CUSTOM` マッピング(上記の note 参照)であり、実際の AG-UI ワイヤー(`encode_frame_wire_streaming`、#3288 ③d)ではこれは代わりに `TEXT_MESSAGE_CONTENT` に乗る——完全なストリーミングメッセージ contract(END のみの完了、再構成 authority、late-joiner closure)は上記 *Text lifecycle* を参照 |
 
 ### `reyn.intervention.<kind>`
 
@@ -390,9 +433,17 @@ transport が加えるのは wire framing のみであり、新しい render sem
 ものと同一である。
 
 **Local ≡ remote は input についても output と対称に成り立つ。** 解決された
-intervention への回答(`InterventionHandler.deliver_answer_to` — TUI の自由記述回答・
-TUI の選択肢リージョン・A2A peer・上記の AG-UI HITL round-trip という全ての回答経路が
-共有する単一の funnel)は `session.outbox` に `kind="user"` の frame を置き、`OutboxHub`
+intervention への回答(`InterventionHandler.deliver_answer_to` — 全ての回答経路が
+共有する単一の funnel: TUI の自由記述回答、Textual TUI のグループ化された
+intervention パネル(`reyn.interfaces.inline.textual_chat.intervention_panel`、
+#3299 P1/P2、tab 化した #3308 P5 — **pending** な intervention ごとに 1 つの
+tab を持ち、それぞれが closed-set の `RadioSet` か自由記述の `Input` であり、
+会話領域と入力行の間に配置される。以前の in-flow chip surface を置き換えた。
+ある tab に回答すると、その intervention の id を対象に配信され(id 指定の
+delivery)、除去されずに ✓ / inert とマークされる——そのため同時に複数の
+intervention が pending であっても、それぞれが順不同で独立に回答可能であり、
+1 つが他方を押しのけることはない)、A2A peer、上記の AG-UI HITL round-trip)は
+`session.outbox` に `kind="user"` の frame を置き、`OutboxHub`
 を経由してアタッチしているすべての surface へ fan-out される。送信されたターン
 (`Session.submit_user_text`)は代わりに `user_submitted` という chat-event を emit する
 (#3300 P1 C — 以前の outbox-echo write を置き換えた。INPUT を display/OUTPUT channel に
@@ -483,7 +534,7 @@ client がスキップせざるを得ない `CUSTOM` event に折りたたんで
 | State      | 3                | 3           | **complete** |
 | Lifecycle  | 5                | 3           | **intentional-scope** — 2 つの Step event は、独立した標準 event としてではなく `STATE_*` read-model の `waiting_on` フィールドに fold される(上記 *STATE_\* — the status read-model* 参照) |
 | Tool       | 5                | 3           | **complete for the HITL round-trip** — `TOOL_CALL_START` + `TOOL_CALL_END`(標準の `status` フィールド付き)+ `TOOL_CALL_RESULT`(intervention frontend-tool の回答 round-trip); `TOOL_CALL_ARGS`/`_CHUNK` のペアは **intentional-scope** である(reyn が発行する時点で tool call は既に完了しており、chunk 化すべき in-flight な args ストリームは存在しない) |
-| Text       | 4                | 3           | **conforming triplet** — メッセージ 1 件全体が `TEXT_MESSAGE_START` → `TEXT_MESSAGE_CONTENT` → `TEXT_MESSAGE_END` に乗り、`messageId` で相関付けられる。マップされていないのはストリーミング用の `TEXT_MESSAGE_CHUNK` のみである(**intentional-scope** — reyn の outbox はトークン差分ではなく whole message を配信する) |
+| Text       | 4                | 3           | **conforming triplet、plain と streamed 両方** — メッセージ 1 件全体が `TEXT_MESSAGE_START` → `TEXT_MESSAGE_CONTENT` → `TEXT_MESSAGE_END` に乗り、`messageId` で相関付けられる。ストリーミングしたメッセージ(#3288 ③a/③b/③d)は同じ triplet に、チャンクごとの本物の `TEXT_MESSAGE_CONTENT` を伴って乗る(上記 *Text lifecycle* 参照)——マップされていないのは凝縮された単一イベントの `TEXT_MESSAGE_CHUNK` variant のみである(**intentional-scope** — triplet の形式が既にストリーミングをカバーしており、reyn には代替の凝縮エンコーディングを使う理由がない) |
 | Special    | 2                | 1           | **intentional-scope** — reyn-private なペイロードは常に構造化されている(`CUSTOM`)。標準の `RAW` passthrough event に reyn の use case はない |
 | Activity   | 2                | 0           | **intentional-scope** — reyn に直接の analog はない。同じ情報は既に frame stream + `STATE_*` が運んでいる |
 | Reasoning  | 7                | 3           | **standard-mapped** — reasoning メッセージ 1 件全体が `REASONING_MESSAGE_START` → `REASONING_MESSAGE_CONTENT` → `REASONING_MESSAGE_END` に乗り、`messageId` で相関付けられる。外側の `REASONING_START`/`REASONING_END` コンテキスト wrapper とストリーミング用の `REASONING_MESSAGE_CHUNK`/`REASONING_ENCRYPTED_VALUE` variant は **intentional-scope** である(reyn は whole-message であり、暗号化 CoT はない) |
