@@ -7,6 +7,10 @@ seam, changing *routing* only (delivery is unchanged, behavior byte-identical):
   ``session.outbox`` into ``registry.repl_outbox``. This transport drains that
   queue in a background pump task and re-tags each message as a
   :class:`~reyn.interfaces.transport.frames.DisplayFrame` on the unified stream.
+  (#3310 N1: ``registry.repl_outbox`` also carries an already-tagged
+  :class:`~reyn.interfaces.transport.frames.EventFrame` directly — the
+  ``session_attached`` switch-barrier the registry attach seam puts there;
+  the pump passes it through unchanged instead of re-wrapping it.)
 - **Event path** — a ``session.chat_events`` subscription (wired via the
   registry's focus-listener binding, so it follows ``/attach``), *filtered to
   the renderer's forward-set* (:func:`renderer_chat_events`), enqueues each
@@ -102,11 +106,22 @@ class InProcessTransport(ClientTransport):
     async def _pump_outbox(self) -> None:
         # Re-tag the display outbox onto the unified stream, preserving order.
         # Stops after forwarding the ``__end__`` control frame (session shutdown).
+        #
+        # #3310 N1: ``repl_outbox`` carries an ``EventFrame`` too now — the
+        # registry attach seam (``AgentRegistry._announce_session_attached``)
+        # puts a ``session_attached`` EventFrame directly on this queue (the
+        # barrier), rather than routing through a session's own chat-events
+        # (the very stream a switch swaps). Pass an already-tagged frame
+        # through UNCHANGED; only a bare ``OutboxMessage`` gets re-tagged as a
+        # ``DisplayFrame`` here.
         outbox = self._registry.repl_outbox
         while True:
-            msg = await outbox.get()
-            self._frames.put_nowait(DisplayFrame(msg))
-            if msg.kind == "__end__":
+            item = await outbox.get()
+            if isinstance(item, EventFrame):
+                self._frames.put_nowait(item)
+                continue
+            self._frames.put_nowait(DisplayFrame(item))
+            if item.kind == "__end__":
                 return
 
     async def frames(self) -> "AsyncIterator[Frame]":

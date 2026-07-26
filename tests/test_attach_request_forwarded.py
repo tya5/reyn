@@ -7,7 +7,10 @@ discards the message without forwarding it to ``repl_outbox``.
 This file pins:
   1. A ``__attach_request__("beta")`` on alpha's outbox swaps the attached
      agent to beta (control path intact).
-  2. ``repl_outbox`` is empty after the swap — no re-post occurs.
+  2. ``repl_outbox`` gets no RE-POST of the raw sentinel — the only thing a
+     swap contributes is the #3310 N1 ``session_attached`` announce
+     ``attach()`` itself now emits (the switch-barrier), never a bare-text
+     leak of the control message.
   3. An unknown target (= registry.exists() is False) does not swap and
      does not forward — unchanged behavior proves the control path is not
      broken by the removal.
@@ -19,8 +22,16 @@ from pathlib import Path
 
 import pytest
 
+from reyn.interfaces.transport.frames import EventFrame
 from reyn.runtime.outbox import OutboxMessage
 from reyn.runtime.outbox_hub import OutboxHub
+
+
+def _drain_all(q: "asyncio.Queue") -> list:
+    out = []
+    while not q.empty():
+        out.append(q.get_nowait())
+    return out
 
 
 class _FakeInterventions:
@@ -71,17 +82,19 @@ def _build_registry(tmp_path: Path):
 
 @pytest.mark.asyncio
 async def test_attach_request_swaps_but_does_not_repost(tmp_path):
-    """Tier 2: __attach_request__ swaps attach AND leaves repl_outbox empty.
+    """Tier 2: __attach_request__ swaps attach; repl_outbox gets the #3310 N1
+    ``session_attached`` announce for the swap and NOTHING else — no re-post
+    of the raw sentinel.
 
-    The control path (attach swap + continue) is intact. repl_outbox gets
-    no copy of the signal — there is no live downstream consumer for it.
-    If a re-post is silently re-added, this test goes RED, preventing
+    The control path (attach swap + continue) is intact. repl_outbox gets no
+    COPY OF THE SENTINEL — there is no live downstream consumer for that raw
+    text. If a re-post is silently re-added, this test goes RED, preventing
     a bare-text leak through _output_loop.
     """
     registry, sessions = _build_registry(tmp_path)
 
     await registry.attach("alpha")
-    assert registry.attached_name == "alpha"
+    _drain_all(registry.repl_outbox)  # discard the first-attach announce
 
     await sessions["alpha"].outbox.put(
         OutboxMessage(kind="__attach_request__", text="beta"),
@@ -95,8 +108,13 @@ async def test_attach_request_swaps_but_does_not_repost(tmp_path):
 
     # Control path intact: swap happened.
     assert registry.attached_name == "beta"
-    # Re-post removal proven: outbox got nothing.
-    assert registry.repl_outbox.empty()
+    # Re-post removal proven: outbox got ONLY the switch-barrier announce,
+    # never a copy of the raw "__attach_request__"/"beta" sentinel.
+    # Unpacking into a single-element tuple IS the "exactly one, nothing
+    # else" assertion (raises ValueError on 0 or 2+ items in the queue).
+    (frame,) = _drain_all(registry.repl_outbox)
+    assert isinstance(frame, EventFrame) and frame.event.type == "session_attached"
+    assert frame.event.data == {"agent": "beta", "session_id": "main"}
 
 
 @pytest.mark.asyncio
@@ -105,6 +123,7 @@ async def test_attach_request_unknown_target_drops_silently(tmp_path):
     registry, sessions = _build_registry(tmp_path)
 
     await registry.attach("alpha")
+    _drain_all(registry.repl_outbox)  # discard the first-attach announce
 
     await sessions["alpha"].outbox.put(
         OutboxMessage(kind="__attach_request__", text="ghost"),
@@ -114,4 +133,5 @@ async def test_attach_request_unknown_target_drops_silently(tmp_path):
         await asyncio.sleep(0.01)
 
     assert registry.attached_name == "alpha"
+    # No swap happened (unknown target) => no NEW announce, and no re-post.
     assert registry.repl_outbox.empty()
