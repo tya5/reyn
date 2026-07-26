@@ -90,16 +90,18 @@ def _user_frame_meta(attribution: "dict | None") -> dict:
     """Mirrors ``session._user_frame_meta`` (kept in sync — see that
     docstring for the full rationale).
 
-    Builds ``meta`` for the ``kind="user"`` outbox frame that broadcasts an
-    intervention answer's DISPLAY text (ADR-0039 multi-client input-broadcast
-    fix). ``attribution`` is ``None`` for every local UI caller (the inline
-    CUI's free-text-answer / choice-region paths) → empty meta, the
-    renderer shows the bare operator line. The AG-UI answer path
-    (``endpoint.py._handle_answer``) passes ``auth_user_id`` /
-    ``auth_connection_id`` — mirroring ``user_answered_intervention``'s own
-    attribution shape below — copied here to ``actor`` too, so the renderer's
-    EXISTING ``_meta_prefix`` provenance prefix (already used for agent /
-    status lines) picks it up as ``[alice] `` with no new renderer branch.
+    Builds ``meta`` for the ``intervention_answer_submitted`` chat-event that
+    broadcasts an intervention answer's DISPLAY text (ADR-0039 multi-client
+    input-broadcast fix, migrated from a ``kind="user"`` outbox frame to a
+    chat-event as part of #3300 — see the emit site in ``deliver_answer_to``).
+    ``attribution`` is ``None`` for every local UI caller (the inline CUI's
+    free-text-answer / choice-region paths) → empty meta, the renderer shows
+    the bare operator line. The AG-UI answer path (``endpoint.py._handle_answer``)
+    passes ``auth_user_id`` / ``auth_connection_id`` — mirroring
+    ``user_answered_intervention``'s own attribution shape below — copied here
+    to ``actor`` too, so the renderer's EXISTING ``_meta_prefix`` provenance
+    prefix (already used for agent / status lines) picks it up as ``[alice] ``
+    with no new renderer branch.
     """
     if not attribution:
         return {}
@@ -335,15 +337,17 @@ class InterventionHandler:
             answer_text=text if not iv.choices else "",
             **attrib,
         )
-        # ADR-0039 multi-client input-broadcast fix: broadcast the answer's
-        # DISPLAY text too (kind="user") — every answer path (TUI free-text /
+        # ADR-0039 multi-client input-broadcast fix, migrated to a chat-event
+        # (part of #3300 — the last site still using the category error
+        # #3301/P1(C) retired for the ordinary-submit path: an INPUT written
+        # into the display/OUTPUT channel). Every answer path (TUI free-text /
         # TUI choice-region / A2A peer / AG-UI HITL) shares this ONE funnel, so
         # this single emit site covers all of them uniformly. A peer thin
         # client previously saw only the agent's NEXT reply with no trace the
         # intervention was ever answered (unless the local TUI happened to
-        # ALSO put a local-only "answered: <label>" system echo — since removed
-        # from the inline CUI's choice-answer path as part of this fix, to avoid
-        # a double-render now that this broadcasts).
+        # ALSO put a local-only "answered: <label>" system echo — removed from
+        # the inline CUI's choice-answer path when this first broadcast, to
+        # avoid a double-render).
         #
         # Uses ``choice.label`` (when a choice was matched) or the raw
         # ``text`` — NEVER ``history_text`` (the fenced context-bound copy
@@ -352,15 +356,26 @@ class InterventionHandler:
         # context; broadcasting the SAME answer to human observers' terminals
         # doesn't touch context at all, so it stays unfenced (an operator
         # watching a peer answer a prompt should see what was actually
-        # answered). Neutralized (ESC/control strip) because it now reaches
-        # every attached peer's terminal — the SAME ``_neutralize_terminal``
-        # seam ``announce``'s scrollback echo uses (#2770).
-        display_text = _neutralize_terminal(choice.label if choice is not None else text)
-        await self._put_outbox(OutboxMessage(
-            kind="user",
-            text=display_text,
+        # answered).
+        #
+        # RAW on the wire — NOT pre-neutralized here (unlike the pre-#3300
+        # outbox frame this replaces). Mirrors ``user_submitted``
+        # (#3301/P1 C): the single truth traveling the wire is raw text; each
+        # consuming surface neutralizes at its OWN render boundary —
+        # ``ConsoleChatRenderer``/``InlineChatRenderer.on_chat_event`` (via
+        # ``intervention_answer_display_message``, the SAME
+        # ``core/present/guard.get_neutralizer("terminal")`` seam #2770 uses)
+        # and ``TextualChatApp._handle_intervention_answer_event`` (via
+        # ``_neutralized_label``). Pre-neutralizing here, as the removed
+        # outbox write did, would have permanently destroyed the original
+        # bytes for every other consumer of this event.
+        answer_display_text = choice.label if choice is not None else text
+        self._events.emit(
+            "intervention_answer_submitted",
+            intervention_id=iv.id,
+            text=answer_display_text,
             meta=_user_frame_meta(attribution),
-        ))
+        )
         return True
 
     async def announce(self, iv: UserIntervention) -> None:
