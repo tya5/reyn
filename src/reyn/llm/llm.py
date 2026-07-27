@@ -1495,139 +1495,20 @@ def _emit_llm_request_error(
 
 
 class ResponsesEndpointRequiredError(Exception):
-    """#1678: raised when a ``reasoning_effort + tools`` call was routed to the
-    OpenAI ``/v1/responses`` endpoint but the configured endpoint/proxy does not
-    serve it (HTTP 405). Carries a decision-enabling message naming BOTH remedies
-    so the operator isn't left with a raw 405."""
-
-
-def _responses_bridge_providers() -> "frozenset[str]":
-    """The litellm provider identities the #1678 ``/v1/responses`` bridge
-    applies to — see ``_requires_responses_bridge`` for why this is a set,
-    not a single literal.
-
-    Enum-referenced (``litellm.LlmProviders.OPENAI.value`` /
-    ``.AZURE.value``), not bare string literals — if litellm ever renames a
-    provider identity, the enum moves with it instead of silently going
-    stale here.
-
-    **This allowlist is PROVISIONAL** (owner direction: minimize
-    provider-dependent code in reyn). litellm's own model info already
-    declares the routing need per-MODEL, not per-provider —
-    ``litellm.get_model_info("o1-pro")["mode"] == "responses"`` — and
-    ``litellm.utils`` exposes a ``supports_reasoning`` capability query
-    alongside the ``supports_native_streaming`` / ``supports_function_calling``
-    ones ``_streaming_capable`` already uses. A follow-up should replace this
-    provider allowlist with that per-model ``mode`` declaration, which would
-    make Azure/OpenRouter case-by-case judgment (and tracking future
-    providers) unnecessary. Until that lands: if an Azure-routed reasoning
-    model 405s unexpectedly, this frozenset is the first place to check.
-    """
-    import litellm  # noqa: PLC0415
-
-    return frozenset({
-        litellm.LlmProviders.OPENAI.value,
-        litellm.LlmProviders.AZURE.value,
-    })
-
-
-def _requires_responses_bridge(model: str) -> bool:
-    """#3288 follow-up (issue #3288 comment thread, per-PR-coder root-cause;
-    provider-set widened per co-vet finding (b) on PR #3325): does ``model``
-    need the ``/v1/responses`` bridge for a ``reasoning_effort + tools`` call?
-
-    **PROVISIONAL — see ``_responses_bridge_providers``'s docstring.** This
-    decision is currently provider-based; a follow-up should switch it to a
-    per-model ``litellm.get_model_info(...)["mode"] == "responses"``
-    declaration instead (litellm already declares this per-model, not merely
-    per-provider), which would need no Azure/OpenRouter case-by-case judgment
-    and no tracking of future providers. Not done in this PR — #3325 fixes a
-    live default-config regression (streaming silently dead) and that fix
-    should not wait on the provider→model-mode replacement.
-
-    The #1678 bridge exists because SOME reasoning models reject
-    ``reasoning_effort + tools`` on ``/chat/completions`` and need
-    ``/v1/responses`` instead. It is NOT a universal requirement — e.g.
-    Gemini's ``reasoning_effort`` maps to a native "thinking budget" param
-    (see the #1650 comment above) and does not need (or support well —
-    #1652/②'s reasoning-continuity note) the bridge. Before this fix,
-    ``_routed_to_responses`` had no provider check, so it fired for EVERY
-    ``tools + reasoning_effort`` call, including Gemini's default-config
-    primary reply — silently rewriting ``gemini/...`` to
-    ``responses/gemini/...``, which ``_streaming_capable`` cannot recognize
-    (litellm's model map has no entry for the ``responses/`` marker), so
-    streaming was silently disabled on the default configuration.
-
-    **Provider boundary — why {openai, azure}, and where to look if you hit a
-    405 on an ``azure/o1``-shaped model**: Azure is a first-class reyn
-    provider (``credentials.py``'s ``"azure": "AZURE_API_KEY"``) whose
-    reasoning-model deployments (``azure/o1``, ``azure/o3-mini``, …) are
-    literally OpenAI's reasoning models, hosted by Azure — the SAME
-    ``/chat/completions`` rejection this bridge exists to route around
-    applies there too. Excluding azure would have been a SILENT BEHAVIOR
-    CHANGE for this PR: ``azure/o1`` already resolves through
-    ``_to_responses_model`` (``azure/o1`` → ``azure/responses/o1``), so it was
-    almost certainly bridged before this fix (no provider check existed) —
-    narrowing to ``openai`` alone would un-bridge it and could reintroduce the
-    405 this bridge exists to avoid, for a provider nobody verified doesn't
-    need it. Minimal change = keep Azure's existing (bridged) behavior. If a
-    genuine Azure reasoning-model 405 shows up in the future, this frozenset
-    is the first place to check — either Azure's ``/v1/responses`` support
-    changed, or a model isn't resolving to the ``azure`` provider the way
-    expected (verify with ``litellm.get_llm_provider``, not by inspection).
-
-    **Deliberately excluded: ``openrouter/openai/...``.** ``get_llm_provider``
-    resolves that model string to provider ``"openrouter"``, not
-    ``"openai"`` — correctly: the HTTP call actually lands on OpenRouter's own
-    completions endpoint, not OpenAI's ``/v1/responses``, regardless of the
-    ``openai/`` segment embedded in the OpenRouter model name. Bridging it
-    would target an endpoint OpenRouter doesn't serve.
-
-    Derives the provider from the resolved MODEL IDENTITY via
-    ``litellm.get_llm_provider``, queried WITHOUT an explicit
-    ``custom_llm_provider`` (``None``) — the SAME transport-independence
-    discipline ``_streaming_capable`` documents: reyn's proxy routing
-    (``proxy_kwargs()``) forces ``custom_llm_provider="openai"`` on the wire
-    for ALL models when an operator proxy is configured, so deriving "is this
-    OpenAI?" from that forced value would make every model look like OpenAI —
-    reproducing the exact bug this function fixes, one layer over. Capability
-    (and provider identity) is a property of the MODEL, not of the transport
-    used to reach it.
-
-    Any lookup failure (unmapped model name, litellm internal error) is
-    caught and treated as "does not require the bridge" — conservative in the
-    direction that matters here: it means an unrecognized model is never
-    force-routed through a bridge it may not need, at the cost of a genuinely
-    unmapped reasoning model needing an explicit ``openai/responses/...`` /
-    ``azure/responses/...`` model string (already supported — see
-    ``_to_responses_model``'s idempotent explicit-prefix path).
-    """
-    try:
-        import litellm  # noqa: PLC0415
-
-        _, provider, _, _ = litellm.get_llm_provider(model=model, custom_llm_provider=None)
-        return provider in _responses_bridge_providers()
-    except Exception:  # noqa: BLE001 — unknown provider → conservative "no bridge"
-        return False
-
-
-def _to_responses_model(model: str) -> str:
-    """#1678: rewrite a resolved litellm model string to route through the OpenAI
-    Responses API (``/v1/responses``) via the ``responses/`` bridge marker, which
-    litellm.acompletion honours and returns a chat-completions-shaped response for
-    (so reyn's response parsing is unchanged). Idempotent — an already-routed model
-    (explicit ``openai/responses/...`` prefix) is returned unchanged.
-
-    - ``openai/gpt-5.4``    → ``openai/responses/gpt-5.4`` (direct path)
-    - ``gpt-5.4``           → ``responses/gpt-5.4``        (proxy path, post-strip;
-      reyn's ``custom_llm_provider="openai"`` carries the provider)
-    """
-    if "/responses/" in model or model.startswith("responses/"):
-        return model
-    if "/" in model:
-        provider, rest = model.split("/", 1)
-        return f"{provider}/responses/{rest}"
-    return f"responses/{model}"
+    """#1678, delegated to litellm at #3288-follow-up (issue #3288 comment
+    thread, 2026-07-26/27): litellm >= 1.89.3 auto-bridges eligible
+    ``reasoning_effort + tools`` calls to the OpenAI ``/v1/responses`` endpoint
+    internally (``litellm.main.responses_api_bridge_check`` — reyn no longer
+    rewrites the model string itself, see ``recorded_acompletion``). reyn can
+    no longer tell whether a given call WAS bridged, so this error is now
+    raised on ANY 405 for a call shaped ``reasoning_effort + tools`` — the
+    guidance ("this needs /v1/responses, but your endpoint doesn't serve it")
+    is equally true whether litellm applied its own bridge or the operator's
+    proxy simply doesn't support the endpoint. Kept deliberately (owner
+    decision, #3288 comment thread): it is the safety net that makes
+    delegating to litellm's narrower, upstream-maintained routing decision
+    reversible — if litellm's bridge coverage misses a model that genuinely
+    needs it, this surfaces as an ACTIONABLE 405 instead of a raw one."""
 
 
 def _emit_chat_cost_events(model: str, usage: "TokenUsage | None") -> None:
@@ -1825,38 +1706,38 @@ async def recorded_acompletion(
             _allowed.append("reasoning_effort")
         base_kwargs["allowed_openai_params"] = _allowed
 
-    # #1678: route reasoning-model + tools calls to the OpenAI Responses API.
-    # ``reasoning_effort`` + ``tools`` together are only valid on /v1/responses
-    # (owner-confirmed: removing reasoning_effort cleared the 405) — but reyn
-    # sends everything via acompletion (/chat/completions) → 405. litellm's
-    # auto-route is unreliable (litellm#23156), so apply the ``responses/`` bridge
-    # prefix EXPLICITLY: it routes to /v1/responses yet returns a chat-completions
-    # shape, so the existing chokepoint + response parsing are unchanged (no
-    # parallel recorded_aresponses). An explicit operator prefix is preserved
-    # (idempotent). ``_routed_to_responses`` gates the decision-enabling error
-    # below so a normal 405 is unaffected.
+    # #1678 → delegated to litellm at #3288-follow-up (issue #3288 comment
+    # thread, owner-approved 2026-07-26/27): ``reasoning_effort`` + ``tools``
+    # together are only valid on /v1/responses for SOME reasoning models
+    # (owner-confirmed gpt-5.4 405 repro). reyn used to rewrite the model
+    # string to a ``responses/`` bridge marker itself (#1678) so litellm would
+    # route to /v1/responses while still returning a chat-completions shape.
+    # That manual bridge is now REDUNDANT: litellm >= 1.89.3 ships its own
+    # ``responses_api_bridge_check`` (upstream PR BerriAI/litellm#23577,
+    # merged 2026-03-13 — before #1678 was even filed), entered from inside
+    # ``litellm.acompletion()`` itself, requiring NO ``responses/`` prefix
+    # from the caller. Investigation (issue #3288 comment thread) found
+    # reyn's own provider-allowlist bridge was actually the WRONG direction
+    # of "safe": it fired for every openai/azure reasoning model (incl. ones
+    # nobody verified need it), which is exactly how the #3288 default-config
+    # streaming regression happened for Gemini before the #3325 provider gate
+    # — a bridge that is too WIDE silently breaks streaming for models that
+    # didn't need it. litellm's own narrower, upstream-maintained routing
+    # (currently gpt-5.4-family + tools + reasoning_effort, or
+    # ``mode == "responses"``) is strictly better: reyn passes the bare
+    # resolved model straight to ``litellm.acompletion`` and litellm decides
+    # internally.
     #
-    # #3288 follow-up: this is a provider-scoped requirement (OpenAI + Azure —
-    # see ``_requires_responses_bridge``'s docstring for the boundary), not a
-    # universal one — gate it on the resolved model's PROVIDER, not merely on
-    # the tools+reasoning_effort SHAPE. Without the provider check, this fired
-    # for every reasoning-capable default model class (incl. Gemini, whose
-    # reasoning_effort maps to a native thinking-budget param, not a
-    # /v1/responses requirement), silently rewriting ``gemini/...`` to a
-    # ``responses/`` bridge string that ``_streaming_capable`` cannot
-    # recognize — disabling streaming on the default configuration.
-    _routed_to_responses = bool(
-        base_kwargs.get("tools")
-        and base_kwargs.get("reasoning_effort")
-        and _requires_responses_bridge(effective_model)
+    # ``_needs_responses_endpoint`` no longer gates a rewrite (reyn does not
+    # know whether litellm applied its own bridge) — it ONLY gates the
+    # decision-enabling ``ResponsesEndpointRequiredError`` below, by call
+    # SHAPE (tools + reasoning_effort), per the owner's explicit call:
+    # keep the guidance regardless of who did the bridging, since a 405 on
+    # this shape means the same thing either way (endpoint/proxy does not
+    # serve /v1/responses).
+    _needs_responses_endpoint = bool(
+        base_kwargs.get("tools") and base_kwargs.get("reasoning_effort")
     )
-    if _routed_to_responses:
-        effective_model = _to_responses_model(effective_model)
-        # #1652/②: native reasoning continuity is a no-op on this
-        # capable+tools+reasoning ``/v1/responses`` bridge path due to an
-        # upstream litellm reasoning-item output-parse limitation (canonical
-        # write-up in builtin-models.md → "Vendor-specific quirks: Reasoning on
-        # tool-bearing turns"). It works on the chat path.
 
     # #1669: emit a P6 ``llm_request`` event (TUI-observable) carrying the
     # non-message call params, ONCE here — before the ``_once`` response_format
@@ -2061,13 +1942,16 @@ async def recorded_acompletion(
                 raise
     except Exception as exc:
         _emit_llm_request_error(effective_model, purpose, exc, base_kwargs)
-        # #1678: when WE routed this call to /v1/responses (reasoning_effort +
-        # tools) and it still 405s, the endpoint/proxy does not serve /v1/responses.
-        # Turn that raw dead-end into a decision-enabling error naming BOTH remedies
-        # (the raw 405 detail is already captured in the #1676 llm_request_error
-        # event above). Only fires when reyn applied the responses route, so a
-        # normal/unrelated 405 is unaffected.
-        if _routed_to_responses and getattr(exc, "status_code", None) == 405:
+        # #1678, delegated to litellm at #3288-follow-up: this call shape
+        # (reasoning_effort + tools) MAY need /v1/responses — litellm decides
+        # internally now (see the comment above ``_needs_responses_endpoint``),
+        # so reyn can no longer tell whether IT applied a bridge. On a 405 for
+        # this shape, turn the raw dead-end into a decision-enabling error
+        # naming BOTH remedies (the raw 405 detail is already captured in the
+        # #1676 llm_request_error event above) — the guidance is equally true
+        # whether litellm's own bridge fired or the proxy just doesn't serve
+        # /v1/responses. A 405 on a call NOT shaped this way is unaffected.
+        if _needs_responses_endpoint and getattr(exc, "status_code", None) == 405:
             raise ResponsesEndpointRequiredError(
                 f"This call combines reasoning_effort + tools on model {model!r}, "
                 "which requires the OpenAI /v1/responses endpoint — but the "

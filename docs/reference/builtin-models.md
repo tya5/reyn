@@ -155,15 +155,37 @@ Anthropic API via LiteLLM.  The `budget_tokens` value is the upper bound of reas
 tokens; actual usage may be less.  Setting `budget_tokens` too low can degrade answer
 quality on complex tasks.
 
-### Reasoning on tool-bearing turns (Responses-API bridge)
+### Reasoning on tool-bearing turns (Responses-API bridge — litellm-native)
 
-A turn that carries **tools** *and* has `reasoning_effort` set on a reasoning-
-capable model resolved to the **OpenAI or Azure** provider is routed through
-litellm's Responses-API bridge (`responses/<model>`), because
-`reasoning_effort + tools` together are only valid on the `/v1/responses`
-endpoint on those providers — `/v1/chat/completions` rejects the combination
-with a 405 (#1678). litellm's bridge currently cannot map the `reasoning`
-output item the model returns, so the call raises:
+A turn that carries **tools** *and* has `reasoning_effort` set is, for SOME
+reasoning models, only valid on the OpenAI `/v1/responses` endpoint —
+`/v1/chat/completions` rejects the combination with a 405 (#1678,
+owner-confirmed on `gpt-5.4`). Reyn used to detect this shape itself and
+rewrite the model string to a `responses/<model>` bridge marker (#1678,
+provider-gated to OpenAI/Azure at #3325). **That manual bridge was deleted**
+(#3288 follow-up, issue #3288 comment thread, owner-approved): **litellm
+>= 1.89.3 ships its own automatic bridge**
+(`litellm.main.responses_api_bridge_check`, upstream `BerriAI/litellm#23577`,
+merged 2026-03-13 — before #1678 was even filed), entered from inside
+`litellm.acompletion()` itself with no `responses/` prefix required from the
+caller. Reyn now passes the resolved model straight to `litellm.acompletion`
+unchanged; litellm decides internally whether to route to `/v1/responses`.
+
+**Why delegate rather than keep reyn's own gate.** Investigation found reyn's
+provider-allowlist bridge was strictly *wider* than litellm's own routing —
+it fired for every OpenAI/Azure reasoning model (`o1`, `o3-mini`, …), none of
+which were ever verified to actually need the bridge, whereas litellm's
+routing is narrower (currently gpt-5.4-family + tools + reasoning_effort, or
+`model_info.mode == "responses"`) and upstream-maintained, tracking future
+provider/model changes automatically. A bridge that's too wide is not the
+safe direction — it's exactly the shape of the #3288 default-config
+regression (Gemini's `tools + reasoning_effort` primary-reply shape got
+silently rewritten to an unrecognized `responses/` model string, disabling
+token streaming) before #3325 narrowed it. Deleting reyn's own gate removes
+an unverified, frozen guess in favor of a narrower, upstream-maintained one.
+
+litellm's bridge currently cannot map the `reasoning` output item some models
+return, so a bridged call can still raise:
 
 ```
 litellm.APIConnectionError: OpenAIException -
@@ -173,51 +195,38 @@ Unknown items in responses API response: [GenericResponseOutputItem(type='reason
 The reasoning text is present in the response — the bridge parser simply doesn't
 map the `reasoning` item onto the chat-completions shape. This is present in both
 the current and the latest litellm release, with no released fix; Reyn does not
-ship a provider-specific workaround for it.
+ship a provider-specific workaround for it. This is unaffected by the delegation
+above — it is a litellm-internal parsing gap either way.
 
-**Provider-gated (#3288 follow-up).** The bridge only applies to models Reyn
-resolves as **OpenAI or Azure** (via a `litellm.get_llm_provider` query on the
-resolved model identity, never on the transport/proxy routing — see
-`_requires_responses_bridge` in `src/reyn/llm/llm.py`). Azure is included
-because it is a first-class reyn provider that literally hosts OpenAI's
-reasoning models (`azure/o1`, `azure/o3-mini`, …) under the same
-`/chat/completions` rejection. It does NOT apply to Gemini, whose
-`reasoning_effort` maps to a native "thinking budget" parameter handled
-entirely on `/v1/chat/completions` — Gemini reasoning-on-tool-turns never go
-through this bridge and never hit the error above. It also does NOT apply to
-an OpenRouter-routed model whose own model name happens to embed an `openai/`
-segment (e.g. `openrouter/openai/gpt-5`) — that call lands on OpenRouter's own
-completions endpoint, never OpenAI's `/v1/responses`, regardless of the
-embedded segment. (Earlier behavior — before this gate existed — routed EVERY
-`tools + reasoning_effort` combination through the bridge regardless of
-provider, which silently disabled token streaming for Gemini's default model
-classes; see `_streaming_capable`'s docstring for the streaming side of that
-fix.)
+**Do not set `litellm.route_all_chat_openai_to_responses = True`.** litellm
+exposes this as a global opt-in (default `False`) that routes *every* OpenAI
+chat call through `/v1/responses`, not just the tools+reasoning_effort combo
+covered above. Turning it on reproduces the #3288 default-streaming
+regression for the entire OpenAI provider: `_streaming_capable` cannot
+recognize the bridged model shape, so streaming silently goes dark for every
+OpenAI call, not just reasoning+tools ones. Reyn does not set this flag and
+you should not either.
 
-**When it bites — a narrow, opt-in combination.** All must hold:
-
-1. a **tool-bearing** purpose (e.g. the router, whose turns always carry tools)
-   is pointed at a reasoning-capable model; **and**
-2. `reasoning_effort` is set on that model; **and**
-3. the model resolves to the **OpenAI or Azure** provider
-   (`model_class_by_purpose: router: strong` pointed at an OpenAI/Azure
-   reasoning model, or the default `model` class set to one).
+**If your endpoint 405s anyway.** Reyn no longer knows whether IT applied a
+bridge (litellm decides internally now), but it still raises a
+decision-enabling `ResponsesEndpointRequiredError` on any HTTP 405 for a
+`tools + reasoning_effort` call — naming both remedies: unset
+`reasoning_effort` for that agent, or enable `/v1/responses` on your proxy.
+This is deliberately kept as a safety net for litellm's narrower routing
+coverage: if a model needs the bridge but litellm's heuristic doesn't (yet)
+cover it, the 405 surfaces as actionable guidance instead of a raw dead-end.
 
 **Unaffected paths:**
 
 - **The default setup.** The `standard`/`light` classes (Gemini Flash Lite,
   which DOES ship with `reasoning_effort: low` by default — see #1654 above)
-  are unaffected because Gemini is not an OpenAI/Azure provider the bridge
-  targets, not because `reasoning_effort` is unset. Tool-bearing turns on the
-  default config go through `/v1/chat/completions` as normal.
+  are unaffected: Gemini's `reasoning_effort` maps to a native "thinking
+  budget" parameter handled entirely on `/v1/chat/completions`, and litellm's
+  bridge only engages for OpenAI-family reasoning models. Tool-bearing turns
+  on the default config go through `/v1/chat/completions` as normal.
 - **Non-tool chat with reasoning.** A reasoning-capable model *without* tools goes
   through `/v1/chat/completions`; reasoning survives and round-trips normally
   (surfaced as `reasoning_content` / `thinking_blocks`).
-
-**To avoid it**, keep `reasoning_effort` off any OpenAI/Azure reasoning-capable
-model that serves tool-bearing turns — or keep tool-bearing purposes on a
-model that resolves to neither provider. Reasoning on the non-tool chat path
-is unaffected.
 
 ## Namespace and override semantics
 
