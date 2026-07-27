@@ -792,6 +792,12 @@ hot-reload mechanics — the layered COMBINE, validate-before-apply, boot
 resilience — are covered in
 [Concepts: Config hot-reload](config-hot-reload.md).
 
+**Decision, not an oversight**: the default agent writes the GLOBAL layer
+(`.reyn/config/hooks.yaml`) for backward compatibility and the unnamed scope
+— `.reyn/agents/default/hooks.yaml` **is** read (an operator can hand-place
+one there and it is combined in), but `hooks_add` never generates one, by
+design.
+
 ## LLM-authored hook-events (`emit_hook_event`)
 
 Everything above is fired by the OS (a lifecycle point, an external-event
