@@ -50,65 +50,42 @@ class ConsoleLogger:
     def on_llm_called(self, data: dict) -> None:
         print(f"[llm] calling {data.get('model', '?')}...")
 
+    # ``--conversation`` mode (below) filters replay to ``context_built`` +
+    # ``llm_response_received``. #2696 finding: **``context_built`` has no
+    # producer.** Nothing in ``src/`` emits it — the phase engine that did was
+    # deleted (#2434 / #2438). This handler is therefore not "broken but
+    # reconnectable": there is no wiring to restore, and making the mode useful
+    # again means writing a NEW emitter for whatever the chat router's prompt
+    # assembly actually looks like — a feature, not a repair. Tracked separately;
+    # see #2696.
+    #
+    # The body was stripped to bones for exactly that reason. It used to read
+    # ``frame.current_phase`` / ``current_phase_role`` / ``execution.current_visit``
+    # / ``total_steps`` / ``path`` / ``candidate_outputs[].next_phase`` /
+    # ``control_ir_results`` and print a ``[LLM INPUT] phase=… visit=…`` heading —
+    # the deleted phase engine's ContextFrame shape. Left intact, it would have
+    # taught the next author that phase headings are the target output shape and
+    # led them to reintroduce the vocabulary into a phase-less system.
     def on_context_built(self, data: dict) -> None:
         if not self.conversation:
             return
         import json as _json
-        frame = data.get("frame", {})
-        phase = frame.get("current_phase", data.get("phase", "?"))
-        role = frame.get("current_phase_role") or ""
-        execution = frame.get("execution", {})
-        visit = execution.get("current_visit", 1)
-        total = execution.get("total_steps", 0)
-        path = execution.get("path", [])
-
         print(f"\n{'='*70}")
-        role_str = f"  role={role}" if role else ""
-        print(f"[LLM INPUT]  phase={phase}{role_str}  visit={visit}  total_steps={total}")
+        print("[LLM INPUT]")
         print(f"{'='*70}")
+        print(_json.dumps(data, ensure_ascii=False, indent=2, default=repr))
 
-        if path:
-            print("  path: " + " → ".join(path))
-
-        instructions = frame.get("instructions", "")
-        if instructions:
-            print("  --- instructions ---")
-            for line in instructions.splitlines():
-                print(f"  {line}")
-
-        artifact = frame.get("input_artifact", {})
-        if artifact:
-            print("  --- input_artifact ---")
-            print(_json.dumps(artifact, ensure_ascii=False, indent=4)
-                  .replace("\n", "\n  "))
-
-        candidates = frame.get("candidate_outputs", [])
-        if candidates:
-            print("  --- candidates ---")
-            for c in candidates:
-                desc = f"  {c.get('description', '')}" if c.get("description") else ""
-                print(f"    next={c.get('next_phase')}  schema={c.get('schema_name')}{desc}")
-
-        finish_criteria = frame.get("finish_criteria", [])
-        if finish_criteria:
-            print("  --- finish_criteria ---")
-            for fc in finish_criteria:
-                print(f"    {fc}")
-
-        ir_results = frame.get("control_ir_results", [])
-        if ir_results:
-            print("  --- control_ir_results (act re-call) ---")
-            print(_json.dumps(ir_results, ensure_ascii=False, indent=4)
-                  .replace("\n", "\n  "))
-
+    # ``llm_response_received`` IS live (``llm.py::_emit_chat_cost_events``), but
+    # it carries usage/cost only — never the ``phase``, ``raw`` or
+    # ``response_type`` keys this used to read, so ``--conversation`` printed a
+    # constant ``[LLM OUTPUT] phase=?  type=?`` + ``{}`` for every call. Now
+    # prints what the event actually carries (#2696).
     def on_llm_response_received(self, data: dict) -> None:
         if not self.conversation:
             return
-        phase = data.get("phase", "?")
-        raw = data.get("raw", {})
-        print(f"\n[LLM OUTPUT] phase={phase}  type={data.get('response_type', '?')}")
         import json
-        print(json.dumps(raw, ensure_ascii=False, indent=2))
+        print("\n[LLM OUTPUT]")
+        print(json.dumps(data, ensure_ascii=False, indent=2, default=repr))
 
     # ── Present (FP-0054 §8) ────────────────────────────────────────────────────
 

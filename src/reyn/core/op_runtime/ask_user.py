@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from typing import Literal
 
+from reyn.core.events.event_schema import RETIRED_PHASE_FIELD
 from reyn.schemas.models import AskUserIROp
 from reyn.user_intervention import InterventionChoice, UserIntervention
 
@@ -54,7 +55,7 @@ async def handle(op: AskUserIROp, ctx: OpContext) -> dict:
         "user_intervention_requested",
         run_id=ctx.run_id,
         actor=ctx.actor,
-        phase=ctx.current_phase,
+        phase=RETIRED_PHASE_FIELD,
         question=op.question,
         intervention_id=iv.id,
         suggestions=op.suggestions or [],
@@ -72,7 +73,7 @@ async def handle(op: AskUserIROp, ctx: OpContext) -> dict:
             "user_intervention_received",
             run_id=ctx.run_id,
             actor=ctx.actor,
-            phase=ctx.current_phase,
+            phase=RETIRED_PHASE_FIELD,
             answer="",
             intervention_id=iv.id,
             refused=True,
@@ -92,7 +93,7 @@ async def handle(op: AskUserIROp, ctx: OpContext) -> dict:
         "user_intervention_received",
         run_id=ctx.run_id,
         actor=ctx.actor,
-        phase=ctx.current_phase,
+        phase=RETIRED_PHASE_FIELD,
         answer=text,
         intervention_id=iv.id,
     )

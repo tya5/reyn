@@ -30,6 +30,14 @@ applies_to: [reyn chat, reyn run-once]
 | `--llm-timeout SECONDS` | `safety.timeout.llm_call_seconds`（または `60`） | LiteLLM に渡される呼び出しごとの HTTP タイムアウト。 |
 | `--llm-max-retries N` | `safety.timeout.llm_max_retries`（または `3`） | LLM 呼び出しごとの一時的エラーのリトライ数（LiteLLM 指数バックオフ）。 |
 
+## 削除されたフラグ
+
+`argparse` は認識できないフラグを報告するだけで、なぜ無くなったかは説明しません。そのため削除はここに記録します。
+
+| フラグ | 削除 | 理由 |
+|------|---------|-----|
+| `--phase-budget SECONDS` | #2696（2026-07） | `safety.timeout.phase_seconds` を設定していましたが、**これを読むランタイムコードは存在しませんでした** — 強制していた phase エンジンは削除済み（#2434 / #2438）。フラグを受け付けて何もしないのは「ランに上限がある」という誤った表示なので、フラグと設定キーの両方を削除しました。代替はありません。ランのウォールクロックを縛りたい場合はループを縛ってください（`--max-iterations` / `safety.loop.max_router_iterations`）。 |
+
 ## 解決順序
 
 各フラグについて、ランタイムは（優先度が高い順で）チェックします:

@@ -107,7 +107,6 @@ async def op_context_from_tool_context(ctx: ToolContext) -> Any:
         state_dir_strategy="control_ir",
         mcp_servers={},
         intervention_bus=None,
-        current_phase="",
         caller="direct",
         parent_run_id=None,
         sandbox_config=sandbox_config,

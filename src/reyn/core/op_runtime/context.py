@@ -3,7 +3,7 @@
 Bundles the dependencies an op needs from the surrounding frontend
 (workspace, events, permissions, resolver, and sub-run helpers) so the
 handler signatures stay flat. Frontends construct an OpContext once
-and reuse it for the whole phase or act loop.
+and reuse it for the whole run.
 """
 from __future__ import annotations
 
@@ -81,7 +81,6 @@ class OpContext:
 
     # User interventions (ask_user, permission prompts in PR7)
     intervention_bus: "RequestBus | None" = None
-    current_phase: str = ""
 
     # FP-0054 PR-B: the surface a `present` op renders to. None = PR-A's null-surface
     # behavior (no UI reached, resolve_bindings(surface="null")). A wired renderer names

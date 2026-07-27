@@ -78,7 +78,6 @@ async def _handle(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
         state_dir_strategy="control_ir",
         mcp_servers={},
         intervention_bus=None,
-        current_phase="",
         caller="direct",
         parent_run_id=None,
     )

@@ -19,6 +19,7 @@ from __future__ import annotations
 
 from typing import Literal
 
+from reyn.core.events.event_schema import RETIRED_PHASE_FIELD
 from reyn.schemas.models import CompactIROp
 
 from . import register
@@ -37,7 +38,7 @@ async def handle(
     model isn't misled into thinking the window was freed.
     """
     if ctx.compact_now is None:
-        ctx.events.emit("compact_op_unavailable", run_id=ctx.run_id, phase=ctx.current_phase)
+        ctx.events.emit("compact_op_unavailable", run_id=ctx.run_id, phase=RETIRED_PHASE_FIELD)
         return {
             "kind": "compact",
             "status": "error",
@@ -52,14 +53,14 @@ async def handle(
     ctx.events.emit(
         "compact_op_requested",
         run_id=ctx.run_id,
-        phase=ctx.current_phase,
+        phase=RETIRED_PHASE_FIELD,
         reason=op.reason,
     )
     try:
         result = await ctx.compact_now()
     except Exception as exc:  # noqa: BLE001 — surface as op error, never crash the turn
         ctx.events.emit(
-            "compact_op_failed", run_id=ctx.run_id, phase=ctx.current_phase, error=str(exc)
+            "compact_op_failed", run_id=ctx.run_id, phase=RETIRED_PHASE_FIELD, error=str(exc)
         )
         return {
             "kind": "compact",
@@ -80,7 +81,7 @@ async def handle(
     ctx.events.emit(
         "compact_op_completed",
         run_id=ctx.run_id,
-        phase=ctx.current_phase,
+        phase=RETIRED_PHASE_FIELD,
         freed_tokens=out.get("freed_tokens"),
         free_window_after=out.get("free_window_after"),
         # #191 chat-axis compression metric (None on the phase axis):
