@@ -136,12 +136,25 @@ class ClientTransport(ABC):
         NOT abstract (mirrors :meth:`cancel_queued`): added after several
         narrow-purpose ``ClientTransport`` stubs already existed across the
         test suite; the default no-op preserves their behavior unchanged.
-        ``InProcessTransport`` overrides it with the real bypass. The AG-UI
-        wire transport does NOT (yet) — it tracks only a SINGLE pending
-        intervention id client-side (see its module docstring) with no
-        server op to resolve an ``/answer`` id-prefix remotely; closing that
-        gap needs a new wire message and is out of #3327's scope (the issue's
-        repro, and this fix, are confined to the in-process path).
+        ``InProcessTransport`` overrides it with the real bypass.
+
+        ``AgUiTransport`` deliberately does NOT override this — not a gap,
+        verified (#3327 co-vet): the REMOTE answer path was never
+        queue-gated to begin with. The plain ``--connect`` client
+        (``stream_client.route_input_line``) already routes a bare (non-``/``)
+        line straight to ``answer_intervention_text`` — un-queued — whenever
+        ``pending_intervention_head()`` is set, no ``/answer`` needed; the
+        AG-UI web surface has its own direct ``TOOL_CALL_RESULT`` POST
+        (``agui/endpoint.py``'s ``_handle_answer`` → ``answer_intervention_by_id``).
+        The #3327 deadlock is a Textual-chat-ONLY defect: #3299 P2
+        deliberately removed the equivalent bare-text-answers-the-head
+        branch from the Composer (the ``pending_intervention_head()`` read
+        this class's own docstring above still mentions) as the
+        no-double-input fix for that arc — leaving the Composer, alone among
+        reyn's clients, with no un-queued answer path until THIS method
+        added one back (scoped to ``/answer``, not bare text, to keep
+        #3300's queue-everything invariant otherwise intact). AG-UI needs no
+        parallel bypass because its answer path was never removed.
         """
         return False
 

@@ -286,6 +286,69 @@ async def test_ordinary_submission_still_queues_during_busy_turn(tmp_path, monke
 
 
 @pytest.mark.asyncio
+async def test_unrelated_slash_command_during_pending_intervention_is_not_claimed(
+    tmp_path, monkeypatch,
+):
+    """Tier 2: ★co-vet finding (#3330 review) — GATE 3's narrowness has TWO
+    independent conditions (``cmd == "answer"`` AND something pending), and
+    the FIRST test above only witnessed the second (plain, non-slash text).
+    This is the missing witness for the ``cmd == "answer"`` check itself: an
+    UNRELATED slash command (``/model …``) typed while a turn is blocked on
+    a pending intervention must ALSO fall through to the ordinary queued
+    path — ``deliver_pending_answer`` must not widen to "any slash command
+    is un-queued while something is pending", which would silently erode
+    #3300's "every Composer submission rides the queue" invariant for
+    every OTHER slash command, not just ``/answer``.
+
+    NON-VACUITY (strip-falsify, verified locally): commenting out the
+    ``if cmd != "answer": return False`` guard in
+    ``Session.maybe_deliver_answer_command`` flips this assertion to
+    ``True`` — RED — confirming this test actually exercises that specific
+    line (not just the already-witnessed ``list_active()`` guard)."""
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    out = proj / "out.txt"
+
+    session = _make_session(
+        proj, wal=tmp_path / "state.wal", snap=tmp_path / "snap.json",
+    )
+    run_task = asyncio.create_task(session.run())
+    try:
+        await _start_blocked_write_turn(session, monkeypatch, out=out)
+        transport = _transport_for(session)
+
+        delivered = await transport.deliver_pending_answer("/model gpt-fake")
+        assert delivered is False, (
+            "an UNRELATED slash command (/model) must NOT be claimed by "
+            "deliver_pending_answer while an intervention is pending — the "
+            "bypass must stay narrow to /answer specifically, not widen to "
+            "'any slash command bypasses the queue while something is "
+            "pending'"
+        )
+
+        msg_id = await transport.submit_user_text("/model gpt-fake")
+        assert msg_id, "submit_user_text did not accept the slash command"
+        queued_texts = [
+            item.get("text") for item in session.queued_user_messages()
+        ]
+        assert "/model gpt-fake" in queued_texts, (
+            "the unrelated slash command was not queued — an unintended "
+            "widening of the bypass would let it dispatch early instead"
+        )
+        assert session.interventions.head() is not None, (
+            "an unrelated slash command must never resolve the pending "
+            "intervention"
+        )
+    finally:
+        await session.shutdown()
+        try:
+            await asyncio.wait_for(run_task, timeout=2.0)
+        except asyncio.TimeoutError:
+            run_task.cancel()
+            await asyncio.gather(run_task, return_exceptions=True)
+
+
+@pytest.mark.asyncio
 async def test_answer_command_with_nothing_pending_is_not_claimed(tmp_path):
     """Tier 2: GATE 3 (mirror) — ``/answer`` typed with NOTHING pending must
     also fall through to the ordinary queued path (``deliver_pending_answer``
