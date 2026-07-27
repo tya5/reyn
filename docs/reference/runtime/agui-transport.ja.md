@@ -314,9 +314,16 @@ WaitingOn ラベル)は**read-model**であり、ファイルミラーではな�
 
 - `STATE_SNAPSHOT` — **接続時**に発行される、read-model 全体。フィールド: `attached_name`、
   `model`、`cost_agent`、`cost_total`、`agent_tokens`、`ctx_used`、`ctx_window`、
-  `waiting_on`、`queue`、`turn_active`。
+  `waiting_on`、`queue`、`turn_active`、`halted_reason`。
 - `STATE_DELTA` — **変更時**に発行され、変更されたキーのみを運ぶ。アイドルなストリームは
   delta を発行しない。
+
+`halted_reason`(#2280)は `Session.halted_reason` —実行中は `None`、永続的な
+durability failure(#2259)でセッションが fail-stop した後は理由(例:
+`"durability_failure"`)。同じ snapshot+delta channel に乗せることで、remote client
+もローカルの TUI status line / plain `--cui` bottom toolbar と同じ proactive な表示を
+得る — halt 自体は既に別の場所(`DurabilityHaltError`)で同期的に enforce されており、
+このフィールドは observability 専用で halt 自体には load-bearing ではない。
 
 `queue` と `turn_active`(#3300 P2a)は、サーバー権威の **sent-queue 状態**を publish する:
 `queue` は現在未 dispatch の inbox キュー(各 item は `{msg_id, chain_id, text}` —

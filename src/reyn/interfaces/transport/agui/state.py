@@ -57,6 +57,10 @@ _WIRE_KEYS = (
     # The order-race gate token (#3300 P2a design-pass pin D) — see
     # `RemoteQueueView` below.
     "queue_seq",
+    # #2280: the durability-halt reason (``None`` while running) — rides this
+    # SAME snapshot/delta channel so a remote status panel surfaces a halt
+    # proactively too, not only the local in-process one.
+    "halted_reason",
 )
 
 
@@ -82,6 +86,8 @@ def project_status(snapshot: "dict | None", *, waiting_on: "str | None" = None) 
         "queue": snap.get("queue", []),
         "turn_active": snap.get("turn_active", False),
         "queue_seq": snap.get("queue_seq", 0),
+        # #2280: see _WIRE_KEYS above.
+        "halted_reason": snap.get("halted_reason"),
     }
     return out
 

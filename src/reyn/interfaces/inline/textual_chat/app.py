@@ -1329,6 +1329,22 @@ class TextualChatApp(App):
         meta = dict(data.get("meta") or {})
         self._ingest_frame(OutboxMessage(kind="user", text=text, meta=meta))
 
+    def _handle_session_halted_event(self, event) -> None:
+        """#2280: the durability-halt observability surface. ``session_halted``
+        (``Session._fail_stop_if_durability_dead`` / ``run_one_iteration``)
+        fires the MOMENT the fail-stop latches — including while the operator
+        is fully idle, no DISPLAY frame in flight — so this is the ONE handler
+        that must call :meth:`_refresh_status` OUTSIDE the normal "a DISPLAY
+        frame landed" trigger (see the F5b refresh-per-message-frame comment in
+        :meth:`_pump_frames`): without it, an idle operator's status line would
+        stay stale until the next unrelated message happened to land. The
+        status snapshot itself already carries ``halted_reason`` live off
+        ``Session.halted_reason`` (``interfaces/repl/status.py``'s
+        ``_snapshot``) — this call is purely "go read it now", never a second
+        source of truth. Purely observability: does not touch the halt itself,
+        which is already enforced synchronously elsewhere."""
+        self._refresh_status()
+
     def _handle_inbox_cancel_event(self, event) -> None:
         """REMOVE exit (#3300 Y-client, sent-queue exit contract §6a): an
         ``inbox_cancel`` delta removes the matching queued item from the
@@ -1568,6 +1584,13 @@ class TextualChatApp(App):
                             logger.exception(
                                 "textual chat: intervention_answer_submitted "
                                 "ingest failed"
+                            )
+                    elif etype == "session_halted":
+                        try:
+                            self._handle_session_halted_event(frame.event)
+                        except Exception:
+                            logger.exception(
+                                "textual chat: session_halted status refresh failed"
                             )
                     elif etype == "agent_delta":
                         try:
