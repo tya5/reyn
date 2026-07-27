@@ -58,7 +58,7 @@ Skill version snapshots written by `skill_improver`. Each `v<N>.md` is a timesta
 
 ### `state/budget_ledger.jsonl`
 
-Durable, append-only budget record log (fsync per append). Holds one record per LLM call (token + USD usage). Legacy per-chain skill-spawn records (`kind: "spawn"`) may still be present in an old ledger but are no longer written and are skipped on read. On startup Reyn re-aggregates the daily / monthly totals (auto-reset at midnight / the 1st of the month) and the cumulative per-agent token + USD totals — so every budget cap survives a process restart or crash. This is the cap-critical source of truth. Inspect with `/budget` in `reyn chat`. Not affected by `/budget reset` (which only clears in-memory counters).
+Durable, append-only budget record log (fsync per append). Holds one record per LLM call (token + USD usage, the turn key, and whether the token count was reported by the provider or estimated locally — see [reference/config/budget.md](budget.md) "Token-count provenance"). Legacy per-chain skill-spawn records (`kind: "spawn"`) may still be present in an old ledger but are no longer written and are skipped on read. On startup Reyn re-aggregates the daily / monthly totals (auto-reset at midnight / the 1st of the month) and the cumulative per-agent token + USD totals — so every budget cap survives a process restart or crash. This is the cap-critical source of truth. Inspect with `/budget` in `reyn chat`. Not affected by `/budget reset` (which only clears in-memory counters).
 
 Because the ledger is never rotated, `hydrate` does not re-parse it in full on
 every startup (#2945) — it reads a compacted per-agent checkpoint (see

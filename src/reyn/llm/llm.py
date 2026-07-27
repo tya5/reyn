@@ -18,7 +18,7 @@ from reyn.llm.credentials import check_model_credentials
 from reyn.llm.json_parse import loads_lenient
 from reyn.llm.litellm_bootstrap import ensure_litellm_ready
 from reyn.llm.model_resolver import ModelSpec
-from reyn.llm.pricing import TokenUsage, estimate_cost
+from reyn.llm.pricing import TokenUsage, UsageSource, estimate_cost, parse_usage_source
 from reyn.prompt.loop_control import G12_SIGNAL_ERROR_TEXT as _G12_SIGNAL_ERROR_TEXT
 from reyn.prompt.loop_control import G12_SIGNAL_TEXT as _G12_SIGNAL_TEXT
 
@@ -1179,8 +1179,70 @@ def _extract_reasoning_bundle(msg) -> dict | None:
     return bundle or None
 
 
+#: #3351: attribute name under which ``recorded_acompletion`` stamps the
+#: PROVENANCE of a response's token counts onto the response object itself,
+#: so ``_extract_usage`` derives it in ONE place for every reader. Stamped on
+#: the response rather than threaded as a parameter because
+#: ``call_llm_tools`` re-extracts usage from the response object it got back
+#: from the chokepoint — a parameter would have to be plumbed through two
+#: call layers and would silently default to "provider" wherever someone
+#: forgot. Underscore-prefixed so it stays out of litellm's ``model_dump``
+#: (verified against a real ``ModelResponse``) and never reaches a payload
+#: trace dump or the wire.
+_USAGE_SOURCE_ATTR = "_reyn_usage_source"
+
+
+def _stamp_usage_source(response: object, source: UsageSource) -> object:
+    """Record where *response*'s token counts came from, returning *response*.
+
+    A response object that refuses the attribute (a mapping, a slotted stand-in)
+    leaves provenance UNSTATED — which ``_extract_usage`` reads as
+    ``UNKNOWN``, never as ``PROVIDER``. The failure mode of the observability
+    machinery is therefore "we don't know", not a false claim of exactness.
+    """
+    try:
+        setattr(response, _USAGE_SOURCE_ATTR, source)
+    except Exception:  # noqa: BLE001 — provenance stamping must never break a call
+        logger.debug("could not stamp usage provenance on %s", type(response).__name__)
+    return response
+
+
+def _provider_reported_usage(chunks: list) -> bool:
+    """#3351: did the PROVIDER's own token counts ride this chunk stream?
+
+    ``litellm.stream_chunk_builder`` fills each missing field from
+    ``litellm.token_counter`` (``prompt_tokens or token_counter(...)``, per
+    field, in ``litellm_core_utils/streaming_chunk_builder_utils.py``), so the
+    reconstructed ``response.usage`` is a LOCAL ESTIMATE for exactly the fields
+    no chunk reported. This answers "were BOTH prompt and completion reported"
+    — a partially-estimated total is an estimate for accounting purposes, and
+    the conservative direction is the one that never labels a token_counter
+    figure as provider-supplied.
+    """
+    prompt = 0
+    completion = 0
+    for chunk in chunks:
+        u = getattr(chunk, "usage", None)
+        if u is None:
+            continue
+        try:
+            prompt += int(getattr(u, "prompt_tokens", 0) or 0)
+            completion += int(getattr(u, "completion_tokens", 0) or 0)
+        except (TypeError, ValueError):  # a malformed usage field reports nothing
+            continue
+    return bool(prompt) and bool(completion)
+
+
 def _extract_usage(response) -> TokenUsage | None:
-    """Extract token usage from a litellm response object."""
+    """Extract token usage from a litellm response object.
+
+    #3351: the returned ``TokenUsage`` carries its own PROVENANCE
+    (``TokenUsage.source``), read from the stamp ``recorded_acompletion`` put
+    on *response* — so every consumer of the numbers (``record_llm`` → the
+    ledger / ``/cost`` / the budget caps, the cost audit-events, the per-turn
+    buckets) holds the origin alongside the figure instead of receiving a bare
+    int whose two possible origins differ by up to +86%.
+    """
     try:
         u = response.usage
         if u is None:
@@ -1191,9 +1253,21 @@ def _extract_usage(response) -> TokenUsage | None:
             completion_tokens=int(u.completion_tokens or 0),
             cached_tokens=cached,
             cache_creation_tokens=creation,
+            source=_read_usage_source(response),
         )
     except Exception:
         return None
+
+
+def _read_usage_source(response: object) -> UsageSource:
+    """The provenance stamped on *response*, or ``UNKNOWN`` when there is none.
+
+    An unstamped response is a response obtained outside
+    ``recorded_acompletion`` — nothing in ``src/`` does that today (the #1190
+    AST guard keeps the completion call-sites inside that one funnel), so this
+    reads UNKNOWN only for a hand-built object. Never PROVIDER by default.
+    """
+    return parse_usage_source(getattr(response, _USAGE_SOURCE_ATTR, None))
 
 
 def proxy_kwargs() -> dict:
@@ -1598,6 +1672,14 @@ def _emit_chat_cost_events(
             cached_tokens=usage.cached_tokens,
             cache_creation_tokens=usage.cache_creation_tokens,
             cost_usd=cost_usd,
+            # #3351: PROVENANCE of the figures on this same event — "provider"
+            # (the provider reported them) / "estimated" (litellm.token_counter
+            # filled them locally) / "unknown". Declared MANDATORY in
+            # ``EVENT_AUDIT_REQUIREMENTS`` so the audit trail cannot carry the
+            # numbers without saying where they came from, and so estimated
+            # turns are findable AFTER THE FACT via ``reyn events`` (the numbers
+            # are already grouped by ``chain_id``).
+            usage_source=usage.source.value,
             **turn_key,
         )
     except Exception:  # noqa: BLE001 — observability emit must never break the call
@@ -1932,7 +2014,7 @@ async def recorded_acompletion(
             # chunk consumption (e.g. a counter incremented while iterating
             # the async generator), not just that ``stream=True`` was
             # passed in the call kwargs.
-            return chunk_stream
+            return _stamp_usage_source(chunk_stream, UsageSource.PROVIDER)
         chunks = []
         _delta_fired = False
         async for chunk in chunk_stream:
@@ -1968,13 +2050,31 @@ async def recorded_acompletion(
                 "delta.content the way this parsing expects",
                 len(chunks),
             )
+        # #3351: decide provenance from the RAW chunks, BEFORE reconstruction
+        # collapses "the provider reported nothing" into a plausible-looking
+        # int. This is the one place in the process where the two origins are
+        # still distinguishable.
+        _source = (
+            UsageSource.PROVIDER if _provider_reported_usage(chunks) else UsageSource.ESTIMATED
+        )
+        if _source is UsageSource.ESTIMATED:
+            logger.debug(
+                "usage provenance: no provider usage on %d streamed chunk(s) for model=%s "
+                "— litellm.token_counter will fill the counts (recorded as ESTIMATED)",
+                len(chunks), model,
+            )
         reconstructed = litellm.stream_chunk_builder(chunks, messages=msgs)
         if reconstructed is None:
             # No chunks at all (degenerate empty stream) — degrade to the
             # whole-collect call rather than surface None to a caller that
-            # expects a message-bearing response object.
-            return await litellm.acompletion(model=model, messages=msgs, **call_kwargs)
-        return reconstructed
+            # expects a message-bearing response object. That call returns the
+            # provider's own usage payload, so provenance is PROVIDER, not the
+            # ESTIMATED verdict the (empty) chunk list produced above.
+            return _stamp_usage_source(
+                await litellm.acompletion(model=model, messages=msgs, **call_kwargs),
+                UsageSource.PROVIDER,
+            )
+        return _stamp_usage_source(reconstructed, _source)
 
     async def _once(rf: dict | None) -> object:
         call_kwargs = dict(base_kwargs)
@@ -1991,8 +2091,16 @@ async def recorded_acompletion(
             # num_retries (the callsite's max_retries) — else it would override the
             # config-set value (probe: per-call wins). Config is the one source.
             router_kwargs = {k: v for k, v in call_kwargs.items() if k != "num_retries"}
-            return await _single_deployment_router(effective_model).acompletion(
-                model=effective_model, messages=messages, **router_kwargs
+            # #3351: a non-streamed completion returns the PROVIDER's own usage
+            # payload — litellm's only token_counter fills live in the streaming
+            # reconstruction (``streaming_chunk_builder_utils.calculate_usage``)
+            # and in the legacy ``text_completion`` helper, neither of which is
+            # on this path (read from litellm's source, not assumed).
+            return _stamp_usage_source(
+                await _single_deployment_router(effective_model).acompletion(
+                    model=effective_model, messages=messages, **router_kwargs
+                ),
+                UsageSource.PROVIDER,
             )
         # #3288 ③a: capability-gated streaming loop, INSIDE the single #1190
         # funnel (the two ``litellm.acompletion`` call sites remain exactly
@@ -2012,8 +2120,13 @@ async def recorded_acompletion(
             effective_model, bool(call_kwargs.get("tools")), _capable,
         )
         if _capable:
+            # Provenance is stamped INSIDE (only the streaming path can produce
+            # a token_counter estimate — see ``_provider_reported_usage``).
             return await _stream_and_reconstruct(effective_model, messages, call_kwargs)
-        return await litellm.acompletion(model=effective_model, messages=messages, **call_kwargs)
+        return _stamp_usage_source(
+            await litellm.acompletion(model=effective_model, messages=messages, **call_kwargs),
+            UsageSource.PROVIDER,
+        )
 
     # response_format fallback (predates #1212): on a provider that rejects
     # response_format, retry once without it. Used by the json-mode path
