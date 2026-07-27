@@ -355,6 +355,13 @@ def test_summing_usage_keeps_the_least_confident_provenance() -> None:
     assert total.source is UsageSource.ESTIMATED
     assert total.total_tokens == provider.total_tokens + estimated.total_tokens
 
+    # Enumerated from the enum itself, not from a hand-listed subset: a variant
+    # added later without a place in the merge ordering fails here rather than
+    # raising from inside a cost path at runtime.
+    for member in UsageSource:
+        same = TokenUsage(prompt_tokens=1, source=member)
+        assert (same + same).source is member
+
 
 def test_a_serialized_usage_round_trips_its_provenance() -> None:
     """Tier 1: ``to_dict`` / ``from_dict`` preserve a NON-DEFAULT provenance,
