@@ -5,13 +5,15 @@ under ``B_M``) so the chat retry_loop's shrink can always fold it into the
 summary — closing the persistent dead-end where one huge tool result could never
 be compacted away.
 
-Mechanism (mirrors ``context_builder.offload_control_ir_result``, the phase
-analog): when a tool-result string exceeds the cap, the FULL body is stored via
+Mechanism: when a tool-result string exceeds the cap, the FULL body is stored via
 the injected ``save_fn`` (= ``MediaStore.save_tool_result``, the #385 store —
 lossless + restorable via ``MediaStore.read_tool_result``, same
 ``.reyn/tool-results/`` dir + path-ref shape) and the inline is replaced with a
 bounded preview (head/tail + the project-relative ``_offload_ref`` path +
-``_offload_content_hash``).
+``_offload_content_hash``). This is now the ONE offload path (#2396): the prior
+phase-axis analog (``context_builder.offload_control_ir_result``, DICT-shaped,
+``.reyn/control_ir_offload/``) was retired in #2396 Step 4 once its last caller
+(the ContextFrame-driven phase path) was removed by earlier convergence steps.
 
 Offload-based, NO lossy ``[:N]`` truncation of raw content and NO store-less
 discard path — the body is always recoverable, so the head/tail preview is
@@ -32,8 +34,7 @@ from typing import Any, Callable
 from reyn.services.compaction.engine import estimate_tokens
 
 # Additional absolute char ceiling on the inline preview (latency / pathological
-# guard), on top of the primary token-unit ≤ cap_tokens bound. Mirrors
-# ``context_builder.MAX_OFFLOADED_INLINE_BYTES``.
+# guard), on top of the primary token-unit ≤ cap_tokens bound.
 MAX_TOOL_RESULT_INLINE_BYTES: int = 16_384
 _PREVIEW_HEAD_CHARS: int = 6_000
 _PREVIEW_TAIL_CHARS: int = 2_000
