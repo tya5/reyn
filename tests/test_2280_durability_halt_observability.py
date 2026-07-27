@@ -114,11 +114,18 @@ async def test_process_edge_halt_emits_session_halted_once(tmp_path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_accept_edge_halt_also_emits_session_halted(tmp_path) -> None:
+async def test_accept_edge_halt_also_emits_session_halted_once(tmp_path) -> None:
     """Tier 2: the ACCEPT-edge (``_put_inbox`` — the pre-existing synchronous
     safety raise) latches the SAME emit, for a remote/other-window client
     watching passively while THIS operator is the one who triggered the
-    accept-edge raise."""
+    accept-edge raise. The guard's OWN docstring names its target case as
+    "keeps rejecting further ops ... every subsequent submit" — i.e. an
+    operator (or a retrying client) who calls ``_put_inbox`` REPEATEDLY
+    while still durability-dead, so the witness must call it twice (not
+    once) and confirm the SECOND call does not re-emit (object identity,
+    not a ``len(...) == N`` pin) — the single-call form used previously
+    never exercised the guard at all (co-vet finding on #3336: it could not
+    tell a guarded emit from an unguarded one)."""
     worker = DurabilityWorker(max_write_attempts=1)
     log = StateLog(tmp_path / "wal.jsonl", worker=worker)
     session = make_session(agent_name="alpha", state_log=log)
@@ -126,10 +133,18 @@ async def test_accept_edge_halt_also_emits_session_halted(tmp_path) -> None:
     session.subscribe_chat_events(events.append)
     try:
         await _inject_persistent_durability_failure(log)
+
         with pytest.raises(DurabilityHaltError):
             await session._put_inbox("user", {"text": "after disk death"})
         (halted_event,) = [e for e in events if e.type == "session_halted"]
         assert halted_event.data.get("reason") == "durability_failure"
+
+        # A second accept-edge submit (durability still dead, the operator's
+        # retry) must NOT re-emit: the SAME event object, not a fresh one.
+        with pytest.raises(DurabilityHaltError):
+            await session._put_inbox("user", {"text": "still after disk death"})
+        (still_only_event,) = [e for e in events if e.type == "session_halted"]
+        assert still_only_event is halted_event, "second submit re-emitted session_halted"
     finally:
         await log.aclose()
 
